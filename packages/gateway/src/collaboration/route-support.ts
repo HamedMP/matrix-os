@@ -9,6 +9,7 @@ import {
 } from "node:crypto";
 import { directErrorResponse, readDirectCredentials } from "./direct-routes.js";
 import type { DirectSessionService } from "./direct-sessions.js";
+import type { OwnerRuntimeSessionService } from "./owner-runtime-sessions.js";
 import {
   COLLABORATION_CLIENT_REQUEST_ID_HEADER,
   COLLABORATION_EXPECTED_MEMBER_REVISION_HEADER,
@@ -90,6 +91,7 @@ import { ProjectAppAdapterError } from "./project-app-adapter.js";
 import { ProjectResourceAdapterError } from "./project-adapters.js";
 import { ResourceCatalogError } from "./resource-catalog.js";
 import type { CollaborationResourceServices } from "./resource-routes.js";
+import type { StandaloneResourceScopeService } from "./standalone-resource-scope.js";
 import type { CollaborationCapabilityRepository } from "./capability-repository.js";
 import type { CollaborationCapabilityEvaluator } from "./capability-evaluator.js";
 import type { ReadinessProbes } from "./readiness-evaluator.js";
@@ -113,6 +115,7 @@ export interface CollaborationRouteOptions {
   verifier: CollaborationActorProofVerifier;
   /** S05: direct sessions; when a request carries session credentials they replace the relay proof. */
   directSessions?: DirectSessionService;
+  ownerRuntimeSessions?: OwnerRuntimeSessionService;
   authority: CollaborationAuthority;
   repository: CollaborationRepository;
   chatScope: CollaborationChatScopeService;
@@ -137,6 +140,7 @@ export interface CollaborationRouteOptions {
   executionPolicies?: CollaborationExecutionPolicyRepository;
   /** S12: catalog, file driver and app instances; file/app routes report unavailable when absent. */
   resources?: CollaborationResourceServices;
+  standaloneScope?: StandaloneResourceScopeService;
   resolveParticipant(actorId: string): Promise<Participant>;
   resolveInvitationIdentifier(identifier: string, organizationId: string): Promise<Participant>;
   invitationResolutionRateLimiter?: RateLimiter;
@@ -205,6 +209,31 @@ export async function verifyHttp(verifier: CollaborationActorProofVerifier, c: C
     body,
     conditionalHeaders: optionalDeleteConditions(c),
   });
+}
+
+/** Initial Share routes have no scope yet: authorize only the owner's exact runtime and organization. */
+export async function ownerRuntimeIdentity(
+  options: Pick<CollaborationRouteOptions, "verifier" | "ownerRuntimeSessions" | "runtimeId">,
+  c: Context,
+  body: Uint8Array,
+  requestedRuntimeId: string,
+  organizationId?: string,
+): Promise<{ actorId: string; ownerId: string; runtimeId: string; organizationId?: string }> {
+  const credentials = readDirectCredentials(c);
+  if (credentials) {
+    if (!options.ownerRuntimeSessions) throw new CollaborationAuthorizationError("unavailable", "Owner runtime sessions are unavailable");
+    const session = await options.ownerRuntimeSessions.authenticate({
+      ...credentials, method: "POST", path: c.req.path,
+      query: rawQuery(c), body,
+    });
+    if (requestedRuntimeId !== options.runtimeId || (organizationId && session.organizationId !== organizationId)) {
+      throw new CollaborationAuthorizationError("forbidden", "Owner runtime access is required");
+    }
+    return { actorId: session.actorId, ownerId: session.actorId, runtimeId: options.runtimeId, organizationId: session.organizationId };
+  }
+  const proof = await verifyHttp(options.verifier, c, body);
+  requireOwnerCreationProof(proof, requestedRuntimeId, options.runtimeId);
+  return { actorId: proof.actorId, ownerId: proof.ownerId, runtimeId: proof.runtimeId };
 }
 
 export function digestDeleteConditions(input: z.infer<typeof CollaborationRevokeRequestSchema>): string {

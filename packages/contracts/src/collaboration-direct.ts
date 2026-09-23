@@ -6,6 +6,7 @@ import {
   CollaborationIdSchema,
   CollaborationOrganizationIdSchema,
   CollaborationRevisionSchema,
+  CollaborationRuntimeIdSchema,
 } from "#collaboration";
 import { CollaborationPresetSchema, CollaborationResourceKindSchema } from "#collaboration-capabilities";
 import { CollaborationOrganizationAiSubmissionSchema } from "#collaboration-execution";
@@ -65,6 +66,21 @@ export const CollaborationTicketPurposeSchema = z.enum(["direct_session", "event
 export const CollaborationLogicalRuntimeIdSchema = referenceId(128)
   .refine((value) => !value.includes(".") && !value.includes(":"), { message: "Runtime id cannot be a hostname or address" });
 
+const VPS_ENROLLMENT_RUNTIME_ID = /^vps:([0-9a-f-]{36})$/i;
+
+/**
+ * The one canonicalization every side of the direct transport must agree on:
+ * customer-VPS enrollment names a home `vps:<machine-uuid>`, which the logical
+ * form writes as `vps-<machine-uuid>` because a ticket may never carry `:`.
+ * Every other enrolled runtime id is already logical and is returned verbatim,
+ * case included -- lowercasing one here would make a valid ticket look forged
+ * to whichever side canonicalized differently.
+ */
+export function toLogicalRuntimeId(runtimeId: string): string {
+  const vps = VPS_ENROLLMENT_RUNTIME_ID.exec(runtimeId);
+  return vps ? `vps-${vps[1]!.toLowerCase()}` : runtimeId;
+}
+
 export const CollaborationAuthorityGenerationSchema = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
 
 export const CollaborationLogicalRuntimeRefSchema = z.object({
@@ -75,6 +91,8 @@ export const CollaborationLogicalRuntimeRefSchema = z.object({
 export const CollaborationTicketResourceSchema = z.object({
   scopeId: CollaborationIdSchema,
   kind: CollaborationResourceKindSchema,
+  /** Directory-backed organization grant for an accept-only pending session. */
+  pendingGrantId: CollaborationIdSchema.optional(),
 }).strict();
 
 export const CollaborationConnectionTicketSchema = z.object({
@@ -105,7 +123,49 @@ export const CollaborationSignedConnectionTicketSchema = z.object({
   signature: z.string().regex(BASE64URL_SIGNATURE),
 }).strict();
 
+/** Owner setup uses its own ticket resource; no shared scope exists yet. */
+export const CollaborationOwnerRuntimeConnectionRequestSchema = z.object({
+  clientRequestId: CollaborationIdSchema,
+  runtimeId: CollaborationRuntimeIdSchema,
+  organizationId: CollaborationOrganizationIdSchema,
+  proofPublicKey: z.string().regex(BASE64URL_KEY),
+}).strict();
+
+export const CollaborationOwnerRuntimeTicketSchema = z.object({
+  protocolVersion: CollaborationProtocolVersionSchema,
+  ticketId: CollaborationIdSchema,
+  nonce: z.string().regex(HEX_NONCE),
+  actorId: CollaborationActorIdSchema,
+  organizationId: CollaborationOrganizationIdSchema,
+  resource: z.object({ kind: z.literal("owner_runtime") }).strict(),
+  purpose: z.literal("owner_runtime"),
+  runtime: CollaborationLogicalRuntimeRefSchema,
+  proofKeyThumbprint: z.string().regex(BASE64URL_THUMBPRINT),
+  maxActions: z.number().int().min(1).max(COLLABORATION_DIRECT_LIMITS.maxTicketActions),
+  issuedAt: IsoTimestampSchema,
+  expiresAt: IsoTimestampSchema,
+}).strict().superRefine((ticket, ctx) => {
+  const ttl = secondsBetween(ticket.issuedAt, ticket.expiresAt);
+  if (!(ttl > 0) || ttl > COLLABORATION_DIRECT_LIMITS.ticketTtlSeconds) {
+    ctx.addIssue({ code: "custom", path: ["expiresAt"], message: "Ticket must expire within the ticket TTL" });
+  }
+});
+
+export const CollaborationSignedOwnerRuntimeTicketSchema = z.object({
+  ticket: CollaborationOwnerRuntimeTicketSchema,
+  keyId: CollaborationSigningKeyIdSchema,
+  signature: z.string().regex(BASE64URL_SIGNATURE),
+}).strict();
+
 export const CollaborationClientOriginSchema = z.string().max(253 + 8 + 6).regex(HTTPS_ORIGIN, "Origin must be an https origin without a path");
+
+export const CollaborationOwnerRuntimeSessionRequestSchema = z.object({
+  clientRequestId: CollaborationIdSchema,
+  signedTicket: CollaborationSignedOwnerRuntimeTicketSchema,
+  proofPublicKey: z.string().regex(BASE64URL_KEY),
+  possession: z.string().regex(BASE64URL_SIGNATURE),
+  clientOrigin: CollaborationClientOriginSchema,
+}).strict();
 
 export const CollaborationDirectSessionRequestSchema = z.object({
   clientRequestId: CollaborationIdSchema,
@@ -126,6 +186,7 @@ export const CollaborationDirectSessionSchema = z.object({
   actorId: CollaborationActorIdSchema,
   organizationId: CollaborationOrganizationIdSchema,
   scopeId: CollaborationIdSchema,
+  pendingGrantId: CollaborationIdSchema.optional(),
   runtimeId: CollaborationLogicalRuntimeIdSchema,
   authorityGeneration: CollaborationAuthorityGenerationSchema,
   purpose: CollaborationTicketPurposeSchema,
@@ -145,6 +206,35 @@ export const CollaborationDirectSessionSchema = z.object({
   }
   if (Date.parse(session.evidenceExpiresAt) > Date.parse(session.expiresAt)) {
     ctx.addIssue({ code: "custom", path: ["evidenceExpiresAt"], message: "Evidence cannot outlive the session" });
+  }
+  if (Date.parse(session.renewAfter) > Date.parse(session.expiresAt) || Date.parse(session.renewAfter) < Date.parse(session.issuedAt)) {
+    ctx.addIssue({ code: "custom", path: ["renewAfter"], message: "Renewal must fall inside the session lifetime" });
+  }
+});
+
+/** Identity session for exactly three owner-runtime setup routes. */
+export const CollaborationOwnerRuntimeSessionSchema = z.object({
+  protocolVersion: CollaborationProtocolVersionSchema,
+  id: CollaborationIdSchema,
+  actorId: CollaborationActorIdSchema,
+  organizationId: CollaborationOrganizationIdSchema,
+  runtimeId: CollaborationLogicalRuntimeIdSchema,
+  authorityGeneration: CollaborationAuthorityGenerationSchema,
+  purpose: z.literal("owner_runtime"),
+  proofKeyThumbprint: z.string().regex(BASE64URL_THUMBPRINT),
+  issuedAt: IsoTimestampSchema,
+  expiresAt: IsoTimestampSchema,
+  evidenceExpiresAt: IsoTimestampSchema,
+  renewAfter: IsoTimestampSchema,
+}).strict().superRefine((session, ctx) => {
+  const ttl = secondsBetween(session.issuedAt, session.expiresAt);
+  if (!(ttl > 0) || ttl > COLLABORATION_DIRECT_LIMITS.identitySessionTtlSeconds) {
+    ctx.addIssue({ code: "custom", path: ["expiresAt"], message: "Session must expire within the identity session TTL" });
+  }
+  const evidence = secondsBetween(session.issuedAt, session.evidenceExpiresAt);
+  if (!(evidence > 0) || evidence > COLLABORATION_DIRECT_LIMITS.organizationEvidenceTtlSeconds
+    || Date.parse(session.evidenceExpiresAt) > Date.parse(session.expiresAt)) {
+    ctx.addIssue({ code: "custom", path: ["evidenceExpiresAt"], message: "Evidence must expire within its TTL and session" });
   }
   if (Date.parse(session.renewAfter) > Date.parse(session.expiresAt) || Date.parse(session.renewAfter) < Date.parse(session.issuedAt)) {
     ctx.addIssue({ code: "custom", path: ["renewAfter"], message: "Renewal must fall inside the session lifetime" });
@@ -310,6 +400,7 @@ export const COLLABORATION_DIRECT_ROUTES: readonly CollaborationDirectRoute[] = 
   platform("GET", `${HOME}/shared`, "U+O", { response: "CollaborationResourceDirectoryEntrySchema[]" }),
   platform("GET", `${HOME}/inbox`, "U+O", { response: "CollaborationResourceDirectoryEntrySchema[]" }),
   platform("POST", `${HOME}/connections`, "U+O", { request: "CollaborationConnectionRequestSchema", response: "CollaborationSignedConnectionTicketSchema" }),
+  platform("POST", `${HOME}/owner-runtime/connections`, "U+O", { request: "CollaborationOwnerRuntimeConnectionRequestSchema", response: "CollaborationSignedOwnerRuntimeTicketSchema" }),
   platform("POST", "/internal/collaboration/runtime-endpoints", "R", { request: "CollaborationRuntimeEndpointRegistrationSchema" }),
   platform("GET", "/internal/collaboration/control", "R", { websocket: true, response: "CollaborationControlAssertionSchema" }),
   platform("POST", "/internal/organizations/access/resolve", "R", { response: "CollaborationControlAssertionSchema[]" }),
@@ -317,6 +408,7 @@ export const COLLABORATION_DIRECT_ROUTES: readonly CollaborationDirectRoute[] = 
   platform("PUT", "/internal/collaboration/directory", "R", { request: "CollaborationResourceDirectoryEntrySchema" }),
   platform("POST", "/webhooks/clerk/organizations", "webhook", { bodyLimit: COLLABORATION_DIRECT_LIMITS.webhookBytes }),
   home("POST", `${HOME}/direct-sessions`, { auth: "T", request: "CollaborationDirectSessionRequestSchema", response: "CollaborationDirectSessionSchema" }),
+  home("POST", `${HOME}/owner-runtime/sessions`, { auth: "T", request: "CollaborationOwnerRuntimeSessionRequestSchema", response: "CollaborationOwnerRuntimeSessionSchema" }),
   home("POST", `${HOME}/direct-sessions/:sessionId/renew`, { auth: "T", request: "CollaborationDirectSessionRenewRequestSchema", response: "CollaborationDirectSessionSchema" }),
   home("DELETE", `${HOME}/direct-sessions/:sessionId`),
   home("POST", `${HOME}/runtimes/:runtimeId/scopes/preflight`, { request: "CollaborationScopePreflightRequestSchema" }),
@@ -382,6 +474,9 @@ export type CollaborationSignedConnectionTicket = z.infer<typeof CollaborationSi
 export type CollaborationDirectSessionRequest = z.infer<typeof CollaborationDirectSessionRequestSchema>;
 export type CollaborationDirectSessionRenewRequest = z.infer<typeof CollaborationDirectSessionRenewRequestSchema>;
 export type CollaborationDirectSession = z.infer<typeof CollaborationDirectSessionSchema>;
+export type CollaborationOwnerRuntimeTicket = z.infer<typeof CollaborationOwnerRuntimeTicketSchema>;
+export type CollaborationSignedOwnerRuntimeTicket = z.infer<typeof CollaborationSignedOwnerRuntimeTicketSchema>;
+export type CollaborationOwnerRuntimeSession = z.infer<typeof CollaborationOwnerRuntimeSessionSchema>;
 export type CollaborationDirectRequestSignature = z.infer<typeof CollaborationDirectRequestSignatureSchema>;
 export type CollaborationDirectHandshakeFrame = z.infer<typeof CollaborationDirectHandshakeFrameSchema>;
 export type CollaborationRuntimeEndpointRegistration = z.infer<typeof CollaborationRuntimeEndpointRegistrationSchema>;

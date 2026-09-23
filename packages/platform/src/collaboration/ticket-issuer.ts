@@ -14,10 +14,13 @@ import {
   COLLABORATION_DIRECT_LIMITS,
   COLLABORATION_DIRECT_PROTOCOL_VERSION,
   CollaborationIdSchema,
+  CollaborationOwnerRuntimeConnectionRequestSchema,
   CollaborationSignedConnectionTicketSchema,
+  CollaborationSignedOwnerRuntimeTicketSchema,
   CollaborationTicketPurposeSchema,
   type CollaborationRuntimePublicKeySchema,
   type CollaborationSignedConnectionTicket,
+  type CollaborationSignedOwnerRuntimeTicket,
 } from "@matrix-os/contracts";
 import { z } from "zod/v4";
 import type { PlatformCollaborationRepository } from "./repository.js";
@@ -78,6 +81,11 @@ export class CollaborationTicketIssuerError extends Error {
 
 export interface IssuedConnectionTicket {
   signedTicket: CollaborationSignedConnectionTicket;
+  endpoint: { origin: string; protocolVersion: typeof COLLABORATION_DIRECT_PROTOCOL_VERSION };
+}
+
+export interface IssuedOwnerRuntimeTicket {
+  signedTicket: CollaborationSignedOwnerRuntimeTicket;
   endpoint: { origin: string; protocolVersion: typeof COLLABORATION_DIRECT_PROTOCOL_VERSION };
 }
 
@@ -238,7 +246,10 @@ export class CollaborationTicketIssuer {
       this.options.resolveOrganization(scopeId),
     ]);
     // Existence is never disclosed: every denial is the same not-found.
-    if (!directory || !organizationId || !status || status === "revoked") throw denied();
+    if (!directory || !organizationId || status === "revoked") throw denied();
+    const pendingGrantId = !status && directory.audience === "organization"
+      ? directory.organizationGrantId : null;
+    if (!status && (!pendingGrantId || purpose !== "direct_session")) throw denied();
     if (status === "invited" && purpose !== "direct_session") throw denied();
     if (purpose === "terminal" && directory.kind !== "terminal") throw denied();
     if (!(await this.options.projection.isCurrentMember({ organizationId, actorId: input.actorId }))) throw denied();
@@ -260,7 +271,7 @@ export class CollaborationTicketIssuer {
       nonce: this.createNonce(),
       actorId: input.actorId,
       organizationId,
-      resource: { scopeId, kind: directory.kind },
+      resource: { scopeId, kind: directory.kind, ...(pendingGrantId ? { pendingGrantId } : {}) },
       purpose,
       runtime: { runtimeId: endpoint.runtimeId, authorityGeneration: directory.authorityGeneration },
       proofKeyThumbprint: proofKeyThumbprint(proofPublicKey),
@@ -276,6 +287,38 @@ export class CollaborationTicketIssuer {
     });
     return {
       signedTicket,
+      endpoint: { origin: this.options.relayOrigin, protocolVersion: COLLABORATION_DIRECT_PROTOCOL_VERSION },
+    };
+  }
+
+  /** An owner-runtime setup ticket never names a scope and cannot authorize shared content. */
+  async issueOwnerRuntime(input: { actorId: string; request: unknown }): Promise<IssuedOwnerRuntimeTicket> {
+    const request = CollaborationOwnerRuntimeConnectionRequestSchema.safeParse(input.request);
+    if (!request.success) throw new CollaborationTicketIssuerError("invalid_request", "Connection request is invalid");
+    const endpoint = await this.options.endpoints.resolveEnrolled(request.data.runtimeId);
+    if (!endpoint || endpoint.ownerId !== input.actorId) throw denied();
+    if (!(await this.options.projection.isCurrentMember({ organizationId: request.data.organizationId, actorId: input.actorId }))) throw denied();
+    const issuedAt = this.now();
+    const lastControlAt = endpoint.lastControlAt ? Date.parse(endpoint.lastControlAt) : Number.NaN;
+    if (!Number.isFinite(lastControlAt) || issuedAt.getTime() - lastControlAt > HOME_LIVENESS_WINDOW_MS) {
+      throw new CollaborationTicketIssuerError("host_offline", "Collaboration home is offline");
+    }
+    const ticket = {
+      protocolVersion: COLLABORATION_DIRECT_PROTOCOL_VERSION,
+      ticketId: this.createId(), nonce: this.createNonce(), actorId: input.actorId,
+      organizationId: request.data.organizationId,
+      resource: { kind: "owner_runtime" as const }, purpose: "owner_runtime" as const,
+      runtime: { runtimeId: endpoint.runtimeId, authorityGeneration: endpoint.authorityGeneration },
+      proofKeyThumbprint: proofKeyThumbprint(request.data.proofPublicKey),
+      maxActions: 32,
+      issuedAt: issuedAt.toISOString(),
+      expiresAt: new Date(issuedAt.getTime() + COLLABORATION_DIRECT_LIMITS.ticketTtlSeconds * 1_000).toISOString(),
+    };
+    const keyId = this.options.keyring.activeKeyId;
+    return {
+      signedTicket: CollaborationSignedOwnerRuntimeTicketSchema.parse({
+        ticket, keyId, signature: signEd25519(this.signingKeys.get(keyId)!, ticketSigningPayload(ticket)),
+      }),
       endpoint: { origin: this.options.relayOrigin, protocolVersion: COLLABORATION_DIRECT_PROTOCOL_VERSION },
     };
   }
