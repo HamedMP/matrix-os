@@ -15,6 +15,7 @@ import {
 const now = new Date("2026-09-07T12:00:00.000Z");
 const scopeId = "10000000-0000-4000-8000-000000000001";
 const inviteId = "30000000-0000-4000-8000-000000000001";
+const organizationGrantId = "70000000-0000-4000-8000-000000000001";
 const runtimeSecret = "runtime-secret".repeat(3);
 
 describe("platform collaboration routes", () => {
@@ -120,6 +121,11 @@ describe("platform collaboration routes", () => {
     const orgScopeId = "10000000-0000-4000-8000-000000000077";
     await repository.applyDirectoryEvent({
       ...directoryEvent("accepted"), eventId: "20000000-0000-4000-8000-000000000077", scopeId: orgScopeId,
+      organizationId: "org_1", audience: "organization", organizationGrantId, recipients: [],
+    });
+    await repository.applyDirectoryEvent({
+      ...directoryEvent("accepted"), eventId: "20000000-0000-4000-8000-000000000079",
+      scopeId: "10000000-0000-4000-8000-000000000079",
       organizationId: "org_1", audience: "organization", recipients: [],
     });
     organizationIds = ["org_1"];
@@ -128,7 +134,7 @@ describe("platform collaboration routes", () => {
     });
     expect(await member.json()).toEqual({ items: [{
       scopeId: orgScopeId, runtimeId: "runtime_owner", ownerId: platformCollaborationActors.owner, kind: "chat", authorityGeneration: 1,
-      status: "organization_pending", organizationId: "org_1",
+      status: "organization_pending", organizationId: "org_1", grantId: organizationGrantId,
     }] });
     // The owner is never pending on their own share.
     const owner = await app.request("/api/collaboration/inbox", { headers: { "x-test-actor": platformCollaborationActors.owner } });
@@ -143,7 +149,7 @@ describe("platform collaboration routes", () => {
     organizationIds = ["org_1"];
     await repository.applyDirectoryEvent({
       ...directoryEvent("accepted"), eventId: "20000000-0000-4000-8000-000000000078", scopeId: orgScopeId,
-      organizationId: "org_1", audience: "organization", metadataRevision: 2,
+      organizationId: "org_1", audience: "organization", organizationGrantId, metadataRevision: 2,
       recipients: [{ actorId: platformCollaborationActors.recipientWithoutComputer, status: "accepted" }],
     });
     const opened = await app.request("/api/collaboration/inbox", {
@@ -158,11 +164,14 @@ describe("platform collaboration routes", () => {
 
   it("paginates organization-pending shares after ordinary invitations without losing any", async () => {
     await repository.applyDirectoryEvent(directoryEvent("invited"));
+    // Each organization share needs organizationGrantId below: pending discovery selects only rows
+    // with a live grant pointer, so a grant-less share is silently absent from the page.
     for (const suffix of ["071", "072", "073"]) {
       await repository.applyDirectoryEvent({
         ...directoryEvent("accepted"), scopeId: `10000000-0000-4000-8000-000000000${suffix}`,
         eventId: `20000000-0000-4000-8000-000000000${suffix}`,
         organizationId: "org_1", audience: "organization", recipients: [],
+        organizationGrantId: `70000000-0000-4000-8000-000000000${suffix}`,
       });
     }
     organizationIds = ["org_1"];

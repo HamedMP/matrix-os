@@ -19,7 +19,7 @@ type Namespace = { ownerId: string; projectId: string | null };
 type FileAction = Extract<CollaborationFileActionRequest, { type: "write" | "create" | "rename" | "delete" }>;
 
 export interface CollaborationResourceDriver {
-  read(input: Namespace & { path: string }): Promise<{ stream: ReadableStream<Uint8Array>; size: number; contentType?: string }>;
+  read(input: Namespace & { path: string; expectedIncarnation: string }): Promise<{ stream: ReadableStream<Uint8Array>; size: number; contentType?: string }>;
   write(input: Namespace & { path: string; content: Uint8Array }): Promise<void>;
   /**
    * Atomic write of a large file the caller never holds whole: the bytes land
@@ -29,7 +29,11 @@ export interface CollaborationResourceDriver {
   remove(input: Namespace & { path: string; kind: "file" | "folder" }): Promise<void>;
   rename(input: Namespace & { from: string; to: string }): Promise<void>;
   mkdir(input: Namespace & { path: string }): Promise<void>;
-  /** Opaque incarnation fingerprint of the current bytes; changes on every write. */
+  /** Read-only owner inspection for a normal Share control. Must validate kind and reject symlinks. */
+  inspect?(input: Namespace & { kind: "file" | "folder" | "app"; path: string }): Promise<{ incarnation: string }>;
+  /** Resolve a normal owner-home selection into its authoritative catalog namespace. */
+  resolveOwnerNamespace?(input: { ownerId: string; kind: "file" | "folder" | "app"; path: string }): Promise<{ projectId: string | null; path: string }>;
+  /** Stable identity of the current filesystem object; changes on replacement. */
   fingerprint(input: Namespace & { path: string }): Promise<string>;
   readAppAsset(input: Namespace & { appId: string; assetPath: string }): Promise<{ stream: ReadableStream<Uint8Array>; size: number; contentType?: string }>;
 }
@@ -161,7 +165,7 @@ export function createFileActionExecutor(options: {
           if (namespace.root && namespace.root.id === locked.id) throw new ResourceCatalogError("forbidden");
           if (namespace.root && !action.path.startsWith(`${namespace.root.path}/`)) throw new ResourceCatalogError("not_found");
           await options.driver.rename({ ...ns, from: locked.path, to: action.path });
-          entry = await options.catalog.rename({ id: locked.id, path: action.path, expectedRevision, incarnation: locked.incarnation, executor: trx });
+          entry = await options.catalog.rename({ id: locked.id, path: action.path, expectedRevision, incarnation: await options.driver.fingerprint({ ...ns, path: action.path }), executor: trx });
         } else {
           if (namespace.root && namespace.root.id === locked.id) throw new ResourceCatalogError("forbidden");
           // Admit the folder before the recursive filesystem delete: a bound that

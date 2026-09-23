@@ -76,14 +76,18 @@ export function createAppRegistry(db: AppDb, kysely: Kysely<any>): AppRegistry {
 
     async get(slug: string): Promise<AppRecord | null> {
       const result = await sql<AppRecord>`
-        SELECT * FROM public._apps WHERE slug = ${slug}
+        SELECT slug, name, description, version, installed_version, author, category, tables,
+          created_at::text AS created_at, updated_at::text AS updated_at
+        FROM public._apps WHERE slug = ${slug}
       `.execute(kysely);
       return (result.rows[0] as AppRecord | undefined) ?? null;
     },
 
     async listApps(): Promise<AppRecord[]> {
       const result = await sql<AppRecord>`
-        SELECT * FROM public._apps ORDER BY name
+        SELECT slug, name, description, version, installed_version, author, category, tables,
+          created_at::text AS created_at, updated_at::text AS updated_at
+        FROM public._apps ORDER BY name
       `.execute(kysely);
       return result.rows as AppRecord[];
     },

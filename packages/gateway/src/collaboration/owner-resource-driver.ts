@@ -1,6 +1,6 @@
 /** Filesystem driver for owner-home collaboration resources. Catalog IDs, never paths, reach this boundary. */
 import { createHash, randomUUID } from "node:crypto";
-import { constants, createReadStream } from "node:fs";
+import { constants, createReadStream, type BigIntStats } from "node:fs";
 import { lstat, mkdir, open, readdir, realpath, rename, rm, stat } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { Readable } from "node:stream";
@@ -26,6 +26,36 @@ function forbiddenHomePath(path: string): boolean {
 function missing(error: unknown): boolean {
   return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
 }
+/**
+ * Identity of the physical thing behind a share, used to refuse a path whose bytes were swapped
+ * underneath it.
+ *
+ * `dev:ino:birthtimeNs` is what catches that: deleting and recreating a file or folder at the same
+ * path yields a new inode or a new birth time, so the stored incarnation stops matching.
+ *
+ * `ctimeNs` is deliberately excluded when the filesystem reports a usable birth time. It changes on
+ * any metadata write, and for a *folder* it also changes whenever an entry is added or removed — so
+ * including it made an ordinary "collaborator adds a file to the shared folder" rotate the
+ * incarnation and 404 the share until the owner re-shared it. Measured: adding a file to a folder
+ * leaves dev, ino and birthtimeNs untouched while moving ctimeNs, and delete-and-recreate moves ino
+ * or birthtimeNs on both files and folders. So dropping it costs no defence and stops the share
+ * breaking under normal use.
+ *
+ * It is kept as a fallback where birth time is unavailable — some filesystems report 0 or simply
+ * mirror ctime — because there inode reuse could otherwise let a recreated path keep its identity.
+ */
+function physicalIncarnation(info: BigIntStats): string {
+  // Whether the platform reports a birth time at all — not whether it currently differs from
+  // ctime. A freshly created object has them equal, so comparing the two made the branch flip on
+  // the first metadata write and rehash the same object under a different scheme, which is the
+  // very failure this function exists to avoid.
+  const birthtimeUsable = info.birthtimeNs > 0n;
+  const identity = birthtimeUsable
+    ? `${info.dev}:${info.ino}:${info.birthtimeNs}`
+    : `${info.dev}:${info.ino}:${info.birthtimeNs}:${info.ctimeNs}`;
+  return createHash("sha256").update(identity).digest("hex");
+}
+
 function contentType(path: string): string {
   const extension = path.split(".").at(-1)?.toLowerCase();
   switch (extension) {
@@ -42,8 +72,11 @@ function contentType(path: string): string {
 
 export function createOwnerResourceDriver(options: {
   homePath: string;
+  listOwnedProjectIds(ownerId: string): Promise<string[]>;
   resolveProjectWorkingDirectory(ownerId: string, projectId: string): Promise<string | null>;
   resolveAppAssetRoot(ownerId: string, projectId: string | null, appId: string): Promise<string | null>;
+  /** Registry identity of an installed app; null when no app is registered under that id. */
+  resolveAppIncarnation(ownerId: string, projectId: string | null, appId: string): Promise<string | null>;
 }): CollaborationResourceDriver & { sweepTemp(): Promise<number>; close(): void } {
   const homeRoot = resolve(options.homePath);
   // Bounded LRU of directories where this process placed an atomic write temp.
@@ -123,14 +156,15 @@ export function createOwnerResourceDriver(options: {
     return candidate;
   }
 
-  async function readFile(input: Namespace & { path: string }) {
+  async function readFile(input: Namespace & { path: string; expectedIncarnation: string }) {
     const path = await target(input, false);
     let handle;
     try {
       handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
-      const info = await handle.stat();
-      if (!info.isFile() || info.size > MAX_STREAM_BYTES) throw new ResourceCatalogError("unavailable");
-      const size = info.size;
+      const info = await handle.stat({ bigint: true });
+      if (!info.isFile() || info.size > BigInt(MAX_STREAM_BYTES)) throw new ResourceCatalogError("unavailable");
+      if (physicalIncarnation(info) !== input.expectedIncarnation) throw new ResourceCatalogError("not_found");
+      const size = Number(info.size);
       const stream = Readable.toWeb(handle.createReadStream({ autoClose: true })) as ReadableStream<Uint8Array>;
       return { stream, size, contentType: contentType(path) };
     } catch (error: unknown) {
@@ -222,6 +256,33 @@ export function createOwnerResourceDriver(options: {
   return {
     sweepTemp,
     close: () => clearInterval(timer),
+    async resolveOwnerNamespace(input) {
+      if (input.kind === "app") return { projectId: null, path: input.path };
+      if (!isSafeCollaborationRelativePath(input.path) || forbiddenHomePath(input.path)) {
+        throw new ResourceCatalogError("forbidden");
+      }
+      const ownerRoot = await root({ ownerId: input.ownerId, projectId: null });
+      const selected = resolve(ownerRoot, input.path);
+      const projectIds = await options.listOwnedProjectIds(input.ownerId);
+      if (projectIds.length > 1_000 || new Set(projectIds).size !== projectIds.length) {
+        throw new ResourceCatalogError("unavailable");
+      }
+      let matched: { projectId: string; path: string; rootLength: number } | null = null;
+      for (const projectId of projectIds) {
+        const projectRoot = await root({ ownerId: input.ownerId, projectId });
+        if (!inside(ownerRoot, projectRoot)) continue;
+        // A standalone folder grant must never encompass a registered project.
+        if (inside(selected, projectRoot)) throw new ResourceCatalogError("forbidden");
+        if (!inside(projectRoot, selected)) continue;
+        const path = relative(projectRoot, selected).split(sep).join("/");
+        if (!path || !isSafeCollaborationRelativePath(path)) throw new ResourceCatalogError("forbidden");
+        if (matched && matched.rootLength === projectRoot.length) throw new ResourceCatalogError("unavailable");
+        if (!matched || projectRoot.length > matched.rootLength) {
+          matched = { projectId, path, rootLength: projectRoot.length };
+        }
+      }
+      return matched ? { projectId: matched.projectId, path: matched.path } : { projectId: null, path: input.path };
+    },
     read: readFile,
     write: writeFile,
     writeChunks: writeFileFromChunks,
@@ -262,9 +323,49 @@ export function createOwnerResourceDriver(options: {
         throw new ResourceCatalogError("unavailable");
       }
     },
+    async inspect(input) {
+      // Each kind must be registered under the identity its own read path
+      // verifies, or the catalog entry is dead on arrival: a file is checked
+      // against its physical incarnation, an app against its registry row.
+      if (input.kind === "app") {
+        if (!/^[A-Za-z0-9_-]{1,256}$/.test(input.path)) throw new ResourceCatalogError("invalid");
+        let incarnation: string | null;
+        try {
+          incarnation = await options.resolveAppIncarnation(input.ownerId, input.projectId, input.path);
+        } catch (error: unknown) {
+          console.warn("[collaboration-resources] app identity unavailable", error instanceof Error ? error.name : "UnknownError");
+          throw new ResourceCatalogError("unavailable");
+        }
+        if (incarnation === null) throw new ResourceCatalogError("not_found");
+        if (!/^[a-f0-9]{64}$/.test(incarnation)) throw new ResourceCatalogError("unavailable");
+        return { incarnation };
+      }
+      const inspectedPath = await target(input, false);
+      try {
+        const info = await lstat(inspectedPath, { bigint: true });
+        if (info.isSymbolicLink()
+          || (input.kind === "file" && !info.isFile())
+          || (input.kind !== "file" && !info.isDirectory())) throw new ResourceCatalogError("not_found");
+        return { incarnation: physicalIncarnation(info) };
+      } catch (error: unknown) {
+        if (error instanceof ResourceCatalogError) throw error;
+        if (missing(error)) throw new ResourceCatalogError("not_found");
+        throw new ResourceCatalogError("unavailable");
+      }
+    },
     async fingerprint(input) {
-      await target(input, false);
-      return randomUUID();
+      const path = await target(input, false);
+      let handle;
+      try {
+        handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+        return physicalIncarnation(await handle.stat({ bigint: true }));
+      } catch (error: unknown) {
+        if (error instanceof ResourceCatalogError) throw error;
+        if (missing(error)) throw new ResourceCatalogError("not_found");
+        throw new ResourceCatalogError("unavailable");
+      } finally {
+        await handle?.close();
+      }
     },
     async readAppAsset(input) {
       const assetRoot = await options.resolveAppAssetRoot(input.ownerId, input.projectId, input.appId);

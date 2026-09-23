@@ -204,10 +204,8 @@ import {
   type GatewayCollaborationRuntime,
 } from "./collaboration/wiring.js";
 import { createLegacyProjectPathAdmission } from "./collaboration/project-path-admission.js";
-import { createGatewayProjectInventorySource } from "./collaboration/project-inventory-source.js";
-import { createProjectChatRootInventory } from "./collaboration/project-chat-root-inventory.js";
 import { createProjectGitDriver } from "./collaboration/project-git-operations.js";
-import { enableGatewaySharedResources } from "./collaboration/resource-wiring.js";
+import { enableOwnerCollaborationSurfaces } from "./collaboration/owner-runtime-surfaces.js";
 import { createCodingAgentFilePreviewWiring } from "./coding-agents/file-preview-wiring.js";
 import { createCodingAgentSourceControlStore } from "./coding-agents/source-control.js";
 import { registerCodingAgentAttentionNotifications } from "./coding-agents/attention-notifications.js";
@@ -1003,67 +1001,16 @@ export async function createGateway(config: GatewayConfig) {
           },
         }),
           {
-          onPartialRuntime: (runtime) => {
-            enableGatewaySharedResources({ runtime, homePath, projects: codingAgentProjectManager });
-            const inventorySource = createGatewayProjectInventorySource({
-              homePath,
-              gitSetup: { get: projectGitDriver.getGitSetup },
-              chatRoots: createProjectChatRootInventory({
-                db: ownerChatRepository.kysely,
-                executionRoots: ownerChatExecutionRoots,
-              }),
-              projects: {
-                get: async (ownerId, projectId) => {
-                  const result = await codingAgentProjectManager.getProjectById(
-                    { type: "user", id: ownerId },
-                    projectId,
-                  );
-                  return result.ok ? {
-                    id: result.project.id,
-                    ownerId,
-                    rootPath: result.project.localPath,
-                    updatedAt: result.project.updatedAt,
-                  } : null;
-                },
-              },
-              chats: {
-                list: async (ownerId, projectId) => chatRepository!.kysely.selectFrom("chats")
-                  .select(["id", "revision"])
-                  .where("owner_type", "=", "personal")
-                  .where("owner_id", "=", ownerId)
-                  .where("project_id", "=", projectId)
-                  .orderBy("id", "asc")
-                  .limit(100_001)
-                  .execute(),
-              },
-              canvases: {
-                getProjectCanvas: async (ownerId, projectId) => {
-                  const rows = await canvasRepository!.kysely.selectFrom("canvas_documents")
-                    .select(["id", "revision", "nodes"])
-                    .where("owner_scope", "=", "personal")
-                    .where("owner_id", "=", ownerId)
-                    .where("scope_type", "=", "project")
-                    .where("deleted_at", "is", null)
-                    .where(sql<boolean>`scope_ref ->> 'projectId' = ${projectId}`)
-                    .limit(2)
-                    .execute();
-                  if (rows.length > 1) throw new Error("ProjectCanvasConflict");
-                  return rows[0] ?? null;
-                },
-              },
-              apps: {
-                get: async (appId) => {
-                  const app = await appRegistry!.get(appId);
-                  return app ? { id: app.slug, collaborationMode: "scoped" as const } : null;
-                },
-              },
-              sessions: {
-                list: () => terminalWorkspaceRuntime.listWorkspaces(),
-              },
-            });
-            runtime.enableProjectGit({ driver: projectGitDriver, source: inventorySource });
-            return runtime.enableSharedProject({ homePath, inventorySource });
-          } },
+          onPartialRuntime: (runtime) => enableOwnerCollaborationSurfaces(runtime, {
+            homePath,
+            appRegistry,
+            canvasRepository,
+            chatRepository: ownerChatRepository,
+            chatExecutionRoots: ownerChatExecutionRoots,
+            projectManager: codingAgentProjectManager,
+            projectGitDriver,
+            terminalWorkspaces: terminalWorkspaceRuntime,
+          }) },
         );
         if (construction.ok) gatewayCollaboration = construction.runtime;
         else collaborationFailClosedReason = construction.reason;

@@ -18,6 +18,7 @@ const ProjectAppRecordSchema = z.object({
   appId: AppIdSchema,
   bridgeAppId: z.string().min(1).max(256),
   collaborationMode: z.enum(["scoped", "unavailable"]),
+  incarnation: z.string().regex(/^[a-f0-9]{64}$/).optional(),
 }).strict();
 const MutationEnvelopeSchema = z.object({
   appId: AppIdSchema,

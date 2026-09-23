@@ -157,6 +157,29 @@ describe("CollaborationProxy", () => {
     expect(signedProof.proof.scopeId).toBeUndefined();
   });
 
+  it("allowlists exact owner catalog, preset grant, and policy preview routes", () => {
+    const runtime = "/api/collaboration/runtimes/runtime_owner";
+    expect(parseCollaborationProxyRoute("POST", `${runtime}/catalog/resolve`))
+      .toEqual({ kind: "runtime", identifier: "runtime_owner" });
+    const scope = `/api/collaboration/scopes/${scopeId}`;
+    for (const method of ["GET", "POST"]) {
+      expect(parseCollaborationProxyRoute(method, `${scope}/grants`))
+        .toEqual({ kind: "scope", identifier: scopeId });
+    }
+    for (const method of ["PATCH", "DELETE"]) {
+      expect(parseCollaborationProxyRoute(method, `${scope}/grants/${invitationId}`))
+        .toEqual({ kind: "scope", identifier: scopeId });
+    }
+    expect(parseCollaborationProxyRoute("POST", `${scope}/grants/${invitationId}/accept`))
+      .toEqual({ kind: "scope", identifier: scopeId });
+    expect(parseCollaborationProxyRoute("POST", `${scope}/policy/preflight`))
+      .toEqual({ kind: "scope", identifier: scopeId });
+    expect(parseCollaborationProxyRoute("GET", `${runtime}/catalog/resolve`)).toBeNull();
+    expect(parseCollaborationProxyRoute("POST", `${runtime}/catalog/resolve/extra`)).toBeNull();
+    expect(parseCollaborationProxyRoute("PUT", `${scope}/grants/${invitationId}`)).toBeNull();
+    expect(parseCollaborationProxyRoute("GET", `${scope}/grants/${invitationId}/accept`)).toBeNull();
+  });
+
   it("routes only the exact owner lifecycle, operation, and export paths", () => {
     const operationId = "50000000-0000-4000-8000-000000000001";
     expect(parseCollaborationProxyRoute("POST", `/api/collaboration/scopes/${scopeId}/lifecycle`))

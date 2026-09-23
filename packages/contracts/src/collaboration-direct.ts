@@ -321,6 +321,7 @@ export const COLLABORATION_DIRECT_ROUTES: readonly CollaborationDirectRoute[] = 
   home("DELETE", `${HOME}/direct-sessions/:sessionId`),
   home("POST", `${HOME}/runtimes/:runtimeId/scopes/preflight`, { request: "CollaborationScopePreflightRequestSchema" }),
   home("POST", `${HOME}/runtimes/:runtimeId/scopes`, { request: "CollaborationCreateScopeRequestSchema" }),
+  home("POST", `${HOME}/runtimes/:runtimeId/catalog/resolve`, { request: "CollaborationOwnerCatalogResolveRequestSchema", response: "CollaborationOwnerCatalogResolveResponseSchema" }),
   home("GET", SCOPE, { response: "CollaborationScopeSchema" }),
   home("GET", `${SCOPE}/access`, { response: "CollaborationEffectiveAccessSchema" }),
   home("GET", `${SCOPE}/grants`, { response: "CollaborationGrantSchema[]" }),

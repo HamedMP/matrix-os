@@ -14,6 +14,8 @@ import { CollaborationCapabilityRepository } from "./capability-repository.js";
 import { CollaborationCapabilityEvaluator } from "./capability-evaluator.js";
 import { createProjectGitBroker, type ProjectGitDriver, type ProjectGitOwnerIdentity } from "./project-git-broker.js";
 import { createProjectAccessReadiness } from "./project-access-readiness.js";
+import { createGatewayReadinessProbes } from "./gateway-readiness-probes.js";
+import { createOwnerSourceReadinessProbes } from "./account-eligibility.js";
 import { CollaborationChatAdapter } from "./chat-adapter.js";
 import { CollaborationChatScopeService } from "./chat-scope.js";
 import { bootstrapCollaborationDatabase, type OwnerCollaborationDatabase } from "./database.js";
@@ -289,6 +291,7 @@ export async function createGatewayCollaboration(options: {
   let projectTransitionCoordinator: ReturnType<typeof createProjectTransitionCoordinator> | undefined;
   let projectGit: ReturnType<typeof createProjectGitBroker> | undefined;
   let projectReadiness: ReturnType<typeof createProjectAccessReadiness> | undefined;
+  let projectInventorySource: Pick<ProjectInventoryResourceSource, "listChats" | "getGitSetup"> | undefined;
   let resourceServices: CollaborationResourceServices | undefined;
   let ownerResourceDriver: (CollaborationResourceDriver & { close?(): void }) | undefined;
   function closeResourceServices(): void {
@@ -363,6 +366,7 @@ export async function createGatewayCollaboration(options: {
         },
       });
       projectReadiness = createProjectAccessReadiness({ repository, source: input.source });
+      projectInventorySource = input.source;
     },
     enableSharedResources(input: {
       driver: CollaborationResourceDriver & { close?(): void };
@@ -566,6 +570,16 @@ export async function createGatewayCollaboration(options: {
         directSessions,
         authority,
         repository,
+        capabilities,
+        capabilityEvaluator: new CollaborationCapabilityEvaluator({ db: options.db, grants: capabilities, organizationPrecondition }),
+        readinessProbes: createGatewayReadinessProbes({
+          repository, chats: options.chatRepository,
+          projectSource: () => projectInventorySource,
+          sandboxSupported: async (subject) => sharedAiRuntime?.available === true
+            ? sharedAiRuntime.sandboxSupported(subject) : false,
+          ownerSource: eligibility && executionPolicies
+            ? createOwnerSourceReadinessProbes({ policies: executionPolicies, eligibility }) : undefined,
+        }),
         chatScope,
         chatAdapter,
         discussionAdapter,

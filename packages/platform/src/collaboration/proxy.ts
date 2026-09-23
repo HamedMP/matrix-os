@@ -17,12 +17,19 @@ const RUNTIME = "[A-Za-z0-9:_-]{1,128}";
 const RESOURCE = "[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}";
 
 const RUNTIME_ROUTES = [
+  ["POST", new RegExp(`^/api/collaboration/runtimes/(${RUNTIME})/catalog/resolve$`)],
   ["POST", new RegExp(`^/api/collaboration/runtimes/(${RUNTIME})/scopes/preflight$`)],
   ["POST", new RegExp(`^/api/collaboration/runtimes/(${RUNTIME})/scopes$`)],
 ] as const;
 
 const SCOPE_ROUTES = [
   ["GET", new RegExp(`^/api/collaboration/scopes/(${UUID})$`)],
+  ["GET", new RegExp(`^/api/collaboration/scopes/(${UUID})/grants$`)],
+  ["POST", new RegExp(`^/api/collaboration/scopes/(${UUID})/grants$`)],
+  ["PATCH", new RegExp(`^/api/collaboration/scopes/(${UUID})/grants/${UUID}$`)],
+  ["DELETE", new RegExp(`^/api/collaboration/scopes/(${UUID})/grants/${UUID}$`)],
+  ["POST", new RegExp(`^/api/collaboration/scopes/(${UUID})/grants/${UUID}/accept$`)],
+  ["POST", new RegExp(`^/api/collaboration/scopes/(${UUID})/policy/preflight$`)],
   ["GET", new RegExp(`^/api/collaboration/scopes/(${UUID})/members$`)],
   ["POST", new RegExp(`^/api/collaboration/scopes/(${UUID})/invitations$`)],
   ["DELETE", new RegExp(`^/api/collaboration/scopes/(${UUID})/invitations/${UUID}$`)],
