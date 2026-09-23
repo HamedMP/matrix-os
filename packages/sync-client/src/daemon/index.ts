@@ -2,7 +2,6 @@ import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import { copyFile, link, mkdir, readFile, writeFile, unlink, stat } from "node:fs/promises";
 import { dirname, extname, join, resolve, sep } from "node:path";
-import { fileURLToPath } from "node:url";
 import pino from "pino";
 import {
   saveConfig,
@@ -36,6 +35,7 @@ import { createOutgoingRetry } from "./outgoing-retry.js";
 import { createDaemonShellControlClient } from "./shell-control-client.js";
 import { createRemotePrefixMapper } from "./remote-prefix.js";
 import { generateConflictPath } from "./conflict-resolver.js";
+import { writePidFileExclusive } from "./pid-file.js";
 import {
   requestPresignedUrls,
   uploadFile,
@@ -258,69 +258,6 @@ export async function persistPauseState(
 ): Promise<void> {
   config.pauseSync = paused;
   await saveConfig(config, path);
-}
-
-export async function writePidFileExclusive(filePath: string, pid: number): Promise<void> {
-  const writeExclusive = async () => {
-    await writeFile(filePath, String(pid), { flag: "wx" });
-  };
-
-  try {
-    await writeExclusive();
-    return;
-  } catch (err: unknown) {
-    if (
-      !(err instanceof Error) ||
-      !("code" in err) ||
-      (err as NodeJS.ErrnoException).code !== "EEXIST"
-    ) {
-      throw err;
-    }
-  }
-
-  let existingPid: number | null = null;
-  try {
-    const raw = await readFile(filePath, "utf-8");
-    const parsed = Number.parseInt(raw.trim(), 10);
-    existingPid = Number.isInteger(parsed) && parsed > 0 ? parsed : null;
-  } catch (err: unknown) {
-    if (
-      err instanceof Error &&
-      "code" in err &&
-      (err as NodeJS.ErrnoException).code === "ENOENT"
-    ) {
-      await writeExclusive();
-      return;
-    }
-    throw err;
-  }
-
-  if (existingPid !== null) {
-    try {
-      process.kill(existingPid, 0);
-      throw new Error(`Sync daemon already running (pid ${existingPid})`);
-    } catch (err: unknown) {
-      if (
-        !(err instanceof Error) ||
-        !("code" in err) ||
-        (err as NodeJS.ErrnoException).code !== "ESRCH"
-      ) {
-        throw err;
-      }
-    }
-  }
-
-  await unlink(filePath).catch((err: unknown) => {
-    if (
-      err instanceof Error &&
-      "code" in err &&
-      (err as NodeJS.ErrnoException).code === "ENOENT"
-    ) {
-      return;
-    }
-    throw err;
-  });
-  await writeExclusive();
 }
 
 export async function adoptRemoteManifestVersion(
@@ -1655,29 +1592,4 @@ export async function startDaemon(): Promise<void> {
     { syncPath: config.syncPath, peerId: config.peerId },
     "Daemon started",
   );
-}
-
-// Only auto-start when invoked as an entry point (tsx / compiled bin).
-// Importing this module (e.g. from tests) must not trigger daemon startup.
-const isEntrypoint = (() => {
-  const entry = process.argv[1];
-  if (!entry) return false;
-  try {
-    return fileURLToPath(import.meta.url) === entry;
-  } catch (err: unknown) {
-    if (!(err instanceof TypeError)) {
-      console.warn(
-        "[sync/daemon] Failed to compare entrypoint path:",
-        err instanceof Error ? err.message : String(err),
-      );
-    }
-    return false;
-  }
-})();
-
-if (isEntrypoint) {
-  startDaemon().catch((err) => {
-    console.error("Daemon failed to start:", err);
-    process.exit(1);
-  });
 }

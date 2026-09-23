@@ -24,7 +24,6 @@ import {
   resolveWithinSyncRoot,
   shouldCommitWatcherDelete,
   shouldSkipWatcherUpload,
-  writePidFileExclusive,
 } from "../../src/daemon/index.js";
 import { loadAuth, loadProfileAuth, saveAuth, saveProfileAuth } from "../../src/auth/token-store.js";
 import { loadConfig, type SyncConfig } from "../../src/lib/config.js";
@@ -58,38 +57,6 @@ describe("daemon runtime guards", () => {
     expect(() => resolveWithinSyncRoot(tempDir, "../../.ssh/authorized_keys")).toThrow(
       "Remote event path escapes sync root",
     );
-  });
-
-  it("creates the pid file exclusively", async () => {
-    const pidPath = join(tempDir, "daemon.pid");
-
-    await writePidFileExclusive(pidPath, 4242);
-
-    expect(await readFile(pidPath, "utf-8")).toBe("4242");
-  });
-
-  it("rejects a live daemon pid", async () => {
-    const pidPath = join(tempDir, "daemon.pid");
-    await writeFile(pidPath, "1111");
-    vi.spyOn(process, "kill").mockReturnValue(true);
-
-    await expect(writePidFileExclusive(pidPath, 4242)).rejects.toThrow(
-      "Sync daemon already running",
-    );
-  });
-
-  it("replaces a stale pid file", async () => {
-    const pidPath = join(tempDir, "daemon.pid");
-    await writeFile(pidPath, "1111");
-    vi.spyOn(process, "kill").mockImplementation(() => {
-      const err = new Error("No such process") as NodeJS.ErrnoException;
-      err.code = "ESRCH";
-      throw err;
-    });
-
-    await writePidFileExclusive(pidPath, 4242);
-
-    expect(await readFile(pidPath, "utf-8")).toBe("4242");
   });
 
   it("persists pause state changes", async () => {
