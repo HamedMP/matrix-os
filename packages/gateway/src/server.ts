@@ -4,25 +4,24 @@ import { createProjectChatCleanup } from "./chat/project-deletion.js";
 import { createRuntimeAppAiRoutes } from "./app-ai/runtime.js";
 import { restoreBackgroundChatThread, createBackgroundChatProjection } from "./coding-agents/background-chat-recovery.js";
 import { createBackgroundAgentRuntime } from "./background-agent-runtime.js";
-import { bootstrapChatSharing, ChatSharing } from "./chat/sharing.js";
+import { ChatSharing } from "./chat/sharing.js";
 import { withAsyncChatInput } from "./chat/async-input-adapter.js";
 import { createChatSharingRoutes } from "./chat/sharing-routes.js";
-import { readFileSync, existsSync, statSync, readdirSync } from "node:fs";
+import { readFileSync, existsSync, readdirSync } from "node:fs";
 import {
   appendFile as appendFileAsync,
   mkdir as mkdirAsync,
   writeFile as writeFileAsync,
 } from "node:fs/promises";
 import { randomBytes, randomUUID } from "node:crypto";
-import { dirname, join, normalize, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { Hono, type Context } from "hono";
 import { cors } from "hono/cors";
 import { bodyLimit } from "hono/body-limit";
 import { serve } from "@hono/node-server";
 import { createNodeWebSocket } from "@hono/node-ws";
 import { installPostHogHonoErrorTracking, resolveOwnerTelemetryDistinctId } from "@matrix-os/observability";
-import { TerminalRuntimeSocketClient, TerminalFrameQueue } from "@matrix-os/terminal-runtime";
-import { CanonicalChatIdSchema, TerminalRefSchema, TerminalTabClientFrameSchema } from "@matrix-os/contracts";
+import { TerminalRuntimeSocketClient } from "@matrix-os/terminal-runtime";
 import { createDispatcher, type Dispatcher, type BatchEntry, type DispatchContext } from "./dispatcher.js";
 import {
   createFundedAiCredentialManager,
@@ -68,10 +67,7 @@ import { createElixirSymphonyProxyRoutes } from "./symphony/proxy.js";
 import { createSymphonyRunner } from "./symphony-runner.js";
 import { createAgentLauncher } from "./agent-launcher.js";
 import { resolveAgentCredentialProbe } from "./onboarding/agent-credential-probe.js";
-import {
-  createAgentSessionManager,
-  hasActiveWorkspaceSessionForTerminalRef,
-} from "./agent-session-manager.js";
+import { createAgentSessionManager } from "./agent-session-manager.js";
 import { createAgentSandbox } from "./agent-sandbox.js";
 import { createWorktreeManager } from "./worktree-manager.js";
 import {
@@ -83,14 +79,7 @@ import { createWorkspaceEventPublisher } from "./workspace-event-publisher.js";
 import {
   createProviderLoginTerminalRegistry,
   createSessionRuntimeBridge,
-  resolveTerminalAttachmentMode,
-  terminalAttachmentAllowsFrame,
 } from "./session-runtime-bridge.js";
-import {
-  parseTerminalInputCapabilityRequest,
-  terminalFrameForInputCapabilities,
-} from "./terminal-input-capabilities.js";
-import { createTerminalSizeLease } from "./terminal-size-lease.js";
 import { createTerminalLiveOwnership } from "./terminal-live-ownership.js";
 import { createWorkspaceStartupRecovery } from "./workspace-startup-recovery.js";
 import { createChannelManager, type ChannelManager } from "./channels/manager.js";
@@ -119,10 +108,6 @@ import {
   type Watchdog,
   type KernelEvent,
   loadHandle,
-  createImageClient,
-  loadIconStyle,
-  buildIconPrompt,
-  generateIconBatch,
   createUsageTracker,
   createMemoryStore,
 } from "@matrix-os/kernel";
@@ -171,10 +156,10 @@ import {
   closeCanonicalChatEventLifecycle,
   createCanonicalChatRoutes,
 } from "./chat/routes.js";
-import { createGatewayChatEventStream } from "./chat/gateway-event-stream.js";
+import type { createGatewayChatEventStream } from "./chat/gateway-event-stream.js";
 import { registerCanonicalChatEventHttpRoute } from "./chat/event-http-route.js";
 import { registerCanonicalChatEventWebSocketRoute } from "./chat/event-websocket-route.js";
-import { createChatExecutionRootResolver, type ChatExecutionRootResolver } from "./chat/execution-root.js";
+import type { ChatExecutionRootResolver } from "./chat/execution-root.js";
 import { createChatTerminalSessionService } from "./chat/terminal-session-service.js";
 import { createHermesChatProviderAdapter } from "./chat/hermes-provider-adapter.js";
 import { createOpenClawChatProviderAdapter } from "./chat/openclaw-provider-adapter.js";
@@ -192,11 +177,10 @@ import {
   createCanonicalChatService,
   createUnavailableCanonicalChatService,
 } from "./chat/service.js";
-import { createDiscussionOnlyChatExecutionGuard } from "./collaboration/chat-scope.js";
-import { teardownOwnerDatabaseServices } from "./startup/owner-database-fallback.js";
+import type { createDiscussionOnlyChatExecutionGuard } from "./collaboration/chat-scope.js";
+import { initializeOwnerDatabaseServices } from "./startup/owner-database.js";
+import { initializePlatformIntegrations } from "./startup/platform-integrations.js";
 import {
-  constructGatewayCollaborationOrFailClosed,
-  createGatewayCollaboration,
   describeGatewayCollaborationConfiguration,
   loadGatewayCollaborationConfig,
   registerFailClosedCollaborationRoutes,
@@ -204,8 +188,6 @@ import {
   type GatewayCollaborationRuntime,
 } from "./collaboration/wiring.js";
 import { createLegacyProjectPathAdmission } from "./collaboration/project-path-admission.js";
-import { createProjectGitDriver } from "./collaboration/project-git-operations.js";
-import { enableOwnerCollaborationSurfaces } from "./collaboration/owner-runtime-surfaces.js";
 import { createCodingAgentFilePreviewWiring } from "./coding-agents/file-preview-wiring.js";
 import { createCodingAgentSourceControlStore } from "./coding-agents/source-control.js";
 import { registerCodingAgentAttentionNotifications } from "./coding-agents/attention-notifications.js";
@@ -230,9 +212,6 @@ import { createDraftActionReadinessService } from "./onboarding/draft-action-rea
 import { createDraftActionRoutes } from "./onboarding/draft-action-routes.js";
 import { createVocalHandler } from "./vocal/ws-handler.js";
 import type { GeminiLiveConnection } from "./onboarding/gemini-live.js";
-import { resolveDefaultAppIconUrl, resolveSystemIconUrl } from "./default-icons.js";
-import { registerIconRoutes } from "./icon-routes.js";
-import { buildShellBootstrap } from "./shell-bootstrap.js";
 import { securityHeadersMiddleware } from "./security/headers.js";
 import { getSystemInfo, getVersion } from "./system-info.js";
 import { collectSystemActivity } from "./system-activity/collector.js";
@@ -255,20 +234,15 @@ import { createInteractionLogger, type InteractionLogger } from "./logger.js";
 import { createApprovalBridge, type ApprovalBridge } from "./approval.js";
 import { DEFAULT_APPROVAL_POLICY, type ApprovalPolicy } from "@matrix-os/kernel";
 import { listApps } from "./apps.js";
-import { createAppDb, type AppDb } from "./app-db.js";
-import { createAppRegistry, type AppRegistry } from "./app-db-registry.js";
-import { registerNativeAppStorage } from "./native-app-storage.js";
-import { createQueryEngine, type QueryEngine } from "./app-db-query.js";
-import { BridgeQueryBodySchema } from "./app-db-contracts.js";
+import type { AppDb } from "./app-db.js";
+import type { AppRegistry } from "./app-db-registry.js";
+
+import type { QueryEngine } from "./app-db-query.js";
 import { isSafeName, normalizeAppStorageSlug } from "./app-db-types.js";
-import { createKvStore, type KvStore } from "./app-db-kv.js";
-import { renameApp, deleteApp } from "./app-ops.js";
-import { createPlatformDb, type PlatformDb } from "./platform-db.js";
-import { createPipedreamClient, type PipedreamConnectClient } from "./integrations/pipedream.js";
+import type { KvStore } from "./app-db-kv.js";
+import type { PlatformDb } from "./platform-db.js";
 import { registerCustomMcpGatewayRoutes } from "./integrations/custom-mcp/gateway-routes.js";
-import { createIntegrationRoutes } from "./integrations/routes.js";
 import { createIntegrationBridgeRoutes } from "./integrations/bridge-routes.js";
-import { discoverComponentKeys } from "./integrations/registry.js";
 import { createIntegrationProxyResponse } from "./integrations/proxy-response.js";
 import { z } from "zod/v4";
 import {
@@ -318,20 +292,20 @@ import {
 import { sql, type Kysely } from "kysely";
 import { createSocialRoutes, insertPost, bootstrapSocialSchema, type SocialRoutes } from "./social.js";
 import { createActivityService } from "./social-activity.js";
-import { CanvasRepository } from "./canvas/repository.js";
-import { CanvasConfigurationError, CanvasService } from "./canvas/service.js";
+import type { CanvasRepository } from "./canvas/repository.js";
+import type { CanvasService } from "./canvas/service.js";
 import { createCanvasRoutes } from "./canvas/routes.js";
 import { CanvasSubscriptionHub } from "./canvas/subscriptions.js";
 import { CanvasIdSchema } from "./canvas/contracts.js";
-import { cleanupCanvasTempFiles } from "./canvas/recovery.js";
+
 import {
   createChatAttachmentCleanupLifecycle,
 } from "./chat/attachment-cleanup.js";
-import { OsViewStateRepository } from "./os-view-state/repository.js";
+import type { OsViewStateRepository } from "./os-view-state/repository.js";
 import { createOsViewStateRoutes } from "./os-view-state/routes.js";
 import { createOsViewAgentTools } from "./os-view-state/agent-tools.js";
-import { ChatRepository } from "./chat/repository.js";
-import { MessagingKyselyRepository } from "./messages/repository.js";
+import type { ChatRepository } from "./chat/repository.js";
+import type { MessagingKyselyRepository } from "./messages/repository.js";
 import { createMessagingRoutes } from "./messages/routes.js";
 import type { WSContext } from "hono/ws";
 import {
@@ -351,6 +325,8 @@ import {
 } from "./server/symphony-origin.js";
 import { registerAppRuntimeRoutes } from "./server/app-runtime-routes.js";
 import { registerFileRoutes } from "./server/file-routes.js";
+import { registerBridgeDataRoutes } from "./server/bridge-routes.js";
+import { registerAppManagementRoutes } from "./server/app-management-routes.js";
 import { registerConversationHistoryRoutes } from "./server/conversation-history-routes.js";
 import { startTerminalPasteAssetCleanup } from "./shell/paste-asset-cleanup-runtime.js";
 import {
@@ -370,9 +346,6 @@ import {
   TerminalWindowLayoutStore,
   createTerminalWorkspaceRoutes,
   createTerminalWorkspaceProjectAdmission,
-  terminalResourceOwnerId,
-  terminalRuntimeRefAccess,
-  shellWsMessageDataToString,
 } from "./shell/index.js";
 import {
   CLIENT_ERROR_LOG_BODY_LIMIT,
@@ -381,6 +354,7 @@ import {
   writeClientErrorReport,
 } from "./client-error-log.js";
 import { createForwardTunnelHub } from "./forward-ws.js";
+import { registerTerminalWebSocketRoutes } from "./server/terminal-ws-routes.js";
 
 export {
   buildAllowedOrigins,
@@ -396,12 +370,6 @@ export {
   readInitialSymphonyPort,
   resolveInitialSymphonyPort,
 } from "./server/symphony-origin.js";
-
-const SAFE_ICON_STEM = /^[a-zA-Z0-9_-]+$/;
-
-function isSafeIconStem(value: unknown): value is string {
-  return typeof value === "string" && SAFE_ICON_STEM.test(value);
-}
 
 const ApiMessageBodySchema = z.object({
   text: z.string().refine((value) => value.trim().length > 0),
@@ -943,238 +911,41 @@ export async function createGateway(config: GatewayConfig) {
   let collaborationFailClosedReason: GatewayCollaborationConfigurationFailure | null = collaborationHealth.configured
     ? null
     : collaborationHealth.reason;
-  if (databaseUrl) {
-    try {
-      const { db, kysely } = createAppDb(databaseUrl);
-      appDb = db;
-      kyselyInstance = kysely;
-      await appDb.bootstrap();
-      queryEngine = createQueryEngine(appDb);
-      kvStore = createKvStore(kysely);
-      appRegistry = createAppRegistry(appDb, kysely);
-      for (const slug of await registerNativeAppStorage(appRegistry)) {
-        rememberProvisionedAppSlug(slug);
-      }
-      canvasRepository = new CanvasRepository(kysely as Kysely<any>);
-      await canvasRepository.bootstrap();
-      osViewStateRepository = new OsViewStateRepository(kysely as Kysely<any>);
-      await osViewStateRepository.bootstrap();
-      chatRepository = new ChatRepository(kysely as Kysely<any>);
-      await chatRepository.bootstrap();
-      const ownerChatExecutionRoots = createChatExecutionRootResolver({
-        homePath,
-        projects: codingAgentProjectManager,
-        worktrees: codingAgentWorktreeManager,
-      });
-      canonicalChatExecutionRoots = ownerChatExecutionRoots;
-      canonicalChatCollaborationGuard = createDiscussionOnlyChatExecutionGuard(chatRepository.kysely as Kysely<any>);
-      await bootstrapChatSharing(chatRepository.kysely);
-      if (collaborationConfig) {
-        const ownerChatRepository = chatRepository;
-        const projectGitDriver = createProjectGitDriver({
-          resolveProjectRoot: async ({ ownerId, projectId }) => {
-            const root = await ownerChatExecutionRoots.resolve(
-              { type: "personal", ownerId }, { kind: "project", projectId },
-            );
-            return root.primaryWorkspaceRoot;
-          },
-        });
-        const construction = await constructGatewayCollaborationOrFailClosed(
-          () => createGatewayCollaboration({
-          db: ownerChatRepository.kysely as Kysely<any>,
-          chatRepository: ownerChatRepository,
-          config: collaborationConfig,
-          providerSnapshotReader: collaborationProviderSnapshots.reader,
-          projectSource: {
-            getProject: async (ownerId, projectId) => {
-              const result = await codingAgentProjectManager.getProjectById(
-                { type: "user", id: ownerId },
-                projectId,
-              );
-              if (!result.ok) return null;
-              const revision = Date.parse(result.project.updatedAt);
-              if (!Number.isSafeInteger(revision) || revision < 0) {
-                throw new Error("ProjectRevisionUnavailable");
-              }
-              return { id: result.project.id, ownerId, revision };
-            },
-          },
-        }),
-          {
-          onPartialRuntime: (runtime) => enableOwnerCollaborationSurfaces(runtime, {
-            homePath,
-            ownerId: collaborationConfig.ownerId,
-            appRegistry,
-            canvasRepository,
-            chatRepository: ownerChatRepository,
-            chatExecutionRoots: ownerChatExecutionRoots,
-            projectManager: codingAgentProjectManager,
-            projectGitDriver,
-            terminalWorkspaces: terminalWorkspaceRuntime,
-          }) },
-        );
-        if (construction.ok) gatewayCollaboration = construction.runtime;
-        else collaborationFailClosedReason = construction.reason;
-      }
-      canonicalChatEventStream = createGatewayChatEventStream({
-        projectOwnerToolOutput,
-        repository: chatRepository,
-        reconcileOwner: (owner) => canonicalChatOrchestrator?.reconcileActiveRuns(owner) ?? Promise.resolve(),
-        capture: (event, options) => posthogErrorTracker.captureEvent(event, options),
-        runtimeVersion: runningVersion,
-        buildSha: process.env.MATRIX_BUILD_SHA,
-      });
-      canvasService = new CanvasService(canvasRepository, {
-        terminalRuntime: terminalWorkspaceRuntime,
-        terminalOwnerIds: terminalRuntimeOwnerIds,
-        homePath,
-        resolveProjectWorkingDirectory: async (ownerId, projectId) => {
-          const result = await codingAgentProjectManager.getProjectById(
-            { type: "user", id: ownerId },
-            projectId,
-          );
-          if (!result.ok) {
-            if (result.status === 404 || result.status === 400) return null;
-            throw new CanvasConfigurationError("project lookup is unavailable");
-          }
-          return codingAgentProjectManager.resolveProjectWorkingDirectory(result.project);
-        },
-      });
-      messagingRepository = new MessagingKyselyRepository(kysely as Kysely<any>);
-      await messagingRepository.bootstrap();
-      canvasSubscriptionHub = new CanvasSubscriptionHub({
-        authorize: async (subscriber) => {
-          const record = await canvasRepository?.get(
-            { ownerScope: "personal", ownerId: subscriber.userId },
-            subscriber.canvasId,
-          );
-          return Boolean(record);
-        },
-      });
-      const canvasExportDir = join(homePath, "system", "canvas-exports");
-      const canvasCleanupPolicy = {
-        ttlMs: 7 * 24 * 60 * 60 * 1000,
-        maxFiles: 100,
-      };
-      await cleanupCanvasTempFiles(canvasExportDir, canvasCleanupPolicy);
-      let canvasCleanupFailures = 0;
-      canvasCleanupTimer = setInterval(() => {
-        void cleanupCanvasTempFiles(canvasExportDir, canvasCleanupPolicy)
-          .then(() => {
-            canvasCleanupFailures = 0;
-          })
-          .catch((cleanupErr: unknown) => {
-            canvasCleanupFailures += 1;
-            logBestEffortFailure("Canvas export cleanup failed", cleanupErr);
-            if (canvasCleanupFailures >= 3 && canvasCleanupTimer) {
-              clearInterval(canvasCleanupTimer);
-              canvasCleanupTimer = null;
-              console.warn("[canvas] Export cleanup disabled after repeated failures");
-            }
-          });
-      }, 6 * 60 * 60 * 1000);
-      console.log("[app-db] Postgres connected, data layer ready");
-
-      // Auto-migrate JSON files to _kv on first boot (per-user sentinel)
-      const handle = process.env.MATRIX_HANDLE ?? "default";
-      const migrated = await kvStore.read("_system", `migration_v1_${handle}`);
-      if (!migrated) {
-        try {
-          const { migrateJsonToKv } = await import("./app-db-migration.js");
-          const jsonResult = await migrateJsonToKv(homePath, kvStore);
-          if (jsonResult.keys > 0) {
-            console.log(`[app-db] JSON migration: ${jsonResult.apps} apps, ${jsonResult.keys} keys`);
-          }
-          if (jsonResult.errors.length > 0) {
-            console.error("[app-db] Migration had errors, will retry next boot:", jsonResult.errors);
-          } else {
-            await kvStore.write("_system", `migration_v1_${handle}`, new Date().toISOString());
-          }
-        } catch (migErr) {
-          console.error("[app-db] Migration error:", (migErr as Error).message);
-        }
-      }
-
-      // Register apps with storage declarations
-      try {
-        const { loadAppManifest } = await import("./app-manifest.js");
-        const apps = await listApps(homePath, { includeInactiveDesigns: true });
-        let registered = 0;
-        for (const app of apps) {
-          if (!app.file.includes("/")) continue;
-          const relDir = app.file.replace(/\/index\.html$/, "").replace(/\.html$/, "");
-          const manifest = loadAppManifest(join(homePath, "apps", relDir));
-          if (!manifest?.storage?.tables || Object.keys(manifest.storage.tables).length === 0) {
-            continue;
-          }
-          // The storage slug MUST match what /api/bridge/query derives from the
-          // app identity: all non-[A-Za-z0-9_-] characters stripped. So nested
-          // games like "games/2048" register under schema "games2048" — the same
-          // value the bridge queries. Schema names must start with a letter
-          // (SAFE_SLUG), so numeric-only slugs ("2048") are folded into their path.
-          const storageSlug = normalizeAppStorageSlug(relDir);
-          if (!isSafeName(storageSlug)) {
-            console.warn(`[app-db] Skipping registration for ${relDir}: unusable storage slug "${storageSlug}"`);
-            continue;
-          }
-          // Register each app independently — one failure must not abort the rest.
-          try {
-            await appRegistry.register({
-              slug: storageSlug,
-              name: manifest.name,
-              description: manifest.description,
-              version: manifest.version,
-              author: manifest.author,
-              category: manifest.category,
-              tables: manifest.storage.tables as Record<
-                string,
-                { columns: Record<string, string>; indexes?: string[]; uniqueIndexes?: string[] }
-              >,
-            });
-            registered++;
-            rememberProvisionedAppSlug(storageSlug);
-          } catch (appRegErr) {
-            console.error(`[app-db] Registration failed for ${relDir} (slug ${storageSlug}):`, (appRegErr as Error).message);
-          }
-        }
-        if (registered > 0) {
-          console.log(`[app-db] Registered ${registered} app(s) with storage schemas`);
-        }
-      } catch (regErr) {
-        console.error("[app-db] App registration error:", (regErr as Error).message);
-      }
-    } catch (err) {
-      console.error("[app-db] Failed to connect to Postgres:", (err as Error).message);
-      // Collaboration fails closed without the owner database; the rest of the gateway keeps serving.
-      if (collaborationConfig) collaborationFailClosedReason = "owner_database_missing";
-      console.log("[app-db] Falling back to file-based storage");
-      // Tear down every partially built database-backed service (event stream before its
-      // repository, pool last) so the gateway runs wholly in the file-storage fallback instead
-      // of a mixture of retained Postgres handles and files.
-      await teardownOwnerDatabaseServices({
-        collaboration: gatewayCollaboration,
-        chatEventStream: canonicalChatEventStream,
-        chatRepository,
-        canvasRepository,
-        appDb,
-      });
-      gatewayCollaboration = null;
-      canonicalChatEventStream = null;
-      chatRepository = null;
-      canonicalChatExecutionRoots = null;
-      canonicalChatCollaborationGuard = null;
-      kyselyInstance = null;
-      appDb = null;
-      queryEngine = null;
-      kvStore = null;
-      appRegistry = null;
-      canvasRepository = null;
-      osViewStateRepository = null;
-      canvasService = null;
-      canvasSubscriptionHub = null;
-      messagingRepository = null;
-    }
-  }
+  const ownerDatabaseStartup = await initializeOwnerDatabaseServices({
+    databaseUrl,
+    homePath,
+    collaborationConfig,
+    initialFailureReason: collaborationFailClosedReason,
+    providerSnapshotReader: collaborationProviderSnapshots.reader,
+    codingAgentProjectManager,
+    codingAgentWorktreeManager,
+    terminalWorkspaceRuntime,
+    terminalRuntimeOwnerIds,
+    projectOwnerToolOutput,
+    capture: (event, options) => posthogErrorTracker.captureEvent(event, options),
+    runningVersion,
+    getCanonicalChatOrchestrator: () => canonicalChatOrchestrator,
+    rememberProvisionedAppSlug,
+    logBestEffortFailure,
+  });
+  const ownerDatabaseServices = ownerDatabaseStartup.services;
+  collaborationFailClosedReason = ownerDatabaseStartup.failClosedReason;
+  appDb = ownerDatabaseServices?.appDb ?? null;
+  queryEngine = ownerDatabaseServices?.queryEngine ?? null;
+  kvStore = ownerDatabaseServices?.kvStore ?? null;
+  appRegistry = ownerDatabaseServices?.appRegistry ?? null;
+  kyselyInstance = ownerDatabaseServices?.kyselyInstance ?? null;
+  canvasRepository = ownerDatabaseServices?.canvasRepository ?? null;
+  osViewStateRepository = ownerDatabaseServices?.osViewStateRepository ?? null;
+  canvasService = ownerDatabaseServices?.canvasService ?? null;
+  canvasSubscriptionHub = ownerDatabaseServices?.canvasSubscriptionHub ?? null;
+  canvasCleanupTimer = ownerDatabaseServices?.canvasCleanupTimer ?? null;
+  chatRepository = ownerDatabaseServices?.chatRepository ?? null;
+  canonicalChatEventStream = ownerDatabaseServices?.chatEventStream ?? null;
+  canonicalChatExecutionRoots = ownerDatabaseServices?.chatExecutionRoots ?? null;
+  canonicalChatCollaborationGuard = ownerDatabaseServices?.chatCollaborationGuard ?? null;
+  gatewayCollaboration = ownerDatabaseServices?.collaboration ?? null;
+  messagingRepository = ownerDatabaseServices?.messagingRepository ?? null;
 
   const trustedOsViewOwnerId = process.env.MATRIX_USER_ID?.trim();
   const osViewTools = osViewStateRepository
@@ -1359,155 +1130,15 @@ export async function createGateway(config: GatewayConfig) {
     return createIntegrationProxyResponse(upstream);
   }
 
-  // Platform DB + Integrations (Pipedream Connect)
-  let pipedreamClient: PipedreamConnectClient | null = null;
-  let integrationRoutes: Hono | null = null;
-  let resolveIntegrationUserId: ((c: Context) => Promise<string | null>) | null = null;
-  const platformDbUrl = process.env.PLATFORM_DATABASE_URL;
-  if (platformDbUrl && process.env.PIPEDREAM_CLIENT_ID && process.env.PIPEDREAM_CLIENT_SECRET && process.env.PIPEDREAM_PROJECT_ID) {
-    try {
-      platformDb = createPlatformDb(platformDbUrl);
-      await platformDb.migrate();
-      console.log("[platform-db] Initialized");
-
-      pipedreamClient = await createPipedreamClient({
-        clientId: process.env.PIPEDREAM_CLIENT_ID,
-        clientSecret: process.env.PIPEDREAM_CLIENT_SECRET,
-        projectId: process.env.PIPEDREAM_PROJECT_ID,
-        environment: process.env.PIPEDREAM_ENVIRONMENT ?? "production",
-      });
-
-      // Single source of truth for user resolution -- used by /api/integrations/*
-      // and the /api/bridge/service handlers. Prefers platform-verified Clerk
-      // identity from the proxy header; falls back to env vars only in dev.
-      //
-      // Returns null on any failure so callers can return 401 instead of
-      // leaking a 500. Each failure mode logs a distinct stable string so
-      // prod incidents are debuggable: a 401 spike that's actually a Postgres
-      // outage shows up as `[integrations][auth] db_error` in logs, while a
-      // legitimate "user not in platform DB" shows as `[integrations][auth]
-      // no_user_for_clerk_id`. Grep on those tags to triage.
-      resolveIntegrationUserId = async (c) => {
-        // ---- Path A: prod / platform header ----
-        const clerkIdFromPlatform = c.req.header("x-platform-user-id");
-        if (clerkIdFromPlatform) {
-          try {
-            const user = await platformDb!.getUserByClerkId(clerkIdFromPlatform);
-            if (!user) {
-              // Genuine auth failure: header is present but no platform row.
-              // The user signed in via Clerk but their container/platform-db
-              // row hasn't been provisioned yet. Distinct from a DB error.
-              console.warn("[integrations][auth] no_user_for_clerk_id:", clerkIdFromPlatform.slice(0, 32));
-              return null;
-            }
-            return user.id;
-          } catch (err) {
-            // Platform DB is down or query failed. This is a 500 masquerading
-            // as a 401. Log loudly so the symptom (401 to client) maps to the
-            // root cause (DB outage) without trial-and-error debugging.
-            console.error(
-              "[integrations][auth] db_error during getUserByClerkId:",
-              err instanceof Error ? err.message : err,
-            );
-            return null;
-          }
-        }
-
-        // ---- Path B: prod with no header = locked out (not an error) ----
-        if (process.env.NODE_ENV === "production") {
-          // Not console.error -- this is a routine "missing header" outcome,
-          // not a server fault. The proxy is supposed to inject this header;
-          // if it isn't, that's a deployment issue, not a per-request error.
-          console.warn("[integrations][auth] no_platform_header_in_production");
-          return null;
-        }
-
-        // ---- Path C: dev env-var fallback ----
-        const handle = process.env.MATRIX_HANDLE ?? "default";
-        const clerkId = process.env.MATRIX_CLERK_USER_ID ?? handle;
-        const containerId = process.env.HOSTNAME ?? "local";
-
-        // Atomic upsert eliminates the SELECT->INSERT TOCTOU race that could
-        // let two concurrent first-time dev requests both reach createUser and
-        // have one fail on the unique constraint. ON CONFLICT covers the
-        // common case (same env vars across parallel requests => same
-        // clerk_id). On match, backfill pipedream_external_id if missing.
-        try {
-          const upserted = await platformDb!.raw(
-            `INSERT INTO users (clerk_id, handle, display_name, email, container_id, pipedream_external_id)
-             VALUES ($1, $2, $3, $4, $5, $6)
-             ON CONFLICT (clerk_id) DO UPDATE
-               SET pipedream_external_id = COALESCE(users.pipedream_external_id, EXCLUDED.pipedream_external_id)
-             RETURNING id`,
-            [clerkId, handle, handle, `${handle}@matrix-os.local`, containerId, handle],
-          );
-          const row = upserted.rows[0] as { id: string } | undefined;
-          if (row) return row.id;
-          console.warn("[integrations][auth] dev_upsert_returned_no_row");
-          return null;
-        } catch (err) {
-          // The upsert handles clerk_id conflicts but not handle/container_id
-          // ones. Those occur when MATRIX_CLERK_USER_ID was changed between
-          // runs and the orphaned row still owns the handle. Try to recover
-          // by returning the orphaned row so dev keeps working without a wipe.
-          try {
-            const byHandle = await platformDb!.raw(
-              `SELECT id, pipedream_external_id FROM users WHERE handle = $1 LIMIT 1`,
-              [handle],
-            );
-            if (byHandle.rows.length > 0) {
-              const row = byHandle.rows[0] as { id: string; pipedream_external_id: string | null };
-              if (!row.pipedream_external_id) {
-                await platformDb!.updatePipedreamExternalId(row.id, handle);
-              }
-              return row.id;
-            }
-            // Upsert raised, recovery SELECT found nothing. Whatever caused
-            // the original error is real (DB down, schema drift, etc.).
-            console.error(
-              "[integrations][auth] db_error during dev fallback upsert (recovery select empty):",
-              err instanceof Error ? err.message : err,
-            );
-            return null;
-          } catch (recoveryErr) {
-            // Both queries failed -- DB is genuinely unreachable.
-            console.error(
-              "[integrations][auth] db_error during dev fallback (both upsert and recovery failed):",
-              err instanceof Error ? err.message : err,
-              "recovery:",
-              recoveryErr instanceof Error ? recoveryErr.message : recoveryErr,
-            );
-            return null;
-          }
-        }
-      };
-
-      integrationRoutes = createIntegrationRoutes({
-        db: platformDb,
-        pipedream: pipedreamClient,
-        webhookSecret: (() => {
-          const s = process.env.PIPEDREAM_WEBHOOK_SECRET;
-          if (!s) console.warn("[integrations] PIPEDREAM_WEBHOOK_SECRET not set -- webhooks will be rejected");
-          return s ?? "";
-        })(),
-        resolveUserId: resolveIntegrationUserId,
-        broadcast,
-      });
-      // Routes mounted after auth middleware below (see "deferred route mounts")
-      console.log("[platform-db] Integration routes ready");
-
-      discoverComponentKeys(pipedreamClient)
-        .then((stats) => {
-          console.log(`[integrations] Component keys discovered: ${stats.matched}/${stats.total} matched, ${stats.errors} errors`);
-        })
-        .catch((err) => {
-          console.error("[integrations] Component key discovery failed:", err instanceof Error ? err.message : err);
-        });
-    } catch (err) {
-      console.error("[platform-db] Failed to initialize:", (err as Error).message);
-      platformDb = null;
-    }
-  }
+  // Platform integration services are constructed before auth and mounted below it.
+  const platformIntegrations = await initializePlatformIntegrations({
+    env: process.env,
+    broadcast,
+  });
+  platformDb = platformIntegrations.db;
+  const pipedreamClient = platformIntegrations.client;
+  const integrationRoutes = platformIntegrations.routes;
+  const resolveIntegrationUserId = platformIntegrations.resolveUserId;
 
   function logHealing(message: string) {
     const timestamp = new Date().toISOString();
@@ -2721,261 +2352,13 @@ export async function createGateway(config: GatewayConfig) {
     upgradeWebSocket(() => forwardTunnelHub.createHandler()),
   );
 
-  app.get(
-    "/ws/terminal/tab",
-    upgradeWebSocket((c) => {
-      const refResult = TerminalRefSchema.safeParse({
-        workspaceId: c.req.query("workspaceId"),
-        tabId: c.req.query("tabId"),
-      });
-      const clientResult = z.enum(["browser", "canvas", "desktop", "electron", "mobile", "cli"])
-        .safeParse(c.req.query("client"));
-      const chatResult = c.req.query("chat") === undefined
-        ? { success: true as const, data: undefined }
-        : CanonicalChatIdSchema.safeParse(c.req.query("chat"));
-      const attachmentTokenResult = c.req.query("attachmentToken") === undefined
-        ? { success: true as const, data: undefined }
-        : z.string().length(48).regex(/^[a-f0-9]+$/).safeParse(c.req.query("attachmentToken"));
-      const leaseResult = c.req.query("lease") === undefined
-        ? { success: true as const, data: undefined }
-        : z.enum(["exclusive", "observe"]).safeParse(c.req.query("lease"));
-      const fromSeqRaw = c.req.query("fromSeq") ?? "0";
-      const colsRaw = c.req.query("cols") ?? "120";
-      const rowsRaw = c.req.query("rows") ?? "36";
-      const fromSeq = /^\d+$/.test(fromSeqRaw) ? Number(fromSeqRaw) : Number.NaN;
-      const cols = /^\d+$/.test(colsRaw) ? Number(colsRaw) : Number.NaN;
-      const rows = /^\d+$/.test(rowsRaw) ? Number(rowsRaw) : Number.NaN;
-      const binaryInputRequested = parseTerminalInputCapabilityRequest(c.req.query("inputCapability"));
-      const validNumbers = Number.isSafeInteger(fromSeq) && fromSeq >= 0
-        && Number.isSafeInteger(cols) && cols >= 20 && cols <= 500
-        && Number.isSafeInteger(rows) && rows >= 5 && rows <= 200;
-      let stream: ReturnType<TerminalRuntimeSocketClient["attach"]> | null = null;
-      let attachmentMode: "owner" | "observe" | null = null;
-      let ownershipKey: string | null = null;
-      const ownershipViewerId = randomUUID();
-      let principal: RequestPrincipal | null = null;
-      let closed = false;
-      let inputQueue: TerminalFrameQueue | null = null;
-
-      return {
-        onOpen(_event, ws) {
-          inputQueue = new TerminalFrameQueue({
-            onOverflow: () => {
-              captureTerminalEvent("input-overflow", { client: clientResult.success ? clientResult.data : undefined });
-              closed = true;
-              ws.close(1013, "Terminal input queue full");
-            },
-            onError: (error) => {
-              logBestEffortFailure("Terminal tab mutation authorization failed", error);
-              if (!closed) {
-                try {
-                  ws.send(JSON.stringify({
-                    type: "error",
-                    code: "authorization_failed",
-                    message: "Terminal operation unavailable",
-                  }));
-                } catch (sendError: unknown) {
-                  logUnexpectedWsSendFailure("Terminal tab WebSocket error send failed", sendError);
-                }
-                closed = true;
-                ws.close();
-              }
-            },
-          });
-          if (!refResult.success || !clientResult.success || !chatResult.success
-            || !attachmentTokenResult.success || !leaseResult.success || !validNumbers) {
-            ws.send(JSON.stringify({ type: "error", code: "invalid_request", message: "Invalid request" }));
-            ws.close();
-            return;
-          }
-          void (async () => {
-            principal = requireRequestPrincipal(c);
-            const resourceOwnerId = terminalResourceOwnerId(principal, readPreviewTerminalOwner(c));
-            const refAccess = await terminalRuntimeRefAccess(
-              principal,
-              terminalRuntimeOwnerIds,
-              terminalWorkspaceRuntime,
-              refResult.data,
-              readPreviewTerminalOwner(c),
-            );
-            if (refAccess === "not_found" || refAccess === "unavailable") {
-              throw new Error("Terminal runtime reference denied");
-            }
-            const actorOwner = { type: "personal" as const, ownerId: principal.userId };
-            const refKey = `${refResult.data.workspaceId}:${refResult.data.tabId}`;
-            const terminalAuthorizationRepository = chatRepository;
-            if (chatResult.data) {
-              if (!terminalAuthorizationRepository) throw new Error("Terminal attachment authorization unavailable");
-              const binding = await terminalAuthorizationRepository.getTerminalBinding(actorOwner, chatResult.data, refKey);
-              if (!binding) throw new Error("Chat terminal attachment denied");
-            } else {
-              if (refAccess === "chat_required") throw new Error("Chat terminal attachment requires Chat context");
-              if (refAccess === "repository_required" && !terminalAuthorizationRepository) {
-                throw new Error("Terminal attachment authorization unavailable");
-              }
-              if (terminalAuthorizationRepository) {
-                const bound = await terminalAuthorizationRepository.listBoundTerminalSessionIds(
-                  { type: "personal", ownerId: resourceOwnerId },
-                  [refKey],
-                );
-                if (bound.includes(refKey)) throw new Error("Chat terminal attachment requires Chat context");
-              }
-            }
-            attachmentMode = await resolveTerminalAttachmentMode({
-              ...(attachmentTokenResult.data
-                ? { attachmentToken: attachmentTokenResult.data }
-                : {}),
-              ownerId: resourceOwnerId,
-              terminalRef: refResult.data,
-            }, {
-              consumeSessionAttachment: workspaceSessionRuntimeBridge.consumeSessionAttachment,
-              requiresAttachmentToken: (ref) => hasActiveWorkspaceSessionForTerminalRef(homePath, ref),
-            });
-            const sizeLease = createTerminalSizeLease(refResult.data, (frame) => { stream?.send(frame); });
-            ownershipKey = `${principal.userId}:${refKey}`;
-            terminalLiveOwnership.attach({
-              key: ownershipKey,
-              viewerId: ownershipViewerId,
-              exclusive: leaseResult.data === "exclusive",
-              observe: leaseResult.data === "observe",
-              onRevoked: (epoch) => {
-                if (closed) return;
-                try {
-                  sizeLease.revoke();
-                  ws.send(JSON.stringify({
-                    type: "lease-revoked",
-                    terminalRef: refResult.data,
-                    epoch,
-                  }));
-                } catch (error: unknown) {
-                  logUnexpectedWsSendFailure("Terminal ownership revocation send failed", error);
-                }
-              },
-            });
-            if (closed) {
-              terminalLiveOwnership.detach(ownershipKey, ownershipViewerId);
-              ownershipKey = null;
-              return;
-            }
-            const mode = clientResult.data === "cli"
-              && attachmentMode === "owner"
-              && terminalLiveOwnership.role(ownershipKey, ownershipViewerId) === "writer"
-              ? "hard" as const
-              : "soft" as const;
-            captureTerminalEvent("attach-request", { client: clientResult.data, mode });
-            stream = await terminalWorkspaceProjectAdmission.withWorkspace(
-              resourceOwnerId,
-              refResult.data.workspaceId,
-              "run",
-              async () => terminalWorkspaceRuntime.attach({
-                ref: refResult.data,
-                viewerId: `${clientResult.data}:${randomUUID()}`,
-                fromSeq,
-                mode,
-                size: { cols, rows },
-                onFrame: (frame) => {
-                  if (closed) return;
-                  try {
-                    const capableFrame = terminalFrameForInputCapabilities(frame, binaryInputRequested);
-                    if (capableFrame.type === "attached" && ownershipKey) {
-                      const role = terminalLiveOwnership.role(ownershipKey, ownershipViewerId);
-                      const leaseEpoch = terminalLiveOwnership.leaseEpoch(ownershipKey, ownershipViewerId);
-                      ws.send(JSON.stringify({
-                        ...capableFrame,
-                        ownership: role,
-                        ...(leaseEpoch === null ? {} : { leaseEpoch }),
-                      }));
-                    } else {
-                      ws.send(JSON.stringify(capableFrame));
-                    }
-                  }
-                  catch (error) { logUnexpectedWsSendFailure("Terminal tab WebSocket send failed", error); }
-                },
-                onClose: () => { if (!closed) ws.close(); },
-                onError: (error) => {
-                  captureTerminalEvent("runtime-error", { client: clientResult.data });
-                  logBestEffortFailure("Terminal tab runtime stream failed", error);
-                  if (!closed) {
-                    try { ws.send(JSON.stringify({ type: "error", code: "runtime_unavailable", message: "Terminal unavailable" })); }
-                    catch (sendError) { logUnexpectedWsSendFailure("Terminal tab WebSocket error send failed", sendError); }
-                    ws.close();
-                  }
-                },
-              }),
-            );
-            if (closed) { stream.close(); stream = null; return; }
-            sizeLease.attached();
-            inputQueue?.resume(async (frame) => {
-              if (closed || !stream || !principal) return;
-              await terminalWorkspaceProjectAdmission.withWorkspace(
-                resourceOwnerId,
-                refResult.data.workspaceId,
-                "run",
-                async () => {
-                  if (closed || !stream || !attachmentMode || !ownershipKey) return;
-                  terminalLiveOwnership.touch(ownershipKey, ownershipViewerId);
-                  if (terminalLiveOwnership.role(ownershipKey, ownershipViewerId) !== "writer") sizeLease.revoke();
-                  const liveOwnershipAllowsFrame = frame.type === "scroll-query" || frame.type === "ping"
-                    || frame.type === "detach"
-                    || (frame.type === "resize" && frame.mode === "soft")
-                    || terminalLiveOwnership.allowsMutation(ownershipKey, ownershipViewerId);
-                  if (terminalAttachmentAllowsFrame(attachmentMode, frame) && liveOwnershipAllowsFrame) {
-                    stream.send(frame);
-                  } else {
-                    ws.send(JSON.stringify({ type: "error", code: "read_only", message: "Terminal is read-only" }));
-                  }
-                },
-              );
-            });
-          })().catch((error: unknown) => {
-            logBestEffortFailure("Terminal tab authorization failed", error);
-            if (!closed) {
-              try { ws.send(JSON.stringify({ type: "error", code: "attach_failed", message: "Shell attach failed" })); }
-              catch (sendError) { logUnexpectedWsSendFailure("Terminal tab WebSocket error send failed", sendError); }
-              ws.close();
-            }
-          });
-        },
-        onMessage(event, ws) {
-          const raw = shellWsMessageDataToString(event.data);
-          if (raw === null) return;
-          let frame: unknown;
-          try { frame = JSON.parse(raw); }
-          catch (error) {
-            logUnexpectedJsonParseFailure("Failed to parse terminal tab WebSocket message", error);
-            ws.close();
-            return;
-          }
-          const parsed = TerminalTabClientFrameSchema.safeParse(frame);
-          if (!parsed.success) {
-            ws.send(JSON.stringify({ type: "error", code: "invalid_message", message: "Invalid message" }));
-            ws.close();
-            return;
-          }
-          if (!closed) inputQueue?.enqueue(parsed.data);
-        },
-        onClose() {
-          if (stream) captureTerminalEvent("close", { client: clientResult.success ? clientResult.data : undefined });
-          closed = true;
-          inputQueue?.close();
-          inputQueue = null;
-          if (ownershipKey) terminalLiveOwnership.detach(ownershipKey, ownershipViewerId);
-          ownershipKey = null;
-          stream?.close();
-          stream = null;
-        },
-      };
-    }),
-  );
-
-  const clientUpgradeRequired = (c: Context) => c.json({
-    error: "client_upgrade_required",
-    message: "Upgrade Matrix OS to use terminal workspaces.",
-  }, 426);
-  app.get("/ws/terminal/session", clientUpgradeRequired);
-  app.get("/ws/terminal", clientUpgradeRequired);
-
-
+  registerTerminalWebSocketRoutes({
+    app, upgradeWebSocket, homePath, terminalWorkspaceRuntime, terminalLiveOwnership,
+    workspaceSessionRuntimeBridge, terminalRuntimeOwnerIds, chatRepository,
+    terminalWorkspaceProjectAdmission, captureTerminalEvent,
+    getPrincipal: requireRequestPrincipal,
+    logBestEffortFailure, logUnexpectedJsonParseFailure, logUnexpectedWsSendFailure,
+  });
 
   if (codingAgentThreadStream) {
     app.get(
@@ -3222,9 +2605,6 @@ export async function createGateway(config: GatewayConfig) {
   const layoutBodyLimit = bodyLimit({ maxSize: 100_000 });
   const canvasBodyLimit = bodyLimit({ maxSize: 100_000 });
   const taskBodyLimit = bodyLimit({ maxSize: 64 * 1024 });
-  const renameAppBodyLimit = bodyLimit({ maxSize: 4096 });
-  const appIconBodyLimit = bodyLimit({ maxSize: 4096 });
-  let iconRegenerationInProgress = false;
   const cronBodyLimit = bodyLimit({ maxSize: 64 * 1024 });
   const upgradeBodyLimit = bodyLimit({ maxSize: 4096 });
   const pushRegistrationBodyLimit = bodyLimit({ maxSize: 4096 });
@@ -3297,272 +2677,10 @@ export async function createGateway(config: GatewayConfig) {
     return c.json({ events });
   });
 
-  // Structured query API (Postgres-backed)
-  app.post("/api/bridge/query", bridgeQueryBodyLimit, async (c) => {
-    if (!queryEngine || !appRegistry) {
-      return c.json({ error: "Database not configured (no DATABASE_URL)" }, 503);
-    }
-
-    let rawBody: unknown;
-    try {
-      rawBody = await c.req.json();
-    } catch (err: unknown) {
-      if (err instanceof SyntaxError) {
-        return c.json({ error: "Invalid JSON body" }, 400);
-      }
-      console.error("[bridge/query] Failed to read request body:", err);
-      return c.json({ error: "Failed to read request body" }, 500);
-    }
-
-    const parsedBody = BridgeQueryBodySchema.safeParse(rawBody);
-    if (!parsedBody.success) {
-      const exceedsRowLimit = parsedBody.error.issues.some((issue) =>
-        issue.code === "too_big" && (issue.path[0] === "rows" || issue.path[0] === "updates")
-      );
-      return c.json(
-        { error: exceedsRowLimit ? "rows too large (max 200 rows)" : "Invalid query body" },
-        exceedsRowLimit ? 413 : 400,
-      );
-    }
-    const body = parsedBody.data;
-    const action = body.action;
-    const appSlug = action === "listApps" ? "" : body.app;
-    const safeTable = "table" in body ? body.table : "";
-
-    // Ensure the app's Postgres schema exists before querying. Apps built in-OS
-    // after gateway startup aren't in the startup registration pass; provision
-    // them lazily from their manifest so the first query doesn't 500.
-    if (appSlug && action !== "listApps") {
-      await ensureAppProvisioned(appSlug);
-    }
-
-    try {
-      switch (action) {
-        case "find":
-          return c.json(await queryEngine.find(appSlug, safeTable, {
-            filter: body.filter,
-            orderBy: body.orderBy,
-            limit: body.limit,
-            offset: body.offset,
-          }));
-        case "findOne":
-          return c.json(await queryEngine.findOne(appSlug, safeTable, body.id));
-        case "insert": {
-          const result = await queryEngine.insert(appSlug, safeTable, body.data);
-          broadcast({ type: "data:change", app: appSlug, key: safeTable });
-          return c.json(result, 201);
-        }
-        case "bulkInsert": {
-          const result = await queryEngine.bulkInsert(
-            appSlug,
-            safeTable,
-            body.rows,
-          );
-          broadcast({ type: "data:change", app: appSlug, key: safeTable });
-          return c.json(result, 201);
-        }
-        case "update": {
-          await queryEngine.update(appSlug, safeTable, body.id, body.data);
-          broadcast({ type: "data:change", app: appSlug, key: safeTable });
-          return c.json({ ok: true });
-        }
-        case "bulkUpdate": {
-          await queryEngine.bulkUpdate(
-            appSlug,
-            safeTable,
-            body.updates,
-          );
-          broadcast({ type: "data:change", app: appSlug, key: safeTable });
-          return c.json({ ok: true });
-        }
-        case "delete": {
-          await queryEngine.delete(appSlug, safeTable, body.id);
-          broadcast({ type: "data:change", app: appSlug, key: safeTable });
-          return c.json({ ok: true });
-        }
-        case "count":
-          return c.json({ count: await queryEngine.count(appSlug, safeTable, body.filter) });
-        case "schema":
-          return c.json(await appRegistry.getSchema(appSlug));
-        case "appInfo": {
-          const record = await appRegistry.get(appSlug);
-          if (!record) return c.json({ error: "App not found" }, 404);
-          return c.json({ installedVersion: record.installed_version });
-        }
-        case "listApps":
-          return c.json(await appRegistry.listApps());
-        default:
-          return c.json({ error: `Unknown action: ${action}` }, 400);
-      }
-    } catch (e) {
-      const msg = (e as Error).message;
-      console.error("[app-db] Query error:", msg);
-      const isValidation =
-        msg.startsWith("Invalid ") ||
-        msg.startsWith("insert:") ||
-        msg.startsWith("bulkInsert:") ||
-        msg.startsWith("update:") ||
-        msg.startsWith("bulkUpdate:");
-      const safe = isValidation ? msg : "Query failed";
-      return c.json({ error: safe }, isValidation ? 400 : 500);
-    }
-  });
-
-  // Read-only outbound proxy for sandboxed apps. Apps run in a null-origin iframe
-  // with CSP connect-src 'self', so they cannot call third-party APIs directly.
-  // This proxies GET requests to a small, fixed allowlist of public, keyless data
-  // APIs. Allowlist-only (no user-supplied host) keeps the SSRF surface closed.
-  // The fetch remains hostname-based after allowlist validation, so it accepts
-  // the residual DNS-rebinding risk for these stable public API hosts.
-  const BRIDGE_PROXY_ALLOWED_HOSTS = new Set([
-    "api.open-meteo.com",
-    "geocoding-api.open-meteo.com",
-  ]);
-  app.get("/api/bridge/proxy", async (c) => {
-    const target = c.req.query("url");
-    if (!target || typeof target !== "string" || target.length > 2048) {
-      return c.json({ error: "url query param required" }, 400);
-    }
-    let parsed: URL;
-    try {
-      parsed = new URL(target);
-    } catch (err) {
-      if (!(err instanceof TypeError)) {
-        console.warn("[bridge/proxy] URL parse failed:", err instanceof Error ? err.message : String(err));
-      }
-      return c.json({ error: "invalid url" }, 400);
-    }
-    if (parsed.protocol !== "https:" || !BRIDGE_PROXY_ALLOWED_HOSTS.has(parsed.hostname)) {
-      // Do not echo the host back; this is an allowlist boundary.
-      return c.json({ error: "url not allowed" }, 403);
-    }
-    try {
-      const upstream = await fetch(parsed.toString(), {
-        method: "GET",
-        redirect: "error",
-        headers: { accept: "application/json" },
-        signal: AbortSignal.timeout(10_000),
-      });
-      if (!upstream.ok) {
-        // Coarse status only; never leak upstream body/headers on failure.
-        return c.json({ error: "upstream request failed" }, 502);
-      }
-      let data: unknown = null;
-      try {
-        data = await upstream.json();
-      } catch (err) {
-        console.warn("[bridge/proxy] upstream JSON parse failed:", err instanceof Error ? err.message : String(err));
-      }
-      if (data == null) return c.json({ error: "upstream returned no data" }, 502);
-      return c.json({ data });
-    } catch (e) {
-      console.error("[bridge/proxy] fetch error:", (e as Error).message);
-      return c.json({ error: "proxy request failed" }, 502);
-    }
-  });
-
-  // Key-value bridge: GET for reads (query params), POST for read/write (JSON body)
-  app.get("/api/bridge/data", async (c) => {
-    const appName = c.req.query("app");
-    const key = c.req.query("key");
-    if (!appName || !key) return c.json({ error: "app and key query params required" }, 400);
-
-    const safeApp = appName.replace(/[^a-zA-Z0-9_-]/g, "");
-    const safeKey = key.replace(/[^a-zA-Z0-9_-]/g, "");
-    if (!safeApp || !safeKey) return c.json({ error: "Invalid app or key" }, 400);
-
-    if (kvStore) {
-      try {
-        const value = await kvStore.read(safeApp, safeKey);
-        return c.json({ value });
-      } catch (e) {
-        console.error(`[app-db] KV read error for ${safeApp}/${safeKey}:`, (e as Error).message);
-        return c.json({ error: "Database read failed" }, 500);
-      }
-    }
-
-    const dataDir = join(homePath, "data", safeApp);
-    const filePath = normalize(join(dataDir, `${safeKey}.json`));
-    if (!filePath.startsWith(normalize(dataDir))) return c.json({ error: "Path traversal denied" }, 403);
-    if (!existsSync(filePath)) return c.json({ value: null });
-    const content = readFileSync(filePath, "utf-8");
-    let value = content;
-    try {
-      const parsed = JSON.parse(content);
-      if (typeof parsed === "string") value = parsed;
-    } catch (err: unknown) {
-      logUnexpectedJsonParseFailure("Failed to parse stored bridge value", err);
-    }
-    return c.json({ value });
-  });
-
-  app.post("/api/bridge/data", bridgeDataBodyLimit, async (c) => {
-    let body: { action: "read" | "write"; app: string; key: string; value?: string };
-    try {
-      body = await c.req.json();
-    } catch (err: unknown) {
-      if (err instanceof SyntaxError) {
-        return c.json({ error: "Invalid JSON body" }, 400);
-      }
-      console.error("[bridge/data] Failed to read request body:", err);
-      return c.json({ error: "Failed to read request body" }, 500);
-    }
-
-    if (!body.app || typeof body.app !== "string" || !body.key || typeof body.key !== "string") {
-      return c.json({ error: "app and key are required strings" }, 400);
-    }
-
-    const safeApp = body.app.replace(/[^a-zA-Z0-9_-]/g, "");
-    const safeKey = body.key.replace(/[^a-zA-Z0-9_-]/g, "");
-
-    if (!safeApp || !safeKey) {
-      return c.json({ error: "app and key must contain valid characters" }, 400);
-    }
-
-    // Postgres-backed path
-    if (kvStore) {
-      try {
-        if (body.action === "read") {
-          const value = await kvStore.read(safeApp, safeKey);
-          return c.json({ value });
-        }
-        await kvStore.write(safeApp, safeKey, body.value ?? "");
-        broadcast({ type: "data:change", app: safeApp, key: safeKey });
-        return c.json({ ok: true });
-      } catch (e) {
-        console.error(`[app-db] KV ${body.action} error for ${safeApp}/${safeKey}:`, (e as Error).message);
-        return c.json({ error: "Database operation failed" }, 500);
-      }
-    }
-
-    // File-based fallback (no Postgres)
-    const dataDir = join(homePath, "data", safeApp);
-    const filePath = normalize(join(dataDir, `${safeKey}.json`));
-
-    if (!filePath.startsWith(normalize(dataDir))) {
-      return c.json({ error: "Path traversal denied" }, 403);
-    }
-
-    if (body.action === "read") {
-      if (!existsSync(filePath)) return c.json({ value: null });
-      const content = readFileSync(filePath, "utf-8");
-      let value = content;
-      try {
-        const parsed = JSON.parse(content);
-        if (typeof parsed === "string") {
-          value = parsed;
-        }
-      } catch (err: unknown) {
-        logUnexpectedJsonParseFailure("Failed to parse stored bridge data", err);
-      }
-      return c.json({ value });
-    }
-
-    await mkdirAsync(dataDir, { recursive: true });
-    const raw = body.value ?? "";
-    await writeFileAsync(filePath, typeof raw === "string" ? raw : String(raw), "utf-8");
-    broadcast({ type: "data:change", app: safeApp, key: safeKey });
-    return c.json({ ok: true });
+  registerBridgeDataRoutes(app, {
+    homePath, queryEngine, appRegistry, kvStore, ensureAppProvisioned,
+    broadcast, queryBodyLimit: bridgeQueryBodyLimit, dataBodyLimit: bridgeDataBodyLimit,
+    logUnexpectedJsonParseFailure,
   });
 
   app.route("/api/bridge/ai", createRuntimeAppAiRoutes({
@@ -3743,127 +2861,7 @@ export async function createGateway(config: GatewayConfig) {
     return c.json(task);
   });
 
-  app.get("/api/apps", async (c) => {
-    return c.json(await listApps(homePath));
-  });
-
-  app.get("/api/shell/bootstrap", async (c) => {
-    return c.json(await buildShellBootstrap(homePath));
-  });
-
-  registerIconRoutes(app, homePath);
-
-  app.put("/api/apps/:slug/rename", renameAppBodyLimit, async (c) => {
-    const slug = c.req.param("slug");
-    const { name } = await c.req.json<{ name: string }>();
-    const result = renameApp(homePath, slug, name);
-    if (!result.success) {
-      const status = result.error?.includes("not found") ? 404 : 400;
-      return c.json({ error: result.error }, status);
-    }
-    return c.json({ ok: true, newSlug: result.newSlug });
-  });
-
-  app.delete("/api/apps/:slug", async (c) => {
-    const slug = c.req.param("slug");
-    const result = deleteApp(homePath, slug);
-    if (!result.success) {
-      const status = result.error?.includes("not found") ? 404 : 400;
-      return c.json({ error: result.error }, status);
-    }
-    return c.json({ ok: true });
-  });
-
-  app.post("/api/apps/:slug/icon", appIconBodyLimit, async (c) => {
-    const slug = c.req.param("slug");
-    if (!/^[a-zA-Z0-9_-]+$/.test(slug)) {
-      return c.json({ error: "Invalid slug" }, 400);
-    }
-    const shippedDefaultIcon = await resolveDefaultAppIconUrl(homePath, slug);
-    if (shippedDefaultIcon) {
-      return c.json({
-        iconUrl: shippedDefaultIcon,
-        generated: false,
-        shipped: true,
-      });
-    }
-    const geminiKey = process.env.GEMINI_API_KEY ?? "";
-    if (!geminiKey) {
-      return c.json({
-        iconUrl: (await resolveSystemIconUrl(homePath, `${slug}.png`)) ?? "/files/system/icons/game.svg",
-        generated: false,
-      });
-    }
-    try {
-      let body: { style?: string } = {};
-      try {
-        body = await c.req.json();
-      } catch (err: unknown) {
-        if (!(err instanceof SyntaxError)) {
-          console.error("[gateway] Failed to parse icon generation body:", err);
-          return c.json({ error: "Failed to read request body" }, 500);
-        }
-      }
-
-      const iconStyle = body.style || loadIconStyle(homePath);
-      const client = createImageClient(geminiKey);
-      const apps = await listApps(homePath);
-      const targetApp = apps.find((appEntry) => appEntry.slug === slug);
-      const iconStem = isSafeIconStem(targetApp?.icon) ? targetApp.icon : slug;
-      const prompt = buildIconPrompt(targetApp?.name ?? slug, iconStyle);
-      const iconsDir = join(homePath, "system/icons");
-      const result = await client.generateImage(prompt, {
-        aspectRatio: "1:1",
-        imageDir: iconsDir,
-        saveAs: `${iconStem}.png`,
-      });
-      const iconPath = join(iconsDir, `${iconStem}.png`);
-      const stat = statSync(iconPath);
-      const etag = `"${stat.mtimeMs.toString(36)}-${stat.size.toString(36)}"`;
-      c.header("ETag", etag);
-      return c.json({
-        iconUrl: `/files/system/icons/${iconStem}.png`,
-        etag,
-        cost: result.cost,
-      });
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Unknown error";
-      console.error(`Icon generation failed for "${slug}":`, message);
-      return c.json({ error: "Icon generation failed" }, 500);
-    }
-  });
-
-  app.post("/api/icons/regenerate-all", appIconBodyLimit, async (c) => {
-    if (iconRegenerationInProgress) {
-      return c.json({ error: "Regeneration already in progress" }, 409);
-    }
-    iconRegenerationInProgress = true;
-
-    const geminiKey = process.env.GEMINI_API_KEY ?? "";
-    if (!geminiKey) {
-      iconRegenerationInProgress = false;
-      return c.json({ regenerated: 0, failed: [], generated: false });
-    }
-
-    const iconsDir = join(homePath, "system/icons");
-    if (!existsSync(iconsDir)) {
-      iconRegenerationInProgress = false;
-      return c.json({ regenerated: 0, failed: [] });
-    }
-
-    const apps = await listApps(homePath);
-    const iconTargets = apps.flatMap((appEntry) => appEntry.slug ? [{
-        slug: appEntry.slug,
-        icon: isSafeIconStem(appEntry.icon) ? appEntry.icon : appEntry.slug,
-        name: appEntry.name,
-      }] : []);
-
-    generateIconBatch(geminiKey, iconTargets, loadIconStyle(homePath), iconsDir)
-      .then((r) => console.log(`[icons] Regeneration complete: ${r.generated}/${iconTargets.length} succeeded, ${r.failed.length} failed`))
-      .catch((err) => console.error("[icons] Regeneration error:", err))
-      .finally(() => { iconRegenerationInProgress = false; });
-    return c.json({ accepted: true, total: iconTargets.length }, 202);
-  });
+  registerAppManagementRoutes(app, { homePath });
 
   app.get("/api/cron", (c) => {
     return c.json(cronService.listJobs());
@@ -4852,6 +3850,7 @@ export async function createGateway(config: GatewayConfig) {
       await canvasRepository?.destroy();
       await socialRoutes?.shutdownPostHog();
       await appDb?.destroy();
+      await platformDb?.destroy();
       await posthogErrorTracker.shutdown();
       server.close();
     },
