@@ -194,6 +194,7 @@ export class CustomMcpBroker {
       tools,
       enabled: true,
       status: "ready",
+      discoveredAt: this.options.now?.() ?? new Date(),
     });
     if (!updated) throw new CustomMcpBrokerError("conflict");
     await this.options.projection.upsert(input.userId, toProjection(updated));
@@ -266,11 +267,12 @@ export class CustomMcpBroker {
     }));
     // First discovery activates the server. Later discoveries preserve a
     // deliberate server disablement and each existing tool's policy.
-    const enabled = tools.length > 0 && (row.tools.length === 0 || row.enabled);
+    const enabled = tools.some((tool) => tool.enabled) && (row.discovered_at === null || row.enabled);
     const updated = await this.options.db.updateCustomMcpServer(serverId, userId, row.revision, {
       tools,
       status: enabled ? "ready" : "disabled",
       enabled,
+      discoveredAt: this.options.now?.() ?? new Date(),
       actionRequiredReason: null,
     });
     if (!updated) throw new CustomMcpBrokerError("conflict");
