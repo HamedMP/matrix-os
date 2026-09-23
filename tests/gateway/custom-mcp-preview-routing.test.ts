@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { resolveCustomMcpRuntimeRouting } from '../../packages/gateway/src/integrations/custom-mcp/preview-routing.js';
 
 const origin = 'https://pr-1871---matrix-platform-preview-jqxkjdhtkq-ey.a.run.app';
@@ -48,5 +48,21 @@ describe('preview Custom MCP routing', () => {
       MATRIX_PREVIEW_CUSTOM_MCP_OWNER_ID: 'chat-share-preview-fixture-pr-1871',
       MATRIX_HANDLE: 'pr-1872',
     }, base)).toThrow(/preview Custom MCP routing/);
+  });
+
+  it('preserves unexpected URL parser failures for diagnosis', () => {
+    vi.stubGlobal('URL', class {
+      constructor() { throw new Error('unexpected parser failure'); }
+    });
+    try {
+      expect(() => resolveCustomMcpRuntimeRouting({
+        MATRIX_PREVIEW_RUNTIME: 'true', MATRIX_PREVIEW_CUSTOM_MCP_ORIGIN: origin,
+        MATRIX_PREVIEW_CUSTOM_MCP_TOKEN: token,
+        MATRIX_PREVIEW_CUSTOM_MCP_OWNER_ID: 'chat-share-preview-fixture-pr-1871',
+        MATRIX_HANDLE: 'pr-1871',
+      }, base)).toThrow('unexpected parser failure');
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });

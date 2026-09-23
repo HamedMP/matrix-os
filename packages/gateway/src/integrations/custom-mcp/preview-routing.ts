@@ -27,8 +27,9 @@ export function resolveCustomMcpRuntimeRouting(
   let parsed: URL;
   try {
     parsed = new URL(origin);
-  } catch {
-    throw invalid();
+  } catch (error) {
+    if (error instanceof TypeError) throw invalid();
+    throw error;
   }
   if (parsed.protocol !== 'https:' || parsed.username || parsed.password
     || parsed.pathname !== '/' || parsed.search || parsed.hash
