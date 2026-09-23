@@ -8,7 +8,11 @@ import {
   createHash,
 } from "node:crypto";
 import { directErrorResponse, readDirectCredentials } from "./direct-routes.js";
-import { DirectAuthError, toLogicalRuntimeId } from "./direct-auth.js";
+import { DirectAuthError } from "./direct-auth.js";
+// The VPS-only canonicalization lives once in the contracts package; `direct-auth` is a
+// consumer of it, not its owner, so importing it from there would recreate the duplication
+// that let a client and the gateway drift apart.
+import { toLogicalRuntimeId } from "@matrix-os/contracts";
 import type { DirectSessionService } from "./direct-sessions.js";
 import type { OwnerRuntimeSessionService } from "./owner-runtime-sessions.js";
 import {
