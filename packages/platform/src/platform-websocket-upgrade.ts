@@ -47,13 +47,7 @@ import { resolveContainerEndpoint } from './container-endpoint.js';
 import { describeError } from './platform-route-utils.js';
 import { shouldVerifyCustomerVpsTls } from './customer-vps-tls.js';
 import { handleInternalGeminiLiveProxyUpgrade } from './gemini-live-proxy.js';
-import {
-  buildCollaborationWebSocketUpgradeHeaders,
-  isCollaborationWebSocketCandidate,
-  isCollaborationWebSocketPath,
-  type CollaborationWebSocketAuthorizer,
-  type CollaborationWebSocketUpgrade,
-} from './collaboration/websocket.js';
+import { isCollaborationWebSocketCandidate, parseRelaySocketPath } from './collaboration/relay.js';
 
 interface PlatformWebSocketTelemetry {
   capturePlatformEvent(event: MatrixTelemetryEvent, properties: Record<string, unknown>): void;
@@ -84,7 +78,6 @@ export interface RegisterPlatformWebSocketUpgradeHandlerOpts {
     runtimeSlot?: string,
     provisioningClass?: string,
   ): Promise<EntitlementAccessDecision>;
-  collaborationSockets?: CollaborationWebSocketAuthorizer;
   /** S05: runtime control-stream upgrade (`/internal/collaboration/control`); handled before session routing. */
   collaborationDirect?: {
     handleUpgrade(req: IncomingMessage, socket: Socket, head: Buffer): Promise<boolean>;
@@ -108,7 +101,6 @@ export function registerPlatformWebSocketUpgradeHandler(
     codeServerPort,
     getRuntimeEntitlementDecision,
     getRuntimeEntitlementDecisionForUser,
-    collaborationSockets,
     collaborationDirect,
   } = opts;
 
@@ -157,11 +149,10 @@ export function registerPlatformWebSocketUpgradeHandler(
     }
     const isCodeDomain = isCodeDomainHost(host);
     const isAppDomain = isAppDomainHost(host);
-    const isCollaborationCandidate = isAppDomain && isCollaborationWebSocketCandidate(path);
-    const isCollaborationSocket = isAppDomain && isCollaborationWebSocketPath(path);
+    const isCollaborationCandidate = isCollaborationWebSocketCandidate(path);
     // S05: direct sockets are relayed as bytes; the home verifies the ticket in the first frame.
-    const isDirectSocket = isAppDomain && Boolean(collaborationDirect) && isCollaborationDirectSocketPath(path);
-    if (isCollaborationCandidate && !isCollaborationSocket && !isDirectSocket) {
+    const isDirectSocket = isAppDomain && Boolean(collaborationDirect) && Boolean(parseRelaySocketPath(path));
+    if (isCollaborationCandidate && !isDirectSocket) {
       socket.destroy();
       return;
     }
@@ -199,7 +190,7 @@ export function registerPlatformWebSocketUpgradeHandler(
         requestedHandle: explicitVmRoute?.handle,
         runtimeSlot: requestRuntimeSlot,
         wsToken,
-        clerkPrincipalOnly: isCollaborationSocket || isDirectSocket,
+        clerkPrincipalOnly: isDirectSocket,
       });
       if (
         !identity
@@ -240,7 +231,6 @@ export function registerPlatformWebSocketUpgradeHandler(
       return;
     }
 
-    let collaborationUpgrade: CollaborationWebSocketUpgrade | undefined;
     let directUpgrade: Awaited<ReturnType<NonNullable<typeof collaborationDirect>["relay"]["prepareSocket"]>> | undefined;
     let runtimeSlot = identity.runtimeSlot ?? requestRuntimeSlot;
     let requestedActiveMachine: UserMachineRecord | undefined;
@@ -275,33 +265,6 @@ export function registerPlatformWebSocketUpgradeHandler(
       runningMachine = authorityMachine;
       runtimeSlot = authorityMachine.runtimeSlot;
       webSocketProxyPath = directUpgrade.upstreamPath;
-    } else if (isCollaborationSocket) {
-      if (!collaborationSockets || !identity.userId) {
-        socket.destroy();
-        return;
-      }
-      try {
-        collaborationUpgrade = await collaborationSockets.authorizeUpgrade({
-          actorId: identity.userId,
-          authentication: collaborationAuthentication(path, req.headers.authorization),
-          rawPath: path,
-          origin: firstHeader(req.headers.origin),
-        });
-      } catch (err: unknown) {
-        console.warn(`[platform] collaboration websocket authorization failed error=${describeError(err)}`);
-        socket.destroy();
-        return;
-      }
-      const machineId = parseCollaborationRuntimeId(collaborationUpgrade.runtimeId);
-      const authorityMachine = machineId ? await getUserMachine(db, machineId) : undefined;
-      if (!authorityMachine || authorityMachine.status !== 'running' || !authorityMachine.publicIPv4
-        || authorityMachine.clerkUserId !== collaborationUpgrade.ownerId) {
-        socket.destroy();
-        return;
-      }
-      runningMachine = authorityMachine;
-      runtimeSlot = authorityMachine.runtimeSlot;
-      webSocketProxyPath = collaborationUpgrade.upstreamPath;
     } else if (explicitVmRoute) {
       const explicitMachine = await getRunningUserMachineByHandle(
         db,
@@ -382,12 +345,6 @@ export function registerPlatformWebSocketUpgradeHandler(
     const buildUpgradeHeaders = (handle: string, includePlatformProof: boolean): string => (
       directUpgrade
         ? directUpgrade.headers
-        : collaborationUpgrade
-        ? buildCollaborationWebSocketUpgradeHeaders({
-            incomingHeaders: req.headers,
-            externalHost: host,
-            signedProof: collaborationUpgrade.signedProof,
-          })
         : buildPlatformWebSocketUpgradeHeaders({
         incomingHeaders: req.headers,
         externalHost: host,
@@ -528,34 +485,6 @@ export function registerPlatformWebSocketUpgradeHandler(
       socket.destroy();
     });
   });
-}
-
-function isCollaborationDirectSocketPath(rawPath: string): boolean {
-  if (rawPath.length > 1_024 || /[\r\n]/.test(rawPath)) return false;
-  try {
-    return /^\/ws\/collaboration\/direct\/scopes\/[0-9a-f-]{36}\/(?:events|terminal)$/.test(new URL(rawPath, 'https://platform.invalid').pathname);
-  } catch (err: unknown) {
-    if (!(err instanceof TypeError)) console.warn('[platform] direct socket path classification failed:', describeError(err));
-    return false;
-  }
-}
-
-function firstHeader(value: string | string[] | undefined): string | undefined {
-  return Array.isArray(value) ? value[0] : value;
-}
-
-function collaborationAuthentication(
-  rawPath: string,
-  authorization: string | string[] | undefined,
-): 'session' | 'bearer' | 'ticket' {
-  try {
-    if (new URL(rawPath, 'https://platform.invalid').searchParams.has('ticket')) return 'ticket';
-  } catch (err: unknown) {
-    if (!(err instanceof TypeError)) {
-      console.warn('[platform] collaboration websocket credential parse failed:', describeError(err));
-    }
-  }
-  return firstHeader(authorization)?.startsWith('Bearer ') ? 'bearer' : 'session';
 }
 
 function parseCollaborationRuntimeId(runtimeId: string): string | null {

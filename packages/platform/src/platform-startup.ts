@@ -1096,7 +1096,6 @@ async function startPlatformServerWithCleanup(
     codeServerPort,
     getRuntimeEntitlementDecision,
     getRuntimeEntitlementDecisionForUser,
-    collaborationSockets: collaboration?.sockets,
     collaborationDirect: collaboration?.direct,
   });
 }
