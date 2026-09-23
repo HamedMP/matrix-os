@@ -173,6 +173,12 @@ describe("Codex app-server contract", () => {
     expect(codexAppServerContractStatus("codex-cli 0.155.1")).toEqual({
       status: "verified", version: "0.155.1",
     });
+    expect(codexAppServerContractStatus("codex-cli 0.156.0")).toEqual({
+      status: "verified", version: "0.156.0",
+    });
+    expect(codexAppServerContractStatus("codex-cli 0.156.1")).toEqual({
+      status: "verified", version: "0.156.1",
+    });
     expect(codexAppServerContractStatus("codex-cli 0.143.9")).toEqual({
       status: "unverified_older",
       version: "0.143.9",
