@@ -54,10 +54,16 @@ adapters separate from production connector clients, with clearly labeled fictio
 data and deterministic simulated failure controls. Follow Red -> Green -> Refactor
 for interaction/state behavior; do not write tests that merely restate static copy.
 
-Build the default widget, compact input, result panel, all six sections, profile and
+Build the default assistant dock, compact input, result panel, all six sections, profile and
 candidate drawers, both hiring pipelines, GTM relationship-dependent drafts,
 collaboration filters/handoffs and four workflow examples. Each control must reach
 a meaningful state or clear simulation feedback. No external operation may be reachable.
+
+Use the [September 23 dock reference](./dock-design.md) for the collapsed vertical
+rail and inward-expanding panel. Validate rail selection, panel switching, preserved
+drafts, dismissal/focus return, expansion to the workspace, shell-chrome collision,
+reduced transparency/motion and narrow-screen adaptation. Reference screenshots are
+source evidence; they do not count as screenshots of the implemented Matrix product.
 
 Use shared product derivation for Web Canvas, Web Desktop and Electron Desktop;
 validate responsive Web Mobile. Register the product identity through the existing
@@ -166,6 +172,7 @@ audience isolation. Validate a selected test account before any broader rollout.
 | New user opens Company OS after setup; optional sources skipped | R1/R2 | Prebuilt identity, honest readiness, no fabricated priorities or unapproved source reads |
 | Source yields zero, one or three priorities | R2/R4 | Matching count/copy, visible owner, source and next action |
 | Open/close/minimize/expand, reload and switch presentation | R2/R4/R10 | Same selected workspace/item/draft/run; correct focus return and retained geometry |
+| Select/switch assistant-dock icons; dismiss; expand; resize viewport | R2/dock design | One anchored panel, persistent rail, truthful selection, retained drafts, keyboard focus return; no overlap with protected shell chrome |
 | Voice start/stop/cancel and permission denial | R2/R10 | No pre-activation recording; compact control, text fallback and documented cleanup |
 | Navigate all six sections with keyboard and pointer | R4-R10 | No dead entry, accessible active state and useful first viewport |
 | Open directory role with restricted source context | R5 | Authorized details only; directory presence grants no source access |

@@ -114,11 +114,15 @@ that the referenced implementation is shipped or accepted.
 - A workspace is an experience boundary, not an authorization grant. Personal data
   must never become team context merely because a company name was entered.
 
-### R2. Compact widget and input
+### R2. Compact assistant dock and input
 
-- Place a floating Company OS widget near the upper-right of Web Desktop and
-  Electron Desktop; retain access without occupying the main work surface.
-- Include identity, connection indicator, minimize/expand, a neutral greeting, and
+- Use a narrow, vertically stacked assistant dock near the upper-right edge of Web
+  Desktop and Electron Desktop. The September 23 design reference refines “widget”
+  into a persistent icon rail with one contextual panel expanding inward to its left.
+  See [visual evidence and interaction contract](./dock-design.md), including three
+  screenshots from the public reference reel. This is separate from the OS app dock.
+- Keep the collapsed rail compact; place identity, connection indicator,
+  minimize/expand, a neutral greeting, and the following content in its opened panel:
   up to three prioritized items with source labels and Decide / Review / Prep actions.
 - Use “Three things need you.” only when there are three items. Fewer or zero items
   need truthful copy; never manufacture work to fill the design.
@@ -134,6 +138,11 @@ that the referenced implementation is shipped or accepted.
   concise readiness/freshness and a repair/setup action. It is not a logo dashboard.
 - Minimize, expand, light dismiss and Escape preserve the selected work and draft;
   closing Company OS must not stop unrelated agents or alter source data.
+- Keep one compact panel open at a time. Switching rail destinations changes panel
+  content in place; selecting the active destination or dismissing closes the panel
+  while the rail remains available. Expand is a separate action into the existing
+  six-section workspace. The reference supplies the dock/panel form, not an approved
+  connector list, voice implementation, native overlay capability, or exact sizing.
 
 ### R3. Master agent and evidence-backed results
 
