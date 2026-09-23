@@ -53,6 +53,7 @@ describe('platform/customer-vps-cloud-init', () => {
     clerkUserId: 'user_123',
     handle: 'alice',
     runtimeSlot: 'staging',
+    runtimeTokenEpoch: '1',
     developerTools: 'codex claude-code opencode pi',
     imageVersion: 'stable',
     updateChannel: 'stable',
@@ -417,6 +418,7 @@ exit 99
     expect(cloudInit).toContain('MATRIX_AUTH_TOKEN={{platformVerificationToken}}');
     expect(cloudInit).toContain('MATRIX_CODE_PROXY_TOKEN={{platformVerificationToken}}');
     expect(cloudInit).toContain('MATRIX_FUNDED_AI_RUNTIME_TOKEN={{fundedAiRuntimeToken}}');
+    expect(cloudInit).toContain('MATRIX_RUNTIME_TOKEN_EPOCH={{runtimeTokenEpoch}}');
     expect(cloudInit).toContain('MATRIX_PLATFORM_SPEECH_ENABLED={{platformSpeechEnabled}}');
     expect(cloudInit).toContain('MATRIX_PLATFORM_SPEECH_ORIGIN={{platformSpeechOrigin}}');
     expect(cloudInit).toContain('MATRIX_PLATFORM_SPEECH_RUNTIME_TOKEN={{platformSpeechRuntimeToken}}');

@@ -120,7 +120,7 @@ async function authenticatedRuntimeMachine(
     handle,
     machineId: machine.machineId,
     runtimeSlot: machine.runtimeSlot,
-  }, options.platformSecret);
+  }, options.platformSecret, machine.runtimeTokenEpoch);
   return timingSafeTokenEquals(token, expected) ? machine : undefined;
 }
 

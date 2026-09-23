@@ -363,6 +363,29 @@ describe("platform/internal-sync-routes", () => {
     );
   });
 
+  it("rejects the previous sync credential after a scoped epoch advance", async () => {
+    await insertUserMachine(db, {
+      machineId: "machine-studio", clerkUserId: "user_alice", handle: "alice", runtimeSlot: "studio",
+      status: "running", imageVersion: "v1", provisionedAt: "2026-08-30T00:00:00.000Z",
+      runtimeTokenEpoch: 2,
+    });
+    r2.getPresignedGetUrl.mockResolvedValue("https://platform.example/studio-get");
+    const app = createTestApp();
+    const identity = { handle: "alice", machineId: "machine-studio", runtimeSlot: "studio" };
+    const request = (token: string) => app.request("/internal/containers/alice/sync/presign/get", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${token}`,
+        "content-type": "application/json",
+        "x-matrix-machine-id": identity.machineId,
+        "x-matrix-runtime-slot": identity.runtimeSlot,
+      },
+      body: JSON.stringify({ key: "matrixos-sync/v2/owners/user_alice/runtimes/studio/manifest.json" }),
+    });
+    expect((await request(buildPlatformSyncVerificationToken(identity, "platform-secret-123"))).status).toBe(401);
+    expect((await request(buildPlatformSyncVerificationToken(identity, "platform-secret-123", 2))).status).toBe(200);
+  });
+
   it("uses the active VPS owner instead of a stale legacy container owner", async () => {
     await insertUserMachine(db, {
       machineId: "machine-alice",
