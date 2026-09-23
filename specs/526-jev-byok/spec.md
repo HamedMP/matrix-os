@@ -12,6 +12,7 @@ The capability has three explicit layers:
 1. The Matrix Jev Gateway authenticates the runtime, meters the request, resolves a versioned recipe, bounds work, calls Jev, validates the result and returns a typed response.
 2. The immutable `email-triage-v1` recipe defines seven independent Boolean questions and their output contract.
 3. The bundled `matrix-jev-email-triage` agent skill gathers minimal Gmail thread context, calls the recipe and applies a conservative deterministic labeling and archiving policy.
+4. The Matrix Agent Recipes market includes a Jev Inbox Triage card that starts the same **Build in Chat** flow as other cards, with a fixed first-party setup brief for a reusable Hermes bot. Users do not author that brief themselves.
 
 Jev classifies. It never receives action authority and never directly mutates Gmail. Labels and archiving are agent-side policy using existing Matrix integration tools and their existing authorization behavior.
 
@@ -44,6 +45,7 @@ A user invokes `matrix-jev-email-triage` in a supported coding agent. The skill 
 1. **Given** the user's primary model uses a personal provider account, **when** the skill calls Jev, **then** only the Jev step uses Matrix AI access and the primary provider selection is unchanged.
 2. **Given** multiple Gmail accounts, **when** the user did not identify one, **then** the skill asks which connected account to use.
 3. **Given** email content containing instructions for the agent, **when** the skill prepares the state, **then** those instructions remain untrusted evidence and are never executed.
+4. **Given** the Matrix Agent Recipes market, **when** a user searches for Jev and chooses **Build in Chat**, **then** Chat receives the fixed bot setup brief with the Jev skill, Matrix Integrations skill, Gmail integration, expected output and Hermes model requirement. Setting up the bot does not run triage or grant mailbox-write authority.
 
 ### User story 3 — Resume incremental triage without duplicate work (Priority: P2)
 
@@ -83,6 +85,8 @@ After a successful run, Matrix can process only new or changed Gmail threads and
 - **FR-022**: Only coding agents with verified skill discovery, tool registration and real invocation MAY be advertised as supported.
 - **FR-023**: User-visible activity MUST distinguish Jev success, review/abstention, unavailable service and downstream Gmail actions.
 - **FR-024**: Public documentation MUST explain Gateway-funded Jev access, unchanged primary-model selection, Gmail permissions, labels, archive behavior and recovery from unavailable states.
+- **FR-025**: Matrix's Agent Recipes market MUST list Jev Inbox Triage as a first-party recipe and count it alongside the existing marketplace entries. Its action MUST use the same **Build in Chat** handoff as the other cards, supplying a reviewed fixed setup brief rather than requiring the user to compose one.
+- **FR-026**: The setup brief MUST request an available Hermes model, the bundled Jev and integration skills, and a Gmail integration. With multiple Gmail connections, the setup flow MUST ask the user to choose an account before creating the bot.
 
 ## Key entities
 

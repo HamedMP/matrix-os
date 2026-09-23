@@ -39,6 +39,7 @@
 - [x] T022 [US2] Add the authenticated local-Gateway Jev client in `packages/kernel/src/tools/integrations.ts`
 - [x] T023 [US2] Register `jev_evaluate` without credential/model/question arguments in `packages/integrations-mcp/src/server.ts`
 - [x] T024 [US2] Author `skills/matrix/jev-email-triage/SKILL.md` with Gmail evidence, prompt-injection, authorization and policy rules
+- [x] T024a [US2] Add Jev Inbox Triage as the 72nd Agent Recipes market card using the standard Build in Chat handoff and a fixed Hermes bot setup brief
 - [x] T025 [US2] Synchronize generated skill artifacts through the repository's source mechanism and verify supported-agent discovery
 
 ## Phase 5: Gmail triage orchestration (Stack C)

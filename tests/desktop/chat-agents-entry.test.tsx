@@ -107,17 +107,20 @@ describe("shared Agents entry", () => {
     </ChatAgentsWorkspace>);
     fireEvent.click(await screen.findByRole("button", { name: "Browse agent recipes" }));
     const surface = await screen.findByRole("region", { name: "Agent recipes" });
+    expect(screen.getByRole("button", { name: "Browse agent recipes" }).textContent).toContain("72");
     expect(surface.querySelector("header")?.className).not.toContain("border-b");
-    expect(screen.getByText("71 recipe ideas")).toBeTruthy();
+    expect(screen.getByText("72 recipe ideas")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Use Jev Inbox Triage" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Use Account Research Desk" })).toBeTruthy();
     const rabbits = surface.querySelectorAll('[data-recipe-rabbit]');
-    expect(rabbits.length).toBe(71);
-    expect(rabbits[0]?.getAttribute("data-rabbit-variant")).not.toBe(rabbits[1]?.getAttribute("data-rabbit-variant"));
-    expect(rabbits[0]?.getAttribute("data-rabbit-state")).toBe("idle");
-    expect(rabbits[0]?.getAttribute("data-rabbit-task")).toBe("sales");
-    expect(rabbits[0]?.getAttribute("data-rabbit-color")).toBe("coral");
-    expect(rabbits[0]?.querySelector(".matrix-agent-rabbit__face")).toBeTruthy();
-    expect(rabbits[0]?.querySelectorAll(".matrix-agent-rabbit__inner-ear").length).toBe(2);
+    expect(rabbits.length).toBe(72);
+    expect(rabbits[0]?.getAttribute("data-recipe-rabbit")).toBe("jev-inbox-triage");
+    expect(rabbits[1]?.getAttribute("data-rabbit-variant")).not.toBe(rabbits[2]?.getAttribute("data-rabbit-variant"));
+    expect(rabbits[1]?.getAttribute("data-rabbit-state")).toBe("idle");
+    expect(rabbits[1]?.getAttribute("data-rabbit-task")).toBe("sales");
+    expect(rabbits[1]?.getAttribute("data-rabbit-color")).toBe("coral");
+    expect(rabbits[1]?.querySelector(".matrix-agent-rabbit__face")).toBeTruthy();
+    expect(rabbits[1]?.querySelectorAll(".matrix-agent-rabbit__inner-ear").length).toBe(2);
     expect(rabbits[0]?.querySelector(".matrix-recipe-rabbit__orbit")).toBeNull();
     expect(rabbits[0]?.getAttribute("aria-hidden")).toBe("true");
     const recipeGrid = surface.querySelector(".matrix-chat-agent-recipes__grid");
@@ -125,6 +128,22 @@ describe("shared Agents entry", () => {
     expect(recipeGrid?.className).not.toContain("md:grid-cols-2");
     fireEvent.click(screen.getByRole("button", { name: "Use Account Research Desk" }));
     expect(onStartChat).toHaveBeenCalledWith(expect.stringContaining("Account Research Desk"));
+  });
+
+  it("starts the Jev bot setup through the same Build in Chat flow as other recipes", async () => {
+    const client = clientFixture();
+    const onStartChat = vi.fn();
+    render(<ChatAgentsWorkspace><ChatAgentsRailSection client={client} onStartChat={onStartChat} />
+      <ChatAgentsContent client={client} scopeKey="chat_one"><p>Chat canvas</p></ChatAgentsContent></ChatAgentsWorkspace>);
+    fireEvent.click(await screen.findByRole("button", { name: "Browse agent recipes" }));
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search recipes" }), { target: { value: "Jev" } });
+    const useJev = screen.getByRole("button", { name: "Use Jev Inbox Triage" });
+    expect(useJev.textContent).toBe("Build in Chat");
+    fireEvent.click(useJev);
+    expect(onStartChat).toHaveBeenCalledWith(expect.stringContaining("create a Matrix agent named Jev Inbox Triage"));
+    expect(onStartChat.mock.calls[0]![0]).toContain("matrix-jev-email-triage");
+    expect(onStartChat.mock.calls[0]![0]).toContain("Hermes");
+    expect(client.create).not.toHaveBeenCalled();
   });
   it("replaces only the main pane and restores the same Chat draft and keyboard focus", async () => {
     render(<ChatAgentsEntry client={clientFixture()} />);
