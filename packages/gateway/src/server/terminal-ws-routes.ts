@@ -8,7 +8,7 @@ import { readPreviewTerminalOwner } from "../auth.js";
 import type { ChatRepository } from "../chat/repository.js";
 import { hasActiveWorkspaceSessionForTerminalRef } from "../agent-session-manager.js";
 import { resolveTerminalAttachmentMode, terminalAttachmentAllowsFrame, createSessionRuntimeBridge } from "../session-runtime-bridge.js";
-import { parseTerminalInputCapabilityRequest, terminalFrameForInputCapabilities } from "../terminal-input-capabilities.js";
+import { parseTerminalInputCapabilityRequest, parseTerminalScrollCapabilityRequest, terminalFrameForInputCapabilities } from "../terminal-input-capabilities.js";
 import { createTerminalSizeLease } from "../terminal-size-lease.js";
 import { createTerminalLiveOwnership } from "../terminal-live-ownership.js";
 import { createTerminalWorkspaceProjectAdmission, terminalResourceOwnerId, terminalRuntimeRefAccess, shellWsMessageDataToString } from "../shell/index.js";
@@ -64,6 +64,7 @@ export function registerTerminalWebSocketRoutes(options: TerminalWebSocketRouteO
       const cols = /^\d+$/.test(colsRaw) ? Number(colsRaw) : Number.NaN;
       const rows = /^\d+$/.test(rowsRaw) ? Number(rowsRaw) : Number.NaN;
       const binaryInputRequested = parseTerminalInputCapabilityRequest(c.req.query("inputCapability"));
+      const nativeScrollRequested = parseTerminalScrollCapabilityRequest(c.req.query("scrollCapability"));
       const validNumbers = Number.isSafeInteger(fromSeq) && fromSeq >= 0
         && Number.isSafeInteger(cols) && cols >= 20 && cols <= 500
         && Number.isSafeInteger(rows) && rows >= 5 && rows <= 200;
@@ -194,7 +195,7 @@ export function registerTerminalWebSocketRoutes(options: TerminalWebSocketRouteO
                 onFrame: (frame) => {
                   if (closed) return;
                   try {
-                    const capableFrame = terminalFrameForInputCapabilities(frame, binaryInputRequested);
+                    const capableFrame = terminalFrameForInputCapabilities(frame, binaryInputRequested, nativeScrollRequested);
                     if (capableFrame.type === "attached" && ownershipKey) {
                       const role = terminalLiveOwnership.role(ownershipKey, ownershipViewerId);
                       const leaseEpoch = terminalLiveOwnership.leaseEpoch(ownershipKey, ownershipViewerId);

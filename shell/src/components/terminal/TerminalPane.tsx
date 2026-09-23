@@ -1369,6 +1369,7 @@ export function TerminalPane({
           fromSeq: String(replayRequest?.requestedSeq ?? 0),
           client: suppressNativeKeyboard ? "mobile" : "browser",
           inputCapability: "binary-input-v1",
+          scrollCapability: "native-scroll-v1",
           ...(requestedOwnershipRef.current ? { lease: requestedOwnershipRef.current } : {}),
           ...(declaredSize ? { cols: String(declaredSize.cols), rows: String(declaredSize.rows) } : {}),
         };
