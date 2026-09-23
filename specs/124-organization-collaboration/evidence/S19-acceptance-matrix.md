@@ -138,13 +138,22 @@ demonstrating — the suite was green while both defects were present, so it evi
 non-concurrent cutover paths only. Cutover recovery under a racing security control was **never
 covered**, before or after the fix. Both annotations are recorded in that log.
 
+**Why a green suite could not have caught either one.** An unchecked `.execute()` is invisible to a
+test that asserts end state, because the failure mode *is* the absence of an effect: a write that
+matched zero rows and a write that succeeded leave the assertion looking at the same journal unless
+something inspects the result. The same holds for the cleared fence — the end state after a silently
+discarded disable is a plausible journal, not a corrupt one. Both defects are only reachable by a
+test that interleaves two writers and then asserts on the *affected-row count*, not on the row.
+Adding coverage for these paths therefore means new concurrent tests, not stronger assertions on the
+existing ones.
+
 **Pattern count.** These are the **fourth and fifth** instances of pre-read-plus-unpredicated-write
 found in this release, and the first two where the racing writer was a **security control** rather
 than ordinary data — a cleared recovery fence and a falsely-reported disable, not a lost update.
 `CLAUDE.md` already requires that optimistic concurrency be enforced in the write statement rather
 than by a pre-read under READ COMMITTED. Five occurrences says the rule is not reaching the code at
-review time. A row that passes while the control it exercises is racing is exactly the kind of green
-this matrix exists to refuse.
+review time; the finding is recorded in `../implementation-log.md`. A row that passes while the
+control it exercises is racing is exactly the kind of green this matrix exists to refuse.
 
 ## Rendered surface evidence: T079 is open
 

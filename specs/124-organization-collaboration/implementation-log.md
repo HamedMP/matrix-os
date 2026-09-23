@@ -63,6 +63,43 @@ The full kernel and gateway `vitest --coverage` gate must run on the final integ
 - S07 static sandbox policy hides owner credentials and constrains `/workspace/project`; a root/systemd escape probe remains unrun. S10's broker never passes forge credentials into the sandbox in unit tests; a live owner credential/forge probe remains unrun.
 - S15 shared UI components cover readiness and owner-runtime first Share in tests. Equivalent authenticated information, states and actions on Web Canvas, Web Desktop and Electron Desktop require the final interactive parity run. Existing S06/S20 screenshots do not prove S15 parity.
 
+## Process finding: the atomicity rule is written down and is not reaching the code
+
+Recorded 2026-09-23. This is a process finding about how this release was reviewed, not a defect
+report. It is stated at full strength deliberately.
+
+**Five instances of pre-read-plus-unpredicated-write were found in this release.** `CLAUDE.md`
+already forbids exactly this, by name, under **Atomicity**: "Optimistic concurrency must be enforced
+in the write statement. Pre-reading a revision inside a transaction is not enough under READ
+COMMITTED; include `WHERE revision = :baseRevision` on the `UPDATE` or take a row lock." The rule is
+not ambiguous, is not new, and is in the file every agent on this release reads at session start.
+
+**The two most serious instances were found last, by an automated reviewer, on a rebased head.**
+Greptile found both `cutover.ts` defects on #1860 *after* those layers had been through review rounds
+and been called clean. They are also the only two where the racing writer was a security control
+rather than ordinary data: a recovery disable silently cleared, and a fence reporting success while
+matching zero rows. The more dangerous instances were the later-found ones, not the earlier ones, so
+this is not a case of review quality improving as the release settled.
+
+**Why the existing gates could not have caught it.** `bun run check:patterns` has eight checks —
+bare/empty catch, `fetch()` without `AbortSignal.timeout`, missing `bodyLimit`, unbounded in-memory
+structures, sync file I/O in handlers, path operations on external input, external headers and
+identifiers, and the legacy request principal resolver. **None of them covers atomicity.** So the
+mechanical sweep that `CLAUDE.md` names as review pass 1 cannot see a violation of the rule
+`CLAUDE.md` states first under Mandatory Code Patterns. The only enforcement is a reviewer noticing,
+and across this release reviewers did not notice five times.
+
+Nor can the test suites close it: an unchecked `.execute()` is invisible to any test that asserts end
+state, because the failure mode is the absence of an effect. Catching it needs assertions on
+affected-row counts under interleaved writers.
+
+**The gap is enforcement, not documentation.** Restating the rule would change nothing. The
+candidates are a scanner check for `.execute()` whose result is discarded on an `updateTable`/
+`deleteFrom` chain, and one for an `UPDATE` whose `WHERE` carries no predicate from a value read
+earlier in the same function. Both are heuristics and both would be noisy; that is still a different
+category of cost from five missed instances, two of them security controls, in one release. Filing
+and scoping that check is outside spec 124 and is recorded here so it is not lost with this release.
+
 ## Cutover and rollback runbook to execute after integration
 
 1. Pin the reviewed full-stack source SHA, direct protocol, key IDs, runtime versions and approved owner/member/outsider fixtures. Capture DB and owner-data backups, their storage reference, retention and restore test. Inventory organization and person-to-person rows separately and disposition any latter explicitly.
