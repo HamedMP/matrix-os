@@ -64,6 +64,8 @@ export function registerTerminalWebSocketRoutes(options: TerminalWebSocketRouteO
       const cols = /^\d+$/.test(colsRaw) ? Number(colsRaw) : Number.NaN;
       const rows = /^\d+$/.test(rowsRaw) ? Number(rowsRaw) : Number.NaN;
       const binaryInputRequested = parseTerminalInputCapabilityRequest(c.req.query("inputCapability"));
+      const scrollCapabilityResult = z.literal("native-scroll-v1").optional().safeParse(c.req.query("scrollCapability"));
+      const nativeScrollRequested = scrollCapabilityResult.success && scrollCapabilityResult.data !== undefined;
       const validNumbers = Number.isSafeInteger(fromSeq) && fromSeq >= 0
         && Number.isSafeInteger(cols) && cols >= 20 && cols <= 500
         && Number.isSafeInteger(rows) && rows >= 5 && rows <= 200;
@@ -100,7 +102,7 @@ export function registerTerminalWebSocketRoutes(options: TerminalWebSocketRouteO
               }
             },
           });
-          if (!refResult.success || !clientResult.success || !chatResult.success
+          if (!refResult.success || !clientResult.success || !chatResult.success || !scrollCapabilityResult.success
             || !attachmentTokenResult.success || !leaseResult.success || !validNumbers) {
             ws.send(JSON.stringify({ type: "error", code: "invalid_request", message: "Invalid request" }));
             ws.close();
@@ -194,7 +196,7 @@ export function registerTerminalWebSocketRoutes(options: TerminalWebSocketRouteO
                 onFrame: (frame) => {
                   if (closed) return;
                   try {
-                    const capableFrame = terminalFrameForInputCapabilities(frame, binaryInputRequested);
+                    const capableFrame = terminalFrameForInputCapabilities(frame, binaryInputRequested, nativeScrollRequested);
                     if (capableFrame.type === "attached" && ownershipKey) {
                       const role = terminalLiveOwnership.role(ownershipKey, ownershipViewerId);
                       const leaseEpoch = terminalLiveOwnership.leaseEpoch(ownershipKey, ownershipViewerId);

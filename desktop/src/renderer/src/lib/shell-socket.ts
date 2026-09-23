@@ -323,7 +323,7 @@ export class ShellSocket {
     const size = this.lastKnownDims;
     const sizingSuffix = size ? `&cols=${size.cols}&rows=${size.rows}` : "";
     const leaseSuffix = `&lease=${this.requestedOwnership}`;
-    return `${base}/ws/terminal/tab?workspaceId=${encodeURIComponent(this.terminalRef.workspaceId)}&tabId=${encodeURIComponent(this.terminalRef.tabId)}&client=electron&fromSeq=${fromSeq}${chatSuffix}${runtimeSuffix}${sizingSuffix}${leaseSuffix}&inputCapability=binary-input-v1`;
+    return `${base}/ws/terminal/tab?workspaceId=${encodeURIComponent(this.terminalRef.workspaceId)}&tabId=${encodeURIComponent(this.terminalRef.tabId)}&client=electron&fromSeq=${fromSeq}${chatSuffix}${runtimeSuffix}${sizingSuffix}${leaseSuffix}&inputCapability=binary-input-v1&scrollCapability=native-scroll-v1`;
   }
 
   private scheduleReconnect(): void {
