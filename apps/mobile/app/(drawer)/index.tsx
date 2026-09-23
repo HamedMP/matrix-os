@@ -3,7 +3,6 @@ import { ChatToolActivity } from "@/components/ChatToolActivity";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   FlatList,
-  Image as NativeImage,
   InteractionManager,
   KeyboardAvoidingView,
   Platform,
@@ -17,7 +16,6 @@ import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth, useUser } from "@clerk/clerk-expo";
 import { Image } from "expo-image";
-import { useRouter } from "expo-router";
 import Add01Icon from "@hugeicons/core-free-icons/Add01Icon";
 import ArrowDown01Icon from "@hugeicons/core-free-icons/ArrowDown01Icon";
 import ArrowUp01Icon from "@hugeicons/core-free-icons/ArrowUp01Icon";
@@ -43,12 +41,11 @@ import { CanonicalInputMessage } from "@/components/CanonicalInputMessage";
 import { CanonicalApprovalMessage } from "@/components/CanonicalApprovalMessage";
 import { ChatContextMenu } from "@/components/ChatContextMenu";
 import { HOSTED_GATEWAY_URL } from "@/lib/storage";
-import { buildGatewayRequestUrl } from "@/lib/requests/http";
 
 const rabbitArtwork = require("../../assets/app.icon/Assets/rabbit.svg");
 
 export default function ChatScreen() {
-  const { getToken, isSignedIn } = useAuth();
+  const { isSignedIn } = useAuth();
   const { user } = useUser();
   const { theme } = useUnistyles();
   const {
@@ -193,15 +190,11 @@ export default function ChatScreen() {
             key={`${activeChatId}:${item.approval.runId}:${item.approval.approvalId}`}
             approval={item.approval} chatId={activeChatId}
             gatewayUrl={`${HOSTED_GATEWAY_URL}${computer.gatewayPath}`} onSettled={refresh}
-          /> : <MessageBubble
-            message={item}
-            gatewayUrl={computer ? `${HOSTED_GATEWAY_URL}${computer.gatewayPath}` : undefined}
-            getToken={getToken}
-          />}
+          /> : <MessageBubble message={item} />}
         </AnalyticsMask>
       </Pressable>
     </ChatContextMenu>
-  ), [activeChatId, computer, detail?.record.chat.id, getToken, refresh]);
+  ), [activeChatId, computer, detail?.record.chat.id, refresh]);
 
   const keyExtractor = useCallback((item: TranscriptMessage) => item.id, []);
 
@@ -320,11 +313,7 @@ export default function ChatScreen() {
   );
 }
 
-function MessageBubble({ message, gatewayUrl, getToken }: {
-  message: TranscriptMessage;
-  gatewayUrl?: string;
-  getToken: () => Promise<string | null>;
-}) {
+function MessageBubble({ message }: { message: TranscriptMessage }) {
   if (message.role === "user") {
     return (
       <View style={styles.userBubble}>
@@ -346,62 +335,10 @@ function MessageBubble({ message, gatewayUrl, getToken }: {
       </View>
     );
   }
-  return <AssistantMessage message={message} gatewayUrl={gatewayUrl} getToken={getToken} />;
+  return <AssistantMessage message={message} />;
 }
 
-function NativeChatAttachment({ attachment, gatewayUrl, getToken }: {
-  attachment: TranscriptMessage["attachments"][number];
-  gatewayUrl?: string;
-  getToken: () => Promise<string | null>;
-}) {
-  const router = useRouter();
-  const [authorization, setAuthorization] = useState<string | null>(null);
-  const [imageFailed, setImageFailed] = useState(false);
-  useEffect(() => {
-    let active = true;
-    setAuthorization(null);
-    setImageFailed(false);
-    if (attachment.kind !== "image" || !gatewayUrl) return () => { active = false; };
-    void getToken().then((token) => {
-      if (active && token) setAuthorization(`Bearer ${token}`);
-    }).catch(() => { if (active) setImageFailed(true); });
-    return () => { active = false; };
-  }, [attachment.kind, attachment.path, gatewayUrl, getToken]);
-  const previewUrl = gatewayUrl ? buildGatewayRequestUrl(gatewayUrl, "/api/file-previews/content", {
-    kind: "home",
-    path: attachment.path,
-  }) : null;
-  const open = () => router.push({
-    pathname: "/file-browser/file",
-    params: { name: attachment.label, path: attachment.path },
-  } as never);
-  return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={`Preview ${attachment.label}`}
-      onPress={open}
-      style={({ pressed }) => [styles.attachmentCard, pressed && styles.pressed]}
-    >
-      {attachment.kind === "image" && previewUrl && authorization && !imageFailed ? (
-        <NativeImage
-          accessibilityLabel={attachment.label}
-          source={{ uri: previewUrl, headers: { Authorization: authorization } }}
-          resizeMode="cover"
-          onError={() => setImageFailed(true)}
-          style={styles.attachmentImage}
-        />
-      ) : null}
-      <Text style={styles.attachmentLabel}>{attachment.label}</Text>
-      <Text style={styles.attachmentAction}>Open in File Preview</Text>
-    </Pressable>
-  );
-}
-
-function AssistantMessage({ message, gatewayUrl, getToken }: {
-  message: TranscriptMessage;
-  gatewayUrl?: string;
-  getToken: () => Promise<string | null>;
-}) {
+function AssistantMessage({ message }: { message: TranscriptMessage }) {
   // Auto-expanded while the turn is running (so reasoning/tool activity is
   // visible live, matching desktop), until the user manually toggles it.
   const [manualExpanded, setManualExpanded] = useState<boolean | null>(null);
@@ -454,18 +391,6 @@ function AssistantMessage({ message, gatewayUrl, getToken }: {
         </View>
       ) : null}
       {workedLabel ? <View style={styles.divider} /> : null}
-      {message.attachments.length ? (
-        <View style={styles.attachments}>
-          {message.attachments.map((attachment) => (
-            <NativeChatAttachment
-              key={attachment.id}
-              attachment={attachment}
-              gatewayUrl={gatewayUrl}
-              getToken={getToken}
-            />
-          ))}
-        </View>
-      ) : null}
       <View style={styles.matrixTextBlock}>{markdownNodes}</View>
     </View>
   );
@@ -554,35 +479,6 @@ const styles = StyleSheet.create((theme) => ({
   },
   matrixTextBlock: {
     gap: 2,
-  },
-  attachments: {
-    gap: 8,
-    marginBottom: 8,
-  },
-  attachmentCard: {
-    overflow: "hidden",
-    borderWidth: 1,
-    borderColor: theme.v2.appColors.line,
-    borderRadius: 12,
-    backgroundColor: theme.v2.appColors.surface,
-    padding: 10,
-    gap: 4,
-  },
-  attachmentImage: {
-    width: "100%",
-    height: 220,
-    borderRadius: 8,
-    marginBottom: 6,
-  },
-  attachmentLabel: {
-    fontFamily: theme.v2.fonts.medium,
-    fontSize: 14,
-    color: theme.v2.appColors.ink,
-  },
-  attachmentAction: {
-    fontFamily: theme.v2.fonts.body,
-    fontSize: 12,
-    color: theme.v2.appColors.blue,
   },
   toolRow: {
     alignSelf: "flex-start",
