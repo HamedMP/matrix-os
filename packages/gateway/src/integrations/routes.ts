@@ -246,6 +246,7 @@ export interface IntegrationRoutesOpts {
       last_used_at: Date | string | null;
     }>>;
     listAvailableActions?(userId: string, serviceId: string): Promise<readonly string[] | null>;
+    listAvailableActionParams?(userId: string, serviceId: string): Promise<Record<string, readonly string[]> | null>;
     connect(userId: string, service: ServiceDefinition): Promise<{ url: string }>;
     call(input: {
       userId: string;
@@ -458,6 +459,19 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
               actions = Object.fromEntries(
                 Object.entries(s.actions).filter(([actionId]) => availableActions.includes(actionId)),
               );
+              if (actions.list_notes && mcpPresetBroker.listAvailableActionParams) {
+                const supported = await mcpPresetBroker.listAvailableActionParams(uid, s.id);
+                const names = supported?.list_notes ?? [];
+                actions = {
+                  ...actions,
+                  list_notes: {
+                    ...actions.list_notes,
+                    params: Object.fromEntries(
+                      Object.entries(actions.list_notes.params).filter(([name]) => names.includes(name)),
+                    ),
+                  },
+                };
+              }
             }
           } catch (err: unknown) {
             console.warn(
@@ -775,6 +789,17 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
         });
         return c.json({ data, service, action });
       } catch (err) {
+        if (err && typeof err === "object" && "code" in err
+          && err.code === "unsupported_granola_parameter"
+          && "parameter" in err
+          && ["folderId", "timeRange", "limit"].includes(String(err.parameter))) {
+          const parameter = String(err.parameter);
+          return c.json({
+            error: `Parameter ${parameter} is not supported by this connection`,
+            code: "unsupported_parameter",
+            parameter,
+          }, 400);
+        }
         console.error("[integrations] MCP preset call failed:", err instanceof Error ? err.message : String(err));
         return c.json({ error: "Integration call failed" }, 502);
       }

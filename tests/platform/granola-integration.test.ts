@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   GRANOLA_PRESET,
   availableGranolaActions,
+  supportedGranolaListParams,
+  UnsupportedGranolaParameterError,
   planGranolaAction,
 } from "../../packages/platform/src/granola-integration.js";
 
@@ -137,5 +139,15 @@ describe("Granola managed integration", () => {
     expect(() => planGranolaAction("search_notes", { query: "x".repeat(4_001) }, tools)).toThrow(
       "Granola query is invalid",
     );
+  });
+
+  it("rejects a requested limit when the discovered tool cannot honor it", () => {
+    const liveTools = tools.map((tool) => tool.name === "list_meetings"
+      ? { ...tool, inputSchema: { type: "object", properties: {} } }
+      : tool);
+    expect(supportedGranolaListParams(liveTools)).toEqual([]);
+    expect(planGranolaAction("list_notes", {}, liveTools).calls[0].arguments).toEqual({});
+    expect(() => planGranolaAction("list_notes", { limit: 1 }, liveTools))
+      .toThrow(UnsupportedGranolaParameterError);
   });
 });
