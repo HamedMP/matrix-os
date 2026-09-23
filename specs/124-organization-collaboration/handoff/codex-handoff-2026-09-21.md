@@ -2152,3 +2152,182 @@ recorded rather than assumed, so it is recorded for a reviewer to accept or reje
 cleared on #1805. Triage first: **the file is not in the layer's diff**, and it was the only failure on the
 run. Only then re-run, which passed. Re-running before checking is how a genuine intermittent defect gets
 retried until it looks like a flake.
+
+## 72. Three wrong oldbases, each caught only by counting — 2026-09-23 10:40 UTC
+
+**The cardinal rule: `git rebase --onto <new-parent> <oldbase> <branch>` takes the branch's CURRENT PARENT as
+`<oldbase>`.** Nothing else. Three different wrong values for it have now appeared in this release, and every
+one was caught by comparing `git rev-list --count <branch> ^<parent>` before and after the restack — not by an
+error, a conflict or a failing test. All three fail silently.
+
+1. **`git merge-base` against `main`.** On `124/s19-acceptance` this sweeps **157** commits where the correct
+   oldbase `801883466` sweeps **15**. `merge-base` answers *where did these two histories diverge*, which on a
+   stack that has been restacked repeatedly sits far below the branch's own parent.
+2. **The branch's own tip.** Replays **zero** commits and silently resets the branch onto its parent. This
+   destroyed `124/s15-direct` and `124/s15` earlier in the release and needed reflog recovery. The tell is
+   three branches sharing one hash, which is never a real outcome of a restack.
+3. **The merged layer's *post-rebase* head.** After #1848 was rebased onto new `main` and squash-merged, its
+   new head `89d24d710` looks like the natural parent for `124/s15-direct`. Using it gave **40** commits; the
+   true oldbase was the *pre-rebase* `329ddc6a0`, giving **10**. `89d24d710` was never an ancestor of the
+   branch at all — a squash merge mints a commit the child has never seen.
+
+Verified oldbases for this release, with the commit count each branch must still have afterwards:
+
+| branch | oldbase | own commits |
+| --- | --- | --- |
+| `124/s15-direct` | `329ddc6a0` | 10 |
+| `124/s15` | `e2be7f903` | 14 |
+| `s18-consolidated/u1` | `bac7b7fd0` | 21 |
+| `s18-consolidated/u2` | `da6cdb592` | 18 |
+| `s18-consolidated/u3a` | `f4599ff22` | 19 |
+| `s18-consolidated/u3` | `3e01b3c51` | 14 |
+| `s18-consolidated/u4` | `592f7f8c8` | 28 |
+| `s18-consolidated/u5a` | `5e7ae15a9` | 1 |
+| `s18-consolidated/u5b` | `efb855c0f` | 1 |
+| `124/s19-acceptance` | `801883466` | 15 |
+
+**The check is the count, taken twice.** A restack that changes it has taken the wrong oldbase, whichever of
+the three ways it got there, and the only signal you will get is the number.
+
+## 73. Two distinct mechanisms make CI look like it never ran — 2026-09-23 10:40 UTC
+
+From outside they are indistinguishable, and neither looks like a failure: there is **no run at all** — not a
+red one, not a skipped one, nothing to click. This cost hours because the first explanation fits both.
+
+**Structural.** `ci.yml`'s `pull_request: branches: [main, "stack/**", "codex/**"]` filter matches the PR's
+**base**, and is evaluated *before* `types`. A PR based on `s18-consolidated/*` can never receive a
+`pull_request` event. `workflow_dispatch` carries no branch filter, so dispatching the run is the **standing
+answer for stacked PRs**, not a workaround for something broken.
+
+**Conflict.** For `pull_request` events GitHub runs against the merge ref `refs/pull/N/merge`. When a PR is
+`CONFLICTING` that merge commit cannot be created, so **no run is created at all**. #1848 hit this after three
+PRs landed on `main` and rewrote the same part of `packages/gateway/src/server.ts`. The discriminator:
+`pull_request_target` uses the base ref and needs no merge commit, so those workflows kept firing while every
+`pull_request` workflow produced nothing. **One family running while the other is silent means conflicting,
+not misconfigured.**
+
+**The consequence that outlives both causes.** A dispatched run on a conflicting PR, and any dispatched run on
+a stacked PR, tests **the branch head alone, not its merge with `main`**. Green there says nothing about
+merging. That is the same shape as a bare `PASS` row in the acceptance matrix (section 78) and as the
+64-second green run in section 67: a real run that measured something other than the thing being claimed. It
+belongs beside #1838 — a PR that can merge on a cancelled run, and a PR that can be green on a head nobody
+will ship, are one gap seen from two sides.
+
+## 74. Greptile edits its summary, so `created_at` lies — 2026-09-23 10:40 UTC
+
+Greptile **edits its existing summary comment** rather than posting a new one. `created_at` stays pinned to
+the first post while `updated_at` moves. Reading `created_at` — which is exactly what
+`gh pr view --json comments | last | .createdAt` hands you — makes a current 5/5 look like a stale review from
+the previous day. This produced a real misread in both directions today.
+
+**Read `updated_at`, and cross-check the "Greptile Review" check status.** Combined with section 67's third
+status trap, resolving Greptile's actual state takes both steps: select the last comment matching
+`Confidence Score` (the newest comment is often a scoreless out-of-diff note), then read that comment's
+`updated_at`, never its `created_at`.
+
+## 75. GitHub does not auto-retarget stacked children — 2026-09-23 10:40 UTC
+
+When #1848 merged, #1849's base stayed `124/s15-directory` and the PR went `dirty`. It had to be retargeted by
+hand: `gh pr edit 1849 --base main`.
+
+GitHub auto-retargets children **only when the base branch is deleted** — and the stacked-merge safety rule
+forbids deleting a base branch while any descendant PR is open (Hard Rules; the 2026-07-13 cascade). The two
+rules do not conflict. They mean **retargeting is a manual step you own**, and it is the step most easily
+skipped because the PR looks merged-adjacent already.
+
+The per-layer cycle this fixes into place:
+
+1. restack with the verified oldbase (section 72),
+2. push,
+3. **retarget to `main`** (`gh pr edit <n> --base main`),
+4. apply the label,
+5. dispatch CI (section 73),
+6. request Greptile and read `updated_at` (section 74),
+7. merge.
+
+## 76. Two live layers were closed by mistake, and recovered — 2026-09-23 10:40 UTC
+
+#1849 and #1850 were closed at 01:12Z on 2026-09-23. One minute later a comment was posted **on #1849** citing
+head `329ddc6a0` — which is **#1848's** head, not #1849's. Someone acted on the wrong PR and closed two live
+layers doing it.
+
+`git` was the arbiter, not GitHub: `124/s15-direct` and `124/s15` still carried **9** and **14** commits
+present in no other PR. Both were reopened — possible only because their base branches had never been deleted
+— and came back at **+1454 / 37 files** and **+1068 / 27 files**.
+
+Unnoticed, this ends one of two ways: 23 commits stranded on branches no PR tracks, or #1851 retargeted onto
+`main` to unblock the stack, swelling it past the 3000-addition limit and pulling both layers in unreviewed.
+
+**Cross-reference:** a closed PR whose base branch was **deleted** cannot be reopened *or* retargeted — GitHub
+rejects both, which is what made the 2026-07-13 cascade unrecoverable. Recovery was cheap here only because
+the rule about not deleting base branches under open descendants had been followed. The cheap guard before
+acting on any PR: `gh pr view <n> --json headRefOid` and compare it with the hash you are about to cite.
+
+## 77. Four real defects, none of them on anyone's list — 2026-09-23 10:40 UTC
+
+Found by agents doing an audit nobody asked for. Each is recorded with its mechanism, because each is a
+repeatable class rather than a one-off.
+
+### `SELECT ... FOR UPDATE` locks nothing while the row is still absent
+
+`applyDirectoryEvent` lost a metadata-revision race. The pre-read guard took a row lock — but a lock on a row
+that does not exist yet excludes nothing, so two concurrent *first* writers both passed the guard, and the
+loser's unconditional `ON CONFLICT ... DO UPDATE` replayed stale metadata over the winner's. Fixed by moving
+the revision test into the write statement, `WHERE metadata_revision < :revision` plus `RETURNING`, so the
+database decides rather than the reader. **Failed 2 of 3 runs before, 5 of 5 after.** This is the **third**
+instance of pre-read-plus-unconditional-write in this release.
+
+### A test that fails by calendar
+
+`collaboration-direct-owner-routes.test.ts` pinned `now` to `2026-09-21T15:00Z` and wrote `expires_at` 24
+hours later, but built its repository on the **real** clock. Every accept returned 410 once wall-clock passed
+`2026-09-22T15:00Z`. It was green when written and went red on a machine nobody had touched. Fixed by passing
+the pinned clock into the repository. **Pushing `expires_at` out would only move the bomb** — a test with one
+foot on the real clock fails eventually whatever the offset is.
+
+### A fix that relocated a failure instead of removing it
+
+Raising the shared-terminal snapshot frame limit to 5 MiB did not stop viewers disconnecting: snapshot and
+live output still shared one `pendingBytes` counter, so the failure simply moved from attach time to the first
+output frame. Fixed with separate `pendingSnapshotBytes` / `pendingOutputBytes` budgets. **The tell is a
+symptom that changes timing rather than disappearing** — that is a relocated failure, not a fixed one.
+
+### Every streamed upload logged as zero bytes
+
+The relay's inline accounting always took the `: 0` branch, because the route **always** passes a
+`ReadableStream`. And a capped request logged the client-declared `content-length` rather than the bytes
+actually sent. This is the byte/egress accounting feed: it reported zero for the streaming path and an
+attacker-supplied number for the capped one.
+
+## 78. The acceptance matrix overstated seven rows — 2026-09-23 10:40 UTC
+
+Rows **1, 4, 9, 10, 11, 12 and 17** carried a bare `PASS` with **no recorded live gap**, when they had only
+ever run in-process. That is identical in kind to six other rows whose gaps *were* recorded — same evidence,
+different label. The giveaway was internal to the document: a section headed *"Three rows passed their
+automated part"* then listed six.
+
+Corrected classification of the 26 quickstart journeys:
+
+| class | count | rows |
+| --- | --- | --- |
+| LIVE | **0** | — |
+| AUTOMATED-ONLY | 13 | includes the seven corrected rows |
+| BLOCKED | 3 | rows 13, 19, 23 |
+| NEVER RUN | 10 | — |
+
+**Zero of 26 quickstart journeys are verified live**, not thirteen. Nothing regressed to produce that number;
+the label was wrong.
+
+Two further corrections to the same document:
+
+- S15 has **four** unevidenced sharing surfaces — `ReadinessSummary`, `ProjectSourceSummary`,
+  `AudienceGrantPicker`, `ResourceSharingButton` — not three.
+- **Row 16 is an unmet release gate, not a deferral.** The deferrals are S11, S13, S14, S16, S17, T063 and
+  T077, each by explicit decision. An unmet gate and a decided deferral must never read the same: one is a
+  thing someone chose, the other is a thing nobody did.
+
+### The standing rule this produced
+
+An `N/A` in a PR surface matrix must carry an explicit sentence stating that it covers **that PR's diff only**
+and is **not** a parity claim for the release. Without that sentence the same overstatement reappears one
+document over: a reader aggregating per-PR matrices arrives at a release-wide `N/A` nobody ever wrote.
