@@ -86,4 +86,25 @@ describe("user message Markdown", () => {
     expect(screen.getByText("the file")).toBeTruthy();
     expect(container.querySelector('[data-slot="bubble"]')?.textContent).toContain("next");
   });
+
+  it("preserves Markdown formatting that surrounds a reference chip", () => {
+    const markdown = "**open [the file](resource-id)** next";
+    const { container } = show([
+      { kind: "text", text: "**open " },
+      { kind: "reference", referenceKind: "resource", id: "resource-id", label: "the file" },
+      { kind: "text", text: "** next" },
+    ], markdown);
+    expect(container.querySelector("strong")?.textContent).toBe("open the file");
+    expect(screen.getByText("the file").closest("strong")).toBeTruthy();
+  });
+
+  it("keeps controls in a collapsed long message out of keyboard navigation", () => {
+    const markdown = `${"Introduction. ".repeat(65)} [hidden link](https://example.com)`;
+    const { container } = show([{ kind: "text", text: markdown }], markdown);
+    expect(container.querySelector('[data-message-preview-content]')?.hasAttribute("inert")).toBe(true);
+    expect(screen.getByText(/Message preview:/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Show full message" }));
+    expect(container.querySelector('[data-message-preview-content]')?.hasAttribute("inert")).toBe(false);
+    expect(screen.getByRole("link", { name: "hidden link" })).toBeTruthy();
+  });
 });

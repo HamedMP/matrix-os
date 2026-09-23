@@ -642,6 +642,7 @@ export function CanonicalChatWorkspace({
       <SharedChatComposer
         value={draft}
         onChange={setDraft}
+        draftScopeKey={routedComposerChatId ?? `new:${projectId ?? "global"}`}
         referenceTokens={referenceTokens}
         onReferenceTokensChange={setReferenceTokens}
         onSubmit={(submission) => void (

@@ -151,6 +151,7 @@ function SuggestionMenu({
 export function SharedChatComposer({
   value,
   onChange,
+  draftScopeKey,
   referenceTokens = [],
   onReferenceTokensChange,
   onSubmit,
@@ -184,6 +185,7 @@ export function SharedChatComposer({
 }: {
   value: string;
   onChange: (value: string) => void;
+  draftScopeKey?: string;
   referenceTokens?: ComposerReferenceToken[];
   onReferenceTokensChange?: (tokens: ComposerReferenceToken[]) => void;
   onSubmit: (submission: SharedChatComposerSubmission) => void;
@@ -224,7 +226,8 @@ export function SharedChatComposer({
   const editorRef = useRef<ComposerPromptEditorHandle>(null);
   const [cursor, setCursor] = useState(value.length);
   const [speechActive, setSpeechActive] = useState(false);
-  const [markdownPreview, setMarkdownPreview] = useState(false);
+  const [previewState, setPreviewState] = useState({ scopeKey: draftScopeKey, active: false });
+  const markdownPreview = previewState.scopeKey === draftScopeKey && previewState.active;
   const restoreEditorFocus = useRef(false);
   const lastEditorValueRef = useRef(value);
   const lastObservedValueRef = useRef(value);
@@ -441,7 +444,7 @@ export function SharedChatComposer({
           if (!speechActive) {
             const submission = currentSubmission();
             if (markdownPreview) restoreEditorFocus.current = true;
-            setMarkdownPreview(false);
+            setPreviewState({ scopeKey: draftScopeKey, active: false });
             onSubmit(submission);
           }
         }}
@@ -512,7 +515,7 @@ export function SharedChatComposer({
               style={{ color: "var(--text-secondary)" }}
               onClick={() => {
                 if (markdownPreview) restoreEditorFocus.current = true;
-                setMarkdownPreview((current) => !current);
+                setPreviewState({ scopeKey: draftScopeKey, active: !markdownPreview });
               }}
             >
               {markdownPreview ? "Edit" : "Preview"}

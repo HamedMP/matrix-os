@@ -175,6 +175,8 @@ function Harness({
   onAttach = vi.fn(),
   onProviderSetup = vi.fn(),
   initialValue = "",
+  controlledValue,
+  draftScopeKey,
   initialReferenceTokens = [],
   onNewChat,
   disabled = false,
@@ -186,6 +188,8 @@ function Harness({
   onAttach?: (() => void) | null;
   onProviderSetup?: (instanceId: string, actionId: string) => void;
   initialValue?: string;
+  controlledValue?: string;
+  draftScopeKey?: string;
   initialReferenceTokens?: ComposerReferenceToken[];
   onNewChat?: () => void;
   disabled?: boolean;
@@ -198,8 +202,9 @@ function Harness({
   const [referenceTokens, setReferenceTokens] = useState<ComposerReferenceToken[]>(initialReferenceTokens);
   return (
     <SharedChatComposer
-      value={value}
+      value={controlledValue ?? value}
       onChange={setValue}
+      draftScopeKey={draftScopeKey}
       referenceTokens={referenceTokens}
       onReferenceTokensChange={setReferenceTokens}
       onSubmit={onSubmit}
@@ -238,6 +243,17 @@ describe("SharedChatComposer", () => {
     expect(onSubmit.mock.calls[0]?.[0].text).toBe(markdown);
     await waitFor(() => expect(screen.getByLabelText("Message chat").textContent).toBe(markdown));
     expect(screen.getByRole("button", { name: "Preview Markdown" })).toBeTruthy();
+  });
+
+  it("returns to Edit when the selected chat draft changes", async () => {
+    const { rerender } = render(<Harness controlledValue="**First chat**" draftScopeKey="chat-1" />);
+    fireEvent.click(screen.getByRole("button", { name: "Preview Markdown" }));
+    expect(screen.getByRole("region", { name: "Markdown preview" })).toBeTruthy();
+
+    rerender(<Harness controlledValue="**Second chat**" draftScopeKey="chat-2" />);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Preview Markdown" })).toBeTruthy());
+    expect(screen.queryByRole("region", { name: "Markdown preview" })).toBeNull();
+    expect(screen.getByLabelText("Message chat").textContent).toBe("**Second chat**");
   });
 
   it("renders the selected model and capability-backed controls in the Figma composer", () => {

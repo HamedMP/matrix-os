@@ -290,24 +290,28 @@ export function MessageResponse({
   copyText,
   openFile,
   openWebLink,
+  renderReferenceLink,
   className,
 }: {
   children: string;
   copyText: ConversationPresentationCallbacks["copyText"];
   openFile?: ConversationPresentationCallbacks["openFile"];
   openWebLink?: ConversationPresentationCallbacks["openWebLink"];
+  renderReferenceLink?: (href: string) => React.ReactNode | undefined;
   className?: string;
 }) {
-  const callbacks = React.useRef({ copyText, openFile, openWebLink });
+  const callbacks = React.useRef({ copyText, openFile, openWebLink, renderReferenceLink });
   React.useLayoutEffect(() => {
-    callbacks.current = { copyText, openFile, openWebLink };
-  }, [copyText, openFile, openWebLink]);
+    callbacks.current = { copyText, openFile, openWebLink, renderReferenceLink };
+  }, [copyText, openFile, openWebLink, renderReferenceLink]);
   const copy = React.useCallback((text: string) => callbacks.current.copyText(text), []);
   const hasFileNavigation = Boolean(openFile);
   const hasWebNavigation = Boolean(openWebLink);
   // Keep Markdown element types stable across focus and controller updates.
   const markdownComponents = React.useMemo(() => ({
     a: ({ node: _node, href, ...props }: React.ComponentProps<"a"> & { node?: unknown }) => {
+      const reference = typeof href === "string" ? callbacks.current.renderReferenceLink?.(href) : undefined;
+      if (reference !== undefined) return reference;
       const target = typeof href === "string" ? resolveChatMessageLink(href) : null;
       const external = target?.kind === "web";
       const editorPath = target?.kind === "file" ? target.path : null;
