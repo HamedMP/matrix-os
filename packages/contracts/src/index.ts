@@ -197,6 +197,8 @@ export const TerminalTabSchema = z.object({
   exitCode: z.number().int().nullable().optional(),
   createdAt: IsoTimestampSchema,
   updatedAt: IsoTimestampSchema,
+  /** Stable across restart and different for every new incarnation, even if a tab ID is reused. */
+  incarnation: z.string().regex(/^ti_[a-f0-9]{32}$/).optional(),
 }).strict();
 
 export type TerminalTab = z.infer<typeof TerminalTabSchema>;
