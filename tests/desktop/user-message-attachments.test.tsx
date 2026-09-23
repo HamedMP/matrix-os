@@ -52,3 +52,38 @@ describe("attachment-only user messages", () => {
     expect(screen.getAllByText("notes.txt")).toHaveLength(1);
   });
 });
+
+describe("user message Markdown", () => {
+  it("renders formatting and links inside the user bubble", () => {
+    const markdown = "**Important**: read [the guide](https://example.com/guide) and `run test`.";
+    const { container } = show([{ kind: "text", text: markdown }], markdown);
+    const bubble = container.querySelector('[data-slot="bubble"]')!;
+    expect(bubble.querySelector("strong")?.textContent).toBe("Important");
+    expect(bubble.querySelector("code")?.textContent).toBe("run test");
+    expect(screen.getByRole("link", { name: "the guide" }).getAttribute("href"))
+      .toBe("https://example.com/guide");
+    expect(bubble.textContent).not.toContain("**Important**");
+  });
+
+  it("keeps complete Markdown markup when a long message expands", () => {
+    const markdown = `${"An introduction. ".repeat(50)}\n\n**Final point**`;
+    const { container } = show([{ kind: "text", text: markdown }], markdown);
+    expect(screen.getByRole("button", { name: "Show full message" })).toBeTruthy();
+    expect(container.querySelector("strong")?.textContent).toBe("Final point");
+    fireEvent.click(screen.getByRole("button", { name: "Show full message" }));
+    expect(container.querySelector("strong")?.textContent).toBe("Final point");
+    expect(screen.getByRole("button", { name: "Show less" })).toBeTruthy();
+  });
+
+  it("keeps reference chips between formatted text segments", () => {
+    const markdown = "**Review** [the file](resource-id) next";
+    const { container } = show([
+      { kind: "text", text: "**Review** " },
+      { kind: "reference", referenceKind: "resource", id: "resource-id", label: "the file" },
+      { kind: "text", text: " next" },
+    ], markdown);
+    expect(container.querySelector("strong")?.textContent).toBe("Review");
+    expect(screen.getByText("the file")).toBeTruthy();
+    expect(container.querySelector('[data-slot="bubble"]')?.textContent).toContain("next");
+  });
+});

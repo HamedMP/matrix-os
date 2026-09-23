@@ -10,6 +10,7 @@ import { Box, ChevronDown, Paperclip, SlidersHorizontalIcon, SquareTerminal } fr
 import { useEffect, useMemo, useRef, useState, type ReactNode, type Ref } from "react";
 import { PromptInput } from "./elements/prompt-input";
 import { ComposerPromptEditor, type ComposerPromptEditorHandle } from "./ComposerPromptEditor";
+import { MessageResponse } from "../../components/conversation/message";
 import { ResourceRows } from "./ComposerResourceRows";
 import {
   listCanonicalSlashEntries,
@@ -223,6 +224,8 @@ export function SharedChatComposer({
   const editorRef = useRef<ComposerPromptEditorHandle>(null);
   const [cursor, setCursor] = useState(value.length);
   const [speechActive, setSpeechActive] = useState(false);
+  const [markdownPreview, setMarkdownPreview] = useState(false);
+  const restoreEditorFocus = useRef(false);
   const lastEditorValueRef = useRef(value);
   const lastObservedValueRef = useRef(value);
   useEffect(() => {
@@ -230,6 +233,11 @@ export function SharedChatComposer({
     if (value !== lastEditorValueRef.current) setCursor(value.length);
     lastObservedValueRef.current = value;
   }, [value]);
+  useEffect(() => {
+    if (markdownPreview || !restoreEditorFocus.current) return;
+    restoreEditorFocus.current = false;
+    editorRef.current?.focus();
+  }, [markdownPreview]);
   const instance = catalog.instances.find((candidate) => candidate.id === selection?.instanceId);
   const valueBeforeCursor = value.slice(0, cursor);
   const slashMatch = valueBeforeCursor.match(/(?:^|\s)(\/[a-z0-9_-]*)$/i);
@@ -430,7 +438,12 @@ export function SharedChatComposer({
         value={value}
         onChange={onChange}
         onSubmit={() => {
-          if (!speechActive) onSubmit(currentSubmission());
+          if (!speechActive) {
+            const submission = currentSubmission();
+            if (markdownPreview) restoreEditorFocus.current = true;
+            setMarkdownPreview(false);
+            onSubmit(submission);
+          }
         }}
         onAbort={onAbort}
         busy={busy}
@@ -443,7 +456,11 @@ export function SharedChatComposer({
         maxLength={maxLength}
         placeholder={placeholder}
         ariaLabel={ariaLabel}
-        editor={(
+        editor={markdownPreview ? (
+          <div role="region" aria-label="Markdown preview" className="max-h-[220px] min-h-9 overflow-y-auto break-words px-4 pb-1 pt-1">
+            <MessageResponse className="pointer-events-none [&_p:first-child]:mt-0 [&_p:last-child]:mb-0" copyText={async () => undefined}>{value}</MessageResponse>
+          </div>
+        ) : (
           <ComposerPromptEditor
             ref={editorRef}
             value={value}
@@ -486,6 +503,20 @@ export function SharedChatComposer({
               </button>
             ) : null}
             {leadingControls}
+            <button
+              type="button"
+              aria-label={markdownPreview ? "Edit Markdown" : "Preview Markdown"}
+              aria-pressed={markdownPreview}
+              disabled={!markdownPreview && value.trim().length === 0}
+              className="h-8 rounded-lg px-2 text-xs font-medium outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:opacity-40"
+              style={{ color: "var(--text-secondary)" }}
+              onClick={() => {
+                if (markdownPreview) restoreEditorFocus.current = true;
+                setMarkdownPreview((current) => !current);
+              }}
+            >
+              {markdownPreview ? "Edit" : "Preview"}
+            </button>
           </>
         )}
         trailingControls={(

@@ -225,6 +225,21 @@ function Harness({
 describe("SharedChatComposer", () => {
   afterEach(cleanup);
 
+  it("previews Markdown without changing the submitted source", async () => {
+    const onSubmit = vi.fn();
+    const markdown = "**Important**: read [the guide](https://example.com/guide).";
+    render(<Harness initialValue={markdown} onSubmit={onSubmit} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Preview Markdown" }));
+    const preview = screen.getByRole("region", { name: "Markdown preview" });
+    expect(preview.querySelector("strong")?.textContent).toBe("Important");
+    expect(preview.querySelector("a")?.textContent).toBe("the guide");
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    expect(onSubmit.mock.calls[0]?.[0].text).toBe(markdown);
+    await waitFor(() => expect(screen.getByLabelText("Message chat").textContent).toBe(markdown));
+    expect(screen.getByRole("button", { name: "Preview Markdown" })).toBeTruthy();
+  });
+
   it("renders the selected model and capability-backed controls in the Figma composer", () => {
     const { container } = render(<Harness />);
 

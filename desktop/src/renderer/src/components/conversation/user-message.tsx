@@ -3,7 +3,7 @@ import { useState } from "react";
 import { ChatAttachments, type ChatMessageAttachment } from "@matrix-os/ui";
 import { ConversationItem } from "./conversation";
 import { Bubble, BubbleContent } from "./bubble";
-import { Message, MessageContent, MessageMetadata } from "./message";
+import { Message, MessageContent, MessageMetadata, MessageResponse } from "./message";
 import type { ConversationMessagePresentation, ConversationPresentationCallbacks } from "./presentation";
 
 export function UserMessage({
@@ -20,15 +20,12 @@ export function UserMessage({
     reference.kind !== "file" || !message.content?.some((segment) =>
       segment.kind !== "text" && segment.id === reference.id
       && (segment.kind === "image" || segment.referenceKind === "file")));
-  const visibleMarkdown = collapsible && !expanded
-    ? `${lines.slice(0, 10).join("\n").slice(0, 700)}…`
-    : message.markdown;
-  const renderStructuredContent = Boolean(message.content?.length) && (!collapsible || expanded);
+  const renderStructuredContent = Boolean(message.content?.length);
   const hasBubbleContent = renderStructuredContent
     ? message.content!.some((segment) => segment.kind === "text"
       ? segment.text.trim().length > 0
       : segment.kind === "reference" && segment.referenceKind !== "file")
-    : visibleMarkdown.trim().length > 0 || references.length > 0;
+    : message.markdown.trim().length > 0 || references.length > 0;
   return (
     <ConversationItem messageId={`user:${message.id}`} scrollAnchor>
       <Message align="end">
@@ -38,23 +35,24 @@ export function UserMessage({
             : segment.kind === "reference" && segment.referenceKind === "file" ? [{ ...segment, kind: "file" as const }] : [])}
             open={callbacks.openAttachment} loadImage={callbacks.loadImage} />
           {hasBubbleContent ? <Bubble variant="secondary" align="end" className="max-w-[min(85%,48rem)]">
-            <BubbleContent className="max-w-full whitespace-pre-wrap [overflow-wrap:anywhere] rounded-2xl px-4 py-3 text-[14px] leading-relaxed"
+            <BubbleContent className="max-w-full [overflow-wrap:anywhere] rounded-2xl px-4 py-3 text-[14px] leading-relaxed"
               style={{ background: "color-mix(in srgb, var(--text-primary) 7%, var(--bg-surface))", borderColor: "color-mix(in srgb, var(--text-primary) 6%, transparent)" }} data-selectable>
-              {renderStructuredContent ? message.content!.map((segment, index) => {
-                if (segment.kind === "text") return <span key={`text:${index}`}>{segment.text}</span>;
-                if (segment.kind === "image" || segment.referenceKind === "file") return null;
-                const Icon = segment.referenceKind === "resource" ? Link2 : Wrench;
-                return (
-                  <span
-                    key={`${segment.referenceKind}:${segment.id}`}
-                    className="my-2 inline-flex max-w-full items-center gap-2 rounded-xl border bg-[var(--bg-surface)] px-3 py-2 text-sm disabled:cursor-default hover:enabled:bg-[var(--bg-hover)]"
-                    style={{ borderColor: "var(--border-default)", color: "var(--text-secondary)" }}
-                  >
-                    <Icon size={12} aria-hidden className="shrink-0" />
-                    <span className="truncate">{segment.label}</span>
-                  </span>
-                );
-              }) : visibleMarkdown}
+              <div className={collapsible && !expanded ? "max-h-[14rem] overflow-hidden" : undefined}>
+                {renderStructuredContent ? message.content!.map((segment, index) => {
+                  if (segment.kind === "text") return <MessageResponse key={`text:${index}`} className="[&_p:first-child]:mt-0 [&_p:last-child]:mb-0" copyText={callbacks.copyText} openFile={callbacks.openFile} openWebLink={callbacks.openWebLink}>{segment.text}</MessageResponse>;
+                  if (segment.kind === "image" || segment.referenceKind === "file") return null;
+                  const Icon = segment.referenceKind === "resource" ? Link2 : Wrench;
+                  return (
+                    <span
+                      key={`${segment.referenceKind}:${segment.id}`}
+                      className="my-2 inline-flex max-w-full items-center gap-2 rounded-xl border bg-[var(--bg-surface)] px-3 py-2 text-sm disabled:cursor-default hover:enabled:bg-[var(--bg-hover)]"
+                      style={{ borderColor: "var(--border-default)", color: "var(--text-secondary)" }}
+                    >
+                      <Icon size={12} aria-hidden className="shrink-0" />
+                      <span className="truncate">{segment.label}</span>
+                    </span>
+                  );
+                }) : <MessageResponse className="[&_p:first-child]:mt-0 [&_p:last-child]:mb-0" copyText={callbacks.copyText} openFile={callbacks.openFile} openWebLink={callbacks.openWebLink}>{message.markdown}</MessageResponse>}
               {!renderStructuredContent && references.length > 0 ? (
                 <span className="mt-2 flex flex-wrap justify-end gap-1.5">
                   {references.map((reference) => {
@@ -72,6 +70,7 @@ export function UserMessage({
                   })}
                 </span>
               ) : null}
+              </div>
               {collapsible ? (
                 <button
                   type="button"
