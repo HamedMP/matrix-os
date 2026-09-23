@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdtemp, mkdir, readdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -46,6 +46,18 @@ describe("owner resource driver boundary", () => {
     const incarnation = await driver.fingerprint(namespace);
     expect(incarnation).toMatch(/^[a-f0-9]{64}$/);
     expect(await driver.fingerprint(namespace)).toBe(incarnation);
+  });
+
+  it("keeps the same identity across a metadata write on a freshly created file", async () => {
+    // A fresh object reports equal birth and change times. Deciding the hashing scheme by comparing
+    // those two made the branch flip on the first metadata write, rehashing the same file and
+    // 404-ing the share with nothing replaced. The scheme must depend only on whether the platform
+    // reports a birth time, which does not change over an object's life.
+    await writeFile(join(project, "fresh.txt"), "contents");
+    const namespace = { ownerId: OWNER, projectId: PROJECT, path: "fresh.txt" };
+    const atCreation = await driver.fingerprint(namespace);
+    await chmod(join(project, "fresh.txt"), 0o600);
+    expect(await driver.fingerprint(namespace)).toBe(atCreation);
   });
 
   it("keeps a shared folder readable when a collaborator adds a file, and still catches a recreated one", async () => {

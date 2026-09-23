@@ -45,7 +45,11 @@ function missing(error: unknown): boolean {
  * mirror ctime — because there inode reuse could otherwise let a recreated path keep its identity.
  */
 function physicalIncarnation(info: BigIntStats): string {
-  const birthtimeUsable = info.birthtimeNs > 0n && info.birthtimeNs !== info.ctimeNs;
+  // Whether the platform reports a birth time at all — not whether it currently differs from
+  // ctime. A freshly created object has them equal, so comparing the two made the branch flip on
+  // the first metadata write and rehash the same object under a different scheme, which is the
+  // very failure this function exists to avoid.
+  const birthtimeUsable = info.birthtimeNs > 0n;
   const identity = birthtimeUsable
     ? `${info.dev}:${info.ino}:${info.birthtimeNs}`
     : `${info.dev}:${info.ino}:${info.birthtimeNs}:${info.ctimeNs}`;
