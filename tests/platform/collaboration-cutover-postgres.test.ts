@@ -9,6 +9,7 @@ import {
 } from "../../packages/platform/src/collaboration/database.js";
 import { inventoryPlatformPersonToPersonRecords } from "../../packages/platform/src/collaboration/person-to-person-inventory.js";
 import { PlatformCollaborationCutover, cutoverTicketAdmission } from "../../packages/platform/src/collaboration/cutover.js";
+import { lockLegacyDirectoryIngestion } from "../../packages/platform/src/collaboration/legacy-ingestion-lock.js";
 import { createGatewayCutoverHomeAdapter } from "../../packages/platform/src/collaboration/cutover-home-adapter.js";
 import { createPlatformCutoverHomeResolver } from "../../packages/platform/src/collaboration/cutover-home-transport.js";
 import { canonicalJson, ed25519PrivateKeyFromSeed, ed25519PublicKeyRaw, verifyEd25519 } from "../../packages/platform/src/collaboration/ticket-crypto.js";
@@ -384,5 +385,92 @@ describe.skipIf(!connectionString)("collaboration cutover on real PostgreSQL (T0
     const disposition = await db.selectFrom("collaboration_cutover_dispositions").selectAll().where("scope_id", "=", legacyScopeId).executeTakeFirstOrThrow();
     expect(disposition).toMatchObject({ action: "terminated", notice_ref: "notice-1", home_receipt: "home-ended-1" });
     expect((await coordinator.resume(scopeId)).phase).toBe("active");
+  });
+
+  it("denies a direct ticket for an organization scope that predates the cutover migration", async () => {
+    // Reproduce a pre-S18 row: it exists before the cutover migration runs, so
+    // the migration is the only thing that can mark it as a legacy scope.
+    await sql`ALTER TABLE collaboration_directory DROP COLUMN IF EXISTS direct_native`.execute(db);
+    const legacyOrganizationScope = randomUUID();
+    await db.insertInto("collaboration_directory").values({
+      scope_id: legacyOrganizationScope, runtime_id: runtimeId, owner_id: "owner-a", kind: "project",
+      organization_id: "org_current", audience: "organization", organization_grant_id: randomUUID(),
+      authority_generation: 1, metadata_revision: 1, last_event_id: randomUUID(), updated_at: new Date(),
+    }).execute();
+    await bootstrapPlatformCollaborationDatabase(db);
+
+    expect(await cutoverTicketAdmission(db, legacyOrganizationScope)).toBe(false);
+    // A scope created after the migration carries no journal and stays admissible.
+    expect(await cutoverTicketAdmission(db, await orgScope())).toBe(true);
+    // An unknown scope is denied rather than admitted by absence.
+    expect(await cutoverTicketAdmission(db, randomUUID())).toBe(false);
+  });
+
+  it("blocks activation when a legacy record commits after the pre-activation check", async () => {
+    const scopeId = await orgScope();
+    const ownerHome = home(scopeId);
+    const legacyScopeId = randomUUID();
+    // Commits inside the check-then-act window: after advance() runs the global
+    // legacy inventory at phase `verified`, before the activation transaction.
+    ownerHome.activate = vi.fn(async () => {
+      await db.insertInto("collaboration_directory").values({
+        scope_id: legacyScopeId, runtime_id: "vps:legacy", owner_id: "owner-a", kind: "chat",
+        organization_id: null, audience: null, organization_grant_id: null,
+        authority_generation: 1, metadata_revision: 1, last_event_id: randomUUID(), updated_at: new Date(),
+      }).execute();
+      return { authorityGeneration: 2 };
+    });
+
+    const blocked = await cutover(ownerHome).run(scopeId, { backupRef: "restricted-backup-1" });
+    expect(blocked).toMatchObject({ phase: "blocked", blockReason: "legacy_disposition_required" });
+    const directory = await db.selectFrom("collaboration_directory").select("authority_generation")
+      .where("scope_id", "=", scopeId).executeTakeFirstOrThrow();
+    expect(Number(directory.authority_generation)).toBe(1);
+  });
+
+  it("serializes cutover activation and legacy ingestion on the shared ingestion lock", async () => {
+    const scopeId = await orgScope();
+    let release!: () => void;
+    const released = new Promise<void>((resolve) => { release = resolve; });
+    // Hold the ingestion lock on its own connection, as an in-flight legacy
+    // directory event would, and prove both sides wait for it.
+    const holder = db.transaction().execute(async (trx) => {
+      await lockLegacyDirectoryIngestion(trx);
+      await released;
+    });
+    let running: Promise<unknown> = Promise.resolve();
+    let ingesting: Promise<unknown> = Promise.resolve();
+    try {
+      await vi.waitFor(async () => {
+        const held = await sql<{ held: boolean }>`
+          SELECT count(*) > 0 AS held FROM pg_locks
+          WHERE locktype = 'advisory' AND granted
+            AND classid = hashtext(current_schema()) AND objid = 1394229470
+        `.execute(db);
+        expect(held.rows[0]?.held).toBe(true);
+      });
+
+      let activated = false;
+      running = cutover(home(scopeId)).run(scopeId, { backupRef: "restricted-backup-1" })
+        .then((journal) => { activated = journal.phase === "active"; });
+      // Every home phase completes; only the activation transaction waits.
+      await vi.waitFor(async () => {
+        const journal = await db.selectFrom("collaboration_cutover_journal").select("phase")
+          .where("scope_id", "=", scopeId).executeTakeFirst();
+        expect(journal?.phase).toBe("verified");
+      });
+
+      let ingested = false;
+      ingesting = new PlatformCollaborationRepository(db).applyDirectoryEvent({
+        eventId: randomUUID(), scopeId: randomUUID(), runtimeId: "vps:legacy", ownerId: "owner-a",
+        kind: "chat", authorityGeneration: 1, metadataRevision: 1, recipients: [],
+      }).then(() => { ingested = true; });
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      expect(ingested).toBe(false);
+      expect(activated).toBe(false);
+    } finally {
+      release();
+      await Promise.allSettled([holder, running, ingesting]);
+    }
   });
 });
