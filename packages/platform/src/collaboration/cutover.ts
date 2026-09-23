@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { Kysely, Selectable } from "kysely";
+import { lockLegacyDirectoryIngestion } from "./legacy-ingestion-lock.js";
 import { inventoryPlatformPersonToPersonRecords } from "./person-to-person-inventory.js";
 import type { CollaborationCutoverJournalTable, CollaborationPlatformDatabase } from "./database.js";
 
@@ -88,13 +89,30 @@ function publicJournal(row: JournalRow): CutoverJournal {
 export async function cutoverTicketAdmission(
   db: Kysely<CollaborationPlatformDatabase>, scopeId: string,
 ): Promise<boolean> {
-  const row = await db.selectFrom("collaboration_cutover_journal as journal")
-    .innerJoin("collaboration_directory as directory", "directory.scope_id", "journal.scope_id")
-    .select(["journal.phase", "journal.target_generation", "directory.authority_generation"])
-    .where("journal.scope_id", "=", scopeId).executeTakeFirst();
-  // A scope created directly after cutover has no migration journal.
-  return !row || (row.phase === "active"
-    && Number(row.authority_generation) === Number(row.target_generation));
+  const row = await db.selectFrom("collaboration_directory as directory")
+    .leftJoin("collaboration_cutover_journal as journal", "journal.scope_id", "directory.scope_id")
+    .select([
+      "journal.phase", "journal.target_generation",
+      "directory.authority_generation", "directory.direct_native",
+    ])
+    .where("directory.scope_id", "=", scopeId).executeTakeFirst();
+  // Absence never admits: an unknown scope is denied like any other.
+  if (!row) return false;
+  // A scope created after the cutover migration is direct from birth and never
+  // receives a migration journal. Every row that already existed was marked
+  // legacy by that migration, so it stays denied until its own journal
+  // activates rather than being admitted at its legacy generation.
+  if (row.phase === null) return row.direct_native === true;
+  return row.phase === "active"
+    && Number(row.authority_generation) === Number(row.target_generation);
+}
+
+/** Raised inside the activation transaction; the scope blocks instead of activating. */
+class LegacyDispositionRequiredError extends Error {
+  constructor() {
+    super("An undispositioned person-to-person record blocks activation");
+    this.name = "LegacyDispositionRequiredError";
+  }
 }
 
 export class PlatformCollaborationCutover {
@@ -265,6 +283,9 @@ export class PlatformCollaborationCutover {
           try {
             await this.activateDirectory(row);
           } catch (error: unknown) {
+            if (error instanceof LegacyDispositionRequiredError) {
+              return this.block(row, "legacy_disposition_required", "verified");
+            }
             console.warn("[collaboration-cutover] directory activation needs recovery", error instanceof Error ? error.name : "UnknownError");
             return this.block(row, "directory_generation_conflict", "verified");
           }
@@ -322,6 +343,14 @@ export class PlatformCollaborationCutover {
 
   private async activateDirectory(row: JournalRow): Promise<void> {
     await this.options.db.transaction().execute(async (trx) => {
+      // The global legacy check in `advance` is a pre-read: under READ COMMITTED
+      // a legacy directory event can commit between it and this write. Take the
+      // shared ingestion lock and re-count inside the transaction that activates
+      // the generation, so no scope can go active past an undispositioned
+      // person-to-person record.
+      await lockLegacyDirectoryIngestion(trx);
+      const legacy = await inventoryPlatformPersonToPersonRecords(trx);
+      if (legacy.total !== 0) throw new LegacyDispositionRequiredError();
       const updated = await trx.updateTable("collaboration_directory")
         .set({ authority_generation: Number(row.target_generation),
           metadata_revision: Number(row.source_metadata_revision) + 1,

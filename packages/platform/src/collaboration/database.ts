@@ -18,6 +18,12 @@ export interface CollaborationDirectoryTable {
   audience: "members" | "organization" | null;
   /** Opaque owner-home grant pointer used only for an explicit accept request. */
   organization_grant_id: string | null;
+  /**
+   * S18: false for every row that predates the cutover migration. Those rows
+   * are legacy and only their own activated journal admits them; rows created
+   * afterwards are direct from birth and default to true.
+   */
+  direct_native: ColumnType<boolean, boolean | undefined, boolean>;
   authority_generation: number;
   metadata_revision: number;
   last_event_id: string;
@@ -139,6 +145,15 @@ async function applyCollaborationSchema(trx: Transaction<CollaborationPlatformDa
   await sql`ALTER TABLE collaboration_directory ADD COLUMN IF NOT EXISTS audience TEXT
     CHECK (audience IS NULL OR audience IN ('members', 'organization'))`.execute(trx);
   await sql`ALTER TABLE collaboration_directory ADD COLUMN IF NOT EXISTS organization_grant_id UUID`.execute(trx);
+  // S18: the cutover migration is the boundary between legacy and direct scopes.
+  // The column is added without a default so every row that already exists
+  // backfills to false, then defaults to true so rows created after the
+  // migration are direct from birth. Ticket admission denies a legacy row until
+  // its own cutover journal activates, so journal absence can never admit one.
+  await sql`ALTER TABLE collaboration_directory ADD COLUMN IF NOT EXISTS direct_native BOOLEAN`.execute(trx);
+  await sql`UPDATE collaboration_directory SET direct_native = false WHERE direct_native IS NULL`.execute(trx);
+  await sql`ALTER TABLE collaboration_directory ALTER COLUMN direct_native SET DEFAULT true`.execute(trx);
+  await sql`ALTER TABLE collaboration_directory ALTER COLUMN direct_native SET NOT NULL`.execute(trx);
   await sql`
     CREATE TABLE IF NOT EXISTS collaboration_user_index (
       actor_id TEXT NOT NULL CHECK (char_length(actor_id) BETWEEN 1 AND 128),
