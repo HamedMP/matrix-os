@@ -2,7 +2,7 @@
  * Gateway collaboration configuration (S20 / T099).
  *
  * There is no release flag: collaboration wiring always constructs. When the
- * signing, preflight, platform or service-token configuration is incomplete
+ * signing, platform or service-token configuration is incomplete
  * the loader returns `null` and the composition root registers the
  * fail-closed routes from `./fail-closed.js` instead of skipping construction.
  * Organization membership, evaluated on the home, is the only gate.
@@ -15,7 +15,6 @@ export interface GatewayCollaborationConfig {
   runtimeId: string;
   activeKeyId: string;
   proofKeys: Readonly<Record<string, string>>;
-  preflightSecret: string;
   platformBaseUrl: string;
   serviceToken: string;
   /** S05: browser origins allowed to open direct sessions; empty means direct sessions fail closed. */
@@ -49,7 +48,6 @@ export function loadGatewayCollaborationConfig(env: NodeJS.ProcessEnv): GatewayC
     runtimeId,
     activeKeyId: env.MATRIX_COLLABORATION_ACTIVE_KEY_ID!.trim(),
     proofKeys,
-    preflightSecret: env.MATRIX_COLLABORATION_PREFLIGHT_SECRET!,
     platformBaseUrl: env.PLATFORM_INTERNAL_URL!.trim(),
     serviceToken: env.UPGRADE_TOKEN!,
     clientOrigins: parseClientOrigins(env.MATRIX_COLLABORATION_CLIENT_ORIGINS),
@@ -79,10 +77,8 @@ function describeSigningConfiguration(env: NodeJS.ProcessEnv): GatewayCollaborat
     || (machineId && MACHINE_ID_PATTERN.test(machineId) ? `vps:${machineId.toLowerCase()}` : undefined);
   if (!runtimeId) return { configured: false, reason: "runtime_identity_missing" };
   const activeKeyId = env.MATRIX_COLLABORATION_ACTIVE_KEY_ID?.trim();
-  const preflightSecret = env.MATRIX_COLLABORATION_PREFLIGHT_SECRET;
   const proofKeys = parseProofKeys(env.MATRIX_COLLABORATION_PROOF_KEYS);
-  if (!activeKeyId || !preflightSecret || !proofKeys || !proofKeys[activeKeyId]
-    || Buffer.byteLength(preflightSecret) < 32) {
+  if (!activeKeyId || !proofKeys || !proofKeys[activeKeyId]) {
     return { configured: false, reason: "signing_configuration_missing" };
   }
   const platformBaseUrl = env.PLATFORM_INTERNAL_URL?.trim();

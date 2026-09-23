@@ -223,16 +223,7 @@ export function createKyselySharingDb(kysely: Kysely<SyncDatabase>): SharingDb {
         return rows as unknown as ShareRow[];
       },
 
-      async listSharesByGranteeAndOwner(granteeId: string, ownerId: string): Promise<ShareRow[]> {
-        const rows = await executor
-          .selectFrom("sync_shares")
-          .selectAll()
-          .where("grantee_id", "=", granteeId)
-          .where("owner_id", "=", ownerId)
-          .execute();
 
-        return rows as unknown as ShareRow[];
-      },
 
       async resolveHandle(handle: string): Promise<string | null> {
         const row = await executor

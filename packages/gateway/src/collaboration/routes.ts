@@ -14,6 +14,9 @@ import { registerTerminalRoutes } from "./terminal-routes.js";
 
 export type { CollaborationRouteOptions, Participant } from "./route-support.js";
 
+/** Only a canonical scope identifier selects the per-scope gate; anything else stays runtime-wide. */
+const SCOPE_MUTATION_PATH = /^\/api\/collaboration\/scopes\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:\/|$)/i;
+
 /**
  * Composition entrypoint for the owner-home collaboration HTTP routes. The
  * per-resource modules register handlers in the original routes.ts order;
@@ -31,9 +34,15 @@ export function createCollaborationRoutes(options: CollaborationRouteOptions): H
   });
   routes.on(["POST", "PUT", "PATCH", "DELETE"], "/api/collaboration/*", mutationLimit);
   routes.on(["POST", "PUT", "PATCH", "DELETE"], "/api/collaboration/*", async (c, next) => {
-    if (options.cutoverGuard) {
+    const guard = options.cutoverGuard;
+    if (guard) {
+      // A scope-identified mutation is admitted by that scope's own cutover journal, so one
+      // recovering scope cannot fence collaboration writes for every other scope of this home.
+      // Paths that carry no scope keep the runtime-wide gate.
+      const scopeId = SCOPE_MUTATION_PATH.exec(c.req.path)?.[1];
       try {
-        await options.cutoverGuard.assertRuntimeWritable(options.runtimeId);
+        if (scopeId) await guard.assertWritable(scopeId);
+        else await guard.assertRuntimeWritable(options.runtimeId);
       } catch (error: unknown) {
         // Do not expose inventory, database, or host failures at this pre-auth boundary.
         console.warn("[collaboration] cutover admission unavailable", error instanceof Error ? error.name : "UnknownError");

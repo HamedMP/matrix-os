@@ -3,6 +3,7 @@
  * on first boot and kept in the owner database, whose public half the home
  * registers with the platform. Gateway migration 9 owns the table.
  */
+import { hkdfSync } from "node:crypto";
 import { sql, type ColumnType, type Kysely, type Transaction } from "kysely";
 import { generateRuntimeKeyPair } from "./direct-crypto.js";
 import type { OwnerCollaborationDatabase } from "./database.js";
@@ -32,6 +33,21 @@ export interface RuntimeIdentity {
   keyId: string;
   seed: string;
   publicKey: string;
+}
+
+/**
+ * Separate the local, short-lived share-confirmation HMAC from Ed25519 signing.
+ * Runtime identity rotation invalidates outstanding confirmations (TTL: 60 s);
+ * the owner must repeat preflight after the new identity is registered and the
+ * gateway restarts. Never reuse an old seed to keep a confirmation valid.
+ */
+export function confirmationKeyFromRuntimeIdentity(identity: RuntimeIdentity, runtimeId: string): string {
+  const seed = Buffer.from(identity.seed, "base64url");
+  if (seed.byteLength !== 32 || seed.toString("base64url") !== identity.seed || !runtimeId) {
+    throw new Error("Runtime identity is unavailable for share confirmation");
+  }
+  return Buffer.from(hkdfSync("sha256", seed, Buffer.from(runtimeId, "utf8"),
+    Buffer.from("matrix-collaboration-confirmation-v1", "utf8"), 32)).toString("hex");
 }
 
 /** Idempotent: a concurrent first boot keeps whichever row won the insert. */

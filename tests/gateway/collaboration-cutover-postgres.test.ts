@@ -2,10 +2,13 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { sql } from "kysely";
 import { bootstrapChatDatabase } from "../../packages/gateway/src/chat/database.js";
 import { bootstrapCollaborationDatabase } from "../../packages/gateway/src/collaboration/database.js";
+import { CollaborationAuthority } from "../../packages/gateway/src/collaboration/authority.js";
 import { drainActiveSharedRunsForCutover, GatewayCollaborationCutover } from "../../packages/gateway/src/collaboration/cutover.js";
+import { CollaborationRepository } from "../../packages/gateway/src/collaboration/repository.js";
+import { fenceSharedChatAuthority } from "../../packages/gateway/src/collaboration/shared-chat-authority.js";
 import { lockDirectScope } from "../../packages/gateway/src/collaboration/repository-shared.js";
 import {
-  collaborationActors, collaborationIds, createRealCollaborationTestDatabase,
+  allowAllOrganizationPrecondition, collaborationActors, collaborationIds, createRealCollaborationTestDatabase,
   type CollaborationTestDatabase,
 } from "./collaboration-test-support.js";
 
@@ -99,6 +102,47 @@ describe.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)("S18 home cutover on real
     expect(grants.some((grant) => grant.id === "80000000-0000-4000-8000-000000000001")).toBe(true);
     expect(await cutover.assertWritable(key.scopeId)).toBeUndefined();
     expect(await cutover.assertRuntimeWritable(key.runtimeId)).toBeUndefined();
+  });
+
+  it("never reopens an accepted legacy member row inserted after direct activation", async () => {
+    const revivedActor = "user_revived_legacy_after_cutover";
+    const authority = new CollaborationAuthority(new CollaborationRepository(fixture.db), {
+      now: () => new Date(NOW), organizationPrecondition: allowAllOrganizationPrecondition,
+    });
+    await cutover.inventory(key);
+    await cutover.freeze(key);
+    await cutover.drain(key, async () => ({ interrupted: 0, remaining: 0 }));
+    await cutover.stage(key);
+    await cutover.verify(key);
+    await cutover.activate(key);
+    await fixture.db.insertInto("collaboration_members").values(member(revivedActor, "editor", ORG)).execute();
+    await expect(authority.authorize({ scopeId: key.scopeId, actorId: revivedActor, action: "read" }))
+      .rejects.toMatchObject({ code: "not_found" });
+    await cutover.rollbackCompatible(key, { compatibleDirectBuild: true });
+    await expect(authority.authorize({ scopeId: key.scopeId, actorId: revivedActor, action: "read" }))
+      .rejects.toMatchObject({ code: "not_found" });
+  });
+
+  it("never reopens a revived legacy role inside the locked shared Chat fence", async () => {
+    const revivedActor = "user_revived_chat_legacy_after_cutover";
+    await fixture.db.updateTable("collaboration_scopes").set({ kind: "chat", resource_id: collaborationIds.chat })
+      .where("id", "=", key.scopeId).execute();
+    await cutover.inventory(key);
+    await cutover.freeze(key);
+    await cutover.drain(key, async () => ({ interrupted: 0, remaining: 0 }));
+    await cutover.stage(key);
+    await cutover.verify(key);
+    await cutover.activate(key);
+    await fixture.db.insertInto("collaboration_members").values(member(revivedActor, "editor", ORG)).execute();
+    const authority = new CollaborationAuthority(new CollaborationRepository(fixture.db), {
+      now: () => new Date(NOW), organizationPrecondition: allowAllOrganizationPrecondition,
+    });
+    const owner = await authority.authorize({ scopeId: key.scopeId, actorId: key.ownerId, action: "read" });
+    const scope = await fixture.db.selectFrom("collaboration_scopes").selectAll()
+      .where("id", "=", key.scopeId).executeTakeFirstOrThrow();
+    await expect(fixture.db.transaction().execute((trx) => fenceSharedChatAuthority(trx, scope, {
+      ...owner, actorId: revivedActor, role: "editor", capability: "request_ai",
+    }, revivedActor, "request_ai"))).rejects.toMatchObject({ code: "forbidden" });
   });
 
   it("holds a failed drain and interrupted activation fenced for safe retry", async () => {

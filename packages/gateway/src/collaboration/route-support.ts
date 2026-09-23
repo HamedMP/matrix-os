@@ -113,7 +113,10 @@ export type Participant = { actorId: string; displayName: string };
 export interface CollaborationRouteOptions {
   runtimeId: string;
   /** S18: durable runtime maintenance gate, including owner proof paths that bypass authority. */
-  cutoverGuard?: { assertRuntimeWritable(runtimeId: string): Promise<void> };
+  cutoverGuard?: {
+    assertRuntimeWritable(runtimeId: string): Promise<void>;
+    assertWritable(scopeId: string): Promise<void>;
+  };
   verifier: CollaborationActorProofVerifier;
   /** S05: direct sessions; when a request carries session credentials they replace the relay proof. */
   directSessions?: DirectSessionService;

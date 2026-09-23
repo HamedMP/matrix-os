@@ -6,6 +6,7 @@ import { isActivationCurrent } from "./capability-evaluator.js";
 import type { CollaborationCapabilityRepository } from "./capability-repository.js";
 import type { OrganizationPrecondition } from "./organization-precondition.js";
 import type { CollaborationRepository } from "./repository.js";
+import { hasRetiredLegacyAuthority } from "./repository-shared.js";
 
 export { CollaborationAuthorizationError, type CollaborationAuthorizationErrorCode };
 
@@ -89,9 +90,12 @@ export class CollaborationAuthority {
     const member = await this.repository.getMember(membershipScope.id, input.actorId);
     const legacyRole = member && member.status === "accepted" && !member.dispositionedAt
       && !(member.expiresAt && new Date(member.expiresAt).getTime() <= this.now().getTime())
+      && (input.actorId === membershipScope.owner_id
+        || !await hasRetiredLegacyAuthority(this.repository.db, membershipScope.id))
       ? member.role
       : null;
-    // S04: a whole-project preset grant is the V1 membership; legacy member rows keep their exact old role.
+    // Before S18 activation, legacy rows keep their old role. After activation,
+    // only direct grants can authorize non-owners, including after rollback.
     const role = legacyRole ?? await this.resolveGrantRole(membershipScope.id, input.actorId, evidence.membershipEpoch);
     if (!role) {
       throw new CollaborationAuthorizationError("not_found", "Current membership is required");
