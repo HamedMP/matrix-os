@@ -29,7 +29,7 @@ describe("terminal sharing button", () => {
         : scope),
       patch: vi.fn(), delete: vi.fn(),
     };
-    render(<TerminalSharingButton api={api} runtimeId="runtime_owner" organizationId="org_matrix_team" terminalId="terminal_release" />);
+    render(<TerminalSharingButton api={api} runtimeId="vps:runtime_owner" organizationId="org_matrix_team" terminalId="terminal_release" />);
     fireEvent.click(screen.getByRole("button", { name: "Share terminal" }));
     expect(await screen.findByRole("heading", { name: "Share this whole terminal?" })).toBeVisible();
     expect(screen.getByText(/complete retained output and future live output/i)).toBeVisible();
@@ -38,7 +38,7 @@ describe("terminal sharing button", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Confirm and invite members" }));
     await waitFor(() => expect(api.post).toHaveBeenCalledWith(
-      "/api/collaboration/runtimes/runtime_owner/scopes",
+      "/api/collaboration/runtimes/vps%3Aruntime_owner/scopes",
       expect.objectContaining({
         kind: "terminal",
         resourceId: "terminal_release",

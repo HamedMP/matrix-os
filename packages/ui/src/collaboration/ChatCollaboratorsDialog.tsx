@@ -1,12 +1,15 @@
 import {
-  CollaborationInvitationIdentifierSchema,
   CollaborationMemberSchema,
+  CollaborationReadinessSchema,
+  type CollaborationReadiness,
   CollaborationScopeSchema,
   type CollaborationTerminalFrame,
 } from "@matrix-os/contracts";
-import { useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import type { z } from "zod/v4";
 import { Dialog } from "../Dialog.js";
+import { AudienceGrantPicker } from "./AudienceGrantPicker.js";
+import { ReadinessSummary } from "./ReadinessSummary.js";
 
 type Scope = z.infer<typeof CollaborationScopeSchema>;
 type Member = z.infer<typeof CollaborationMemberSchema>;
@@ -42,86 +45,27 @@ export function ChatCollaboratorsDialog({ api, scope, members, onRefresh, onClos
   onRefresh: () => Promise<{ scope: Scope; members: Member[] }>;
   onClose: () => void;
 }) {
-  const resourceLabel = scope.kind === "chat" ? "Chat" : scope.kind === "terminal" ? "terminal" : "project";
-  const currentScope = useRef(scope);
+  const resourceLabel = scope.kind === "chat" ? "Chat" : scope.kind === "terminal" ? "terminal" : scope.kind === "app" ? "app" : scope.kind;
   const [currentMembers, setCurrentMembers] = useState(members);
-  const [identifier, setIdentifier] = useState("");
-  const [role, setRole] = useState<"editor" | "viewer">("editor");
-  const [pending, setPending] = useState(false);
-  const [feedback, setFeedback] = useState("");
-  const [error, setError] = useState("");
-
-  const beginAction = () => {
-    setPending(true);
-    setError("");
-  };
-  const failAction = (failure: unknown) => {
-    console.warn("[chat-collaboration] member action failed", failure instanceof Error ? failure.name : "UnknownError");
-    setError("Collaboration could not be updated. Refresh and try again.");
-  };
+  const [readiness, setReadiness] = useState<CollaborationReadiness | null>(null);
+  useEffect(() => {
+    if (scope.kind !== "project" && scope.kind !== "chat") return;
+    let active = true;
+    void Promise.resolve().then(() => api.post(`/api/collaboration/scopes/${encodeURIComponent(scope.id)}/policy/preflight`, {}))
+      .then((value) => {
+        const parsed = CollaborationReadinessSchema.safeParse(value);
+        if (active && parsed.success && parsed.data.resourceKind === scope.kind) setReadiness(parsed.data);
+      })
+      .catch((failure: unknown) => {
+        console.warn("[collaboration-access] readiness unavailable", failure instanceof Error ? failure.name : "UnknownError");
+      });
+    return () => { active = false; };
+  }, [api, scope.id, scope.kind]);
   const refresh = async () => {
     const next = await onRefresh();
-    currentScope.current = next.scope;
     setCurrentMembers(next.members);
   };
-  const invite = async () => {
-    beginAction();
-    try {
-      const targetIdentifier = CollaborationInvitationIdentifierSchema.parse(identifier);
-      await api.post(`/api/collaboration/scopes/${encodeURIComponent(currentScope.current.id)}/invitations`, {
-        identifier: targetIdentifier,
-        role,
-        clientRequestId: crypto.randomUUID(),
-        expectedRevision: currentScope.current.revision,
-      });
-      await refresh();
-      setIdentifier("");
-      setFeedback("Invitation sent. Access begins only after acceptance.");
-    } catch (failure: unknown) {
-      failAction(failure);
-    } finally {
-      setPending(false);
-    }
-  };
-  const changeRole = async (member: Member, nextRole: "editor" | "viewer") => {
-    beginAction();
-    try {
-      if (!api.patch) throw new Error("Unsupported collaboration client");
-      await api.patch(`/api/collaboration/scopes/${encodeURIComponent(currentScope.current.id)}/members/${encodeURIComponent(member.actor.actorId)}`, {
-        role: nextRole,
-        clientRequestId: crypto.randomUUID(),
-        expectedRevision: currentScope.current.revision,
-        expectedMemberRevision: member.revision,
-      });
-      await refresh();
-      setFeedback(`${member.actor.displayName} is now a ${nextRole}.`);
-    } catch (failure: unknown) {
-      failAction(failure);
-    } finally {
-      setPending(false);
-    }
-  };
-  const revoke = async (member: Member) => {
-    beginAction();
-    try {
-      const base = `/api/collaboration/scopes/${encodeURIComponent(currentScope.current.id)}`;
-      const path = member.status === "pending" && member.invitationId
-        ? `${base}/invitations/${encodeURIComponent(member.invitationId)}`
-        : `${base}/members/${encodeURIComponent(member.actor.actorId)}`;
-      await api.delete(path, {
-        clientRequestId: crypto.randomUUID(),
-        expectedRevision: currentScope.current.revision,
-        expectedMemberRevision: member.revision,
-      });
-      await refresh();
-      setFeedback(member.status === "pending" ? "Invitation revoked." : "Collaborator removed.");
-    } catch (failure: unknown) {
-      failAction(failure);
-    } finally {
-      setPending(false);
-    }
-  };
-  return <Dialog open onClose={() => { if (!pending) onClose(); }} aria-label="Invite collaborators"
+  return <Dialog open onClose={onClose} aria-label="Invite collaborators"
     className="ph-no-capture flex max-h-[85vh] w-[min(92vw,640px)] flex-col gap-5 overflow-y-auto rounded-2xl border p-6"
     style={{ background: "var(--bg-surface, var(--matrix-card, #FCFCF8))", color: "var(--text-primary, var(--matrix-card-fg, #32352E))",
       borderColor: "var(--border-default, var(--matrix-border, #D8D6C7))" }}>
@@ -131,64 +75,42 @@ export function ChatCollaboratorsDialog({ api, scope, members, onRefresh, onClos
         <p className="mt-1 text-sm" style={{ color: "var(--text-secondary)" }}>
           {scope.kind === "project"
             ? "Sharing is limited to current members of your organization. Access applies to this whole project and its future project-owned contents; external references and unrelated resources stay outside the share."
-            : `Sharing is limited to current members of your organization. Access applies only to this ongoing ${resourceLabel} and does not grant access to its project, sibling Chats or terminals, files, or apps.`}
+            : scope.kind === "folder"
+              ? "Access covers this folder and its contents only. Other folders, Chats and apps stay outside the share."
+              : scope.kind === "file" || scope.kind === "app"
+                ? `Access covers only this ${resourceLabel}. Its project, sibling files, Chats and apps stay outside the share.`
+                : `Sharing is limited to current members of your organization. Access applies only to this ongoing ${resourceLabel} and does not grant access to its project, sibling Chats or terminals, files, or apps.`}
         </p>
       </div>
-      <button type="button" className={buttonClass} disabled={pending} onClick={onClose}>Close</button>
+      <button type="button" className={buttonClass} onClick={onClose}>Close</button>
     </div>
-    <section aria-labelledby="invite-person-heading" className="rounded-xl border p-4">
-      <h3 id="invite-person-heading" className="font-medium">Invite an organization member</h3>
-      <div className="mt-3 grid gap-3 sm:grid-cols-[1fr_9rem_auto]">
-        <label className="grid gap-1 text-sm">Member email or username
-          <input value={identifier} disabled={pending} onChange={(event) => setIdentifier(event.target.value)}
-            placeholder="name@example.com or @username" autoComplete="off"
-            className="min-w-0 rounded-lg border bg-transparent px-3 py-2" />
-        </label>
-        <label className="grid gap-1 text-sm">Role
-          <select value={role} disabled={pending} onChange={(event) => setRole(event.target.value as "editor" | "viewer")}
-            className="rounded-lg border bg-transparent px-3 py-2">
-            <option value="editor">Editor</option>
-            <option value="viewer">Viewer</option>
-          </select>
-        </label>
-        <button type="button" className={`${buttonClass} self-end`} disabled={pending || !identifier.trim()} onClick={() => void invite()}>
-          {pending ? "Sending…" : "Send invitation"}
-        </button>
-      </div>
-      <p className="mt-3 text-xs" style={{ color: "var(--text-secondary)" }}>
-        Only current members of your organization can be invited. Enter their exact email address or username; people outside the organization cannot be found.
-      </p>
-      <p className="mt-3 text-xs" style={{ color: "var(--text-secondary)" }}>
-        {scope.kind === "terminal"
-          ? "Editors can watch and request input control. Viewers watch only. Owners may take over control."
-          : scope.kind === "project"
-            ? "Editors can work across shared project contents. Viewers have read-only access. Owners manage membership and AI approvals."
-            : "Editors can read, discuss, and request AI when shared AI is available. Viewers can read only. Owners decide AI approvals."}
-      </p>
-    </section>
+    {readiness ? <ReadinessSummary readiness={readiness} /> : null}
+    <AudienceGrantPicker api={api} scope={scope} onRefresh={refresh} />
+    <p className="text-xs" style={{ color: "var(--text-secondary)" }}>
+      {scope.kind === "terminal"
+        ? "Viewers watch only. Contributors may request input control. Owners may take over control."
+        : scope.kind === "file" || scope.kind === "folder" || scope.kind === "app"
+          ? "Viewers can read this resource. Contributors may make changes within its exact scope."
+        : scope.kind === "project"
+          ? "Contributors can work across shared project contents. Viewers have read-only access. Owners manage membership and AI approvals."
+          : "Contributors can read, discuss, and request AI when shared AI is available. Viewers can read only. Owners decide AI approvals."}
+    </p>
     <section aria-labelledby="people-heading">
       <h3 id="people-heading" className="font-medium">People with access</h3>
       <div className="mt-2 grid gap-2">
         {currentMembers.length === 0 ? <div className="rounded-xl border p-5 text-center">
           <div aria-hidden className="text-xl">◇</div>
           <p className="mt-1 font-medium">No collaborators yet</p>
-          <p className="text-sm" style={{ color: "var(--text-secondary)" }}>Invite an editor or viewer above.</p>
+          <p className="text-sm" style={{ color: "var(--text-secondary)" }}>Choose Viewer or Contributor above.</p>
         </div> : currentMembers.map((member) => <div key={member.actor.actorId} className="flex flex-wrap items-center gap-3 rounded-xl border px-3 py-2">
           <div className="min-w-0 flex-1">
             <p className="truncate text-sm font-medium">{member.actor.displayName}</p>
-            <p className="truncate text-xs" style={{ color: "var(--text-secondary)" }}>{member.status === "pending" ? "Invitation pending" : member.role}</p>
+            <p className="truncate text-xs" style={{ color: "var(--text-secondary)" }}>{member.status === "pending"
+              ? "Access pending" : member.role === "editor" ? "Contributor" : member.role === "viewer" ? "Viewer" : "Owner"}</p>
           </div>
-          {member.role !== "owner" && member.status === "accepted" ? <select aria-label={`Role for ${member.actor.displayName}`}
-            value={member.role} disabled={pending} onChange={(event) => void changeRole(member, event.target.value as "editor" | "viewer")}
-            className="rounded-lg border bg-transparent px-2 py-1 text-sm">
-            <option value="editor">Editor</option><option value="viewer">Viewer</option>
-          </select> : null}
-          {member.role !== "owner" ? <button type="button" className={buttonClass} disabled={pending}
-            onClick={() => void revoke(member)}>{member.status === "pending" ? "Revoke invite" : "Remove"}</button> : null}
         </div>)}
       </div>
     </section>
-    {error ? <p role="alert" className="text-sm">{error}</p> : <p role="status" className="text-sm">{feedback}</p>}
     <p className="text-xs" style={{ color: "var(--text-secondary)" }}>
       {scope.kind === "project"
         ? "Removing a collaborator revokes the whole project membership without changing independently shared external items."
