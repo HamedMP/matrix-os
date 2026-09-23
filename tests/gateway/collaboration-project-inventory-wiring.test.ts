@@ -9,31 +9,63 @@ import {
   type OwnerCollaborationRuntimeSurfaces,
   type OwnerCollaborationSurfaceDependencies,
 } from "../../packages/gateway/src/collaboration/owner-runtime-surfaces.js";
+import { recordingRuntime, startupOptions, type EnabledSurfaces } from "./collaboration-startup-harness.js";
+
+// The startup extraction moved this composition out of the entry point, so the
+// cross-module half is exercised through `constructOwnerCollaboration` against a
+// recording runtime rather than asserted against the shape of the source text.
+const surfaces: EnabledSurfaces = { order: [] };
+vi.mock("../../packages/gateway/src/collaboration/wiring.js", async (importActual) => {
+  const actual = await importActual<typeof import("../../packages/gateway/src/collaboration/wiring.js")>();
+  return { ...actual, createGatewayCollaboration: async () => recordingRuntime(surfaces) };
+});
+
+const { constructOwnerCollaboration } = await import("../../packages/gateway/src/startup/collaboration.js");
 
 const OWNER = "user_surface_owner";
 const BOARD = { slug: "board", created_at: "2026-01-02T03:04:05.000Z", tables: { notes: {} } };
 
 describe("production project share inventory wiring", () => {
-  it("constructs canonical Chat roots before composing the owner collaboration surfaces", async () => {
-    // The startup extraction moved this sequence out of the entry point: the
-    // owner-database startup builds the Chat execution roots, then hands them
-    // to collaboration construction, which builds the git driver and composes
-    // the surfaces. The cross-module half of the ordering is enforced by
-    // constructOwnerCollaboration requiring ownerChatExecutionRoots.
-    const [ownerDatabase, collaboration] = await Promise.all([
-      readFile(new URL("../../packages/gateway/src/startup/owner-database.ts", import.meta.url), "utf8"),
-      readFile(new URL("../../packages/gateway/src/startup/collaboration.ts", import.meta.url), "utf8"),
-    ]);
-    const rootInitialization = ownerDatabase.indexOf("const ownerChatExecutionRoots = createChatExecutionRootResolver(");
-    expect(rootInitialization).toBeGreaterThan(-1);
-    expect(collaboration).toContain("ownerChatExecutionRoots: ChatExecutionRootResolver;");
-    const gitDriver = collaboration.indexOf("const projectGitDriver = createProjectGitDriver(");
-    const composition = collaboration.indexOf("onPartialRuntime: (runtime) => enableOwnerCollaborationSurfaces(runtime, {");
-    expect(gitDriver).toBeGreaterThan(-1);
-    expect(composition).toBeGreaterThan(gitDriver);
-    const passed = collaboration.slice(composition, composition + 500);
-    expect(passed).toContain("chatExecutionRoots: ownerChatExecutionRoots");
-    expect(passed).toContain("projectGitDriver,");
+  let homePath: string;
+
+  beforeEach(async () => {
+    homePath = await mkdtemp(join(tmpdir(), "matrix-inventory-wiring-"));
+    surfaces.order = [];
+    surfaces.git = undefined;
+    surfaces.project = undefined;
+    surfaces.resources = undefined;
+  });
+
+  afterEach(async () => {
+    surfaces.resources?.driver.close();
+    await rm(homePath, { recursive: true, force: true });
+  });
+
+  it("resolves canonical Chat roots through the Git driver the shared project reads from", async () => {
+    // The owner-database startup builds the Chat execution roots and hands them to
+    // collaboration construction, which builds the Git driver from them and composes
+    // the surfaces. Both halves are observed here: the driver the Git broker receives
+    // resolves project roots through those execution roots, and the inventory source
+    // the broker reads is the same one the shared project surface serves from.
+    const resolve = vi.fn(async () => ({ primaryWorkspaceRoot: homePath }));
+    const construction = await constructOwnerCollaboration(startupOptions(homePath, {
+      ownerChatExecutionRoots: { resolve } as never,
+    }));
+    expect(construction.ok).toBe(true);
+    const git = surfaces.git as { driver: { getGitSetup(input: unknown): Promise<unknown> }; source: unknown };
+    const project = surfaces.project as { homePath: string; inventorySource: unknown };
+    expect(git.source).toBe(project.inventorySource);
+    expect(project.homePath).toBe(homePath);
+    expect(surfaces.order.indexOf("git")).toBeLessThan(surfaces.order.indexOf("project"));
+
+    // The directory is not a repository, so the broker reports unavailable — but only
+    // after reaching the owner's canonical Chat execution roots for that project.
+    expect(await git.driver.getGitSetup({ ownerId: "user_startup_owner", projectId: "project_alpha" }))
+      .toMatchObject({ identity: { status: "unavailable" }, forgeCredential: { status: "unavailable" } });
+    expect(resolve).toHaveBeenCalledWith(
+      { type: "personal", ownerId: "user_startup_owner" },
+      { kind: "project", projectId: "project_alpha" },
+    );
   });
 
   it("keeps the gateway entry point out of the collaboration surface composition", async () => {

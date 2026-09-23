@@ -6,6 +6,70 @@ const scopeB = "10000000-0000-4000-8000-000000000002";
 const incarnation = `terminal-${"a".repeat(32)}`;
 
 describe("CollaborationTerminalEventRegistry", () => {
+  it("opens one canonical output source per scope and drains it after revoke or shutdown", async () => {
+    let publish!: (data: string) => Promise<void>;
+    const closeSource = vi.fn();
+    const connectOutput = vi.fn(async (_metadata, handlers) => {
+      publish = handlers.output;
+      return { close: closeSource };
+    });
+    const fixture = setup({ connectOutput });
+    const alice = socket();
+    const bob = socket();
+    await fixture.registry.open(connection(scopeA, "user_alice", "alice", alice));
+    await fixture.registry.open(connection(scopeA, "user_bob", "bob", bob));
+    expect(connectOutput).toHaveBeenCalledTimes(1);
+    await publish("owner PTY output");
+    expect(frames(alice)).toContainEqual(expect.objectContaining({ type: "terminal.output", data: "owner PTY output" }));
+    expect(frames(bob)).toContainEqual(expect.objectContaining({ type: "terminal.output", data: "owner PTY output" }));
+
+    fixture.registry.notifyRevoked(scopeA, "user_alice");
+    expect(closeSource).not.toHaveBeenCalled();
+    fixture.registry.notifyRevoked(scopeA, "user_bob");
+    await vi.waitFor(() => expect(closeSource).toHaveBeenCalledTimes(1));
+    fixture.registry.shutdown();
+    expect(closeSource).toHaveBeenCalledTimes(1);
+  });
+
+  it("replaces retained history when a restarted source replays the daemon snapshot", async () => {
+    let publish!: (data: string, replacesHistory?: boolean) => Promise<void>;
+    const connectOutput = vi.fn(async (_metadata, handlers) => {
+      publish = handlers.output;
+      return { close: vi.fn() };
+    });
+    const fixture = setup({ connectOutput });
+    const first = socket();
+    const opened = await fixture.registry.open(connection(scopeA, "user_alice", "first", first));
+    await publish("screen one", true);
+    await publish("live output");
+    expect(frames(first).some((frame) => frame.type === "terminal.refresh_required")).toBe(false);
+    // The last viewer leaves, so the registry stops the source but keeps its records and sequence.
+    opened.close();
+    expect(connectOutput).toHaveBeenCalledTimes(1);
+
+    const resumed = socket();
+    await fixture.registry.open(connection(scopeA, "user_alice", "resumed", resumed, 2));
+    expect(connectOutput).toHaveBeenCalledTimes(2);
+    await publish("screen one\r\nlive output", true);
+    const seen = frames(resumed);
+    const refreshAt = seen.findIndex((frame) => frame.type === "terminal.refresh_required");
+    const snapshotAt = seen.findIndex((frame) => frame.type === "terminal.output"
+      && frame.data === "screen one\r\nlive output");
+    expect(refreshAt).toBeGreaterThanOrEqual(0);
+    expect(snapshotAt).toBeGreaterThan(refreshAt);
+    fixture.registry.shutdown();
+  });
+
+  it("fails admission closed when the canonical output source cannot attach", async () => {
+    const fixture = setup({ connectOutput: async () => { throw new Error("daemon unavailable"); } });
+    const target = socket();
+    await expect(fixture.registry.open(connection(scopeA, "user_alice", "alice", target)))
+      .rejects.toThrow();
+    expect(fixture.registry.connectionCount).toBe(0);
+    expect(frames(target).some((frame) => frame.type === "terminal.ready")).toBe(false);
+    fixture.registry.shutdown();
+  });
+
   it("delivers ordered scope-only output and bounded replay", async () => {
     const fixture = setup({ maxReplayBytes: 9 });
     const alice = socket();
@@ -176,6 +240,7 @@ function setup(limits: {
   maxConnections?: number;
   maxScopeConnections?: number;
   maxActorScopeConnections?: number;
+  connectOutput?: ConstructorParameters<typeof CollaborationTerminalEventRegistry>[0]["connectOutput"];
 } = {}) {
   const fixture = {
     now: new Date("2026-09-11T12:00:00.000Z"),

@@ -1,0 +1,28 @@
+# S18 receipt — canonical terminal output over the direct route
+
+**Packet:** S18 / T090 terminal replacement. **Date:** 2026-09-21. **Branch:** `124/s18-terminal-output`, layer 21 of the S18 chain (`S18-chain.md`), based on `124/s18-terminal-wiring-probe`. **Result:** the production shared-terminal path now works end to end in process on real PostgreSQL: a member's direct-session socket on `/ws/collaboration/direct/scopes/:scopeId/terminal` receives the owner's canonical PTY output through `createCanonicalTerminalCollaborationBridge` → `CollaborationTerminalEventRegistry.connectOutput`; the owner can hold the controller and write input; workspace-wide resize stays fail-closed; a replaced tab is never served.
+
+## RED → GREEN
+
+| Test | RED | GREEN |
+| --- | --- | --- |
+| `tests/gateway/collaboration-direct-terminal-output-postgres.test.ts` (new, real Postgres, `skipIf` without `MATRIX_TEST_POSTGRES_URL`) | 3/3 failed at `CollaborationTerminalAdapter.shareTerminal`: `invalid input syntax for type json` — the outbox `recipient_actor_ids` array was sent as a Postgres array literal (PGlite had accepted it). After that fix: 1/3 failed — the owner's `input` never reached `writeInput` because the adapter called the runtime with only `{ terminalId, data }` while the canonical bridge requires `{ scopeId, incarnation, revalidate }` to re-check its binding, so every production action failed closed with `CanonicalTerminalBridgeError`. | 3/3: member `terminal.ready` + `terminal.output "owner output"` after `attach({ ref, expectedIncarnation, mode: "soft", size })`; viewer `acquire` rejected (socket 1008); source drained (`stream.close` once) when the last viewer leaves; owner `acquire` → controller `leaseEpoch "1"` → `input` reaches `writeInput({ workspaceId, tabId }, "echo hi\n", tabIncarnation)`; `resize` rejected 1008 with no PTY call; stale incarnation closes before `terminal.ready` and never attaches. |
+| `bun run typecheck` | `startup/collaboration.ts(116,9)`: `Kysely<ChatDatabase>` not assignable to `Kysely<OwnerCollaborationDatabase>` (the layer's snapshot had only run focused tests) | exit 0 across gateway, platform, proxy, edge router and Electron Desktop |
+| `bun run check:patterns` | 1 violation: two empty `.catch(() => failed())` in `canonical-terminal-bridge.ts` | 0 violations, 5 inherited warnings |
+| `collaboration-canonical-terminal-bridge-postgres.test.ts` (existing; note: uses the PGlite fixture despite its name) | — | 6/6 |
+| `collaboration-terminal-events.test.ts`, `-production-wiring`, `-scope`, `-sandbox`, `-authorization`, `-websocket`, `-control`, `collaboration-wiring.test.ts` | — | 59/59 across the ten terminal/wiring files including the new suite |
+| Replacement clients on this layer: `tests/cli/collaboration-direct-transport`, `tests/cli/collaboration-terminal`, `tests/platform/collaboration-relay`, `tests/ui/collaboration-direct-client`, `tests/ui/collaboration-owner-runtime-client` | — | 28/28; `packages/sync-client` `collaboration-command.test.ts` 9/9 |
+
+Commands: `PATH=/home/nima/.bun/bin:$PATH pnpm exec vitest run <files> --maxWorkers=2` with the real-Postgres env sourced; one real-Postgres run at a time.
+
+## Production composition proof
+
+`tests/gateway/collaboration-terminal-production-wiring.test.ts` (2/2) pins that `packages/gateway/src/startup/collaboration.ts` calls `createCanonicalTerminalCollaborationBridge` and `runtime.enableSharedTerminal({ … connectOutput })` before `enableSharedProject`, and that `wiring.ts` registers the direct terminal socket only when dispatcher, registry and control exist. The new real-Postgres suite composes the same classes the startup module composes (`CollaborationTerminalAdapter` over the bridge registry/runtime, `TerminalControlCoordinator`, `CollaborationTerminalDispatcher`, `CollaborationTerminalEventRegistry` with `connectOutput`, `DirectSessionService`, `registerCollaborationDirectWebSocketRoutes`) and drives the route exactly as the CLI and browser clients do (possession handshake, then schema-checked action frames). The in-process `createGatewayCollaboration` path could not be used for the socket proof because its direct ticket verifier takes platform keys and control freshness only from the platform control client.
+
+## Invariants
+
+- **Source of truth:** owner Postgres `collaboration_terminal_bindings` (migration v15) plus the daemon's persisted per-tab incarnation. The platform holds no PTY data; the relay forwards bytes only.
+- **Lock/transaction scope:** unchanged from the binding layer — private-scope row lock plus binding insert in one transaction; the share transaction now writes JSONB for the outbox recipient list. No network call inside a transaction; the PTY attach happens after admission, outside any transaction.
+- **Acceptable orphan states:** an attach that fails after admission closes the socket with a generic error; the registry drops the output source when the last viewer leaves; a stale binding is unavailable, never remapped.
+- **Auth source of truth:** `DirectSessionService` (platform-signed ticket + client possession) then `CollaborationAuthority.authorize` per admission and per action; the bridge re-validates scope/terminal/incarnation/generation on every action.
+- **Deferred scope:** workspace-wide resize is refused until a terminal-scoped resize exists in the daemon; live owner-host, Web Canvas/Web Desktop/Electron Desktop interactive terminal evidence, and the S07 sandbox-shell profile for Contributor control remain unrun here. `project-membership-transition.ts:131` writes `recipient_actor_ids` as a raw string array (same real-Postgres hazard, S10 file) — reported for the S10 owner, not changed in this layer.

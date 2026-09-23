@@ -1,8 +1,8 @@
 /** Build the owner-backed collaboration runtime after Chat and canvas bootstrap. */
-import { join } from "node:path";
+import { createHash } from "node:crypto";
 import type { Hono } from "hono";
 import type { createNodeWebSocket } from "@hono/node-ws";
-import { sql, type Kysely } from "kysely";
+import type { Kysely } from "kysely";
 import type { TerminalRuntimeSocketClient } from "@matrix-os/terminal-runtime";
 import type { AppRegistry } from "../app-db-registry.js";
 import type { CanonicalProviderSnapshotReader } from "../ai-providers/provider-settings-coordinators.js";
@@ -11,8 +11,8 @@ import type { ChatExecutionRootResolver } from "../chat/execution-root.js";
 import type { ChatRepository } from "../chat/repository.js";
 import { enableOwnerCollaborationSurfaces } from "../collaboration/owner-runtime-surfaces.js";
 import { createProjectGitDriver } from "../collaboration/project-git-operations.js";
-import { createOwnerResourceDriver } from "../collaboration/owner-resource-driver.js";
-import { createScopedAppBridge } from "../collaboration/scoped-app-bridge.js";
+import { createCanonicalTerminalCollaborationBridge } from "../collaboration/canonical-terminal-bridge.js";
+import type { OwnerCollaborationDatabase } from "../collaboration/database.js";
 import { registerFailClosedCollaborationRoutes } from "../collaboration/fail-closed.js";
 import {
   constructGatewayCollaborationOrFailClosed,
@@ -103,22 +103,42 @@ export async function constructOwnerCollaboration(options: OwnerCollaborationSta
     },
   }),
     {
-    // The shared resources, their app binding and the project inventory belong
-    // to the collaboration package's own composition. Calling it here instead
-    // of keeping a copy of that body is what stops the resource driver's
-    // app-asset and app-incarnation wiring from drifting out of this startup
-    // module the next time either side moves.
-    onPartialRuntime: (runtime) => enableOwnerCollaborationSurfaces(runtime, {
-      homePath,
-      ownerId: collaborationConfig.ownerId,
-      appRegistry,
-      canvasRepository,
-      chatRepository: ownerChatRepository,
-      chatExecutionRoots: ownerChatExecutionRoots,
-      projectManager: codingAgentProjectManager,
-      projectGitDriver,
-      terminalWorkspaces: terminalWorkspaceRuntime,
-    }) },
+    // The shared resources, their app binding and the project inventory belong to the
+    // collaboration package's own composition, so this delegates rather than keeping a copy —
+    // that is what stops the resource driver's app-asset and app-incarnation wiring drifting
+    // out of this startup module. The canonical terminal bridge is this layer's own addition
+    // and is wired here, before the delegation, because it must exist on the runtime first.
+    onPartialRuntime: (runtime) => {
+      // The owner Chat database is the owner collaboration database (same Kysely instance as `db` above).
+      const terminalBridge = createCanonicalTerminalCollaborationBridge({
+        db: ownerChatRepository.kysely as unknown as Kysely<OwnerCollaborationDatabase>,
+        ownerId: collaborationConfig.ownerId ?? "",
+        runtime: terminalWorkspaceRuntime,
+      });
+      runtime.enableSharedTerminal({
+        registry: terminalBridge.registry,
+        runtime: terminalBridge.runtime,
+        connectOutput: terminalBridge.connectOutput,
+        executionEligibility: {
+          profileId: "scope-runtime-terminal-v1",
+          profileVersion: 1,
+          profileDigest: createHash("sha256").update("matrix-canonical-host-terminal-v1").digest("hex"),
+          adapterId: "terminal",
+          harnessVersion: "1.0.0",
+        },
+      });
+      return enableOwnerCollaborationSurfaces(runtime, {
+        homePath,
+        ownerId: collaborationConfig.ownerId,
+        appRegistry,
+        canvasRepository,
+        chatRepository: ownerChatRepository,
+        chatExecutionRoots: ownerChatExecutionRoots,
+        projectManager: codingAgentProjectManager,
+        projectGitDriver,
+        terminalWorkspaces: terminalWorkspaceRuntime,
+      });
+    } },
   );
   return construction;
 }
