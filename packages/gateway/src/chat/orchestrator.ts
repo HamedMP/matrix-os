@@ -186,6 +186,7 @@ export class CanonicalChatOrchestrator {
       | "markRunRunning"
       | "appendRunActivities"
       | "appendAssistantDelta"
+      | "appendAssistantAttachment"
       | "updateAdapterState"
       | "finishRun"
       | "getAdapterState"
@@ -735,6 +736,16 @@ export class CanonicalChatOrchestrator {
             runId: run.id,
             messageId,
             delta: event.delta,
+            createdAt: (this.options.now ?? (() => new Date()))().toISOString(),
+          });
+          await this.sharedExecution.notify(sharedScopeId);
+        } else if (event.type === "assistant.attachment") {
+          failureStage = "persistence";
+          await this.options.repository.appendAssistantAttachment(owner, {
+            chatId: run.chatId,
+            runId: run.id,
+            messageId: assistantMessageId(run.id),
+            attachment: event.attachment,
             createdAt: (this.options.now ?? (() => new Date()))().toISOString(),
           });
           await this.sharedExecution.notify(sharedScopeId);

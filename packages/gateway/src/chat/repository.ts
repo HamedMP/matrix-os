@@ -1508,6 +1508,13 @@ export class ChatRepository {
     return this.runLifecycle.appendAssistantDelta(ownerInput, input);
   }
 
+  async appendAssistantAttachment(
+    ownerInput: ChatOwner,
+    input: Parameters<ChatRunLifecycleRepository["appendAssistantAttachment"]>[1],
+  ) {
+    return this.runLifecycle.appendAssistantAttachment(ownerInput, input);
+  }
+
   async finishRun(ownerInput: ChatOwner, input: {
     chatId: string;
     runId: string;

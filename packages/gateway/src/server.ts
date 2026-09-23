@@ -208,7 +208,7 @@ import { createGatewayProjectInventorySource } from "./collaboration/project-inv
 import { createProjectChatRootInventory } from "./collaboration/project-chat-root-inventory.js";
 import { createProjectGitDriver } from "./collaboration/project-git-operations.js";
 import { enableGatewaySharedResources } from "./collaboration/resource-wiring.js";
-import { createCodingAgentFileStore } from "./coding-agents/file-read.js";
+import { createCodingAgentFilePreviewWiring } from "./coding-agents/file-preview-wiring.js";
 import { createCodingAgentSourceControlStore } from "./coding-agents/source-control.js";
 import { registerCodingAgentAttentionNotifications } from "./coding-agents/attention-notifications.js";
 import { createCodingAgentNotificationPreferenceStore } from "./coding-agents/notification-preferences.js";
@@ -637,7 +637,7 @@ export async function createGateway(config: GatewayConfig) {
   const codingAgentProjectManager = createProjectManager({ homePath });
   const conversationContextResolver = createConversationContextResolver(codingAgentProjectManager);
   const codingAgentWorktreeManager = createWorktreeManager({ homePath });
-  const codingAgentFileStore = createCodingAgentFileStore({
+  const { codingAgentFileStore, filePreviewService } = createCodingAgentFilePreviewWiring({
     homePath,
     ownerId: process.env.MATRIX_USER_ID,
     principalOwnerIds: codingAgentOwnerIds,
@@ -3255,6 +3255,8 @@ export async function createGateway(config: GatewayConfig) {
 
   registerFileRoutes(app, {
     homePath,
+    filePreviewService,
+    getPrincipal: (c) => requireRequestPrincipal(c),
     ...(legacyProjectPathAdmission ? {
       getOwnerId: (c) => requireRequestPrincipal(c).userId,
       projectPathAdmission: legacyProjectPathAdmission,

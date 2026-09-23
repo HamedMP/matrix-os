@@ -7,6 +7,7 @@ import { registerAppRuntimeRoutes } from "../../packages/gateway/src/server/app-
 import { registerFileRoutes } from "../../packages/gateway/src/server/file-routes.js";
 import { ProjectFenceError } from "../../packages/gateway/src/collaboration/project-fence.js";
 import { createLegacyProjectPathAdmission } from "../../packages/gateway/src/collaboration/project-path-admission.js";
+import type { FilePreviewService } from "../../packages/gateway/src/file-preview-service.js";
 
 describe("gateway server route registrars", () => {
   const cleanupPaths: string[] = [];
@@ -47,6 +48,39 @@ describe("gateway server route registrars", () => {
 
     expect(res.status).toBe(400);
     await expect(res.json()).resolves.toEqual({ error: "q required" });
+  });
+
+  it("mounts the authenticated shared preview routes through the file registrar", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "gateway-file-preview-routes-"));
+    cleanupPaths.push(homePath);
+    const service: FilePreviewService = {
+      resolvePreview: vi.fn(async (_principal, resource) => ({
+        resource,
+        name: "output.png",
+        mimeType: "image/png",
+        sizeBytes: 12,
+        kind: "image",
+        version: "file_fixture",
+        canDownload: true,
+      })),
+      openPreviewContent: vi.fn(async () => new Response("fixture")),
+    };
+    const app = new Hono();
+    registerFileRoutes(app, {
+      homePath,
+      filePreviewService: service,
+      getPrincipal: () => ({ userId: "user_owner", source: "jwt" }),
+    });
+
+    const response = await app.request(
+      "/api/file-previews/metadata?kind=home&path=output.png",
+    );
+
+    expect(response.status).toBe(200);
+    expect(service.resolvePreview).toHaveBeenCalledWith(
+      { userId: "user_owner", source: "jwt" },
+      { kind: "home", path: "output.png" },
+    );
   });
 
   it("blocks legacy file writes inside a shared project root", async () => {

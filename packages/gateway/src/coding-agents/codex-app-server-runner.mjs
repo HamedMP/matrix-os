@@ -1,11 +1,12 @@
 import { createCodexSubagentRuntime } from "./codex-subagent-runtime.mjs";
+import { extractCodexArtifactRecords } from "./codex-artifact-events.mjs";
 import { tryLoadToolOutputKey } from "./protected-tool-output.mjs";
 import { codexToolHasPrivateContext, codexToolOutput } from "./codex-tool-output.mjs";
 import { createHash } from "node:crypto";
 import { constants } from "node:fs";
-import { chmod, lstat, mkdir, open, rm } from "node:fs/promises";
+import { chmod, lstat, mkdir, open, realpath, rm } from "node:fs/promises";
 import { createServer } from "node:net";
-import { dirname, isAbsolute, relative } from "node:path";
+import { basename, dirname, extname, isAbsolute, join, relative, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { CodexTransportError, MAX_CODEX_TRANSPORT_BYTES, consumeCodexProviderOutput } from "./codex-provider-output.mjs";
 import { z } from "zod/v4";
@@ -43,6 +44,7 @@ const STEER_RPC_TIMEOUT_MS = 60 * 1000;
 const CONTROL_SOCKET_TIMEOUT_MS = 60 * 1000;
 const PROVIDER_STOP_TIMEOUT_MS = 5_000;
 const SHUTDOWN_REPLAY_GRACE_MS = 250;
+const MAX_CAPTURED_ARTIFACT_BYTES = 10 * 1024 * 1024;
 const TURN_FRAME_V1_PREFIX = "matrix-turn-v1:";
 const TURN_FRAME_V2_PREFIX = "matrix-turn-v2:";
 const UNSAFE_DISPLAY_TEXT = /(stack trace|\/home\/|\/tmp\/|\/var\/|\.ssh\/|id_rsa|bearer\s+[A-Za-z0-9._-]+|sk-[A-Za-z0-9_-]+)/i;
@@ -341,6 +343,17 @@ try {
 }
 
 const toolOutputKey = process.env.MATRIX_HOME ? await tryLoadToolOutputKey(process.env.MATRIX_HOME) : undefined;
+const artifactHomePath = resolve(dirname(eventPath), "../../..");
+const artifactStorageDirectory = join(artifactHomePath, "data", "chat-artifacts", "codex", "sha256");
+const artifactSessionId = basename(eventPath, extname(eventPath));
+const artifactRoots = await Promise.all([process.cwd(), ...config.writableRoots].map((root) => realpath(root)));
+
+function withinArtifactRoot(path) {
+  return artifactRoots.some((root) => {
+    const child = relative(root, path);
+    return child === "" || (child !== ".." && !child.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`) && !isAbsolute(child));
+  });
+}
 
 const controlPath = eventPath.replace(/\.jsonl$/, ".sock");
 await mkdir(dirname(eventPath), { recursive: true });
@@ -763,6 +776,89 @@ async function handleInput(raw) {
   return true;
 }
 
+async function stageArtifactCandidate(candidate) {
+  let bytes;
+  if (candidate.source.type === "inline_bytes") {
+    bytes = Buffer.from(candidate.source.base64, "base64");
+  } else {
+    let source;
+    try {
+      const resolved = await realpath(candidate.source.path);
+      if (!withinArtifactRoot(resolved)) throw new Error("Codex artifact file is outside the run roots");
+      source = await open(candidate.source.path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+      const before = await source.stat({ bigint: true });
+      if (!before.isFile() || before.size <= 0n || before.size > BigInt(MAX_CAPTURED_ARTIFACT_BYTES)) {
+        throw new Error("Codex artifact file is unavailable");
+      }
+      // The provider controls the path. A parent directory can change after
+      // realpath, so bind the opened descriptor to the checked path identity.
+      const openedPath = await realpath(candidate.source.path);
+      const current = await lstat(openedPath, { bigint: true });
+      if (!withinArtifactRoot(openedPath) || before.dev !== current.dev || before.ino !== current.ino) {
+        throw new Error("Codex artifact file changed while being opened");
+      }
+      bytes = await source.readFile();
+      const after = await source.stat({ bigint: true });
+      if (after.size !== before.size || after.mtimeNs !== before.mtimeNs || after.ctimeNs !== before.ctimeNs) {
+        throw new Error("Codex artifact file changed while being captured");
+      }
+    } finally {
+      await source?.close();
+    }
+  }
+  if (bytes.length === 0 || bytes.length > MAX_CAPTURED_ARTIFACT_BYTES) {
+    throw new Error("Codex artifact bytes exceed the capture limit");
+  }
+  const rawExtension = extname(candidate.label).toLowerCase();
+  const extension = /^\.[a-z0-9]{1,10}$/.test(rawExtension) ? rawExtension : ".bin";
+  const digest = createHash("sha256").update(bytes).digest("hex");
+  await mkdir(artifactStorageDirectory, { recursive: true, mode: 0o700 });
+  const path = join(artifactStorageDirectory, `${digest}${extension}`);
+  let capturedExists = false;
+  try {
+    const info = await lstat(path);
+    if (info.isSymbolicLink() || !info.isFile() || info.size !== bytes.length) {
+      throw new Error("Codex artifact capture path is unsafe");
+    }
+    capturedExists = true;
+  } catch (error) {
+    if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
+  }
+  let handle;
+  let created = false;
+  try {
+    if (!capturedExists) {
+      handle = await open(path, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY, 0o600);
+      created = true;
+      await handle.writeFile(bytes);
+      await handle.sync();
+    }
+  } catch (error) {
+    if (!(error instanceof Error && "code" in error && error.code === "EEXIST")) throw error;
+    const info = await lstat(path);
+    if (info.isSymbolicLink() || !info.isFile() || info.size !== bytes.length) {
+      throw new Error("Codex artifact capture collision");
+    }
+  } finally {
+    await handle?.close();
+    if (created) await chmod(path, 0o600);
+  }
+  const ownerReference = relative(artifactHomePath, path).split("\\").join("/");
+  return {
+    type: candidate.type,
+    providerItemId: candidate.providerItemId,
+    outputIndex: candidate.outputIndex,
+    attachmentId: `attachment_codex_${createHash("sha256")
+      .update(`${artifactSessionId}\0${candidate.providerItemId}\0${candidate.outputIndex}\0${digest}`)
+      .digest("hex").slice(0, 32)}`,
+    ownerReference,
+    label: candidate.label,
+    mimeType: candidate.mimeType,
+    sizeBytes: bytes.length,
+    sha256: digest,
+  };
+}
+
 async function handleItemLifecycle(raw) {
   const parsed = ItemLifecycleSchema.safeParse(raw);
   if (!parsed.success) return false;
@@ -783,6 +879,18 @@ async function handleItemLifecycle(raw) {
       assistantItemsWithDelta.delete(matrixItemId);
     }
     return true;
+  }
+  if (parsed.data.method === "item/completed") {
+    for (const candidate of extractCodexArtifactRecords(item)) {
+      let artifact;
+      try {
+        artifact = await stageArtifactCandidate(candidate);
+      } catch (error) {
+        console.warn("[codex] artifact unavailable:", error instanceof Error ? error.name : "UnknownError");
+        continue;
+      }
+      await persist(artifact);
+    }
   }
   if (!ToolLifecycleTypeSchema.options.includes(item.type)) {
     return true;
