@@ -13,6 +13,24 @@ read_host_value() {
   printf '%s\n' "$value"
 }
 
+# Hermes launches stdio MCP servers with a sanitized environment. Recover only
+# the signed Chat-run identity from the immediate parent; never inherit its
+# provider credentials or arbitrary variables into this process.
+parent_pid="$PPID"
+read_parent_run_value() {
+  local name="$1" entry
+  [ -r "/proc/$parent_pid/environ" ] || return 1
+  while IFS= read -r -d '' entry; do
+    case "$entry" in
+      "$name="*) printf '%s' "${entry#*=}"; return 0 ;;
+    esac
+  done < "/proc/$parent_pid/environ"
+  return 1
+}
+MATRIX_CLERK_CALLER_ID="${MATRIX_CLERK_USER_ID:-$(read_parent_run_value MATRIX_CLERK_USER_ID || true)}"
+MATRIX_AGENT_OWNER_ID="${MATRIX_AGENT_OWNER_ID:-$(read_parent_run_value MATRIX_AGENT_OWNER_ID || true)}"
+MATRIX_AGENT_OWNER_PROOF="${MATRIX_AGENT_OWNER_PROOF:-$(read_parent_run_value MATRIX_AGENT_OWNER_PROOF || true)}"
+
 if [ ! -r "$HOST_ENV_FILE" ]; then
   echo "matrix-integrations-mcp: Matrix identity is unavailable" >&2
   exit 3
@@ -30,7 +48,7 @@ if [[ ! "$MATRIX_AUTH_TOKEN_VALUE" =~ ^[A-Za-z0-9._~+/=-]{16,512}$ ]] || \
   echo "matrix-integrations-mcp: Matrix identity is invalid" >&2
   exit 3
 fi
-if [ -n "${MATRIX_CLERK_USER_ID:-}" ] && [ "$MATRIX_CLERK_USER_ID" != "$MATRIX_CLERK_USER_ID_VALUE" ] && \
+if [ -n "$MATRIX_CLERK_CALLER_ID" ] && [ "$MATRIX_CLERK_CALLER_ID" != "$MATRIX_CLERK_USER_ID_VALUE" ] && \
    { [ -z "${MATRIX_AGENT_OWNER_ID:-}" ] || [ -z "${MATRIX_AGENT_OWNER_PROOF:-}" ]; }; then
   echo "matrix-integrations-mcp: delegated identity is unavailable" >&2
   exit 3

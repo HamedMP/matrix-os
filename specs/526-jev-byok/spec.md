@@ -88,7 +88,7 @@ After a successful run, Matrix can process only new or changed Gmail threads and
 - **FR-025**: Matrix's Agent Recipes market MUST list Jev Inbox Triage as a first-party recipe and count it alongside the existing marketplace entries. Its **Build in Chat** action MUST save the reviewed bot configuration through the current user's authenticated Agent API and open the verified bot in Chat without a user-authored setup prompt.
 - **FR-026**: The saved bot MUST use an available Hermes model, the bundled Jev and integration skills, and an active Gmail connection read from the current user's Services. With multiple Gmail connections, the user MUST choose one before creation. With none, creation MUST be disabled. The selected account label MUST be persisted in the bot recipe, not inferred by an agent from its own runtime context.
 - **FR-027**: When Hermes runs a saved bot on a shared computer, its local Matrix MCP requests MUST carry the authenticated Chat run owner with a gateway-verifiable proof. The MCP MUST NOT silently fall back to the VPS owner's integrations for a collaborator's bot.
-  The host-installed integration launcher keeps its credential-isolating environment reset and forwards the signed Run identity. The MCP rejects missing or invalid collaborator delegation before any integration request.
+  Hermes sanitizes the stdio MCP subprocess environment, so the host-installed launcher recovers only the signed Run identity from its immediate parent process before its own credential-isolating environment reset. The MCP rejects missing or invalid collaborator delegation before any integration request. The saved bot also checks that the inventory account matches the Gmail connection selected by the current user before reading mail.
 
 ## Key entities
 
