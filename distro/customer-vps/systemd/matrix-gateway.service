@@ -19,10 +19,11 @@ ExecStart=/opt/matrix/bin/matrix-gateway
 TimeoutStartSec=720
 Restart=on-failure
 RestartSec=5
-# Contain gateway memory so a leak throttles and restarts this unit instead
-# of driving the whole host into OOM (spec 107 Phase 1 guardrail).
-MemoryHigh=1G
-MemoryMax=1536M
+# Include gateway-launched work while reserving most RAM for the host. Fixed
+# 1G/1.5G limits thrash on larger plans when active agent children share this
+# cgroup, even though the host has free memory.
+MemoryHigh=40%
+MemoryMax=50%
 
 [Install]
 WantedBy=multi-user.target

@@ -398,6 +398,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
       reqPath.startsWith('/api/auth/device/') ||
       reqPath === '/api/auth/app-session' ||
       reqPath === '/api/auth/computers' ||
+      (reqPath === '/api/auth/runtime-selection' && c.req.method === 'POST') ||
       reqPath === '/api/auth/provision-runtime' ||
       reqPath === '/api/journey' ||
       reqPath === '/api/journey/retry-provision'

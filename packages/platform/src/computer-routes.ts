@@ -22,6 +22,7 @@ import {
   type UserRuntimeComputerRecord,
 } from './computer-repository.js';
 import { isPreviewMachine } from './customer-vps-preview.js';
+import { appOrigin } from './origins.js';
 import {
   resolveAppDomainIdentity,
   resolveSyncBearerIdentity,
@@ -90,6 +91,22 @@ function controlPlaneHost(env: NodeJS.ProcessEnv): string | null {
   } catch (err: unknown) {
     if (!(err instanceof TypeError)) {
       console.warn('[platform] API origin validation failed:', typeof err);
+    }
+    return null;
+  }
+}
+
+function appControlPlaneHost(env: NodeJS.ProcessEnv): string | null {
+  try {
+    const url = new URL(appOrigin(env));
+    const loopback = url.hostname === 'localhost' || url.hostname === '127.0.0.1' || url.hostname === '[::1]';
+    if (url.protocol !== 'https:' && !(url.protocol === 'http:' && loopback)) return null;
+    if (url.username || url.password || url.pathname !== '/' || url.search || url.hash) return null;
+    const host = url.host.toLowerCase();
+    return isAppDomainHost(host) ? host : null;
+  } catch (err: unknown) {
+    if (!(err instanceof TypeError)) {
+      console.warn('[platform] App origin validation failed:', typeof err);
     }
     return null;
   }
@@ -199,7 +216,8 @@ export function createComputerRoutes(opts: {
       c.req.header(EDGE_SECRET_HEADER),
       opts.appEnv.EDGE_ROUTER_SECRET,
     ).toLowerCase();
-    if (requestHost !== expectedHost) {
+    const expectedAppHost = appControlPlaneHost(opts.appEnv);
+    if (requestHost !== expectedHost && requestHost !== expectedAppHost) {
       opts.applyNoStoreHeaders(c);
       return c.json({ error: 'Not found' }, 404);
     }
