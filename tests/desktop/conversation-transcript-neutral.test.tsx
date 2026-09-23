@@ -285,7 +285,8 @@ describe("provider-neutral conversation transcript", () => {
     expect(userBubbleContent.className).not.toContain("font-");
     expect(userMessageContent.className).toContain("gap-1.5");
     expect(expand.getAttribute("aria-expanded")).toBe("false");
-    expect(screen.queryByText(longMessage)).toBeNull();
+    expect(userBubbleContent.querySelector('[data-message-preview-content]')?.hasAttribute("inert")).toBe(true);
+    expect(screen.getByText(/Message preview:/)).toBeTruthy();
     expect(screen.getByText("run.log")).toBeTruthy();
     expect(screen.getByText("Matrix OS")).toBeTruthy();
     expect(screen.getByText("/review")).toBeTruthy();
@@ -293,6 +294,7 @@ describe("provider-neutral conversation transcript", () => {
 
     fireEvent.click(expand);
     expect(screen.getByText(longMessage)).toBeTruthy();
+    expect(userBubbleContent.querySelector('[data-message-preview-content]')?.hasAttribute("inert")).toBe(false);
     expect(screen.getByRole("button", { name: "Show less" }).getAttribute("aria-expanded")).toBe("true");
 
     fireEvent.click(screen.getByRole("button", { name: "Copy user message" }));
