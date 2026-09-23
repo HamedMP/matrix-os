@@ -11,6 +11,7 @@ An operator command can accidentally place a runtime bearer token in a host audi
 - A machine's next epoch can be prepared without changing authorization. An operator encrypts the three next-epoch tokens to a key generated on that host; only ciphertext is transferred through the normal file channel.
 - Activation is a compare-and-set update of the selected active machine row. The host then atomically replaces exactly the three token values in its root-owned `host.env`, records the epoch, and restarts affected services. Other machines stay on their current epoch.
 - A failed or replayed host update must not silently restore old tokens. The operator resolves any activation/host mismatch before closing the incident.
+- In-place host bundle updates verify the system Python cryptography dependency after installing host scripts and before restarting services; missing dependencies are installed through the bounded host-prerequisites step.
 
 ## Operator sequence
 
