@@ -165,6 +165,10 @@ describe("integration discovery", () => {
 
     const result = await describeServiceHandler({ service: "gmail" }, fetcher);
 
+    expect(fetcher).toHaveBeenCalledWith(
+      expect.stringContaining("/api/integrations/capabilities"),
+      expect.objectContaining({ method: "GET" }),
+    );
     expect(result.content[0].text).toContain("Gmail actions");
     expect(result.content[0].text).toContain("list_messages");
     expect(result.content[0].text).toContain("maxResults");

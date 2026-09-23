@@ -432,20 +432,12 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
     console.warn("[integrations] Startup logo warm failed:", err instanceof Error ? err.message : String(err));
   });
 
-  app.get("/available", async (c) => {
-    let uid: string | null = null;
-    let capabilityIdentityFailed = false;
-    if (mcpPresetBroker?.listAvailableActions) {
-      try {
-        uid = await resolveUserId(c);
-      } catch (err: unknown) {
-        capabilityIdentityFailed = true;
-        console.warn(
-          "[integrations] Optional capability identity resolution failed:",
-          err instanceof Error ? err.message : String(err),
-        );
-      }
-    }
+  async function availableServices(
+    c: Context,
+    uid: string | null,
+    capabilityIdentityFailed: boolean,
+    authoritative = false,
+  ) {
     const services = await Promise.all(listServices()
       .filter((service) => service.connectorKind !== "mcp_preset" || mcpPresetBroker)
       .map(async (s) => {
@@ -472,6 +464,8 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
                   },
                 };
               }
+            } else if (authoritative) {
+              actions = {};
             }
           } catch (err: unknown) {
             console.warn(
@@ -488,6 +482,37 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
         };
       }));
     return c.json(services);
+  }
+
+  app.get("/available", async (c) => {
+    let uid: string | null = null;
+    let capabilityIdentityFailed = false;
+    if (mcpPresetBroker?.listAvailableActions) {
+      try {
+        uid = await resolveUserId(c);
+      } catch (err: unknown) {
+        capabilityIdentityFailed = true;
+        console.warn(
+          "[integrations] Optional capability identity resolution failed:",
+          err instanceof Error ? err.message : String(err),
+        );
+      }
+    }
+    return availableServices(c, uid, capabilityIdentityFailed);
+  });
+
+  // Agent capability discovery must resolve the caller's identity. The public
+  // catalog cannot do that on the app domain, so it must not drive tool calls.
+  app.get("/capabilities", async (c) => {
+    let uid: string | null;
+    try {
+      uid = await resolveUserId(c);
+    } catch (err: unknown) {
+      console.error("[integrations] Capability identity resolution failed:", err);
+      return c.json({ error: "Integration capabilities unavailable" }, 503);
+    }
+    if (!uid) return c.json({ error: "Unauthorized" }, 401);
+    return availableServices(c, uid, false, true);
   });
 
   // -----------------------------------------------------------------------
