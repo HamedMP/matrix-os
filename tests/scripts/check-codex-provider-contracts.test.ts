@@ -15,18 +15,24 @@ const scriptPath = fileURLToPath(
 );
 
 describe("Codex provider contract checker", () => {
-  it("trusts the reviewed Codex 0.155.1 provider schemas", () => {
-    expect(contract.latestVerifiedVersion).toBe("0.155.1");
-    expect(contract.verifiedVersions["0.155.1"]).toEqual({
-      schemaSha256: "c404928e0f2a463e19d1b263081c9d5e0380aec9f651a05ee0766f7bb7527f32",
+  it("trusts the reviewed Codex 0.156.1 provider schemas", () => {
+    expect(contract.latestVerifiedVersion).toBe("0.156.1");
+    expect(contract.verifiedVersions["0.156.0"]).toEqual({
+      schemaSha256: "dafa872d7e86a099e56e28a329dcb9c03db90ed768c3b88cca8c91d46dc1d0e5",
     });
-    expect(appServerContract.latestVerifiedVersion).toBe("0.155.1");
-    expect(appServerContract.verifiedVersions["0.155.1"]).toEqual({
+    expect(contract.verifiedVersions["0.156.1"]).toEqual({
+      schemaSha256: "dafa872d7e86a099e56e28a329dcb9c03db90ed768c3b88cca8c91d46dc1d0e5",
+    });
+    expect(appServerContract.latestVerifiedVersion).toBe("0.156.1");
+    expect(appServerContract.verifiedVersions["0.156.0"]).toEqual({
       schemaSha256ByTarget: {
-        "darwin-arm64": "058e9af9dc4ac3a39b3a382f14d117d5cd3beff329e2cbbf6929346f92eef1aa",
-        "linux-x64": "058e9af9dc4ac3a39b3a382f14d117d5cd3beff329e2cbbf6929346f92eef1aa",
+        "darwin-arm64": "655adafa0ccea3d84f30bcbdc74e201fa14511c51e08d0cd024a0280daa8bc60",
+        "linux-x64": "655adafa0ccea3d84f30bcbdc74e201fa14511c51e08d0cd024a0280daa8bc60",
       },
     });
+    expect(appServerContract.verifiedVersions["0.156.1"]).toEqual(
+      appServerContract.verifiedVersions["0.156.0"],
+    );
     expect(appServerContract.requiredServerProtocolSchemaDigests[
       "item/commandExecution/requestApproval"
     ]).toEqual({
@@ -35,6 +41,9 @@ describe("Codex provider contract checker", () => {
         "linux-x64": "ef803ac64161397389bc35428803c3ec8dcc94757c93d758a9fdf0ae6b5a944f",
       },
     });
+    expect(appServerContract.requiredServerProtocolSchemaDigests[
+      "item/started"
+    ]).toBe("7e1fcd8e3953999660d5c80e2ba4479697645e179ce3a95555712d4f60097d6b");
   });
 
   it("requires exact-version digests and protocol semantics to evolve together", () => {
