@@ -152,19 +152,32 @@ export async function previewChromiumSites(
     databasePath(home, selected.directory, "logins"), databasePath(home, selected.directory, "cookies"),
   ]);
   if (!loginPath && !cookiePath) throw new Error("local browser import unavailable");
+  const [loginRows, cookieRows] = await Promise.all([
+    loginPath ? queryRows(home, loginPath, LOGIN_META_SQL) : Promise.resolve([]),
+    cookiePath ? queryRows(home, cookiePath, COOKIE_META_SQL) : Promise.resolve([]),
+  ]);
   const counts = new Map<string, ChromiumSitePreview>();
-  function add(host: string, kind: "passwords" | "cookies") {
+  function register(host: string) {
     const item = counts.get(host) ?? { host, passwords: 0, cookies: 0 };
-    item[kind] += 1;
     if (counts.has(host)) counts.delete(host);
     else if (counts.size >= MAX_PREVIEW_SITES) counts.delete(counts.keys().next().value!);
     counts.set(host, item);
   }
-  if (loginPath) for (const row of await queryRows(home, loginPath, LOGIN_META_SQL)) {
-    const host = hostFromUrl(row.origin_url); if (host) add(host, "passwords");
+  for (const row of loginRows) {
+    const host = hostFromUrl(row.origin_url); if (host) register(host);
   }
-  if (cookiePath) for (const row of await queryRows(home, cookiePath, COOKIE_META_SQL)) {
-    const host = cookieHost(row.host_key); if (host) add(host, "cookies");
+  for (const row of cookieRows) {
+    const host = cookieHost(row.host_key); if (host) register(host);
+  }
+  for (const row of loginRows) {
+    const host = hostFromUrl(row.origin_url); if (host) {
+      const item = counts.get(host); if (item) item.passwords++;
+    }
+  }
+  for (const row of cookieRows) {
+    const host = cookieHost(row.host_key); if (host) {
+      const item = counts.get(host); if (item) item.cookies++;
+    }
   }
   return [...counts.values()].sort((a, b) => a.host.localeCompare(b.host));
 }

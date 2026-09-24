@@ -299,6 +299,22 @@ describe("selected local browser profile transfer", () => {
     expect(sites.some((site) => site.host === "site1.example")).toBe(false);
     expect(sites.some((site) => site.host === "site5001.example")).toBe(true);
   });
+
+  it("keeps accurate password counts when a preview site is evicted then rediscovered", async () => {
+    const home = await mkdtemp(join(tmpdir(), "matrix-source-home-"));
+    dirs.push(home);
+    const profile = join(home, "Library/Application Support/Arc/User Data/Default");
+    await mkdir(profile, { recursive: true });
+    execFileSync("/usr/bin/sqlite3", [join(profile, "Login Data"), `CREATE TABLE logins (origin_url TEXT, blacklisted_by_user INTEGER);
+      INSERT INTO logins VALUES ('https://site1.example/login', 0);`]);
+    execFileSync("/usr/bin/sqlite3", [join(profile, "Cookies"), `CREATE TABLE cookies (host_key TEXT);
+      WITH RECURSIVE sites(n) AS (SELECT 2 UNION ALL SELECT n + 1 FROM sites WHERE n < 5001)
+      INSERT INTO cookies SELECT 'site' || n || '.example' FROM sites;
+      INSERT INTO cookies VALUES ('site1.example');`]);
+    const sites = await previewChromiumSites(home, "arc:Default", "darwin");
+    expect(sites.find((site) => site.host === "site1.example"))
+      .toEqual({ host: "site1.example", passwords: 1, cookies: 1 });
+  });
   it("imports plaintext cookies without asking for a Keychain secret", async () => {
     const home = await mkdtemp(join(tmpdir(), "matrix-source-home-"));
     dirs.push(home);

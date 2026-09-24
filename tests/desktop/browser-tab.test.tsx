@@ -21,6 +21,10 @@ describe("BrowserTab", () => {
   beforeEach(() => {
     window.localStorage.clear();
     vi.mocked(invoke).mockReset();
+    vi.mocked(invoke).mockImplementation(async (channel) => {
+      if (channel === "browser:list-secret-sources") return { sources: [] } as never;
+      return { ok: true } as never;
+    });
     mocks.embedRender.mockReset();
     useBrowserNavigation.setState(useBrowserNavigation.getInitialState(), true);
   });
@@ -107,7 +111,7 @@ describe("BrowserTab", () => {
     const settings = screen.getByRole("region", { name: "Browser settings" });
     expect((within(settings).getByRole("checkbox", { name: "Restore previous tabs" }) as HTMLInputElement).checked).toBe(true);
     expect(within(settings).getByText("Cookies and sign-ins persist in the browser profile.")).toBeTruthy();
-    expect(within(settings).getByText(/Password saving requires an OS-encrypted browser vault/)).toBeTruthy();
+    expect(within(settings).getByText(/Passwords you import are stored in an OS-encrypted local vault/)).toBeTruthy();
   });
 
   it("imports selected local browser pages and opens them from Saved pages", async () => {
@@ -118,6 +122,7 @@ describe("BrowserTab", () => {
       if (channel === "browser:import-pages") return {
         pages: [{ title: "Project", url: "https://example.com/project", folder: "Arc tabs" }],
       } as never;
+      if (channel === "browser:list-secret-sources") return { sources: [] } as never;
       return { ok: true } as never;
     });
     const first = render(<BrowserTab active />);
