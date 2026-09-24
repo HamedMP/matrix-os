@@ -14,6 +14,7 @@ import { createTestPlatformDb, destroyTestPlatformDb } from "./platform-db-test-
 const checkoutEnv = {
   MATRIX_FUNDED_AI_ADDON_CHECKOUT_ENABLED: "true",
   MATRIX_FUNDED_AI_RELAY_URL: "https://relay.example.test",
+  AI_RELAY_CONTROL_TOKEN: "c".repeat(32),
   STRIPE_SECRET_KEY: "configured",
   STRIPE_WEBHOOK_SECRET: "whsec_test",
   STRIPE_PRICE_AI_CREDIT_USD_5: "price_ai_5",
@@ -76,7 +77,7 @@ describe("funded AI add-on checkout", () => {
       constructWebhookEvent: vi.fn(() => webhookEvent),
     };
     webhookEvent = completedEvent();
-    relayHealthFetch = vi.fn(async () => new Response(null, { status: 200 }));
+    relayHealthFetch = vi.fn(async () => Response.json({ ready: true }));
   });
 
   afterEach(async () => {
@@ -149,9 +150,12 @@ describe("funded AI add-on checkout", () => {
     });
 
     expect(response.status).toBe(200);
-    expect(relayHealthFetch).toHaveBeenCalledWith("https://relay.example.test/health", expect.objectContaining({
+    expect(relayHealthFetch).toHaveBeenCalledWith(
+      "https://relay.example.test/ready?model=anthropic%2Fclaude-sonnet-5", expect.objectContaining({
       redirect: "error", signal: expect.any(AbortSignal),
-    }));
+      headers: { authorization: `Bearer ${checkoutEnv.AI_RELAY_CONTROL_TOKEN}` },
+      }),
+    );
     await expect(response.json()).resolves.toEqual({ url: "https://checkout.stripe.com/c/pay/cs_test" });
     expect(stripe.createAiCreditCheckoutSession).toHaveBeenCalledWith({
       idempotencyKey: `matrix-ai-credit:${createHash("sha256")
@@ -171,8 +175,13 @@ describe("funded AI add-on checkout", () => {
   });
 
   it("blocks a new paid checkout when owner policy or relay health is unavailable", async () => {
+    relayHealthFetch.mockResolvedValueOnce(Response.json({ ready: false }));
+    expect((await createCheckout()).status).toBe(503);
+    expect(stripe.createAiCreditCheckoutSession).not.toHaveBeenCalled();
     relayHealthFetch.mockResolvedValueOnce(new Response(null, { status: 503 }));
     expect((await createCheckout()).status).toBe(503);
+    expect(stripe.createAiCreditCheckoutSession).not.toHaveBeenCalled();
+    expect((await createCheckout({ ...checkoutEnv, AI_RELAY_CONTROL_TOKEN: undefined })).status).toBe(503);
     expect(stripe.createAiCreditCheckoutSession).not.toHaveBeenCalled();
 
     await repository.setRuntimePolicy({

@@ -61,7 +61,6 @@ export function GatewayPanel({
   const budget = policy?.monthlyBudgetMicrousd ?? null;
   const [budgetUsd, setBudgetUsd] = useState(budget === null ? "" : String(budget / 1_000_000));
   const [creditDialogOpen, setCreditDialogOpen] = useState(false);
-  useGettingStartedBlocker(creditDialogOpen);
   const [creditPackage, setCreditPackage] = useState<"usd_5" | "usd_10" | "usd_25">("usd_5");
   const [creditBusy, setCreditBusy] = useState(false);
   const [creditError, setCreditError] = useState(false);
@@ -76,6 +75,10 @@ export function GatewayPanel({
   const checkoutAvailable = Boolean(source && policy?.topUpEnabled && canAddCredit
     && source.usage.kind === "managed_credit" && source.usage.state === "current"
     && (ready || creditRequired));
+  useGettingStartedBlocker(creditDialogOpen && checkoutAvailable);
+  useEffect(() => {
+    if (!checkoutAvailable) setCreditDialogOpen(false);
+  }, [checkoutAvailable]);
   const status = !source || !policy ? "Setup needed" : ready ? "Ready" : creditRequired ? "Credit needed"
     : source.readiness.state === "ready" ? "Unavailable" : titleCase(source.readiness.state);
 
@@ -91,7 +94,7 @@ export function GatewayPanel({
   };
 
   const submitCredit = async () => {
-    if (creditBusy || !source || !canAddCredit || disabled) return;
+    if (creditBusy || !source || !checkoutAvailable || disabled) return;
     setCreditBusy(true);
     setCreditError(false);
     try {

@@ -872,6 +872,22 @@ describe("AgentsProvidersView", () => {
     expect(onAddCredit.mock.calls[1]?.[2]).toBe(firstRequestId);
   });
 
+  it("closes a credit dialog when refreshed route eligibility is lost", async () => {
+    const current = snapshot();
+    const { rerender, props } = setup({ snapshot: current });
+    fireEvent.click(screen.getByRole("button", { name: "Add credit" }));
+    expect(screen.getByRole("dialog", { name: "Add Matrix AI credit" })).toBeVisible();
+    const unavailable = structuredClone(current);
+    unavailable.accessSources[0]!.readiness = {
+      state: "unavailable", checkedAt: now, staleAfter: later,
+      action: "retry", safeReason: "provider_unavailable",
+    };
+    rerender(<AgentsProvidersView {...props} snapshot={unavailable} />);
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Add Matrix AI credit" })).toBeNull());
+    rerender(<AgentsProvidersView {...props} snapshot={current} />);
+    expect(screen.queryByRole("dialog", { name: "Add Matrix AI credit" })).toBeNull();
+  });
+
   it("shows install, offline, busy, and read-only states without inventing an install capability", () => {
     const base = snapshot();
     base.harnesses.push({

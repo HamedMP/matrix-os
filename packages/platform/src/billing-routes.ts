@@ -631,6 +631,7 @@ export function createBillingRoutes(options: {
         repository: options.fundedAiRepository,
         identity: { ownerId: clerkUserId, machineId: machine.machineId, runtimeSlot: machine.runtimeSlot },
         relayBaseUrl: env.MATRIX_FUNDED_AI_RELAY_URL,
+        relayControlToken: env.AI_RELAY_CONTROL_TOKEN,
         fetchFn: options.fundedRelayHealthFetch,
         now,
       })) return c.json(BILLING_UNAVAILABLE_RESPONSE, 503);
