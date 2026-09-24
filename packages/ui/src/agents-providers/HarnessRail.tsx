@@ -1,13 +1,13 @@
 import type { ReactNode } from "react";
 import { isSupportedGenericHarnessCredentialRoute } from "@matrix-os/contracts";
 import type { ProviderAccessSource, ProviderHarnessInstance, ProviderHarnessKind } from "@matrix-os/contracts";
-import { CODING_AGENT_ARTWORK } from "../coding-agent-artwork.js";
+import { CODING_AGENT_ARTWORK, codingAgentArtworkSrc } from "../coding-agent-artwork.js";
 
 /** The same shipped artwork and backgrounds used by both Terminal menus. */
 export function HarnessIcon({ harness }: { harness: ProviderHarnessKind }) {
   if (harness === "claude" || harness === "codex" || harness === "opencode" || harness === "pi") {
     const logo = CODING_AGENT_ARTWORK[harness];
-    return <span className="matrix-ap-agent-logo" style={{ background: logo.background }} aria-hidden="true"><img src={logo.src} alt="" width="20" height="20" draggable={false} loading="eager" /></span>;
+    return <span className="matrix-ap-agent-logo" style={{ background: logo.background }} aria-hidden="true"><img src={codingAgentArtworkSrc(logo.src)} alt="" width="20" height="20" draggable={false} loading="eager" /></span>;
   }
   const paths = {
     hermes: "M3 6h18l-6 6h6l-9 9 2-8H8l2-4H3z",

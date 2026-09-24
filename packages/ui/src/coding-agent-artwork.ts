@@ -5,3 +5,8 @@ export const CODING_AGENT_ARTWORK = {
   opencode: { src: "/agent-logos/opencode-white.png", background: "#111111" },
   pi: { src: "/agent-logos/pi-coding-agent.png", background: "#1E2F5C" },
 } as const;
+
+/** Packaged Electron serves public assets beside index.html; web serves them at the origin root. */
+export function codingAgentArtworkSrc(src: string, baseUri = typeof document === "undefined" ? "" : document.baseURI): string {
+  return baseUri.startsWith("file:") ? `.${src}` : src;
+}
