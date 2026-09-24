@@ -26,6 +26,7 @@ export interface StubGateway {
   setProjectLifecycle(lifecycle: "active" | "archived" | "deleted"): void;
   setKernelResponseDelay(delayMs: number): void;
   setBuildCommit(commit: string): void;
+  setDeviceUserId(userId: string): void;
   setSystemInfo(info: Record<string, unknown>): void;
   disconnectKernel(): void;
   close(): Promise<void>;
@@ -649,6 +650,7 @@ export async function startStubGateway(options: StubGatewayOptions = {}): Promis
     kernelConnections: 0,
   };
   let currentToken = TOKEN;
+  let deviceUserId = "user-1";
   const activeTerminalOutputs: Partial<Record<string, (data: string) => void>> = {};
   const terminalOutputSequences: Record<string, number> = {};
   let createdHermesConversation = false;
@@ -698,7 +700,7 @@ export async function startStubGateway(options: StubGatewayOptions = {}): Promis
       json(res, 200, {
         accessToken: TOKEN,
         expiresAt: Date.now() + 3_600_000,
-        userId: "user-1",
+        userId: deviceUserId,
         handle: "neo",
         displayName: "Thomas Anderson",
       });
@@ -1468,6 +1470,7 @@ export async function startStubGateway(options: StubGatewayOptions = {}): Promis
     url: `http://127.0.0.1:${port}`,
     port,
     state,
+    setDeviceUserId: (userId) => { deviceUserId = userId; },
     setBuildCommit: systemInfo.setBuildCommit,
     setSystemInfo: systemInfo.setSystemInfo,
     sendTerminalOutput: (data, session = "matrix-task-1") => activeTerminalOutputs[session]?.(data),

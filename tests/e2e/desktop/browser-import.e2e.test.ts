@@ -100,4 +100,14 @@ fi
     const evidence = join(root, "output/playwright/browser-import");
     await page.screenshot({ path: join(evidence, "electron-browser-secret-import.png") });
   }, 60_000);
+
+  it("does not expose the first account's passwords after a second Matrix account signs in", async () => {
+    gateway!.setDeviceUserId("user-2");
+    await page.evaluate(async () => window.operator.invoke("auth:sign-out", {}));
+    await page.evaluate(async () => window.operator.invoke("auth:start-device-flow", {}));
+    await expect.poll(async () => page.evaluate(async () => window.operator.invoke("auth:status", {})),
+      { timeout: 20_000 }).toMatchObject({ signedIn: true, userId: "user-2" });
+    const accounts = await page.evaluate(async () => window.operator.invoke("browser:list-passwords", { origin: "https://example.com" }));
+    expect(accounts).toEqual({ accounts: [] });
+  }, 60_000);
 });
