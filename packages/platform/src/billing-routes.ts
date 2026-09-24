@@ -215,7 +215,7 @@ export function createBillingRoutes(options: {
   upsertEntitlement?: typeof upsertBillingEntitlement;
   prebilling?: PrebillingCheckoutCoordinator;
   fundedAiRepository?: Pick<import('./ai-funded-policy-repository.js').AiFundedPolicyRepository,
-    'grantCreditInTransaction' | 'getRuntimeFundingSummary'>;
+    'grantCreditInTransaction' | 'getCheckoutFundingSummary'>;
   fundedRelayHealthFetch?: typeof fetch;
   redditConversions?: RedditConversionsClient;
   /**

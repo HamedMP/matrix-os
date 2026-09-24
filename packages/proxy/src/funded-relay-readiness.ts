@@ -1,5 +1,6 @@
 import type { FundedRelayConfig } from "./funded-relay-config.js";
 import { FUNDED_GLM_FLASH } from "./funded-relay-model.js";
+import { workersAiTarget } from "./funded-relay-openai-request.js";
 
 export const FUNDED_SONNET = "anthropic/claude-sonnet-5";
 const MAX_PROBE_BODY_BYTES = 64 * 1024;
@@ -26,35 +27,47 @@ async function boundedJson(response: Response): Promise<unknown> {
   }
 }
 
-/** An authenticated, no-inference model probe for the exact paid route. */
+/** A minimal generation on the same upstream route and credential as paid traffic. */
 export async function probeFundedModel(config: FundedRelayConfig, modelId: string, fetchFn: typeof fetch = fetch): Promise<boolean> {
   let url: string;
   let headers: Record<string, string>;
+  let body: string;
   if (modelId === FUNDED_GLM_FLASH && config.workersAiToken && config.reservationMode === "usage") {
-    const accountId = new URL(config.gatewayBaseUrl).pathname.split("/")[2];
-    url = `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/models/search?search=glm-5.3-flash&per_page=10`;
-    headers = { authorization: `Bearer ${config.workersAiToken}` };
+    const target = workersAiTarget(config.gatewayBaseUrl);
+    url = target.url;
+    headers = {
+      authorization: `Bearer ${config.workersAiToken}`,
+      "cf-aig-gateway-id": target.gatewayId,
+      "cf-aig-collect-log-payload": "false",
+      "content-type": "application/json",
+    };
+    body = JSON.stringify({ model: FUNDED_GLM_FLASH, messages: [{ role: "user", content: "ping" }], max_tokens: 1, store: false });
   } else if (modelId === FUNDED_SONNET) {
-    url = `${config.gatewayBaseUrl}/v1/models/claude-sonnet-5`;
+    url = `${config.gatewayBaseUrl}/v1/messages`;
     headers = {
       "cf-aig-authorization": `Bearer ${config.gatewayToken}`,
       "anthropic-version": "2023-06-01",
+      "content-type": "application/json",
     };
+    body = JSON.stringify({ model: "claude-sonnet-5", messages: [{ role: "user", content: "ping" }], max_tokens: 1 });
   } else return false;
 
   try {
-    const response = await fetchFn(url, { headers, redirect: "error", signal: AbortSignal.timeout(2_000) });
+    const response = await fetchFn(url, { method: "POST", headers, body, redirect: "error", signal: AbortSignal.timeout(5_000) });
     if (!response.ok) {
       await response.body?.cancel();
       return false;
     }
-    const body = await boundedJson(response);
-    if (!body || typeof body !== "object") return false;
-    if (modelId === FUNDED_SONNET) return "id" in body && body.id === "claude-sonnet-5";
-    const catalog = body as { success?: unknown; result?: unknown };
-    return catalog.success === true && Array.isArray(catalog.result)
-      && catalog.result.some((item: unknown) => item !== null && typeof item === "object"
-        && "name" in item && item.name === FUNDED_GLM_FLASH);
+    const responseBody = await boundedJson(response);
+    if (!responseBody || typeof responseBody !== "object") return false;
+    if (modelId === FUNDED_SONNET) return "type" in responseBody && responseBody.type === "message"
+      && "model" in responseBody && responseBody.model === "claude-sonnet-5"
+      && "content" in responseBody && Array.isArray(responseBody.content);
+    const envelope = responseBody as { success?: unknown; result?: unknown };
+    if ("success" in envelope && envelope.success !== true) return false;
+    const result = envelope.success === true ? envelope.result : responseBody;
+    return !!result && typeof result === "object" && "model" in result && result.model === FUNDED_GLM_FLASH
+      && "choices" in result && Array.isArray(result.choices) && result.choices.length > 0;
   } catch (error) {
     console.warn("[funded-ai] Model readiness probe unavailable:", error instanceof Error ? error.name : typeof error);
     return false;

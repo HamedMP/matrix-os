@@ -3,10 +3,12 @@ import type { AiFundedPolicyRepository } from "./ai-funded-policy-repository.js"
 const MAX_LEDGER_AGE_MS = 5 * 60_000;
 const PREFLIGHT_DEADLINE_MS = 6_000;
 const PROBE_MODELS = ["@cf/zai-org/glm-5.3-flash", "anthropic/claude-sonnet-5"] as const;
+const MAX_PENDING_FUNDING_READS = 4;
+const pendingFundingReads = new Set<Promise<unknown>>();
 
 /** A new payment must be useful to this owner and exact computer. Zero balance is allowed. */
 export async function isAiCreditCheckoutRouteHealthy(input: {
-  repository: Pick<AiFundedPolicyRepository, "getRuntimeFundingSummary">;
+  repository: Pick<AiFundedPolicyRepository, "getCheckoutFundingSummary">;
   identity: { ownerId: string; machineId: string; runtimeSlot: string };
   relayBaseUrl: string | undefined;
   relayControlToken: string | undefined;
@@ -21,7 +23,16 @@ export async function isAiCreditCheckoutRouteHealthy(input: {
     const base = new URL(input.relayBaseUrl ?? "");
     if (base.protocol !== "https:" || base.username || base.password || base.pathname !== "/"
       || base.search || base.hash || !input.relayControlToken || input.relayControlToken.length < 32) return false;
+    // A saturated DB must fail new checkouts closed without accumulating
+    // unbounded pool waiters after their HTTP deadlines expire.
+    if (pendingFundingReads.size >= MAX_PENDING_FUNDING_READS) return false;
     const deadlineMs = input.deadlineMs ?? PREFLIGHT_DEADLINE_MS;
+    const fundingRead = input.repository.getCheckoutFundingSummary(input.identity, Date.now() + deadlineMs);
+    pendingFundingReads.add(fundingRead);
+    void fundingRead.then(
+      () => { pendingFundingReads.delete(fundingRead); },
+      () => { pendingFundingReads.delete(fundingRead); },
+    );
     const deadline = new Promise<boolean>((resolve) => {
       timeout = setTimeout(() => {
         expired = true;
@@ -31,7 +42,7 @@ export async function isAiCreditCheckoutRouteHealthy(input: {
     });
     const check = async (): Promise<boolean> => {
       const now = (input.now ?? (() => new Date()))().getTime();
-      const { policy, funding } = await input.repository.getRuntimeFundingSummary(input.identity);
+      const { policy, funding } = await fundingRead;
       if (expired) return false;
       const checkedAt = Date.parse(policy.checkedAt);
       const staleAfter = Date.parse(policy.staleAfter);

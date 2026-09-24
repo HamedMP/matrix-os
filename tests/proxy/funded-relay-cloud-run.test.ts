@@ -49,9 +49,9 @@ describe("funded relay Cloud Run service", () => {
       ...enabledEnv(), CLOUDFLARE_WORKERS_AI_TOKEN: "w".repeat(32),
       MATRIX_FUNDED_AI_RESERVATION_MODE: "usage",
     });
-    const fetchFn = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({
-      success: true, result: [{ name: "@cf/zai-org/glm-5.3-flash" }],
-    }), { status: 200 }));
+    const fetchFn = vi.fn<typeof fetch>().mockResolvedValue(Response.json({
+      success: true, result: { model: "@cf/zai-org/glm-5.3-flash", choices: [{ message: { content: "ok" } }] },
+    }));
     const service = createFundedRelayService(config, { fetchFn });
     const path = "http://relay.test/ready?model=%40cf%2Fzai-org%2Fglm-5.3-flash";
     try {
@@ -60,12 +60,15 @@ describe("funded relay Cloud Run service", () => {
       const headers = { authorization: `Bearer ${config.relayControlToken}` };
       expect((await service.app.request(path, { headers })).status).toBe(200);
       expect(fetchFn).toHaveBeenCalledWith(
-        "https://api.cloudflare.com/client/v4/accounts/0123456789abcdef0123456789abcdef/ai/models/search?search=glm-5.3-flash&per_page=10",
-        expect.objectContaining({ redirect: "error", signal: expect.any(AbortSignal) }),
+        "https://api.cloudflare.com/client/v4/accounts/0123456789abcdef0123456789abcdef/ai/run/@cf/zai-org/glm-5.3-flash",
+        expect.objectContaining({ method: "POST", redirect: "error", signal: expect.any(AbortSignal),
+          body: expect.stringContaining('"max_tokens":1') }),
       );
       fetchFn.mockResolvedValueOnce(new Response(null, { status: 503 }));
       expect((await service.app.request(path, { headers })).status).toBe(503);
-      fetchFn.mockResolvedValueOnce(Response.json({ success: true, result: [{ name: "@cf/other/model" }] }));
+      fetchFn.mockResolvedValueOnce(Response.json({ success: true, result: [{ name: "@cf/zai-org/glm-5.3-flash" }] }));
+      expect((await service.app.request(path, { headers })).status).toBe(503);
+      fetchFn.mockResolvedValueOnce(Response.json({ success: false, model: "@cf/zai-org/glm-5.3-flash", choices: [{}] }));
       expect((await service.app.request(path, { headers })).status).toBe(503);
       expect((await service.app.request("http://relay.test/ready?model=unknown", { headers })).status).toBe(400);
     } finally {
@@ -73,9 +76,11 @@ describe("funded relay Cloud Run service", () => {
     }
   });
 
-  it("checks the configured Anthropic gateway model without making an inference request", async () => {
+  it("checks the configured Anthropic gateway by making a bounded inference request", async () => {
     const config = requireFundedRelayServiceConfig(enabledEnv());
-    const fetchFn = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ id: "claude-sonnet-5" }));
+    const fetchFn = vi.fn<typeof fetch>().mockResolvedValue(Response.json({
+      type: "message", model: "claude-sonnet-5", content: [{ type: "text", text: "ok" }],
+    }));
     const service = createFundedRelayService(config, { fetchFn });
     try {
       const response = await service.app.request("http://relay.test/ready?model=anthropic%2Fclaude-sonnet-5", {
@@ -83,10 +88,11 @@ describe("funded relay Cloud Run service", () => {
       });
       expect(response.status).toBe(200);
       expect(await response.json()).toEqual({ ready: true });
-      expect(fetchFn).toHaveBeenCalledWith(`${config.gatewayBaseUrl}/v1/models/claude-sonnet-5`,
-        expect.objectContaining({ headers: {
+      expect(fetchFn).toHaveBeenCalledWith(`${config.gatewayBaseUrl}/v1/messages`,
+        expect.objectContaining({ method: "POST", body: expect.stringContaining('"max_tokens":1'), headers: {
           "cf-aig-authorization": `Bearer ${config.gatewayToken}`,
           "anthropic-version": "2023-06-01",
+          "content-type": "application/json",
         } }));
     } finally {
       await service.close();

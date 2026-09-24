@@ -118,6 +118,15 @@ describe("funded AI add-on checkout", () => {
     expect((await deliver(completedEvent())).status).toBe(200);
   }
 
+  it("checks purchase eligibility without mutating the runtime balance", async () => {
+    const before = await db.executor.selectFrom("ai_funded_runtime_balances").selectAll()
+      .where("machine_id", "=", identity.machineId).executeTakeFirstOrThrow();
+    expect((await createCheckout()).status).toBe(200);
+    const after = await db.executor.selectFrom("ai_funded_runtime_balances").selectAll()
+      .where("machine_id", "=", identity.machineId).executeTakeFirstOrThrow();
+    expect(after).toEqual(before);
+  });
+
   it("loads a complete, bounded, server-owned package catalog or disables checkout", () => {
     expect(loadAiCreditCheckoutConfig(checkoutEnv)).toEqual({
       enabled: true,
