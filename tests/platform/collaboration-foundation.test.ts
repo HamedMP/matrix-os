@@ -22,8 +22,9 @@ import { createTestPlatformDb, destroyTestPlatformDb, type TestPlatformDb } from
  * S01 / T006 characterization: the platform schema registration and the
  * customer-VPS (user machine) query seams keep their observable behavior after
  * extraction out of packages/platform/src/db.ts. The baseline fixture (tables,
- * columns, constraints and index definitions) was captured from the unextracted
- * migrateSchema at the 124/s00 base (8e44fe960) with the same queries used below.
+ * columns, constraints and index definitions) was initially captured from the
+ * unextracted migrateSchema at the 124/s00 base (8e44fe960) with the same queries
+ * used below, then updated when later migrations intentionally changed the schema.
  */
 const { capturedFrom: _capturedFrom, ...baseline } = JSON.parse(
   readFileSync(new URL('./fixtures/platform-schema-baseline.json', import.meta.url), 'utf8'),

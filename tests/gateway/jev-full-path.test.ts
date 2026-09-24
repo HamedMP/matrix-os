@@ -59,11 +59,19 @@ describe("Jev local Gateway to funded relay", () => {
       })),
     };
     const upstream = vi.fn(async () => new Response(JSON.stringify({
-      model: "jev-1.13.0",
-      answers: Object.fromEntries(JEV_EMAIL_TRIAGE_ANSWER_IDS.map((id) => [
-        id, { type: "noul", noul: 0.5 },
-      ])),
-      usage: { input_tokens: 275, output_tokens: 20 },
+      result: {
+        state: "Completed",
+        result: {
+          model: "jev-1.13.0",
+          answers: Object.fromEntries(JEV_EMAIL_TRIAGE_ANSWER_IDS.map((id) => [
+            id, { type: "noul", noul: 0.5 },
+          ])),
+          usage: { input_tokens: 275, output_tokens: 20 },
+        },
+      },
+      success: true,
+      errors: [],
+      messages: [],
     }), { status: 200, headers: { "content-type": "application/json" } }));
     const config = resolveFundedRelayConfig({
       MATRIX_FUNDED_AI_ENABLED: "1", MATRIX_FUNDED_AI_RESERVATION_MODE: "usage",
