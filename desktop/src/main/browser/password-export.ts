@@ -26,7 +26,8 @@ export async function exportBrowserPasswords(
     ensureAuthorized?.();
     await link(temporary, destination);
     return true;
-  } catch {
+  } catch (error: unknown) {
+    console.warn("[browser-export] password export unavailable", error instanceof Error ? error.name : "unknown");
     throw new Error("password export unavailable");
   } finally {
     await rm(temporary, { force: true });

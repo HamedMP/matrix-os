@@ -266,8 +266,9 @@ export function createWebContentsView(options: {
         // Check location again inside the target frame: navigation can commit
         // between the main-process check and executeJavaScript.
         return await contents.executeJavaScript(buildBrowserPasswordFillScript(origin, username, password), true) === true;
-      } catch {
-        return false;
+      } catch (error: unknown) {
+        console.warn("[browser] password fill execution unavailable", error instanceof Error ? error.name : "unknown");
+        throw new Error("browser password fill unavailable");
       }
     },
     captureSnapshot,

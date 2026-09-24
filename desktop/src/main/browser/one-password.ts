@@ -66,8 +66,9 @@ export async function runOnePasswordCli(args: string[], signal?: AbortSignal): P
       }
     }
     return JSON.parse(stdout) as unknown;
-  } catch {
+  } catch (error: unknown) {
     // CLI errors can contain item names, account identifiers, or paths.
+    console.warn("[browser-import] 1Password CLI unavailable", error instanceof Error ? error.name : "unknown");
     throw new Error("1Password is unavailable or locked");
   }
 }
@@ -110,6 +111,7 @@ export async function importOnePasswordLogins(
       detail = await run(["item", "get", id, "--format", "json", "--reveal"], signal);
     } catch (error: unknown) {
       if (error instanceof BrowserAccountChangedError) throw error;
+      console.warn("[browser-import] selected 1Password item unavailable", error instanceof Error ? error.name : "unknown");
       if (imported === 0 && pending.length === 0) throw new Error("1Password is unavailable or locked");
       break;
     }
@@ -120,6 +122,7 @@ export async function importOnePasswordLogins(
         await vault.upsertMany(pending);
       } catch (error: unknown) {
         if (error instanceof BrowserAccountChangedError) throw error;
+        console.warn("[browser-import] 1Password batch could not be saved", error instanceof Error ? error.name : "unknown");
         if (imported === 0) throw new Error("browser password vault unavailable");
         return { imported, skipped: unique.length - imported };
       }
@@ -132,6 +135,7 @@ export async function importOnePasswordLogins(
       await vault.upsertMany(pending);
     } catch (error: unknown) {
       if (error instanceof BrowserAccountChangedError) throw error;
+      console.warn("[browser-import] final 1Password batch could not be saved", error instanceof Error ? error.name : "unknown");
       if (imported === 0) throw new Error("browser password vault unavailable");
       return { imported, skipped: unique.length - imported };
     }

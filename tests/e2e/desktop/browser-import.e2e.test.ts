@@ -91,6 +91,10 @@ fi
     await page.getByRole("button", { name: "Import from another browser" }).click();
     await page.getByRole("button", { name: "Arc · Default" }).click();
     await page.getByRole("checkbox", { name: /example.com.*password/ }).waitFor();
+    await page.getByRole("textbox", { name: "Add a website by domain" }).fill("missing.example");
+    await page.getByRole("button", { name: "Add website" }).click();
+    await page.getByRole("button", { name: "Import selected websites (1)" }).waitFor();
+    await page.getByRole("button", { name: "Remove missing.example" }).click();
     await page.getByRole("button", { name: "Choose 1Password logins" }).click();
     await page.getByRole("checkbox", { name: /Example login/ }).check();
     await page.getByRole("button", { name: "Import selected logins (1)" }).click();

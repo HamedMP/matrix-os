@@ -4,12 +4,15 @@ import { invoke } from "../../lib/operator";
 interface Source { id: string; browser: string; profile: string }
 interface Site { host: string; passwords: number; cookies: number }
 interface OnePasswordItem { id: string; title: string; origin: string }
+const DOMAIN = /^(?=.{1,253}$)[a-z0-9]+(?:[a-z0-9.-]*[a-z0-9])?$/;
 
 export default function BrowserSecretImportView() {
   const [sources, setSources] = useState<Source[]>([]);
   const [sourceId, setSourceId] = useState<string | null>(null);
   const [sites, setSites] = useState<Site[]>([]);
   const [selectedHosts, setSelectedHosts] = useState<string[]>([]);
+  const [manualHost, setManualHost] = useState("");
+  const [manualHosts, setManualHosts] = useState<string[]>([]);
   const [filter, setFilter] = useState("");
   const [items, setItems] = useState<OnePasswordItem[] | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -28,6 +31,8 @@ export default function BrowserSecretImportView() {
   }, []);
 
   const visibleSites = useMemo(() => sites.filter((site) => site.host.includes(filter.trim().toLowerCase())).slice(0, 200), [sites, filter]);
+  const normalizedManualHost = manualHost.trim().toLowerCase();
+  const validManualHost = DOMAIN.test(normalizedManualHost) && !normalizedManualHost.includes("..");
 
   const preview = async (id: string) => {
     if (busy) return;
@@ -37,6 +42,8 @@ export default function BrowserSecretImportView() {
     setSourceId(id);
     setSites([]);
     setSelectedHosts([]);
+    setManualHost("");
+    setManualHosts([]);
     try {
       const result = await invoke("browser:preview-sites", { sourceId: id });
       setSites(result.sites);
@@ -113,13 +120,14 @@ export default function BrowserSecretImportView() {
           ))}
         </div>
         {sources.length === 0 ? <p className="mt-3 text-xs" style={{ color: "var(--text-secondary)" }}>No local Chromium sign-in profiles found on this Mac.</p> : null}
-        {sourceId && sites.length > 0 ? (
+        {sourceId ? (
           <div className="mt-4">
             <label className="block text-xs font-medium" htmlFor="browser-import-site-search">Find a website</label>
             <input id="browser-import-site-search" value={filter} onChange={(event) => setFilter(event.target.value)}
               placeholder="Search websites" className="mt-1 w-full rounded-lg border bg-transparent px-3 py-2 text-sm"
               style={{ borderColor: "var(--border-default)" }} />
             <div className="mt-2 max-h-64 overflow-y-auto rounded-lg border" style={{ borderColor: "var(--border-default)" }}>
+              {sites.length === 0 && busy !== "preview" ? <p className="px-3 py-2 text-xs">No website metadata found in this profile.</p> : null}
               {visibleSites.map((site) => (
                 <label key={site.host} className="flex items-center gap-3 border-b px-3 py-2 text-xs last:border-b-0" style={{ borderColor: "var(--border-subtle)" }}>
                   <input type="checkbox" checked={selectedHosts.includes(site.host)} onChange={(event) => setSelectedHosts((current) => event.target.checked ? [...current, site.host] : current.filter((host) => host !== site.host))} />
@@ -128,7 +136,31 @@ export default function BrowserSecretImportView() {
                 </label>
               ))}
             </div>
-            <p className="mt-2 text-xs" style={{ color: "var(--text-secondary)" }}>Select each website you want. Cookies from other sites remain in the source browser.</p>
+            <p className="mt-2 text-xs" style={{ color: "var(--text-secondary)" }}>Select each website you want. If a website is missing from the preview, enter its domain below. Cookies from other sites remain in the source browser.</p>
+            <label className="mt-3 block text-xs font-medium" htmlFor="browser-import-manual-domain">Add a website by domain</label>
+            <div className="mt-1 flex gap-2">
+              <input id="browser-import-manual-domain" value={manualHost} onChange={(event) => setManualHost(event.target.value)}
+                placeholder="example.com" className="min-w-0 flex-1 rounded-lg border bg-transparent px-3 py-2 text-sm"
+                style={{ borderColor: "var(--border-default)" }} />
+              <button type="button" disabled={busy !== null || !validManualHost || selectedHosts.length >= 5_000 || manualHosts.length >= 100}
+                className="rounded-lg border px-3 py-2 text-xs disabled:opacity-50" style={{ borderColor: "var(--border-default)" }}
+                onClick={() => {
+                  setSelectedHosts((current) => current.includes(normalizedManualHost) ? current : [...current, normalizedManualHost]);
+                  if (!sites.some((site) => site.host === normalizedManualHost)) {
+                    setManualHosts((current) => current.includes(normalizedManualHost) ? current : [...current, normalizedManualHost]);
+                  }
+                  setManualHost("");
+                }}>Add website</button>
+            </div>
+            {manualHosts.length > 0 ? <div className="mt-2 flex flex-wrap gap-2" aria-label="Manually added websites">
+              {manualHosts.map((host) => <span key={host} className="inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-xs" style={{ borderColor: "var(--border-default)" }}>
+                {host}
+                <button type="button" disabled={busy !== null} aria-label={`Remove ${host}`} onClick={() => {
+                  setManualHosts((current) => current.filter((item) => item !== host));
+                  setSelectedHosts((current) => current.filter((item) => item !== host));
+                }}>Remove</button>
+              </span>)}
+            </div> : null}
             <button type="button" disabled={busy !== null || selectedHosts.length === 0}
               className="mt-3 rounded-lg px-3 py-2 text-xs font-medium disabled:opacity-50"
               style={{ background: "var(--accent)", color: "var(--text-on-accent)" }}

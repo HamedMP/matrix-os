@@ -76,7 +76,8 @@ async function queryRows(home: string, path: string, sql: string): Promise<Recor
   }
   try {
     return await run(path);
-  } catch {
+  } catch (error: unknown) {
+    console.warn("[browser-import] direct database query unavailable; trying a snapshot", error instanceof Error ? error.name : "unknown");
     const temporary = await mkdtemp(join(tmpdir(), "matrix-browser-snapshot-"));
     try {
       const destination = join(temporary, basename(path));
@@ -86,7 +87,8 @@ async function queryRows(home: string, path: string, sql: string): Promise<Recor
         if (await confinedFile(home, sidecar)) await copyFile(sidecar, `${destination}${suffix}`);
       }
       return await run(destination);
-    } catch {
+    } catch (snapshotError: unknown) {
+      console.warn("[browser-import] database snapshot unavailable", snapshotError instanceof Error ? snapshotError.name : "unknown");
       throw new Error("local browser database unavailable");
     } finally {
       await rm(temporary, { recursive: true, force: true });
@@ -126,7 +128,12 @@ export async function listChromiumSecretSources(home: string, platform: NodeJS.P
     const root = join(home, "Library", "Application Support", browser.directory);
     let profiles: string[];
     try { profiles = browser.id === "opera" ? ["Default"] : (await readdir(root)).filter((item) => PROFILE.test(item)).slice(0, 32); }
-    catch { continue; }
+    catch (error: unknown) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+        console.warn("[browser-import] a local browser profile directory was unavailable");
+      }
+      continue;
+    }
     for (const profile of profiles) {
       const directory = browser.id === "opera" ? root : join(root, profile);
       if (await databasePath(home, directory, "logins") || await databasePath(home, directory, "cookies")) {
@@ -204,12 +211,18 @@ export async function importChromiumSites(options: {
   if (loginPath) {
     try { loginRows = (await queryRows(options.home, loginPath, LOGIN_SQL))
       .filter((row) => hosts.has(hostFromUrl(row.origin_url) ?? "")); }
-    catch { failedDatabases++; skipped++; }
+    catch (error: unknown) {
+      console.warn("[browser-import] selected login table unavailable", error instanceof Error ? error.name : "unknown");
+      failedDatabases++; skipped++;
+    }
   }
   if (cookiePath) {
     try { selectedCookieRows = (await cookieRows(options.home, cookiePath))
       .filter((row) => hosts.has(cookieHost(row.host_key) ?? "")); }
-    catch { failedDatabases++; skipped++; }
+    catch (error: unknown) {
+      console.warn("[browser-import] selected cookie table unavailable", error instanceof Error ? error.name : "unknown");
+      failedDatabases++; skipped++;
+    }
   }
   if (failedDatabases === Number(Boolean(loginPath)) + Number(Boolean(cookiePath))) {
     throw new Error("local browser database unavailable");
@@ -220,10 +233,10 @@ export async function importChromiumSites(options: {
   if (needsKeychain) {
     try {
       password = await (options.getKeychainPassword ?? getMacKeychainPassword)(selected.browser.service);
-    } catch {
+    } catch (error: unknown) {
       const hasPlaintextCookie = selectedCookieRows.some((row) => !row.secret_hex && typeof row.value === "string");
       if (!hasPlaintextCookie) throw new Error("Keychain access was unavailable or declined");
-      console.warn("[browser-import] Keychain unavailable; continuing with selected plaintext cookies");
+      console.warn("[browser-import] Keychain unavailable; continuing with selected plaintext cookies", error instanceof Error ? error.name : "unknown");
     }
   }
   for (const row of loginRows) {
@@ -251,7 +264,10 @@ export async function importChromiumSites(options: {
   let importedCookies = 0;
   for (const cookie of cookies) {
     try { await options.setCookie(cookie); importedCookies++; }
-    catch { skipped++; }
+    catch (error: unknown) {
+      console.warn("[browser-import] selected cookie could not be installed", error instanceof Error ? error.name : "unknown");
+      skipped++;
+    }
   }
   return { passwords: logins.length, cookies: importedCookies, skipped };
 }

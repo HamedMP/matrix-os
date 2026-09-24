@@ -78,6 +78,15 @@ describe("createWebContentsView", () => {
     expect(script).toContain("https://example.com");
     expect(script).toContain("secret");
   });
+  it("reports Browser fill execution failures without revealing page details", async () => {
+    const view = createWebContentsView({
+      window: { isDestroyed: () => false, contentView: { addChildView: vi.fn(), removeChildView: vi.fn() } } as never,
+      partition: "persist:browser", allowedOrigins: [], allowPublicNavigation: true, onState: vi.fn(),
+    });
+    electronMock.webContents.executeJavaScript.mockRejectedValue(new Error("internal page detail"));
+    await expect(view.fillPassword?.("https://example.com", "alice", "secret"))
+      .rejects.toThrow("browser password fill unavailable");
+  });
   it("distinguishes an unloaded Browser view from a URL retrieval failure", () => {
     const view = createWebContentsView({
       window: { isDestroyed: () => false, contentView: { addChildView: vi.fn(), removeChildView: vi.fn() } } as never,

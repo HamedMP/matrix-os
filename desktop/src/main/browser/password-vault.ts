@@ -77,7 +77,8 @@ export function createBrowserPasswordVault(options: {
       const value: unknown = JSON.parse(options.safeStorage.decryptString(blob));
       if (!Array.isArray(value) || value.length > MAX_PASSWORDS || !value.every(validLogin)) throw new Error("invalid vault");
       return value;
-    } catch {
+    } catch (error: unknown) {
+      console.warn("[browser-vault] encrypted password vault unavailable", error instanceof Error ? error.name : "unknown");
       throw new Error("browser password vault unavailable");
     }
   }
