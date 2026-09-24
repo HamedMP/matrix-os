@@ -694,7 +694,7 @@ export function createApp(deps: {
         // retain the owner scope only when the machine has no collaborators.
         // Shared and Preview machines must use signed delegation.
         const legacyOwnerHeader = delegatedId === record.clerkUserId
-          && !delegatedProof
+          && delegatedProof === undefined
           && machine?.provisioningClass === 'customer'
           && machine.accessClerkUserIds.length === 0;
         if ((delegatedId || delegatedProof) && !legacyOwnerHeader) {

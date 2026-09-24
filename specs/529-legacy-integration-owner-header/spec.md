@@ -13,8 +13,8 @@ boundary.
 
 - A valid per-machine bearer and an unsigned owner ID may resolve to the
   machine owner only for a running, single-user customer machine.
-- The unsigned ID must exactly match the recorded owner. An invalid proof is
-  never treated as a legacy request.
+- The unsigned ID must exactly match the recorded owner. A present proof,
+  including an empty or invalid value, is never treated as a legacy request.
 - Preview machines, shared machines, and unrelated actors continue to require
   valid signed delegation. Missing or invalid bearer tokens remain rejected.
 - Existing signed delegation and provider action behavior are unchanged.

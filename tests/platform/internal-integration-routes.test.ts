@@ -154,6 +154,7 @@ describe("platform/internal-integration-routes", () => {
 
     for (const headers of [
       { "x-platform-user-id": "user_stranger" },
+      { "x-platform-user-id": "user_customer_owner", "x-platform-verified": "" },
       { "x-platform-user-id": "user_customer_owner", "x-platform-verified": "invalid" },
     ]) {
       const rejected = await app.request("/internal/containers/customer-1301/integrations/probe", {
