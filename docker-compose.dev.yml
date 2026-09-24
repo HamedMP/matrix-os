@@ -30,7 +30,7 @@ services:
       start_period: 10s
 
   minio:
-    image: quay.io/minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
+    image: docker.io/pgsty/silo@sha256:635197cb9f36d01bee221d34d1c7d7960f6a95c48b0b6c01d99cd13bdae51a46
     restart: unless-stopped
     ports:
       - "9100:9000"
@@ -48,16 +48,13 @@ services:
       start_period: 10s
 
   minio-init:
-    image: quay.io/minio/mc@sha256:a7fe349ef4bd8521fb8497f55c6042871b2ae640607cf99d9bede5e9bdf11727
+    image: docker.io/pgsty/mc@sha256:cfc83108c3abb371f8fb84d99c1fdc88f8c237e022409b0081fb7c0a3be634dd
     depends_on:
       minio:
         condition: service_healthy
-    entrypoint: >
-      /bin/sh -c "
-      mc alias set local http://minio:9000 matrixos matrixos123 &&
-      mc mb local/matrixos-sync --ignore-existing &&
-      echo 'Bucket matrixos-sync created'
-      "
+    environment:
+      MC_HOST_local: http://matrixos:matrixos123@minio:9000
+    command: mb local/matrixos-sync --ignore-existing
     restart: "no"
 
   dev:
