@@ -12,7 +12,7 @@ import {
   type BrowserLogin,
 } from "@desktop/main/browser/chromium-secrets";
 import { createBrowserPasswordVault, type BrowserPasswordVault } from "@desktop/main/browser/password-vault";
-import { browserAccountScope } from "@desktop/main/browser/account-scope";
+import { bindBrowserVaultToAccount, browserAccountScope } from "@desktop/main/browser/account-scope";
 import { importOnePasswordLogins, listOnePasswordLogins, parseOnePasswordLogin } from "@desktop/main/browser/one-password";
 import { importChromiumSites, listChromiumSecretSources, previewChromiumSites } from "@desktop/main/browser/import-secrets";
 import { exportBrowserPasswords } from "@desktop/main/browser/password-export";
@@ -90,6 +90,18 @@ describe("OS-encrypted Matrix Browser password vault", () => {
     const bobVault = createBrowserPasswordVault({ dir: join(dir, bob.vaultDirectory), safeStorage });
     await aliceVault.upsertMany([{ origin: "https://example.com", username: "alice", password: "synthetic" }]);
     expect(await bobVault.list()).toEqual([]);
+  });
+
+  it("rejects a password read that resolves after the Matrix account changes", async () => {
+    let resolveList!: (value: Array<{ origin: string; username: string }>) => void;
+    const delayedList = new Promise<Array<{ origin: string; username: string }>>((resolve) => { resolveList = resolve; });
+    const vault = { list: () => delayedList } as unknown as BrowserPasswordVault;
+    let currentUserId = "user-alice";
+    const bound = bindBrowserVaultToAccount("user-alice", () => currentUserId, vault);
+    const pending = bound.list();
+    currentUserId = "user-bob";
+    resolveList([{ origin: "https://example.com", username: "alice" }]);
+    await expect(pending).rejects.toThrow("browser account unavailable");
   });
   it("stores no plaintext, deduplicates a site login, and returns only metadata for listing", async () => {
     const dir = await mkdtemp(join(tmpdir(), "matrix-password-vault-"));
@@ -173,6 +185,17 @@ describe("OS-encrypted Matrix Browser password vault", () => {
     await writeFile(target, "preserve");
     await expect(exportBrowserPasswords(vault, async () => target)).rejects.toThrow("password export unavailable");
     expect(await readFile(target, "utf8")).toBe("preserve");
+  });
+
+  it("does not publish a password export after the Matrix account changes", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "matrix-password-export-"));
+    dirs.push(dir);
+    const target = join(dir, "passwords.json");
+    const vault = { all: async () => [{ origin: "https://example.com", username: "alice", password: "synthetic" }] };
+    let authorized = true;
+    await expect(exportBrowserPasswords(vault, async () => { authorized = false; return target; },
+      () => { if (!authorized) throw new Error("account changed"); })).rejects.toThrow("password export unavailable");
+    await expect(stat(target)).rejects.toMatchObject({ code: "ENOENT" });
   });
 });
 

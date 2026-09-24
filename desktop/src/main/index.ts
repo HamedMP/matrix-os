@@ -4,7 +4,7 @@ import { createFileDownloadService } from "./files/file-download-service";
 import { importBrowserPages, listBrowserImportSources } from "./browser/import-pages";
 import { importChromiumSites, listChromiumSecretSources, previewChromiumSites } from "./browser/import-secrets";
 import { createBrowserPasswordVault, type BrowserPasswordVault } from "./browser/password-vault";
-import { browserAccountScope } from "./browser/account-scope";
+import { bindBrowserVaultToAccount, browserAccountScope } from "./browser/account-scope";
 import { importOnePasswordLogins, listOnePasswordLogins } from "./browser/one-password";
 import { exportBrowserPasswords } from "./browser/password-export";
 import { pathToFileURL } from "node:url";
@@ -274,17 +274,7 @@ if (!gotLock) {
           browserVaults.delete(scope.userId);
         }
         browserVaults.set(scope.userId, vault);
-        const selected = vault;
-        const verifyOwner = () => {
-          if (currentBrowserScope().userId !== scope.userId) throw new Error("browser account unavailable");
-        };
-        return {
-          list: () => { verifyOwner(); return selected.list(); },
-          all: () => { verifyOwner(); return selected.all(); },
-          find: (origin, username) => { verifyOwner(); return selected.find(origin, username); },
-          upsertMany: (logins) => { verifyOwner(); return selected.upsertMany(logins); },
-          remove: (origin, username) => { verifyOwner(); return selected.remove(origin, username); },
-        };
+        return bindBrowserVaultToAccount(scope.userId, () => currentBrowserScope().userId, vault);
       };
 
       const rendererOrigin = desktopRendererUrl
@@ -433,22 +423,29 @@ if (!gotLock) {
         },
         listOnePasswordItems: () => listOnePasswordLogins(),
         importOnePasswordItems: (ids) => importOnePasswordLogins(ids, browserVaultForAccount()),
-        listBrowserPasswords: async (origin) => (await browserVaultForAccount().list())
-          .filter((item) => item.origin === origin)
-          .slice(0, 100)
-          .map(({ username }) => ({ username })),
+        listBrowserPasswords: async (origin) => {
+          const owner = currentBrowserScope().userId;
+          const items = await browserVaultForAccount().list();
+          if (currentBrowserScope().userId !== owner) throw new Error("browser account unavailable");
+          return items.filter((item) => item.origin === origin)
+            .slice(0, 100)
+            .map(({ username }) => ({ username }));
+        },
         fillBrowserPassword: async ({ embedId, username }) => {
+          const owner = currentBrowserScope().userId;
           const origin = embeds.getBrowserOrigin(embedId);
           if (!origin) return { filled: false };
           const login = await browserVaultForAccount().find(origin, username);
+          if (currentBrowserScope().userId !== owner) return { filled: false };
           if (!login) return { filled: false };
           return { filled: await embeds.fillBrowserPassword(embedId, login) };
         },
         deleteBrowserPassword: async ({ origin, username }) => ({
           deleted: await browserVaultForAccount().remove(origin, username),
         }),
-        exportBrowserPasswords: async () => ({
-          exported: await exportBrowserPasswords(browserVaultForAccount(), async () => {
+        exportBrowserPasswords: async () => {
+          const owner = currentBrowserScope().userId;
+          const exported = await exportBrowserPasswords(browserVaultForAccount(), async () => {
             const options = {
               title: "Export Matrix Browser passwords",
               defaultPath: join(app.getPath("downloads"), "matrix-browser-passwords.json"),
@@ -460,8 +457,11 @@ if (!gotLock) {
               ? await dialog.showSaveDialog(mainWindow, options)
               : await dialog.showSaveDialog(options);
             return result.canceled ? null : result.filePath ?? null;
-          }),
-        }),
+          }, () => {
+            if (currentBrowserScope().userId !== owner) throw new Error("browser account unavailable");
+          });
+          return { exported };
+        },
         setBadgeCount: (count) => {
           app.setBadgeCount(count);
         },
