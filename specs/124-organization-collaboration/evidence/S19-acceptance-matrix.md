@@ -69,9 +69,24 @@ ancestry and all three passed their suites, which moves them into AUTOMATED-ONLY
 Their live halves are still unrun and are named in the table. **Nothing became a verified journey;
 three rows went from undecided to automated-only.**
 
-**Totals across the 16 rows whose suites ran:** 67 file runs over 66 distinct files, one file appears
-in two rows, 545 tests, **537 passed, 8 failed, 0 skipped**. No row was skipped-and-counted-as-passed:
-vitest reported zero skipped tests in this run.
+**Totals are per measurement date, and the two dates do not sum.** This table now displays results
+from two runs, so a single aggregate would be true of neither. Both are stated in full rather than
+reconciled into one figure.
+
+| Measurement | Scope | Result |
+| --- | --- | --- |
+| **2026-09-21**, the original acceptance run | The 16 rows whose suites ran, as recorded then | 67 file runs over 66 distinct files (one file appears in two rows), **545 tests: 537 passed, 8 failed, 0 skipped** |
+| **2026-09-24**, re-measurements on the replayed ancestry | Rows 13/19/23's four failing suites; row 24's 9 named suites | **51/51** and **69/69**, both exit 0, real PostgreSQL for the first |
+
+The 2026-09-21 row is the historical record of that run and is **not** updated in place: its 8
+failures are the blocked-row failures, since resolved, and rewriting them away would erase the
+evidence that the resolution was needed. The 2026-09-24 rows supersede two of its entries — row 24's
+15-tests-across-5-files figure is replaced by the 9 named suites above, and rows 13/19/23's failures
+are replaced by the re-run — so **summing the displayed rows does not reproduce 545, and is not meant
+to.** Each row states which run produced it.
+
+No row was skipped-and-counted-as-passed in either measurement: vitest reported zero skipped tests
+in both.
 
 ## Correction history
 
@@ -297,6 +312,15 @@ mechanism none of these tests can see.
 constituents, and by the time anyone asked which five, the answer was gone. Evidence has to name what
 it ran, not how many things it ran, or it cannot be re-derived — the same failure as a bare line
 number naming a position instead of a claim.
+
+**And re-measuring this row broke an invariant one section away.** Replacing row 24's figure left the
+run-level totals summing to 599 against a stated 545 — every row individually honest, the aggregate
+reconciling to neither. That is the seventh finding again with arithmetic instead of prose:
+**correcting a value at its site and leaving its dependents stale is the same move as correcting a
+claim at its site of discovery and leaving its copies.** The dependents of a number are the totals
+that consume it, and nothing checks them. The totals block above now states its measurement date per
+row, so a reader can reproduce which run produced which figure instead of trusting that one sum
+covers both.
 
 ## Shared-terminal evidence measured against three since-fixed P1 defects
 
