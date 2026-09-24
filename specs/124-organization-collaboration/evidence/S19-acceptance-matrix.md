@@ -149,29 +149,38 @@ carefully" would lose the only actionable part of each.
 | **Pre-read plus unpredicated write** | 5, the last 2 being security controls (`cutover.ts` `resume()` and `block()`) | Mechanical enforcement. The rule is already written in `CLAUDE.md` and `check-patterns.sh` has no check for it. |
 | **Retirement without a caller inventory** | 1 defect, 3 inventories that each missed something (`connection-tickets` against `apps/mobile` and `packages/ui`) | Enumerate callers **from the retired path across every workspace package**, not from the previous inventory and not only under `shell/` and `apps/`. |
 | **Boundary-blind tests** | **6**, in two sub-shapes — absence (4) and proxy assertion (2). See below. | Assertions on the far side of the boundary: affected-row counts, a shared route constant both sides import, and rendered output rather than callback order. |
-| **Correction applied at the site of discovery** | 1 (the Native Mobile claim, corrected in `quickstart.md` while five copies survived) | Enumerate a corrected claim's copies the way you enumerate a retired route's callers — from the claim, across every document. |
+| **Correction applied at the site of discovery** | 1 defect (the Native Mobile claim): corrected in `quickstart.md` while four inaccurate copies remained elsewhere, all since corrected | Enumerate a corrected claim's copies the way you enumerate a retired route's callers — from the claim, across every document. |
 
 Each is detailed below.
 
 ## Correcting a claim where you found it, not where it lives
 
 Added 2026-09-24, found by Greptile on #1883. This pass established that Native Mobile's shared Chat
-and terminal do not work, and corrected the sentence saying otherwise in `quickstart.md`. **Five
-other copies of the same claim survived**, including one that would have shipped:
+and terminal do not work, and corrected the sentence saying otherwise in `quickstart.md`. Enumerating the claim afterwards
+found **five further occurrences: four inaccurate copies, all corrected here, and one already-correct
+historical quotation.** Nothing in the list below is outstanding. One of the four would have
+shipped:
 
-| Location | Why it mattered |
-| --- | --- |
-| `site-docs-draft.md` | Feeds the public site PR. Would have **advertised to customers** shared Chat and terminal that are destroyed at the platform edge. |
-| `spec.md` | The authoritative V1 scope statement. A reader checking what V1 supports would have been told it works. |
-| `tasks.md`, S17 exit criterion | A requirement phrased as a description, the same defect as quickstart row 24. |
-| `evidence/direct.md` | Transport table asserting Native Mobile reaches the home by that path. |
-| This matrix | Quoting line 53 — correct, because the quotation is immediately followed by "is not true". |
+| Location | Status | Why it mattered |
+| --- | --- | --- |
+| `site-docs-draft.md` | **Corrected** | Feeds the public site PR. Would have **advertised to customers** shared Chat and terminal that are destroyed at the platform edge. |
+| `spec.md` | **Corrected** | The authoritative V1 scope statement. A reader checking what V1 supports would have been told it works. |
+| `tasks.md`, S17 exit criterion | **Corrected** | A requirement phrased as a description, the same defect as quickstart row 24. |
+| `evidence/direct.md` | **Corrected** | Transport table asserting Native Mobile reaches the home by that path. |
+| This matrix | Already correct | **Not a defect.** Quotes line 53 to negate it — the quotation is immediately followed by "is not true". Listed so the enumeration is complete, not because anything needed changing. |
 
 **This is not a stale claim that was never re-derived.** It *was* re-derived, correctly, and fixed.
 The failure is that the correction was applied **at the site of discovery rather than at every site
-the claim lived**. Two of the five were found only because Greptile flagged the publication draft and
-the resulting search turned up three more — so even the corrected correction was incomplete until it
+the claim lived**. `site-docs-draft.md` was found only because Greptile flagged it, and the search
+that followed turned up the other three — so even the corrected correction was incomplete until it
 was enumerated properly.
+
+**Three numbers, not one.** Five occurrences, four defects, one quotation. An earlier revision of
+this paragraph said five copies "survived", which reads as five stale claims still loose and would
+have sent a reader after four documents already clean and one that was never wrong. That is an
+overstatement of remaining damage inside the record of fixing an overstatement — the mirror of the
+understatement corrected in row 24's build claim, one document later. A count is not a finding until
+it says what each item is.
 
 The discipline already existed in this document, aimed at the wrong noun. The retirement finding
 above says to enumerate every *caller* of a retired route rather than trusting a map written from
