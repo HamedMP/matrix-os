@@ -5,6 +5,12 @@ interface Source { id: string; browser: string; profile: string }
 interface Site { host: string; passwords: number; cookies: number }
 interface OnePasswordItem { id: string; title: string; origin: string }
 const DOMAIN = /^(?=.{1,253}$)[a-z0-9]+(?:[a-z0-9.-]*[a-z0-9])?$/;
+const MAX_SELECTED_SITES = 5_000;
+
+export function selectImportHost(selected: string[], host: string): string[] {
+  if (selected.includes(host) || selected.length >= MAX_SELECTED_SITES) return selected;
+  return [...selected, host];
+}
 
 export default function BrowserSecretImportView() {
   const [sources, setSources] = useState<Source[]>([]);
@@ -130,7 +136,9 @@ export default function BrowserSecretImportView() {
               {sites.length === 0 && busy !== "preview" ? <p className="px-3 py-2 text-xs">No website metadata found in this profile.</p> : null}
               {visibleSites.map((site) => (
                 <label key={site.host} className="flex items-center gap-3 border-b px-3 py-2 text-xs last:border-b-0" style={{ borderColor: "var(--border-subtle)" }}>
-                  <input type="checkbox" checked={selectedHosts.includes(site.host)} onChange={(event) => setSelectedHosts((current) => event.target.checked ? [...current, site.host] : current.filter((host) => host !== site.host))} />
+              <input type="checkbox" checked={selectedHosts.includes(site.host)}
+                disabled={!selectedHosts.includes(site.host) && selectedHosts.length >= MAX_SELECTED_SITES}
+                onChange={(event) => setSelectedHosts((current) => event.target.checked ? selectImportHost(current, site.host) : current.filter((host) => host !== site.host))} />
                   <span className="min-w-0 flex-1 truncate">{site.host}</span>
                   <span style={{ color: "var(--text-secondary)" }}>{site.passwords} passwords · {site.cookies} cookies</span>
                 </label>
@@ -142,10 +150,10 @@ export default function BrowserSecretImportView() {
               <input id="browser-import-manual-domain" value={manualHost} onChange={(event) => setManualHost(event.target.value)}
                 placeholder="example.com" className="min-w-0 flex-1 rounded-lg border bg-transparent px-3 py-2 text-sm"
                 style={{ borderColor: "var(--border-default)" }} />
-              <button type="button" disabled={busy !== null || !validManualHost || selectedHosts.length >= 5_000 || manualHosts.length >= 100}
+              <button type="button" disabled={busy !== null || !validManualHost || selectedHosts.length >= MAX_SELECTED_SITES || manualHosts.length >= 100}
                 className="rounded-lg border px-3 py-2 text-xs disabled:opacity-50" style={{ borderColor: "var(--border-default)" }}
                 onClick={() => {
-                  setSelectedHosts((current) => current.includes(normalizedManualHost) ? current : [...current, normalizedManualHost]);
+                  setSelectedHosts((current) => selectImportHost(current, normalizedManualHost));
                   if (!sites.some((site) => site.host === normalizedManualHost)) {
                     setManualHosts((current) => current.includes(normalizedManualHost) ? current : [...current, normalizedManualHost]);
                   }

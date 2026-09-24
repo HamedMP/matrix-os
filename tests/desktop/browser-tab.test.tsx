@@ -4,6 +4,7 @@ import React from "react";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import BrowserTab from "@desktop/renderer/src/features/browser/BrowserTab";
+import { selectImportHost } from "@desktop/renderer/src/features/browser/BrowserSecretImportView";
 import { invoke } from "@desktop/renderer/src/lib/operator";
 import { useBrowserNavigation } from "@desktop/renderer/src/stores/browser-navigation";
 
@@ -18,6 +19,13 @@ vi.mock("@desktop/renderer/src/features/embeds/EmbedHost", () => ({
 }));
 
 describe("BrowserTab", () => {
+  it("caps combined preview and manual website selection at the import limit", () => {
+    const selected = Array.from({ length: 5_000 }, (_, index) => `site${index}.example`);
+    expect(selectImportHost(selected, "extra.example")).toBe(selected);
+    expect(selectImportHost(selected.slice(1), "extra.example")).toHaveLength(5_000);
+    expect(selectImportHost(selected, "site1.example")).toBe(selected);
+  });
+
   beforeEach(() => {
     window.localStorage.clear();
     vi.mocked(invoke).mockReset();
