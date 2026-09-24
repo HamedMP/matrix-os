@@ -31,7 +31,98 @@ function catalogService(overrides: Partial<Parameters<typeof createChatProviderC
 
 describe("Claude catalog selection and CLI handoff", () => {
   afterEach(() => vi.useRealTimers());
-  it("admits the runtime's resolved Fable ID unchanged without claiming its context qualifier", async () => {
+  it("shows resolved versions for moving aliases and a pinned Opus 5.5 only when the runtime reports it", async () => {
+    const source = createClaudeModelCatalogSource({ discover: async () => [
+      { value: "default", resolvedModel: "claude-sonnet-5", displayName: "Default (recommended)" },
+      { value: "opus", resolvedModel: "claude-opus-5-5", displayName: "Opus" },
+      { value: "sonnet", resolvedModel: "claude-sonnet-5", displayName: "Sonnet" },
+      { value: "haiku", resolvedModel: "claude-haiku-4-5-20251001", displayName: "Haiku" },
+      { value: "claude-opus-5-5", displayName: "Opus" },
+    ] });
+    const catalog = await catalogService({ codingModelCatalogSource: source }).getCatalog(principal);
+    const models = catalog.instances.find((entry) => entry.id === "claude_code_default")!.models;
+    expect(Object.fromEntries(models.map(({ id, displayName }) => [id, displayName]))).toMatchObject({
+      default: "Default · currently Claude Sonnet 5",
+      opus: "Opus · currently Claude Opus 5.5",
+      sonnet: "Sonnet · currently Claude Sonnet 5",
+      haiku: "Haiku · currently Claude Haiku 4.5",
+      "claude-opus-5-5": "Claude Opus 5.5",
+    });
+    const admitted = validateChatProviderSelection({ catalog, selection: {
+      instanceId: "claude_code_default", model: "claude-opus-5-5",
+    } });
+    expect(admitted).toMatchObject({ ok: true, selection: { model: "claude-opus-5-5" } });
+    if (!admitted.ok) throw new Error("Expected Opus 5.5 admission");
+    const launch = buildAgentLaunch({ agent: "claude", cwd: "/workspace", runtimeHome: "/runtime-home",
+      prompt: "Read only", model: admitted.selection.model, mode: "default", approvalPolicy: "on-request",
+      sandbox: { enabled: true, mode: "workspace-write", writableRoots: ["/workspace"] } });
+    expect(launch.args[launch.args.indexOf("--model") + 1]).toBe("claude-opus-5-5");
+  });
+
+  it("preserves the active VPS-style 1M choices and displays their resolved versions", async () => {
+    const source = createClaudeModelCatalogSource({ discover: async () => [
+      { value: "default", resolvedModel: "claude-opus-5[1m]", displayName: "Default (recommended)" },
+      { value: "opus[1m]", resolvedModel: "claude-opus-5[1m]", displayName: "Opus (1M context)" },
+      { value: "claude-fable-5[1m]", resolvedModel: "claude-fable-5", displayName: "Fable" },
+      { value: "sonnet", resolvedModel: "claude-sonnet-5", displayName: "Sonnet" },
+      { value: "haiku", resolvedModel: "claude-haiku-4-5-20251001", displayName: "Haiku" },
+    ] });
+    const catalog = await catalogService({ codingModelCatalogSource: source }).getCatalog(principal);
+    const models = catalog.instances.find((entry) => entry.id === "claude_code_default")!.models;
+    expect(Object.fromEntries(models.map(({ id, displayName }) => [id, displayName]))).toMatchObject({
+      default: "Default · currently Claude Opus 5 · 1M context",
+      "opus[1m]": "Opus · currently Claude Opus 5 · 1M context",
+      "claude-fable-5[1m]": "Claude Fable 5 · 1M context",
+      sonnet: "Sonnet · currently Claude Sonnet 5",
+      haiku: "Haiku · currently Claude Haiku 4.5",
+    });
+    expect(models.some((entry) => entry.id === "claude-opus-5-5")).toBe(false);
+    const admitted = validateChatProviderSelection({ catalog, selection: {
+      instanceId: "claude_code_default", model: "claude-fable-5[1m]",
+    } });
+    expect(admitted).toMatchObject({ ok: true, selection: { model: "claude-fable-5[1m]" } });
+    if (!admitted.ok) throw new Error("Expected qualified model admission");
+    const launch = buildAgentLaunch({ agent: "claude", cwd: "/workspace", runtimeHome: "/runtime-home",
+      prompt: "Read only", model: admitted.selection.model, mode: "default", approvalPolicy: "on-request",
+      sandbox: { enabled: true, mode: "workspace-write", writableRoots: ["/workspace"] } });
+    expect(launch.args[launch.args.indexOf("--model") + 1]).toBe("claude-fable-5[1m]");
+  });
+
+  it("keeps alias labels honest when Opus 5.5 is absent or discovery fails", async () => {
+    const source = createClaudeModelCatalogSource({ discover: async () => [
+      { value: "opus", resolvedModel: "claude-opus-5", displayName: "Opus" },
+    ] });
+    const live = await catalogService({ codingModelCatalogSource: source }).getCatalog(principal);
+    const liveModels = live.instances.find((entry) => entry.id === "claude_code_default")!.models;
+    expect(liveModels.find((entry) => entry.id === "opus")?.displayName)
+      .toBe("Opus · currently Claude Opus 5");
+    expect(liveModels.some((entry) => entry.id === "claude-opus-5-5")).toBe(false);
+
+    const unavailable = createClaudeModelCatalogSource({ discover: async () => { throw new Error("offline"); } });
+    const fallback = await catalogService({ codingModelCatalogSource: unavailable }).getCatalog(principal);
+    expect(fallback.instances.find((entry) => entry.id === "claude_code_default")?.models
+      .map((entry) => [entry.id, entry.displayName])).toEqual([
+      ["default", "Default · model chosen by Claude Code"],
+      ["opus", "Opus · current version varies"],
+      ["sonnet", "Sonnet · current version varies"],
+    ]);
+  });
+
+  it("qualifies an alias resolution as last seen after a failed refresh", async () => {
+    let offline = false;
+    const source = createClaudeModelCatalogSource({ discover: async () => {
+      if (offline) throw new Error("offline");
+      return [{ value: "opus", resolvedModel: "claude-opus-5-5", displayName: "Opus" }];
+    } });
+    const service = catalogService({ codingModelCatalogSource: source, invalidateCodingModelCatalog: source.invalidate });
+    expect((await service.getCatalog(principal)).instances.find((entry) => entry.id === "claude_code_default")?.models
+      .find((model) => model.id === "opus")?.displayName).toBe("Opus · currently Claude Opus 5.5");
+    offline = true;
+    expect((await service.refresh(principal)).instances.find((entry) => entry.id === "claude_code_default")?.models
+      .find((model) => model.id === "opus")?.displayName).toBe("Opus · last seen Claude Opus 5.5");
+  });
+
+  it("admits exact runtime choices without substituting a resolved base model", async () => {
     const source = createClaudeModelCatalogSource({ discover: async () => [
       { value: "default", resolvedModel: "claude-opus-5[1m]", displayName: "Default (recommended)" },
       { value: "opus[1m]", resolvedModel: "claude-opus-5[1m]", displayName: "Opus (1M context)" },
@@ -43,7 +134,7 @@ describe("Claude catalog selection and CLI handoff", () => {
     const instance = catalog.instances.find((entry) => entry.id === "claude_code_default")!;
     expect(instance.defaultSelection?.model).toBe("default");
     expect(instance.models.map((model) => model.id)).not.toContain("claude-fable-5-1");
-    for (const model of ["claude-fable-5", "default", "opus", "sonnet"]) {
+    for (const model of ["claude-fable-5[1m]", "default", "opus", "opus[1m]", "sonnet"]) {
       const admitted = validateChatProviderSelection({
         catalog, boundInstanceId: "claude_code_default",
         selection: { instanceId: "claude_code_default", model },
@@ -62,6 +153,9 @@ describe("Claude catalog selection and CLI handoff", () => {
     }
     expect(validateChatProviderSelection({ catalog, selection: {
       instanceId: "claude_code_default", model: "claude-unadvertised",
+    } })).toMatchObject({ ok: false, error: { code: "model_unavailable", retryable: false } });
+    expect(validateChatProviderSelection({ catalog, selection: {
+      instanceId: "claude_code_default", model: "claude-fable-5",
     } })).toMatchObject({ ok: false, error: { code: "model_unavailable", retryable: false } });
   });
 
@@ -180,7 +274,7 @@ describe("Claude catalog selection and CLI handoff", () => {
       await repository.create(owner, { id: "chat_catalog", clientRequestId: "req_create_catalog", title: "Catalog" });
       for (let turn = 0; turn < 2; turn++) {
         const chat = await repository.get(owner, "chat_catalog");
-        const selection = chat?.chat.currentSelection ?? { instanceId: "claude_code_default", model: "claude-fable-5" };
+        const selection = chat?.chat.currentSelection ?? { instanceId: "claude_code_default", model: "claude-fable-5[1m]" };
         const admitted = await orchestrator.admitTurn(principal, owner, "chat_catalog", {
           clientRequestId: `req_catalog_turn_${turn}`, baseRevision: chat!.chat.revision,
           parts: [{ type: "text", text: "Read only" }], selection,
@@ -189,10 +283,10 @@ describe("Claude catalog selection and CLI handoff", () => {
         expect(admitted.admission).toBe("accepted");
         await orchestrator.drain();
         expect((await repository.get(owner, "chat_catalog"))?.chat.currentSelection)
-          .toMatchObject({ instanceId: "claude_code_default", model: "claude-fable-5" });
+          .toMatchObject({ instanceId: "claude_code_default", model: "claude-fable-5[1m]" });
       }
       expect(launches).toHaveLength(2);
-      for (const args of launches) expect(args[args.indexOf("--model") + 1]).toBe("claude-fable-5");
+      for (const args of launches) expect(args[args.indexOf("--model") + 1]).toBe("claude-fable-5[1m]");
       expect(launches[1]![launches[1]!.indexOf("--resume") + 1]).toBe("session_catalog");
     } finally {
       await orchestrator.drain();

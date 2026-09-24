@@ -6,9 +6,13 @@ export const ProviderModelReferenceSchema = z.string()
   .min(1)
   .max(160)
   .regex(
-    /^(?:(?:[A-Za-z0-9][A-Za-z0-9_.-]*:)?@cf\/)?[A-Za-z0-9][A-Za-z0-9_.:-]*(?:\/[A-Za-z0-9][A-Za-z0-9_.:-]*)*$/,
+    /^(?:(?:[A-Za-z0-9][A-Za-z0-9_.-]*:)?@cf\/)?[A-Za-z0-9][A-Za-z0-9_.:-]*(?:\/[A-Za-z0-9][A-Za-z0-9_.:-]*)*(?:\[1m\])?$/,
     "Invalid model reference",
   )
+  .refine((value) => !value.includes("[") ||
+    /^(?:claude-(?:opus|sonnet|haiku|fable)-[A-Za-z0-9-]+|opus|sonnet|haiku|fable|best)\[1m\]$/.test(value), {
+    message: "Extended context qualifier is only supported for Claude models",
+  })
   .refine((value) => !value.includes(".."), {
     message: "Model reference cannot contain traversal",
   })

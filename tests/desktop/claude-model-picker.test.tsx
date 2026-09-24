@@ -12,7 +12,11 @@ import { createClaudeModelCatalogSource } from "../../packages/gateway/src/chat/
 afterEach(cleanup);
 
 it("selects the gateway's exact Fable model and preserves it when the shared picker catalog refreshes", async () => {
-  let inventory = [{ value: "claude-fable-5", displayName: "Claude Fable 5" }];
+  let inventory = [
+    { value: "default", resolvedModel: "claude-opus-5[1m]", displayName: "Default (recommended)" },
+    { value: "opus[1m]", resolvedModel: "claude-opus-5[1m]", displayName: "Opus (1M context)" },
+    { value: "claude-fable-5[1m]", resolvedModel: "claude-fable-5", displayName: "Fable" },
+  ];
   const source = createClaudeModelCatalogSource({ discover: async () => inventory });
   const service = createChatProviderCatalogService({
     codingProviders: { invalidate() {}, listProviders: async () => [{
@@ -42,12 +46,14 @@ it("selects the gateway's exact Fable model and preserves it when the shared pic
   expect(picker?.classList.contains("overflow-y-auto")).toBe(true);
   expect(picker?.classList.contains("overflow-hidden")).toBe(false);
   expect(picker?.style.maxHeight).toBe("min(520px, calc(100vh - 32px))");
-  fireEvent.click(screen.getByRole("option", { name: /Claude Fable 5/ }));
-  expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ instanceId: "claude_code_default", model: "claude-fable-5" }));
+  expect(screen.getByRole("option", { name: /Default · currently Claude Opus 5 · 1M context/ })).toBeTruthy();
+  expect(screen.getByRole("option", { name: /Opus · currently Claude Opus 5 · 1M context/ })).toBeTruthy();
+  fireEvent.click(screen.getByRole("option", { name: /Claude Fable 5 · 1M context/ }));
+  expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ instanceId: "claude_code_default", model: "claude-fable-5[1m]" }));
   inventory = [...inventory, { value: "claude-fable-5-1", displayName: "Claude Fable 5.1" }];
   view.rerender(<Picker catalog={await service.refresh(principal)} />);
   expect(screen.getByRole("button", { name: "Choose model and provider" }).getAttribute("data-model"))
-    .toBe("claude-fable-5");
+    .toBe("claude-fable-5[1m]");
   fireEvent.click(screen.getByRole("button", { name: "Choose model and provider" }));
   expect(screen.getByRole("option", { name: /Claude Fable 5\.1/ })).toBeTruthy();
   expect(onChange).toHaveBeenCalledTimes(1);
