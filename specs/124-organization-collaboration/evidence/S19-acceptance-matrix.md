@@ -253,6 +253,14 @@ consequences follow, and both bind the re-run of rows 13/19/23 after the restack
    decision is not a risk trade-off against an unstated standard; it is the standard the spec
    already set, on the surface that had nothing watching it.
 
+**The two are a pair and must stay recorded as one.** The release satisfies line 53 *at the cost of*
+line 52: Native Mobile keeps working because a legacy V1 path is deliberately left served. Neither
+half is honest alone — the justification without the cost reads as a clean decision, and the cost
+without the justification reads as an oversight. Satisfying one acceptance criterion by quietly
+failing another is how a green matrix stops meaning anything, which is the failure this entire
+document was rewritten to remove. Any future summary of this decision that carries one line and not
+the other is a misreport.
+
 Recording this as a **deferral by explicit decision**, not an unmet gate: the release is choosing to
 keep a legacy path served rather than failing to remove it. The migration itself remains owed, and
 belongs with the other unmet work rather than with the nine V1 deferrals.
