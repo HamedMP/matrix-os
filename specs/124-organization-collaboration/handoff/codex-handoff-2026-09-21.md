@@ -2331,3 +2331,119 @@ Two further corrections to the same document:
 An `N/A` in a PR surface matrix must carry an explicit sentence stating that it covers **that PR's diff only**
 and is **not** a parity claim for the release. Without that sentence the same overstatement reappears one
 document over: a reader aggregating per-PR matrices arrives at a release-wide `N/A` nobody ever wrote.
+
+## 79. The release landed: ten PRs, and three repairs to `main` along the way — 2026-09-24 06:50 UTC
+
+The spec 124 stack is on `main`, merged bottom-up one at a time with `base == main` verified before each:
+#1848 `7ef2543d2`, #1849 `f6b780e32`, #1850 `ba1847a75`, #1851 `00ba13417`, #1852 `5f6d0ce71`,
+#1860 `13c4ca234`, #1853 `2dacfb8e5`, #1854 `7b348d918`, #1864 `274b6f6d7`, #1865 `2486bc684`.
+
+Three separate repairs to `main` were required to get there, none of them caused by this release:
+**#1878** `09b630fe7` and **#1885** `89a39d93f` (platform schema baseline, twice, different columns each time)
+and **#1879** `3b5239f3b` (unit-shard `timeout-minutes` 20 → 30). **#1884** `3cb29dd10` then corrected the
+Greptile rule and the soft-grid flake.
+
+The headline for the release record is unchanged by any of it: **zero of 26 acceptance journeys are verified
+live.** Sixteen automated-only, ten never run, zero blocked after the S19 replay resolved rows 13, 19 and 23.
+
+## 80. Two PRs merged with their own CI red, and broke `main` twice — 2026-09-24 06:50 UTC
+
+#1842 (`615c9f517`) added three columns to `ai_funded_usage_reservations` without updating the schema baseline
+fixture. Its own CI run `35956743015` concluded `failure`. It merged anyway. #1843 (`ecfa4e5eb`) then merged
+on top, also red. Every branch cut from `main` afterwards failed `Unit Tests (3/4)` regardless of content.
+
+**The diagnostic that identified it as a base problem rather than a branch problem: two unrelated PRs failing
+the identical shard.** One branch failing is a hypothesis. Two unrelated branches failing the same test is a
+measurement. The same move cleared the soft-grid flake earlier the same night, where `main` @ `a4335006a`
+failed with a byte-identical assertion value.
+
+A green local suite cannot see this. A branch that predates the breakage passes correctly, because it does not
+contain it; CI builds `refs/pull/N/merge` and merges the broken base in. **The local pass is evidence about the
+branch, the CI failure is evidence about the merge, and only the second is the question the merge button asks.**
+
+## 81. `refs/pull/N/merge` does not recompute when you fix the base — 2026-09-24 06:50 UTC
+
+#1885 merged at `05:59:53Z`. Two PRs were re-triggered at `06:00:22Z`, 29 seconds later. **Both built against a
+base without the fix**, failing on the exact three columns #1885 had just added. The stale merge ref survived
+**25 minutes** and survived forcing mergeability through the API.
+
+- A **re-run** reuses the old merge SHA and cannot help.
+- A **fresh event** may still pick up a stale ref, as it did here.
+- Only `gh pr update-branch` (or an equivalent head move) reliably recomputes it — at the cost of invalidating
+  the current Greptile score, since the head changes.
+- The only trustworthy check is ancestry: `git merge-base --is-ancestor <fix> <refs/pull/N/merge>`.
+
+**"I merged the fix, so the PR now tests against it" is an assumption, not a fact.**
+
+## 82. `ci.yml` mechanics that are not in the repo docs — 2026-09-24 06:50 UTC
+
+- `types: [labeled, ready_for_review, synchronize]` — **`opened` is absent.** A newly opened PR gets no run
+  until `ready-for-ci` is added. A *pushed-to* PR needs nothing, because a push is `synchronize`. Both halves
+  matter: one agent correctly learned the first and then carried it past its boundary, nearly queuing a
+  redundant run behind its own push.
+- `concurrency: ci-<ref>-shared` has **no `cancel-in-progress`**. A new run queues behind the previous one —
+  including behind a run on a head you have already abandoned. Nothing releases the slot but an explicit
+  cancel. This cost four separate delays in one night.
+- The changed-files gate computes `git diff --name-only origin/$GITHUB_BASE_REF $GITHUB_SHA` — **PR-wide, not
+  per-push** — so a docs-only push still runs the suites when the PR touches code.
+
+## 83. Greptile does not review every commit, and the doc said it did — 2026-09-24 06:50 UTC
+
+`CLAUDE.md` stated that Greptile "is configured to review every new commit" and that a stale footer means the
+review is still running. **Both halves were false.** It reviews on PR creation and thereafter **only** on an
+explicit `@greptileai please review`. Measured on #1865: two reviews total; two pushes and 54 minutes produced
+nothing; one request produced 5/5 in three minutes.
+
+An agent following the old text waits forever **while believing it is being patient** — the worst shape for a
+rule to fail in, because inaction looks like compliance. Corrected in #1884, which also added the piece that
+cost the most time: reading the reviewed commit SHA rather than a timestamp, as a four-row table. The row that
+traps people is *reviewed SHA names an older head* → **answered, stale, request now** — not "still working".
+A readiness check must separate *not yet* from *done, about something else*; they are identical to any check
+that only asks whether the answer matches the expectation.
+
+The retry rule is stated as a trade rather than a proof: a slow review and a dropped one are indistinguishable
+from outside, a duplicate costs one redundant review that overwrites the same comment, and a deadlock needs a
+human — so prefer the recoverable failure.
+
+## 84. Five tooling false negatives in one night, all of them plausible — 2026-09-24 06:50 UTC
+
+Every instrument that failed tonight failed *quietly*, returning something believable instead of erroring:
+
+1. A **pinned CI run id** reported `cancelled` — true of the run it named, false of the PR.
+2. `gh run list --jq` silently **misparses jq's `--arg`**, returning empty. Read as "no CI run exists".
+3. A **transient empty run listing** read as "no ci.yml run for head".
+4. `gh pr comment` with a malformed flag returned **empty instead of a URL** — a review request that never
+   posted, one step from being reported as sent.
+5. `gh run list` reported a run as `queued` that was already `cancelled`; the **attempted cancel** was the only
+   thing that revealed the truth, by refusing.
+
+> `gh`'s output is a snapshot that can be empty on malformed input and stale on valid input. An empty result is
+> not evidence of an empty state, and a returned value is not evidence of a current one. Read the state back,
+> and prefer a command whose failure mode is an error over one whose failure mode is a value.
+
+Four of the five returned *nothing* where a value existed; the fifth returned a plausible wrong value. The
+first kind cannot be caught by reading more carefully — only by checking the state afterwards.
+
+## 85. The dominant failure mode of this release, in one sentence — 2026-09-24 06:50 UTC
+
+> **Verifying the action you took is not verifying the state you wanted.**
+
+Seven instances, in seven different media, in one night:
+
+| # | The action verified | The state not verified |
+| --- | --- | --- |
+| 1 | a suite ran green | it could not observe a zero-row write |
+| 2 | mobile tests passed | they assert the client's own output, not the server's acceptance |
+| 3 | a budget test passed | it had stopped exercising exhaustion |
+| 4 | an ordering test passed | it measured callback order, never the rendered screen |
+| 5 | a reply mutation succeeded | the thread was still open; the gate reads a different boolean |
+| 6 | a claim was corrected where found | four more copies survived, including the V1 scope statement |
+| 7 | a push happened | whether pushing triggers CI was never re-checked |
+
+Instance 4 is the worst shape, and it was **live inside the fix for its own class**: a real, passing,
+conscientiously written assertion measuring a proxy. A gap looks like a gap; a proxy assertion looks like
+coverage, consumes the reviewer's attention, and returns nothing.
+
+The companion rule, from the same night: **a count is not a finding until it says what each item is.** Five
+occurrences / four defects / one quotation; 26 journeys / 17 in scope / 0 live; 15 polls in a file / 2 observed
+failing. Each collapsed to one number misleads someone deciding what is left to do.
