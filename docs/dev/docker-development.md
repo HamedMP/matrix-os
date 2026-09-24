@@ -137,10 +137,34 @@ Volumes persist data across container restarts:
 | `dev-node-modules` | pnpm dependencies (cached, ~30s first install) |
 | `dev-home` | Matrix OS home directory (`~/matrixos/`) |
 | `pgdata` | PostgreSQL data (app data layer) |
+| `minio-data` | Local S3 objects (served by the Silo-compatible `minio` service) |
+| `minio-mc-config` | Local object-store client alias used during bucket initialization |
 | `prometheus-data` | Metrics history |
 | `grafana-data` | Dashboard configs |
 
 **IMPORTANT**: Never use `docker compose down -v` unless you explicitly want to destroy all data and start fresh. This removes all volumes including your OS home directory and installed dependencies.
+
+### Moving an existing local object-store volume to Silo
+
+The local Compose images changed from MinIO to the maintained Silo fork. The
+same `/data` volume is mounted, but this repository has not verified a populated
+MinIO volume against the new image. Before updating a populated local stack:
+
+1. While the old object store still runs, export each bucket to a host directory
+   with an S3 client, and confirm that the exported object count and a known
+   object's contents match. Keep a copy of the old image if it is cached locally.
+2. Stop the Compose stack **without** `-v`. Snapshot its `minio-data` named
+   volume to a separate archive before starting the new image. Find the exact
+   project-prefixed volume name with `docker volume ls`; for the dev-VPS Compose
+   file, snapshot `dev-vps-minio-data` instead.
+3. Start the updated stack and verify the bucket, a known object, and sync
+   reads before removing either backup. If an existing volume cannot be read,
+   stop the stack and restore the snapshot with the old cached image, or start
+   with a new empty Silo volume and import the S3 export. Do not reset the
+   original volume in place.
+
+The normal fresh-install Docker test verifies bucket creation; it does not
+prove compatibility for pre-existing on-disk objects.
 
 ### Reset to clean state (destructive)
 

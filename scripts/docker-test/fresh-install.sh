@@ -22,6 +22,15 @@ $COMPOSE up $COMPOSE_UP_FLAGS -d dev
 
 wait_for_healthy "dev" "${DOCKER_HEALTH_TIMEOUT:-180}"
 
+# The dev service depends on bucket initialization; verify the actual S3 bucket.
+if $COMPOSE run --rm --no-deps --entrypoint /usr/bin/mc minio-init stat local/matrixos-sync >/dev/null 2>&1; then
+  echo -e "  ${GREEN}PASS${NC} local sync bucket exists"
+  PASS_COUNT=$((PASS_COUNT + 1))
+else
+  echo -e "  ${RED}FAIL${NC} local sync bucket is unavailable"
+  FAIL_COUNT=$((FAIL_COUNT + 1))
+fi
+
 # Verify home directory structure
 assert_file_exists "dev" "/home/matrixos/home/system/soul.md" \
   "soul.md exists (SOUL identity)"
