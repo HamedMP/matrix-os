@@ -14,6 +14,7 @@ function harness() {
     listBrowserSecretSources: vi.fn(async () => []),
     previewBrowserSites: vi.fn(async () => []),
     importBrowserSites: vi.fn(async () => ({ passwords: 0, cookies: 0, skipped: 0 })),
+    listOnePasswordAccounts: vi.fn(async () => []),
     listOnePasswordItems: vi.fn(async () => []),
     importOnePasswordItems: vi.fn(async () => ({ imported: 0, skipped: 0 })),
     listBrowserPasswords: vi.fn(async () => []),

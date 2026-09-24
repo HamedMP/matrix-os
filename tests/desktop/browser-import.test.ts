@@ -174,6 +174,7 @@ describe("local browser page import", () => {
       listBrowserSecretSources: async () => [],
       previewBrowserSites: async () => [],
       importBrowserSites: async () => ({ passwords: 0, cookies: 0, skipped: 0 }),
+      listOnePasswordAccounts: async () => [],
       listOnePasswordItems: async () => [],
       importOnePasswordItems: async () => ({ imported: 0, skipped: 0 }),
       listBrowserPasswords: async () => [],

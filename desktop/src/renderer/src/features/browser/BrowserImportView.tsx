@@ -59,7 +59,7 @@ export default function BrowserImportView({
       {!loading && sources.length === 0 && !error ? (
         <p role="status" className="mt-6 text-sm">No supported local browser profiles with saved pages were found. Local import is currently available on macOS.</p>
       ) : null}
-      {error ? <p role="alert" className="mt-6 text-sm" style={{ color: "var(--status-error, var(--text-primary))" }}>{error}</p> : null}
+      {error ? <p role="alert" className="mt-6 text-sm" style={{ color: "var(--text-danger)" }}>{error}</p> : null}
       <div className="mt-5 max-w-xl space-y-3">
         {sources.map((source) => {
           const label = `Import ${source.pageCount} ${source.pageCount === 1 ? "page" : "pages"} from ${source.browser} ${source.profile}`;

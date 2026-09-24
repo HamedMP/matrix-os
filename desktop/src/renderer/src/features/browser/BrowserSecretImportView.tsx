@@ -251,7 +251,7 @@ export default function BrowserSecretImportView() {
         ) : null}
       </section>
       {notice ? <p role="status" className="text-xs">{notice}</p> : null}
-      {error ? <p role="alert" className="text-xs" style={{ color: "var(--status-error, var(--text-primary))" }}>{error}</p> : null}
+      {error ? <p role="alert" className="text-xs" style={{ color: "var(--text-danger)" }}>{error}</p> : null}
     </div>
   );
 }
