@@ -92,6 +92,21 @@ describe("daemon runtime guards", () => {
     expect(await readFile(pidPath, "utf-8")).toBe("4242");
   });
 
+  it("preserves a pid file when the existing process cannot be verified dead", async () => {
+    const pidPath = join(tempDir, "daemon.pid");
+    await writeFile(pidPath, "1111");
+    vi.spyOn(process, "kill").mockImplementation(() => {
+      const err = new Error("Operation not permitted") as NodeJS.ErrnoException;
+      err.code = "EPERM";
+      throw err;
+    });
+
+    await expect(writePidFileExclusive(pidPath, 4242)).rejects.toMatchObject({
+      code: "EPERM",
+    });
+    expect(await readFile(pidPath, "utf-8")).toBe("1111");
+  });
+
   it("persists pause state changes", async () => {
     const configPath = join(tempDir, "config.json");
     const config: SyncConfig = {

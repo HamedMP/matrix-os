@@ -123,7 +123,13 @@ describe("gateway collaboration route registration (S01 foundation)", () => {
   it("keeps the no-store and mutation body-limit middleware on the collaboration prefix", () => {
     const app = createCollaborationRoutes(stubOptions);
     const prefix = app.routes.filter((route) => route.path === "/api/collaboration/*");
-    expect(prefix.map((route) => route.method).sort()).toEqual(["ALL", "DELETE", "PATCH", "POST"]);
+    // One entry per mutating registration that carries the body-limit middleware, so this
+    // list grows as mutating routes are added. It stays an exact match rather than a
+    // superset check: a mutating method that appears here without its limit, or a limit
+    // that quietly disappears, must both fail.
+    expect(prefix.map((route) => route.method).sort()).toEqual([
+      "ALL", "DELETE", "DELETE", "PATCH", "PATCH", "POST", "POST", "PUT", "PUT",
+    ]);
   });
 
   it("composes the same handler set from the per-resource registration modules", () => {
@@ -191,13 +197,13 @@ describe("gateway collaboration schema bootstrap (S01 foundation)", () => {
 
   it("registers the versioned migrations in order and records every version idempotently", async () => {
     // S12 adds migration 12 (resource catalog); 13 is the S10 project Git migration below it.
-    expect(COLLABORATION_VERSIONED_MIGRATIONS.map((step) => step.version)).toEqual([3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]);
+    expect(COLLABORATION_VERSIONED_MIGRATIONS.map((step) => step.version)).toEqual([3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]);
     expect(typeof applyCollaborationBaseSchema).toBe("function");
     await bootstrapCollaborationDatabase(fixture.db);
     await bootstrapCollaborationDatabase(fixture.db);
     const versions = await fixture.db.selectFrom("collaboration_schema_migrations")
       .select("version").orderBy("version").execute();
-    expect(versions.map((row) => Number(row.version))).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]);
+    expect(versions.map((row) => Number(row.version))).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]);
   });
 });
 

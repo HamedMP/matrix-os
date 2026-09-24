@@ -51,6 +51,7 @@ prerequisites_present() {
   for command in "${required_commands[@]}"; do
     command -v "$command" >/dev/null 2>&1 || return 1
   done
+  /usr/bin/python3 -I -c 'import cryptography' >/dev/null 2>&1 || return 1
 }
 
 write_readiness_marker() {
@@ -75,6 +76,10 @@ certify_prerequisites() {
       return 1
     }
   done
+  /usr/bin/python3 -I -c 'import cryptography' >/dev/null 2>&1 || {
+    echo "matrix host prerequisite missing: python3-cryptography" >&2
+    return 1
+  }
   write_readiness_marker
 }
 
@@ -115,7 +120,7 @@ apt_get_update
 timeout --kill-after=30 600 env DEBIAN_FRONTEND=noninteractive apt-get install -y \
   bubblewrap build-essential ca-certificates cmatrix curl docker.io elixir \
   erlang-base erlang-crypto erlang-inets erlang-public-key erlang-ssl erlang-tools \
-  file git postgresql-client procps nginx openssl socat sudo unzip zsh
+  file git postgresql-client procps python3-cryptography nginx openssl socat sudo unzip zsh
 
 install -d -o root -g root -m 0755 /etc/apparmor.d
 cat >/etc/apparmor.d/bwrap <<'EOF'

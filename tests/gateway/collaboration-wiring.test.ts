@@ -52,9 +52,6 @@ describe("gateway collaboration wiring", () => {
     expect(loadGatewayCollaborationConfig({})).toBeNull();
     expect(loadGatewayCollaborationConfig({
       MATRIX_RUNTIME_ID: collaborationIds.runtime,
-      MATRIX_COLLABORATION_ACTIVE_KEY_ID: "key-1",
-      MATRIX_COLLABORATION_PROOF_KEYS: JSON.stringify({ "key-1": "a".repeat(32) }),
-      MATRIX_COLLABORATION_PREFLIGHT_SECRET: "b".repeat(32),
       PLATFORM_INTERNAL_URL: "https://platform.internal",
       UPGRADE_TOKEN: "c".repeat(32),
     })).toMatchObject({ runtimeId: collaborationIds.runtime });
@@ -63,9 +60,6 @@ describe("gateway collaboration wiring", () => {
   it("derives the VPS runtime ID from the existing machine identity", () => {
     expect(loadGatewayCollaborationConfig({
       MATRIX_MACHINE_ID: "11111111-1111-4111-8111-111111111111",
-      MATRIX_COLLABORATION_ACTIVE_KEY_ID: "key-1",
-      MATRIX_COLLABORATION_PROOF_KEYS: JSON.stringify({ "key-1": "a".repeat(32) }),
-      MATRIX_COLLABORATION_PREFLIGHT_SECRET: "b".repeat(32),
       PLATFORM_INTERNAL_URL: "https://platform.internal",
       UPGRADE_TOKEN: "c".repeat(32),
     })).toMatchObject({ runtimeId: "vps:11111111-1111-4111-8111-111111111111" });
@@ -80,7 +74,6 @@ describe("gateway collaboration wiring", () => {
         runtimeId: collaborationIds.runtime,
         activeKeyId: "key-1",
         proofKeys: { "key-1": "a".repeat(32) },
-        preflightSecret: "b".repeat(32),
         platformBaseUrl: "https://platform.internal",
         serviceToken: "c".repeat(32),
       },
@@ -96,6 +89,7 @@ describe("gateway collaboration wiring", () => {
     }) as unknown as UpgradeWebSocket;
     runtime.register({ app, upgradeWebSocket });
     expect(registeredSocket).toBe(true);
+    expect(app.routes.some((route) => route.path === "/internal/collaboration/cutover/:scopeId/:phase" && route.method === "POST")).toBe(true);
     expect(await fixture.db.selectFrom("collaboration_schema_migrations").select("version").execute())
       .toEqual([
         { version: 1 },
@@ -111,6 +105,7 @@ describe("gateway collaboration wiring", () => {
         { version: 11 },
         { version: 12 },
         { version: 13 },
+        { version: 14 },
       ]);
     await expect(app.request(`/api/collaboration/scopes/${collaborationIds.scope}/discussion/messages`))
       .resolves.toMatchObject({ status: 401 });
@@ -127,7 +122,6 @@ describe("gateway collaboration wiring", () => {
         runtimeId: collaborationIds.runtime,
         activeKeyId: "key-1",
         proofKeys: { "key-1": "a".repeat(32) },
-        preflightSecret: "b".repeat(32),
         platformBaseUrl: "https://platform.internal",
         serviceToken: "c".repeat(32),
       },
@@ -165,7 +159,6 @@ describe("gateway collaboration wiring", () => {
         runtimeId: collaborationIds.runtime,
         activeKeyId: "key-1",
         proofKeys: { "key-1": "a".repeat(32) },
-        preflightSecret: "b".repeat(32),
         platformBaseUrl: "https://platform.internal",
         serviceToken: "c".repeat(32),
       },
@@ -202,7 +195,6 @@ describe("gateway collaboration wiring", () => {
         runtimeId: collaborationIds.runtime,
         activeKeyId: "key-1",
         proofKeys: { "key-1": "a".repeat(32) },
-        preflightSecret: "b".repeat(32),
         platformBaseUrl: "https://platform.internal",
         serviceToken: "c".repeat(32),
       },
@@ -262,7 +254,6 @@ describe("gateway collaboration wiring", () => {
         runtimeId: collaborationIds.runtime,
         activeKeyId: "key-1",
         proofKeys: { "key-1": "a".repeat(32) },
-        preflightSecret: "b".repeat(32),
         platformBaseUrl: "https://platform.internal",
         serviceToken: "c".repeat(32),
       },
@@ -342,7 +333,6 @@ describe("gateway collaboration wiring", () => {
         runtimeId: collaborationIds.runtime,
         activeKeyId: "key-1",
         proofKeys: { "key-1": "a".repeat(32) },
-        preflightSecret: "b".repeat(32),
         platformBaseUrl: "https://platform.internal",
         serviceToken: "c".repeat(32),
       },
@@ -369,7 +359,6 @@ describe("gateway collaboration wiring", () => {
         runtimeId: collaborationIds.runtime,
         activeKeyId: "key-1",
         proofKeys: { "key-1": "a".repeat(32) },
-        preflightSecret: "b".repeat(32),
         platformBaseUrl: "https://platform.internal",
         serviceToken: "c".repeat(32),
       },
@@ -511,7 +500,6 @@ describe("gateway collaboration wiring", () => {
         runtimeId: collaborationIds.runtime,
         activeKeyId: "key-1",
         proofKeys: { "key-1": "a".repeat(32) },
-        preflightSecret: "b".repeat(32),
         platformBaseUrl: "https://platform.internal",
         serviceToken: "c".repeat(32),
       },
@@ -593,11 +581,14 @@ describe("gateway collaboration wiring", () => {
 
   it("enables shared AI before the owner run reconcile loop so lost runs keep gateway_restart attribution", async () => {
     const server = await readFile(new URL("../../packages/gateway/src/server.ts", import.meta.url), "utf8");
-    const enable = server.indexOf("await gatewayCollaboration.enableSharedAi({");
+    const enable = server.indexOf("await enableOwnerSharedAi({");
     const reconcile = server.indexOf('await canonicalChatOrchestrator.reconcileActiveRuns({ type: "personal", ownerId });');
     expect(enable).toBeGreaterThan(-1);
     expect(reconcile).toBeGreaterThan(-1);
     expect(enable).toBeLessThan(reconcile);
+    // The extracted helper is what server.ts now awaits, so it must still await shared AI itself.
+    const startup = await readFile(new URL("../../packages/gateway/src/startup/collaboration.ts", import.meta.url), "utf8");
+    expect(startup).toContain("await options.gatewayCollaboration.enableSharedAi(options.input)");
   });
 
   it("marks runs the previous process lost as gateway_restart before shared AI reports ready", async () => {
@@ -1067,7 +1058,6 @@ describe("S08 owner source wiring", () => {
         runtimeId: collaborationIds.runtime,
         activeKeyId: "key-1",
         proofKeys: { "key-1": "a".repeat(32) },
-        preflightSecret: "b".repeat(32),
         platformBaseUrl: "https://platform.internal",
         serviceToken: "c".repeat(32),
       },
@@ -1134,7 +1124,6 @@ describe("S08 owner source wiring", () => {
       runtimeId: collaborationIds.runtime,
       activeKeyId: "key-1",
       proofKeys: { "key-1": "a".repeat(32) },
-      preflightSecret: "b".repeat(32),
       platformBaseUrl: "https://platform.internal",
       serviceToken: "c".repeat(32),
     };

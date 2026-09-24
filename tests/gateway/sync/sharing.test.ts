@@ -30,7 +30,6 @@ function createMockDb(): SharingDb {
     deleteShare: vi.fn(),
     listSharesByOwner: vi.fn(),
     listSharesByGrantee: vi.fn(),
-    listSharesByGranteeAndOwner: vi.fn(),
     resolveHandle: vi.fn(),
     resolveUserId: vi.fn(),
     resolveUserIds: vi.fn(),
@@ -58,6 +57,10 @@ describe("SharingService", () => {
     db = createMockDb();
     peerRegistry = createMockPeerRegistry();
     service = createSharingService({ db, peerRegistry });
+  });
+
+  it("exposes only personal sync grant management, not a secondary file authorization reader", () => {
+    expect(Object.keys(service).sort()).toEqual(["acceptShare", "createShare", "listShares", "revokeShare"]);
   });
 
   // -----------------------------------------------------------------------
@@ -97,20 +100,12 @@ describe("SharingService", () => {
       expect(db.runInTransaction).toHaveBeenCalledTimes(1);
     });
 
-    it("normalizes dot segments so shared paths remain accessible", async () => {
+    it("normalizes dot segments before persisting a personal sync share", async () => {
       (db.resolveHandle as ReturnType<typeof vi.fn>).mockResolvedValue("grantee1");
       (db.resolveUserId as ReturnType<typeof vi.fn>).mockResolvedValue("@owner:matrix-os.com");
       (db.insertShare as ReturnType<typeof vi.fn>).mockResolvedValue(
         makeShareRow({ path: "documents/reports" }),
       );
-      (db.listSharesByGranteeAndOwner as ReturnType<typeof vi.fn>).mockResolvedValue([
-        makeShareRow({
-          path: "documents/reports",
-          grantee_id: "grantee1",
-          accepted: true,
-        }),
-      ]);
-
       await service.createShare("owner1", {
         path: "documents/./reports/",
         granteeHandle: "@colleague:matrix-os.com",
@@ -120,14 +115,6 @@ describe("SharingService", () => {
       expect(db.insertShare).toHaveBeenCalledWith(
         expect.objectContaining({ path: "documents/reports" }),
       );
-      await expect(
-        service.checkSharePermission(
-          "owner1",
-          "grantee1",
-          "documents/reports/q1.md",
-          "get",
-        ),
-      ).resolves.toBeNull();
     });
 
     it("rejects traversal paths before inserting the share", async () => {
@@ -324,166 +311,4 @@ describe("SharingService", () => {
     });
   });
 
-  // -----------------------------------------------------------------------
-  // checkSharePermission
-  // -----------------------------------------------------------------------
-  describe("checkSharePermission", () => {
-    it("returns null for the owner (full access)", async () => {
-      const result = await service.checkSharePermission("owner1", "owner1", "any/path", "put");
-      expect(result).toBeNull();
-    });
-
-    it("viewer can GET but not PUT", async () => {
-      (db.listSharesByGranteeAndOwner as ReturnType<typeof vi.fn>).mockResolvedValue([
-        makeShareRow({
-          owner_id: "owner1",
-          grantee_id: "viewer1",
-          path: "projects/",
-          role: "viewer",
-          accepted: true,
-        }),
-      ]);
-
-      const getResult = await service.checkSharePermission("owner1", "viewer1", "projects/readme.md", "get");
-      expect(getResult).toBeNull(); // allowed
-
-      const putResult = await service.checkSharePermission("owner1", "viewer1", "projects/readme.md", "put");
-      expect(putResult).toBe("forbidden"); // denied
-      expect(db.listSharesByGranteeAndOwner).toHaveBeenCalledWith("viewer1", "owner1");
-    });
-
-    it("editor can GET and PUT", async () => {
-      (db.listSharesByGranteeAndOwner as ReturnType<typeof vi.fn>).mockResolvedValue([
-        makeShareRow({
-          owner_id: "owner1",
-          grantee_id: "editor1",
-          path: "projects/",
-          role: "editor",
-          accepted: true,
-        }),
-      ]);
-
-      const getResult = await service.checkSharePermission("owner1", "editor1", "projects/file.ts", "get");
-      expect(getResult).toBeNull();
-
-      const putResult = await service.checkSharePermission("owner1", "editor1", "projects/file.ts", "put");
-      expect(putResult).toBeNull();
-    });
-
-    it("admin can GET, PUT, and delete", async () => {
-      (db.listSharesByGranteeAndOwner as ReturnType<typeof vi.fn>).mockResolvedValue([
-        makeShareRow({
-          owner_id: "owner1",
-          grantee_id: "admin1",
-          path: "projects/",
-          role: "admin",
-          accepted: true,
-        }),
-      ]);
-
-      const getResult = await service.checkSharePermission("owner1", "admin1", "projects/file.ts", "get");
-      expect(getResult).toBeNull();
-
-      const putResult = await service.checkSharePermission("owner1", "admin1", "projects/file.ts", "put");
-      expect(putResult).toBeNull();
-
-      const deleteResult = await service.checkSharePermission("owner1", "admin1", "projects/file.ts", "delete");
-      expect(deleteResult).toBeNull();
-    });
-
-    it("denies access for paths outside the shared prefix", async () => {
-      (db.listSharesByGranteeAndOwner as ReturnType<typeof vi.fn>).mockResolvedValue([
-        makeShareRow({
-          owner_id: "owner1",
-          grantee_id: "grantee1",
-          path: "projects/startup/",
-          role: "editor",
-          accepted: true,
-        }),
-      ]);
-
-      const result = await service.checkSharePermission("owner1", "grantee1", "private/secrets.md", "get");
-      expect(result).toBe("forbidden");
-    });
-
-    it("denies traversal-shaped file paths even when the prefix appears to match", async () => {
-      (db.listSharesByGranteeAndOwner as ReturnType<typeof vi.fn>).mockResolvedValue([
-        makeShareRow({
-          owner_id: "owner1",
-          grantee_id: "grantee1",
-          path: "documents/",
-          role: "viewer",
-          accepted: true,
-        }),
-      ]);
-
-      const result = await service.checkSharePermission(
-        "owner1",
-        "grantee1",
-        "documents/../secrets/key.txt",
-        "get",
-      );
-
-      expect(result).toBe("forbidden");
-    });
-
-    it("does not match partial directory prefixes", async () => {
-      (db.listSharesByGranteeAndOwner as ReturnType<typeof vi.fn>).mockResolvedValue([
-        makeShareRow({
-          owner_id: "owner1",
-          grantee_id: "grantee1",
-          path: "projects/app",
-          role: "viewer",
-          accepted: true,
-        }),
-      ]);
-
-      const result = await service.checkSharePermission(
-        "owner1",
-        "grantee1",
-        "projects/application-secrets/keys.json",
-        "get",
-      );
-
-      expect(result).toBe("forbidden");
-    });
-
-    it("denies access for unaccepted shares", async () => {
-      (db.listSharesByGranteeAndOwner as ReturnType<typeof vi.fn>).mockResolvedValue([
-        makeShareRow({
-          owner_id: "owner1",
-          grantee_id: "grantee1",
-          path: "projects/",
-          role: "editor",
-          accepted: false,
-        }),
-      ]);
-
-      const result = await service.checkSharePermission("owner1", "grantee1", "projects/readme.md", "get");
-      expect(result).toBe("forbidden");
-    });
-
-    it("denies access for expired shares", async () => {
-      (db.listSharesByGranteeAndOwner as ReturnType<typeof vi.fn>).mockResolvedValue([
-        makeShareRow({
-          owner_id: "owner1",
-          grantee_id: "grantee1",
-          path: "projects/",
-          role: "editor",
-          accepted: true,
-          expires_at: new Date("2020-01-01T00:00:00.000Z"),
-        }),
-      ]);
-
-      const result = await service.checkSharePermission("owner1", "grantee1", "projects/readme.md", "get");
-      expect(result).toBe("forbidden");
-    });
-
-    it("denies access when no shares exist for the user", async () => {
-      (db.listSharesByGranteeAndOwner as ReturnType<typeof vi.fn>).mockResolvedValue([]);
-
-      const result = await service.checkSharePermission("owner1", "stranger", "projects/readme.md", "get");
-      expect(result).toBe("forbidden");
-    });
-  });
 });

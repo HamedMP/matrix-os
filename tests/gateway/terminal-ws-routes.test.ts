@@ -40,7 +40,7 @@ function authorizedRoutes(input: {
     }) as UpgradeWebSocket;
 
   const send = vi.fn((frame: { type: string }) => { order.push(`runtime-send:${frame.type}`); });
-  const attach = vi.fn(async () => {
+  const attach = vi.fn(async (_input: { onFrame: (frame: unknown) => void }) => {
     order.push("attach");
     return { send, close: vi.fn() };
   });
@@ -106,8 +106,8 @@ function repositoryDouble(bound: boolean) {
   });
 }
 
-async function openTab(routes: ReturnType<typeof authorizedRoutes>, query: string) {
-  await routes.app.request(`/ws/terminal/tab?workspaceId=${WORKSPACE_ID}&tabId=${TAB_ID}&client=browser${query}`);
+async function openTab(routes: ReturnType<typeof authorizedRoutes>, query: string, client = "browser") {
+  await routes.app.request(`/ws/terminal/tab?workspaceId=${WORKSPACE_ID}&tabId=${TAB_ID}&client=${client}${query}`);
   const peer = routes.socket();
   routes.events?.onOpen?.(new Event("open"), peer.context);
   return peer;
@@ -151,6 +151,27 @@ function mountedRoutes() {
 }
 
 describe("terminal WebSocket route registration", () => {
+  it.each([
+    { request: "&inputCapability=binary-input-v1", expected: ["binary-input-v1"] },
+    { request: "&inputCapability=binary-input-v1&scrollCapability=native-scroll-v1", expected: ["binary-input-v1", "native-scroll-v1"] },
+    { request: "", expected: undefined },
+  ])("projects attached capabilities for Electron request $request", async ({ request, expected }) => {
+    const routes = authorizedRoutes({ accessScope: "owner" });
+    const peer = await openTab(routes, request, "electron");
+    await vi.waitFor(() => expect(routes.attach).toHaveBeenCalledOnce());
+    routes.attach.mock.calls[0]![0].onFrame({
+      type: "attached", terminalRef: TERMINAL_REF, revision: 1,
+      canonicalSize: { cols: 120, rows: 36 }, nextSeq: 0,
+      capabilities: ["binary-input-v1", "native-scroll-v1"],
+    });
+    expect(peer.sent).toHaveLength(1);
+    expect(JSON.parse(peer.sent[0]!)).toMatchObject({
+      type: "attached", terminalRef: TERMINAL_REF, ownership: "writer",
+      ...(expected ? { capabilities: expected } : {}),
+    });
+    if (!expected) expect(JSON.parse(peer.sent[0]!)).not.toHaveProperty("capabilities");
+  });
+
   it("keeps the tab route mounted and returns upgrade-required on retired paths", async () => {
     const routes = mountedRoutes();
     for (const path of ["/ws/terminal/session", "/ws/terminal"]) {
@@ -176,6 +197,18 @@ describe("terminal WebSocket route registration", () => {
     expect(peer.close).toHaveBeenCalledOnce();
     expect(routes.getPrincipal).not.toHaveBeenCalled();
     expect(routes.attachOwnership).not.toHaveBeenCalled();
+    expect(routes.attach).not.toHaveBeenCalled();
+  });
+
+  it("rejects an unknown scroll capability before principal or runtime access", async () => {
+    const routes = mountedRoutes();
+    await routes.app.request(`/ws/terminal/tab?workspaceId=${WORKSPACE_ID}&tabId=${TAB_ID}&client=electron&scrollCapability=native-scroll-v2`);
+    const peer = routes.socket();
+    routes.events?.onOpen?.(new Event("open"), peer.context);
+
+    expect(peer.sent).toEqual([JSON.stringify({ type: "error", code: "invalid_request", message: "Invalid request" })]);
+    expect(peer.close).toHaveBeenCalledOnce();
+    expect(routes.getPrincipal).not.toHaveBeenCalled();
     expect(routes.attach).not.toHaveBeenCalled();
   });
 

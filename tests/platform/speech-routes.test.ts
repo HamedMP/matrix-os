@@ -95,6 +95,21 @@ describe("speech runtime routes", () => {
     expect(response.headers.get("cache-control")).toContain("no-store");
   });
 
+  it("rejects the previous speech credential after a scoped epoch advance", async () => {
+    const routes = app(service());
+    const path = "/internal/containers/alice/speech/capabilities?runtimeSlot=primary";
+    const previous = runtimeBearer();
+    await db.executor.updateTable("user_machines").set({ runtime_token_epoch: 2 })
+      .where("machine_id", "=", identity.machineId).execute();
+    expect((await routes.request(path, { headers: { authorization: `Bearer ${previous}` } })).status).toBe(401);
+    const rotated = buildPlatformSpeechRuntimeVerificationToken(
+      { handle: "alice", machineId: identity.machineId, runtimeSlot: "primary" },
+      platformSecret,
+      2,
+    );
+    expect((await routes.request(path, { headers: { authorization: `Bearer ${rotated}` } })).status).toBe(200);
+  });
+
   it("validates status IDs before service lookup and hides foreign operations", async () => {
     const speech = service();
     const routes = app(speech);

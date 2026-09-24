@@ -19,47 +19,43 @@ export function buildPlatformVerificationToken(handle: string, platformSecret: s
   return createHmac("sha256", platformSecret).update(handle).digest("hex");
 }
 
+type RuntimeIdentity = { handle: string; machineId: string; runtimeSlot: string };
+
+function runtimeTokenPayload(kind: string, identity: RuntimeIdentity, epoch: number): string {
+  if (!Number.isSafeInteger(epoch) || epoch < 1 || epoch > 2_147_483_647) {
+    throw new Error("Invalid runtime token epoch");
+  }
+  // Epoch 1 must preserve existing host tokens until that machine is rotated.
+  const prefix = [kind, epoch === 1 ? 1 : 2, identity.handle, identity.machineId, identity.runtimeSlot];
+  return JSON.stringify(epoch === 1 ? prefix : [...prefix, epoch]);
+}
+
 export function buildPlatformRuntimeVerificationToken(
-  identity: { handle: string; machineId: string; runtimeSlot: string },
+  identity: RuntimeIdentity,
   platformSecret: string,
+  epoch = 1,
 ): string {
   return createHmac("sha256", platformSecret)
-    .update(JSON.stringify([
-      "matrix-funded-ai-runtime",
-      1,
-      identity.handle,
-      identity.machineId,
-      identity.runtimeSlot,
-    ]))
+    .update(runtimeTokenPayload("matrix-funded-ai-runtime", identity, epoch))
     .digest("hex");
 }
 
 export function buildPlatformSyncVerificationToken(
-  identity: { handle: string; machineId: string; runtimeSlot: string },
+  identity: RuntimeIdentity,
   platformSecret: string,
+  epoch = 1,
 ): string {
   return createHmac("sha256", platformSecret)
-    .update(JSON.stringify([
-      "matrix-sync-runtime",
-      1,
-      identity.handle,
-      identity.machineId,
-      identity.runtimeSlot,
-    ]))
+    .update(runtimeTokenPayload("matrix-sync-runtime", identity, epoch))
     .digest("hex");
 }
 
 export function buildPlatformSpeechRuntimeVerificationToken(
-  identity: { handle: string; machineId: string; runtimeSlot: string },
+  identity: RuntimeIdentity,
   platformSecret: string,
+  epoch = 1,
 ): string {
   return createHmac("sha256", platformSecret)
-    .update(JSON.stringify([
-      "matrix-platform-speech-runtime",
-      1,
-      identity.handle,
-      identity.machineId,
-      identity.runtimeSlot,
-    ]))
+    .update(runtimeTokenPayload("matrix-platform-speech-runtime", identity, epoch))
     .digest("hex");
 }

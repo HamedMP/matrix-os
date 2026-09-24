@@ -12,6 +12,8 @@ import { CollaborationActorProofVerifier } from "./actor-proof.js";
 import { CollaborationAuthority, CollaborationAuthorizationError } from "./authority.js";
 import { CollaborationCapabilityRepository } from "./capability-repository.js";
 import { CollaborationCapabilityEvaluator } from "./capability-evaluator.js";
+import { drainActiveSharedRunsForCutover, GatewayCollaborationCutover } from "./cutover.js";
+import { createCollaborationCutoverRoutes } from "./cutover-route.js";
 import { createProjectGitBroker, type ProjectGitDriver, type ProjectGitOwnerIdentity } from "./project-git-broker.js";
 import { createProjectAccessReadiness } from "./project-access-readiness.js";
 import { createGatewayReadinessProbes } from "./gateway-readiness-probes.js";
@@ -28,7 +30,7 @@ import { createDirectSessionRoutes } from "./direct-routes.js";
 import { DirectSessionService } from "./direct-sessions.js";
 import { OwnerRuntimeSessionService } from "./owner-runtime-sessions.js";
 import { registerCollaborationDirectWebSocketRoutes } from "./direct-websocket.js";
-import { ensureRuntimeIdentity } from "./runtime-identity.js";
+import { confirmationKeyFromRuntimeIdentity, ensureRuntimeIdentity } from "./runtime-identity.js";
 import { CollaborationEventRegistry } from "./events.js";
 import { CollaborationParticipantResolver } from "./participant-resolver.js";
 import {
@@ -135,6 +137,7 @@ export async function createGatewayCollaboration(options: {
   await bootstrapCollaborationDatabase(options.db);
   await cleanupExpiredArtifacts(options.db, new Date());
   const repository = new CollaborationRepository(options.db, { chatRepository: options.chatRepository });
+  const cutoverGuard = new GatewayCollaborationCutover(options.db);
   const participantResolver = options.resolveParticipant && options.resolveInvitationIdentifier
     ? undefined
     : new CollaborationParticipantResolver({
@@ -180,7 +183,7 @@ export async function createGatewayCollaboration(options: {
   const runLoss = new CollaborationRunLossRepository(options.db);
   const verifier = new CollaborationActorProofVerifier({
     runtimeId: options.config.runtimeId,
-    keys: options.config.proofKeys,
+    keys: options.config.proofKeys ?? {},
     authority,
   });
   // S05: direct transport. The platform relay signs nothing on this path; the
@@ -188,6 +191,7 @@ export async function createGatewayCollaboration(options: {
   // and holds every session. Without registered keys or client origins the
   // direct routes fail closed while the rest keeps serving.
   const runtimeIdentity = await ensureRuntimeIdentity(options.db);
+  const confirmationSecret = confirmationKeyFromRuntimeIdentity(runtimeIdentity, options.config.runtimeId);
   let controlClient: CollaborationControlClient | undefined;
   const directVerifier = new DirectTicketVerifier({
     runtimeId: options.config.runtimeId,
@@ -241,7 +245,7 @@ export async function createGatewayCollaboration(options: {
   }
   const chatScope = new CollaborationChatScopeService(options.db, {
     runtimeId: options.config.runtimeId,
-    preflightSecret: options.config.preflightSecret,
+    preflightSecret: confirmationSecret,
   });
   const projectTransitions = createProjectTransitionJournal({ db: options.db });
   const projectFence = createProjectFence({ db: options.db, transitions: projectTransitions });
@@ -251,7 +255,7 @@ export async function createGatewayCollaboration(options: {
   if (projectLifecycle) await projectLifecycle.recoverPending();
   const projectScope = options.projectSource ? new CollaborationProjectScopeService(options.db, {
     runtimeId: options.config.runtimeId,
-    preflightSecret: options.config.preflightSecret,
+    preflightSecret: confirmationSecret,
     source: options.projectSource,
   }) : undefined;
   const outbox = new CollaborationDirectoryOutbox({
@@ -290,6 +294,7 @@ export async function createGatewayCollaboration(options: {
   let closing = false;
   let chatExecutionAdapter: CollaborationChatExecutionAdapter | undefined;
   let sharedAiRuntime: Awaited<ReturnType<typeof createSharedAiRuntime>> | undefined;
+  let sharedAiOrchestrator: CanonicalChatOrchestrator | undefined;
   let controlLossWatchdog: ReturnType<typeof startControlLossWatchdog> | undefined;
   let terminalAdapter: CollaborationTerminalAdapter | undefined;
   let terminalControl: TerminalControlCoordinator | undefined;
@@ -398,7 +403,7 @@ export async function createGatewayCollaboration(options: {
         const apps = input.appsFactory?.({ db: options.db, authority, catalog, onCommitted });
         resourceServices = { catalog, driver: input.driver, uploads, ...(apps ? { apps } : {}) };
         standaloneScope = new StandaloneResourceScopeService({ resources: resourceServices,
-          runtimeId: options.config.runtimeId, preflightSecret: options.config.preflightSecret });
+          runtimeId: options.config.runtimeId, preflightSecret: confirmationSecret });
         ownerResourceDriver = input.driver;
       } catch (error: unknown) {
         uploads.close();
@@ -455,6 +460,7 @@ export async function createGatewayCollaboration(options: {
         ...(input.sandboxManifests ? { sandboxManifests: input.sandboxManifests } : {}),
         ...(input.executionRoots ? { executionRoots: input.executionRoots } : {}),
       });
+      sharedAiOrchestrator = input.orchestrator;
       if (sharedAiRuntime.available) chatExecutionAdapter = sharedAiRuntime.chatExecutionAdapter;
       // S09 / T048: losing the control stream past its lease loses every active
       // shared run. The watchdog fires once per outage episode and never extends authority.
@@ -499,7 +505,7 @@ export async function createGatewayCollaboration(options: {
         runtime: input.runtime,
         runtimeId: options.config.runtimeId,
         executionEligibility: input.executionEligibility,
-        preflightSecret: options.config.preflightSecret,
+        preflightSecret: confirmationSecret,
       });
       terminalControl = new TerminalControlCoordinator({
         startTimer: options.startTimers,
@@ -539,7 +545,7 @@ export async function createGatewayCollaboration(options: {
       const inventory = createProjectInventoryService({
         homePath: input.homePath,
         source: input.inventorySource,
-        confirmationSecret: options.config.preflightSecret,
+        confirmationSecret,
       });
       projectTransitionCoordinator = createProjectTransitionCoordinator({
         db: options.db,
@@ -578,6 +584,7 @@ export async function createGatewayCollaboration(options: {
       if (registered || closing) throw new Error("Collaboration routes are already registered or shutting down");
       registered = true;
       input.app.route("/", createCollaborationRoutes({
+        cutoverGuard,
         runtimeId: options.config.runtimeId,
         verifier,
         directSessions,
@@ -620,6 +627,22 @@ export async function createGatewayCollaboration(options: {
           if (role === "viewer") terminalControl?.invalidateActor(scopeId, actorId);
           void terminalEventRegistry?.publishState(scopeId);
         },
+      }));
+      input.app.route("/", createCollaborationCutoverRoutes({
+        ownerId: options.config.ownerId ?? "",
+        runtimeId: options.config.runtimeId,
+        platformKeys: () => controlClient?.platformKeys() ?? [],
+        controlFresh: () => controlClient?.controlFresh() ?? false,
+        cutover: cutoverGuard,
+        drainRuns: (key) => drainActiveSharedRunsForCutover({
+          db: options.db, scopeId: key.scopeId, ownerId: key.ownerId,
+          orchestrator: {
+            cancelSharedRun: async (...args) => {
+              if (!sharedAiOrchestrator) throw new Error("Shared execution orchestrator unavailable");
+              await sharedAiOrchestrator.cancelSharedRun(...args);
+            },
+          },
+        }),
       }));
       registerCollaborationEventWebSocketRoute({
         app: input.app,

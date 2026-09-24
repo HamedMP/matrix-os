@@ -81,6 +81,7 @@ import {
   terminalWebSocketPathForSession,
 } from "./terminal-session-id";
 import { createXtermLogger } from "./xterm-logger";
+import { buildTerminalConnectionQuery } from "./terminal-connection-query";
 import { createColdReplayVisibility, type ColdReplayVisibility } from "./cold-replay-visibility";
 import { parseTerminalServerMessage, stripTerminalControls } from "./terminal-server-message";
 import type { TerminalPaneProps } from "./terminal-pane-types";
@@ -1363,15 +1364,13 @@ export function TerminalPane({
         webSocketConnectPending = true;
         const generation = wsGenerationRef.current + 1;
         wsGenerationRef.current = generation;
-        const query = {
-          workspaceId: terminalRef.workspaceId,
-          tabId: terminalRef.tabId,
-          fromSeq: String(replayRequest?.requestedSeq ?? 0),
-          client: suppressNativeKeyboard ? "mobile" : "browser",
-          inputCapability: "binary-input-v1",
-          ...(requestedOwnershipRef.current ? { lease: requestedOwnershipRef.current } : {}),
-          ...(declaredSize ? { cols: String(declaredSize.cols), rows: String(declaredSize.rows) } : {}),
-        };
+        const query = buildTerminalConnectionQuery({
+          terminalRef,
+          fromSeq: replayRequest?.requestedSeq ?? 0,
+          mobile: suppressNativeKeyboard,
+          lease: requestedOwnershipRef.current,
+          size: declaredSize,
+        });
         log("connect-ws", {
           wsPath,
           replayMode: replayRequest?.mode,
