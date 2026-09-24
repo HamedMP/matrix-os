@@ -43,7 +43,7 @@
 
 ## Phase 5: Gmail triage orchestration (Stack C)
 
-- [ ] T026 [P] [US1] Add fixture tests for account selection, snippet/full-context preparation and hostile email instructions in `tests/gateway/jev-email-triage-workflow.test.ts`
+- [ ] T026 [P] [US1] Add fixture tests proving bot creation saves the selected Gmail account and each run compares a live `get_profile.emailAddress` before any message read; cover missing/mismatched/ambiguous accounts, snippet/full-context preparation and hostile email instructions in `tests/gateway/jev-email-triage-workflow.test.ts`
 - [ ] T027 [P] [US3] Add fixture tests for Gmail history fallback, fingerprints and repeat-run mutation suppression in `tests/gateway/jev-email-triage-workflow.test.ts`
 - [ ] T028 [US1] Implement bounded Gmail thread normalization and latest-four-message verification in the smallest focused gateway/skill helper
 - [ ] T029 [US1] Apply multi-label actions through existing `create_label` and `modify_message`; remove only `INBOX` for an authorized verified archive

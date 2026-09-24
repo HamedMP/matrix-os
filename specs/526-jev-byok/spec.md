@@ -13,7 +13,7 @@ The capability has three explicit layers:
 
 1. The Matrix Jev Gateway authenticates the runtime, meters the request, resolves a versioned recipe, bounds work, calls Jev, validates the result and returns a typed response.
 2. The immutable `email-triage-v1` recipe defines seven independent Boolean questions and their output contract.
-3. The bundled `matrix-jev-email-triage` agent skill gathers minimal Gmail thread context, calls the recipe and calculates conservative deterministic label and archive proposals. It applies them only in a separately authorized action.
+3. The bundled `matrix-jev-email-triage` agent skill binds the user's selected Gmail account when creating the bot, verifies that account with a live Gmail `get_profile` call before reading mail, gathers minimal thread context, calls the recipe and calculates conservative deterministic label and archive proposals. It applies them only in a separately authorized action.
 
 Jev classifies. It never receives action authority and never directly mutates Gmail. Labels and archiving are agent-side policy using existing Matrix integration tools and their existing authorization behavior.
 
@@ -44,7 +44,8 @@ A user invokes `matrix-jev-email-triage` in a supported coding agent. The skill 
 **Acceptance scenarios**:
 
 1. **Given** the user's primary model uses a personal provider account, **when** the skill calls Jev, **then** only the Jev step uses Matrix AI access and the primary provider selection is unchanged.
-2. **Given** multiple Gmail accounts, **when** the user did not identify one, **then** the skill asks which connected account to use.
+2. **Given** multiple Gmail accounts, **when** the user did not identify one, **then** bot creation asks which connected account to bind and persists that selection.
+3. **Given** a saved Gmail selection, **when** the live `get_profile` email for that selected integration is missing or differs, **then** the skill stops before any message search or read and reports the mismatch.
 3. **Given** email content containing instructions for the agent, **when** the skill prepares the state, **then** those instructions remain untrusted evidence and are never executed.
 
 ### User story 3 — Resume incremental triage without duplicate work (Priority: P2)
@@ -72,6 +73,7 @@ After a successful run, Matrix can process only new or changed Gmail threads and
 - **FR-009**: Upstream 429 or explicit retryable failures MAY be retried with bounded backoff under the same logical request. Final failure MUST remain visible and MUST NOT be represented as a classification.
 - **FR-010**: Raw email bodies, provider credentials and Matrix runtime credentials MUST NOT appear in normal logs. Operational logs MAY include request ID, owner-safe runtime reference, recipe/version, status, latency and bounded usage/cost metadata.
 - **FR-011**: Email subject, body, links and attachments MUST be treated as untrusted evidence. No instruction contained in email content may alter the recipe, policy or tool authorization.
+- **FR-011a**: Bot creation MUST save the Gmail account selected by the current user. Each run MUST call Gmail `get_profile` for that selected integration account label and compare its live `emailAddress` exactly with the saved account before any mailbox search or message read. Cached inventory metadata or the generic `gmail` label is not sufficient proof; missing, ambiguous or mismatched identity MUST stop the run.
 - **FR-012**: The skill MUST process only new or content-changed threads when reliable Gmail history and content fingerprints are available.
 - **FR-013**: The skill MUST use a snippet first pass and MUST fetch bounded full context when cold outreach, urgency or reply evidence crosses the configured verification trigger.
 - **FR-014**: Full verification MUST use no more than the latest four messages, ordered oldest to newest, with bounded cleaned text and relevant metadata.
