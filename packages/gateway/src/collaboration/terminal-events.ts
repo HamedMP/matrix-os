@@ -50,6 +50,7 @@ interface TerminalRuntime {
   evictedThrough: number;
   connections: Set<string>;
   lastTouchedAt: number;
+  source?: Promise<{ close(): void }>;
 }
 
 interface TerminalConnection {
@@ -88,6 +89,12 @@ export class CollaborationTerminalEventRegistry {
     maxActorScopeConnections?: number;
     maxReplayBytes?: number;
     maxSessions?: number;
+    connectOutput?: (metadata: CollaborationTerminalMetadata, handlers: {
+      /** `replacesHistory` marks a daemon snapshot: it supersedes retained records, never extends them. */
+      output(data: string, replacesHistory?: boolean): Promise<void>;
+      exit(): Promise<void>;
+      error(): void;
+    }) => Promise<{ close(): void }>;
   }) {
     this.now = options.now ?? (() => new Date());
     this.maxConnections = bounded(options.maxConnections ?? DEFAULT_MAX_CONNECTIONS, 1, 256);
@@ -147,6 +154,17 @@ export class CollaborationTerminalEventRegistry {
     runtime.connections.add(connection.connectionId);
     runtime.lastTouchedAt = this.now().getTime();
     try {
+      if (this.options.connectOutput) {
+        runtime.source ??= this.options.connectOutput(metadata, {
+          output: (data, replacesHistory) => this.publishOutput(metadata.scopeId, metadata.incarnation, data, replacesHistory),
+          exit: () => this.publishExit(metadata.scopeId, metadata.incarnation),
+          error: () => this.sourceUnavailable(runtime),
+        });
+        await runtime.source;
+        if (this.closing || !this.connections.has(connection.connectionId)) {
+          throw new CollaborationTerminalEventError("unavailable");
+        }
+      }
       await this.deliverReplay(connection, runtime);
       this.send(connection, {
         version: 1,
@@ -172,11 +190,12 @@ export class CollaborationTerminalEventRegistry {
     };
   }
 
-  async publishOutput(scopeId: string, incarnation: string, data: string): Promise<void> {
+  async publishOutput(scopeId: string, incarnation: string, data: string, replacesHistory = false): Promise<void> {
     const runtime = this.runtimes.get(scopeId);
     if (!runtime || runtime.metadata.incarnation !== incarnation || runtime.metadata.status !== "active") {
       throw new CollaborationTerminalEventError("unavailable");
     }
+    if (replacesHistory) this.replaceHistory(runtime);
     for (const chunk of byteChunks(data, MAX_FRAME_DATA_BYTES)) {
       runtime.sequence += 1;
       const record = { sequence: runtime.sequence, data: chunk, bytes: Buffer.byteLength(chunk) };
@@ -220,6 +239,10 @@ export class CollaborationTerminalEventRegistry {
     }
     runtime.metadata = { ...runtime.metadata, status: "exited", exitedAt: this.now().toISOString() };
     await this.publishUnavailable(runtime, "exited");
+    for (const connectionId of [...runtime.connections]) {
+      const connection = this.connections.get(connectionId);
+      if (connection) this.remove(connection, 1000, "Exited");
+    }
   }
 
   notifyRevoked(scopeId: string, actorId: string): void {
@@ -285,11 +308,32 @@ export class CollaborationTerminalEventRegistry {
         >= this.maxActorScopeConnections) throw new CollaborationTerminalEventError("capacity");
   }
 
+  /**
+   * A restarted source replays the whole retained screen, so every subscriber is told to refresh
+   * before that snapshot arrives instead of appending it to the history it already rendered.
+   */
+  private replaceHistory(runtime: TerminalRuntime): void {
+    if (runtime.sequence === 0) return;
+    runtime.records = [];
+    runtime.replayBytes = 0;
+    runtime.evictedThrough = runtime.sequence;
+    for (const connectionId of [...runtime.connections]) {
+      const connection = this.connections.get(connectionId);
+      if (!connection) continue;
+      this.sendBestEffort(connection, refreshFrame(connection, runtime));
+      connection.lastSequence = runtime.sequence;
+    }
+  }
+
   private async deliverReplay(connection: TerminalConnection, runtime: TerminalRuntime): Promise<void> {
     if (connection.lastSequence < runtime.evictedThrough) {
+      // The viewer is behind the retained window, so its transcript cannot be continued and
+      // is replaced. Advance only to the eviction point rather than to the head: the records
+      // still retained are the current screen, and a refresh carries metadata, not bytes.
+      // Skipping them left a joining viewer with a blank terminal until the next output,
+      // which is reachable whenever one snapshot exceeds the retention budget.
       this.send(connection, refreshFrame(connection, runtime));
-      connection.lastSequence = runtime.sequence;
-      return;
+      connection.lastSequence = runtime.evictedThrough;
     }
     for (const record of runtime.records) {
       if (record.sequence > connection.lastSequence) this.sendRecord(connection, runtime, record);
@@ -382,10 +426,29 @@ export class CollaborationTerminalEventRegistry {
     const runtime = this.runtimes.get(connection.scopeId);
     runtime?.connections.delete(connection.connectionId);
     if (runtime) runtime.lastTouchedAt = this.now().getTime();
+    if (runtime?.connections.size === 0) this.stopSource(runtime);
     try {
       connection.socket.close(code, reason);
     } catch (error: unknown) {
       console.warn("[collaboration-terminal-events] socket close failed", error instanceof Error ? error.name : "UnknownError");
+    }
+  }
+
+  private stopSource(runtime: TerminalRuntime): void {
+    const source = runtime.source;
+    if (!source) return;
+    runtime.source = undefined;
+    void source.then(({ close }) => close()).catch((error: unknown) => {
+      console.warn("[collaboration-terminal-events] source close failed", error instanceof Error ? error.name : "UnknownError");
+    });
+  }
+
+  private sourceUnavailable(runtime: TerminalRuntime): void {
+    for (const connectionId of [...runtime.connections]) {
+      const connection = this.connections.get(connectionId);
+      if (!connection) continue;
+      this.sendBestEffort(connection, unavailableFrame(connection, runtime, "unavailable"));
+      this.remove(connection, 1011, "Unavailable");
     }
   }
 

@@ -197,13 +197,13 @@ describe("gateway collaboration schema bootstrap (S01 foundation)", () => {
 
   it("registers the versioned migrations in order and records every version idempotently", async () => {
     // S12 adds migration 12 (resource catalog); 13 is the S10 project Git migration below it.
-    expect(COLLABORATION_VERSIONED_MIGRATIONS.map((step) => step.version)).toEqual([3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]);
+    expect(COLLABORATION_VERSIONED_MIGRATIONS.map((step) => step.version)).toEqual([3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]);
     expect(typeof applyCollaborationBaseSchema).toBe("function");
     await bootstrapCollaborationDatabase(fixture.db);
     await bootstrapCollaborationDatabase(fixture.db);
     const versions = await fixture.db.selectFrom("collaboration_schema_migrations")
       .select("version").orderBy("version").execute();
-    expect(versions.map((row) => Number(row.version))).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]);
+    expect(versions.map((row) => Number(row.version))).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]);
   });
 });
 

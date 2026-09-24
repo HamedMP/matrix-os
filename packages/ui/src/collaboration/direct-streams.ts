@@ -285,6 +285,22 @@ export function createDirectStreams(deps: {
     let stopped = false;
     let heartbeatTimer: ReturnType<typeof setInterval> | undefined;
     const clearHeartbeat = () => { if (heartbeatTimer) clearInterval(heartbeatTimer); heartbeatTimer = undefined; };
+    // Null while no refresh is settling, so the common path stays synchronous and output is
+    // not deferred a microtask for every frame. It becomes a promise only for the window
+    // between a refresh frame and its handler resolving, and output queued behind it keeps
+    // arrival order because each delivery chains onto the same gate.
+    let refreshGate: Promise<void> | null = null;
+    /** Appends to the gate and releases it once this is the last queued step, so the gate
+     *  exists only while work is actually outstanding. */
+    const chain = (step: () => void | Promise<void>): void => {
+      const queued = Promise.resolve(refreshGate).then(step);
+      const settled = queued.then(() => { if (refreshGate === settled) refreshGate = null; });
+      refreshGate = settled;
+    };
+    const deliverOutput = (frame: Parameters<typeof handlers.onOutput>[0]) => {
+      if (!refreshGate) { handlers.onOutput(frame); return; }
+      chain(() => { if (!stopped) handlers.onOutput(frame); });
+    };
     const stream = openStream(parsedScopeId, "terminal", () => sequence.toString(), (socket, _connected, terminate) => {
       socket.onopen = () => {
         clearHeartbeat();
@@ -299,13 +315,21 @@ export function createDirectStreams(deps: {
           if (frame.type === "terminal.ready") { sequence = maxSequence(sequence, frame.sequence); handlers.onReady(frame); }
           else if (frame.type === "terminal.output") {
             const next = BigInt(frame.sequence);
-            if (next > sequence) { sequence = next; handlers.onOutput(frame); }
+            // A refresh replaces the transcript, so output that arrives while one is still
+            // settling has to wait for it. Delivering it immediately would append the
+            // daemon's replayed snapshot to the transcript the refresh is about to clear,
+            // which is the duplicated-history failure this ordering exists to prevent.
+            if (next > sequence) { sequence = next; deliverOutput(frame); }
           } else if (frame.type === "terminal.state") { sequence = maxSequence(sequence, frame.sequence); handlers.onState(frame); }
           else if (frame.type === "terminal.refresh_required") {
             sequence = maxSequence(sequence, frame.sequence);
-            void Promise.resolve(handlers.onRefreshRequired()).catch((error: unknown) => {
-              console.warn("[collaboration-direct] terminal refresh failed", error instanceof Error ? error.name : "UnknownError");
-              socket.close(1011, "Refresh failed");
+            chain(async () => {
+              try {
+                await handlers.onRefreshRequired();
+              } catch (error: unknown) {
+                console.warn("[collaboration-direct] terminal refresh failed", error instanceof Error ? error.name : "UnknownError");
+                socket.close(1011, "Refresh failed");
+              }
             });
           } else { stopped = true; clearHeartbeat(); terminate(); handlers.onUnavailable(); }
         } catch (error: unknown) {
