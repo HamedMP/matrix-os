@@ -6,6 +6,7 @@ import { registerIpcHandlers, type HandlerContext } from "@desktop/main/ipc/hand
 import {
   importBrowserPages,
   listBrowserImportSources,
+  scanBrowserImportCandidates,
   parseArcSidebar,
   parseChromiumBookmarks,
   parseFirefoxBookmarks,
@@ -107,6 +108,49 @@ describe("local browser page import", () => {
     await expect(importBrowserPages(home, "chrome:Default", "darwin"))
       .rejects.toThrow("browser source unavailable");
     expect(JSON.parse(await readFile(outside, "utf8"))).toEqual({ roots: {} });
+  });
+
+  it("rejects symlinked profile directories during discovery and import", async () => {
+    const home = await fixtureHome();
+    const chrome = join(home, "Library/Application Support/Google/Chrome");
+    const outside = join(home, "outside-profile");
+    await mkdir(chrome, { recursive: true });
+    await mkdir(outside);
+    await writeFile(join(outside, "Bookmarks"), JSON.stringify({ roots: {
+      bookmark_bar: { type: "folder", children: [
+        { type: "url", name: "Outside", url: "https://outside.example" },
+      ] },
+    } }));
+    await symlink(outside, join(chrome, "Default"));
+    expect(await listBrowserImportSources(home, "darwin")).toEqual([]);
+    await expect(importBrowserPages(home, "chrome:Default", "darwin"))
+      .rejects.toThrow("browser source unavailable");
+  });
+
+  it("bounds discovery time and concurrent source reads", async () => {
+    let active = 0;
+    let peak = 0;
+    const starts: string[] = [];
+    const result = await scanBrowserImportCandidates(
+      ["one", "two", "three", "four", "five"],
+      async (id, signal) => {
+        starts.push(id);
+        active += 1;
+        peak = Math.max(peak, active);
+        if (id === "one") {
+          await new Promise<void>((resolve) => signal.addEventListener("abort", () => resolve(), { once: true }));
+        }
+        active -= 1;
+        return { id, browser: "Test", profile: id, pageCount: 1 };
+      },
+      { timeoutMs: 20, concurrency: 2 },
+    );
+    expect(result).toEqual(expect.arrayContaining([
+      { id: "two", browser: "Test", profile: "two", pageCount: 1 },
+    ]));
+    expect(result.some((source) => source.id === "one")).toBe(false);
+    expect(peak).toBeLessThanOrEqual(2);
+    expect(starts).toContain("three");
   });
 
   it("routes a selected profile from validated IPC to the local file reader", async () => {

@@ -4,7 +4,7 @@
 import { constants } from "node:fs";
 import { execFile } from "node:child_process";
 import { lstat, open, readdir } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
@@ -166,16 +166,36 @@ export function parseFirefoxBookmarks(value: unknown): ImportedBrowserPage[] {
   return pages;
 }
 
-async function readBoundedJson(path: string): Promise<unknown> {
+async function assertConfinedSource(home: string, path: string): Promise<void> {
+  const root = resolve(home);
+  const parent = resolve(dirname(path));
+  const suffix = relative(root, parent);
+  if (suffix === ".." || suffix.startsWith(`..${sep}`) || isAbsolute(suffix)) {
+    throw new Error("browser source unavailable");
+  }
+  let current = root;
+  for (const segment of suffix.split(sep).filter(Boolean)) {
+    current = join(current, segment);
+    const stat = await lstat(current);
+    if (!stat.isDirectory()) throw new Error("browser source unavailable");
+  }
+  const file = await lstat(path);
+  if (!file.isFile()) throw new Error("browser source unavailable");
+}
+
+async function readBoundedJson(path: string, signal?: AbortSignal): Promise<unknown> {
+  signal?.throwIfAborted();
   const stat = await lstat(path);
   if (!stat.isFile() || stat.size > MAX_SOURCE_BYTES) throw new Error("browser source unavailable");
+  signal?.throwIfAborted();
   const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
   try {
+    signal?.throwIfAborted();
     const current = await handle.stat();
     if (!current.isFile() || current.size > MAX_SOURCE_BYTES) throw new Error("browser source unavailable");
     const chunks: Buffer[] = [];
     let bytes = 0;
-    for await (const chunk of handle.createReadStream({ highWaterMark: 64 * 1024 })) {
+    for await (const chunk of handle.createReadStream({ highWaterMark: 64 * 1024, signal })) {
       bytes += chunk.length;
       if (bytes > MAX_SOURCE_BYTES) throw new Error("browser source unavailable");
       chunks.push(chunk);
@@ -186,17 +206,20 @@ async function readBoundedJson(path: string): Promise<unknown> {
   }
 }
 
-async function readBoundedSafariPlist(path: string): Promise<unknown> {
+async function readBoundedSafariPlist(path: string, signal?: AbortSignal): Promise<unknown> {
+  signal?.throwIfAborted();
   const stat = await lstat(path);
   if (!stat.isFile() || stat.size > MAX_SOURCE_BYTES) throw new Error("browser source unavailable");
   const { stdout } = await execFileAsync("/usr/bin/plutil", ["-convert", "json", "-o", "-", path], {
+    signal,
     timeout: 10_000,
     maxBuffer: MAX_SOURCE_BYTES,
   });
   return JSON.parse(stdout) as unknown;
 }
 
-async function readFirefoxBookmarks(path: string): Promise<unknown> {
+async function readFirefoxBookmarks(path: string, signal?: AbortSignal): Promise<unknown> {
+  signal?.throwIfAborted();
   const stat = await lstat(path);
   if (!stat.isFile() || stat.size > MAX_SQLITE_BYTES) throw new Error("browser source unavailable");
   const query = `SELECT b.title AS title, p.url AS url,
@@ -205,6 +228,7 @@ async function readFirefoxBookmarks(path: string): Promise<unknown> {
     LEFT JOIN moz_bookmarks parent ON parent.id = b.parent
     WHERE b.type = 1 ORDER BY b.id LIMIT ${MAX_PAGES}`;
   const { stdout } = await execFileAsync("/usr/bin/sqlite3", ["-readonly", "-json", path, query], {
+    signal,
     timeout: 10_000,
     maxBuffer: MAX_SOURCE_BYTES,
   });
@@ -254,14 +278,16 @@ export async function importBrowserPages(
   home: string,
   sourceId: string,
   platform: NodeJS.Platform = process.platform,
+  signal?: AbortSignal,
 ): Promise<{ pages: ImportedBrowserPage[] }> {
   const source = sourcePath(home, sourceId, platform);
   try {
+    await assertConfinedSource(home, source.path);
     const data = source.format === "safari"
-      ? await readBoundedSafariPlist(source.path)
+      ? await readBoundedSafariPlist(source.path, signal)
       : source.format === "firefox"
-        ? await readFirefoxBookmarks(source.path)
-      : await readBoundedJson(source.path);
+        ? await readFirefoxBookmarks(source.path, signal)
+      : await readBoundedJson(source.path, signal);
     const pages = source.format === "arc"
       ? parseArcSidebar(data)
       : source.format === "safari"
@@ -276,6 +302,60 @@ export async function importBrowserPages(
   }
 }
 
+/** Keep the picker responsive even when a local browser profile is locked. */
+export async function scanBrowserImportCandidates(
+  ids: string[],
+  load: (id: string, signal: AbortSignal) => Promise<BrowserImportSource | null>,
+  options: { timeoutMs?: number; concurrency?: number } = {},
+): Promise<BrowserImportSource[]> {
+  const controller = new AbortController();
+  const candidates = ids.slice(0, 256);
+  const results: Array<BrowserImportSource | null> = Array(candidates.length).fill(null);
+  const concurrency = Math.max(1, Math.min(options.concurrency ?? 4, 8));
+  const timeoutMs = Math.max(1, Math.min(options.timeoutMs ?? 12_000, 30_000));
+  let next = 0;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const worker = async () => {
+    while (!controller.signal.aborted && next < candidates.length) {
+      const index = next++;
+      try {
+        const source = await load(candidates[index]!, controller.signal);
+        if (!controller.signal.aborted) results[index] = source;
+      } catch (error: unknown) {
+        if (!controller.signal.aborted && !(error instanceof Error)) {
+          console.warn("[browser-import] source scan failed with an unknown error");
+        }
+      }
+    }
+  };
+  const deadline = new Promise<BrowserImportSource[]>((resolve) => {
+    timer = setTimeout(() => {
+      controller.abort();
+      resolve(results.filter((source): source is BrowserImportSource => source !== null));
+    }, timeoutMs);
+  });
+  try {
+    const complete = Promise.all(Array.from({ length: Math.min(concurrency, candidates.length) }, () => worker()))
+      .then(() => results.filter((source): source is BrowserImportSource => source !== null));
+    return await Promise.race([complete, deadline]);
+  } finally {
+    if (timer) clearTimeout(timer);
+    controller.abort();
+  }
+}
+
+async function readdirWithin(path: string, timeoutMs: number): Promise<string[]> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      readdir(path),
+      new Promise<string[]>((resolve) => { timer = setTimeout(() => resolve([]), timeoutMs); }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 export async function listBrowserImportSources(
   home: string,
   platform: NodeJS.Platform = process.platform,
@@ -283,36 +363,38 @@ export async function listBrowserImportSources(
   if (platform !== "darwin") return [];
   const support = join(home, "Library", "Application Support");
   const ids = ["arc:sidebar", "safari:bookmarks", "opera:Default"];
-  for (const browser of CHROMIUM_BROWSERS) {
-    if (browser.id === "opera") continue;
-    let profiles: string[];
+  const profileDirectories = [
+    ...CHROMIUM_BROWSERS.filter((browser) => browser.id !== "opera").map((browser) => ({
+      id: browser.id,
+      path: join(support, browser.directory),
+      pattern: PROFILE_NAME,
+    })),
+    { id: "firefox", path: join(support, "Firefox", "Profiles"), pattern: FIREFOX_PROFILE_NAME },
+  ];
+  const discovered = await Promise.all(profileDirectories.map(async (directory) => {
     try {
-      profiles = await readdir(join(support, browser.directory));
+      const profiles = await readdirWithin(directory.path, 2_000);
+      return profiles.filter((name) => directory.pattern.test(name))
+        .slice(0, MAX_PROFILES_PER_BROWSER)
+        .map((profile) => `${directory.id}:${profile}`);
     } catch (error: unknown) {
       if (!(error instanceof Error)) console.warn("[browser-import] profile scan failed with an unknown error");
-      continue;
+      return [];
     }
-    for (const profile of profiles.filter((name) => PROFILE_NAME.test(name)).slice(0, MAX_PROFILES_PER_BROWSER)) {
-      ids.push(`${browser.id}:${profile}`);
-    }
-  }
-  try {
-    const profiles = await readdir(join(support, "Firefox", "Profiles"));
-    for (const profile of profiles.filter((name) => FIREFOX_PROFILE_NAME.test(name)).slice(0, MAX_PROFILES_PER_BROWSER)) {
-      ids.push(`firefox:${profile}`);
-    }
-  } catch (error: unknown) {
-    if (!(error instanceof Error)) console.warn("[browser-import] Firefox profile scan failed with an unknown error");
-  }
-  const sources: BrowserImportSource[] = [];
-  for (const id of ids) {
+  }));
+  for (const profiles of discovered) ids.push(...profiles);
+  return scanBrowserImportCandidates(ids, async (id, signal) => {
     try {
       const source = sourcePath(home, id, platform);
-      const { pages } = await importBrowserPages(home, id, platform);
-      if (pages.length > 0) sources.push({ id, browser: source.browser, profile: source.profile, pageCount: pages.length });
+      const { pages } = await importBrowserPages(home, id, platform, signal);
+      return pages.length > 0
+        ? { id, browser: source.browser, profile: source.profile, pageCount: pages.length }
+        : null;
     } catch (error: unknown) {
-      if (!(error instanceof Error)) console.warn("[browser-import] source scan failed with an unknown error");
+      if (!(error instanceof Error) && !signal.aborted) {
+        console.warn("[browser-import] source scan failed with an unknown error");
+      }
+      return null;
     }
-  }
-  return sources;
+  });
 }
