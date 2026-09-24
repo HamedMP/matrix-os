@@ -35,6 +35,23 @@ Removed the V1 platform HTTP `CollaborationProxy`, V1 socket authorizer, their r
 
 Platform startup now requires validated Ed25519 direct ticket keys and browser allowed origins instead of V1 proof keys. The Cloud Run workflow references `MATRIX_COLLABORATION_TICKET_ACTIVE_KEY_ID` and a `collaboration-ticket-keys` secret, validates the bounded seed map and deployed binding, and no longer deploys the V1 proof-key secret. These are workflow code changes only: the named secret, active key ID, environment binding and IAM grant were **not** provisioned or verified on GCP. Repository-level secret-name listing found no `MATRIX_COLLABORATION_*` names and does not establish environment or organization secret state. An operator must provision and inspect those settings before any separately authorized rollout.
 
+**Outcome, recorded 2026-09-24.** That provisioning did not happen before rollout, and the paragraph above
+is the only place it was ever written down. #1864 merged, and every Production `Platform Cloud Run` deploy
+failed from `274b6f6d7` onward — `7b348d918` was the last green one. Two separate causes, the second hidden
+behind the first: `MATRIX_COLLABORATION_TICKET_ACTIVE_KEY_ID` had been a hardcoded `collaboration-v1` and
+became a reference to a repository variable nobody created, and `collaboration-ticket-keys` does not exist in
+`matrix-os-1144` — Secret Manager holds only `collaboration-proof-keys`.
+
+#1889 restored deployment by pointing the V2 environment binding at the secret that exists and defaulting the
+key id, and set the Production variable. **The secret rename remains unperformed**, so the env var name and
+the secret name deliberately differ; `tests/platform/collaboration-deployment.test.ts` carries that as a
+comment so it is not "corrected" back.
+
+The prediction in this paragraph was accurate. What failed was not the analysis but the handoff: a prerequisite
+recorded in a spec evidence file, with no owner, no issue and no gate, is indistinguishable from a prerequisite
+nobody identified. A merge gate cannot read prose.
+
+
 Observed RED on this child before removal: `pnpm exec vitest run tests/platform/collaboration-legacy-retirement.test.ts --maxWorkers=2` had **3 failed, 1 passed** (V1 content 200, ticket route present, old terminal socket served). The new signed-header ticket case separately failed **1/1** (200 instead of 404). `tests/platform/collaboration-wiring.test.ts -t 'fails closed on incomplete environment configuration'` failed **1/1** because V1 keys still admitted startup. `tests/platform/collaboration-deployment.test.ts` failed **2/3** before workflow correction.
 
 Observed GREEN after implementation:
