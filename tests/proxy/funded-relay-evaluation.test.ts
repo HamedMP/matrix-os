@@ -284,7 +284,7 @@ describe("funded Jev evaluation relay", () => {
     await relay.close();
   });
 
-  it("bounds the upstream evaluation and conservatively reconciles an ambiguous timeout", async () => {
+  it("keeps an ambiguous timeout for manual usage reconciliation without a false charge", async () => {
     const platformClient = {
       check: vi.fn(async () => ({ contractVersion: 1 as const, authorized: true as const, identity: identity(), policy: policy() })),
       authorize: vi.fn(async (input: { requestId: string }) => ({
@@ -324,10 +324,7 @@ describe("funded Jev evaluation relay", () => {
     relay.register(app);
     const response = await app.request("/v1/evaluate", request());
     expect(response.status).toBe(504);
-    await vi.waitFor(() => expect(platformClient.finalize).toHaveBeenCalledWith(
-      { reservationId: "reservation_123", tokenId: "credential_123", mode: "conservative" },
-      expect.any(AbortSignal),
-    ));
     await relay.close();
+    expect(platformClient.finalize).not.toHaveBeenCalled();
   });
 });

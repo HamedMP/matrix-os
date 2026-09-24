@@ -98,6 +98,9 @@ export async function migrateAiFunded(db: PlatformMigrationExecutor): Promise<vo
       authorization_response TEXT NOT NULL,
       settlement_response TEXT,
       finalization_mode TEXT CHECK (finalization_mode IN ('exact', 'conservative')),
+      manual_review_evidence_ref TEXT,
+      manual_review_actor TEXT,
+      manual_reviewed_at TEXT,
       start_response TEXT,
       release_response TEXT,
       release_reason TEXT,
@@ -130,6 +133,9 @@ export async function migrateAiFunded(db: PlatformMigrationExecutor): Promise<vo
   `.execute(db);
   await sql`ALTER TABLE ai_funded_usage_reservations ADD COLUMN IF NOT EXISTS promotional_reserved_microusd BIGINT CHECK (promotional_reserved_microusd >= 0)`.execute(db);
   await sql`ALTER TABLE ai_funded_usage_reservations ADD COLUMN IF NOT EXISTS addon_reserved_microusd BIGINT CHECK (addon_reserved_microusd >= 0)`.execute(db);
+  await sql`ALTER TABLE ai_funded_usage_reservations ADD COLUMN IF NOT EXISTS manual_review_evidence_ref TEXT`.execute(db);
+  await sql`ALTER TABLE ai_funded_usage_reservations ADD COLUMN IF NOT EXISTS manual_review_actor TEXT`.execute(db);
+  await sql`ALTER TABLE ai_funded_usage_reservations ADD COLUMN IF NOT EXISTS manual_reviewed_at TEXT`.execute(db);
   // Existing reservations intentionally remain NULL/NULL: historical rows do
   // not contain evidence of which funding source paid for them. Runtime expiry
   // reconciliation protects promotion only through explicit allocation rows.

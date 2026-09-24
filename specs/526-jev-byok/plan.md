@@ -42,7 +42,7 @@ Extend the funded relay with one strict `/v1/evaluate` route. Reuse bearer lease
 
 Gateway composition stays limited to repository bootstrap, service construction and `createJevRoutes` registration in `server.ts`. Before adding a second Jev workflow or another funded provider there, extract those bootstrap calls into `packages/gateway/src/jev/register.ts` with explicit database, credential and configuration dependencies; keep request validation, policy and retry semantics in the dedicated Jev modules. This avoids growing the gateway composition entrypoint with workflow behavior.
 
-No database transaction spans the external call. Actual settlement uses Cloudflare-returned input-token usage and the reviewed Jev price table with a short expiry horizon; missing usage, expired pricing or unknown cost follows an explicit conservative reconciliation path. No blind retry occurs after an ambiguous timeout.
+No database transaction spans the external call. Actual settlement uses Cloudflare-returned input-token usage and a reviewed Jev price snapshot selected before dispatch; calls stop when that price expires. When dispatch occurred but usage is unknown, the Platform retains the in-flight hold and owner admission barrier without charging or futile conservative-finalization retries. An operator reviews the upstream evidence after the hold expires and a ten-minute retry grace period passes, then uses `scripts/reconcile-jev-usage.ts` with an evidence reference, reviewer ID and verified microusd cost. An exact cost of zero releases the hold without a charge. The resulting settlement, evidence reference, reviewer and review time are written atomically. No blind retry occurs after an ambiguous timeout.
 
 Likely paths:
 

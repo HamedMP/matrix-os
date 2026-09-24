@@ -140,6 +140,9 @@ export interface AiFundedUsageReservationsTable {
   authorization_response: string;
   settlement_response: string | null;
   finalization_mode: string | null;
+  manual_review_evidence_ref: string | null;
+  manual_review_actor: string | null;
+  manual_reviewed_at: string | null;
   start_response: string | null;
   release_response: string | null;
   release_reason: string | null;

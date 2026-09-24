@@ -616,7 +616,14 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
       if (result.mode === "exact" && result.actualCostMicrousd <= config.jevMaxCostMicrousd) {
         settlementQueue.enqueue({ ...finalizationLocator, ...result });
       } else {
-        settlementQueue.enqueue({ ...finalizationLocator, mode: "conservative" });
+        // Platform deliberately refuses conservative settlement for usage
+        // billing. Keep the durable in-flight hold for operator review rather
+        // than retrying a request that can never succeed or charging without
+        // verified provider usage.
+        console.warn("[proxy] Jev usage requires manual reconciliation", {
+          reservationId: reservation.reservationId,
+          requestId,
+        });
       }
     };
 
