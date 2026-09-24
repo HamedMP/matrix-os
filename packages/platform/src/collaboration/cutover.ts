@@ -52,6 +52,7 @@ export interface CutoverJournal {
 type JournalRow = Selectable<CollaborationCutoverJournalTable>;
 const DIGEST = /^[a-f0-9]{64}$/;
 const OPAQUE_REF = /^[A-Za-z0-9._:-]{1,256}$/;
+const ROLLBACK_RETRY_REASONS = ["offline", "ambiguous", "rollback_generation_mismatch", "rollback_unavailable"] as const;
 
 function validCounts(value: CutoverCounts): boolean {
   return [value.scopes, value.grants, value.invitations].every((count) =>
@@ -137,6 +138,17 @@ export class PlatformCollaborationCutover {
       || row.block_reason === "disabled_for_recovery") {
       return publicJournal(row);
     }
+    // An already activated directory cannot repeat the source→target CAS.
+    // The schema permits `verified` as a resume phase, so distinguish an
+    // active rollback retry by its reason and the installed target generation.
+    if (row.resume_phase === "verified"
+      && ROLLBACK_RETRY_REASONS.some((reason) => reason === row.block_reason)) {
+      const directory = await this.options.db.selectFrom("collaboration_directory")
+        .select("authority_generation").where("scope_id", "=", scopeId).executeTakeFirst();
+      if (directory && Number(directory.authority_generation) === Number(row.target_generation)) {
+        return this.resumeCompatibleRollback(row);
+      }
+    }
     // The pre-read above cannot fence a concurrent disable: `rollback(..., "disable")`
     // leaves the phase as `blocked` and only changes `block_reason`, so a write predicated
     // on the phase alone still matches and would clear the recovery fence. Carry the exact
@@ -163,16 +175,7 @@ export class PlatformCollaborationCutover {
     if (mode === "compatible_direct") {
       if (proof?.compatibleDirectBuild !== true) throw new Error("A compatible direct build must be verified before rollback");
       if (row.phase !== "active") throw new Error("Compatible rollback requires an active direct generation");
-      let verified = false;
-      try {
-        verified = await this.options.verifyCompatibleDirectBuild?.({
-          scopeId, runtimeId: row.runtime_id, ownerId: row.owner_id,
-          targetGeneration: Number(row.target_generation),
-        }) === true;
-      } catch (error: unknown) {
-        console.warn("[collaboration-cutover] compatible build verification unavailable", error instanceof Error ? error.name : "UnknownError");
-      }
-      if (!verified) throw new Error("A compatible direct build must be verified before rollback");
+      if (!await this.compatibleBuildVerified(row)) throw new Error("A compatible direct build must be verified before rollback");
       const resolution = await this.readyHome(row);
       if (resolution.status !== "ready") return this.block(row, resolution.status, "verified");
       try {
@@ -345,6 +348,44 @@ export class PlatformCollaborationCutover {
       console.warn("[collaboration-cutover] home resolution unavailable", error instanceof Error ? error.name : "UnknownError");
       return { status: "offline" };
     }
+  }
+
+  private async compatibleBuildVerified(row: JournalRow): Promise<boolean> {
+    try {
+      return await this.options.verifyCompatibleDirectBuild?.({
+        scopeId: row.scope_id, runtimeId: row.runtime_id, ownerId: row.owner_id,
+        targetGeneration: Number(row.target_generation),
+      }) === true;
+    } catch (error: unknown) {
+      console.warn("[collaboration-cutover] compatible build verification unavailable", error instanceof Error ? error.name : "UnknownError");
+      return false;
+    }
+  }
+
+  private async resumeCompatibleRollback(row: JournalRow): Promise<CutoverJournal> {
+    if (!await this.compatibleBuildVerified(row)) return publicJournal(row);
+    const resolution = await this.readyHome(row);
+    if (resolution.status !== "ready") return publicJournal(row);
+    try {
+      const result = await resolution.home.rollbackCompatible(this.homeRequest(row));
+      if (result.authorityGeneration !== Number(row.target_generation)) return publicJournal(row);
+    } catch (error: unknown) {
+      console.warn("[collaboration-cutover] compatible rollback retry unavailable", error instanceof Error ? error.name : "UnknownError");
+      return publicJournal(row);
+    }
+    await this.options.db.updateTable("collaboration_cutover_journal")
+      .set({ phase: "active", resume_phase: null, block_reason: null,
+        rollback_mode: "compatible_direct", updated_at: new Date() })
+      .where("scope_id", "=", row.scope_id).where("phase", "=", "blocked")
+      .where("resume_phase", "=", "verified")
+      .where("block_reason", "in", [...ROLLBACK_RETRY_REASONS])
+      .where(({ exists, selectFrom }) => exists(selectFrom("collaboration_directory")
+        .select("scope_id").where("scope_id", "=", row.scope_id)
+        .where("runtime_id", "=", row.runtime_id).where("owner_id", "=", row.owner_id)
+        .where("organization_id", "=", row.organization_id)
+        .where("authority_generation", "=", Number(row.target_generation))))
+      .execute();
+    return publicJournal(await this.requireRow(row.scope_id));
   }
 
   private async requireRow(scopeId: string): Promise<JournalRow> {

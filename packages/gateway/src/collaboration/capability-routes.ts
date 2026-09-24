@@ -9,6 +9,7 @@ import {
 import type { Hono } from "hono";
 import { z } from "zod/v4";
 import { readDirectCredentials } from "./direct-routes.js";
+import { DirectAuthError } from "./direct-auth.js";
 import { CollaborationAuthorizationError } from "./authority-error.js";
 import type { CollaborationCapabilityEvaluator } from "./capability-evaluator.js";
 import { evaluateCollaborationReadiness } from "./readiness-evaluator.js";
@@ -80,6 +81,7 @@ export function registerCapabilityRoutes(routes: Hono, options: CapabilityRouteO
         || session.pendingGrantId !== grantId) throw new CollaborationAuthorizationError("not_found", "Grant not found");
       actorId = session.actorId;
     } else {
+      if (options.directSessions) throw new DirectAuthError("invalid_signature", "Direct session credentials are required");
       const proof = await verifyHttp(options.verifier, c, bytes);
       if (proof.scopeId !== scopeId || proof.ownerId !== scope.ownerId) {
         throw new CollaborationAuthorizationError("not_found", "Grant not found");

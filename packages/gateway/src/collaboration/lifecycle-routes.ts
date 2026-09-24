@@ -13,9 +13,8 @@ import {
   CollaborationRepositoryError,
 } from "./repository.js";
 import {
-  verifyHttp,
+  authorizeOwnerScope,
   readJson,
-  requireOwnerLifecycleProof,
   requireScopeOrganizationMembership,
   requireProjectLifecycle,
   notifyScope,
@@ -28,9 +27,8 @@ export function registerLifecycleRoutes(routes: Hono, options: CollaborationRout
   routes.post("/api/collaboration/scopes/:scopeId/lifecycle", async (c) => handle(c, async () => {
     const scopeId = CollaborationIdSchema.parse(c.req.param("scopeId"));
     const { value, bytes } = await readJson(c);
-    const proof = await verifyHttp(options.verifier, c, bytes);
-    requireOwnerLifecycleProof(proof, scopeId);
-    await requireScopeOrganizationMembership(options, scopeId, proof.actorId);
+    const context = await authorizeOwnerScope(options, c, bytes, scopeId);
+    await requireScopeOrganizationMembership(options, scopeId, context.actorId);
     const input = CollaborationLifecycleRequestSchema.parse(value);
     const scope = await options.repository.getScope(scopeId);
     if (!scope) throw new CollaborationRepositoryError("not_found", "Collaboration scope not found");
@@ -41,7 +39,7 @@ export function registerLifecycleRoutes(routes: Hono, options: CollaborationRout
       const lifecycle = requireProjectLifecycle(options.projectLifecycle);
       const common = {
         scopeId,
-        actorId: proof.actorId,
+        actorId: context.actorId,
         clientRequestId: input.clientRequestId,
         expectedRevision: Number(input.expectedRevision),
         payloadHash: digest(bytes),
@@ -63,7 +61,7 @@ export function registerLifecycleRoutes(routes: Hono, options: CollaborationRout
       }
       const result = await options.repository.applyTerminalExport({
         scopeId,
-        actorId: proof.actorId,
+        actorId: context.actorId,
         type: "export",
         clientRequestId: input.clientRequestId,
         expectedRevision: Number(input.expectedRevision),
@@ -77,7 +75,7 @@ export function registerLifecycleRoutes(routes: Hono, options: CollaborationRout
     }
     const result = await options.repository.applyChatLifecycle({
       scopeId,
-      actorId: proof.actorId,
+      actorId: context.actorId,
       type: input.type,
       clientRequestId: input.clientRequestId,
       expectedRevision: Number(input.expectedRevision),
@@ -90,14 +88,13 @@ export function registerLifecycleRoutes(routes: Hono, options: CollaborationRout
   routes.get("/api/collaboration/scopes/:scopeId/operations/:operationId", async (c) => handle(c, async () => {
     const scopeId = CollaborationIdSchema.parse(c.req.param("scopeId"));
     const operationId = CollaborationIdSchema.parse(c.req.param("operationId"));
-    const proof = await verifyHttp(options.verifier, c, new Uint8Array());
-    requireOwnerLifecycleProof(proof, scopeId);
-    await requireScopeOrganizationMembership(options, scopeId, proof.actorId);
+    const context = await authorizeOwnerScope(options, c, new Uint8Array(), scopeId);
+    await requireScopeOrganizationMembership(options, scopeId, context.actorId);
     const projectOperation = options.projectLifecycle
-      ? await options.projectLifecycle.getOperation(scopeId, proof.actorId, operationId)
+      ? await options.projectLifecycle.getOperation(scopeId, context.actorId, operationId)
       : null;
     const operation = projectOperation
-      ?? await options.repository.getLifecycleOperation(scopeId, proof.actorId, operationId);
+      ?? await options.repository.getLifecycleOperation(scopeId, context.actorId, operationId);
     if (!operation) throw new CollaborationRepositoryError("not_found", "Lifecycle operation not found");
     return c.json(CollaborationOperationSchema.parse(operation));
   }));
@@ -105,10 +102,9 @@ export function registerLifecycleRoutes(routes: Hono, options: CollaborationRout
   routes.get("/api/collaboration/scopes/:scopeId/exports/:exportId", async (c) => handle(c, async () => {
     const scopeId = CollaborationIdSchema.parse(c.req.param("scopeId"));
     const exportId = CollaborationIdSchema.parse(c.req.param("exportId"));
-    const proof = await verifyHttp(options.verifier, c, new Uint8Array());
-    requireOwnerLifecycleProof(proof, scopeId);
-    await requireScopeOrganizationMembership(options, scopeId, proof.actorId);
-    const exported = await options.repository.getScopeExport(scopeId, proof.actorId, exportId);
+    const context = await authorizeOwnerScope(options, c, new Uint8Array(), scopeId);
+    await requireScopeOrganizationMembership(options, scopeId, context.actorId);
+    const exported = await options.repository.getScopeExport(scopeId, context.actorId, exportId);
     if (!exported) throw new CollaborationRepositoryError("not_found", "Scope export not found");
     return c.json(CollaborationScopeExportSchema.parse(exported));
   }));
