@@ -1,6 +1,13 @@
 # S18 T090 platform route retirement map
 
-**State on this child:** tests and audit only. The platform legacy proxy, V1 ticket issuer, and WebSocket proof bridge still serve requests. Their removal awaits the direct owner-route authorization fix and a decision about the existing CLI consumer. This child is not a release pass.
+**State on this child:** the removal is performed here. The platform legacy proxy, V1 ticket issuer and WebSocket proof bridge no longer serve requests; the retirement tests that were RED during the audit are GREEN. The paragraphs below marked *(audit, superseded)* describe the pre-removal state and are kept for provenance, not as current fact.
+
+**Caller inventory — the gate this map did not apply.** The map was derived from what the layer intended to retire rather than from an enumeration of callers, and two consumers were missed:
+
+- **Native Mobile** — `apps/mobile/lib/requests/collaboration.ts:407` POSTs the retired per-scope ticket path, and `:452`/`:462` build the pre-`/direct/` socket paths. Its shared Chat and shared terminal are **already broken on `main`**, because the socket retirement landed in an earlier layer: `platform-websocket-upgrade.ts:155-158` destroys any `/ws/collaboration/` upgrade that is not a direct socket. This layer removes the last intact piece rather than causing the outage. `quickstart.md` line 53 requires those keep working, so that criterion is currently unmet. Migration tracked in #1881.
+- **CLI** — `packages/sync-client/src/cli/commands/collaboration.ts`, as recorded in the audit below.
+
+Neither consumer's tests could have caught this: they assert that the client *calls* these paths, so they fail only if the client stops calling them, which is the opposite of the defect. A retirement needs a caller inventory as an explicit gate, and these paths should be expressed through `COLLABORATION_DIRECT_ROUTES` (`packages/contracts/src/collaboration-direct.ts:397`) so that retiring one breaks the build in every caller instead of failing silently at runtime.
 
 | Old route or path | Direct replacement | Retirement condition |
 | --- | --- | --- |
@@ -12,7 +19,11 @@
 
 Metadata and control paths retained on platform: `/api/collaboration/inbox`, `/shared`, `/api/collaboration/connections`, `/owner-runtime/connections`, `/internal/collaboration/directory`, `/participants/:actorId`, `/participants/resolve`, `/runtime-endpoints`, and `/internal/collaboration/control`. Organization membership/control and cutover command routes remain. Unrelated personal `/api` and WebSocket routes remain.
 
-## Consumer audit and current evidence
+## Consumer audit *(audit, superseded)*
+
+The findings below were recorded before the removal in this child. They are retained as
+provenance for how the retirement was assessed; where they describe routes as still serving or
+tests as RED, that state no longer holds.
 
 - Web Canvas, Web Desktop and Electron Desktop use `packages/ui/src/collaboration/direct-client.ts` through shared adapters. The S05 two-home in-process E2E passed 4/4 in this same combined ancestry: direct routing to resource home, forged ticket rejected at home, generic owner endpoint blocked, and partitioned lease expiry. A route-level platform test passed for a direct session header with no platform proof; `collaboration-relay.test.ts` passed 9/9 and the S18 real-Postgres signed cutover fullstack passed 2/2.
 - `packages/sync-client/src/cli/commands/collaboration.ts` still issues old per-scope tickets, sends content requests without direct-session headers, and opens the old terminal WebSocket. `shell/e2e/shared-chat.spec.ts` mocks the old ticket route. Spec 124 defers CLI parity while requiring existing 525 Chat/terminal to keep working; the coordinator is resolving this compatibility gate. The CLI cannot be silently made unavailable or migrated as part of this audit.
