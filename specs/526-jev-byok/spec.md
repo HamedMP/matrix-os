@@ -3,7 +3,7 @@
 Updated: 2026-09-22. Status: implementation approved; runtime acceptance pending.
 Tracking: [ENG-11](https://linear.app/matrix-os/issue/ENG-11), [OM-286](https://linear.app/matrix-os/issue/OM-286), [GitHub #1800](https://github.com/HamedMP/matrix-os/issues/1800), [spec PR #1812](https://github.com/HamedMP/matrix-os/pull/1812).
 
-The team narrowed the first milestone from ENG-11's earlier three-recipe and generic `use-jevs` proposal to this one Gmail workflow. ENG-11 now records that supersession; the research and routing recipes and generic skill remain follow-up scope. The first acceptance run is read-only, and classification never authorizes unattended Gmail mutations.
+The team narrowed the first milestone from ENG-11's earlier three-recipe and generic `use-jevs` proposal to this one Gmail workflow. [ENG-11's current scope](https://linear.app/matrix-os/issue/ENG-11/jev-inbox-triage-recipe-via-matrix-ai-gateway) explicitly supersedes that 2026-09-21 proposal; the research and routing recipes and generic skill remain follow-up scope. The initial demo and release acceptance are read-only: no unattended label or archive mutation is accepted. The implementation may offer a separately requested, action-specific Gmail write after explicit user authorization or an existing automation grant, but neither creating the bot nor receiving a Jev result grants that authority.
 
 ## Product scope
 
@@ -13,7 +13,7 @@ The capability has three explicit layers:
 
 1. The Matrix Jev Gateway authenticates the runtime, meters the request, resolves a versioned recipe, bounds work, calls Jev, validates the result and returns a typed response.
 2. The immutable `email-triage-v1` recipe defines seven independent Boolean questions and their output contract.
-3. The bundled `matrix-jev-email-triage` agent skill gathers minimal Gmail thread context, calls the recipe and applies a conservative deterministic labeling and archiving policy.
+3. The bundled `matrix-jev-email-triage` agent skill gathers minimal Gmail thread context, calls the recipe and calculates conservative deterministic label and archive proposals. It applies them only in a separately authorized action.
 
 Jev classifies. It never receives action authority and never directly mutates Gmail. Labels and archiving are agent-side policy using existing Matrix integration tools and their existing authorization behavior.
 
@@ -29,9 +29,9 @@ A user asks Matrix to organize a connected Gmail inbox. Matrix reads recent or c
 
 **Acceptance scenarios**:
 
-1. **Given** a recent direct question from an existing contact, **when** the recipe returns strong `needs_reply` evidence, **then** Matrix proposes or applies the Needs reply label according to the current authorization context.
-2. **Given** an email matching more than one category, **when** thresholds are met, **then** Matrix applies multiple labels rather than forcing a single category.
-3. **Given** a borderline score, snippet-only evidence or malformed response, **when** confidence is insufficient for the requested action, **then** Matrix adds or proposes Review and does not archive.
+1. **Given** a recent direct question from an existing contact, **when** the recipe returns strong `needs_reply` evidence, **then** Matrix proposes the Needs reply label; a separately authorized write may apply it.
+2. **Given** an email matching more than one category, **when** thresholds are met, **then** Matrix proposes multiple labels rather than forcing a single category.
+3. **Given** a borderline score, snippet-only evidence or malformed response, **when** confidence is insufficient for the requested action, **then** Matrix proposes Review and does not archive.
 4. **Given** a verified high-confidence cold outreach thread with no conflicting urgent, personal, investment or recruiting signal, **when** archiving is already authorized, **then** Matrix removes only the Gmail `INBOX` label.
 5. **Given** missing authorization, insufficient Matrix AI credit or unavailable Jev service, **when** triage runs, **then** Matrix reports the safe failure and makes no Gmail changes for the affected thread.
 
@@ -78,7 +78,7 @@ After a successful run, Matrix can process only new or changed Gmail threads and
 - **FR-015**: Triage categories MUST be multi-label. The skill MUST use deterministic thresholds maintained outside model output.
 - **FR-016**: An authorized cold-outreach archive proposal MUST require verified full-message classification, the strict archive threshold and no conflicting urgent, needs-reply, personal, investment or recruiting signal. Archive means removing only `INBOX`; classification alone never performs the mutation.
 - **FR-017**: The workflow MUST never send, reply, forward, trash or delete email.
-- **FR-018**: Mailbox mutation MUST occur only under explicit user authorization or an existing automation authorization that covers the action. A Jev result is never authorization.
+- **FR-018**: The first release acceptance run MUST be read-only. Any later mailbox mutation MUST occur only under explicit, action-specific user authorization or an existing automation authorization that covers the action. A Jev result is never authorization.
 - **FR-019**: Classification, verification or integration failure MUST cause no Gmail changes for that thread.
 - **FR-020**: Gmail label creation and message modification MUST be idempotent and use existing Matrix integration actions.
 - **FR-021**: The bundled skill MUST be discoverable through the existing Matrix skill distribution path and MUST use the shared Matrix Jev tool rather than implement a second HTTP client.

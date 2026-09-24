@@ -12,7 +12,7 @@ The implementation has three independently testable layers:
 2. **`email-triage-v1`** — an immutable server-owned recipe containing seven Boolean questions and a strict typed output contract.
 3. **`matrix-jev-email-triage`** — a bundled agent skill that reads Gmail through existing Matrix integrations, asks the Jev tool for probabilities, and applies deterministic safety policy.
 
-Jev returns evidence for a decision. It never receives Gmail mutation authority. The skill may mutate Gmail only through existing integration actions and only when the current user or automation authorization covers that action.
+Jev returns evidence for a decision. It never receives Gmail mutation authority. The initial demo and first-release acceptance are read-only, as recorded in the [updated ENG-11 scope](https://linear.app/matrix-os/issue/ENG-11/jev-inbox-triage-recipe-via-matrix-ai-gateway), which supersedes the earlier three-recipe proposal. A later, separately requested label or archive action may use existing integration tools only when the current user or automation authorization explicitly covers that action. Neither recipe creation nor classification is such authorization.
 
 ## Runtime architecture
 
