@@ -132,6 +132,75 @@ describe("platform/internal-integration-routes", () => {
     await expect(res.json()).resolves.toEqual({ clerkUserId: "user_collaborator" });
   });
 
+  it("accepts an unsigned owner header from a legacy single-user customer gateway", async () => {
+    await insertUserMachine(db, {
+      machineId: "00000000-0000-4000-8000-000000001301",
+      clerkUserId: "user_customer_owner",
+      handle: "customer-1301",
+      runtimeSlot: "main",
+      provisioningClass: "customer",
+      status: "running",
+      provisionedAt: "2026-08-22T00:00:00.000Z",
+    });
+    const app = createTestApp();
+    const res = await app.request("/internal/containers/customer-1301/integrations/probe", {
+      headers: {
+        authorization: `Bearer ${bearerFor("customer-1301", "platform-secret-123")}`,
+        "x-platform-user-id": "user_customer_owner",
+      },
+    });
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toEqual({ clerkUserId: "user_customer_owner" });
+
+    for (const headers of [
+      { "x-platform-user-id": "user_stranger" },
+      { "x-platform-user-id": "user_customer_owner", "x-platform-verified": "invalid" },
+    ]) {
+      const rejected = await app.request("/internal/containers/customer-1301/integrations/probe", {
+        headers: {
+          authorization: `Bearer ${bearerFor("customer-1301", "platform-secret-123")}`,
+          ...headers,
+        },
+      });
+      expect(rejected.status).toBe(401);
+    }
+  });
+
+  it("rejects unsigned owner headers on shared and Preview machines", async () => {
+    await insertUserMachine(db, {
+      machineId: "00000000-0000-4000-8000-000000001302",
+      clerkUserId: "user_customer_owner",
+      handle: "customer-1302",
+      runtimeSlot: "main",
+      provisioningClass: "customer",
+      accessClerkUserIds: ["user_collaborator"],
+      status: "running",
+      provisionedAt: "2026-08-22T00:00:00.000Z",
+    });
+    await insertUserMachine(db, {
+      machineId: "00000000-0000-4000-8000-000000001303",
+      clerkUserId: "user_preview_owner",
+      handle: "pr-1303",
+      runtimeSlot: "pr-1303",
+      provisioningClass: "preview",
+      status: "running",
+      provisionedAt: "2026-08-22T00:00:00.000Z",
+    });
+    const app = createTestApp();
+    for (const [handle, owner] of [
+      ["customer-1302", "user_customer_owner"],
+      ["pr-1303", "user_preview_owner"],
+    ]) {
+      const res = await app.request(`/internal/containers/${handle}/integrations/probe`, {
+        headers: {
+          authorization: `Bearer ${bearerFor(handle!, "platform-secret-123")}`,
+          "x-platform-user-id": owner!,
+        },
+      });
+      expect(res.status).toBe(401);
+    }
+  });
+
   it("rejects a delegated actor who cannot access the Preview machine", async () => {
     await insertUserMachine(db, {
       machineId: "00000000-0000-4000-8000-000000001300",
