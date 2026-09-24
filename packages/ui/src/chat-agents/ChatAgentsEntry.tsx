@@ -6,6 +6,8 @@ import { useChatAgentsNavigation } from "./ChatAgentsNavigation.js";
 import { deriveCanonicalProviderChoices } from "../canonical-provider-choice.js";
 import { accountForNewIntegration } from "./recipe-integrations.js";
 import { recipeSkillsFit } from "./recipe-skills.js";
+import { activeConnections } from "./recipe-integrations.js";
+import { JEV_AGENT_DESCRIPTION, JEV_AGENT_NAME, jevAgentInstructions, jevAgentRecipe } from "./jev-agent-template.js";
 import { AgentEditor, type AgentDraft } from "./AgentEditor.js";
 import { AgentAvatar } from "./AgentAvatar.js";
 import { AgentRecipesPanel } from "./AgentRecipesPanel.js";
@@ -106,6 +108,7 @@ function AgentLibraryBody({ state, models, edit, change, save, archive, back, re
 
 export function ChatAgentsPanel({ client, view = "library", onClose, onSetup, onStartChat }: { client: ChatAgentClient; view?: "library" | "recipes"; onClose(): void; onSetup?: () => void; onStartChat?: StartAgentChat }) {
   const heading = useRef<HTMLHeadingElement>(null);
+  const jevCreateAttempt = useRef<{ accountLabel: string; selectionKey: string; requestId: string } | null>(null);
   const [state, setState] = useState<Library>({ agents: [], catalog: null, enabled: true,
     loading: true, pending: false, error: "", notice: "", editing: null, draft: null,
     recipeCatalog: null, connections: [], recipeLoading: true, recipeError: "", connectionError: "" });
@@ -130,6 +133,57 @@ export function ChatAgentsPanel({ client, view = "library", onClose, onSetup, on
   }, [client]);
   const models = useMemo(() => state.catalog ? deriveCanonicalProviderChoices(state.catalog).filter((choice) =>
     isChatAgentDriver(choice.driverKind) && choice.interactionModes.includes("default") && choice.permissionModes.includes("full_access")) : [], [state.catalog]);
+  const [jevPending, setJevPending] = useState(false);
+  const [jevError, setJevError] = useState("");
+  const jevUnavailable = state.loading || state.recipeLoading ? "Loading available accounts and Agent capabilities…"
+    : !state.enabled ? "Agents are disabled for this computer."
+    : state.connectionError || state.recipeError ? "Account or recipe options are unavailable. Try again later."
+    : state.agents.length >= 100 ? "The 100-Agent limit has been reached. Archive an Agent before using this recipe."
+    : !models.some((choice) => choice.driverKind === "hermes") ? "Connect Hermes in Agents & providers first."
+    : !state.recipeCatalog?.enabled || !["matrix-jev-email-triage", "matrix-integrations"].every((id) =>
+      state.recipeCatalog?.skills.some((skill) => skill.id === id)) ? "Jev Agent skills are unavailable on this computer."
+    : "";
+  const createJev = async (accountLabel: string) => {
+    if (jevPending || jevUnavailable || !onStartChat) return;
+    const matchingAccounts = activeConnections("gmail", state.connections).filter((account) => account.account_label === accountLabel);
+    if (matchingAccounts.length !== 1 || !matchingAccounts[0]?.account_email) {
+      setJevError("Choose a connected Gmail account with a verified email address before creating this Agent.");
+      return;
+    }
+    const hermes = models.find((choice) => choice.driverKind === "hermes");
+    const recipe = jevAgentRecipe(accountLabel);
+    if (!hermes || !ChatAgentRecipeSchema.safeParse(recipe).success
+      || !recipeSkillsFit(recipe.skills, state.recipeCatalog?.skills ?? [])) return;
+    const selectionKey = `${hermes.instanceId}:${hermes.modelId}`;
+    if (jevCreateAttempt.current?.accountLabel !== accountLabel || jevCreateAttempt.current.selectionKey !== selectionKey) {
+      jevCreateAttempt.current = { accountLabel, selectionKey, requestId: requestId() };
+    }
+    setJevPending(true);
+    setJevError("");
+    try {
+      const saved = await client.create({ name: JEV_AGENT_NAME, description: JEV_AGENT_DESCRIPTION,
+        instructions: jevAgentInstructions(matchingAccounts[0].account_email),
+        selection: { instanceId: hermes.instanceId, model: hermes.modelId,
+          ...(hermes.selectedOptions.length ? { options: hermes.selectedOptions } : {}) },
+        recipe, clientRequestId: jevCreateAttempt.current.requestId,
+      });
+      const readback = await client.list();
+      const verified = readback.agents.find((agent) => agent.id === saved.id);
+      if (!verified || verified.recipe?.integrations.some((integration) =>
+        integration.service === "gmail" && integration.accountLabel === accountLabel) !== true) {
+        setJevError("Agent creation could not be verified in your library. Please check Agents before trying again.");
+        return;
+      }
+      jevCreateAttempt.current = null;
+      onClose();
+      onStartChat("", [{ kind: "agent", id: verified.id, label: verified.name, revision: String(verified.revision) }]);
+    } catch (failure: unknown) {
+      console.warn("[chat-agents] Jev Agent creation failed:", failure instanceof Error ? failure.name : "UnknownError");
+      setJevError("Agent could not be created. Please check Agents before trying again.");
+    } finally {
+      setJevPending(false);
+    }
+  };
   const retryRecipes = () => {
     if (state.recipeLoading) return;
     patch({ recipeLoading: true, recipeError: "", connectionError: "" });
@@ -216,7 +270,9 @@ export function ChatAgentsPanel({ client, view = "library", onClose, onSetup, on
       <button type="button" className={`${button} shrink-0`} disabled={state.pending} onClick={onClose}>Back to Chat</button>
     </header>
     <div className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-8 sm:px-6">
-    {recipes ? <AgentRecipesPanel onStartChat={onStartChat ? (text) => { onClose(); onStartChat(text); } : undefined} /> : <div className="mx-auto w-full max-w-3xl">
+    {recipes ? <AgentRecipesPanel onStartChat={onStartChat ? (text) => { onClose(); onStartChat(text); } : undefined}
+      onCreateJev={onStartChat ? createJev : undefined} connections={state.connections}
+      jevUnavailable={jevUnavailable} jevPending={jevPending} jevError={jevError} /> : <div className="mx-auto w-full max-w-3xl">
     <AgentLibraryBody state={state} models={models} edit={edit} change={change} save={save} archive={archive}
       back={() => patch({ editing: null, draft: null, error: "" })} retryRecipes={retryRecipes}
       setup={onSetup ? () => { onClose(); onSetup(); } : undefined} />

@@ -5,7 +5,7 @@ import {
   ChatAgentListResponseSchema, ChatAgentRecipeCatalogSchema, ChatAgentSchema,
   CanonicalProviderCatalogSchema, CreateChatAgentRequestSchema,
 } from "@matrix-os/contracts";
-import type { GatewayFetcher } from "../../kernel/dist/tools/integrations.js";
+import { gatewayAuthHeaders, type GatewayFetcher } from "../../kernel/dist/tools/integrations.js";
 
 const failure = () => ({ isError: true, content: [{ type: "text" as const,
   text: "Agent setup is unavailable. Check Agents & providers and retry. No save has been confirmed; reuse the same request ID when retrying." }] });
@@ -14,9 +14,7 @@ const result = (value: unknown) => ({ content: [{ type: "text" as const, text: J
 /** The host wrapper supplies the owner identity; model inputs cannot choose an owner or URL. */
 export function registerChatAgentTools(server: McpServer, fetcher: GatewayFetcher = fetch) {
   async function request(path: string, body?: unknown): Promise<unknown> {
-    const headers: Record<string, string> = { "Content-Type": "application/json" };
-    if (process.env.MATRIX_AUTH_TOKEN) headers.Authorization = `Bearer ${process.env.MATRIX_AUTH_TOKEN}`;
-    if (process.env.MATRIX_CLERK_USER_ID) headers["x-platform-user-id"] = process.env.MATRIX_CLERK_USER_ID;
+    const headers = gatewayAuthHeaders();
     const response = await fetcher(`${process.env.GATEWAY_URL ?? "http://localhost:4000"}${path}`, {
       method: body ? "POST" : "GET", headers, signal: AbortSignal.timeout(10_000), redirect: "error",
       ...(body ? { body: JSON.stringify(body) } : {}),

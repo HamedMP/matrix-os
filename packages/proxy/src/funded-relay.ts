@@ -1,11 +1,21 @@
 import { createHmac, randomUUID } from "node:crypto";
-import { FundedAiPolicyCheckRequestSchema, type FundedAiIdentity } from "@matrix-os/contracts";
+import {
+  FundedAiPolicyCheckRequestSchema,
+  JEV_MODEL_ID,
+  type FundedAiIdentity,
+} from "@matrix-os/contracts";
 import type { Context, Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod/v4";
 import { isFundedProxyApiKey } from "./auth.js";
 import { AdmissionController, type AdmissionLease } from "./funded-relay-admission.js";
 import { COUNT_TOKENS_BODY_LIMIT_BYTES, type FundedRelayConfig } from "./funded-relay-config.js";
+import {
+  cloudflareJevTarget,
+  normalizeFundedJevEvaluationResponse,
+  reviewedJevPricing,
+  serializeFundedJevEvaluationRequest,
+} from "./funded-relay-evaluation.js";
 import { estimateWorstCaseMicrousd, FUNDED_GLM_FLASH, mapFundedModel, maximumFundedInputTokens } from "./funded-relay-model.js";
 import { serializeFundedOpenAiRequest, workersAiTarget } from "./funded-relay-openai-request.js";
 import { normalizeWorkersAiResponse } from "./funded-relay-workers-response.js";
@@ -27,6 +37,7 @@ import { createFundedUsageTracker, type FundedFinalization } from "./funded-rela
 const MESSAGES_PATH = "/v1/messages";
 const COUNT_TOKENS_PATH = "/v1/messages/count_tokens";
 const CHAT_COMPLETIONS_PATH = "/v1/chat/completions";
+const EVALUATE_PATH = "/v1/evaluate";
 const CLAUDE_CODE_BETA_QUERY = "?beta=true";
 const CountTokensResponseSchema = z.object({
   input_tokens: z.number().int().nonnegative().max(10_000_000),
@@ -119,6 +130,11 @@ function errorResponse(
   message: string,
 ): Response {
   return c.json({ type: "error", error: { type, message } }, status);
+}
+
+function jevNotStarted(response: Response): Response {
+  response.headers.set("x-matrix-jev-dispatch", "not-started");
+  return response;
 }
 
 function controlPlaneError(c: Context, error: unknown): Response {
@@ -517,13 +533,186 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
     }
   }
 
+  async function handleEvaluation(c: Context, state: ActiveRequestState): Promise<Response> {
+    if (!config.workersAiToken) {
+      return jevNotStarted(errorResponse(c, 503, "api_error", "AI access is temporarily unavailable"));
+    }
+    let pricing: ReturnType<typeof reviewedJevPricing>;
+    try {
+      pricing = reviewedJevPricing(now());
+    } catch (error) {
+      console.warn("[proxy] Jev pricing unavailable", { errorName: error instanceof Error ? error.name : "UnknownError" });
+      return jevNotStarted(errorResponse(c, 503, "api_error", "AI access is temporarily unavailable"));
+    }
+    let requestBody: string;
+    try {
+      const body: unknown = JSON.parse(await c.req.text());
+      requestBody = serializeFundedJevEvaluationRequest(body).body;
+    } catch (error) {
+      if (error instanceof Error && error.name === "BodyLimitError") throw error;
+      console.warn("[proxy] Funded Jev request rejected", requestRejectionDiagnostic(error));
+      return jevNotStarted(errorResponse(c, 400, "invalid_request_error", "Invalid AI request"));
+    }
+
+    const credential = fundedCredential(c);
+    const checkInput = FundedAiPolicyCheckRequestSchema.safeParse({
+      credential,
+      modelId: JEV_MODEL_ID,
+    });
+    if (!checkInput.success) return jevNotStarted(errorResponse(c, 401, "authentication_error", "Unauthorized"));
+    let checked: Awaited<ReturnType<FundedPlatformClient["check"]>>;
+    try {
+      checked = await platform.check(checkInput.data, state.lifetimeSignal);
+    } catch (error) {
+      return jevNotStarted(controlPlaneError(c, error));
+    }
+    const runtimeRef = runtimeAdmissionRef(checked.identity, config.metadataSecret);
+    if (!admission.admitRuntime(runtimeRef)) {
+      return jevNotStarted(errorResponse(c, 429, "rate_limit_error", "AI capacity is temporarily limited"));
+    }
+    const requestId = requestIdFactory();
+    let authorization: Awaited<ReturnType<FundedPlatformClient["authorize"]>>;
+    try {
+      authorization = await platform.authorize({
+        credential,
+        requestId,
+        modelId: JEV_MODEL_ID,
+        maxCostMicrousd: config.jevMaxCostMicrousd,
+        billingMode: "usage",
+      }, state.lifetimeSignal);
+    } catch (error) {
+      return jevNotStarted(controlPlaneError(c, error));
+    }
+    const reservation = authorization.reservation;
+    if (!identitiesMatch(checked.identity, authorization.identity)
+      || reservation.requestId !== requestId || reservation.modelId !== JEV_MODEL_ID
+      || reservation.billingMode !== "usage" || reservation.reservedMicrousd <= 0
+      || reservation.reservedMicrousd > config.jevMaxCostMicrousd) {
+      await releaseBeforeStart(reservation.reservationId, authorization.identity.tokenId);
+      return jevNotStarted(errorResponse(c, 503, "api_error", "AI access is temporarily unavailable"));
+    }
+
+    const acquiredLease = admission.acquireResources(runtimeRef);
+    if (!acquiredLease) {
+      await releaseBeforeStart(reservation.reservationId, authorization.identity.tokenId);
+      return jevNotStarted(errorResponse(c, 429, "rate_limit_error", "AI capacity is temporarily limited"));
+    }
+    let resourceReleased = false;
+    const resourceLease: AdmissionLease = {
+      release: () => {
+        if (resourceReleased) return;
+        resourceReleased = true;
+        acquiredLease.release();
+        state.globalLease.release();
+        activeRequests.delete(state.controller);
+      },
+    };
+    state.resourceLease = resourceLease;
+    const finalizationLocator = {
+      reservationId: reservation.reservationId,
+      tokenId: authorization.identity.tokenId,
+    };
+    const enqueueFinalization = (result: FundedFinalization): void => {
+      if (result.mode === "exact" && result.actualCostMicrousd <= config.jevMaxCostMicrousd) {
+        settlementQueue.enqueue({ ...finalizationLocator, ...result });
+      } else {
+        // Platform deliberately refuses conservative settlement for usage
+        // billing. Keep the durable in-flight hold for operator review rather
+        // than retrying a request that can never succeed or charging without
+        // verified provider usage.
+        console.warn("[proxy] Jev usage requires manual reconciliation", {
+          reservationId: reservation.reservationId,
+          requestId,
+        });
+      }
+    };
+
+    const deadline = AbortSignal.timeout(config.firstResponseTimeoutMs);
+    const evaluationSignal = AbortSignal.any([state.lifetimeSignal, deadline]);
+    let started = false;
+    const startedAt = now().getTime();
+    try {
+      const startResult = await platform.start(
+        { reservationId: reservation.reservationId, tokenId: authorization.identity.tokenId },
+        state.lifetimeSignal,
+      );
+      if (startResult.reservationId !== reservation.reservationId
+        || startResult.requestId !== requestId || startResult.tokenId !== authorization.identity.tokenId) {
+        throw new Error("Funded AI start response did not match its reservation");
+      }
+      started = true;
+      const target = cloudflareJevTarget(config.gatewayBaseUrl);
+      const upstream = await fetchImpl(target.url, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${config.workersAiToken}`,
+          "cf-aig-gateway-id": target.gatewayId,
+          "cf-aig-collect-log-payload": "false",
+          "content-type": "application/json",
+        },
+        body: requestBody,
+        redirect: "error",
+        signal: evaluationSignal,
+      });
+      const text = await readBoundedText(upstream, config.maxControlResponseBytes);
+      if (!upstream.ok) {
+        enqueueFinalization({ mode: "conservative" });
+        resourceLease.release();
+        state.resourceLease = null;
+        if (upstream.status === 429) {
+          return errorResponse(c, 429, "rate_limit_error", "AI capacity is temporarily limited");
+        }
+        console.warn("[proxy] Funded Jev upstream rejected request", { status: upstream.status });
+        return errorResponse(c, 502, "api_error", "AI access is temporarily unavailable");
+      }
+      let value: unknown;
+      try {
+        value = JSON.parse(text) as unknown;
+      } catch (error) {
+        if (error instanceof SyntaxError) throw new Error("Jev response was invalid");
+        throw error;
+      }
+      const normalized = normalizeFundedJevEvaluationResponse({
+        value,
+        requestId,
+        latencyMs: Math.max(0, now().getTime() - startedAt),
+        pricing,
+      });
+      if (normalized.actualCostMicrousd === null
+        || normalized.actualCostMicrousd > config.jevMaxCostMicrousd) {
+        throw new Error("Jev response cost was unavailable or exceeded its bound");
+      }
+      enqueueFinalization({ mode: "exact", actualCostMicrousd: normalized.actualCostMicrousd });
+      resourceLease.release();
+      state.resourceLease = null;
+      return c.json(normalized.result, 200);
+    } catch (error) {
+      if (!started) {
+        await releaseBeforeStart(reservation.reservationId, authorization.identity.tokenId);
+      } else {
+        enqueueFinalization({ mode: "conservative" });
+      }
+      resourceLease.release();
+      state.resourceLease = null;
+      const errorName = error instanceof Error ? error.name : "UnknownError";
+      console.warn("[proxy] Funded Jev upstream request failed", { errorName });
+      if (state.lifetimeSignal.aborted || deadline.aborted) {
+        return started ? errorResponse(c, 504, "timeout_error", "AI access timed out")
+          : jevNotStarted(errorResponse(c, 504, "timeout_error", "AI access timed out"));
+      }
+      return started ? errorResponse(c, 502, "api_error", "AI access is temporarily unavailable")
+        : jevNotStarted(errorResponse(c, 502, "api_error", "AI access is temporarily unavailable"));
+    }
+  }
+
   return {
     register(app) {
       app.use("/v1/*", async (c, next) => {
         const providedKey = fundedCredential(c);
         if (!isFundedProxyApiKey(providedKey)) return next();
         if (c.req.method !== "POST") return errorResponse(c, 404, "not_found_error", "AI route not found");
-        if (c.req.path !== MESSAGES_PATH && c.req.path !== COUNT_TOKENS_PATH && c.req.path !== CHAT_COMPLETIONS_PATH) {
+        if (c.req.path !== MESSAGES_PATH && c.req.path !== COUNT_TOKENS_PATH
+          && c.req.path !== CHAT_COMPLETIONS_PATH && c.req.path !== EVALUATE_PATH) {
           return errorResponse(c, 404, "not_found_error", "AI route not found");
         }
         const search = new URL(c.req.url).search;
@@ -536,7 +725,8 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
         }
         const globalLease = admission.acquireGlobal();
         if (!globalLease) {
-          return errorResponse(c, 429, "rate_limit_error", "AI capacity is temporarily limited");
+          const response = errorResponse(c, 429, "rate_limit_error", "AI capacity is temporarily limited");
+          return c.req.path === EVALUATE_PATH ? jevNotStarted(response) : response;
         }
         const controller = new AbortController();
         activeRequests.add(controller);
@@ -572,10 +762,12 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
       const countLimit = limit(Math.min(config.maxBodyBytes, COUNT_TOKENS_BODY_LIMIT_BYTES));
       app.use(MESSAGES_PATH, async (c, next) => requestStates.has(c) ? messagesLimit(c, next) : next());
       app.use(CHAT_COMPLETIONS_PATH, async (c, next) => requestStates.has(c) ? messagesLimit(c, next) : next());
+      app.use(EVALUATE_PATH, async (c, next) => requestStates.has(c) ? messagesLimit(c, next) : next());
       app.use(COUNT_TOKENS_PATH, async (c, next) => requestStates.has(c) ? countLimit(c, next) : next());
       app.all("/v1/*", async (c, next) => {
         const state = requestStates.get(c);
-        return state ? handle(c, state) : next();
+        if (!state) return next();
+        return c.req.path === EVALUATE_PATH ? handleEvaluation(c, state) : handle(c, state);
       });
     },
     async close() {

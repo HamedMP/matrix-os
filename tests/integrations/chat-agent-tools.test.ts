@@ -1,4 +1,5 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { createHmac } from "node:crypto";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { afterEach, expect, it, vi } from "vitest";
 import { createIntegrationsMcpServer } from "../../packages/integrations-mcp/src/server.js";
@@ -43,7 +44,8 @@ it("creates through the owner-authenticated canonical route and retains its retr
     expect(result.isError).not.toBe(true);
     expect(fetcher).toHaveBeenCalledWith("http://localhost:4000/api/chat-agents", expect.objectContaining({
       method: "POST", signal: expect.any(AbortSignal),
-      headers: expect.objectContaining({ Authorization: "Bearer test-only-token", "x-platform-user-id": "owner_fixture" }),
+      headers: expect.objectContaining({ Authorization: "Bearer test-only-token", "x-platform-user-id": "owner_fixture",
+        "x-platform-verified": createHmac("sha256", "test-only-token").update("owner_fixture").digest("hex") }),
     }));
     expect(JSON.parse(fetcher.mock.calls[0]![1].body as string)).toEqual(draft);
     expect(JSON.stringify(result)).toContain(saved.id);

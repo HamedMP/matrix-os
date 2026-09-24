@@ -91,6 +91,40 @@ describe("CanonicalChatRoute top-level tab ownership", () => {
     expect(useTabs.getState().activeTabId).toBe(draftId);
   });
 
+  it("clears the retained Work Chat route for a new draft, then routes the created conversation", async () => {
+    const workTabId = useTabs.getState().openTab({
+      kind: "work",
+      title: "Chat",
+      workRoute: "chat",
+      chatId: "chat-old",
+      chatTitle: "Old chat",
+      chatView: "conversation",
+      closable: false,
+    });
+
+    render(
+      <CanonicalChatRoute
+        api={routeApi()}
+        projectId={null}
+        tabId={workTabId}
+        initialChatId="chat-old"
+        initialView="conversation"
+        active
+        fallback={<div>legacy chat</div>}
+      />,
+    );
+
+    expect(await screen.findByText("canonical workspace")).toBeTruthy();
+    act(() => workspace.props?.onActiveChatChanged?.(null));
+    expect(useTabs.getState().tabs.find((tab) => tab.id === workTabId)).toMatchObject({
+      kind: "work", workRoute: "chat", chatView: "draft", chatId: undefined,
+    });
+    act(() => workspace.props?.onActiveChatChanged?.("chat-new", "New chat"));
+    expect(useTabs.getState().tabs.find((tab) => tab.id === workTabId)).toMatchObject({
+      kind: "work", workRoute: "chat", chatView: "conversation", chatId: "chat-new", chatTitle: "New chat",
+    });
+  });
+
   it("keeps the selected Project Chat title when canonical detail loading reports the active Chat", async () => {
     const workTabId = useTabs.getState().openTab({
       kind: "work",

@@ -67,6 +67,7 @@ describe("Matrix coding-agent skill sync", () => {
     try {
       writeSkill(source, "app-builder", "matrix-app-builder");
       writeSkill(source, "integrations", "matrix-integrations");
+      writeSkill(source, "jev-email-triage", "matrix-jev-email-triage");
 
       mkdirSync(join(cliHome, ".codex", "skills", "matrix-old"), { recursive: true });
       writeFileSync(join(cliHome, ".codex", "skills", "matrix-old", ".matrix-os-managed"), "");
@@ -99,6 +100,14 @@ describe("Matrix coding-agent skill sync", () => {
       expect(readFileSync(join(cliHome, ".agents", "skills", "matrix-integrations", "SKILL.md"), "utf-8")).toContain(
         "name: matrix-integrations",
       );
+      for (const target of [
+        join(matrixHome, ".agents", "skills", "matrix-jev-email-triage"),
+        join(cliHome, ".agents", "skills", "matrix-jev-email-triage"),
+        join(cliHome, ".claude", "skills", "matrix-jev-email-triage"),
+        join(hermesHome, "skills", "matrix-jev-email-triage"),
+      ]) {
+        expect(realpathSync(target)).toBe(realpathSync(join(source, "jev-email-triage")));
+      }
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

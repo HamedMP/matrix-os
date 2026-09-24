@@ -7,7 +7,6 @@ export function buildAgentRecipePrompt(recipe: AgentInspiration) {
   return `Help me create a Matrix agent inspired by “${recipe.name}”. ${recipe.description} Start by asking me the few decisions needed to tailor it. Suggested capabilities: ${capabilities || "none listed"}. Possible integrations: ${integrations || "none listed"}. Do not copy third-party private prompts; build an original agent for my needs.`;
 }
 
-
 export function resolveRecipeHandoff(id: string | null): { id: string; prompt: string } | null {
   if (!id || !/^[a-z0-9][a-z0-9-]{0,199}$/.test(id)) return null;
   const owned = matrixRecipes.find((recipe) => recipe.id === id);

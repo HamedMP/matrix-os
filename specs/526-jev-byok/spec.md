@@ -14,6 +14,7 @@ The capability has three explicit layers:
 1. The Matrix Jev Gateway authenticates the runtime, meters the request, resolves a versioned recipe, bounds work, calls Jev, validates the result and returns a typed response.
 2. The immutable `email-triage-v1` recipe defines seven independent Boolean questions and their output contract.
 3. The bundled `matrix-jev-email-triage` agent skill binds the user's selected Gmail account when creating the bot, verifies that account with a live Gmail `get_profile` call before reading mail, gathers minimal thread context, calls the recipe and calculates conservative deterministic label and archive proposals. It applies them only in a separately authorized action.
+4. The Matrix Agent Recipes market includes a Jev Inbox Triage card. **Build in Chat** creates a reusable Hermes bot using the current user's authenticated Agent API and Gmail connection from Services, verifies that the bot appears in that user's Agent library with the selected Gmail account, then opens it in Chat. Users do not author a setup prompt.
 
 Jev classifies. It never receives action authority and never directly mutates Gmail. Labels and archiving are agent-side policy using existing Matrix integration tools and their existing authorization behavior.
 

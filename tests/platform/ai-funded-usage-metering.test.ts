@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createAiFundedPolicyRepository } from "../../packages/platform/src/ai-funded-policy-repository.js";
 import { insertUserMachine, type PlatformDB } from "../../packages/platform/src/db.js";
 import { createTestPlatformDb, destroyTestPlatformDb } from "./platform-db-test-helper.js";
+import { JEV_MODEL_ID } from "@matrix-os/contracts";
 
 const modelId = "anthropic/claude-sonnet-5";
 const identity = { ownerId: "usage_owner", machineId: "usage_machine", runtimeSlot: "primary" };
@@ -132,6 +133,36 @@ describe("usage-based funded AI admission", () => {
       .where("reservation_id", "=", key.reservationId).execute())
       .reduce((total, row) => total + Number(row.amount_microusd), 0)).toBe(-100);
     expect((await repo.authorize(request(credential.token, "reconciled"))).authorized).toBe(true);
+  });
+
+  it("requires evidence before manually releasing an expired Jev hold", async () => {
+    await repo.updateGlobalPolicy({ expectedRevision: 1, enabled: true, allowedModelIds: [modelId, JEV_MODEL_ID] });
+    await repo.setRuntimePolicy({ identity, expectedRevision: 1, enabled: true,
+      allowedModelIds: [modelId, JEV_MODEL_ID], monthlyBudgetMicrousd: 1_000_000, expiresAt: null });
+    const auth = await repo.authorize({ ...request(credential.token, "jev_manual_review"),
+      modelId: JEV_MODEL_ID, maxCostMicrousd: 5_000 });
+    const key = { reservationId: auth.reservation.reservationId, tokenId: credential.tokenId };
+    await repo.startReservation(key);
+    const review = { ...key, expectedRequestId: "jev_manual_review", actualCostMicrousd: 0,
+      evidenceRef: "ENG-11/provider-no-charge", reviewer: "operator_1" };
+    await expect(repo.reconcileUnknownJevUsage(review)).rejects.toMatchObject({ code: "rate_limited" });
+    clock = new Date(clock.getTime() + 61_000 + 10 * 60_000);
+    await expect(repo.cleanupExpiredReservations({ limit: 10 })).resolves.toBe(0);
+    await expect(repo.reconcileUnknownJevUsage({ ...review, expectedRequestId: "wrong_request" }))
+      .rejects.toMatchObject({ code: "idempotency_conflict" });
+    const settled = await repo.reconcileUnknownJevUsage(review);
+    expect(settled).toMatchObject({ status: "settled", actualCostMicrousd: 0, releasedMicrousd: 5_000 });
+    await expect(repo.reconcileUnknownJevUsage(review)).resolves.toEqual(settled);
+    await expect(repo.reconcileUnknownJevUsage({ ...review, evidenceRef: "ENG-11/different" }))
+      .rejects.toMatchObject({ code: "idempotency_conflict" });
+    const audit = await db.executor.selectFrom("ai_funded_usage_reservations")
+      .select(["manual_review_evidence_ref", "manual_review_actor", "manual_reviewed_at", "actual_microusd"])
+      .where("reservation_id", "=", key.reservationId).executeTakeFirstOrThrow();
+    expect(audit).toMatchObject({ manual_review_evidence_ref: review.evidenceRef,
+      manual_review_actor: review.reviewer, actual_microusd: 0 });
+    expect(audit.manual_reviewed_at).toBeTruthy();
+    expect(await db.executor.selectFrom("ai_funded_credit_ledger").selectAll()
+      .where("reservation_id", "=", key.reservationId).execute()).toEqual([]);
   });
 
   it("keeps zero credit and strict maximum-cost admission fail-closed", async () => {

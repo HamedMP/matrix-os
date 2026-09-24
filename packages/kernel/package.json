@@ -49,6 +49,7 @@
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "0.3.240",
+    "@matrix-os/contracts": "workspace:*",
     "@matrix-os/gateway": "workspace:*",
     "@matrix-os/mcp-browser": "workspace:*",
     "@mozilla/readability": "^0.6.0",
