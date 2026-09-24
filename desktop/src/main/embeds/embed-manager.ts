@@ -17,6 +17,8 @@ export interface EmbedViewLike {
   setBounds(bounds: Bounds): void;
   setScale(factor: number): void;
   loadUrl(url: string): Promise<void>;
+  currentOrigin?(): string | null;
+  fillPassword?(origin: string, username: string, password: string): Promise<boolean>;
   captureSnapshot?(): Promise<string | null>;
   attach(): void;
   detach(): void;
@@ -30,6 +32,7 @@ type EmbedOriginOptions =
   | { allowedOrigins?: never; getAllowedOrigins: () => string[] };
 
 export type EmbedManagerOptions = {
+  getBrowserPartition?: () => string;
   createView: (opts: {
     partition: string;
     kind: EmbedKind;
@@ -51,6 +54,7 @@ const ERR_ABORTED = -3;
 
 interface EmbedRecord {
   id: string;
+  kind: EmbedKind;
   url: string;
   view: EmbedViewLike;
   live: boolean;
@@ -77,6 +81,7 @@ export class EmbedManager {
   private readonly records = new Map<string, EmbedRecord>();
   private readonly createView: EmbedManagerOptions["createView"];
   private readonly getAllowedOrigins: () => string[];
+  private readonly getBrowserPartition: () => string;
   private readonly maxLive: number;
   private tick = 0;
 
@@ -88,6 +93,7 @@ export class EmbedManager {
       throw new Error("EmbedManager requires exactly one allowed origin source");
     }
     this.getAllowedOrigins = dynamicOrigins ?? (() => staticOrigins!);
+    this.getBrowserPartition = options.getBrowserPartition ?? (() => "persist:browser");
     this.maxLive = options.maxLive ?? DEFAULT_MAX_LIVE;
     if (this.maxLive > MAX_TOTAL_EMBEDS) {
       throw new Error(
@@ -124,7 +130,7 @@ export class EmbedManager {
         : kind === "code-editor"
           ? "persist:code-editor"
         : kind === "browser"
-          ? "persist:browser"
+          ? this.getBrowserPartition()
           : this.appPartition(options?.routeSlug ?? slug);
 
     const active = options?.active ?? true;
@@ -155,6 +161,7 @@ export class EmbedManager {
     });
     record = {
       id,
+      kind,
       url,
       view,
       live: active,
@@ -307,6 +314,18 @@ export class EmbedManager {
 
   has(embedId: string): boolean {
     return this.records.has(embedId);
+  }
+
+  getBrowserOrigin(embedId: string): string | null {
+    const record = this.records.get(embedId);
+    return record?.kind === "browser" && record.live ? record.view.currentOrigin?.() ?? null : null;
+  }
+
+  async fillBrowserPassword(embedId: string, origin: string, username: string, password: string): Promise<boolean> {
+    const record = this.records.get(embedId);
+    if (!record || record.kind !== "browser" || !record.live || !record.view.fillPassword ||
+      record.view.currentOrigin?.() !== origin) return false;
+    return record.view.fillPassword(origin, username, password);
   }
 
   get liveCount(): number {

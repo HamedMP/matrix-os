@@ -29,6 +29,23 @@ export interface HandlerContext {
   listBrowserImportSources: () => Promise<InvokeResponse<"browser:list-import-sources">["sources"]>;
   importBrowserPages: (sourceId: InvokeRequest<"browser:import-pages">["sourceId"])
     => Promise<InvokeResponse<"browser:import-pages">>;
+  listBrowserSecretSources: () => Promise<InvokeResponse<"browser:list-secret-sources">["sources"]>;
+  previewBrowserSites: (sourceId: InvokeRequest<"browser:preview-sites">["sourceId"])
+    => Promise<InvokeResponse<"browser:preview-sites">["sites"]>;
+  importBrowserSites: (request: InvokeRequest<"browser:import-sites">)
+    => Promise<InvokeResponse<"browser:import-sites">>;
+  listOnePasswordAccounts: () => Promise<InvokeResponse<"browser:list-1password-accounts">["accounts"]>;
+  listOnePasswordItems: (accountId: InvokeRequest<"browser:list-1password">["accountId"])
+    => Promise<InvokeResponse<"browser:list-1password">["items"]>;
+  importOnePasswordItems: (accountId: InvokeRequest<"browser:import-1password">["accountId"], ids: InvokeRequest<"browser:import-1password">["ids"])
+    => Promise<InvokeResponse<"browser:import-1password">>;
+  listBrowserPasswords: (origin: InvokeRequest<"browser:list-passwords">["origin"])
+    => Promise<InvokeResponse<"browser:list-passwords">["accounts"]>;
+  fillBrowserPassword: (request: InvokeRequest<"browser:fill-password">)
+    => Promise<InvokeResponse<"browser:fill-password">>;
+  deleteBrowserPassword: (request: InvokeRequest<"browser:delete-password">)
+    => Promise<InvokeResponse<"browser:delete-password">>;
+  exportBrowserPasswords: () => Promise<InvokeResponse<"browser:export-passwords">>;
   setBadgeCount: (count: number) => void;
   notify: (input: { threadId: string; title: string; body: string; kind: string }) => void;
   onRuntimeChanged: (slot: string) => void;
@@ -184,6 +201,12 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): 
   if (typeof listBrowserImportSources !== "function" || typeof importBrowserPages !== "function") {
     throw new Error("browser import unavailable");
   }
+  if ([ctx.listBrowserSecretSources, ctx.previewBrowserSites, ctx.importBrowserSites,
+    ctx.listOnePasswordAccounts, ctx.listOnePasswordItems, ctx.importOnePasswordItems, ctx.listBrowserPasswords,
+    ctx.fillBrowserPassword, ctx.deleteBrowserPassword, ctx.exportBrowserPasswords
+  ].some((dependency) => typeof dependency !== "function")) {
+    throw new Error("browser secret import unavailable");
+  }
   function handle<C extends InvokeChannel>(channel: C, handler: Handler<C>): void {
     ipcMain.handle(channel, async (_event, rawPayload) => {
       const parsedRequest = INVOKE_CHANNELS[channel].request.safeParse(rawPayload ?? {});
@@ -326,6 +349,16 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): 
 
   handle("browser:list-import-sources", async () => ({ sources: await listBrowserImportSources() }));
   handle("browser:import-pages", ({ sourceId }) => importBrowserPages(sourceId));
+  handle("browser:list-secret-sources", async () => ({ sources: await ctx.listBrowserSecretSources() }));
+  handle("browser:preview-sites", async ({ sourceId }) => ({ sites: await ctx.previewBrowserSites(sourceId) }));
+  handle("browser:import-sites", (request) => ctx.importBrowserSites(request));
+  handle("browser:list-1password-accounts", async () => ({ accounts: await ctx.listOnePasswordAccounts() }));
+  handle("browser:list-1password", async ({ accountId }) => ({ items: await ctx.listOnePasswordItems(accountId) }));
+  handle("browser:import-1password", ({ accountId, ids }) => ctx.importOnePasswordItems(accountId, ids));
+  handle("browser:list-passwords", async ({ origin }) => ({ accounts: await ctx.listBrowserPasswords(origin) }));
+  handle("browser:fill-password", (request) => ctx.fillBrowserPassword(request));
+  handle("browser:delete-password", (request) => ctx.deleteBrowserPassword(request));
+  handle("browser:export-passwords", () => ctx.exportBrowserPasswords());
 
   handle("shell:open-external", async ({ url }) => {
     await ctx.openExternal(url);

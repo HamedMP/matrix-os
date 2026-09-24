@@ -2,6 +2,12 @@ import { app, BrowserWindow, dialog, ipcMain, Notification, safeStorage, screen,
 import { join } from "node:path";
 import { createFileDownloadService } from "./files/file-download-service";
 import { importBrowserPages, listBrowserImportSources } from "./browser/import-pages";
+import { importChromiumSites, listChromiumSecretSources, previewChromiumSites } from "./browser/import-secrets";
+import { resolveBrowserImportHome } from "./browser/source-home";
+import { createBrowserPasswordVault, type BrowserPasswordVault } from "./browser/password-vault";
+import { bindBrowserVaultToAccount, browserAccountScope, BrowserAccountChangedError } from "./browser/account-scope";
+import { importOnePasswordLogins, listOnePasswordAccounts, listOnePasswordLogins } from "./browser/one-password";
+import { exportBrowserPasswords } from "./browser/password-export";
 import { pathToFileURL } from "node:url";
 import { AuthService } from "./auth/auth-service";
 import { createAnalyticsBeforeQuit } from "./analytics-quit";
@@ -219,6 +225,12 @@ if (!gotLock) {
       const userData = app.getPath("userData");
       const store = createLocalStore({ dir: userData });
       const credentialStore = createCredentialStore({ dir: userData, safeStorage });
+      const localBrowserHome = resolveBrowserImportHome(
+        userData, app.getPath("home"), Boolean(process.env.OPERATOR_USER_DATA_DIR),
+        process.env.OPERATOR_BROWSER_USE_HOST_HOME === "1", app.isPackaged,
+      );
+      let closeAccountEmbeds: (() => void) | null = null;
+      let previousBrowserUserId: string | null = null;
 
       const platformHost = process.env.OPERATOR_GATEWAY_URL ?? DEFAULT_PLATFORM_HOST;
       const runtimeSelectionOrigin = process.env.MATRIX_API_ORIGIN
@@ -232,6 +244,9 @@ if (!gotLock) {
         saveProfile: (profile) => store.set("profile", profile),
         clearProfile: () => store.delete("profile"),
         onAuthChanged: (status) => {
+          const nextBrowserUserId = status.signedIn ? status.userId : null;
+          if (previousBrowserUserId && previousBrowserUserId !== nextBrowserUserId) closeAccountEmbeds?.();
+          previousBrowserUserId = nextBrowserUserId;
           fileDownloads?.cancelAll();
           sendEvent("auth:changed", {
             signedIn: status.signedIn,
@@ -244,6 +259,27 @@ if (!gotLock) {
         },
       });
       await auth.init();
+      const restoredBrowserStatus = auth.getStatus();
+      previousBrowserUserId = restoredBrowserStatus.signedIn ? restoredBrowserStatus.userId : null;
+
+      const browserVaults = new Map<string, BrowserPasswordVault>();
+      const currentBrowserScope = () => {
+        const status = auth.getStatus();
+        if (!status.signedIn) throw new BrowserAccountChangedError();
+        return { userId: status.userId, ...browserAccountScope(status.userId) };
+      };
+      const browserVaultForAccount = (): BrowserPasswordVault => {
+        const scope = currentBrowserScope();
+        let vault = browserVaults.get(scope.userId);
+        if (!vault) {
+          vault = createBrowserPasswordVault({ dir: join(userData, scope.vaultDirectory), safeStorage });
+          if (browserVaults.size >= 8) browserVaults.delete(browserVaults.keys().next().value!);
+        } else {
+          browserVaults.delete(scope.userId);
+        }
+        browserVaults.set(scope.userId, vault);
+        return bindBrowserVaultToAccount(scope.userId, () => currentBrowserScope().userId, vault);
+      };
 
       const rendererOrigin = desktopRendererUrl
         ? new URL(desktopRendererUrl).origin
@@ -292,10 +328,12 @@ if (!gotLock) {
         getWindow: () => mainWindow,
         getGatewayOrigin: () => auth.getGatewayOrigin(),
         getToken: () => auth.getToken(),
+        getBrowserPartition: () => currentBrowserScope().partition,
         emitState: (embedId, state) => sendEvent("embed:state", { embedId, state }),
         appBridge: nativeAppBridge,
         appPreloadPath: join(__dirname, "../preload/index.cjs"),
       });
+      closeAccountEmbeds = () => embeds.closeAll();
       const updater = createUpdater({
         onAvailable: (version) => {
           console.info(`[updates] downloading Matrix OS ${version}`);
@@ -365,13 +403,65 @@ if (!gotLock) {
         store,
         embeds,
         openExternal: openExternalHttpUrl,
-        listBrowserImportSources: () => listBrowserImportSources(
-          process.env.OPERATOR_USER_DATA_DIR ? app.getPath("userData") : app.getPath("home"),
-        ),
-        importBrowserPages: (sourceId) => importBrowserPages(
-          process.env.OPERATOR_USER_DATA_DIR ? app.getPath("userData") : app.getPath("home"),
-          sourceId,
-        ),
+        listBrowserImportSources: () => listBrowserImportSources(localBrowserHome),
+        importBrowserPages: (sourceId) => importBrowserPages(localBrowserHome, sourceId),
+        listBrowserSecretSources: () => listChromiumSecretSources(localBrowserHome),
+        previewBrowserSites: (sourceId) => previewChromiumSites(localBrowserHome, sourceId),
+        importBrowserSites: async ({ sourceId, hosts }) => {
+          const scope = currentBrowserScope();
+          const browserSession = session.fromPartition(scope.partition);
+          const result = await importChromiumSites({
+            home: localBrowserHome, sourceId, hosts, vault: browserVaultForAccount(),
+            setCookie: (cookie) => {
+              if (currentBrowserScope().userId !== scope.userId) throw new Error("browser account unavailable");
+              return browserSession.cookies.set(cookie);
+            },
+          });
+          await browserSession.cookies.flushStore();
+          return result;
+        },
+        listOnePasswordAccounts: () => listOnePasswordAccounts(),
+        listOnePasswordItems: (accountId) => listOnePasswordLogins(accountId),
+        importOnePasswordItems: (accountId, ids) => importOnePasswordLogins(accountId, ids, browserVaultForAccount()),
+        listBrowserPasswords: async (origin) => {
+          const owner = currentBrowserScope().userId;
+          const items = await browserVaultForAccount().list();
+          if (currentBrowserScope().userId !== owner) throw new Error("browser account unavailable");
+          return items.filter((item) => item.origin === origin)
+            .slice(0, 100)
+            .map(({ username }) => ({ username }));
+        },
+        fillBrowserPassword: async ({ embedId, username }) => {
+          const owner = currentBrowserScope().userId;
+          const origin = embeds.getBrowserOrigin(embedId);
+          if (!origin) return { filled: false };
+          const login = await browserVaultForAccount().find(origin, username);
+          if (currentBrowserScope().userId !== owner) return { filled: false };
+          if (!login) return { filled: false };
+          return { filled: await embeds.fillBrowserPassword(embedId, login) };
+        },
+        deleteBrowserPassword: async ({ origin, username }) => ({
+          deleted: await browserVaultForAccount().remove(origin, username),
+        }),
+        exportBrowserPasswords: async () => {
+          const owner = currentBrowserScope().userId;
+          const exported = await exportBrowserPasswords(browserVaultForAccount(), async () => {
+            const options = {
+              title: "Export Matrix Browser passwords",
+              defaultPath: join(app.getPath("downloads"), "matrix-browser-passwords.json"),
+              buttonLabel: "Export",
+              filters: [{ name: "JSON", extensions: ["json"] }],
+              properties: ["createDirectory", "showOverwriteConfirmation"] as Array<"createDirectory" | "showOverwriteConfirmation">,
+            };
+            const result = mainWindow && !mainWindow.isDestroyed()
+              ? await dialog.showSaveDialog(mainWindow, options)
+              : await dialog.showSaveDialog(options);
+            return result.canceled ? null : result.filePath ?? null;
+          }, () => {
+            if (currentBrowserScope().userId !== owner) throw new Error("browser account unavailable");
+          });
+          return { exported };
+        },
         setBadgeCount: (count) => {
           app.setBadgeCount(count);
         },

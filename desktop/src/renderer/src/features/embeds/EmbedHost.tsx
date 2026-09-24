@@ -11,6 +11,7 @@ import { useUi } from "../../stores/ui";
 // (embed:set-active false) rather than moved off-screen (lesson L14).
 interface EmbedHostCommonProps {
   active?: boolean;
+  onOpened?: (embedId: string | null) => void;
   refreshRequest?: number;
   layoutRevision?: string;
   visualScale?: number;
@@ -43,6 +44,8 @@ export default function EmbedHost({
   const runtimeSlot = useConnection((connection) => connection.runtimeSlot);
   const hostRef = useRef<HTMLDivElement>(null);
   const embedIdRef = useRef<string | null>(null);
+  const onOpenedRef = useRef(props.onOpened);
+  onOpenedRef.current = props.onOpened;
   const activeRef = useRef(active);
   const lastRefreshRequestRef = useRef(refreshRequest);
   activeRef.current = active;
@@ -113,6 +116,7 @@ export default function EmbedHost({
           return;
         }
         embedIdRef.current = embedId;
+        onOpenedRef.current?.(embedId);
         setOpenedEmbedRevision((revision) => revision + 1);
         setState(pendingStates.get(embedId) ?? initialState);
         pendingStates.delete(embedId);
@@ -138,6 +142,7 @@ export default function EmbedHost({
       offState?.();
       const id = embedIdRef.current;
       embedIdRef.current = null;
+      onOpenedRef.current?.(null);
       if (id) void invoke("embed:close", { embedId: id });
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps

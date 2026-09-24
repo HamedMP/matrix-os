@@ -1,0 +1,452 @@
+import { createCipheriv, createDecipheriv, createHash, pbkdf2Sync, randomBytes } from "node:crypto";
+import { execFileSync } from "node:child_process";
+import { mkdtemp, mkdir, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  decryptChromiumSecret,
+  decodeChromiumCookieValue,
+  normalizeChromiumCookie,
+  normalizeChromiumLogin,
+  type BrowserLogin,
+} from "@desktop/main/browser/chromium-secrets";
+import { createBrowserPasswordVault, type BrowserPasswordVault } from "@desktop/main/browser/password-vault";
+import { bindBrowserVaultToAccount, browserAccountScope, BrowserAccountChangedError } from "@desktop/main/browser/account-scope";
+import { importOnePasswordLogins, listOnePasswordAccounts, listOnePasswordLogins, parseOnePasswordLogin } from "@desktop/main/browser/one-password";
+import { importChromiumSites, listChromiumSecretSources, previewChromiumSites } from "@desktop/main/browser/import-secrets";
+import { resolveBrowserImportHome } from "@desktop/main/browser/source-home";
+import { exportBrowserPasswords } from "@desktop/main/browser/password-export";
+import { INVOKE_CHANNELS } from "@desktop/shared/ipc-contract";
+
+const dirs: string[] = [];
+afterEach(async () => {
+  await Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+});
+
+describe("Chromium local secret import", () => {
+  const safeStoragePassword = "synthetic-keychain-value";
+  const key = pbkdf2Sync(safeStoragePassword, "saltysalt", 1003, 16, "sha1");
+  const iv = Buffer.alloc(16, 0x20);
+  function encrypted(value: string): Buffer {
+    const cipher = createCipheriv("aes-128-cbc", key, iv);
+    return Buffer.concat([Buffer.from("v10"), cipher.update(value), cipher.final()]);
+  }
+
+  it("decrypts supported v10 values in memory and rejects unknown formats", () => {
+    expect(decryptChromiumSecret(encrypted("synthetic password"), safeStoragePassword)).toBe("synthetic password");
+    expect(decryptChromiumSecret(encrypted("synthetic password"), "wrong-key")).toBeNull();
+    expect(decryptChromiumSecret(Buffer.from("v20garbage"), safeStoragePassword)).toBeNull();
+    expect(decryptChromiumSecret(Buffer.from("v10bad"), safeStoragePassword)).toBeNull();
+  });
+
+  it("checks the domain digest in current Chromium cookie databases", () => {
+    const digest = createHash("sha256").update(".example.com").digest();
+    const raw = Buffer.concat([digest, Buffer.from("synthetic-cookie")]);
+    expect(decodeChromiumCookieValue(raw, ".example.com", 24)).toBe("synthetic-cookie");
+    expect(decodeChromiumCookieValue(raw, ".other.example", 24)).toBeNull();
+    expect(decodeChromiumCookieValue(Buffer.from("legacy"), ".example.com", 23)).toBe("legacy");
+  });
+
+  it("normalizes only web logins with a username and decrypted password", () => {
+    expect(normalizeChromiumLogin({
+      origin_url: "https://example.com/login", username_value: "alice", blacklisted_by_user: 0,
+    }, "secret")).toEqual({ origin: "https://example.com", username: "alice", password: "secret" });
+    expect(normalizeChromiumLogin({ origin_url: "javascript:bad", username_value: "alice" }, "secret")).toBeNull();
+    expect(normalizeChromiumLogin({ origin_url: "https://example.com", username_value: "alice", blacklisted_by_user: 1 }, "secret")).toBeNull();
+  });
+
+  it("converts host cookies and skips partitioned or expired cookies", () => {
+    const now = Date.parse("2026-09-24T00:00:00Z") / 1000;
+    const expiresUtc = (now + 3600 + 11_644_473_600) * 1_000_000;
+    expect(normalizeChromiumCookie({
+      host_key: ".example.com", top_frame_site_key: "", name: "session", path: "/",
+      is_secure: 1, is_httponly: 1, samesite: 2, expires_utc: expiresUtc,
+      is_persistent: 1,
+    }, "synthetic-cookie", now)).toEqual({
+      url: "https://example.com/", domain: ".example.com", name: "session",
+      value: "synthetic-cookie", path: "/", secure: true, httpOnly: true,
+      sameSite: "strict", expirationDate: now + 3600,
+    });
+    expect(normalizeChromiumCookie({ host_key: "example.com", top_frame_site_key: "https://other.example", name: "x", path: "/" }, "value", now)).toBeNull();
+    expect(normalizeChromiumCookie({ host_key: "example.com", name: "x", path: "/", is_persistent: 1, expires_utc: 1 }, "value", now)).toBeNull();
+  });
+});
+
+describe("OS-encrypted Matrix Browser password vault", () => {
+  it("isolates browser passwords and cookies by Matrix account", async () => {
+    const alice = browserAccountScope("user-alice");
+    const bob = browserAccountScope("user-bob");
+    expect(alice.partition).not.toBe(bob.partition);
+    expect(alice.vaultDirectory).not.toBe(bob.vaultDirectory);
+    expect(() => browserAccountScope("")).toThrow();
+    const dir = await mkdtemp(join(tmpdir(), "matrix-browser-accounts-"));
+    dirs.push(dir);
+    const safeStorage = {
+      isEncryptionAvailable: () => true,
+      encryptString: (value: string) => Buffer.from(value),
+      decryptString: (value: Buffer) => value.toString(),
+    };
+    const aliceVault = createBrowserPasswordVault({ dir: join(dir, alice.vaultDirectory), safeStorage });
+    const bobVault = createBrowserPasswordVault({ dir: join(dir, bob.vaultDirectory), safeStorage });
+    await aliceVault.upsertMany([{ origin: "https://example.com", username: "alice", password: "synthetic" }]);
+    expect(await bobVault.list()).toEqual([]);
+  });
+
+  it("rejects a password read that resolves after the Matrix account changes", async () => {
+    let resolveList!: (value: Array<{ origin: string; username: string }>) => void;
+    const delayedList = new Promise<Array<{ origin: string; username: string }>>((resolve) => { resolveList = resolve; });
+    const vault = { list: () => delayedList } as unknown as BrowserPasswordVault;
+    let currentUserId = "user-alice";
+    const bound = bindBrowserVaultToAccount("user-alice", () => currentUserId, vault);
+    const pending = bound.list();
+    currentUserId = "user-bob";
+    resolveList([{ origin: "https://example.com", username: "alice" }]);
+    await expect(pending).rejects.toThrow("browser account unavailable");
+  });
+  it("stores no plaintext, deduplicates a site login, and returns only metadata for listing", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "matrix-password-vault-"));
+    dirs.push(dir);
+    const key = randomBytes(32);
+    const safeStorage = {
+      isEncryptionAvailable: () => true,
+      encryptString: (value: string) => {
+        const iv = randomBytes(12);
+        const cipher = createCipheriv("aes-256-gcm", key, iv);
+        const body = Buffer.concat([cipher.update(value, "utf8"), cipher.final()]);
+        return Buffer.concat([iv, cipher.getAuthTag(), body]);
+      },
+      decryptString: (value: Buffer) => {
+        const decipher = createDecipheriv("aes-256-gcm", key, value.subarray(0, 12));
+        decipher.setAuthTag(value.subarray(12, 28));
+        return Buffer.concat([decipher.update(value.subarray(28)), decipher.final()]).toString("utf8");
+      },
+    };
+    const vault = createBrowserPasswordVault({ dir, safeStorage });
+    await vault.upsertMany([{ origin: "https://example.com", username: "alice", password: "secret-one" }]);
+    await vault.upsertMany([{ origin: "https://example.com", username: "alice", password: "secret-two" }]);
+    expect(await vault.list()).toEqual([{ origin: "https://example.com", username: "alice" }]);
+    expect(await vault.find("https://example.com", "alice")).toEqual({ origin: "https://example.com", username: "alice", password: "secret-two" });
+    expect(await vault.all()).toEqual([{ origin: "https://example.com", username: "alice", password: "secret-two" }]);
+    expect(await vault.remove("https://example.com", "alice")).toBe(true);
+    expect(await vault.list()).toEqual([]);
+    const file = await readFile(join(dir, "browser-passwords.bin"));
+    expect(file.toString("utf8")).not.toContain("secret-two");
+  });
+
+  it("refuses plaintext storage when OS encryption is unavailable", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "matrix-password-vault-"));
+    dirs.push(dir);
+    const vault = createBrowserPasswordVault({ dir, safeStorage: {
+      isEncryptionAvailable: () => false,
+      encryptString: () => Buffer.alloc(0),
+      decryptString: () => "",
+    } });
+    await expect(vault.upsertMany([{ origin: "https://example.com", username: "a", password: "b" }]))
+      .rejects.toThrow("OS encryption unavailable");
+  });
+
+  it("refuses Electron's Linux basic_text fallback for imported passwords", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "matrix-password-vault-"));
+    dirs.push(dir);
+    const vault = createBrowserPasswordVault({ dir, safeStorage: {
+      isEncryptionAvailable: () => true,
+      getSelectedStorageBackend: () => "basic_text",
+      encryptString: () => Buffer.from("not-encrypted"),
+      decryptString: () => "[]",
+    } });
+    await expect(vault.upsertMany([{ origin: "https://example.com", username: "a", password: "b" }]))
+      .rejects.toThrow("OS encryption unavailable");
+  });
+
+  it("rejects a symlinked vault file before reading it", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "matrix-password-link-"));
+    dirs.push(dir);
+    const outside = join(dir, "outside.bin");
+    await writeFile(outside, "synthetic-secret");
+    await symlink(outside, join(dir, "browser-passwords.bin"));
+    const decryptString = vi.fn(() => "[]");
+    const vault = createBrowserPasswordVault({ dir, safeStorage: {
+      isEncryptionAvailable: () => true,
+      encryptString: () => Buffer.alloc(0),
+      decryptString,
+    } });
+    await expect(vault.list()).rejects.toThrow("browser password vault unavailable");
+    expect(decryptString).not.toHaveBeenCalled();
+  });
+
+  it("exports only to an explicitly chosen new file with owner-only permissions", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "matrix-password-export-"));
+    dirs.push(dir);
+    const target = join(dir, "passwords.json");
+    const vault = { all: async () => [{ origin: "https://example.com", username: "alice", password: "synthetic-export-secret" }] };
+    expect(await exportBrowserPasswords(vault, async () => target)).toBe(true);
+    expect(JSON.parse(await readFile(target, "utf8"))).toEqual({ version: 1, logins: await vault.all() });
+    expect((await stat(target)).mode & 0o777).toBe(0o600);
+    await writeFile(target, "preserve");
+    await expect(exportBrowserPasswords(vault, async () => target)).rejects.toThrow("password export unavailable");
+    expect(await readFile(target, "utf8")).toBe("preserve");
+  });
+
+  it("does not publish a password export after the Matrix account changes", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "matrix-password-export-"));
+    dirs.push(dir);
+    const target = join(dir, "passwords.json");
+    const vault = { all: async () => [{ origin: "https://example.com", username: "alice", password: "synthetic" }] };
+    let authorized = true;
+    await expect(exportBrowserPasswords(vault, async () => { authorized = false; return target; },
+      () => { if (!authorized) throw new Error("account changed"); })).rejects.toThrow("password export unavailable");
+    await expect(stat(target)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+});
+
+describe("1Password direct import", () => {
+  const accountId = "A".repeat(26);
+
+  it("lists local accounts so a CLI with multiple accounts can be scoped", async () => {
+    const calls: string[][] = [];
+    const run = async (args: string[]) => {
+      calls.push(args);
+      return [
+        { account_uuid: accountId, email: "first@example.com", url: "first.1password.com" },
+        { account_uuid: "B".repeat(26), email: "second@example.com", url: "second.1password.com" },
+      ];
+    };
+    expect(await listOnePasswordAccounts(run)).toEqual([
+      { id: accountId, label: "first@example.com · first.1password.com" },
+      { id: "B".repeat(26), label: "second@example.com · second.1password.com" },
+    ]);
+    expect(calls).toEqual([["account", "list", "--format", "json"]]);
+  });
+
+  it("accepts a Login with a supported website, username, and concealed password", () => {
+    expect(parseOnePasswordLogin({ category: "LOGIN", urls: [{ href: "https://example.com/login" }], fields: [
+      { id: "username", value: "alice" }, { id: "password", value: "secret", type: "CONCEALED" },
+    ] })).toEqual({ origin: "https://example.com", username: "alice", password: "secret" });
+    expect(parseOnePasswordLogin({ category: "LOGIN", urls: [{ href: "file:///private/secret" }], fields: [] })).toBeNull();
+  });
+
+  it("lists metadata and fetches selected item secrets only", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "matrix-op-vault-"));
+    dirs.push(dir);
+    const vault = createBrowserPasswordVault({ dir, safeStorage: {
+      isEncryptionAvailable: () => true,
+      encryptString: (value: string) => Buffer.from(value).map((byte) => byte ^ 0xa5),
+      decryptString: (value: Buffer) => Buffer.from(value).map((byte) => byte ^ 0xa5).toString(),
+    } });
+    const calls: string[][] = [];
+    const list = [{ id: "abcdefghijkl", title: "Example", category: "LOGIN", urls: [{ href: "https://example.com/login" }] },
+      { id: "mnopqrstuvwx", title: "Other", category: "LOGIN", urls: [{ href: "https://other.example" }] }];
+    const run = async (args: string[]) => {
+      calls.push(args);
+      if (args[1] === "list") return list;
+      return { ...list[0], fields: [{ id: "username", value: "alice" }, { id: "password", value: "synthetic-op-secret" }] };
+    };
+    expect(await listOnePasswordLogins(accountId, run)).toEqual([
+      { id: "abcdefghijkl", title: "Example", origin: "https://example.com" },
+      { id: "mnopqrstuvwx", title: "Other", origin: "https://other.example" },
+    ]);
+    expect(await importOnePasswordLogins(accountId, ["abcdefghijkl"], vault, run)).toEqual({ imported: 1, skipped: 0 });
+    expect(calls.filter((args) => args[1] === "list")).toEqual([
+      ["item", "list", "--categories", "Login", "--format", "json", "--account", accountId],
+      ["item", "list", "--categories", "Login", "--format", "json", "--account", accountId],
+    ]);
+    expect(calls.filter((args) => args[1] === "get")).toEqual([["item", "get", "abcdefghijkl", "--format", "json", "--reveal", "--account", accountId]]);
+    expect(await vault.find("https://example.com", "alice")).toMatchObject({ password: "synthetic-op-secret" });
+  });
+
+  it("keeps completed 1Password batches when a later item cannot be fetched", async () => {
+    const ids = Array.from({ length: 21 }, (_, index) => String(index).padStart(12, "0"));
+    const items = ids.map((id) => ({ id, category: "LOGIN", urls: [{ href: `https://${id}.example.com` }] }));
+    const saved: BrowserLogin[] = [];
+    const vault = { upsertMany: vi.fn(async (logins: BrowserLogin[]) => { saved.push(...logins); return logins.length; }) } as unknown as BrowserPasswordVault;
+    const run = async (args: string[]) => {
+      if (args[1] === "list") return items;
+      const id = args[2]!;
+      if (id === ids[20]) throw new Error("synthetic CLI interruption");
+      return { ...items.find((item) => item.id === id), fields: [
+        { id: "username", value: id }, { id: "password", value: "synthetic-secret" },
+      ] };
+    };
+    expect(await importOnePasswordLogins(accountId, ids, vault, run)).toEqual({ imported: 20, skipped: 1 });
+    expect(saved).toHaveLength(20);
+  });
+
+  it("reports completed 1Password batches when a later vault write fails", async () => {
+    const ids = Array.from({ length: 21 }, (_, index) => String(index).padStart(12, "0"));
+    const items = ids.map((id) => ({ id, category: "LOGIN", urls: [{ href: `https://${id}.example.com` }] }));
+    const saved: BrowserLogin[] = [];
+    let writes = 0;
+    const vault = { upsertMany: vi.fn(async (logins: BrowserLogin[]) => {
+      if (++writes === 2) throw new Error("synthetic vault failure");
+      saved.push(...logins);
+      return logins.length;
+    }) } as unknown as BrowserPasswordVault;
+    const run = async (args: string[]) => args[1] === "list" ? items : {
+      ...items.find((item) => item.id === args[2]), fields: [
+        { id: "username", value: args[2] }, { id: "password", value: "synthetic-secret" },
+      ],
+    };
+    expect(await importOnePasswordLogins(accountId, ids, vault, run)).toEqual({ imported: 20, skipped: 1 });
+    expect(saved).toHaveLength(20);
+  });
+
+  it("reports an account switch as an interrupted 1Password import", async () => {
+    const ids = Array.from({ length: 21 }, (_, index) => String(index).padStart(12, "0"));
+    const items = ids.map((id) => ({ id, category: "LOGIN", urls: [{ href: `https://${id}.example.com` }] }));
+    let writes = 0;
+    const vault = { upsertMany: vi.fn(async (logins: BrowserLogin[]) => {
+      if (++writes === 2) throw new BrowserAccountChangedError();
+      return logins.length;
+    }) } as unknown as BrowserPasswordVault;
+    const run = async (args: string[]) => args[1] === "list" ? items : {
+      ...items.find((item) => item.id === args[2]), fields: [
+        { id: "username", value: args[2] }, { id: "password", value: "synthetic-secret" },
+      ],
+    };
+    await expect(importOnePasswordLogins(accountId, ids, vault, run)).rejects.toBeInstanceOf(BrowserAccountChangedError);
+  });
+});
+
+describe("selected local browser profile transfer", () => {
+  it("uses the real Mac browser home only when a local preview opts in", () => {
+    expect(resolveBrowserImportHome("/temporary-profile", "/real-home", true, true, false)).toBe("/real-home");
+    expect(resolveBrowserImportHome("/temporary-profile", "/real-home", true, true, true)).toBe("/temporary-profile");
+    expect(resolveBrowserImportHome("/temporary-profile", "/real-home", true, false, false)).toBe("/temporary-profile");
+  });
+
+  it("caps the site preview while retaining recently discovered hosts", async () => {
+    const home = await mkdtemp(join(tmpdir(), "matrix-source-home-"));
+    dirs.push(home);
+    const profile = join(home, "Library/Application Support/Arc/User Data/Default");
+    await mkdir(profile, { recursive: true });
+    execFileSync("/usr/bin/sqlite3", [join(profile, "Cookies"), `CREATE TABLE cookies (host_key TEXT);
+      WITH RECURSIVE sites(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM sites WHERE n < 5001)
+      INSERT INTO cookies SELECT 'site' || n || '.example' FROM sites;`]);
+    const sites = await previewChromiumSites(home, "arc:Default", "darwin");
+    expect(sites).toHaveLength(5_000);
+    expect(sites.some((site) => site.host === "site1.example")).toBe(false);
+    expect(sites.some((site) => site.host === "site5001.example")).toBe(true);
+  });
+
+  it("keeps accurate password counts when a preview site is evicted then rediscovered", async () => {
+    const home = await mkdtemp(join(tmpdir(), "matrix-source-home-"));
+    dirs.push(home);
+    const profile = join(home, "Library/Application Support/Arc/User Data/Default");
+    await mkdir(profile, { recursive: true });
+    execFileSync("/usr/bin/sqlite3", [join(profile, "Login Data"), `CREATE TABLE logins (origin_url TEXT, blacklisted_by_user INTEGER);
+      INSERT INTO logins VALUES ('https://site1.example/login', 0);`]);
+    execFileSync("/usr/bin/sqlite3", [join(profile, "Cookies"), `CREATE TABLE cookies (host_key TEXT);
+      WITH RECURSIVE sites(n) AS (SELECT 2 UNION ALL SELECT n + 1 FROM sites WHERE n < 5001)
+      INSERT INTO cookies SELECT 'site' || n || '.example' FROM sites;
+      INSERT INTO cookies VALUES ('site1.example');`]);
+    const sites = await previewChromiumSites(home, "arc:Default", "darwin");
+    expect(sites.find((site) => site.host === "site1.example"))
+      .toEqual({ host: "site1.example", passwords: 1, cookies: 1 });
+  });
+  it("imports plaintext cookies without asking for a Keychain secret", async () => {
+    const home = await mkdtemp(join(tmpdir(), "matrix-source-home-"));
+    dirs.push(home);
+    const profile = join(home, "Library/Application Support/Arc/User Data/Default");
+    await mkdir(profile, { recursive: true });
+    execFileSync("/usr/bin/sqlite3", [join(profile, "Cookies"), `CREATE TABLE cookies (host_key TEXT, name TEXT, value TEXT, encrypted_value BLOB, path TEXT, expires_utc INTEGER, is_secure INTEGER, is_httponly INTEGER, is_persistent INTEGER, samesite INTEGER);
+      INSERT INTO cookies VALUES ('example.com', 'sid', 'plain-session', X'', '/', 0, 1, 1, 0, 1);`]);
+    const keychain = vi.fn(async () => "unused");
+    const setCookie = vi.fn(async () => undefined);
+    const vault = { upsertMany: vi.fn(async () => 0) } as unknown as BrowserPasswordVault;
+    expect(await importChromiumSites({ home, sourceId: "arc:Default", platform: "darwin", hosts: ["example.com"],
+      getKeychainPassword: keychain, vault, setCookie })).toEqual({ passwords: 0, cookies: 1, skipped: 0 });
+    expect(keychain).not.toHaveBeenCalled();
+    expect(setCookie).toHaveBeenCalledWith(expect.objectContaining({ value: "plain-session" }));
+  });
+
+  it("imports passwords when an older cookie table has no partition column", async () => {
+    const home = await mkdtemp(join(tmpdir(), "matrix-source-home-"));
+    dirs.push(home);
+    const profile = join(home, "Library/Application Support/Arc/User Data/Default");
+    await mkdir(profile, { recursive: true });
+    const key = pbkdf2Sync("synthetic-keychain", "saltysalt", 1003, 16, "sha1");
+    const cipher = createCipheriv("aes-128-cbc", key, Buffer.alloc(16, 0x20));
+    const secretHex = Buffer.concat([Buffer.from("v10"), cipher.update("synthetic-password"), cipher.final()]).toString("hex");
+    const cookieCipher = createCipheriv("aes-128-cbc", key, Buffer.alloc(16, 0x20));
+    const cookieHex = Buffer.concat([Buffer.from("v10"), cookieCipher.update("encrypted-session"), cookieCipher.final()]).toString("hex");
+    execFileSync("/usr/bin/sqlite3", [join(profile, "Login Data"), `CREATE TABLE logins (origin_url TEXT, username_value TEXT, password_value BLOB, blacklisted_by_user INTEGER);
+      INSERT INTO logins VALUES ('https://example.com', 'alice', X'${secretHex}', 0);`]);
+    execFileSync("/usr/bin/sqlite3", [join(profile, "Cookies"), `CREATE TABLE cookies (host_key TEXT, name TEXT, value TEXT, encrypted_value BLOB, path TEXT, expires_utc INTEGER, is_secure INTEGER, is_httponly INTEGER, is_persistent INTEGER, samesite INTEGER);
+      INSERT INTO cookies VALUES ('example.com', 'sid', 'plain-session', X'', '/', 0, 1, 1, 0, 1);
+      INSERT INTO cookies VALUES ('example.com', 'encrypted', '', X'${cookieHex}', '/', 0, 1, 1, 0, 1);`]);
+    const logins: BrowserLogin[] = [];
+    const vault = { upsertMany: vi.fn(async (items: BrowserLogin[]) => { logins.push(...items); return items.length; }) } as unknown as BrowserPasswordVault;
+    const setCookie = vi.fn(async () => undefined);
+    expect(await importChromiumSites({ home, sourceId: "arc:Default", platform: "darwin", hosts: ["example.com"],
+      getKeychainPassword: async () => "synthetic-keychain", vault, setCookie })).toEqual({ passwords: 1, cookies: 2, skipped: 0 });
+    expect(logins).toEqual([expect.objectContaining({ password: "synthetic-password" })]);
+    setCookie.mockClear();
+    expect(await importChromiumSites({ home, sourceId: "arc:Default", platform: "darwin", hosts: ["example.com"],
+      getKeychainPassword: async () => { throw new Error("declined"); }, vault, setCookie })).toEqual({ passwords: 0, cookies: 1, skipped: 2 });
+    expect(setCookie).toHaveBeenCalledTimes(1);
+    expect(setCookie).toHaveBeenCalledWith(expect.objectContaining({ name: "sid", value: "plain-session" }));
+  });
+
+  it("discovers Arc, previews only site metadata, then transfers selected secrets", async () => {
+    const home = await mkdtemp(join(tmpdir(), "matrix-source-home-"));
+    const vaultDir = await mkdtemp(join(tmpdir(), "matrix-target-vault-"));
+    dirs.push(home, vaultDir);
+    const profile = join(home, "Library/Application Support/Arc/User Data/Default");
+    await mkdir(profile, { recursive: true });
+    const dbLogin = join(profile, "Login Data");
+    const dbCookies = join(profile, "Cookies");
+    const secret = "synthetic-keychain-value";
+    const key = pbkdf2Sync(secret, "saltysalt", 1003, 16, "sha1");
+    const encrypt = (value: string, cookieHost?: string) => {
+      const cipher = createCipheriv("aes-128-cbc", key, Buffer.alloc(16, 0x20));
+      const raw = cookieHost ? Buffer.concat([createHash("sha256").update(cookieHost).digest(), Buffer.from(value)]) : Buffer.from(value);
+      return Buffer.concat([Buffer.from("v10"), cipher.update(raw), cipher.final()]).toString("hex");
+    };
+    execFileSync("/usr/bin/sqlite3", [dbLogin, `CREATE TABLE logins (origin_url TEXT, username_value TEXT, password_value BLOB, blacklisted_by_user INTEGER);
+      INSERT INTO logins VALUES ('https://example.com/login', 'alice', X'${encrypt("selected-secret")}', 0);
+      INSERT INTO logins VALUES ('https://other.example/login', 'bob', X'${encrypt("unselected-secret")}', 0);`]);
+    execFileSync("/usr/bin/sqlite3", [dbCookies, `CREATE TABLE meta (key TEXT, value INTEGER); INSERT INTO meta VALUES ('version', 24);
+      CREATE TABLE cookies (host_key TEXT, top_frame_site_key TEXT, name TEXT, value TEXT, encrypted_value BLOB, path TEXT, expires_utc INTEGER, is_secure INTEGER, is_httponly INTEGER, is_persistent INTEGER, samesite INTEGER);
+      INSERT INTO cookies VALUES ('.example.com', '', 'sid', '', X'${encrypt("selected-cookie", ".example.com")}', '/', 0, 1, 1, 0, 1);
+      INSERT INTO cookies VALUES ('other.example', '', 'sid', '', X'${encrypt("unselected-cookie", "other.example")}', '/', 0, 1, 1, 0, 1);`]);
+    const safeStorage = {
+      isEncryptionAvailable: () => true,
+      encryptString: (value: string) => Buffer.from(value).map((byte) => byte ^ 0xa5),
+      decryptString: (value: Buffer) => Buffer.from(value).map((byte) => byte ^ 0xa5).toString(),
+    };
+    const vault = createBrowserPasswordVault({ dir: vaultDir, safeStorage });
+    expect(await listChromiumSecretSources(home, "darwin")).toEqual(expect.arrayContaining([
+      { id: "arc:Default", browser: "Arc", profile: "Default" },
+    ]));
+    expect(await previewChromiumSites(home, "arc:Default", "darwin")).toEqual([
+      { host: "example.com", passwords: 1, cookies: 1 },
+      { host: "other.example", passwords: 1, cookies: 1 },
+    ]);
+    const setCookies: Array<{ name: string; value: string }> = [];
+    const result = await importChromiumSites({
+      home, sourceId: "arc:Default", platform: "darwin", hosts: ["example.com"],
+      getKeychainPassword: async (service) => { expect(service).toBe("Arc Safe Storage"); return secret; },
+      vault, setCookie: async (cookie) => { setCookies.push(cookie); },
+    });
+    expect(result).toEqual({ passwords: 1, cookies: 1, skipped: 0 });
+    expect(setCookies).toEqual([expect.objectContaining({ name: "sid", value: "selected-cookie" })]);
+    expect(await vault.find("https://example.com", "alice")).toMatchObject({ password: "selected-secret" });
+    expect(await vault.find("https://other.example", "bob")).toBeNull();
+  });
+});
+
+describe("browser secret IPC contract", () => {
+  it("accepts a selected site import and returns counts, never secret values", () => {
+    const channels = INVOKE_CHANNELS as Record<string, { request: { safeParse: (value: unknown) => { success: boolean } }; response: { safeParse: (value: unknown) => { success: boolean } } }>;
+    expect(channels["browser:import-sites"]?.request.safeParse({ sourceId: "arc:Default", hosts: ["example.com"] }).success).toBe(true);
+    expect(channels["browser:import-sites"]?.request.safeParse({ sourceId: "arc:Default", hosts: ["../secret"] }).success).toBe(false);
+    expect(channels["browser:import-sites"]?.response.safeParse({ passwords: 1, cookies: 2, skipped: 0 }).success).toBe(true);
+    expect(channels["browser:import-sites"]?.response.safeParse({ passwords: 1, cookies: 2, skipped: 0, password: "leak" }).success).toBe(false);
+    expect(channels["browser:import-1password"]?.request.safeParse({ accountId: "A".repeat(26), ids: ["abcdefghijkl"] }).success).toBe(true);
+    expect(channels["browser:import-1password"]?.request.safeParse({ ids: ["abcdefghijkl"] }).success).toBe(false);
+    expect(channels["browser:delete-password"]?.request.safeParse({ origin: "https://example.com", username: "alice" }).success).toBe(true);
+    expect(channels["browser:delete-password"]?.request.safeParse({ origin: "https://example.com", username: "alice", password: "leak" }).success).toBe(false);
+    expect(channels["browser:export-passwords"]?.response.safeParse({ exported: true }).success).toBe(true);
+  });
+});

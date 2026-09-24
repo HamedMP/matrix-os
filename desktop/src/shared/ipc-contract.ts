@@ -92,6 +92,32 @@ const BrowserImportSourceSchema = z.strictObject({
   profile: z.string().min(1).max(64),
   pageCount: z.number().int().min(1).max(10_000),
 });
+const BrowserSecretSourceIdSchema = z.string().regex(
+  /^(?:arc|chrome|brave|edge|vivaldi|opera|chromium):(?:Default|Profile [1-9]\d{0,2})$/,
+);
+const BrowserHostSchema = z.string().min(1).max(253).regex(/^[a-z0-9]+(?:[a-z0-9.-]*[a-z0-9])?$/)
+  .refine((value) => !value.includes(".."));
+const BrowserOriginSchema = z.url().max(2_048).refine((value) => {
+  const url = new URL(value);
+  return ["http:", "https:"].includes(url.protocol) && url.origin === value;
+});
+const BrowserSecretSourceSchema = z.strictObject({
+  id: BrowserSecretSourceIdSchema,
+  browser: z.string().min(1).max(64),
+  profile: z.string().min(1).max(64),
+});
+const BrowserSitePreviewSchema = z.strictObject({
+  host: BrowserHostSchema,
+  passwords: z.number().int().nonnegative().max(10_000),
+  cookies: z.number().int().nonnegative().max(50_000),
+});
+const BrowserSecretImportResultSchema = z.strictObject({
+  passwords: z.number().int().nonnegative().max(10_000),
+  cookies: z.number().int().nonnegative().max(50_000),
+  skipped: z.number().int().nonnegative().max(60_000),
+});
+const OnePasswordItemIdSchema = z.string().regex(/^[A-Za-z0-9]{12,64}$/);
+const OnePasswordAccountIdSchema = z.string().regex(/^[A-Za-z0-9]{20,64}$/);
 
 // App-wide Chromium zoom factor (webContents.setZoomFactor). Bounded so a
 // renderer can never push the UI outside the supported 50%–200% range.
@@ -365,6 +391,50 @@ export const INVOKE_CHANNELS = {
   "browser:import-pages": {
     request: z.strictObject({ sourceId: BrowserImportSourceIdSchema }),
     response: z.strictObject({ pages: z.array(ImportedBrowserPageSchema).max(10_000) }),
+  },
+  "browser:list-secret-sources": {
+    request: Empty,
+    response: z.strictObject({ sources: z.array(BrowserSecretSourceSchema).max(256) }),
+  },
+  "browser:preview-sites": {
+    request: z.strictObject({ sourceId: BrowserSecretSourceIdSchema }),
+    response: z.strictObject({ sites: z.array(BrowserSitePreviewSchema).max(5_000) }),
+  },
+  "browser:import-sites": {
+    request: z.strictObject({ sourceId: BrowserSecretSourceIdSchema, hosts: z.array(BrowserHostSchema).min(1).max(5_000) }),
+    response: BrowserSecretImportResultSchema,
+  },
+  "browser:list-1password-accounts": {
+    request: Empty,
+    response: z.strictObject({ accounts: z.array(z.strictObject({
+      id: OnePasswordAccountIdSchema, label: z.string().min(1).max(320),
+    })).max(32) }),
+  },
+  "browser:list-1password": {
+    request: z.strictObject({ accountId: OnePasswordAccountIdSchema }),
+    response: z.strictObject({ items: z.array(z.strictObject({
+      id: OnePasswordItemIdSchema, title: z.string().max(256), origin: BrowserOriginSchema,
+    })).max(2_000) }),
+  },
+  "browser:import-1password": {
+    request: z.strictObject({ accountId: OnePasswordAccountIdSchema, ids: z.array(OnePasswordItemIdSchema).min(1).max(2_000) }),
+    response: z.strictObject({ imported: z.number().int().nonnegative().max(2_000), skipped: z.number().int().nonnegative().max(2_000) }),
+  },
+  "browser:list-passwords": {
+    request: z.strictObject({ origin: BrowserOriginSchema }),
+    response: z.strictObject({ accounts: z.array(z.strictObject({ username: z.string().min(1).max(512) })).max(100) }),
+  },
+  "browser:fill-password": {
+    request: z.strictObject({ embedId: z.string().uuid(), username: z.string().min(1).max(512) }),
+    response: z.strictObject({ filled: z.boolean() }),
+  },
+  "browser:delete-password": {
+    request: z.strictObject({ origin: BrowserOriginSchema, username: z.string().min(1).max(512) }),
+    response: z.strictObject({ deleted: z.boolean() }),
+  },
+  "browser:export-passwords": {
+    request: Empty,
+    response: z.strictObject({ exported: z.boolean() }),
   },
   "embed:open": {
     request: z.discriminatedUnion("kind", [

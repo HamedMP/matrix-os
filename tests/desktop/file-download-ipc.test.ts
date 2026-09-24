@@ -11,6 +11,16 @@ function harness() {
     cancelFileDownload,
     listBrowserImportSources: vi.fn(async () => []),
     importBrowserPages: vi.fn(async () => ({ pages: [] })),
+    listBrowserSecretSources: vi.fn(async () => []),
+    previewBrowserSites: vi.fn(async () => []),
+    importBrowserSites: vi.fn(async () => ({ passwords: 0, cookies: 0, skipped: 0 })),
+    listOnePasswordAccounts: vi.fn(async () => []),
+    listOnePasswordItems: vi.fn(async () => []),
+    importOnePasswordItems: vi.fn(async () => ({ imported: 0, skipped: 0 })),
+    listBrowserPasswords: vi.fn(async () => []),
+    fillBrowserPassword: vi.fn(async () => ({ filled: false })),
+    deleteBrowserPassword: vi.fn(async () => ({ deleted: false })),
+    exportBrowserPasswords: vi.fn(async () => ({ exported: false })),
   } as unknown as HandlerContext;
   registerIpcHandlers({ handle(channel, listener) { listeners[channel] = listener as typeof listeners[string]; } }, ctx);
   return { listeners, downloadFile, cancelFileDownload };

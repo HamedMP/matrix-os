@@ -7,6 +7,7 @@ import { isNavigationAllowed } from "./origin-policy";
 import type { Bounds, EmbedViewLike } from "./embed-manager";
 import { safeExternalHttpUrl } from "../external-url";
 import type { RuntimeBrowserNavigationDecision } from "../../shared/runtime-browser-url";
+import { buildBrowserPasswordFillScript } from "../browser/password-fill";
 import { resolveBrowserAddress } from "../../shared/runtime-browser-url";
 import { NATIVE_APP_ACTIVITY_BRIDGE_ARG, isNativeAppActivityIdentity } from "../../shared/native-app-gateway";
 
@@ -245,6 +246,30 @@ export function createWebContentsView(options: {
     },
     async loadUrl(url: string) {
       await contents.loadURL(url);
+    },
+    currentOrigin() {
+      if (contents.isDestroyed()) return null;
+      let rawUrl: string;
+      try {
+        rawUrl = contents.getURL();
+      } catch {
+        throw new Error("browser view unavailable");
+      }
+      if (!URL.canParse(rawUrl)) return null;
+      const url = new URL(rawUrl);
+      return ["http:", "https:"].includes(url.protocol) ? url.origin : null;
+    },
+    async fillPassword(origin: string, username: string, password: string) {
+      if (contents.isDestroyed() || !options.allowPublicNavigation) return false;
+      try {
+        if (new URL(contents.getURL()).origin !== origin) return false;
+        // Check location again inside the target frame: navigation can commit
+        // between the main-process check and executeJavaScript.
+        return await contents.executeJavaScript(buildBrowserPasswordFillScript(origin, username, password), true) === true;
+      } catch (error: unknown) {
+        console.warn("[browser] password fill execution unavailable", error instanceof Error ? error.name : "unknown");
+        throw new Error("browser password fill unavailable");
+      }
     },
     captureSnapshot,
     attach() {

@@ -29,10 +29,12 @@ import {
 import { resolveLaunchUrl } from "./origin-policy";
 import { createWebContentsView } from "./web-contents-view";
 import type { NativeAppBridge } from "./native-app-bridge";
+import type { BrowserLogin } from "../browser/chromium-secrets";
 
 export type EmbedState = "loading" | "ready" | "auth-required" | "failed";
 
 interface EmbedServiceDeps {
+  getBrowserPartition?: () => string;
   getWindow: () => BaseWindow | null;
   getGatewayOrigin: () => string;
   getToken: () => string | null;
@@ -95,6 +97,7 @@ export class EmbedService {
     this.manager = new EmbedManager({
       maxLive: 3,
       getAllowedOrigins: () => [this.deps.getGatewayOrigin()],
+      ...(this.deps.getBrowserPartition ? { getBrowserPartition: this.deps.getBrowserPartition } : {}),
       createView: ({
         partition,
         kind,
@@ -158,6 +161,14 @@ export class EmbedService {
 
   setBounds(embedId: string, bounds: Bounds): boolean {
     return this.manager.setBounds(embedId, bounds);
+  }
+
+  getBrowserOrigin(embedId: string): string | null {
+    return this.manager.getBrowserOrigin(embedId);
+  }
+
+  fillBrowserPassword(embedId: string, login: BrowserLogin): Promise<boolean> {
+    return this.manager.fillBrowserPassword(embedId, login.origin, login.username, login.password);
   }
 
   setScale(embedId: string, factor: number): boolean {

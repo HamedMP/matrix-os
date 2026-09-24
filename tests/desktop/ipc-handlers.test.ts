@@ -38,6 +38,16 @@ function makeHarness(overrides: Partial<HandlerContext> = {}) {
     openExternal: vi.fn(),
     listBrowserImportSources: vi.fn(async () => [{ id: "arc:sidebar", browser: "Arc", profile: "Sidebar", pageCount: 1 }]),
     importBrowserPages: vi.fn(async () => ({ pages: [{ title: "Page", url: "https://example.com/", folder: "Arc tabs" }] })),
+    listBrowserSecretSources: vi.fn(async () => []),
+    previewBrowserSites: vi.fn(async () => []),
+    importBrowserSites: vi.fn(async () => ({ passwords: 0, cookies: 0, skipped: 0 })),
+    listOnePasswordAccounts: vi.fn(async () => [{ id: "A".repeat(26), label: "first@example.com" }]),
+    listOnePasswordItems: vi.fn(async () => []),
+    importOnePasswordItems: vi.fn(async () => ({ imported: 0, skipped: 0 })),
+    listBrowserPasswords: vi.fn(async () => []),
+    fillBrowserPassword: vi.fn(async () => ({ filled: false })),
+    deleteBrowserPassword: vi.fn(async () => ({ deleted: false })),
+    exportBrowserPasswords: vi.fn(async () => ({ exported: false })),
     setBadgeCount: vi.fn(),
     notify: vi.fn(),
     onRuntimeChanged: vi.fn(),
@@ -105,6 +115,22 @@ describe("registerIpcHandlers", () => {
     });
     expect(harness.ctx.importBrowserPages).toHaveBeenCalledWith("arc:sidebar");
     await expect(harness.invoke("browser:import-pages", { sourceId: "../../secret" }))
+      .rejects.toThrow("invalid request");
+  });
+
+  it("requires a selected 1Password account for listing and importing logins", async () => {
+    const harness = makeHarness();
+    const accountId = "A".repeat(26);
+    const ids = ["abcdefghijkl"];
+    expect(await harness.invoke("browser:list-1password-accounts")).toEqual({ accounts: [
+      { id: accountId, label: "first@example.com" },
+    ] });
+    await harness.invoke("browser:list-1password", { accountId });
+    await harness.invoke("browser:import-1password", { accountId, ids });
+    expect(harness.ctx.listOnePasswordItems).toHaveBeenCalledWith(accountId);
+    expect(harness.ctx.importOnePasswordItems).toHaveBeenCalledWith(accountId, ids);
+    await expect(harness.invoke("browser:list-1password", {})).rejects.toThrow("invalid request");
+    await expect(harness.invoke("browser:import-1password", { accountId: "invalid", ids }))
       .rejects.toThrow("invalid request");
   });
 
