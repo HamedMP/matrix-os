@@ -763,6 +763,46 @@ for i in $(seq 1 45); do printf 'line-%s DATABASE_URL=postgresql://matrix:${secr
       .toBe('version=1\n');
   });
 
+  it('keeps the live Matrix directory traversable during prerequisite recertification', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'matrix-host-prerequisites-ownership-'));
+    const matrixDir = join(root, 'opt/matrix');
+    const fakeBin = join(root, 'bin');
+    const calls = join(root, 'calls');
+    await mkdir(matrixDir, { recursive: true });
+    await mkdir(fakeBin);
+    await writeFile(join(fakeBin, 'getent'), '#!/bin/sh\nexit 2\n');
+    await writeFile(join(fakeBin, 'groupadd'), '#!/bin/sh\nprintf "groupadd %s\\n" "$*" >> "$MATRIX_TEST_CALLS"\n');
+    await writeFile(join(fakeBin, 'install'), '#!/bin/sh\nprintf "install %s\\n" "$*" >> "$MATRIX_TEST_CALLS"\n');
+    await writeFile(join(fakeBin, 'chown'), '#!/bin/sh\nprintf "chown %s\\n" "$*" >> "$MATRIX_TEST_CALLS"\n');
+    for (const command of ['getent', 'groupadd', 'install', 'chown']) {
+      await chmod(join(fakeBin, command), 0o755);
+    }
+
+    const source = await readFile(prerequisitesPath, 'utf8');
+    const markerWriter = source.match(/^write_readiness_marker\(\) \{[\s\S]*?^\}/m)?.[0];
+    expect(markerWriter).toBeDefined();
+    await execFileAsync('bash', [
+      '-c',
+      `${markerWriter}\nHOST_PREREQUISITES_VERSION=1\nroot=/\nmatrix_dir="$1"\nmarker="$matrix_dir/HOST_PREREQUISITES_READY"\nwrite_readiness_marker`,
+      'bash',
+      matrixDir,
+    ], {
+      env: {
+        ...process.env,
+        MATRIX_TEST_CALLS: calls,
+        PATH: `${fakeBin}:${process.env.PATH ?? ''}`,
+      },
+    });
+
+    expect(await readFile(calls, 'utf8')).toBe([
+      'groupadd --system matrix',
+      `install -d -o root -g matrix -m 0770 ${matrixDir}`,
+      '',
+    ].join('\n'));
+    expect(await readFile(join(matrixDir, 'HOST_PREREQUISITES_READY'), 'utf8'))
+      .toBe('version=1\n');
+  });
+
   it('functionally certifies the baked AWS CLI before snapshot readiness and validation', async () => {
     const builder = await readFile('distro/customer-vps/golden-snapshot-builder-cloud-init.yaml', 'utf8');
     const validator = await readFile(validatePath, 'utf8');
