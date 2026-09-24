@@ -93,7 +93,7 @@ describe("agent CLI install matrix", () => {
   it("keeps the host-bundle pack installer aligned with npm package names", () => {
     const installer = readFileSync(join(root, "distro/customer-vps/host-bin/matrix-install-tool-pack"), "utf8");
 
-    expect(installer).toContain("@anthropic-ai/claude-code@latest");
+    expect(installer).toContain('"@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}"');
     expect(installer).toContain('"@openai/codex@${CODEX_VERSION}"');
     expect(AGENT_INSTALLS.find((agent) => agent.id === "codex")?.npmPackage)
       .toBe(CODEX_VERIFIED_NPM_PACKAGE);

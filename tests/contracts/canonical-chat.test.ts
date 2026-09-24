@@ -74,6 +74,22 @@ describe("canonical Chat contracts", () => {
       instanceId: "pi_default",
       model: "@other/private-model",
     }).success).toBe(false);
+    expect(CanonicalChatModelSelectionSchema.safeParse({
+      instanceId: "claude_code_default",
+      model: "claude-fable-5[1m]",
+    }).success).toBe(true);
+    expect(CanonicalChatModelSelectionSchema.safeParse({
+      instanceId: "claude_code_default",
+      model: "opus[1m]",
+    }).success).toBe(true);
+    expect(CanonicalChatModelSelectionSchema.safeParse({
+      instanceId: "claude_code_default",
+      model: "opus[2m]",
+    }).success).toBe(false);
+    expect(CanonicalChatModelSelectionSchema.safeParse({
+      instanceId: "claude_code_default",
+      model: "opus[1m]/../private",
+    }).success).toBe(false);
   });
 
   it("parses one complete Chat, Turn, Run, and message without exposing runtime internals", () => {

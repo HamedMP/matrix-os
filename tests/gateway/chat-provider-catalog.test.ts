@@ -1397,9 +1397,9 @@ describe("canonical Chat Provider catalog", () => {
       "sonnet",
     ]);
     expect(claude.models.map((model) => model.displayName)).toEqual([
-      "Claude default",
-      "Claude Opus",
-      "Claude Sonnet",
+      "Default · model chosen by Claude Code",
+      "Opus · current version varies",
+      "Sonnet · current version varies",
     ]);
     expect(claude.models.some((model) => model.id === "provider-default")).toBe(false);
     expect(claude.options).toMatchObject([{

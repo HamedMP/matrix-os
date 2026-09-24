@@ -17,6 +17,7 @@ MATRIX_RUNTIME_DIR="${MATRIX_RUNTIME_DIR:-/opt/matrix/runtime}"
 NODE_PREFIX="${MATRIX_NODE_PREFIX:-$MATRIX_RUNTIME_DIR/node}"
 CODE_SERVER_VERSION="${HOST_BUNDLE_CODE_SERVER_VERSION:-4.116.0}"
 CODEX_VERSION="0.156.1"
+CLAUDE_CODE_VERSION="2.1.280"
 OPENCODE_AI_VERSION="${OPENCODE_AI_VERSION:-latest}"
 PI_CODING_AGENT_VERSION="${PI_CODING_AGENT_VERSION:-latest}"
 CODE_SERVER_DIST="code-server-${CODE_SERVER_VERSION}-linux-amd64"
@@ -178,7 +179,7 @@ finish_agent_install() {
 
 install_claude_code_package() {
   run_npm_install install -g --prefix "$NODE_PREFIX" \
-    @anthropic-ai/claude-code@latest
+    "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}"
 }
 
 install_claude_code() {

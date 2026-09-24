@@ -9,9 +9,9 @@ import { z } from "zod/v4";
 export function claudeFallbackCatalog(): CodingModelCatalogProjection {
   return {
     models: [
-      ["default", "Claude default"],
-      ["opus", "Claude Opus"],
-      ["sonnet", "Claude Sonnet"],
+      ["default", "Default · model chosen by Claude Code"],
+      ["opus", "Opus · current version varies"],
+      ["sonnet", "Sonnet · current version varies"],
     ].map(([id, displayName]) => ({
       id: id!, displayName: displayName!, capabilities: ["reasoning", "tools", "vision"],
       supportsVision: true, supportsToolUse: true,
@@ -34,22 +34,59 @@ const ModelInfoSchema = z.object({
     .pipe(CanonicalModelDescriptorSchema.shape.displayName),
 });
 
+const CLAUDE_VERSIONED_ID = /^claude-(opus|sonnet|haiku|fable)-(\d+)(?:-(?!\d{8}(?:\[1m\])?$)(\d+))?(?:-\d{8})?(\[1m\])?$/;
+const MOVING_ALIASES = new Set(["default", "opus", "sonnet", "haiku", "fable", "best",
+  "opus[1m]", "sonnet[1m]", "haiku[1m]", "fable[1m]", "best[1m]"]);
+
+function versionedClaudeName(id: string): string | null {
+  const match = CLAUDE_VERSIONED_ID.exec(id);
+  if (!match) return null;
+  const family = match[1]!.charAt(0).toUpperCase() + match[1]!.slice(1);
+  return `Claude ${family} ${match[2]}${match[3] ? `.${match[3]}` : ""}${match[4] ? " · 1M context" : ""}`;
+}
+
+function aliasName(id: string, resolvedModel?: string): string {
+  const base = id.replace(/\[1m\]$/, "");
+  const alias = base === "default" ? "Default" : base.charAt(0).toUpperCase() + base.slice(1);
+  const resolved = resolvedModel ? versionedClaudeName(resolvedModel) : null;
+  if (resolved) return `${alias} · currently ${resolved}${id.endsWith("[1m]") && !resolved.endsWith("1M context")
+    ? " · 1M context" : ""}`;
+  return id === "default" ? "Default · model chosen by Claude Code"
+    : `${alias} · current version varies${id.endsWith("[1m]") ? " · 1M context" : ""}`;
+}
+
+function markLastSeen(catalog: CodingModelCatalogProjection): CodingModelCatalogProjection {
+  return { ...catalog, models: catalog.models.map((model) => ({
+    ...model,
+    displayName: MOVING_ALIASES.has(model.id)
+      ? model.displayName.replace(" · currently ", " · last seen ") : model.displayName,
+  })) };
+}
+
 function projectModels(value: unknown): CodingModelCatalogProjection {
   const rows = z.array(ModelInfoSchema).min(1).max(64).parse(value);
   const catalog = claudeFallbackCatalog();
   // Keep legacy aliases/default stable, without claiming that a documented
   // model absent from this runtime's inventory is available on this account.
   for (const row of rows) {
-    if (catalog.models.length === 64) break;
     const id = CanonicalChatModelSelectionSchema.shape.model.safeParse(row.value);
     const resolved = CanonicalChatModelSelectionSchema.shape.model.safeParse(row.resolvedModel);
-    const model = id.success ? id.data : resolved.success ? resolved.data : null;
-    if (!model || catalog.models.some((entry) => entry.id === model)) continue;
+    // Advertise only the exact value the runtime said is selectable. A
+    // resolvedModel may be useful for a label but is not a substitute value.
+    if (!id.success) continue;
+    const model = id.data;
+    const existing = catalog.models.find((entry) => entry.id === model);
+    if (existing) {
+      if (MOVING_ALIASES.has(model)) existing.displayName = aliasName(model,
+        resolved.success ? resolved.data : undefined);
+      continue;
+    }
+    if (catalog.models.length === 64) break;
     catalog.models.push({
       id: model,
-      // A resolved ID is a separate base-model choice, not an advertised [1m]
-      // option. Never strip qualifiers or rewrite an existing selection.
-      displayName: id.success ? row.displayName : model,
+      // Never strip a context qualifier or rewrite an existing selection.
+      displayName: MOVING_ALIASES.has(model) ? aliasName(model, resolved.success ? resolved.data : undefined)
+        : versionedClaudeName(model) ?? row.displayName,
       capabilities: ["reasoning", "tools", "vision"], supportsVision: true, supportsToolUse: true,
     });
   }
@@ -141,7 +178,7 @@ export function createClaudeModelCatalogSource(options: {
         // Metadata/SDK errors may contain owner credentials or native output.
         // Log only the checked category, never raw error messages or objects.
         console.warn("[chat-providers] Claude model discovery unavailable", { category });
-        const value = hit && hit.staleAt > Date.now() ? hit.value : null;
+        const value = hit && hit.staleAt > Date.now() && hit.value ? markLastSeen(hit.value) : null;
         if (contextKey) save({ contextKey, value,
           expiresAt: value ? Math.min(Date.now() + 5_000, hit!.staleAt) : Date.now() + 5_000,
           staleAt: hit?.staleAt ?? 0, retainOnRefresh: hit?.retainOnRefresh ?? false });
