@@ -96,16 +96,20 @@ async function queryRows(home: string, path: string, sql: string): Promise<Recor
 const LOGIN_META_SQL = "SELECT origin_url FROM logins WHERE blacklisted_by_user = 0 LIMIT 10000";
 const COOKIE_META_SQL = "SELECT host_key FROM cookies LIMIT 50000";
 const LOGIN_SQL = "SELECT origin_url, username_value, hex(password_value) AS secret_hex, blacklisted_by_user FROM logins WHERE blacklisted_by_user = 0 LIMIT 10000";
-const COOKIE_SQL = "SELECT host_key, top_frame_site_key, name, value, hex(encrypted_value) AS secret_hex, path, expires_utc, is_secure, is_httponly, is_persistent, samesite, (SELECT value FROM meta WHERE key='version') AS db_version FROM cookies LIMIT 50000";
+
+async function cookieRows(home: string, path: string): Promise<Record<string, unknown>[]> {
+  const columns = new Set((await queryRows(home, path, "PRAGMA table_info(cookies)"))
+    .map((row) => row.name).filter((name): name is string => typeof name === "string"));
+  const tables = await queryRows(home, path, "SELECT name FROM sqlite_master WHERE type='table' AND name='meta' LIMIT 1");
+  const partition = columns.has("top_frame_site_key") ? "top_frame_site_key" : "''";
+  const version = tables.length ? "(SELECT value FROM meta WHERE key='version')" : "0";
+  return queryRows(home, path, `SELECT host_key, ${partition} AS top_frame_site_key, name, value, hex(encrypted_value) AS secret_hex, path, expires_utc, is_secure, is_httponly, is_persistent, samesite, ${version} AS db_version FROM cookies LIMIT 50000`);
+}
 
 function hostFromUrl(value: unknown): string | null {
-  if (typeof value !== "string" || value.length > 2_048) return null;
-  try {
-    const url = new URL(value);
-    return ["http:", "https:"].includes(url.protocol) && !url.username && !url.password ? url.hostname.toLowerCase() : null;
-  } catch {
-    return null;
-  }
+  if (typeof value !== "string" || value.length > 2_048 || !URL.canParse(value)) return null;
+  const url = new URL(value);
+  return ["http:", "https:"].includes(url.protocol) && !url.username && !url.password ? url.hostname.toLowerCase() : null;
 }
 
 function cookieHost(value: unknown): string | null {
@@ -188,22 +192,47 @@ export async function importChromiumSites(options: {
   ]);
   if (!loginPath && !cookiePath) throw new Error("local browser import unavailable");
   const hosts = new Set(options.hosts);
-  const password = await (options.getKeychainPassword ?? getMacKeychainPassword)(selected.browser.service);
   const logins: BrowserLogin[] = [];
   const cookies: BrowserCookie[] = [];
   let skipped = 0;
-  if (loginPath) for (const row of await queryRows(options.home, loginPath, LOGIN_SQL)) {
-    if (!hosts.has(hostFromUrl(row.origin_url) ?? "")) continue;
+  let loginRows: Record<string, unknown>[] = [];
+  let selectedCookieRows: Record<string, unknown>[] = [];
+  let failedDatabases = 0;
+  if (loginPath) {
+    try { loginRows = (await queryRows(options.home, loginPath, LOGIN_SQL))
+      .filter((row) => hosts.has(hostFromUrl(row.origin_url) ?? "")); }
+    catch { failedDatabases++; skipped++; }
+  }
+  if (cookiePath) {
+    try { selectedCookieRows = (await cookieRows(options.home, cookiePath))
+      .filter((row) => hosts.has(cookieHost(row.host_key) ?? "")); }
+    catch { failedDatabases++; skipped++; }
+  }
+  if (failedDatabases === Number(Boolean(loginPath)) + Number(Boolean(cookiePath))) {
+    throw new Error("local browser database unavailable");
+  }
+  const needsKeychain = [...loginRows, ...selectedCookieRows]
+    .some((row) => typeof row.secret_hex === "string" && row.secret_hex.length > 0);
+  let password: string | null = null;
+  if (needsKeychain) {
+    try {
+      password = await (options.getKeychainPassword ?? getMacKeychainPassword)(selected.browser.service);
+    } catch {
+      const hasPlaintextCookie = selectedCookieRows.some((row) => !row.secret_hex && typeof row.value === "string");
+      if (!hasPlaintextCookie) throw new Error("Keychain access was unavailable or declined");
+      console.warn("[browser-import] Keychain unavailable; continuing with selected plaintext cookies");
+    }
+  }
+  for (const row of loginRows) {
     const hex = row.secret_hex;
-    const value = typeof hex === "string" && /^[0-9A-F]*$/.test(hex) && hex.length <= 128 * 1024
+    const value = password !== null && typeof hex === "string" && /^[0-9A-F]*$/.test(hex) && hex.length <= 128 * 1024
       ? decryptChromiumSecret(Buffer.from(hex, "hex"), password) : null;
     const login = value === null ? null : normalizeChromiumLogin(row, value);
     if (login) logins.push(login); else skipped++;
   }
-  if (cookiePath) for (const row of await queryRows(options.home, cookiePath, COOKIE_SQL)) {
-    if (!hosts.has(cookieHost(row.host_key) ?? "")) continue;
+  for (const row of selectedCookieRows) {
     const hex = row.secret_hex;
-    const value = typeof hex === "string" && hex.length > 0 && /^[0-9A-F]+$/.test(hex) && hex.length <= 128 * 1024
+    const value = password !== null && typeof hex === "string" && hex.length > 0 && /^[0-9A-F]+$/.test(hex) && hex.length <= 128 * 1024
       ? (() => {
           const raw = decryptChromiumBytes(Buffer.from(hex, "hex"), password);
           return raw ? decodeChromiumCookieValue(raw, String(row.host_key), Number(row.db_version)) : null;

@@ -54,7 +54,7 @@ export default function BrowserSecretImportView() {
     setNotice(null);
     try {
       const result = await invoke("browser:import-sites", { sourceId, hosts: selectedHosts });
-      setNotice(`Imported ${result.passwords} ${result.passwords === 1 ? "password" : "passwords"} and ${result.cookies} ${result.cookies === 1 ? "cookie" : "cookies"}.${result.skipped ? ` Skipped ${result.skipped} unsupported or expired entries.` : ""}`);
+      setNotice(`Imported ${result.passwords} ${result.passwords === 1 ? "password" : "passwords"} and ${result.cookies} ${result.cookies === 1 ? "cookie" : "cookies"}.${result.skipped ? ` Couldn’t import ${result.skipped} entries.` : ""}`);
       setSelectedHosts([]);
     } catch {
       setError("Couldn’t import sign-ins. Check the macOS Keychain prompt and try again.");
@@ -85,7 +85,7 @@ export default function BrowserSecretImportView() {
     setNotice(null);
     try {
       const result = await invoke("browser:import-1password", { ids: selectedIds });
-      setNotice(`Imported ${result.imported} ${result.imported === 1 ? "login" : "logins"} from 1Password.${result.skipped ? ` Skipped ${result.skipped} unsupported items.` : ""}`);
+      setNotice(`Imported ${result.imported} ${result.imported === 1 ? "login" : "logins"} from 1Password.${result.skipped ? ` Couldn’t import ${result.skipped} items.` : ""}`);
       setSelectedIds([]);
     } catch {
       setError("Couldn’t import the selected 1Password logins. Unlock 1Password and try again.");

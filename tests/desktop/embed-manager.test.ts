@@ -153,6 +153,20 @@ describe("EmbedManager", () => {
     ]);
   });
 
+  it("takes the browser partition from the signed-in account scope", () => {
+    const partitions: string[] = [];
+    const manager = new EmbedManager({
+      allowedOrigins: ["https://gw.test"],
+      getBrowserPartition: () => "persist:browser-account-a",
+      createView: ({ partition, onState }) => {
+        partitions.push(partition);
+        return new FakeView(null, onState);
+      },
+    });
+    manager.open("browser", null, BOUNDS, "https://gw.test");
+    expect(partitions).toEqual(["persist:browser-account-a"]);
+  });
+
   it("uses the route slug for the partition while retaining a nested app identity", () => {
     const created: Array<{ partition: string; slug: string | null; routeSlug: string | null }> = [];
     const manager = new EmbedManager({

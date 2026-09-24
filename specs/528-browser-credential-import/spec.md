@@ -7,16 +7,17 @@ Transfer selected website passwords and cookies from local Chromium-family brows
 ## Ownership and source of truth
 
 - Source browser databases and the 1Password vault are read only. Matrix never modifies them.
-- Matrix Browser cookies live in Electron's `persist:browser` session. That partition is separate from the hosted shell and app partitions.
-- Imported passwords live in `browser-passwords.bin` under Electron `userData`, encrypted through Electron `safeStorage`. No plaintext password file, renderer local storage, gateway upload, or Matrix account sync is involved.
+- Matrix Browser cookies live in an Electron session partition derived from the signed-in Matrix user ID. That partition is separate from other accounts, the hosted shell, and app partitions.
+- Imported passwords live in an account-specific `browser-passwords.bin` under Electron `userData`, encrypted through Electron `safeStorage`. No plaintext password file, renderer local storage, gateway upload, or Matrix account sync is involved.
 - The user can reimport to update an existing origin and username, remove an individual imported password, or export a readable JSON copy to a chosen file. Local browser profile files remain user controlled.
 
 ## Flow
 
 1. Electron Desktop discovers known local browser profiles under the current user's macOS Application Support directory. Only source names and profile names cross IPC.
 2. Selecting a profile reads URL and cookie-domain metadata and shows counts per website. The user selects sites. Secret values are not previewed.
-3. On import, the main process requests the source browser's Safe Storage value from macOS Keychain. The system may prompt for access. The main process decrypts supported Chromium `v10` entries in memory, checks current cookie domain digests, validates each entry, writes passwords into the encrypted local vault, and sets cookies through Electron's browser session API. Expired, partitioned, invalid, or unsupported entries are skipped and counted.
+3. On import, the main process requests the source browser's Safe Storage value from macOS Keychain only if selected rows contain encrypted values. The system may prompt for access. The main process decrypts supported Chromium `v10` entries in memory, checks current cookie domain digests, validates each entry, writes passwords into the encrypted local vault, and sets cookies through Electron's browser session API. Expired, partitioned, invalid, or unsupported entries are skipped and counted.
 4. The 1Password picker invokes the local `op` CLI using desktop app integration. It lists Login metadata, then fetches secret fields only for selected item IDs. Only website, username, and password are imported; OTP fields, passkeys, other categories, and attachments are excluded.
+   Completed 20-item batches are persisted as the import runs; if a later item fails or the overall deadline arrives, completed items remain and the rest are counted as skipped.
 5. While visiting a site, Passwords lists usernames only. A chosen password is filled from the main process into an active Browser view after both main and page context verify the current origin. Password values never cross renderer IPC.
 6. A user can remove one imported password, or explicitly export the encrypted vault contents to a new, owner-only JSON file through a native save dialog. The renderer receives only success or failure.
 
@@ -47,6 +48,8 @@ No HTTP route is added. No external service receives imported data.
 - Encryption unavailable, including Electron's Linux `basic_text` fallback, means refusing to import passwords. The vault uses an exclusive 0600 temporary file and atomic rename. A corrupt vault is never overwritten implicitly.
 - Plaintext export is user initiated and creates a new 0600 file atomically. Existing files are not replaced. Export data remains only on the user's Mac.
 - A password batch is written before cookie setting begins. Electron cookies are flushed after import. Cookie failures are counted as skipped, so a partial cookie transfer is an acceptable and visible state. There is no cross-resource transaction between the encrypted file and Electron's cookie store.
+- A source login or cookie table failure does not discard selected data from the other table. The UI reports the failed table as skipped. Account transitions close existing embeds; credential operations are gated by the current signed-in Matrix user ID.
+- If Keychain access is unavailable for a mixed selection, plaintext cookies can still import; encrypted entries are counted as skipped. A selection with only encrypted entries reports a Keychain error.
 - UI messages are generic. Keychain, CLI, SQLite, and decryption errors must not reveal raw paths, account identifiers, item names, or secret values.
 
 ## Verification

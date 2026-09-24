@@ -32,6 +32,7 @@ type EmbedOriginOptions =
   | { allowedOrigins?: never; getAllowedOrigins: () => string[] };
 
 export type EmbedManagerOptions = {
+  getBrowserPartition?: () => string;
   createView: (opts: {
     partition: string;
     kind: EmbedKind;
@@ -80,6 +81,7 @@ export class EmbedManager {
   private readonly records = new Map<string, EmbedRecord>();
   private readonly createView: EmbedManagerOptions["createView"];
   private readonly getAllowedOrigins: () => string[];
+  private readonly getBrowserPartition: () => string;
   private readonly maxLive: number;
   private tick = 0;
 
@@ -91,6 +93,7 @@ export class EmbedManager {
       throw new Error("EmbedManager requires exactly one allowed origin source");
     }
     this.getAllowedOrigins = dynamicOrigins ?? (() => staticOrigins!);
+    this.getBrowserPartition = options.getBrowserPartition ?? (() => "persist:browser");
     this.maxLive = options.maxLive ?? DEFAULT_MAX_LIVE;
     if (this.maxLive > MAX_TOTAL_EMBEDS) {
       throw new Error(
@@ -127,7 +130,7 @@ export class EmbedManager {
         : kind === "code-editor"
           ? "persist:code-editor"
         : kind === "browser"
-          ? "persist:browser"
+          ? this.getBrowserPartition()
           : this.appPartition(options?.routeSlug ?? slug);
 
     const active = options?.active ?? true;

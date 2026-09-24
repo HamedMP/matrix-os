@@ -23,13 +23,9 @@ function originFromItem(value: Record<string, unknown>): string | null {
   const urls = Array.isArray(value.urls) ? value.urls : [];
   for (const candidate of urls.slice(0, 16)) {
     const href = record(candidate)?.href;
-    if (typeof href !== "string" || href.length > 2_048) continue;
-    try {
-      const url = new URL(href);
-      if (["https:", "http:"].includes(url.protocol) && !url.username && !url.password) return url.origin;
-    } catch {
-      // Another URL on this item may be a usable website.
-    }
+    if (typeof href !== "string" || href.length > 2_048 || !URL.canParse(href)) continue;
+    const url = new URL(href);
+    if (["https:", "http:"].includes(url.protocol) && !url.username && !url.password) return url.origin;
   }
   return null;
 }
@@ -104,13 +100,28 @@ export async function importOnePasswordLogins(
   const allowed = new Map(summaries.map((item) => [item.id, item.origin]));
   const unique = [...new Set(ids)];
   if (unique.some((id) => !allowed.has(id))) throw new Error("invalid 1Password selection");
-  const logins: BrowserLogin[] = [];
+  let pending: BrowserLogin[] = [];
+  let imported = 0;
   for (const id of unique) {
-    signal.throwIfAborted();
-    const detail = await run(["item", "get", id, "--format", "json", "--reveal"], signal);
+    if (signal.aborted) break;
+    let detail: unknown;
+    try {
+      detail = await run(["item", "get", id, "--format", "json", "--reveal"], signal);
+    } catch {
+      if (imported === 0 && pending.length === 0) throw new Error("1Password is unavailable or locked");
+      break;
+    }
     const login = parseOnePasswordLogin(detail);
-    if (login && login.origin === allowed.get(id)) logins.push(login);
+    if (login && login.origin === allowed.get(id)) pending.push(login);
+    if (pending.length >= 20) {
+      await vault.upsertMany(pending);
+      imported += pending.length;
+      pending = [];
+    }
   }
-  if (logins.length > 0) await vault.upsertMany(logins);
-  return { imported: logins.length, skipped: unique.length - logins.length };
+  if (pending.length > 0) {
+    await vault.upsertMany(pending);
+    imported += pending.length;
+  }
+  return { imported, skipped: unique.length - imported };
 }

@@ -9,8 +9,10 @@ import {
   decodeChromiumCookieValue,
   normalizeChromiumCookie,
   normalizeChromiumLogin,
+  type BrowserLogin,
 } from "@desktop/main/browser/chromium-secrets";
-import { createBrowserPasswordVault } from "@desktop/main/browser/password-vault";
+import { createBrowserPasswordVault, type BrowserPasswordVault } from "@desktop/main/browser/password-vault";
+import { browserAccountScope } from "@desktop/main/browser/account-scope";
 import { importOnePasswordLogins, listOnePasswordLogins, parseOnePasswordLogin } from "@desktop/main/browser/one-password";
 import { importChromiumSites, listChromiumSecretSources, previewChromiumSites } from "@desktop/main/browser/import-secrets";
 import { exportBrowserPasswords } from "@desktop/main/browser/password-export";
@@ -32,6 +34,7 @@ describe("Chromium local secret import", () => {
 
   it("decrypts supported v10 values in memory and rejects unknown formats", () => {
     expect(decryptChromiumSecret(encrypted("synthetic password"), safeStoragePassword)).toBe("synthetic password");
+    expect(decryptChromiumSecret(encrypted("synthetic password"), "wrong-key")).toBeNull();
     expect(decryptChromiumSecret(Buffer.from("v20garbage"), safeStoragePassword)).toBeNull();
     expect(decryptChromiumSecret(Buffer.from("v10bad"), safeStoragePassword)).toBeNull();
   });
@@ -70,6 +73,24 @@ describe("Chromium local secret import", () => {
 });
 
 describe("OS-encrypted Matrix Browser password vault", () => {
+  it("isolates browser passwords and cookies by Matrix account", async () => {
+    const alice = browserAccountScope("user-alice");
+    const bob = browserAccountScope("user-bob");
+    expect(alice.partition).not.toBe(bob.partition);
+    expect(alice.vaultDirectory).not.toBe(bob.vaultDirectory);
+    expect(() => browserAccountScope("")).toThrow();
+    const dir = await mkdtemp(join(tmpdir(), "matrix-browser-accounts-"));
+    dirs.push(dir);
+    const safeStorage = {
+      isEncryptionAvailable: () => true,
+      encryptString: (value: string) => Buffer.from(value),
+      decryptString: (value: Buffer) => value.toString(),
+    };
+    const aliceVault = createBrowserPasswordVault({ dir: join(dir, alice.vaultDirectory), safeStorage });
+    const bobVault = createBrowserPasswordVault({ dir: join(dir, bob.vaultDirectory), safeStorage });
+    await aliceVault.upsertMany([{ origin: "https://example.com", username: "alice", password: "synthetic" }]);
+    expect(await bobVault.list()).toEqual([]);
+  });
   it("stores no plaintext, deduplicates a site login, and returns only metadata for listing", async () => {
     const dir = await mkdtemp(join(tmpdir(), "matrix-password-vault-"));
     dirs.push(dir);
@@ -187,9 +208,64 @@ describe("1Password direct import", () => {
     expect(calls.filter((args) => args[1] === "get")).toEqual([["item", "get", "abcdefghijkl", "--format", "json", "--reveal"]]);
     expect(await vault.find("https://example.com", "alice")).toMatchObject({ password: "synthetic-op-secret" });
   });
+
+  it("keeps completed 1Password batches when a later item cannot be fetched", async () => {
+    const ids = Array.from({ length: 21 }, (_, index) => String(index).padStart(12, "0"));
+    const items = ids.map((id) => ({ id, category: "LOGIN", urls: [{ href: `https://${id}.example.com` }] }));
+    const saved: BrowserLogin[] = [];
+    const vault = { upsertMany: vi.fn(async (logins: BrowserLogin[]) => { saved.push(...logins); return logins.length; }) } as unknown as BrowserPasswordVault;
+    const run = async (args: string[]) => {
+      if (args[1] === "list") return items;
+      const id = args[2]!;
+      if (id === ids[20]) throw new Error("synthetic CLI interruption");
+      return { ...items.find((item) => item.id === id), fields: [
+        { id: "username", value: id }, { id: "password", value: "synthetic-secret" },
+      ] };
+    };
+    expect(await importOnePasswordLogins(ids, vault, run)).toEqual({ imported: 20, skipped: 1 });
+    expect(saved).toHaveLength(20);
+  });
 });
 
 describe("selected local browser profile transfer", () => {
+  it("imports plaintext cookies without asking for a Keychain secret", async () => {
+    const home = await mkdtemp(join(tmpdir(), "matrix-source-home-"));
+    dirs.push(home);
+    const profile = join(home, "Library/Application Support/Arc/User Data/Default");
+    await mkdir(profile, { recursive: true });
+    execFileSync("/usr/bin/sqlite3", [join(profile, "Cookies"), `CREATE TABLE cookies (host_key TEXT, name TEXT, value TEXT, encrypted_value BLOB, path TEXT, expires_utc INTEGER, is_secure INTEGER, is_httponly INTEGER, is_persistent INTEGER, samesite INTEGER);
+      INSERT INTO cookies VALUES ('example.com', 'sid', 'plain-session', X'', '/', 0, 1, 1, 0, 1);`]);
+    const keychain = vi.fn(async () => "unused");
+    const setCookie = vi.fn(async () => undefined);
+    const vault = { upsertMany: vi.fn(async () => 0) } as unknown as BrowserPasswordVault;
+    expect(await importChromiumSites({ home, sourceId: "arc:Default", platform: "darwin", hosts: ["example.com"],
+      getKeychainPassword: keychain, vault, setCookie })).toEqual({ passwords: 0, cookies: 1, skipped: 0 });
+    expect(keychain).not.toHaveBeenCalled();
+    expect(setCookie).toHaveBeenCalledWith(expect.objectContaining({ value: "plain-session" }));
+  });
+
+  it("imports passwords when an older cookie table has no partition column", async () => {
+    const home = await mkdtemp(join(tmpdir(), "matrix-source-home-"));
+    dirs.push(home);
+    const profile = join(home, "Library/Application Support/Arc/User Data/Default");
+    await mkdir(profile, { recursive: true });
+    const key = pbkdf2Sync("synthetic-keychain", "saltysalt", 1003, 16, "sha1");
+    const cipher = createCipheriv("aes-128-cbc", key, Buffer.alloc(16, 0x20));
+    const secretHex = Buffer.concat([Buffer.from("v10"), cipher.update("synthetic-password"), cipher.final()]).toString("hex");
+    execFileSync("/usr/bin/sqlite3", [join(profile, "Login Data"), `CREATE TABLE logins (origin_url TEXT, username_value TEXT, password_value BLOB, blacklisted_by_user INTEGER);
+      INSERT INTO logins VALUES ('https://example.com', 'alice', X'${secretHex}', 0);`]);
+    execFileSync("/usr/bin/sqlite3", [join(profile, "Cookies"), `CREATE TABLE cookies (host_key TEXT, name TEXT, value TEXT, encrypted_value BLOB, path TEXT, expires_utc INTEGER, is_secure INTEGER, is_httponly INTEGER, is_persistent INTEGER, samesite INTEGER);
+      INSERT INTO cookies VALUES ('example.com', 'sid', 'plain-session', X'', '/', 0, 1, 1, 0, 1);`]);
+    const logins: BrowserLogin[] = [];
+    const vault = { upsertMany: vi.fn(async (items: BrowserLogin[]) => { logins.push(...items); return items.length; }) } as unknown as BrowserPasswordVault;
+    const setCookie = vi.fn(async () => undefined);
+    expect(await importChromiumSites({ home, sourceId: "arc:Default", platform: "darwin", hosts: ["example.com"],
+      getKeychainPassword: async () => "synthetic-keychain", vault, setCookie })).toEqual({ passwords: 1, cookies: 1, skipped: 0 });
+    expect(logins).toEqual([expect.objectContaining({ password: "synthetic-password" })]);
+    expect(await importChromiumSites({ home, sourceId: "arc:Default", platform: "darwin", hosts: ["example.com"],
+      getKeychainPassword: async () => { throw new Error("declined"); }, vault, setCookie })).toEqual({ passwords: 0, cookies: 1, skipped: 1 });
+  });
+
   it("discovers Arc, previews only site metadata, then transfers selected secrets", async () => {
     const home = await mkdtemp(join(tmpdir(), "matrix-source-home-"));
     const vaultDir = await mkdtemp(join(tmpdir(), "matrix-target-vault-"));

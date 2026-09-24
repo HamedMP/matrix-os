@@ -32,8 +32,10 @@ export function decryptChromiumBytes(blob: Buffer, keychainPassword: string): Bu
     const key = pbkdf2Sync(keychainPassword, "saltysalt", 1003, 16, "sha1");
     const decipher = createDecipheriv("aes-128-cbc", key, Buffer.alloc(16, 0x20));
     return Buffer.concat([decipher.update(blob.subarray(3)), decipher.final()]);
-  } catch {
-    return null;
+  } catch (error: unknown) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ERR_OSSL_BAD_DECRYPT" || code === "ERR_OSSL_WRONG_FINAL_BLOCK_LENGTH") return null;
+    throw error;
   }
 }
 
@@ -46,14 +48,10 @@ export function decodeChromiumCookieValue(value: Buffer, hostKey: string, databa
 }
 
 function webOrigin(raw: unknown): string | null {
-  if (typeof raw !== "string" || raw.length > 2_048) return null;
-  try {
-    const url = new URL(raw);
-    if (!["http:", "https:"].includes(url.protocol) || url.username || url.password) return null;
-    return url.origin;
-  } catch {
-    return null;
-  }
+  if (typeof raw !== "string" || raw.length > 2_048 || !URL.canParse(raw)) return null;
+  const url = new URL(raw);
+  if (!["http:", "https:"].includes(url.protocol) || url.username || url.password) return null;
+  return url.origin;
 }
 
 export function normalizeChromiumLogin(row: Record<string, unknown>, password: string): BrowserLogin | null {

@@ -34,6 +34,7 @@ import type { BrowserLogin } from "../browser/chromium-secrets";
 export type EmbedState = "loading" | "ready" | "auth-required" | "failed";
 
 interface EmbedServiceDeps {
+  getBrowserPartition?: () => string;
   getWindow: () => BaseWindow | null;
   getGatewayOrigin: () => string;
   getToken: () => string | null;
@@ -96,6 +97,7 @@ export class EmbedService {
     this.manager = new EmbedManager({
       maxLive: 3,
       getAllowedOrigins: () => [this.deps.getGatewayOrigin()],
+      ...(this.deps.getBrowserPartition ? { getBrowserPartition: this.deps.getBrowserPartition } : {}),
       createView: ({
         partition,
         kind,

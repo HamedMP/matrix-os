@@ -21,12 +21,9 @@ function validLogin(value: unknown): value is BrowserLogin {
   const item = value as Partial<BrowserLogin>;
   if (typeof item.origin !== "string" || typeof item.username !== "string" || typeof item.password !== "string" ||
     !item.username || item.username.length > 512 || !item.password || item.password.length > 64 * 1024) return false;
-  try {
-    const url = new URL(item.origin);
-    return ["http:", "https:"].includes(url.protocol) && url.origin === item.origin && !url.username && !url.password;
-  } catch {
-    return false;
-  }
+  if (!URL.canParse(item.origin)) return false;
+  const url = new URL(item.origin);
+  return ["http:", "https:"].includes(url.protocol) && url.origin === item.origin && !url.username && !url.password;
 }
 
 /** A local, OS-encrypted browser vault. Passwords never enter renderer IPC. */
