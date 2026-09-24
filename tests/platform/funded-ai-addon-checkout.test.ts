@@ -127,6 +127,18 @@ describe("funded AI add-on checkout", () => {
     expect(after).toEqual(before);
   });
 
+  it.each([
+    { frozen: true, debt: 0 },
+    { frozen: false, debt: 1_000_000 },
+  ])("refuses new paid checkout for a restricted funded runtime (%j)", async ({ frozen, debt }) => {
+    await db.executor.insertInto("ai_funded_credit_restrictions").values({
+      machine_id: identity.machineId, owner_id: identity.ownerId, runtime_slot: identity.runtimeSlot,
+      debt_microusd: debt, frozen, updated_at: "2026-08-31T10:00:00.000Z",
+    }).execute();
+    expect((await createCheckout()).status).toBe(503);
+    expect(stripe.createAiCreditCheckoutSession).not.toHaveBeenCalled();
+  });
+
   it("loads a complete, bounded, server-owned package catalog or disables checkout", () => {
     expect(loadAiCreditCheckoutConfig(checkoutEnv)).toEqual({
       enabled: true,

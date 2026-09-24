@@ -11,6 +11,7 @@ type CheckoutRow = {
   credit_balance_microusd: unknown; promotional_balance_microusd: unknown; addon_balance_microusd: unknown;
   reserved_microusd: unknown; funding_shortfall_microusd: unknown; month_period_start: string;
   month_spent_microusd: unknown; month_reserved_microusd: unknown;
+  restriction_debt_microusd: unknown | null; restriction_frozen: boolean | null;
 };
 
 /** Checkout reads current owner/policy/budget without admission's balancing
@@ -42,20 +43,27 @@ export async function readCheckoutFundingSnapshot(input: {
         global.revision as global_revision,
         balance.credit_balance_microusd, balance.promotional_balance_microusd,
         balance.addon_balance_microusd, balance.reserved_microusd, balance.funding_shortfall_microusd,
-        balance.month_period_start, balance.month_spent_microusd, balance.month_reserved_microusd
+        balance.month_period_start, balance.month_spent_microusd, balance.month_reserved_microusd,
+        restriction.debt_microusd as restriction_debt_microusd,
+        restriction.frozen as restriction_frozen
       from user_machines as machine
       join ai_funded_runtime_policies as runtime on runtime.machine_id = machine.machine_id
       join ai_funded_runtime_balances as balance on balance.machine_id = runtime.machine_id
         and balance.owner_id = runtime.owner_id and balance.runtime_slot = runtime.runtime_slot
+      left join ai_funded_credit_restrictions as restriction on restriction.machine_id = runtime.machine_id
+        and restriction.owner_id = runtime.owner_id and restriction.runtime_slot = runtime.runtime_slot
       join ai_funded_global_policy as global on global.policy_id = 'default'
       where machine.machine_id = ${identity.machineId}
     `.execute(trx.executor);
     const row = result.rows[0];
-    if (!row || row.clerk_user_id !== identity.ownerId || row.machine_runtime_slot !== identity.runtimeSlot
+      if (!row || row.clerk_user_id !== identity.ownerId || row.machine_runtime_slot !== identity.runtimeSlot
       || row.status !== "running" || row.activation_state !== "authorized" || row.deleted_at !== null
       || row.owner_id !== identity.ownerId || row.policy_runtime_slot !== identity.runtimeSlot) {
-      throw new AiFundedPolicyError("identity_mismatch");
-    }
+        throw new AiFundedPolicyError("identity_mismatch");
+      }
+      if (row.restriction_frozen === true || exactInteger(row.restriction_debt_microusd ?? 0) > 0) {
+        throw new AiFundedPolicyError("access_disabled");
+      }
     const monthlyBudgetMicrousd = exactInteger(row.monthly_budget_microusd);
     const enabled = row.global_enabled && row.runtime_enabled
       && (row.expires_at === null || Date.parse(row.expires_at) > checked.getTime());
