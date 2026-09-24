@@ -4,6 +4,7 @@ import type { Context, Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { installPostHogHonoErrorTracking } from "@matrix-os/observability";
 import { registerCustomMcpGatewayRoutes } from "../integrations/custom-mcp/gateway-routes.js";
+import { resolveCustomMcpRuntimeRouting } from "../integrations/custom-mcp/preview-routing.js";
 import { httpRequestDuration, httpRequestsTotal, metricsRegistry, normalizePath } from "../metrics.js";
 import { registerAppRuntimeRoutes } from "./app-runtime-routes.js";
 
@@ -66,16 +67,22 @@ export function registerDeferredRuntimeRoutes(options: DeferredRuntimeRouteOptio
     });
     console.log("[platform-db] Integration routes proxied via platform internal API");
   }
-  registerCustomMcpGatewayRoutes(app, {
-    homePath,
+  const customMcpRouting = resolveCustomMcpRuntimeRouting(process.env, {
+    internalPlatformUrl,
+    internalPlatformToken,
     clerkUserId: process.env.MATRIX_CLERK_USER_ID ?? process.env.MATRIX_USER_ID,
     projectionToken: process.env.UPGRADE_TOKEN,
-    ...(internalPlatformUrl && internalHandle && internalPlatformToken
+  });
+  registerCustomMcpGatewayRoutes(app, {
+    homePath,
+    clerkUserId: customMcpRouting.clerkUserId,
+    projectionToken: customMcpRouting.projectionToken,
+    ...(customMcpRouting.internalPlatformUrl && internalHandle && customMcpRouting.internalPlatformToken
       ? {
           platformProxy: {
-            internalPlatformUrl,
+            internalPlatformUrl: customMcpRouting.internalPlatformUrl,
             handle: internalHandle,
-            token: internalPlatformToken,
+            token: customMcpRouting.internalPlatformToken,
             request: (
               context: Context,
               targetBase: string,
