@@ -23,6 +23,8 @@ describe("shared provider artwork URLs", () => {
     const expected = {
       claude: "claude-code.png",
       codex: "codex.png",
+      hermes: "hermes-agent.png",
+      openclaw: "openclaw.svg",
       opencode: "opencode-white.png",
       pi: "pi-coding-agent.png",
     } as const;

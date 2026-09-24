@@ -5,15 +5,8 @@ import { CODING_AGENT_ARTWORK, codingAgentArtworkSrc } from "../coding-agent-art
 
 /** The same shipped artwork and backgrounds used by both Terminal menus. */
 export function HarnessIcon({ harness }: { harness: ProviderHarnessKind }) {
-  if (harness === "claude" || harness === "codex" || harness === "opencode" || harness === "pi") {
-    const logo = CODING_AGENT_ARTWORK[harness];
-    return <span className="matrix-ap-agent-logo" style={{ background: logo.background }} aria-hidden="true"><img src={codingAgentArtworkSrc(logo.src)} alt="" width="20" height="20" draggable={false} loading="eager" /></span>;
-  }
-  const paths = {
-    hermes: "M3 6h18l-6 6h6l-9 9 2-8H8l2-4H3z",
-    openclaw: "M7 3L3 7l4 5h10l4-5-4-4M7 12v5l5 4 5-4v-5M12 12v9",
-  };
-  return <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={paths[harness]} /></svg>;
+  const logo = CODING_AGENT_ARTWORK[harness];
+  return <span className="matrix-ap-agent-logo" style={{ background: logo.background }} aria-hidden="true"><img src={codingAgentArtworkSrc(logo.src)} alt="" width="20" height="20" draggable={false} loading="eager" /></span>;
 }
 
 function rowStatus(harness: ProviderHarnessInstance, source: ProviderAccessSource | undefined): string {
