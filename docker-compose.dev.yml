@@ -47,14 +47,28 @@ services:
       timeout: 5s
       start_period: 10s
 
-  minio-init:
+  minio-alias:
     image: docker.io/pgsty/mc@sha256:cfc83108c3abb371f8fb84d99c1fdc88f8c237e022409b0081fb7c0a3be634dd
     depends_on:
       minio:
         condition: service_healthy
     environment:
-      MC_HOST_local: http://matrixos:matrixos123@minio:9000
-    command: mb local/matrixos-sync --ignore-existing
+      MC_CONFIG_DIR: /mc-config
+    volumes:
+      - minio-mc-config:/mc-config
+    command: ["alias", "set", "local", "http://minio:9000", "matrixos", "matrixos123"]
+    restart: "no"
+
+  minio-init:
+    image: docker.io/pgsty/mc@sha256:cfc83108c3abb371f8fb84d99c1fdc88f8c237e022409b0081fb7c0a3be634dd
+    depends_on:
+      minio-alias:
+        condition: service_completed_successfully
+    environment:
+      MC_CONFIG_DIR: /mc-config
+    volumes:
+      - minio-mc-config:/mc-config
+    command: ["mb", "local/matrixos-sync", "--ignore-existing"]
     restart: "no"
 
   dev:
@@ -63,6 +77,8 @@ services:
         condition: service_healthy
       minio:
         condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
     build:
       context: .
       dockerfile: Dockerfile.dev
@@ -404,6 +420,7 @@ services:
 volumes:
   pgdata:
   minio-data:
+  minio-mc-config:
   dev-node-modules:
   dev-home:
   ai-auth:

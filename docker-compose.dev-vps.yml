@@ -40,14 +40,28 @@ services:
       timeout: 5s
       start_period: 10s
 
-  minio-init:
+  minio-alias:
     image: docker.io/pgsty/mc@sha256:cfc83108c3abb371f8fb84d99c1fdc88f8c237e022409b0081fb7c0a3be634dd
     depends_on:
       minio:
         condition: service_healthy
     environment:
-      MC_HOST_local: http://${DEV_VPS_MINIO_ROOT_USER:-matrixos}:${DEV_VPS_MINIO_ROOT_PASSWORD:-matrixos123}@minio:9000
-    command: mb local/${DEV_VPS_S3_BUCKET:-matrixos-sync} --ignore-existing
+      MC_CONFIG_DIR: /mc-config
+    volumes:
+      - dev-vps-minio-mc-config:/mc-config
+    command: ["alias", "set", "local", "http://minio:9000", "${DEV_VPS_MINIO_ROOT_USER:-matrixos}", "${DEV_VPS_MINIO_ROOT_PASSWORD:-matrixos123}"]
+    restart: "no"
+
+  minio-init:
+    image: docker.io/pgsty/mc@sha256:cfc83108c3abb371f8fb84d99c1fdc88f8c237e022409b0081fb7c0a3be634dd
+    depends_on:
+      minio-alias:
+        condition: service_completed_successfully
+    environment:
+      MC_CONFIG_DIR: /mc-config
+    volumes:
+      - dev-vps-minio-mc-config:/mc-config
+    command: ["mb", "local/${DEV_VPS_S3_BUCKET:-matrixos-sync}", "--ignore-existing"]
     restart: "no"
 
   dev:
@@ -57,6 +71,8 @@ services:
         condition: service_healthy
       minio:
         condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
     build:
       context: .
       dockerfile: Dockerfile.dev
@@ -141,6 +157,7 @@ services:
 volumes:
   dev-vps-pgdata:
   dev-vps-minio-data:
+  dev-vps-minio-mc-config:
   dev-vps-node-modules:
   dev-vps-home:
   dev-vps-ai-auth:
