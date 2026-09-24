@@ -447,6 +447,11 @@ function boundedRequestStream(
 ): ReadableStream<Uint8Array> {
   const reader = source.getReader();
   let size = 0;
+  // `onSettled` is called from inside the try, so a callback that throws would be re-entered by
+  // the catch below and announce the end twice. One settle per body is structural here rather
+  // than a property of whether the callback throws.
+  let settled = false;
+  const settle = () => { if (settled) return; settled = true; onSettled(); };
   return new ReadableStream<Uint8Array>({
     async pull(controller) {
       try {
@@ -454,7 +459,7 @@ function boundedRequestStream(
         if (chunk.done) {
           controller.close();
           reader.releaseLock();
-          onSettled();
+          settle();
           return;
         }
         size += chunk.value.byteLength;
@@ -463,19 +468,19 @@ function boundedRequestStream(
           onOverflow();
           await reader.cancel();
           controller.error(new Error("Collaboration request exceeds safe limits"));
-          onSettled();
+          settle();
           return;
         }
         controller.enqueue(chunk.value);
       } catch (error: unknown) {
         console.warn("[collaboration-relay] request stream failed", error instanceof Error ? error.name : "UnknownError");
         controller.error(new Error("Collaboration unavailable"));
-        onSettled();
+        settle();
       }
     },
     async cancel(reason) {
       await reader.cancel(reason);
-      onSettled();
+      settle();
     },
   });
 }
@@ -499,6 +504,12 @@ async function settleWithin(settled: Promise<void>, timeoutMs: number): Promise<
 function boundedStream(source: ReadableStream<Uint8Array>, maxBytes: number, onBytes: (bytes: number) => void, onDone: () => void): ReadableStream<Uint8Array> {
   const reader = source.getReader();
   let size = 0;
+  // `onDone` emits the request's one metadata event. It sits inside the try, so a throwing
+  // metadata sink was re-entered by the catch and the request was counted twice -- and
+  // `controller.error` was called on an already-closed controller. One event per request is now
+  // structural, not a property of whether the sink throws.
+  let done = false;
+  const finishOnce = () => { if (done) return; done = true; onDone(); };
   return new ReadableStream<Uint8Array>({
     async pull(controller) {
       try {
@@ -506,7 +517,7 @@ function boundedStream(source: ReadableStream<Uint8Array>, maxBytes: number, onB
         if (chunk.done) {
           controller.close();
           reader.releaseLock();
-          onDone();
+          finishOnce();
           return;
         }
         size += chunk.value.byteLength;
@@ -514,19 +525,19 @@ function boundedStream(source: ReadableStream<Uint8Array>, maxBytes: number, onB
         if (size > maxBytes) {
           await reader.cancel();
           controller.error(new Error("Collaboration response exceeds safe limits"));
-          onDone();
+          finishOnce();
           return;
         }
         controller.enqueue(chunk.value);
       } catch (error: unknown) {
         console.warn("[collaboration-relay] response stream failed", error instanceof Error ? error.name : "UnknownError");
         controller.error(new Error("Collaboration unavailable"));
-        onDone();
+        finishOnce();
       }
     },
     async cancel(reason) {
       await reader.cancel(reason);
-      onDone();
+      finishOnce();
     },
   });
 }
