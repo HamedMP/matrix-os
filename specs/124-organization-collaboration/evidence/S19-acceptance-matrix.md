@@ -59,7 +59,7 @@ under which the run's log and JSON are stored.
 | 21 | Ownership | NEVER RUN | — | Deferred from V1 (S14); no implementation claimed | — |
 | 22 | Transfer | NEVER RUN | — | Deferred from V1 (S13); no implementation claimed | — |
 | 23 | Cutover | AUTOMATED-ONLY | **Decided 2026-09-24 on the replayed ancestry: PASS.** Was 25/30 on stale ancestry; all five failures were ancestry, now green | Operator dry-run on a real host with old clients, offline homes, ambiguous handles and a real backup was never performed. The earlier cap on this row is **withdrawn** — #1864 merged, so the retired-V1-paths clause is satisfied. The cutover recovery qualification below still applies | `20-cutover` |
-| 24 | Surfaces | AUTOMATED-ONLY, **with one surface known broken** | PASS for the five shell suites only, 15/15 in 17s, 5 files | Authenticated Web Canvas, Web Desktop and Electron Desktop owner/member/outsider parity; the four S15 sharing surfaces have no rendered capture at all; `bun run build:shell:production` and `bun run build:desktop` were **not re-run in this session** — both ran and passed during S15 (`S15-receipt.md:35`), which is a build check and not an interactive surface journey. **Native Mobile is not merely unevidenced — its shared Chat and terminal are known not to work**, so quickstart line 53 is failed. See the correction below. | `21-surfaces` |
+| 24 | Surfaces | AUTOMATED-ONLY, **with one surface known broken** | **PASS, 69/69 across 9 named suites** (re-measured 2026-09-24; see "What row 24's suites actually cover"). Only one is surface-specific; the other eight are not surface-partitioned | Authenticated Web Canvas, Web Desktop and Electron Desktop owner/member/outsider parity; the four S15 sharing surfaces have no rendered capture at all; `bun run build:shell:production` and `bun run build:desktop` were **not re-run in this session** — both ran and passed during S15 (`S15-receipt.md:35`), which is a build check and not an interactive surface journey. **Native Mobile is not merely unevidenced — its shared Chat and terminal are known not to work**, so quickstart line 53 is failed. See the correction below. | `21-surfaces` |
 | 25 | Scale | AUTOMATED-ONLY | PASS for the in-process profile only, 4/4 in 2s, 1 file | Real bandwidth, egress cost and a two-host CPU/memory/network profile; the numbers here are deterministic synthetic byte counts | `22-scale` |
 | 26 | Matrix groups | NEVER RUN | — | Deferred from V1 (S16); no implementation claimed | — |
 
@@ -254,6 +254,49 @@ spec already froze in S02, after which retiring a route breaks the **build** in 
 than returning 404 at runtime — the same lesson the atomicity class produced, that enforcement beats
 documentation. It also makes the caller inventory partly automatic: the compiler enumerates the
 callers.
+
+## What row 24's suites actually cover
+
+Added 2026-09-24, after Greptile flagged that "the five shell suites" names no surface.
+`AGENTS.md` requires evidence to name Web Canvas, Web Desktop, Electron Desktop, Web Mobile or
+Native Mobile, and "shell suites" is exactly the ambiguity that rule exists to prevent — most costly
+on this row, because row 24 is where Native Mobile is recorded as known broken, and a reader who
+cannot tell which surfaces were covered cannot tell what that claim is scoped against.
+
+**The original five could not be reconstructed.** The file list lived in a job scratch directory that
+no longer exists, so the label could not be expanded into its constituents. Rather than guess five
+filenames, the row is re-measured against an explicitly named set, run on this branch at
+`0aaea34ef`: **9 files, 69/69, exit 0.**
+
+| Suite | Surface it evidences |
+| --- | --- |
+| `tests/shell/web-desktop-surface.test.tsx` | **Web Desktop** — the only surface-specific suite; it renders `WebDesktopSurface` directly |
+| `tests/shell/collaboration-organization.test.tsx` | Not surface-partitioned |
+| `tests/shell/shared-chat-app-integration.test.tsx` | Not surface-partitioned |
+| `tests/shell/shared-chat-deep-link.test.tsx` | Not surface-partitioned |
+| `tests/shell/shared-chat-route-sync.test.tsx` | Not surface-partitioned |
+| `tests/shell/shared-with-me-nav.test.tsx` | Not surface-partitioned |
+| `tests/ui/chat-collaboration-sharing.test.tsx` | Not surface-partitioned |
+| `tests/ui/collaboration-project-sharing.test.tsx` | Not surface-partitioned |
+| `tests/ui/collaboration-ready-to-work.test.tsx` | Not surface-partitioned |
+
+**"Not surface-partitioned" is the honest label, not a hedge.** Those eight mount shared components
+and stores that Web Canvas, Web Desktop and Electron Desktop all consume, and none of them asserts
+anything per-surface — no canvas or Electron reference appears in any of them. **So they are evidence
+about shared code, not about any surface's rendering.** Stretching a surface name over them would
+turn one green run into three surface claims it cannot support, which is the same arithmetic the
+seven corrected `PASS` rows were about.
+
+That is also why Native Mobile's known-broken status on this row is **not** scoped by these suites.
+It rests on platform-edge behaviour — `platform-websocket-upgrade.ts` destroying every
+`/ws/collaboration/` upgrade that `parseRelaySocketPath` rejects — which no shell or UI suite
+observes. One surface evidenced, three surfaces' shared code exercised, one surface known broken by a
+mechanism none of these tests can see.
+
+**The label was the defect.** "Five shell suites" recorded a count and a vague noun instead of its
+constituents, and by the time anyone asked which five, the answer was gone. Evidence has to name what
+it ran, not how many things it ran, or it cannot be re-derived — the same failure as a bare line
+number naming a position instead of a claim.
 
 ## Shared-terminal evidence measured against three since-fixed P1 defects
 
