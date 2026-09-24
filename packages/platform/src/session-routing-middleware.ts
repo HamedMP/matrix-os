@@ -417,7 +417,9 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
       reqPath === '/api/integrations' || reqPath.startsWith('/api/integrations/');
     const isCustomMcpPath =
       reqPath === '/api/mcp-servers' || reqPath.startsWith('/api/mcp-servers/');
-    if (isAppDomain && isPublicIntegrationPath) {
+    const isPublicCustomMcpCallback =
+      c.req.method === 'GET' && reqPath === '/api/mcp-servers/oauth/callback';
+    if (isAppDomain && (isPublicIntegrationPath || isPublicCustomMcpCallback)) {
       return next();
     }
     if (isAppDomain && reqPath === '/voice/webhook/twilio') {

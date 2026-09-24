@@ -411,9 +411,11 @@ jobs:
     name: Unit Tests (${{ matrix.shard }}/4)
     needs: [changes, patterns, sync-client]
     runs-on: ubuntu-latest
-    # Shard 4 passed all tests at ~15 minutes including setup; allow cleanup
-    # and runner variance without cancelling an otherwise successful shard.
-    timeout-minutes: 20
+    # Shard 4 has grown past the previous 20-minute ceiling: run 35911423904 was
+    # cancelled at 20m18s with no failing assertion and no summary line, which reads
+    # as a product failure but is not one. Raise rather than let a passing shard be
+    # reported as red; split the shards if this approaches the new ceiling too.
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:

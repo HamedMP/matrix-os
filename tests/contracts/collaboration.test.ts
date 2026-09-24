@@ -23,6 +23,7 @@ import {
   CollaborationMemberPatchRequestSchema,
   CollaborationRoleSchema,
   CollaborationScopeSchema,
+  CollaborationScopeKindSchema,
   CollaborationScopePreflightRequestSchema,
   CollaborationTerminalActionSchema,
   CollaborationTerminalFrameSchema,
@@ -181,6 +182,30 @@ describe("collaboration contracts", () => {
       kind: "document",
       resourceId: "private-file",
     }).success).toBe(false);
+  });
+
+  it("admits every scope kind the home can create, catalog kinds included", () => {
+    for (const kind of ["chat", "terminal", "project"]) {
+      expect(CollaborationScopePreflightRequestSchema.safeParse({
+        kind, resourceId: "resource_release", organizationId: "org_matrix_team",
+      }).success).toBe(true);
+    }
+    // A catalog kind now has its own creation path through the standalone
+    // resource scope service, which is what binds its id to one catalog entry.
+    for (const kind of ["file", "folder", "app"]) {
+      expect(CollaborationScopePreflightRequestSchema.safeParse({
+        kind, resourceId: "70000000-0000-4000-8000-0000000000a1", organizationId: "org_matrix_team",
+      }).success).toBe(true);
+      expect(CollaborationCreateScopeRequestSchema.safeParse({
+        kind,
+        resourceId: "70000000-0000-4000-8000-0000000000a1",
+        organizationId: "org_matrix_team",
+        clientRequestId: requestId,
+        expectedRevision: "0",
+        confirmationToken: "a".repeat(64),
+      }).success).toBe(true);
+      expect(CollaborationScopeKindSchema.safeParse(kind).success).toBe(true);
+    }
   });
 
   it("keeps user state actor-local and rejects actor overrides", () => {
@@ -538,6 +563,18 @@ describe("collaboration contracts", () => {
       actor: { actorId: "user_editor", displayName: "Ada" },
       parts: [{ type: "text", text: "Ship it" }], createdAt: now,
     })).toMatchObject({ actor: { displayName: "Ada" }, purpose: "discussion" });
+  });
+
+  it("requires an exact grant pointer for an unopened organization share", () => {
+    const pending = {
+      scopeId, runtimeId: "runtime_owner", ownerId: "user_owner", kind: "chat",
+      authorityGeneration: 1, status: "organization_pending", organizationId: "org_team",
+      grantId: "70000000-0000-4000-8000-000000000001",
+    };
+    expect(CollaborationDiscoveryResponseSchema.parse({ items: [pending] })).toMatchObject({ items: [pending] });
+    expect(() => CollaborationDiscoveryResponseSchema.parse({ items: [{
+      ...pending, grantId: undefined,
+    }] })).toThrow();
   });
 
   it("keeps shared AI admission and control actor-free and scope bounded", () => {

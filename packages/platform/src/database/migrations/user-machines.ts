@@ -9,6 +9,7 @@ export async function migrateUserMachines(db: PlatformMigrationExecutor): Promis
       clerk_user_id TEXT NOT NULL,
       handle TEXT NOT NULL,
       runtime_slot TEXT NOT NULL DEFAULT 'primary',
+      runtime_token_epoch INTEGER NOT NULL DEFAULT 1 CHECK (runtime_token_epoch >= 1),
       provisioning_class TEXT NOT NULL DEFAULT 'customer',
       access_clerk_user_ids TEXT[] NOT NULL DEFAULT '{}',
       developer_tools TEXT NOT NULL DEFAULT '["codex","claude-code","opencode","pi"]',
@@ -43,6 +44,7 @@ export async function migrateUserMachines(db: PlatformMigrationExecutor): Promis
     )
   `.execute(db);
   await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS runtime_slot TEXT NOT NULL DEFAULT 'primary'`.execute(db);
+  await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS runtime_token_epoch INTEGER NOT NULL DEFAULT 1 CHECK (runtime_token_epoch >= 1)`.execute(db);
   await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS provisioning_class TEXT NOT NULL DEFAULT 'customer'`.execute(db);
   await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS access_clerk_user_ids TEXT[] NOT NULL DEFAULT '{}'`.execute(db);
   await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS developer_tools TEXT NOT NULL DEFAULT '["codex","claude-code","opencode","pi"]'`.execute(db);

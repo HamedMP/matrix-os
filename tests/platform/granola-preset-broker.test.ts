@@ -42,6 +42,8 @@ describe("Granola preset broker", () => {
       "get_account",
     ]);
     await expect(broker.listAvailableActions("user-1", "other-service")).resolves.toBeNull();
+    await expect(broker.listAvailableActionParams("user-1", "granola"))
+      .resolves.toEqual({ list_notes: [] });
   });
 
   it("fails closed while a disabled preset cannot be activated", async () => {

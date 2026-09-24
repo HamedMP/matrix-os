@@ -145,13 +145,23 @@ describe("canonical shell Chat client", () => {
 
   it("keeps attachment-only messages without synthesizing a duplicate text bubble", () => {
     const projected = projectCanonicalMessages([{
-      id: "msg_image", chatId: "chat_shell_test", seq: 1, role: "user", state: "committed",
-      parts: [{ type: "attachment_reference", attachmentId: "image", kind: "image", label: "image.png", ownerReference: "temporary/image.png" }],
+      id: "msg_image", chatId: "chat_shell_test", seq: 1, role: "assistant", state: "committed",
+      parts: [{
+        type: "attachment_reference", attachmentId: "image", kind: "image", label: "image.png",
+        ownerReference: "temporary/image.png", resource: { kind: "home", path: "temporary/image.png" },
+      }],
       createdAt: "2026-08-31T00:00:00.000Z",
     }]);
     expect(projected).toHaveLength(1);
     expect(projected[0]?.content).toBe("");
-    expect(projected[0]?.attachments).toEqual([expect.objectContaining({ label: "image.png", kind: "image" })]);
+    expect(projected[0]).toMatchObject({
+      role: "assistant",
+      attachments: [{
+        label: "image.png",
+        kind: "image",
+        src: "/api/file-previews/content?kind=home&path=temporary%2Fimage.png",
+      }],
+    });
   });
 
   it("projects pending approvals and submits a bounded canonical decision", async () => {

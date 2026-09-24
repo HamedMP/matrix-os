@@ -1,5 +1,5 @@
 import { CanonicalUpdateChatReadStateRequestSchema, type CanonicalUpdateChatReadStateRequest } from "@matrix-os/contracts";
-import { createChatAgentClient, type ChatAgentClient } from "@matrix-os/ui";
+import { createChatAgentClient, filePreviewContentUrl, type ChatAgentClient } from "@matrix-os/ui";
 import { chatMessageVersionUrl, chatReadStateVersionUrl } from "@matrix-os/contracts";
 import {
   CanonicalChatQueueAdmissionResponseSchema, CanonicalChatQueueCancellationResponseSchema,
@@ -360,7 +360,19 @@ export function projectCanonicalMessages(messages: CanonicalChatMessage[]): Chat
       ? [`${message.runId}\0${part.approvalId}`]
       : [])));
   return messages.flatMap((message) => {
-    const attachments = message.parts.flatMap((part) => part.type === "attachment_reference" ? [{ id: part.attachmentId, label: part.label, kind: part.kind === "image" ? "image" as const : "file" as const, path: part.ownerReference, ...(part.kind === "image" && part.ownerReference ? { src: `/api/files/blob?path=${encodeURIComponent(part.ownerReference)}` } : {}) }] : []);
+    const attachments = message.parts.flatMap((part) => {
+      if (part.type !== "attachment_reference") return [];
+      const resource = part.resource ?? (part.ownerReference
+        ? { kind: "home" as const, path: part.ownerReference }
+        : undefined);
+      return [{
+        id: part.attachmentId,
+        label: part.label,
+        kind: part.kind === "image" ? "image" as const : "file" as const,
+        path: part.ownerReference,
+        ...(part.kind === "image" && resource ? { src: filePreviewContentUrl(resource) } : {}),
+      }];
+    });
     const content = message.parts.map(partText).filter((part): part is string => part !== null).join("\n");
     if (!content && !attachments.length) return [];
     const toolRequest = message.parts.find((part) => part.type === "tool_request");

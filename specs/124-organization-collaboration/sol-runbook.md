@@ -42,6 +42,10 @@ Read spec.md, plan.md, research.md, data-model.md, contracts/organization-api.md
 
 Missing credentials/sandboxes do not permit fake passes. Complete unaffected work and mark the specific probe unrun. Every enrolled customer VPS is eligible through the relay; do not add per-home hostnames or certificates. Missing org prices disable those paid choices. Member submission on any owner source is a product decision; do not add provider-eligibility enforcement. A failed required Codex/Claude API/worktree/sandbox mode blocks release acceptance. Native Matrix participation is deferred; the managed group service still needs its enforcement evidence. Failed cutover keeps collaboration fenced until recovery, without a legacy proxy fallback.
 
+## Home share-confirmation key rotation
+
+The gateway derives a local confirmation HMAC key from its persisted Ed25519 runtime identity seed in the owner's Postgres database. `MATRIX_COLLABORATION_PREFLIGHT_SECRET` is not required. A gateway restart with the same owner database preserves unexpired share confirmations. Rotate the runtime identity only with coordinated platform registration and a gateway restart; do not edit the seed in a running process. Rotation invalidates outstanding confirmations (maximum 60 seconds), so the owner repeats share preflight before confirming. Never retain an old runtime seed to keep a confirmation valid. Keep the owner database and its backups protected as signing-key material.
+
 ## Simplification receipt
 
 S20 deletes the release flag, rollout cohort and person-to-person path before contracts freeze, so no later packet carries a personal-audience or cohort branch. S08 implements one project source rather than participant accounts. S09 enforces distinct discussion and AI submission. S10 owns default group Chat/root behavior and owner identity/approval for Git/PR operations. S15 presents one-click join with owner-configured execution readiness. Existing source IDs preserve future extension seams without dormant participant-account/clone code.

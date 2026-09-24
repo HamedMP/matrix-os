@@ -480,6 +480,11 @@ export class ChatRepository {
   private readonly steering: ChatSteeringRepository;
   private readonly outboxDelivery: ChatOutboxDelivery;
 
+  /** Installed by the collaboration runtime before accepting shared requests. */
+  setSharedAuthorizer(authorize: import("../collaboration/shared-chat-authority.js").SharedChatAuthorizer): void {
+    this.queue.setSharedAuthorizer(authorize);
+  }
+
   constructor(
     dialectOrKysely: Dialect | Kysely<ChatDatabase>,
     transactionScoped = false,
@@ -526,6 +531,25 @@ export class ChatRepository {
         payload,
       ),
     );
+  }
+
+  async ownsAttachmentPath(ownerInput: ChatOwner, pathInput: string): Promise<boolean> {
+    const owner = validateOwner(ownerInput);
+    const parsedPath = z.string().regex(
+      /^data\/chat-artifacts\/codex\/sha256\/[a-f0-9]{64}\.[a-z0-9]{1,10}$/,
+    ).safeParse(pathInput);
+    if (!parsedPath.success) return false;
+    const path = parsedPath.data;
+    const row = await this.kysely
+      .selectFrom("chat_attachments as attachment")
+      .innerJoin("chats as chat", "chat.id", "attachment.chat_id")
+      .select("attachment.id")
+      .where("chat.owner_type", "=", owner.type)
+      .where("chat.owner_id", "=", owner.ownerId)
+      .where("attachment.owner_reference", "=", path)
+      .limit(1)
+      .executeTakeFirst();
+    return row !== undefined;
   }
 
   async bootstrap(): Promise<void> {
@@ -1503,11 +1527,18 @@ export class ChatRepository {
     return this.runLifecycle.appendAssistantDelta(ownerInput, input);
   }
 
+  async appendAssistantAttachment(
+    ownerInput: ChatOwner,
+    input: Parameters<ChatRunLifecycleRepository["appendAssistantAttachment"]>[1],
+  ) {
+    return this.runLifecycle.appendAssistantAttachment(ownerInput, input);
+  }
+
   async finishRun(ownerInput: ChatOwner, input: {
     chatId: string;
     runId: string;
     outcome: "completed" | "failed" | "aborted";
-    sharedRequestState?: "interrupted" | "unauthorized" | "unavailable";
+    sharedRequestState?: "interrupted" | "unauthorized" | "unavailable" | "cancelled";
     completedAt: string;
     diagnostic?: ChatRunFailureDiagnostic;
     output?: CanonicalChatMessage;

@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { sql, type Kysely } from "kysely";
-import type { CollaborationPlatformDatabase } from "./database.js";
+import type { CollaborationDirectoryKind, CollaborationPlatformDatabase } from "./database.js";
+import { lockLegacyDirectoryIngestion } from "./legacy-ingestion-lock.js";
 
 const MAX_OUTSTANDING_TICKETS = 20;
 const MAX_TICKET_LIFETIME_MS = 30_000;
@@ -26,9 +27,10 @@ export interface DirectoryEventInput {
   scopeId: string;
   runtimeId: string;
   ownerId: string;
-  kind: "chat" | "terminal" | "project";
+  kind: CollaborationDirectoryKind;
   organizationId?: string;
   audience?: "members" | "organization";
+  organizationGrantId?: string;
   authorityGeneration: number;
   metadataRevision: number;
   recipients: Array<{
@@ -42,7 +44,7 @@ export interface CollaborationDirectoryEntry {
   scopeId: string;
   runtimeId: string;
   ownerId: string;
-  kind: "chat" | "terminal" | "project";
+  kind: CollaborationDirectoryKind;
   authorityGeneration: number;
   status: "invited" | "accepted" | "revoked";
   invitationId?: string;
@@ -54,9 +56,10 @@ export interface CollaborationOrganizationShareEntry {
   scopeId: string;
   runtimeId: string;
   ownerId: string;
-  kind: "chat" | "terminal" | "project";
+  kind: CollaborationDirectoryKind;
   authorityGeneration: number;
   organizationId: string;
+  grantId: string;
 }
 
 export class PlatformCollaborationRepository {
@@ -72,23 +75,45 @@ export class PlatformCollaborationRepository {
   async applyDirectoryEvent(input: DirectoryEventInput): Promise<void> {
     const now = this.now().toISOString();
     await this.db.transaction().execute(async (trx) => {
+      // A person-to-person event is legacy ingestion: it must not commit inside
+      // the cutover's final inventory-to-activation interval, so it takes the
+      // shared ingestion lock first. Organization events skip it and stay
+      // parallel. The lock is always taken before any row lock, so the two
+      // paths cannot deadlock.
+      if (!input.organizationId) await lockLegacyDirectoryIngestion(trx);
       const existing = await trx.selectFrom("collaboration_directory")
         .selectAll()
         .where("scope_id", "=", input.scopeId)
         .forUpdate()
         .executeTakeFirst();
+      const cutover = await trx.selectFrom("collaboration_cutover_journal")
+        .select(["phase", "target_generation"])
+        .where("scope_id", "=", input.scopeId)
+        .executeTakeFirst();
+      // The cutover journal freezes directory writes under the same row lock
+      // used by generation activation. A delayed pre-cutover event cannot
+      // reopen an older authority generation after direct activation.
+      if (cutover && (cutover.phase !== "active"
+        || input.authorityGeneration < Number(cutover.target_generation))) {
+        throw new PlatformCollaborationRepositoryError("conflict", "Directory is fenced for collaboration cutover");
+      }
       if (existing && (existing.owner_id !== input.ownerId || existing.runtime_id !== input.runtimeId)) {
         throw new PlatformCollaborationRepositoryError("conflict", "Directory authority changed without transition");
       }
       if (existing && Number(existing.metadata_revision) >= input.metadataRevision) return;
 
-      await trx.insertInto("collaboration_directory").values({
+      // The pre-read cannot fence a concurrent event: FOR UPDATE locks nothing while the row is
+      // still absent, so two first-writers both pass the guard above and the loser's unconditional
+      // DO UPDATE would replay its stale metadata over the winner's. The revision test belongs in
+      // the write statement itself.
+      const applied = await trx.insertInto("collaboration_directory").values({
         scope_id: input.scopeId,
         runtime_id: input.runtimeId,
         owner_id: input.ownerId,
         kind: input.kind,
         organization_id: input.organizationId ?? null,
         audience: input.audience ?? null,
+        organization_grant_id: input.audience === "organization" ? input.organizationGrantId ?? null : null,
         authority_generation: input.authorityGeneration,
         metadata_revision: input.metadataRevision,
         last_event_id: input.eventId,
@@ -97,11 +122,16 @@ export class PlatformCollaborationRepository {
         kind: input.kind,
         ...(input.organizationId ? { organization_id: input.organizationId } : {}),
         audience: input.audience ?? null,
+        organization_grant_id: input.audience === "organization" ? input.organizationGrantId ?? null : null,
         authority_generation: input.authorityGeneration,
         metadata_revision: input.metadataRevision,
         last_event_id: input.eventId,
         updated_at: now,
-      })).execute();
+      }).where("collaboration_directory.metadata_revision", "<", input.metadataRevision))
+        .returning("collaboration_directory.scope_id")
+        .executeTakeFirst();
+      // No row returned means the DO UPDATE was fenced by a newer revision: the whole event is stale.
+      if (!applied) return;
 
       for (const recipient of input.recipients) {
         await trx.insertInto("collaboration_user_index").values({
@@ -127,13 +157,15 @@ export class PlatformCollaborationRepository {
     scopeId: string;
     runtimeId: string;
     ownerId: string;
-    kind: "chat" | "terminal" | "project";
+    kind: CollaborationDirectoryKind;
     /** S05: owning organization, null only for pre-organization rows (tickets fail closed). */
     organizationId: string | null;
+    audience: "members" | "organization" | null;
+    organizationGrantId: string | null;
     authorityGeneration: number;
   } | null> {
     const row = await this.db.selectFrom("collaboration_directory")
-      .select(["scope_id", "runtime_id", "owner_id", "kind", "organization_id", "authority_generation"])
+      .select(["scope_id", "runtime_id", "owner_id", "kind", "organization_id", "audience", "organization_grant_id", "authority_generation"])
       .where("scope_id", "=", scopeId)
       .executeTakeFirst();
     return row ? {
@@ -142,6 +174,8 @@ export class PlatformCollaborationRepository {
       ownerId: row.owner_id,
       kind: row.kind,
       organizationId: row.organization_id ?? null,
+      audience: row.audience,
+      organizationGrantId: row.organization_grant_id,
       authorityGeneration: Number(row.authority_generation),
     } : null;
   }
@@ -150,7 +184,7 @@ export class PlatformCollaborationRepository {
     scopeId: string;
     runtimeId: string;
     ownerId: string;
-    kind: "chat" | "terminal" | "project";
+    kind: CollaborationDirectoryKind;
     authorityGeneration: number;
   } | null> {
     const row = await this.db.selectFrom("collaboration_user_index as user_index")
@@ -341,8 +375,9 @@ export class PlatformCollaborationRepository {
     if (organizations.length === 0) return { items: [] };
     const limit = Math.max(1, Math.min(100, Math.trunc(options.limit)));
     let query = this.db.selectFrom("collaboration_directory as directory")
-      .select(["directory.scope_id", "directory.runtime_id", "directory.owner_id", "directory.kind", "directory.organization_id", "directory.authority_generation", "directory.updated_at"])
+      .select(["directory.scope_id", "directory.runtime_id", "directory.owner_id", "directory.kind", "directory.organization_id", "directory.organization_grant_id", "directory.authority_generation", "directory.updated_at"])
       .where("directory.audience", "=", "organization")
+      .where("directory.organization_grant_id", "is not", null)
       .where("directory.organization_id", "in", organizations)
       .where("directory.owner_id", "!=", actorId)
       .where(({ not, exists, selectFrom }) => not(exists(
@@ -365,7 +400,7 @@ export class PlatformCollaborationRepository {
     return {
       items: page.map((row) => ({
         scopeId: row.scope_id, runtimeId: row.runtime_id, ownerId: row.owner_id, kind: row.kind,
-        authorityGeneration: Number(row.authority_generation), organizationId: row.organization_id!,
+        authorityGeneration: Number(row.authority_generation), organizationId: row.organization_id!, grantId: row.organization_grant_id!,
       })),
       ...(last ? { nextCursor: { updatedAt: toIso(last.updated_at), scopeId: last.scope_id } } : {}),
     };

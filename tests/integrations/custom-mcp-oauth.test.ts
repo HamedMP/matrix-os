@@ -40,8 +40,12 @@ describe("Custom MCP OAuth", () => {
     const authorization = new URL(await oauth.start("owner", row.id));
     expect(authorization.searchParams.get("code_challenge_method")).toBe("S256");
     expect(authorization.searchParams.get("resource")).toBe(row.url);
-    expect(authorization.searchParams.get("state")).toHaveLength(43);
-    expect(encrypted).not.toContain(authorization.searchParams.get("state")!);
+    const state = authorization.searchParams.get("state")!;
+    expect(state.length).toBeGreaterThan(43);
+    expect(state.length).toBeLessThanOrEqual(512);
+    expect(state).not.toContain("owner");
+    expect(state).not.toContain(row.id);
+    expect(encrypted).not.toContain(state);
     const credential = decryptCustomMcpCredential<any>(encrypted, key, { userId: "owner", serverId: row.id });
     expect(credential.oauth.stateExpiresAt).toBe("2026-08-29T00:10:00.000Z");
     expect(credential.oauth.verifier.length).toBeGreaterThan(43);

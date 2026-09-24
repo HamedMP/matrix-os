@@ -12,7 +12,7 @@ The implementation has three independently testable layers:
 2. **`email-triage-v1`** — an immutable server-owned recipe containing seven Boolean questions and a strict typed output contract.
 3. **`matrix-jev-email-triage`** — a bundled agent skill that reads Gmail through existing Matrix integrations, asks the Jev tool for probabilities, and applies deterministic safety policy.
 
-Jev returns evidence for a decision. It never receives Gmail mutation authority. The skill may mutate Gmail only through existing integration actions and only when the current user or automation authorization covers that action.
+Jev returns evidence for a decision. It never receives Gmail mutation authority. The initial demo and first-release acceptance are read-only, as recorded in the [updated ENG-11 scope](https://linear.app/matrix-os/issue/ENG-11/jev-inbox-triage-recipe-via-matrix-ai-gateway), which supersedes the earlier three-recipe proposal. A later, separately requested label or archive action may use existing integration tools only when the current user or automation authorization explicitly covers that action. Neither recipe creation nor classification is such authorization.
 
 ## Runtime architecture
 
@@ -101,7 +101,7 @@ Labels are independent and may overlap:
 
 Urgent also requires `newsletter < 0.80` and `cold_outreach < 0.80`; Needs reply requires `newsletter < 0.75` and `cold_outreach < 0.85`.
 
-Automatic archive is allowed only after full-message verification when all of these hold: `cold_outreach >= 0.92`, `urgent <= 0.20`, `personal_intro <= 0.30`, `investment <= 0.20`, and `recruiting <= 0.20`. Archive means removing only `INBOX`.
+The policy may propose archive only after full-message verification when all of these hold: `cold_outreach >= 0.92`, `urgent <= 0.20`, `needs_reply <= 0.20`, `personal_intro <= 0.30`, `investment <= 0.20`, and `recruiting <= 0.20`. Archive means removing only `INBOX`. The proposal never grants mutation authority; explicit user authorization or an existing action-specific automation grant is required before any Gmail write.
 
 `00 • Jev/Z Review` is applied for recent ambiguous cases: cold outreach at least `0.65` that fails the archive gate; urgency at least `0.40` below the label threshold; or needs-reply at least `0.65` below its label threshold unless the message is probably newsletter/cold outreach. Failure to classify never becomes a Review classification and causes no mutation for that thread.
 

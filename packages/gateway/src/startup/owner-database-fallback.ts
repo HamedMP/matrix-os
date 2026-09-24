@@ -16,6 +16,8 @@ export interface OwnerDatabaseFallbackServices {
   chatEventStream?: { shutdown(): void } | null;
   chatRepository?: { release(): Promise<void> } | null;
   canvasRepository?: { destroy(): Promise<void> } | null;
+  canvasSubscriptionHub?: { close(): void } | null;
+  canvasCleanupTimer?: ReturnType<typeof setInterval> | null;
   appDb?: { destroy(): Promise<void> } | null;
 }
 
@@ -24,6 +26,8 @@ export type OwnerDatabaseFallbackStep =
   | "collaborationFenced"
   | "chatEventStream"
   | "chatRepository"
+  | "canvasCleanupTimer"
+  | "canvasSubscriptionHub"
   | "canvasRepository"
   | "appDb";
 
@@ -50,6 +54,21 @@ export async function teardownOwnerDatabaseServices(
     completed.push(drained ? "collaboration" : "collaborationFenced");
   } else {
     completed.push("collaboration");
+  }
+
+  // A partially started canvas may still have a recurring cleanup timer and
+  // subscribers. Stop both before releasing repositories or the Postgres pool.
+  if (services.canvasCleanupTimer) {
+    clearInterval(services.canvasCleanupTimer);
+    completed.push("canvasCleanupTimer");
+  }
+  if (services.canvasSubscriptionHub) {
+    try {
+      services.canvasSubscriptionHub.close();
+      completed.push("canvasSubscriptionHub");
+    } catch (error: unknown) {
+      warn("canvasSubscriptionHub", error);
+    }
   }
 
   const steps: [OwnerDatabaseFallbackStep, () => Promise<void> | void][] = [

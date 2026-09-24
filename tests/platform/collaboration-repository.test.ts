@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { sql } from "kysely";
 import { bootstrapPlatformCollaborationDatabase } from "../../packages/platform/src/collaboration/database.js";
 import {
   PlatformCollaborationRepository,
@@ -57,6 +58,47 @@ describe("PlatformCollaborationRepository", () => {
       .not.toMatch(/title|message|transcript|content/i);
   });
 
+  it("projects standalone file, folder and app scopes for member discovery", async () => {
+    for (const [index, kind] of (["file", "folder", "app"] as const).entries()) {
+      const resourceScopeId = `10000000-0000-4000-8000-${(index + 101).toString().padStart(12, "0")}`;
+      await repository.applyDirectoryEvent({
+        eventId: `20000000-0000-4000-8000-${(index + 101).toString().padStart(12, "0")}`,
+        scopeId: resourceScopeId,
+        runtimeId: "runtime_owner",
+        ownerId: platformCollaborationActors.owner,
+        kind,
+        organizationId: "org_matrix_team",
+        authorityGeneration: 1,
+        metadataRevision: 1,
+        recipients: [{ actorId: platformCollaborationActors.recipientWithoutComputer, status: "invited" }],
+      });
+      await expect(repository.getDirectoryRoute(resourceScopeId)).resolves.toMatchObject({ kind });
+    }
+    const shares = await repository.listForActor(platformCollaborationActors.recipientWithoutComputer);
+    expect(shares.map((share) => share.kind)).toEqual(["file", "folder", "app"]);
+  });
+
+  it("upgrades an existing directory kind constraint before accepting standalone resources", async () => {
+    await sql`ALTER TABLE collaboration_directory DROP CONSTRAINT collaboration_directory_kind_check`.execute(fixture.collaborationDb);
+    await sql`ALTER TABLE collaboration_directory ADD CONSTRAINT collaboration_directory_kind_check
+      CHECK (kind IN ('chat', 'terminal', 'project'))`.execute(fixture.collaborationDb);
+
+    await bootstrapPlatformCollaborationDatabase(fixture.collaborationDb);
+    await repository.applyDirectoryEvent({
+      eventId: "20000000-0000-4000-8000-000000000104",
+      scopeId: "10000000-0000-4000-8000-000000000104",
+      runtimeId: "runtime_owner",
+      ownerId: platformCollaborationActors.owner,
+      kind: "file",
+      organizationId: "org_matrix_team",
+      authorityGeneration: 1,
+      metadataRevision: 1,
+      recipients: [{ actorId: platformCollaborationActors.recipientWithoutComputer, status: "invited" }],
+    });
+    await expect(repository.getDirectoryRoute("10000000-0000-4000-8000-000000000104"))
+      .resolves.toMatchObject({ kind: "file" });
+  });
+
   it("does not let a different event at the same revision replace newer directory state", async () => {
     await repository.applyDirectoryEvent({
       eventId: "20000000-0000-4000-8000-000000000010",
@@ -83,6 +125,27 @@ describe("PlatformCollaborationRepository", () => {
       authorityGeneration: 2,
       status: "accepted",
     }]);
+  });
+
+  it("projects an opaque organization grant pointer by revision and clears it on revocation", async () => {
+    const event = {
+      eventId: "20000000-0000-4000-8000-000000000201", scopeId,
+      runtimeId: "runtime_owner", ownerId: platformCollaborationActors.owner,
+      kind: "chat" as const, organizationId: "org_matrix_team", audience: "organization" as const,
+      organizationGrantId: "70000000-0000-4000-8000-000000000001",
+      authorityGeneration: 1, metadataRevision: 3, recipients: [],
+    };
+    await repository.applyDirectoryEvent(event);
+    expect((await repository.listOrganizationSharesForActorPage(platformCollaborationActors.recipientWithoutComputer, ["org_matrix_team"], { limit: 100 })).items)
+      .toMatchObject([{ grantId: event.organizationGrantId }]);
+    await repository.applyDirectoryEvent({ ...event, eventId: "20000000-0000-4000-8000-000000000202", metadataRevision: 2, organizationGrantId: "70000000-0000-4000-8000-000000000002" });
+    expect((await repository.listOrganizationSharesForActorPage(platformCollaborationActors.recipientWithoutComputer, ["org_matrix_team"], { limit: 100 })).items)
+      .toMatchObject([{ grantId: event.organizationGrantId }]);
+    await repository.applyDirectoryEvent({ ...event, eventId: "20000000-0000-4000-8000-000000000203", metadataRevision: 4, audience: "members", organizationGrantId: undefined });
+    expect((await repository.listOrganizationSharesForActorPage(platformCollaborationActors.recipientWithoutComputer, ["org_matrix_team"], { limit: 100 })).items)
+      .toEqual([]);
+    expect((await fixture.collaborationDb.selectFrom("collaboration_directory").selectAll().where("scope_id", "=", scopeId).executeTakeFirstOrThrow()).organization_grant_id)
+      .toBeNull();
   });
 
   it("removes revoked discovery projections through a bounded retention cleanup", async () => {
@@ -197,6 +260,29 @@ describe.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)("PlatformCollaborationRep
 
   afterEach(async () => {
     await fixture.destroy();
+  });
+
+  it("migrates an old directory and atomically projects the newest grant pointer", async () => {
+    await sql`ALTER TABLE collaboration_directory DROP COLUMN organization_grant_id`.execute(fixture.collaborationDb);
+    await bootstrapPlatformCollaborationDatabase(fixture.collaborationDb);
+    const event = {
+      eventId: "20000000-0000-4000-8000-000000000301", scopeId,
+      runtimeId: "runtime_owner", ownerId: platformCollaborationActors.owner,
+      kind: "chat" as const, organizationId: "org_matrix_team", audience: "organization" as const,
+      organizationGrantId: "70000000-0000-4000-8000-000000000301",
+      authorityGeneration: 1, metadataRevision: 2, recipients: [],
+    };
+    await Promise.all([
+      repository.applyDirectoryEvent(event),
+      repository.applyDirectoryEvent({ ...event, eventId: "20000000-0000-4000-8000-000000000300", metadataRevision: 1,
+        organizationGrantId: "70000000-0000-4000-8000-000000000300" }),
+    ]);
+    expect((await repository.listOrganizationSharesForActorPage(platformCollaborationActors.recipientWithoutComputer, ["org_matrix_team"], { limit: 100 })).items)
+      .toMatchObject([{ grantId: event.organizationGrantId }]);
+    await repository.applyDirectoryEvent({ ...event, eventId: "20000000-0000-4000-8000-000000000302", metadataRevision: 3,
+      audience: "members", organizationGrantId: undefined });
+    expect((await repository.listOrganizationSharesForActorPage(platformCollaborationActors.recipientWithoutComputer, ["org_matrix_team"], { limit: 100 })).items)
+      .toEqual([]);
   });
 
   it("preserves a fresh recipient committed while revoked cleanup waits on the directory", async () => {

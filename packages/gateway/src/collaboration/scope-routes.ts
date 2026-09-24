@@ -14,18 +14,20 @@ import type { Hono } from "hono";
 import {
   CollaborationAuthorizationError,
 } from "./authority.js";
+import type { StandaloneResourceScopeService } from "./standalone-resource-scope.js";
 import {
   createInvitationCreationHandler,
 } from "./invitation-creation-route.js";
 import {
   authorize,
+  authorizeCurrentScope,
+  authenticateInvitationRequest,
   deleteConditions,
-  verifyHttp,
   digestDeleteConditions,
   requireTerminalAdapter,
   requireProjectScope,
   readJson,
-  requireOwnerCreationProof,
+  ownerRuntimeIdentity,
   requireOrganizationMembership,
   requireScopeOrganizationMembership,
   scopeProjection,
@@ -44,9 +46,9 @@ export function registerScopeRoutes(routes: Hono, options: CollaborationRouteOpt
   const now = options.now ?? (() => new Date());
   routes.post("/api/collaboration/runtimes/:runtimeId/scopes/preflight", async (c) => handle(c, async () => {
     const { value, bytes } = await readJson(c);
-    const proof = await verifyHttp(options.verifier, c, bytes);
-    requireOwnerCreationProof(proof, CollaborationRuntimeIdSchema.parse(c.req.param("runtimeId")), options.runtimeId);
     const input = CollaborationScopePreflightRequestSchema.parse(value);
+    const proof = await ownerRuntimeIdentity(options, c, bytes,
+      CollaborationRuntimeIdSchema.parse(c.req.param("runtimeId")), input.organizationId);
     // The owner must be a current member of the organization the share is scoped to (S20 / T101).
     await requireOrganizationMembership(options, proof.actorId, input.organizationId);
     const result = input.kind === "chat"
@@ -61,11 +63,12 @@ export function registerScopeRoutes(routes: Hono, options: CollaborationRouteOpt
             organizationId: input.organizationId,
             terminalId: input.resourceId,
           })
-        : await requireProjectScope(options.projectScope).preflight({
+        : input.kind === "project" ? await requireProjectScope(options.projectScope).preflight({
             ownerId: proof.ownerId,
             organizationId: input.organizationId,
             projectId: input.resourceId,
-          });
+          }) : await requireStandaloneScope(options).preflight({ ownerId: proof.ownerId,
+            organizationId: input.organizationId, kind: input.kind, resourceId: input.resourceId });
     return c.json(CollaborationScopePreflightResponseSchema.parse({
       eligible: result.eligible,
       ...("reason" in result && result.reason ? { reason: result.reason } : {}),
@@ -73,7 +76,7 @@ export function registerScopeRoutes(routes: Hono, options: CollaborationRouteOpt
         ? result.chatRevision
         : "projectRevision" in result ? result.projectRevision : result.resourceRevision),
       ...(result.confirmationToken ? { confirmationToken: result.confirmationToken } : {}),
-      ...(input.kind === "project" && "existingScopeId" in result && result.existingScopeId
+      ...("existingScopeId" in result && result.existingScopeId
         ? { existingScopeId: result.existingScopeId, existingLifecycle: result.existingLifecycle }
         : {}),
     }));
@@ -81,9 +84,9 @@ export function registerScopeRoutes(routes: Hono, options: CollaborationRouteOpt
 
   routes.post("/api/collaboration/runtimes/:runtimeId/scopes", async (c) => handle(c, async () => {
     const { value, bytes } = await readJson(c);
-    const proof = await verifyHttp(options.verifier, c, bytes);
-    requireOwnerCreationProof(proof, CollaborationRuntimeIdSchema.parse(c.req.param("runtimeId")), options.runtimeId);
     const input = CollaborationCreateScopeRequestSchema.parse(value);
+    const proof = await ownerRuntimeIdentity(options, c, bytes,
+      CollaborationRuntimeIdSchema.parse(c.req.param("runtimeId")), input.organizationId);
     // Membership is proven before any write; the confirmation token also binds this organization.
     await requireOrganizationMembership(options, proof.actorId, input.organizationId);
     const scope = input.kind === "chat"
@@ -106,7 +109,7 @@ export function registerScopeRoutes(routes: Hono, options: CollaborationRouteOpt
             expectedResourceRevision: Number(input.expectedRevision),
             confirmationToken: input.confirmationToken,
           })
-        : await requireProjectScope(options.projectScope).prepare({
+        : input.kind === "project" ? await requireProjectScope(options.projectScope).prepare({
             ownerId: proof.ownerId,
             organizationId: input.organizationId,
             projectId: input.resourceId,
@@ -114,7 +117,10 @@ export function registerScopeRoutes(routes: Hono, options: CollaborationRouteOpt
             payloadHash: digest(bytes),
             expectedProjectRevision: Number(input.expectedRevision),
             confirmationToken: input.confirmationToken,
-          });
+          }) : await requireStandaloneScope(options).create({ ownerId: proof.ownerId,
+            organizationId: input.organizationId, kind: input.kind, resourceId: input.resourceId,
+            clientRequestId: input.clientRequestId, payloadHash: digest(bytes),
+            expectedRevision: Number(input.expectedRevision), confirmationToken: input.confirmationToken });
     if (scope.kind === "project") {
       await notifyScope(options, scope.id);
       return c.json(projectPreparationProjection(scope), 201);
@@ -135,7 +141,7 @@ export function registerScopeRoutes(routes: Hono, options: CollaborationRouteOpt
 
   routes.get("/api/collaboration/scopes/:scopeId", async (c) => handle(c, async () => {
     const scopeId = CollaborationIdSchema.parse(c.req.param("scopeId"));
-    const context = await authorize(options, c, new Uint8Array(), "read", scopeId);
+    const context = await authorizeCurrentScope(options, c, new Uint8Array(), "read", scopeId);
     const scope = await requireScope(options.repository, scopeId);
     return c.json(await scopeProjection(
       scope,
@@ -147,7 +153,7 @@ export function registerScopeRoutes(routes: Hono, options: CollaborationRouteOpt
 
   routes.get("/api/collaboration/scopes/:scopeId/members", async (c) => handle(c, async () => {
     const scopeId = CollaborationIdSchema.parse(c.req.param("scopeId"));
-    const context = await authorize(options, c, new Uint8Array(), "read", scopeId);
+    const context = await authorizeCurrentScope(options, c, new Uint8Array(), "read", scopeId);
     const members = await options.repository.listMembers(context.membershipScopeId, {
       includePending: context.role === "owner",
     });
@@ -167,9 +173,7 @@ export function registerScopeRoutes(routes: Hono, options: CollaborationRouteOpt
 
   routes.get("/api/collaboration/invitations/:invitationId", async (c) => handle(c, async () => {
     const invitationId = CollaborationIdSchema.parse(c.req.param("invitationId"));
-    const proof = await verifyHttp(options.verifier, c, new Uint8Array());
-    const member = await requireInvitation(options.repository, invitationId);
-    const scope = await requireScope(options.repository, member.scopeId);
+    const { proof, member, scope } = await authenticateInvitationRequest(options, c, new Uint8Array(), invitationId);
     if (proof.scopeId !== scope.id || proof.ownerId !== scope.ownerId
       || ![member.actorId, member.invitedBy].includes(proof.actorId)) {
       throw new CollaborationAuthorizationError("forbidden", "Invitation access is required");
@@ -181,9 +185,8 @@ export function registerScopeRoutes(routes: Hono, options: CollaborationRouteOpt
   routes.post("/api/collaboration/invitations/:invitationId/accept", async (c) => handle(c, async () => {
     const invitationId = CollaborationIdSchema.parse(c.req.param("invitationId"));
     const { value, bytes } = await readJson(c);
-    const proof = await verifyHttp(options.verifier, c, bytes);
     const input = CollaborationAcceptInvitationRequestSchema.parse(value);
-    const member = await requireInvitation(options.repository, invitationId);
+    const { proof, member } = await authenticateInvitationRequest(options, c, bytes, invitationId);
     if (proof.scopeId !== member.scopeId || proof.actorId !== member.actorId) {
       throw new CollaborationAuthorizationError("forbidden", "Invitation access is required");
     }
@@ -202,9 +205,8 @@ export function registerScopeRoutes(routes: Hono, options: CollaborationRouteOpt
   routes.post("/api/collaboration/invitations/:invitationId/decline", async (c) => handle(c, async () => {
     const invitationId = CollaborationIdSchema.parse(c.req.param("invitationId"));
     const { value, bytes } = await readJson(c);
-    const proof = await verifyHttp(options.verifier, c, bytes);
     const input = CollaborationDeclineInvitationRequestSchema.parse(value);
-    const member = await requireInvitation(options.repository, invitationId);
+    const { proof, member } = await authenticateInvitationRequest(options, c, bytes, invitationId);
     if (proof.scopeId !== member.scopeId || proof.actorId !== member.actorId) {
       throw new CollaborationAuthorizationError("forbidden", "Invitation access is required");
     }
@@ -266,11 +268,10 @@ export function registerScopeRoutes(routes: Hono, options: CollaborationRouteOpt
     const targetActorId = CollaborationActorIdSchema.parse(c.req.param("actorId"));
     const bytes = new Uint8Array();
     const input = deleteConditions(c);
-    const proof = await verifyHttp(options.verifier, c, bytes);
-    if (proof.scopeId !== scopeId) throw new CollaborationAuthorizationError("forbidden", "Member access is required");
-    const context = proof.actorId === targetActorId
-      ? await options.authority.authorize({ scopeId, actorId: proof.actorId, action: "read" })
-      : await options.authority.authorize({ scopeId, actorId: proof.actorId, action: "manage_members" });
+    const probe = await authorizeCurrentScope(options, c, bytes, "read", scopeId);
+    const context = probe.actorId === targetActorId
+      ? probe
+      : await options.authority.authorize({ scopeId, actorId: probe.actorId, action: "manage_members" });
     const result = await options.repository.revokeMember({
       scopeId,
       actorId: context.actorId,
@@ -284,4 +285,9 @@ export function registerScopeRoutes(routes: Hono, options: CollaborationRouteOpt
     await notifyScope(options, scopeId);
     return c.json(result);
   }));
+}
+
+function requireStandaloneScope(options: CollaborationRouteOptions): StandaloneResourceScopeService {
+  if (!options.standaloneScope) throw new CollaborationAuthorizationError("unavailable", "Shared resources are unavailable");
+  return options.standaloneScope;
 }

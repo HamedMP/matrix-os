@@ -24,7 +24,13 @@ process.on("SIGTERM", () => {
 });
 for await (const line of input) {
   const message = JSON.parse(line);
-  await appendFile(requestsPath, `${JSON.stringify({ attempt, method: message.method })}\n`);
+  await appendFile(requestsPath, `${JSON.stringify({
+    attempt,
+    method: message.method,
+    ...(message.method === "thread/start" || message.method === "thread/resume"
+      ? { developerInstructions: message.params?.developerInstructions }
+      : {}),
+  })}\n`);
   if (message.method === "initialize") {
     initializeId = message.id;
     if (mode === "rejected") {
@@ -45,8 +51,10 @@ for await (const line of input) {
       }
     }
     console.log(JSON.stringify({ id: message.id, result: { userAgent: "test" } }));
-  } else if (message.method === "thread/start") {
-    console.log(JSON.stringify({ id: message.id, result: { thread: { id: "startup_thread" } } }));
+  } else if (message.method === "thread/start" || message.method === "thread/resume") {
+    console.log(JSON.stringify({ id: message.id, result: { thread: {
+      id: message.method === "thread/resume" ? message.params.threadId : "startup_thread",
+    } } }));
   } else if (message.method === "turn/start") {
     console.log(JSON.stringify({ id: message.id, result: { turn: { id: "startup_turn" } } }));
     console.log(JSON.stringify({ method: "item/agentMessage/delta", params: {

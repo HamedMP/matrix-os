@@ -7,7 +7,7 @@ import type { CustomMcpTool } from "./types.js";
 const MAX_REQUEST_BYTES = 64 * 1024;
 const MAX_SCHEMA_BYTES = 32 * 1024;
 const MAX_RESPONSE_BYTES = 1024 * 1024;
-const MAX_TOOLS = 100;
+export const MAX_CUSTOM_MCP_TOOLS = 100;
 const DISCOVERY_TIMEOUT_MS = 10_000;
 const TOOL_TIMEOUT_MS = 30_000;
 const PROTOCOL_VERSION = "2025-06-18";
@@ -182,7 +182,7 @@ export class RemoteMcpClient {
     }
     const result = response.result as { tools?: unknown } | undefined;
     if (!Array.isArray(result?.tools)) throw new Error("Custom MCP returned an invalid tool catalog");
-    if (result.tools.length > MAX_TOOLS) throw new Error("Custom MCP tool limit exceeded");
+    if (result.tools.length > MAX_CUSTOM_MCP_TOOLS) throw new Error("Custom MCP tool limit exceeded");
 
     return result.tools.map((rawTool) => {
       if (!rawTool || typeof rawTool !== "object" || Array.isArray(rawTool)) {

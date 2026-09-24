@@ -88,6 +88,7 @@ export interface CustomMcpServersTable {
   encrypted_credentials: string | null;
   pending_expires_at: Date | null;
   action_required_reason: string | null;
+  discovered_at: Date | null;
   created_at: Date;
   updated_at: Date;
 }
@@ -158,6 +159,7 @@ export interface UpdateCustomMcpServerInput {
   encryptedCredentials?: string | null;
   pendingExpiresAt?: Date | null;
   actionRequiredReason?: string | null;
+  discoveredAt?: Date;
 }
 
 export type CustomMcpServerBrokerRow = CustomMcpServersTable;
@@ -210,6 +212,7 @@ export interface PlatformDb {
     revision: number,
     encryptedCredentials: string,
     status: CustomMcpStatus,
+    advanceRevision?: boolean,
   ): Promise<boolean>;
   deleteCustomMcpServer(id: string, userId: string): Promise<boolean>;
   sweepPendingCustomMcpServers(now: Date): Promise<number>;
@@ -362,11 +365,29 @@ export function createPlatformDb(opts: string | { dialect: any }): PlatformDb {
           encrypted_credentials    TEXT,
           pending_expires_at       TIMESTAMPTZ,
           action_required_reason   TEXT,
+          discovered_at            TIMESTAMPTZ,
           created_at               TIMESTAMPTZ NOT NULL DEFAULT now(),
           updated_at               TIMESTAMPTZ NOT NULL DEFAULT now()
         )
       `.execute(kysely);
       await sql`ALTER TABLE custom_mcp_servers ADD COLUMN IF NOT EXISTS preset_id TEXT`.execute(kysely);
+      // Existing rows predate this marker. Treat them as already discovered so
+      // a later sync cannot silently undo a user's disabled server policy.
+      await sql`
+        DO $custom_mcp_discovery$
+        BEGIN
+          IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = current_schema()
+              AND table_name = 'custom_mcp_servers'
+              AND column_name = 'discovered_at'
+          ) THEN
+            ALTER TABLE custom_mcp_servers ADD COLUMN discovered_at TIMESTAMPTZ;
+            UPDATE custom_mcp_servers SET discovered_at = created_at;
+          END IF;
+        END
+        $custom_mcp_discovery$
+      `.execute(kysely);
 
       // Indexes
       await sql`CREATE INDEX IF NOT EXISTS idx_connected_services_user ON connected_services(user_id)`.execute(kysely);
@@ -650,6 +671,7 @@ export function createPlatformDb(opts: string | { dialect: any }): PlatformDb {
             encrypted_credentials: input.encryptedCredentials ?? null,
             pending_expires_at: input.pendingExpiresAt,
             action_required_reason: null,
+            discovered_at: null,
             created_at: sql`now()`,
             updated_at: sql`now()`,
           })
@@ -720,6 +742,7 @@ export function createPlatformDb(opts: string | { dialect: any }): PlatformDb {
       if (update.encryptedCredentials !== undefined) values.encrypted_credentials = update.encryptedCredentials;
       if (update.pendingExpiresAt !== undefined) values.pending_expires_at = update.pendingExpiresAt;
       if (update.actionRequiredReason !== undefined) values.action_required_reason = update.actionRequiredReason;
+      if (update.discoveredAt !== undefined) values.discovered_at = update.discoveredAt;
 
       const row = await kysely
         .updateTable("custom_mcp_servers")
@@ -748,14 +771,17 @@ export function createPlatformDb(opts: string | { dialect: any }): PlatformDb {
       revision: number,
       encryptedCredentials: string,
       status: CustomMcpStatus,
+      advanceRevision = false,
     ): Promise<boolean> {
+      const values: Record<string, unknown> = {
+        encrypted_credentials: encryptedCredentials,
+        status,
+        updated_at: sql`now()`,
+      };
+      if (advanceRevision) values.revision = sql`revision + 1`;
       const row = await kysely
         .updateTable("custom_mcp_servers")
-        .set({
-          encrypted_credentials: encryptedCredentials,
-          status,
-          updated_at: sql`now()`,
-        })
+        .set(values as never)
         .where("id", "=", id)
         .where("user_id", "=", userId)
         .where("revision", "=", revision)

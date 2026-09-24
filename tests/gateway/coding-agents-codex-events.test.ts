@@ -142,6 +142,12 @@ describe("Codex structured event normalization", () => {
     expect(codexExecContractStatus("codex-cli 0.155.1")).toEqual({
       status: "verified", version: "0.155.1",
     });
+    expect(codexExecContractStatus("codex-cli 0.156.0")).toEqual({
+      status: "verified", version: "0.156.0",
+    });
+    expect(codexExecContractStatus("codex-cli 0.156.1")).toEqual({
+      status: "verified", version: "0.156.1",
+    });
     expect(codexExecContractStatus("codex-cli 0.143.9")).toEqual({
       status: "unverified_older",
       version: "0.143.9",
@@ -435,6 +441,29 @@ describe("Codex structured event normalization", () => {
     expect(delta.events[0]).toMatchObject({
       type: "assistant.text.delta",
       delta: "Working on it.",
+    });
+
+    const artifact = parseCodexExecJsonLine(JSON.stringify({
+      type: "matrix.codex.artifact.available",
+      providerItemId: "image_item_1",
+      outputIndex: 0,
+      attachmentId: "attachment_codex_11111111111111111111111111111111",
+      ownerReference: "data/chat-artifacts/codex/sha256/whale.png",
+      label: "whale.png",
+      mimeType: "image/png",
+      sizeBytes: 12,
+      sha256: "1".repeat(64),
+    }), context);
+    expect(artifact.events[0]).toMatchObject({
+      type: "assistant.attachment",
+      attachment: {
+        id: "attachment_codex_11111111111111111111111111111111",
+        kind: "image",
+        label: "whale.png",
+        path: "data/chat-artifacts/codex/sha256/whale.png",
+        mimeType: "image/png",
+        sizeBytes: 12,
+      },
     });
   });
 });

@@ -72,7 +72,7 @@ export function ProjectSharingButton({ api, runtimeId, organizationId, projectId
     setError(false);
     try {
       const preflight = CollaborationScopePreflightResponseSchema.parse(await api.post(
-        `/api/collaboration/runtimes/${runtimeId}/scopes/preflight`,
+        `/api/collaboration/runtimes/${encodeURIComponent(runtimeId)}/scopes/preflight`,
         { kind: "project", resourceId: projectId, organizationId },
       ));
       if (!preflight.eligible || !preflight.confirmationToken) throw new Error("Project unavailable");
@@ -87,7 +87,7 @@ export function ProjectSharingButton({ api, runtimeId, organizationId, projectId
         return;
       }
       const created = CollaborationScopeSchema.parse(await api.post(
-        `/api/collaboration/runtimes/${runtimeId}/scopes`,
+        `/api/collaboration/runtimes/${encodeURIComponent(runtimeId)}/scopes`,
         {
           kind: "project",
           resourceId: projectId, organizationId,

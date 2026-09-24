@@ -285,17 +285,21 @@ function MarkdownTable({
   );
 }
 
+const ReferenceLinkContext = React.createContext<((href: string) => React.ReactNode | undefined) | undefined>(undefined);
+
 export function MessageResponse({
   children,
   copyText,
   openFile,
   openWebLink,
+  renderReferenceLink,
   className,
 }: {
   children: string;
   copyText: ConversationPresentationCallbacks["copyText"];
   openFile?: ConversationPresentationCallbacks["openFile"];
   openWebLink?: ConversationPresentationCallbacks["openWebLink"];
+  renderReferenceLink?: (href: string) => React.ReactNode | undefined;
   className?: string;
 }) {
   const callbacks = React.useRef({ copyText, openFile, openWebLink });
@@ -306,8 +310,11 @@ export function MessageResponse({
   const hasFileNavigation = Boolean(openFile);
   const hasWebNavigation = Boolean(openWebLink);
   // Keep Markdown element types stable across focus and controller updates.
-  const markdownComponents = React.useMemo(() => ({
-    a: ({ node: _node, href, ...props }: React.ComponentProps<"a"> & { node?: unknown }) => {
+  const markdownComponents = React.useMemo(() => {
+    function Anchor({ node: _node, href, ...props }: React.ComponentProps<"a"> & { node?: unknown }) {
+      const currentReferenceLink = React.useContext(ReferenceLinkContext);
+      const reference = typeof href === "string" ? currentReferenceLink?.(href) : undefined;
+      if (reference !== undefined) return reference;
       const target = typeof href === "string" ? resolveChatMessageLink(href) : null;
       const external = target?.kind === "web";
       const editorPath = target?.kind === "file" ? target.path : null;
@@ -318,6 +325,29 @@ export function MessageResponse({
         event.preventDefault();
         callbacks.current.openWebLink?.(href!);
       } } : {})} />;
+    }
+    return {
+    a: Anchor,
+    img: ({ node: _node, src, alt, ...props }: React.ComponentProps<"img"> & { node?: unknown }) => {
+      const target = typeof src === "string" ? resolveChatMessageLink(src) : null;
+      const label = alt?.trim() || (target?.kind === "file" ? target.path.split("/").at(-1) : null) || "image";
+      if (target?.kind === "file") {
+        if (!hasFileNavigation) return <span aria-label={`Image file: ${label}`}>{label}</span>;
+        return (
+          <button
+            type="button"
+            aria-label={`Preview image ${label}`}
+            title={target.path}
+            onClick={() => callbacks.current.openFile?.(src!)}
+            className="inline-flex max-w-full items-center gap-1 rounded-md border border-[var(--border-default)] bg-[var(--bg-sunken)] px-2 py-1 align-middle text-xs text-[var(--highlight)] hover:bg-[var(--bg-hover)]"
+          >
+            <FileText size={13} aria-hidden className="shrink-0" />
+            <span className="truncate">{label}</span>
+          </button>
+        );
+      }
+      if (target?.kind === "web") return <img {...props} src={target.url} alt={alt ?? ""} />;
+      return <span aria-label={`Unavailable image: ${label}`}>{label}</span>;
     },
     code: ({ node: _node, children: codeChildren, className, ...props }: React.ComponentProps<"code"> & { node?: unknown }) => {
       const value = String(codeChildren).replace(/\n$/, "");
@@ -371,7 +401,8 @@ export function MessageResponse({
     table: ({ node: _node, ...props }: React.ComponentProps<"table"> & { node?: unknown }) => (
       <MarkdownTable {...props} copyText={copy} />
     ),
-  }), [copy, hasFileNavigation, hasWebNavigation]);
+    };
+  }, [copy, hasFileNavigation, hasWebNavigation]);
 
   return (
     <div
@@ -379,12 +410,14 @@ export function MessageResponse({
       style={{ color: "var(--text-primary)" }}
       data-selectable
     >
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        components={markdownComponents}
-      >
-        {children}
-      </ReactMarkdown>
+      <ReferenceLinkContext.Provider value={renderReferenceLink}>
+        <ReactMarkdown
+          remarkPlugins={[remarkGfm]}
+          components={markdownComponents}
+        >
+          {children}
+        </ReactMarkdown>
+      </ReferenceLinkContext.Provider>
     </div>
   );
 }

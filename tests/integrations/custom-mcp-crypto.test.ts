@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  decryptCustomMcpOAuthState,
   decryptCustomMcpCredential,
+  encryptCustomMcpOAuthState,
   encryptCustomMcpCredential,
   parseCustomMcpEncryptionKey,
 } from "../../packages/gateway/src/integrations/custom-mcp/crypto.js";
@@ -41,5 +43,24 @@ describe("Custom MCP credential encryption", () => {
     expect(() => parseCustomMcpEncryptionKey(undefined)).toThrow(/MCP_CREDENTIAL_ENCRYPTION_KEY/);
     expect(() => parseCustomMcpEncryptionKey(Buffer.alloc(16).toString("base64"))).toThrow(/32 bytes/);
     expect(() => parseCustomMcpEncryptionKey("not base64!" )).toThrow(/32 bytes/);
+  });
+
+  it("encrypts callback state and rejects tampering", () => {
+    const encryptionKey = parseCustomMcpEncryptionKey(key);
+    const state = encryptCustomMcpOAuthState({
+      userId: "user-1",
+      serverId: "server-1",
+    }, encryptionKey);
+
+    expect(state).not.toContain("user-1");
+    expect(state).not.toContain("server-1");
+    expect(decryptCustomMcpOAuthState(state, encryptionKey)).toEqual({
+      userId: "user-1",
+      serverId: "server-1",
+    });
+
+    const parts = state.split(".");
+    parts[2] = `${parts[2]!.slice(0, -2)}aa`;
+    expect(() => decryptCustomMcpOAuthState(parts.join("."), encryptionKey)).toThrow();
   });
 });

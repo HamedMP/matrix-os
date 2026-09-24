@@ -57,10 +57,11 @@ via a single Postgres manifest row. Think of it as Dropbox where one of the
    subscribes to `sync:change` broadcasts from other peers via the in-process
    `PeerRegistry` (registered as virtual peer `gateway-${userId}`).
 
-2. **Laptop daemon** (`packages/sync-client/src/daemon/index.ts`) watches
-   the user's local sync folder. On startup it fetches the manifest and
-   downloads any missing/stale files. Then it connects over WebSocket
-   (`/api/sync/ws`) to receive `sync:change` broadcasts in real time.
+2. **Laptop daemon** (`packages/sync-client/src/daemon/entrypoint.ts`, with
+   the implementation in `daemon/index.ts`) watches the user's local sync
+   folder. On startup it fetches the manifest and downloads any missing/stale
+   files. Then it connects over WebSocket (`/api/sync/ws`) to receive
+   `sync:change` broadcasts in real time.
 
 3. **Postgres `sync_manifests`** holds the authoritative manifest version
    per user. The `/api/sync/commit` endpoint updates it under an optimistic
@@ -331,7 +332,8 @@ to run `matrixos sync`.
 - R2/S3 client: `packages/gateway/src/sync/r2-client.ts`
 - Manifest logic: `packages/gateway/src/sync/manifest.ts`
 - Postgres adapters: `packages/gateway/src/sync/db-impl.ts`
-- Daemon entry: `packages/sync-client/src/daemon/index.ts`
+- Daemon entry: `packages/sync-client/src/daemon/entrypoint.ts`
+- Daemon implementation: `packages/sync-client/src/daemon/index.ts`
 - IPC server: `packages/sync-client/src/daemon/ipc-server.ts`
 - macOS app: `packages/sync-client/macos/MatrixSync/`
 - Spec: `specs/066-file-sync/spec.md`
