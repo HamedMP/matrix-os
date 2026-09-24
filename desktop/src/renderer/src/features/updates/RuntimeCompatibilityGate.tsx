@@ -10,20 +10,20 @@ import { useUi } from "../../stores/ui";
 /** Advisory only: never move the titlebar, hide apps, or unmount drafts. */
 export default function RuntimeCompatibilityGate({ children }: { children: ReactNode }) {
   const api = useConnection((state) => state.api);
-  const { status, noticeKey } = useRuntimeCompatibility(api);
   const runtimeSlot = useConnection((state) => state.runtimeSlot);
+  const { status, noticeKey } = useRuntimeCompatibility(api, runtimeSlot);
   const [operationHidden, setOperationHidden] = useState(false);
   // Dismiss the current release pair, not every future mismatch on this computer.
   // Keep only the last 16 pairs and scope them to the current API connection.
-  const [dismissed, setDismissed] = useState<{ api: typeof api; keys: string[] }>({ api, keys: [] });
+  const [dismissed, setDismissed] = useState<{ api: typeof api; runtimeSlot: string; keys: string[] }>({ api, runtimeSlot, keys: [] });
   const [nativeEmbedsSuspended, setNativeEmbedsSuspended] = useState(false);
-  const notice = status === "checking" || status === "aligned" || status === "unavailable" ? null : noticeKey;
-  const requestedOpen = notice !== null && (dismissed.api !== api || !dismissed.keys.includes(notice));
+  const notice = status === "desktop-update-required" || status === "runtime-update-required" ? noticeKey : null;
+  const requestedOpen = notice !== null && (dismissed.api !== api || dismissed.runtimeSlot !== runtimeSlot || !dismissed.keys.includes(notice));
   const repair = useCompatibilityRepair(api, runtimeSlot, requestedOpen);
   const open = requestedOpen || (repair.busy && !operationHidden);
   const dismiss = (key: string) => setDismissed((previous) => {
-    const keys = previous.api === api ? previous.keys : [];
-    return { api, keys: keys.includes(key) ? keys : [...keys, key].slice(-16) };
+    const keys = previous.api === api && previous.runtimeSlot === runtimeSlot ? previous.keys : [];
+    return { api, runtimeSlot, keys: keys.includes(key) ? keys : [...keys, key].slice(-16) };
   });
   const close = () => {
     setOperationHidden(true);
@@ -46,7 +46,7 @@ export default function RuntimeCompatibilityGate({ children }: { children: React
       setNativeEmbedsSuspended(false);
       useUi.getState().releaseRendererOverlay();
     };
-  }, [api, notice, open]);
+  }, [api, runtimeSlot, notice, open]);
 
   return (
     <>

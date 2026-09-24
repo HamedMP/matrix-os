@@ -13,7 +13,7 @@ describe("released source comparison", () => {
   it("compares the captured VPS-native response with no image build environment", () => {
     expect(evaluateDesktopReleaseState(hostInfo, {
       commit: newCommit, ancestors: [hostInfo.release.gitCommit],
-    }).status).toBe("runtime-update-required");
+    }).status).toBe("compatible");
     expect(evaluateReleaseAlignment(hostInfo, {
       commit: hostInfo.release.gitCommit, ancestors: [],
     })).toBe("aligned");
@@ -70,7 +70,7 @@ describe("source alignment and explicit protocol recovery", () => {
   it("does not let matching sources hide a gateway protocol upgrade", () => {
     expect(evaluateDesktopReleaseState(info(newCommit), source, 2)).toMatchObject({ alignment: "aligned", status: "runtime-update-required" });
   });
-  it("still prompts for missing merged changes when the protocol is supported", () => {
-    expect(evaluateDesktopReleaseState(info(oldCommit), source)).toEqual({ alignment: "runtime-update-required", status: "runtime-update-required", protocol: "compatible" });
+  it("keeps source divergence diagnostic when the protocol is supported", () => {
+    expect(evaluateDesktopReleaseState(info(oldCommit), source)).toEqual({ alignment: "runtime-update-required", status: "compatible", protocol: "compatible" });
   });
 });
