@@ -32,6 +32,13 @@ export const GMAIL_SERVICE: ServiceDefinition = {
   id: "gmail", name: "Gmail", category: "google", pipedreamApp: "gmail", icon: "mail",
   logoUrl: "https://pipedream.com/s.v0/gmail/logo/48",
   actions: {
+    get_profile: {
+      risk: "read",
+      description: "Read the email address of the currently authorized Gmail account",
+      params: {},
+      paramsSchema: z.strictObject({}),
+      directApi: { method: "GET", url: `${BASE}/profile` },
+    },
     list_messages: {
       risk: "read",
       description: "List a page of email messages; use nextPageToken to continue",

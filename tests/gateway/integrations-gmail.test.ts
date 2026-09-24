@@ -19,6 +19,18 @@ async function execute(actionId: string, params: Record<string, unknown>, pipedr
 }
 
 describe("Gmail connector foundation", () => {
+  it("reads the live Gmail profile through the selected connected account", async () => {
+    const pipedream = client();
+    const profile = { emailAddress: "owner@example.com", messagesTotal: 42 };
+    pipedream.proxyGet.mockResolvedValue(profile);
+    expect(await execute("get_profile", {}, pipedream)).toEqual({ data: profile });
+    expect(pipedream.proxyGet).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      externalUserId: "owner",
+      accountId: "account",
+      url: "https://gmail.googleapis.com/gmail/v1/users/me/profile",
+    }));
+  });
+
   it.each(["list_messages", "search"])("paginates %s without changing the query", async (actionId) => {
     const pipedream = client();
     const response = { messages: [{ id: "abc123" }], nextPageToken: "next", resultSizeEstimate: 123 };
@@ -96,6 +108,7 @@ describe("Gmail connector foundation", () => {
     ["modify_message", { messageId: "abc", addLabelIds: Array.from({ length: 101 }, (_, i) => `Label_${i}`) }],
     ["modify_message", { messageId: "abc", removeLabelIds: ["INBOX"], ids: ["other"] }],
     ["list_labels", { surprise: true }],
+    ["get_profile", { surprise: true }],
   ] as [string, Record<string, unknown>][])("rejects invalid %s params before any external call: %j", async (actionId, params) => {
     const pipedream = client();
     const action = getAction("gmail", actionId);

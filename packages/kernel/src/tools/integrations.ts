@@ -1,17 +1,39 @@
+import {
+  JevEmailTriageResultSchema,
+  JevEmailTriageScoresSchema,
+  evaluateEmailTriagePolicy,
+} from "@matrix-os/contracts";
+import { createHmac } from "node:crypto";
 import { wrapExternalContent } from "../security/external-content.js";
 
 const GATEWAY_BASE = process.env.GATEWAY_URL ?? "http://localhost:4000";
 const API_TIMEOUT_MS = 10_000;
 const ACTION_TIMEOUT_MS = 35_000; // Pipedream actions timeout at 30s
 
-function authHeaders(): Record<string, string> {
+export function gatewayAuthHeaders(): Record<string, string> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
+  const scopedToken = process.env.MATRIX_AGENT_INTEGRATIONS_TOKEN;
+  if (scopedToken) {
+    if (!/^[a-f0-9]{64}$/.test(scopedToken)) throw new Error("InvalidAgentIntegrationCapability");
+    headers.Authorization = `Bearer ${scopedToken}`;
+    return headers;
+  }
   const token = process.env.MATRIX_AUTH_TOKEN;
   const clerkUserId = process.env.MATRIX_CLERK_USER_ID;
+  if (process.env.MATRIX_AGENT_OWNER_ID || process.env.MATRIX_AGENT_OWNER_PROOF) {
+    throw new Error("LegacyAgentDelegationRejected");
+  }
   if (token) headers["Authorization"] = `Bearer ${token}`;
-  if (clerkUserId) headers["x-platform-user-id"] = clerkUserId;
+  // The local MCP process inherits the authenticated Chat run's owner ID.
+  // The gateway ignores an unsigned user header and otherwise falls back to
+  // the VPS owner, which can be a different user on a shared Preview computer.
+  if (token && clerkUserId && /^[A-Za-z0-9_-]{1,256}$/.test(clerkUserId)) {
+    headers["x-platform-user-id"] = clerkUserId;
+    headers["x-platform-verified"] = createHmac("sha256", token).update(clerkUserId).digest("hex");
+  }
   return headers;
 }
+const authHeaders = gatewayAuthHeaders;
 
 export interface GatewayFetchResponse {
   ok: boolean;
@@ -27,11 +49,16 @@ export type GatewayFetcher = (
 
 interface ToolResult {
   [key: string]: unknown;
+  isError?: boolean;
   content: Array<{ type: "text"; text: string }>;
 }
 
 function textResult(text: string): ToolResult {
   return { content: [{ type: "text" as const, text }] };
+}
+
+function errorResult(text: string): ToolResult {
+  return { isError: true, content: [{ type: "text" as const, text }] };
 }
 
 function defaultFetcher(): GatewayFetcher {
@@ -313,6 +340,58 @@ export async function callServiceHandler(
   } catch (err: unknown) {
     console.error("[integrations] call_service error:", err instanceof Error ? err.message : err);
     return textResult("Integration service is temporarily unavailable. Please try again later.");
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Matrix-funded Jev. The caller supplies only bounded evidence and a stable
+// idempotency key. Owner identity, recipe, model, payer, and upstream endpoint
+// remain server-owned.
+// ---------------------------------------------------------------------------
+
+export interface JevEvaluateInput {
+  state: string;
+  idempotency_key: string;
+  verified: boolean;
+  age_days: number;
+}
+
+export async function jevEvaluateHandler(
+  input: JevEvaluateInput,
+  fetcher: GatewayFetcher = defaultFetcher(),
+): Promise<ToolResult> {
+  try {
+    const response = await fetcher(`${GATEWAY_BASE}/api/jev/evaluate`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({
+        recipe: "email-triage-v1",
+        state: input.state,
+        idempotencyKey: input.idempotency_key,
+      }),
+      redirect: "error",
+      signal: AbortSignal.timeout(API_TIMEOUT_MS),
+    });
+    if (!response.ok) {
+      return errorResult("Jev evaluation is currently unavailable. No classification was produced.");
+    }
+    const result = JevEmailTriageResultSchema.safeParse(await response.json());
+    if (!result.success) {
+      console.warn("[jev] Invalid local Gateway response");
+      return errorResult("Jev evaluation is currently unavailable. No classification was produced.");
+    }
+    const scores = JevEmailTriageScoresSchema.parse(Object.fromEntries(
+      result.data.answers.map((answer) => [answer.id, answer.probability]),
+    ));
+    const decision = evaluateEmailTriagePolicy({
+      scores,
+      verified: input.verified,
+      ageDays: input.age_days,
+    });
+    return textResult(JSON.stringify({ evaluation: result.data, decision }));
+  } catch (error: unknown) {
+    console.error("[jev] Evaluation unavailable:", error instanceof Error ? error.name : "UnknownError");
+    return errorResult("Jev evaluation is currently unavailable. No classification was produced.");
   }
 }
 

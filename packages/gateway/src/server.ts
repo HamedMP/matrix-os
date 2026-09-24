@@ -112,6 +112,9 @@ import {
 } from "./funded-ai-credential-manager.js";
 import { createFundedAiFundingSummaryClient } from "./funded-ai-funding-summary-client.js";
 import { createFundedAiReadinessReader } from "./funded-ai-readiness.js";
+import { JevEvaluationRepository } from "./jev/repository.js";
+import { createJevRoutes } from "./jev/routes.js";
+import { createJevService } from "./jev/service.js";
 import { createHeartbeatRunner, type HeartbeatRunner } from "./heartbeat/runner.js";
 import { createInteractionLogger, type InteractionLogger } from "./logger.js";
 import { extractMemoriesLocal } from "./memory-extractor.js";
@@ -196,6 +199,7 @@ import type { CanvasService } from "./canvas/service.js";
 import { CanvasSubscriptionHub } from "./canvas/subscriptions.js";
 import { createIntegrationBridgeRoutes } from "./integrations/bridge-routes.js";
 import { createIntegrationProxyResponse } from "./integrations/proxy-response.js";
+import { delegatedIntegrationHeaders } from "./integrations/delegated-identity.js";
 import type { PlatformDb } from "./platform-db.js";
 import {
   createHookRunner,
@@ -998,6 +1002,14 @@ export async function createGateway(config: GatewayConfig) {
     }
     if (internalAuthToken) {
       headers.set("authorization", `Bearer ${internalAuthToken}`);
+      if (routePrefix === "/api/integrations") {
+        // Platform verifies this machine's token, so sign the authenticated
+        // Gateway principal rather than forwarding any caller-supplied ID.
+        const actorId = requireRequestPrincipal(c).userId;
+        for (const [key, value] of Object.entries(delegatedIntegrationHeaders(actorId, internalAuthToken))) {
+          headers.set(key, value);
+        }
+      }
     }
 
     const upstream = await fetch(upstreamUrl, {
@@ -1246,6 +1258,20 @@ export async function createGateway(config: GatewayConfig) {
     broadcast,
   });
 
+  let jevService: ReturnType<typeof createJevService> | null = null;
+  if (fundedCredentialProvider && fundedAiRuntimeConfig && kyselyInstance) {
+    try {
+      const jevRepository = new JevEvaluationRepository(kyselyInstance as Kysely<any>);
+      await jevRepository.bootstrap();
+      jevService = createJevService({
+        store: jevRepository,
+        credentialProvider: fundedCredentialProvider,
+      });
+    } catch (error) {
+      console.error("[jev] Failed to initialize:", error instanceof Error ? error.name : "UnknownError");
+    }
+  }
+
   watcher.on((change) => {
     broadcast(change);
     if (change.path === "system/setup-plan.json") {
@@ -1294,6 +1320,19 @@ export async function createGateway(config: GatewayConfig) {
       })
     : undefined;
   app.route("/api/speech", speechRuntime.routes);
+  const fundedOwnerIds = new Set([
+    fundedAiRuntimeConfig?.identity.ownerId,
+    process.env.MATRIX_USER_ID?.trim(),
+  ].filter((value): value is string => Boolean(value)));
+  app.route("/api/jev", createJevRoutes({
+    service: jevService,
+    resolveOwnerId: (c) => {
+      const principal = requireRequestPrincipal(c);
+      return fundedAiRuntimeConfig && fundedOwnerIds.has(principal.userId)
+        ? fundedAiRuntimeConfig.identity.ownerId
+        : null;
+    },
+  }));
   app.route("/api/onboarding", createReadinessRoutes({ service: readinessService }));
   app.route("/api/onboarding", createToolPackRoutes({ service: toolPackService }));
   app.route("/api/agents", createAgentCredentialRoutes({ service: agentCredentialService }));
