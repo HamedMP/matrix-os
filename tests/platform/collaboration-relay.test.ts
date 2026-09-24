@@ -120,6 +120,25 @@ describe("CollaborationRelay", () => {
     expect(policyStore.lookup).not.toHaveBeenCalled();
   });
 
+  it("keeps owner content available when relay metadata recording fails", async () => {
+    const privatePayload = "owner-private-content";
+    const onMetadata = vi.fn(() => { throw new Error("telemetry unavailable: private details"); });
+    const fetchImpl = vi.fn(async () => new Response(privatePayload, { status: 200 }));
+    const { instance } = relay({ onMetadata }, fetchImpl as never);
+    const request = { actorId: "user_a", method: "GET", path: `/api/collaboration/scopes/${scopeId}/chat`, query: "", headers: new Headers(), body: null };
+
+    const response = await instance.forward(request);
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe(privatePayload);
+    expect(onMetadata).toHaveBeenCalledOnce();
+
+    const empty = relay({ onMetadata }, vi.fn(async () => new Response(null, { status: 204 })) as never);
+    const emptyResponse = await empty.instance.forward(request);
+    expect(emptyResponse.status).toBe(204);
+    expect(await emptyResponse.text()).toBe("");
+    expect(onMetadata).toHaveBeenCalledTimes(2);
+  });
+
   it("is unroutable without a directory entry and never guesses a home", async () => {
     const fetchImpl = vi.fn();
     const { instance, metadata } = relay({}, fetchImpl as never);
@@ -439,5 +458,38 @@ describe("CollaborationRelay", () => {
     expect(await instance.prepareSocket({ actorId: "user_a", rawPath: `/ws/collaboration/direct/scopes/${scopeId}/events?ticket=abc`, incomingHeaders: {}, externalHost: "app.matrix-os.com" })).toBeNull();
     prepared!.release();
     expect(instance.connectionCounts()).toEqual({ homes: 0, actors: 0 });
+  });
+
+  it("counts streamed request bytes without reading payloads into metadata or accepting a false short length", async () => {
+    const privatePayload = "private-file-payload";
+    const chunks = [new TextEncoder().encode(privatePayload.slice(0, 8)), new TextEncoder().encode(privatePayload.slice(8))];
+    const stream = () => new ReadableStream<Uint8Array>({
+      start(controller) { for (const chunk of chunks) controller.enqueue(chunk); controller.close(); },
+    });
+    const fetchImpl = vi.fn(async (_url: string, init: RequestInit) => {
+      const received = await new Response(init.body).text();
+      expect(received).toBe(privatePayload);
+      return new Response("ok", { status: 200 });
+    });
+    const { instance, metadata } = relay({}, fetchImpl as never);
+    const response = await instance.forward({
+      actorId: "user_a", method: "POST", path: `/api/collaboration/scopes/${scopeId}/discussion/messages`, query: "",
+      headers: new Headers(), body: stream(),
+    });
+    expect(await response.text()).toBe("ok");
+    expect(metadata).toMatchObject([{ requestBytes: new TextEncoder().encode(privatePayload).byteLength, responseBytes: 2, outcome: "forwarded" }]);
+    expect(JSON.stringify(metadata)).not.toContain(privatePayload);
+
+    const limitedFetch = vi.fn(async (_url: string, init: RequestInit) => {
+      await new Response(init.body).text();
+      return new Response("unexpected", { status: 200 });
+    });
+    const limited = relay({ limits: { requestBytes: 12 } }, limitedFetch as never);
+    const oversized = await limited.instance.forward({
+      actorId: "user_a", method: "POST", path: `/api/collaboration/scopes/${scopeId}/discussion/messages`, query: "",
+      headers: new Headers(), body: stream(), contentLength: 1,
+    });
+    expect(oversized.status).toBe(413);
+    expect(limited.metadata).toMatchObject([{ outcome: "limit" }]);
   });
 });

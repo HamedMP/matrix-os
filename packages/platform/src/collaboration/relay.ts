@@ -191,20 +191,33 @@ export class CollaborationRelay {
     contentLength?: number;
   }): Promise<Response> {
     const startedAt = this.now();
+    // What a caller declares is not what it sends. This starts at the known size of a buffered
+    // body and is replaced by the real count as a stream is consumed, so metadata never reports a
+    // caller-supplied number: `routes.ts` always passes a ReadableStream, whose declared length is
+    // a client header.
+    let requestBytes = input.body instanceof Uint8Array ? input.body.byteLength : 0;
     const route = parseRelayRoute(input.method, input.path);
     const finish = (status: number, outcome: RelayMetadata["outcome"], runtimeId: string | null, responseBytes = 0) => {
-      this.options.onMetadata?.({
-        actorId: input.actorId, runtimeId, resourceId: route?.identifier ?? null, method: input.method, path: input.path,
-        requestBytes: input.contentLength ?? (input.body instanceof Uint8Array ? input.body.byteLength : 0), responseBytes,
-        status, durationMs: this.now() - startedAt, outcome,
-      });
+      try {
+        this.options.onMetadata?.({
+          actorId: input.actorId, runtimeId, resourceId: route?.identifier ?? null, method: input.method, path: input.path,
+          requestBytes, responseBytes,
+          status, durationMs: this.now() - startedAt, outcome,
+        });
+      } catch (error: unknown) {
+        // Observability cannot change a home-authenticated content result.
+        console.warn("[collaboration-relay] metadata unavailable", error instanceof Error ? error.name : "UnknownError");
+      }
     };
     if (!route) {
       finish(404, "rejected", null);
       return plain("Collaboration route not found", 404);
     }
-    const declared = input.contentLength ?? (input.body instanceof Uint8Array ? input.body.byteLength : undefined);
-    if (declared !== undefined && declared > this.limits.requestBytes) {
+    // A caller may under-declare its length. The cap is held against the larger of what was
+    // declared and what is already in hand, so a false short length cannot buy headroom -- and a
+    // buffered body, which no stream bound covers, is capped here rather than forwarded whole.
+    const declared = Math.max(input.contentLength ?? 0, requestBytes);
+    if (declared > this.limits.requestBytes) {
       finish(413, "limit", null);
       return plain("Collaboration request too large", 413);
     }
@@ -226,7 +239,7 @@ export class CollaborationRelay {
       ? new Promise<void>((resolve) => { settleRequestBody = resolve; })
       : Promise.resolve();
     const requestBody = input.body instanceof ReadableStream
-      ? boundedRequestStream(input.body, this.limits.requestBytes, () => { overflowed = true; }, () => { settleRequestBody?.(); })
+      ? boundedRequestStream(input.body, this.limits.requestBytes, (bytes) => { requestBytes = bytes; }, () => { overflowed = true; }, () => { settleRequestBody?.(); })
       : input.body;
     const headers = new Headers();
     input.headers.forEach((value, name) => {
@@ -428,11 +441,17 @@ export class CollaborationRelay {
 function boundedRequestStream(
   source: ReadableStream<Uint8Array>,
   maxBytes: number,
+  onBytes: (bytes: number) => void,
   onOverflow: () => void,
   onSettled: () => void,
 ): ReadableStream<Uint8Array> {
   const reader = source.getReader();
   let size = 0;
+  // `onSettled` is called from inside the try, so a callback that throws would be re-entered by
+  // the catch below and announce the end twice. One settle per body is structural here rather
+  // than a property of whether the callback throws.
+  let settled = false;
+  const settle = () => { if (settled) return; settled = true; onSettled(); };
   return new ReadableStream<Uint8Array>({
     async pull(controller) {
       try {
@@ -440,27 +459,28 @@ function boundedRequestStream(
         if (chunk.done) {
           controller.close();
           reader.releaseLock();
-          onSettled();
+          settle();
           return;
         }
         size += chunk.value.byteLength;
+        onBytes(size);
         if (size > maxBytes) {
           onOverflow();
           await reader.cancel();
           controller.error(new Error("Collaboration request exceeds safe limits"));
-          onSettled();
+          settle();
           return;
         }
         controller.enqueue(chunk.value);
       } catch (error: unknown) {
         console.warn("[collaboration-relay] request stream failed", error instanceof Error ? error.name : "UnknownError");
         controller.error(new Error("Collaboration unavailable"));
-        onSettled();
+        settle();
       }
     },
     async cancel(reason) {
       await reader.cancel(reason);
-      onSettled();
+      settle();
     },
   });
 }
@@ -484,6 +504,12 @@ async function settleWithin(settled: Promise<void>, timeoutMs: number): Promise<
 function boundedStream(source: ReadableStream<Uint8Array>, maxBytes: number, onBytes: (bytes: number) => void, onDone: () => void): ReadableStream<Uint8Array> {
   const reader = source.getReader();
   let size = 0;
+  // `onDone` emits the request's one metadata event. It sits inside the try, so a throwing
+  // metadata sink was re-entered by the catch and the request was counted twice -- and
+  // `controller.error` was called on an already-closed controller. One event per request is now
+  // structural, not a property of whether the sink throws.
+  let done = false;
+  const finishOnce = () => { if (done) return; done = true; onDone(); };
   return new ReadableStream<Uint8Array>({
     async pull(controller) {
       try {
@@ -491,7 +517,7 @@ function boundedStream(source: ReadableStream<Uint8Array>, maxBytes: number, onB
         if (chunk.done) {
           controller.close();
           reader.releaseLock();
-          onDone();
+          finishOnce();
           return;
         }
         size += chunk.value.byteLength;
@@ -499,19 +525,19 @@ function boundedStream(source: ReadableStream<Uint8Array>, maxBytes: number, onB
         if (size > maxBytes) {
           await reader.cancel();
           controller.error(new Error("Collaboration response exceeds safe limits"));
-          onDone();
+          finishOnce();
           return;
         }
         controller.enqueue(chunk.value);
       } catch (error: unknown) {
         console.warn("[collaboration-relay] response stream failed", error instanceof Error ? error.name : "UnknownError");
         controller.error(new Error("Collaboration unavailable"));
-        onDone();
+        finishOnce();
       }
     },
     async cancel(reason) {
       await reader.cancel(reason);
-      onDone();
+      finishOnce();
     },
   });
 }

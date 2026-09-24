@@ -1,0 +1,545 @@
+# S19 quickstart acceptance matrix
+
+**Run:** 2026-09-21. **Suites executed at:** `3b7af0e4d`, clean worktree. **Branch head when this
+matrix was last corrected:** `bc018a4ab` (`47498d1d7` coverage docs and this file are the only
+commits added after the run; neither changes product code).
+**Database:** real PostgreSQL. `MATRIX_TEST_POSTGRES_URL` was exported for the whole run, and 17 of
+the 66 distinct test files take the real-server fixture (`createRealCollaborationTestDatabase`); the rest use
+the PostgreSQL-compatible in-process fixture, which is what those suites are written against.
+**Command shape:** every row ran as
+`pnpm exec vitest run <files> --maxWorkers=2`, one row at a time, in quickstart order, with no other
+wide run on the host. Per-row logs and machine-readable results are kept in the job scratch
+directory (`matrix/<row>.log`, `matrix/<row>.json`, `matrix/summary.jsonl`).
+
+## How to read this matrix
+
+Every row carries two independent facts, and they must not be collapsed:
+
+- **Automated result** — what vitest reported. A row is `PASS` only when vitest exited 0 with zero
+  failures. This says nothing about the journey.
+- **Verification class** — how much of the quickstart journey was actually exercised:
+  - **LIVE** — the journey ran end to end against the real dependencies the quickstart row names.
+  - **AUTOMATED-ONLY** — the in-process suites passed; the live half named in the quickstart row was
+    not exercised. The `Live half not exercised` column states exactly what was skipped.
+  - **BLOCKED** — the suites ran and failed on stale ancestry; the row is undecided until re-run.
+  - **NEVER RUN** — no suite and no live journey ran for this row.
+
+**No row in this release is LIVE.** No approved Clerk sandbox, provider credential, disposable
+enrolled two-computer fixture, root systemd host, or forge account was supplied to this S19 run
+(`../implementation-log.md`, "Pinned local inputs"). Every row that passed its suites passed only
+its automated half. No row's result is inferred from another row.
+
+## Result by journey, in quickstart order
+
+Journey names and order are exactly `quickstart.md`'s acceptance matrix. "Artifact" is the row label
+under which the run's log and JSON are stored.
+
+| # | Journey | Class | Automated result | Live half not exercised | Artifact |
+| --- | --- | --- | --- | --- | --- |
+| 1 | Org-only gate | AUTOMATED-ONLY | PASS, 36/36 in 21s, 5 files | Outsider holding a real Clerk session with direct network reachability to a running home; no live Clerk tenant was used | `01-org-only-gate` |
+| 2 | Relay transparency | AUTOMATED-ONLY | PASS, 82/82 in 72s, 9 files | Two enrolled member computers through the platform relay, an inspected production platform trace, and a recipient with no computer of their own; no VPS was provisioned | `02-relay-transparency` |
+| 3 | Peer path | NEVER RUN | — | Deferred from V1 (S13); no implementation claimed | — |
+| 4 | Membership | AUTOMATED-ONLY | PASS, 27/27 in 34s, 6 files | Direct Clerk-console membership edit, real lost/reordered Clerk webhooks, and a real platform/control network partition against the deadlines | `04-membership` |
+| 5 | Coarse roles | NEVER RUN | — | Deferred from V1 (S03 scope); no implementation claimed | — |
+| 6 | Granular profile | NEVER RUN | — | Deferred from V1; no implementation claimed | — |
+| 7 | Git/shell | AUTOMATED-ONLY | PASS, 36/36 in 25s, 5 files | Sandbox escape denial on a root systemd host; policy and broker assertions here are static and in-process | `06-git-shell-sandbox` |
+| 8 | Chat disclosure | NEVER RUN | — | Deferred from V1; no implementation claimed | — |
+| 9 | One owner source | AUTOMATED-ONLY | PASS, 78/78 in 104s, 6 files | Any real provider source. Readiness, revision checks and the submit-mode gate are proven in-process against fakes; "exhausted source pauses without fallback" was never observed against a real exhausted account | `08-one-owner-source` |
+| 10 | Group Chat | AUTOMATED-ONLY | PASS, 23/23 in 41s, 4 files | Cross-account, cross-host share/join producing one shared Chat between two real member identities | `09-group-chat` |
+| 11 | Standalone shares | AUTOMATED-ONLY | PASS, 69/69 in 120s, 4 files | Cross-account, cross-host Chat/terminal/app/file/folder journeys, including a live terminal Viewer and a Contributor taking the controller | `10-standalone-shares` |
+| 12 | Explicit join | AUTOMATED-ONLY | PASS, 23/23 in 34s, 3 files | A second real member account opening a pending organization share, and a member added to the organization after the share exists | `11-explicit-join` |
+| 13 | Cancel and tool approval | AUTOMATED-ONLY | **Decided 2026-09-24 on the replayed ancestry: PASS.** Was 32/34 on stale ancestry; both failures were ancestry, now green | Only the requesting member or project owner cancelling a real run, and a real tool-approval prompt answered by each role, were never exercised | `12-cancel-tool-approval` |
+| 14 | Home loses a run | AUTOMATED-ONLY | PASS, 34/34 in 60s, 3 files | All four physical loss modes: restarting the gateway, killing the scope-runtime supervisor, killing the run unit, partitioning the control stream past its lease | `13-home-loses-run` |
+| 15 | Git identity | AUTOMATED-ONLY | PASS, 8/8 in 27s, 1 file | A live forge push or pull request under the owner identity; attribution and audit are proven on real Postgres only | `14-git-identity` |
+| 16 | Shared coding | NEVER RUN | — | Needs live Codex and Claude API-backed runs on the project root; no provider credential was used in this session | — |
+| 17 | Share inventory | AUTOMATED-ONLY | PASS, 21/21 in 14s, 5 files | Sharing a real project across two accounts and observing the confirmation, the blocked unresolvable root, and worktree survival on a real host | `16-share-inventory` |
+| 18 | Integrations | NEVER RUN | — | Deferred from V1 (S11); V1 evidence asserts the endpoints are not exposed | — |
+| 19 | Ready-to-work | AUTOMATED-ONLY | **Decided 2026-09-24 on the replayed ancestry: PASS.** Was 24/25 on stale ancestry; the failure was ancestry, now green | Share preflight was never exercised interactively. **T079 remains open and the four S15 surfaces still have no rendered capture**, so this row cannot reach LIVE on suites alone | `18-ready-to-work` |
+| 20 | Invite costs | NEVER RUN | — | Deferred from V1 (S14); no implementation claimed | — |
+| 21 | Ownership | NEVER RUN | — | Deferred from V1 (S14); no implementation claimed | — |
+| 22 | Transfer | NEVER RUN | — | Deferred from V1 (S13); no implementation claimed | — |
+| 23 | Cutover | AUTOMATED-ONLY | **Decided 2026-09-24 on the replayed ancestry: PASS.** Was 25/30 on stale ancestry; all five failures were ancestry, now green | Operator dry-run on a real host with old clients, offline homes, ambiguous handles and a real backup was never performed. The earlier cap on this row is **withdrawn** — #1864 merged, so the retired-V1-paths clause is satisfied. The cutover recovery qualification below still applies | `20-cutover` |
+| 24 | Surfaces | AUTOMATED-ONLY, **with one surface known broken** | **PASS, 69/69 across 9 named suites** (re-measured 2026-09-24; see "What row 24's suites actually cover"). Only one is surface-specific; the other eight are not surface-partitioned | Authenticated Web Canvas, Web Desktop and Electron Desktop owner/member/outsider parity; the four S15 sharing surfaces have no rendered capture at all; `bun run build:shell:production` and `bun run build:desktop` were **not re-run in this session** — both ran and passed during S15 (`S15-receipt.md:35`), which is a build check and not an interactive surface journey. **Native Mobile is not merely unevidenced — its shared Chat and terminal are known not to work**, so quickstart line 53 is failed. See the correction below. | `21-surfaces` |
+| 25 | Scale | AUTOMATED-ONLY | PASS for the in-process profile only, 4/4 in 2s, 1 file | Real bandwidth, egress cost and a two-host CPU/memory/network profile; the numbers here are deterministic synthetic byte counts | `22-scale` |
+| 26 | Matrix groups | NEVER RUN | — | Deferred from V1 (S16); no implementation claimed | — |
+
+**Class totals across 26 journeys, updated 2026-09-24 after the replay:** **0 LIVE**, **16
+AUTOMATED-ONLY**, **0 BLOCKED**, 10 NEVER RUN. The three blocked rows were re-run on the corrected
+ancestry and all three passed their suites, which moves them into AUTOMATED-ONLY — not into LIVE.
+Their live halves are still unrun and are named in the table. **Nothing became a verified journey;
+three rows went from undecided to automated-only.**
+
+**Totals are per measurement date, and the two dates do not sum.** This table now displays results
+from two runs, so a single aggregate would be true of neither. Both are stated in full rather than
+reconciled into one figure.
+
+| Measurement | Scope | Result |
+| --- | --- | --- |
+| **2026-09-21**, the original acceptance run | The 16 rows whose suites ran, as recorded then | 67 file runs over 66 distinct files (one file appears in two rows), **545 tests: 537 passed, 8 failed, 0 skipped** |
+| **2026-09-24**, re-measurements on the replayed ancestry | Rows 13/19/23's four failing suites; row 24's 9 named suites | **51/51** and **69/69**, both exit 0, real PostgreSQL for the first |
+
+The 2026-09-21 row is the historical record of that run and is **not** updated in place: its 8
+failures are the blocked-row failures, since resolved, and rewriting them away would erase the
+evidence that the resolution was needed. The 2026-09-24 rows supersede two of its entries — row 24's
+15-tests-across-5-files figure is replaced by the 9 named suites above, and rows 13/19/23's failures
+are replaced by the re-run — so **summing the displayed rows does not reproduce 545, and is not meant
+to.** Each row states which run produced it.
+
+No row was skipped-and-counted-as-passed in either measurement: vitest reported zero skipped tests
+in both.
+
+## Correction history
+
+An earlier revision of this file labelled rows 1, 4, 9, 10, 11, 12 and 17 simply `PASS` with no
+recorded live gap, and summarised the run as "13 rows green". That reads as seven verified journeys
+and it is not what happened: those seven rows ran their in-process suites and nothing else, exactly
+like the six rows whose gaps were already recorded. The same revision introduced a section headed
+"Three rows passed their automated part while their live part remains unrun" and then listed six
+rows under it. Both are corrected above: every passing row now carries its class and its exact
+unexercised live half, and the "green" count is gone.
+
+## The three blocked rows were stale ancestry, and the re-run proves it
+
+**Resolved 2026-09-24.** The layer was replayed onto `2486bc684` (the merged stack tip) with oldbase
+`801883466`, and the four suites carrying all eight failures were re-run on real PostgreSQL:
+`collaboration-database`, `collaboration-foundation`, `shared-coding-execution` and
+`collaboration-project-lifecycle` — **4 files, 51/51, exit 0**. Every failure below was an
+expectation pinned to the older chain, and none was a product defect. The diagnosis recorded before
+the restack is confirmed rather than assumed.
+
+Scope of that claim: the four files above carried all eight failures. The remaining files in rows
+13, 19 and 23 passed in the original run on the older ancestry and are covered by the broader
+collaboration sweep recorded with this receipt, not by a per-row re-run with the original file
+lists, which were kept in a job scratch directory that no longer exists.
+
+The failures as originally recorded:
+
+`124/s19-acceptance` sits above a chain that has moved and has **not been restacked**. The eight
+failures are expectations pinned to the older chain, and every one of them fails by finding *more*
+than it expects, or by a defect already fixed on a newer lower layer:
+
+| Row | Failing test | What the assertion shows |
+| --- | --- | --- |
+| 23 Cutover | `collaboration-database.test.ts` "adds every collaboration authority and transition table and index idempotently" | 26 tables present, 13 expected |
+| 23 Cutover | `collaboration-foundation.test.ts` "registers exactly the baseline handler routes in the baseline order" | 51 routes present, 34 expected |
+| 23 Cutover | `collaboration-foundation.test.ts` "keeps the no-store and mutation body-limit middleware on the collaboration prefix" | 9 middleware methods present, 4 expected |
+| 23 Cutover | `collaboration-foundation.test.ts` "composes the same handler set from the per-resource registration modules" | 37 handlers present, 34 expected |
+| 23 Cutover | `collaboration-foundation.test.ts` "registers the versioned migrations in order and records every version idempotently" | versions 3-14 present, 3-11 expected |
+| 13 Cancel and tool approval | `shared-coding-execution.test.ts` "registers the shared run loss migration after the execution policies" | versions 3-14 present, 3-11 expected |
+| 13 Cancel and tool approval | `shared-coding-execution.test.ts` "lets only the requesting member retry an interrupted request, never the owner" | `invalid input syntax for type json`, the retry JSONB defect already fixed on a newer S09 head |
+| 19 Ready-to-work | `collaboration-project-lifecycle.test.ts` "fences every membership mutation while an ownership transfer is staged" | `CollaborationRepositoryError: Scope has no organization context` from `grant-repository.ts:67` |
+
+**Historical, as recorded before the replay.** At the time, these rows were recorded as blocked —
+not as failures and not as passes — pending a re-run on corrected ancestry, and the last row was
+called out as the least obviously ancestry-driven of the eight: a missing organization context on a
+fixture, matching a requirement introduced below that branch but unproven there. **That re-run has
+since happened and all three rows passed** (see the resolution above); the paragraph is kept as the
+record of what was known then, not as a live status.
+
+Two files that failed during the separate coverage run now **pass** at this head:
+`chat-provider-binding-reconciliation.test.ts` and `collaboration-owner-resource-driver.test.ts`,
+9/9 together. See `S19-coverage.md`.
+
+## What every NEVER RUN row needs
+
+No NEVER RUN row has an automated substitute, and none is inferred from a neighbouring row.
+
+- **Deferred by explicit decision, not by failure** (rows 3, 5, 6, 8, 18, 20, 21, 22, 26): peer path,
+  coarse roles, granular profile, Chat disclosure, integrations, invite costs, ownership, transfer
+  and Matrix groups are marked deferred in `quickstart.md` and in `tasks.md` (slices **S11, S13, S14,
+  S16, S17**, plus **T063** and **T077**), and are not release gates. V1 evidence instead asserts
+  their endpoints and selectors are not exposed.
+- **Row 16, Shared coding**: needs live Codex and Claude API-backed runs on the project root. No
+  provider credential was used in this session, so the row did not run at all. This row is **not**
+  deferred — it is a release gate that has not been met.
+
+## Three finding classes, three different fixes
+
+Three distinct defect classes surfaced while this release was being assembled. They are recorded
+separately and deliberately: they share no cause and no fix, and collapsing them into "review more
+carefully" would lose the only actionable part of each.
+
+| Class | Instances in this release | What actually fixes it |
+| --- | --- | --- |
+| **Pre-read plus unpredicated write** | 5, the last 2 being security controls (`cutover.ts` `resume()` and `block()`) | Mechanical enforcement. The rule is already written in `CLAUDE.md` and `check-patterns.sh` has no check for it. |
+| **Retirement without a caller inventory** | 1 defect, 3 inventories that each missed something (`connection-tickets` against `apps/mobile` and `packages/ui`) | Enumerate callers **from the retired path across every workspace package**, not from the previous inventory and not only under `shell/` and `apps/`. |
+| **Boundary-blind tests** | **6**, in two sub-shapes — absence (4) and proxy assertion (2). See below. | Assertions on the far side of the boundary: affected-row counts, a shared route constant both sides import, and rendered output rather than callback order. |
+| **Correction applied at the site of discovery** | 1 defect (the Native Mobile claim): corrected in `quickstart.md` while four inaccurate copies remained elsewhere, all since corrected | Enumerate a corrected claim's copies the way you enumerate a retired route's callers — from the claim, across every document. |
+
+Each is detailed below.
+
+## Correcting a claim where you found it, not where it lives
+
+Added 2026-09-24, found by Greptile on #1883. This pass established that Native Mobile's shared Chat
+and terminal do not work, and corrected the sentence saying otherwise in `quickstart.md`. Enumerating the claim afterwards
+found **five further occurrences: four inaccurate copies, all corrected here, and one already-correct
+historical quotation.** Nothing in the list below is outstanding. One of the four would have
+shipped:
+
+| Location | Status | Why it mattered |
+| --- | --- | --- |
+| `site-docs-draft.md` | **Corrected** | Feeds the public site PR. Would have **advertised to customers** shared Chat and terminal that are destroyed at the platform edge. |
+| `spec.md` | **Corrected** | The authoritative V1 scope statement. A reader checking what V1 supports would have been told it works. |
+| `tasks.md`, S17 exit criterion | **Corrected** | A requirement phrased as a description, the same defect as quickstart row 24. |
+| `evidence/direct.md` | **Corrected** | Transport table asserting Native Mobile reaches the home by that path. |
+| This matrix | Already correct | **Not a defect.** Quotes line 53 to negate it — the quotation is immediately followed by "is not true". Listed so the enumeration is complete, not because anything needed changing. |
+
+**This is not a stale claim that was never re-derived.** It *was* re-derived, correctly, and fixed.
+The failure is that the correction was applied **at the site of discovery rather than at every site
+the claim lived**. `site-docs-draft.md` was found only because Greptile flagged it, and the search
+that followed turned up the other three — so even the corrected correction was incomplete until it
+was enumerated properly.
+
+**Three numbers, not one.** Five occurrences, four defects, one quotation. An earlier revision of
+this paragraph said five copies "survived", which reads as five stale claims still loose and would
+have sent a reader after four documents already clean and one that was never wrong. That is an
+overstatement of remaining damage inside the record of fixing an overstatement — the mirror of the
+understatement corrected in row 24's build claim, one document later. A count is not a finding until
+it says what each item is.
+
+The discipline already existed in this document, aimed at the wrong noun. The retirement finding
+above says to enumerate every *caller* of a retired route rather than trusting a map written from
+intent. The same is owed to every *instance* of a retired claim, and nobody thought to run it,
+including the author of the retirement finding.
+
+**The gate: when you correct a factual claim, enumerate its copies from the claim, across every
+document, the way you would enumerate callers from a path.** For this defect the gate is one `grep`
+for the claim's distinctive phrase — which is how the remaining three were found, after the first two
+were fixed one at a time.
+
+**Largest blast radius of anything recorded here.** Every other finding in this document is wrong
+internally, visible only to someone reading the release's own evidence. This one was wrong in a
+document whose purpose is publication.
+
+## Boundary-blind tests: green because the assertion is on our side of the boundary
+
+Added 2026-09-23. Two tests in unrelated code, found on the same day, were green while sitting
+directly beside the defect they covered. Both failed the same way: **the assertion is on our side of
+a boundary, and the thing that broke is on the other side of it.** A test written that way can only
+confirm that we did not change our mind.
+
+| Instance | What it asserts | Why it cannot fail |
+| --- | --- | --- |
+| The `block()` coverage in the T095 cutover suite | The journal row after the call | A write matching zero rows and a write that succeeded leave the same row. The effect is on the database's side of the boundary, in the affected-row count, which nothing inspects. |
+| `apps/mobile/__tests__/requests-collaboration.test.ts:260,316` | That the client POSTs `/api/collaboration/scopes/:id/connection-tickets` | Whether that route is *served* is on the server's side. The test would only fail if the client stopped calling the path — the opposite of the defect. |
+
+These differ in mechanism — an absent effect versus an absent counterparty — and share the blind
+spot. Neither is fixed by adding assertions to the existing test, because the existing test never
+reaches the far side at all.
+
+**Six instances, in two sub-shapes.** This is no longer a pattern; it is the dominant failure mode of
+this release.
+
+*Absence — no assertion could reach the far side (4):*
+
+1. The `block()` coverage: a zero-row write and a successful write leave the same row.
+2. `apps/mobile/__tests__/requests-collaboration.test.ts`, the ticket pair: asserts the client POSTs
+   a path the server now 404s.
+3. The same file, the socket pair: asserts, *as a requirement*, the exact non-`/direct/` URLs that
+   `platform-websocket-upgrade.ts` destroys. Four blind assertions in one file, and this pair is the
+   stronger evidence — a test pinning the precise string the server exists to reject.
+4. The budget suite that stopped exercising exhaustion.
+
+*Proxy assertion — a real, passing assertion about the wrong thing (2):*
+
+5. The shared-terminal refresh-ordering test: `["refresh:start", "refresh:end", "output:6"]` passed
+   while output still duplicated, because callback order is not the rendered screen. **It was live
+   inside the fix for this very class.**
+6. The replay-path coverage that reported success while `deliverReplay` discarded retained records.
+
+**The proxy sub-shape is worse than absence**, and it is the one that survives a conscientious
+author. A gap looks like a gap. A proxy assertion looks like coverage: it is real, it is green, it
+was written on purpose, and it consumes the reviewer's attention budget while returning nothing. The
+fix is not more assertions but assertions on the artifact the user sees — the rendered `<pre>`, the
+affected-row count, the served route — rather than on a signal correlated with it.
+
+**What fixes it.** For the database: assert the affected-row count, under interleaved writers.
+
+For the client, the mechanism **already exists and this retirement did not use it.**
+`packages/contracts/src/collaboration-direct.ts:397` exports `COLLABORATION_DIRECT_ROUTES`, commented
+"Exact V1 route allowlist", carrying every route with its method, authority, auth class and schemas.
+`apps/mobile` already depends on that package and already imports `@matrix-os/contracts/collaboration`
+(`app/(drawer)/shared.tsx:13`), so the dependency edge is in place. The retired path was simply never
+on the shared table: it lived as a string literal in the mobile client and as a regex in the platform
+router, with nothing connecting the two. Its replacement, `POST /api/collaboration/connections`
+returning `CollaborationSignedConnectionTicketSchema`, **is** on the table.
+
+So the fix is not new machinery. It is migrating the remaining literals onto the frozen table the
+spec already froze in S02, after which retiring a route breaks the **build** in every caller rather
+than returning 404 at runtime — the same lesson the atomicity class produced, that enforcement beats
+documentation. It also makes the caller inventory partly automatic: the compiler enumerates the
+callers.
+
+## What row 24's suites actually cover
+
+Added 2026-09-24, after Greptile flagged that "the five shell suites" names no surface.
+`AGENTS.md` requires evidence to name Web Canvas, Web Desktop, Electron Desktop, Web Mobile or
+Native Mobile, and "shell suites" is exactly the ambiguity that rule exists to prevent — most costly
+on this row, because row 24 is where Native Mobile is recorded as known broken, and a reader who
+cannot tell which surfaces were covered cannot tell what that claim is scoped against.
+
+**The original five could not be reconstructed.** The file list lived in a job scratch directory that
+no longer exists, so the label could not be expanded into its constituents. Rather than guess five
+filenames, the row is re-measured against an explicitly named set, run on this branch at
+`0aaea34ef`: **9 files, 69/69, exit 0.**
+
+| Suite | Surface it evidences |
+| --- | --- |
+| `tests/shell/web-desktop-surface.test.tsx` | **Web Desktop** — the only surface-specific suite; it renders `WebDesktopSurface` directly |
+| `tests/shell/collaboration-organization.test.tsx` | Not surface-partitioned |
+| `tests/shell/shared-chat-app-integration.test.tsx` | Not surface-partitioned |
+| `tests/shell/shared-chat-deep-link.test.tsx` | Not surface-partitioned |
+| `tests/shell/shared-chat-route-sync.test.tsx` | Not surface-partitioned |
+| `tests/shell/shared-with-me-nav.test.tsx` | Not surface-partitioned |
+| `tests/ui/chat-collaboration-sharing.test.tsx` | Not surface-partitioned |
+| `tests/ui/collaboration-project-sharing.test.tsx` | Not surface-partitioned |
+| `tests/ui/collaboration-ready-to-work.test.tsx` | Not surface-partitioned |
+
+**"Not surface-partitioned" is the honest label, not a hedge.** Those eight mount shared components
+and stores that Web Canvas, Web Desktop and Electron Desktop all consume, and none of them asserts
+anything per-surface — no canvas or Electron reference appears in any of them. **So they are evidence
+about shared code, not about any surface's rendering.** Stretching a surface name over them would
+turn one green run into three surface claims it cannot support, which is the same arithmetic the
+seven corrected `PASS` rows were about.
+
+That is also why Native Mobile's known-broken status on this row is **not** scoped by these suites.
+It rests on platform-edge behaviour — `platform-websocket-upgrade.ts` destroying every
+`/ws/collaboration/` upgrade that `parseRelaySocketPath` rejects — which no shell or UI suite
+observes. One surface evidenced, three surfaces' shared code exercised, one surface known broken by a
+mechanism none of these tests can see.
+
+**The label was the defect.** "Five shell suites" recorded a count and a vague noun instead of its
+constituents, and by the time anyone asked which five, the answer was gone. Evidence has to name what
+it ran, not how many things it ran, or it cannot be re-derived — the same failure as a bare line
+number naming a position instead of a claim.
+
+**And re-measuring this row broke an invariant one section away.** Replacing row 24's figure left the
+run-level totals summing to 599 against a stated 545 — every row individually honest, the aggregate
+reconciling to neither. That is the seventh finding again with arithmetic instead of prose:
+**correcting a value at its site and leaving its dependents stale is the same move as correcting a
+claim at its site of discovery and leaving its copies.** The dependents of a number are the totals
+that consume it, and nothing checks them. The totals block above now states its measurement date per
+row, so a reader can reproduce which run produced which figure instead of trusting that one sum
+covers both.
+
+## Shared-terminal evidence measured against three since-fixed P1 defects
+
+Added 2026-09-24. #1865 (`2486bc684`) carries three P1 fixes in the shared-terminal path, all found
+by review after the acceptance run measured that path. **Rows 11 (Standalone shares) and 24
+(Surfaces) exercise this path, and their automated halves were green while all three defects were
+present.**
+
+| Defect | Effect on a viewer |
+| --- | --- |
+| The retained daemon snapshot shared one backlog counter with live output | Raising the snapshot frame limit alone relocated the viewer disconnect from attach to the first output frame rather than fixing it; the two budgets are now separate |
+| The client fired `onRefreshRequired` without awaiting it | Replayed output could be applied before the refresh settled, appending the snapshot to the transcript the refresh was about to clear |
+| `deliverReplay` sent `refresh_required` and returned when a viewer was behind `evictedThrough` | `lastSequence` advanced to the head and the retained records were discarded, so a joining viewer saw a blank terminal until the next output |
+
+**The second fix reported success while the defect was still live**, which is the sharpest instance
+in this release of the class recorded below: the ordering test asserted
+`["refresh:start", "refresh:end", "output:6"]` and passed, because it watched callback order and
+never looked at the rendered screen. The replacement asserts the `<pre role="log">` and fails on the
+parent with `stale screen\nsnapshot screen` — the defect as a viewer reads it rather than a proxy
+for it.
+
+**Row 14 was checked against this and is not qualified.** Its live half includes partitioning the
+*control* stream past its lease, which is a different stream from the terminal events connection.
+`deliverReplay` is called from terminal connection setup only
+(`packages/gateway/src/collaboration/terminal-events.ts:168`, immediately before `terminal.ready`),
+so the replay path is reached on viewer attach and reattach, not by control-stream loss. Qualifying
+row 14 would have been an inference from a plausible-sounding description rather than from the
+merged diff.
+
+## Cutover evidence measured against since-fixed security defects
+
+Added 2026-09-23, after the acceptance run. Greptile found two **P1** defects on #1860 in
+`packages/platform/src/collaboration/cutover.ts`. Both are fixed and merged (`13c4ca234`, verified
+present on `origin/main`), and both were in the code the cutover evidence was measured against:
+
+| Defect | Why the suite did not catch it |
+| --- | --- |
+| `resume()` pre-read the journal and wrote predicated only on `phase = "blocked"`. The recovery disable also leaves the phase `blocked` and changes only `block_reason`, so a disable committing between the read and the write was silently cleared, and `advance()` then re-blocked the scope for an unrelated reason leaving no trace the disable was issued. | The race needs a disable to commit inside the read-write window. The suite exercises `resume()` and the disable separately, never interleaved. |
+| `block()` never checked its affected-row result, so a disable racing an activation matched zero rows while reporting success to its caller. The home disable that follows only logs failures, so both sides could stay open with ticket admission continuing. | Same window. A zero-row write is indistinguishable from a successful one unless the result is inspected, which no assertion did. |
+
+**What this changes in this matrix.** Row 23 (Cutover) is `BLOCKED` and claims nothing, so no green
+row here is affected. The claim that is affected lives in `../implementation-log.md`: the T095
+cutover audit's **17/17 on real Postgres, including blocked compatible-direct rollback recovery**.
+That result stands as a fact about that run and does not demonstrate what it was read as
+demonstrating — the suite was green while both defects were present, so it evidences the
+non-concurrent cutover paths only. Cutover recovery under a racing security control was **never
+covered**, before or after the fix. Both annotations are recorded in that log.
+
+**Why a green suite could not have caught either one.** An unchecked `.execute()` is invisible to a
+test that asserts end state, because the failure mode *is* the absence of an effect: a write that
+matched zero rows and a write that succeeded leave the assertion looking at the same journal unless
+something inspects the result. The same holds for the cleared fence — the end state after a silently
+discarded disable is a plausible journal, not a corrupt one. Both defects are only reachable by a
+test that interleaves two writers and then asserts on the *affected-row count*, not on the row.
+Adding coverage for these paths therefore means new concurrent tests, not stronger assertions on the
+existing ones.
+
+**Pattern count.** These are the **fourth and fifth** instances of pre-read-plus-unpredicated-write
+found in this release, and the first two where the racing writer was a **security control** rather
+than ordinary data — a cleared recovery fence and a falsely-reported disable, not a lost update.
+`CLAUDE.md` already requires that optimistic concurrency be enforced in the write statement rather
+than by a pre-read under READ COMMITTED. Five occurrences says the rule is not reaching the code at
+review time; the finding is recorded in `../implementation-log.md`. A row that passes while the
+control it exercises is racing is exactly the kind of green this matrix exists to refuse.
+
+## A route retired ahead of its callers, on the one surface with no evidence
+
+Added 2026-09-23. Greptile returned #1864 at 4/5 with a P1. Verified against source on both sides:
+
+- **Retirement.** `packages/platform/src/collaboration/routes.ts:16` defines
+  `RETIRED_CONNECTION_TICKET_PATH = /^\/api\/collaboration\/scopes\/[^/]+\/connection-tickets$/`
+  and line 67 returns 404 for any POST matching it.
+- **Callers.** `apps/mobile/lib/requests/collaboration.ts` POSTs exactly that path from its
+  connection-ticket request, and so does `createCollaborationBrowserApi` in
+  `packages/ui/src/collaboration/client.ts`. (Cited by symbol deliberately: a bare line number names
+  a position, not a claim. Two readers each correctly verified different integers in the mobile test
+  file for four rounds, because one meant the ticket assertion and the other the socket assertion
+  four lines below it, and neither said which.) Only Native Mobile reaches it at runtime: S06
+  routed the shells onto the direct client, and `direct-api.ts:155,158` override `subscribe` and
+  `subscribeTerminal` to use `direct.subscribeEvents`/`direct.subscribeTerminal`, so the legacy
+  paths in `client.ts` are never entered through `createCollaborationDirectApi`. See the inventory
+  correction below — the first version of this bullet claimed Native Mobile was the only *caller*,
+  which was wrong.
+- **Failure radius is one call; fix radius is three.** The ticket is the precondition for both
+  sockets: `collaborationEventsUrl` (:452) and `collaborationTerminalUrl` (:462) are built *from the
+  returned ticket*, so a 404 at :407 means no ticket exists and neither socket is attempted. One
+  broken call gates shared project, shared drawer and shared terminal. But the sockets are **not**
+  fixed by restoring the ticket: both build `/ws/collaboration/scopes/:id/{events,terminal}`, while
+  `relay.ts:36` routes only `^/ws/collaboration/direct/scopes/(UUID)/(events|terminal)$`. The
+  mobile paths lack the `/direct/` segment and do not match. Worse, `isCollaborationWebSocketCandidate`
+  (:148) claims everything under `/ws/collaboration/`, so those sockets are taken by the relay and
+  then fail classification rather than falling through. All three call sites need migrating.
+
+**Why the layer's own tests were green — four blind assertions, not two.**
+`apps/mobile/__tests__/requests-collaboration.test.ts` asserts the exact strings returned by
+`collaborationEventsUrl` and `collaborationTerminalUrl`, which build
+`/ws/collaboration/scopes/:id/{events,terminal}` with no `/direct/` segment — the precise URLs that
+`platform-websocket-upgrade.ts`'s `isCollaborationCandidate && !isDirectSocket` branch destroys,
+because `parseRelaySocketPath`'s regex requires `/direct/`. The same tests also assert the
+`connection-tickets` POST that `RETIRED_CONNECTION_TICKET_PATH` 404s. **The socket pair is the
+stronger evidence**: a test that pins, as a requirement, the exact string the server exists to
+reject. All four assert the client's own output and none asserts the server's acceptance. See
+"Boundary-blind tests" below.
+
+**This is a different failure class from the five atomicity instances.** Those were a rule with no
+mechanical enforcement. This is a **retirement whose caller inventory was never taken**. The layer's
+own evidence document, `S18-T090-route-map.md`, is separately flagged as contradicting the code,
+which suggests the route map was written from intent rather than by enumerating callers. Neither the
+map nor the tests caught a shipped client still calling the retired path.
+
+**Correction, 2026-09-24: the retirement was NOT deferred, and this document said it was.** An
+earlier revision recorded a decision to defer #1864, capped row 23 on that basis, and stated that
+the release satisfied quickstart line 53 at the cost of line 52. Every part of that is wrong and is
+replaced here. #1864 **merged with the retirement intact** (`274b6f6d7`). The reversal is correct,
+for a reason the deferral had missed: **Native Mobile was already broken on `main` before the ticket
+route was touched.** `packages/platform/src/platform-websocket-upgrade.ts:152-158`, verified on
+`origin/main`:
+
+```ts
+const isCollaborationCandidate = isCollaborationWebSocketCandidate(path);
+const isDirectSocket = isAppDomain && Boolean(collaborationDirect) && Boolean(parseRelaySocketPath(path));
+if (isCollaborationCandidate && !isDirectSocket) { socket.destroy(); return; }
+```
+
+`isCollaborationWebSocketCandidate` matches anything under `/ws/collaboration/`;
+`parseRelaySocketPath` requires `/ws/collaboration/direct/scopes/:uuid/{events,terminal}`. Mobile's
+sockets carry no `/direct/` segment, so they are candidates, are not direct, and are **destroyed**.
+The socket retirement landed earlier than the ticket retirement, so a ticket without a reachable
+socket is inert: preserving the endpoint would have preserved nothing usable.
+
+**Which inverts both criteria from how this document had them.**
+
+1. **Line 52 is satisfied, not failed.** "Legacy proxy/WS/V1 paths, rollout flag and cohort policy
+   removed" is met: the retirement landed. The earlier cap on row 23 rested on that clause being
+   unmet and is withdrawn. Row 23 was still `BLOCKED` on stale ancestry when this correction was
+   written; the 2026-09-24 re-run has since decided it, and it is now AUTOMATED-ONLY.
+2. **Line 53 is failed, and was failed by `main` rather than by any decision of ours.** "Native
+   Mobile and CLI are a recorded V1 limitation whose existing 525 shared Chat/terminal keep
+   working" is not true: Native Mobile's shared Chat and terminal do not work. The honest statement
+   is **not** "we chose to break it" but "it was already broken and this release did not restore
+   it".
+
+**Row 24 is downgraded accordingly.** Native Mobile moves from *unevidenced* to *known broken*, and
+those are not the same claim. The row's automated part still passes for the five shell suites; the
+row now carries a surface whose required behaviour is known not to hold. Recording a known break as
+"no evidence" would be the same overstatement this document was rewritten to remove, one column
+over. The migration is an **unmet gate**, owed by the release, and belongs with row 16 rather than
+with the nine V1 deferrals.
+
+**The gate is demonstrably achievable, because one surface did it.**
+`packages/sync-client/src/cli/commands/collaboration.ts:61` reads
+`return !/\/connection-tickets(?:[/?]|$)/.test(path) && COLLABORATION_PATH.test(path)` — the CLI
+explicitly refuses the retired path. **One surface was migrated properly in the same release that
+left another broken.** That is the strongest argument in this finding: the gate is not aspirational
+here, it is something this codebase already did once and did not do twice.
+
+**Three inventories were taken of this retirement, and all three missed something — each in a
+different way.**
+
+1. The layer's route map (`S18-T090-route-map.md`) was derived from what the layer *intended* to
+   retire, so it agreed with the code it came from and enumerated no consumers.
+2. The first correction carried its CLI claim forward without re-checking it. The CLI had already
+   migrated.
+3. This document's own inventory grepped `apps/mobile` and `shell/src` for the literal path. The
+   shells import from `@matrix-os/ui`, not a literal, so that search was **structurally incapable**
+   of finding a shell-side caller — and it missed `packages/ui/src/collaboration/client.ts`.
+
+The third is recorded here against its own claim rather than quietly fixed. Its conclusion survived
+— the shells really are unaffected — but it survived because of a migration the search had not
+verified, not because the search was sound. **A correct answer from a method that could not have
+found the counterexample is not evidence that the method works.**
+
+**So the gate is not "write an inventory".** It is: *enumerate callers of the retired path across
+every workspace package, from the path itself rather than from the previous inventory.* Searching
+`shell/` and `apps/` is not enough when shared packages hold the call.
+
+**Cite by symbol, because an integer names a position and not a claim.** Three mechanisms break a
+line-number citation, and only the third needs the file to stay still: the file changes (the S18
+route map cited a CLI call site that had already migrated); the reader miscounts; or — most common —
+two readers each verify their own correct integer while meaning different assertions. That last one
+cost four exchanges here over `:260` versus `:264` in one test file, where both numbers were right
+and neither had drifted. A symbol carries its referent; an integer does not.
+
+**A live trap remains.** `packages/ui/src/collaboration/client.ts:88,188` still POST the retired
+path and still build non-`/direct/` sockets at `:92,192`, and
+`createCollaborationBrowserApi` is exported publicly at `packages/ui/src/index.ts:124`.
+`tests/ui/collaboration-client.test.ts` keeps it green by asserting the call the client makes —
+boundary-blind, again. Nothing reaches it today; anything that calls that export tomorrow gets a
+destroyed socket. It belongs on the migration's caller list alongside the three mobile call sites.
+
+**What it cost to have no Native Mobile evidence.** Native Mobile is one of the five surfaces in the
+mandatory surface matrix. It is also the surface this release has no evidence for anywhere: S17 is
+deferred, and row 24 above records Native Mobile as a V1 limitation rather than a tested surface. So
+**the break landed on precisely the surface that had nothing watching it.** That is the cost of an
+`N/A`, made concrete. An `N/A` is a statement that a surface was not verified; it is not a statement
+that the surface is safe, and this release now has an example of the difference. The layer's own PR
+surface matrix would have carried `N/A` or `pass` for Native Mobile while shipping a 404 to it --
+the same overstatement this matrix was rewritten to remove, appearing in a PR body instead.
+
+## Rendered surface evidence: T079 is open
+
+S15 added four new shared sharing surfaces in `f05e10989`:
+`packages/ui/src/collaboration/{ReadinessSummary,ProjectSourceSummary,AudienceGrantPicker,ResourceSharingButton}.tsx`.
+`specs/124-organization-collaboration/evidence/` holds rendered captures for **S06**
+(`S06-direct-client/`, 16 images) and **S20** (`S20-audience/`), and **none for S15**. The four
+surfaces above have component tests and a passing `bun run build:shell:production` /
+`bun run build:desktop` from the S15 receipt, and no rendered evidence on any surface.
+
+`tasks.md:165` **T079** — "Exercise owner/member/outsider journeys... Record Web Canvas first, Web
+Desktop then Electron evidence" — is therefore **open**, and rows 19 and 24 above cannot reach LIVE
+until it closes. S06 and S20 captures are not S15 evidence.
+
+## Reproducing
+
+```sh
+source <the protected Postgres environment>
+pnpm exec vitest run <the files for one row> --maxWorkers=2
+```
+
+Rows ran one at a time with no other wide run on the host. The complete per-row command lines are in
+`matrix/summary.jsonl` in the job scratch directory, one JSON object per row carrying its exact
+command, exit code, counts and duration.

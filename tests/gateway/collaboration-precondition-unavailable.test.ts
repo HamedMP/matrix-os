@@ -39,6 +39,27 @@ describe("organization precondition: dependency failures are unavailable, not no
       .rejects.toMatchObject({ code: "not_found" });
   });
 
+  it("bounds outage logging while every failed membership lookup remains unavailable", async () => {
+    let clock = Date.parse("2026-09-21T00:00:00.000Z");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const precondition = createOrganizationPrecondition({
+      now: () => new Date(clock),
+      source: { assertMembership: async () => { throw new Error("private upstream detail"); } },
+    });
+    for (const actorId of ["user_a", "user_b", "user_c"]) {
+      await expect(precondition.require({ organizationId: "org_matrix_team", actorId }))
+        .rejects.toMatchObject({ code: "unavailable", message: "Collaboration unavailable" });
+    }
+    expect(warn.mock.calls).toEqual([
+      ["[collaboration-org-precondition] membership source failed", "Error"],
+      ["[collaboration-org-precondition] denied", "source_failure"],
+    ]);
+    clock += 60_001;
+    await expect(precondition.require({ organizationId: "org_matrix_team", actorId: "user_d" }))
+      .rejects.toMatchObject({ code: "unavailable" });
+    expect(warn).toHaveBeenCalledTimes(4);
+  });
+
   it("maps the unavailable authorization code to a generic 503 on collaboration routes", async () => {
     const app = new Hono();
     app.get("/unavailable", (c) => handle(c, async () => {

@@ -9,7 +9,7 @@ Harness: `tests/integration/collaboration-direct-boundaries.integration.ts`, run
 | --- | --- | --- |
 | Browser (Web Canvas, Web Desktop, Web Mobile) | `app.matrix-os.com` session routing → platform proxy (`packages/platform/src/collaboration/proxy.ts`) → customer VPS over self-signed TLS (`CUSTOMER_VPS_TLS_VERIFY=false`) | Platform signs `x-matrix-collaboration-proof` and forwards a signed policy header |
 | Electron Desktop | Same platform origin; CSP is main-process injected and gateway-scoped | No hostname per user |
-| Native Mobile / CLI | Same platform origin through existing 525 shared Chat/terminal | Recorded V1 limitation for new states |
+| Native Mobile / CLI | Same platform origin through existing 525 shared Chat/terminal | Recorded V1 limitation for new states. **Native Mobile's existing shared Chat/terminal do not reach the home as of 2026-09-24**: its sockets use the pre-direct path and are closed at the platform edge. CLI unaffected |
 | WebSocket | Platform `websocket.ts` issues a one-use ticket bound to the policy revision and bridges frames | S05 moves verification to the home |
 
 Customer VPS TLS: `distro/customer-vps/cloud-init.yaml:689` generates a 30-day self-signed certificate with
