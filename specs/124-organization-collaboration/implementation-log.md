@@ -63,6 +63,27 @@ The full kernel and gateway `vitest --coverage` gate must run on the final integ
 - S07 static sandbox policy hides owner credentials and constrains `/workspace/project`; a root/systemd escape probe remains unrun. S10's broker never passes forge credentials into the sandbox in unit tests; a live owner credential/forge probe remains unrun.
 - S15 shared UI components cover readiness and owner-runtime first Share in tests. Equivalent authenticated information, states and actions on Web Canvas, Web Desktop and Electron Desktop require the final interactive parity run. Existing S06/S20 screenshots do not prove S15 parity.
 
+## Process finding: `tasks.md` is not a progress record
+
+Recorded 2026-09-24. `specs/124-organization-collaboration/tasks.md` contains **103 unchecked boxes
+and zero checked**, measured on `origin/main`, against roughly 44 evidence receipts and ten merged
+pull requests. The boxes were written once and never re-derived.
+
+**The receipts are the progress record; `tasks.md` cannot be read as one.**
+
+The failure direction is worth naming because it is the inverse of the one this release has spent
+its effort on. A green row that never ran invents progress. 103 unchecked boxes tell a cold reader
+the release did nothing, which is exactly as wrong, just inverted. Both are documents that stopped
+tracking the thing they describe, and both mislead a reader deciding what is left to do — one into
+shipping, the other into redoing finished work. This same error appeared inside this release's own
+evidence, where row 24 briefly claimed two production builds had not run when they had.
+
+The general shape is distinct from the boundary-blind class and from the retirement-inventory gap:
+**a claim that was true when written and was never re-derived after the thing it describes changed.**
+It applies to task checkboxes, to acceptance rows, to PR-body surface matrices, and to any citation
+carried forward rather than re-measured. The fix is not to write more carefully but to re-derive at
+the point of use: state what was measured, against which tree, and when.
+
 ## Process finding: the atomicity rule is written down and is not reaching the code
 
 Recorded 2026-09-23. This is a process finding about how this release was reviewed, not a defect
