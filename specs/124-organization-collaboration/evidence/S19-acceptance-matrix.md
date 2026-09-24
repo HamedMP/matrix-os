@@ -58,8 +58,8 @@ under which the run's log and JSON are stored.
 | 20 | Invite costs | NEVER RUN | — | Deferred from V1 (S14); no implementation claimed | — |
 | 21 | Ownership | NEVER RUN | — | Deferred from V1 (S14); no implementation claimed | — |
 | 22 | Transfer | NEVER RUN | — | Deferred from V1 (S13); no implementation claimed | — |
-| 23 | Cutover | **BLOCKED** | 25/30, 5 failed, 35s | Undecided until the restack; operator dry-run on a real host also unrun. **Cannot become green on re-run**: the retired-V1-paths clause is unmet by the 2026-09-23 deferral decision below | `20-cutover` |
-| 24 | Surfaces | AUTOMATED-ONLY | PASS for the five shell suites only, 15/15 in 17s, 5 files | Authenticated Web Canvas, Web Desktop and Electron Desktop owner/member/outsider parity; the four S15 sharing surfaces have no rendered capture at all; `bun run build:shell:production` and `bun run build:desktop` from the quickstart command list were not run in this session | `21-surfaces` |
+| 23 | Cutover | **BLOCKED** | 25/30, 5 failed, 35s | Undecided until the restack; operator dry-run on a real host also unrun. (An earlier cap on this row, based on the retired-V1-paths clause being unmet, is **withdrawn**: #1864 merged and that clause is satisfied. See the correction below.) | `20-cutover` |
+| 24 | Surfaces | AUTOMATED-ONLY, **with one surface known broken** | PASS for the five shell suites only, 15/15 in 17s, 5 files | Authenticated Web Canvas, Web Desktop and Electron Desktop owner/member/outsider parity; the four S15 sharing surfaces have no rendered capture at all; `bun run build:shell:production` and `bun run build:desktop` were not run. **Native Mobile is not merely unevidenced — its shared Chat and terminal are known not to work**, so quickstart line 53 is failed. See the correction below. | `21-surfaces` |
 | 25 | Scale | AUTOMATED-ONLY | PASS for the in-process profile only, 4/4 in 2s, 1 file | Real bandwidth, egress cost and a two-host CPU/memory/network profile; the numbers here are deterministic synthetic byte counts | `22-scale` |
 | 26 | Matrix groups | NEVER RUN | — | Deferred from V1 (S16); no implementation claimed | — |
 
@@ -128,7 +128,7 @@ carefully" would lose the only actionable part of each.
 | Class | Instances in this release | What actually fixes it |
 | --- | --- | --- |
 | **Pre-read plus unpredicated write** | 5, the last 2 being security controls (`cutover.ts` `resume()` and `block()`) | Mechanical enforcement. The rule is already written in `CLAUDE.md` and `check-patterns.sh` has no check for it. |
-| **Retirement without a caller inventory** | 1 (`connection-tickets` 404 against `apps/mobile`) | A caller-enumeration gate on any layer that retires a route, not a route map written from intent. |
+| **Retirement without a caller inventory** | 1 defect, 3 inventories that each missed something (`connection-tickets` against `apps/mobile` and `packages/ui`) | Enumerate callers **from the retired path across every workspace package**, not from the previous inventory and not only under `shell/` and `apps/`. |
 | **Boundary-blind tests** | 2 (the `block()` suite, the mobile request suite) | Assertions on the far side of the boundary: affected-row counts, and a shared route constant both sides import. |
 
 Each is detailed below.
@@ -209,9 +209,13 @@ Added 2026-09-23. Greptile returned #1864 at 4/5 with a P1. Verified against sou
 - **Retirement.** `packages/platform/src/collaboration/routes.ts:16` defines
   `RETIRED_CONNECTION_TICKET_PATH = /^\/api\/collaboration\/scopes\/[^/]+\/connection-tickets$/`
   and line 67 returns 404 for any POST matching it.
-- **Caller.** `apps/mobile/lib/requests/collaboration.ts:407` POSTs exactly that path. The regex
-  matches it. A `grep` of `apps/mobile` and `shell/src` on `origin/main` finds that call site and
-  its two test assertions and nothing else, so **Native Mobile is the only affected surface**.
+- **Callers.** `apps/mobile/lib/requests/collaboration.ts:407` POSTs exactly that path, and so does
+  `packages/ui/src/collaboration/client.ts:88,188`. Only Native Mobile reaches it at runtime: S06
+  routed the shells onto the direct client, and `direct-api.ts:155,158` override `subscribe` and
+  `subscribeTerminal` to use `direct.subscribeEvents`/`direct.subscribeTerminal`, so the legacy
+  paths in `client.ts` are never entered through `createCollaborationDirectApi`. See the inventory
+  correction below — the first version of this bullet claimed Native Mobile was the only *caller*,
+  which was wrong.
 - **Failure radius is one call; fix radius is three.** The ticket is the precondition for both
   sockets: `collaborationEventsUrl` (:452) and `collaborationTerminalUrl` (:462) are built *from the
   returned ticket*, so a 404 at :407 means no ticket exists and neither socket is attempted. One
@@ -233,42 +237,77 @@ own evidence document, `S18-T090-route-map.md`, is separately flagged as contrad
 which suggests the route map was written from intent rather than by enumerating callers. Neither the
 map nor the tests caught a shipped client still calling the retired path.
 
-**Decision, 2026-09-23: the retirement is deferred; mobile is not migrated in this layer.** A
-three-call-site migration needs real-device validation per `docs/dev/mobile-shell.md`, and shipping
-it unvalidated on the one surface with no evidence is the failure this matrix exists to refuse. Two
-consequences follow, and both bind the re-run of rows 13/19/23 after the restack:
+**Correction, 2026-09-24: the retirement was NOT deferred, and this document said it was.** An
+earlier revision recorded a decision to defer #1864, capped row 23 on that basis, and stated that
+the release satisfied quickstart line 53 at the cost of line 52. Every part of that is wrong and is
+replaced here. #1864 **merged with the retirement intact** (`274b6f6d7`). The reversal is correct,
+for a reason the deferral had missed: **Native Mobile was already broken on `main` before the ticket
+route was touched.** `packages/platform/src/platform-websocket-upgrade.ts:152-158`, verified on
+`origin/main`:
 
-1. **Row 23 (Cutover) cannot be recorded green on re-run.** `quickstart.md`'s required evidence for
-   that row includes "legacy proxy/WS/V1 paths, rollout flag and cohort policy removed". While
-   `/api/collaboration/scopes/:id/connection-tickets` remains served, that clause is unmet **by
-   decision**. The row is `BLOCKED` on stale ancestry today; when the ancestry is fixed and the
-   suites go green, the row still does not become `LIVE` or `PASS` — it becomes a row whose
-   automated part passes against a requirement the release has deliberately not met. Whoever re-runs
-   it must not read a green suite as a green row. This is the same distinction the seven corrected
-   `PASS` rows were about, arriving in advance rather than after the fact.
-2. **The deferral is required by row 24, not merely prudent.** `quickstart.md`'s required evidence
-   for Surfaces reads: "Native Mobile and CLI are a recorded V1 limitation **whose existing 525
-   shared Chat/terminal keep working**". Shipping the retirement would have stopped Native Mobile's
-   shared Chat and terminal working, which fails row 24 by its own written criterion. So the
-   decision is not a risk trade-off against an unstated standard; it is the standard the spec
-   already set, on the surface that had nothing watching it.
+```ts
+const isCollaborationCandidate = isCollaborationWebSocketCandidate(path);
+const isDirectSocket = isAppDomain && Boolean(collaborationDirect) && Boolean(parseRelaySocketPath(path));
+if (isCollaborationCandidate && !isDirectSocket) { socket.destroy(); return; }
+```
 
-**The two are a pair and must stay recorded as one.** The release satisfies line 53 *at the cost of*
-line 52: Native Mobile keeps working because a legacy V1 path is deliberately left served. Neither
-half is honest alone — the justification without the cost reads as a clean decision, and the cost
-without the justification reads as an oversight. Satisfying one acceptance criterion by quietly
-failing another is how a green matrix stops meaning anything, which is the failure this entire
-document was rewritten to remove. Any future summary of this decision that carries one line and not
-the other is a misreport.
+`isCollaborationWebSocketCandidate` matches anything under `/ws/collaboration/`;
+`parseRelaySocketPath` requires `/ws/collaboration/direct/scopes/:uuid/{events,terminal}`. Mobile's
+sockets carry no `/direct/` segment, so they are candidates, are not direct, and are **destroyed**.
+The socket retirement landed earlier than the ticket retirement, so a ticket without a reachable
+socket is inert: preserving the endpoint would have preserved nothing usable.
 
-Recording this as a **deferral by explicit decision**, not an unmet gate: the release is choosing to
-keep a legacy path served rather than failing to remove it. The migration itself remains owed, and
-belongs with the other unmet work rather than with the nine V1 deferrals.
+**Which inverts both criteria from how this document had them.**
 
-**The finding: retirement layers need a caller inventory as a gate.** Not a route map written from
-what the layer meant to retire, but a search for every caller of each retired path across
-`shell/`, `apps/mobile/`, `packages/`, and the CLI, with the result recorded and reviewed. For this
-defect that gate is one `grep`.
+1. **Line 52 is satisfied, not failed.** "Legacy proxy/WS/V1 paths, rollout flag and cohort policy
+   removed" is met: the retirement landed. The earlier cap on row 23 rested on that clause being
+   unmet and is withdrawn. Row 23 remains `BLOCKED` on stale ancestry, decided only by the re-run.
+2. **Line 53 is failed, and was failed by `main` rather than by any decision of ours.** "Native
+   Mobile and CLI are a recorded V1 limitation whose existing 525 shared Chat/terminal keep
+   working" is not true: Native Mobile's shared Chat and terminal do not work. The honest statement
+   is **not** "we chose to break it" but "it was already broken and this release did not restore
+   it".
+
+**Row 24 is downgraded accordingly.** Native Mobile moves from *unevidenced* to *known broken*, and
+those are not the same claim. The row's automated part still passes for the five shell suites; the
+row now carries a surface whose required behaviour is known not to hold. Recording a known break as
+"no evidence" would be the same overstatement this document was rewritten to remove, one column
+over. The migration is an **unmet gate**, owed by the release, and belongs with row 16 rather than
+with the nine V1 deferrals.
+
+**The gate is demonstrably achievable, because one surface did it.**
+`packages/sync-client/src/cli/commands/collaboration.ts:61` reads
+`return !/\/connection-tickets(?:[/?]|$)/.test(path) && COLLABORATION_PATH.test(path)` — the CLI
+explicitly refuses the retired path. **One surface was migrated properly in the same release that
+left another broken.** That is the strongest argument in this finding: the gate is not aspirational
+here, it is something this codebase already did once and did not do twice.
+
+**Three inventories were taken of this retirement, and all three missed something — each in a
+different way.**
+
+1. The layer's route map (`S18-T090-route-map.md`) was derived from what the layer *intended* to
+   retire, so it agreed with the code it came from and enumerated no consumers.
+2. The first correction carried its CLI claim forward without re-checking it. The CLI had already
+   migrated.
+3. This document's own inventory grepped `apps/mobile` and `shell/src` for the literal path. The
+   shells import from `@matrix-os/ui`, not a literal, so that search was **structurally incapable**
+   of finding a shell-side caller — and it missed `packages/ui/src/collaboration/client.ts`.
+
+The third is recorded here against its own claim rather than quietly fixed. Its conclusion survived
+— the shells really are unaffected — but it survived because of a migration the search had not
+verified, not because the search was sound. **A correct answer from a method that could not have
+found the counterexample is not evidence that the method works.**
+
+**So the gate is not "write an inventory".** It is: *enumerate callers of the retired path across
+every workspace package, from the path itself rather than from the previous inventory.* Searching
+`shell/` and `apps/` is not enough when shared packages hold the call.
+
+**A live trap remains.** `packages/ui/src/collaboration/client.ts:88,188` still POST the retired
+path and still build non-`/direct/` sockets at `:92,192`, and
+`createCollaborationBrowserApi` is exported publicly at `packages/ui/src/index.ts:124`.
+`tests/ui/collaboration-client.test.ts` keeps it green by asserting the call the client makes —
+boundary-blind, again. Nothing reaches it today; anything that calls that export tomorrow gets a
+destroyed socket. It belongs on the migration's caller list alongside the three mobile call sites.
 
 **What it cost to have no Native Mobile evidence.** Native Mobile is one of the five surfaces in the
 mandatory surface matrix. It is also the surface this release has no evidence for anywhere: S17 is
