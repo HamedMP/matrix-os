@@ -99,10 +99,10 @@ const COOKIE_META_SQL = "SELECT host_key FROM cookies LIMIT 50000";
 const LOGIN_SQL = "SELECT origin_url, username_value, hex(password_value) AS secret_hex, blacklisted_by_user FROM logins WHERE blacklisted_by_user = 0 LIMIT 10000";
 
 async function cookieRows(home: string, path: string): Promise<Record<string, unknown>[]> {
-  const columns = new Set((await queryRows(home, path, "PRAGMA table_info(cookies)"))
-    .map((row) => row.name).filter((name): name is string => typeof name === "string"));
+  const columns = await queryRows(home, path, "PRAGMA table_info(cookies)");
+  if (columns.length > 2_000) throw new Error("invalid browser database");
   const tables = await queryRows(home, path, "SELECT name FROM sqlite_master WHERE type='table' AND name='meta' LIMIT 1");
-  const partition = columns.has("top_frame_site_key") ? "top_frame_site_key" : "''";
+  const partition = columns.some((row) => row.name === "top_frame_site_key") ? "top_frame_site_key" : "''";
   const version = tables.length ? "(SELECT value FROM meta WHERE key='version')" : "0";
   return queryRows(home, path, `SELECT host_key, ${partition} AS top_frame_site_key, name, value, hex(encrypted_value) AS secret_hex, path, expires_utc, is_secure, is_httponly, is_persistent, samesite, ${version} AS db_version FROM cookies LIMIT 50000`);
 }
