@@ -44,7 +44,7 @@ No HTTP route is added. No external service receives imported data.
 - Profile discovery is limited to 32 profiles per browser. SQLite input files are limited to 1 GiB; query output to 32 MiB; rows to 10,000 logins and 50,000 cookies. CLI item lists are limited to 2,000. Preview returns up to 5,000 website rows.
 - SQLite subprocesses have a 10 second timeout. Keychain access has a 120 second timeout to allow a system prompt. Each 1Password call has a 30 second timeout, and a selected import has a 180 second overall deadline.
 - Locked databases may be copied with WAL sidecars to a private temporary directory, deleted in `finally`. The source remains untouched. A failed snapshot reports a generic error.
-- Encryption unavailable means refusing to import passwords. The vault uses an exclusive 0600 temporary file and atomic rename. A corrupt vault is never overwritten implicitly.
+- Encryption unavailable, including Electron's Linux `basic_text` fallback, means refusing to import passwords. The vault uses an exclusive 0600 temporary file and atomic rename. A corrupt vault is never overwritten implicitly.
 - Plaintext export is user initiated and creates a new 0600 file atomically. Existing files are not replaced. Export data remains only on the user's Mac.
 - A password batch is written before cookie setting begins. Electron cookies are flushed after import. Cookie failures are counted as skipped, so a partial cookie transfer is an acceptable and visible state. There is no cross-resource transaction between the encrypted file and Electron's cookie store.
 - UI messages are generic. Keychain, CLI, SQLite, and decryption errors must not reveal raw paths, account identifiers, item names, or secret values.

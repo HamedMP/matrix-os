@@ -30,9 +30,17 @@ function validLogin(value: unknown): value is BrowserLogin {
 }
 
 /** A local, OS-encrypted browser vault. Passwords never enter renderer IPC. */
-export function createBrowserPasswordVault(options: { dir: string; safeStorage: SafeStorageLike }): BrowserPasswordVault {
+export function createBrowserPasswordVault(options: {
+  dir: string;
+  safeStorage: SafeStorageLike & { getSelectedStorageBackend?(): string };
+}): BrowserPasswordVault {
   const file = join(options.dir, "browser-passwords.bin");
   let mutation = Promise.resolve();
+
+  function hasOsEncryption(): boolean {
+    return options.safeStorage.isEncryptionAvailable() &&
+      options.safeStorage.getSelectedStorageBackend?.() !== "basic_text";
+  }
 
   async function load(): Promise<BrowserLogin[]> {
     let size: number;
@@ -44,7 +52,7 @@ export function createBrowserPasswordVault(options: { dir: string; safeStorage: 
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
       throw new Error("browser password vault unavailable");
     }
-    if (!options.safeStorage.isEncryptionAvailable()) {
+    if (!hasOsEncryption()) {
       throw new Error("browser password vault unavailable");
     }
     let blob: Buffer;
@@ -111,7 +119,7 @@ export function createBrowserPasswordVault(options: { dir: string; safeStorage: 
     },
     upsertMany(logins) {
       const result = mutation.then(async () => {
-        if (!options.safeStorage.isEncryptionAvailable()) throw new Error("OS encryption unavailable");
+        if (!hasOsEncryption()) throw new Error("OS encryption unavailable");
         if (logins.length > MAX_PASSWORDS || !logins.every(validLogin)) throw new Error("invalid browser passwords");
         const existing = await load();
         const map = new Map(existing.map((item) => [`${item.origin}\0${item.username}`, item]));
@@ -125,7 +133,7 @@ export function createBrowserPasswordVault(options: { dir: string; safeStorage: 
     },
     remove(origin, username) {
       const result = mutation.then(async () => {
-        if (!options.safeStorage.isEncryptionAvailable()) throw new Error("OS encryption unavailable");
+        if (!hasOsEncryption()) throw new Error("OS encryption unavailable");
         const existing = await load();
         const remaining = existing.filter((item) => item.origin !== origin || item.username !== username);
         if (remaining.length === existing.length) return false;

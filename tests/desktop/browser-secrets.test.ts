@@ -112,6 +112,19 @@ describe("OS-encrypted Matrix Browser password vault", () => {
       .rejects.toThrow("OS encryption unavailable");
   });
 
+  it("refuses Electron's Linux basic_text fallback for imported passwords", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "matrix-password-vault-"));
+    dirs.push(dir);
+    const vault = createBrowserPasswordVault({ dir, safeStorage: {
+      isEncryptionAvailable: () => true,
+      getSelectedStorageBackend: () => "basic_text",
+      encryptString: () => Buffer.from("not-encrypted"),
+      decryptString: () => "[]",
+    } });
+    await expect(vault.upsertMany([{ origin: "https://example.com", username: "a", password: "b" }]))
+      .rejects.toThrow("OS encryption unavailable");
+  });
+
   it("rejects a symlinked vault file before reading it", async () => {
     const dir = await mkdtemp(join(tmpdir(), "matrix-password-link-"));
     dirs.push(dir);
