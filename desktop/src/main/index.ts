@@ -268,8 +268,10 @@ if (!gotLock) {
         if (!vault) {
           vault = createBrowserPasswordVault({ dir: join(userData, scope.vaultDirectory), safeStorage });
           if (browserVaults.size >= 8) browserVaults.delete(browserVaults.keys().next().value!);
-          browserVaults.set(scope.userId, vault);
+        } else {
+          browserVaults.delete(scope.userId);
         }
+        browserVaults.set(scope.userId, vault);
         const selected = vault;
         const verifyOwner = () => {
           if (currentBrowserScope().userId !== scope.userId) throw new Error("browser account unavailable");
