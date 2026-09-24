@@ -23,7 +23,7 @@ function resultMessage(action: Action, result: unknown): string {
   if (action === "discover") {
     return count === 0
       ? "Connected, but this server returned no tools. Check the server URL or try Discover again."
-      : `Found ${count} ${count === 1 ? "tool" : "tools"}. Select tools below, then enable the server.`;
+      : `Found ${count} ${count === 1 ? "tool" : "tools"}. New tools are enabled by default; review permissions below.`;
   }
   return count === 0
     ? "Connection successful, but the server returned no tools. No tools were executed."
@@ -68,7 +68,7 @@ export function McpServerDiagnostics({ disabled, request, onDiscovered, onPendin
       </button>
     </div>
     <p className="text-xs opacity-70">Discover loads available tools. Test checks the connection without running a tool.</p>
-    <p className="text-xs opacity-70">Choose permissions before enabling. Always ask requires approval for each call; Allow permits calls without asking.</p>
+    <p className="text-xs opacity-70">New tools start enabled. Always ask requires approval for each call; Allow permits calls without asking.</p>
     {pending ? <p role="status" className="text-xs">{pending === "discover" ? "Discovering available tools…" : "Testing connection…"}</p> : null}
     {feedback ? <p role={feedback.error ? "alert" : "status"} className="text-xs">{feedback.message}</p> : null}
   </div>;

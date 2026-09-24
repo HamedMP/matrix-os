@@ -7,6 +7,12 @@ const API_TIMEOUT_MS = 10_000;
 
 export function buildGatewayUrl(baseUrl: string, path: string, runtimeSlot: string): string {
   const base = baseUrl.replace(/\/$/, "");
+  // The platform serves /api/mcp-servers itself, so a runtime query cannot
+  // select the isolated broker for a PR Preview computer. Target its VPS route.
+  if (/^pr-[1-9][0-9]{0,8}$/.test(runtimeSlot)
+    && /^\/api\/mcp-servers(?:[/?]|$)/.test(path)) {
+    return `${base}/vm/${runtimeSlot}${path}`;
+  }
   if (runtimeSlot === "primary") return `${base}${path}`;
   const sep = path.includes("?") ? "&" : "?";
   return `${base}${path}${sep}runtime=${encodeURIComponent(runtimeSlot)}`;
