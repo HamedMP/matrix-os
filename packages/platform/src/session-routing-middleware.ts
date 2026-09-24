@@ -327,6 +327,36 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
     }
   }
 
+  async function maybeServeBillingRecoveryShell(
+    c: Context,
+    host: string,
+    identity: AppDomainIdentity,
+    upstreamPath: string,
+  ): Promise<Response | null> {
+    // The VPS shell trusts platform sessions and therefore skips its own billing gate.
+    // Serve recovery documents from the platform shell so an inactive customer never
+    // lands in a shell whose runtime requests are correctly rejected with 402.
+    if (
+      !isAppDomainHost(host)
+      || !identity.userId
+      || identity.source === 'mobile-session'
+      || identity.source === 'static-route'
+      || isAppDomainStaticAssetPath(upstreamPath)
+      || !shouldProxyShellForBillingGate({
+        isAppDomain: true,
+        method: c.req.method,
+        upstreamPath,
+      })
+    ) {
+      return null;
+    }
+    if (!isBillingSetupPath(c.req.url)) {
+      applyNoStoreHeaders(c);
+      return c.redirect(buildBillingSetupPath(c.req.url), 302);
+    }
+    return proxyAuthShell(c, host, { redirectToBillingOnFailure: false });
+  }
+
   async function issueWebSocketTokenResponse(
     c: Context,
     target: { clerkUserId: string; handle: string; runtimeSlot?: string },
@@ -652,6 +682,15 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
         machine.runtimeSlot,
         machine.provisioningClass,
       );
+      if (!entitlement.runtimeProxyAllowed) {
+        const recovery = await maybeServeBillingRecoveryShell(
+          c,
+          host,
+          identity,
+          explicitVmRoute.upstreamPath,
+        );
+        if (recovery) return recovery;
+      }
       if (
         !entitlement.runtimeProxyAllowed &&
         !shouldProxyShellForBillingGate({
@@ -816,6 +855,10 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
         : getRuntimeEntitlementDecision(appEnv);
     if (runningMachine) {
       const qs = buildForwardedQueryString(c.req.url, APP_ASSET_ROUTE_OMITTED_QUERY_PARAMS);
+      if (!entitlement.runtimeProxyAllowed) {
+        const recovery = await maybeServeBillingRecoveryShell(c, host, identity, path);
+        if (recovery) return recovery;
+      }
       if (
         !entitlement.runtimeProxyAllowed &&
         !shouldProxyShellForBillingGate({
@@ -948,6 +991,10 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
       ? await getAccessibleActiveUserMachineByClerkId(db, identity.userId, runtimeSlot)
       : await getActiveUserMachineByHandle(db, identity.handle));
     if (activeMachine) {
+      if (!entitlement.runtimeProxyAllowed) {
+        const recovery = await maybeServeBillingRecoveryShell(c, host, identity, path);
+        if (recovery) return recovery;
+      }
       if (
         !entitlement.runtimeProxyAllowed &&
         !shouldProxyShellForBillingGate({
@@ -988,6 +1035,10 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
     const record = await getContainer(db, identity.handle);
     if (!record) return c.html(getNoContainerPage());
 
+    if (!entitlement.runtimeProxyAllowed) {
+      const recovery = await maybeServeBillingRecoveryShell(c, host, identity, path);
+      if (recovery) return recovery;
+    }
     if (
       !entitlement.runtimeProxyAllowed &&
       !shouldProxyShellForBillingGate({
