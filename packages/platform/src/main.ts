@@ -689,7 +689,15 @@ export function createApp(deps: {
         let actorId = record.clerkUserId;
         const delegatedId = c.req.header('x-platform-user-id');
         const delegatedProof = c.req.header('x-platform-verified');
-        if (delegatedId || delegatedProof) {
+        // Older single-user customer gateways forward the owner's unsigned
+        // header. The machine bearer already authenticates that gateway, so
+        // retain the owner scope only when the machine has no collaborators.
+        // Shared and Preview machines must use signed delegation.
+        const legacyOwnerHeader = delegatedId === record.clerkUserId
+          && delegatedProof === undefined
+          && machine?.provisioningClass === 'customer'
+          && machine.accessClerkUserIds.length === 0;
+        if ((delegatedId || delegatedProof) && !legacyOwnerHeader) {
           if (!delegatedId || !delegatedProof || !/^[A-Za-z0-9_-]{1,256}$/.test(delegatedId)
             || !timingSafeTokenEquals(delegatedProof, buildPlatformUserProof(handle, delegatedId, platformSecret))) {
             c.res = c.json({ error: 'Unauthorized' }, 401);
