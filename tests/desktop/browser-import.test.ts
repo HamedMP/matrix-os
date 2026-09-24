@@ -171,6 +171,15 @@ describe("local browser page import", () => {
       cancelFileDownload: () => ({ ok: true }),
       listBrowserImportSources: () => listBrowserImportSources(home, "darwin"),
       importBrowserPages: (sourceId: string) => importBrowserPages(home, sourceId, "darwin"),
+      listBrowserSecretSources: async () => [],
+      previewBrowserSites: async () => [],
+      importBrowserSites: async () => ({ passwords: 0, cookies: 0, skipped: 0 }),
+      listOnePasswordItems: async () => [],
+      importOnePasswordItems: async () => ({ imported: 0, skipped: 0 }),
+      listBrowserPasswords: async () => [],
+      fillBrowserPassword: async () => ({ filled: false }),
+      deleteBrowserPassword: async () => ({ deleted: false }),
+      exportBrowserPasswords: async () => ({ exported: false }),
     } as unknown as HandlerContext);
     const discovered = await listeners.get("browser:list-import-sources")!({}, {});
     expect(discovered).toEqual({ sources: [{

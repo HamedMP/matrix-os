@@ -17,6 +17,8 @@ const electronMock = vi.hoisted(() => {
     }),
     setWindowOpenHandler: vi.fn(),
     loadURL: vi.fn(async () => {}),
+    getURL: vi.fn(() => "https://example.com/login"),
+    executeJavaScript: vi.fn(async () => true),
     capturePage: vi.fn(async () => ({
       isEmpty: () => false,
       toJPEG: () => Buffer.from("retained-frame"),
@@ -49,7 +51,10 @@ beforeEach(() => {
   electronMock.viewOptions.length = 0;
   electronMock.shell.openExternal.mockClear();
   electronMock.webContents.setWindowOpenHandler.mockClear();
+  electronMock.webContents.on.mockClear();
   electronMock.webContents.loadURL.mockClear();
+  electronMock.webContents.getURL.mockReset().mockReturnValue("https://example.com/login");
+  electronMock.webContents.executeJavaScript.mockReset().mockResolvedValue(true);
   electronMock.webContents.capturePage.mockClear();
   electronMock.webContents.isDestroyed.mockReset();
   electronMock.webContents.isDestroyed.mockReturnValue(false);
@@ -59,6 +64,20 @@ beforeEach(() => {
 });
 
 describe("createWebContentsView", () => {
+  it("fills only a browser main frame on the matching origin", async () => {
+    const view = createWebContentsView({
+      window: { isDestroyed: () => false, contentView: { addChildView: vi.fn(), removeChildView: vi.fn() } } as never,
+      partition: "persist:browser", allowedOrigins: [], allowPublicNavigation: true, onState: vi.fn(),
+    });
+    expect(view.currentOrigin?.()).toBe("https://example.com");
+    expect(await view.fillPassword?.("https://wrong.example", "alice", "secret")).toBe(false);
+    expect(electronMock.webContents.executeJavaScript).not.toHaveBeenCalled();
+    expect(await view.fillPassword?.("https://example.com", "alice", "secret")).toBe(true);
+    const script = electronMock.webContents.executeJavaScript.mock.calls[0]?.[0] as string;
+    expect(script).toContain("location.origin");
+    expect(script).toContain("https://example.com");
+    expect(script).toContain("secret");
+  });
   it.each([
     ["resource-manager", "resource-manager", true],
     ["custom/resource-manager", "resource-manager", false],

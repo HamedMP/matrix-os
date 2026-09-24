@@ -2,6 +2,10 @@ import { app, BrowserWindow, dialog, ipcMain, Notification, safeStorage, screen,
 import { join } from "node:path";
 import { createFileDownloadService } from "./files/file-download-service";
 import { importBrowserPages, listBrowserImportSources } from "./browser/import-pages";
+import { importChromiumSites, listChromiumSecretSources, previewChromiumSites } from "./browser/import-secrets";
+import { createBrowserPasswordVault } from "./browser/password-vault";
+import { importOnePasswordLogins, listOnePasswordLogins } from "./browser/one-password";
+import { exportBrowserPasswords } from "./browser/password-export";
 import { pathToFileURL } from "node:url";
 import { AuthService } from "./auth/auth-service";
 import { createAnalyticsBeforeQuit } from "./analytics-quit";
@@ -219,6 +223,8 @@ if (!gotLock) {
       const userData = app.getPath("userData");
       const store = createLocalStore({ dir: userData });
       const credentialStore = createCredentialStore({ dir: userData, safeStorage });
+      const browserPasswordVault = createBrowserPasswordVault({ dir: userData, safeStorage });
+      const localBrowserHome = process.env.OPERATOR_USER_DATA_DIR ? userData : app.getPath("home");
 
       const platformHost = process.env.OPERATOR_GATEWAY_URL ?? DEFAULT_PLATFORM_HOST;
       const runtimeSelectionOrigin = process.env.MATRIX_API_ORIGIN
@@ -372,6 +378,48 @@ if (!gotLock) {
           process.env.OPERATOR_USER_DATA_DIR ? app.getPath("userData") : app.getPath("home"),
           sourceId,
         ),
+        listBrowserSecretSources: () => listChromiumSecretSources(localBrowserHome),
+        previewBrowserSites: (sourceId) => previewChromiumSites(localBrowserHome, sourceId),
+        importBrowserSites: async ({ sourceId, hosts }) => {
+          const browserSession = session.fromPartition("persist:browser");
+          const result = await importChromiumSites({
+            home: localBrowserHome, sourceId, hosts, vault: browserPasswordVault,
+            setCookie: (cookie) => browserSession.cookies.set(cookie),
+          });
+          await browserSession.cookies.flushStore();
+          return result;
+        },
+        listOnePasswordItems: () => listOnePasswordLogins(),
+        importOnePasswordItems: (ids) => importOnePasswordLogins(ids, browserPasswordVault),
+        listBrowserPasswords: async (origin) => (await browserPasswordVault.list())
+          .filter((item) => item.origin === origin)
+          .slice(0, 100)
+          .map(({ username }) => ({ username })),
+        fillBrowserPassword: async ({ embedId, username }) => {
+          const origin = embeds.getBrowserOrigin(embedId);
+          if (!origin) return { filled: false };
+          const login = await browserPasswordVault.find(origin, username);
+          if (!login) return { filled: false };
+          return { filled: await embeds.fillBrowserPassword(embedId, login) };
+        },
+        deleteBrowserPassword: async ({ origin, username }) => ({
+          deleted: await browserPasswordVault.remove(origin, username),
+        }),
+        exportBrowserPasswords: async () => ({
+          exported: await exportBrowserPasswords(browserPasswordVault, async () => {
+            const options = {
+              title: "Export Matrix Browser passwords",
+              defaultPath: join(app.getPath("downloads"), "matrix-browser-passwords.json"),
+              buttonLabel: "Export",
+              filters: [{ name: "JSON", extensions: ["json"] }],
+              properties: ["createDirectory", "showOverwriteConfirmation"] as Array<"createDirectory" | "showOverwriteConfirmation">,
+            };
+            const result = mainWindow && !mainWindow.isDestroyed()
+              ? await dialog.showSaveDialog(mainWindow, options)
+              : await dialog.showSaveDialog(options);
+            return result.canceled ? null : result.filePath ?? null;
+          }),
+        }),
         setBadgeCount: (count) => {
           app.setBadgeCount(count);
         },

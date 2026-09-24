@@ -17,6 +17,8 @@ export interface EmbedViewLike {
   setBounds(bounds: Bounds): void;
   setScale(factor: number): void;
   loadUrl(url: string): Promise<void>;
+  currentOrigin?(): string | null;
+  fillPassword?(origin: string, username: string, password: string): Promise<boolean>;
   captureSnapshot?(): Promise<string | null>;
   attach(): void;
   detach(): void;
@@ -51,6 +53,7 @@ const ERR_ABORTED = -3;
 
 interface EmbedRecord {
   id: string;
+  kind: EmbedKind;
   url: string;
   view: EmbedViewLike;
   live: boolean;
@@ -155,6 +158,7 @@ export class EmbedManager {
     });
     record = {
       id,
+      kind,
       url,
       view,
       live: active,
@@ -307,6 +311,18 @@ export class EmbedManager {
 
   has(embedId: string): boolean {
     return this.records.has(embedId);
+  }
+
+  getBrowserOrigin(embedId: string): string | null {
+    const record = this.records.get(embedId);
+    return record?.kind === "browser" && record.live ? record.view.currentOrigin?.() ?? null : null;
+  }
+
+  async fillBrowserPassword(embedId: string, origin: string, username: string, password: string): Promise<boolean> {
+    const record = this.records.get(embedId);
+    if (!record || record.kind !== "browser" || !record.live || !record.view.fillPassword ||
+      record.view.currentOrigin?.() !== origin) return false;
+    return record.view.fillPassword(origin, username, password);
   }
 
   get liveCount(): number {

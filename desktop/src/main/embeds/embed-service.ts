@@ -29,6 +29,7 @@ import {
 import { resolveLaunchUrl } from "./origin-policy";
 import { createWebContentsView } from "./web-contents-view";
 import type { NativeAppBridge } from "./native-app-bridge";
+import type { BrowserLogin } from "../browser/chromium-secrets";
 
 export type EmbedState = "loading" | "ready" | "auth-required" | "failed";
 
@@ -158,6 +159,14 @@ export class EmbedService {
 
   setBounds(embedId: string, bounds: Bounds): boolean {
     return this.manager.setBounds(embedId, bounds);
+  }
+
+  getBrowserOrigin(embedId: string): string | null {
+    return this.manager.getBrowserOrigin(embedId);
+  }
+
+  fillBrowserPassword(embedId: string, login: BrowserLogin): Promise<boolean> {
+    return this.manager.fillBrowserPassword(embedId, login.origin, login.username, login.password);
   }
 
   setScale(embedId: string, factor: number): boolean {

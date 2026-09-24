@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { invoke } from "../../lib/operator";
 import type { SavedBrowserPage } from "./saved-pages";
+import BrowserSecretImportView from "./BrowserSecretImportView";
 
 interface Source {
   id: string;
@@ -52,7 +53,7 @@ export default function BrowserImportView({
       <button type="button" className="mb-4 text-sm" style={{ color: "var(--accent)" }} onClick={onBack}>← Browser settings</button>
       <h2 className="text-base font-semibold">Import from another browser</h2>
       <p className="mt-2 max-w-xl text-sm" style={{ color: "var(--text-secondary)" }}>
-        Bring your saved pages into Matrix Browser. Sign-ins, passwords, and extensions stay in your other browser.
+        Bring saved pages, passwords, and selected website sessions into Matrix Browser from local browsers or 1Password.
       </p>
       {loading ? <p role="status" className="mt-6 text-sm">Finding local browsers…</p> : null}
       {!loading && sources.length === 0 && !error ? (
@@ -82,6 +83,7 @@ export default function BrowserImportView({
           );
         })}
       </div>
+      <BrowserSecretImportView />
     </section>
   );
 }

@@ -6,6 +6,7 @@ import { useBrowserNavigation } from "../../stores/browser-navigation";
 import EmbedHost from "../embeds/EmbedHost";
 import BrowserImportView from "./BrowserImportView";
 import BrowserSavedPagesView from "./BrowserSavedPagesView";
+import { BrowserPasswordBar, BrowserPasswordSettings, useBrowserPasswords } from "./BrowserPasswords";
 import {
   BROWSER_SAVED_PAGES_KEY,
   mergeSavedPages,
@@ -118,6 +119,7 @@ export default function BrowserTab({
   const [savedPages, setSavedPages] = useState(readSavedPages);
   const [savedNotice, setSavedNotice] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [embedId, setEmbedId] = useState<string | null>(null);
   const pendingNavigation = useBrowserNavigation((state) => state.pending);
   const consumeNavigation = useBrowserNavigation((state) => state.consume);
   const handledNavigationId = useRef<number | null>(null);
@@ -125,6 +127,7 @@ export default function BrowserTab({
     () => session.tabs.find((tab) => tab.id === session.activeId) ?? session.tabs[0]!,
     [session],
   );
+  const passwords = useBrowserPasswords(activeTab.id, activeTab.url, embedId, setMessage);
 
   useEffect(() => {
     window.localStorage.setItem(BROWSER_SETTINGS_KEY, JSON.stringify({ restorePreviousTabs }));
@@ -300,6 +303,13 @@ export default function BrowserTab({
           Go
         </button>
         {activeResolution?.disposition === "public" ? (
+          <button type="button" aria-label="Saved passwords" aria-expanded={passwords.accounts !== null}
+            disabled={passwords.busy} className="inline-flex h-8 shrink-0 items-center rounded-lg px-2 text-xs hover:bg-[var(--bg-hover)] disabled:opacity-50"
+            style={{ color: "var(--text-secondary)" }} onClick={() => { void passwords.toggle(); }}>
+            Passwords
+          </button>
+        ) : null}
+        {activeResolution?.disposition === "public" ? (
           <button
             type="button"
             aria-label="Save current page"
@@ -372,6 +382,11 @@ export default function BrowserTab({
           <SlidersHorizontalIcon size={15} aria-hidden="true" />
         </button>
       </form>
+      {panel === "browser" && passwords.accounts !== null ? (
+        <BrowserPasswordBar accounts={passwords.accounts} busy={passwords.busy}
+          onFill={(username) => { void passwords.fill(username); }}
+          onRemove={(username) => { void passwords.remove(username); }} onClose={passwords.close} />
+      ) : null}
       {message && activeTab.url ? (
         <p role="status" className="px-3 py-1 text-xs" style={{ color: "var(--text-secondary)" }}>{message}</p>
       ) : null}
@@ -388,7 +403,7 @@ export default function BrowserTab({
             <div className="flex items-center justify-between gap-4 rounded-xl border p-4" style={{ borderColor: "var(--border-default)" }}>
               <span>
                 <span className="block font-medium">Import browser data</span>
-                <span className="mt-1 block text-xs" style={{ color: "var(--text-secondary)" }}>Bring saved pages from Arc or another local browser.</span>
+                <span className="mt-1 block text-xs" style={{ color: "var(--text-secondary)" }}>Bring saved pages, selected site sessions, and passwords from local browsers or 1Password.</span>
               </span>
               <button type="button" className="shrink-0 rounded-lg px-3 py-2 text-xs font-medium" style={{ background: "var(--accent)", color: "var(--text-on-accent)" }} onClick={() => setPanel("import")}>Import from another browser</button>
             </div>
@@ -408,13 +423,7 @@ export default function BrowserTab({
               <p className="font-medium">Site data</p>
               <p className="mt-1 text-xs" style={{ color: "var(--text-secondary)" }}>Cookies and sign-ins persist in the browser profile.</p>
             </div>
-            <label className="flex items-start justify-between gap-4 rounded-xl border p-4 opacity-75" style={{ borderColor: "var(--border-default)" }}>
-              <span>
-                <span className="block font-medium">Save passwords</span>
-                <span className="mt-1 block text-xs" style={{ color: "var(--text-secondary)" }}>Password saving requires an OS-encrypted browser vault and is not enabled yet. Matrix will never store passwords in local storage.</span>
-              </span>
-              <input type="checkbox" aria-label="Save passwords" disabled />
-            </label>
+            <BrowserPasswordSettings />
           </div>
         </section>
       ) : panel === "import" ? (
@@ -463,6 +472,7 @@ export default function BrowserTab({
           active={active}
           layoutRevision={layoutRevision}
           visualScale={visualScale}
+          onOpened={setEmbedId}
         />
       ) : (
         <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 px-8 text-center">

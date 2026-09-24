@@ -12,6 +12,7 @@ const BOUNDS: Bounds = { x: 0, y: 0, width: 800, height: 600 };
 class FakeView implements EmbedViewLike {
   events: string[] = [];
   loadedUrls: string[] = [];
+  filled: Array<{ origin: string; username: string }> = [];
   bounds: Bounds | null = null;
   failNextLoadError: unknown;
   onState: (state: "loading" | "ready" | "failed") => void;
@@ -41,6 +42,16 @@ class FakeView implements EmbedViewLike {
       this.failNextLoadError = null;
       throw err;
     }
+  }
+
+  currentOrigin(): string | null {
+    const url = this.loadedUrls.at(-1);
+    return url ? new URL(url).origin : null;
+  }
+
+  async fillPassword(origin: string, username: string): Promise<boolean> {
+    this.filled.push({ origin, username });
+    return this.currentOrigin() === origin;
   }
 
   async captureSnapshot(): Promise<string> {
@@ -100,6 +111,16 @@ afterEach(() => {
 });
 
 describe("EmbedManager", () => {
+  it("allows a live browser view to fill only its current origin", async () => {
+    const { manager, views } = makeManager();
+    const id = manager.open("browser", null, BOUNDS, "https://example.com/login", { allowedOrigins: ["https://example.com"], allowPublicNavigation: true });
+    expect(manager.getBrowserOrigin(id)).toBe("https://example.com");
+    expect(await manager.fillBrowserPassword(id, "https://example.com", "alice", "secret")).toBe(true);
+    expect(views[0]?.view.filled).toEqual([{ origin: "https://example.com", username: "alice" }]);
+    expect(await manager.fillBrowserPassword(id, "https://other.example", "alice", "secret")).toBe(false);
+    manager.setActive(id, false);
+    expect(await manager.fillBrowserPassword(id, "https://example.com", "alice", "secret")).toBe(false);
+  });
   it("requires exactly one allowed origin source", () => {
     const createView: EmbedManagerOptions["createView"] = ({ onState }) => new FakeView(null, onState);
 
