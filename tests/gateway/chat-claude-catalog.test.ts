@@ -59,6 +59,36 @@ describe("Claude catalog selection and CLI handoff", () => {
     expect(launch.args[launch.args.indexOf("--model") + 1]).toBe("claude-opus-5-5");
   });
 
+  it("does not treat a dated model ID as a minor version", async () => {
+    const source = createClaudeModelCatalogSource({ discover: async () => [
+      { value: "sonnet", resolvedModel: "claude-sonnet-4-20250514", displayName: "Sonnet" },
+      { value: "claude-sonnet-4-20250514", displayName: "Sonnet 4" },
+      { value: "claude-sonnet-4-20250514[1m]", displayName: "Sonnet 4 (1M context)" },
+      { value: "claude-haiku-4-5-20251001", displayName: "Haiku 4.5" },
+    ] });
+    const catalog = await catalogService({ codingModelCatalogSource: source }).getCatalog(principal);
+    const models = catalog.instances.find((entry) => entry.id === "claude_code_default")!.models;
+    expect(Object.fromEntries(models.map(({ id, displayName }) => [id, displayName]))).toMatchObject({
+      sonnet: "Sonnet · currently Claude Sonnet 4",
+      "claude-sonnet-4-20250514": "Claude Sonnet 4",
+      "claude-sonnet-4-20250514[1m]": "Claude Sonnet 4 · 1M context",
+      "claude-haiku-4-5-20251001": "Claude Haiku 4.5",
+    });
+  });
+
+  it("identifies a 1M alias even when the runtime omits its resolved model", async () => {
+    const source = createClaudeModelCatalogSource({ discover: async () => [
+      { value: "opus[1m]", displayName: "Opus" },
+      { value: "opus", displayName: "Opus" },
+    ] });
+    const catalog = await catalogService({ codingModelCatalogSource: source }).getCatalog(principal);
+    const models = catalog.instances.find((entry) => entry.id === "claude_code_default")!.models;
+    expect(models.find((entry) => entry.id === "opus[1m]")?.displayName)
+      .toBe("Opus · current version varies · 1M context");
+    expect(models.find((entry) => entry.id === "opus")?.displayName)
+      .toBe("Opus · current version varies");
+  });
+
   it("preserves the active VPS-style 1M choices and displays their resolved versions", async () => {
     const source = createClaudeModelCatalogSource({ discover: async () => [
       { value: "default", resolvedModel: "claude-opus-5[1m]", displayName: "Default (recommended)" },

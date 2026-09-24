@@ -34,7 +34,7 @@ const ModelInfoSchema = z.object({
     .pipe(CanonicalModelDescriptorSchema.shape.displayName),
 });
 
-const CLAUDE_VERSIONED_ID = /^claude-(opus|sonnet|haiku|fable)-(\d+)(?:-(\d+))?(?:-\d{8})?(\[1m\])?$/;
+const CLAUDE_VERSIONED_ID = /^claude-(opus|sonnet|haiku|fable)-(\d+)(?:-(?!\d{8}(?:\[1m\])?$)(\d+))?(?:-\d{8})?(\[1m\])?$/;
 const MOVING_ALIASES = new Set(["default", "opus", "sonnet", "haiku", "fable", "best",
   "opus[1m]", "sonnet[1m]", "haiku[1m]", "fable[1m]", "best[1m]"]);
 
@@ -52,7 +52,7 @@ function aliasName(id: string, resolvedModel?: string): string {
   if (resolved) return `${alias} · currently ${resolved}${id.endsWith("[1m]") && !resolved.endsWith("1M context")
     ? " · 1M context" : ""}`;
   return id === "default" ? "Default · model chosen by Claude Code"
-    : `${alias} · current version varies`;
+    : `${alias} · current version varies${id.endsWith("[1m]") ? " · 1M context" : ""}`;
 }
 
 function markLastSeen(catalog: CodingModelCatalogProjection): CodingModelCatalogProjection {
