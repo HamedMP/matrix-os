@@ -413,10 +413,20 @@ blocker, not a green light):
 
 - **All changes ship via PR from a manual `git worktree`** -- no direct commits to `main`, no exceptions. Create the worktree with `git worktree add -b <kebab-branch> ../<dir-name> origin/main` and do all work there. Applies to code AND docs.
 - **No PR merge until Greptile reports 5/5** -- every finding must be fixed in the diff or explicitly deferred in the PR body with a linked follow-up issue.
-- **Greptile reviews on PR creation and thereafter only on an explicit `@greptileai please review` comment.** It does not review every push. After a push, the score stays stale until you ask; waiting for an automatic re-review blocks forever.
-- **One request per head, and never a second while one is outstanding for that head.** That is what "do not spam" means here: request once after pushing, then wait.
-- **A request that produced nothing after 15 minutes was lost, not slow -- request once more.** Observed turnaround is about three minutes, so 15 is well past the normal range. Without this, a dropped request deadlocks the PR: the merge gate needs a 5/5 naming that exact commit, and the no-duplicate rule would forbid ever asking again. If a second request also produces nothing, that is an outage rather than a retry problem -- say so in the PR and escalate instead of continuing to ask.
-- **Verify the score against the reviewed commit SHA, not the comment timestamp.** Greptile edits its summary comment in place, so `created_at` stays at the first review while `updated_at` moves. Read `Last reviewed commit` from the body and compare it to the PR's `headRefOid`; a 5/5 that names an older commit is not a 5/5 for what you would merge.
+- **Greptile reviews on PR creation and thereafter only on an explicit `@greptileai please review` comment.** It does not review every push. After a push the score stays stale until you ask, so waiting for an automatic re-review blocks forever.
+- **Read `Last reviewed commit` from the summary body, not the timestamp.** Greptile edits that comment in place, so `created_at` stays at the first review while `updated_at` moves, and neither says which commit was read. Compare the reviewed SHA to the PR's `headRefOid` and act on this table:
+
+  | Reviewed SHA | What it means | Do this |
+  | --- | --- | --- |
+  | Names the current head | Answered, current | Use the score |
+  | Names an older head | **Answered**, about a superseded commit | **Request once for the new head, now** |
+  | No review names the head, under 15 min | Probably still working | Wait |
+  | No review names the head, over 15 min | Probably lost | Request once more |
+  | Still nothing after that | Outage | Say so in the PR and escalate; do not keep asking |
+
+  Row 2 is the one that traps people: a stale answer is a **completed** answer, not a review still in flight, and the two call for opposite actions. A readiness check has to separate *not yet* from *done, about something else* -- they look identical to any check that only asks whether the answer matches what you expected.
+
+  The 15-minute line is a heuristic, not proof: a slow review and a dropped one look the same from outside, so retrying may start a second review for the same head. That is deliberate. A duplicate costs one redundant review that overwrites the same summary comment; never retrying can block a PR permanently. Prefer the recoverable failure. Observed turnaround is about three minutes.
 - No bare `catch {}` or `.catch(() => {})` -- every catch must check error type and log
 - No `fetch()` without `signal: AbortSignal.timeout()` -- 10s APIs, 30s downloads
 - No `writeFileSync`/`appendFileSync` in request handlers -- use `fs/promises`
