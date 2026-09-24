@@ -580,7 +580,7 @@ exit 99
     expect(toolPackInstaller).toContain('install_coding_agents()');
     expect(toolPackInstaller).toContain('finish_agent_install()');
     expect(toolPackInstaller).toContain('install_code_server()');
-    expect(toolPackInstaller).toContain('@anthropic-ai/claude-code@latest');
+    expect(toolPackInstaller).toContain('"@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}"');
     expect(toolPackInstaller).toContain(`CODEX_VERSION="${CODEX_VERIFIED_VERSION}"`);
     expect(toolPackInstaller).toContain('"@openai/codex@${CODEX_VERSION}"');
     expect(toolPackInstaller).toContain('OPENCODE_AI_VERSION="${OPENCODE_AI_VERSION:-latest}"');

@@ -16,6 +16,8 @@ STATE_DIR="${MATRIX_DEVELOPER_TOOLS_STATE_DIR:-/var/lib/matrix-developer-tools}"
 FAILED_FILE="$STATE_DIR/failed-tools"
 INSTALLED_FILE="$STATE_DIR/installed-tools"
 CODEX_VERSION="0.156.1"
+CLAUDE_CODE_VERSION="2.1.280"
+NODE_PREFIX="${MATRIX_NODE_PREFIX:-/opt/matrix/runtime/node}"
 
 log() {
   printf 'matrix-install-developer-tools: %s\n' "$*"
@@ -91,8 +93,8 @@ link_tool() {
   local tool="$1"
   local bin_name
   bin_name="$(tool_bin_name "$tool")"
-  if [ -x "/opt/matrix/runtime/node/bin/${bin_name}" ]; then
-    ln -sf "/opt/matrix/runtime/node/bin/${bin_name}" "/usr/local/bin/${bin_name}"
+  if [ -x "$NODE_PREFIX/bin/${bin_name}" ]; then
+    ln -sf "$NODE_PREFIX/bin/${bin_name}" "/usr/local/bin/${bin_name}"
   fi
 }
 
@@ -107,16 +109,35 @@ tool_bin_name() {
 
 codex_version_is_current() {
   local output escaped_version
-  output="$(/opt/matrix/runtime/node/bin/codex --version 2>/dev/null)" || return 1
+  output="$("$NODE_PREFIX/bin/codex" --version 2>/dev/null)" || return 1
   escaped_version="${CODEX_VERSION//./\\.}"
   printf '%s\n' "$output" | grep -Eq "(^|[[:space:]])${escaped_version}([[:space:]]|$)"
+}
+
+claude_version_is_current() {
+  local output required_major required_minor required_patch current_major current_minor current_patch
+  output="$("$NODE_PREFIX/bin/claude" --version 2>/dev/null)" || return 1
+  [[ "$output" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)([[:space:]]|$) ]] || return 1
+  current_major="${BASH_REMATCH[1]}"
+  current_minor="${BASH_REMATCH[2]}"
+  current_patch="${BASH_REMATCH[3]}"
+  IFS=. read -r required_major required_minor required_patch <<< "$CLAUDE_CODE_VERSION"
+  (( 10#$current_major > 10#$required_major ||
+     (10#$current_major == 10#$required_major && 10#$current_minor > 10#$required_minor) ||
+     (10#$current_major == 10#$required_major && 10#$current_minor == 10#$required_minor && 10#$current_patch >= 10#$required_patch) ))
 }
 
 is_tool_installed() {
   local tool="$1"
   local bin_name
   bin_name="$(tool_bin_name "$tool")"
-  grep -qxF "$tool" "$INSTALLED_FILE" && [ -x "/opt/matrix/runtime/node/bin/${bin_name}" ] || return 1
+  # A newer manually installed managed-prefix CLI must not be downgraded just
+  # because its state marker is absent.
+  if [ "$tool" = "claude-code" ]; then
+    [ -x "$NODE_PREFIX/bin/claude" ] && claude_version_is_current
+    return
+  fi
+  grep -qxF "$tool" "$INSTALLED_FILE" && [ -x "$NODE_PREFIX/bin/${bin_name}" ] || return 1
   if [ "$tool" = "codex" ]; then
     codex_version_is_current
   fi
@@ -152,12 +173,23 @@ for tool in $TOOLS; do
   esac
 
   if is_tool_installed "$tool"; then
+    if [ "$tool" = "claude-code" ] && ! grep -qxF "$tool" "$INSTALLED_FILE"; then
+      printf '%s\n' "$tool" >>"$INSTALLED_FILE"
+    fi
     log "optional developer tool ${tool} already installed; skipping"
     continue
   fi
 
   log "installing optional developer tool ${tool}"
+  install_succeeded=0
   if /opt/matrix/bin/matrix-install-tool-pack "$tool" >>"$STATE_DIR/${tool}.log" 2>&1; then
+    if [ "$tool" = "claude-code" ] && ! claude_version_is_current; then
+      log "installed Claude Code did not meet the required version"
+    else
+      install_succeeded=1
+    fi
+  fi
+  if [ "$install_succeeded" -eq 1 ]; then
     link_tool "$tool"
     grep -vxF "$tool" "$FAILED_FILE" >"$FAILED_FILE.tmp" || true
     mv "$FAILED_FILE.tmp" "$FAILED_FILE"

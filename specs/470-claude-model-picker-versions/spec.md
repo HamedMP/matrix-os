@@ -20,7 +20,8 @@ The read-only Main Computer probe on September 24 found Claude Code 2.1.251
 and `supportedModels()` values `default`, `opus[1m]`,
 `claude-fable-5[1m]`, `sonnet`, and `haiku`; the resolved default is
 `claude-opus-5[1m]`. Opus 5.5 is absent. Anthropic documents that it requires
-Claude Code 2.1.280 or later. No production runtime update is in scope.
+Claude Code 2.1.280 or later. The managed optional Claude Code package is
+upgraded in this PR; production rollout is outside this task.
 
 ## Scope
 
@@ -38,11 +39,24 @@ Claude Code 2.1.280 or later. No production runtime update is in scope.
   selection, and unsupported-model behavior.
 - Reuse the canonical catalog in Web Canvas, Web Desktop, and Electron Desktop.
   No client-specific catalog or model list.
+- Pin the managed VPS Claude Code package to 2.1.280 for fresh installs. On
+  optional developer-tools service restart, reinstall a selected managed CLI
+  only if its version is older or unreadable. Preserve newer managed-prefix
+  installs even if their state marker is missing, and verify the installed
+  version before marking the install successful. Failed installs retain the
+  existing retry path.
 
 ## Non-goals and constraints
 
-- Do not add a static Opus 5.5 choice, install/upgrade Claude Code, alter
-  credentials, infer entitlement from public docs, or change model pricing.
+- Do not add a static Opus 5.5 choice, alter credentials, infer entitlement
+  from public docs, or change model pricing. Do not upgrade the separately
+  pinned Agent SDK or isolated scope-runtime harness as part of this managed
+  Chat CLI change.
+- The owner-runtime `~/.local/bin` precedes the managed Node prefix on PATH.
+  A user-installed Claude binary there can shadow the managed version. The
+  live inventory and turn use the same effective PATH, so the picker reports
+  that effective binary's models instead of promising Opus 5.5 after a
+  managed package update.
 - `supportedModels()` is catalog metadata, not an execution guarantee. Native
   errors remain authoritative for unavailable models and provider limits.
 - Existing persisted alias selections remain valid. A moving alias is never
@@ -69,11 +83,19 @@ byte cap.
 
 Tests begin red for alias resolution, pinned ID labels, qualified `[1m]`
 choices, absent Opus 5.5, fallback after discovery failure, and exact
-`--model` handoff. Then run the
+`--model` handoff, then for CLI version pinning and upgrade decisions. Then run the
 focused gateway and picker suites. At the exact PR head, inspect Web Canvas and
 Web Desktop shared behavior and capture Electron Desktop integration evidence
 against a real VPS with the actual installed Claude inventory. If the VPS does
 not report Opus 5.5, record that limitation rather than manufacturing it.
+
+The compatibility spike installs Claude Code 2.1.280 into an isolated temp
+directory. It reads `supportedModels()` through the repository's pinned Agent
+SDK 0.3.240 with the external CLI path and runs the canonical Chat CLI flags
+and stream-json input against a local synthetic Anthropic endpoint. This checks
+SDK initialization and Chat protocol without using an owner's credentials or
+claiming provider entitlement. The managed CLI is installed by the existing
+out-of-band optional tool service, not through the repository's pnpm lockfile.
 
 ## Acceptance
 
@@ -87,6 +109,9 @@ not report Opus 5.5, record that limitation rather than manufacturing it.
    persistence continue to work across the shared clients.
 4. The exact PR head has Electron Desktop integration evidence and is submitted
    for human review. No merge or deploy in this task.
+5. A managed CLI below 2.1.280 is upgraded when the selected optional-tool
+   service runs; 2.1.280 or newer is retained. A failed or unverifiable install
+   remains retryable and does not advertise a completed upgrade.
 
 ## Documentation deliverable
 
