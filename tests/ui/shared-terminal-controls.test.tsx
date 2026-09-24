@@ -44,7 +44,7 @@ type TerminalHandlers = {
   onReady(frame: unknown): void;
   onOutput(frame: unknown): void;
   onState(frame: unknown): void;
-  onRefreshRequired(): void;
+  onRefreshRequired(): void | Promise<void>;
   onUnavailable(): void;
   onDisconnected(): void;
 };
@@ -80,6 +80,19 @@ function readyFrame(connectionId: string, current = terminal) {
   };
 }
 
+function outputFrame(sequence: string, data: string) {
+  return {
+    version: 1 as const,
+    type: "terminal.output" as const,
+    scopeId,
+    resourceId: terminal.id,
+    authorityGeneration: "1",
+    incarnation: terminal.incarnation,
+    sequence,
+    data,
+  };
+}
+
 describe("shared terminal controls", () => {
   it("toggles the discussion layer from the terminal chrome", async () => {
     const { api } = apiFixture();
@@ -90,6 +103,24 @@ describe("shared terminal controls", () => {
     expect(await screen.findByRole("dialog", { name: "Discussion" })).toBeVisible();
     fireEvent.click(trigger);
     expect(screen.queryByRole("dialog", { name: "Discussion" })).toBeNull();
+  });
+
+  it("drops the superseded transcript when the server replaces terminal history", async () => {
+    const { api, handlers } = apiFixture();
+    render(<SharedTerminalControls api={api} scope={scope("viewer")} actorId="user_viewer" />);
+    await waitFor(() => expect(api.subscribeTerminal).toHaveBeenCalled());
+    act(() => handlers().onReady(readyFrame("connection_viewer")));
+    act(() => handlers().onOutput(outputFrame("1", "stale screen\n")));
+    expect(await screen.findByText("stale screen", { exact: false })).toBeVisible();
+
+    // The daemon reconnected, so the gateway voids retained history and replays its snapshot.
+    // A refresh reloads metadata only, so without an explicit reset the snapshot lands on top
+    // of the screen it is meant to replace and the viewer reads the same output twice.
+    await act(async () => { await handlers().onRefreshRequired(); });
+    act(() => handlers().onOutput(outputFrame("2", "snapshot screen\n")));
+
+    expect(await screen.findByText("snapshot screen", { exact: false })).toBeVisible();
+    expect(screen.queryByText("stale screen", { exact: false })).toBeNull();
   });
 
   it("lets a viewer watch bounded output without exposing mutation controls", async () => {

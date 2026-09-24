@@ -34,6 +34,7 @@ type Action =
   | { type: "state"; terminal: CollaborationTerminal }
   | { type: "output"; data: string }
   | { type: "refresh"; terminal: CollaborationTerminal }
+  | { type: "resync" }
   | { type: "pending"; value: boolean }
   | { type: "accepted"; terminal: CollaborationTerminal; connectionId: string | null; leaseEpoch: string | null }
   | { type: "disconnected" }
@@ -76,6 +77,14 @@ export function SharedTerminalControls({ api, scope, actorId, layers }: {
     ));
     dispatch({ type: "refresh", terminal });
   }, [api, scope.id]);
+  // A refresh_required frame means the retained history the screen was built from is gone, so
+  // the rendered transcript is dropped before the replacement snapshot arrives. The reset is
+  // dispatched ahead of the metadata read so a failed read cannot leave the stale screen in
+  // place for the snapshot to append to.
+  const resync = useCallback(async () => {
+    dispatch({ type: "resync" });
+    await refresh();
+  }, [refresh]);
 
   useEffect(() => {
     let active = true;
@@ -105,12 +114,12 @@ export function SharedTerminalControls({ api, scope, actorId, layers }: {
         const frame = CollaborationTerminalFrameSchema.parse(value);
         if (frame.type === "terminal.state") dispatch({ type: "state", terminal: frame.terminal });
       },
-      onRefreshRequired: refresh,
+      onRefreshRequired: resync,
       onUnavailable: () => { if (active) dispatch({ type: "unavailable" }); },
       onDisconnected: () => { if (active) dispatch({ type: "disconnected" }); },
     });
     return () => { active = false; unsubscribe(); };
-  }, [api, refresh, scope.id]);
+  }, [api, refresh, resync, scope.id]);
 
   const controller = state.terminal?.controller;
   const holdsControl = controller?.actor.actorId === actorId
@@ -234,6 +243,7 @@ function reduce(state: State, action: Action): State {
   if (action.type === "disconnected") return { ...state, connectionId: null,
     controlConnectionId: null, controlLeaseEpoch: null, pending: false };
   if (action.type === "refresh") return { ...state, terminal: action.terminal, loading: false, error: false };
+  if (action.type === "resync") return { ...state, output: "" };
   if (action.type === "output") return { ...state, output: appendBounded(state.output, action.data) };
   if (action.type === "pending") return { ...state, pending: action.value, error: false };
   if (action.type === "error") return { ...state, loading: false, pending: false, error: true };

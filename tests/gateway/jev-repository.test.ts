@@ -1,4 +1,5 @@
 import { JEV_EMAIL_TRIAGE_ANSWER_IDS, JEV_MODEL_ID, type JevEmailTriageResult } from "@matrix-os/contracts";
+import { sql, type Dialect } from "kysely";
 import { KyselyPGlite } from "kysely-pglite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { JevEvaluationRepository } from "../../packages/gateway/src/jev/repository.js";
@@ -47,5 +48,48 @@ describe("Jev evaluation repository", () => {
     await expect(repository.claim(key)).resolves.toEqual({ kind: "pending" });
     await repository.release(key);
     await expect(repository.claim(key)).resolves.toEqual({ kind: "claimed" });
+  });
+
+  it("rolls back the table when its index cannot be created", async () => {
+    const isolated = await KyselyPGlite.create();
+    const base = isolated.dialect;
+    const failingDialect: Dialect = {
+      createAdapter: () => base.createAdapter(),
+      createQueryCompiler: () => base.createQueryCompiler(),
+      createIntrospector: (db) => base.createIntrospector(db),
+      createDriver: () => {
+        const driver = base.createDriver();
+        return {
+          init: () => driver.init(),
+          acquireConnection: async () => {
+            const connection = await driver.acquireConnection();
+            return {
+              executeQuery: async <R>(query: Parameters<typeof connection.executeQuery>[0]) => {
+                if (query.sql.includes("CREATE INDEX IF NOT EXISTS idx_jev_evaluations_updated_at")) {
+                  throw new Error("injected index failure");
+                }
+                return connection.executeQuery<R>(query);
+              },
+              streamQuery: <R>(query: Parameters<typeof connection.streamQuery>[0], chunkSize?: number) =>
+                connection.streamQuery<R>(query, chunkSize),
+            };
+          },
+          beginTransaction: (connection, settings) => driver.beginTransaction(connection, settings),
+          commitTransaction: (connection) => driver.commitTransaction(connection),
+          rollbackTransaction: (connection) => driver.rollbackTransaction(connection),
+          releaseConnection: (connection) => driver.releaseConnection(connection),
+          destroy: () => driver.destroy(),
+        };
+      },
+    };
+    const failing = new JevEvaluationRepository(failingDialect);
+    try {
+      await expect(failing.bootstrap()).rejects.toThrow("injected index failure");
+      const result = await sql<{ table_name: string | null }>`SELECT to_regclass('public.jev_evaluations')::text AS table_name`
+        .execute(failing.kysely);
+      expect(result.rows[0]?.table_name).toBeNull();
+    } finally {
+      await failing.destroy();
+    }
   });
 });

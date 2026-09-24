@@ -17,6 +17,7 @@ describe("terminal control references", () => {
     const tab = await store.createTab(workspace.id, { name: "control", cwd: "" });
     const ref = { workspaceId: workspace.id, tabId: tab.id };
     const writeInput = vi.fn(async (inputRef) => { TerminalRefSchema.parse(inputRef); });
+    const terminateTab = vi.fn(async (inputRef) => { TerminalRefSchema.parse(inputRef); });
     const resize = vi.fn(async (inputRef) => {
       TerminalRefSchema.parse(inputRef);
       return (await store.listWorkspaces())[0];
@@ -24,12 +25,13 @@ describe("terminal control references", () => {
     const runtime = {
       updateTabUiState: store.updateTabUiState.bind(store),
       writeInput,
+      terminateTab,
       resize,
     } as unknown as TerminalRuntimeControlApi;
     const socketPath = join(homePath, "runtime.sock");
     const server = new TerminalRuntimeSocketServer({ socketPath, runtime });
     await server.start();
-    return { homePath, store, tab, ref, writeInput, resize,
+    return { homePath, store, tab, ref, writeInput, terminateTab, resize,
       client: new TerminalRuntimeSocketClient({ socketPath }),
       close: async () => { await server.close(); await rm(homePath, { recursive: true, force: true }); },
     };
@@ -53,6 +55,16 @@ describe("terminal control references", () => {
     try {
       await f.client.writeInput(f.ref, "echo check\r");
       expect(f.writeInput).toHaveBeenCalledWith(f.ref, "echo check\r");
+    } finally { await f.close(); }
+  });
+
+  it("passes collaboration tab creation proof through the socket for input and termination", async () => {
+    const f = await fixture();
+    try {
+      await f.client.writeInput(f.ref, "echo exact\r", f.tab.incarnation);
+      expect(f.writeInput).toHaveBeenCalledWith(f.ref, "echo exact\r", f.tab.incarnation);
+      await f.client.terminateTab(f.ref, f.tab.incarnation);
+      expect(f.terminateTab).toHaveBeenCalledWith(f.ref, f.tab.incarnation);
     } finally { await f.close(); }
   });
 

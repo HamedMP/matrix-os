@@ -68,7 +68,8 @@ export class JevEvaluationRepository implements JevEvaluationStore {
   }
 
   async bootstrap(): Promise<void> {
-    await sql`
+    await this.kysely.transaction().execute(async (trx) => {
+      await sql`
       CREATE TABLE IF NOT EXISTS jev_evaluations (
         owner_id TEXT NOT NULL CHECK (length(owner_id) BETWEEN 1 AND 256),
         idempotency_key TEXT NOT NULL CHECK (length(idempotency_key) BETWEEN 8 AND 240),
@@ -80,9 +81,10 @@ export class JevEvaluationRepository implements JevEvaluationStore {
         PRIMARY KEY (owner_id, idempotency_key),
         CHECK ((status = 'completed' AND result IS NOT NULL) OR (status <> 'completed' AND result IS NULL))
       )
-    `.execute(this.kysely);
-    await sql`CREATE INDEX IF NOT EXISTS idx_jev_evaluations_updated_at ON jev_evaluations (updated_at)`
-      .execute(this.kysely);
+      `.execute(trx);
+      await sql`CREATE INDEX IF NOT EXISTS idx_jev_evaluations_updated_at ON jev_evaluations (updated_at)`
+        .execute(trx);
+    });
   }
 
   async claim(input: EvaluationKey): Promise<JevEvaluationClaim> {
