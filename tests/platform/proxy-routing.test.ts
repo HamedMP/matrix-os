@@ -4956,7 +4956,7 @@ describe("platform proxy routing", () => {
     expect(res.headers.get("content-type")).toBe("image/x-icon");
   });
 
-  it("redirects explicit VM routes to platform billing recovery when Stripe access is inactive", async () => {
+  it("preserves the explicit runtime slot through platform billing recovery", async () => {
     await insertUserMachine(db, {
       machineId: "9f05824c-8d0a-4d83-9cb4-b312d43ff12c",
       clerkUserId: "user_alice",
@@ -4964,6 +4964,7 @@ describe("platform proxy routing", () => {
       status: "running",
       hetznerServerId: 123476,
       publicIPv4: "203.0.113.28",
+      runtimeSlot: "studio",
       imageVersion: "matrix-os-host-2026.04.26-1",
       provisionedAt: "2026-04-26T12:00:00.000Z",
     });
@@ -4993,9 +4994,23 @@ describe("platform proxy routing", () => {
     });
 
     expect(res.status).toBe(302);
-    expect(res.headers.get("location")).toBe("/?billing=setup");
+    expect(res.headers.get("location")).toBe("/?billing=setup&runtime=studio");
     expect(res.headers.get("cache-control")).toBe("no-store, private");
     expect(fetchMock).not.toHaveBeenCalled();
+
+    const recovery = await app.request("/?billing=setup&runtime=studio", {
+      headers: {
+        host: "app.matrix-os.com",
+        authorization: "Bearer clerk-session",
+      },
+    });
+
+    expect(recovery.status).toBe(200);
+    expect(await recovery.text()).toBe("explicit shell");
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      "http://auth-shell.test:3200/?billing=setup&runtime=studio",
+    );
   });
 
   it("blocks explicit VM runtime API routes when Stripe access is inactive", async () => {

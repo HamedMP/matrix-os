@@ -200,6 +200,40 @@ describe("BillingGate", () => {
     expect(screen.queryByText("Confirming your subscription")).toBeNull();
   });
 
+  it("checks and renews the exact runtime selected by billing recovery", async () => {
+    vi.unstubAllEnvs();
+    window.history.replaceState({}, "", "/?billing=setup&runtime=studio");
+    clerkState.isLoaded = true;
+    clerkState.isSignedIn = true;
+    clerkState.activePlan = null;
+    vi.resetModules();
+
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+    const { BillingGate } = await loadBillingGate();
+    render(
+      <BillingGate>
+        <div>Matrix workspace</div>
+      </BillingGate>,
+    );
+
+    await screen.findByRole("button", { name: "Continue to pay" });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/billing/status?runtimeSlot=studio",
+      expect.objectContaining({ method: "GET" }),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Continue to pay" }));
+
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/billing/checkout",
+        expect.objectContaining({
+          body: expect.stringContaining('\"runtimeSlot\":\"studio\"'),
+        }),
+      ),
+    );
+  });
+
   it("renders the shell for app-session billing access without Clerk client auth", async () => {
     vi.unstubAllEnvs();
     clerkState.isLoaded = true;

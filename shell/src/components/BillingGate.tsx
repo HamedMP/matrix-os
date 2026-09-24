@@ -2,6 +2,7 @@
 
 import { Suspense, useEffect, useRef, useState, type ReactNode } from "react";
 import { useAuth } from "@clerk/nextjs";
+import { MatrixComputerRuntimeSlotSchema } from "@matrix-os/contracts";
 import { usePathname, useSearchParams } from "next/navigation";
 import { AlertCircleIcon, Loader2Icon } from "@/lib/hugeicons";
 import {
@@ -63,11 +64,22 @@ function hasRecentBillingCheckoutAttempt(): boolean {
   }
 }
 
-function getBillingCheckoutReturnPath(deviceReturnPath: string | null): string | undefined {
-  return deviceReturnPath ?? undefined;
+function getBillingCheckoutReturnPath(
+  deviceReturnPath: string | null,
+  runtimeSlot?: string,
+): string | undefined {
+  if (deviceReturnPath) return deviceReturnPath;
+  if (!runtimeSlot || runtimeSlot === "primary") return undefined;
+  return `/?billing=setup&runtime=${encodeURIComponent(runtimeSlot)}`;
 }
 
-function BillingRequired({ checkoutReturnPath }: { checkoutReturnPath?: string }) {
+function BillingRequired({
+  checkoutReturnPath,
+  runtimeSlot,
+}: {
+  checkoutReturnPath?: string;
+  runtimeSlot?: string;
+}) {
   return (
     <Settings
       open
@@ -79,6 +91,7 @@ function BillingRequired({ checkoutReturnPath }: { checkoutReturnPath?: string }
       billingMode={checkoutReturnPath ? "device-setup" : "provisioning"}
       onBillingCheckoutIntent={rememberBillingCheckoutAttempt}
       billingCheckoutReturnPath={checkoutReturnPath}
+      billingCheckoutRuntimeSlot={runtimeSlot}
     />
   );
 }
@@ -279,15 +292,22 @@ function BillingGateInner({
   handoffStartedAt: number;
 }) {
   const { isLoaded, isSignedIn } = useAuth();
-  const { active: billingActive, checking: billingAccessChecking } = useMatrixBillingAccess();
   const searchParams = useSearchParams();
+  const parsedRuntimeSlot = MatrixComputerRuntimeSlotSchema.safeParse(searchParams.get("runtime"));
+  const billingRuntimeSlot = parsedRuntimeSlot.success ? parsedRuntimeSlot.data : undefined;
+  const { active: billingActive, checking: billingAccessChecking } = useMatrixBillingAccess(
+    billingRuntimeSlot,
+  );
   const pathname = usePathname();
   const signupBillingHandoff =
     loadingSurface === "signup-handoff" &&
     isSignupBillingHandoffSearch(pathname, searchParams);
   const checkoutReturnRequested = searchParams.get("checkout") === "success";
   const deviceReturnPath = normalizeDeviceReturnPath(searchParams.get("device_return"));
-  const billingCheckoutReturnPath = getBillingCheckoutReturnPath(deviceReturnPath);
+  const billingCheckoutReturnPath = getBillingCheckoutReturnPath(
+    deviceReturnPath,
+    billingRuntimeSlot,
+  );
   const hasBillingAccess = billingActive === true;
   const billingChecking = billingAccessChecking;
   const [checkoutJustCompleted, setCheckoutJustCompleted] = useState(false);
@@ -383,7 +403,10 @@ function BillingGateInner({
         <div className="min-h-screen pointer-events-none select-none blur-[1px] brightness-90">
           {children}
         </div>
-        <BillingRequired checkoutReturnPath={billingCheckoutReturnPath} />
+        <BillingRequired
+          checkoutReturnPath={billingCheckoutReturnPath}
+          runtimeSlot={billingRuntimeSlot}
+        />
       </>
     );
   }

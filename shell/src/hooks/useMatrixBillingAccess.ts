@@ -83,8 +83,8 @@ function getServerE2eBillingScenario(): null {
   return null;
 }
 
-export function useMatrixBillingAccess(): BillingAccessState {
-  const state = useManagedMatrixBillingAccess();
+export function useMatrixBillingAccess(runtimeSlot?: string): BillingAccessState {
+  const state = useManagedMatrixBillingAccess(runtimeSlot);
   const e2eBillingScenario = useSyncExternalStore(
     subscribeToE2eBillingScenario,
     readE2eBillingScenario,
@@ -214,12 +214,13 @@ export function useMatrixBillingAccess(): BillingAccessState {
   };
 }
 
-function useManagedMatrixBillingAccess(): BillingAccessState {
+function useManagedMatrixBillingAccess(runtimeSlot?: string): BillingAccessState {
   const { isLoaded, isSignedIn, has, userId } = useAuth();
+  const scopedRuntimeSlot = runtimeSlot && runtimeSlot !== "primary" ? runtimeSlot : undefined;
   // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- returned hook API / stable identity for effect dep
   const legacyActive = useMemo(
-    () => (isLoaded && isSignedIn ? hasMatrixBillingAccess(has) : false),
-    [has, isLoaded, isSignedIn],
+    () => (!scopedRuntimeSlot && isLoaded && isSignedIn ? hasMatrixBillingAccess(has) : false),
+    [has, isLoaded, isSignedIn, scopedRuntimeSlot],
   );
   const [remoteState, setRemoteState] = useState<BillingAccessRemoteState | null>(null);
   const [remoteChecked, setRemoteChecked] = useState(false);
@@ -246,7 +247,8 @@ function useManagedMatrixBillingAccess(): BillingAccessState {
       setRemoteChecked(true);
       return;
     }
-    const billingCacheKey = isSignedIn ? userId : PLATFORM_SESSION_BILLING_CACHE_KEY;
+    const principalCacheKey = isSignedIn ? userId : PLATFORM_SESSION_BILLING_CACHE_KEY;
+    const billingCacheKey = `${principalCacheKey}:${scopedRuntimeSlot ?? "primary"}`;
     if (previousCacheKeyRef.current !== billingCacheKey) {
       previousCacheKeyRef.current = billingCacheKey;
       failedAttemptsRef.current = 0;
@@ -267,6 +269,7 @@ function useManagedMatrixBillingAccess(): BillingAccessState {
     readRemoteBillingStatus(billingCacheKey, {
       skipCache: !shouldUseSnapshotCache,
       skipInactiveCache: checkoutReturnRequested,
+      runtimeSlot: scopedRuntimeSlot,
     })
       .then((state) => {
         if (disposed) return;
@@ -307,7 +310,7 @@ function useManagedMatrixBillingAccess(): BillingAccessState {
       disposed = true;
       if (retryTimeoutId !== undefined) window.clearTimeout(retryTimeoutId);
     };
-  }, [isLoaded, isSignedIn, legacyActive, retryTick, userId]);
+  }, [isLoaded, isSignedIn, legacyActive, retryTick, scopedRuntimeSlot, userId]);
 
   if (!isLoaded) return { active: null, checking: true, entitlement: null, trialOffer: null, accessReason: null, accessIssue: null, retry: retryBillingStatus };
   if (legacyActive) {
@@ -373,13 +376,16 @@ function isCheckoutSuccessReturn(): boolean {
 
 function readRemoteBillingStatus(
   cacheKey: string,
-  options: { skipCache?: boolean; skipInactiveCache?: boolean } = {},
+  options: { skipCache?: boolean; skipInactiveCache?: boolean; runtimeSlot?: string } = {},
 ): Promise<BillingAccessRemoteState> {
   if (billingStatusRequest?.cacheKey === cacheKey) return billingStatusRequest.promise;
 
   const controller = new AbortController();
   const timeoutId = window.setTimeout(() => controller.abort(), BILLING_STATUS_TIMEOUT_MS);
-  const promise = fetch("/billing/status", {
+  const statusPath = options.runtimeSlot
+    ? `/billing/status?runtimeSlot=${encodeURIComponent(options.runtimeSlot)}`
+    : "/billing/status";
+  const promise = fetch(statusPath, {
     method: "GET",
     credentials: "include",
     headers: { accept: "application/json" },

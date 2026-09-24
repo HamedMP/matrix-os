@@ -332,6 +332,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
     host: string,
     identity: AppDomainIdentity,
     upstreamPath: string,
+    runtimeSlot?: string,
   ): Promise<Response | null> {
     // The VPS shell trusts platform sessions and therefore skips its own billing gate.
     // Serve recovery documents from the platform shell so an inactive customer never
@@ -352,7 +353,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
     }
     if (!isBillingSetupPath(c.req.url)) {
       applyNoStoreHeaders(c);
-      return c.redirect(buildBillingSetupPath(c.req.url), 302);
+      return c.redirect(buildBillingSetupPath(c.req.url, runtimeSlot), 302);
     }
     return proxyAuthShell(c, host, { redirectToBillingOnFailure: false });
   }
@@ -688,6 +689,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
           host,
           identity,
           explicitVmRoute.upstreamPath,
+          machine.runtimeSlot,
         );
         if (recovery) return recovery;
       }
@@ -856,7 +858,13 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
     if (runningMachine) {
       const qs = buildForwardedQueryString(c.req.url, APP_ASSET_ROUTE_OMITTED_QUERY_PARAMS);
       if (!entitlement.runtimeProxyAllowed) {
-        const recovery = await maybeServeBillingRecoveryShell(c, host, identity, path);
+        const recovery = await maybeServeBillingRecoveryShell(
+          c,
+          host,
+          identity,
+          path,
+          runningMachine.runtimeSlot,
+        );
         if (recovery) return recovery;
       }
       if (
@@ -992,7 +1000,13 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
       : await getActiveUserMachineByHandle(db, identity.handle));
     if (activeMachine) {
       if (!entitlement.runtimeProxyAllowed) {
-        const recovery = await maybeServeBillingRecoveryShell(c, host, identity, path);
+        const recovery = await maybeServeBillingRecoveryShell(
+          c,
+          host,
+          identity,
+          path,
+          activeMachine.runtimeSlot,
+        );
         if (recovery) return recovery;
       }
       if (
