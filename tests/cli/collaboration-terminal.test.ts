@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
 import {
-  createCollaborationTerminalWebSocketUrl,
   isCollaborationPathAllowed,
   watchCollaborationTerminal,
 } from "../../packages/sync-client/src/cli/commands/collaboration.js";
@@ -56,59 +55,54 @@ describe("CLI shared terminal", () => {
       .toBe(true);
     expect(isCollaborationPathAllowed(`/api/collaboration/scopes/${scopeId}/discussion/messages/private`))
       .toBe(false);
+    expect(isCollaborationPathAllowed(`/api/collaboration/scopes/${scopeId}/connection-tickets`))
+      .toBe(false);
   });
 
-  it("builds an exact ticket-only terminal WebSocket URL", () => {
-    expect(createCollaborationTerminalWebSocketUrl("https://app.matrix-os.com", scopeId, "t".repeat(43)))
-      .toBe(`wss://app.matrix-os.com/ws/collaboration/scopes/${scopeId}/terminal?ticket=${"t".repeat(43)}`);
-    expect(() => createCollaborationTerminalWebSocketUrl("https://user:secret@app.matrix-os.com", scopeId, "t".repeat(43)))
-      .toThrow();
-  });
-
-  it("acquires, sends, and releases one input with issued connection and lease fences", async () => {
-    const request = vi.fn(async () => ({
-      ticket: "t".repeat(43), actorId: "user_editor", expiresAt: "2026-09-11T12:00:30.000Z",
-    }));
+  it("opens a direct terminal stream with a possession handshake, then preserves lease fences", async () => {
+    const transport = { terminal: vi.fn(async () => ({
+      url: `wss://relay.matrix-os.com/ws/collaboration/direct/scopes/${scopeId}/terminal?ticket=opaque&after=0`,
+      actorId: "user_editor",
+      handshake: JSON.stringify({ protocolVersion: 2, type: "handshake", sessionId: "session", ticketNonce: "nonce", possession: "proof" }),
+    })) };
     const watching = watchCollaborationTerminal({
       platformUrl: "https://app.matrix-os.com",
       token: "actor-token",
       scopeId,
       control: "acquire",
       input: "pnpm test",
-      request,
+      transport: transport as never,
       WebSocketImpl: FakeSocket as never,
       writeOutput: vi.fn(),
       writeState: vi.fn(),
     });
     await vi.waitFor(() => expect(FakeSocket.instance).not.toBeNull());
     const socket = FakeSocket.instance!;
+    expect(socket.url).toContain(`/ws/collaboration/direct/scopes/${scopeId}/terminal`);
     socket.emit("open");
+    expect(JSON.parse(socket.sent[0]!)).toMatchObject({ type: "handshake", sessionId: "session" });
     socket.emit("message", JSON.stringify(frame("terminal.ready", terminal())));
-    expect(JSON.parse(socket.sent[0]!)).toMatchObject({
+    expect(JSON.parse(socket.sent[1]!)).toMatchObject({
       type: "acquire", connectionId: "connection_cli", incarnation,
     });
     socket.emit("message", JSON.stringify(frame("terminal.state", terminal({
       actorId: "user_other", displayName: "Grace", leaseEpoch: "6",
     }))));
-    expect(socket.sent).toHaveLength(1);
+    expect(socket.sent).toHaveLength(2);
     socket.emit("message", JSON.stringify(frame("terminal.state", terminal({
       actorId: "user_editor", displayName: "Ada", leaseEpoch: "7",
     }))));
-    expect(JSON.parse(socket.sent[1]!)).toMatchObject({
+    expect(JSON.parse(socket.sent[2]!)).toMatchObject({
       type: "input", connectionId: "connection_cli", leaseEpoch: "7", data: "pnpm test",
     });
     socket.emit("message", JSON.stringify(frame("terminal.state", terminal({
       actorId: "user_editor", displayName: "Ada", leaseEpoch: "7",
     }))));
-    expect(JSON.parse(socket.sent[2]!)).toMatchObject({
+    expect(JSON.parse(socket.sent[3]!)).toMatchObject({
       type: "release", connectionId: "connection_cli", leaseEpoch: "7",
     });
     socket.emit("message", JSON.stringify(frame("terminal.state", terminal())));
     await expect(watching).resolves.toBeUndefined();
-    expect(request).toHaveBeenCalledWith(expect.objectContaining({
-      method: "POST",
-      path: `/api/collaboration/scopes/${scopeId}/connection-tickets`,
-      body: expect.objectContaining({ purpose: "terminal" }),
-    }));
+    expect(transport.terminal).toHaveBeenCalledWith(scopeId);
   });
 });

@@ -77,7 +77,13 @@ describe("cloud workspace runtime gates", () => {
   });
 
   it("extends health output without leaking filesystem paths or secrets", () => {
-    const server = readFileSync(join(root, "packages/gateway/src/server.ts"), "utf-8");
+    // Health output moved into the extracted operational routes. Both files are joined so
+    // the leak guards below keep covering the composition root and the module that now
+    // builds the payload; scoping them to one file would let a path or key leak from the other.
+    const server = [
+      readFileSync(join(root, "packages/gateway/src/server.ts"), "utf-8"),
+      readFileSync(join(root, "packages/gateway/src/server/operational-routes.ts"), "utf-8"),
+    ].join("\n");
 
     for (const key of ["workspace", "sessions", "reviews", "sandbox", "browserIde"]) {
       expect(server).toContain(`${key}:`);

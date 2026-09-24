@@ -9,8 +9,15 @@ import type { ChatProviderCatalogService } from "../chat/provider-catalog.js";
 import type { CodingAgentProviderRegistry } from "../coding-agents/provider-registry.js";
 import type { MatrixFundedCredentialProvider } from "../funded-ai-credential-manager.js";
 import { CollaborationActorProofVerifier } from "./actor-proof.js";
-import { CollaborationAuthority } from "./authority.js";
+import { CollaborationAuthority, CollaborationAuthorizationError } from "./authority.js";
 import { CollaborationCapabilityRepository } from "./capability-repository.js";
+import { CollaborationCapabilityEvaluator } from "./capability-evaluator.js";
+import { drainActiveSharedRunsForCutover, GatewayCollaborationCutover } from "./cutover.js";
+import { createCollaborationCutoverRoutes } from "./cutover-route.js";
+import { createProjectGitBroker, type ProjectGitDriver, type ProjectGitOwnerIdentity } from "./project-git-broker.js";
+import { createProjectAccessReadiness } from "./project-access-readiness.js";
+import { createGatewayReadinessProbes } from "./gateway-readiness-probes.js";
+import { createOwnerSourceReadinessProbes } from "./account-eligibility.js";
 import { CollaborationChatAdapter } from "./chat-adapter.js";
 import { CollaborationChatScopeService } from "./chat-scope.js";
 import { bootstrapCollaborationDatabase, type OwnerCollaborationDatabase } from "./database.js";
@@ -21,8 +28,9 @@ import { CollaborationControlClient, isMembershipEvidenceEvictor } from "./contr
 import { DirectReplayCache, DirectTicketVerifier } from "./direct-auth.js";
 import { createDirectSessionRoutes } from "./direct-routes.js";
 import { DirectSessionService } from "./direct-sessions.js";
+import { OwnerRuntimeSessionService } from "./owner-runtime-sessions.js";
 import { registerCollaborationDirectWebSocketRoutes } from "./direct-websocket.js";
-import { ensureRuntimeIdentity } from "./runtime-identity.js";
+import { confirmationKeyFromRuntimeIdentity, ensureRuntimeIdentity } from "./runtime-identity.js";
 import { CollaborationEventRegistry } from "./events.js";
 import { CollaborationParticipantResolver } from "./participant-resolver.js";
 import {
@@ -32,7 +40,13 @@ import {
 } from "./organization-precondition.js";
 import { OrganizationMembershipClient } from "./organization-membership-client.js";
 import { CollaborationRepository } from "./repository.js";
+import { CollaborationResourceCatalog } from "./resource-catalog.js";
+import { StandaloneResourceScopeService } from "./standalone-resource-scope.js";
+import type { AppInstanceAdapter } from "./app-instance-adapter.js";
+import type { CollaborationResourceDriver, CollaborationResourceServices } from "./resource-routes.js";
+import { createCollaborationUploadStager } from "./upload-stages.js";
 import { createCollaborationRoutes } from "./routes.js";
+import type { ChatExecutionRootResolver } from "../chat/execution-root.js";
 import { createSharedAiRuntime, type SharedChatSandboxManifestSource } from "./shared-ai-runtime.js";
 import type { ReadinessSubject } from "./readiness-evaluator.js";
 import { sandboxRequiredForResourceKind } from "./sandbox-readiness.js";
@@ -45,6 +59,7 @@ import {
 } from "./execution-policy.js";
 import { CollaborationRunBindingRepository } from "./run-account-binding.js";
 import { SharedRunOwnerSource } from "./shared-run-owner-source.js";
+import { CollaborationRunLossRepository, startControlLossWatchdog } from "./shared-run-loss.js";
 import type { CollaborationChatExecutionAdapter } from "./chat-execution-adapter.js";
 import { CollaborationTerminalAdapter } from "./terminal-adapter.js";
 import { TerminalControlCoordinator } from "./terminal-control.js";
@@ -122,6 +137,7 @@ export async function createGatewayCollaboration(options: {
   await bootstrapCollaborationDatabase(options.db);
   await cleanupExpiredArtifacts(options.db, new Date());
   const repository = new CollaborationRepository(options.db, { chatRepository: options.chatRepository });
+  const cutoverGuard = new GatewayCollaborationCutover(options.db);
   const participantResolver = options.resolveParticipant && options.resolveInvitationIdentifier
     ? undefined
     : new CollaborationParticipantResolver({
@@ -159,12 +175,15 @@ export async function createGatewayCollaboration(options: {
   const runBindings = eligibility && executionPolicies
     ? new CollaborationRunBindingRepository(options.db, { policies: executionPolicies, eligibility })
     : undefined;
-  const ownerSource = eligibility && executionPolicies
-    ? new SharedRunOwnerSource({ policies: executionPolicies, eligibility, ...(runBindings ? { bindings: runBindings } : {}) })
+  const ownerSource = eligibility && executionPolicies && runBindings
+    ? new SharedRunOwnerSource({ policies: executionPolicies, eligibility, bindings: runBindings })
     : undefined;
+  // S09: immutable loss reasons and run-control decisions; constructed here so the
+  // shared AI runtime, its commands and the request projection share one store.
+  const runLoss = new CollaborationRunLossRepository(options.db);
   const verifier = new CollaborationActorProofVerifier({
     runtimeId: options.config.runtimeId,
-    keys: options.config.proofKeys,
+    keys: options.config.proofKeys ?? {},
     authority,
   });
   // S05: direct transport. The platform relay signs nothing on this path; the
@@ -172,6 +191,7 @@ export async function createGatewayCollaboration(options: {
   // and holds every session. Without registered keys or client origins the
   // direct routes fail closed while the rest keeps serving.
   const runtimeIdentity = await ensureRuntimeIdentity(options.db);
+  const confirmationSecret = confirmationKeyFromRuntimeIdentity(runtimeIdentity, options.config.runtimeId);
   let controlClient: CollaborationControlClient | undefined;
   const directVerifier = new DirectTicketVerifier({
     runtimeId: options.config.runtimeId,
@@ -197,6 +217,12 @@ export async function createGatewayCollaboration(options: {
     },
     startTimers: options.startTimers !== false,
   });
+  const ownerRuntimeSessions = options.config.ownerId
+    ? new OwnerRuntimeSessionService({
+        verifier: directVerifier, ownerId: options.config.ownerId,
+        runtimeId: options.config.runtimeId, organizationPrecondition,
+      })
+    : undefined;
   // S07 / T039: lease loss also releases terminal control, stops bound sandbox runtimes and refuses input.
   directSessions.subscribeEnded((session, reason) => revocationEnforcer?.onSessionEnded(session, reason));
   if (options.config.ownerId && options.config.relayHandle) {
@@ -219,7 +245,7 @@ export async function createGatewayCollaboration(options: {
   }
   const chatScope = new CollaborationChatScopeService(options.db, {
     runtimeId: options.config.runtimeId,
-    preflightSecret: options.config.preflightSecret,
+    preflightSecret: confirmationSecret,
   });
   const projectTransitions = createProjectTransitionJournal({ db: options.db });
   const projectFence = createProjectFence({ db: options.db, transitions: projectTransitions });
@@ -229,7 +255,7 @@ export async function createGatewayCollaboration(options: {
   if (projectLifecycle) await projectLifecycle.recoverPending();
   const projectScope = options.projectSource ? new CollaborationProjectScopeService(options.db, {
     runtimeId: options.config.runtimeId,
-    preflightSecret: options.config.preflightSecret,
+    preflightSecret: confirmationSecret,
     source: options.projectSource,
   }) : undefined;
   const outbox = new CollaborationDirectoryOutbox({
@@ -268,12 +294,27 @@ export async function createGatewayCollaboration(options: {
   let closing = false;
   let chatExecutionAdapter: CollaborationChatExecutionAdapter | undefined;
   let sharedAiRuntime: Awaited<ReturnType<typeof createSharedAiRuntime>> | undefined;
+  let sharedAiOrchestrator: CanonicalChatOrchestrator | undefined;
+  let controlLossWatchdog: ReturnType<typeof startControlLossWatchdog> | undefined;
   let terminalAdapter: CollaborationTerminalAdapter | undefined;
   let terminalControl: TerminalControlCoordinator | undefined;
   let terminalDispatcher: CollaborationTerminalDispatcher | undefined;
   let terminalEventRegistry: CollaborationTerminalEventRegistry | undefined;
   let projectSharing: ProjectSharingService | undefined;
   let projectTransitionCoordinator: ReturnType<typeof createProjectTransitionCoordinator> | undefined;
+  let projectGit: ReturnType<typeof createProjectGitBroker> | undefined;
+  let projectReadiness: ReturnType<typeof createProjectAccessReadiness> | undefined;
+  let projectInventorySource: Pick<ProjectInventoryResourceSource, "listChats" | "getGitSetup"> | undefined;
+  let resourceServices: CollaborationResourceServices | undefined;
+  let standaloneScope: StandaloneResourceScopeService | undefined;
+  let ownerResourceDriver: (CollaborationResourceDriver & { close?(): void }) | undefined;
+  function closeResourceServices(): void {
+    resourceServices?.uploads?.close();
+    ownerResourceDriver?.close?.();
+    resourceServices = undefined;
+    standaloneScope = undefined;
+    ownerResourceDriver = undefined;
+  }
 
   return {
     repository,
@@ -281,6 +322,8 @@ export async function createGatewayCollaboration(options: {
     executionPolicies,
     runBindings,
     ownerSource,
+    get projectGit() { return projectGit; },
+    get projectReadiness() { return projectReadiness; },
     authority,
     organizationPrecondition,
     verifier,
@@ -294,8 +337,12 @@ export async function createGatewayCollaboration(options: {
     projectFence,
     projectScope,
     directSessions,
+    ownerRuntimeSessions,
     directVerifier,
     controlClient,
+    /** S07/S09: the live sandbox runtime registry, present only while shared AI is available. */
+    get sandboxRuntimes() { return sharedAiRuntime?.available ? sharedAiRuntime.sandboxRuntimes : undefined; },
+    get revocationEnforcer() { return revocationEnforcer; },
     projectOperationAdmission: {
       withLegacyAdmission<T>(input: {
         ownerType: "personal" | "organization";
@@ -309,6 +356,61 @@ export async function createGatewayCollaboration(options: {
         }, () => operation());
       },
     },
+    enableProjectGit(input: {
+      driver: ProjectGitDriver & {
+        resolveOwnerIdentity(input: { ownerId: string; projectId: string }): Promise<ProjectGitOwnerIdentity>;
+      };
+      source: Pick<ProjectInventoryResourceSource, "listChats" | "getGitSetup">;
+    }): void {
+      if (registered || closing || projectGit || projectReadiness) {
+        throw new Error("Project Git must be initialized exactly once before route registration");
+      }
+      const evaluator = new CollaborationCapabilityEvaluator({
+        db: options.db, grants: capabilities, organizationPrecondition,
+      });
+      projectGit = createProjectGitBroker({
+        db: options.db,
+        driver: input.driver,
+        resolveOwnerIdentity: input.driver.resolveOwnerIdentity,
+        authorize: async ({ scopeId, actorId, action }) => {
+          const context = await authority.authorize({ scopeId, actorId, action: "read" });
+          if (context.resourceKind !== "project" || context.scopeId !== context.membershipScopeId) {
+            throw new CollaborationAuthorizationError("not_found", "Project scope is unavailable");
+          }
+          if (action !== "read") await evaluator.requireAction({ scopeId, actorId, action });
+          return { ownerId: context.ownerId, projectId: context.resourceId };
+        },
+      });
+      projectReadiness = createProjectAccessReadiness({ repository, source: input.source });
+      projectInventorySource = input.source;
+    },
+    enableSharedResources(input: {
+      driver: CollaborationResourceDriver & { close?(): void };
+      appsFactory?: (dependencies: {
+        db: Kysely<OwnerCollaborationDatabase>;
+        authority: CollaborationAuthority;
+        catalog: CollaborationResourceCatalog;
+        onCommitted(scopeId: string): Promise<void>;
+      }) => AppInstanceAdapter;
+    }): void {
+      if (registered || closing || resourceServices) {
+        throw new Error("Shared resources must be initialized exactly once before route registration");
+      }
+      const catalog = new CollaborationResourceCatalog(options.db);
+      const onCommitted = async (scopeId: string) => { eventRegistry.broadcastScope(scopeId); };
+      const uploads = createCollaborationUploadStager({ db: options.db, catalog, driver: input.driver, onCommitted });
+      try {
+        const apps = input.appsFactory?.({ db: options.db, authority, catalog, onCommitted });
+        resourceServices = { catalog, driver: input.driver, uploads, ...(apps ? { apps } : {}) };
+        standaloneScope = new StandaloneResourceScopeService({ resources: resourceServices,
+          runtimeId: options.config.runtimeId, preflightSecret: confirmationSecret });
+        ownerResourceDriver = input.driver;
+      } catch (error: unknown) {
+        uploads.close();
+        input.driver.close?.();
+        throw error;
+      }
+    },
     async enableSharedAi(input: {
       orchestrator: CanonicalChatOrchestrator;
       homePath: string;
@@ -320,9 +422,18 @@ export async function createGatewayCollaboration(options: {
       codingProviders?: Pick<CodingAgentProviderRegistry, "listProviders">;
       /** S07: mounts each shared run's authoritative root; without it shared AI stays disabled. */
       sandboxManifests?: SharedChatSandboxManifestSource;
+      /** S09: the canonical execution-root resolver used as the default manifest source. */
+      executionRoots?: Pick<ChatExecutionRootResolver, "resolve">;
     }): Promise<{ available: boolean }> {
       if (registered || closing || sharedAiRuntime) {
         throw new Error("Shared AI must be initialized exactly once before route registration");
+      }
+      if (!ownerSource || !executionPolicies) {
+        // Fail closed: without the owner's Provider V3 reader there is no execution
+        // policy, and no shared run may execute on a default credential.
+        console.warn("[collaboration] shared AI disabled: owner source and execution policies are unavailable");
+        await chatScope.reconcileExecutionEligibility({ executionGeneration: null, eligibility: null });
+        return { available: false };
       }
       sharedAiRuntime = await createSharedAiRuntime({
         db: options.db,
@@ -339,14 +450,29 @@ export async function createGatewayCollaboration(options: {
         resolveParticipant,
         ...(input.providerCatalog ? { providerCatalog: input.providerCatalog } : {}),
         ...(input.codingProviders ? { codingProviders: input.codingProviders } : {}),
-        ...(ownerSource ? { ownerSource } : {}),
+        ownerSource,
+        executionPolicies,
+        runLoss,
         ...(input.fundedCredentialProvider ? { fundedCredentialProvider: input.fundedCredentialProvider } : {}),
         ...(input.supervisorSocket ? { supervisorSocket: input.supervisorSocket } : {}),
         ...(input.brokerSocket ? { brokerSocket: input.brokerSocket } : {}),
         ...(input.fetchImpl ? { fetchImpl: input.fetchImpl } : {}),
         ...(input.sandboxManifests ? { sandboxManifests: input.sandboxManifests } : {}),
+        ...(input.executionRoots ? { executionRoots: input.executionRoots } : {}),
       });
+      sharedAiOrchestrator = input.orchestrator;
       if (sharedAiRuntime.available) chatExecutionAdapter = sharedAiRuntime.chatExecutionAdapter;
+      // S09 / T048: losing the control stream past its lease loses every active
+      // shared run. The watchdog fires once per outage episode and never extends authority.
+      const control = controlClient;
+      if (sharedAiRuntime.available && control) {
+        const runtime = sharedAiRuntime;
+        controlLossWatchdog = startControlLossWatchdog({
+          controlFresh: () => control.controlFresh(),
+          onLost: () => runtime.interruptForLoss("control_partition"),
+          startTimer: options.startTimers !== false,
+        });
+      }
       return { available: sharedAiRuntime.available };
     },
     /**
@@ -360,6 +486,10 @@ export async function createGatewayCollaboration(options: {
     async sandboxSupported(subject: ReadinessSubject): Promise<boolean> {
       if (!sandboxRequiredForResourceKind(subject.resourceKind)) return true;
       return sharedAiRuntime?.available === true ? sharedAiRuntime.sandboxSupported(subject) : false;
+    },
+    /** Runs one control-lease check now (the watchdog's tick) and settles any interruption it starts. */
+    async checkSharedAiControlLease(): Promise<void> {
+      await controlLossWatchdog?.check();
     },
     enableSharedTerminal(input: {
       registry: ConstructorParameters<typeof CollaborationTerminalAdapter>[0]["registry"];
@@ -375,13 +505,21 @@ export async function createGatewayCollaboration(options: {
         runtime: input.runtime,
         runtimeId: options.config.runtimeId,
         executionEligibility: input.executionEligibility,
-        preflightSecret: options.config.preflightSecret,
+        preflightSecret: confirmationSecret,
       });
       terminalControl = new TerminalControlCoordinator({
         startTimer: options.startTimers,
         onChanged: ({ scopeId }) => terminalEventRegistry?.publishState(scopeId),
       });
-      revocationEnforcer = new CollaborationRevocationEnforcer({ control: terminalControl });
+      revocationEnforcer = new CollaborationRevocationEnforcer({
+        control: terminalControl,
+        // Late-bound: shared AI owns the registry because it owns the supervisor
+        // client, and it may be enabled before or after the shared terminal.
+        runtimes: {
+          stopForActor: (scopeId, actorId) =>
+            sharedAiRuntime?.available ? sharedAiRuntime.sandboxRuntimes.stopForActor(scopeId, actorId) : Promise.resolve(0),
+        },
+      });
       terminalDispatcher = new CollaborationTerminalDispatcher({
         authority,
         terminal: terminalAdapter,
@@ -407,7 +545,7 @@ export async function createGatewayCollaboration(options: {
       const inventory = createProjectInventoryService({
         homePath: input.homePath,
         source: input.inventorySource,
-        confirmationSecret: options.config.preflightSecret,
+        confirmationSecret,
       });
       projectTransitionCoordinator = createProjectTransitionCoordinator({
         db: options.db,
@@ -446,11 +584,23 @@ export async function createGatewayCollaboration(options: {
       if (registered || closing) throw new Error("Collaboration routes are already registered or shutting down");
       registered = true;
       input.app.route("/", createCollaborationRoutes({
+        cutoverGuard,
         runtimeId: options.config.runtimeId,
         verifier,
         directSessions,
+        ownerRuntimeSessions,
         authority,
         repository,
+        capabilities,
+        capabilityEvaluator: new CollaborationCapabilityEvaluator({ db: options.db, grants: capabilities, organizationPrecondition }),
+        readinessProbes: createGatewayReadinessProbes({
+          repository, chats: options.chatRepository,
+          projectSource: () => projectInventorySource,
+          sandboxSupported: async (subject) => sharedAiRuntime?.available === true
+            ? sharedAiRuntime.sandboxSupported(subject) : false,
+          ownerSource: eligibility && executionPolicies
+            ? createOwnerSourceReadinessProbes({ policies: executionPolicies, eligibility }) : undefined,
+        }),
         chatScope,
         chatAdapter,
         discussionAdapter,
@@ -460,9 +610,13 @@ export async function createGatewayCollaboration(options: {
         ...(projectLifecycle ? { projectLifecycle } : {}),
         ...(projectScope ? { projectScope } : {}),
         ...(projectSharing ? { projectSharing } : {}),
+        ...(projectGit ? { projectGit } : {}),
+        ...(projectReadiness ? { projectReadiness } : {}),
         resolveParticipant,
         resolveInvitationIdentifier,
         ...(executionPolicies ? { executionPolicies } : {}),
+        ...(resourceServices ? { resources: resourceServices } : {}),
+        ...(standaloneScope ? { standaloneScope } : {}),
         onScopeCommitted: (scopeId) => eventRegistry.broadcastScope(scopeId),
         onRevoked: (scopeId, actorId) => {
           eventRegistry.notifyRevoked(scopeId, actorId);
@@ -474,6 +628,22 @@ export async function createGatewayCollaboration(options: {
           void terminalEventRegistry?.publishState(scopeId);
         },
       }));
+      input.app.route("/", createCollaborationCutoverRoutes({
+        ownerId: options.config.ownerId ?? "",
+        runtimeId: options.config.runtimeId,
+        platformKeys: () => controlClient?.platformKeys() ?? [],
+        controlFresh: () => controlClient?.controlFresh() ?? false,
+        cutover: cutoverGuard,
+        drainRuns: (key) => drainActiveSharedRunsForCutover({
+          db: options.db, scopeId: key.scopeId, ownerId: key.ownerId,
+          orchestrator: {
+            cancelSharedRun: async (...args) => {
+              if (!sharedAiOrchestrator) throw new Error("Shared execution orchestrator unavailable");
+              await sharedAiOrchestrator.cancelSharedRun(...args);
+            },
+          },
+        }),
+      }));
       registerCollaborationEventWebSocketRoute({
         app: input.app,
         upgradeWebSocket: input.upgradeWebSocket,
@@ -481,7 +651,7 @@ export async function createGatewayCollaboration(options: {
         authority,
         registry: eventRegistry,
       });
-      input.app.route("/", createDirectSessionRoutes({ sessions: directSessions }));
+      input.app.route("/", createDirectSessionRoutes({ sessions: directSessions, ownerRuntimeSessions }));
       registerCollaborationDirectWebSocketRoutes({
         app: input.app,
         upgradeWebSocket: input.upgradeWebSocket,
@@ -520,6 +690,12 @@ export async function createGatewayCollaboration(options: {
     fence(): void {
       closing = true;
       if (cleanupTimer) clearInterval(cleanupTimer);
+      // The control-loss watchdog stops before anything else drains. It reads control
+      // freshness and calls interruptForLoss, so a watchdog that outlives the control
+      // client's drain reads an ordinary shutdown as a partition and marks healthy runs
+      // interrupted.
+      controlLossWatchdog?.stop();
+      controlLossWatchdog = undefined;
       // The control client is drained first: its frames revoke sessions, evict membership
       // evidence and end grants, so it must stop before the registries detach and the
       // verifier shuts down. Its drain is synchronous, like this fence.
@@ -527,6 +703,11 @@ export async function createGatewayCollaboration(options: {
       // Direct sessions drain next, in the same order shutdown() uses: ending them notifies
       // the event and terminal registries through the end hooks, which the lines below detach.
       directSessions.fence();
+      // Resource services close after the *synchronous* drains above, whose end hooks reach
+      // the catalog and file driver. The detached drains below, owner runtime sessions
+      // included, are fire-and-forget because this fence cannot await: they may still settle
+      // after this line. shutdown() awaits each one and so closes resources strictly last.
+      closeResourceServices();
       const drainingSharedAi = sharedAiRuntime;
       sharedAiRuntime = undefined;
       chatExecutionAdapter = undefined;
@@ -542,6 +723,7 @@ export async function createGatewayCollaboration(options: {
       projectSharing = undefined;
       participantResolver?.shutdown();
       verifier.shutdown();
+      void ownerRuntimeSessions?.shutdown();
       for (const [name, drain] of [
         ["shared AI", () => drainingSharedAi?.shutdown()],
         ["project transitions", () => drainingTransitions?.shutdown()],
@@ -556,8 +738,21 @@ export async function createGatewayCollaboration(options: {
       if (closing) return;
       closing = true;
       if (cleanupTimer) clearInterval(cleanupTimer);
+      // The control-loss watchdog stops before anything else drains. It reads control
+      // freshness and calls interruptForLoss, so a watchdog that outlives the control
+      // client's drain reads an ordinary shutdown as a partition and marks healthy runs
+      // interrupted.
+      controlLossWatchdog?.stop();
+      controlLossWatchdog = undefined;
       await controlClient?.shutdown();
       await directSessions.shutdown();
+      // Owner runtime sessions drain with the other session registries, before any resource
+      // teardown, because ending them runs the same end hooks.
+      await ownerRuntimeSessions?.shutdown();
+      // Resource services close after every drain: sessions ending above still reach the
+      // catalog and the file driver through their end hooks, so tearing these down first
+      // would pull them out from under a notify that is still in flight.
+      closeResourceServices();
       await sharedAiRuntime?.shutdown();
       sharedAiRuntime = undefined;
       chatExecutionAdapter = undefined;

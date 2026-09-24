@@ -6,6 +6,7 @@ import { isActivationCurrent } from "./capability-evaluator.js";
 import type { CollaborationCapabilityRepository } from "./capability-repository.js";
 import type { OrganizationPrecondition } from "./organization-precondition.js";
 import type { CollaborationRepository } from "./repository.js";
+import { hasRetiredLegacyAuthority } from "./repository-shared.js";
 
 export { CollaborationAuthorizationError, type CollaborationAuthorizationErrorCode };
 
@@ -18,7 +19,9 @@ export type CollaborationAction =
   | "export_project"
   | "request_ai"
   | "control_execution"
-  | "recover";
+  | "recover"
+  /** S12: write to a shared file, folder or app instance (Contributor); the project variant stays `mutate_project`. */
+  | "mutate_resource";
 
 export interface AuthorizedCollaborationContext {
   actorId: string;
@@ -26,10 +29,14 @@ export interface AuthorizedCollaborationContext {
   organizationId: string;
   scopeId: string;
   membershipScopeId: string;
-  resourceKind: "chat" | "terminal" | "project";
+  resourceKind: "chat" | "terminal" | "project" | "file" | "folder" | "app";
   resourceId: string;
   role: CollaborationRole;
   authEpoch: number;
+  /** Separate epochs preserve the revoke fence when parent and child epochs differ. */
+  resourceAuthEpoch?: number;
+  membershipAuthEpoch?: number;
+  membershipEvidenceEpoch?: string;
   authorityRuntimeId: string;
   authorityGeneration: number;
   capability: CollaborationAction;
@@ -83,9 +90,12 @@ export class CollaborationAuthority {
     const member = await this.repository.getMember(membershipScope.id, input.actorId);
     const legacyRole = member && member.status === "accepted" && !member.dispositionedAt
       && !(member.expiresAt && new Date(member.expiresAt).getTime() <= this.now().getTime())
+      && (input.actorId === membershipScope.owner_id
+        || !await hasRetiredLegacyAuthority(this.repository.db, membershipScope.id))
       ? member.role
       : null;
-    // S04: a whole-project preset grant is the V1 membership; legacy member rows keep their exact old role.
+    // Before S18 activation, legacy rows keep their old role. After activation,
+    // only direct grants can authorize non-owners, including after rollback.
     const role = legacyRole ?? await this.resolveGrantRole(membershipScope.id, input.actorId, evidence.membershipEpoch);
     if (!role) {
       throw new CollaborationAuthorizationError("not_found", "Current membership is required");
@@ -103,6 +113,9 @@ export class CollaborationAuthority {
       resourceId: scope.resource_id,
       role,
       authEpoch: Math.max(Number(scope.auth_epoch), Number(membershipScope.auth_epoch)),
+      resourceAuthEpoch: Number(scope.auth_epoch),
+      membershipAuthEpoch: Number(membershipScope.auth_epoch),
+      ...(evidence.membershipEpoch ? { membershipEvidenceEpoch: evidence.membershipEpoch } : {}),
       authorityRuntimeId: scope.authority_runtime_id,
       authorityGeneration: Number(scope.authority_generation),
       capability: input.action,
@@ -206,9 +219,9 @@ function requireRoleCapability(role: CollaborationRole, action: CollaborationAct
     return;
   }
   const allowed = role === "owner"
-    ? ["read", "discuss", "manage_members", "publish_snapshot", "mutate_project", "export_project", "recover"]
+    ? ["read", "discuss", "manage_members", "publish_snapshot", "mutate_project", "mutate_resource", "export_project", "recover"]
     : role === "editor"
-      ? ["read", "discuss", "mutate_project"]
+      ? ["read", "discuss", "mutate_project", "mutate_resource"]
       : ["read"];
   if (!allowed.includes(action)) {
     throw new CollaborationAuthorizationError("forbidden", "Role does not allow this action");

@@ -13,7 +13,9 @@ import {
 } from "@renderer/lib/hugeicons";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { DESKTOP_Z_INDEX } from "../../design/layering";
-import { lazy, useEffect, useState, type ReactNode } from "react";
+import { lazy, useCallback, useEffect, useState, type ReactNode } from "react";
+import { FilePreviewDescriptorSchema, type FilePreviewDescriptor } from "@matrix-os/contracts";
+import { FilePreviewContent, filePreviewContentUrl, filePreviewMetadataUrl } from "@matrix-os/ui";
 import { Button, EmptyState } from "../../design/primitives";
 import { AppError, toUserMessage } from "../../lib/errors";
 import { useConnection } from "../../stores/connection";
@@ -84,13 +86,18 @@ function isMarkdown(path: string): boolean {
   return /\.mdx?$/i.test(path);
 }
 
-export type FilePreviewKind = "image" | "markdown" | "text" | "unsupported";
+export type FilePreviewKind = "image" | "markdown" | "text" | "pdf" | "table" | "audio" | "video" | "html" | "unsupported";
 
 export function previewKindForPath(path: string): FilePreviewKind {
   if (isImage(path)) return "image";
   if (isMarkdown(path)) return "markdown";
   const name = path.split("/").pop()?.toLowerCase() ?? "";
   const extension = name.includes(".") ? name.split(".").pop() ?? "" : "";
+  if (extension === "pdf") return "pdf";
+  if (["csv", "tsv"].includes(extension)) return "table";
+  if (["aac", "flac", "m4a", "mp3", "oga", "ogg", "opus", "wav"].includes(extension)) return "audio";
+  if (["avi", "m4v", "mkv", "mov", "mp4", "ogv", "webm"].includes(extension)) return "video";
+  if (["htm", "html"].includes(extension)) return "html";
   if (TEXT_EXTENSIONS.includes(extension) || TEXT_FILENAMES.includes(name) || /^\.[a-z0-9_-]+$/.test(name)) {
     return "text";
   }
@@ -238,6 +245,50 @@ function ImagePreview({ path, name }: { path: string; name: string }) {
   );
 }
 
+function RichFilePreview({ path }: { path: string }) {
+  const api = useConnection((state) => state.api);
+  const [attempt, setAttempt] = useState(0);
+  const [state, setState] = useState<
+    { status: "loading" } | { status: "ready"; descriptor: FilePreviewDescriptor } | { status: "error"; error: unknown }
+  >({ status: "loading" });
+  const resource = { kind: "home" as const, path };
+  useEffect(() => {
+    if (!api) return;
+    let cancelled = false;
+    const scope = captureConnectionScope();
+    setState({ status: "loading" });
+    void api.get<unknown>(filePreviewMetadataUrl(resource)).then((value) => {
+      if (!cancelled && captureConnectionScope() === scope) {
+        setState({ status: "ready", descriptor: FilePreviewDescriptorSchema.parse(value) });
+      }
+    }).catch((error: unknown) => {
+      if (!cancelled) setState({ status: "error", error });
+    });
+    return () => { cancelled = true; };
+  }, [api, attempt, path]);
+  const loadBlob = useCallback(async (url: string, maxBytes: number) => {
+    if (!api) throw new Error("PreviewUnavailable");
+    return api.getBlob(url, { maxBytes });
+  }, [api]);
+  const loadText = useCallback(async (url: string, maxBytes: number) => {
+    if (!api) throw new Error("PreviewUnavailable");
+    return api.getText(url, { maxBytes });
+  }, [api]);
+  const retry = () => setAttempt((value) => value + 1);
+  if (state.status === "loading") return <LoadingPreview />;
+  if (state.status === "error") return <PreviewFailure error={state.error} onRetry={retry} />;
+  return <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto p-4" style={{ background: "var(--bg-sunken)" }}>
+    <FilePreviewContent
+      key={`${state.descriptor.version}:${attempt}`}
+      descriptor={state.descriptor}
+      contentUrl={filePreviewContentUrl(state.descriptor.resource)}
+      loadBlob={loadBlob}
+      loadText={loadText}
+      retry={retry}
+    />
+  </div>;
+}
+
 function childBrowserPath(parent: string, name: string): string {
   return parent ? `${parent}/${name}` : name;
 }
@@ -328,6 +379,7 @@ export function FilePreview({
   if (kind === "image") return <ImagePreview key={path} path={path} name={name} />;
   if (kind === "markdown") return <TextPreview key={path} path={path} markdown />;
   if (kind === "text") return <TextPreview key={path} path={path} monaco={textRenderer === "monaco"} />;
+  if (["pdf", "table", "audio", "video", "html"].includes(kind)) return <RichFilePreview key={path} path={path} />;
   return <EmptyState icon={<FileQuestion size={26} />} headline="Preview not available" description="This file type can’t be previewed here." action={unavailableAction} />;
 }
 

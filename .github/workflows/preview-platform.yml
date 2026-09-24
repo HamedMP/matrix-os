@@ -507,6 +507,9 @@ jobs:
       ARTIFACT_REPOSITORY: ${{ vars.ARTIFACT_REPOSITORY }}
       PR_NUMBER: ${{ inputs.pr }}
       PREVIEW_CLERK_USER_ID: ${{ secrets.PREVIEW_CLERK_USER_ID }}
+      PREVIEW_CLERK_ACCESS_USER_IDS: ${{ secrets.PREVIEW_CLERK_ACCESS_USER_IDS }}
+      PREVIEW_VPS_CONTROL_URL: https://app.matrix-os.com
+      CUSTOM_MCP_ENABLED: ${{ inputs.custom_mcp }}
       CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY }}
       EXPECTED_HEAD_SHA: ${{ needs.select-share-preview.outputs.head_sha }}
       GH_TOKEN: ${{ github.token }}
@@ -539,6 +542,7 @@ jobs:
           preview_db="$(gcloud secrets versions access latest --secret platform-database-url-staging --project "$GCP_PROJECT_ID" --quiet)"
           echo "::add-mask::$preview_db"
           PREVIEW_DATABASE_URL="$preview_db" PREVIEW_CLERK_USER_ID="$PREVIEW_CLERK_USER_ID" \
+            PREVIEW_CLERK_ACCESS_USER_IDS="${PREVIEW_CLERK_ACCESS_USER_IDS:-[]}" \
             node --input-type=module <<'NODE'
           import { readFile } from "node:fs/promises";
           import { Client } from "pg";
@@ -546,8 +550,21 @@ jobs:
 
           const actorId = process.env.PREVIEW_CLERK_USER_ID ?? "";
           const prNumber = process.env.PR_NUMBER ?? "";
+          const fixtureOwnerId = `chat-share-preview-fixture-pr-${prNumber}`;
           if (!/^user_[A-Za-z0-9]+$/.test(actorId)) {
             console.error("Preview fixture authorization is invalid.");
+            process.exit(1);
+          }
+          let accessUserIds;
+          try {
+            accessUserIds = JSON.parse(process.env.PREVIEW_CLERK_ACCESS_USER_IDS ?? "[]");
+            // The staging fixture has a synthetic owner. The real Preview
+            // owner is one of its collaborators, leaving seven extra slots.
+            if (!Array.isArray(accessUserIds) || accessUserIds.length > 7
+              || accessUserIds.some((id) => typeof id !== "string" || !/^user_[A-Za-z0-9]+$/.test(id) || id === actorId)
+              || new Set(accessUserIds).size !== accessUserIds.length) throw new Error("invalid access list");
+          } catch {
+            console.error("Preview fixture access list is invalid.");
             process.exit(1);
           }
           const client = new Client({
@@ -568,27 +585,21 @@ jobs:
             const result = await client.query(`INSERT INTO user_machines
               (machine_id, clerk_user_id, handle, runtime_slot, provisioning_class, public_ipv4,
                status, provisioned_at, developer_tools, access_clerk_user_ids)
-              VALUES ($1, 'chat-share-preview-fixture', $2, $2, 'preview', $3,
-                      'running', $4, '[]', ARRAY[$5]::TEXT[])
+              VALUES ($1, $6, $2, $2, 'preview', $3,
+                      'running', $4, '[]', $5::TEXT[])
               ON CONFLICT (machine_id) DO UPDATE SET
+                clerk_user_id = EXCLUDED.clerk_user_id,
                 public_ipv4 = EXCLUDED.public_ipv4,
                 status = 'running',
                 deleted_at = NULL,
                 provisioned_at = EXCLUDED.provisioned_at,
-                access_clerk_user_ids = CASE
-                  WHEN $5 = ANY(user_machines.access_clerk_user_ids)
-                    THEN user_machines.access_clerk_user_ids
-                  ELSE array_append(user_machines.access_clerk_user_ids, $5)
-                END
-              WHERE user_machines.clerk_user_id = 'chat-share-preview-fixture'
+                access_clerk_user_ids = EXCLUDED.access_clerk_user_ids
+              WHERE user_machines.clerk_user_id IN ('chat-share-preview-fixture', $6)
                 AND user_machines.handle = EXCLUDED.handle
                 AND user_machines.runtime_slot = EXCLUDED.runtime_slot
                 AND user_machines.provisioning_class = 'preview'
-                AND $5 <> user_machines.clerk_user_id
-                AND ($5 = ANY(user_machines.access_clerk_user_ids)
-                  OR cardinality(user_machines.access_clerk_user_ids) < 8)
-              RETURNING $5 = ANY(access_clerk_user_ids) AS authorized`, [
-              `chat-share-preview-${handle}`, handle, address, new Date().toISOString(), actorId,
+              RETURNING access_clerk_user_ids @> $5::TEXT[] AS authorized`, [
+              `chat-share-preview-${handle}`, handle, address, new Date().toISOString(), [actorId, ...accessUserIds], fixtureOwnerId,
             ]);
             if (result.rowCount !== 1 || result.rows[0]?.authorized !== true) {
               throw new Error("authorization rejected");
@@ -635,15 +646,21 @@ jobs:
           fi
           # Match the existing platform VPS-origin TLS policy (tracked in #410).
           # This applies only to the dedicated Preview service and registered VPS addresses.
+          custom_mcp_args=()
+          if [ "$CUSTOM_MCP_ENABLED" = true ]; then
+            custom_mcp_args+=(--update-secrets "MCP_CREDENTIAL_ENCRYPTION_KEY=mcp-credential-encryption-key-preview:1")
+          fi
           gcloud run deploy "$CLOUD_RUN_PREVIEW_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" \
             --image "$image" --tag "pr-$PR_NUMBER" --no-traffic \
-            --update-env-vars "^@^MATRIX_APP_DOMAIN_HOSTS=preview.matrix-os.com,${url#https://}@CUSTOMER_VPS_TLS_VERIFY=false" --quiet
+            --update-env-vars "^@^MATRIX_APP_DOMAIN_HOSTS=preview.matrix-os.com,${url#https://}@CUSTOMER_VPS_TLS_VERIFY=false@CUSTOM_MCP_ENABLED=${CUSTOM_MCP_ENABLED}@MCP_OAUTH_CALLBACK_URL=${url}/api/mcp-servers/oauth/callback" \
+            "${custom_mcp_args[@]}" --quiet
           if ! [[ "$PREVIEW_CLERK_USER_ID" =~ ^user_[A-Za-z0-9]+$ ]]; then
             echo "PREVIEW_CLERK_USER_ID is required for preview speech authorization." >&2
             exit 1
           fi
           handle="pr-$PR_NUMBER"
           machine_id="chat-share-preview-$handle"
+          fixture_owner_id="chat-share-preview-fixture-$handle"
           if [ -z "${CLERK_SECRET_KEY:-}" ]; then
             echo "Preview Clerk authentication is not configured." >&2
             exit 1
@@ -665,10 +682,15 @@ jobs:
             <<< "$session_token_payload")"
           echo "::add-mask::$preview_session_token"
           unset sessions session_token_payload
-          terminal_url="${url}/vm/${handle}/api/terminal/run"
+          terminal_url="${PREVIEW_VPS_CONTROL_URL}/vm/${handle}/api/terminal/run"
           preview_platform_secret="$(gcloud secrets versions access latest \
             --secret platform-preview-secret --project "$GCP_PROJECT_ID" --quiet)"
           echo "::add-mask::$preview_platform_secret"
+          mcp_token="$(PREVIEW_SIGNING_SECRET="$preview_platform_secret" node --input-type=module -e '
+            import { createHmac } from "node:crypto";
+            process.stdout.write(createHmac("sha256", process.env.PREVIEW_SIGNING_SECRET).update(process.argv[1]).digest("hex"));
+          ' "$handle")"
+          echo "::add-mask::$mcp_token"
           speech_token="$(PREVIEW_SIGNING_SECRET="$preview_platform_secret" node --input-type=module -e '
             import { createHmac } from "node:crypto";
             process.stdout.write(createHmac("sha256", process.env.PREVIEW_SIGNING_SECRET).update(JSON.stringify([
@@ -680,6 +702,7 @@ jobs:
             --arg origin "$url" \
             --arg token "$speech_token" \
             --arg owner "$PREVIEW_CLERK_USER_ID" \
+            --arg fixtureOwner "$fixture_owner_id" \
             --arg machine "$machine_id" \
             --arg slot "$handle" \
             '{
@@ -688,10 +711,18 @@ jobs:
               MATRIX_PLATFORM_SPEECH_ORIGIN:$origin,
               MATRIX_PLATFORM_SPEECH_RUNTIME_TOKEN:$token,
               MATRIX_PLATFORM_SPEECH_REQUEST_OWNER_ID:$owner,
-              MATRIX_PLATFORM_SPEECH_OWNER_ID:"chat-share-preview-fixture",
+              MATRIX_PLATFORM_SPEECH_OWNER_ID:$fixtureOwner,
               MATRIX_PLATFORM_SPEECH_MACHINE_ID:$machine,
               MATRIX_PLATFORM_SPEECH_RUNTIME_SLOT:$slot
             }')"
+          if [ "$CUSTOM_MCP_ENABLED" = true ]; then
+            runtime_config="$(jq -cn --argjson base "$runtime_config" --arg origin "$url" --arg mcpToken "$mcp_token" --arg fixtureOwner "$fixture_owner_id" '
+              $base + {
+                MATRIX_PREVIEW_CUSTOM_MCP_ORIGIN:$origin,
+                MATRIX_PREVIEW_CUSTOM_MCP_TOKEN:$mcpToken,
+                MATRIX_PREVIEW_CUSTOM_MCP_OWNER_ID:$fixtureOwner
+              }')"
+          fi
           read -r -d '' patch_script <<'PYTHON' || true
           import json
           import os
@@ -715,7 +746,8 @@ jobs:
           with open(path, "r", encoding="utf-8") as source:
               lines = source.read().splitlines()
           keys = set(config)
-          lines = [line for line in lines if line.split("=", 1)[0] not in keys]
+          preview_mcp_keys = {"MATRIX_PREVIEW_CUSTOM_MCP_ORIGIN", "MATRIX_PREVIEW_CUSTOM_MCP_TOKEN", "MATRIX_PREVIEW_CUSTOM_MCP_OWNER_ID"}
+          lines = [line for line in lines if line.split("=", 1)[0] not in keys | preview_mcp_keys]
           lines.extend(f"{key}={config[key]}" for key in sorted(keys))
           directory = os.path.dirname(path)
           fd, temporary = tempfile.mkstemp(prefix=".host.env.preview.", dir=directory, text=True)
@@ -738,21 +770,38 @@ jobs:
           PYTHON
           send_runtime_command() {
             local body="$1" response="$2"
-            curl --fail --silent --show-error --max-time 45 \
+            if ! curl --fail --silent --show-error --max-time 45 \
               --retry 5 --retry-all-errors --retry-delay 2 --retry-max-time 30 \
               -o "$response" -X POST "$terminal_url" \
               -H "authorization: Bearer ${preview_session_token}" \
-              -H 'content-type: application/json' --data-binary "$body"
+              -H 'content-type: application/json' --data-binary "$body"; then
+              return 1
+            fi
             jq -e 'select(.exitCode==0 and .timedOut==false and .truncated==false and .signal==null)' \
               "$response" >/dev/null
+          }
+          wait_runtime_command() {
+            local body="$1" response="$2" attempt
+            for attempt in {1..12}; do
+              if send_runtime_command "$body" "$response"; then return 0; fi
+              if [ "$attempt" -eq 12 ]; then
+                echo "Preview gateway did not recover after restart." >&2
+                return 1
+              fi
+              sleep 5
+            done
           }
           body="$(jq -cn --arg script "$patch_script" --arg config "$runtime_config" \
             '{command:["/usr/bin/sudo","/usr/bin/python3","-c",$script,$config],timeoutMs:10000}')"
           send_runtime_command "$body" "$speech_config_response"
-          body='{"command":["/usr/bin/sudo","/usr/bin/systemctl","restart","matrix-gateway.service"],"timeoutMs":30000}'
+          # A synchronous restart drops the gateway connection that carries this terminal request.
+          restart_unit="matrix-preview-gateway-restart-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          body="$(jq -cn --arg unit "--unit=$restart_unit" \
+            '{command:["/usr/bin/sudo","/usr/bin/systemd-run",$unit,"--on-active=2s","--collect","/usr/bin/systemctl","restart","matrix-gateway.service"],timeoutMs:10000}')"
           send_runtime_command "$body" "$gateway_restart_response"
+          sleep 5
           body='{"command":["/usr/bin/systemctl","is-active","--quiet","matrix-gateway.service"],"timeoutMs":10000}'
-          send_runtime_command "$body" "$gateway_active_response"
+          wait_runtime_command "$body" "$gateway_active_response"
           capability_url="${url}/internal/containers/${handle}/speech/capabilities?runtimeSlot=${handle}"
           curl --fail --silent --show-error --max-time 15 \
             -H "authorization: Bearer ${speech_token}" "$capability_url" \
@@ -764,6 +813,7 @@ jobs:
           import os
           import re
           import stat
+          import sys
           import urllib.request
 
           path = "/opt/matrix/env/host.env"
@@ -789,10 +839,13 @@ jobs:
           if re.fullmatch(r"[a-f0-9]{64}", token) is None:
               raise ValueError("invalid gateway authentication configuration")
           results = {}
-          for name, path in (
+          paths = [
               ("speech", "/api/speech/capabilities"),
               ("providers", "/api/chat-providers"),
-          ):
+          ]
+          if sys.argv[1] == "true":
+              paths.append(("mcp", "/api/mcp-servers"))
+          for name, path in paths:
               request = urllib.request.Request(
                   f"http://127.0.0.1:4000{path}",
                   headers={"authorization": f"Bearer {token}"},
@@ -803,13 +856,14 @@ jobs:
                   results[name] = json.load(response)
           print(json.dumps(results, separators=(",", ":")))
           PYTHON
-          body="$(jq -cn --arg script "$gateway_probe_script" \
-            '{command:["/usr/bin/python3","-c",$script],timeoutMs:30000}')"
-          send_runtime_command "$body" "$gateway_capabilities_response"
-          jq -e '
+          body="$(jq -cn --arg script "$gateway_probe_script" --arg customMcp "$CUSTOM_MCP_ENABLED" \
+            '{command:["/usr/bin/python3","-c",$script,$customMcp],timeoutMs:30000}')"
+          wait_runtime_command "$body" "$gateway_capabilities_response"
+          jq -e --arg customMcp "$CUSTOM_MCP_ENABLED" '
             (.stdout | fromjson) as $result
             | $result.speech.fileTranscription.status == "ready"
             and $result.speech.fileTranscription.dictation.enabled == true
             and ($result.providers | type == "object")
+            and ($customMcp != "true" or ($result.mcp | type == "array"))
           ' "$gateway_capabilities_response" >/dev/null
           echo "Share preview origin: $url" >> "$GITHUB_STEP_SUMMARY"

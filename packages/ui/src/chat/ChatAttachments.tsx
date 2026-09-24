@@ -9,14 +9,15 @@ export interface ChatMessageAttachment {
   src?: string;
 }
 
-export function ChatAttachments({ attachments, open, loadImage }: {
+export function ChatAttachments({ attachments, open, loadImage, align = "end" }: {
   attachments: ChatMessageAttachment[];
   open?: (path: string) => boolean | void;
   loadImage?: (src: string) => Promise<Blob>;
+  align?: "start" | "end";
 }) {
-  return <div className="ml-auto flex max-w-[min(85%,48rem)] flex-wrap justify-end gap-2">
+  return <div className={`flex max-w-[min(85%,48rem)] flex-wrap gap-2 ${align === "start" ? "justify-start" : "ml-auto justify-end"}`}>
     {attachments.map((attachment) => attachment.kind === "image" && attachment.src
-      ? <AttachmentImage key={attachment.id} src={attachment.src} label={attachment.label} loadImage={loadImage} />
+      ? <AttachmentImage key={attachment.id} src={attachment.src} label={attachment.label} path={attachment.path} open={open} loadImage={loadImage} />
       : <div key={attachment.id} className="max-w-full overflow-hidden rounded-xl border bg-[var(--bg-surface,var(--background))]" style={{ borderColor: "var(--border-default, var(--border))" }}>
       <button type="button" disabled={!attachment.path || !open} aria-label={`Preview ${attachment.label}`}
         onClick={() => attachment.path && open?.(attachment.path)} className="flex max-w-full items-center gap-2 px-3 py-2 text-sm hover:enabled:bg-[var(--bg-hover,var(--muted))] disabled:cursor-default">
@@ -29,10 +30,14 @@ export function ChatAttachments({ attachments, open, loadImage }: {
 function AttachmentImage({
   src,
   label,
+  path,
+  open,
   loadImage,
 }: {
   src: string;
   label: string;
+  path?: string;
+  open?: (path: string) => boolean | void;
   loadImage?: (src: string) => Promise<Blob>;
 }) {
   const [enlarged, setEnlarged] = useState(false);
@@ -83,7 +88,16 @@ function AttachmentImage({
         style={{ width: "fit-content", maxWidth: "92vw", maxHeight: "90vh", padding: 12, background: "var(--bg-surface, var(--matrix-card))", color: "var(--text-primary, var(--matrix-card-fg))" }}>
         <div className="mb-3 flex items-center justify-between gap-4">
           <span className="min-w-0 truncate text-sm">{label}</span>
-          <button type="button" aria-label="Close image preview" onClick={() => setEnlarged(false)} className="shrink-0 rounded-lg border px-3 py-1 text-sm">Close</button>
+          <div className="flex shrink-0 items-center gap-2">
+            {path && open ? (
+              <button type="button" aria-label={`Open ${label} in File Preview`} onClick={() => {
+                if (open(path) !== false) setEnlarged(false);
+              }} className="rounded-lg border px-3 py-1 text-sm">
+                File Preview
+              </button>
+            ) : null}
+            <button type="button" aria-label="Close image preview" onClick={() => setEnlarged(false)} className="rounded-lg border px-3 py-1 text-sm">Close</button>
+          </div>
         </div>
         <img src={resolvedSrc} alt={`Full size ${label}`} style={{ display: "block", maxWidth: "calc(92vw - 24px)", maxHeight: "calc(90vh - 76px)", objectFit: "contain" }} />
       </Dialog> : null}

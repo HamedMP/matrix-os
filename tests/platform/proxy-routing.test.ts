@@ -170,6 +170,12 @@ describe("platform proxy routing", () => {
         platformHandle: c.get("platformHandle"),
       }),
     );
+    integrationRoutes.get("/agent-catalog", (c) =>
+      c.json({
+        platformUserId: c.get("platformUserId"),
+        platformHandle: c.get("platformHandle"),
+      }),
+    );
     const app = createApp({
       db,
       orchestrator: stubOrchestrator(),
@@ -189,6 +195,17 @@ describe("platform proxy routing", () => {
 
     expect(res.status).toBe(200);
     await expect(res.json()).resolves.toEqual({
+      platformUserId: "user_alice",
+      platformHandle: "alice",
+    });
+    const capabilities = await app.request("/api/integrations/agent-catalog", {
+      headers: {
+        host: "app.matrix-os.com",
+        authorization: "Bearer clerk-session",
+      },
+    });
+    expect(capabilities.status).toBe(200);
+    await expect(capabilities.json()).resolves.toEqual({
       platformUserId: "user_alice",
       platformHandle: "alice",
     });

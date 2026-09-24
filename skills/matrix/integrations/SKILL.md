@@ -53,7 +53,10 @@ Use `describe_service` before an unfamiliar action, then use `call_service`.
 
 Only use the bundled `matrix-integrations` command when MCP tools are unavailable.
 It supplies Matrix's local identity to the gateway without exposing that
-credential or any provider credential to the agent process.
+credential or any provider credential to the agent process. CLI `call` is
+read-only: it verifies the advertised action risk and requires the exact account
+label. Use a native integration tool with approval for writes; do not call the
+gateway directly to bypass that approval.
 
 ### List Connected Services
 
@@ -80,11 +83,12 @@ matrix-integrations sync
 
 ```bash
 matrix-integrations describe github
-matrix-integrations call github list_repos '{"sort":"updated","per_page":10}'
+matrix-integrations call github list_repos '{"sort":"updated","per_page":10}' 'Work GitHub'
 ```
 
-If multiple accounts for the same service are connected, pass the account
-label as the final `call` argument.
+Use the account label returned by `inventory` as the final `call` argument,
+even when only one account is connected. Only actions marked `read` by
+`describe` can run through the CLI fallback.
 
 ## In-App Bridge
 

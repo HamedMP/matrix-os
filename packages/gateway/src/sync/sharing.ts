@@ -30,7 +30,6 @@ export interface SharingDb {
   deleteShare(shareId: string): Promise<void>;
   listSharesByOwner(ownerId: string): Promise<ShareRow[]>;
   listSharesByGrantee(granteeId: string): Promise<ShareRow[]>;
-  listSharesByGranteeAndOwner(granteeId: string, ownerId: string): Promise<ShareRow[]>;
   resolveHandle(handle: string): Promise<string | null>;
   resolveUserId(userId: string): Promise<string | null>;
   resolveUserIds(userIds: string[]): Promise<Map<string, string>>;
@@ -87,12 +86,6 @@ export interface SharingService {
   acceptShare(callerId: string, shareId: string): Promise<AcceptShareResult>;
   revokeShare(callerId: string, shareId: string): Promise<void>;
   listShares(userId: string): Promise<ListSharesResult>;
-  checkSharePermission(
-    ownerId: string,
-    callerId: string,
-    filePath: string,
-    action: "get" | "put" | "delete",
-  ): Promise<null | "forbidden">;
 }
 
 // ---------------------------------------------------------------------------
@@ -142,16 +135,6 @@ export class GranteeNotFoundError extends Error {
 }
 
 // ---------------------------------------------------------------------------
-// Role permission matrix
-// ---------------------------------------------------------------------------
-
-const ROLE_PERMISSIONS: Record<ShareRole, Set<string>> = {
-  viewer: new Set(["get"]),
-  editor: new Set(["get", "put"]),
-  admin: new Set(["get", "put", "delete"]),
-};
-
-// ---------------------------------------------------------------------------
 // Factory
 // ---------------------------------------------------------------------------
 
@@ -175,14 +158,6 @@ export function createSharingService(deps: {
     return checked.key.slice(`matrixos-sync/${ownerId}/files/`.length);
   }
 
-  function shareMatchesPath(sharePath: string, filePath: string): boolean {
-    const normalizedSharePath = sharePath.replace(/\/+/g, "/").replace(/\/$/, "");
-    const normalizedFilePath = filePath.replace(/\/+/g, "/").replace(/\/$/, "");
-    return (
-      normalizedFilePath === normalizedSharePath ||
-      normalizedFilePath.startsWith(`${normalizedSharePath}/`)
-    );
-  }
 
   return {
     async createShare(ownerId, input) {
@@ -338,39 +313,6 @@ export function createSharingService(deps: {
       return { owned, received };
     },
 
-    async checkSharePermission(ownerId, callerId, filePath, action) {
-      // Owner always has full access
-      if (callerId === ownerId) {
-        return null;
-      }
 
-      const normalizedFilePath = normalizeSharedPath(ownerId, filePath);
-      if (!normalizedFilePath) {
-        return "forbidden";
-      }
-
-      // Look up shares granted to this caller by this owner
-      const shares = await db.listSharesByGranteeAndOwner(callerId, ownerId);
-      const matchingShares = shares.filter(
-        (s) =>
-          s.accepted &&
-          (!s.expires_at || s.expires_at.getTime() > Date.now()) &&
-          shareMatchesPath(s.path, normalizedFilePath),
-      );
-
-      if (matchingShares.length === 0) {
-        return "forbidden";
-      }
-
-      // Use the most permissive matching share
-      for (const share of matchingShares) {
-        const perms = ROLE_PERMISSIONS[share.role];
-        if (perms && perms.has(action)) {
-          return null;
-        }
-      }
-
-      return "forbidden";
-    },
   };
 }

@@ -6,6 +6,8 @@ export type { AppAiInput, AppAiRequest, AppAiResult } from "#app-ai";
 export * from "#release-alignment";
 export * from "#runtime-compatibility";
 export * from "#chat-message-wire";
+export * from "#chat-artifacts";
+export * from "#file-preview";
 import { z } from "zod/v4";
 import { IsoTimestampSchema, ProviderModelReferenceSchema, SAFE_SLUG } from "#contract-primitives";
 import {
@@ -29,7 +31,7 @@ import {
   textEncoder,
 } from "#legacy-contract-primitives";
 
-export const CODEX_VERIFIED_VERSION = "0.155.1";
+export const CODEX_VERIFIED_VERSION = "0.156.1";
 export const CODEX_VERIFIED_NPM_PACKAGE = `@openai/codex@${CODEX_VERIFIED_VERSION}`;
 /** Keep Codex output in xterm's normal buffer so scrollback remains selectable. */
 export const CODEX_TERMINAL_LAUNCH_COMMAND = "codex --no-alt-screen";
@@ -59,6 +61,7 @@ export * from "#collaboration-capabilities";
 export * from "#collaboration-direct";
 export * from "#collaboration-execution";
 export * from "#collaboration-peer";
+export * from "#collaboration-resources";
 export * from "#organization-billing";
 export * from "#custom-mcp-policy";
 export * from "#hermes-configuration";

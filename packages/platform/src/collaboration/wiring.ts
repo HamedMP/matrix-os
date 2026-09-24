@@ -1,25 +1,23 @@
 import type { Context, Hono } from "hono";
 import type { Kysely } from "kysely";
 import { bootstrapPlatformCollaborationDatabase, type CollaborationPlatformDatabase } from "./database.js";
-import { CollaborationProofSigner } from "./proof.js";
-import { CollaborationProxy, type CollaborationRuntimeRoute } from "./proxy.js";
 import { PlatformCollaborationRepository } from "./repository.js";
 import { createPlatformCollaborationRoutes } from "./routes.js";
-import { CollaborationWebSocketAuthorizer } from "./websocket.js";
+import { loadCollaborationRelayOrigin } from "./direct-wiring.js";
+import { loadTicketSigningKeyring, type TicketSigningKeyring } from "./ticket-issuer.js";
 import type { FailClosedPlatformCollaboration, PlatformCollaborationConfigurationFailure } from "./fail-closed.js";
 import type { PlatformOrganizations } from "../organizations/wiring.js";
 import type { PlatformCollaborationDirect } from "./direct-wiring.js";
 
 export type { FailClosedPlatformCollaboration, PlatformCollaborationConfigurationFailure } from "./fail-closed.js";
 
-const MAX_PROOF_KEYS = 8;
 const MAX_ALLOWED_ORIGINS = 16;
 
 export interface PlatformCollaborationConfig {
-  activeKeyId: string;
-  proofKeys: Readonly<Record<string, string>>;
+  /** Null when a present-but-unusable keyring leaves the ticket route unavailable; the platform still starts. */
+  ticketKeyring: TicketSigningKeyring | null;
+  relayOrigin: string;
   allowedOrigins: readonly string[];
-  enabledPurposes: readonly ["events"];
 }
 
 export type PlatformCollaborationConfigurationHealth =
@@ -35,48 +33,31 @@ export function loadPlatformCollaborationConfig(env: NodeJS.ProcessEnv): Platfor
 export function describePlatformCollaborationConfiguration(
   env: NodeJS.ProcessEnv,
 ): PlatformCollaborationConfigurationHealth {
-  const activeKeyId = env.MATRIX_COLLABORATION_ACTIVE_KEY_ID?.trim();
+  const relayOrigin = loadCollaborationRelayOrigin(env);
+  if (!relayOrigin) return { configured: false, reason: "origin_configuration_missing" };
   const allowedOrigins = [...new Set((env.MATRIX_COLLABORATION_ALLOWED_ORIGINS ?? "")
     .split(",").map((value) => value.trim()).filter(Boolean))];
   if (allowedOrigins.length < 1 || allowedOrigins.length > MAX_ALLOWED_ORIGINS) {
     return { configured: false, reason: "origin_configuration_missing" };
   }
-  let proofKeys: Record<string, string>;
+  let origins: string[];
   try {
-    const parsed = JSON.parse(env.MATRIX_COLLABORATION_PROOF_KEYS ?? "null") as unknown;
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-      return { configured: false, reason: "signing_configuration_missing" };
-    }
-    proofKeys = Object.fromEntries(Object.entries(parsed).filter(
-      (entry): entry is [string, string] => typeof entry[1] === "string",
-    ));
-  } catch (error: unknown) {
-    if (!(error instanceof SyntaxError)) {
-      console.warn("[platform-collaboration] proof key configuration parse failed", error instanceof Error ? error.name : "UnknownError");
-    }
-    return { configured: false, reason: "signing_configuration_missing" };
-  }
-  const keys = Object.entries(proofKeys);
-  if (!activeKeyId || keys.length < 1 || keys.length > MAX_PROOF_KEYS
-    || keys.some(([keyId, key]) => !/^[A-Za-z0-9_.-]{1,80}$/.test(keyId) || Buffer.byteLength(key) < 32)
-    || !proofKeys[activeKeyId]) {
-    return { configured: false, reason: "signing_configuration_missing" };
-  }
-  try {
-    const origins = allowedOrigins.map((value) => requireOrigin(value));
-    return {
-      configured: true,
-      config: { activeKeyId, proofKeys, allowedOrigins: origins, enabledPurposes: ["events"] },
-    };
+    origins = allowedOrigins.map(requireOrigin);
   } catch (error: unknown) {
     console.warn("[platform-collaboration] origin configuration rejected", error instanceof Error ? error.name : "UnknownError");
     return { configured: false, reason: "origin_configuration_missing" };
   }
+  // Absent ticket signing configuration is a platform misconfiguration. A configuration that is
+  // present but unusable (mistimed rotation, stray retirement entry) costs the ticket route only:
+  // the keyring loader documents that degradation, so do not promote it to a platform that will not start.
+  if (!env.MATRIX_COLLABORATION_TICKET_ACTIVE_KEY_ID?.trim() || !env.MATRIX_COLLABORATION_TICKET_KEYS?.trim()) {
+    return { configured: false, reason: "signing_configuration_missing" };
+  }
+  return { configured: true, config: { ticketKeyring: loadTicketSigningKeyring(env), relayOrigin, allowedOrigins: origins } };
 }
 
 export async function createPlatformCollaboration(options: {
   db: Kysely<CollaborationPlatformDatabase>;
-  config: PlatformCollaborationConfig;
   /** S03 organization projection, control authority and routes; registered and drained with the runtime. */
   organizations?: PlatformOrganizations;
   /** S05 direct transport: runtime endpoints, tickets and the control stream; registered and drained with the runtime. */
@@ -88,30 +69,10 @@ export async function createPlatformCollaboration(options: {
   }): Promise<{ runtimeId: string; ownerId: string } | null>;
   resolveParticipant(actorId: string): Promise<{ actorId: string; displayName: string } | null>;
   resolveInvitationIdentifier(identifier: string, organizationId: string): Promise<{ actorId: string; displayName: string } | null>;
-  resolveRuntime(runtimeId: string): Promise<CollaborationRuntimeRoute | null>;
-  fetchImpl?: typeof fetch;
   now?: () => Date;
 }) {
   await bootstrapPlatformCollaborationDatabase(options.db);
   const repository = new PlatformCollaborationRepository(options.db, { now: options.now });
-  const signer = new CollaborationProofSigner({
-    activeKeyId: options.config.activeKeyId,
-    keys: options.config.proofKeys,
-    now: options.now,
-  });
-  const sockets = new CollaborationWebSocketAuthorizer({
-    repository,
-    signer,
-    allowedOrigins: options.config.allowedOrigins,
-    enabledPurposes: options.config.enabledPurposes,
-    now: options.now,
-  });
-  const proxy = new CollaborationProxy({
-    repository,
-    signer,
-    resolveRuntime: options.resolveRuntime,
-    ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
-  });
   // S06 / T032: discovery is metadata-only; organization-wide shares are listed for current members.
   const organizations = options.organizations;
   const listOrganizationIds = organizations
@@ -119,9 +80,6 @@ export async function createPlatformCollaboration(options: {
     : undefined;
   const routes = createPlatformCollaborationRoutes({
     repository,
-    signer,
-    sockets,
-    proxy,
     ...(options.direct?.relay ? { relay: options.direct.relay } : {}),
     resolveActor: options.resolveActor,
     authenticateRuntime: options.authenticateRuntime,
@@ -135,9 +93,6 @@ export async function createPlatformCollaboration(options: {
 
   return {
     repository,
-    signer,
-    sockets,
-    proxy,
     organizations: options.organizations,
     direct: options.direct,
     register(app: Hono<any>): void {

@@ -10,7 +10,9 @@ if [ -r /opt/matrix/bin/matrix-owner-env ]; then
   matrix_export_owner_env
 fi
 MATRIX_RUNTIME_HOME="${MATRIX_RUNTIME_HOME:-${MATRIX_HOME:-/home/matrix/home}}"
-HERMES_INSTALLER_URL="${HERMES_INSTALLER_URL:-https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh}"
+HERMES_RELEASE="${HERMES_RELEASE:-v2026.9.21}"
+HERMES_COMMIT="${HERMES_COMMIT:-d337b736aa1e8ebecfab043842d13e4a2d2f48a3}"
+HERMES_INSTALLER_URL="${HERMES_INSTALLER_URL:-https://raw.githubusercontent.com/NousResearch/hermes-agent/$HERMES_COMMIT/scripts/install.sh}"
 HERMES_HOME="${HERMES_HOME:-$MATRIX_RUNTIME_HOME/.hermes}"
 HERMES_INSTALLER_PATH="${HERMES_INSTALLER_PATH:-/tmp/hermes-agent-install.sh}"
 MATRIX_APP_DIR="${MATRIX_APP_DIR:-/opt/matrix/app}"
@@ -18,6 +20,14 @@ MATRIX_GATEWAY_URL="${MATRIX_GATEWAY_URL:-http://localhost:4000}"
 
 log() {
   printf 'matrix-install-hermes: %s\n' "$*"
+}
+
+HERMES_DASHBOARD_SHOULD_RESTART=false
+restore_hermes_dashboard() {
+  if [ "$HERMES_DASHBOARD_SHOULD_RESTART" = true ]; then
+    systemctl start --no-block matrix-hermes-dashboard.service ||
+      log "Hermes dashboard restart will retry through systemd"
+  fi
 }
 
 if ! id "$MATRIX_RUNTIME_USER" >/dev/null 2>&1; then
@@ -47,7 +57,17 @@ curl --fail --location --retry 3 --retry-delay 5 --retry-all-errors \
   "$HERMES_INSTALLER_URL" -o "$HERMES_INSTALLER_PATH"
 chmod 0755 "$HERMES_INSTALLER_PATH"
 
-log "installing Hermes Agent for $MATRIX_RUNTIME_USER"
+if command -v systemctl >/dev/null 2>&1 &&
+  systemctl is-active --quiet matrix-hermes-dashboard.service 2>/dev/null; then
+  HERMES_DASHBOARD_SHOULD_RESTART=true
+  systemctl stop matrix-hermes-dashboard.service || {
+    log "failed to stop Hermes dashboard before upgrade"
+    exit 1
+  }
+fi
+trap restore_hermes_dashboard EXIT
+
+log "installing Hermes Agent $HERMES_RELEASE for $MATRIX_RUNTIME_USER"
 # setpriv avoids PAM account checks: sudo fails outright when the invoking or
 # target account has an expired password (Hetzner expires root's on servers
 # created without SSH keys), which left first-boot installs crash-looping.
@@ -65,7 +85,7 @@ run_installer_as_runtime_user env \
   XDG_DATA_HOME="$MATRIX_RUNTIME_HOME/.local/share" \
   XDG_CACHE_HOME="$MATRIX_RUNTIME_HOME/.cache" \
   PATH="$MATRIX_RUNTIME_HOME/.local/bin:/opt/matrix/bin:/opt/matrix/runtime/node/bin:/usr/local/bin:/usr/bin:/bin" \
-  bash "$HERMES_INSTALLER_PATH" --skip-setup
+  bash "$HERMES_INSTALLER_PATH" --branch main --commit "$HERMES_COMMIT" --force-commit --skip-setup
 
 for cli in uv uvx hermes; do
   if [ -x "$MATRIX_RUNTIME_HOME/.local/bin/$cli" ]; then

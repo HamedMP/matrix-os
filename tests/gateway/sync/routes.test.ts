@@ -48,7 +48,6 @@ const mockSharing = {
   acceptShare: vi.fn(),
   revokeShare: vi.fn(),
   listShares: vi.fn(),
-  checkSharePermission: vi.fn(),
 };
 
 import { createSyncRoutes, type SyncRouteDeps } from "../../../packages/gateway/src/sync/routes.js";

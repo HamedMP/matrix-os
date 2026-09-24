@@ -1,12 +1,16 @@
 import {
   CollaborationProjectInventorySchema,
   CollaborationProjectTransitionSchema,
+  CollaborationReadinessSchema,
+  type CollaborationReadiness,
   type CollaborationProjectInventory,
   type CollaborationScope,
 } from "@matrix-os/contracts";
 import { useEffect, useRef, useState } from "react";
 import { Dialog } from "../Dialog.js";
 import type { CollaborationApi } from "./ChatCollaboratorsDialog.js";
+import { ProjectSourceSummary } from "./ProjectSourceSummary.js";
+import { ReadinessSummary } from "./ReadinessSummary.js";
 import {
   deriveProjectPresentation,
   projectMembershipEffectKey,
@@ -38,12 +42,30 @@ export function ProjectSharingDialog({
   const [pending, setPending] = useState(false);
   const [feedback, setFeedback] = useState("");
   const [error, setError] = useState("");
+  const [readiness, setReadiness] = useState<CollaborationReadiness | null>(null);
   const alive = useRef(true);
   useEffect(() => {
     alive.current = true;
     return () => { alive.current = false; };
   }, []);
+  useEffect(() => {
+    let active = true;
+    void Promise.resolve().then(() => api.post(`/api/collaboration/scopes/${encodeURIComponent(scope.id)}/policy/preflight`, {}))
+      .then((value) => {
+        const parsed = CollaborationReadinessSchema.safeParse(value);
+        if (active && parsed.success && parsed.data.resourceKind === "project") setReadiness(parsed.data);
+      })
+      .catch((failure: unknown) => {
+        console.warn("[project-collaboration] readiness unavailable", failure instanceof Error ? failure.name : "UnknownError");
+      });
+    return () => { active = false; };
+  }, [api, scope.id]);
   const presentation = deriveProjectPresentation(scope, currentInventory);
+  const chatRoots = currentInventory.ownedItems.filter((item) => item.kind === "chat").map((item) => ({
+    chatId: item.id, ...(item.executionRoot ? { executionRoot: item.executionRoot } : {}),
+    ...(item.branch ? { branch: item.branch } : {}), ...(item.dirty !== undefined ? { dirty: item.dirty } : {}),
+    readiness: item.compatibility,
+  }));
 
   const confirm = async () => {
     if (!presentation.canConfirm || pending) return;
@@ -109,6 +131,9 @@ export function ProjectSharingDialog({
         </li>)}
       </ul>
     </section>
+
+    {readiness ? <ReadinessSummary readiness={readiness} /> : null}
+    <ProjectSourceSummary gitSetup={currentInventory.gitSetup} chatRoots={chatRoots} />
 
     {currentInventory.externalReferences.length > 0 ? <section aria-labelledby="external-references-heading"
       className="rounded-xl border p-4">

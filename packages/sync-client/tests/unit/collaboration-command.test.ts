@@ -23,19 +23,17 @@ describe("collaboration CLI transport", () => {
     })).rejects.toMatchObject({ code: "collaboration_failed" });
   });
 
-  it("allows the shared project projection through the scoped transport boundary", async () => {
+  it("sends shared project content to the signed home transport", async () => {
     const path = "/api/collaboration/scopes/10000000-0000-4000-8000-000000000001/project";
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({
-      id: "project_launch",
-    }), { headers: { "content-type": "application/json" } }));
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+    const request = vi.fn(async () => ({ id: "project_launch" }));
 
     await expect(collaborationRequest({
       platformUrl: "https://app.matrix-os.com", token: "actor-token", method: "GET", path,
+      transport: { request } as never,
     })).resolves.toEqual({ id: "project_launch" });
-    expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining(path), expect.objectContaining({
-      method: "GET",
-      signal: expect.any(AbortSignal),
-    }));
+    expect(request).toHaveBeenCalledWith("10000000-0000-4000-8000-000000000001", "GET", path, undefined);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -43,19 +41,28 @@ describe("collaboration CLI transport", () => {
     "/api/collaboration/scopes/10000000-0000-4000-8000-000000000001/chat/requests/qturn_one/cancel",
     "/api/collaboration/scopes/10000000-0000-4000-8000-000000000001/chat/requests/qturn_one/retry",
     "/api/collaboration/scopes/10000000-0000-4000-8000-000000000001/chat/approvals/approval_one/decision",
-  ])("keeps M2 controls on the scoped platform route %s", async (path) => {
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ ok: true }), {
-      headers: { "content-type": "application/json" },
-    }));
+  ])("keeps M2 controls on the scoped home route %s", async (path) => {
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+    const request = vi.fn(async () => ({ ok: true }));
     await expect(collaborationRequest({
       platformUrl: "https://app.matrix-os.com", token: "actor-token", method: "POST", path, body: {},
+      transport: { request } as never,
     })).resolves.toEqual({ ok: true });
-    expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining(path), expect.objectContaining({
-      method: "POST",
-      redirect: "error",
-      signal: expect.any(AbortSignal),
-    }));
+    expect(request).toHaveBeenCalledWith("10000000-0000-4000-8000-000000000001", "POST", path, {});
+    expect(fetchMock).not.toHaveBeenCalled();
     fetchMock.mockRestore();
+  });
+
+  it("resolves only an indexed invitation scope pointer on platform before home content", async () => {
+    const scopeId = "10000000-0000-4000-8000-000000000001";
+    const path = "/api/collaboration/invitations/30000000-0000-4000-8000-000000000001";
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ scopeId }));
+    const request = vi.fn(async () => ({ id: "invitation" }));
+    await expect(collaborationRequest({ platformUrl: "https://app.matrix-os.com", token: "actor-token",
+      method: "GET", path, transport: { request } as never })).resolves.toEqual({ id: "invitation" });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(`https://app.matrix-os.com${path}/location`);
+    expect(request).toHaveBeenCalledWith(scopeId, "GET", path, undefined);
   });
 
   it("builds bounded opaque discovery page paths", () => {

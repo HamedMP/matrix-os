@@ -8,7 +8,13 @@ import {
   createHash,
 } from "node:crypto";
 import { directErrorResponse, readDirectCredentials } from "./direct-routes.js";
+import { DirectAuthError } from "./direct-auth.js";
+// The VPS-only canonicalization lives once in the contracts package; `direct-auth` is a
+// consumer of it, not its owner, so importing it from there would recreate the duplication
+// that let a client and the gateway drift apart.
+import { toLogicalRuntimeId } from "@matrix-os/contracts";
 import type { DirectSessionService } from "./direct-sessions.js";
+import type { OwnerRuntimeSessionService } from "./owner-runtime-sessions.js";
 import {
   COLLABORATION_CLIENT_REQUEST_ID_HEADER,
   COLLABORATION_EXPECTED_MEMBER_REVISION_HEADER,
@@ -84,6 +90,16 @@ import {
   type CollaborationTerminalDispatcher,
 } from "./terminal-dispatcher.js";
 import type { CollaborationExecutionPolicyRepository } from "./execution-policy.js";
+import { ProjectGitBrokerError, type ProjectGitBroker } from "./project-git-broker.js";
+import type { ProjectAccessReadiness } from "./project-access-readiness.js";
+import { ProjectAppAdapterError } from "./project-app-adapter.js";
+import { ProjectResourceAdapterError } from "./project-adapters.js";
+import { ResourceCatalogError } from "./resource-catalog.js";
+import type { CollaborationResourceServices } from "./resource-routes.js";
+import type { StandaloneResourceScopeService } from "./standalone-resource-scope.js";
+import type { CollaborationCapabilityRepository } from "./capability-repository.js";
+import type { CollaborationCapabilityEvaluator } from "./capability-evaluator.js";
+import type { ReadinessProbes } from "./readiness-evaluator.js";
 import {
   CollaborationRepositoryError,
   type CollaborationMemberRecord,
@@ -101,9 +117,15 @@ export type Participant = { actorId: string; displayName: string };
 
 export interface CollaborationRouteOptions {
   runtimeId: string;
+  /** S18: durable runtime maintenance gate, including owner proof paths that bypass authority. */
+  cutoverGuard?: {
+    assertRuntimeWritable(runtimeId: string): Promise<void>;
+    assertWritable(scopeId: string): Promise<void>;
+  };
   verifier: CollaborationActorProofVerifier;
   /** S05: direct sessions; when a request carries session credentials they replace the relay proof. */
   directSessions?: DirectSessionService;
+  ownerRuntimeSessions?: OwnerRuntimeSessionService;
   authority: CollaborationAuthority;
   repository: CollaborationRepository;
   chatScope: CollaborationChatScopeService;
@@ -118,8 +140,17 @@ export interface CollaborationRouteOptions {
   >;
   projectScope?: CollaborationProjectScopeService;
   projectSharing?: ProjectSharingService;
+  projectGit?: ProjectGitBroker;
+  projectReadiness?: ProjectAccessReadiness;
+  /** S15: exact V1 grant storage and fresh membership evaluator. */
+  capabilities?: CollaborationCapabilityRepository;
+  capabilityEvaluator?: CollaborationCapabilityEvaluator;
+  readinessProbes?: ReadinessProbes;
   /** S08: owner-selected execution policy repository; routes report unavailable when absent. */
   executionPolicies?: CollaborationExecutionPolicyRepository;
+  /** S12: catalog, file driver and app instances; file/app routes report unavailable when absent. */
+  resources?: CollaborationResourceServices;
+  standaloneScope?: StandaloneResourceScopeService;
   resolveParticipant(actorId: string): Promise<Participant>;
   resolveInvitationIdentifier(identifier: string, organizationId: string): Promise<Participant>;
   invitationResolutionRateLimiter?: RateLimiter;
@@ -166,6 +197,119 @@ export async function authorize(
   return context;
 }
 
+/** During direct cutover, a configured home must never accept a relay actor proof alone. */
+export async function authorizeCurrentScope(
+  options: { verifier: CollaborationActorProofVerifier; directSessions?: DirectSessionService; authority: CollaborationAuthority;
+    ownerRuntimeSessions?: OwnerRuntimeSessionService; repository?: CollaborationRepository; runtimeId?: string },
+  c: Context,
+  body: Uint8Array,
+  action: CollaborationAction,
+  scopeId: string,
+): Promise<AuthorizedCollaborationContext> {
+  if (c.req.header("x-matrix-collaboration-owner-runtime") === "1") {
+    if (action !== "read") throw new DirectAuthError("denied", "Owner project setup is read-only on this route");
+    const scope = await authenticateOwnerProject(options, c, body, scopeId);
+    return {
+      actorId: scope.ownerId, ownerId: scope.ownerId, organizationId: scope.organizationId!, scopeId: scope.id,
+      membershipScopeId: scope.id, resourceKind: "project", resourceId: scope.resourceId, role: "owner",
+      authEpoch: scope.authEpoch, authorityRuntimeId: scope.authorityRuntimeId,
+      authorityGeneration: scope.authorityGeneration, capability: "read",
+    };
+  }
+  if (options.directSessions && !readDirectCredentials(c)) {
+    throw new DirectAuthError("invalid_signature", "Direct session credentials are required");
+  }
+  return authorize(options, c, body, action, scopeId);
+}
+
+export async function authorizeOwnerScope(
+  options: { verifier: CollaborationActorProofVerifier; directSessions?: DirectSessionService; authority: CollaborationAuthority;
+    ownerRuntimeSessions?: OwnerRuntimeSessionService; repository?: CollaborationRepository; runtimeId?: string },
+  c: Context,
+  body: Uint8Array,
+  scopeId: string,
+): Promise<{ actorId: string; ownerId: string; scopeId: string }> {
+  if (c.req.header("x-matrix-collaboration-owner-runtime") === "1") {
+    const scope = await authenticateOwnerProject(options, c, body, scopeId);
+    return { actorId: scope.ownerId, ownerId: scope.ownerId, scopeId: scope.id };
+  }
+  if (!options.directSessions) {
+    const proof = await verifyHttp(options.verifier, c, body);
+    requireOwnerLifecycleProof(proof, scopeId);
+    return { actorId: proof.actorId, ownerId: proof.ownerId, scopeId };
+  }
+  const context = await authorizeCurrentScope(options, c, body, "read", scopeId);
+  if (context.actorId !== context.ownerId || context.role !== "owner"
+    || (options.runtimeId && context.authorityRuntimeId !== options.runtimeId)) {
+    throw new CollaborationAuthorizationError("forbidden", "Owner scope access is required");
+  }
+  return context;
+}
+
+async function authenticateOwnerProject(
+  options: { ownerRuntimeSessions?: OwnerRuntimeSessionService; repository?: CollaborationRepository; runtimeId?: string },
+  c: Context,
+  body: Uint8Array,
+  scopeId: string,
+): Promise<CollaborationScopeRecord> {
+  const credentials = readDirectCredentials(c);
+  const verb = method(c);
+  if (!credentials || !options.ownerRuntimeSessions || !options.repository || !options.runtimeId
+    || (verb !== "GET" && verb !== "POST")) {
+    throw new DirectAuthError("invalid_signature", "Owner project session is required");
+  }
+  const session = await options.ownerRuntimeSessions.authenticate({
+    ...credentials, method: verb, path: c.req.path, query: rawQuery(c), body,
+  });
+  const scope = await requireScope(options.repository, scopeId);
+  if (scope.kind !== "project" || scope.membershipMode !== "direct"
+    || (scope.lifecycle !== "private" && scope.lifecycle !== "preparing")
+    || scope.ownerId !== session.actorId || scope.organizationId !== session.organizationId
+    || scope.authorityRuntimeId !== options.runtimeId
+    || scope.authorityGeneration !== session.authorityGeneration
+    || session.runtimeId !== toLogicalRuntimeId(options.runtimeId)) {
+    throw new DirectAuthError("denied", "Owner project setup is unavailable");
+  }
+  const member = await options.repository.getMember(scopeId, session.actorId);
+  if (!member || member.role !== "owner" || member.status !== "accepted") {
+    throw new DirectAuthError("denied", "Owner project setup is unavailable");
+  }
+  return scope;
+}
+
+/** Invitees may authenticate before acceptance, so ordinary scope authorization is unavailable. */
+export async function authenticateInvitationRequest(
+  options: { verifier: CollaborationActorProofVerifier; directSessions?: DirectSessionService; runtimeId: string; repository: CollaborationRepository },
+  c: Context,
+  body: Uint8Array,
+  invitationId: string,
+): Promise<{ proof: { actorId: string; ownerId: string; scopeId: string }; member: CollaborationMemberRecord; scope: CollaborationScopeRecord }> {
+  // Authenticate before the invitation lookup, so unknown identifiers reveal nothing to unsigned callers.
+  const directSessions = options.directSessions;
+  const session = directSessions
+    ? await (async () => {
+        const credentials = readDirectCredentials(c);
+        if (!credentials) throw new DirectAuthError("invalid_signature", "Direct session credentials are required");
+        return directSessions.authenticate({
+          ...credentials, method: method(c), path: c.req.path, query: rawQuery(c), body,
+        });
+      })()
+    : null;
+  const proof = session ? null : await verifyHttp(options.verifier, c, body);
+  const member = await requireInvitation(options.repository, invitationId);
+  const scope = await requireScope(options.repository, member.scopeId);
+  if (session) {
+    if (session.pendingGrantId || session.scopeId !== scope.id || session.organizationId !== scope.organizationId
+      || session.runtimeId !== toLogicalRuntimeId(options.runtimeId)
+      || session.authorityGeneration !== scope.authorityGeneration) {
+      throw new DirectAuthError("denied", "Invitation session is unavailable");
+    }
+  } else if (!proof || proof.scopeId !== scope.id || proof.ownerId !== scope.ownerId) {
+    throw new CollaborationAuthorizationError("forbidden", "Invitation access is required");
+  }
+  return { proof: { actorId: session?.actorId ?? proof!.actorId, ownerId: scope.ownerId, scopeId: scope.id }, member, scope };
+}
+
 export function optionalDeleteConditions(c: Context) {
   if (c.req.method !== "DELETE") return undefined;
   return deleteConditions(c);
@@ -188,6 +332,31 @@ export async function verifyHttp(verifier: CollaborationActorProofVerifier, c: C
     body,
     conditionalHeaders: optionalDeleteConditions(c),
   });
+}
+
+/** Initial Share routes have no scope yet: authorize only the owner's exact runtime and organization. */
+export async function ownerRuntimeIdentity(
+  options: Pick<CollaborationRouteOptions, "verifier" | "ownerRuntimeSessions" | "runtimeId">,
+  c: Context,
+  body: Uint8Array,
+  requestedRuntimeId: string,
+  organizationId?: string,
+): Promise<{ actorId: string; ownerId: string; runtimeId: string; organizationId?: string }> {
+  const credentials = readDirectCredentials(c);
+  if (credentials) {
+    if (!options.ownerRuntimeSessions) throw new CollaborationAuthorizationError("unavailable", "Owner runtime sessions are unavailable");
+    const session = await options.ownerRuntimeSessions.authenticate({
+      ...credentials, method: "POST", path: c.req.path,
+      query: rawQuery(c), body,
+    });
+    if (requestedRuntimeId !== options.runtimeId || (organizationId && session.organizationId !== organizationId)) {
+      throw new CollaborationAuthorizationError("forbidden", "Owner runtime access is required");
+    }
+    return { actorId: session.actorId, ownerId: session.actorId, runtimeId: options.runtimeId, organizationId: session.organizationId };
+  }
+  const proof = await verifyHttp(options.verifier, c, body);
+  requireOwnerCreationProof(proof, requestedRuntimeId, options.runtimeId);
+  return { actorId: proof.actorId, ownerId: proof.ownerId, runtimeId: proof.runtimeId };
 }
 
 export function digestDeleteConditions(input: z.infer<typeof CollaborationRevokeRequestSchema>): string {
@@ -473,6 +642,13 @@ export async function handle(c: Context, operation: () => Promise<Response>): Pr
     if (error instanceof CollaborationDiscussionError) {
       return c.json({ error: "Invalid collaboration request", code: error.code }, 400);
     }
+    if (error instanceof ProjectGitBrokerError) {
+      const status = error.code === "not_found" ? 404
+        : error.code === "forbidden" ? 403
+          : error.code === "busy" ? 429
+            : error.code === "conflict" ? 409 : 503;
+      return c.json({ error: "Collaboration unavailable", code: error.code }, status);
+    }
     if (error instanceof CollaborationAuthorizationError) {
       const status = error.code === "not_found" ? 404 : error.code === "forbidden" ? 403 : 503;
       return c.json({ error: "Collaboration unavailable", code: error.code }, status);
@@ -507,6 +683,16 @@ export async function handle(c: Context, operation: () => Promise<Response>): Pr
             : error.code === "conflict" || error.code === "invalid_confirmation"
               || error.code === "held" || error.code === "stale_lease" ? 409 : 503;
       return c.json({ error: "Collaboration state changed", code: error.code }, status);
+    }
+    if (error instanceof ResourceCatalogError || error instanceof ProjectResourceAdapterError) {
+      const status = error.code === "invalid" ? 400 : error.code === "not_found" ? 404
+        : error.code === "forbidden" ? 403 : error.code === "conflict" ? 409 : 503;
+      return c.json({ error: status === 400 ? "Invalid collaboration request" : "Collaboration state changed", code: error.code }, status);
+    }
+    if (error instanceof ProjectAppAdapterError) {
+      const status = error.code === "invalid_action" ? 400 : error.code === "not_found" ? 404
+        : error.code === "forbidden" ? 403 : error.code === "conflict" ? 409 : 503;
+      return c.json({ error: status === 400 ? "Invalid collaboration request" : "Collaboration state changed", code: error.code }, status);
     }
     if (error instanceof CollaborationRepositoryError) {
       const status = error.code === "not_found" ? 404

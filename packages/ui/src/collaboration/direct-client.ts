@@ -17,8 +17,14 @@ import {
   COLLABORATION_EXPECTED_MEMBER_REVISION_HEADER,
   COLLABORATION_EXPECTED_REVISION_HEADER,
   CollaborationDirectSessionSchema,
+  CollaborationOwnerRuntimeSessionSchema,
+  CollaborationSignedOwnerRuntimeTicketSchema,
+  CollaborationOrganizationIdSchema,
+  CollaborationRuntimeIdSchema,
   CollaborationSignedConnectionTicketSchema,
+  toLogicalRuntimeId,
   type CollaborationDirectSession,
+  type CollaborationOwnerRuntimeSession,
 } from "@matrix-os/contracts";
 import { z } from "zod/v4";
 import {
@@ -40,9 +46,14 @@ const MAX_SCOPE_RECORDS = 128;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const SESSION_HEADER = "x-matrix-collaboration-session";
 const REQUEST_HEADER = "x-matrix-collaboration-request";
+const RELAY_RUNTIME_HEADER = "x-matrix-collaboration-runtime";
 
 const IssuedTicketSchema = z.object({
   signedTicket: CollaborationSignedConnectionTicketSchema,
+  endpoint: z.object({ origin: z.string().url(), protocolVersion: z.number().int() }).strict(),
+}).strict();
+const IssuedOwnerRuntimeTicketSchema = z.object({
+  signedTicket: CollaborationSignedOwnerRuntimeTicketSchema,
   endpoint: z.object({ origin: z.string().url(), protocolVersion: z.number().int() }).strict(),
 }).strict();
 
@@ -78,6 +89,8 @@ export interface CollaborationDirectClientOptions {
 
 export interface CollaborationDirectClient {
   request(scopeId: string, method: DirectMethod, path: string, body?: unknown, conditions?: DirectDeleteConditions): Promise<unknown>;
+  requestOwnerRuntime(runtimeId: string, organizationId: string, path: string, body: unknown): Promise<unknown>;
+  requestOwnerProject(runtimeId: string, organizationId: string, method: "GET" | "POST", path: string, body?: unknown): Promise<unknown>;
   subscribeEvents(scopeId: string, handlers: DirectEventHandlers): () => void;
   subscribeTerminal(scopeId: string, handlers: DirectTerminalHandlers): () => void;
   describe(scopeId: string): { state: DirectScopeState; origin: string | null; expiresAt: string | null };
@@ -97,6 +110,11 @@ interface ScopeRecord {
   key: ProofKeyPair | null;
   generation: number;
 }
+interface OwnerRuntimeRecord {
+  connected: { session: CollaborationOwnerRuntimeSession; origin: string; key: ProofKeyPair } | null;
+  pending: Promise<{ session: CollaborationOwnerRuntimeSession; origin: string; key: ProofKeyPair }> | null;
+  key: ProofKeyPair | null;
+}
 
 export function createCollaborationDirectClient(options: CollaborationDirectClientOptions): CollaborationDirectClient {
   const platform = requireOrigin(options.platformBaseUrl);
@@ -105,6 +123,7 @@ export function createCollaborationDirectClient(options: CollaborationDirectClie
   const clientOrigin = options.clientOrigin ?? globalThis.location?.origin ?? platform.origin;
   const scopes = new Map<string, ScopeRecord>();
   let disposed = false;
+  const ownerRuntimes = new Map<string, OwnerRuntimeRecord>();
 
   const record = (scopeId: string): ScopeRecord => {
     if (disposed) throw new CollaborationDirectError("denied", "Collaboration session closed");
@@ -159,12 +178,12 @@ export function createCollaborationDirectClient(options: CollaborationDirectClie
     return { signedTicket: issued.data.signedTicket, origin: requireOrigin(issued.data.endpoint.origin).origin };
   };
 
-  const homeJson = async (origin: string, path: string, query: string, body: unknown): Promise<unknown> => {
+  const homeJson = async (origin: string, path: string, query: string, body: unknown, runtimeId: string): Promise<unknown> => {
     const url = new URL(path, origin);
     url.search = query;
     const response = await guardedFetch(fetchImpl, url.href, {
       method: "POST",
-      headers: new Headers({ accept: "application/json", "content-type": "application/json" }),
+      headers: new Headers({ accept: "application/json", "content-type": "application/json", [RELAY_RUNTIME_HEADER]: runtimeId }),
       credentials: "omit",
       redirect: "error",
       body: JSON.stringify(body),
@@ -179,8 +198,41 @@ export function createCollaborationDirectClient(options: CollaborationDirectClie
     const possession = await signPayload(key, possessionPayload({ ticketNonce: signedTicket.ticket.nonce, purpose: "direct_session" }), options.subtle);
     const session = CollaborationDirectSessionSchema.safeParse(await homeJson(origin, "/api/collaboration/direct-sessions", `scope=${scopeId}`, {
       clientRequestId: randomId(), signedTicket, proofPublicKey: key.publicKeyRaw, possession, clientOrigin,
-    }));
-    if (!session.success || session.data.scopeId !== scopeId) throw new CollaborationDirectError("invalid_response");
+    }, signedTicket.ticket.runtime.runtimeId));
+    if (!session.success || session.data.scopeId !== scopeId || session.data.runtimeId !== signedTicket.ticket.runtime.runtimeId) {
+      throw new CollaborationDirectError("invalid_response");
+    }
+    return { session: session.data, origin, key };
+  };
+
+  const exchangeOwnerRuntime = async (runtimeId: string, organizationId: string, key: ProofKeyPair): Promise<NonNullable<OwnerRuntimeRecord["connected"]>> => {
+    const response = await guardedFetch(fetchImpl, new URL("/api/collaboration/owner-runtime/connections", platform).href, {
+      method: "POST", headers: await platformHeaders(), credentials: "same-origin", redirect: "error",
+      body: JSON.stringify({ clientRequestId: randomId(), runtimeId, organizationId, proofPublicKey: key.publicKeyRaw }),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+    throwForStatus(response.status);
+    const raw = await readJson(response);
+    const advertised = (raw as { endpoint?: { protocolVersion?: unknown }; signedTicket?: { ticket?: { protocolVersion?: unknown } } } | null);
+    if ([advertised?.endpoint?.protocolVersion, advertised?.signedTicket?.ticket?.protocolVersion]
+      .some((version) => typeof version === "number" && version !== COLLABORATION_DIRECT_PROTOCOL_VERSION)) {
+      throw new CollaborationDirectError("upgrade_required", "Collaboration client update required");
+    }
+    const issued = IssuedOwnerRuntimeTicketSchema.safeParse(raw);
+    // The same canonicalization the platform and the home apply: only a VPS
+    // enrollment id is rewritten, so a logical runtime id keeps its case.
+    const logicalRuntimeId = toLogicalRuntimeId(runtimeId);
+    if (!issued.success || issued.data.signedTicket.ticket.organizationId !== organizationId
+      || issued.data.signedTicket.ticket.runtime.runtimeId !== logicalRuntimeId) throw new CollaborationDirectError("invalid_response");
+    const { signedTicket } = issued.data;
+    const origin = requireOrigin(issued.data.endpoint.origin).origin;
+    const possession = await signPayload(key, possessionPayload({ ticketNonce: signedTicket.ticket.nonce, purpose: "owner_runtime" }), options.subtle);
+    const session = CollaborationOwnerRuntimeSessionSchema.safeParse(await homeJson(origin, "/api/collaboration/owner-runtime/sessions", "", {
+      clientRequestId: randomId(), signedTicket, proofPublicKey: key.publicKeyRaw, possession, clientOrigin,
+    }, logicalRuntimeId));
+    if (!session.success || session.data.organizationId !== organizationId || session.data.runtimeId !== logicalRuntimeId) {
+      throw new CollaborationDirectError("invalid_response");
+    }
     return { session: session.data, origin, key };
   };
 
@@ -189,6 +241,7 @@ export function createCollaborationDirectClient(options: CollaborationDirectClie
     const session = CollaborationDirectSessionSchema.safeParse(await homeJson(
       current.origin, `/api/collaboration/direct-sessions/${current.session.id}/renew`, `scope=${scopeId}`,
       { clientRequestId: randomId(), signedTicket },
+      current.session.runtimeId,
     ));
     if (!session.success || session.data.id !== current.session.id) throw new CollaborationDirectError("invalid_response");
     return { ...current, session: session.data };
@@ -255,7 +308,26 @@ export function createCollaborationDirectClient(options: CollaborationDirectClie
     return pending;
   };
 
-  const signedFetch = async (scopeId: string, connected: Connected, method: DirectMethod, path: string, query: string, body: string | undefined, conditions?: DirectDeleteConditions) => {
+  const ensureOwnerRuntime = async (runtimeId: string, organizationId: string, fresh = false): Promise<NonNullable<OwnerRuntimeRecord["connected"]>> => {
+    const id = `${runtimeId}\u0000${organizationId}`;
+    let entry = ownerRuntimes.get(id);
+    if (!entry) {
+      if (ownerRuntimes.size >= 16) ownerRuntimes.delete(ownerRuntimes.keys().next().value!);
+      entry = { connected: null, pending: null, key: null };
+    } else ownerRuntimes.delete(id);
+    ownerRuntimes.set(id, entry);
+    if (entry.pending) return entry.pending;
+    if (entry.connected && !fresh && Date.parse(entry.connected.session.renewAfter) > now().getTime()) return entry.connected;
+    entry.pending = (async () => {
+      entry!.key ??= await generateProofKey(options.subtle);
+      const connected = await exchangeOwnerRuntime(runtimeId, organizationId, entry!.key);
+      entry!.connected = connected;
+      return connected;
+    })().catch((error: unknown) => { entry!.connected = null; throw error; }).finally(() => { entry!.pending = null; });
+    return entry.pending;
+  };
+
+  const signedFetch = async (_scopeId: string, connected: { session: { id: string; runtimeId: string }; origin: string; key: ProofKeyPair }, method: DirectMethod, path: string, query: string, body: string | undefined, conditions?: DirectDeleteConditions, ownerProject = false) => {
     const bodyBytes = new TextEncoder().encode(body ?? "");
     const conditional = conditions
       ? new TextEncoder().encode(JSON.stringify({ clientRequestId: conditions.clientRequestId, expectedRevision: conditions.expectedRevision, expectedMemberRevision: conditions.expectedMemberRevision }))
@@ -275,7 +347,9 @@ export function createCollaborationDirectClient(options: CollaborationDirectClie
     const headers = new Headers({ accept: "application/json" });
     if (body !== undefined) headers.set("content-type", "application/json");
     headers.set(SESSION_HEADER, connected.session.id);
+    headers.set(RELAY_RUNTIME_HEADER, connected.session.runtimeId);
     headers.set(REQUEST_HEADER, toBase64Url(new TextEncoder().encode(JSON.stringify({ signature, proof }))));
+    if (ownerProject) headers.set("x-matrix-collaboration-owner-runtime", "1");
     if (conditions) {
       headers.set(COLLABORATION_CLIENT_REQUEST_ID_HEADER, conditions.clientRequestId);
       headers.set(COLLABORATION_EXPECTED_REVISION_HEADER, conditions.expectedRevision);
@@ -326,6 +400,55 @@ export function createCollaborationDirectClient(options: CollaborationDirectClie
     return readJson(response);
   };
 
+  const requestOwnerRuntime: CollaborationDirectClient["requestOwnerRuntime"] = async (runtimeId, organizationId, path, body) => {
+    if (!CollaborationRuntimeIdSchema.safeParse(runtimeId).success || !CollaborationOrganizationIdSchema.safeParse(organizationId).success
+      || !body || typeof body !== "object" || (body as { organizationId?: unknown }).organizationId !== organizationId) {
+      throw new CollaborationDirectError("invalid_request", "Invalid collaboration request");
+    }
+    const prefix = `/api/collaboration/runtimes/${encodeURIComponent(runtimeId)}`;
+    if (![`${prefix}/catalog/resolve`, `${prefix}/scopes/preflight`, `${prefix}/scopes`].includes(path)) {
+      throw new CollaborationDirectError("invalid_request", "Invalid collaboration request");
+    }
+    const serialized = JSON.stringify(body);
+    if (new TextEncoder().encode(serialized).byteLength > COLLABORATION_DIRECT_LIMITS.httpJsonBytes) {
+      throw new CollaborationDirectError("invalid_request", "Invalid collaboration request");
+    }
+    let connected = await ensureOwnerRuntime(runtimeId, organizationId);
+    let response = await signedFetch(runtimeId, connected, "POST", path, "", serialized);
+    if (response.status === 401) {
+      await response.body?.cancel();
+      connected = await ensureOwnerRuntime(runtimeId, organizationId, true);
+      response = await signedFetch(runtimeId, connected, "POST", path, "", serialized);
+    }
+    throwForStatus(response.status);
+    if (response.status === 204) { await response.body?.cancel(); return null; }
+    return readJson(response);
+  };
+
+  const requestOwnerProject: CollaborationDirectClient["requestOwnerProject"] = async (runtimeId, organizationId, method, path, body) => {
+    if (!CollaborationRuntimeIdSchema.safeParse(runtimeId).success || !CollaborationOrganizationIdSchema.safeParse(organizationId).success) {
+      throw new CollaborationDirectError("invalid_request", "Invalid collaboration request");
+    }
+    const project = /^\/api\/collaboration\/scopes\/([0-9a-f-]{36})(?:\/(members|project\/inventory|project\/confirm))?$/.exec(path);
+    if (!project || !UUID.test(project[1]!) || (project[2] === "project/confirm" ? method !== "POST" : method !== "GET")
+      || (method === "GET" && body !== undefined) || (method === "POST" && (body === undefined || typeof body !== "object"))) {
+      throw new CollaborationDirectError("invalid_request", "Invalid collaboration request");
+    }
+    const serialized = body === undefined ? undefined : JSON.stringify(body);
+    if (serialized !== undefined && new TextEncoder().encode(serialized).byteLength > COLLABORATION_DIRECT_LIMITS.httpJsonBytes) {
+      throw new CollaborationDirectError("invalid_request", "Invalid collaboration request");
+    }
+    let connected = await ensureOwnerRuntime(runtimeId, organizationId);
+    let response = await signedFetch(runtimeId, connected, method, path, "", serialized, undefined, true);
+    if (response.status === 401) {
+      await response.body?.cancel();
+      connected = await ensureOwnerRuntime(runtimeId, organizationId, true);
+      response = await signedFetch(runtimeId, connected, method, path, "", serialized, undefined, true);
+    }
+    throwForStatus(response.status);
+    return readJson(response);
+  };
+
   const streams = createDirectStreams({
     ensure,
     issueTicket: (scopeId, purpose, key) => issueTicket(scopeId, purpose, key),
@@ -349,6 +472,8 @@ export function createCollaborationDirectClient(options: CollaborationDirectClie
 
   return {
     request,
+    requestOwnerRuntime,
+    requestOwnerProject,
     subscribeEvents: streams.subscribeEvents,
     subscribeTerminal: streams.subscribeTerminal,
     describe: (scopeId) => {
@@ -357,7 +482,12 @@ export function createCollaborationDirectClient(options: CollaborationDirectClie
     },
     close: (scopeId) => {
       if (scopeId) closeScope(scopeId);
-      else { disposed = true; streams.closeAll(); for (const id of [...scopes.keys()]) closeScope(id); }
+      else {
+        disposed = true;
+        streams.closeAll();
+        for (const id of [...scopes.keys()]) closeScope(id);
+        ownerRuntimes.clear();
+      }
     },
     inspectKeys: (scopeId) => scopes.get(scopeId)?.key ?? null,
   };

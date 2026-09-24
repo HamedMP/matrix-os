@@ -8,7 +8,7 @@
  * Missing fixtures report UNRUN with the fixture named.
  */
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { FIXED_SYSTEMD_PROPERTIES, FIXED_SYSTEMD_ENVIRONMENT } from "../../packages/scope-runtime/src/profile";
@@ -31,25 +31,30 @@ function systemdRunAvailable(): boolean {
   return process.getuid?.() === 0 && spawnSync("systemd-run", ["--version"], { encoding: "utf8" }).status === 0;
 }
 
-describe("S00 direct probes: baseline characterization of the platform proxy (always run)", () => {
-  const proxy = readFileSync(join(REPO_ROOT, "packages/platform/src/collaboration/proxy.ts"), "utf8");
-  const websocket = readFileSync(join(REPO_ROOT, "packages/platform/src/collaboration/websocket.ts"), "utf8");
+describe("S18 direct probes: retired platform serving paths (always run)", () => {
+  const proxyPath = join(REPO_ROOT, "packages/platform/src/collaboration/proxy.ts");
+  const websocketPath = join(REPO_ROOT, "packages/platform/src/collaboration/websocket.ts");
+  const routes = readFileSync(join(REPO_ROOT, "packages/platform/src/collaboration/routes.ts"), "utf8");
+  const upgrade = readFileSync(join(REPO_ROOT, "packages/platform/src/platform-websocket-upgrade.ts"), "utf8");
+  const relay = readFileSync(join(REPO_ROOT, "packages/platform/src/collaboration/relay.ts"), "utf8");
 
-  it("after S20 the platform consults no rollout policy or cohort on any request (S05/S18 still remove proof signing)", () => {
-    for (const source of [proxy, websocket]) {
+  it("has no V1 proxy, socket authorizer, policy or proof serving path", () => {
+    expect(existsSync(proxyPath)).toBe(false);
+    expect(existsSync(websocketPath)).toBe(false);
+    for (const source of [routes, upgrade, relay]) {
       expect(source).not.toContain("getPolicy(");
       expect(source).not.toContain("policyAllows(");
       expect(source).not.toContain("requirePolicy(");
       expect(source).not.toContain("x-matrix-collaboration-policy");
       expect(source).not.toContain("collaboration_rollout_policy");
     }
-    expect(proxy).toContain("x-matrix-collaboration-proof");
+    expect(routes).not.toContain("CollaborationProxy");
+    expect(upgrade).not.toContain("CollaborationWebSocketAuthorizer");
   });
 
-  it("today the platform still signs actor proofs and parses DELETE conditions before forwarding (S18 must invert this)", () => {
-    expect(proxy).toContain("signHttp(");
-    expect(proxy).toContain("CollaborationDeleteConditionSchema.safeParse(");
-    expect(websocket).toContain("signSocket(");
+  it("keeps transparent direct HTTP and socket relay registration", () => {
+    expect(routes).toContain("options.relay.forward(");
+    expect(upgrade).toContain("collaborationDirect!.relay.prepareSocket(");
   });
 });
 

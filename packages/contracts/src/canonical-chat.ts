@@ -13,6 +13,7 @@ import {
   canonicalSafeLabel,
   canonicalOwnerRelativePath,
 } from "#canonical-chat-primitives";
+import { FileResourceRefSchema } from "#file-preview";
 
 const SAFE_ID_BODY = /^[A-Za-z0-9_-]+$/;
 const textEncoder = new TextEncoder();
@@ -292,6 +293,7 @@ export const CanonicalChatMessagePartSchema = z.discriminatedUnion("type", [
     mimeType: z.string().min(1).max(120).regex(/^[A-Za-z0-9][A-Za-z0-9.+/-]+$/).optional(),
     sizeBytes: z.number().int().min(0).max(MAX_AGENT_ATTACHMENT_BYTES).optional(),
     ownerReference: canonicalOwnerRelativePath().optional(),
+    resource: FileResourceRefSchema.optional(),
   }).strict(),
   z.object({
     type: z.literal("approval_request"),
@@ -439,6 +441,7 @@ export const CanonicalChatAgentActivityKindSchema = z.enum([
   "delegation",
   "web_search",
   "image_inspection",
+  "image_generation",
 ]);
 
 export const CanonicalChatAgentActivityStatusSchema = z.enum([

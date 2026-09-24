@@ -423,6 +423,7 @@ function eventCopy(event: AgentThreadEvent): { title: string; detail: string } {
     case "user.message": return { title: "You", detail: event.text };
     case "assistant.text.delta":
     case "assistant.text.completed": return { title: "Assistant update", detail: "Text update received" };
+    case "assistant.attachment": return { title: "Artifact ready", detail: event.attachment.label };
     case "subagent.activity": return { title: event.subagent.name, detail: chatSubagentPresentation(event.subagent).status };
     case "tool.started":
     case "tool.output":

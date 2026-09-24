@@ -58,12 +58,12 @@ describe("whole-project sharing confirmation", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Share project" }));
     expect(await screen.findByRole("heading", { name: "Share the whole Launch project?" })).toBeVisible();
-    expect(api.post).toHaveBeenNthCalledWith(1, "/api/collaboration/runtimes/vps:runtime/scopes/preflight", {
+    expect(api.post).toHaveBeenNthCalledWith(1, "/api/collaboration/runtimes/vps%3Aruntime/scopes/preflight", {
       kind: "project",
       resourceId: "proj_launch",
       organizationId: "org_matrix_team",
     });
-    expect(api.post).toHaveBeenNthCalledWith(2, "/api/collaboration/runtimes/vps:runtime/scopes", expect.objectContaining({
+    expect(api.post).toHaveBeenNthCalledWith(2, "/api/collaboration/runtimes/vps%3Aruntime/scopes", expect.objectContaining({
       kind: "project",
       resourceId: "proj_launch",
       expectedRevision: "7",
@@ -77,13 +77,31 @@ describe("whole-project sharing confirmation", () => {
     expect(screen.getByText(/Everything owned by this project shares together/i)).toBeVisible();
     expect(screen.getByText(/You can't exclude individual files, Chats, apps, layout, or terminals/i)).toBeVisible();
     expect(screen.getByText("README.md")).toBeVisible();
-    expect(screen.getByText("Launch discussion")).toBeVisible();
+    expect(screen.getAllByText("Launch discussion").length).toBeGreaterThan(0);
     expect(screen.getByText("Roadmap app")).toBeVisible();
     expect(screen.getByText("Shared canvas")).toBeVisible();
     expect(screen.getByText("Release terminal")).toBeVisible();
     expect(screen.getByText("Personal notes")).toBeVisible();
     expect(screen.getByText(/stays outside this project share/i)).toBeVisible();
     expect(screen.queryByRole("checkbox")).toBeNull();
+  });
+
+  it("shows every Chat root and the owner's Git readiness before sharing", () => {
+    const inventory = completeInventory();
+    inventory.ownedItems[1] = {
+      ...inventory.ownedItems[1]!, executionRoot: { kind: "worktree", projectId: "proj_launch", worktreeId: "chat_42" },
+      branch: "feature/launch", dirty: true, rootFingerprint: "e".repeat(64),
+    };
+    inventory.gitSetup = {
+      identity: { status: "ready", label: "Project Owner <owner@example.test>" },
+      forgeCredential: { status: "missing" },
+    };
+    renderDialog({ inventory });
+    expect(screen.getByText(/Chat worktree chat_42/)).toBeVisible();
+    expect(screen.getByText(/feature\/launch/)).toBeVisible();
+    expect(screen.getByText(/Uncommitted changes/)).toBeVisible();
+    expect(screen.getByText(/Project Owner <owner@example.test>/)).toBeVisible();
+    expect(screen.getByText(/GitHub access is missing/)).toBeVisible();
   });
 
   it("explains item membership effects without silently promoting recipients", () => {
@@ -136,13 +154,20 @@ describe("whole-project sharing confirmation", () => {
       }],
     };
     const api = apiFixture();
-    api.post.mockRejectedValueOnce(new Error("conflict")).mockResolvedValueOnce({
+    let confirmations = 0;
+    api.post.mockImplementation(async (path: string) => {
+      if (path.endsWith("/policy/preflight")) return undefined;
+      if (!path.endsWith("/project/confirm")) throw new Error("unexpected route");
+      confirmations += 1;
+      if (confirmations === 1) throw new Error("conflict");
+      return {
       id: "20000000-0000-4000-8000-000000000401",
       scopeId: scope.id,
       status: "prepared",
       inventoryRevision: "8",
       createdAt: "2026-08-22T12:00:00.000Z",
       updatedAt: "2026-08-22T12:00:00.000Z",
+      };
     });
     const refreshInventory = vi.fn(async () => changed);
     render(<ProjectSharingDialog api={api} scope={scope} projectName="Launch" inventory={first}

@@ -1,5 +1,6 @@
 import {
   UserInputQuestionListSchema,
+  AgentAttachmentSchema,
   ProtectedToolOutputSchema,
   type CanonicalSubmitChatInputRequest,
   CanonicalChatAgentActivityPayloadSchema,
@@ -25,6 +26,10 @@ export const CanonicalProviderRunEventSchema = z.discriminatedUnion("type", [
     type: z.literal("assistant.delta"),
     messageId: SafeProviderRefSchema.optional(),
     delta: z.string().min(1).max(4_000),
+  }).strict(),
+  z.object({
+    type: z.literal("assistant.attachment"),
+    attachment: AgentAttachmentSchema,
   }).strict(),
   CanonicalChatAgentActivityPayloadSchema.extend({
     type: z.literal("agent.activity"),

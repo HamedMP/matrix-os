@@ -19,13 +19,15 @@ import {
 } from "@matrix-os/contracts";
 
 const UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}";
-const RUNTIME = "[A-Za-z0-9_-]{1,128}";
+const RUNTIME = "(?:[A-Za-z0-9:_-]|%3[Aa]){1,128}";
 const SESSION_ROUTES: ReadonlyArray<readonly [string, RegExp]> = [
   ["POST", new RegExp(`^/api/collaboration/direct-sessions$`)],
+  ["POST", new RegExp(`^/api/collaboration/owner-runtime/sessions$`)],
   ["POST", new RegExp(`^/api/collaboration/direct-sessions/(${UUID})/renew$`)],
   ["DELETE", new RegExp(`^/api/collaboration/direct-sessions/(${UUID})$`)],
 ];
 const RUNTIME_ROUTES: ReadonlyArray<readonly [string, RegExp]> = [
+  ["POST", new RegExp(`^/api/collaboration/runtimes/(${RUNTIME})/catalog/resolve$`)],
   ["POST", new RegExp(`^/api/collaboration/runtimes/(${RUNTIME})/scopes/preflight$`)],
   ["POST", new RegExp(`^/api/collaboration/runtimes/(${RUNTIME})/scopes$`)],
 ];
@@ -111,7 +113,10 @@ export function parseRelayRoute(method: string, path: string): RelayRoute | null
   for (const [allowed, pattern] of SESSION_ROUTES) if (method === allowed && pattern.test(path)) return { kind: "session" };
   for (const [allowed, pattern] of RUNTIME_ROUTES) {
     const match = method === allowed ? pattern.exec(path) : null;
-    if (match) return { kind: "runtime", identifier: match[1]! };
+    if (match) {
+      const identifier = match[1]!.replace(/%3[aA]/g, ":");
+      return /^[A-Za-z0-9:_-]{1,128}$/.test(identifier) ? { kind: "runtime", identifier } : null;
+    }
   }
   const scope = SCOPE_PATH.exec(path);
   if (scope) return { kind: "scope", identifier: scope[1]! };
@@ -134,6 +139,17 @@ export function parseRelaySocketPath(rawPath: string): { scopeId: string; purpos
   const keys = [...url.searchParams.keys()];
   if (keys.some((key) => key !== "ticket" && key !== "after") || keys.filter((key) => key === "ticket").length !== 1) return null;
   return { scopeId: match[1]!, purpose: match[2] as "events" | "terminal", path: url.pathname, query: url.search.slice(1) };
+}
+
+/** Reserve the collaboration socket namespace so old and malformed paths cannot fall into generic VPS routing. */
+export function isCollaborationWebSocketCandidate(rawPath: string): boolean {
+  if (rawPath.length > MAX_RAW_PATH || /[\r\n]/.test(rawPath)) return false;
+  try {
+    return new URL(rawPath, "https://relay.invalid").pathname.startsWith("/ws/collaboration/");
+  } catch (error: unknown) {
+    if (!(error instanceof TypeError)) console.warn("[collaboration-relay] socket path classification failed", error instanceof Error ? error.name : "UnknownError");
+    return false;
+  }
 }
 
 export class CollaborationRelay {

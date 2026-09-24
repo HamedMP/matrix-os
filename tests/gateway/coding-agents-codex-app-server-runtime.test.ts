@@ -171,6 +171,85 @@ describe("Codex app-server control runtime", () => {
     }
   });
 
+  it("publishes generated, function, dynamic and MCP media as bounded artifact records", async () => {
+    const homePath = await mkdtemp(join("/tmp", "codex-artifacts-"));
+    const fakeCodexPath = join(homePath, "fake-codex-artifacts.mjs");
+    const generatedPath = join(homePath, "whale.png");
+    const audioPath = join(homePath, "voice.mp3");
+    const eventPath = codexProviderEventPath(homePath, "sess_artifacts_1");
+    await writeFile(generatedPath, Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+    await writeFile(audioPath, Buffer.from("audio"));
+    await writeFile(fakeCodexPath, [
+      "#!/usr/bin/env node",
+      "import { createInterface } from 'node:readline';",
+      "const input = createInterface({ input: process.stdin, crlfDelay: Infinity });",
+      "for await (const line of input) {",
+      "  const message = JSON.parse(line);",
+      "  if (message.method === 'initialize') console.log(JSON.stringify({ id: message.id, result: { userAgent: 'fake', platformFamily: 'unix', platformOs: 'linux', codexHome: '/private/codex' } }));",
+      "  else if (message.method === 'thread/start') console.log(JSON.stringify({ id: message.id, result: { thread: { id: 'native-thread-artifacts' }, modelProvider: 'openai', cwd: '/private/project', approvalPolicy: 'on-request', approvalsReviewer: 'user', sandbox: {} } }));",
+      "  else if (message.method === 'turn/start') {",
+      "    console.log(JSON.stringify({ id: message.id, result: { turn: { id: 'native-turn-artifacts' } } }));",
+      "    console.log(JSON.stringify({ method: 'item/started', params: { turnId: 'native-turn-artifacts', item: { id: 'generated-image', type: 'imageGeneration', status: 'inProgress' } } }));",
+      `    console.log(JSON.stringify({ method: 'item/completed', params: { turnId: 'native-turn-artifacts', item: { id: 'generated-image', type: 'imageGeneration', status: 'completed', result: '', savedPath: ${JSON.stringify(generatedPath)} } } }));`,
+      "    console.log(JSON.stringify({ method: 'item/completed', params: { turnId: 'native-turn-artifacts', item: { id: 'function-media', type: 'functionCallOutput', name: 'render', output: [{ type: 'input_image', image_url: 'data:image/png;base64,iVBORw0KGgo=' }] } } }));",
+      `    console.log(JSON.stringify({ method: 'item/completed', params: { turnId: 'native-turn-artifacts', item: { id: 'dynamic-media', type: 'dynamicToolCall', status: 'completed', tool: 'voice', arguments: {}, contentItems: [{ type: 'inputAudio', audioUrl: ${JSON.stringify(`file://${audioPath}`)} }] } } }));`,
+      `    console.log(JSON.stringify({ method: 'item/completed', params: { turnId: 'native-turn-artifacts', item: { id: 'mcp-media', type: 'mcpToolCall', status: 'completed', server: 'files', tool: 'read', arguments: {}, result: { content: [{ type: 'resource_link', uri: ${JSON.stringify(`file://${generatedPath}`)}, name: 'generated.png', mimeType: 'image/png' }] } } } }));`,
+      "    console.log(JSON.stringify({ method: 'item/completed', params: { turnId: 'native-turn-artifacts', item: { id: 'mcp-outside', type: 'mcpToolCall', status: 'completed', server: 'files', tool: 'read', arguments: {}, result: { content: [{ type: 'resource_link', uri: 'file:///etc/hosts', name: 'hosts.txt', mimeType: 'text/plain' }] } } } }));",
+      `    console.log(JSON.stringify({ method: 'item/completed', params: { turnId: 'native-turn-artifacts', item: { id: 'mcp-missing', type: 'mcpToolCall', status: 'completed', server: 'files', tool: 'read', arguments: {}, result: { content: [{ type: 'resource_link', uri: ${JSON.stringify(`file://${join(homePath, "missing.png")}`)}, name: 'missing.png', mimeType: 'image/png' }] } } } }));`,
+      "    console.log(JSON.stringify({ method: 'turn/completed', params: { turn: { id: 'native-turn-artifacts', status: 'completed', items: [] } } }));",
+      "    process.exit(0);",
+      "  }",
+      "}",
+    ].join("\n"), "utf8");
+    await chmod(fakeCodexPath, 0o700);
+    const runnerPath = join(process.cwd(), "packages/gateway/src/coding-agents/codex-app-server-runner.mjs");
+    const config = Buffer.from(JSON.stringify({
+      prompt: "Create media.",
+      approvalPolicy: "on-request",
+      sandbox: "workspace-write",
+      writableRoots: [homePath],
+    }), "utf8").toString("base64");
+    const child = spawn(process.execPath, [
+      runnerPath, eventPath, process.version.slice(1), process.execPath, fakeCodexPath, config,
+    ], { cwd: homePath, stdio: ["ignore", "pipe", "pipe"] });
+
+    try {
+      await expect(waitForExit(child)).resolves.toBe(0);
+      const transcript = await readFile(eventPath, "utf8");
+      const artifacts = transcript.trim().split("\n").map((line) => JSON.parse(line))
+        .filter((entry) => entry.type === "matrix.codex.artifact.available");
+      expect(artifacts).toHaveLength(4);
+      expect(artifacts.map((entry) => entry.providerItemId)).toEqual([
+        "generated-image", "function-media", "dynamic-media", "mcp-media",
+      ]);
+      expect(artifacts[0]).toMatchObject({
+        ownerReference: expect.stringMatching(/^data\/chat-artifacts\/codex\/sha256\/[a-f0-9]{64}\.png$/),
+        mimeType: "image/png",
+        sizeBytes: 8,
+      });
+      expect(artifacts[1]).toMatchObject({
+        attachmentId: expect.stringMatching(/^attachment_codex_[a-f0-9]{32}$/),
+        ownerReference: expect.stringMatching(/^data\/chat-artifacts\/codex\/sha256\/[a-f0-9]{64}\.png$/),
+        mimeType: "image/png",
+      });
+      expect(await readFile(join(homePath, artifacts[1].ownerReference))).toEqual(Buffer.from("iVBORw0KGgo=", "base64"));
+      expect(transcript).not.toContain("iVBORw0KGgo=");
+      const records = transcript.trim().split("\n").map((line) => JSON.parse(line));
+      const generationStarted = records.find((entry) => (
+        entry.type === "matrix.codex.tool.started" && entry.displayName === "Generating image"
+      ));
+      expect(generationStarted).toMatchObject({ kind: "image_generation" });
+      expect(records).toContainEqual(expect.objectContaining({
+        type: "matrix.codex.tool.completed",
+        toolCallId: generationStarted.toolCallId,
+        outcome: "success",
+      }));
+    } finally {
+      child.kill("SIGTERM");
+      await rm(homePath, { recursive: true, force: true });
+    }
+  });
+
   it("durably publishes a safe approval before accepting one idempotent decision", async () => {
     const homePath = await mkdtemp(join("/tmp", "codex-appr-"));
     const fakeCodexPath = join(homePath, "fake-codex-app-server.mjs");

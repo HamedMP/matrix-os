@@ -1,6 +1,10 @@
 import { describe, it, expect } from "vitest";
 import { Hono } from "hono";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { authMiddleware } from "../../packages/gateway/src/auth.js";
+import { createCustomMcpProjectionRoutes } from "../../packages/gateway/src/integrations/custom-mcp/projection-routes.js";
 import { mapRequestPrincipalError, requireRequestPrincipal, isRequestPrincipalError } from "../../packages/gateway/src/request-principal.js";
 import { buildPlatformVerificationToken } from "../../packages/platform/src/platform-token.js";
 import { buildPlatformUserProof } from "../../packages/platform/src/session-routing-websocket.js";
@@ -54,6 +58,40 @@ function createTestApp() {
 }
 
 describe("T133: Auth token middleware", () => {
+  it("lets a preview MCP projection use its route-scoped staging credential only", async () => {
+    const originalRuntime = process.env.MATRIX_PREVIEW_RUNTIME;
+    const originalToken = process.env.MATRIX_PREVIEW_CUSTOM_MCP_TOKEN;
+    process.env.MATRIX_PREVIEW_RUNTIME = "true";
+    process.env.MATRIX_PREVIEW_CUSTOM_MCP_TOKEN = "staging-scoped-token";
+    const homePath = mkdtempSync(join(tmpdir(), "matrix-preview-mcp-auth-"));
+    try {
+      const app = new Hono();
+      app.use("*", authMiddleware("production-runtime-token"));
+      app.route("/api/internal/mcp-projection", createCustomMcpProjectionRoutes({
+        homePath, token: "staging-scoped-token", clerkUserId: "chat-share-preview-fixture-pr-1871",
+      }));
+      app.get("/api/conversations", (c) => c.json({ ok: true }));
+
+      const projection = "/api/internal/mcp-projection/11111111-1111-4111-8111-111111111111";
+      expect((await app.request(projection, { headers: {
+        authorization: "Bearer staging-scoped-token",
+        "x-matrix-clerk-user-id": "chat-share-preview-fixture-pr-1871",
+      } })).status).toBe(404);
+      expect((await app.request(projection, { headers: {
+        authorization: "Bearer staging-scoped-token",
+        "x-matrix-clerk-user-id": "wrong-owner",
+      } })).status).toBe(401);
+      expect((await app.request("/api/conversations", {
+        headers: { authorization: "Bearer staging-scoped-token", "x-forwarded-for": "203.0.113.99" },
+      })).status).toBe(401);
+    } finally {
+      rmSync(homePath, { recursive: true, force: true });
+      if (originalRuntime === undefined) delete process.env.MATRIX_PREVIEW_RUNTIME;
+      else process.env.MATRIX_PREVIEW_RUNTIME = originalRuntime;
+      if (originalToken === undefined) delete process.env.MATRIX_PREVIEW_CUSTOM_MCP_TOKEN;
+      else process.env.MATRIX_PREVIEW_CUSTOM_MCP_TOKEN = originalToken;
+    }
+  });
   it("rejects protected requests when no token is configured", async () => {
     const mw = authMiddleware(undefined);
     let nextCalled = false;

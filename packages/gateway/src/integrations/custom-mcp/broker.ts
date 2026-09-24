@@ -4,7 +4,7 @@ import {
   decryptCustomMcpCredential,
   encryptCustomMcpCredential,
 } from "./crypto.js";
-import { RemoteMcpClient } from "./client.js";
+import { MAX_CUSTOM_MCP_TOOLS, RemoteMcpClient } from "./client.js";
 import { validateCustomMcpUrl } from "./security.js";
 import type {
   CustomMcpApproval,
@@ -194,6 +194,7 @@ export class CustomMcpBroker {
       tools,
       enabled: true,
       status: "ready",
+      discoveredAt: this.options.now?.() ?? new Date(),
     });
     if (!updated) throw new CustomMcpBrokerError("conflict");
     await this.options.projection.upsert(input.userId, toProjection(updated));
@@ -253,15 +254,28 @@ export class CustomMcpBroker {
 
   async discover(userId: string, serverId: string): Promise<CustomMcpServer> {
     const row = await this.requirePrivate(userId, serverId);
-    const tools = await this.client.discover({
+    if (row.tools.length > MAX_CUSTOM_MCP_TOOLS) throw new CustomMcpBrokerError("invalid");
+    const discovered = await this.client.discover({
       serverId,
       url: row.url,
       authorization: await this.readAuthorization(userId, row),
     });
+    if (discovered.length > MAX_CUSTOM_MCP_TOOLS) throw new CustomMcpBrokerError("upstream");
+    // This bounded lookup is discarded after this discovery request.
+    const previous = new Map(row.tools.map((tool) => [tool.name, tool]));
+    const tools = discovered.map((tool) => ({
+      ...tool,
+      enabled: previous.get(tool.name)?.enabled ?? true,
+      approval: previous.get(tool.name)?.approval ?? "always_ask",
+    }));
+    // First discovery activates the server. Later discoveries preserve a
+    // deliberate server disablement and each existing tool's policy.
+    const enabled = tools.some((tool) => tool.enabled) && (row.discovered_at === null || row.enabled);
     const updated = await this.options.db.updateCustomMcpServer(serverId, userId, row.revision, {
       tools,
-      status: "disabled",
-      enabled: false,
+      status: enabled ? "ready" : "disabled",
+      enabled,
+      discoveredAt: this.options.now?.() ?? new Date(),
       actionRequiredReason: null,
     });
     if (!updated) throw new CustomMcpBrokerError("conflict");
@@ -272,6 +286,9 @@ export class CustomMcpBroker {
   async patch(userId: string, serverId: string, input: PatchCustomMcpInput): Promise<CustomMcpServer> {
     const row = await this.requirePrivate(userId, serverId);
     if (row.revision !== input.revision) throw new CustomMcpBrokerError("conflict");
+    if (row.tools.length > MAX_CUSTOM_MCP_TOOLS || (input.tools?.length ?? 0) > MAX_CUSTOM_MCP_TOOLS) {
+      throw new CustomMcpBrokerError("invalid");
+    }
     let tools: CustomMcpTool[] | undefined;
     if (input.tools) {
       const discovered = new Map(row.tools.map((tool) => [tool.name, tool]));

@@ -1,5 +1,4 @@
 import {
-  callServiceHandler,
   connectServiceHandler,
   describeServiceHandler,
   disconnectServiceHandler,
@@ -9,9 +8,44 @@ import {
   type GatewayFetcher,
 } from "../../kernel/dist/tools/integrations.js";
 import { z } from "zod/v4";
+import { wrapExternalContent } from "../../kernel/dist/security/external-content.js";
 
 const usage = "Usage: matrix-integrations <inventory|list|describe|connect|sync|call|disconnect> [arguments]";
 const serviceSchema = z.string().min(1).max(64).regex(/^[a-z0-9_-]+$/);
+const catalogSchema = z.array(z.object({
+  id: z.string(),
+  actions: z.record(z.string(), z.object({ risk: z.string().optional() })).optional(),
+}));
+const readOnlyError = "The CLI can only call verified read-only actions; use a native integration tool for writes.";
+
+function authHeaders(): Record<string, string> {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (process.env.MATRIX_AUTH_TOKEN) headers.Authorization = `Bearer ${process.env.MATRIX_AUTH_TOKEN}`;
+  if (process.env.MATRIX_CLERK_USER_ID) headers["x-platform-user-id"] = process.env.MATRIX_CLERK_USER_ID;
+  return headers;
+}
+
+async function callReadOnlyService(
+  input: { service: string; action: string; params?: Record<string, unknown>; label: string },
+  fetcher: GatewayFetcher = fetch as GatewayFetcher,
+): Promise<string> {
+  const base = process.env.GATEWAY_URL ?? "http://localhost:4000";
+  const catalogResponse = await fetcher(`${base}/api/integrations/agent-catalog`, {
+    method: "GET", headers: authHeaders(), signal: AbortSignal.timeout(10_000),
+  });
+  if (!catalogResponse.ok) throw new Error(readOnlyError);
+  const catalog = catalogSchema.safeParse(await catalogResponse.json());
+  if (!catalog.success || catalog.data.find((item) => item.id === input.service)?.actions?.[input.action]?.risk !== "read") {
+    throw new Error(readOnlyError);
+  }
+  const response = await fetcher(`${base}/api/integrations/call`, {
+    method: "POST", headers: authHeaders(), body: JSON.stringify(input), signal: AbortSignal.timeout(35_000),
+  });
+  if (!response.ok) throw new Error("Integration call failed; check the action parameters and account authorization.");
+  return wrapExternalContent(JSON.stringify(await response.json(), null, 2), {
+    source: "api", includeWarning: true,
+  });
+}
 
 function text(result: { content: Array<{ type: "text"; text: string }> }): string {
   return result.content[0]?.text ?? "Integration returned no result.";
@@ -64,8 +98,9 @@ export async function runIntegrationsCommand(
       const service = serviceSchema.parse(rest[0]);
       const action = z.string().min(1).max(100).regex(/^[a-zA-Z0-9_-]+$/).parse(rest[1]);
       const params = parseParams(rest[2]);
-      const label = z.string().trim().min(1).max(100).optional().parse(rest[3]);
-      return text(await callServiceHandler({ service, action, params, label }, fetcher));
+      if (!rest[3]) throw new Error("An exact account label is required for CLI calls.");
+      const label = z.string().trim().min(1).max(100).parse(rest[3]);
+      return callReadOnlyService({ service, action, params, label }, fetcher);
     }
     case "disconnect": {
       if (rest.length !== 1) throw new Error(usage);

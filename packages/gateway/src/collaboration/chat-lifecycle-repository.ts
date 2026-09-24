@@ -124,6 +124,18 @@ export class ChatLifecycleRepository {
         .where("status", "in", ["accepted", "running", "waiting_for_approval", "waiting_for_input"])
         .executeTakeFirst();
       if (activeRun) throw new CollaborationRepositoryError("conflict", "Shared Chat has active work");
+      if (input.type === "archive" || input.type === "delete") {
+        // Queued shared requests cannot outlive the scope they were accepted on:
+        // cancel them in this transaction so no later wake claims them.
+        await trx.updateTable("chat_queued_turns").set({
+          status: "cancelled",
+          cancelled_at: now,
+          updated_at: now,
+        }).where("chat_id", "=", chat.id)
+          .where("collaboration_scope_id", "=", scope.id)
+          .where("status", "=", "queued")
+          .execute();
+      }
       const expectedLifecycle = input.type === "restore" ? "archived" : undefined;
       if ((input.type === "archive" && scope.lifecycle !== "shared")
         || (input.type === "restore" && scope.lifecycle !== expectedLifecycle)
