@@ -78,14 +78,18 @@ describe("customer VPS integrations MCP wiring", () => {
     expect(updater).toContain("sudo systemctl restart --no-block matrix-integrations-agents.service");
   });
 
-  it("reconciles bundled Hermes skills after a healthy host update", async () => {
+  it("reconciles bundled Hermes skills through the durable Hermes service after a host update", async () => {
     const updater = await readFile("distro/customer-vps/host-bin/matrix-sync-agent", "utf8");
+    const hermesUnit = await readFile("distro/customer-vps/systemd/matrix-hermes.service", "utf8");
+    const hermesInstaller = await readFile("distro/customer-vps/host-bin/matrix-install-hermes", "utf8");
     const success = updater.indexOf('if commit_release_metadata; then');
-    const sync = updater.indexOf('MATRIX_SKILL_TARGETS=hermes');
+    const reconciliation = updater.indexOf('mark_hermes_reconciliation_pending "$version"', success);
     expect(success).toBeGreaterThan(0);
-    expect(sync).toBeGreaterThan(success);
-    expect(updater).toContain('MATRIX_SKILLS_SOURCE="$APP_DIR/skills/matrix"');
-    expect(updater).toContain('HERMES_HOME="$runtime_home/.hermes"');
+    expect(reconciliation).toBeGreaterThan(success);
+    expect(updater).toContain("sudo systemctl restart --no-block matrix-hermes.service");
+    expect(updater).not.toContain("MATRIX_SKILL_TARGETS=hermes");
+    expect(hermesUnit).toContain("ExecStart=/opt/matrix/bin/matrix-install-hermes");
+    expect(hermesInstaller).toContain("install-hermes-matrix-skills.sh");
   });
 
   it("keeps certified snapshots from before integrations MCP bootable", async () => {
