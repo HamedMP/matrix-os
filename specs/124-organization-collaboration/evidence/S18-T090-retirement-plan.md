@@ -42,10 +42,19 @@ behind the first: `MATRIX_COLLABORATION_TICKET_ACTIVE_KEY_ID` had been a hardcod
 became a reference to a repository variable nobody created, and `collaboration-ticket-keys` does not exist in
 `matrix-os-1144` — Secret Manager holds only `collaboration-proof-keys`.
 
-#1889 restored deployment by pointing the V2 environment binding at the secret that exists and defaulting the
-key id, and set the Production variable. **The secret rename remains unperformed**, so the env var name and
-the secret name deliberately differ; `tests/platform/collaboration-deployment.test.ts` carries that as a
-comment so it is not "corrected" back.
+#1889 did **not** restore deployment. It pointed the V2 binding at `collaboration-proof-keys` on the
+assumption that the rename was cosmetic and the bytes were the same. They are not: #1864 also tightened the
+value check from `utf8bytelength >= 32` to `^[A-Za-z0-9_-]{43}$`, so V1 proof keys and V2 Ed25519 seeds are
+different key material and the V1 secret can never satisfy the V2 gate. The deploy after that merge failed
+with `collaboration-proof-keys must contain bounded Ed25519 ticket seeds and the configured active key.`
+
+The provisioning this paragraph asked for was performed on 2026-09-24: Secret Manager secret
+`collaboration-ticket-keys` created in `matrix-os-1144` with a freshly generated 32-byte Ed25519 seed under
+key id `collaboration-v1`, `roles/secretmanager.secretAccessor` granted to
+`matrix-platform-runner@matrix-os-1144.iam.gserviceaccount.com`, and the Production variable
+`MATRIX_COLLABORATION_TICKET_ACTIVE_KEY_ID` set to `collaboration-v1`. The workflow and its contract test are
+back on the V2 secret name. The key-id fallback introduced by #1889 is kept, so an unset variable cannot
+break deployment again.
 
 The prediction in this paragraph was accurate. What failed was not the analysis but the handoff: a prerequisite
 recorded in a spec evidence file, with no owner, no issue and no gate, is indistinguishable from a prerequisite
