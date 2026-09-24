@@ -87,7 +87,16 @@ describe("CollaborationTerminalEventRegistry", () => {
 
     const replay = socket();
     await fixture.registry.open(connection(scopeA, "user_alice", "replay", replay, 0));
+    // Behind the retained window, so the transcript is replaced rather than continued.
     expect(frames(replay).map((frame) => frame.type)).toContain("terminal.refresh_required");
+    // The refresh carries metadata, not screen bytes, so the records still retained have to
+    // follow it. Asserting only the refresh let a joining viewer sit on a blank terminal
+    // until the next output, which is reachable whenever one snapshot exceeds the budget.
+    expect(frames(replay).filter((frame) => frame.type === "terminal.output").map((frame) => frame.data))
+      .toEqual(["two", "three"]);
+    const refreshIndex = frames(replay).findIndex((frame) => frame.type === "terminal.refresh_required");
+    const firstOutputIndex = frames(replay).findIndex((frame) => frame.type === "terminal.output");
+    expect(refreshIndex).toBeLessThan(firstOutputIndex);
     fixture.registry.shutdown();
   });
 

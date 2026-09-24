@@ -327,9 +327,13 @@ export class CollaborationTerminalEventRegistry {
 
   private async deliverReplay(connection: TerminalConnection, runtime: TerminalRuntime): Promise<void> {
     if (connection.lastSequence < runtime.evictedThrough) {
+      // The viewer is behind the retained window, so its transcript cannot be continued and
+      // is replaced. Advance only to the eviction point rather than to the head: the records
+      // still retained are the current screen, and a refresh carries metadata, not bytes.
+      // Skipping them left a joining viewer with a blank terminal until the next output,
+      // which is reachable whenever one snapshot exceeds the retention budget.
       this.send(connection, refreshFrame(connection, runtime));
-      connection.lastSequence = runtime.sequence;
-      return;
+      connection.lastSequence = runtime.evictedThrough;
     }
     for (const record of runtime.records) {
       if (record.sequence > connection.lastSequence) this.sendRecord(connection, runtime, record);
