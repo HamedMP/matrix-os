@@ -17,7 +17,7 @@ Transfer selected website passwords and cookies from local Chromium-family brows
 2. Selecting a profile reads URL and cookie-domain metadata and shows counts per website. The user selects sites. Secret values are not previewed.
 3. On import, the main process requests the source browser's Safe Storage value from macOS Keychain only if selected rows contain encrypted values. The system may prompt for access. The main process decrypts supported Chromium `v10` entries in memory, checks current cookie domain digests, validates each entry, writes passwords into the encrypted local vault, and sets cookies through Electron's browser session API. Expired, partitioned, invalid, or unsupported entries are skipped and counted.
 4. The 1Password picker invokes the local `op` CLI using desktop app integration. It lists Login metadata, then fetches secret fields only for selected item IDs. Only website, username, and password are imported; OTP fields, passkeys, other categories, and attachments are excluded.
-   Completed 20-item batches are persisted as the import runs; if a later item fails or the overall deadline arrives, completed items remain and the rest are counted as skipped.
+   Completed 20-item batches are persisted as the import runs; if a later item fails or the overall deadline arrives, completed items remain and the rest are counted as skipped. A Matrix account change interrupts the import with an error even if earlier batches were saved.
 5. While visiting a site, Passwords lists usernames only. A chosen password is filled from the main process into an active Browser view after both main and page context verify the current origin. Password values never cross renderer IPC.
 6. A user can remove one imported password, or explicitly export the encrypted vault contents to a new, owner-only JSON file through a native save dialog. The renderer receives only success or failure.
 
@@ -45,6 +45,7 @@ No HTTP route is added. No external service receives imported data.
 ## Resource and failure policy
 
 - Profile discovery is limited to 32 profiles per browser. SQLite input files are limited to 1 GiB; query output to 32 MiB; rows to 10,000 logins and 50,000 cookies. CLI item lists are limited to 2,000. Preview returns up to 5,000 website rows.
+- The site-preview Map is capped at 5,000 entries with least-recently-used eviction while scanning source rows.
 - SQLite subprocesses have a 10 second timeout. Keychain access has a 120 second timeout to allow a system prompt. Each 1Password call has a 30 second timeout, and a selected import has a 180 second overall deadline.
 - Locked databases may be copied with WAL sidecars to a private temporary directory, deleted in `finally`. The source remains untouched. A failed snapshot reports a generic error.
 - Encryption unavailable, including Electron's Linux `basic_text` fallback, means refusing to import passwords. The vault uses an exclusive 0600 temporary file and atomic rename. A corrupt vault is never overwritten implicitly.

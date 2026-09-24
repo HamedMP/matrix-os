@@ -2,9 +2,13 @@ import { createHash } from "node:crypto";
 import { join } from "node:path";
 import type { BrowserPasswordVault } from "./password-vault";
 
+export class BrowserAccountChangedError extends Error {
+  constructor() { super("browser account unavailable"); }
+}
+
 /** Stable, path-safe local storage names for one authenticated Matrix account. */
 export function browserAccountScope(userId: string): { partition: string; vaultDirectory: string } {
-  if (!userId || userId.length > 512) throw new Error("browser account unavailable");
+  if (!userId || userId.length > 512) throw new BrowserAccountChangedError();
   const digest = createHash("sha256").update(userId).digest("hex");
   return {
     partition: `persist:browser-${digest}`,
@@ -19,7 +23,7 @@ export function bindBrowserVaultToAccount(
   vault: BrowserPasswordVault,
 ): BrowserPasswordVault {
   const verify = () => {
-    if (currentUserId() !== ownerId) throw new Error("browser account unavailable");
+    if (currentUserId() !== ownerId) throw new BrowserAccountChangedError();
   };
   const run = async <T>(operation: () => Promise<T>): Promise<T> => {
     verify();

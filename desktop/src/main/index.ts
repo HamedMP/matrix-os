@@ -4,7 +4,7 @@ import { createFileDownloadService } from "./files/file-download-service";
 import { importBrowserPages, listBrowserImportSources } from "./browser/import-pages";
 import { importChromiumSites, listChromiumSecretSources, previewChromiumSites } from "./browser/import-secrets";
 import { createBrowserPasswordVault, type BrowserPasswordVault } from "./browser/password-vault";
-import { bindBrowserVaultToAccount, browserAccountScope } from "./browser/account-scope";
+import { bindBrowserVaultToAccount, browserAccountScope, BrowserAccountChangedError } from "./browser/account-scope";
 import { importOnePasswordLogins, listOnePasswordLogins } from "./browser/one-password";
 import { exportBrowserPasswords } from "./browser/password-export";
 import { pathToFileURL } from "node:url";
@@ -261,7 +261,7 @@ if (!gotLock) {
       const browserVaults = new Map<string, BrowserPasswordVault>();
       const currentBrowserScope = () => {
         const status = auth.getStatus();
-        if (!status.signedIn) throw new Error("browser account unavailable");
+        if (!status.signedIn) throw new BrowserAccountChangedError();
         return { userId: status.userId, ...browserAccountScope(status.userId) };
       };
       const browserVaultForAccount = (): BrowserPasswordVault => {

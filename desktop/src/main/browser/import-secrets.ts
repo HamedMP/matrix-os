@@ -11,6 +11,7 @@ const PROFILE = /^(?:Default|Profile [1-9]\d{0,2})$/;
 const HOST = /^(?=.{1,253}$)[a-zA-Z0-9]+(?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?$/;
 const MAX_DB_BYTES = 1024 * 1024 * 1024;
 const MAX_ROWS = 50_000;
+const MAX_PREVIEW_SITES = 5_000;
 const SOURCE_BROWSERS = [
   { id: "arc", browser: "Arc", directory: "Arc/User Data", service: "Arc Safe Storage" },
   { id: "chrome", browser: "Chrome", directory: "Google/Chrome", service: "Chrome Safe Storage" },
@@ -148,6 +149,8 @@ export async function previewChromiumSites(
   function add(host: string, kind: "passwords" | "cookies") {
     const item = counts.get(host) ?? { host, passwords: 0, cookies: 0 };
     item[kind] += 1;
+    if (counts.has(host)) counts.delete(host);
+    else if (counts.size >= MAX_PREVIEW_SITES) counts.delete(counts.keys().next().value!);
     counts.set(host, item);
   }
   if (loginPath) for (const row of await queryRows(home, loginPath, LOGIN_META_SQL)) {
@@ -156,7 +159,7 @@ export async function previewChromiumSites(
   if (cookiePath) for (const row of await queryRows(home, cookiePath, COOKIE_META_SQL)) {
     const host = cookieHost(row.host_key); if (host) add(host, "cookies");
   }
-  return [...counts.values()].sort((a, b) => a.host.localeCompare(b.host)).slice(0, 5_000);
+  return [...counts.values()].sort((a, b) => a.host.localeCompare(b.host));
 }
 
 export async function getMacKeychainPassword(service: string): Promise<string> {

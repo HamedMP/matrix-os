@@ -12,7 +12,7 @@ import {
   type BrowserLogin,
 } from "@desktop/main/browser/chromium-secrets";
 import { createBrowserPasswordVault, type BrowserPasswordVault } from "@desktop/main/browser/password-vault";
-import { bindBrowserVaultToAccount, browserAccountScope } from "@desktop/main/browser/account-scope";
+import { bindBrowserVaultToAccount, browserAccountScope, BrowserAccountChangedError } from "@desktop/main/browser/account-scope";
 import { importOnePasswordLogins, listOnePasswordLogins, parseOnePasswordLogin } from "@desktop/main/browser/one-password";
 import { importChromiumSites, listChromiumSecretSources, previewChromiumSites } from "@desktop/main/browser/import-secrets";
 import { exportBrowserPasswords } from "@desktop/main/browser/password-export";
@@ -267,9 +267,38 @@ describe("1Password direct import", () => {
     expect(await importOnePasswordLogins(ids, vault, run)).toEqual({ imported: 20, skipped: 1 });
     expect(saved).toHaveLength(20);
   });
+
+  it("reports an account switch as an interrupted 1Password import", async () => {
+    const ids = Array.from({ length: 21 }, (_, index) => String(index).padStart(12, "0"));
+    const items = ids.map((id) => ({ id, category: "LOGIN", urls: [{ href: `https://${id}.example.com` }] }));
+    let writes = 0;
+    const vault = { upsertMany: vi.fn(async (logins: BrowserLogin[]) => {
+      if (++writes === 2) throw new BrowserAccountChangedError();
+      return logins.length;
+    }) } as unknown as BrowserPasswordVault;
+    const run = async (args: string[]) => args[1] === "list" ? items : {
+      ...items.find((item) => item.id === args[2]), fields: [
+        { id: "username", value: args[2] }, { id: "password", value: "synthetic-secret" },
+      ],
+    };
+    await expect(importOnePasswordLogins(ids, vault, run)).rejects.toBeInstanceOf(BrowserAccountChangedError);
+  });
 });
 
 describe("selected local browser profile transfer", () => {
+  it("caps the site preview while retaining recently discovered hosts", async () => {
+    const home = await mkdtemp(join(tmpdir(), "matrix-source-home-"));
+    dirs.push(home);
+    const profile = join(home, "Library/Application Support/Arc/User Data/Default");
+    await mkdir(profile, { recursive: true });
+    execFileSync("/usr/bin/sqlite3", [join(profile, "Cookies"), `CREATE TABLE cookies (host_key TEXT);
+      WITH RECURSIVE sites(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM sites WHERE n < 5001)
+      INSERT INTO cookies SELECT 'site' || n || '.example' FROM sites;`]);
+    const sites = await previewChromiumSites(home, "arc:Default", "darwin");
+    expect(sites).toHaveLength(5_000);
+    expect(sites.some((site) => site.host === "site1.example")).toBe(false);
+    expect(sites.some((site) => site.host === "site5001.example")).toBe(true);
+  });
   it("imports plaintext cookies without asking for a Keychain secret", async () => {
     const home = await mkdtemp(join(tmpdir(), "matrix-source-home-"));
     dirs.push(home);

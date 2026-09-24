@@ -102,6 +102,10 @@ fi
   }, 60_000);
 
   it("does not expose the first account's passwords after a second Matrix account signs in", async () => {
+    const imported = await page.evaluate(async () => window.operator.invoke("browser:import-1password", { ids: ["abcdefghijkl"] }));
+    expect(imported.imported).toBe(1);
+    expect(await page.evaluate(async () => window.operator.invoke("browser:list-passwords", { origin: "https://example.com" })))
+      .toEqual({ accounts: [{ username: "synthetic-user" }] });
     gateway!.setDeviceUserId("user-2");
     await page.evaluate(async () => window.operator.invoke("auth:sign-out", {}));
     await page.evaluate(async () => window.operator.invoke("auth:start-device-flow", {}));
@@ -112,6 +116,9 @@ fi
   }, 60_000);
 
   it("closes Browser embeds on the first sign-out after restoring a saved account", async () => {
+    const beforeRestart = await page.evaluate(async () => window.operator.invoke("auth:status", {}));
+    expect(beforeRestart.signedIn).toBe(true);
+    const expectedUserId = beforeRestart.signedIn ? beforeRestart.userId : null;
     await app!.close();
     app = await _electron.launch({
       executablePath,
@@ -121,7 +128,7 @@ fi
     });
     page = await app.firstWindow();
     expect(await page.evaluate(async () => window.operator.invoke("auth:status", {})))
-      .toMatchObject({ signedIn: true, userId: "user-2" });
+      .toMatchObject({ signedIn: true, userId: expectedUserId });
     const opened = await page.evaluate(async () => window.operator.invoke("embed:open", {
       kind: "browser", url: "https://example.com", bounds: { x: 0, y: 0, width: 800, height: 600 },
     }));

@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type { BrowserLogin } from "./chromium-secrets";
 import type { BrowserPasswordVault } from "./password-vault";
+import { BrowserAccountChangedError } from "./account-scope";
 
 const execFileAsync = promisify(execFile);
 const MAX_ITEMS = 2_000;
@@ -107,7 +108,8 @@ export async function importOnePasswordLogins(
     let detail: unknown;
     try {
       detail = await run(["item", "get", id, "--format", "json", "--reveal"], signal);
-    } catch {
+    } catch (error: unknown) {
+      if (error instanceof BrowserAccountChangedError) throw error;
       if (imported === 0 && pending.length === 0) throw new Error("1Password is unavailable or locked");
       break;
     }
@@ -116,7 +118,8 @@ export async function importOnePasswordLogins(
     if (pending.length >= 20) {
       try {
         await vault.upsertMany(pending);
-      } catch {
+      } catch (error: unknown) {
+        if (error instanceof BrowserAccountChangedError) throw error;
         if (imported === 0) throw new Error("browser password vault unavailable");
         return { imported, skipped: unique.length - imported };
       }
@@ -127,7 +130,8 @@ export async function importOnePasswordLogins(
   if (pending.length > 0) {
     try {
       await vault.upsertMany(pending);
-    } catch {
+    } catch (error: unknown) {
+      if (error instanceof BrowserAccountChangedError) throw error;
       if (imported === 0) throw new Error("browser password vault unavailable");
       return { imported, skipped: unique.length - imported };
     }
