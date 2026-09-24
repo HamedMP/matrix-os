@@ -4,6 +4,7 @@ import { invoke } from "../../lib/operator";
 interface Source { id: string; browser: string; profile: string }
 interface Site { host: string; passwords: number; cookies: number }
 interface OnePasswordItem { id: string; title: string; origin: string }
+interface OnePasswordAccount { id: string; label: string }
 const DOMAIN = /^(?=.{1,253}$)[a-z0-9]+(?:[a-z0-9.-]*[a-z0-9])?$/;
 const MAX_SELECTED_SITES = 5_000;
 
@@ -21,6 +22,8 @@ export default function BrowserSecretImportView() {
   const [manualHosts, setManualHosts] = useState<string[]>([]);
   const [filter, setFilter] = useState("");
   const [items, setItems] = useState<OnePasswordItem[] | null>(null);
+  const [onePasswordAccounts, setOnePasswordAccounts] = useState<OnePasswordAccount[] | null>(null);
+  const [onePasswordAccountId, setOnePasswordAccountId] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -81,23 +84,51 @@ export default function BrowserSecretImportView() {
     setBusy("1password-list");
     setError(null);
     setNotice(null);
+    setItems(null);
+    setSelectedIds([]);
+    setOnePasswordAccountId(null);
+    setOnePasswordAccounts(null);
     try {
-      const result = await invoke("browser:list-1password", {});
+      const result = await invoke("browser:list-1password-accounts", {});
+      setOnePasswordAccounts(result.accounts);
+      if (result.accounts.length === 1) {
+        const accountId = result.accounts[0]!.id;
+        setOnePasswordAccountId(accountId);
+        const logins = await invoke("browser:list-1password", { accountId });
+        setItems(logins.items);
+      }
+    } catch {
+      setError("1Password CLI couldn’t connect. In 1Password Settings > Developer, enable Integrate with 1Password CLI, then try again.");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const chooseOnePasswordAccount = async (accountId: string) => {
+    if (busy) return;
+    setBusy("1password-list");
+    setError(null);
+    setNotice(null);
+    setOnePasswordAccountId(accountId);
+    setItems(null);
+    setSelectedIds([]);
+    try {
+      const result = await invoke("browser:list-1password", { accountId });
       setItems(result.items);
     } catch {
-      setError("1Password is unavailable. Open and unlock the 1Password app, enable CLI integration, then try again.");
+      setError("Couldn’t list logins for this 1Password account. Check its CLI access and try again.");
     } finally {
       setBusy(null);
     }
   };
 
   const importOnePassword = async () => {
-    if (selectedIds.length === 0 || busy) return;
+    if (!onePasswordAccountId || selectedIds.length === 0 || busy) return;
     setBusy("1password-import");
     setError(null);
     setNotice(null);
     try {
-      const result = await invoke("browser:import-1password", { ids: selectedIds });
+      const result = await invoke("browser:import-1password", { accountId: onePasswordAccountId, ids: selectedIds });
       setNotice(`Imported ${result.imported} ${result.imported === 1 ? "login" : "logins"} from 1Password.${result.skipped ? ` Couldn’t import ${result.skipped} items.` : ""}`);
       setSelectedIds([]);
     } catch {
@@ -185,6 +216,18 @@ export default function BrowserSecretImportView() {
         <button type="button" disabled={busy !== null} className="mt-3 rounded-lg border px-3 py-2 text-xs font-medium disabled:opacity-50" style={{ borderColor: "var(--border-default)" }} onClick={() => { void loadOnePassword(); }}>
           {busy === "1password-list" ? "Opening 1Password…" : "Choose 1Password logins"}
         </button>
+        {onePasswordAccounts && onePasswordAccounts.length === 0 ? <p className="mt-3 text-xs">No local 1Password accounts found for CLI access.</p> : null}
+        {onePasswordAccounts && onePasswordAccounts.length > 1 ? (
+          <div className="mt-3 space-y-2" aria-label="1Password accounts">
+            <p className="text-xs">Choose the 1Password account to import from.</p>
+            {onePasswordAccounts.map((account) => (
+              <button key={account.id} type="button" disabled={busy !== null} aria-pressed={onePasswordAccountId === account.id}
+                className="block w-full rounded-lg border px-3 py-2 text-left text-xs disabled:opacity-50"
+                style={{ borderColor: onePasswordAccountId === account.id ? "var(--accent)" : "var(--border-default)" }}
+                onClick={() => { void chooseOnePasswordAccount(account.id); }}>{account.label}</button>
+            ))}
+          </div>
+        ) : null}
         {items ? (
           <div className="mt-3">
             {items.length === 0 ? <p className="text-xs">No website Login items found.</p> : (

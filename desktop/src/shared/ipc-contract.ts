@@ -117,6 +117,7 @@ const BrowserSecretImportResultSchema = z.strictObject({
   skipped: z.number().int().nonnegative().max(60_000),
 });
 const OnePasswordItemIdSchema = z.string().regex(/^[A-Za-z0-9]{12,64}$/);
+const OnePasswordAccountIdSchema = z.string().regex(/^[A-Za-z0-9]{20,64}$/);
 
 // App-wide Chromium zoom factor (webContents.setZoomFactor). Bounded so a
 // renderer can never push the UI outside the supported 50%–200% range.
@@ -403,14 +404,20 @@ export const INVOKE_CHANNELS = {
     request: z.strictObject({ sourceId: BrowserSecretSourceIdSchema, hosts: z.array(BrowserHostSchema).min(1).max(5_000) }),
     response: BrowserSecretImportResultSchema,
   },
-  "browser:list-1password": {
+  "browser:list-1password-accounts": {
     request: Empty,
+    response: z.strictObject({ accounts: z.array(z.strictObject({
+      id: OnePasswordAccountIdSchema, label: z.string().min(1).max(320),
+    })).max(32) }),
+  },
+  "browser:list-1password": {
+    request: z.strictObject({ accountId: OnePasswordAccountIdSchema }),
     response: z.strictObject({ items: z.array(z.strictObject({
       id: OnePasswordItemIdSchema, title: z.string().max(256), origin: BrowserOriginSchema,
     })).max(2_000) }),
   },
   "browser:import-1password": {
-    request: z.strictObject({ ids: z.array(OnePasswordItemIdSchema).min(1).max(2_000) }),
+    request: z.strictObject({ accountId: OnePasswordAccountIdSchema, ids: z.array(OnePasswordItemIdSchema).min(1).max(2_000) }),
     response: z.strictObject({ imported: z.number().int().nonnegative().max(2_000), skipped: z.number().int().nonnegative().max(2_000) }),
   },
   "browser:list-passwords": {

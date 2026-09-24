@@ -3,9 +3,10 @@ import { join } from "node:path";
 import { createFileDownloadService } from "./files/file-download-service";
 import { importBrowserPages, listBrowserImportSources } from "./browser/import-pages";
 import { importChromiumSites, listChromiumSecretSources, previewChromiumSites } from "./browser/import-secrets";
+import { resolveBrowserImportHome } from "./browser/source-home";
 import { createBrowserPasswordVault, type BrowserPasswordVault } from "./browser/password-vault";
 import { bindBrowserVaultToAccount, browserAccountScope, BrowserAccountChangedError } from "./browser/account-scope";
-import { importOnePasswordLogins, listOnePasswordLogins } from "./browser/one-password";
+import { importOnePasswordLogins, listOnePasswordAccounts, listOnePasswordLogins } from "./browser/one-password";
 import { exportBrowserPasswords } from "./browser/password-export";
 import { pathToFileURL } from "node:url";
 import { AuthService } from "./auth/auth-service";
@@ -224,7 +225,10 @@ if (!gotLock) {
       const userData = app.getPath("userData");
       const store = createLocalStore({ dir: userData });
       const credentialStore = createCredentialStore({ dir: userData, safeStorage });
-      const localBrowserHome = process.env.OPERATOR_USER_DATA_DIR ? userData : app.getPath("home");
+      const localBrowserHome = resolveBrowserImportHome(
+        userData, app.getPath("home"), Boolean(process.env.OPERATOR_USER_DATA_DIR),
+        process.env.OPERATOR_BROWSER_USE_HOST_HOME === "1", app.isPackaged,
+      );
       let closeAccountEmbeds: (() => void) | null = null;
       let previousBrowserUserId: string | null = null;
 
@@ -399,13 +403,8 @@ if (!gotLock) {
         store,
         embeds,
         openExternal: openExternalHttpUrl,
-        listBrowserImportSources: () => listBrowserImportSources(
-          process.env.OPERATOR_USER_DATA_DIR ? app.getPath("userData") : app.getPath("home"),
-        ),
-        importBrowserPages: (sourceId) => importBrowserPages(
-          process.env.OPERATOR_USER_DATA_DIR ? app.getPath("userData") : app.getPath("home"),
-          sourceId,
-        ),
+        listBrowserImportSources: () => listBrowserImportSources(localBrowserHome),
+        importBrowserPages: (sourceId) => importBrowserPages(localBrowserHome, sourceId),
         listBrowserSecretSources: () => listChromiumSecretSources(localBrowserHome),
         previewBrowserSites: (sourceId) => previewChromiumSites(localBrowserHome, sourceId),
         importBrowserSites: async ({ sourceId, hosts }) => {
@@ -421,8 +420,9 @@ if (!gotLock) {
           await browserSession.cookies.flushStore();
           return result;
         },
-        listOnePasswordItems: () => listOnePasswordLogins(),
-        importOnePasswordItems: (ids) => importOnePasswordLogins(ids, browserVaultForAccount()),
+        listOnePasswordAccounts: () => listOnePasswordAccounts(),
+        listOnePasswordItems: (accountId) => listOnePasswordLogins(accountId),
+        importOnePasswordItems: (accountId, ids) => importOnePasswordLogins(accountId, ids, browserVaultForAccount()),
         listBrowserPasswords: async (origin) => {
           const owner = currentBrowserScope().userId;
           const items = await browserVaultForAccount().list();

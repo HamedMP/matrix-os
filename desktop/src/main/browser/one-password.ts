@@ -6,7 +6,14 @@ import { BrowserAccountChangedError } from "./account-scope";
 
 const execFileAsync = promisify(execFile);
 const MAX_ITEMS = 2_000;
+const MAX_ACCOUNTS = 32;
 const ITEM_ID = /^[A-Za-z0-9]{12,64}$/;
+const ACCOUNT_ID = /^[A-Za-z0-9]{20,64}$/;
+
+export interface OnePasswordAccount {
+  id: string;
+  label: string;
+}
 
 export interface OnePasswordSummary {
   id: string;
@@ -73,8 +80,26 @@ export async function runOnePasswordCli(args: string[], signal?: AbortSignal): P
   }
 }
 
-export async function listOnePasswordLogins(run: RunCli = runOnePasswordCli, signal?: AbortSignal): Promise<OnePasswordSummary[]> {
-  const value = await run(["item", "list", "--categories", "Login", "--format", "json"], signal);
+export async function listOnePasswordAccounts(run: RunCli = runOnePasswordCli): Promise<OnePasswordAccount[]> {
+  const value = await run(["account", "list", "--format", "json"]);
+  if (!Array.isArray(value) || value.length > MAX_ACCOUNTS) throw new Error("1Password account list unavailable");
+  const seen = new Set<string>();
+  const accounts: OnePasswordAccount[] = [];
+  for (const candidate of value) {
+    const account = record(candidate);
+    if (!account || typeof account.account_uuid !== "string" ||
+      !ACCOUNT_ID.test(account.account_uuid) || seen.has(account.account_uuid)) continue;
+    const email = typeof account.email === "string" ? account.email.slice(0, 256) : "";
+    const url = typeof account.url === "string" ? account.url.slice(0, 256) : "";
+    seen.add(account.account_uuid);
+    accounts.push({ id: account.account_uuid, label: [email, url].filter(Boolean).join(" · ").slice(0, 320) || "1Password account" });
+  }
+  return accounts;
+}
+
+export async function listOnePasswordLogins(accountId: string, run: RunCli = runOnePasswordCli, signal?: AbortSignal): Promise<OnePasswordSummary[]> {
+  if (!ACCOUNT_ID.test(accountId)) throw new Error("invalid 1Password account");
+  const value = await run(["item", "list", "--categories", "Login", "--format", "json", "--account", accountId], signal);
   if (!Array.isArray(value) || value.length > MAX_ITEMS) throw new Error("1Password list unavailable");
   const seen = new Set<string>();
   const items: OnePasswordSummary[] = [];
@@ -90,15 +115,16 @@ export async function listOnePasswordLogins(run: RunCli = runOnePasswordCli, sig
 }
 
 export async function importOnePasswordLogins(
+  accountId: string,
   ids: string[],
   vault: BrowserPasswordVault,
   run: RunCli = runOnePasswordCli,
 ): Promise<{ imported: number; skipped: number }> {
-  if (!Array.isArray(ids) || ids.length === 0 || ids.length > MAX_ITEMS || ids.some((id) => !ITEM_ID.test(id))) {
+  if (!ACCOUNT_ID.test(accountId) || !Array.isArray(ids) || ids.length === 0 || ids.length > MAX_ITEMS || ids.some((id) => !ITEM_ID.test(id))) {
     throw new Error("invalid 1Password selection");
   }
   const signal = AbortSignal.timeout(180_000);
-  const summaries = await listOnePasswordLogins(run, signal);
+  const summaries = await listOnePasswordLogins(accountId, run, signal);
   const allowed = new Map(summaries.map((item) => [item.id, item.origin]));
   const unique = [...new Set(ids)];
   if (unique.some((id) => !allowed.has(id))) throw new Error("invalid 1Password selection");
@@ -108,7 +134,7 @@ export async function importOnePasswordLogins(
     if (signal.aborted) break;
     let detail: unknown;
     try {
-      detail = await run(["item", "get", id, "--format", "json", "--reveal"], signal);
+      detail = await run(["item", "get", id, "--format", "json", "--reveal", "--account", accountId], signal);
     } catch (error: unknown) {
       if (error instanceof BrowserAccountChangedError) throw error;
       console.warn("[browser-import] selected 1Password item unavailable", error instanceof Error ? error.name : "unknown");

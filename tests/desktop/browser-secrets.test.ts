@@ -13,8 +13,9 @@ import {
 } from "@desktop/main/browser/chromium-secrets";
 import { createBrowserPasswordVault, type BrowserPasswordVault } from "@desktop/main/browser/password-vault";
 import { bindBrowserVaultToAccount, browserAccountScope, BrowserAccountChangedError } from "@desktop/main/browser/account-scope";
-import { importOnePasswordLogins, listOnePasswordLogins, parseOnePasswordLogin } from "@desktop/main/browser/one-password";
+import { importOnePasswordLogins, listOnePasswordAccounts, listOnePasswordLogins, parseOnePasswordLogin } from "@desktop/main/browser/one-password";
 import { importChromiumSites, listChromiumSecretSources, previewChromiumSites } from "@desktop/main/browser/import-secrets";
+import { resolveBrowserImportHome } from "@desktop/main/browser/source-home";
 import { exportBrowserPasswords } from "@desktop/main/browser/password-export";
 import { INVOKE_CHANNELS } from "@desktop/shared/ipc-contract";
 
@@ -200,6 +201,24 @@ describe("OS-encrypted Matrix Browser password vault", () => {
 });
 
 describe("1Password direct import", () => {
+  const accountId = "A".repeat(26);
+
+  it("lists local accounts so a CLI with multiple accounts can be scoped", async () => {
+    const calls: string[][] = [];
+    const run = async (args: string[]) => {
+      calls.push(args);
+      return [
+        { account_uuid: accountId, email: "first@example.com", url: "first.1password.com" },
+        { account_uuid: "B".repeat(26), email: "second@example.com", url: "second.1password.com" },
+      ];
+    };
+    expect(await listOnePasswordAccounts(run)).toEqual([
+      { id: accountId, label: "first@example.com · first.1password.com" },
+      { id: "B".repeat(26), label: "second@example.com · second.1password.com" },
+    ]);
+    expect(calls).toEqual([["account", "list", "--format", "json"]]);
+  });
+
   it("accepts a Login with a supported website, username, and concealed password", () => {
     expect(parseOnePasswordLogin({ category: "LOGIN", urls: [{ href: "https://example.com/login" }], fields: [
       { id: "username", value: "alice" }, { id: "password", value: "secret", type: "CONCEALED" },
@@ -223,12 +242,16 @@ describe("1Password direct import", () => {
       if (args[1] === "list") return list;
       return { ...list[0], fields: [{ id: "username", value: "alice" }, { id: "password", value: "synthetic-op-secret" }] };
     };
-    expect(await listOnePasswordLogins(run)).toEqual([
+    expect(await listOnePasswordLogins(accountId, run)).toEqual([
       { id: "abcdefghijkl", title: "Example", origin: "https://example.com" },
       { id: "mnopqrstuvwx", title: "Other", origin: "https://other.example" },
     ]);
-    expect(await importOnePasswordLogins(["abcdefghijkl"], vault, run)).toEqual({ imported: 1, skipped: 0 });
-    expect(calls.filter((args) => args[1] === "get")).toEqual([["item", "get", "abcdefghijkl", "--format", "json", "--reveal"]]);
+    expect(await importOnePasswordLogins(accountId, ["abcdefghijkl"], vault, run)).toEqual({ imported: 1, skipped: 0 });
+    expect(calls.filter((args) => args[1] === "list")).toEqual([
+      ["item", "list", "--categories", "Login", "--format", "json", "--account", accountId],
+      ["item", "list", "--categories", "Login", "--format", "json", "--account", accountId],
+    ]);
+    expect(calls.filter((args) => args[1] === "get")).toEqual([["item", "get", "abcdefghijkl", "--format", "json", "--reveal", "--account", accountId]]);
     expect(await vault.find("https://example.com", "alice")).toMatchObject({ password: "synthetic-op-secret" });
   });
 
@@ -245,7 +268,7 @@ describe("1Password direct import", () => {
         { id: "username", value: id }, { id: "password", value: "synthetic-secret" },
       ] };
     };
-    expect(await importOnePasswordLogins(ids, vault, run)).toEqual({ imported: 20, skipped: 1 });
+    expect(await importOnePasswordLogins(accountId, ids, vault, run)).toEqual({ imported: 20, skipped: 1 });
     expect(saved).toHaveLength(20);
   });
 
@@ -264,7 +287,7 @@ describe("1Password direct import", () => {
         { id: "username", value: args[2] }, { id: "password", value: "synthetic-secret" },
       ],
     };
-    expect(await importOnePasswordLogins(ids, vault, run)).toEqual({ imported: 20, skipped: 1 });
+    expect(await importOnePasswordLogins(accountId, ids, vault, run)).toEqual({ imported: 20, skipped: 1 });
     expect(saved).toHaveLength(20);
   });
 
@@ -281,11 +304,17 @@ describe("1Password direct import", () => {
         { id: "username", value: args[2] }, { id: "password", value: "synthetic-secret" },
       ],
     };
-    await expect(importOnePasswordLogins(ids, vault, run)).rejects.toBeInstanceOf(BrowserAccountChangedError);
+    await expect(importOnePasswordLogins(accountId, ids, vault, run)).rejects.toBeInstanceOf(BrowserAccountChangedError);
   });
 });
 
 describe("selected local browser profile transfer", () => {
+  it("uses the real Mac browser home only when a local preview opts in", () => {
+    expect(resolveBrowserImportHome("/temporary-profile", "/real-home", true, true, false)).toBe("/real-home");
+    expect(resolveBrowserImportHome("/temporary-profile", "/real-home", true, true, true)).toBe("/temporary-profile");
+    expect(resolveBrowserImportHome("/temporary-profile", "/real-home", true, false, false)).toBe("/temporary-profile");
+  });
+
   it("caps the site preview while retaining recently discovered hosts", async () => {
     const home = await mkdtemp(join(tmpdir(), "matrix-source-home-"));
     dirs.push(home);
@@ -414,7 +443,8 @@ describe("browser secret IPC contract", () => {
     expect(channels["browser:import-sites"]?.request.safeParse({ sourceId: "arc:Default", hosts: ["../secret"] }).success).toBe(false);
     expect(channels["browser:import-sites"]?.response.safeParse({ passwords: 1, cookies: 2, skipped: 0 }).success).toBe(true);
     expect(channels["browser:import-sites"]?.response.safeParse({ passwords: 1, cookies: 2, skipped: 0, password: "leak" }).success).toBe(false);
-    expect(channels["browser:import-1password"]?.request.safeParse({ ids: ["abcdefghijkl"] }).success).toBe(true);
+    expect(channels["browser:import-1password"]?.request.safeParse({ accountId: "A".repeat(26), ids: ["abcdefghijkl"] }).success).toBe(true);
+    expect(channels["browser:import-1password"]?.request.safeParse({ ids: ["abcdefghijkl"] }).success).toBe(false);
     expect(channels["browser:delete-password"]?.request.safeParse({ origin: "https://example.com", username: "alice" }).success).toBe(true);
     expect(channels["browser:delete-password"]?.request.safeParse({ origin: "https://example.com", username: "alice", password: "leak" }).success).toBe(false);
     expect(channels["browser:export-passwords"]?.response.safeParse({ exported: true }).success).toBe(true);

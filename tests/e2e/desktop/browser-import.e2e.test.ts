@@ -12,6 +12,7 @@ const root = resolve(__dirname, "../../..");
 const main = join(root, "desktop/out/main/index.js");
 const executablePath = createRequire(join(root, "desktop/package.json"))("electron") as string;
 const suite = existsSync(main) ? describe : describe.skip;
+const selectedOpAccountId = "B".repeat(26);
 
 suite("Electron Desktop browser import", () => {
   let gateway: StubGateway | undefined;
@@ -36,10 +37,14 @@ suite("Electron Desktop browser import", () => {
       "CREATE TABLE cookies (host_key TEXT); INSERT INTO cookies VALUES ('.example.com');"]);
     const bin = join(userDataDir, "bin");
     await mkdir(bin);
-    await writeFile(join(bin, "op"), `#!/bin/sh
-if [ "$2" = "list" ]; then
+await writeFile(join(bin, "op"), `#!/bin/sh
+if [ "$1" = "account" ] && [ "$2" = "list" ]; then
+  printf '%s' '[{"account_uuid":"${"A".repeat(26)}","email":"first@example.com","url":"first.1password.com"},{"account_uuid":"${selectedOpAccountId}","email":"second@example.com","url":"second.1password.com"}]'
+elif [ "$1" = "item" ] && [ "$2" = "list" ]; then
+  case " $* " in *" --account ${selectedOpAccountId} "*) ;; *) exit 1 ;; esac
   printf '%s' '[{"id":"abcdefghijkl","title":"Example login","category":"LOGIN","urls":[{"href":"https://example.com/login"}]}]'
 else
+  case " $* " in *" --account ${selectedOpAccountId} "*) ;; *) exit 1 ;; esac
   printf '%s' '{"id":"abcdefghijkl","title":"Example login","category":"LOGIN","urls":[{"href":"https://example.com/login"}],"fields":[{"id":"username","value":"synthetic-user"},{"id":"password","value":"synthetic-password","type":"CONCEALED"}]}'
 fi
 `, { mode: 0o755 });
@@ -96,6 +101,7 @@ fi
     await page.getByRole("button", { name: "Import selected websites (1)" }).waitFor();
     await page.getByRole("button", { name: "Remove missing.example" }).click();
     await page.getByRole("button", { name: "Choose 1Password logins" }).click();
+    await page.getByRole("button", { name: /second@example.com · second.1password.com/ }).click();
     await page.getByRole("checkbox", { name: /Example login/ }).check();
     await page.getByRole("button", { name: "Import selected logins (1)" }).click();
     await page.getByRole("status").filter({ hasText: "Imported 1 login from 1Password" }).waitFor();
@@ -106,7 +112,7 @@ fi
   }, 60_000);
 
   it("does not expose the first account's passwords after a second Matrix account signs in", async () => {
-    const imported = await page.evaluate(async () => window.operator.invoke("browser:import-1password", { ids: ["abcdefghijkl"] }));
+    const imported = await page.evaluate(async (accountId) => window.operator.invoke("browser:import-1password", { accountId, ids: ["abcdefghijkl"] }), selectedOpAccountId);
     expect(imported.imported).toBe(1);
     expect(await page.evaluate(async () => window.operator.invoke("browser:list-passwords", { origin: "https://example.com" })))
       .toEqual({ accounts: [{ username: "synthetic-user" }] });

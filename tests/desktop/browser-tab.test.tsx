@@ -4,7 +4,7 @@ import React from "react";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import BrowserTab from "@desktop/renderer/src/features/browser/BrowserTab";
-import { selectImportHost } from "@desktop/renderer/src/features/browser/BrowserSecretImportView";
+import BrowserSecretImportView, { selectImportHost } from "@desktop/renderer/src/features/browser/BrowserSecretImportView";
 import { invoke } from "@desktop/renderer/src/lib/operator";
 import { useBrowserNavigation } from "@desktop/renderer/src/stores/browser-navigation";
 
@@ -24,6 +24,33 @@ describe("BrowserTab", () => {
     expect(selectImportHost(selected, "extra.example")).toBe(selected);
     expect(selectImportHost(selected.slice(1), "extra.example")).toHaveLength(5_000);
     expect(selectImportHost(selected, "site1.example")).toBe(selected);
+  });
+
+  it("lets the owner choose which local 1Password account to import", async () => {
+    const accountId = "B".repeat(26);
+    vi.mocked(invoke).mockImplementation(async (channel) => {
+      if (channel === "browser:list-secret-sources") return { sources: [] } as never;
+      if (channel === "browser:list-1password-accounts") return { accounts: [
+        { id: "A".repeat(26), label: "First · first.1password.com" },
+        { id: accountId, label: "Second · second.1password.com" },
+      ] } as never;
+      if (channel === "browser:list-1password") return { items: [
+        { id: "abcdefghijkl", title: "Selected login", origin: "https://example.com" },
+      ] } as never;
+      if (channel === "browser:import-1password") return { imported: 1, skipped: 0 } as never;
+      return { ok: true } as never;
+    });
+    render(<BrowserSecretImportView />);
+    fireEvent.click(screen.getByRole("button", { name: "Choose 1Password logins" }));
+    const account = await screen.findByRole("button", { name: /Second · second.1password.com/ });
+    fireEvent.click(account);
+    expect(await screen.findByText("Selected login")).toBeTruthy();
+    expect(invoke).toHaveBeenCalledWith("browser:list-1password", { accountId });
+    fireEvent.click(screen.getByRole("checkbox", { name: /Selected login/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Import selected logins (1)" }));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("browser:import-1password", {
+      accountId, ids: ["abcdefghijkl"],
+    }));
   });
 
   beforeEach(() => {
