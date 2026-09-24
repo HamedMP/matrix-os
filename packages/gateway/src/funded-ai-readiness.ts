@@ -56,10 +56,15 @@ export function createFundedAiReadinessReader(options: {
       const { policy, funding } = FundedAiRuntimeFundingSummaryResponseSchema.parse({ contractVersion: 1, ...raw });
       const current = now().getTime();
       if (!healthy || !policy.enabled || Date.parse(policy.checkedAt) > current
-        || Date.parse(policy.staleAfter) <= current || funding.remainingBalanceMicrousd === 0
-        || funding.remainingBudgetMicrousd === 0) return unavailable;
+        || Date.parse(policy.staleAfter) <= current || funding.remainingBudgetMicrousd === 0) return unavailable;
       const allowedModelIds = policy.allowedModelIds.map((id) => id.replace(/^anthropic\//, ""));
       if (allowedModelIds.length === 0) return unavailable;
+      if (funding.remainingBalanceMicrousd === 0) return {
+        readiness: { state: "unavailable", checkedAt: checkedAt.toISOString(),
+          staleAfter: new Date(Math.min(Date.parse(policy.staleAfter), checkedAt.getTime() + 30_000)).toISOString(),
+          action: "retry", safeReason: "credit_required" },
+        allowedModelIds,
+      };
       return {
         readiness: { state: "ready", checkedAt: checkedAt.toISOString(),
           staleAfter: new Date(Math.min(Date.parse(policy.staleAfter), checkedAt.getTime() + 30_000)).toISOString(),

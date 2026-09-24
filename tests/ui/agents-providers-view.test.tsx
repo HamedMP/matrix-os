@@ -709,6 +709,34 @@ describe("AgentsProvidersView", () => {
     expect(screen.queryByText("$0.00 remaining")).toBeNull();
   });
 
+  it("offers checkout for verified zero credit but not a broken route or unavailable ledger", () => {
+    const current = snapshot();
+    const source = current.accessSources[0]!;
+    source.readiness = { state: "unavailable", checkedAt: now, staleAfter: later,
+      action: "retry", safeReason: "credit_required" };
+    if (source.usage.kind !== "managed_credit") throw new Error("Fixture requires managed credit");
+    source.usage.remainingMicrousd = 0;
+    source.usage.credit.remainingBalanceMicrousd = 0;
+    const { rerender } = setup({ snapshot: current });
+    const gateway = screen.getByRole("region", { name: "Matrix AI" });
+    expect(within(gateway).getByText("Credit needed")).toBeVisible();
+    expect(within(gateway).getByRole("button", { name: "Add credit" })).toBeEnabled();
+    expect(within(gateway).getByText(/Add credit to use Matrix AI/)).toBeVisible();
+
+    const broken = structuredClone(current);
+    broken.accessSources[0]!.readiness.safeReason = "provider_unavailable";
+    rerender(<AgentsProvidersView {...setupProps(broken)} />);
+    expect(within(gateway).queryByRole("button", { name: "Add credit" })).not.toBeInTheDocument();
+
+    const ledgerMissing = structuredClone(current);
+    ledgerMissing.accessSources[0]!.usage = {
+      kind: "unavailable", authority: "unavailable", state: "unavailable",
+      scope: "owner_entitlement", reason: "ledger_not_available", asOf: null,
+    };
+    rerender(<AgentsProvidersView {...setupProps(ledgerMissing)} />);
+    expect(within(gateway).queryByRole("button", { name: "Add credit" })).not.toBeInTheDocument();
+  });
+
   it("shows per-account usage and keeps login, logout, and remove distinct", async () => {
     const { onMutate } = setup();
     const personal = screen.getByTestId("account-account_personal");

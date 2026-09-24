@@ -13,6 +13,7 @@ import { createTestPlatformDb, destroyTestPlatformDb } from "./platform-db-test-
 
 const checkoutEnv = {
   MATRIX_FUNDED_AI_ADDON_CHECKOUT_ENABLED: "true",
+  MATRIX_FUNDED_AI_RELAY_URL: "https://relay.example.test",
   STRIPE_SECRET_KEY: "configured",
   STRIPE_WEBHOOK_SECRET: "whsec_test",
   STRIPE_PRICE_AI_CREDIT_USD_5: "price_ai_5",
@@ -31,6 +32,7 @@ describe("funded AI add-on checkout", () => {
   let stripe: StripeBillingClient;
   let repository: ReturnType<typeof createAiFundedPolicyRepository>;
   let webhookEvent: StripeWebhookEvent;
+  let relayHealthFetch: ReturnType<typeof vi.fn<typeof fetch>>;
 
   beforeEach(async () => {
     ({ db } = await createTestPlatformDb());
@@ -74,6 +76,7 @@ describe("funded AI add-on checkout", () => {
       constructWebhookEvent: vi.fn(() => webhookEvent),
     };
     webhookEvent = completedEvent();
+    relayHealthFetch = vi.fn(async () => new Response(null, { status: 200 }));
   });
 
   afterEach(async () => {
@@ -89,6 +92,7 @@ describe("funded AI add-on checkout", () => {
       resolveClerkUserId: () => Promise.resolve(userId),
       now: () => new Date("2026-08-31T10:00:00.000Z"),
       fundedAiRepository: repository,
+      fundedRelayHealthFetch: relayHealthFetch,
     }));
     return hono;
   }
@@ -145,6 +149,9 @@ describe("funded AI add-on checkout", () => {
     });
 
     expect(response.status).toBe(200);
+    expect(relayHealthFetch).toHaveBeenCalledWith("https://relay.example.test/health", expect.objectContaining({
+      redirect: "error", signal: expect.any(AbortSignal),
+    }));
     await expect(response.json()).resolves.toEqual({ url: "https://checkout.stripe.com/c/pay/cs_test" });
     expect(stripe.createAiCreditCheckoutSession).toHaveBeenCalledWith({
       idempotencyKey: `matrix-ai-credit:${createHash("sha256")
@@ -161,6 +168,19 @@ describe("funded AI add-on checkout", () => {
       successUrl: "https://app.matrix-os.com/?billing=success&checkout=success",
       cancelUrl: "https://app.matrix-os.com/?billing=canceled",
     });
+  });
+
+  it("blocks a new paid checkout when owner policy or relay health is unavailable", async () => {
+    relayHealthFetch.mockResolvedValueOnce(new Response(null, { status: 503 }));
+    expect((await createCheckout()).status).toBe(503);
+    expect(stripe.createAiCreditCheckoutSession).not.toHaveBeenCalled();
+
+    await repository.setRuntimePolicy({
+      identity, expectedRevision: 1, enabled: false, allowedModelIds: [],
+      monthlyBudgetMicrousd: 50_000_000, expiresAt: null,
+    });
+    expect((await createCheckout()).status).toBe(503);
+    expect(stripe.createAiCreditCheckoutSession).not.toHaveBeenCalled();
   });
 
   it("rejects client-supplied money, unknown packages, missing auth, and non-running runtimes", async () => {

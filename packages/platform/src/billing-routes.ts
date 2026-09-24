@@ -74,6 +74,7 @@ import {
   prepareAiCreditCheckoutClaim,
 } from './ai-credit-checkout-store.js';
 import { processAiCreditWebhookEvent } from './ai-credit-checkout-webhook.js';
+import { isAiCreditCheckoutRouteHealthy } from './ai-credit-checkout-readiness.js';
 import type { RedditConversionsClient } from './reddit-conversions.js';
 import {
   createRedditAttributionExpiry,
@@ -213,7 +214,9 @@ export function createBillingRoutes(options: {
   now?: () => Date;
   upsertEntitlement?: typeof upsertBillingEntitlement;
   prebilling?: PrebillingCheckoutCoordinator;
-  fundedAiRepository?: Pick<import('./ai-funded-policy-repository.js').AiFundedPolicyRepository, 'grantCreditInTransaction'>;
+  fundedAiRepository?: Pick<import('./ai-funded-policy-repository.js').AiFundedPolicyRepository,
+    'grantCreditInTransaction' | 'getRuntimeFundingSummary'>;
+  fundedRelayHealthFetch?: typeof fetch;
   redditConversions?: RedditConversionsClient;
   /**
    * Optional product telemetry sink. Fire-and-forget: implementations must
@@ -624,6 +627,13 @@ export function createBillingRoutes(options: {
       }
       const selectedPackage = findAiCreditPackage(aiCreditCheckout, parsed.data.packageId);
       if (!persisted && !selectedPackage) return c.json(BILLING_UNAVAILABLE_RESPONSE, 503);
+      if (!persisted && !await isAiCreditCheckoutRouteHealthy({
+        repository: options.fundedAiRepository,
+        identity: { ownerId: clerkUserId, machineId: machine.machineId, runtimeSlot: machine.runtimeSlot },
+        relayBaseUrl: env.MATRIX_FUNDED_AI_RELAY_URL,
+        fetchFn: options.fundedRelayHealthFetch,
+        now,
+      })) return c.json(BILLING_UNAVAILABLE_RESPONSE, 503);
       const claim = persisted ?? await prepareAiCreditCheckoutClaim(options.db, {
         idempotencyKey, requestId: parsed.data.requestId, ownerId: clerkUserId,
         machineId: machine.machineId, runtimeSlot: machine.runtimeSlot,
