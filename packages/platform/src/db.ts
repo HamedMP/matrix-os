@@ -65,6 +65,7 @@ export interface UserMachinesTable {
   clerk_user_id: string;
   handle: string;
   runtime_slot: string;
+  runtime_token_epoch: Generated<number>;
   provisioning_class: string;
   access_clerk_user_ids: string[];
   developer_tools: string;
@@ -140,6 +141,9 @@ export interface AiFundedUsageReservationsTable {
   authorization_response: string;
   settlement_response: string | null;
   finalization_mode: string | null;
+  manual_review_evidence_ref: string | null;
+  manual_review_actor: string | null;
+  manual_reviewed_at: string | null;
   start_response: string | null;
   release_response: string | null;
   release_reason: string | null;
@@ -867,6 +871,7 @@ export interface UserMachineRecord {
   clerkUserId: string;
   handle: string;
   runtimeSlot: string;
+  runtimeTokenEpoch: number;
   provisioningClass: UserMachineProvisioningClass;
   accessClerkUserIds: string[];
   developerTools: DeveloperToolId[];
@@ -1158,6 +1163,7 @@ export interface NewUserMachine {
   clerkUserId: string;
   handle: string;
   runtimeSlot?: string;
+  runtimeTokenEpoch?: number;
   provisioningClass?: UserMachineProvisioningClass;
   accessClerkUserIds?: string[];
   developerTools?: DeveloperToolId[];

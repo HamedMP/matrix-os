@@ -11,6 +11,31 @@ function broker() {
 }
 
 describe("Custom MCP HTTP boundary", () => {
+  it("completes an OAuth callback from state without a Matrix session", async () => {
+    const complete = vi.fn(async () => ({
+      serverId: "5f03d43b-bbc4-47f0-97d2-a281cf15c4c3",
+    }));
+    const app = createCustomMcpRoutes({
+      broker: broker(),
+      resolveUserId: async () => null,
+      oauth: {
+        start: vi.fn(),
+        complete,
+      },
+    });
+
+    const response = await app.request(
+      `/oauth/callback?state=${"s".repeat(32)}&code=provider-code`,
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      ok: true,
+      serverId: "5f03d43b-bbc4-47f0-97d2-a281cf15c4c3",
+    });
+    expect(complete).toHaveBeenCalledWith("s".repeat(32), "provider-code");
+  });
+
   it("checks owner identity before revealing whether an id exists", async () => {
     const service = broker();
     const app = createCustomMcpRoutes({ broker: service, resolveUserId: async () => null });

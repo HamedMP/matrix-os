@@ -94,4 +94,23 @@ describe("Custom MCP platform persistence", () => {
     expect(await db.sweepPendingCustomMcpServers(new Date())).toBe(1);
     expect((await db.listCustomMcpServers(userId)).map((server) => server.name)).toEqual(["Active"]);
   });
+
+  it("marks legacy servers discovered once without marking newly created servers", async () => {
+    const legacy = await db.createCustomMcpServer({
+      userId, name: "Existing", url: "https://mcp.acme.tools/mcp", authMode: "none",
+      pendingExpiresAt: new Date(Date.now() + 86_400_000),
+    });
+    await pglite.client.exec("ALTER TABLE custom_mcp_servers DROP COLUMN discovered_at");
+
+    await db.migrate();
+    const migrated = await db.getCustomMcpServerForBroker(legacy.id, userId);
+    expect(migrated?.discovered_at).toEqual(migrated?.created_at);
+
+    const fresh = await db.createCustomMcpServer({
+      userId, name: "Fresh", url: "https://mcp.acme.tools/new", authMode: "none",
+      pendingExpiresAt: new Date(Date.now() + 86_400_000),
+    });
+    await db.migrate();
+    expect((await db.getCustomMcpServerForBroker(fresh.id, userId))?.discovered_at).toBeNull();
+  });
 });

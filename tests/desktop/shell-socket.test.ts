@@ -231,7 +231,7 @@ describe("ShellSocket URL building", () => {
     const h = createHarness();
     h.socket.connect();
     expect(h.latest().url).toBe(
-      `wss://app.matrix-os.com/ws/terminal/tab?workspaceId=${WORKSPACE_ID}&tabId=${TAB_ID}&client=electron&fromSeq=${LIVE_TAIL_FROM_SEQ}&lease=exclusive&inputCapability=binary-input-v1`,
+      `wss://app.matrix-os.com/ws/terminal/tab?workspaceId=${WORKSPACE_ID}&tabId=${TAB_ID}&client=electron&fromSeq=${LIVE_TAIL_FROM_SEQ}&lease=exclusive&inputCapability=binary-input-v1&scrollCapability=native-scroll-v1`,
     );
     expect(LIVE_TAIL_FROM_SEQ).toBe(9_007_199_254_740_991);
   });
@@ -255,7 +255,7 @@ describe("ShellSocket URL building", () => {
     const h = createHarness();
     h.socket.connect();
     expect(h.latest().url).toBe(
-      `wss://app.matrix-os.com/ws/terminal/tab?workspaceId=${WORKSPACE_ID}&tabId=${TAB_ID}&client=electron&fromSeq=${LIVE_TAIL_FROM_SEQ}&lease=exclusive&inputCapability=binary-input-v1`,
+      `wss://app.matrix-os.com/ws/terminal/tab?workspaceId=${WORKSPACE_ID}&tabId=${TAB_ID}&client=electron&fromSeq=${LIVE_TAIL_FROM_SEQ}&lease=exclusive&inputCapability=binary-input-v1&scrollCapability=native-scroll-v1`,
     );
     expect(h.latest().url).not.toContain("chat=");
   });
@@ -326,7 +326,7 @@ describe("ShellSocket URL building", () => {
     const h = createHarness({ baseUrl: "http://localhost:3001/" });
     h.socket.connect();
     expect(h.latest().url).toBe(
-      `ws://localhost:3001/ws/terminal/tab?workspaceId=${WORKSPACE_ID}&tabId=${TAB_ID}&client=electron&fromSeq=${LIVE_TAIL_FROM_SEQ}&lease=exclusive&inputCapability=binary-input-v1`,
+      `ws://localhost:3001/ws/terminal/tab?workspaceId=${WORKSPACE_ID}&tabId=${TAB_ID}&client=electron&fromSeq=${LIVE_TAIL_FROM_SEQ}&lease=exclusive&inputCapability=binary-input-v1&scrollCapability=native-scroll-v1`,
     );
   });
 
@@ -370,7 +370,7 @@ describe("ShellSocket URL building", () => {
     h.timers.advance(500);
     expect(h.sockets).toHaveLength(2);
     expect(h.latest().url).toBe(
-      `wss://app.matrix-os.com/ws/terminal/tab?workspaceId=${WORKSPACE_ID}&tabId=${TAB_ID}&client=electron&fromSeq=42&lease=exclusive&inputCapability=binary-input-v1`,
+      `wss://app.matrix-os.com/ws/terminal/tab?workspaceId=${WORKSPACE_ID}&tabId=${TAB_ID}&client=electron&fromSeq=42&lease=exclusive&inputCapability=binary-input-v1&scrollCapability=native-scroll-v1`,
     );
   });
 
@@ -381,7 +381,7 @@ describe("ShellSocket URL building", () => {
     h.timers.advance(500);
     expect(h.sockets).toHaveLength(2);
     expect(h.latest().url).toBe(
-      `wss://app.matrix-os.com/ws/terminal/tab?workspaceId=${WORKSPACE_ID}&tabId=${TAB_ID}&client=electron&fromSeq=${LIVE_TAIL_FROM_SEQ}&lease=exclusive&inputCapability=binary-input-v1`,
+      `wss://app.matrix-os.com/ws/terminal/tab?workspaceId=${WORKSPACE_ID}&tabId=${TAB_ID}&client=electron&fromSeq=${LIVE_TAIL_FROM_SEQ}&lease=exclusive&inputCapability=binary-input-v1&scrollCapability=native-scroll-v1`,
     );
   });
 
@@ -750,7 +750,7 @@ describe("ShellSocket server frames", () => {
     h.timers.advance(500);
     expect(h.sockets).toHaveLength(2);
     expect(h.latest().url).toBe(
-      `wss://app.matrix-os.com/ws/terminal/tab?workspaceId=${WORKSPACE_ID}&tabId=${TAB_ID}&client=electron&fromSeq=${LIVE_TAIL_FROM_SEQ}&lease=exclusive&inputCapability=binary-input-v1`,
+      `wss://app.matrix-os.com/ws/terminal/tab?workspaceId=${WORKSPACE_ID}&tabId=${TAB_ID}&client=electron&fromSeq=${LIVE_TAIL_FROM_SEQ}&lease=exclusive&inputCapability=binary-input-v1&scrollCapability=native-scroll-v1`,
     );
   });
 

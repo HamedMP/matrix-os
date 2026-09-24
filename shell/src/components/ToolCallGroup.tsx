@@ -51,6 +51,20 @@ function ToolStatus({ tool }: { tool: ChatMessage }) {
 }
 
 export function ToolCallGroup({ tools }: ToolCallGroupProps) {
+  const imageGeneration = tools.find((tool) => (
+    tool.toolDisplay?.kind === "image_generation" && tool.toolDisplay.state === "running"
+  ));
+  if (imageGeneration) {
+    return <div className="flex w-fit flex-col gap-2">
+      <div
+        role="status"
+        aria-label={imageGeneration.toolDisplay?.label ?? "Generating image"}
+        data-state="running"
+        className="image-generation-glare size-24 overflow-hidden rounded-xl border motion-reduce:animate-none"
+      />
+      <span className="text-sm font-medium text-muted-foreground">{imageGeneration.toolDisplay?.label ?? "Generating image"}…</span>
+    </div>;
+  }
   if (!tools.some((tool) => tool.toolDisplay?.subagent)) return <OrdinaryToolCallGroup tools={tools} />;
   const sections: ChatMessage[][] = [];
   for (const tool of tools) {

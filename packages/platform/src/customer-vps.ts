@@ -833,6 +833,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
             imageVersion,
             hostBundleUrl: hostBundleUrlForImageVersion(deps.config, imageVersion),
           },
+          row.runtimeTokenEpoch,
         );
         const cleanRecoveryPayload = sealProvisioningPayload({
           registrationToken: payload.registrationToken,
@@ -1238,6 +1239,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
           imageVersion,
           hostBundleUrl: hostBundleUrlForImageVersion(deps.config, imageVersion),
         },
+        row.runtimeTokenEpoch,
       );
       const userData = renderCloudInitTemplate(
         deps.cloudInitTemplate ?? DEFAULT_CLOUD_INIT_TEMPLATE,

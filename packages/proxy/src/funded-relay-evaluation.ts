@@ -11,6 +11,7 @@ import { z } from "zod/v4";
 const MAX_STATE_BYTES = 32 * 1024;
 const JEV_INPUT_PRICE_NANOUSD_PER_TOKEN = 42n;
 const JEV_PRICING_VALID_THROUGH = "2026-09-30T23:59:59.999Z";
+const JEV_PRICING_VERSION = "typesafe-jev-input-2026-09";
 const NANOUSD_PER_USD = 1_000_000_000n;
 const NANOUSD_PER_MICROUSD = 1_000n;
 const textEncoder = new TextEncoder();
@@ -82,6 +83,18 @@ export interface NormalizedFundedJevEvaluation {
   actualCostMicrousd: number | null;
 }
 
+export interface JevPricingSnapshot {
+  version: typeof JEV_PRICING_VERSION;
+  nanoUsdPerInputToken: bigint;
+}
+
+export function reviewedJevPricing(at: Date): JevPricingSnapshot {
+  if (!Number.isFinite(at.getTime()) || at.getTime() > Date.parse(JEV_PRICING_VALID_THROUGH)) {
+    throw new Error("Jev pricing has expired");
+  }
+  return { version: JEV_PRICING_VERSION, nanoUsdPerInputToken: JEV_INPUT_PRICE_NANOUSD_PER_TOKEN };
+}
+
 export function serializeFundedJevEvaluationRequest(input: unknown): SerializedFundedJevEvaluationRequest {
   const request = FundedJevEvaluationRequestSchema.parse(input);
   const body = JSON.stringify({
@@ -97,19 +110,16 @@ export function serializeFundedJevEvaluationRequest(input: unknown): SerializedF
   return { request, body };
 }
 
-export function jevInputTokensToMicrousd(inputTokens: number, pricedAt: Date): number {
-  if (pricedAt.getTime() > Date.parse(JEV_PRICING_VALID_THROUGH)) {
-    throw new Error("Jev pricing has expired");
-  }
+export function jevInputTokensToMicrousd(inputTokens: number, pricing: JevPricingSnapshot): number {
   const tokens = z.number().int().nonnegative().max(10_000_000).parse(inputTokens);
-  const nanoUsd = BigInt(tokens) * JEV_INPUT_PRICE_NANOUSD_PER_TOKEN;
+  const nanoUsd = BigInt(tokens) * pricing.nanoUsdPerInputToken;
   const rounded = (nanoUsd + NANOUSD_PER_MICROUSD - 1n) / NANOUSD_PER_MICROUSD;
   if (rounded > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error("Jev gateway cost exceeds supported bounds");
   return Number(rounded);
 }
 
-function jevInputTokensToGatewayUsd(inputTokens: number): string {
-  const nanoUsd = BigInt(inputTokens) * JEV_INPUT_PRICE_NANOUSD_PER_TOKEN;
+function jevInputTokensToGatewayUsd(inputTokens: number, pricing: JevPricingSnapshot): string {
+  const nanoUsd = BigInt(inputTokens) * pricing.nanoUsdPerInputToken;
   const whole = nanoUsd / NANOUSD_PER_USD;
   const fraction = (nanoUsd % NANOUSD_PER_USD).toString().padStart(9, "0").replace(/0+$/, "");
   return fraction === "" ? whole.toString() : `${whole}.${fraction}`;
@@ -119,10 +129,10 @@ export function normalizeFundedJevEvaluationResponse(input: {
   value: unknown;
   requestId: string;
   latencyMs: number;
-  pricedAt: Date;
+  pricing: JevPricingSnapshot;
 }): NormalizedFundedJevEvaluation {
   const upstream = CloudflareJevResponseSchema.parse(input.value).result.result;
-  const gatewayUsd = jevInputTokensToGatewayUsd(upstream.usage.input_tokens);
+  const gatewayUsd = jevInputTokensToGatewayUsd(upstream.usage.input_tokens, input.pricing);
   const result = JevEmailTriageResultSchema.parse({
     requestId: `jev_req_${input.requestId}`,
     recipe: JEV_EMAIL_TRIAGE_RECIPE_ID,
@@ -141,7 +151,7 @@ export function normalizeFundedJevEvaluationResponse(input: {
   });
   return {
     result,
-    actualCostMicrousd: jevInputTokensToMicrousd(upstream.usage.input_tokens, input.pricedAt),
+    actualCostMicrousd: jevInputTokensToMicrousd(upstream.usage.input_tokens, input.pricing),
   };
 }
 

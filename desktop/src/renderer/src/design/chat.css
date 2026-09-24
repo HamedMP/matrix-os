@@ -432,6 +432,26 @@
   --scroll-fade-mask: none;
 }
 /* shimmer */
+@keyframes image-generation-glare {
+  0% { background-position: 130% 0; }
+  100% { background-position: -130% 0; }
+}
+
+.image-generation-glare {
+  background-image:
+    linear-gradient(
+      110deg,
+      transparent 20%,
+      color-mix(in srgb, var(--text-primary) 4%, transparent) 38%,
+      color-mix(in srgb, var(--text-primary) 18%, transparent) 50%,
+      color-mix(in srgb, var(--text-primary) 4%, transparent) 62%,
+      transparent 80%
+    ),
+    radial-gradient(circle at 28% 24%, color-mix(in srgb, var(--accent) 15%, transparent), transparent 60%);
+  background-size: 260% 100%, 100% 100%;
+  animation: image-generation-glare 1.65s ease-in-out infinite;
+}
+
 @property --shimmer-angle {
   syntax: "<angle>";
   inherits: true;

@@ -42,11 +42,11 @@ for (const [surface, Component] of [["Web", CustomMcpServersPanel], ["Electron",
       expect(screen.getByRole("button", { name: "Test", exact: true }).matches(":disabled")).toBe(true);
       fireEvent.click(screen.getByRole("button", { name: "Discovering…" }));
       expect(fetchFn.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(1);
-      resolve(Response.json({ ...server, tools: [tool] }));
-      expect(await screen.findByText("Found 1 tool. Select tools below, then enable the server.")).not.toBeNull();
+      resolve(Response.json({ ...server, enabled: true, status: "ready", tools: [{ ...tool, enabled: true }] }));
+      expect(await screen.findByText("Found 1 tool. New tools are enabled by default; review permissions below.")).not.toBeNull();
       expect(await screen.findByRole("checkbox")).not.toBeNull();
       expect(screen.getByLabelText("search approval").matches(":disabled")).toBe(false);
-      expect((screen.getByRole("checkbox") as HTMLInputElement).checked).toBe(false);
+      expect((screen.getByRole("checkbox") as HTMLInputElement).checked).toBe(true);
     });
 
     it("saves permission choices for unchecked tools without enabling them", async () => {

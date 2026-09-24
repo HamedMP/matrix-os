@@ -2721,15 +2721,23 @@ describe("ChatRepository", () => {
   });
 
   it("wires Chat bootstrap and release around the Gateway-owned Kysely lifecycle", () => {
+    // Construction and bootstrap now live in the owner-database startup
+    // module; the shutdown ordering stays in the composition root. The
+    // fallback teardown path proves the same release-before-destroy order
+    // behaviourally in tests/gateway/owner-database-fallback.test.ts.
+    const startup = readFileSync(
+      join(process.cwd(), "packages/gateway/src/startup/owner-database.ts"),
+      "utf8",
+    );
     const source = readFileSync(join(process.cwd(), "packages/gateway/src/server.ts"), "utf8");
-    const construct = source.indexOf("chatRepository = new ChatRepository(kysely");
-    const bootstrap = source.indexOf("await chatRepository.bootstrap()", construct);
+    const construct = startup.indexOf("chatRepository = new ChatRepository(kysely");
+    const bootstrap = startup.indexOf("await chatRepository.bootstrap()", construct);
     const release = source.indexOf("await chatRepository?.release()");
     const ownerDestroy = source.indexOf("await appDb?.destroy()", release);
 
     expect(construct).toBeGreaterThan(-1);
     expect(bootstrap).toBeGreaterThan(construct);
-    expect(release).toBeGreaterThan(bootstrap);
+    expect(release).toBeGreaterThan(-1);
     expect(ownerDestroy).toBeGreaterThan(release);
   });
 });

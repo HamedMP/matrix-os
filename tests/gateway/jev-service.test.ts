@@ -108,4 +108,54 @@ describe("Jev service idempotency", () => {
     );
     expect(fetchFn).toHaveBeenCalledTimes(1);
   });
+
+  it("releases a claim only when the relay proves a capacity denial preceded dispatch", async () => {
+    const store = new MemoryStore();
+    const fetchFn = vi.fn()
+      .mockResolvedValueOnce(new Response(null, {
+        status: 429, headers: { "x-matrix-jev-dispatch": "not-started" },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(result), { status: 200 }));
+    const service = createJevService({ store, credentialProvider: provider(), fetchFn });
+    const input = { recipe: "email-triage-v1" as const, state: "hello", idempotencyKey: "thread:capacity" };
+
+    await expect(service.evaluate("owner_a", input)).rejects.toEqual(
+      expect.objectContaining<Partial<JevServiceError>>({ code: "unavailable" }),
+    );
+    expect(store.rows.size).toBe(0);
+    await expect(service.evaluate("owner_a", input)).resolves.toEqual(result);
+    expect(fetchFn).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps an upstream 429 without a pre-dispatch receipt unknown", async () => {
+    const store = new MemoryStore();
+    const fetchFn = vi.fn(async () => new Response(null, { status: 429 }));
+    const service = createJevService({ store, credentialProvider: provider(), fetchFn });
+    const input = { recipe: "email-triage-v1" as const, state: "hello", idempotencyKey: "thread:upstream-capacity" };
+
+    await expect(service.evaluate("owner_a", input)).rejects.toEqual(
+      expect.objectContaining<Partial<JevServiceError>>({ code: "unknown" }),
+    );
+    await expect(service.evaluate("owner_a", input)).rejects.toEqual(
+      expect.objectContaining<Partial<JevServiceError>>({ code: "unknown" }),
+    );
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+  });
+
+  it("retries a proven pre-dispatch 503 but keeps an unproven 503 unknown", async () => {
+    const store = new MemoryStore();
+    const fetchFn = vi.fn()
+      .mockResolvedValueOnce(new Response(null, { status: 503, headers: { "x-matrix-jev-dispatch": "not-started" } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(result), { status: 200 }));
+    const service = createJevService({ store, credentialProvider: provider(), fetchFn });
+    const input = { recipe: "email-triage-v1" as const, state: "hello", idempotencyKey: "thread:pre-dispatch-503" };
+    await expect(service.evaluate("owner_a", input)).rejects.toMatchObject({ code: "unavailable" });
+    await expect(service.evaluate("owner_a", input)).resolves.toEqual(result);
+
+    const unknownStore = new MemoryStore();
+    const unknownFetch = vi.fn(async () => new Response(null, { status: 503 }));
+    const unknownService = createJevService({ store: unknownStore, credentialProvider: provider(), fetchFn: unknownFetch });
+    await expect(unknownService.evaluate("owner_a", { ...input, idempotencyKey: "thread:unknown-503" }))
+      .rejects.toMatchObject({ code: "unknown" });
+  });
 });

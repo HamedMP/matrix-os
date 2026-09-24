@@ -17,6 +17,7 @@ import {
   FundedAiStartRequestSchema,
   FundedAiStartResponseSchema,
   IsoTimestampSchema,
+  JEV_MODEL_ID,
   type FundedAiAuthorizationResponse,
   type FundedAiFundingSummary,
   type FundedAiFinalizationResponse,
@@ -45,6 +46,14 @@ const IdentitySchema = z.object({
   runtimeSlot: z.string().min(1).max(80).regex(/^[a-z0-9][a-z0-9_-]*$/),
 }).strict();
 const MoneySchema = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
+const ManualJevReviewSchema = z.object({
+  reservationId: ReferenceSchema,
+  tokenId: ReferenceSchema,
+  expectedRequestId: ReferenceSchema,
+  actualCostMicrousd: MoneySchema,
+  evidenceRef: z.string().min(1).max(200).regex(/^[A-Za-z0-9][A-Za-z0-9._:/-]*$/),
+  reviewer: ReferenceSchema,
+}).strict();
 const GrantSchema = z.object({
   entryId: ReferenceSchema,
   identity: IdentitySchema,
@@ -58,6 +67,7 @@ const GrantSchema = z.object({
   }
 });
 const MAX_PROMOTIONAL_GRANTS_PER_RUNTIME = 64;
+export const JEV_MANUAL_REVIEW_GRACE_MS = 10 * 60_000;
 
 export interface AiFundedMeteringRepositoryOptions {
   db: PlatformDB;
@@ -569,6 +579,9 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
         start_response: null,
         release_response: null,
         release_reason: null,
+        manual_review_evidence_ref: null,
+        manual_review_actor: null,
+        manual_reviewed_at: null,
         token_id: credential.token_id,
         ...{
           owner_id: identity.ownerId,
@@ -682,6 +695,7 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
     reservationId: string;
     tokenId: string;
     actualCostMicrousd: number | null;
+    manualReview?: { expectedRequestId: string; evidenceRef: string; reviewer: string };
   }, finalizationMode: "exact" | "conservative"): Promise<{
     response: FundedAiSettlementResponse;
     finalizationMode: "exact" | "conservative";
@@ -702,6 +716,16 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
         .where("token_id", "=", request.tokenId).forUpdate().executeTakeFirstOrThrow();
       const reserved = exactInteger(reservation.reserved_microusd);
       const usageLimit = usageReservationLimit(reservation.authorization_response);
+      if (request.manualReview) {
+        if (reservation.model_id !== JEV_MODEL_ID || usageLimit === null
+          || reservation.request_id !== request.manualReview.expectedRequestId) {
+          throw new AiFundedPolicyError("idempotency_conflict");
+        }
+        if (reservation.status === "in_flight"
+          && Date.parse(reservation.expires_at) + JEV_MANUAL_REVIEW_GRACE_MS > checked.getTime()) {
+          throw new AiFundedPolicyError("rate_limited");
+        }
+      }
       if (usageLimit !== null && finalizationMode === "conservative") {
         // Unknown provider usage is not evidence of a charge. Keep the hold and
         // owner admission barrier until an exact response can reconcile it.
@@ -710,6 +734,10 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
       const actualCostMicrousd = request.actualCostMicrousd ?? reserved;
       if (reservation.status === "settled") {
         if (exactInteger(reservation.actual_microusd) !== actualCostMicrousd) {
+          throw new AiFundedPolicyError("idempotency_conflict");
+        }
+        if (request.manualReview && (reservation.manual_review_evidence_ref !== request.manualReview.evidenceRef
+          || reservation.manual_review_actor !== request.manualReview.reviewer)) {
           throw new AiFundedPolicyError("idempotency_conflict");
         }
         if (reservation.settlement_response === null) throw new Error("Settled reservation is missing its response");
@@ -746,7 +774,9 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
         const latest = await trx.executor.selectFrom("ai_funded_usage_reservations").selectAll()
           .where("reservation_id", "=", reservation.reservation_id).executeTakeFirstOrThrow();
         if (latest.status === "settled" && exactInteger(latest.actual_microusd) === actualCostMicrousd
-          && latest.settlement_response !== null) {
+          && latest.settlement_response !== null
+          && (!request.manualReview || (latest.manual_review_evidence_ref === request.manualReview.evidenceRef
+            && latest.manual_review_actor === request.manualReview.reviewer))) {
           return {
             response: FundedAiSettlementResponseSchema.parse(JSON.parse(latest.settlement_response)),
             finalizationMode: latest.finalization_mode === "conservative" ? "conservative" : "exact",
@@ -807,6 +837,11 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
         actual_microusd: actualCostMicrousd,
         settled_at: checkedAt,
         finalization_mode: finalizationMode,
+        ...(request.manualReview ? {
+          manual_review_evidence_ref: request.manualReview.evidenceRef,
+          manual_review_actor: request.manualReview.reviewer,
+          manual_reviewed_at: checkedAt,
+        } : {}),
       }).where("reservation_id", "=", reservation.reservation_id).where("status", "=", "settling")
         .returningAll().executeTakeFirstOrThrow();
       const monthlyBudget = exactInteger(runtime.monthly_budget_microusd);
@@ -850,6 +885,24 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
       tokenId: request.tokenId,
       actualCostMicrousd: request.mode === "exact" ? request.actualCostMicrousd : null,
     }, request.mode);
+    return FundedAiFinalizationResponseSchema.parse({
+      ...settlement.response,
+      finalizationMode: settlement.finalizationMode,
+    });
+  }
+
+  async function reconcileUnknownJevUsage(input: z.input<typeof ManualJevReviewSchema>): Promise<FundedAiFinalizationResponse> {
+    const request = ManualJevReviewSchema.parse(input);
+    const settlement = await settleReservationInternal({
+      reservationId: request.reservationId,
+      tokenId: request.tokenId,
+      actualCostMicrousd: request.actualCostMicrousd,
+      manualReview: {
+        expectedRequestId: request.expectedRequestId,
+        evidenceRef: request.evidenceRef,
+        reviewer: request.reviewer,
+      },
+    }, "exact");
     return FundedAiFinalizationResponseSchema.parse({
       ...settlement.response,
       finalizationMode: settlement.finalizationMode,
@@ -953,6 +1006,7 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
     startReservation,
     settleReservation,
     finalizeReservation,
+    reconcileUnknownJevUsage,
     releaseReservation,
     cleanupExpiredReservations,
     grantCredit,

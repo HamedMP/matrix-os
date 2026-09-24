@@ -17,6 +17,8 @@ import type { CollaborationTerminalEventRegistry } from "./terminal-events.js";
 const PROOF_HEADER = "x-matrix-collaboration-proof";
 const MAX_FRAME_BYTES = 64 * 1024;
 const MAX_PENDING_FRAMES = 8;
+/** Frames accepted but not yet settled by the dispatcher; beyond this the socket is closed. */
+const MAX_INFLIGHT_FRAMES = 16;
 const TerminalQuerySchema = z.object({ after: CollaborationRevisionSchema.default("0") }).strict();
 
 type TerminalSession = Awaited<ReturnType<CollaborationTerminalEventRegistry["open"]>>;
@@ -45,9 +47,18 @@ export function registerCollaborationTerminalWebSocketRoute(options: {
       let proofExpiry: ReturnType<typeof setTimeout> | null = null;
       let socketClosed = false;
       let processing = Promise.resolve();
+      let inFlightFrames = 0;
       const pendingFrames: string[] = [];
 
       const processFrame = (raw: string, ws: { send(value: string): void; close(code?: number, reason?: string): void }) => {
+        // Frames settle in order; a client that sends faster than the dispatcher
+        // settles them is closed instead of growing an unbounded promise chain.
+        if (inFlightFrames >= MAX_INFLIGHT_FRAMES) {
+          sendError(ws);
+          ws.close(1008, "Too many frames");
+          return;
+        }
+        inFlightFrames += 1;
         processing = processing.then(async () => {
           if (!session || !actorId || !connectionId) return;
           const parsed = JSON.parse(raw) as unknown;
@@ -64,7 +75,7 @@ export function registerCollaborationTerminalWebSocketRoute(options: {
           console.warn("[collaboration-terminal-ws] client frame rejected", error instanceof Error ? error.name : "UnknownError");
           sendError(ws);
           ws.close(1008, "Invalid frame");
-        });
+        }).finally(() => { inFlightFrames -= 1; });
       };
 
       return {

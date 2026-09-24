@@ -30,6 +30,10 @@ function sharedSandbox(scopeId: string, actorId: string): ScopeRuntimeSandboxMan
     network: "none",
   };
 }
+/** The adapter now requires both collaborators; these cases assert other behaviour. */
+const noRuntimes = { bind: () => undefined, release: () => undefined };
+const noLoss = (): void => undefined;
+
 describe("canonical shared Chat orchestration", () => {
   let fixture: CollaborationTestDatabase;
   let repository: ChatRepository;
@@ -97,6 +101,8 @@ describe("canonical shared Chat orchestration", () => {
           adapterId: "claude-code",
           harnessVersion: "2.1.240",
           sandbox: sharedSandbox(execution.scopeId, execution.requestingActorId),
+          runtimes: noRuntimes,
+          onLoss: noLoss,
         });
       },
     );
@@ -211,6 +217,8 @@ describe("canonical shared Chat orchestration", () => {
         adapterId: "claude-code",
         harnessVersion: "2.1.240",
         sandbox: sharedSandbox(execution.scopeId, execution.requestingActorId),
+        runtimes: noRuntimes,
+        onLoss: noLoss,
       }),
     );
     await orchestrator.drain();

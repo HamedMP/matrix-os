@@ -11,10 +11,14 @@ import {
   CollaborationDirectSessionRenewRequestSchema,
   CollaborationDirectSessionRequestSchema,
   CollaborationDirectSessionSchema,
+  CollaborationOwnerRuntimeConnectionRequestSchema,
+  CollaborationOwnerRuntimeSessionSchema,
+  CollaborationOwnerRuntimeTicketSchema,
   CollaborationResourceDirectoryEntrySchema,
   CollaborationRuntimeEndpointRegistrationSchema,
   CollaborationSignedConnectionTicketSchema,
   CollaborationTicketPurposeSchema,
+  toLogicalRuntimeId,
 } from "@matrix-os/contracts";
 import { describe, expect, it } from "vitest";
 
@@ -46,6 +50,42 @@ const ticket = {
 };
 
 describe("collaboration direct transport contracts (S02 T011)", () => {
+  it("binds owner runtime setup to one enrolled owner and organization without inventing a scope", () => {
+    const request = {
+      clientRequestId: requestId, runtimeId: "vps:11111111-1111-4111-8111-111111111111",
+      organizationId, proofPublicKey: "e".repeat(43),
+    };
+    expect(CollaborationOwnerRuntimeConnectionRequestSchema.parse(request)).toEqual(request);
+    const ownerTicket = {
+      ...ticket, resource: { kind: "owner_runtime" }, purpose: "owner_runtime",
+      actorId: "user_owner", runtime: { runtimeId: "vps-11111111-1111-4111-8111-111111111111", authorityGeneration: 1 },
+    };
+    expect(CollaborationOwnerRuntimeTicketSchema.parse(ownerTicket)).toEqual(ownerTicket);
+    expect(CollaborationOwnerRuntimeTicketSchema.safeParse({ ...ownerTicket, resource: { kind: "owner_runtime", scopeId } }).success).toBe(false);
+    expect(CollaborationOwnerRuntimeTicketSchema.safeParse({ ...ownerTicket, purpose: "direct_session" }).success).toBe(false);
+    const ownerSession = {
+      protocolVersion: 2, id: sessionId, actorId: "user_owner", organizationId,
+      runtimeId: ownerTicket.runtime.runtimeId, authorityGeneration: 1,
+      purpose: "owner_runtime", proofKeyThumbprint: thumbprint,
+      issuedAt, expiresAt: "2026-09-20T12:05:00.000Z", evidenceExpiresAt: "2026-09-20T12:00:20.000Z",
+      renewAfter: "2026-09-20T12:04:00.000Z",
+    };
+    expect(CollaborationOwnerRuntimeSessionSchema.parse(ownerSession)).toEqual(ownerSession);
+    expect(CollaborationOwnerRuntimeSessionSchema.safeParse({ ...ownerSession, scopeId }).success).toBe(false);
+  });
+  it("canonicalizes only a vps enrollment id and leaves every other logical runtime id's case alone", () => {
+    expect(toLogicalRuntimeId("vps:11111111-1111-4111-8111-111111111111"))
+      .toBe("vps-11111111-1111-4111-8111-111111111111");
+    expect(toLogicalRuntimeId("VPS:AAAAAAAA-1111-4111-8111-111111111111"))
+      .toBe("vps-aaaaaaaa-1111-4111-8111-111111111111");
+    // A logical runtime id is already the ticket form: rewriting its case here
+    // would make the platform's and the home's identical id look like a forgery.
+    for (const logical of ["Owner_Runtime", "owner_runtime", "Home-2", "vps-11111111-1111-4111-8111-111111111111"]) {
+      expect(toLogicalRuntimeId(logical)).toBe(logical);
+      expect(CollaborationConnectionTicketSchema.shape.runtime.shape.runtimeId.safeParse(logical).success).toBe(true);
+    }
+  });
+
   it("freezes the protocol version, purposes and limits", () => {
     expect(COLLABORATION_DIRECT_PROTOCOL_VERSION).toBe(2);
     expect(CollaborationTicketPurposeSchema.options).toEqual(["direct_session", "events", "terminal", "control", "peer"]);

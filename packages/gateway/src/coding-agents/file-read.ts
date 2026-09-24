@@ -59,6 +59,14 @@ export interface CodingAgentFileStore {
   writeFile(principal: RequestPrincipal, request: FileWriteRequest): Promise<FileWriteResponse>;
 }
 
+export interface CodingAgentFileAccess {
+  canAccessHome(principal: RequestPrincipal): boolean;
+  resolveProjectRoot(
+    principal: RequestPrincipal,
+    request: Pick<FileReadRequest, "projectId" | "worktreeId">,
+  ): Promise<string | null>;
+}
+
 interface ProjectOwnershipSource {
   getProjectBySlug(projectSlug: string): Promise<
     | { ok: true; project: { ownerScope: { type: "user" | "org"; id: string } } }
@@ -126,6 +134,32 @@ async function assertProjectAccess(input: {
   if (result.project.ownerScope.type !== "user" || result.project.ownerScope.id !== input.principal.userId) {
     throw new CodingAgentFileReadError("file_not_found");
   }
+}
+
+export function createCodingAgentFileAccess(options: {
+  homePath: string;
+  ownerId?: string;
+  principalOwnerIds?: readonly string[];
+  projects?: ProjectOwnershipSource;
+  worktrees?: OwnerScopedWorktreeSource;
+}): CodingAgentFileAccess {
+  const homePath = resolve(options.homePath);
+  const ownerIds = ownerIdsFor(options);
+  return {
+    canAccessHome: (principal) => canAccessFiles(principal, ownerIds),
+    async resolveProjectRoot(principal, request) {
+      if (!canAccessFiles(principal, ownerIds)) return null;
+      try {
+        await assertProjectAccess({ principal, request, projects: options.projects });
+        return await checkoutRootFor(homePath, principal, request, options.worktrees);
+      } catch (error: unknown) {
+        if (error instanceof CodingAgentFileReadError && error.code === "file_not_found") {
+          return null;
+        }
+        throw error;
+      }
+    },
+  };
 }
 
 function normalizePath(path: string): string {

@@ -8,6 +8,7 @@ import { HANDLE_PATTERN } from './platform-route-utils.js';
 
 const HandleSchema = z.string().regex(HANDLE_PATTERN);
 const BODY_LIMIT = 64 * 1024;
+const OAUTH_CALLBACK_PATH = '/api/mcp-servers/oauth/callback';
 
 type McpVariables = {
   platformUserId: string;
@@ -36,6 +37,12 @@ export function registerCustomMcpRoutes(app: Hono<any>, options: {
 }): void {
   const external = new Hono<{ Variables: McpVariables }>();
   external.use('*', bodyLimit({ maxSize: BODY_LIMIT }), async (c, next) => {
+    if (c.req.method === 'GET' && c.req.path === OAUTH_CALLBACK_PATH) {
+      c.header('Cache-Control', 'no-store, private');
+      c.header('CDN-Cache-Control', 'no-store');
+      c.header('Cloudflare-CDN-Cache-Control', 'no-store');
+      return next();
+    }
     // Session routing supplies these only after verifying the personal identity.
     if (!c.get('platformUserId') || !c.get('platformHandle')) {
       return c.json({ error: 'Unauthorized' }, 401);

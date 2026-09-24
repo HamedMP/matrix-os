@@ -137,6 +137,7 @@ export function evaluateEmailTriagePolicy(input: EmailTriagePolicyInput): EmailT
   const mayArchive = verified
     && scores.cold_outreach >= 0.92
     && scores.urgent <= 0.20
+    && scores.needs_reply <= 0.20
     && scores.personal_intro <= 0.30
     && scores.investment <= 0.20
     && scores.recruiting <= 0.20;

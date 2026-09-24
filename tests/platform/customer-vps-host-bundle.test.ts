@@ -1354,19 +1354,19 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(reloadBody).toContain('systemctl --user daemon-reload');
   });
 
-  it('restarts the optional Hermes dashboard after replacing its host wrapper', () => {
+  it('schedules optional Hermes reconciliation only after the release commits', () => {
     const root = process.cwd();
     const syncAgent = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-sync-agent'), 'utf8');
+    const commitIndex = syncAgent.indexOf('if commit_release_metadata; then');
+    const markIndex = syncAgent.indexOf('mark_hermes_reconciliation_pending "$version"', commitIndex);
+    const restartIndex = syncAgent.indexOf('reconcile_hermes_release ||', markIndex);
 
-    expect(syncAgent).toContain('if [ -f "$extract_dir/systemd/matrix-hermes-dashboard.service" ]; then');
-    expect(syncAgent).toContain('sudo systemctl enable matrix-hermes-dashboard.service');
-    expect(syncAgent).toContain('sudo systemctl restart --no-block matrix-hermes-dashboard.service || true');
-    expect(syncAgent.indexOf('log "Updated bin scripts"')).toBeLessThan(
-      syncAgent.indexOf('sudo systemctl restart --no-block matrix-hermes-dashboard.service || true'),
-    );
-    expect(syncAgent.indexOf('sudo systemctl restart --no-block matrix-hermes-dashboard.service || true')).toBeLessThan(
-      syncAgent.indexOf('sudo systemctl start matrix-gateway matrix-shell'),
-    );
+    expect(syncAgent).toContain('if [ -f "/etc/systemd/system/matrix-hermes.service" ]; then');
+    expect(syncAgent).toContain('sudo systemctl enable matrix-hermes.service');
+    expect(syncAgent).toContain('sudo systemctl restart --no-block matrix-hermes.service');
+    expect(commitIndex).toBeGreaterThan(-1);
+    expect(markIndex).toBeGreaterThan(commitIndex);
+    expect(restartIndex).toBeGreaterThan(markIndex);
   });
 
   it('sync agent periodically cleans stale local bundle artifacts', () => {
@@ -1753,6 +1753,15 @@ json_field() { python3 -c "import json,sys; print(json.load(sys.stdin).get(sys.a
     expect(syncAgent).toContain('sudo mv -Tf "$incoming" "$destination"');
     expect(syncAgent).toContain('install_host_bin_payload "$extract_dir/bin"');
     expect(syncAgent).not.toContain('sudo find "$extract_dir/bin" -maxdepth 1 -type f -exec cp -a {} "$BIN_DIR/" \\;');
+  });
+
+  it('verifies the rotation dependency during in-place host updates', () => {
+    const syncAgent = readFileSync(join(process.cwd(), 'distro/customer-vps/host-bin/matrix-sync-agent'), 'utf8');
+    const install = syncAgent.indexOf('install_host_bin_payload "$extract_dir/bin"');
+    const prerequisites = syncAgent.indexOf('sudo /usr/bin/timeout --kill-after=30 1800 "$BIN_DIR/matrix-prepare-host-prerequisites"', install);
+    const services = syncAgent.indexOf('log "Installed systemd units"', install);
+    expect(prerequisites).toBeGreaterThan(install);
+    expect(services).toBeGreaterThan(prerequisites);
   });
 
   it('gateway launcher leaves registration to the independent host service', () => {

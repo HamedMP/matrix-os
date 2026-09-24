@@ -14,7 +14,7 @@ const ATTACHED_FRAME = {
   revision: 1,
   canonicalSize: { cols: 80, rows: 24 },
   nextSeq: 0,
-  capabilities: ["binary-input-v1" as const],
+  capabilities: ["binary-input-v1" as const, "native-scroll-v1" as const],
 };
 
 describe("terminal input capability negotiation", () => {
@@ -36,7 +36,11 @@ describe("terminal input capability negotiation", () => {
   });
 
   it("advertises binary input only to clients that explicitly opted in", () => {
-    expect(terminalFrameForInputCapabilities(ATTACHED_FRAME, true)).toEqual(ATTACHED_FRAME);
+    expect(terminalFrameForInputCapabilities(ATTACHED_FRAME, true)).toEqual({
+      ...ATTACHED_FRAME,
+      capabilities: ["binary-input-v1"],
+    });
+    expect(terminalFrameForInputCapabilities(ATTACHED_FRAME, true, true)).toEqual(ATTACHED_FRAME);
     const output = {
       type: "output" as const,
       terminalRef: ATTACHED_FRAME.terminalRef,

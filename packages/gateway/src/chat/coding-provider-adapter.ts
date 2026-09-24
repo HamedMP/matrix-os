@@ -100,6 +100,7 @@ function activityKind(kind: string): CanonicalChatAgentActivityKind | undefined 
   if (kind === "phase") return "phase";
   if (kind === "reasoning") return "reasoning";
   if (kind === "image" || kind === "image_inspection") return "image_inspection";
+  if (kind === "image_generation") return "image_generation";
   return undefined;
 }
 
@@ -128,6 +129,12 @@ function normalizeEvent(
       type: "assistant.delta",
       messageId: event.messageId,
       delta: event.delta,
+    })];
+  }
+  if (event.type === "assistant.attachment") {
+    return [CanonicalProviderRunEventSchema.parse({
+      type: "assistant.attachment",
+      attachment: event.attachment,
     })];
   }
   if (event.type === "subagent.activity") {

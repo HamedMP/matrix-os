@@ -2,6 +2,7 @@ import { codexToolOutput, coarseToolOutputText } from "./codex-tool-output.mjs";
 import { z } from "zod/v4";
 import {
   AgentThreadEventSchema,
+  AgentAttachmentSchema,
   ChatSubagentSchema,
   AgentToolPreviewSchema,
   AgentToolDetailSchema,
@@ -148,10 +149,21 @@ const MatrixCodexRecordSchema = z.discriminatedUnion("type", [
     messageId: CodexItemIdSchema,
   }).strict(),
   z.object({
+    type: z.literal("matrix.codex.artifact.available"),
+    providerItemId: CodexItemIdSchema,
+    outputIndex: z.number().int().min(0).max(7),
+    attachmentId: CodexItemIdSchema,
+    ownerReference: AgentAttachmentSchema.shape.path.unwrap(),
+    label: SafeDisplayStringSchema,
+    mimeType: z.string().min(1).max(120).regex(/^[A-Za-z0-9][A-Za-z0-9.+/-]+$/),
+    sizeBytes: z.number().int().min(0).max(10 * 1024 * 1024),
+    sha256: z.string().regex(/^[a-f0-9]{64}$/),
+  }).strict(),
+  z.object({
     type: z.literal("matrix.codex.tool.started"),
     toolCallId: CodexItemIdSchema,
     displayName: SafeDisplayStringSchema,
-    kind: z.enum(["command", "file_change", "tool", "agent", "search", "plan", "reasoning", "phase"]),
+    kind: z.enum(["command", "file_change", "tool", "agent", "search", "plan", "reasoning", "phase", "image_generation"]),
     // Display metadata is optional evidence. A rejected field must not erase
     // the tool identity and leave an orphan completion in Chat.
     preview: AgentToolPreviewSchema.optional().catch(undefined),
@@ -288,6 +300,19 @@ function appServerRecordEvents(
     return [event(context, {
       type: "assistant.text.completed",
       messageId: record.messageId,
+    })];
+  }
+  if (record.type === "matrix.codex.artifact.available") {
+    return [event(context, {
+      type: "assistant.attachment",
+      attachment: {
+        id: record.attachmentId,
+        kind: record.mimeType.startsWith("image/") ? "image" : "file",
+        label: record.label,
+        path: record.ownerReference,
+        mimeType: record.mimeType,
+        sizeBytes: record.sizeBytes,
+      },
     })];
   }
   if (record.type === "matrix.codex.tool.started") {

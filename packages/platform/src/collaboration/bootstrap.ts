@@ -22,7 +22,9 @@ import { createPlatformOrganizations } from "../organizations/wiring.js";
 import { createPlatformCollaborationDirect, loadCollaborationRelayOrigin } from "./direct-wiring.js";
 import { PlatformCollaborationRepository } from "./repository.js";
 import type { RuntimeEndpointPlatformDatabase } from "./runtime-endpoints.js";
-import { loadTicketSigningKeyring } from "./ticket-issuer.js";
+import { PlatformCollaborationCutover } from "./cutover.js";
+import { createPlatformCutoverHomeResolver } from "./cutover-home-transport.js";
+import { createCompatibleDirectBuildVerifier } from "./compatible-build.js";
 
 export interface BootstrapPlatformCollaborationOptions {
   env: NodeJS.ProcessEnv;
@@ -43,7 +45,7 @@ export interface BootstrapPlatformCollaborationOptions {
  */
 export async function bootstrapPlatformCollaboration(
   options: BootstrapPlatformCollaborationOptions,
-): Promise<PlatformCollaborationComposition> {
+): Promise<PlatformCollaborationComposition & { cutover?: PlatformCollaborationCutover }> {
   const health = describePlatformCollaborationConfiguration(options.env);
   if (!health.configured) return createFailClosedPlatformCollaboration({ reason: health.reason });
   if (!options.platformSecret) {
@@ -120,7 +122,7 @@ export async function bootstrapPlatformCollaboration(
     repository: new PlatformCollaborationRepository(collaborationDb),
     controlAuthority: organizations.controlAuthority,
     projection: organizations.projection,
-    keyring: loadTicketSigningKeyring(options.env),
+    keyring: config.ticketKeyring,
     relayOrigin,
     resolveActor,
     authenticateRuntime,
@@ -145,7 +147,6 @@ export async function bootstrapPlatformCollaboration(
 
   const collaboration = await createPlatformCollaboration({
     db: collaborationDb,
-    config,
     organizations,
     direct,
     resolveActor,
@@ -157,24 +158,47 @@ export async function bootstrapPlatformCollaboration(
     // Only current members of the scope's organization resolve (S20/S03); there is no
     // person-to-person path.
     resolveInvitationIdentifier: (identifier, organizationId) => identifierResolver.resolve(identifier, organizationId),
-    resolveRuntime: async (runtimeId) => {
-      const machineId = parseVpsRuntimeId(runtimeId);
-      if (!machineId) return null;
-      const machine = await getUserMachine(options.db, machineId);
-      if (!machine || machine.status !== "running" || !machine.publicIPv4) return null;
-      return {
-        runtimeId,
-        ownerId: machine.clerkUserId,
-        baseUrl: `https://${machine.publicIPv4}:443`,
-      };
-    },
-    fetchImpl: (input, init) => fetch(input, {
-      ...init,
-      signal: init?.signal ?? AbortSignal.timeout(10_000),
-      dispatcher: options.customerVpsProxyDispatcher,
-    } as RequestInit & { dispatcher: import("undici").Dispatcher }),
   });
-  return collaboration;
+  // S18 operator path: the journal targets the exact enrolled machine named by
+  // the directory and signs every phase with the platform's direct keyring.
+  // The existing VPS dispatcher pins the outbound connection to that machine.
+  const cutover = new PlatformCollaborationCutover({
+    db: collaborationDb,
+    verifyCompatibleDirectBuild: createCompatibleDirectBuildVerifier({
+      platformSecret: options.platformSecret,
+      resolveMachine: (machineId) => getUserMachine(options.db, machineId),
+      getPublishedRelease: async (version) => {
+        const release = await options.db.kysely.selectFrom("host_bundle_releases")
+          .select(["version", "git_commit", "sha256"])
+          .where("version", "=", version).executeTakeFirst();
+        return release ? { version: release.version, gitCommit: release.git_commit, sha256: release.sha256 } : null;
+      },
+      fetchImpl: (input, init) => fetch(input, {
+        ...init,
+        signal: init?.signal ?? AbortSignal.timeout(10_000),
+        dispatcher: options.customerVpsProxyDispatcher,
+      } as RequestInit & { dispatcher: import("undici").Dispatcher }),
+    }),
+    resolveHome: createPlatformCutoverHomeResolver({
+      keyring: config.ticketKeyring,
+      resolveRuntime: async ({ runtimeId, ownerId }) => {
+        const machineId = parseVpsRuntimeId(runtimeId);
+        const machine = machineId ? await getUserMachine(options.db, machineId) : undefined;
+        if (!machine || machine.status !== "running" || !machine.publicIPv4
+          || machine.clerkUserId !== ownerId) return { status: "offline" };
+        return {
+          status: "ready", origin: `https://${machine.publicIPv4}`,
+          bearerToken: buildPlatformVerificationToken(machine.handle, options.platformSecret),
+        };
+      },
+      fetchImpl: (input, init) => fetch(input, {
+        ...init,
+        signal: init?.signal ?? AbortSignal.timeout(10_000),
+        dispatcher: options.customerVpsProxyDispatcher,
+      } as RequestInit & { dispatcher: import("undici").Dispatcher }),
+    }),
+  });
+  return { ...collaboration, cutover };
 }
 
 function parseVpsRuntimeId(runtimeId: string): string | null {

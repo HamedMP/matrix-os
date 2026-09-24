@@ -7,13 +7,23 @@ vi.mock("@/lib/gateway", () => ({ getGatewayUrl: () => "http://localhost:4000" }
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 it("keeps focus in the preview and supports retry and Escape", async () => {
-  const fetcher = vi.fn().mockRejectedValueOnce(new Error("Offline")).mockResolvedValue(new Response("Hello", { headers: { "content-type": "text/plain" } }));
+  const fetcher = vi.fn()
+    .mockRejectedValueOnce(new Error("Offline"))
+    .mockResolvedValueOnce(Response.json({
+      resource: { kind: "home", path: "reports/result.txt" }, name: "result.txt",
+      mimeType: "text/plain", sizeBytes: 5, kind: "text", version: "file_1", canDownload: true,
+    }))
+    .mockResolvedValueOnce(new Response("Hello", { headers: { "content-type": "text/plain" } }));
   vi.stubGlobal("fetch", fetcher);
   const close = vi.fn();
   render(<ChatFilePanel path="reports/result.txt" onClose={close} />);
   expect(document.activeElement).toBe(screen.getByRole("button", { name: "Close preview" }));
   fireEvent.click(await screen.findByRole("button", { name: "Retry" }));
   expect(await screen.findByText("Hello")).toBeTruthy();
+  expect(fetcher).toHaveBeenNthCalledWith(2,
+    "http://localhost:4000/api/file-previews/metadata?kind=home&path=reports%2Fresult.txt",
+    expect.objectContaining({ signal: expect.any(AbortSignal) }),
+  );
   fireEvent.keyDown(screen.getByRole("button", { name: "Close preview" }), { key: "Escape" });
   expect(close).toHaveBeenCalledOnce();
 });

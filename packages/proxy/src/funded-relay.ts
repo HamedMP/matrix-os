@@ -13,6 +13,7 @@ import { COUNT_TOKENS_BODY_LIMIT_BYTES, type FundedRelayConfig } from "./funded-
 import {
   cloudflareJevTarget,
   normalizeFundedJevEvaluationResponse,
+  reviewedJevPricing,
   serializeFundedJevEvaluationRequest,
 } from "./funded-relay-evaluation.js";
 import { estimateWorstCaseMicrousd, FUNDED_GLM_FLASH, mapFundedModel, maximumFundedInputTokens } from "./funded-relay-model.js";
@@ -129,6 +130,11 @@ function errorResponse(
   message: string,
 ): Response {
   return c.json({ type: "error", error: { type, message } }, status);
+}
+
+function jevNotStarted(response: Response): Response {
+  response.headers.set("x-matrix-jev-dispatch", "not-started");
+  return response;
 }
 
 function controlPlaneError(c: Context, error: unknown): Response {
@@ -529,7 +535,14 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
 
   async function handleEvaluation(c: Context, state: ActiveRequestState): Promise<Response> {
     if (!config.workersAiToken) {
-      return errorResponse(c, 503, "api_error", "AI access is temporarily unavailable");
+      return jevNotStarted(errorResponse(c, 503, "api_error", "AI access is temporarily unavailable"));
+    }
+    let pricing: ReturnType<typeof reviewedJevPricing>;
+    try {
+      pricing = reviewedJevPricing(now());
+    } catch (error) {
+      console.warn("[proxy] Jev pricing unavailable", { errorName: error instanceof Error ? error.name : "UnknownError" });
+      return jevNotStarted(errorResponse(c, 503, "api_error", "AI access is temporarily unavailable"));
     }
     let requestBody: string;
     try {
@@ -538,7 +551,7 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
     } catch (error) {
       if (error instanceof Error && error.name === "BodyLimitError") throw error;
       console.warn("[proxy] Funded Jev request rejected", requestRejectionDiagnostic(error));
-      return errorResponse(c, 400, "invalid_request_error", "Invalid AI request");
+      return jevNotStarted(errorResponse(c, 400, "invalid_request_error", "Invalid AI request"));
     }
 
     const credential = fundedCredential(c);
@@ -546,16 +559,16 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
       credential,
       modelId: JEV_MODEL_ID,
     });
-    if (!checkInput.success) return errorResponse(c, 401, "authentication_error", "Unauthorized");
+    if (!checkInput.success) return jevNotStarted(errorResponse(c, 401, "authentication_error", "Unauthorized"));
     let checked: Awaited<ReturnType<FundedPlatformClient["check"]>>;
     try {
       checked = await platform.check(checkInput.data, state.lifetimeSignal);
     } catch (error) {
-      return controlPlaneError(c, error);
+      return jevNotStarted(controlPlaneError(c, error));
     }
     const runtimeRef = runtimeAdmissionRef(checked.identity, config.metadataSecret);
     if (!admission.admitRuntime(runtimeRef)) {
-      return errorResponse(c, 429, "rate_limit_error", "AI capacity is temporarily limited");
+      return jevNotStarted(errorResponse(c, 429, "rate_limit_error", "AI capacity is temporarily limited"));
     }
     const requestId = requestIdFactory();
     let authorization: Awaited<ReturnType<FundedPlatformClient["authorize"]>>;
@@ -568,7 +581,7 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
         billingMode: "usage",
       }, state.lifetimeSignal);
     } catch (error) {
-      return controlPlaneError(c, error);
+      return jevNotStarted(controlPlaneError(c, error));
     }
     const reservation = authorization.reservation;
     if (!identitiesMatch(checked.identity, authorization.identity)
@@ -576,13 +589,13 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
       || reservation.billingMode !== "usage" || reservation.reservedMicrousd <= 0
       || reservation.reservedMicrousd > config.jevMaxCostMicrousd) {
       await releaseBeforeStart(reservation.reservationId, authorization.identity.tokenId);
-      return errorResponse(c, 503, "api_error", "AI access is temporarily unavailable");
+      return jevNotStarted(errorResponse(c, 503, "api_error", "AI access is temporarily unavailable"));
     }
 
     const acquiredLease = admission.acquireResources(runtimeRef);
     if (!acquiredLease) {
       await releaseBeforeStart(reservation.reservationId, authorization.identity.tokenId);
-      return errorResponse(c, 429, "rate_limit_error", "AI capacity is temporarily limited");
+      return jevNotStarted(errorResponse(c, 429, "rate_limit_error", "AI capacity is temporarily limited"));
     }
     let resourceReleased = false;
     const resourceLease: AdmissionLease = {
@@ -603,7 +616,14 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
       if (result.mode === "exact" && result.actualCostMicrousd <= config.jevMaxCostMicrousd) {
         settlementQueue.enqueue({ ...finalizationLocator, ...result });
       } else {
-        settlementQueue.enqueue({ ...finalizationLocator, mode: "conservative" });
+        // Platform deliberately refuses conservative settlement for usage
+        // billing. Keep the durable in-flight hold for operator review rather
+        // than retrying a request that can never succeed or charging without
+        // verified provider usage.
+        console.warn("[proxy] Jev usage requires manual reconciliation", {
+          reservationId: reservation.reservationId,
+          requestId,
+        });
       }
     };
 
@@ -656,7 +676,7 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
         value,
         requestId,
         latencyMs: Math.max(0, now().getTime() - startedAt),
-        pricedAt: now(),
+        pricing,
       });
       if (normalized.actualCostMicrousd === null
         || normalized.actualCostMicrousd > config.jevMaxCostMicrousd) {
@@ -677,9 +697,11 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
       const errorName = error instanceof Error ? error.name : "UnknownError";
       console.warn("[proxy] Funded Jev upstream request failed", { errorName });
       if (state.lifetimeSignal.aborted || deadline.aborted) {
-        return errorResponse(c, 504, "timeout_error", "AI access timed out");
+        return started ? errorResponse(c, 504, "timeout_error", "AI access timed out")
+          : jevNotStarted(errorResponse(c, 504, "timeout_error", "AI access timed out"));
       }
-      return errorResponse(c, 502, "api_error", "AI access is temporarily unavailable");
+      return started ? errorResponse(c, 502, "api_error", "AI access is temporarily unavailable")
+        : jevNotStarted(errorResponse(c, 502, "api_error", "AI access is temporarily unavailable"));
     }
   }
 
@@ -703,7 +725,8 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
         }
         const globalLease = admission.acquireGlobal();
         if (!globalLease) {
-          return errorResponse(c, 429, "rate_limit_error", "AI capacity is temporarily limited");
+          const response = errorResponse(c, 429, "rate_limit_error", "AI capacity is temporarily limited");
+          return c.req.path === EVALUATE_PATH ? jevNotStarted(response) : response;
         }
         const controller = new AbortController();
         activeRequests.add(controller);

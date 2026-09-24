@@ -4,9 +4,9 @@
  *
  * The decision comes from the scope's execution policy: the owner's selected
  * V3 source and harness, the effective submit mode for the requesting member
- * and the current policy revision. A scope without a policy returns null so
- * the runtime keeps its pre-S08 behaviour until S09 makes the policy
- * mandatory for dispatch. Any refusal is a preparation error that keeps the
+ * and the current policy revision. A scope without a policy is unavailable:
+ * no run may execute on the owner's default kernel credential without an
+ * explicit owner selection. Any refusal is a preparation error that keeps the
  * queued request in place; nothing falls back to another source, and the
  * owner's private provider session is never consulted.
  */
@@ -40,30 +40,46 @@ const DRIVER_BY_HARNESS: Readonly<Record<CollaborationSharedHarness, CanonicalPr
   claude_code: "claude_code",
 });
 
+/**
+ * Whether the owner's selected source can admit queued work right now:
+ * `missing` without a policy for this owner, `paused` while the selected
+ * source is not ready (exhausted, expired, disabled), `ready` otherwise.
+ * `paused` keeps requests queued instead of draining them into `unavailable`.
+ */
+export type SharedRunOwnerSourceAdmission = "ready" | "paused" | "missing";
+
 export class SharedRunOwnerSource {
-  readonly bindings: CollaborationRunBindingRepository | undefined;
+  readonly bindings: CollaborationRunBindingRepository;
   private readonly policies: CollaborationExecutionPolicyRepository;
   private readonly eligibility: OwnerAccountEligibility;
 
   constructor(options: {
     policies: CollaborationExecutionPolicyRepository;
     eligibility: OwnerAccountEligibility;
-    bindings?: CollaborationRunBindingRepository;
+    bindings: CollaborationRunBindingRepository;
   }) {
     this.policies = options.policies;
     this.eligibility = options.eligibility;
     this.bindings = options.bindings;
   }
 
-  /**
-   * Null when the scope has no execution policy. Throws
-   * `SharedChatRunPreparationError("unauthorized")` when a member submits on
-   * an owner-only scope and `SharedChatRunPreparationError("unavailable")`
-   * when the owner's source cannot serve the run.
-   */
-  async prepare(input: SharedRunOwnerSourceInput): Promise<SharedRunOwnerSourceDecision | null> {
+  async admission(input: { scopeId: string; ownerId: string }): Promise<SharedRunOwnerSourceAdmission> {
     const policy = await this.policies.resolve(input.scopeId);
-    if (!policy) return null;
+    if (!policy || policy.ownerId !== input.ownerId) return "missing";
+    const resolution = await this.eligibility.resolveSelection(policy.ownerId, policy.source);
+    if (!resolution.ok || resolution.source.harness !== policy.source.harness) return "missing";
+    return resolution.available ? "ready" : "paused";
+  }
+
+  /**
+   * Throws `SharedChatRunPreparationError("unavailable")` when the scope has
+   * no execution policy or the owner's source cannot serve the run, and
+   * `SharedChatRunPreparationError("unauthorized")` when a member submits on
+   * an owner-only scope. There is no null path: a policy is mandatory.
+   */
+  async prepare(input: SharedRunOwnerSourceInput): Promise<SharedRunOwnerSourceDecision> {
+    const policy = await this.policies.resolve(input.scopeId);
+    if (!policy) throw new SharedChatRunPreparationError("unavailable");
     if (policy.ownerId !== input.ownerId) {
       throw new SharedChatRunPreparationError("unavailable");
     }

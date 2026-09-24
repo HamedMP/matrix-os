@@ -19,6 +19,7 @@ export const DEFAULT_CLOUD_INIT_TEMPLATE = [
   '      MATRIX_CLERK_USER_ID={{clerkUserId}}',
   '      MATRIX_HANDLE={{handle}}',
   '      MATRIX_RUNTIME_SLOT={{runtimeSlot}}',
+  '      MATRIX_RUNTIME_TOKEN_EPOCH={{runtimeTokenEpoch}}',
   '      MATRIX_NODE_PREFIX=/opt/matrix/runtime/node',
   "      MATRIX_DEVELOPER_TOOLS='{{developerTools}}'",
   '      MATRIX_IMAGE_VERSION={{imageVersion}}',
@@ -69,6 +70,7 @@ export function buildHostConfig(
   registrationTokenExpiresAt: string,
   postgresPassword: string,
   bundleRef: HostBundleRef,
+  runtimeTokenEpoch = 1,
 ): CustomerHostConfig {
   const platformInternalUrl = new URL(config.platformRegisterUrl).origin;
   const runtimeIdentity = {
@@ -81,6 +83,7 @@ export function buildHostConfig(
     clerkUserId: input.clerkUserId,
     handle: input.handle,
     runtimeSlot: input.runtimeSlot,
+    runtimeTokenEpoch: String(runtimeTokenEpoch),
     developerTools: developerToolsShellList(input.developerTools ?? DEFAULT_DEVELOPER_TOOLS),
     imageVersion: bundleRef.imageVersion,
     updateChannel: config.imageVersion,
@@ -88,11 +91,11 @@ export function buildHostConfig(
     platformRegisterUrl: config.platformRegisterUrl,
     platformInternalUrl,
     platformVerificationToken: buildPlatformVerificationToken(input.handle, config.platformSecret),
-    syncRuntimeToken: buildPlatformSyncVerificationToken(runtimeIdentity, config.platformSecret),
-    fundedAiRuntimeToken: buildPlatformRuntimeVerificationToken(runtimeIdentity, config.platformSecret),
+    syncRuntimeToken: buildPlatformSyncVerificationToken(runtimeIdentity, config.platformSecret, runtimeTokenEpoch),
+    fundedAiRuntimeToken: buildPlatformRuntimeVerificationToken(runtimeIdentity, config.platformSecret, runtimeTokenEpoch),
     platformSpeechEnabled: String(config.platformSpeechEnabled),
     platformSpeechOrigin: platformInternalUrl,
-    platformSpeechRuntimeToken: buildPlatformSpeechRuntimeVerificationToken(runtimeIdentity, config.platformSecret),
+    platformSpeechRuntimeToken: buildPlatformSpeechRuntimeVerificationToken(runtimeIdentity, config.platformSecret, runtimeTokenEpoch),
     registrationToken,
     registrationTokenExpiresAt,
     postgresPassword,

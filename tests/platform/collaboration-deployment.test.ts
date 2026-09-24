@@ -5,10 +5,11 @@ import { describe, expect, it } from "vitest";
 const workflow = readFileSync(resolve(".github/workflows/platform-cloud-run.yml"), "utf8");
 
 describe("platform collaboration deployment contract", () => {
-  it("configures the platform authority without any collaboration release flag", () => {
-    expect(workflow).toContain("MATRIX_COLLABORATION_ACTIVE_KEY_ID:");
-    expect(workflow).toContain("MATRIX_COLLABORATION_ALLOWED_ORIGINS:");
-    expect(workflow).toContain("MATRIX_COLLABORATION_PROOF_KEYS=collaboration-proof-keys:latest");
+  it("configures the direct ticket authority without V1 proof keys or a release flag", () => {
+    expect(workflow).toContain("MATRIX_COLLABORATION_TICKET_ACTIVE_KEY_ID:");
+    expect(workflow).toContain("MATRIX_COLLABORATION_TICKET_KEYS=collaboration-ticket-keys:latest");
+    expect(workflow).not.toContain("MATRIX_COLLABORATION_PROOF_KEYS=collaboration-proof-keys:latest");
+    expect(workflow).not.toContain("MATRIX_COLLABORATION_ACTIVE_KEY_ID:");
     expect(workflow).not.toContain("MATRIX_COLLABORATION_ENABLED");
   });
 
@@ -18,10 +19,10 @@ describe("platform collaboration deployment contract", () => {
     expect(workflow).toContain("--max-instances 10");
   });
 
-  it("verifies the proof-key secret and the deployed revision contract", () => {
-    expect(workflow).toContain("Verify collaboration proof secret");
-    expect(workflow).toContain("secret_name=collaboration-proof-keys");
-    expect(workflow).toContain("MATRIX_COLLABORATION_ACTIVE_KEY_ID\n");
-    expect(workflow).toContain("MATRIX_COLLABORATION_PROOF_KEYS=collaboration-proof-keys:latest");
+  it("verifies the direct ticket key secret and deployed revision contract", () => {
+    expect(workflow).toContain("Verify collaboration ticket secret");
+    expect(workflow).toContain("secret_name=collaboration-ticket-keys");
+    expect(workflow).toContain("MATRIX_COLLABORATION_TICKET_ACTIVE_KEY_ID\n");
+    expect(workflow).toContain("MATRIX_COLLABORATION_TICKET_KEYS=collaboration-ticket-keys:latest");
   });
 });

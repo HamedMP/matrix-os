@@ -1,6 +1,6 @@
 {
   "packageName": "@openai/codex",
-  "latestVerifiedVersion": "0.155.1",
+  "latestVerifiedVersion": "0.156.1",
   "experimental": true,
   "verifiedVersions": {
     "0.144.3": {
@@ -71,6 +71,18 @@
         "darwin-arm64": "058e9af9dc4ac3a39b3a382f14d117d5cd3beff329e2cbbf6929346f92eef1aa",
         "linux-x64": "058e9af9dc4ac3a39b3a382f14d117d5cd3beff329e2cbbf6929346f92eef1aa"
       }
+    },
+    "0.156.0": {
+      "schemaSha256ByTarget": {
+        "darwin-arm64": "655adafa0ccea3d84f30bcbdc74e201fa14511c51e08d0cd024a0280daa8bc60",
+        "linux-x64": "655adafa0ccea3d84f30bcbdc74e201fa14511c51e08d0cd024a0280daa8bc60"
+      }
+    },
+    "0.156.1": {
+      "schemaSha256ByTarget": {
+        "darwin-arm64": "655adafa0ccea3d84f30bcbdc74e201fa14511c51e08d0cd024a0280daa8bc60",
+        "linux-x64": "655adafa0ccea3d84f30bcbdc74e201fa14511c51e08d0cd024a0280daa8bc60"
+      }
     }
   },
   "requiredServerMethods": [
@@ -98,12 +110,12 @@
     "item/fileChange/requestApproval": "ac5be166d6a7668792b810a97be8bdfb02b2107320d93d0c4d783a11d32d8cf9",
     "item/tool/requestUserInput": "f998a4ecef0e0d5dfc1bf5a093ee77663ec0b9f4dc71c41e02b8c13136f439c2",
     "item/permissions/requestApproval": "a264aef4e3b05a7725eedc504148c96d2200c35a326463d5058b4c134e3890cf",
-    "mcpServer/elicitation/request": "bb53ff5a737b4f92b79721066d395a432cb326d067f2f95f5ee261a256493e5a",
-    "item/started": "a67dae0c2bcd4245eec5a249c7ce71ae193604a2601a5ee2d14efd5e9beb2ed6",
-    "item/completed": "c26cb115b8ebff983ca9d13b004a31183552df287d6d048988bc05af13e30cb0",
+    "mcpServer/elicitation/request": "d164b1519690cfb0b5f353c8e6eb37087f720e7dcd81df4c145bc964f9416d05",
+    "item/started": "7e1fcd8e3953999660d5c80e2ba4479697645e179ce3a95555712d4f60097d6b",
+    "item/completed": "33f9ba75a8594be59e8ad8c841c9a405df51917739cf2dd87da1a87b0f5e2b83",
     "item/agentMessage/delta": "427d58ea4e1b0fd7afce1035cefd40df96d7dc48b82cbe293a2f69ed4e803bf9",
     "item/commandExecution/outputDelta": "aa94a86bcbf20ceca1672b7c476c3472ef5e507b831ceb26561c2785a97a5dc4",
     "thread/tokenUsage/updated": "5dbf1e2a382453af89a44bf72660aade96c8a549068d5bb55ca56951a30505d7",
-    "turn/completed": "b5c5c282d0727bc7fb2a73147cb8287e7db2732964a41d5ce83660c40db2e2f1"
+    "turn/completed": "7a68f912f14af36e22a922dca2466225aa8da9509cfd7ee61db6ef096139360f"
   }
 }

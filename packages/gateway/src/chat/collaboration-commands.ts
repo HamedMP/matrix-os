@@ -13,6 +13,8 @@ import type {
 } from "../collaboration/database.js";
 import { jsonb, parseJson } from "./records.js";
 import type { SharedQueuedTurn } from "./repository.js";
+import type { CollaborationRunLossRepository } from "../collaboration/shared-run-loss.js";
+import { fenceSharedChatAuthority, type SharedChatAuthorizer } from "../collaboration/shared-chat-authority.js";
 
 const RequestIdSchema = CollaborationIdSchema;
 const HashSchema = z.string().regex(/^[a-f0-9]{64}$/);
@@ -80,6 +82,9 @@ export class CollaborationChatCommands {
       clientRequestId: string;
       actorId: string;
     }): Promise<void>;
+    /** S09: immutable audit of who cancelled, approved or retried, written in the command transaction. */
+    runControls?: Pick<CollaborationRunLossRepository, "recordDecision">;
+    authorize?: SharedChatAuthorizer;
   }) {
     this.now = options.now ?? (() => new Date());
   }
@@ -87,13 +92,15 @@ export class CollaborationChatCommands {
   async cancel(input: CommandIdentity & { requestId: string }): Promise<CollaborationChatCommandResult> {
     const identity = parseIdentity(input);
     const requestId = CanonicalChatQueuedTurnIdSchema.parse(input.requestId);
+    const authority = await this.options.authorize?.(identity.scopeId, identity.actorId, "control_execution");
     const reserved = await this.options.db.transaction().execute(async (trx) => {
-      const authorized = await authorizeCommand(trx, identity, "cancel", requestId, this.now());
+      const authorized = await authorizeCommand(trx, identity, "cancel", requestId, this.now(), authority);
       const replay = await replayCommand(trx, identity, "cancel");
       if (replay) return { result: replay, dispatch: false as const };
       requireExpectedRevision(identity, authorized.chatRevision);
       const request = await lockRequest(trx, authorized.chatId, requestId);
       requireRequestControl(authorized.role, identity.actorId, request.requesting_actor_id);
+      const relation = controlRelation(authorized.role, identity.actorId, request.requesting_actor_id);
       if (request.status === "queued") {
         await trx.updateTable("chat_queued_turns").set({
           status: "cancelled",
@@ -112,6 +119,9 @@ export class CollaborationChatCommands {
         await appendEvent(trx, authorized, revision, "chat.ai_request.cancelled", {
           requestId, actorId: identity.actorId, state: "cancelled",
         });
+        await this.options.runControls?.recordDecision({
+          runId: null, requestId, scopeId: identity.scopeId, kind: "cancel", actorId: identity.actorId, relation,
+        }, trx);
         return { result, dispatch: false as const };
       }
       if (request.status !== "claimed" || !request.claimed_run_id || !this.options.submitCancellation) {
@@ -135,6 +145,9 @@ export class CollaborationChatCommands {
       await appendEvent(trx, authorized, revision, "chat.ai_request.cancellation_requested", {
         requestId, runId: request.claimed_run_id, actorId: identity.actorId, state: "accepted",
       });
+      await this.options.runControls?.recordDecision({
+        runId: request.claimed_run_id, requestId, scopeId: identity.scopeId, kind: "cancel", actorId: identity.actorId, relation,
+      }, trx);
       return {
         result,
         dispatch: true as const,
@@ -168,13 +181,15 @@ export class CollaborationChatCommands {
     const identity = parseIdentity(input);
     const requestId = CanonicalChatQueuedTurnIdSchema.parse(input.requestId);
     const newRequestId = CanonicalChatQueuedTurnIdSchema.parse(input.newRequestId);
+    const authority = await this.options.authorize?.(identity.scopeId, identity.actorId, "control_execution");
     return this.options.db.transaction().execute(async (trx) => {
-      const authorized = await authorizeCommand(trx, identity, "retry", requestId, this.now());
+      const authorized = await authorizeCommand(trx, identity, "retry", requestId, this.now(), authority);
       const replay = await replayCommand(trx, identity, "retry");
       if (replay) return replay;
       requireExpectedRevision(identity, authorized.chatRevision);
       const original = await lockRequest(trx, authorized.chatId, requestId);
-      requireRequestControl(authorized.role, identity.actorId, original.requesting_actor_id);
+      // Locked rule: only the requesting member resubmits; the owner may submit a new request instead.
+      if (original.requesting_actor_id !== identity.actorId) throw new CollaborationChatCommandError("forbidden");
       if (!["cancelled", "interrupted", "unauthorized", "unavailable"].includes(original.status)) {
         throw new CollaborationChatCommandError("conflict");
       }
@@ -203,15 +218,15 @@ export class CollaborationChatCommands {
         retry_of_queued_turn_id: requestId,
         position: pendingCount + 1,
         status: "queued",
-        parts: original.parts,
+        parts: jsonb(parseJson(original.parts)),
         driver_kind: original.driver_kind,
         instance_id: original.instance_id,
-        selection: original.selection,
+        selection: jsonb(parseJson(original.selection)),
         interaction_mode: original.interaction_mode,
         permission_mode: original.permission_mode,
         execution_root: null,
         execution_root_fingerprint: null,
-        capability_snapshot: original.capability_snapshot,
+        capability_snapshot: jsonb(parseJson(original.capability_snapshot)),
         claimed_turn_id: null,
         claimed_run_id: null,
         cancelled_at: null,
@@ -229,6 +244,10 @@ export class CollaborationChatCommands {
         actorId: identity.actorId,
         acceptedSequence,
       });
+      await this.options.runControls?.recordDecision({
+        runId: original.claimed_run_id, requestId, scopeId: identity.scopeId, kind: "retry",
+        actorId: identity.actorId, relation: "requester",
+      }, trx);
       return result;
     });
   }
@@ -243,9 +262,18 @@ export class CollaborationChatCommands {
     const runId = z.string().min(1).max(128).parse(input.runId);
     const approvalId = z.string().min(1).max(128).parse(input.approvalId);
     await this.reconcileApprovalReplay(identity);
+    const authority = await this.options.authorize?.(identity.scopeId, identity.actorId, "control_execution");
     const reserved = await this.options.db.transaction().execute(async (trx) => {
-      const authorized = await authorizeCommand(trx, identity, "approval", undefined, this.now());
-      if (authorized.role !== "owner") throw new CollaborationChatCommandError("forbidden");
+      const authorized = await authorizeCommand(trx, identity, "approval", undefined, this.now(), authority);
+      // Locked rule: the requesting member or the scope owner answers a tool approval; nobody else.
+      const requester = await trx.selectFrom("chat_queued_turns").select(["id", "requesting_actor_id"])
+        .where("chat_id", "=", authorized.chatId)
+        .where("claimed_run_id", "=", runId)
+        .where("collaboration_scope_id", "=", identity.scopeId)
+        .executeTakeFirst();
+      if (!requester) throw new CollaborationChatCommandError("not_found");
+      requireRequestControl(authorized.role, identity.actorId, requester.requesting_actor_id);
+      const relation = controlRelation(authorized.role, identity.actorId, requester.requesting_actor_id);
       const replay = await replayCommand(trx, identity, "approval");
       if (replay) return { result: replay, dispatch: false, chatId: authorized.chatId };
       requireExpectedRevision(identity, authorized.chatRevision);
@@ -270,6 +298,10 @@ export class CollaborationChatCommands {
       await insertCommand(trx, identity, authorized, {
         id: result.id, kind: "approval", runId, approvalId, decision, state: "accepted", result,
       });
+      await this.options.runControls?.recordDecision({
+        runId, requestId: requester.id, scopeId: identity.scopeId, kind: "tool_approval",
+        actorId: identity.actorId, relation, approvalId, decision,
+      }, trx);
       return { result, dispatch: true, chatId: authorized.chatId };
     });
     if (!reserved.dispatch) return reserved.result;
@@ -442,22 +474,30 @@ async function authorizeCommand(
   _kind: "approval" | "cancel" | "retry",
   _requestId: string | undefined,
   now: Date,
+  authority?: Awaited<ReturnType<SharedChatAuthorizer>>,
 ) {
   const scope = await trx.selectFrom("collaboration_scopes").selectAll()
     .where("id", "=", identity.scopeId).forUpdate().executeTakeFirst();
   if (!scope || scope.kind !== "chat") throw new CollaborationChatCommandError("not_found");
-  if (scope.lifecycle !== "shared" || scope.membership_mode !== "direct") {
+  if (scope.lifecycle !== "shared") {
     throw new CollaborationChatCommandError("unavailable");
   }
-  const member = await trx.selectFrom("collaboration_members").selectAll()
-    .where("scope_id", "=", identity.scopeId)
-    .where("actor_id", "=", identity.actorId)
-    .forUpdate().executeTakeFirst();
-  if (!member || member.status !== "accepted"
-    || (member.expires_at !== null && new Date(member.expires_at).getTime() <= now.getTime())) {
-    throw new CollaborationChatCommandError("not_found");
+  let role: "owner" | "editor";
+  if (authority) {
+    role = await fenceSharedChatAuthority(trx, scope, authority, identity.actorId, "control_execution");
+  } else {
+    if (scope.membership_mode !== "direct") throw new CollaborationChatCommandError("unavailable");
+    const member = await trx.selectFrom("collaboration_members").selectAll()
+      .where("scope_id", "=", identity.scopeId)
+      .where("actor_id", "=", identity.actorId)
+      .forUpdate().executeTakeFirst();
+    if (!member || member.status !== "accepted"
+      || (member.expires_at !== null && new Date(member.expires_at).getTime() <= now.getTime())) {
+      throw new CollaborationChatCommandError("not_found");
+    }
+    if (member.role === "viewer") throw new CollaborationChatCommandError("forbidden");
+    role = member.role;
   }
-  if (member.role === "viewer") throw new CollaborationChatCommandError("forbidden");
   const chat = await trx.selectFrom("chats").select(["id", "revision", "collaboration"])
     .where("id", "=", scope.resource_id)
     .where("owner_id", "=", scope.owner_id)
@@ -470,8 +510,8 @@ async function authorizeCommand(
     scopeId: scope.id,
     chatId: chat.id,
     chatRevision: Number(chat.revision),
-    role: member.role,
-    authEpoch: Number(scope.auth_epoch),
+    role,
+    authEpoch: authority?.authEpoch ?? Number(scope.auth_epoch),
     authorityGeneration: Number(scope.authority_generation),
     executionGeneration: scope.execution_generation === null ? null : Number(scope.execution_generation),
     executionEligibility: scope.execution_eligibility,
@@ -509,6 +549,11 @@ async function lockRequest(trx: Transaction<OwnerCollaborationDatabase>, chatId:
 
 function requireRequestControl(role: string, actorId: string, requestActorId: string | null): void {
   if (role !== "owner" && requestActorId !== actorId) throw new CollaborationChatCommandError("forbidden");
+}
+
+/** The relation the locked run-control rule authorized: the requester wins when the owner is also the requester. */
+function controlRelation(role: string, actorId: string, requestActorId: string | null): "requester" | "scope_owner" {
+  return requestActorId === actorId ? "requester" : role === "owner" ? "scope_owner" : "requester";
 }
 
 async function compactQueue(

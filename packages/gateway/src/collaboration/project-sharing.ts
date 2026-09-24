@@ -1,4 +1,5 @@
 import type { Kysely } from "kysely";
+import type { CollaborationProjectGitSetup } from "@matrix-os/contracts";
 import { z } from "zod/v4";
 import type { OwnerCollaborationDatabase } from "./database.js";
 import type {
@@ -20,6 +21,7 @@ interface InventoryResult {
   externalReferences: ProjectInventoryReference[];
   blockers: Array<{ kind: ProjectInventoryItem["kind"]; id: string; code: string }>;
   membershipEffects: ProjectInventoryMembershipEffect[];
+  gitSetup?: CollaborationProjectGitSetup;
   inventoryHash: string;
   membershipHash: string;
   inventoryToken: string;

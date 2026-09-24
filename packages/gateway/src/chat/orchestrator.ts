@@ -186,6 +186,7 @@ export class CanonicalChatOrchestrator {
       | "markRunRunning"
       | "appendRunActivities"
       | "appendAssistantDelta"
+      | "appendAssistantAttachment"
       | "updateAdapterState"
       | "finishRun"
       | "getAdapterState"
@@ -566,11 +567,7 @@ export class CanonicalChatOrchestrator {
     owner: ChatOwner,
     chatId: string,
     scopeId: string,
-    createAdapter: (
-      context: Parameters<SharedChatExecutionCoordinator["dispatchNextQueued"]>[3] extends (
-        context: infer Context,
-      ) => unknown ? Context : never,
-    ) => Promise<CanonicalChatProviderAdapter> | CanonicalChatProviderAdapter,
+    createAdapter: Parameters<SharedChatExecutionCoordinator["dispatchNextQueued"]>[3],
   ): Promise<void> {
     this.assertOpen();
     await this.sharedExecution.dispatchNextQueued(owner, chatId, scopeId, createAdapter);
@@ -739,6 +736,16 @@ export class CanonicalChatOrchestrator {
             runId: run.id,
             messageId,
             delta: event.delta,
+            createdAt: (this.options.now ?? (() => new Date()))().toISOString(),
+          });
+          await this.sharedExecution.notify(sharedScopeId);
+        } else if (event.type === "assistant.attachment") {
+          failureStage = "persistence";
+          await this.options.repository.appendAssistantAttachment(owner, {
+            chatId: run.chatId,
+            runId: run.id,
+            messageId: assistantMessageId(run.id),
+            attachment: event.attachment,
             createdAt: (this.options.now ?? (() => new Date()))().toISOString(),
           });
           await this.sharedExecution.notify(sharedScopeId);
@@ -951,8 +958,9 @@ export class CanonicalChatOrchestrator {
     scopeId: string,
     chatId: string,
     runId: string,
+    options: { sharedRequestState?: "cancelled" | "interrupted" } = {},
   ): Promise<void> {
-    await this.sharedExecution.cancel(owner, scopeId, chatId, runId);
+    await this.sharedExecution.cancel(owner, scopeId, chatId, runId, options);
   }
 
   async steerRun(
@@ -1336,11 +1344,13 @@ export class CanonicalChatOrchestrator {
             }
           }
           if (entry.sharedScopeId) {
+            // The home is going away: the request is lost, not cancelled by anyone.
             await this.cancelSharedRun(
               entry.owner,
               entry.sharedScopeId,
               entry.chatId,
               entry.runId,
+              { sharedRequestState: "interrupted" },
             );
             return;
           }

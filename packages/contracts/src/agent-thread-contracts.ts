@@ -189,6 +189,10 @@ const CoreAgentThreadEventSchema = z.discriminatedUnion("type", [
   BaseThreadEventSchema.extend({ type: z.literal("assistant.text.delta"), messageId: referenceId(128), delta: AssistantTextDeltaSchema }).strict(),
   BaseThreadEventSchema.extend({ type: z.literal("assistant.text.completed"), messageId: referenceId(128) }).strict(),
   BaseThreadEventSchema.extend({
+    type: z.literal("assistant.attachment"),
+    attachment: AgentAttachmentSchema,
+  }).strict(),
+  BaseThreadEventSchema.extend({
     type: z.literal("tool.started"),
     toolCallId: referenceId(128),
     displayName: SafeDisplayStringSchema,

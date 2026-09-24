@@ -125,6 +125,36 @@ function fakeStore(initialEvents: AgentThreadEvent[]) {
 }
 
 describe("canonical coding Chat Provider adapter", () => {
+  it("projects captured provider media as a canonical assistant attachment", async () => {
+    const fake = fakeStore([
+      event({
+        type: "assistant.attachment",
+        eventId: "evt_artifact",
+        attachment: {
+          id: "attachment_codex_fixture",
+          kind: "image",
+          label: "whale.png",
+          path: "data/chat-artifacts/codex/sha256/fixture.png",
+          mimeType: "image/png",
+          sizeBytes: 12,
+        },
+      }),
+      event({ type: "thread.completed", eventId: "evt_artifact_complete", outcome: "completed" }),
+    ]);
+    const adapter = createCanonicalCodingChatProviderAdapter({ providerId: "codex", threads: fake.store });
+    const received: CanonicalProviderRunEvent[] = [];
+
+    for await (const item of adapter.start(input())) received.push(item);
+
+    expect(received).toContainEqual({
+      type: "assistant.attachment",
+      attachment: expect.objectContaining({
+        id: "attachment_codex_fixture",
+        path: "data/chat-artifacts/codex/sha256/fixture.png",
+      }),
+    });
+  });
+
   it("recovers a paginated exact-run transcript through a fresh adapter without admitting a new turn", async () => {
     const fake = fakeStore([]);
     const first = event({ type: "assistant.text.delta", eventId: "evt_page_one", messageId: "msg_final", delta: "first " });

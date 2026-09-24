@@ -12,6 +12,7 @@ import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { DirectAuthError } from "./direct-auth.js";
 import type { DirectSessionService } from "./direct-sessions.js";
+import type { OwnerRuntimeSessionService } from "./owner-runtime-sessions.js";
 import { sha256Hex } from "./direct-crypto.js";
 
 export const DIRECT_SESSION_HEADER = "x-matrix-collaboration-session";
@@ -59,7 +60,7 @@ export function directErrorResponse(c: Context, error: unknown): Response | null
   }
 }
 
-export function createDirectSessionRoutes(options: { sessions: DirectSessionService }): Hono {
+export function createDirectSessionRoutes(options: { sessions: DirectSessionService; ownerRuntimeSessions?: OwnerRuntimeSessionService }): Hono {
   const app = new Hono();
   const jsonLimit = bodyLimit({ maxSize: COLLABORATION_DIRECT_LIMITS.httpJsonBytes, onError: (c) => safeJson(c, "Request too large", 413) });
 
@@ -72,6 +73,19 @@ export function createDirectSessionRoutes(options: { sessions: DirectSessionServ
       return c.json(session, 201);
     } catch (error: unknown) {
       return directErrorResponse(c, error) ?? unexpected(c, "session create", error);
+    }
+  });
+
+  app.post("/api/collaboration/owner-runtime/sessions", jsonLimit, async (c) => {
+    const body = await readJson(c);
+    if (body === undefined) return safeJson(c, "Invalid request", 422);
+    if (!options.ownerRuntimeSessions) return safeJson(c, "Collaboration unavailable", 503);
+    try {
+      const session = await options.ownerRuntimeSessions.create(body);
+      c.header("Cache-Control", "no-store");
+      return c.json(session, 201);
+    } catch (error: unknown) {
+      return directErrorResponse(c, error) ?? unexpected(c, "owner runtime session create", error);
     }
   });
 

@@ -5,6 +5,7 @@ import { createPlatformDb, type PlatformDb } from "../../packages/gateway/src/pl
 import { createIntegrationRoutes } from "../../packages/gateway/src/integrations/routes.js";
 import type { PipedreamConnectClient } from "../../packages/gateway/src/integrations/pipedream.js";
 import { getService } from "../../packages/gateway/src/integrations/registry.js";
+import { UnsupportedGranolaParameterError } from "../../packages/platform/src/granola-integration.js";
 import { createHmac } from "node:crypto";
 
 // ---------------------------------------------------------------------------
@@ -161,6 +162,98 @@ describe("Integration Routes", () => {
       const data = await res.json() as Array<{ id: string; actions: Record<string, unknown> }>;
       const granola = data.find((service) => service.id === "granola");
       expect(Object.keys(granola?.actions ?? {})).toEqual(["list_notes", "get_note", "get_account"]);
+    });
+
+    it("only advertises Granola list parameters supported by the discovered tool", async () => {
+      const routes = createIntegrationRoutes({
+        db, pipedream, webhookSecret: WEBHOOK_SECRET, resolveUserId: async () => userId,
+        mcpPresetBroker: {
+          listConnections: vi.fn().mockResolvedValue([]),
+          listAvailableActions: vi.fn().mockResolvedValue(["list_notes"]),
+          listAvailableActionParams: vi.fn().mockResolvedValue({ list_notes: [] }),
+          connect: vi.fn().mockResolvedValue({ url: "https://example.com/oauth" }),
+          call: vi.fn(), disconnect: vi.fn().mockResolvedValue(false),
+        },
+      });
+      const brokeredApp = new Hono();
+      brokeredApp.route("/api/integrations", routes);
+      const res = await brokeredApp.request("/api/integrations/available");
+      const data = await res.json() as Array<{ id: string; actions: Record<string, { params: Record<string, unknown> }> }>;
+      expect(data.find((service) => service.id === "granola")?.actions.list_notes.params).toEqual({});
+    });
+
+    it("requires identity and projects live Granola parameters on the agent capability route", async () => {
+      const broker = {
+        listConnections: vi.fn().mockResolvedValue([]),
+        listAvailableActions: vi.fn().mockResolvedValue(["list_notes"]),
+        listAvailableActionParams: vi.fn().mockResolvedValue({ list_notes: [] }),
+        connect: vi.fn().mockResolvedValue({ url: "https://example.com/oauth" }),
+        call: vi.fn(), disconnect: vi.fn().mockResolvedValue(false),
+      };
+      const routes = createIntegrationRoutes({
+        db, pipedream, webhookSecret: WEBHOOK_SECRET,
+        resolveUserId: async () => userId,
+        mcpPresetBroker: broker,
+      });
+      const brokeredApp = new Hono();
+      brokeredApp.route("/api/integrations", routes);
+
+      const res = await brokeredApp.request("/api/integrations/agent-catalog");
+      expect(res.status).toBe(200);
+      const data = await res.json() as Array<{ id: string; actions: Record<string, { params: Record<string, unknown> }> }>;
+      expect(data.find((service) => service.id === "granola")?.actions.list_notes.params).toEqual({});
+      expect(broker.listAvailableActionParams).toHaveBeenCalledWith(userId, "granola");
+
+      const anonymousRoutes = createIntegrationRoutes({
+        db, pipedream, webhookSecret: WEBHOOK_SECRET,
+        resolveUserId: async () => null,
+        mcpPresetBroker: broker,
+      });
+      const anonymousApp = new Hono();
+      anonymousApp.route("/api/integrations", anonymousRoutes);
+      expect((await anonymousApp.request("/api/integrations/agent-catalog")).status).toBe(401);
+    });
+
+    it("does not advertise undiscovered MCP actions through the agent capability route", async () => {
+      const routes = createIntegrationRoutes({
+        db, pipedream, webhookSecret: WEBHOOK_SECRET,
+        resolveUserId: async () => userId,
+        mcpPresetBroker: {
+          listConnections: vi.fn().mockResolvedValue([]),
+          listAvailableActions: vi.fn().mockResolvedValue(null),
+          connect: vi.fn(), call: vi.fn(), disconnect: vi.fn(),
+        },
+      });
+      const brokeredApp = new Hono();
+      brokeredApp.route("/api/integrations", routes);
+      const res = await brokeredApp.request("/api/integrations/agent-catalog");
+      expect(res.status).toBe(200);
+      const data = await res.json() as Array<{ id: string; actions: Record<string, unknown> }>;
+      expect(data.find((service) => service.id === "granola")?.actions).toEqual({});
+    });
+
+    it("keeps onboarding capabilities separate from the agent action catalog", async () => {
+      const onboarding = new Hono();
+      onboarding.get("/capabilities", (c) => c.json({ capabilities: [] }));
+      const routes = createIntegrationRoutes({
+        db, pipedream, webhookSecret: WEBHOOK_SECRET,
+        resolveUserId: async () => userId,
+        mcpPresetBroker: {
+          listConnections: vi.fn().mockResolvedValue([]),
+          listAvailableActions: vi.fn().mockResolvedValue(["get_account"]),
+          connect: vi.fn(), call: vi.fn(), disconnect: vi.fn(),
+        },
+      });
+      const combined = new Hono();
+      combined.route("/api/integrations", onboarding);
+      combined.route("/api/integrations", routes);
+
+      const onboardingResponse = await combined.request("/api/integrations/capabilities");
+      expect(await onboardingResponse.json()).toEqual({ capabilities: [] });
+      const catalogResponse = await combined.request("/api/integrations/agent-catalog");
+      expect(catalogResponse.status).toBe(200);
+      const catalog = await catalogResponse.json() as Array<{ id: string; actions: Record<string, unknown> }>;
+      expect(Object.keys(catalog.find((service) => service.id === "granola")?.actions ?? {})).toEqual(["get_account"]);
     });
 
     it("fails closed when MCP capability identity resolution fails", async () => {
@@ -595,6 +688,30 @@ describe("Integration Routes", () => {
         scopes: ["read"],
       });
       serviceId = svc.id;
+    });
+
+    it("returns 400 when a Granola list parameter is unsupported", async () => {
+      const routes = createIntegrationRoutes({
+        db, pipedream, webhookSecret: WEBHOOK_SECRET, resolveUserId: async () => userId,
+        mcpPresetBroker: {
+          listConnections: vi.fn().mockResolvedValue([]),
+          connect: vi.fn().mockResolvedValue({ url: "https://example.com/oauth" }),
+          call: vi.fn().mockRejectedValue(new UnsupportedGranolaParameterError("limit")),
+          disconnect: vi.fn().mockResolvedValue(false),
+        },
+      });
+      const brokeredApp = new Hono();
+      brokeredApp.route("/api/integrations", routes);
+      const res = await brokeredApp.request("/api/integrations/call", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ service: "granola", action: "list_notes", params: { limit: 1 } }),
+      });
+      expect(res.status).toBe(400);
+      expect(await res.json()).toEqual({
+        error: "Parameter limit is not supported by this connection",
+        code: "unsupported_parameter",
+        parameter: "limit",
+      });
     });
 
     it("calls the service via Pipedream and returns data", async () => {

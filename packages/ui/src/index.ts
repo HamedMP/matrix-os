@@ -111,6 +111,9 @@ export { SharedTerminalControls } from "./collaboration/SharedTerminalControls.j
 export { TerminalSharingButton } from "./collaboration/TerminalSharingButton.js";
 export { ProjectSharingDialog } from "./collaboration/ProjectSharingDialog.js";
 export { ProjectSharingButton } from "./collaboration/ProjectSharingButton.js";
+export { ResourceSharingButton } from "./collaboration/ResourceSharingButton.js";
+export { ReadinessSummary } from "./collaboration/ReadinessSummary.js";
+export { ProjectSourceSummary } from "./collaboration/ProjectSourceSummary.js";
 export {
   deriveProjectPresentation,
   projectInventoryItemLabel,
@@ -148,6 +151,8 @@ export { constrainFloatingWindow, isPointNearWindow, WINDOW_BACKGROUND_CLICK_BUF
 export { CanonicalChatInputForm, type CanonicalChatInputFormProps } from "./chat/CanonicalChatInputForm.js";
 
 export { useFileDownload, type FileDownloadTransport, type FileDownloadController } from "./files/use-file-download.js";
+export { filePreviewContentUrl, filePreviewMetadataUrl } from "./files/file-preview-policy.js";
+export { FilePreviewContent, type FilePreviewContentProps } from "./files/FilePreviewContent.js";
 
 export { resolveRecipeHandoff } from "./chat-agents/recipe-handoff.js";
 export { generatedChatTitle } from "./generated-chat-title";

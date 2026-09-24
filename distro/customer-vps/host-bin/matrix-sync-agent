@@ -26,6 +26,7 @@ readonly UPDATE_ERROR_MARKER="$APP_DIR/.update-error.json"
 readonly UPDATE_PHASE_MARKER="$STAGING_DIR/update-phase"
 readonly UPDATE_TRANSACTION_DIR="$STAGING_DIR/update-transaction"
 readonly UPDATE_TRANSACTION_STATE="$UPDATE_TRANSACTION_DIR/state"
+readonly HERMES_RECONCILE_MARKER="$STAGING_DIR/hermes-reconcile-pending"
 readonly UPDATE_REPAIR_TRIGGER="$APP_DIR/.update-repair-now"
 readonly ROLLBACK_TRIGGER="$APP_DIR/.rollback-now"
 readonly HEALTH_URL="http://127.0.0.1:4000/health"
@@ -60,6 +61,56 @@ resume_symphony_after_update() {
     sudo systemctl start --no-block matrix-symphony.service
     log "Resumed previously active Symphony"
   fi
+}
+
+# Hermes lives under the owner home, outside the host-bundle rollback tree.
+# Reconcile it only after the candidate bundle is healthy and committed so a
+# rejected candidate cannot leave the prior bundle running a newer Hermes.
+mark_hermes_reconciliation_pending() {
+  local version="$1" incoming="$HERMES_RECONCILE_MARKER.incoming.$$"
+  rm -f -- "$incoming" || return 1
+  if ! printf '%s\n' "$version" >"$incoming" || ! mv -Tf "$incoming" "$HERMES_RECONCILE_MARKER"; then
+    rm -f -- "$incoming"
+    return 1
+  fi
+}
+
+reconcile_hermes_release() {
+  if [ -f "/etc/systemd/system/matrix-hermes.service" ]; then
+    if ! sudo systemctl enable matrix-hermes.service; then
+      log "WARN: failed to enable matrix-hermes.service; reconciliation remains retryable"
+      return 1
+    fi
+    if ! sudo systemctl restart --no-block matrix-hermes.service; then
+      log "WARN: failed to schedule Hermes release reconciliation; reconciliation remains retryable"
+      return 1
+    fi
+    sudo rm -f -- "$HERMES_RECONCILE_MARKER" || return 1
+    log "Hermes release reconciliation scheduled"
+  elif [ -f "/etc/systemd/system/matrix-hermes-dashboard.service" ] &&
+    sudo systemctl is-active --quiet matrix-hermes-dashboard.service; then
+    if ! sudo systemctl restart --no-block matrix-hermes-dashboard.service; then
+      log "WARN: failed to refresh the active Hermes dashboard service; reconciliation remains retryable"
+      return 1
+    fi
+    sudo rm -f -- "$HERMES_RECONCILE_MARKER" || return 1
+    log "Active Hermes dashboard service refreshed"
+  else
+    log "WARN: Hermes release service is unavailable; reconciliation remains retryable"
+    return 1
+  fi
+  return 0
+}
+
+maybe_reconcile_hermes_release() {
+  if [ ! -e "$HERMES_RECONCILE_MARKER" ] && [ ! -L "$HERMES_RECONCILE_MARKER" ]; then
+    return 0
+  fi
+  if [ ! -f "$HERMES_RECONCILE_MARKER" ] || [ -L "$HERMES_RECONCILE_MARKER" ]; then
+    log "WARN: Hermes reconciliation marker has an invalid file type"
+    return 1
+  fi
+  reconcile_hermes_release
 }
 
 stop_runtime_services() {
@@ -1195,7 +1246,9 @@ apply_update() {
   echo "$version" | sudo tee "$VERSION_FILE" >/dev/null
   log "Installed app $version"
   if [ -d "$extract_dir/bin" ]; then
-    if ! write_update_phase host-bin || ! install_host_bin_payload "$extract_dir/bin"; then
+    if ! write_update_phase host-bin \
+      || ! install_host_bin_payload "$extract_dir/bin" \
+      || ! sudo /usr/bin/timeout --kill-after=30 1800 "$BIN_DIR/matrix-prepare-host-prerequisites"; then
       log "ERROR: host-bin installation failed — rolling back"
       if do_rollback false; then
         write_update_error "post_install_host_bin_failed" "The host update helpers could not be installed and the previous release was restored." "$version"
@@ -1255,11 +1308,6 @@ apply_update() {
     if [ -f "$extract_dir/systemd/matrix-symphony.service" ]; then
       resume_symphony_after_update
     fi
-    if [ -f "$extract_dir/systemd/matrix-hermes-dashboard.service" ]; then
-      sudo systemctl enable matrix-hermes-dashboard.service
-      sudo systemctl restart --no-block matrix-hermes-dashboard.service || true
-      log "Hermes dashboard service refreshed"
-    fi
     if [ -x /opt/matrix/messaging/bin/synapse ] && [ -x /opt/matrix/messaging/bin/mautrix-telegram ] && [ -x /opt/matrix/messaging/bin/mautrix-whatsapp ]; then
       sudo systemctl enable matrix-homeserver.service matrix-bridge-telegram.service matrix-bridge-whatsapp.service
       sudo systemctl start --no-block matrix-homeserver.service matrix-bridge-telegram.service matrix-bridge-whatsapp.service || true
@@ -1312,6 +1360,14 @@ apply_update() {
   if [ "$healthy" = true ]; then
     if commit_release_metadata; then
       log "Updated release metadata"
+      if mark_hermes_reconciliation_pending "$version"; then
+        reconcile_hermes_release || log "WARN: Hermes release reconciliation deferred; will retry"
+      else
+        log "ERROR: failed to persist pending Hermes release reconciliation"
+        write_update_error "hermes_reconciliation_not_persisted" "The update completed, but the Hermes upgrade could not be scheduled safely." "$version"
+        rm -rf "$extract_dir" "$bundle_file"
+        return 1
+      fi
       if ! remove_legacy_r2_credentials; then
         log "ERROR: legacy R2 credentials could not be removed after the broker migration"
         write_update_error "legacy_storage_credentials_remain" "The update completed, but legacy storage credentials still require removal." "$version"
@@ -1577,6 +1633,7 @@ mkdir -p "$STAGING_DIR"
 clean_staging
 clean_legacy_upgrade_artifacts || true
 recover_interrupted_update
+maybe_reconcile_hermes_release || log "WARN: Hermes release reconciliation retry failed"
 last_legacy_r2_reconcile="$(date +%s)"
 reconcile_legacy_r2_credentials || log "WARN: legacy R2 credential removal deferred; will retry"
 last_staging_cleanup="$(date +%s)"
@@ -1638,6 +1695,7 @@ while true; do
   # Poll for new version
   check_for_update || true
   maybe_clean_staging
+  maybe_reconcile_hermes_release || log "WARN: Hermes release reconciliation retry failed"
   maybe_reconcile_legacy_r2_credentials || log "WARN: legacy R2 credential removal retry failed"
 
   # Sleep in 6s increments (50x = 5 min) so we react quickly to triggers

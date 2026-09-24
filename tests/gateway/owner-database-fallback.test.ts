@@ -69,6 +69,27 @@ describe("owner database fallback teardown (S20 / T099)", () => {
     expect(collaboration.fence).not.toHaveBeenCalled();
   });
 
+  it("closes the canvas hub and cancels cleanup before destroying its repository", async () => {
+    vi.useFakeTimers();
+    const order: string[] = [];
+    const sweep = vi.fn();
+    const canvasCleanupTimer = setInterval(sweep, 1_000);
+    try {
+      await teardownOwnerDatabaseServices({
+        canvasSubscriptionHub: { close: () => { order.push("hub"); } },
+        canvasCleanupTimer,
+        canvasRepository: { destroy: async () => { order.push("repository"); } },
+        appDb: { destroy: async () => { order.push("pool"); } },
+      });
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(order).toEqual(["hub", "repository", "pool"]);
+      expect(sweep).not.toHaveBeenCalled();
+    } finally {
+      clearInterval(canvasCleanupTimer);
+      vi.useRealTimers();
+    }
+  });
+
   it("tolerates services that were never built", async () => {
     await expect(teardownOwnerDatabaseServices({})).resolves.toEqual([
       "collaboration", "chatEventStream", "chatRepository", "canvasRepository", "appDb",

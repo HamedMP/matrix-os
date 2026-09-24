@@ -1,10 +1,8 @@
 import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { bootstrapPlatformCollaborationDatabase } from "../../packages/platform/src/collaboration/database.js";
-import { CollaborationProofSigner } from "../../packages/platform/src/collaboration/proof.js";
 import { PlatformCollaborationRepository } from "../../packages/platform/src/collaboration/repository.js";
 import { createPlatformCollaborationRoutes } from "../../packages/platform/src/collaboration/routes.js";
-import { CollaborationWebSocketAuthorizer } from "../../packages/platform/src/collaboration/websocket.js";
 import {
   createPlatformCollaborationTestDatabase,
   destroyPlatformCollaborationTestDatabase,
@@ -15,6 +13,7 @@ import {
 const now = new Date("2026-09-07T12:00:00.000Z");
 const scopeId = "10000000-0000-4000-8000-000000000001";
 const inviteId = "30000000-0000-4000-8000-000000000001";
+const organizationGrantId = "70000000-0000-4000-8000-000000000001";
 const runtimeSecret = "runtime-secret".repeat(3);
 
 describe("platform collaboration routes", () => {
@@ -28,20 +27,6 @@ describe("platform collaboration routes", () => {
     fixture = await createPlatformCollaborationTestDatabase();
     await bootstrapPlatformCollaborationDatabase(fixture.collaborationDb);
     repository = new PlatformCollaborationRepository(fixture.collaborationDb, { now: () => now });
-    const signer = new CollaborationProofSigner({
-      activeKeyId: "key-1",
-      keys: { "key-1": "a".repeat(32) },
-      now: () => now,
-      createNonce: () => "b".repeat(32),
-    });
-    const sockets = new CollaborationWebSocketAuthorizer({
-      repository,
-      signer,
-      allowedOrigins: ["https://app.matrix-os.com"],
-      enabledPurposes: ["events"],
-      now: () => now,
-      createToken: () => "c".repeat(43),
-    });
     organizationIds = [];
     resolveInvitationIdentifier = vi.fn(async (identifier: string) => identifier === "nimanaderi"
       ? { actorId: platformCollaborationActors.recipientWithoutComputer, displayName: "Recipient" }
@@ -49,8 +34,6 @@ describe("platform collaboration routes", () => {
     app = new Hono();
     app.route("/", createPlatformCollaborationRoutes({
       repository,
-      signer,
-      sockets,
       resolveActor: async (c) => c.req.header("x-test-actor") ?? null,
       authenticateRuntime: async ({ runtimeId, bearerToken }) =>
         runtimeId === "runtime_owner" && bearerToken === runtimeSecret
@@ -116,10 +99,34 @@ describe("platform collaboration routes", () => {
     }]);
   });
 
+  it("resolves an exact pending invitation to scope metadata only for its indexed actor", async () => {
+    await repository.applyDirectoryEvent({ ...directoryEvent("invited"), organizationId: "org_1" });
+    const path = `/api/collaboration/invitations/${inviteId}/location`;
+    const recipient = await app.request(path, { headers: { "x-test-actor": platformCollaborationActors.recipientWithoutComputer } });
+    expect(recipient.status).toBe(200);
+    expect(await recipient.json()).toEqual({ scopeId });
+    expect(recipient.headers.get("cache-control")).toBe("private, no-store");
+    const outsider = await app.request(path, { headers: { "x-test-actor": platformCollaborationActors.owner } });
+    expect(outsider.status).toBe(404);
+    const unknown = await app.request(`/api/collaboration/invitations/30000000-0000-4000-8000-000000000099/location`,
+      { headers: { "x-test-actor": platformCollaborationActors.recipientWithoutComputer } });
+    expect(unknown.status).toBe(404);
+    expect((await outsider.json())).toEqual(await unknown.json());
+    expect((await app.request(path)).status).toBe(401);
+    await repository.applyDirectoryEvent({ ...directoryEvent("accepted"), organizationId: "org_1",
+      eventId: "20000000-0000-4000-8000-000000000002", metadataRevision: 2 });
+    expect((await app.request(path, { headers: { "x-test-actor": platformCollaborationActors.recipientWithoutComputer } })).status).toBe(404);
+  });
+
   it("lists organization-wide shares as pending only for current members who have not opened them", async () => {
     const orgScopeId = "10000000-0000-4000-8000-000000000077";
     await repository.applyDirectoryEvent({
       ...directoryEvent("accepted"), eventId: "20000000-0000-4000-8000-000000000077", scopeId: orgScopeId,
+      organizationId: "org_1", audience: "organization", organizationGrantId, recipients: [],
+    });
+    await repository.applyDirectoryEvent({
+      ...directoryEvent("accepted"), eventId: "20000000-0000-4000-8000-000000000079",
+      scopeId: "10000000-0000-4000-8000-000000000079",
       organizationId: "org_1", audience: "organization", recipients: [],
     });
     organizationIds = ["org_1"];
@@ -128,7 +135,7 @@ describe("platform collaboration routes", () => {
     });
     expect(await member.json()).toEqual({ items: [{
       scopeId: orgScopeId, runtimeId: "runtime_owner", ownerId: platformCollaborationActors.owner, kind: "chat", authorityGeneration: 1,
-      status: "organization_pending", organizationId: "org_1",
+      status: "organization_pending", organizationId: "org_1", grantId: organizationGrantId,
     }] });
     // The owner is never pending on their own share.
     const owner = await app.request("/api/collaboration/inbox", { headers: { "x-test-actor": platformCollaborationActors.owner } });
@@ -143,7 +150,7 @@ describe("platform collaboration routes", () => {
     organizationIds = ["org_1"];
     await repository.applyDirectoryEvent({
       ...directoryEvent("accepted"), eventId: "20000000-0000-4000-8000-000000000078", scopeId: orgScopeId,
-      organizationId: "org_1", audience: "organization", metadataRevision: 2,
+      organizationId: "org_1", audience: "organization", organizationGrantId, metadataRevision: 2,
       recipients: [{ actorId: platformCollaborationActors.recipientWithoutComputer, status: "accepted" }],
     });
     const opened = await app.request("/api/collaboration/inbox", {
@@ -158,11 +165,14 @@ describe("platform collaboration routes", () => {
 
   it("paginates organization-pending shares after ordinary invitations without losing any", async () => {
     await repository.applyDirectoryEvent(directoryEvent("invited"));
+    // Each organization share needs organizationGrantId below: pending discovery selects only rows
+    // with a live grant pointer, so a grant-less share is silently absent from the page.
     for (const suffix of ["071", "072", "073"]) {
       await repository.applyDirectoryEvent({
         ...directoryEvent("accepted"), scopeId: `10000000-0000-4000-8000-000000000${suffix}`,
         eventId: `20000000-0000-4000-8000-000000000${suffix}`,
         organizationId: "org_1", audience: "organization", recipients: [],
+        organizationGrantId: `70000000-0000-4000-8000-000000000${suffix}`,
       });
     }
     organizationIds = ["org_1"];
@@ -211,7 +221,7 @@ describe("platform collaboration routes", () => {
     })).status).toBe(422);
   });
 
-  it("issues an events-only ticket to an accepted current member", async () => {
+  it("does not issue a V1 connection ticket to an accepted current member", async () => {
     await repository.applyDirectoryEvent({ ...directoryEvent("accepted"), metadataRevision: 2 });
     const response = await app.request(`/api/collaboration/scopes/${scopeId}/connection-tickets`, {
       method: "POST",
@@ -224,11 +234,7 @@ describe("platform collaboration routes", () => {
         purpose: "events",
       }),
     });
-    expect(response.status).toBe(201);
-    expect(await response.json()).toMatchObject({
-      ticket: "c".repeat(43),
-      actorId: platformCollaborationActors.recipientWithoutComputer,
-    });
+    expect(response.status).toBe(404);
   });
 
   it("serves bounded participant identity only to an authenticated runtime", async () => {

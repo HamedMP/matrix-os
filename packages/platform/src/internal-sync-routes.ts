@@ -319,7 +319,7 @@ export function createInternalSyncRoutes(opts: {
         handle,
         machineId: machine.machineId,
         runtimeSlot: machine.runtimeSlot,
-      }, opts.platformSecret);
+      }, opts.platformSecret, machine.runtimeTokenEpoch);
       if (!timingSafeTokenEquals(token, expected)) {
         return c.json({ error: "Unauthorized" }, 401);
       }

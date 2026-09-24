@@ -246,6 +246,7 @@ export interface IntegrationRoutesOpts {
       last_used_at: Date | string | null;
     }>>;
     listAvailableActions?(userId: string, serviceId: string): Promise<readonly string[] | null>;
+    listAvailableActionParams?(userId: string, serviceId: string): Promise<Record<string, readonly string[]> | null>;
     connect(userId: string, service: ServiceDefinition): Promise<{ url: string }>;
     call(input: {
       userId: string;
@@ -431,20 +432,12 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
     console.warn("[integrations] Startup logo warm failed:", err instanceof Error ? err.message : String(err));
   });
 
-  app.get("/available", async (c) => {
-    let uid: string | null = null;
-    let capabilityIdentityFailed = false;
-    if (mcpPresetBroker?.listAvailableActions) {
-      try {
-        uid = await resolveUserId(c);
-      } catch (err: unknown) {
-        capabilityIdentityFailed = true;
-        console.warn(
-          "[integrations] Optional capability identity resolution failed:",
-          err instanceof Error ? err.message : String(err),
-        );
-      }
-    }
+  async function availableServices(
+    c: Context,
+    uid: string | null,
+    capabilityIdentityFailed: boolean,
+    authoritative = false,
+  ) {
     const services = await Promise.all(listServices()
       .filter((service) => service.connectorKind !== "mcp_preset" || mcpPresetBroker)
       .map(async (s) => {
@@ -458,6 +451,21 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
               actions = Object.fromEntries(
                 Object.entries(s.actions).filter(([actionId]) => availableActions.includes(actionId)),
               );
+              if (actions.list_notes && mcpPresetBroker.listAvailableActionParams) {
+                const supported = await mcpPresetBroker.listAvailableActionParams(uid, s.id);
+                const names = supported?.list_notes ?? [];
+                actions = {
+                  ...actions,
+                  list_notes: {
+                    ...actions.list_notes,
+                    params: Object.fromEntries(
+                      Object.entries(actions.list_notes.params).filter(([name]) => names.includes(name)),
+                    ),
+                  },
+                };
+              }
+            } else if (authoritative) {
+              actions = {};
             }
           } catch (err: unknown) {
             console.warn(
@@ -474,6 +482,37 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
         };
       }));
     return c.json(services);
+  }
+
+  app.get("/available", async (c) => {
+    let uid: string | null = null;
+    let capabilityIdentityFailed = false;
+    if (mcpPresetBroker?.listAvailableActions) {
+      try {
+        uid = await resolveUserId(c);
+      } catch (err: unknown) {
+        capabilityIdentityFailed = true;
+        console.warn(
+          "[integrations] Optional capability identity resolution failed:",
+          err instanceof Error ? err.message : String(err),
+        );
+      }
+    }
+    return availableServices(c, uid, capabilityIdentityFailed);
+  });
+
+  // Agent capability discovery must resolve the caller's identity. The public
+  // catalog cannot do that on the app domain, so it must not drive tool calls.
+  app.get("/agent-catalog", async (c) => {
+    let uid: string | null;
+    try {
+      uid = await resolveUserId(c);
+    } catch (err: unknown) {
+      console.error("[integrations] Capability identity resolution failed:", err);
+      return c.json({ error: "Integration capabilities unavailable" }, 503);
+    }
+    if (!uid) return c.json({ error: "Unauthorized" }, 401);
+    return availableServices(c, uid, false, true);
   });
 
   // -----------------------------------------------------------------------
@@ -775,6 +814,17 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
         });
         return c.json({ data, service, action });
       } catch (err) {
+        if (err && typeof err === "object" && "code" in err
+          && err.code === "unsupported_granola_parameter"
+          && "parameter" in err
+          && ["folderId", "timeRange", "limit"].includes(String(err.parameter))) {
+          const parameter = String(err.parameter);
+          return c.json({
+            error: `Parameter ${parameter} is not supported by this connection`,
+            code: "unsupported_parameter",
+            parameter,
+          }, 400);
+        }
         console.error("[integrations] MCP preset call failed:", err instanceof Error ? err.message : String(err));
         return c.json({ error: "Integration call failed" }, 502);
       }

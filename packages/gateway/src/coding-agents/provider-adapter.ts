@@ -163,6 +163,7 @@ function providerMayEmit(event: AgentThreadEvent): boolean {
     case "thread.status":
     case "assistant.text.delta":
     case "assistant.text.completed":
+    case "assistant.attachment":
     case "subagent.activity":
     case "tool.started":
     case "tool.output":

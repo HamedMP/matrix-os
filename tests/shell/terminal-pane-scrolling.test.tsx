@@ -1503,6 +1503,7 @@ describe("TerminalPane scrolling", () => {
     expect(url.searchParams.get("tabId")).toBe(TAB_ID);
     expect(url.searchParams.get("fromSeq")).toBe("0");
     expect(url.searchParams.get("inputCapability")).toBe("binary-input-v1");
+    expect(url.searchParams.get("scrollCapability")).toBe("native-scroll-v1");
     expect(url.searchParams.get("fromSeq")).not.toBe(String(Number.MAX_SAFE_INTEGER));
   });
 
