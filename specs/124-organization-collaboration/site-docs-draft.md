@@ -30,7 +30,7 @@ When the owner's computer or control evidence is unavailable, collaboration fail
 
 ## Availability and migration
 
-The new organization audience, readiness and Git identity controls are part of Web Canvas, Web Desktop and Electron Desktop in V1. Native Mobile and CLI do not gain those new controls in V1; their existing shared Chat and terminal functions from the earlier release remain. There is no separate organization computer to provision for V1.
+The new organization audience, readiness and Git identity controls are part of Web Canvas, Web Desktop and Electron Desktop in V1. Native Mobile and CLI do not gain those new controls in V1. **Native Mobile's existing shared Chat and terminal do not work in this release**: the mobile client opens collaboration sockets on the pre-direct path, and the platform closes every collaboration upgrade that is not on the direct path. Use Web Canvas, Web Desktop or Electron Desktop for shared Chat and terminal until the mobile client is migrated. The CLI's existing shared Chat and terminal continue to work. There is no separate organization computer to provision for V1.
 
 The coordinated upgrade moves collaboration to direct protocol 2 over Matrix's transparent relay. Old collaboration clients must update before opening these shares. The relay forwards direct-protocol traffic to the owner's computer and records connection metadata such as byte counts, but the owner computer decides access. If migration cannot be verified, collaboration stays unavailable until recovery or a compatible direct-protocol build is installed. A legacy authorization fallback is not restored.
 

@@ -175,7 +175,7 @@ Use `gpt-5.6-sol` with high reasoning, one coordinator and at most three workers
 
 ## S17 — Native Mobile and CLI parity
 
-**Deferred from V1; recorded platform limitation.** **Owner:** Surface Sol. **Depends on:** S15. **Exit:** Native Mobile and CLI honor the same permissions, funding and root binding. Their existing 525 shared Chat and terminal keep working in V1.
+**Deferred from V1; recorded platform limitation.** **Owner:** Surface Sol. **Depends on:** S15. **Exit:** Native Mobile and CLI honor the same permissions, funding and root binding. Their existing 525 shared Chat and terminal must keep working in V1 — **unmet for Native Mobile as of 2026-09-24**, whose collaboration sockets are closed at the platform edge.
 
 - [ ] T084 Write mobile Jest and CLI integration tests for direct auth refresh/key custody, resource-home selection, worktree/root state, scoped integrations and stale policy handling.
 - [ ] T085 Wire apps/mobile and existing CLI collaboration clients to shared contracts and direct transport adapters, platform-native secure key storage, same permission/readiness derivations and safe error states.

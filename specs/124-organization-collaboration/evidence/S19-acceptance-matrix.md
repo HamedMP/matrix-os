@@ -114,11 +114,12 @@ than it expects, or by a defect already fixed on a newer lower layer:
 | 13 Cancel and tool approval | `shared-coding-execution.test.ts` "lets only the requesting member retry an interrupted request, never the owner" | `invalid input syntax for type json`, the retry JSONB defect already fixed on a newer S09 head |
 | 19 Ready-to-work | `collaboration-project-lifecycle.test.ts` "fences every membership mutation while an ownership transfer is staged" | `CollaborationRepositoryError: Scope has no organization context` from `grant-repository.ts:67` |
 
-These rows are recorded as **blocked**, not as failures and not as passes. They must be re-run after
-the coordinator's restack pass, and only that re-run can decide them. The last row is the least
-obviously ancestry-driven of the eight: its failure mode is a missing organization context on a
-fixture, which matches a requirement introduced below this branch, but that has not been proven
-here and is not asserted.
+**Historical, as recorded before the replay.** At the time, these rows were recorded as blocked —
+not as failures and not as passes — pending a re-run on corrected ancestry, and the last row was
+called out as the least obviously ancestry-driven of the eight: a missing organization context on a
+fixture, matching a requirement introduced below that branch but unproven there. **That re-run has
+since happened and all three rows passed** (see the resolution above); the paragraph is kept as the
+record of what was known then, not as a live status.
 
 Two files that failed during the separate coverage run now **pass** at this head:
 `chat-provider-binding-reconciliation.test.ts` and `collaboration-owner-resource-driver.test.ts`,
@@ -148,8 +149,43 @@ carefully" would lose the only actionable part of each.
 | **Pre-read plus unpredicated write** | 5, the last 2 being security controls (`cutover.ts` `resume()` and `block()`) | Mechanical enforcement. The rule is already written in `CLAUDE.md` and `check-patterns.sh` has no check for it. |
 | **Retirement without a caller inventory** | 1 defect, 3 inventories that each missed something (`connection-tickets` against `apps/mobile` and `packages/ui`) | Enumerate callers **from the retired path across every workspace package**, not from the previous inventory and not only under `shell/` and `apps/`. |
 | **Boundary-blind tests** | **6**, in two sub-shapes — absence (4) and proxy assertion (2). See below. | Assertions on the far side of the boundary: affected-row counts, a shared route constant both sides import, and rendered output rather than callback order. |
+| **Correction applied at the site of discovery** | 1 (the Native Mobile claim, corrected in `quickstart.md` while five copies survived) | Enumerate a corrected claim's copies the way you enumerate a retired route's callers — from the claim, across every document. |
 
 Each is detailed below.
+
+## Correcting a claim where you found it, not where it lives
+
+Added 2026-09-24, found by Greptile on #1883. This pass established that Native Mobile's shared Chat
+and terminal do not work, and corrected the sentence saying otherwise in `quickstart.md`. **Five
+other copies of the same claim survived**, including one that would have shipped:
+
+| Location | Why it mattered |
+| --- | --- |
+| `site-docs-draft.md` | Feeds the public site PR. Would have **advertised to customers** shared Chat and terminal that are destroyed at the platform edge. |
+| `spec.md` | The authoritative V1 scope statement. A reader checking what V1 supports would have been told it works. |
+| `tasks.md`, S17 exit criterion | A requirement phrased as a description, the same defect as quickstart row 24. |
+| `evidence/direct.md` | Transport table asserting Native Mobile reaches the home by that path. |
+| This matrix | Quoting line 53 — correct, because the quotation is immediately followed by "is not true". |
+
+**This is not a stale claim that was never re-derived.** It *was* re-derived, correctly, and fixed.
+The failure is that the correction was applied **at the site of discovery rather than at every site
+the claim lived**. Two of the five were found only because Greptile flagged the publication draft and
+the resulting search turned up three more — so even the corrected correction was incomplete until it
+was enumerated properly.
+
+The discipline already existed in this document, aimed at the wrong noun. The retirement finding
+above says to enumerate every *caller* of a retired route rather than trusting a map written from
+intent. The same is owed to every *instance* of a retired claim, and nobody thought to run it,
+including the author of the retirement finding.
+
+**The gate: when you correct a factual claim, enumerate its copies from the claim, across every
+document, the way you would enumerate callers from a path.** For this defect the gate is one `grep`
+for the claim's distinctive phrase — which is how the remaining three were found, after the first two
+were fixed one at a time.
+
+**Largest blast radius of anything recorded here.** Every other finding in this document is wrong
+internally, visible only to someone reading the release's own evidence. This one was wrong in a
+document whose purpose is publication.
 
 ## Boundary-blind tests: green because the assertion is on our side of the boundary
 
@@ -343,7 +379,8 @@ socket is inert: preserving the endpoint would have preserved nothing usable.
 
 1. **Line 52 is satisfied, not failed.** "Legacy proxy/WS/V1 paths, rollout flag and cohort policy
    removed" is met: the retirement landed. The earlier cap on row 23 rested on that clause being
-   unmet and is withdrawn. Row 23 remains `BLOCKED` on stale ancestry, decided only by the re-run.
+   unmet and is withdrawn. Row 23 was still `BLOCKED` on stale ancestry when this correction was
+   written; the 2026-09-24 re-run has since decided it, and it is now AUTOMATED-ONLY.
 2. **Line 53 is failed, and was failed by `main` rather than by any decision of ours.** "Native
    Mobile and CLI are a recorded V1 limitation whose existing 525 shared Chat/terminal keep
    working" is not true: Native Mobile's shared Chat and terminal do not work. The honest statement
