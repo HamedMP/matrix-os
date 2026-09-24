@@ -55,9 +55,13 @@ prerequisites_present() {
 }
 
 write_readiness_marker() {
-  install -d -m 0770 "$matrix_dir"
   if [ "$root" = / ]; then
-    chown root:root "$matrix_dir"
+    # The snapshot builder certifies before activation creates this group.
+    # Existing VPSes need it to traverse /opt/matrix during updates and rollback.
+    getent group matrix >/dev/null || groupadd --system matrix
+    install -d -o root -g matrix -m 0770 "$matrix_dir"
+  else
+    install -d -m 0770 "$matrix_dir"
   fi
   local marker_tmp
   marker_tmp="$(mktemp "$matrix_dir/.host-prerequisites.XXXXXX")"
