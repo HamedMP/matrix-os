@@ -107,8 +107,9 @@ export function createJevService(options: {
           signal,
         });
         if (!response.ok) {
+          const neverStarted = response.headers.get("x-matrix-jev-dispatch") === "not-started";
           await response.body?.cancel("relay rejected request");
-          if ([400, 401, 403, 503].includes(response.status)) {
+          if (neverStarted) {
             await options.store.release(key);
             if (response.status === 401) options.credentialProvider.invalidate(lease.tokenId);
             throw new JevServiceError(response.status === 403 ? "denied" : "unavailable");

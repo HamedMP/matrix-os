@@ -8,7 +8,9 @@ import { createFundedRelay, resolveFundedRelayConfig } from "../../packages/prox
 import {
   jevInputTokensToMicrousd,
   normalizeFundedJevEvaluationResponse,
+  reviewedJevPricing,
 } from "../../packages/proxy/src/funded-relay-evaluation.js";
+import { FundedControlPlaneError } from "../../packages/proxy/src/funded-relay-platform-client.js";
 
 const CLOUDFLARE_URL =
   "https://gateway.ai.cloudflare.com/v1/0123456789abcdef0123456789abcdef/matrix/anthropic";
@@ -83,14 +85,14 @@ function json(value: unknown, status = 200): Response {
 
 describe("funded Jev evaluation relay", () => {
   it("settles Cloudflare Jev input usage conservatively and rejects incomplete answers", () => {
-    expect(jevInputTokensToMicrousd(275, NOW)).toBe(12);
-    expect(jevInputTokensToMicrousd(1_000_000, NOW)).toBe(42_000);
-    expect(() => jevInputTokensToMicrousd(275, new Date("2026-10-01T00:00:00.000Z")))
+    expect(jevInputTokensToMicrousd(275, reviewedJevPricing(NOW))).toBe(12);
+    expect(jevInputTokensToMicrousd(1_000_000, reviewedJevPricing(NOW))).toBe(42_000);
+    expect(() => reviewedJevPricing(new Date("2026-10-01T00:00:00.000Z")))
       .toThrow(/pricing has expired/i);
     expect(() => normalizeFundedJevEvaluationResponse({
       requestId: "request_123",
       latencyMs: 1,
-      pricedAt: NOW,
+      pricing: reviewedJevPricing(NOW),
       value: {
         model: "jev-1.13.0",
         answers: { urgent: { type: "noul", noul: 0.5 } },
@@ -230,6 +232,7 @@ describe("funded Jev evaluation relay", () => {
     relay.register(app);
     const response = await app.request("/v1/evaluate", request());
     expect(response.status).toBe(503);
+    expect(response.headers.get("x-matrix-jev-dispatch")).toBe("not-started");
     expect(fetchMock).not.toHaveBeenCalled();
     await relay.close();
   });
@@ -242,6 +245,41 @@ describe("funded Jev evaluation relay", () => {
     relay.register(app);
     const response = await app.request("/v1/evaluate", request(requestBody({ state: "x".repeat(1_000) })));
     expect(response.status).toBe(413);
+    expect(fetchMock).not.toHaveBeenCalled();
+    await relay.close();
+  });
+
+  it("marks a policy capacity denial as definitely not dispatched", async () => {
+    const upstream = vi.fn();
+    const platformClient = {
+      check: vi.fn(async () => { throw new FundedControlPlaneError(429); }),
+      authorize: vi.fn(), start: vi.fn(), release: vi.fn(), finalize: vi.fn(),
+    };
+    const config = resolveFundedRelayConfig(environment())!;
+    const relay = createFundedRelay({ ...config, fetch: upstream as typeof fetch, platformClient });
+    const app = new Hono();
+    relay.register(app);
+
+    const response = await app.request("/v1/evaluate", request());
+    expect(response.status).toBe(429);
+    expect(response.headers.get("x-matrix-jev-dispatch")).toBe("not-started");
+    expect(upstream).not.toHaveBeenCalled();
+    await relay.close();
+  });
+
+  it("rejects expired Jev pricing before policy admission or provider dispatch", async () => {
+    const fetchMock = vi.fn();
+    const config = resolveFundedRelayConfig(environment())!;
+    const relay = createFundedRelay({
+      ...config, fetch: fetchMock as typeof fetch,
+      now: () => new Date("2026-10-01T00:00:00.000Z"),
+    });
+    const app = new Hono();
+    relay.register(app);
+
+    const response = await app.request("/v1/evaluate", request());
+    expect(response.status).toBe(503);
+    expect(response.headers.get("x-matrix-jev-dispatch")).toBe("not-started");
     expect(fetchMock).not.toHaveBeenCalled();
     await relay.close();
   });

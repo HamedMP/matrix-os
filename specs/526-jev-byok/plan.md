@@ -40,6 +40,8 @@ Likely paths:
 
 Extend the funded relay with one strict `/v1/evaluate` route. Reuse bearer lease verification, owner policy, rate/concurrency admission, credit reservation, settlement and shutdown behavior. Accept only the fixed Jev model and bounded evaluation schema, call Cloudflare's fixed `/ai/run` origin with the account and gateway derived from validated operator configuration, an abort deadline and `redirect: "error"`, suppress payload logging, bound the response, validate all seven answers and normalize usage/cost metadata.
 
+Gateway composition stays limited to repository bootstrap, service construction and `createJevRoutes` registration in `server.ts`. Before adding a second Jev workflow or another funded provider there, extract those bootstrap calls into `packages/gateway/src/jev/register.ts` with explicit database, credential and configuration dependencies; keep request validation, policy and retry semantics in the dedicated Jev modules. This avoids growing the gateway composition entrypoint with workflow behavior.
+
 No database transaction spans the external call. Actual settlement uses Cloudflare-returned input-token usage and the reviewed Jev price table with a short expiry horizon; missing usage, expired pricing or unknown cost follows an explicit conservative reconciliation path. No blind retry occurs after an ambiguous timeout.
 
 Likely paths:
