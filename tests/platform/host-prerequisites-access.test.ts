@@ -84,8 +84,8 @@ describe('host prerequisite directory access', () => {
       expect(directory.uid).toBe(0);
       expect(directory.gid).toBe(groupId);
       expect(directory.mode & 0o777).toBe(0o770);
-      await execFileAsync('sudo', ['-n', '-u', 'nobody', '-g', 'matrix', '--', 'test', '-x', matrixDir]);
-      await execFileAsync('sudo', ['-n', '-u', 'nobody', '-g', 'matrix', '--', 'test', '-r', marker]);
+      await execFileAsync('sudo', ['-n', 'runuser', '-u', 'nobody', '-g', 'matrix', '--', 'test', '-x', matrixDir]);
+      await execFileAsync('sudo', ['-n', 'runuser', '-u', 'nobody', '-g', 'matrix', '--', 'test', '-r', marker]);
     } finally {
       await execFileAsync('sudo', ['-n', 'rm', '-rf', '--', root]);
     }
