@@ -114,13 +114,23 @@ export async function importOnePasswordLogins(
     const login = parseOnePasswordLogin(detail);
     if (login && login.origin === allowed.get(id)) pending.push(login);
     if (pending.length >= 20) {
-      await vault.upsertMany(pending);
+      try {
+        await vault.upsertMany(pending);
+      } catch {
+        if (imported === 0) throw new Error("browser password vault unavailable");
+        return { imported, skipped: unique.length - imported };
+      }
       imported += pending.length;
       pending = [];
     }
   }
   if (pending.length > 0) {
-    await vault.upsertMany(pending);
+    try {
+      await vault.upsertMany(pending);
+    } catch {
+      if (imported === 0) throw new Error("browser password vault unavailable");
+      return { imported, skipped: unique.length - imported };
+    }
     imported += pending.length;
   }
   return { imported, skipped: unique.length - imported };

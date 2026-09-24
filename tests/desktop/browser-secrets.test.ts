@@ -225,6 +225,25 @@ describe("1Password direct import", () => {
     expect(await importOnePasswordLogins(ids, vault, run)).toEqual({ imported: 20, skipped: 1 });
     expect(saved).toHaveLength(20);
   });
+
+  it("reports completed 1Password batches when a later vault write fails", async () => {
+    const ids = Array.from({ length: 21 }, (_, index) => String(index).padStart(12, "0"));
+    const items = ids.map((id) => ({ id, category: "LOGIN", urls: [{ href: `https://${id}.example.com` }] }));
+    const saved: BrowserLogin[] = [];
+    let writes = 0;
+    const vault = { upsertMany: vi.fn(async (logins: BrowserLogin[]) => {
+      if (++writes === 2) throw new Error("synthetic vault failure");
+      saved.push(...logins);
+      return logins.length;
+    }) } as unknown as BrowserPasswordVault;
+    const run = async (args: string[]) => args[1] === "list" ? items : {
+      ...items.find((item) => item.id === args[2]), fields: [
+        { id: "username", value: args[2] }, { id: "password", value: "synthetic-secret" },
+      ],
+    };
+    expect(await importOnePasswordLogins(ids, vault, run)).toEqual({ imported: 20, skipped: 1 });
+    expect(saved).toHaveLength(20);
+  });
 });
 
 describe("selected local browser profile transfer", () => {
@@ -252,18 +271,24 @@ describe("selected local browser profile transfer", () => {
     const key = pbkdf2Sync("synthetic-keychain", "saltysalt", 1003, 16, "sha1");
     const cipher = createCipheriv("aes-128-cbc", key, Buffer.alloc(16, 0x20));
     const secretHex = Buffer.concat([Buffer.from("v10"), cipher.update("synthetic-password"), cipher.final()]).toString("hex");
+    const cookieCipher = createCipheriv("aes-128-cbc", key, Buffer.alloc(16, 0x20));
+    const cookieHex = Buffer.concat([Buffer.from("v10"), cookieCipher.update("encrypted-session"), cookieCipher.final()]).toString("hex");
     execFileSync("/usr/bin/sqlite3", [join(profile, "Login Data"), `CREATE TABLE logins (origin_url TEXT, username_value TEXT, password_value BLOB, blacklisted_by_user INTEGER);
       INSERT INTO logins VALUES ('https://example.com', 'alice', X'${secretHex}', 0);`]);
     execFileSync("/usr/bin/sqlite3", [join(profile, "Cookies"), `CREATE TABLE cookies (host_key TEXT, name TEXT, value TEXT, encrypted_value BLOB, path TEXT, expires_utc INTEGER, is_secure INTEGER, is_httponly INTEGER, is_persistent INTEGER, samesite INTEGER);
-      INSERT INTO cookies VALUES ('example.com', 'sid', 'plain-session', X'', '/', 0, 1, 1, 0, 1);`]);
+      INSERT INTO cookies VALUES ('example.com', 'sid', 'plain-session', X'', '/', 0, 1, 1, 0, 1);
+      INSERT INTO cookies VALUES ('example.com', 'encrypted', '', X'${cookieHex}', '/', 0, 1, 1, 0, 1);`]);
     const logins: BrowserLogin[] = [];
     const vault = { upsertMany: vi.fn(async (items: BrowserLogin[]) => { logins.push(...items); return items.length; }) } as unknown as BrowserPasswordVault;
     const setCookie = vi.fn(async () => undefined);
     expect(await importChromiumSites({ home, sourceId: "arc:Default", platform: "darwin", hosts: ["example.com"],
-      getKeychainPassword: async () => "synthetic-keychain", vault, setCookie })).toEqual({ passwords: 1, cookies: 1, skipped: 0 });
+      getKeychainPassword: async () => "synthetic-keychain", vault, setCookie })).toEqual({ passwords: 1, cookies: 2, skipped: 0 });
     expect(logins).toEqual([expect.objectContaining({ password: "synthetic-password" })]);
+    setCookie.mockClear();
     expect(await importChromiumSites({ home, sourceId: "arc:Default", platform: "darwin", hosts: ["example.com"],
-      getKeychainPassword: async () => { throw new Error("declined"); }, vault, setCookie })).toEqual({ passwords: 0, cookies: 1, skipped: 1 });
+      getKeychainPassword: async () => { throw new Error("declined"); }, vault, setCookie })).toEqual({ passwords: 0, cookies: 1, skipped: 2 });
+    expect(setCookie).toHaveBeenCalledTimes(1);
+    expect(setCookie).toHaveBeenCalledWith(expect.objectContaining({ name: "sid", value: "plain-session" }));
   });
 
   it("discovers Arc, previews only site metadata, then transfers selected secrets", async () => {

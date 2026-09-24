@@ -255,6 +255,8 @@ if (!gotLock) {
         },
       });
       await auth.init();
+      const restoredBrowserStatus = auth.getStatus();
+      previousBrowserUserId = restoredBrowserStatus.signedIn ? restoredBrowserStatus.userId : null;
 
       const browserVaults = new Map<string, BrowserPasswordVault>();
       const currentBrowserScope = () => {

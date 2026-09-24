@@ -232,11 +232,14 @@ export async function importChromiumSites(options: {
   }
   for (const row of selectedCookieRows) {
     const hex = row.secret_hex;
-    const value = password !== null && typeof hex === "string" && hex.length > 0 && /^[0-9A-F]+$/.test(hex) && hex.length <= 128 * 1024
-      ? (() => {
-          const raw = decryptChromiumBytes(Buffer.from(hex, "hex"), password);
-          return raw ? decodeChromiumCookieValue(raw, String(row.host_key), Number(row.db_version)) : null;
-        })()
+    const encrypted = typeof hex === "string" && hex.length > 0;
+    const value = encrypted
+      ? password !== null && /^[0-9A-F]+$/.test(hex) && hex.length <= 128 * 1024
+        ? (() => {
+            const raw = decryptChromiumBytes(Buffer.from(hex, "hex"), password);
+            return raw ? decodeChromiumCookieValue(raw, String(row.host_key), Number(row.db_version)) : null;
+          })()
+        : null
       : typeof row.value === "string" ? row.value : null;
     const cookie = value === null ? null : normalizeChromiumCookie(row, value);
     if (cookie) cookies.push(cookie); else skipped++;

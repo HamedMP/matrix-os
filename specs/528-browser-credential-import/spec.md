@@ -23,6 +23,8 @@ Transfer selected website passwords and cookies from local Chromium-family brows
 
 Signed-in session transfer is best effort: cookies alone do not restore sites that bind sessions to a device or require local storage, IndexedDB, passkeys, a fresh token, or reauthentication. Session-only cookies retain session-only behavior; persistent cookies retain their expiry. Import never promises a site remains signed in.
 
+The earlier unscoped `persist:browser` partition has no recorded Matrix account owner. To avoid assigning one account's website session to another, this release does not migrate those older cookies into an account partition. Existing Matrix Browser sites may require sign-in once after the change. The legacy partition remains on disk for local owner recovery rather than being silently erased.
+
 ## Surface scope
 
 Electron Desktop is the native local-import surface. Web Desktop and Web Canvas cannot access other browsers' local databases or macOS Keychain from the browser sandbox. Web Mobile and Native Mobile do not expose Matrix Browser's native Electron partition. The existing saved-page feature remains distinct from this platform-limited credential flow.
@@ -49,6 +51,7 @@ No HTTP route is added. No external service receives imported data.
 - Plaintext export is user initiated and creates a new 0600 file atomically. Existing files are not replaced. Export data remains only on the user's Mac.
 - A password batch is written before cookie setting begins. Electron cookies are flushed after import. Cookie failures are counted as skipped, so a partial cookie transfer is an acceptable and visible state. There is no cross-resource transaction between the encrypted file and Electron's cookie store.
 - A source login or cookie table failure does not discard selected data from the other table. The UI reports the failed table as skipped. Account transitions close existing embeds; credential operations are gated by the current signed-in Matrix user ID.
+- Restored credentials initialize the account-transition guard before a Browser view can open; the first sign-out or expiry closes live embeds. A 1Password vault failure after completed batches returns the completed count, with remaining selections reported as skipped.
 - If Keychain access is unavailable for a mixed selection, plaintext cookies can still import; encrypted entries are counted as skipped. A selection with only encrypted entries reports a Keychain error.
 - UI messages are generic. Keychain, CLI, SQLite, and decryption errors must not reveal raw paths, account identifiers, item names, or secret values.
 

@@ -110,4 +110,24 @@ fi
     const accounts = await page.evaluate(async () => window.operator.invoke("browser:list-passwords", { origin: "https://example.com" }));
     expect(accounts).toEqual({ accounts: [] });
   }, 60_000);
+
+  it("closes Browser embeds on the first sign-out after restoring a saved account", async () => {
+    await app!.close();
+    app = await _electron.launch({
+      executablePath,
+      args: [main],
+      env: { ...process.env, OPERATOR_GATEWAY_URL: gateway!.url, OPERATOR_USER_DATA_DIR: userDataDir!,
+        PATH: `${join(userDataDir!, "bin")}:${process.env.PATH ?? ""}` },
+    });
+    page = await app.firstWindow();
+    expect(await page.evaluate(async () => window.operator.invoke("auth:status", {})))
+      .toMatchObject({ signedIn: true, userId: "user-2" });
+    const opened = await page.evaluate(async () => window.operator.invoke("embed:open", {
+      kind: "browser", url: "https://example.com", bounds: { x: 0, y: 0, width: 800, height: 600 },
+    }));
+    expect(opened.state).toBe("loading");
+    await page.evaluate(async () => window.operator.invoke("auth:sign-out", {}));
+    expect(await page.evaluate(async (embedId) => window.operator.invoke("embed:close", { embedId }), opened.embedId))
+      .toEqual({ ok: false });
+  }, 60_000);
 });
