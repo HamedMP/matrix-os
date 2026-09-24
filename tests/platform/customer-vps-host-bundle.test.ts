@@ -1357,6 +1357,7 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
   it('schedules optional Hermes reconciliation only after the release commits', () => {
     const root = process.cwd();
     const syncAgent = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-sync-agent'), 'utf8');
+    const installer = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-install-hermes'), 'utf8');
     const commitIndex = syncAgent.indexOf('if commit_release_metadata; then');
     const markIndex = syncAgent.indexOf('mark_hermes_reconciliation_pending "$version"', commitIndex);
     const restartIndex = syncAgent.indexOf('reconcile_hermes_release ||', markIndex);
@@ -1367,6 +1368,8 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(commitIndex).toBeGreaterThan(-1);
     expect(markIndex).toBeGreaterThan(commitIndex);
     expect(restartIndex).toBeGreaterThan(markIndex);
+    expect(installer).toContain('install-hermes-matrix-skills.sh');
+    expect(syncAgent).not.toContain('MATRIX_SKILL_TARGETS=hermes');
   });
 
   it('sync agent periodically cleans stale local bundle artifacts', () => {

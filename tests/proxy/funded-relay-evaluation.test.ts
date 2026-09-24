@@ -182,12 +182,21 @@ describe("funded Jev evaluation relay", () => {
         },
       });
       return json({
-        model: "jev-1.13.0",
-        answers: Object.fromEntries(Object.keys(JEV_EMAIL_TRIAGE_INSTRUCTIONS).map((id, index) => [
-          id,
-          { type: "noul", noul: index / 10 },
-        ])),
-        usage: { input_tokens: 275, output_tokens: 20 },
+        result: {
+          state: "Completed",
+          result: {
+            model: "jev-1.13.0",
+            answers: Object.fromEntries(Object.keys(JEV_EMAIL_TRIAGE_INSTRUCTIONS).map((id, index) => [
+              id,
+              { type: "noul", noul: index / 10 },
+            ])),
+            usage: { input_tokens: 275, output_tokens: 20 },
+          },
+          gatewayMetadata: { keySource: "Unified" },
+        },
+        success: true,
+        errors: [],
+        messages: [],
       });
     });
     const config = resolveFundedRelayConfig(environment());

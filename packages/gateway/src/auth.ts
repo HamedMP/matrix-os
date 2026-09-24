@@ -6,6 +6,7 @@ import {
   verifyPreviewTerminalAccess,
 } from "./preview-terminal-access.js";
 import { createRateLimiter } from "./security/rate-limiter.js";
+import { resolveHermesIntegrationCapability } from "./chat/hermes-integration-capability.js";
 import {
   looksLikeJwt,
   readJwtKeyConfig,
@@ -355,6 +356,17 @@ export function authMiddleware(
       : isWsUpgrade && queryToken
         ? queryToken
         : null;
+
+    if (presentedToken) {
+      const hermesActor = resolveHermesIntegrationCapability(presentedToken, normalizedPath);
+      if (hermesActor) {
+        // This run-scoped bearer carries its own actor; caller-supplied
+        // platform identity headers are never accepted with it.
+        if (c.req.header("x-platform-user-id") || c.req.header("x-platform-verified")) return unauthorized(c);
+        setPlatformVerifiedPrincipal(c, hermesActor);
+        return nextWithReady(c, next);
+      }
+    }
 
     // JWT path: if the bearer looks like a JWT and we have a JWT key, treat
     // JWT validation as terminal. Falling back to the legacy shared-secret

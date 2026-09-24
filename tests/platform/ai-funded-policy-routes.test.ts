@@ -134,6 +134,39 @@ describe("funded AI policy routes", () => {
     });
   });
 
+  it("mounts funded AI control routes before personal session routing", async () => {
+    const { app } = await createTestApp();
+    const origin = "https://app.matrix-os.com";
+    const host = "app.matrix-os.com";
+
+    const operator = await app.request(`${origin}/api/operator/ai/funded/global-policy`, {
+      headers: { authorization: `Bearer ${platformSecret}`, host },
+    });
+    expect(operator.status).toBe(200);
+
+    const runtime = await app.request(`${origin}${fundedCredentialPath()}`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${bearerFor("alice")}`,
+        "content-type": "application/json",
+        host,
+      },
+      body: "{}",
+    });
+    expect(runtime.status).toBe(200);
+
+    const relay = await app.request(`${origin}/internal/ai/funded/authorize`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${relayControlToken}`,
+        "content-type": "application/json",
+        host,
+      },
+      body: "{}",
+    });
+    expect(relay.status).toBe(400);
+  });
+
   it("validates relay token length and separation after whitespace normalization", () => {
     for (const token of [" ".repeat(32), ` short${" ".repeat(32)}`, ` ${platformSecret}\n`]) {
       expect(() => loadAiFundedControlPlaneConfig({

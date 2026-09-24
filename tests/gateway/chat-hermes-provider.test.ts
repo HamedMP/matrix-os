@@ -1,4 +1,5 @@
 import { ChatSteerNotDeliveredError } from "../../packages/gateway/src/chat/steer-delivery-error.js";
+import { resolveHermesIntegrationCapability } from "../../packages/gateway/src/chat/hermes-integration-capability.js";
 import { describe, expect, it, vi } from "vitest";
 import { createHermesChatProviderAdapter } from "../../packages/gateway/src/chat/hermes-provider-adapter.js";
 
@@ -37,6 +38,25 @@ async function collectRaw(iterable: AsyncIterable<unknown>): Promise<unknown[]> 
 }
 
 describe("Hermes canonical Chat Provider adapter", () => {
+  it("passes a scoped Chat owner capability to the integration MCP launcher", async () => {
+    vi.stubEnv("MATRIX_AUTH_TOKEN", "test-only-runtime-token");
+    try {
+      const gateway = fakeGateway();
+      const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn: gateway.spawnFn });
+      const events = collect(adapter.start(baseInput));
+      await vi.waitFor(() => expect(gateway.spawnFn).toHaveBeenCalled());
+      const token = gateway.spawnFn.mock.calls[0]?.[2]?.env?.MATRIX_AGENT_INTEGRATIONS_TOKEN;
+      expect(token).toMatch(/^[a-f0-9]{64}$/);
+      expect(resolveHermesIntegrationCapability(token!, "/api/integrations")).toBe(baseInput.owner.ownerId);
+      await vi.waitFor(() => expect(gateway.requests.some(({ method }) => method === "prompt.submit")).toBe(true));
+      gateway.event("message.complete", { text: "done", status: "complete" });
+      await events;
+      expect(resolveHermesIntegrationCapability(token!, "/api/integrations")).toBeNull();
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("projects upstream server-to-client clarify requests as answerable input", async () => {
     const gateway = fakeGateway();
     const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn: gateway.spawnFn });
@@ -863,6 +883,7 @@ describe("Hermes canonical Chat Provider adapter", () => {
       env: {
         HOME: "/home/matrix/home",
         MATRIX_HOME: "/home/matrix/home",
+        MATRIX_CLERK_USER_ID: baseInput.owner.ownerId,
         HERMES_PYTHON_SRC_ROOT: "/home/matrix/home/.hermes/hermes-agent",
         PYTHONPATH: "/home/matrix/home/.hermes/hermes-agent",
         PYTHONUNBUFFERED: "1",

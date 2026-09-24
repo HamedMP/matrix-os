@@ -34,12 +34,15 @@
 
 ## Phase 4: MCP and bundled workflow (Stack C)
 
-- [ ] T020 [P] [US2] Add failing `jev_evaluate` registration and delegation tests in `tests/integrations/mcp-server.test.ts`
-- [ ] T021 [P] [US2] Add failing bundled-skill sync/discovery assertions in `tests/deploy/customer-vps/integrations-mcp-registration.test.ts` and the relevant skill-sync test
-- [ ] T022 [US2] Add the authenticated local-Gateway Jev client in `packages/kernel/src/tools/integrations.ts`
-- [ ] T023 [US2] Register `jev_evaluate` without credential/model/question arguments in `packages/integrations-mcp/src/server.ts`
-- [ ] T024 [US2] Author `skills/matrix/jev-email-triage/SKILL.md` with Gmail evidence, prompt-injection, authorization and policy rules
-- [ ] T025 [US2] Synchronize generated skill artifacts through the repository's source mechanism and verify supported-agent discovery
+- [x] T020 [P] [US2] Add failing `jev_evaluate` registration and delegation tests in `tests/integrations/mcp-server.test.ts`
+- [x] T021 [P] [US2] Add failing bundled-skill sync/discovery assertions in `tests/deploy/customer-vps/integrations-mcp-registration.test.ts` and the relevant skill-sync test
+- [x] T022 [US2] Add the authenticated local-Gateway Jev client in `packages/kernel/src/tools/integrations.ts`
+- [x] T023 [US2] Register `jev_evaluate` without credential/model/question arguments in `packages/integrations-mcp/src/server.ts`
+- [x] T024 [US2] Author `skills/matrix/jev-email-triage/SKILL.md` with Gmail evidence, prompt-injection, authorization and policy rules
+- [x] T024a [US2] Add Jev Inbox Triage as the 72nd Agent Recipes market card using Build in Chat and a reviewed Hermes bot configuration
+- [ ] T024b [US2] Verify Build in Chat saves through the current user's authenticated Agent API and creates the bot in that user's Agent library with the selected Gmail account shown in Services; keep the generic MCP cross-principal failure tracked in ENG-12
+- [ ] T024c [US2] Bind Hermes local MCP calls to the authenticated Chat run owner with a gateway-verifiable proof; retest collaborator account inventory in Preview before reading mail
+- [x] T025 [US2] Synchronize generated skill artifacts through the repository's source mechanism and verify supported-agent discovery
 
 ## Phase 5: Gmail triage orchestration (Stack C)
 

@@ -199,6 +199,7 @@ import type { CanvasService } from "./canvas/service.js";
 import { CanvasSubscriptionHub } from "./canvas/subscriptions.js";
 import { createIntegrationBridgeRoutes } from "./integrations/bridge-routes.js";
 import { createIntegrationProxyResponse } from "./integrations/proxy-response.js";
+import { delegatedIntegrationHeaders } from "./integrations/delegated-identity.js";
 import type { PlatformDb } from "./platform-db.js";
 import {
   createHookRunner,
@@ -1001,6 +1002,14 @@ export async function createGateway(config: GatewayConfig) {
     }
     if (internalAuthToken) {
       headers.set("authorization", `Bearer ${internalAuthToken}`);
+      if (routePrefix === "/api/integrations") {
+        // Platform verifies this machine's token, so sign the authenticated
+        // Gateway principal rather than forwarding any caller-supplied ID.
+        const actorId = requireRequestPrincipal(c).userId;
+        for (const [key, value] of Object.entries(delegatedIntegrationHeaders(actorId, internalAuthToken))) {
+          headers.set(key, value);
+        }
+      }
     }
 
     const upstream = await fetch(upstreamUrl, {

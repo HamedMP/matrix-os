@@ -76,6 +76,7 @@ describe("email-triage-v1 deterministic policy", () => {
       { verified: false },
       { scores: { cold_outreach: 0.919 } },
       { scores: { urgent: 0.201 } },
+      { scores: { needs_reply: 0.201 } },
       { scores: { needs_reply: 0.95 } },
       { scores: { personal_intro: 0.301 } },
       { scores: { investment: 0.201 } },

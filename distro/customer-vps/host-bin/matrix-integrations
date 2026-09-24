@@ -13,6 +13,55 @@ read_host_value() {
   printf '%s\n' "$value"
 }
 
+parent_pid="$PPID"
+ancestor_parent() {
+  awk '/^PPid:/ {print $2; exit}' "/proc/$1/status" 2>/dev/null
+}
+read_ancestor_capability() {
+  local pid="$parent_pid" depth entry
+  for depth in {1..8}; do
+    [ "$pid" -gt 1 ] 2>/dev/null || return 1
+    if [ -r "/proc/$pid/environ" ]; then
+      while IFS= read -r -d '' entry; do
+        case "$entry" in
+          MATRIX_AGENT_INTEGRATIONS_TOKEN=*) printf '%s' "${entry#*=}"; return 0 ;;
+        esac
+      done < "/proc/$pid/environ"
+    fi
+    pid="$(ancestor_parent "$pid")"
+  done
+  return 1
+}
+has_hermes_chat_ancestor() {
+  local pid="$parent_pid" depth command
+  for depth in {1..8}; do
+    [ "$pid" -gt 1 ] 2>/dev/null || return 1
+    command="$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null || true)"
+    case "$command" in *tui_gateway.entry*) return 0 ;; esac
+    pid="$(ancestor_parent "$pid")"
+  done
+  return 1
+}
+scoped_token="${MATRIX_AGENT_INTEGRATIONS_TOKEN:-}"
+if [ -z "$scoped_token" ]; then
+  scoped_token="$(read_ancestor_capability || true)"
+fi
+if has_hermes_chat_ancestor && [ -z "$scoped_token" ]; then
+  echo "matrix-integrations: run capability is unavailable" >&2
+  exit 3
+fi
+if [ -n "$scoped_token" ]; then
+  if [[ ! "$scoped_token" =~ ^[a-f0-9]{64}$ ]] || [ ! -x "$NODE_BIN" ] || [ ! -f "$COMMAND_PATH" ]; then
+    echo "matrix-integrations: run capability or runtime is invalid" >&2
+    exit 3
+  fi
+  exec /usr/bin/env -i \
+    PATH="/opt/matrix/runtime/node/bin:/usr/local/bin:/usr/bin:/bin" \
+    GATEWAY_URL="http://127.0.0.1:4000" \
+    MATRIX_AGENT_INTEGRATIONS_TOKEN="$scoped_token" \
+    "$NODE_BIN" "$COMMAND_PATH" "$@"
+fi
+
 if [ ! -r "$HOST_ENV_FILE" ]; then
   echo "matrix-integrations: Matrix identity is unavailable" >&2
   exit 3
@@ -22,6 +71,10 @@ MATRIX_CLERK_USER_ID_VALUE="$(read_host_value MATRIX_CLERK_USER_ID)" || exit 3
 if [[ ! "$MATRIX_AUTH_TOKEN_VALUE" =~ ^[A-Za-z0-9._~+/=-]{16,512}$ ]] || \
    [[ ! "$MATRIX_CLERK_USER_ID_VALUE" =~ ^[A-Za-z0-9_-]{1,128}$ ]]; then
   echo "matrix-integrations: Matrix identity is invalid" >&2
+  exit 3
+fi
+if [ -n "${MATRIX_CLERK_USER_ID:-}" ] && [ "$MATRIX_CLERK_USER_ID" != "$MATRIX_CLERK_USER_ID_VALUE" ]; then
+  echo "matrix-integrations: owner identity is unavailable" >&2
   exit 3
 fi
 if [ ! -x "$NODE_BIN" ] || [ ! -f "$COMMAND_PATH" ]; then
