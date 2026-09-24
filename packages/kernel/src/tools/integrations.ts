@@ -3,7 +3,7 @@ import {
   JevEmailTriageScoresSchema,
   evaluateEmailTriagePolicy,
 } from "@matrix-os/contracts";
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { createHmac } from "node:crypto";
 import { wrapExternalContent } from "../security/external-content.js";
 
 const GATEWAY_BASE = process.env.GATEWAY_URL ?? "http://localhost:4000";
@@ -12,16 +12,16 @@ const ACTION_TIMEOUT_MS = 35_000; // Pipedream actions timeout at 30s
 
 export function gatewayAuthHeaders(): Record<string, string> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
+  const scopedToken = process.env.MATRIX_AGENT_INTEGRATIONS_TOKEN;
+  if (scopedToken) {
+    if (!/^[a-f0-9]{64}$/.test(scopedToken)) throw new Error("InvalidAgentIntegrationCapability");
+    headers.Authorization = `Bearer ${scopedToken}`;
+    return headers;
+  }
   const token = process.env.MATRIX_AUTH_TOKEN;
-  let clerkUserId = process.env.MATRIX_CLERK_USER_ID;
-  const agentOwnerId = process.env.MATRIX_AGENT_OWNER_ID;
-  const agentOwnerProof = process.env.MATRIX_AGENT_OWNER_PROOF;
-  if (agentOwnerId || agentOwnerProof) {
-    if (!token || !agentOwnerId || !agentOwnerProof || !/^[A-Za-z0-9_-]{1,256}$/.test(agentOwnerId)
-      || !/^[a-f0-9]{64}$/.test(agentOwnerProof)) throw new Error("InvalidAgentOwnerProof");
-    const expected = createHmac("sha256", token).update(agentOwnerId).digest();
-    if (!timingSafeEqual(Buffer.from(agentOwnerProof, "hex"), expected)) throw new Error("InvalidAgentOwnerProof");
-    clerkUserId = agentOwnerId;
+  const clerkUserId = process.env.MATRIX_CLERK_USER_ID;
+  if (process.env.MATRIX_AGENT_OWNER_ID || process.env.MATRIX_AGENT_OWNER_PROOF) {
+    throw new Error("LegacyAgentDelegationRejected");
   }
   if (token) headers["Authorization"] = `Bearer ${token}`;
   // The local MCP process inherits the authenticated Chat run's owner ID.

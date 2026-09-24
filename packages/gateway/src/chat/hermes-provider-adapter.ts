@@ -3,10 +3,11 @@ import { hermesToolHasPrivateContext, hermesToolOutput } from "./hermes-tool-out
 import { ChatSteerNotDeliveredError } from "./steer-delivery-error.js";
 import { createHermesInputController } from "./hermes-input-control.js";
 import { delimiter, join } from "node:path";
-import { createHash, createHmac } from "node:crypto";
+import { createHash } from "node:crypto";
 import { z } from "zod/v4";
 import { CanonicalChatModelReferenceSchema } from "@matrix-os/contracts";
 import { buildAgentRuntimeEnvironment } from "../agent-launcher.js";
+import { issueHermesIntegrationCapability } from "./hermes-integration-capability.js";
 import {
   CanonicalProviderRunEventSchema,
   parseCanonicalProviderRunInput,
@@ -594,20 +595,17 @@ export function createHermesChatProviderAdapter(options: {
 
     const hermesRoot = join(options.homePath, ".hermes", "hermes-agent");
     const existingPythonPath = process.env.PYTHONPATH?.trim();
+    const integrationCapability = issueHermesIntegrationCapability(input.owner.ownerId);
     const clientOptions = {
       command: join(hermesRoot, "venv", "bin", "python"),
       args: ["-u", "-m", "tui_gateway.entry"],
       cwd: input.executionRoot ?? options.homePath,
       env: {
         ...buildAgentRuntimeEnvironment(options.homePath),
-        // The selected Chat owner may be a collaborator rather than the VPS
-        // owner. Bind local Matrix MCP calls to this authenticated Run owner.
+        // The MCP child receives a short-lived bearer scoped to this run's
+        // authenticated actor and only the integrations/Jev Gateway routes.
         MATRIX_CLERK_USER_ID: input.owner.ownerId,
-        ...(process.env.MATRIX_AUTH_TOKEN ? {
-          MATRIX_AGENT_OWNER_ID: input.owner.ownerId,
-          MATRIX_AGENT_OWNER_PROOF: createHmac("sha256", process.env.MATRIX_AUTH_TOKEN)
-            .update(input.owner.ownerId).digest("hex"),
-        } : {}),
+        MATRIX_AGENT_INTEGRATIONS_TOKEN: integrationCapability.token,
         HERMES_PYTHON_SRC_ROOT: hermesRoot,
         PYTHONPATH: existingPythonPath ? `${hermesRoot}${delimiter}${existingPythonPath}` : hermesRoot,
         PYTHONUNBUFFERED: "1",
@@ -831,6 +829,7 @@ export function createHermesChatProviderAdapter(options: {
           }),
         };
       } finally {
+        integrationCapability.revoke();
         releaseSteerRun?.();
         releaseApprovalRun?.();
         releaseInputRun?.();

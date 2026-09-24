@@ -138,12 +138,13 @@ export function ChatAgentsPanel({ client, view = "library", onClose, onSetup, on
   const jevUnavailable = state.loading || state.recipeLoading ? "Loading available accounts and Agent capabilities…"
     : !state.enabled ? "Agents are disabled for this computer."
     : state.connectionError || state.recipeError ? "Account or recipe options are unavailable. Try again later."
+    : state.agents.length >= 100 ? "The 100-Agent limit has been reached. Archive an Agent before using this recipe."
     : !models.some((choice) => choice.driverKind === "hermes") ? "Connect Hermes in Agents & providers first."
     : !state.recipeCatalog?.enabled || !["matrix-jev-email-triage", "matrix-integrations"].every((id) =>
       state.recipeCatalog?.skills.some((skill) => skill.id === id)) ? "Jev Agent skills are unavailable on this computer."
     : "";
   const createJev = async (accountLabel: string) => {
-    if (jevPending || jevUnavailable || !onStartChat || state.agents.length >= 100) return;
+    if (jevPending || jevUnavailable || !onStartChat) return;
     const matchingAccounts = activeConnections("gmail", state.connections).filter((account) => account.account_label === accountLabel);
     if (matchingAccounts.length !== 1 || !matchingAccounts[0]?.account_email) {
       setJevError("Choose a connected Gmail account with a verified email address before creating this Agent.");

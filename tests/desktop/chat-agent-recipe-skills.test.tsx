@@ -27,6 +27,7 @@ describe("installed Recipe skill selection", () => {
     expect(jevAgentRecipe("my-work-gmail").integrations).toEqual([{ service: "gmail", accountLabel: "my-work-gmail" }]);
     expect(jevAgentInstructions("owner@example.com")).toContain('"owner@example.com"');
     expect(jevAgentInstructions("owner@example.com")).toContain("stop before reading mail");
+    expect(jevAgentInstructions("owner@example.com")).toContain("get_profile");
     expect(() => jevAgentInstructions("gmail")).toThrow();
   });
   it("searches names and descriptions without dropping selections across searches", () => {

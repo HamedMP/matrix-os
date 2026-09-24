@@ -177,6 +177,19 @@ describe("shared Agents entry", () => {
     expect(client.create.mock.calls[0]![0].recipe?.integrations).toEqual([{ service: "gmail", accountLabel: "Personal" }]);
   });
 
+  it("explains the Agent capacity limit before offering the Jev recipe", async () => {
+    const client = clientFixture();
+    client.list.mockResolvedValue({ enabled: true, agents: Array.from({ length: 100 }, (_, index) => ({
+      ...saved, id: `agent_${index}`,
+    })) });
+    render(<ChatAgentsWorkspace><ChatAgentsRailSection client={client} onStartChat={vi.fn()} />
+      <ChatAgentsContent client={client} scopeKey="chat_one"><p>Chat canvas</p></ChatAgentsContent></ChatAgentsWorkspace>);
+    fireEvent.click(await screen.findByRole("button", { name: "Browse agent recipes" }));
+    const useJev = await screen.findByRole("button", { name: "Use Jev Inbox Triage" });
+    expect((useJev as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText(/100.Agent limit/)).toBeTruthy();
+  });
+
   it("does not open Chat if the Jev bot is absent from the current user's readback", async () => {
     const client = clientFixture();
     client.integrations.mockResolvedValue([{ service: "gmail", account_label: "Mine", account_email: "mine@example.test", status: "active" }]);

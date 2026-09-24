@@ -1318,6 +1318,20 @@ apply_update() {
         rm -rf "$extract_dir" "$bundle_file"
         return 1
       fi
+      # Gateway startup syncs Matrix/Claude/Codex skills, but existing Hermes
+      # installations do not rerun their installer during host updates.
+      local runtime_home="${MATRIX_HOME:-/home/matrix/home}"
+      if [ -d "$runtime_home/.hermes" ] && [ -x "$APP_DIR/scripts/sync-matrix-agent-skills.sh" ]; then
+        if ! HOME="$runtime_home" HERMES_HOME="$runtime_home/.hermes" \
+          MATRIX_SKILL_TARGETS=hermes MATRIX_SKILLS_SOURCE="$APP_DIR/skills/matrix" \
+          bash "$APP_DIR/scripts/sync-matrix-agent-skills.sh"; then
+          log "ERROR: bundled Hermes skills could not be reconciled"
+          write_update_error "hermes_skill_sync_failed" "The update completed, but Hermes skills require reconciliation." "$version"
+          rm -rf "$extract_dir" "$bundle_file"
+          return 1
+        fi
+        log "Bundled Hermes skills reconciled"
+      fi
       log "Health check passed — update to $version complete"
       clear_consumed_update_markers
       cleanup_update_transaction

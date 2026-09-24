@@ -31,11 +31,13 @@ function mockFetcher(overrides?: {
 const originalClerkUserId = process.env.MATRIX_CLERK_USER_ID;
 const originalAgentOwnerId = process.env.MATRIX_AGENT_OWNER_ID;
 const originalAgentOwnerProof = process.env.MATRIX_AGENT_OWNER_PROOF;
+const originalIntegrationCapability = process.env.MATRIX_AGENT_INTEGRATIONS_TOKEN;
 
 beforeEach(() => {
   delete process.env.MATRIX_CLERK_USER_ID;
   delete process.env.MATRIX_AGENT_OWNER_ID;
   delete process.env.MATRIX_AGENT_OWNER_PROOF;
+  delete process.env.MATRIX_AGENT_INTEGRATIONS_TOKEN;
 });
 
 afterEach(() => {
@@ -48,6 +50,8 @@ afterEach(() => {
   else process.env.MATRIX_AGENT_OWNER_ID = originalAgentOwnerId;
   if (originalAgentOwnerProof === undefined) delete process.env.MATRIX_AGENT_OWNER_PROOF;
   else process.env.MATRIX_AGENT_OWNER_PROOF = originalAgentOwnerProof;
+  if (originalIntegrationCapability === undefined) delete process.env.MATRIX_AGENT_INTEGRATIONS_TOKEN;
+  else process.env.MATRIX_AGENT_INTEGRATIONS_TOKEN = originalIntegrationCapability;
 });
 
 describe("connect_service handler", () => {
@@ -128,17 +132,17 @@ describe("connect_service handler", () => {
     vi.unstubAllEnvs();
   });
 
-  it("uses a signed per-run owner instead of the VPS owner and rejects a forged delegation", () => {
+  it("uses a scoped per-run bearer instead of the VPS token and rejects legacy delegation", () => {
     vi.stubEnv("MATRIX_AUTH_TOKEN", "test-only-runtime-token");
     process.env.MATRIX_CLERK_USER_ID = "preview_host_owner";
-    process.env.MATRIX_AGENT_OWNER_ID = "viewer_123";
-    process.env.MATRIX_AGENT_OWNER_PROOF = createHmac("sha256", "test-only-runtime-token").update("viewer_123").digest("hex");
-    expect(gatewayAuthHeaders()).toMatchObject({
-      "x-platform-user-id": "viewer_123",
-      "x-platform-verified": process.env.MATRIX_AGENT_OWNER_PROOF,
+    process.env.MATRIX_AGENT_INTEGRATIONS_TOKEN = "a".repeat(64);
+    expect(gatewayAuthHeaders()).toEqual({
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${"a".repeat(64)}`,
     });
-    process.env.MATRIX_AGENT_OWNER_PROOF = "0".repeat(64);
-    expect(() => gatewayAuthHeaders()).toThrow("InvalidAgentOwnerProof");
+    delete process.env.MATRIX_AGENT_INTEGRATIONS_TOKEN;
+    process.env.MATRIX_AGENT_OWNER_ID = "viewer_123";
+    expect(() => gatewayAuthHeaders()).toThrow("LegacyAgentDelegationRejected");
     vi.unstubAllEnvs();
   });
 });

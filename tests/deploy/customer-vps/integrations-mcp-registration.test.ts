@@ -7,17 +7,16 @@ const launcherPath = "distro/customer-vps/host-bin/matrix-integrations-mcp";
 const terminalPath = "distro/customer-vps/host-bin/matrix-integrations";
 
 describe("customer VPS integrations MCP wiring", () => {
-  it("ships an executable stdio launcher that isolates host credentials and forwards signed Run identity", async () => {
+  it("ships an executable stdio launcher that isolates host credentials and forwards a scoped Run capability", async () => {
     const launcher = await readFile(launcherPath, "utf8");
 
     expect(launcher).toContain("/opt/matrix/env/host.env");
     expect(launcher).toContain("packages/integrations-mcp/dist/cli.js");
     expect(launcher).toContain("exec /usr/bin/env -i");
-    expect(launcher).toContain('MATRIX_AGENT_OWNER_ID="${MATRIX_AGENT_OWNER_ID:-}"');
-    expect(launcher).toContain('MATRIX_AGENT_OWNER_PROOF="${MATRIX_AGENT_OWNER_PROOF:-}"');
-    expect(launcher).toContain('read_signed_ancestor_context');
+    expect(launcher).toContain('MATRIX_AGENT_INTEGRATIONS_TOKEN="$scoped_token"');
+    expect(launcher).toContain('read_ancestor_capability');
     expect(launcher).toContain('tui_gateway.entry');
-    expect(launcher).toContain('delegated identity is unavailable');
+    expect(launcher).toContain('run capability is unavailable');
     expect(launcher).not.toContain("PIPEDREAM_");
     await expect(access(launcherPath, constants.X_OK)).resolves.toBeUndefined();
   });
@@ -26,8 +25,8 @@ describe("customer VPS integrations MCP wiring", () => {
     const terminal = await readFile(terminalPath, "utf8");
 
     expect(terminal).toContain("exec /usr/bin/env -i");
-    expect(terminal).toContain('MATRIX_AGENT_OWNER_ID="${MATRIX_AGENT_OWNER_ID:-}"');
-    expect(terminal).toContain('MATRIX_AGENT_OWNER_PROOF="${MATRIX_AGENT_OWNER_PROOF:-}"');
+    expect(terminal).toContain('MATRIX_AGENT_INTEGRATIONS_TOKEN="$scoped_token"');
+    expect(terminal).toContain('read_ancestor_capability');
     expect(terminal).toContain("packages/integrations-mcp/dist/command-cli.js");
     expect(terminal).not.toContain("PIPEDREAM_");
     await expect(access(terminalPath, constants.X_OK)).resolves.toBeUndefined();
@@ -77,6 +76,16 @@ describe("customer VPS integrations MCP wiring", () => {
     expect(updater).toContain('if [ -f "$extract_dir/systemd/matrix-integrations-agents.service" ]; then');
     expect(updater).toContain("sudo systemctl enable matrix-integrations-agents.service");
     expect(updater).toContain("sudo systemctl restart --no-block matrix-integrations-agents.service");
+  });
+
+  it("reconciles bundled Hermes skills after a healthy host update", async () => {
+    const updater = await readFile("distro/customer-vps/host-bin/matrix-sync-agent", "utf8");
+    const success = updater.indexOf('if commit_release_metadata; then');
+    const sync = updater.indexOf('MATRIX_SKILL_TARGETS=hermes');
+    expect(success).toBeGreaterThan(0);
+    expect(sync).toBeGreaterThan(success);
+    expect(updater).toContain('MATRIX_SKILLS_SOURCE="$APP_DIR/skills/matrix"');
+    expect(updater).toContain('HERMES_HOME="$runtime_home/.hermes"');
   });
 
   it("keeps certified snapshots from before integrations MCP bootable", async () => {
