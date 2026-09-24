@@ -4,8 +4,8 @@
  * The platform has no collaboration release flag. When the signing key or
  * allowed-origin configuration is incomplete the composition root still
  * registers every collaboration and internal collaboration route, and each
- * one answers with a generic denial. The WebSocket authorizer is absent, so
- * the upgrade handler destroys collaboration sockets. Nothing is skipped.
+ * one answers with a generic denial. The direct control/relay runtime is
+ * absent, so the upgrade handler destroys collaboration sockets.
  */
 import { COLLABORATION_HTTP_BODY_LIMIT } from "@matrix-os/contracts";
 import type { Context, Hono } from "hono";

@@ -1,10 +1,8 @@
 import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { bootstrapPlatformCollaborationDatabase } from "../../packages/platform/src/collaboration/database.js";
-import { CollaborationProofSigner } from "../../packages/platform/src/collaboration/proof.js";
 import { PlatformCollaborationRepository } from "../../packages/platform/src/collaboration/repository.js";
 import { createPlatformCollaborationRoutes } from "../../packages/platform/src/collaboration/routes.js";
-import { CollaborationWebSocketAuthorizer } from "../../packages/platform/src/collaboration/websocket.js";
 import {
   createPlatformCollaborationTestDatabase,
   destroyPlatformCollaborationTestDatabase,
@@ -29,20 +27,6 @@ describe("platform collaboration routes", () => {
     fixture = await createPlatformCollaborationTestDatabase();
     await bootstrapPlatformCollaborationDatabase(fixture.collaborationDb);
     repository = new PlatformCollaborationRepository(fixture.collaborationDb, { now: () => now });
-    const signer = new CollaborationProofSigner({
-      activeKeyId: "key-1",
-      keys: { "key-1": "a".repeat(32) },
-      now: () => now,
-      createNonce: () => "b".repeat(32),
-    });
-    const sockets = new CollaborationWebSocketAuthorizer({
-      repository,
-      signer,
-      allowedOrigins: ["https://app.matrix-os.com"],
-      enabledPurposes: ["events"],
-      now: () => now,
-      createToken: () => "c".repeat(43),
-    });
     organizationIds = [];
     resolveInvitationIdentifier = vi.fn(async (identifier: string) => identifier === "nimanaderi"
       ? { actorId: platformCollaborationActors.recipientWithoutComputer, displayName: "Recipient" }
@@ -50,8 +34,6 @@ describe("platform collaboration routes", () => {
     app = new Hono();
     app.route("/", createPlatformCollaborationRoutes({
       repository,
-      signer,
-      sockets,
       resolveActor: async (c) => c.req.header("x-test-actor") ?? null,
       authenticateRuntime: async ({ runtimeId, bearerToken }) =>
         runtimeId === "runtime_owner" && bearerToken === runtimeSecret
@@ -239,7 +221,7 @@ describe("platform collaboration routes", () => {
     })).status).toBe(422);
   });
 
-  it("issues an events-only ticket to an accepted current member", async () => {
+  it("does not issue a V1 connection ticket to an accepted current member", async () => {
     await repository.applyDirectoryEvent({ ...directoryEvent("accepted"), metadataRevision: 2 });
     const response = await app.request(`/api/collaboration/scopes/${scopeId}/connection-tickets`, {
       method: "POST",
@@ -252,11 +234,7 @@ describe("platform collaboration routes", () => {
         purpose: "events",
       }),
     });
-    expect(response.status).toBe(201);
-    expect(await response.json()).toMatchObject({
-      ticket: "c".repeat(43),
-      actorId: platformCollaborationActors.recipientWithoutComputer,
-    });
+    expect(response.status).toBe(404);
   });
 
   it("serves bounded participant identity only to an authenticated runtime", async () => {

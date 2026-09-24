@@ -10,8 +10,8 @@ import {
 } from "./collaboration-test-support.js";
 
 const validEnvironment = {
-  MATRIX_COLLABORATION_ACTIVE_KEY_ID: "key-1",
-  MATRIX_COLLABORATION_PROOF_KEYS: JSON.stringify({ "key-1": "a".repeat(32) }),
+  MATRIX_COLLABORATION_TICKET_ACTIVE_KEY_ID: "direct-key",
+  MATRIX_COLLABORATION_TICKET_KEYS: JSON.stringify({ "direct-key": Buffer.alloc(32, 1).toString("base64url") }),
   MATRIX_COLLABORATION_ALLOWED_ORIGINS: "https://app.matrix-os.com",
 };
 
@@ -31,14 +31,14 @@ describe("platform collaboration bootstrap", () => {
 
   it("registers fail-closed routes before database startup when configuration is incomplete", async () => {
     const composition = await bootstrapPlatformCollaboration({
-      env: { MATRIX_COLLABORATION_ACTIVE_KEY_ID: "key-1" },
+      env: { MATRIX_COLLABORATION_TICKET_ACTIVE_KEY_ID: "direct-key" },
       db: undefined as unknown as PlatformDB,
       platformSecret: "platform-secret",
       platformJwtSecret: "platform-jwt-secret",
       customerVpsProxyDispatcher: undefined as unknown as Agent,
     });
     expect("failClosed" in composition && composition.failClosed.reason).toBe("origin_configuration_missing");
-    expect(composition.sockets).toBeUndefined();
+    expect(composition.direct).toBeUndefined();
     const app = new Hono();
     composition.register(app);
     const response = await app.request("/api/collaboration/inbox");
@@ -132,7 +132,22 @@ describe("platform collaboration bootstrap", () => {
     }
   });
 
-  it("returns an owner-shutdown runtime when collaboration is configured", async () => {
+  it("fails closed when only retired V1 proof keys are configured", async () => {
+    const composition = await bootstrapPlatformCollaboration({
+      env: {
+        MATRIX_COLLABORATION_ALLOWED_ORIGINS: "https://app.matrix-os.com",
+        MATRIX_COLLABORATION_ACTIVE_KEY_ID: "legacy-key",
+        MATRIX_COLLABORATION_PROOF_KEYS: JSON.stringify({ "legacy-key": "a".repeat(32) }),
+      },
+      db: undefined as unknown as PlatformDB,
+      platformSecret: "platform-secret",
+      platformJwtSecret: "platform-jwt-secret",
+      customerVpsProxyDispatcher: undefined as unknown as Agent,
+    });
+    expect("failClosed" in composition && composition.failClosed.reason).toBe("signing_configuration_missing");
+  });
+
+  it("starts direct ticket authority without V1 proof keys", async () => {
     const fixture = await createPlatformCollaborationTestDatabase();
     try {
       const runtime = await bootstrapPlatformCollaboration({
@@ -144,7 +159,7 @@ describe("platform collaboration bootstrap", () => {
       });
 
       expect("failClosed" in runtime).toBe(false);
-      expect(runtime.sockets).toBeDefined();
+      expect(runtime.direct?.issuer).toBeDefined();
       expect("cutover" in runtime && runtime.cutover).toMatchObject({
         run: expect.any(Function), resume: expect.any(Function), rollback: expect.any(Function),
       });
