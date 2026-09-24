@@ -89,6 +89,10 @@ jobs:
       MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED: ${{ vars.MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED || 'false' }}
       MATRIX_FUNDED_AI_RUNTIME_ENABLED: ${{ vars.MATRIX_FUNDED_AI_RUNTIME_ENABLED || 'false' }}
       MATRIX_FUNDED_AI_RELAY_URL: ${{ vars.MATRIX_FUNDED_AI_RELAY_URL }}
+      MATRIX_FUNDED_AI_ADDON_CHECKOUT_ENABLED: ${{ vars.MATRIX_FUNDED_AI_ADDON_CHECKOUT_ENABLED || 'false' }}
+      STRIPE_PRICE_AI_CREDIT_USD_5: ${{ vars.STRIPE_PRICE_AI_CREDIT_USD_5 }}
+      STRIPE_PRICE_AI_CREDIT_USD_10: ${{ vars.STRIPE_PRICE_AI_CREDIT_USD_10 }}
+      STRIPE_PRICE_AI_CREDIT_USD_25: ${{ vars.STRIPE_PRICE_AI_CREDIT_USD_25 }}
       DEPLOY_ENVIRONMENT: ${{ github.event_name == 'workflow_dispatch' && inputs.environment || 'production' }}
     steps:
       - name: Checkout
@@ -193,6 +197,32 @@ jobs:
               exit 1
             fi
           fi
+          case "$MATRIX_FUNDED_AI_ADDON_CHECKOUT_ENABLED" in
+            true)
+              if [ "$MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED" != "true" ] ||
+                 [ "$MATRIX_FUNDED_AI_RUNTIME_ENABLED" != "true" ]; then
+                echo "Matrix AI credit checkout requires funded AI control plane and runtime." >&2
+                exit 1
+              fi
+              for name in STRIPE_PRICE_AI_CREDIT_USD_5 STRIPE_PRICE_AI_CREDIT_USD_10 STRIPE_PRICE_AI_CREDIT_USD_25; do
+                if ! [[ "${!name}" =~ ^price_[A-Za-z0-9_]{2,249}$ ]]; then
+                  echo "$name must be a Stripe price ID when Matrix AI checkout is enabled." >&2
+                  exit 1
+                fi
+              done
+              if [ "$STRIPE_PRICE_AI_CREDIT_USD_5" = "$STRIPE_PRICE_AI_CREDIT_USD_10" ] ||
+                 [ "$STRIPE_PRICE_AI_CREDIT_USD_5" = "$STRIPE_PRICE_AI_CREDIT_USD_25" ] ||
+                 [ "$STRIPE_PRICE_AI_CREDIT_USD_10" = "$STRIPE_PRICE_AI_CREDIT_USD_25" ]; then
+                echo "Matrix AI credit packages require distinct Stripe price IDs." >&2
+                exit 1
+              fi
+              ;;
+            false) ;;
+            *)
+              echo "MATRIX_FUNDED_AI_ADDON_CHECKOUT_ENABLED must be true or false." >&2
+              exit 1
+              ;;
+          esac
       - name: Authenticate to Google Cloud
         # google-github-actions v4 tags are not published yet; v3 is the latest
         # major tag currently resolvable by GitHub Actions.
@@ -725,11 +755,14 @@ jobs:
             reddit_secret_bindings=",REDDIT_CONVERSIONS_ACCESS_TOKEN=reddit-conversions-access-token:latest"
           fi
 
-          funded_ai_env_bindings="|MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED=${MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED}|MATRIX_FUNDED_AI_RUNTIME_ENABLED=${MATRIX_FUNDED_AI_RUNTIME_ENABLED}"
+          funded_ai_env_bindings="|MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED=${MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED}|MATRIX_FUNDED_AI_RUNTIME_ENABLED=${MATRIX_FUNDED_AI_RUNTIME_ENABLED}|MATRIX_FUNDED_AI_ADDON_CHECKOUT_ENABLED=${MATRIX_FUNDED_AI_ADDON_CHECKOUT_ENABLED}"
           funded_ai_secret_bindings=""
           if [ "$MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED" = "true" ]; then
             funded_ai_env_bindings="${funded_ai_env_bindings}|MATRIX_FUNDED_AI_RELAY_URL=${MATRIX_FUNDED_AI_RELAY_URL}"
             funded_ai_secret_bindings=",AI_RELAY_CONTROL_TOKEN=ai-relay-control-token:latest,AI_FUNDED_CREDENTIAL_HASH_SECRET=ai-funded-credential-hash-secret:latest"
+          fi
+          if [ "$MATRIX_FUNDED_AI_ADDON_CHECKOUT_ENABLED" = "true" ]; then
+            funded_ai_env_bindings="${funded_ai_env_bindings}|STRIPE_PRICE_AI_CREDIT_USD_5=${STRIPE_PRICE_AI_CREDIT_USD_5}|STRIPE_PRICE_AI_CREDIT_USD_10=${STRIPE_PRICE_AI_CREDIT_USD_10}|STRIPE_PRICE_AI_CREDIT_USD_25=${STRIPE_PRICE_AI_CREDIT_USD_25}"
           fi
           speech_env_bindings="|PLATFORM_SPEECH_ENABLED=${PLATFORM_SPEECH_ENABLED}|MATRIX_PLATFORM_SPEECH_RUNTIME_ENABLED=${MATRIX_PLATFORM_SPEECH_RUNTIME_ENABLED}|PLATFORM_SPEECH_PROVIDER=${PLATFORM_SPEECH_PROVIDER}|PLATFORM_SPEECH_MODEL=${PLATFORM_SPEECH_MODEL}|PLATFORM_SPEECH_POLICY_REVISION=${PLATFORM_SPEECH_POLICY_REVISION}|PLATFORM_SPEECH_MICROUSD_PER_MINUTE=${PLATFORM_SPEECH_MICROUSD_PER_MINUTE}|PLATFORM_SPEECH_FUNDING_SOURCES=${PLATFORM_SPEECH_FUNDING_SOURCES}|PLATFORM_SPEECH_OWNER_AUDIO_ENABLED=${PLATFORM_SPEECH_OWNER_AUDIO_ENABLED}"
           speech_secret_bindings=""

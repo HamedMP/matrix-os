@@ -61,7 +61,6 @@ export function GatewayPanel({
   const budget = policy?.monthlyBudgetMicrousd ?? null;
   const [budgetUsd, setBudgetUsd] = useState(budget === null ? "" : String(budget / 1_000_000));
   const [creditDialogOpen, setCreditDialogOpen] = useState(false);
-  useGettingStartedBlocker(creditDialogOpen);
   const [creditPackage, setCreditPackage] = useState<"usd_5" | "usd_10" | "usd_25">("usd_5");
   const [creditBusy, setCreditBusy] = useState(false);
   const [creditError, setCreditError] = useState(false);
@@ -72,7 +71,15 @@ export function GatewayPanel({
   const credit = source ? gatewayCreditLines(source) : { primary: "Credit unavailable", secondary: null, stale: false };
   const usageAsOf = source?.usage.asOf ?? null;
   const ready = isMatrixGatewaySourceReady(source, policy, provider);
-  const status = !source || !policy ? "Setup needed" : ready ? "Ready"
+  const creditRequired = source?.readiness.safeReason === "credit_required";
+  const checkoutAvailable = Boolean(source && policy?.topUpEnabled && canAddCredit
+    && source.usage.kind === "managed_credit" && source.usage.state === "current"
+    && (ready || creditRequired));
+  useGettingStartedBlocker(creditDialogOpen && checkoutAvailable);
+  useEffect(() => {
+    if (!checkoutAvailable) setCreditDialogOpen(false);
+  }, [checkoutAvailable]);
+  const status = !source || !policy ? "Setup needed" : ready ? "Ready" : creditRequired ? "Credit needed"
     : source.readiness.state === "ready" ? "Unavailable" : titleCase(source.readiness.state);
 
   const saveBudget = () => {
@@ -87,7 +94,7 @@ export function GatewayPanel({
   };
 
   const submitCredit = async () => {
-    if (creditBusy || !source || !canAddCredit || disabled) return;
+    if (creditBusy || !source || !checkoutAvailable || disabled) return;
     setCreditBusy(true);
     setCreditError(false);
     try {
@@ -117,11 +124,16 @@ export function GatewayPanel({
       </div>
 
       {!source || !policy ? (
-        <p className="matrix-ap-help">Matrix AI is not enabled for this computer. Ask your workspace administrator.</p>
+        <p className="matrix-ap-help">Matrix AI is not available on this computer yet. Credit purchases are unavailable.</p>
+      ) : creditRequired ? (
+        <p className="matrix-ap-help">Add credit to use Matrix AI.</p>
       ) : !ready ? (
         <p className="matrix-ap-help">{source.readiness.safeReason === "policy" || source.readiness.action === "contact_owner"
           ? "Matrix AI is restricted by your workspace. Ask your administrator."
           : "Matrix AI connection not verified. Check again."}</p>
+      ) : null}
+      {source && policy && !policy.topUpEnabled ? (
+        <p className="matrix-ap-help">Matrix AI credit purchases are not available yet.</p>
       ) : null}
 
       <div className="matrix-ap-credit-row">
@@ -141,7 +153,7 @@ export function GatewayPanel({
           {ready && !onUseGateway && !isSelected && onChooseAgent ? compatibleAgents.map((agent) => (
             <button key={agent.id} type="button" className="matrix-ap-button" onClick={() => onChooseAgent(agent.id)}>Choose {agent.displayName}</button>
           )) : null}
-          {source && policy?.topUpEnabled && canAddCredit ? (
+          {checkoutAvailable ? (
             <button
               type="button"
               className="matrix-ap-button matrix-ap-button-primary"
@@ -227,7 +239,7 @@ export function GatewayPanel({
         </div></details>
       ) : null}
 
-      {creditDialogOpen && source && policy?.topUpEnabled && canAddCredit ? (
+      {creditDialogOpen && source && checkoutAvailable ? (
         <div className="matrix-ap-dialog-backdrop" role="presentation">
           <section className="matrix-ap-dialog" role="dialog" aria-modal="true" aria-labelledby="matrix-ap-credit-title">
             <div className="matrix-ap-dialog-head">

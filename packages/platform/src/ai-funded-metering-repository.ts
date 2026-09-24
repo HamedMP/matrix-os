@@ -30,6 +30,7 @@ import { sql } from "kysely";
 import { z } from "zod/v4";
 import type { PlatformDB } from "./db.js";
 import { AiFundedPolicyError } from "./ai-funded-policy-errors.js";
+import { readCheckoutFundingSnapshot } from "./ai-funded-checkout-snapshot.js";
 import {
   debitAttributedPromotionalGrants,
   debitPromotionalGrants,
@@ -147,6 +148,17 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
           staleAfter: new Date(checked.getTime() + options.policyFreshnessMs).toISOString(),
         },
       };
+    });
+  }
+
+  async function getCheckoutFundingSummary(
+    identityInput: z.input<typeof IdentitySchema>,
+    deadlineAtMs: number,
+  ) {
+    const identity = IdentitySchema.parse(identityInput);
+    return readCheckoutFundingSnapshot({
+      db: options.db, identity, checked: options.now(),
+      policyFreshnessMs: options.policyFreshnessMs, deadlineAtMs,
     });
   }
 
@@ -1001,6 +1013,7 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
   return {
     getFundingSummary,
     getRuntimeFundingSummary,
+    getCheckoutFundingSummary,
     checkPolicy,
     authorize,
     startReservation,

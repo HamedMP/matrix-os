@@ -709,6 +709,34 @@ describe("AgentsProvidersView", () => {
     expect(screen.queryByText("$0.00 remaining")).toBeNull();
   });
 
+  it("offers checkout for verified zero credit but not a broken route or unavailable ledger", () => {
+    const current = snapshot();
+    const source = current.accessSources[0]!;
+    source.readiness = { state: "unavailable", checkedAt: now, staleAfter: later,
+      action: "retry", safeReason: "credit_required" };
+    if (source.usage.kind !== "managed_credit") throw new Error("Fixture requires managed credit");
+    source.usage.remainingMicrousd = 0;
+    source.usage.credit.remainingBalanceMicrousd = 0;
+    const { rerender } = setup({ snapshot: current });
+    const gateway = screen.getByRole("region", { name: "Matrix AI" });
+    expect(within(gateway).getByText("Credit needed")).toBeVisible();
+    expect(within(gateway).getByRole("button", { name: "Add credit" })).toBeEnabled();
+    expect(within(gateway).getByText(/Add credit to use Matrix AI/)).toBeVisible();
+
+    const broken = structuredClone(current);
+    broken.accessSources[0]!.readiness.safeReason = "provider_unavailable";
+    rerender(<AgentsProvidersView {...setupProps(broken)} />);
+    expect(within(gateway).queryByRole("button", { name: "Add credit" })).not.toBeInTheDocument();
+
+    const ledgerMissing = structuredClone(current);
+    ledgerMissing.accessSources[0]!.usage = {
+      kind: "unavailable", authority: "unavailable", state: "unavailable",
+      scope: "owner_entitlement", reason: "ledger_not_available", asOf: null,
+    };
+    rerender(<AgentsProvidersView {...setupProps(ledgerMissing)} />);
+    expect(within(gateway).queryByRole("button", { name: "Add credit" })).not.toBeInTheDocument();
+  });
+
   it("shows per-account usage and keeps login, logout, and remove distinct", async () => {
     const { onMutate } = setup();
     const personal = screen.getByTestId("account-account_personal");
@@ -842,6 +870,22 @@ describe("AgentsProvidersView", () => {
     fireEvent.click(screen.getByRole("button", { name: "Continue to checkout" }));
     await waitFor(() => expect(onAddCredit).toHaveBeenCalledTimes(2));
     expect(onAddCredit.mock.calls[1]?.[2]).toBe(firstRequestId);
+  });
+
+  it("closes a credit dialog when refreshed route eligibility is lost", async () => {
+    const current = snapshot();
+    const { rerender, props } = setup({ snapshot: current });
+    fireEvent.click(screen.getByRole("button", { name: "Add credit" }));
+    expect(screen.getByRole("dialog", { name: "Add Matrix AI credit" })).toBeVisible();
+    const unavailable = structuredClone(current);
+    unavailable.accessSources[0]!.readiness = {
+      state: "unavailable", checkedAt: now, staleAfter: later,
+      action: "retry", safeReason: "provider_unavailable",
+    };
+    rerender(<AgentsProvidersView {...props} snapshot={unavailable} />);
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Add Matrix AI credit" })).toBeNull());
+    rerender(<AgentsProvidersView {...props} snapshot={current} />);
+    expect(screen.queryByRole("dialog", { name: "Add Matrix AI credit" })).toBeNull();
   });
 
   it("shows install, offline, busy, and read-only states without inventing an install capability", () => {

@@ -13,6 +13,8 @@ import { createTestPlatformDb, destroyTestPlatformDb } from "./platform-db-test-
 
 const checkoutEnv = {
   MATRIX_FUNDED_AI_ADDON_CHECKOUT_ENABLED: "true",
+  MATRIX_FUNDED_AI_RELAY_URL: "https://relay.example.test",
+  AI_RELAY_CONTROL_TOKEN: "c".repeat(32),
   STRIPE_SECRET_KEY: "configured",
   STRIPE_WEBHOOK_SECRET: "whsec_test",
   STRIPE_PRICE_AI_CREDIT_USD_5: "price_ai_5",
@@ -31,6 +33,7 @@ describe("funded AI add-on checkout", () => {
   let stripe: StripeBillingClient;
   let repository: ReturnType<typeof createAiFundedPolicyRepository>;
   let webhookEvent: StripeWebhookEvent;
+  let relayHealthFetch: ReturnType<typeof vi.fn<typeof fetch>>;
 
   beforeEach(async () => {
     ({ db } = await createTestPlatformDb());
@@ -74,6 +77,7 @@ describe("funded AI add-on checkout", () => {
       constructWebhookEvent: vi.fn(() => webhookEvent),
     };
     webhookEvent = completedEvent();
+    relayHealthFetch = vi.fn(async () => Response.json({ ready: true }));
   });
 
   afterEach(async () => {
@@ -89,6 +93,7 @@ describe("funded AI add-on checkout", () => {
       resolveClerkUserId: () => Promise.resolve(userId),
       now: () => new Date("2026-08-31T10:00:00.000Z"),
       fundedAiRepository: repository,
+      fundedRelayHealthFetch: relayHealthFetch,
     }));
     return hono;
   }
@@ -112,6 +117,27 @@ describe("funded AI add-on checkout", () => {
     expect((await createCheckout()).status).toBe(200);
     expect((await deliver(completedEvent())).status).toBe(200);
   }
+
+  it("checks purchase eligibility without mutating the runtime balance", async () => {
+    const before = await db.executor.selectFrom("ai_funded_runtime_balances").selectAll()
+      .where("machine_id", "=", identity.machineId).executeTakeFirstOrThrow();
+    expect((await createCheckout()).status).toBe(200);
+    const after = await db.executor.selectFrom("ai_funded_runtime_balances").selectAll()
+      .where("machine_id", "=", identity.machineId).executeTakeFirstOrThrow();
+    expect(after).toEqual(before);
+  });
+
+  it.each([
+    { frozen: true, debt: 0 },
+    { frozen: false, debt: 1_000_000 },
+  ])("refuses new paid checkout for a restricted funded runtime (%j)", async ({ frozen, debt }) => {
+    await db.executor.insertInto("ai_funded_credit_restrictions").values({
+      machine_id: identity.machineId, owner_id: identity.ownerId, runtime_slot: identity.runtimeSlot,
+      debt_microusd: debt, frozen, updated_at: "2026-08-31T10:00:00.000Z",
+    }).execute();
+    expect((await createCheckout()).status).toBe(503);
+    expect(stripe.createAiCreditCheckoutSession).not.toHaveBeenCalled();
+  });
 
   it("loads a complete, bounded, server-owned package catalog or disables checkout", () => {
     expect(loadAiCreditCheckoutConfig(checkoutEnv)).toEqual({
@@ -145,6 +171,12 @@ describe("funded AI add-on checkout", () => {
     });
 
     expect(response.status).toBe(200);
+    expect(relayHealthFetch).toHaveBeenCalledWith(
+      "https://relay.example.test/ready?model=anthropic%2Fclaude-sonnet-5", expect.objectContaining({
+      redirect: "error", signal: expect.any(AbortSignal),
+      headers: { authorization: `Bearer ${checkoutEnv.AI_RELAY_CONTROL_TOKEN}` },
+      }),
+    );
     await expect(response.json()).resolves.toEqual({ url: "https://checkout.stripe.com/c/pay/cs_test" });
     expect(stripe.createAiCreditCheckoutSession).toHaveBeenCalledWith({
       idempotencyKey: `matrix-ai-credit:${createHash("sha256")
@@ -161,6 +193,24 @@ describe("funded AI add-on checkout", () => {
       successUrl: "https://app.matrix-os.com/?billing=success&checkout=success",
       cancelUrl: "https://app.matrix-os.com/?billing=canceled",
     });
+  });
+
+  it("blocks a new paid checkout when owner policy or relay health is unavailable", async () => {
+    relayHealthFetch.mockResolvedValueOnce(Response.json({ ready: false }));
+    expect((await createCheckout()).status).toBe(503);
+    expect(stripe.createAiCreditCheckoutSession).not.toHaveBeenCalled();
+    relayHealthFetch.mockResolvedValueOnce(new Response(null, { status: 503 }));
+    expect((await createCheckout()).status).toBe(503);
+    expect(stripe.createAiCreditCheckoutSession).not.toHaveBeenCalled();
+    expect((await createCheckout({ ...checkoutEnv, AI_RELAY_CONTROL_TOKEN: undefined })).status).toBe(503);
+    expect(stripe.createAiCreditCheckoutSession).not.toHaveBeenCalled();
+
+    await repository.setRuntimePolicy({
+      identity, expectedRevision: 1, enabled: false, allowedModelIds: [],
+      monthlyBudgetMicrousd: 50_000_000, expiresAt: null,
+    });
+    expect((await createCheckout()).status).toBe(503);
+    expect(stripe.createAiCreditCheckoutSession).not.toHaveBeenCalled();
   });
 
   it("rejects client-supplied money, unknown packages, missing auth, and non-running runtimes", async () => {

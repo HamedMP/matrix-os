@@ -45,6 +45,7 @@ export const AiProviderSafeReasonSchema = z.enum([
   "rate_limited",
   "provider_unavailable",
   "policy",
+  "credit_required",
   "unknown",
 ]);
 

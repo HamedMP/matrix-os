@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   createFundedRelayService,
@@ -39,6 +39,61 @@ describe("funded relay Cloud Run service", () => {
 
       const unknown = await service.app.request("http://relay.test/instances");
       expect(unknown.status).toBe(404);
+    } finally {
+      await service.close();
+    }
+  });
+
+  it("requires control auth and upstream model availability for paid-credit readiness", async () => {
+    const config = requireFundedRelayServiceConfig({
+      ...enabledEnv(), CLOUDFLARE_WORKERS_AI_TOKEN: "w".repeat(32),
+      MATRIX_FUNDED_AI_RESERVATION_MODE: "usage",
+    });
+    const fetchFn = vi.fn<typeof fetch>().mockResolvedValue(Response.json({
+      success: true, result: { model: "@cf/zai-org/glm-5.3-flash", choices: [{ message: { content: "ok" } }] },
+    }));
+    const service = createFundedRelayService(config, { fetchFn });
+    const path = "http://relay.test/ready?model=%40cf%2Fzai-org%2Fglm-5.3-flash";
+    try {
+      expect((await service.app.request(path)).status).toBe(401);
+      expect(fetchFn).not.toHaveBeenCalled();
+      const headers = { authorization: `Bearer ${config.relayControlToken}` };
+      expect((await service.app.request(path, { headers })).status).toBe(200);
+      expect(fetchFn).toHaveBeenCalledWith(
+        "https://api.cloudflare.com/client/v4/accounts/0123456789abcdef0123456789abcdef/ai/run/@cf/zai-org/glm-5.3-flash",
+        expect.objectContaining({ method: "POST", redirect: "error", signal: expect.any(AbortSignal),
+          body: expect.stringContaining('"max_tokens":1') }),
+      );
+      fetchFn.mockResolvedValueOnce(new Response(null, { status: 503 }));
+      expect((await service.app.request(path, { headers })).status).toBe(503);
+      fetchFn.mockResolvedValueOnce(Response.json({ success: true, result: [{ name: "@cf/zai-org/glm-5.3-flash" }] }));
+      expect((await service.app.request(path, { headers })).status).toBe(503);
+      fetchFn.mockResolvedValueOnce(Response.json({ success: false, model: "@cf/zai-org/glm-5.3-flash", choices: [{}] }));
+      expect((await service.app.request(path, { headers })).status).toBe(503);
+      expect((await service.app.request("http://relay.test/ready?model=unknown", { headers })).status).toBe(400);
+    } finally {
+      await service.close();
+    }
+  });
+
+  it("checks the configured Anthropic gateway by making a bounded inference request", async () => {
+    const config = requireFundedRelayServiceConfig(enabledEnv());
+    const fetchFn = vi.fn<typeof fetch>().mockResolvedValue(Response.json({
+      type: "message", model: "claude-sonnet-5", content: [{ type: "text", text: "ok" }],
+    }));
+    const service = createFundedRelayService(config, { fetchFn });
+    try {
+      const response = await service.app.request("http://relay.test/ready?model=anthropic%2Fclaude-sonnet-5", {
+        headers: { authorization: `Bearer ${config.relayControlToken}` },
+      });
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ ready: true });
+      expect(fetchFn).toHaveBeenCalledWith(`${config.gatewayBaseUrl}/v1/messages`,
+        expect.objectContaining({ method: "POST", body: expect.stringContaining('"max_tokens":1'), headers: {
+          "cf-aig-authorization": `Bearer ${config.gatewayToken}`,
+          "anthropic-version": "2023-06-01",
+          "content-type": "application/json",
+        } }));
     } finally {
       await service.close();
     }

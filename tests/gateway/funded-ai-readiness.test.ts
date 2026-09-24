@@ -129,6 +129,21 @@ describe("funded AI readiness", () => {
     if (reason === "credit") { state.funding.reservedMicrousd = 5_000_000; state.funding.remainingBalanceMicrousd = 0; }
     expect((await reader.read()).readiness.state).toBe("unavailable");
   });
+  it("distinguishes a healthy zero-credit route from a broken relay", async () => {
+    const { reader, state, fetchFn } = setup();
+    state.funding.promotionalBalanceMicrousd = 0;
+    state.funding.creditBalanceMicrousd = 0;
+    state.funding.remainingBalanceMicrousd = 0;
+    expect(await reader.read()).toMatchObject({
+      readiness: { state: "unavailable", safeReason: "credit_required" },
+      allowedModelIds: ["claude-sonnet-5"],
+    });
+    fetchFn.mockResolvedValue(new Response(null, { status: 503 }));
+    expect(await reader.read()).toMatchObject({
+      readiness: { state: "unavailable", safeReason: "provider_unavailable" },
+      allowedModelIds: [],
+    });
+  });
   it("does not expose upstream errors or claim readiness when relay or policy calls fail", async () => {
     const { reader, fetchFn, getFundingSummary } = setup();
     fetchFn.mockResolvedValue(new Response(null, { status: 503 }));
