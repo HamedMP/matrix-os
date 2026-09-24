@@ -14,7 +14,16 @@ const repoRoot = resolve(testDir, "../..");
 describe("published CLI package runners", () => {
   it("bundles private contracts and uses workspace-aware release packing", async () => {
     const pkg = JSON.parse(await readFile(resolve(repoRoot, "packages/sync-client/package.json"), "utf8"));
+    const contractsPkg = JSON.parse(
+      await readFile(resolve(repoRoot, "packages/contracts/package.json"), "utf8"),
+    );
     expect(pkg.bundledDependencies).toContain("@matrix-os/contracts");
+    for (const [name, version] of Object.entries(contractsPkg.dependencies ?? {})) {
+      expect(pkg.dependencies, `missing bundled contracts runtime dependency ${name}`).toHaveProperty(
+        name,
+        version,
+      );
+    }
     const cliRelease = await readFile(resolve(repoRoot, ".github/workflows/cli-release.yml"), "utf8");
     expect(cliRelease).toContain("pnpm pack --config.node-linker=hoisted");
     expect(cliRelease).toContain('resolve(process.env.RUNNER_TEMP, result.filename)');
