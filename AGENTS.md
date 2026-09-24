@@ -413,7 +413,9 @@ blocker, not a green light):
 
 - **All changes ship via PR from a manual `git worktree`** -- no direct commits to `main`, no exceptions. Create the worktree with `git worktree add -b <kebab-branch> ../<dir-name> origin/main` and do all work there. Applies to code AND docs.
 - **No PR merge until Greptile reports 5/5** -- every finding must be fixed in the diff or explicitly deferred in the PR body with a linked follow-up issue.
-- **Do not spam Greptile re-review comments** -- Greptile is configured to review every new commit. If the score/footer is stale after a push, it means the review is still running; wait and poll instead of repeatedly mentioning it.
+- **Greptile reviews on PR creation and thereafter only on an explicit `@greptileai please review` comment.** It does not review every push. After a push, the score stays stale until you ask; waiting for an automatic re-review blocks forever.
+- **One request per head, and never a second while one is outstanding for that head.** That is what "do not spam" means here: request once after pushing, then wait.
+- **Verify the score against the reviewed commit SHA, not the comment timestamp.** Greptile edits its summary comment in place, so `created_at` stays at the first review while `updated_at` moves. Read `Last reviewed commit` from the body and compare it to the PR's `headRefOid`; a 5/5 that names an older commit is not a 5/5 for what you would merge.
 - No bare `catch {}` or `.catch(() => {})` -- every catch must check error type and log
 - No `fetch()` without `signal: AbortSignal.timeout()` -- 10s APIs, 30s downloads
 - No `writeFileSync`/`appendFileSync` in request handlers -- use `fs/promises`

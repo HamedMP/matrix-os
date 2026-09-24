@@ -334,9 +334,9 @@ describe("real terminal renderer soft-grid resizing", () => {
       await expect.poll(() => rail.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
       expect(await page.locator(".xterm .scrollbar.vertical").isVisible()).toBe(false);
       await rail.evaluate((element) => { element.scrollTop = 0; });
-      await expect.poll(async () => (await geometry(page)).panTop).toBe(0);
+      await expect.poll(async () => (await geometry(page)).panTop, { timeout: 5_000 }).toBe(0);
       await rail.evaluate((element) => { element.scrollTop = element.scrollHeight; });
-      await expect.poll(async () => { const g = await geometry(page); return g.scrollHeight - g.clientHeight - g.panTop; }).toBeLessThanOrEqual(1);
+      await expect.poll(async () => { const g = await geometry(page); return g.scrollHeight - g.clientHeight - g.panTop; }, { timeout: 5_000 }).toBeLessThanOrEqual(1);
       await page.evaluate(() => (window as unknown as { fixtureObserve: () => void }).fixtureObserve());
       await expect.poll(() => page.getByText("Live on another device.").isVisible()).toBe(true);
       await expect.poll(() => page.getByRole("button", { name: "Continue here" }).isVisible()).toBe(true);
