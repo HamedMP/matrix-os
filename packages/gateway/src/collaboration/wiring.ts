@@ -495,6 +495,7 @@ export async function createGatewayCollaboration(options: {
       registry: ConstructorParameters<typeof CollaborationTerminalAdapter>[0]["registry"];
       runtime: ConstructorParameters<typeof CollaborationTerminalAdapter>[0]["runtime"];
       executionEligibility: ConstructorParameters<typeof CollaborationTerminalAdapter>[0]["executionEligibility"];
+      connectOutput: NonNullable<ConstructorParameters<typeof CollaborationTerminalEventRegistry>[0]["connectOutput"]>;
     }): { available: true } {
       if (registered || closing || terminalAdapter) {
         throw new Error("Shared terminal must be initialized exactly once before route registration");
@@ -531,6 +532,7 @@ export async function createGatewayCollaboration(options: {
         authorize: (scopeId, actorId) => authority.authorize({ scopeId, actorId, action: "read" }),
         getTerminal: (scopeId, terminalId) => terminalAdapter!.get(scopeId, terminalId),
         projectTerminal: (metadata) => terminalDispatcher!.project(metadata),
+        connectOutput: input.connectOutput,
         startTimers: options.startTimers,
       });
       return { available: true };
