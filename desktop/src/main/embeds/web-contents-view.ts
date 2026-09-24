@@ -249,12 +249,15 @@ export function createWebContentsView(options: {
     },
     currentOrigin() {
       if (contents.isDestroyed()) return null;
+      let rawUrl: string;
       try {
-        const url = new URL(contents.getURL());
-        return ["http:", "https:"].includes(url.protocol) ? url.origin : null;
+        rawUrl = contents.getURL();
       } catch {
-        return null;
+        throw new Error("browser view unavailable");
       }
+      if (!URL.canParse(rawUrl)) return null;
+      const url = new URL(rawUrl);
+      return ["http:", "https:"].includes(url.protocol) ? url.origin : null;
     },
     async fillPassword(origin: string, username: string, password: string) {
       if (contents.isDestroyed() || !options.allowPublicNavigation) return false;

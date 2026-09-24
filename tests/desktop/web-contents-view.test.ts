@@ -78,6 +78,16 @@ describe("createWebContentsView", () => {
     expect(script).toContain("https://example.com");
     expect(script).toContain("secret");
   });
+  it("distinguishes an unloaded Browser view from a URL retrieval failure", () => {
+    const view = createWebContentsView({
+      window: { isDestroyed: () => false, contentView: { addChildView: vi.fn(), removeChildView: vi.fn() } } as never,
+      partition: "persist:browser", allowedOrigins: [], allowPublicNavigation: true, onState: vi.fn(),
+    });
+    electronMock.webContents.getURL.mockReturnValue("");
+    expect(view.currentOrigin?.()).toBeNull();
+    electronMock.webContents.getURL.mockImplementation(() => { throw new Error("internal webContents detail"); });
+    expect(() => view.currentOrigin?.()).toThrow("browser view unavailable");
+  });
   it.each([
     ["resource-manager", "resource-manager", true],
     ["custom/resource-manager", "resource-manager", false],
