@@ -237,6 +237,7 @@ describe("Desktop support widget", () => {
     );
     expect(posthogClient.register).toHaveBeenCalledWith({
       matrix_client: "desktop",
+      platform: "desktop",
       matrix_bundle_version: "v2026.09.02-running",
       matrix_desktop_version: "1.4.0-canary.2",
     });
@@ -466,6 +467,7 @@ describe("Desktop support widget", () => {
     });
     expect(posthogClient.register).toHaveBeenLastCalledWith({
       matrix_client: "desktop",
+      platform: "desktop",
       matrix_bundle_version: "v2026.09.03-preview",
       matrix_desktop_version: "1.4.0-canary.2",
     });
@@ -527,7 +529,7 @@ describe("Desktop support widget", () => {
       email: "neo@example.com",
       matrix_client: "desktop",
     }));
-    expect(posthogClient.register).toHaveBeenCalledWith({ matrix_client: "desktop" });
+    expect(posthogClient.register).toHaveBeenCalledWith({ matrix_client: "desktop", platform: "desktop" });
     expect(posthogClient.unregister).toHaveBeenCalledWith("matrix_bundle_version");
     expect(posthogClient.unregister).toHaveBeenCalledWith("matrix_desktop_version");
     expect(warning).toHaveBeenCalledWith(
