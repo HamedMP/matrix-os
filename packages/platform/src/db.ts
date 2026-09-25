@@ -12,6 +12,7 @@ import {
 } from 'kysely';
 import pg from 'pg';
 import { runPlatformMigration } from './migration-runner.js';
+import { PLATFORM_SCHEMA_REVISION } from './database/migration-revision.js';
 import { migratePlatformSchema } from './database/migrate.js';
 import { parseStringArray } from './database/json.js';
 import { mapUserMachine, type UserMachineProvisioningClass } from './database/user-machine-records.js';
@@ -1237,7 +1238,10 @@ function wrapDb(
 }
 
 async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
-  await runPlatformMigration(db, migrateSchema);
+  await runPlatformMigration(db, migrateSchema, {
+    revision: PLATFORM_SCHEMA_REVISION,
+    deadlockAttempts: 12,
+  });
 }
 
 async function migrateSchema(db: Executor): Promise<void> {

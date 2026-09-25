@@ -10,7 +10,8 @@ describe("platform database startup migration", () => {
     expect(wrapperStart).toBeGreaterThanOrEqual(0);
     expect(schemaStart).toBeGreaterThan(wrapperStart);
 
-    expect(source.slice(wrapperStart, schemaStart)).toContain('await runPlatformMigration(db, migrateSchema)');
+    expect(source.slice(wrapperStart, schemaStart)).toContain('await runPlatformMigration(db, migrateSchema, {');
+    expect(source.slice(wrapperStart, schemaStart)).toContain('revision: PLATFORM_SCHEMA_REVISION');
     const wrapper = await readFile('packages/platform/src/migration-runner.ts', 'utf8');
     const transactionStart = wrapper.indexOf("await db.transaction().execute");
     const callbackStart = wrapper.indexOf("=> {", transactionStart);
