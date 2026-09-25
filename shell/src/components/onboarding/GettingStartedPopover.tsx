@@ -13,7 +13,7 @@ import {
 import { useEffect, useState } from "react";
 import { Popover as PopoverPrimitive } from "radix-ui";
 import { CheckIcon, ClipboardCheck, DownloadIcon, Github } from "@/lib/hugeicons";
-import { getGatewayUrl } from "@/lib/gateway";
+import { getGatewayUrl, getPersonalApiUrl } from "@/lib/gateway";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 
 const TOTAL_STEPS = GETTING_STARTED_STEP_IDS.length;
@@ -145,7 +145,7 @@ export async function loadWebGettingStartedSnapshot(
   const billingUrl = `/billing/status?runtimeSlot=${encodeURIComponent(currentRuntimeSlot())}`;
   const [github, integrations, agents, projects, chats, billing] = await Promise.allSettled([
     readJson(fetcher, `${gatewayUrl}/api/github/status`, signal),
-    readJson(fetcher, `${gatewayUrl}/api/integrations`, signal),
+    readJson(fetcher, `${getPersonalApiUrl()}/api/integrations`, signal),
     readJson(fetcher, `${gatewayUrl}/api/agents/credentials/status`, signal),
     readJson(fetcher, `${gatewayUrl}/api/workspace/projects`, signal),
     readJson(fetcher, `${gatewayUrl}/api/chats?limit=1`, signal),

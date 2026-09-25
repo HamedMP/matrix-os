@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { getGatewayUrl, getGatewayWs } from "@/lib/gateway";
+import { getGatewayWs, getPersonalApiUrl } from "@/lib/gateway";
 import { buildAuthenticatedWebSocketUrl } from "@/lib/websocket-auth";
 import {
   hasNewConnectionForService,
@@ -10,7 +10,7 @@ import {
 } from "./integrations-helpers";
 import { CustomMcpServersPanel } from "./CustomMcpServersPanel";
 
-const GATEWAY = getGatewayUrl();
+const GATEWAY = getPersonalApiUrl();
 
 interface ServiceDef {
   id: string;

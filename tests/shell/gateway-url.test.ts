@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { getGatewayUrl, getGatewayWs } from "../../shell/src/lib/gateway";
+import { getGatewayUrl, getGatewayWs, getPersonalApiUrl } from "../../shell/src/lib/gateway";
 
 describe("gateway URL resolution", () => {
   afterEach(() => {
@@ -30,12 +30,14 @@ describe("gateway URL resolution", () => {
   it("prefixes API and WS URLs with the explicit /vm/<handle> route", () => {
     window.history.replaceState({}, "", "/vm/pr-1018");
     expect(getGatewayUrl()).toBe(`${window.location.origin}/vm/pr-1018`);
+    expect(getPersonalApiUrl()).toBe(window.location.origin);
     expect(getGatewayWs()).toBe(`ws://${window.location.host}/vm/pr-1018/ws`);
   });
 
   it("prefixes nested explicit-vm paths too", () => {
     window.history.replaceState({}, "", "/vm/alice-2/canvas");
     expect(getGatewayUrl()).toBe(`${window.location.origin}/vm/alice-2`);
+    expect(getPersonalApiUrl()).toBe(`${window.location.origin}/vm/alice-2`);
   });
 
   it("keeps a runtime selector in the tab-scoped API and WebSocket route", () => {
@@ -43,6 +45,7 @@ describe("gateway URL resolution", () => {
     expect(getGatewayUrl()).toBe(
       `${window.location.origin}/vm/alice-shared/~runtime/review`,
     );
+    expect(getPersonalApiUrl()).toBe(`${window.location.origin}/vm/alice-shared/~runtime/review`);
     expect(getGatewayWs()).toBe(
       `ws://${window.location.host}/vm/alice-shared/~runtime/review/ws`,
     );
