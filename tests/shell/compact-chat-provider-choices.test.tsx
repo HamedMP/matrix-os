@@ -111,4 +111,34 @@ describe("compact shared Chat choices", () => {
     fireEvent.click(screen.getByRole("button", { name: "Connect OpenCode" }));
     expect(setup).toHaveBeenCalledWith(catalog.instances[2], catalog.instances[2]?.setupActions[0]);
   });
+
+  it("lets owners inspect a saved-off system harness without offering connection or model selection", () => {
+    const select = vi.fn();
+    const setup = vi.fn();
+    const disabledHermes = {
+      ...catalog.instances[1]!, id: "hermes_default", driverKind: "hermes" as const,
+      displayName: "Hermes", availability: "unavailable" as const,
+      unavailabilityReason: "disabled_in_settings" as const,
+      models: [], setupActions: [],
+    };
+    const systemCatalog: CanonicalProviderCatalog = {
+      ...catalog,
+      drivers: [...catalog.drivers, {
+        kind: "hermes", displayName: "Hermes", adapterVersion: "1", capabilityClass: "system_agent",
+      }],
+      instances: [...catalog.instances, disabledHermes],
+    };
+    render(<CompactChatProviderChoices catalog={systemCatalog} choices={[matrix, pi]} selected={pi}
+      onSelect={select} onSetupAction={setup} />);
+
+    const button = screen.getByRole("button", { name: "Hermes agent, Disabled in Settings" });
+    expect(button).toBeEnabled();
+    fireEvent.click(button);
+    expect(button).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByText("Disabled in Settings")).toBeVisible();
+    expect(screen.queryByRole("option")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Connect Hermes" })).toBeNull();
+    expect(select).not.toHaveBeenCalled();
+    expect(setup).not.toHaveBeenCalled();
+  });
 });
