@@ -50,6 +50,7 @@ describe('per-PR Preview edge router', () => {
   it('fails closed when the staging origin or secret is missing', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('wrong origin'));
     for (const candidate of [
+      { ...env, PREVIEW_PLATFORM_ORIGIN: 'not-a-url' },
       { ...env, PREVIEW_PLATFORM_ORIGIN: 'https://app.matrix-os.com' },
       { ...env, PREVIEW_PLATFORM_ORIGIN: 'http://matrix-platform-preview-example.a.run.app' },
       { ...env, PREVIEW_EDGE_MASTER_SECRET: '' },

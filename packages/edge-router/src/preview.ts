@@ -16,17 +16,19 @@ export function classifyPreviewHost(host: string): { prNumber: string } | null {
 
 function taggedPreviewOrigin(origin: string | undefined, prNumber: string): string | null {
   if (!origin) return null;
+  let parsed: URL;
   try {
-    const parsed = new URL(origin);
-    if (parsed.protocol !== 'https:' || parsed.username || parsed.password
-      || parsed.port || parsed.pathname !== '/' || parsed.search || parsed.hash
-      || !/^matrix-platform-preview-[a-z0-9-]+\.a\.run\.app$/.test(parsed.hostname)) {
-      return null;
-    }
-    return `https://pr-${prNumber}---${parsed.hostname}`;
-  } catch {
+    parsed = new URL(origin);
+  } catch (error: unknown) {
+    if (error instanceof TypeError) return null;
+    throw error;
+  }
+  if (parsed.protocol !== 'https:' || parsed.username || parsed.password
+    || parsed.port || parsed.pathname !== '/' || parsed.search || parsed.hash
+    || !/^matrix-platform-preview-[a-z0-9-]+\.a\.run\.app$/.test(parsed.hostname)) {
     return null;
   }
+  return `https://pr-${prNumber}---${parsed.hostname}`;
 }
 
 function unavailable(): Response {
