@@ -56,6 +56,7 @@ export function wwwOrigin(env: NodeJS.ProcessEnv = process.env): string {
 const RETURN_PATH_ALLOWLIST: RegExp[] = [
   /^\/$/,
   /^\/\?billing=setup&handoff=add-computer$/,
+  /^\/\?billing=setup&runtime=[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$/,
   /^\/sign-in(?:[/?].*)?$/,
   /^\/sign-up(?:[/?].*)?$/,
   /^\/runtime(?:[/?].*)?$/,

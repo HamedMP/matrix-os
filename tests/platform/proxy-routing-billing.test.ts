@@ -518,7 +518,7 @@ describe("platform proxy routing billing and provisioning", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("shows the provisioning page instead of raw billing JSON when paid-beta entitlement denies shell access", async () => {
+  it("redirects to billing recovery instead of raw billing JSON when paid-beta entitlement denies shell access", async () => {
     await deleteContainer(db, "alice");
     await insertUserMachine(db, {
       machineId: "machine-alice-provisioning-expired",
@@ -553,18 +553,14 @@ describe("platform proxy routing billing and provisioning", () => {
       },
     });
 
-    expect(res.status).toBe(503);
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toBe("/?billing=setup");
     expect(res.headers.get("cache-control")).toBe("no-store, private");
     expect(res.headers.get("set-cookie")).toBeNull();
-    const html = await res.text();
-    expect(html).toContain("Booting Matrix OS");
-    expect(html).toContain('class="matrix-boot-screen" role="status" aria-live="polite"');
-    expect(html).toContain('http-equiv="refresh" content="8"');
-    expect(html).not.toContain("Instance status:");
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("shows the provisioning page instead of raw billing JSON when Stripe billing is inactive", async () => {
+  it("redirects to billing recovery instead of raw billing JSON when Stripe billing is inactive", async () => {
     await deleteContainer(db, "alice");
     await insertUserMachine(db, {
       machineId: "machine-alice-provisioning-stripe-expired",
@@ -596,12 +592,9 @@ describe("platform proxy routing billing and provisioning", () => {
       },
     });
 
-    expect(res.status).toBe(503);
-    const html = await res.text();
-    expect(html).toContain("Booting Matrix OS");
-    expect(html).toContain('class="matrix-boot-screen" role="status" aria-live="polite"');
-    expect(html).toContain('http-equiv="refresh" content="8"');
-    expect(html).not.toContain("Instance status:");
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toBe("/?billing=setup");
+    expect(res.headers.get("cache-control")).toBe("no-store, private");
     expect(fetchMock).not.toHaveBeenCalled();
   });
 

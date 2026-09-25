@@ -13,6 +13,7 @@ import {
   updateContainerStatus,
   upsertBillingEntitlement,
   upsertBillingOverride,
+  upsertBillingSubscription,
 } from "../../packages/platform/src/db.js";
 import {
   buildPostAuthRedirectPath,
@@ -4824,7 +4825,7 @@ describe("platform proxy routing", () => {
     });
   });
 
-  it("still serves the shell for the billing gate when Stripe billing is enabled without an active entitlement", async () => {
+  it("serves the platform billing recovery shell when Stripe billing is enabled without an active entitlement", async () => {
     await insertUserMachine(db, {
       machineId: "9f05824c-8d0a-4d83-9cb4-b312d43ff127",
       clerkUserId: "user_alice",
@@ -4835,8 +4836,8 @@ describe("platform proxy routing", () => {
       imageVersion: "matrix-os-host-2026.04.26-1",
       provisionedAt: "2026-04-26T12:00:00.000Z",
     });
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
-      new Response("shell html", { status: 200 }),
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("billing shell html", { status: 200 }),
     );
     const app = createApp({
       db,
@@ -4845,7 +4846,11 @@ describe("platform proxy routing", () => {
         verifyToken: vi.fn().mockResolvedValue({ sub: "user_alice" }),
       }),
       platformSecret: "platform-secret-123",
-      env: { MATRIX_STRIPE_BILLING_ENABLED: "true" } as NodeJS.ProcessEnv,
+      env: {
+        MATRIX_STRIPE_BILLING_ENABLED: "true",
+        AUTH_SHELL_HOST: "auth-shell.test",
+        AUTH_SHELL_PORT: "3200",
+      } as NodeJS.ProcessEnv,
     });
 
     const res = await app.request("/", {
@@ -4855,10 +4860,23 @@ describe("platform proxy routing", () => {
       },
     });
 
-    expect(res.status).toBe(200);
-    expect(await res.text()).toBe("shell html");
-    expect(fetchMock.mock.calls[0]?.[0]).toBe("https://203.0.113.24:443/");
-    expect(res.headers.get("set-cookie")).toContain("matrix_shell_route=alice");
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toBe("/?billing=setup");
+    expect(res.headers.get("cache-control")).toBe("no-store, private");
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    const recovery = await app.request("/?billing=setup", {
+      headers: {
+        host: "app.matrix-os.com",
+        authorization: "Bearer clerk-session",
+      },
+    });
+
+    expect(recovery.status).toBe(200);
+    expect(await recovery.text()).toBe("billing shell html");
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("http://auth-shell.test:3200/?billing=setup");
+    expect(recovery.headers.get("set-cookie")).toBeNull();
   });
 
   it("keeps runtime API paths blocked while the unpaid billing shell is visible", async () => {
@@ -4938,7 +4956,7 @@ describe("platform proxy routing", () => {
     expect(res.headers.get("content-type")).toBe("image/x-icon");
   });
 
-  it("serves the billing shell for explicit VM routes when Stripe access is inactive", async () => {
+  it("preserves the explicit runtime slot through platform billing recovery", async () => {
     await insertUserMachine(db, {
       machineId: "9f05824c-8d0a-4d83-9cb4-b312d43ff12c",
       clerkUserId: "user_alice",
@@ -4946,6 +4964,7 @@ describe("platform proxy routing", () => {
       status: "running",
       hetznerServerId: 123476,
       publicIPv4: "203.0.113.28",
+      runtimeSlot: "studio",
       imageVersion: "matrix-os-host-2026.04.26-1",
       provisionedAt: "2026-04-26T12:00:00.000Z",
     });
@@ -4959,7 +4978,11 @@ describe("platform proxy routing", () => {
         verifyToken: vi.fn().mockResolvedValue({ sub: "user_alice" }),
       }),
       platformSecret: "platform-secret-123",
-      env: { MATRIX_STRIPE_BILLING_ENABLED: "true" } as NodeJS.ProcessEnv,
+      env: {
+        MATRIX_STRIPE_BILLING_ENABLED: "true",
+        AUTH_SHELL_HOST: "auth-shell.test",
+        AUTH_SHELL_PORT: "3200",
+      } as NodeJS.ProcessEnv,
     });
 
     const res = await app.request("/vm/alice", {
@@ -4970,12 +4993,24 @@ describe("platform proxy routing", () => {
       },
     });
 
-    expect(res.status).toBe(200);
-    expect(await res.text()).toBe("explicit shell");
-    expect(fetchMock.mock.calls[0]?.[0]).toBe("https://203.0.113.28:443/");
-    const headers = fetchMock.mock.calls[0]?.[1]?.headers as Headers;
-    expect(headers.get("x-matrix-edge-secret")).toBeNull();
-    expect(res.headers.get("set-cookie")).toContain("matrix_shell_route=alice");
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toBe("/?billing=setup&runtime=studio");
+    expect(res.headers.get("cache-control")).toBe("no-store, private");
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    const recovery = await app.request("/?billing=setup&runtime=studio", {
+      headers: {
+        host: "app.matrix-os.com",
+        authorization: "Bearer clerk-session",
+      },
+    });
+
+    expect(recovery.status).toBe(200);
+    expect(await recovery.text()).toBe("explicit shell");
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      "http://auth-shell.test:3200/?billing=setup&runtime=studio",
+    );
   });
 
   it("blocks explicit VM runtime API routes when Stripe access is inactive", async () => {
@@ -5042,6 +5077,21 @@ describe("platform proxy routing", () => {
       effectiveUntil: null,
       updatedAt: "2026-05-30T00:00:00.000Z",
     });
+    await upsertBillingSubscription(db, {
+      stripeSubscriptionId: "sub_123",
+      stripeCustomerId: "cus_123",
+      clerkUserId: "user_alice",
+      runtimeSlot: "primary",
+      planSlug: "matrix_builder",
+      stripePriceId: "price_builder_monthly",
+      billingInterval: "monthly",
+      status: "active",
+      currentPeriodEnd: "2026-06-30T00:00:00.000Z",
+      gracePeriodEndsAt: null,
+      latestEventCreatedAt: "2026-05-30T00:00:00.000Z",
+      latestEventId: "evt_123",
+      updatedAt: "2026-05-30T00:00:00.000Z",
+    });
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response("ok", { status: 200 }),
     );
@@ -5055,6 +5105,7 @@ describe("platform proxy routing", () => {
       env: {
         MATRIX_STRIPE_BILLING_ENABLED: "true",
         MATRIX_PAID_BETA_ENTITLEMENT_STATUS: "expired",
+        STRIPE_PRICE_MATRIX_BUILDER_MONTHLY: "price_builder_monthly",
       } as NodeJS.ProcessEnv,
     });
 

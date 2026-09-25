@@ -32,6 +32,7 @@ describe('platform/origins', () => {
     it('accepts allowlisted same-origin paths', () => {
       expect(resolveReturnPath('/')).toBe('/');
       expect(resolveReturnPath('/?billing=setup&handoff=add-computer')).toBe('/?billing=setup&handoff=add-computer');
+      expect(resolveReturnPath('/?billing=setup&runtime=studio')).toBe('/?billing=setup&runtime=studio');
       expect(resolveReturnPath('/sign-in')).toBe('/sign-in');
       expect(resolveReturnPath('/sign-up?redirect=1')).toBe('/sign-up?redirect=1');
       expect(resolveReturnPath('/runtime')).toBe('/runtime');
@@ -46,6 +47,8 @@ describe('platform/origins', () => {
       expect(resolveReturnPath('/admin')).toBe('/');          // not on the allowlist
       expect(resolveReturnPath('/?billing=setup&handoff=add-computer&next=/admin')).toBe('/');
       expect(resolveReturnPath('/?handoff=add-computer&billing=setup')).toBe('/');
+      expect(resolveReturnPath('/?billing=setup&runtime=studio&next=/admin')).toBe('/');
+      expect(resolveReturnPath('/?billing=setup&runtime=Studio')).toBe('/');
       expect(resolveReturnPath('/onboarding/computer/other')).toBe('/');
       expect(resolveReturnPath('https://evil.com')).toBe('/'); // absolute URL
       expect(resolveReturnPath('//evil.com')).toBe('/');       // protocol-relative

@@ -199,13 +199,19 @@ export function shouldProxyAuthShellForUnroutedUser(input: {
   );
 }
 
-export function buildBillingSetupPath(rawUrl: string): string {
+export function buildBillingSetupPath(rawUrl: string, runtimeSlot?: string): string {
   try {
     const url = new URL(rawUrl, 'https://app.matrix-os.com');
     const deviceReturn = url.searchParams.get('device_return');
+    const parsedRuntimeSlot = RuntimeSlotSchema.safeParse(
+      runtimeSlot ?? url.searchParams.get('runtime'),
+    );
     const target = new URL('/', url.origin);
     target.searchParams.set('billing', 'setup');
     if (deviceReturn) target.searchParams.set('device_return', deviceReturn);
+    if (parsedRuntimeSlot.success && parsedRuntimeSlot.data !== 'primary') {
+      target.searchParams.set('runtime', parsedRuntimeSlot.data);
+    }
     return `${target.pathname}${target.search}`;
   } catch (err: unknown) {
     console.warn('[platform] Failed to build billing setup URL:', err instanceof Error ? err.message : String(err));
