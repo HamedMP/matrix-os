@@ -110,11 +110,25 @@ function createApp(options: {
 
 describe("provider settings routes", () => {
   it("negotiates atomic connection support without changing legacy snapshot responses", async () => {
-    const { app } = createApp();
+    const enabledIntent: ProviderSettingsSnapshot = {
+      ...snapshot,
+      harnesses: [{
+        id: "harness_claude", harness: "claude", displayName: "Claude", accentColor: null,
+        enabled: false, configuredEnabled: true, version: null,
+        installState: "installed", authState: "unknown", loginMethods: ["terminal"],
+        recommendedLoginMethod: "terminal", connectivity: "offline", accountIds: [],
+        selectedAccountId: null, accessSourceId: null,
+        route: { kind: "fixed", providerId: "anthropic", modelId: "anthropic/claude-opus-5" },
+        activeChatCount: 0,
+      }],
+    };
+    const { app } = createApp({ getSnapshot: async () => enabledIntent });
     const legacy = await (await app.request("/api/ai/provider-settings")).json();
     expect(legacy).not.toHaveProperty("atomicConnectSupported");
+    expect(legacy.harnesses[0]).not.toHaveProperty("configuredEnabled");
     const modern = await (await app.request("/api/ai/provider-settings?includeCapabilities=true")).json();
     expect(modern).toHaveProperty("atomicConnectSupported", true);
+    expect(modern.harnesses[0]).toHaveProperty("configuredEnabled", true);
     expect(ProviderSettingsSnapshotSchema.safeParse(modern).success).toBe(true);
     expect((await app.request("/api/ai/provider-settings?includeCapabilities=maybe")).status).toBe(400);
   });

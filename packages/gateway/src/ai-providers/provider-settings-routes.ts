@@ -16,8 +16,12 @@ const PROVIDER_SETTINGS_BODY_LIMIT = 64 * 1024;
 const RefreshQuerySchema = z.enum(["true", "false"]).optional();
 
 function withCapabilities(snapshot: ProviderSettingsSnapshot, include: boolean): ProviderSettingsSnapshot {
-  return include ? { ...snapshot, atomicConnectSupported: snapshot.supportedActions.includes("set_route")
-    && snapshot.supportedActions.includes("set_harness_enabled") } : snapshot;
+  if (include) return { ...snapshot, atomicConnectSupported: snapshot.supportedActions.includes("set_route")
+    && snapshot.supportedActions.includes("set_harness_enabled") };
+  return {
+    ...snapshot,
+    harnesses: snapshot.harnesses.map(({ configuredEnabled: _configuredEnabled, ...harness }) => harness),
+  };
 }
 const DeleteAccountBodySchema = z.object({
   expectedRevision: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),

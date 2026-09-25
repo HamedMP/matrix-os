@@ -361,6 +361,7 @@ function projectHarness(input: {
     accentColor: input.stored.accentColor,
     enabled: Boolean(executionRouteAvailable
       && input.stored.enabled && driver?.installState === "installed"),
+    configuredEnabled: input.stored.enabled,
     version: null,
     installState: driver?.installState ?? "missing",
     authState: authState(readiness),
