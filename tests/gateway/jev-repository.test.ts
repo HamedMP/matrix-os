@@ -16,11 +16,13 @@ const key = { ownerId: "owner_a", idempotencyKey: "thread:abc123", payloadHash: 
 describe("Jev evaluation repository", () => {
   let pglite: InstanceType<typeof KyselyPGlite>;
   let repository: JevEvaluationRepository;
+  let clock: Date;
 
   beforeEach(async () => {
     pglite = await KyselyPGlite.create();
+    clock = new Date("2026-09-22T10:00:00.000Z");
     repository = new JevEvaluationRepository(pglite.dialect, {
-      now: () => new Date("2026-09-22T10:00:00.000Z"),
+      now: () => clock,
     });
     await repository.bootstrap();
   });
@@ -40,6 +42,37 @@ describe("Jev evaluation repository", () => {
     await expect(repository.claim({ ...key, payloadHash: "b".repeat(64) })).resolves.toEqual({ kind: "conflict" });
     await repository.markUnknown(key);
     await expect(repository.claim(key)).resolves.toEqual({ kind: "unknown" });
+  });
+
+  it("retains a completed key after result retention without repeating a paid evaluation", async () => {
+    await repository.claim(key);
+    await repository.complete({ ...key, result: completed });
+    clock = new Date(clock.getTime() + 7 * 24 * 60 * 60_000 + 1);
+
+    const restarted = new JevEvaluationRepository(repository.kysely, { now: () => clock });
+    await expect(restarted.claim(key)).resolves.toEqual({ kind: "result_expired" });
+    await expect(restarted.claim({ ...key, payloadHash: "b".repeat(64) }))
+      .resolves.toEqual({ kind: "conflict" });
+    await expect(restarted.claim({ ...key, ownerId: "owner_b" }))
+      .resolves.toEqual({ kind: "claimed" });
+    const row = await repository.kysely.selectFrom("jev_evaluations")
+      .select(["status", "result"])
+      .where("owner_id", "=", key.ownerId)
+      .where("idempotency_key", "=", key.idempotencyKey)
+      .executeTakeFirstOrThrow();
+    expect(row).toEqual({ status: "completed_pruned", result: null });
+  });
+
+  it("retains an unknown-outcome key after seven days, including concurrent retry attempts", async () => {
+    await repository.claim(key);
+    await repository.markUnknown(key);
+    clock = new Date(clock.getTime() + 7 * 24 * 60 * 60_000 + 1);
+
+    const restarted = new JevEvaluationRepository(repository.kysely, { now: () => clock });
+    const claims = await Promise.all([repository.claim(key), restarted.claim(key)]);
+    expect(claims).toEqual([{ kind: "unknown" }, { kind: "unknown" }]);
+    await expect(restarted.claim({ ...key, payloadHash: "b".repeat(64) }))
+      .resolves.toEqual({ kind: "conflict" });
   });
 
   it("releases only matching pending claims", async () => {
