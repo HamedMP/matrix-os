@@ -10,7 +10,10 @@ const env = {
   PREVIEW_EDGE_MASTER_SECRET: 'a-private-preview-edge-master-secret-with-adequate-length',
 };
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+});
 
 describe('per-PR Preview edge router', () => {
   it('accepts only an exact PR hostname', () => {
@@ -113,5 +116,87 @@ describe('per-PR Preview edge router', () => {
     ), env);
     expect(response.status).toBe(413);
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    '/vm/pr-1907/api/chats/events',
+    '/vm/pr-1907/api/files/media?download=true',
+  ])('keeps a healthy streaming response alive beyond the header deadline on %s', async (path) => {
+    vi.useFakeTimers();
+    vi.spyOn(AbortSignal, 'timeout').mockImplementation((ms) => {
+      const controller = new AbortController();
+      setTimeout(() => controller.abort(new DOMException('timed out', 'TimeoutError')), ms);
+      return controller.signal;
+    });
+    let signal!: AbortSignal;
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (_request, options) => {
+      signal = options!.signal!;
+      return new Response(new ReadableStream({ start(controller) {
+        signal.addEventListener('abort', () => controller.error(signal.reason), { once: true });
+        setTimeout(() => {
+          if (!signal.aborted) {
+            controller.enqueue(new Uint8Array([9]));
+            controller.close();
+          }
+        }, 35_000);
+      } }));
+    });
+    const response = await handlePreviewRequest(
+      new Request(`https://pr-1907.preview.matrix-os.com${path}`), env,
+    );
+    await vi.advanceTimersByTimeAsync(35_001);
+    expect(signal.aborted).toBe(false);
+    expect(new Uint8Array(await response.arrayBuffer())).toEqual(new Uint8Array([9]));
+  });
+
+  it('bounds the wait for streaming response headers', async () => {
+    vi.useFakeTimers();
+    let fetchStarted!: () => void;
+    const started = new Promise<void>((resolve) => { fetchStarted = resolve; });
+    vi.spyOn(globalThis, 'fetch').mockImplementation((_request, options) => {
+      fetchStarted();
+      return new Promise((_resolve, reject) => {
+        options!.signal!.addEventListener('abort', () => reject(options!.signal!.reason), { once: true });
+      });
+    });
+    const pending = handlePreviewRequest(
+      new Request('https://pr-1907.preview.matrix-os.com/vm/pr-1907/api/chats/events'), env,
+    );
+    await started;
+    await vi.advanceTimersByTimeAsync(30_001);
+    expect((await pending).status).toBe(503);
+  });
+
+  it('preserves the WebSocket handle on a Preview upgrade', async () => {
+    vi.useFakeTimers();
+    const NativeResponse = Response;
+    const webSocket = {} as WebSocket;
+    const upstream = {
+      status: 101,
+      statusText: 'Switching Protocols',
+      headers: new Headers(),
+      body: null,
+      webSocket,
+    } as Response & { webSocket: WebSocket };
+    let signal!: AbortSignal;
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (_request, options) => {
+      signal = options!.signal!;
+      return upstream;
+    });
+    vi.spyOn(globalThis, 'Response').mockImplementation(function PreviewResponseMock(body, init) {
+      if (init?.status === 101) {
+        return { ...upstream, headers: new Headers(init.headers), webSocket: (init as typeof init & { webSocket: WebSocket }).webSocket };
+      }
+      return new NativeResponse(body, init);
+    });
+
+    const response = await handlePreviewRequest(new Request(
+      'https://pr-1907.preview.matrix-os.com/vm/pr-1907/api/terminal',
+      { headers: { upgrade: 'websocket' } },
+    ), env) as Response & { webSocket: WebSocket };
+    await vi.advanceTimersByTimeAsync(35_001);
+    expect(response.status).toBe(101);
+    expect(response.webSocket).toBe(webSocket);
+    expect(signal.aborted).toBe(false);
   });
 });

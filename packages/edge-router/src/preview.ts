@@ -3,6 +3,7 @@ import { buildEdgeResponseInit } from './index.js';
 const PREVIEW_HOST = /^pr-([1-9][0-9]{0,8})\.preview\.matrix-os\.com$/;
 const PREVIEW_BODY_LIMIT = 10 * 1024 * 1024;
 const PREVIEW_TIMEOUT_MS = 30_000;
+const STREAMING_PATH = /(?:^|\/)api\/(?:chats\/events|files\/media)$/;
 
 export interface PreviewEdgeEnv {
   PREVIEW_PLATFORM_ORIGIN?: string;
@@ -125,14 +126,25 @@ export async function handlePreviewRequest(request: Request, env: PreviewEdgeEnv
     redirect: 'manual',
   });
   let response: Response;
+  const releaseTimeoutAfterHeaders = request.headers.get('upgrade')?.toLowerCase() === 'websocket'
+    || (request.method === 'GET' && STREAMING_PATH.test(url.pathname));
+  const headerController = new AbortController();
+  const headerTimer = releaseTimeoutAfterHeaders
+    ? setTimeout(() => headerController.abort(new DOMException('Header wait expired', 'TimeoutError')), PREVIEW_TIMEOUT_MS)
+    : undefined;
   try {
     response = await fetch(upstream, {
       redirect: 'manual',
-      signal: AbortSignal.any([request.signal, AbortSignal.timeout(PREVIEW_TIMEOUT_MS)]),
+      signal: AbortSignal.any([
+        request.signal,
+        releaseTimeoutAfterHeaders ? headerController.signal : AbortSignal.timeout(PREVIEW_TIMEOUT_MS),
+      ]),
     });
   } catch (error: unknown) {
     console.warn('[preview-edge] upstream unavailable:', error instanceof Error ? error.name : typeof error);
     return unavailable();
+  } finally {
+    if (headerTimer !== undefined) clearTimeout(headerTimer);
   }
 
   const responseHeaders = new Headers(response.headers);
