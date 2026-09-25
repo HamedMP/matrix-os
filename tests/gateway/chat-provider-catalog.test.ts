@@ -662,7 +662,10 @@ describe("canonical Chat Provider catalog", () => {
     const service = createChatProviderCatalogService({
       codingProviders: codingRegistry([]),
       agentRuntimeSource: runtimeSource(),
-      harnessSettingsSource: harnessSettings([configuredHarness("pi", false)]),
+      harnessSettingsSource: harnessSettings([{
+        ...configuredHarness("pi", false),
+        configuredEnabled: false,
+      }]),
       executableDriverKinds: ["pi"],
       credentialedDriverKinds: ["pi"],
     });
@@ -1968,6 +1971,31 @@ describe("canonical Provider selection policy", () => {
 });
 
 describe("GET /api/chat-providers", () => {
+  it("returns a stopped saved-off OpenClaw as disabled without a Connect action", async () => {
+    const service = createChatProviderCatalogService({
+      codingProviders: codingRegistry(),
+      agentRuntimeSource: runtimeSource(),
+      harnessSettingsSource: harnessSettings([{
+        ...configuredHarness("openclaw", false),
+        configuredEnabled: false,
+      }]),
+      executableDriverKinds: ["openclaw"],
+    });
+    const app = new Hono().route("/", createChatProviderRoutes({
+      catalog: service,
+      getPrincipal: () => principal,
+    }));
+
+    const response = await app.request("/api/chat-providers?refresh=true&includeConnectionLabels=true");
+    expect(response.status).toBe(200);
+    const catalog = CanonicalProviderCatalogSchema.parse(await response.json());
+    expect(catalog.instances.find((instance) => instance.id === "openclaw_default")).toMatchObject({
+      availability: "unavailable",
+      unavailabilityReason: "disabled_in_settings",
+      setupActions: [],
+    });
+  });
+
   it("returns the safe catalog for the verified principal", async () => {
     const catalog = selectionCatalog();
     const getCatalog = vi.fn(async () => catalog);
