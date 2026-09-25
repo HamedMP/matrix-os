@@ -23,6 +23,7 @@ import { createChatProviderRoutes } from "../../packages/gateway/src/chat/provid
 import { createNativeCodingModelCatalogSource } from "../../packages/gateway/src/chat/native-coding-model-catalog.js";
 import type { CodingAgentProviderRegistry } from "../../packages/gateway/src/coding-agents/provider-registry.js";
 import type { RequestPrincipal } from "../../packages/gateway/src/request-principal.js";
+import { canonicalProviderAvailabilityLabel } from "../../packages/ui/src/canonical-provider-choice.js";
 import { providerSettingsCanonicalFixture } from "./provider-settings-test-support.js";
 import { makeAiProviderSnapshot } from "../fixtures/ai-provider-snapshot.js";
 
@@ -685,6 +686,41 @@ describe("canonical Chat Provider catalog", () => {
       .toMatchObject({ availability: "available", displayName: "Codex" });
     expect(catalog.instances.find((instance) => instance.id === "claude_code_default"))
       .toMatchObject({ availability: "available", displayName: "Claude" });
+  });
+
+  it("keeps a Codex route admitted for a user attempt while qualifying its local-only status", async () => {
+    const homePath = mkdtempSync(join(tmpdir(), "codex-local-observation-"));
+    mkdirSync(join(homePath, "system"), { recursive: true });
+    const aiProviderSource = new AiProviderService({
+      homePath,
+      env: {},
+      driverInventory: async () => [{
+        id: "codex", displayName: "Codex", kind: "cli", installState: "installed",
+        health: "unknown", capabilities: ["tools", "resume", "reasoning"], setupActions: [],
+      }],
+    });
+    try {
+      const snapshot = await aiProviderSource.getSnapshot();
+      expect(snapshot.accessSources.find((source) => source.id === "owner_openai_profile")?.state).toBe("unknown");
+      expect(snapshot.accounts.find((account) => account.id === "owner_codex")?.state).toBe("unknown");
+      const service = createChatProviderCatalogService({
+        // The registry's local CLI status is positive; it is not remote proof.
+        codingProviders: codingRegistry([codingProvider({ availability: "available" })]),
+        agentRuntimeSource: runtimeSource(),
+        aiProviderSource,
+        executableDriverKinds: ["codex"],
+      });
+
+      const catalog = await service.getCatalog(principal);
+      const codex = catalog.instances.find((instance) => instance.id === "codex_default");
+      expect(codex?.availability).toBe("available");
+      expect(codex?.defaultSelection).toBeDefined();
+      expect(validateChatProviderSelection({ catalog, selection: codex!.defaultSelection! }).ok).toBe(true);
+      expect(canonicalProviderAvailabilityLabel(codex!)).toBe("Local login found; access not verified");
+    } finally {
+      aiProviderSource.close();
+      rmSync(homePath, { recursive: true, force: true });
+    }
   });
 
   it("does not let the default Matrix harness shadow terminal-authenticated Claude Code", async () => {

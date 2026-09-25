@@ -40,6 +40,12 @@ describe("AiProviderService", () => {
     healthProbe?: AiProviderHealthProbe;
     healthTimeoutMs?: number;
     driverInventory?: () => Promise<AiProviderSnapshotV3["drivers"]>;
+    codexLocalObservation?: () => Promise<{
+      accessSourceId: string;
+      state: "present_unverified" | "absent" | "unknown";
+      checkedAt: string | null;
+      staleAfter: string | null;
+    }>;
   } = {}) {
     return new AiProviderService({
       homePath,
@@ -60,8 +66,55 @@ describe("AiProviderService", () => {
       driverInventory: options.driverInventory === undefined
         ? undefined
         : async () => options.driverInventory!(),
+      codexLocalObservation: options.codexLocalObservation,
     });
   }
+
+  it.each([
+    { sourceId: "owner_openai_profile", checkedAt: NOW.toISOString(), staleAfter: new Date(NOW.getTime() + 5_000).toISOString(), expected: "present_unverified" },
+    { sourceId: "other_source", checkedAt: NOW.toISOString(), staleAfter: new Date(NOW.getTime() + 5_000).toISOString(), expected: "unknown" },
+    { sourceId: "owner_openai_profile", checkedAt: NOW.toISOString(), staleAfter: new Date(NOW.getTime() - 1).toISOString(), expected: "unknown" },
+    { sourceId: "owner_openai_profile", checkedAt: new Date(NOW.getTime() + 1).toISOString(), staleAfter: new Date(NOW.getTime() + 5_000).toISOString(), expected: "unknown" },
+  ] as const)("projects only a fresh, source-matched Codex local observation: $expected ($sourceId)", async ({ sourceId, checkedAt, staleAfter, expected }) => {
+    const service = createService({
+      driverInventory: async () => [{
+        id: "codex", displayName: "Codex", kind: "cli", installState: "installed",
+        health: "unknown", capabilities: ["tools", "resume", "reasoning"], setupActions: [],
+      }],
+      codexLocalObservation: async () => ({
+        accessSourceId: sourceId, state: "present_unverified", checkedAt, staleAfter,
+      }),
+    });
+    try {
+      const snapshot = await service.getSnapshot();
+      const source = snapshot.accessSources.find((item) => item.id === "owner_openai_profile");
+      expect(source?.localObservation?.state).toBe(expected);
+      expect(source?.state).toBe("unknown");
+      expect(snapshot.accounts.find((item) => item.id === "owner_codex")?.state).toBe("unknown");
+      expect(snapshot.instances.find((item) => item.driverId === "codex")?.readiness.state).toBe("unknown");
+      expect(snapshot.active.providerInstanceId).toBeNull();
+      expect(AiProviderSnapshotV3Schema.safeParse(snapshot).success).toBe(true);
+    } finally {
+      service.close();
+    }
+  });
+
+  it("returns a generic unverified Codex observation when the bounded local probe fails", async () => {
+    const service = createService({
+      driverInventory: async () => [{
+        id: "codex", displayName: "Codex", kind: "cli", installState: "installed",
+        health: "unknown", capabilities: ["tools", "resume", "reasoning"], setupActions: [],
+      }],
+      codexLocalObservation: async () => { throw new Error("private credential material"); },
+    });
+    try {
+      const snapshot = await service.getSnapshot();
+      expect(snapshot.accessSources.find((item) => item.id === "owner_openai_profile")?.localObservation?.state).toBe("unknown");
+      expect(JSON.stringify(snapshot)).not.toContain("private credential material");
+    } finally {
+      service.close();
+    }
+  });
 
   it("requires an authoritative readiness reader even when funded credentials are configured", async () => {
     const service = new AiProviderService({ homePath, fundedCredentialProvider: fundedProvider() });

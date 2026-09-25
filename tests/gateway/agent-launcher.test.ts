@@ -186,6 +186,102 @@ describe("agent-launcher", () => {
     });
   });
 
+  it.each([
+    { output: "Not logged in\n", authState: "required", errorCode: "agent_auth_required" },
+    { output: "Error checking login status: key must be a string at line 1 column 2\n", authState: "error", errorCode: "agent_check_failed" },
+  ] as const)("classifies the exact Codex login-status result: $authState", async ({ output, authState, errorCode }) => {
+    const runCommand = vi.fn(async (command: string, args: string[]) => {
+      if (args[0] === "--version") {
+        return {
+          stdout: command === "codex" ? `codex-cli ${CODEX_VERIFIED_VERSION}\n` : `${command} 1.0.0\n`,
+          stderr: "",
+        };
+      }
+      if (command === "codex" && args.join(" ") === "login status") {
+        throw Object.assign(new Error("Codex login status exited 1"), {
+          code: 1, stdout: output.startsWith("Not logged in") ? output : "",
+          stderr: output.startsWith("Error checking") ? output : "",
+        });
+      }
+      return { stdout: "ok\n", stderr: "" };
+    });
+    const launcher = createAgentLauncher({ runCommand, runtimeHome: "/tmp/fixture-owner-home" });
+
+    const result = await launcher.detectAgentCredentials();
+
+    expect(result.agents.find((agent) => agent.id === "codex")).toMatchObject({
+      installState: "installed", workspaceCompatibility: "compatible", authState, errorCode,
+    });
+    expect(result.agents.find((agent) => agent.id === "claude")).toMatchObject({
+      installState: "installed", authState: "ok",
+    });
+  });
+
+  it("binds a local Codex login observation to the selected executable, owner home, Codex home, and profile source", async () => {
+    vi.stubEnv("CODEX_HOME", "/tmp/codex-observation-profile");
+    let now = Date.parse("2026-09-26T00:00:00.000Z");
+    const runCommand = vi.fn(async (_command: string, args: string[]) => ({
+      stdout: args[0] === "--version"
+        ? `codex-cli ${CODEX_VERIFIED_VERSION}\n`
+        : "Logged in using ChatGPT\n",
+      stderr: "",
+    }));
+    try {
+      const launcher = createAgentLauncher({
+        runCommand,
+        runtimeHome: "/tmp/codex-observation-owner",
+        codexExecutable: "/tmp/codex-observation-bin",
+        now: () => now,
+      });
+      const binding = {
+        executable: "/tmp/codex-observation-bin",
+        runtimeHome: "/tmp/codex-observation-owner",
+        codexHome: "/tmp/codex-observation-profile",
+        accessSourceId: "owner_openai_profile" as const,
+      };
+      const observed = await launcher.observeCodexLocalCredential(binding);
+      expect(observed).toEqual({
+        accessSourceId: "owner_openai_profile",
+        state: "present_unverified",
+        checkedAt: "2026-09-26T00:00:00.000Z",
+        staleAfter: "2026-09-26T00:00:05.000Z",
+      });
+      const calls = runCommand.mock.calls.length;
+      for (const mismatch of [
+        { ...binding, executable: "/tmp/other-codex-bin" },
+        { ...binding, runtimeHome: "/tmp/other-owner" },
+        { ...binding, codexHome: "/tmp/other-profile" },
+        { ...binding, accessSourceId: "other_source" as const },
+      ]) {
+        expect((await launcher.observeCodexLocalCredential(mismatch)).state).toBe("unknown");
+      }
+      expect(runCommand).toHaveBeenCalledTimes(calls);
+      now += 5_001;
+      expect((await launcher.observeCodexLocalCredential(binding)).checkedAt).toBe("2026-09-26T00:00:05.001Z");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("does not bind a locally configured API key to the selected Codex profile", async () => {
+    const launcher = createAgentLauncher({
+      runtimeHome: "/tmp/codex-observation-owner",
+      codexExecutable: "/tmp/codex-observation-bin",
+      runCommand: async (_command, args) => ({
+        stdout: args[0] === "--version"
+          ? `codex-cli ${CODEX_VERIFIED_VERSION}\n`
+          : "Logged in using an API key - fixture_***_only\n",
+        stderr: "",
+      }),
+    });
+    expect(await launcher.observeCodexLocalCredential({
+      executable: "/tmp/codex-observation-bin",
+      runtimeHome: "/tmp/codex-observation-owner",
+      codexHome: process.env.CODEX_HOME,
+      accessSourceId: "owner_openai_profile",
+    })).toMatchObject({ state: "unknown" });
+  });
+
   it("checks auth with the Matrix runtime home so terminal logins are reused", async () => {
     const runCommand = vi.fn(async (command: string, args: string[]) => ({
       stdout: command === "codex" && args[0] === "--version"
