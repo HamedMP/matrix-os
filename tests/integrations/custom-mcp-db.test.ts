@@ -25,6 +25,19 @@ describe("Custom MCP platform persistence", () => {
 
   afterEach(async () => db.destroy());
 
+  it("migrates durable bounded Run leases and one-use approval records alongside server revisions", async () => {
+    const result = await pglite.client.query<{ table_name: string }>(`
+      SELECT table_name FROM information_schema.tables
+      WHERE table_schema = current_schema()
+        AND table_name IN ('custom_mcp_run_leases', 'custom_mcp_tool_approvals')
+      ORDER BY table_name
+    `);
+    expect(result.rows.map((row) => row.table_name)).toEqual([
+      "custom_mcp_run_leases",
+      "custom_mcp_tool_approvals",
+    ]);
+  });
+
   it("creates pending records and never exposes encrypted credentials in public rows", async () => {
     const row = await db.createCustomMcpServer({
       userId,

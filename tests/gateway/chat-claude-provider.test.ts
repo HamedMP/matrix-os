@@ -95,7 +95,6 @@ describe("Claude canonical Chat Provider adapter", () => {
       expect(settings.permissions.allow?.filter((rule) => rule.startsWith("mcp__"))).toEqual([
         "mcp__matrix-integrations__list_custom_mcp_servers",
         "mcp__matrix-integrations__describe_custom_mcp_server",
-        "mcp__matrix-integrations__call_custom_mcp_tool",
       ]);
       expect(args.includes("--resume")).toBe(index === 1);
     }
