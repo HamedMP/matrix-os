@@ -1,6 +1,7 @@
 import { z } from "zod/v4";
 import { canonicalReferenceId } from "#canonical-chat-primitives";
 import { IsoTimestampSchema, ProviderModelReferenceSchema } from "#contract-primitives";
+import { JEV_MODEL_ID, JEV_PRICING_VERSION, JevProvenanceSchema } from "#jev";
 
 export const FUNDED_AI_AUDIENCE = "matrix-funded-relay" as const;
 export const FUNDED_AI_SCOPE = "ai:invoke" as const;
@@ -127,7 +128,13 @@ export const FundedAiAuthorizationRequestSchema = z.object({
   /** Strict hold, or maximum platform liability when billingMode is usage. */
   maxCostMicrousd: MicrousdSchema.min(1),
   billingMode: z.literal("usage").optional(),
-}).strict();
+  jevPricingVersion: z.literal(JEV_PRICING_VERSION).optional(),
+}).strict().superRefine((value, ctx) => {
+  if (value.jevPricingVersion !== undefined
+    && (value.modelId !== JEV_MODEL_ID || value.billingMode !== "usage")) {
+    ctx.addIssue({ code: "custom", path: ["jevPricingVersion"], message: "Jev pricing requires Jev usage authorization" });
+  }
+});
 
 export const FundedAiPolicyCheckRequestSchema = z.object({
   credential: OpaqueCredentialSchema,
@@ -240,6 +247,7 @@ export const FundedAiAuthorizationResponseSchema = z.object({
     reservedMicrousd: MicrousdSchema.min(1),
     billingMode: z.literal("usage").optional(),
     maxCostMicrousd: MicrousdSchema.min(1).optional(),
+    jevPricingVersion: JevProvenanceSchema.shape.pricingVersion.optional(),
     remainingBalanceMicrousd: MicrousdSchema,
     remainingBudgetMicrousd: MicrousdSchema,
     periodStart: IsoTimestampSchema,
@@ -269,6 +277,11 @@ export const FundedAiAuthorizationResponseSchema = z.object({
       message: "Strict reservations do not expose a separate liability ceiling",
     });
   }
+  if (reservation.jevPricingVersion !== undefined
+    && (reservation.modelId !== JEV_MODEL_ID || reservation.billingMode !== "usage")) {
+    ctx.addIssue({ code: "custom", path: ["reservation", "jevPricingVersion"],
+      message: "Jev pricing requires Jev usage authorization" });
+  }
 });
 
 export const FundedAiSettlementRequestSchema = z.object({
@@ -283,6 +296,7 @@ export const FundedAiFinalizationRequestSchema = z.discriminatedUnion("mode", [
     tokenId: TokenIdSchema,
     mode: z.literal("exact"),
     actualCostMicrousd: MicrousdSchema,
+    jevProvenance: JevProvenanceSchema.optional(),
   }).strict(),
   z.object({
     reservationId: canonicalReferenceId(160),

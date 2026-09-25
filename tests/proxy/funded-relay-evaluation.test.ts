@@ -101,6 +101,42 @@ describe("funded Jev evaluation relay", () => {
     })).toThrow();
   });
 
+  it("retains the strictly parsed resolved model and reviewed price version without changing public model identity", () => {
+    const normalized = normalizeFundedJevEvaluationResponse({
+      requestId: "request_provenance",
+      latencyMs: 12,
+      pricing: reviewedJevPricing(NOW),
+      value: {
+        result: {
+          state: "Completed",
+          result: {
+            model: "jev-1.13.0",
+            answers: Object.fromEntries(Object.keys(JEV_EMAIL_TRIAGE_INSTRUCTIONS).map((id) => [
+              id, { type: "noul", noul: 0.5 },
+            ])),
+            usage: { input_tokens: 275, output_tokens: 20 },
+          },
+        },
+        success: true,
+        errors: [],
+        messages: [],
+      },
+    });
+
+    expect(normalized.result.model).toBe(JEV_MODEL_ID);
+    expect(normalized).toMatchObject({
+      resolvedModel: "jev-1.13.0",
+      pricingVersion: "typesafe-jev-input-2026-09",
+      actualCostMicrousd: 12,
+      result: {
+        provenance: {
+          resolvedModel: "jev-1.13.0",
+          pricingVersion: "typesafe-jev-input-2026-09",
+        },
+      },
+    });
+  });
+
   it("reuses the bounded Cloudflare Workers AI credential for Jev", () => {
     expect(resolveFundedRelayConfig(environment())).toMatchObject({
       workersAiToken: "cloudflare-workers-ai-token-123456789012345",
@@ -131,12 +167,14 @@ describe("funded Jev evaluation relay", () => {
             modelId: JEV_MODEL_ID,
             maxCostMicrousd: 5_000,
             billingMode: "usage",
+            jevPricingVersion: "typesafe-jev-input-2026-09",
           });
           return json({
             contractVersion: 1, authorized: true, identity: identity(), policy: policy(), funding: funding(5_000),
             reservation: {
               reservationId: "reservation_123", requestId: "request_123", modelId: JEV_MODEL_ID,
               reservedMicrousd: 5_000, maxCostMicrousd: 5_000, billingMode: "usage",
+              jevPricingVersion: "typesafe-jev-input-2026-09",
               remainingBalanceMicrousd: 95_000, remainingBudgetMicrousd: 95_000,
               periodStart: "2026-09-01T00:00:00.000Z", expiresAt: "2026-09-22T10:05:00.000Z", status: "reserved",
             },
@@ -153,6 +191,10 @@ describe("funded Jev evaluation relay", () => {
           expect(body).toEqual({
             reservationId: "reservation_123", tokenId: "credential_123",
             mode: "exact", actualCostMicrousd: 12,
+            jevProvenance: {
+              resolvedModel: "jev-1.13.0",
+              pricingVersion: "typesafe-jev-input-2026-09",
+            },
           });
           return json({
             contractVersion: 1, reservationId: "reservation_123", requestId: "request_123",
@@ -213,9 +255,64 @@ describe("funded Jev evaluation relay", () => {
       requestId: "jev_req_request_123", recipe: "email-triage-v1", model: JEV_MODEL_ID,
       usage: { inputTokens: 275, outputTokens: 20 },
       cost: { gatewayUsd: "0.00001155" },
+      provenance: { resolvedModel: "jev-1.13.0", pricingVersion: "typesafe-jev-input-2026-09" },
     });
     await vi.waitFor(() => expect(events).toContain("finalize"));
     expect(events).toEqual(["check", "authorize", "start", "evaluate", "finalize"]);
+    await relay.close();
+  });
+
+  it.each([
+    ["missing", undefined],
+    ["mismatched", "typesafe-jev-input-2026-08"],
+  ])("releases a %s authorization price version before Jev dispatch", async (_label, version) => {
+    const events: string[] = [];
+    const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      expect(url.startsWith(PLATFORM_URL)).toBe(true);
+      const action = url.slice(`${PLATFORM_URL}/internal/ai/funded/`.length);
+      events.push(action);
+      if (action === "check") {
+        return json({ contractVersion: 1, authorized: true, identity: identity(), policy: policy() });
+      }
+      if (action === "authorize") {
+        expect(JSON.parse(String(init?.body))).toMatchObject({
+          modelId: JEV_MODEL_ID, billingMode: "usage", jevPricingVersion: "typesafe-jev-input-2026-09",
+        });
+        return json({
+          contractVersion: 1, authorized: true, identity: identity(), policy: policy(), funding: funding(5_000),
+          reservation: {
+            reservationId: "reservation_123", requestId: "request_123", modelId: JEV_MODEL_ID,
+            reservedMicrousd: 5_000, maxCostMicrousd: 5_000, billingMode: "usage",
+            ...(version ? { jevPricingVersion: version } : {}),
+            remainingBalanceMicrousd: 95_000, remainingBudgetMicrousd: 95_000,
+            periodStart: "2026-09-01T00:00:00.000Z", expiresAt: "2026-09-22T10:05:00.000Z",
+            status: "reserved",
+          },
+        });
+      }
+      if (action === "release") {
+        expect(JSON.parse(String(init?.body))).toEqual({
+          reservationId: "reservation_123", tokenId: "credential_123", reason: "pre_upstream_failure",
+        });
+        return json({
+          contractVersion: 1, reservationId: "reservation_123", requestId: "request_123",
+          tokenId: "credential_123", releasedMicrousd: 5_000, releasedAt: NOW.toISOString(),
+          reason: "pre_upstream_failure", status: "released", funding: funding(0),
+        });
+      }
+      throw new Error(`Unexpected dispatch after version mismatch: ${url}`);
+    });
+    const config = resolveFundedRelayConfig(environment())!;
+    const relay = createFundedRelay({
+      ...config, fetch: fetchMock as typeof fetch, now: () => NOW, requestIdFactory: () => "request_123",
+    });
+    const app = new Hono();
+    relay.register(app);
+    const response = await app.request("/v1/evaluate", request());
+    expect(response.status).toBe(503);
+    expect(response.headers.get("x-matrix-jev-dispatch")).toBe("not-started");
+    expect(events).toEqual(["check", "authorize", "release"]);
     await relay.close();
   });
 
@@ -301,6 +398,7 @@ describe("funded Jev evaluation relay", () => {
         reservation: {
           reservationId: "reservation_123", requestId: input.requestId, modelId: JEV_MODEL_ID,
           reservedMicrousd: 5_000, maxCostMicrousd: 5_000, billingMode: "usage" as const,
+          jevPricingVersion: "typesafe-jev-input-2026-09",
           remainingBalanceMicrousd: 95_000, remainingBudgetMicrousd: 95_000,
           periodStart: "2026-09-01T00:00:00.000Z", expiresAt: "2026-09-22T10:05:00.000Z",
           status: "reserved" as const,

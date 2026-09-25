@@ -61,6 +61,7 @@ export interface FundedPlatformClient {
     modelId: string;
     maxCostMicrousd: number;
     billingMode?: "usage";
+    jevPricingVersion?: string;
   }, signal: AbortSignal): Promise<FundedAiAuthorizationResponse>;
   start(input: { reservationId: string; tokenId: string }, signal: AbortSignal): Promise<FundedAiStartResponse>;
   release(input: {

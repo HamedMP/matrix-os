@@ -157,6 +157,8 @@ export interface AiFundedUsageReservationsTable {
   promotional_reserved_microusd: number | null;
   addon_reserved_microusd: number | null;
   actual_microusd: number | null;
+  resolved_model: string | null;
+  pricing_version: string | null;
   period_start: string;
   status: string;
   created_at: string;

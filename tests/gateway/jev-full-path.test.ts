@@ -39,6 +39,7 @@ describe("Jev local Gateway to funded relay", () => {
         reservation: {
           reservationId: "reservation_123", requestId: input.requestId, modelId: JEV_MODEL_ID,
           reservedMicrousd: 5_000, maxCostMicrousd: 5_000, billingMode: "usage" as const,
+          jevPricingVersion: "typesafe-jev-input-2026-09",
           remainingBalanceMicrousd: 95_000, remainingBudgetMicrousd: 95_000,
           periodStart: "2026-09-01T00:00:00.000Z", expiresAt: "2026-09-22T10:05:00.000Z",
           status: "reserved" as const,
@@ -126,11 +127,14 @@ describe("Jev local Gateway to funded relay", () => {
       body: JSON.stringify({ recipe: "email-triage-v1", state: "hello", idempotencyKey: "thread:abc123" }),
     });
     expect(response.status).toBe(200);
-    expect(await response.json()).toMatchObject({ model: JEV_MODEL_ID, answers: expect.arrayContaining([
+    expect(await response.json()).toMatchObject({ model: JEV_MODEL_ID,
+      provenance: { resolvedModel: "jev-1.13.0", pricingVersion: "typesafe-jev-input-2026-09" },
+      answers: expect.arrayContaining([
       expect.objectContaining({ id: "urgent", probability: 0.5 }),
     ]) });
     await vi.waitFor(() => expect(platformClient.finalize).toHaveBeenCalledWith(
-      expect.objectContaining({ mode: "exact", actualCostMicrousd: 12 }),
+      expect.objectContaining({ mode: "exact", actualCostMicrousd: 12,
+        jevProvenance: { resolvedModel: "jev-1.13.0", pricingVersion: "typesafe-jev-input-2026-09" } }),
       expect.any(AbortSignal),
     ));
     expect(upstream).toHaveBeenCalledTimes(1);
