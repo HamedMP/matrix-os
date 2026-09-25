@@ -72,4 +72,16 @@ describe("Claude Custom MCP Run capability", () => {
     expect(registry.resolve(next.token, "GET", "/api/mcp-servers")).toBeNull();
     expect(registry.issue({ owner, runId: "run_c" })).toBeNull();
   });
+
+  it("caps active grants and frees a slot on revocation", () => {
+    const registry = createMatrixMcpCapabilityRegistry({ configuredOwnerId: owner.ownerId });
+    const capabilities = Array.from({ length: 128 }, (_, index) => registry.issue({ owner, runId: `run_${index}` }));
+    expect(capabilities.every(Boolean)).toBe(true);
+    expect(registry.issue({ owner, runId: "over_limit" })).toBeNull();
+    capabilities[0]!.revoke();
+    const replacement = registry.issue({ owner, runId: "replacement" });
+    expect(replacement?.token).toMatch(/^[a-f0-9]{64}$/);
+    expect(registry.resolve(capabilities[0]!.token, "GET", "/api/mcp-servers")).toBeNull();
+    registry.close();
+  });
 });

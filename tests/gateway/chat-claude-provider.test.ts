@@ -130,6 +130,9 @@ describe("Claude canonical Chat Provider adapter", () => {
   });
 
   it.each([null, 0])("resumes the active Claude session after steer exits with code %s", async (exitCode) => {
+    const registry = createMatrixMcpCapabilityRegistry({ configuredOwnerId: baseInput.owner.ownerId });
+    let firstToken = "";
+    let secondToken = "";
     const firstStdout = new FakeStream();
     const firstStderr = new FakeStream();
     const firstProcess = new EventEmitter() as EventEmitter & {
@@ -141,8 +144,10 @@ describe("Claude canonical Chat Provider adapter", () => {
     firstProcess.stdout = firstStdout;
     firstProcess.stderr = firstStderr;
     firstProcess.kill = vi.fn(() => queueMicrotask(() => firstProcess.emit("exit", exitCode, exitCode === null ? "SIGTERM" : null)));
-    const spawnFn = vi.fn()
-      .mockImplementationOnce(() => {
+    const spawnFn = vi.fn<CanonicalCliSpawn>()
+      .mockImplementationOnce((_command, _args, options) => {
+        firstToken = options.env.MATRIX_AGENT_INTEGRATIONS_TOKEN!;
+        expect(registry.resolve(firstToken, "GET", "/api/mcp-servers")).toBe(baseInput.owner.ownerId);
         queueMicrotask(() => firstStdout.emit("data", Buffer.from(`${JSON.stringify({
           type: "system",
           subtype: "init",
@@ -151,10 +156,16 @@ describe("Claude canonical Chat Provider adapter", () => {
         })}\n`)));
         return firstProcess;
       })
-      .mockImplementationOnce(() => child([
-        JSON.stringify({ type: "result", subtype: "success", is_error: false, result: "222", session_id: "claude_steer_session" }),
-      ]));
-    const adapter = createClaudeChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn });
+      .mockImplementationOnce((_command, _args, options) => {
+        secondToken = options.env.MATRIX_AGENT_INTEGRATIONS_TOKEN!;
+        expect(registry.resolve(firstToken, "GET", "/api/mcp-servers")).toBeNull();
+        expect(registry.resolve(secondToken, "GET", "/api/mcp-servers")).toBe(baseInput.owner.ownerId);
+        return child([
+          JSON.stringify({ type: "result", subtype: "success", is_error: false, result: "222", session_id: "claude_steer_session" }),
+        ]);
+      });
+    const adapter = createClaudeChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn,
+      resolveCredentialEnv: async () => ({}), matrixMcpCapabilityIssuer: registry });
     const events: unknown[] = [];
     const runPromise = (async () => {
       for await (const event of adapter.start(baseInput)) events.push(event);
@@ -179,6 +190,9 @@ describe("Claude canonical Chat Provider adapter", () => {
     ]));
     expect(events).toContainEqual({ type: "assistant.delta", delta: "222" });
     expect(events.at(-1)).toEqual({ type: "run.completed", outcome: "completed" });
+    expect(secondToken).not.toBe(firstToken);
+    expect(registry.resolve(firstToken, "GET", "/api/mcp-servers")).toBeNull();
+    expect(registry.resolve(secondToken, "GET", "/api/mcp-servers")).toBeNull();
   });
 
   it("runs the selected model, effort, permission and streams native deltas", async () => {
@@ -934,6 +948,7 @@ describe("Claude canonical Chat Provider adapter", () => {
   });
 
   it("keeps the native Claude session checkpoint when a running turn is cancelled", async () => {
+    const registry = createMatrixMcpCapabilityRegistry({ configuredOwnerId: baseInput.owner.ownerId });
     const controller = new AbortController();
     const stdout = new FakeStream();
     const stderr = new FakeStream();
@@ -947,10 +962,14 @@ describe("Claude canonical Chat Provider adapter", () => {
     process.stderr = stderr;
     process.kill = vi.fn(() => queueMicrotask(() => process.emit("exit", null, "SIGTERM")));
     const spawnFn = vi.fn(() => process);
-    const adapter = createClaudeChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn });
+    const adapter = createClaudeChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn,
+      resolveCredentialEnv: async () => ({}), matrixMcpCapabilityIssuer: registry });
     const iterator = adapter.start({ ...baseInput, signal: controller.signal })[Symbol.asyncIterator]();
     const stateEvent = iterator.next();
     await vi.waitFor(() => expect(spawnFn).toHaveBeenCalledOnce());
+    const token = spawnFn.mock.calls[0]?.[2].env.MATRIX_AGENT_INTEGRATIONS_TOKEN;
+    expect(token).toMatch(/^[a-f0-9]{64}$/);
+    expect(registry.resolve(token!, "GET", "/api/mcp-servers")).toBe(baseInput.owner.ownerId);
     stdout.emit("data", Buffer.from(`${JSON.stringify({
       type: "system",
       session_id: "claude_cancel_session",
@@ -970,6 +989,7 @@ describe("Claude canonical Chat Provider adapter", () => {
     });
     await expect(iterator.next()).resolves.toEqual({ done: true, value: undefined });
     expect(process.kill).toHaveBeenCalledWith("SIGTERM");
+    expect(registry.resolve(token!, "GET", "/api/mcp-servers")).toBeNull();
   });
 
   it("trusts a successful result event even when Claude exits non-zero afterward", async () => {
