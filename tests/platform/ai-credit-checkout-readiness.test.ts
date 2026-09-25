@@ -2,6 +2,32 @@ import { describe, expect, it, vi } from "vitest";
 import { isAiCreditCheckoutRouteHealthy } from "../../packages/platform/src/ai-credit-checkout-readiness.js";
 
 describe("AI credit checkout preflight", () => {
+  it("passes the remaining request deadline to a paid probe and cancels it when checkout times out", async () => {
+    const current = new Date().toISOString();
+    const future = new Date(Date.now() + 60_000).toISOString();
+    const funding = {
+      policy: { enabled: true, allowedModelIds: ["anthropic/claude-sonnet-5"],
+        globalRevision: 1, runtimeRevision: 1, checkedAt: current, staleAfter: future },
+      funding: { remainingBudgetMicrousd: 1, asOf: current },
+    };
+    let probeSignal: AbortSignal | undefined;
+    const probe = vi.fn((_model: string, call?: { signal?: AbortSignal; deadlineAtMs?: number }) => {
+      probeSignal = call?.signal;
+      return new Promise<never>(() => undefined);
+    });
+    const started = Date.now();
+    const healthy = await isAiCreditCheckoutRouteHealthy({
+      repository: { getCheckoutFundingSummary: async () => funding } as never,
+      identity: { ownerId: "owner", machineId: "machine", runtimeSlot: "primary" },
+      modelProbes: { probe }, deadlineMs: 25,
+    });
+    expect(healthy).toBe(false);
+    expect(probe).toHaveBeenCalledOnce();
+    expect(probe.mock.calls[0]?.[1]?.deadlineAtMs).toBeGreaterThanOrEqual(started + 25);
+    expect(probe.mock.calls[0]?.[1]?.deadlineAtMs).toBeLessThan(started + 100);
+    expect(probeSignal?.aborted).toBe(true);
+  });
+
   it("fails closed within the overall deadline when the funding read stalls", async () => {
     const probe = vi.fn();
     let releaseRead!: (error: Error) => void;

@@ -6,6 +6,7 @@ import type { PlatformDB } from "../../packages/platform/src/db.js";
 
 const now = new Date("2026-09-25T12:00:00.000Z");
 const sonnet = "anthropic/claude-sonnet-5";
+const pricedReady = { ready: true, priceValidThrough: "2026-09-30T23:59:59.999Z" };
 
 describe("fleet funded model probe budget", () => {
   let db: PlatformDB;
@@ -39,7 +40,7 @@ describe("fleet funded model probe budget", () => {
   });
 
   it("coalesces repeated probes and retains the fleet count after service restart", async () => {
-    const fetchFn = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ ready: true }));
+    const fetchFn = vi.fn<typeof fetch>().mockResolvedValue(Response.json(pricedReady));
     const input = { db, relayBaseUrl: "https://relay.example.test", relayControlToken: "c".repeat(32),
       dailyLimit: 1, minuteLimit: 1, fetchFn, now: () => now };
     const first = createFundedModelProbeService(input);
@@ -54,7 +55,7 @@ describe("fleet funded model probe budget", () => {
   });
 
   it("admits only one paid call across concurrent Platform service instances", async () => {
-    const fetchFn = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ ready: true }));
+    const fetchFn = vi.fn<typeof fetch>().mockResolvedValue(Response.json(pricedReady));
     const input = { db, relayBaseUrl: "https://relay.example.test", relayControlToken: "c".repeat(32),
       dailyLimit: 1, minuteLimit: 1, fetchFn, now: () => now };
     const first = createFundedModelProbeService(input);
@@ -75,5 +76,47 @@ describe("fleet funded model probe budget", () => {
     expect((await probes.probe(sonnet)).ready).toBe(false);
     expect(Date.now() - started).toBeLessThan(500);
     expect(fetchFn).not.toHaveBeenCalled();
+  });
+
+  it("does not start a paid fetch when the last caller expires during budget admission", async () => {
+    const admission = Promise.withResolvers<boolean>();
+    const fetchFn = vi.fn<typeof fetch>().mockResolvedValue(Response.json(pricedReady));
+    const probes = createFundedModelProbeService({ db, relayBaseUrl: "https://relay.example.test",
+      relayControlToken: "c".repeat(32), dailyLimit: 1, minuteLimit: 1,
+      reserveProbe: () => admission.promise, fetchFn, now: () => now });
+    const result = await probes.probe(sonnet, { deadlineAtMs: Date.now() + 20 });
+    expect(result.ready).toBe(false);
+    admission.resolve(true);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(fetchFn).not.toHaveBeenCalled();
+  });
+
+  it("keeps a coalesced paid probe alive for a second caller after the first expires", async () => {
+    const admission = Promise.withResolvers<boolean>();
+    const fetchFn = vi.fn<typeof fetch>().mockResolvedValue(Response.json(pricedReady));
+    const probes = createFundedModelProbeService({ db, relayBaseUrl: "https://relay.example.test",
+      relayControlToken: "c".repeat(32), dailyLimit: 1, minuteLimit: 1,
+      reserveProbe: () => admission.promise, fetchFn, now: () => now });
+    const first = probes.probe(sonnet, { deadlineAtMs: Date.now() + 20 });
+    const second = probes.probe(sonnet, { deadlineAtMs: Date.now() + 1_000 });
+    expect((await first).ready).toBe(false);
+    admission.resolve(true);
+    expect((await second).ready).toBe(true);
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+  });
+
+  it("caps cached model readiness at relay-supplied pricing expiry and rejects missing expiry", async () => {
+    let observedNow = new Date("2026-09-30T23:59:59.900Z");
+    const fetchFn = vi.fn<typeof fetch>().mockResolvedValueOnce(Response.json({
+      ready: true, priceValidThrough: "2026-09-30T23:59:59.999Z",
+    })).mockResolvedValueOnce(Response.json({ ready: true }));
+    const probes = createFundedModelProbeService({ db, relayBaseUrl: "https://relay.example.test",
+      relayControlToken: "c".repeat(32), dailyLimit: 2, minuteLimit: 2,
+      fetchFn, now: () => observedNow });
+    const first = await probes.probe(sonnet);
+    expect(first).toMatchObject({ ready: true, staleAfter: "2026-09-30T23:59:59.999Z" });
+    observedNow = new Date("2026-10-01T00:00:00.100Z");
+    expect((await probes.probe(sonnet)).ready).toBe(false);
+    expect(fetchFn).toHaveBeenCalledTimes(2);
   });
 });

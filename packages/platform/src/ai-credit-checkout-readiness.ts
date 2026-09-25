@@ -16,6 +16,7 @@ export async function isAiCreditCheckoutRouteHealthy(input: {
 }): Promise<boolean> {
   let expired = false;
   let timeout: ReturnType<typeof setTimeout> | undefined;
+  const controller = new AbortController();
   try {
     if (!input.modelProbes || pendingFundingReads.size >= MAX_PENDING_FUNDING_READS) return false;
     const deadlineMs = input.deadlineMs ?? PREFLIGHT_DEADLINE_MS;
@@ -34,7 +35,7 @@ export async function isAiCreditCheckoutRouteHealthy(input: {
     };
     const fundingRead = read();
     const deadline = new Promise<boolean>((resolve) => {
-      timeout = setTimeout(() => { expired = true; resolve(false); }, deadlineMs);
+      timeout = setTimeout(() => { expired = true; controller.abort(); resolve(false); }, deadlineMs);
     });
     const check = async (): Promise<boolean> => {
       const first = await fundingRead;
@@ -42,7 +43,7 @@ export async function isAiCreditCheckoutRouteHealthy(input: {
       if (expired || !validFunding(first, current)) return false;
       for (const model of FUNDED_PROBE_MODELS) {
         if (!first.policy.allowedModelIds.includes(model) || expired) continue;
-        const result = await input.modelProbes!.probe(model);
+        const result = await input.modelProbes!.probe(model, { signal: controller.signal, deadlineAtMs });
         const afterProbe = (input.now ?? (() => new Date()))().getTime();
         if (!result.ready || expired || Date.parse(result.checkedAt) > afterProbe
           || Date.parse(result.staleAfter) <= afterProbe) continue;
@@ -64,6 +65,7 @@ export async function isAiCreditCheckoutRouteHealthy(input: {
     return false;
   } finally {
     if (timeout !== undefined) clearTimeout(timeout);
+    controller.abort();
   }
 }
 

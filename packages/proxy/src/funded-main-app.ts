@@ -8,7 +8,7 @@ import {
   type FundedRelayConfig,
 } from "./funded-relay.js";
 import { FUNDED_SONNET, probeFundedModel } from "./funded-relay-readiness.js";
-import { FUNDED_GLM_FLASH, isFundedModelPriceCurrent } from "./funded-relay-model.js";
+import { FUNDED_GLM_FLASH, fundedModelPriceValidThrough, isFundedModelPriceCurrent } from "./funded-relay-model.js";
 
 export interface FundedRelayService {
   app: Hono;
@@ -34,6 +34,7 @@ export function createFundedRelayService(config: FundedRelayConfig, options: { f
 
   app.get("/health", (c) => c.json({ status: "ok" }));
   app.get("/ready", async (c) => {
+    c.header("Cache-Control", "no-store");
     const bearer = /^Bearer (\S+)$/i.exec(c.req.header("authorization") ?? "")?.[1] ?? "";
     const supplied = Buffer.from(bearer);
     const expected = Buffer.from(config.relayControlToken);
@@ -42,10 +43,13 @@ export function createFundedRelayService(config: FundedRelayConfig, options: { f
     }
     const model = c.req.query("model");
     if (model !== FUNDED_GLM_FLASH && model !== FUNDED_SONNET) return c.json({ ready: false }, 400);
-    if (!isFundedModelPriceCurrent(model, (options.now ?? (() => new Date()))())) return c.json({ ready: false }, 503);
-    const ready = await probeFundedModel(config, model, options.fetchFn);
-    c.header("Cache-Control", "no-store");
-    return c.json({ ready }, ready ? 200 : 503);
+    const priceValidThrough = fundedModelPriceValidThrough(model);
+    if (!priceValidThrough || !isFundedModelPriceCurrent(model, (options.now ?? (() => new Date()))())) {
+      return c.json({ ready: false }, 503);
+    }
+    const probed = await probeFundedModel(config, model, options.fetchFn);
+    const ready = probed && isFundedModelPriceCurrent(model, (options.now ?? (() => new Date()))());
+    return c.json(ready ? { ready: true, priceValidThrough } : { ready: false }, ready ? 200 : 503);
   });
   relay.register(app);
 

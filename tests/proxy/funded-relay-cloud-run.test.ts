@@ -90,6 +90,24 @@ describe("funded relay Cloud Run service", () => {
     } finally { await service.close(); }
   });
 
+  it("does not return ready when pricing expires while its paid probe is running", async () => {
+    const config = requireFundedRelayServiceConfig(enabledEnv());
+    let checkedAt = new Date("2026-09-30T23:59:59.900Z");
+    const fetchFn = vi.fn<typeof fetch>().mockImplementation(async () => {
+      checkedAt = new Date("2026-10-01T00:00:00.000Z");
+      return Response.json({ type: "message", model: "claude-sonnet-5", content: [{ type: "text", text: "ok" }] });
+    });
+    const service = createFundedRelayService(config, { fetchFn, now: () => checkedAt });
+    try {
+      const response = await service.app.request("http://relay.test/ready?model=anthropic%2Fclaude-sonnet-5", {
+        headers: { authorization: `Bearer ${config.relayControlToken}` },
+      });
+      expect(response.status).toBe(503);
+      expect(await response.json()).toEqual({ ready: false });
+      expect(fetchFn).toHaveBeenCalledTimes(1);
+    } finally { await service.close(); }
+  });
+
   it("checks the configured Anthropic gateway by making a bounded inference request", async () => {
     const config = requireFundedRelayServiceConfig(enabledEnv());
     const fetchFn = vi.fn<typeof fetch>().mockResolvedValue(Response.json({
@@ -101,7 +119,7 @@ describe("funded relay Cloud Run service", () => {
         headers: { authorization: `Bearer ${config.relayControlToken}` },
       });
       expect(response.status).toBe(200);
-      expect(await response.json()).toEqual({ ready: true });
+      expect(await response.json()).toEqual({ ready: true, priceValidThrough: "2026-09-30T23:59:59.999Z" });
       expect(fetchFn).toHaveBeenCalledWith(`${config.gatewayBaseUrl}/v1/messages`,
         expect.objectContaining({ method: "POST", body: expect.stringContaining('"max_tokens":1'), headers: {
           "cf-aig-authorization": `Bearer ${config.gatewayToken}`,

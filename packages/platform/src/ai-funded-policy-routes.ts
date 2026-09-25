@@ -285,11 +285,16 @@ export function createAiFundedRuntimeRoutes(options: {
     if (!machine) return c.json(safeError("unauthorized"), 401);
     const body = EmptyBodySchema.safeParse(await readStrictJson(c));
     if (!body.success) return c.json(safeError("invalid_request"), 400);
+    const deadlineAtMs = Date.now() + 6_000;
+    const controller = new AbortController();
+    const onRequestAbort = () => controller.abort();
+    const deadlineTimer = setTimeout(onRequestAbort, 6_000);
+    c.req.raw.signal.addEventListener("abort", onRequestAbort, { once: true });
+    if (c.req.raw.signal.aborted) controller.abort();
     try {
       const identity = { ownerId: machine.clerkUserId, machineId: machine.machineId, runtimeSlot: machine.runtimeSlot };
-      const deadlineAtMs = Date.now() + 6_000;
       const read = () => {
-        if (pendingRouteFundingReads.size >= MAX_PENDING_ROUTE_FUNDING_READS) {
+        if (controller.signal.aborted || pendingRouteFundingReads.size >= MAX_PENDING_ROUTE_FUNDING_READS) {
           throw new Error("Funded route funding reads saturated");
         }
         const pending = options.repository.getCheckoutFundingSummary(identity, deadlineAtMs);
@@ -305,7 +310,9 @@ export function createAiFundedRuntimeRoutes(options: {
         ? FUNDED_PROBE_MODELS.filter((model) => first.policy.allowedModelIds.includes(model)) : [];
       if (Date.now() >= deadlineAtMs) throw new Error("Funded route readiness timed out");
       const observations = options.routeProbes
-        ? await beforeDeadline(Promise.all(eligible.map(async (model) => ({ model, result: await options.routeProbes!.probe(model) }))), deadlineAtMs)
+        ? await beforeDeadline(Promise.all(eligible.map(async (model) => ({ model, result: await options.routeProbes!.probe(model, {
+          signal: controller.signal, deadlineAtMs,
+        }) }))), deadlineAtMs)
         : [];
       // An upstream probe is asynchronous. Re-read exact owner policy and ledger
       // before returning any model as ready; do not reuse an old authorization.
@@ -332,6 +339,11 @@ export function createAiFundedRuntimeRoutes(options: {
         checkedAt: checked.toISOString(), staleAfter: new Date(staleAfter).toISOString(), readyModelIds,
       }), 200);
     } catch (error) { return policyErrorResponse(c, error); }
+    finally {
+      clearTimeout(deadlineTimer);
+      c.req.raw.signal.removeEventListener("abort", onRequestAbort);
+      controller.abort();
+    }
   });
   return app;
 }

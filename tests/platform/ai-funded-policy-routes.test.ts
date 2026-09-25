@@ -140,7 +140,9 @@ describe("funded AI policy routes", () => {
     });
     expect(response.status).toBe(200);
     expect(FundedAiRouteReadinessReceiptSchema.parse(await response.json()).readyModelIds).toEqual([modelId]);
-    expect(probe).toHaveBeenCalledExactlyOnceWith(modelId);
+    expect(probe).toHaveBeenCalledExactlyOnceWith(modelId, expect.objectContaining({
+      signal: expect.any(AbortSignal), deadlineAtMs: expect.any(Number),
+    }));
     const after = await repository.getCheckoutFundingSummary(identity, Date.now() + 6_000);
     expect(after.funding.creditBalanceMicrousd).toBe(before.funding.creditBalanceMicrousd);
   });
@@ -159,7 +161,9 @@ describe("funded AI policy routes", () => {
       now: () => new Date(now),
     });
     expect(await reader.read()).toMatchObject({ readiness: { state: "ready" }, allowedModelIds: ["claude-sonnet-5"] });
-    expect(probe).toHaveBeenCalledExactlyOnceWith(modelId);
+    expect(probe).toHaveBeenCalledExactlyOnceWith(modelId, expect.objectContaining({
+      signal: expect.any(AbortSignal), deadlineAtMs: expect.any(Number),
+    }));
   });
 
   it("fails closed after an asynchronous probe when owner policy is revoked", async () => {

@@ -36,6 +36,18 @@ calls, not verified dollar spend. The limits must match across Platform replicas
 a same-day mismatch fails closed until the next UTC day. GLM Flash and Sonnet 5 are the only currently
 probed models; Jev requires its own priced, exact-wire readiness path.
 
+The authenticated relay `GET /ready?model=<canonical-id>` success response is
+`{ "ready": true, "priceValidThrough": "<ISO timestamp>" }`. The timestamp
+comes from the same local model price table used for admission. Platform accepts
+only this bounded success shape and caps positive cache freshness at both 30
+seconds and `priceValidThrough`; a missing timestamp or a price that expires
+during the probe fails closed. Runtime route-readiness and checkout pass their
+request deadlines into the shared probe service. It cancels an abandoned probe
+when its last caller expires; a second active caller may continue the same
+coalesced probe. Deploy the relay response before Platform requires the new
+field: the old Platform ignores the extra field, while the new Platform safely
+rejects a bare `{"ready":true}` from an old relay.
+
 The funding-summary request body and query are both strict-empty schemas. Its
 response contains only `contractVersion` plus reconciled microusd funding
 totals. It never returns owner ID, machine ID, runtime slot, credential, ledger

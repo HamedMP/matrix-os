@@ -44,9 +44,14 @@ const GLM_PRICING: FundedPricing = {
 };
 
 /** Readiness must agree with the local price gate used before admission. */
-export function isFundedModelPriceCurrent(modelId: string, now: Date): boolean {
+export function fundedModelPriceValidThrough(modelId: string): string | undefined {
   const pricing = [CURRENT_PRICING, GLM_PRICING].find((item) => item.canonicalModelId === modelId);
-  return !!pricing && now.getTime() <= Date.parse(pricing.validThrough);
+  return pricing?.validThrough;
+}
+
+export function isFundedModelPriceCurrent(modelId: string, now: Date): boolean {
+  const validThrough = fundedModelPriceValidThrough(modelId);
+  return !!validThrough && now.getTime() <= Date.parse(validThrough);
 }
 
 // Retain the previous version only for safe settlement of reservations created
