@@ -13,7 +13,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { z } from "zod/v4";
 import { useBrowserOrigin } from "@/hooks/useBrowserOrigin";
 import { createShellCollaborationApi } from "@/lib/collaboration";
-import { driveBasePath as base, loadDiscoveryItems, loadDriveSnapshotPages } from "./organization-drive-paging";
+import { createRefreshGuard, driveBasePath as base, loadDiscoveryItems, loadDriveSnapshotPages } from "./organization-drive-paging";
 
 const OrganizationsSchema = z.object({ organizations: z.array(z.object({
   organizationId: z.string(), name: z.string(),
@@ -91,10 +91,13 @@ export function OrganizationDrivesView() {
   const [error, setError] = useState<string | null>(null);
   // Pages loaded per drive, so refreshes keep files the member already paged in.
   const pageCounts = useRef<PageCounts>({});
+  const [refreshGuard] = useState(createRefreshGuard);
   const load = useCallback(async () => {
     if (!api) return;
+    const token = refreshGuard.begin();
     try {
       const next = await loadOptions(api, pageCounts.current);
+      if (!refreshGuard.isCurrent(token)) return;
       pageCounts.current = Object.fromEntries(next.filter((option) => option.pages)
         .map((option) => [option.scopeId, option.pages ?? 1]));
       setOptions(next);
@@ -103,9 +106,9 @@ export function OrganizationDrivesView() {
       setError(null);
     } catch (failure: unknown) {
       console.warn("[organization-drive] listing unavailable", failure instanceof Error ? failure.name : "UnknownError");
-      setError(safeError(failure));
-    } finally { setLoading(false); }
-  }, [api]);
+      if (refreshGuard.isCurrent(token)) setError(safeError(failure));
+    } finally { refreshGuard.finish(token); setLoading(false); }
+  }, [api, refreshGuard]);
   // react-doctor-disable-next-line react-doctor/no-fetch-in-effect -- current organization shares and scope sessions are browser identity state.
   useEffect(() => { void load(); }, [load]);
   useEffect(() => {
@@ -213,8 +216,12 @@ export function OrganizationDrivesView() {
         `${base(option.scopeId)}?after=${encodeURIComponent(cursor)}`));
       const pages = (option.pages ?? 1) + 1;
       pageCounts.current = { ...pageCounts.current, [option.scopeId]: pages };
+      // A refresh started before this page arrived would restore the shorter list.
+      const refreshPending = refreshGuard.inFlight();
+      refreshGuard.invalidate();
       setOptions((current) => current.map((item) => item.scopeId === option.scopeId && item.snapshot
         ? { ...item, pages, snapshot: { ...page, files: [...item.snapshot.files, ...page.files] } } : item));
+      if (refreshPending) void load();
     } catch (failure: unknown) {
       console.warn("[organization-drive] next page unavailable", failure instanceof Error ? failure.name : "UnknownError");
       setError(safeError(failure));
