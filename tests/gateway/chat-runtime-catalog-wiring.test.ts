@@ -56,15 +56,26 @@ describe("gateway Chat runtime catalog composition", () => {
   });
 
   it("shares the execution credential factory with metadata discovery and preserves service dependencies", async () => {
-    const { resolveClaudeCredentialLaunch, options } = compose("/runtime/codex");
-    expect(mocks.createClaude).toHaveBeenCalledWith({ homePath: "/runtime-home", resolveCredentialLaunch: resolveClaudeCredentialLaunch });
-    await resolveClaudeCredentialLaunch();
-    expect(mocks.credentials).toHaveBeenCalledWith("/runtime-home", process.env, undefined, undefined);
-    expect(options).toMatchObject(dependencies);
-    options.skillsSource?.();
-    expect(mocks.skills).toHaveBeenCalledWith("/runtime-home");
-    expect(mocks.createCodex).toHaveBeenCalledWith({ executable: "/runtime/codex", cwd: "/runtime-home" });
-    expect(mocks.createNative).toHaveBeenCalledWith({ homePath: "/runtime-home" });
+    vi.stubEnv("HOME", "/gateway-home");
+    try {
+      const { resolveClaudeCredentialLaunch, options } = compose("/runtime/codex");
+      expect(mocks.createClaude).toHaveBeenCalledWith({ homePath: "/runtime-home", resolveCredentialLaunch: resolveClaudeCredentialLaunch });
+      await resolveClaudeCredentialLaunch();
+      expect(mocks.credentials).toHaveBeenCalledWith("/runtime-home", process.env, undefined, undefined);
+      expect(options).toMatchObject(dependencies);
+      options.skillsSource?.();
+      expect(mocks.skills).toHaveBeenCalledWith("/runtime-home");
+      const codexOptions = mocks.createCodex.mock.calls[0]?.[0] as {
+        executable?: string; cwd?: string; environment?: Record<string, string>;
+      };
+      expect(codexOptions.executable).toBe("/runtime/codex");
+      expect(codexOptions.cwd).toBe("/runtime-home");
+      expect(codexOptions.environment?.HOME).toBe("/runtime-home");
+      expect(codexOptions.environment?.MATRIX_HOME).toBe("/runtime-home");
+      expect(mocks.createNative).toHaveBeenCalledWith({ homePath: "/runtime-home" });
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it("returns owner-scoped Claude metadata without querying fallback sources", async () => {

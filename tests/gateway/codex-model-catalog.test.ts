@@ -1,7 +1,51 @@
-import { describe, expect, it } from "vitest";
-import { normalizeCodexModelCatalog } from "../../packages/gateway/src/chat/codex-model-catalog.js";
+import { EventEmitter } from "node:events";
+import { PassThrough } from "node:stream";
+import type { SpawnOptionsWithoutStdio } from "node:child_process";
+import { describe, expect, it, vi } from "vitest";
+import { buildAgentRuntimeEnvironment } from "../../packages/gateway/src/agent-launcher.js";
+import { createCodexModelCatalogSource, normalizeCodexModelCatalog } from "../../packages/gateway/src/chat/codex-model-catalog.js";
 
 describe("Codex model catalog projection", () => {
+  it("spawns the configured Codex executable with the owner runtime HOME", async () => {
+    vi.stubEnv("HOME", "/gateway-home");
+    try {
+      const spawnProcess = vi.fn(() => {
+        const child = Object.assign(new EventEmitter(), {
+          stdin: new PassThrough(), stdout: new PassThrough(), stderr: new PassThrough(), kill: vi.fn(),
+        });
+        child.stdin.on("data", (chunk: Buffer) => {
+          const message = JSON.parse(chunk.toString()) as { id?: number };
+          if (message.id === 1) child.stdout.write(`${JSON.stringify({ id: 1, result: {} })}\n`);
+          if (message.id === 2) child.stdout.write(`${JSON.stringify({
+            id: 2,
+            result: { data: [{
+              id: "fixture-model", model: "fixture-model", displayName: "Fixture Model",
+              hidden: false, isDefault: true, defaultReasoningEffort: "low",
+              supportedReasoningEfforts: [],
+            }], nextCursor: null },
+          })}\n`);
+        });
+        return child as never;
+      });
+      const source = createCodexModelCatalogSource({
+        executable: "/owner-bin/codex", cwd: "/owner-home",
+        environment: buildAgentRuntimeEnvironment("/owner-home"), spawnProcess,
+      });
+
+      await expect(source({ id: "codex", kind: "codex", availability: "available" } as never))
+        .resolves.toMatchObject({ defaultModel: "fixture-model" });
+      const [command, args, spawnOptions] = spawnProcess.mock.calls[0] as unknown as [string, string[], SpawnOptionsWithoutStdio];
+      expect(command).toBe("/owner-bin/codex");
+      expect(args).toEqual(["app-server", "--stdio"]);
+      expect(spawnOptions.cwd).toBe("/owner-home");
+      expect(spawnOptions.stdio).toBe("pipe");
+      expect(spawnOptions.env?.HOME).toBe("/owner-home");
+      expect(spawnOptions.env?.MATRIX_HOME).toBe("/owner-home");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("projects live app-server models and their effort/service-tier options", () => {
     const catalog = normalizeCodexModelCatalog({
       data: [{
