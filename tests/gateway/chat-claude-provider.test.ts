@@ -1,8 +1,11 @@
 import { EventEmitter } from "node:events";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createClaudeChatProviderAdapter } from "../../packages/gateway/src/chat/claude-provider-adapter.js";
+import type { CanonicalCliSpawn } from "../../packages/gateway/src/chat/cli-process.js";
 
 class FakeStream extends EventEmitter {}
+
+afterEach(() => vi.unstubAllEnvs());
 
 function child(lines: string[], exitCode = 0, stderrLines: string[] = []) {
   const stdout = new FakeStream();
@@ -44,7 +47,8 @@ const baseInput = {
 
 describe("Claude canonical Chat Provider adapter", () => {
   it("registers only the scoped Matrix Custom MCP broker on fresh and resumed supervised Runs", async () => {
-    const spawnFn = vi.fn(() => child([
+    vi.stubEnv("MATRIX_CLERK_USER_ID", "owner_claude");
+    const spawnFn = vi.fn<CanonicalCliSpawn>(() => child([
       JSON.stringify({ type: "result", subtype: "success", is_error: false, result: "done", session_id: "claude_mcp_session" }),
     ]));
     const adapter = createClaudeChatProviderAdapter({
