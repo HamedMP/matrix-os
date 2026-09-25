@@ -58,6 +58,8 @@ describe("scoped Custom MCP approval through Gateway and Platform broker", () =>
 
     expect((await post(JSON.stringify({ tool: "ask", approvalGranted: true }))).status).toBe(403);
     expect(remoteCall).not.toHaveBeenCalled();
+    expect((await post(JSON.stringify({ tool: "search", approvalGranted: true }))).status).toBe(403);
+    expect(remoteCall).not.toHaveBeenCalled();
     expect((await post(JSON.stringify({ tool: "search", approvalGranted: false }))).status).toBe(200);
     expect(remoteCall).toHaveBeenCalledOnce();
     for (const raw of [
@@ -70,7 +72,7 @@ describe("scoped Custom MCP approval through Gateway and Platform broker", () =>
     expect((await post('{"tool":"ask","approvalGranted":')).status).toBe(400);
     expect((await post(JSON.stringify([{ tool: "ask", approvalGranted: true }]))).status).toBe(400);
     expect((await post(JSON.stringify({ tool: "ask", approvalGranted: false,
-      arguments: { approvalGranted: true } }))).status).toBe(403);
+      arguments: { approvalGranted: true } }))).status).toBe(404);
     expect((await post("x".repeat(64 * 1024 + 1))).status).toBe(413);
     expect(remoteCall).toHaveBeenCalledOnce();
     expect((await post(JSON.stringify({ tool: "ask", approvalGranted: true }), {

@@ -108,7 +108,9 @@ not Preview. It permits only Custom MCP collection/detail reads and an exact
 server-ID call path; completion, abort, timeout, and gateway shutdown revoke it.
 Claude's native auto-allow list covers the three broker wrappers only. The
 broker still enforces tool enablement, server revision, and approval policy:
-`always_ask` calls remain denied until native approval is wired separately.
+the Gateway also rejects a Run-bearer request that claims human approval
+before proxying it under the platform machine token. `always_ask` calls remain
+denied until native approval is wired separately.
 
 ## Agent delivery
 

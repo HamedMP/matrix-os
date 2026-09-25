@@ -7,6 +7,9 @@ const SERVER_ID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
 const DETAIL_PATH = new RegExp(`^/api/mcp-servers/${SERVER_ID}$`);
 const CALL_PATH = new RegExp(`^/api/mcp-servers/${SERVER_ID}/call$`);
 
+/** Set only by Gateway auth after a live scoped Run bearer resolves. */
+export const MATRIX_MCP_RUN_CONTEXT_KEY = "matrixMcpRunCapability";
+
 export const MATRIX_CUSTOM_MCP_TOOLS = [
   "mcp__matrix-integrations__list_custom_mcp_servers",
   "mcp__matrix-integrations__describe_custom_mcp_server",
