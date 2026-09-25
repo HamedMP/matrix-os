@@ -373,6 +373,9 @@ export async function jevEvaluateHandler(
       signal: AbortSignal.timeout(API_TIMEOUT_MS),
     });
     if (!response.ok) {
+      if (response.status === 410) {
+        return errorResult("This Jev result has expired. No classification was produced.");
+      }
       return errorResult("Jev evaluation is currently unavailable. No classification was produced.");
     }
     const result = JevEmailTriageResultSchema.safeParse(await response.json());

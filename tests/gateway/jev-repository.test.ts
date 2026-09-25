@@ -75,6 +75,43 @@ describe("Jev evaluation repository", () => {
       .resolves.toEqual({ kind: "conflict" });
   });
 
+  it("migrates an existing Jev table without discarding completed rows", async () => {
+    await sql`DROP TABLE jev_evaluations`.execute(repository.kysely);
+    await sql`
+      CREATE TABLE jev_evaluations (
+        owner_id TEXT NOT NULL,
+        idempotency_key TEXT NOT NULL,
+        payload_hash TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('pending', 'completed', 'unknown')),
+        result JSONB,
+        created_at TIMESTAMPTZ NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL,
+        PRIMARY KEY (owner_id, idempotency_key),
+        CHECK ((status = 'completed' AND result IS NOT NULL) OR (status <> 'completed' AND result IS NULL))
+      )
+    `.execute(repository.kysely);
+    await repository.kysely.insertInto("jev_evaluations").values({
+      owner_id: key.ownerId, idempotency_key: key.idempotencyKey, payload_hash: key.payloadHash,
+      status: "completed", result: JSON.stringify(completed), created_at: clock, updated_at: clock,
+    }).execute();
+
+    await repository.bootstrap();
+    await repository.bootstrap();
+    await expect(repository.claim(key)).resolves.toEqual({ kind: "completed", result: completed });
+    clock = new Date(clock.getTime() + 7 * 24 * 60 * 60_000 + 1);
+    await expect(repository.claim(key)).resolves.toEqual({ kind: "result_expired" });
+  });
+
+  it("fails closed if stored status is malformed rather than treating it as pending", async () => {
+    await sql`ALTER TABLE jev_evaluations DROP CONSTRAINT jev_evaluations_status_check`.execute(repository.kysely);
+    await sql`
+      INSERT INTO jev_evaluations (owner_id, idempotency_key, payload_hash, status, result)
+      VALUES (${key.ownerId}, ${key.idempotencyKey}, ${key.payloadHash}, 'corrupted', NULL)
+    `.execute(repository.kysely);
+
+    await expect(repository.claim(key)).rejects.toThrow(/invalid Jev evaluation status/i);
+  });
+
   it("releases only matching pending claims", async () => {
     await repository.claim(key);
     await repository.release({ ...key, payloadHash: "b".repeat(64) });

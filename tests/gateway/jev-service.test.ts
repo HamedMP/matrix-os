@@ -24,7 +24,7 @@ const result: JevEmailTriageResult = {
 };
 
 class MemoryStore implements JevEvaluationStore {
-  readonly rows = new Map<string, { hash: string; status: "pending" | "completed" | "unknown"; result?: JevEmailTriageResult }>();
+  readonly rows = new Map<string, { hash: string; status: "pending" | "completed" | "completed_pruned" | "unknown"; result?: JevEmailTriageResult }>();
   async claim(input: { ownerId: string; idempotencyKey: string; payloadHash: string }): Promise<JevEvaluationClaim> {
     const key = `${input.ownerId}:${input.idempotencyKey}`;
     const current = this.rows.get(key);
@@ -34,6 +34,7 @@ class MemoryStore implements JevEvaluationStore {
     }
     if (current.hash !== input.payloadHash) return { kind: "conflict" };
     if (current.status === "completed") return { kind: "completed", result: current.result! };
+    if (current.status === "completed_pruned") return { kind: "result_expired" };
     return { kind: current.status };
   }
   async complete(input: { ownerId: string; idempotencyKey: string; payloadHash: string; result: JevEmailTriageResult }) {
@@ -67,6 +68,20 @@ function provider() {
 }
 
 describe("Jev service idempotency", () => {
+  it("reports an expired completed result without acquiring a credential or dispatching again", async () => {
+    const store = new MemoryStore();
+    const credentialProvider = provider();
+    const fetchFn = vi.fn();
+    const service = createJevService({ store, credentialProvider, fetchFn });
+    const input = { recipe: "email-triage-v1" as const, state: "hello", idempotencyKey: "thread:abc123" };
+    const claim = vi.spyOn(store, "claim").mockResolvedValue({ kind: "result_expired" });
+
+    await expect(service.evaluate("owner_a", input)).rejects.toMatchObject({ code: "result_expired" });
+    expect(claim).toHaveBeenCalledTimes(1);
+    expect(credentialProvider.getCredential).not.toHaveBeenCalled();
+    expect(fetchFn).not.toHaveBeenCalled();
+  });
+
   it("returns a completed owner-scoped result without a second relay dispatch", async () => {
     const store = new MemoryStore();
     const fetchFn = vi.fn(async () => new Response(JSON.stringify(result), {
