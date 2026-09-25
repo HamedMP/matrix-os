@@ -54,8 +54,13 @@ has_hermes_chat_ancestor() {
   done
   return 1
 }
-scoped_token="${MATRIX_AGENT_INTEGRATIONS_TOKEN:-}"
-if [ -z "$scoped_token" ]; then
+if [ "${MATRIX_AGENT_INTEGRATIONS_TOKEN+x}" = x ]; then
+  scoped_token="$MATRIX_AGENT_INTEGRATIONS_TOKEN"
+  if [[ ! "$scoped_token" =~ ^[a-f0-9]{64}$ ]]; then
+    echo "matrix-integrations-mcp: run capability or runtime is invalid" >&2
+    exit 3
+  fi
+else
   scoped_token="$(read_ancestor_capability || true)"
 fi
 if [ "$require_scoped" = true ] && [ -z "$scoped_token" ]; then

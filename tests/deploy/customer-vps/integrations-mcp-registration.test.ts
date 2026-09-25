@@ -20,6 +20,16 @@ describe("customer VPS integrations MCP wiring", () => {
     expect(result.stderr).not.toContain("Matrix authentication is unavailable");
   });
 
+  it.each(["", " ", "invalid-token"])("rejects a present invalid MCP Run token before ancestry or host fallback (%j)", (invalidToken) => {
+    const result = spawnSync("bash", [launcherPath], {
+      encoding: "utf8",
+      env: { PATH: process.env.PATH ?? "", MATRIX_AGENT_INTEGRATIONS_TOKEN: invalidToken },
+    });
+    expect(result.status).toBe(3);
+    expect(result.stderr).toContain("run capability or runtime is invalid");
+    expect(result.stderr).not.toContain("Matrix authentication is unavailable");
+  });
+
   it("ships an executable stdio launcher that isolates host credentials and forwards a scoped Run capability", async () => {
     const launcher = await readFile(launcherPath, "utf8");
 
