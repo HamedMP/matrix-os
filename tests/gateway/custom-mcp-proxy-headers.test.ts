@@ -30,6 +30,7 @@ describe("production Custom MCP proxy header provenance", () => {
     const request = (token: string) => app.request(path, { method: "POST", headers: {
       authorization: `Bearer ${token}`, "x-matrix-mcp-run-id": "run_forged",
       "x-matrix-custom-mcp-approval-proof": "forged-proof", host: "forged.test",
+      "x-matrix-integration-read-scope": "read",
       "content-type": "application/json",
     }, body });
     const scoped = await request(capability.token);
@@ -41,6 +42,7 @@ describe("production Custom MCP proxy header provenance", () => {
     });
     const scopedHeaders = new Headers(upstream.mock.calls[0]?.[1]?.headers);
     expect(scopedHeaders.has("x-matrix-custom-mcp-approval-proof")).toBe(false);
+    expect(scopedHeaders.has("x-matrix-integration-read-scope")).toBe(false);
     expect(scopedHeaders.has("host")).toBe(false);
 
     const generic = await request("machine-bearer");
@@ -48,7 +50,42 @@ describe("production Custom MCP proxy header provenance", () => {
     const genericHeaders = new Headers(upstream.mock.calls[1]?.[1]?.headers);
     expect(genericHeaders.has("x-matrix-mcp-run-id")).toBe(false);
     expect(genericHeaders.has("x-matrix-custom-mcp-approval-proof")).toBe(false);
+    expect(genericHeaders.has("x-matrix-integration-read-scope")).toBe(false);
     expect(upstream).toHaveBeenCalledTimes(2);
+    registry.close();
+  });
+
+  it("stamps read scope only from the live integration Run and never forwards MCP Run claims", async () => {
+    const registry = createMatrixMcpCapabilityRegistry({ configuredOwnerId: "owner" });
+    const capability = registry.issue({ owner: { type: "personal", ownerId: "owner" },
+      runId: "read_run", scope: "integration_read" })!;
+    const upstream = vi.fn(async (_url: string | URL | Request, init?: RequestInit) =>
+      new Response(JSON.stringify(Object.fromEntries(new Headers(init?.headers))), {
+        headers: { "content-type": "application/json" },
+      }));
+    const app = new Hono();
+    app.use("*", authMiddleware("machine-bearer", { resolveMatrixMcpRunContext: registry.resolveRunContext }));
+    app.get("/api/integrations/agent-catalog", (context) => proxyIntegrationRequest(context, {
+      targetBase: "https://platform.test/internal/containers/runtime/integrations",
+      machineToken: "platform-machine-bearer",
+      fetcher: upstream,
+    }));
+
+    const scoped = await app.request("/api/integrations/agent-catalog", { headers: {
+      authorization: `Bearer ${capability.token}`,
+      "x-matrix-integration-read-scope": "forged",
+      "x-matrix-mcp-run-id": "run_forged",
+      "x-matrix-custom-mcp-approval-proof": "forged-proof",
+      host: "forged.test",
+    } });
+    expect(scoped.status).toBe(200);
+    const headers = new Headers(upstream.mock.calls[0]?.[1]?.headers);
+    expect(headers.get("x-matrix-integration-read-scope")).toBe("read");
+    expect(headers.get("x-platform-user-id")).toBe("owner");
+    expect(headers.has("x-platform-verified")).toBe(true);
+    expect(headers.has("x-matrix-mcp-run-id")).toBe(false);
+    expect(headers.has("x-matrix-custom-mcp-approval-proof")).toBe(false);
+    expect(headers.has("host")).toBe(false);
     registry.close();
   });
 });
