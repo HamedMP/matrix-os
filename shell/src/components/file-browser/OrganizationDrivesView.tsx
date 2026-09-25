@@ -21,7 +21,8 @@ const OrganizationsSchema = z.object({ organizations: z.array(z.object({
 const GrantsSchema = z.array(CollaborationGrantSchema).max(100);
 
 type DriveOption = { scopeId: string; organizationId: string; name: string;
-  state: "ready" | "enable" | "pending"; grantId?: string; snapshot?: z.infer<typeof OrganizationDriveSnapshotSchema> };
+  state: "ready" | "enable" | "pending"; canManage?: boolean; grantId?: string;
+  snapshot?: z.infer<typeof OrganizationDriveSnapshotSchema> };
 
 function base(scopeId: string) { return `/api/collaboration/scopes/${scopeId}/drive`; }
 
@@ -30,10 +31,10 @@ async function inspectScope(api: CollaborationDirectApi, scopeId: string, organi
   if (scope.kind !== "folder" || scope.organizationId !== organizationId) return null;
   try {
     const snapshot = OrganizationDriveSnapshotSchema.parse(await api.direct.request(scopeId, "GET", base(scopeId)));
-    return { scopeId, organizationId, name, state: "ready", snapshot };
+    return { scopeId, organizationId, name, state: "ready", canManage: scope.role === "owner", snapshot };
   } catch (error: unknown) {
     // An existing folder share can be selected as the drive by its owner.
-    if (scope.role === "owner") return { scopeId, organizationId, name, state: "enable" };
+    if (scope.role === "owner") return { scopeId, organizationId, name, state: "enable", canManage: true };
     console.warn("[organization-drive] scope inspection unavailable", error instanceof Error ? error.name : "UnknownError");
     return null;
   }
@@ -41,13 +42,10 @@ async function inspectScope(api: CollaborationDirectApi, scopeId: string, organi
 
 async function loadOptions(api: CollaborationDirectApi): Promise<DriveOption[]> {
   const [inbox, shared, organizations] = await Promise.all([
-    api.get("/api/collaboration/inbox?limit=100"),
-    api.get("/api/collaboration/shared?limit=100"),
-    api.get("/api/organizations"),
+    loadDiscovery(api, "inbox"), loadDiscovery(api, "shared"), api.get("/api/organizations"),
   ]);
   const names = new Map(OrganizationsSchema.parse(organizations).organizations.map((org) => [org.organizationId, org.name]));
-  const items = [...CollaborationDiscoveryResponseSchema.parse(inbox).items,
-    ...CollaborationDiscoveryResponseSchema.parse(shared).items];
+  const items = [...inbox, ...shared];
   const seen = new Set<string>();
   const options: DriveOption[] = [];
   const accepted: Array<{ scopeId: string; organizationId: string; name: string }> = [];
@@ -61,7 +59,7 @@ async function loadOptions(api: CollaborationDirectApi): Promise<DriveOption[]> 
       continue;
     }
     if (item.status !== "accepted") continue;
-    if (accepted.length < 32) accepted.push({ scopeId: item.scopeId, organizationId: item.organizationId, name });
+    accepted.push({ scopeId: item.scopeId, organizationId: item.organizationId, name });
   }
   for (let offset = 0; offset < accepted.length; offset += 4) {
     const batch = await Promise.all(accepted.slice(offset, offset + 4).map(async (item) => {
@@ -74,6 +72,22 @@ async function loadOptions(api: CollaborationDirectApi): Promise<DriveOption[]> 
     for (const option of batch) if (option) options.push(option);
   }
   return options;
+}
+
+async function loadDiscovery(api: CollaborationDirectApi, kind: "inbox" | "shared") {
+  const items: Array<z.infer<typeof CollaborationDiscoveryResponseSchema>["items"][number]> = [];
+  const seen = new Set<string>();
+  let cursor: string | undefined;
+  for (let pageNumber = 0; pageNumber < 100; pageNumber += 1) {
+    const suffix = cursor ? `&cursor=${encodeURIComponent(cursor)}` : "";
+    const page = CollaborationDiscoveryResponseSchema.parse(await api.get(`/api/collaboration/${kind}?limit=100${suffix}`));
+    items.push(...page.items);
+    if (!page.nextCursor) return items;
+    if (seen.has(page.nextCursor)) throw new Error("CollaborationDiscoveryCursorLoop");
+    seen.add(page.nextCursor);
+    cursor = page.nextCursor;
+  }
+  throw new Error("CollaborationDiscoveryPageLimit");
 }
 
 function safeError(error: unknown): string {
@@ -105,6 +119,12 @@ export function OrganizationDrivesView() {
   }, [api]);
   // react-doctor-disable-next-line react-doctor/no-fetch-in-effect -- current organization shares and scope sessions are browser identity state.
   useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    if (!api || !selected) return;
+    const unsubscribe = api.subscribe?.(selected, () => load(), () => setError("Organization drive is unavailable. Try again."));
+    const timer = setInterval(() => { void load(); }, 30_000);
+    return () => { unsubscribe?.(); clearInterval(timer); };
+  }, [api, selected, load]);
   const active = options.find((option) => option.scopeId === selected);
 
   const run = async (action: () => Promise<void>) => {
@@ -127,17 +147,33 @@ export function OrganizationDrivesView() {
     if (!api) return;
     const path = base(option.scopeId);
     await api.direct.request(option.scopeId, "PUT", path, {});
-    const scope = CollaborationScopeSchema.parse(await api.direct.request(option.scopeId, "GET",
-      `/api/collaboration/scopes/${option.scopeId}`));
-    const grants = GrantsSchema.parse(await api.direct.request(option.scopeId, "GET",
-      `/api/collaboration/scopes/${option.scopeId}/grants`));
-    if (!grants.some((grant) => grant.audience.kind === "organization" && grant.state !== "revoked" && grant.state !== "expired")) {
-      await api.direct.request(option.scopeId, "POST", `/api/collaboration/scopes/${option.scopeId}/grants`, {
+    await ensureContributorGrant(api, option.scopeId);
+  });
+
+  const share = (option: DriveOption) => run(async () => {
+    if (!api) return;
+    await ensureContributorGrant(api, option.scopeId);
+  });
+
+  async function ensureContributorGrant(api: CollaborationDirectApi, scopeId: string) {
+    const scope = CollaborationScopeSchema.parse(await api.direct.request(scopeId, "GET",
+      `/api/collaboration/scopes/${scopeId}`));
+    const grants = GrantsSchema.parse(await api.direct.request(scopeId, "GET",
+      `/api/collaboration/scopes/${scopeId}/grants`));
+    const activeGrant = grants.find((grant) => grant.audience.kind === "organization"
+      && grant.state !== "revoked" && grant.state !== "expired");
+    if (activeGrant?.preset === "viewer") {
+      await api.direct.request(scopeId, "PATCH", `/api/collaboration/scopes/${scopeId}/grants/${activeGrant.id}`, {
+        clientRequestId: crypto.randomUUID(), expectedRevision: scope.revision,
+        expectedGrantRevision: activeGrant.revision, preset: "contributor",
+      });
+    } else if (!activeGrant) {
+      await api.direct.request(scopeId, "POST", `/api/collaboration/scopes/${scopeId}/grants`, {
         clientRequestId: crypto.randomUUID(), expectedRevision: scope.revision,
         audience: { kind: "organization" }, preset: "contributor",
       });
     }
-  });
+  }
 
   const upload = (option: DriveOption, file: File) => run(async () => {
     if (!api) return;
@@ -218,6 +254,8 @@ export function OrganizationDrivesView() {
           {active.state === "enable" && <button type="button" disabled={busy} onClick={() => void enable(active)}
             className="rounded border px-3 py-1.5">Enable drive for organization</button>}
           {active.snapshot && <>
+            {active.canManage && <button type="button" disabled={busy} onClick={() => void share(active)}
+              className="mb-3 rounded border px-3 py-1.5">Ensure organization can upload</button>}
             <p className="mb-3 text-xs text-muted-foreground">
               {(active.snapshot.usedBytes / 1_000_000_000).toFixed(2)} GB of {(active.snapshot.quotaBytes / 1_000_000_000_000).toFixed(1)} TB used
             </p>
