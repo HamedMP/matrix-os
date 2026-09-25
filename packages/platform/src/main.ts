@@ -1,5 +1,5 @@
 import { createInternalIntegrationGuard } from './internal-integration-guard.js';
-import { canClerkUserAccessMachine } from './customer-vps-preview.js';
+import { canClerkUserAccessMachine, getActivePreviewMachineByHandle } from './customer-vps-preview.js';
 import { Hono, type Context } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import {
@@ -676,16 +676,21 @@ export function createApp(deps: {
 
       c.set('internalContainerHandle', handle);
       return integrationGuard.middleware(c, async () => {
-        // Customer and preview VPSes are persisted in user_machines. Keep the
-        // legacy containers lookup only as a compatibility fallback for older
-        // runtimes that have not migrated yet.
+        // Preview and customer slots can share a handle, while their machine
+        // bearer is derived from that handle alone. Check both preview slots
+        // before an unqualified lookup can select a customer primary row.
+        if (await getActivePreviewMachineByHandle(db, handle)) {
+          c.res = c.json({ error: 'Forbidden' }, 403);
+          return;
+        }
+        // Customer VPSes are persisted in user_machines. Keep the legacy
+        // containers lookup for older runtimes that have not migrated yet.
         const machine = await getRunningUserMachineByHandle(db, handle);
         const record = machine ?? (await getContainer(db, handle));
         if (!record?.clerkUserId) {
           c.res = c.json({ error: 'Unknown handle' }, 404);
           return;
         }
-
         let actorId = record.clerkUserId;
         const delegatedId = c.req.header('x-platform-user-id');
         const delegatedProof = c.req.header('x-platform-verified');

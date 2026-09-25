@@ -90,6 +90,16 @@ blocks subsequent HTTP requests and new WebSocket handshakes after that deploy.
 An already-established WebSocket remains connected until it disconnects or is
 closed; active connection draining is intentionally deferred.
 
+Preview VPSes cannot use machine-proxied personal Integrations or Custom MCP
+accounts. A collaborator with a shared Terminal can read the machine credential,
+so the platform rejects personal-account requests on both internal routes,
+including requests claiming the owner or another collaborator. An isolated
+platform-preview Custom MCP fixture uses a synthetic owner and remains available.
+Personal integrations remain
+available through the platform's Clerk-authenticated routes under each actor's own
+account. Use synthetic fixtures for in-VPS integration acceptance tests until a
+user-bound capability is available that the shared machine cannot mint.
+
 ### Shared preview Terminal authorization
 
 The platform database machine record is authoritative for preview classification

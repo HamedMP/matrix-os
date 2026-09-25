@@ -3,6 +3,7 @@ import { Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { z } from 'zod/v4';
 import { getContainer, getRunningUserMachineByHandle, type PlatformDB } from './db.js';
+import { getActivePreviewMachineByHandle } from './customer-vps-preview.js';
 import { buildPlatformVerificationToken, timingSafeTokenEquals } from './platform-token.js';
 import { HANDLE_PATTERN } from './platform-route-utils.js';
 
@@ -66,7 +67,19 @@ export function registerCustomMcpRoutes(app: Hono<any>, options: {
     if (!timingSafeTokenEquals(token, buildPlatformVerificationToken(handle, options.platformSecret))) {
       return c.json({ error: 'Unauthorized' }, 401);
     }
-    const record = (await getRunningUserMachineByHandle(options.db, handle)) ?? (await getContainer(options.db, handle));
+    // The handle-derived bearer cannot distinguish a preview from a customer
+    // primary row with the same handle. Select a preview slot first.
+    const preview = await getActivePreviewMachineByHandle(options.db, handle);
+    // Shared preview Terminals can obtain that bearer. The isolated platform
+    // preview fixture is the only synthetic account allowed through.
+    const isolatedFixture = preview
+      && preview.status === 'running'
+      && preview.runtimeSlot === handle
+      && /^pr-[1-9][0-9]{0,8}$/.test(handle)
+      && preview.clerkUserId === `chat-share-preview-fixture-${handle}`;
+    if (preview && !isolatedFixture) return c.json({ error: 'Forbidden' }, 403);
+    const record = preview ?? (await getRunningUserMachineByHandle(options.db, handle))
+      ?? (await getContainer(options.db, handle));
     if (!record?.clerkUserId) return c.json({ error: 'Unknown handle' }, 404);
     c.set('internalContainerHandle', handle);
     c.set('internalContainerClerkUserId', record.clerkUserId);
