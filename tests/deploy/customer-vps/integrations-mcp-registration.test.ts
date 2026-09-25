@@ -30,6 +30,25 @@ describe("customer VPS integrations MCP wiring", () => {
     expect(result.stderr).not.toContain("Matrix authentication is unavailable");
   });
 
+  it("accepts bounded host bearer syntax on the installed macOS Bash used for launcher checks", async () => {
+    const launcher = await readFile(launcherPath, "utf8");
+    const validator = launcher.match(/^valid_host_bearer\(\) \{[\s\S]*?^\}/m)?.[0];
+    expect(validator).toBeDefined();
+    for (const [token, valid] of [
+      ["A".repeat(15), false],
+      ["A".repeat(16), true],
+      ["A".repeat(512), true],
+      ["A".repeat(513), false],
+      ["A".repeat(16) + "!", false],
+    ] as const) {
+      const result = spawnSync("bash", ["-c", `${validator}\nvalid_host_bearer "$TOKEN"`], {
+        encoding: "utf8", env: { PATH: process.env.PATH ?? "", TOKEN: token },
+      });
+      expect(result.status).toBe(valid ? 0 : 1);
+    }
+    expect(launcher).toContain('valid_host_bearer "$MATRIX_AUTH_TOKEN_VALUE"');
+  });
+
   it("ships an executable stdio launcher that isolates host credentials and forwards a scoped Run capability", async () => {
     const launcher = await readFile(launcherPath, "utf8");
 
