@@ -930,6 +930,10 @@ describe("createHomeMirror", () => {
       await writeFile(join(tmpRoot, ".claude", ".credentials.json"), "oauth secret");
       await writeFile(join(tmpRoot, "notes", "client.pem"), "private pem");
       await writeFile(join(tmpRoot, "notes", "safe.md"), "safe");
+      await writeFile(
+        join(tmpRoot, ".syncignore"),
+        "!.ssh/id_ed25519\n!.claude/.credentials.json\n!notes/client.pem\n",
+      );
 
       const mirror = createHomeMirror({
         r2,
@@ -951,14 +955,19 @@ describe("createHomeMirror", () => {
       await mirror.stop();
     });
 
-    it("applies owner .syncignore rules to startup, explicit pushes, and remote broadcasts", async () => {
+    it("applies owner .syncignore globs and negations to startup, explicit pushes, and remote broadcasts", async () => {
       await mkdir(join(tmpRoot, "projects", "large"), { recursive: true });
       await mkdir(join(tmpRoot, "buzz"), { recursive: true });
       await mkdir(join(tmpRoot, "notes"), { recursive: true });
-      await writeFile(join(tmpRoot, ".syncignore"), "projects/\nbuzz/\n*.bak\n");
+      await writeFile(
+        join(tmpRoot, ".syncignore"),
+        "projects/\nbuzz/\ncredentials.*\n*.bak\n!keep.bak\n",
+      );
       await writeFile(join(tmpRoot, "projects", "large", "source.ts"), "ignored project");
       await writeFile(join(tmpRoot, "buzz", "generated.bin"), "ignored tree");
       await writeFile(join(tmpRoot, "notes", "old.bak"), "ignored backup");
+      await writeFile(join(tmpRoot, "notes", "keep.bak"), "restored backup");
+      await writeFile(join(tmpRoot, "notes", "credentials.json"), "ignored credential glob");
       await writeFile(join(tmpRoot, "notes", "safe.md"), "safe");
 
       const mirror = createHomeMirror({
@@ -978,6 +987,8 @@ describe("createHomeMirror", () => {
       expect(manifest?.files["projects/large/source.ts"]).toBeUndefined();
       expect(manifest?.files["buzz/generated.bin"]).toBeUndefined();
       expect(manifest?.files["notes/old.bak"]).toBeUndefined();
+      expect(manifest?.files["notes/credentials.json"]).toBeUndefined();
+      expect(manifest?.files["notes/keep.bak"]?.objectKey).toBeDefined();
 
       await writeFile(join(tmpRoot, "projects", "large", "later.ts"), "ignored later");
       await mirror.pushLocalFile("projects/large/later.ts");
@@ -996,6 +1007,89 @@ describe("createHomeMirror", () => {
       });
       await settle(80);
       await expect(stat(join(tmpRoot, "projects", "large", "remote.ts"))).rejects.toThrow(/ENOENT/);
+      await mirror.stop();
+    });
+
+    it("loads a remote .syncignore before the initial pull and reloads later remote updates", async () => {
+      const initialIgnore = Buffer.from("private/\n");
+      const initialSecret = Buffer.from("must stay remote");
+      const ignoreKey = "matrixos-sync/alice/files/.syncignore";
+      const initialSecretKey = "matrixos-sync/alice/files/private/secret.txt";
+      r2.store.set(ignoreKey, initialIgnore);
+      r2.store.set(initialSecretKey, initialSecret);
+      r2.store.set(
+        "matrixos-sync/alice/manifest.json",
+        Buffer.from(JSON.stringify({
+          version: 2,
+          manifestVersion: 1,
+          files: {
+            ".syncignore": {
+              hash: sha256(initialIgnore),
+              size: initialIgnore.length,
+              mtime: Date.now(),
+              peerId: "laptop-1",
+              version: 1,
+              objectKey: ignoreKey,
+            },
+            "private/secret.txt": {
+              hash: sha256(initialSecret),
+              size: initialSecret.length,
+              mtime: Date.now(),
+              peerId: "laptop-1",
+              version: 1,
+              objectKey: initialSecretKey,
+            },
+          },
+        })),
+      );
+
+      const mirror = createHomeMirror({
+        r2,
+        manifestDb: db,
+        homeRoot: tmpRoot,
+        userId: "alice",
+        peerId: "gateway-alice",
+        peerRegistry: registry,
+        logger: { info: () => {}, error: () => {} },
+        watchLocalChanges: false,
+      });
+      await mirror.start();
+
+      expect(await readFile(join(tmpRoot, ".syncignore"), "utf8")).toBe("private/\n");
+      await expect(stat(join(tmpRoot, "private", "secret.txt"))).rejects.toThrow(/ENOENT/);
+
+      const updatedIgnore = Buffer.from("later/\n");
+      r2.store.set(ignoreKey, updatedIgnore);
+      registry.broadcastChange("alice", "laptop-1", {
+        type: "sync:change",
+        files: [{
+          path: ".syncignore",
+          hash: sha256(updatedIgnore),
+          size: updatedIgnore.length,
+          action: "update",
+        }],
+        peerId: "laptop-1",
+        manifestVersion: 2,
+      });
+      await settle(80);
+
+      const later = Buffer.from("still ignored");
+      const laterKey = "matrixos-sync/alice/files/later/remote.txt";
+      r2.store.set(laterKey, later);
+      registry.broadcastChange("alice", "laptop-1", {
+        type: "sync:change",
+        files: [{
+          path: "later/remote.txt",
+          hash: sha256(later),
+          size: later.length,
+          action: "update",
+        }],
+        peerId: "laptop-1",
+        manifestVersion: 3,
+      });
+      await settle(80);
+
+      await expect(stat(join(tmpRoot, "later", "remote.txt"))).rejects.toThrow(/ENOENT/);
       await mirror.stop();
     });
 

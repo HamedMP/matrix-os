@@ -181,8 +181,8 @@ its `matrix shell connect --project <project> --tab <tab-id>` command immediatel
 
 `matrix instance info --json` reads authenticated instance metadata from the gateway. A successful
 structured response confirms metadata reachability, not command execution. Use `matrix doctor` and
-a separate bounded `matrix run --project main -- true` tab when a workflow requires an execution
-health check; do not infer execution readiness from `matrix instance info`.
+a separate bounded one-shot `matrix run --project main -- true` command when a workflow requires an
+execution health check; do not infer execution readiness from `matrix instance info`.
 
 Use the reserved `main` workspace for setup workflows so the user, Matrix web terminal, Claude, Codex, or Hermes can all view the same tab:
 

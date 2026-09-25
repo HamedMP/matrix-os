@@ -104,6 +104,18 @@ describe("waitForHomeMirrorReady", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it("fails immediately when an unconfigured gateway returns disabled with 503", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      jsonResponse({ homeMirror: { state: "disabled" } }, 503),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      waitForHomeMirrorReady({ gatewayUrl, token, logger: silentLogger }),
+    ).rejects.toThrow(/not enabled/);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it("fails clearly when the gateway does not expose home-mirror readiness", async () => {
     const fetchMock = vi.fn().mockResolvedValueOnce(
       jsonResponse({ manifestVersion: 2, fileCount: 3 }),

@@ -4,6 +4,11 @@ import { lstat, mkdir, open, readdir, realpath, rename, stat, unlink, writeFile 
 import { dirname, join, relative, sep } from "node:path";
 import { watch, type FSWatcher } from "chokidar";
 import { z } from "zod/v4";
+import {
+  isIgnored as isSyncIgnored,
+  parseSyncIgnore,
+  type SyncIgnorePatterns,
+} from "@finnaai/matrix";
 import type { SyncScope } from "@matrix-os/contracts";
 import {
   applyCommitToManifest,
@@ -154,39 +159,25 @@ function createSerialQueue(onError: (err: unknown) => void): {
   };
 }
 
-function matchesUserIgnorePattern(normalizedPath: string, pattern: string): boolean {
-  const normalizedPattern = pattern.replace(/^\/+/, "");
-  if (!normalizedPattern) return false;
-  if (normalizedPattern.endsWith("/")) {
-    const dir = normalizedPattern.slice(0, -1);
-    if (dir.includes("/")) {
-      return normalizedPath === dir || normalizedPath.startsWith(`${dir}/`);
-    }
-    return normalizedPath.split("/").includes(dir);
-  }
-  if (normalizedPattern.startsWith("*.") && !normalizedPattern.slice(2).includes("*")) {
-    return normalizedPath.toLowerCase().endsWith(normalizedPattern.slice(1).toLowerCase());
-  }
-  return normalizedPath === normalizedPattern || normalizedPath.startsWith(`${normalizedPattern}/`);
-}
-
-function parseUserIgnorePatterns(content: string): string[] {
-  const patterns: string[] = [];
+function parseUserIgnorePatterns(content: string): SyncIgnorePatterns {
+  let patternCount = 0;
   for (const rawLine of content.split("\n")) {
-    const pattern = rawLine.trim();
-    if (!pattern || pattern.startsWith("#") || pattern.startsWith("!")) continue;
+    const line = rawLine.trim();
+    if (!line || line.startsWith("#")) continue;
+    const pattern = line.startsWith("!") ? line.slice(1).trim() : line;
+    if (!pattern) continue;
     if (pattern.length > SYNCIGNORE_MAX_PATTERN_LENGTH) {
       throw new Error(".syncignore contains an overlong pattern");
     }
-    patterns.push(pattern);
-    if (patterns.length > SYNCIGNORE_MAX_PATTERNS) {
+    patternCount++;
+    if (patternCount > SYNCIGNORE_MAX_PATTERNS) {
       throw new Error(`.syncignore exceeds ${SYNCIGNORE_MAX_PATTERNS} patterns`);
     }
   }
-  return patterns;
+  return parseSyncIgnore(content);
 }
 
-async function loadUserIgnorePatterns(homeRoot: string): Promise<string[]> {
+async function loadUserIgnorePatterns(homeRoot: string): Promise<SyncIgnorePatterns> {
   const path = join(homeRoot, ".syncignore");
   let handle: Awaited<ReturnType<typeof open>>;
   try {
@@ -196,14 +187,14 @@ async function loadUserIgnorePatterns(homeRoot: string): Promise<string[]> {
       err instanceof Error && "code" in err &&
       ["ENOENT", "ELOOP"].includes(String((err as NodeJS.ErrnoException).code))
     ) {
-      return [];
+      return parseSyncIgnore("");
     }
     throw err;
   }
 
   try {
     const info = await handle.stat();
-    if (!info.isFile()) return [];
+    if (!info.isFile()) return parseSyncIgnore("");
     if (info.size > SYNCIGNORE_MAX_BYTES) {
       throw new Error(`.syncignore exceeds ${SYNCIGNORE_MAX_BYTES} bytes`);
     }
@@ -221,7 +212,7 @@ async function loadUserIgnorePatterns(homeRoot: string): Promise<string[]> {
 function isIgnored(
   relPath: string,
   extraDirs?: Set<string>,
-  userPatterns: readonly string[] = [],
+  userPatterns: SyncIgnorePatterns = parseSyncIgnore(""),
 ): boolean {
   // Treat the home root itself ("") as NOT ignored -- otherwise chokidar
   // refuses to descend into it. Only ignore actual entries.
@@ -241,7 +232,11 @@ function isIgnored(
   }
   const last = segments[segments.length - 1] ?? "";
   if (DEFAULT_IGNORE_PATTERNS.some((p) => p.test(last))) return true;
-  return userPatterns.some((pattern) => matchesUserIgnorePattern(normalizedPath, pattern));
+  // The ignore file itself must always remain synchronized so every peer can
+  // converge on the same owner policy. Hard exclusions above remain
+  // non-overridable even when the owner uses a negation pattern.
+  if (normalizedPath === ".syncignore") return false;
+  return isSyncIgnored(normalizedPath, userPatterns);
 }
 
 function hashFileStream(absPath: string): Promise<string> {
@@ -419,10 +414,14 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
   let stopRequested = false;
   let subscribed = false;
   let resolvedHomeRoot = config.homeRoot;
-  let userIgnorePatterns: string[] = [];
+  let userIgnorePatterns = parseSyncIgnore("");
 
   const ignored = (relPath: string): boolean =>
     isIgnored(relPath, extraIgnore, userIgnorePatterns);
+
+  async function reloadUserIgnorePatterns(): Promise<void> {
+    userIgnorePatterns = await loadUserIgnorePatterns(config.homeRoot);
+  }
 
   function assertWithinResolvedHomeRoot(resolvedPath: string): void {
     if (
@@ -527,6 +526,9 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
 
   async function pushFile(relPath: string): Promise<void> {
     const safeRelPath = normalizeRelativePath(config.userId, relPath);
+    if (safeRelPath === ".syncignore") {
+      await reloadUserIgnorePatterns();
+    }
     if (ignored(safeRelPath)) return;
     const absPath = join(config.homeRoot, safeRelPath);
 
@@ -575,6 +577,9 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
 
   async function pushDelete(relPath: string): Promise<void> {
     const safeRelPath = normalizeRelativePath(config.userId, relPath);
+    if (safeRelPath === ".syncignore") {
+      await reloadUserIgnorePatterns();
+    }
     if (ignored(safeRelPath)) return;
     await enqueue(async () => {
       await withManifestLock(async (lockedStore) => {
@@ -715,7 +720,19 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
     const files = existing.manifest.files ?? {};
     let pulled = 0;
     let failed = 0;
+    const remoteIgnore = files[".syncignore"];
+    if (remoteIgnore?.hash && !remoteIgnore.deleted) {
+      try {
+        await pullFile(".syncignore", remoteIgnore);
+        await reloadUserIgnorePatterns();
+        pulled++;
+      } catch (err: unknown) {
+        log.error("pull failed for .syncignore:", errorMessage(err));
+        throw new Error("initial pull incomplete: .syncignore could not be applied");
+      }
+    }
     for (const [relPath, entry] of Object.entries(files)) {
+      if (relPath === ".syncignore") continue;
       if (!entry.hash || entry.deleted || ignored(relPath)) continue;
       try {
         await pullFile(relPath, entry);
@@ -900,9 +917,13 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
   // back up to R2. Errors are logged per-file; one bad file doesn't stop
   // the rest. Returns after all files have been processed.
   async function handleRemoteChange(msg: z.infer<typeof RemoteChangeMessageSchema>): Promise<void> {
-    const files = msg.files;
+    // Apply policy changes before other files in the same broadcast so a
+    // freshly restored or updated .syncignore governs the whole batch.
+    const files = [...msg.files].sort((left, right) =>
+      Number(right.path === ".syncignore") - Number(left.path === ".syncignore")
+    );
     for (const f of files) {
-      if (!f.path || ignored(f.path)) continue;
+      if (!f.path || (f.path !== ".syncignore" && ignored(f.path))) continue;
       try {
         if (f.action === "delete") {
           await pullDelete(f.path);
@@ -915,8 +936,12 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
             version: 0,
           } as ManifestEntry);
         }
+        if (f.path === ".syncignore") {
+          await reloadUserIgnorePatterns();
+        }
       } catch (err: unknown) {
         log.error(`remote-change failed for ${f.path}:`, errorMessage(err));
+        if (f.path === ".syncignore") break;
       }
     }
   }
@@ -978,7 +1003,7 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
         resolvedHomeRoot = config.homeRoot;
       }
       if (stopRequested) return;
-      userIgnorePatterns = await loadUserIgnorePatterns(config.homeRoot);
+      await reloadUserIgnorePatterns();
       if (stopRequested) return;
       await cleanupTempFiles(config.homeRoot);
       if (stopRequested) return;

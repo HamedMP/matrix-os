@@ -37,7 +37,7 @@ matrix status
 matrix instance info --json
 ```
 
-`matrix instance info --json` reads authenticated instance metadata from the gateway. A successful structured response confirms metadata reachability, not command execution. Use `matrix doctor` and a separate bounded `matrix run --project main -- true` tab when execution health is required; do not infer execution readiness from `matrix instance info`.
+`matrix instance info --json` reads authenticated instance metadata from the gateway. A successful structured response confirms metadata reachability, not command execution. Use `matrix doctor` and a separate bounded one-shot `matrix run --project main -- true` command when execution health is required; do not infer execution readiness from `matrix instance info`.
 
 If login is missing or expired, run `matrix login --profile cloud` and let the user complete browser/device authentication. If the instance is not provisioned, use `https://app.matrix-os.com` and wait until it is ready.
 
