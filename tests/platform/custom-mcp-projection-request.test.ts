@@ -4,7 +4,7 @@ import { createCustomMcpProjectionRequest } from '../../packages/platform/src/cu
 import { buildPlatformVerificationToken } from '../../packages/platform/src/platform-token.js';
 
 const user: Pick<UsersTable, 'handle' | 'clerk_id'> = { handle: 'pr-1733', clerk_id: 'user_fixture' };
-const machine = { status: 'running', publicIPv4: '8.8.8.8', clerkUserId: user.clerk_id };
+const machine = { status: 'running', publicIPv4: '8.8.8.8', clerkUserId: user.clerk_id, handle: user.handle };
 const platformSecret = 'preview-only-platform-secret';
 function setup(owner = user, runtime = machine) {
   const fetchFn = vi.fn(async () => new Response(JSON.stringify({ ok: true }), { status: 200 }));
@@ -20,6 +20,18 @@ describe('Custom MCP projection request with real database row shape', () => {
       method: 'POST', redirect: 'error', signal: expect.any(AbortSignal), body: '{"id":"server"}',
       headers: expect.objectContaining({ 'x-matrix-clerk-user-id': user.clerk_id,
         authorization: `Bearer ${buildPlatformVerificationToken(user.handle, platformSecret)}` }),
+    }));
+  });
+
+  it('signs the actual preview runtime handle instead of its isolated account key', async () => {
+    const fixture = { handle: '~preview:pr-1733', clerk_id: 'chat-share-preview-fixture-pr-1733' };
+    const runtime = { ...machine, handle: 'pr-1733', clerkUserId: fixture.clerk_id };
+    const { request, fetchFn } = setup(fixture, runtime);
+    await expect(request('user-id', 'GET')).resolves.toEqual({ ok: true });
+    expect(fetchFn).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
+      headers: expect.objectContaining({
+        authorization: `Bearer ${buildPlatformVerificationToken(runtime.handle, platformSecret)}`,
+      }),
     }));
   });
 

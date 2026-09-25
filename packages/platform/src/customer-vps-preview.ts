@@ -1,4 +1,4 @@
-import type { UserMachineRecord } from './db.js';
+import { getActiveUserMachineByHandle, type PlatformDB, type UserMachineRecord } from './db.js';
 import { CustomerVpsError } from './customer-vps-errors.js';
 import { PREVIEW_RUNTIME_SLOT_PATTERN } from './customer-vps-schema.js';
 
@@ -8,6 +8,19 @@ export function isPreviewMachine(
   return machine.provisioningClass === 'preview'
     && PREVIEW_RUNTIME_SLOT_PATTERN.test(machine.handle)
     && (machine.runtimeSlot === machine.handle || machine.runtimeSlot === 'preview');
+}
+
+/** Find a preview even when a customer primary machine shares its handle. */
+export async function getActivePreviewMachineByHandle(
+  db: PlatformDB,
+  handle: string,
+): Promise<UserMachineRecord | undefined> {
+  if (!PREVIEW_RUNTIME_SLOT_PATTERN.test(handle)) return undefined;
+  for (const runtimeSlot of [handle, 'preview']) {
+    const machine = await getActiveUserMachineByHandle(db, handle, runtimeSlot);
+    if (machine && isPreviewMachine(machine)) return machine;
+  }
+  return undefined;
 }
 
 export function canClerkUserAccessMachine(

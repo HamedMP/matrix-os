@@ -64,6 +64,7 @@ import {
 } from './r2-capability.js';
 import { bootstrapPlatformCollaboration } from './collaboration/bootstrap.js';
 import type { PlatformCollaborationComposition } from './collaboration/wiring.js';
+import { getCustomMcpProjectionMachine, resolveCustomMcpUserIdForMachine } from './custom-mcp-route-registration.js';
 import { createSpeechRuntimeRoutes } from './speech/routes.js';
 import {
   PlatformSpeechConfigError,
@@ -565,23 +566,11 @@ async function startPlatformServerWithCleanup(
     registerCustomMcpStartupCleanup(closeCustomMcpDb);
     await customDb.migrate();
 
-    const resolveCustomMcpUserId = async (clerkUserId: string | undefined, handle: string | undefined) => {
-      if (!clerkUserId || !handle) return null;
-      const existing = await customDb.getUserByClerkId(clerkUserId);
-      if (existing) return existing.id;
-      const owner = (await getRunningUserMachineByHandle(db, handle)) ?? (await getContainer(db, handle));
-      if (!owner || owner.clerkUserId !== clerkUserId) return null;
-      return (await customDb.ensureUser({
-        clerkId: clerkUserId,
-        handle,
-        displayName: handle,
-        email: `${handle}@matrix-os.local`,
-        containerId: `platform:${clerkUserId}`,
-      })).id;
-    };
+    const resolveCustomMcpUserId = (clerkUserId: string | undefined, handle: string | undefined) =>
+      resolveCustomMcpUserIdForMachine(db, customDb, clerkUserId, handle);
     const projectionRequest = createCustomMcpProjectionRequest({
       getUser: (userId) => customDb.getUserById(userId),
-      getMachine: (handle) => getRunningUserMachineByHandle(db, handle),
+      getMachine: (user) => getCustomMcpProjectionMachine(db, user),
       platformSecret,
       dispatcher: customerVpsProxyDispatcher,
     });

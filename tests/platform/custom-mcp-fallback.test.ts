@@ -2,7 +2,9 @@ import { createHmac } from 'node:crypto';
 import { Hono } from 'hono';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createApp } from '../../packages/platform/src/main.js';
-import type { PlatformDB } from '../../packages/platform/src/db.js';
+import { getCustomMcpProjectionMachine, resolveCustomMcpUserIdForMachine } from '../../packages/platform/src/custom-mcp-route-registration.js';
+import { createCustomMcpRoutes } from '../../packages/gateway/src/integrations/custom-mcp/routes.js';
+import { insertUserMachine, type PlatformDB } from '../../packages/platform/src/db.js';
 import { issueSyncJwt } from '../../packages/platform/src/sync-jwt.js';
 import { createIntegrationProxyResponse } from '../../packages/gateway/src/integrations/proxy-response.js';
 import { registerCustomMcpGatewayRoutes } from '../../packages/gateway/src/integrations/custom-mcp/gateway-routes.js';
@@ -39,6 +41,139 @@ describe('Custom MCP route boundary', () => {
     const token = internal ? createHmac('sha256', secret).update('alice').digest('hex') : userToken;
     return { host: 'app.matrix-os.com', authorization: `Bearer ${token}` };
   }
+
+  it('rejects owner-scoped custom MCP access from preview machines', async () => {
+    await insertUserMachine(db, {
+      machineId: '00000000-0000-4000-8000-000000001304',
+      clerkUserId: 'user_alice',
+      handle: 'pr-1304',
+      runtimeSlot: 'pr-1304',
+      provisioningClass: 'preview',
+      accessClerkUserIds: ['user_collaborator'],
+      status: 'running',
+      provisionedAt: '2026-09-25T00:00:00.000Z',
+    });
+    const token = createHmac('sha256', secret).update('pr-1304').digest('hex');
+    const response = await app(true).request('/internal/containers/pr-1304/mcp-servers', {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(response.status).toBe(403);
+  });
+
+  it.each(['running', 'provisioning'] as const)('does not select a customer MCP owner when a %s preview shares its handle', async (previewStatus) => {
+    await insertUserMachine(db, {
+      machineId: '00000000-0000-4000-8000-000000001308',
+      clerkUserId: 'user_alice',
+      handle: 'pr-1308',
+      runtimeSlot: 'primary',
+      provisioningClass: 'customer',
+      status: 'running',
+      provisionedAt: '2026-09-25T00:00:00.000Z',
+    });
+    await insertUserMachine(db, {
+      machineId: '00000000-0000-4000-8000-000000001309',
+      clerkUserId: 'user_preview_owner',
+      handle: 'pr-1308',
+      runtimeSlot: 'pr-1308',
+      provisioningClass: 'preview',
+      status: previewStatus,
+      provisionedAt: '2026-09-25T00:00:00.000Z',
+    });
+    const token = createHmac('sha256', secret).update('pr-1308').digest('hex');
+    const response = await app(true).request('/internal/containers/pr-1308/mcp-servers', {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(response.status).toBe(403);
+  });
+
+  it('keeps the isolated platform preview Custom MCP fixture available', async () => {
+    await insertUserMachine(db, {
+      machineId: '00000000-0000-4000-8000-000000001305',
+      clerkUserId: 'chat-share-preview-fixture-pr-1305',
+      handle: 'pr-1305',
+      runtimeSlot: 'pr-1305',
+      provisioningClass: 'preview',
+      status: 'running',
+      provisionedAt: '2026-09-25T00:00:00.000Z',
+    });
+    const token = createHmac('sha256', secret).update('pr-1305').digest('hex');
+    const response = await app(true).request('/internal/containers/pr-1305/mcp-servers', {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual([]);
+  });
+
+  it('resolves the synthetic fixture through the real Custom MCP route when a primary row shares its handle', async () => {
+    const handle = 'pr-1307';
+    const fixtureId = `chat-share-preview-fixture-${handle}`;
+    await insertUserMachine(db, {
+      machineId: '00000000-0000-4000-8000-000000001310',
+      clerkUserId: 'user_customer_owner',
+      handle,
+      runtimeSlot: 'primary',
+      provisioningClass: 'customer',
+      status: 'running',
+      provisionedAt: '2026-09-25T00:00:00.000Z',
+    });
+    await insertUserMachine(db, {
+      machineId: '00000000-0000-4000-8000-000000001311',
+      clerkUserId: fixtureId,
+      handle,
+      runtimeSlot: handle,
+      provisioningClass: 'preview',
+      status: 'running',
+      provisionedAt: '2026-09-25T00:00:00.000Z',
+    });
+    const ensureUser = vi.fn(async (input: { handle: string }) => {
+      if (input.handle === handle) throw new Error('users_handle_key');
+      return { id: 'fixture-user' };
+    });
+    const routes = createCustomMcpRoutes({
+      broker: { list: vi.fn().mockResolvedValue([]) } as unknown as Parameters<typeof createCustomMcpRoutes>[0]['broker'],
+      resolveUserId: (c) => resolveCustomMcpUserIdForMachine(db, {
+        getUserByClerkId: vi.fn().mockResolvedValue(null),
+        ensureUser,
+      }, c.get('internalContainerClerkUserId'), c.get('internalContainerHandle')),
+    });
+    const server = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      platformSecret: secret,
+      internalCustomMcpRoutes: routes,
+    });
+    const token = createHmac('sha256', secret).update(handle).digest('hex');
+    const response = await server.request(`/internal/containers/${handle}/mcp-servers`, {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual([]);
+    expect(ensureUser).toHaveBeenCalledWith(expect.objectContaining({ clerkId: fixtureId, handle: `~preview:${handle}` }));
+    await expect(getCustomMcpProjectionMachine(db, { handle: `~preview:${handle}`, clerk_id: fixtureId })).resolves.toMatchObject({
+      machineId: '00000000-0000-4000-8000-000000001311', handle, clerkUserId: fixtureId,
+    });
+  });
+
+  it('moves an existing synthetic fixture account to its isolated key', async () => {
+    const handle = 'pr-1310';
+    const fixtureId = `chat-share-preview-fixture-${handle}`;
+    await insertUserMachine(db, {
+      machineId: '00000000-0000-4000-8000-000000001312',
+      clerkUserId: fixtureId,
+      handle,
+      runtimeSlot: handle,
+      provisioningClass: 'preview',
+      status: 'running',
+      provisionedAt: '2026-09-25T00:00:00.000Z',
+    });
+    const ensureUser = vi.fn().mockResolvedValue({ id: 'fixture-user' });
+    const accountId = await resolveCustomMcpUserIdForMachine(db, {
+      getUserByClerkId: vi.fn().mockResolvedValue({ id: 'fixture-user' }),
+      ensureUser,
+    }, fixtureId, handle);
+    expect(accountId).toBe('fixture-user');
+    expect(ensureUser).toHaveBeenCalledWith(expect.objectContaining({ handle: `~preview:${handle}` }));
+  });
 
   it.each([false, true])('returns unavailable for disabled routes (internal=%s)', async (internal) => {
     const server = app();

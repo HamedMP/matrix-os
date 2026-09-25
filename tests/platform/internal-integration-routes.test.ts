@@ -92,7 +92,7 @@ describe("platform/internal-integration-routes", () => {
     await expect(res.json()).resolves.toEqual({ clerkUserId: "user_alice" });
   });
 
-  it("resolves preview VPS handles from user_machines", async () => {
+  it("rejects owner-scoped integrations from a preview VPS", async () => {
     await insertUserMachine(db, {
       machineId: "00000000-0000-4000-8000-000000001298",
       clerkUserId: "user_preview_owner",
@@ -110,11 +110,35 @@ describe("platform/internal-integration-routes", () => {
       },
     });
 
-    expect(res.status).toBe(200);
-    await expect(res.json()).resolves.toEqual({ clerkUserId: "user_preview_owner" });
+    expect(res.status).toBe(403);
   });
 
-  it("uses an authenticated Preview collaborator for integration calls", async () => {
+  it.each(["running", "provisioning"] as const)("does not select a customer owner when a %s preview shares its handle", async (previewStatus) => {
+    await insertUserMachine(db, {
+      machineId: "00000000-0000-4000-8000-000000001306",
+      clerkUserId: "user_customer_owner",
+      handle: "pr-1306",
+      runtimeSlot: "primary",
+      provisioningClass: "customer",
+      status: "running",
+      provisionedAt: "2026-09-25T00:00:00.000Z",
+    });
+    await insertUserMachine(db, {
+      machineId: "00000000-0000-4000-8000-000000001307",
+      clerkUserId: "user_preview_owner",
+      handle: "pr-1306",
+      runtimeSlot: "pr-1306",
+      provisioningClass: "preview",
+      status: previewStatus,
+      provisionedAt: "2026-09-25T00:00:00.000Z",
+    });
+    const res = await createTestApp().request("/internal/containers/pr-1306/integrations/probe", {
+      headers: { authorization: `Bearer ${bearerFor("pr-1306", "platform-secret-123")}` },
+    });
+    expect(res.status).toBe(403);
+  });
+
+  it("rejects delegated integration calls from a shared preview VPS", async () => {
     await insertUserMachine(db, {
       machineId: "00000000-0000-4000-8000-000000001299",
       clerkUserId: "user_preview_owner",
@@ -128,8 +152,7 @@ describe("platform/internal-integration-routes", () => {
     const res = await createTestApp().request("/internal/containers/pr-1299/integrations/probe", {
       headers: delegatedHeaders("pr-1299", "user_collaborator"),
     });
-    expect(res.status).toBe(200);
-    await expect(res.json()).resolves.toEqual({ clerkUserId: "user_collaborator" });
+    expect(res.status).toBe(403);
   });
 
   it("accepts an unsigned owner header from a legacy single-user customer gateway", async () => {
@@ -167,7 +190,7 @@ describe("platform/internal-integration-routes", () => {
     }
   });
 
-  it("rejects unsigned owner headers on shared and Preview machines", async () => {
+  it("rejects unsigned owner headers on shared machines and all preview integrations", async () => {
     await insertUserMachine(db, {
       machineId: "00000000-0000-4000-8000-000000001302",
       clerkUserId: "user_customer_owner",
@@ -198,7 +221,7 @@ describe("platform/internal-integration-routes", () => {
           "x-platform-user-id": owner!,
         },
       });
-      expect(res.status).toBe(401);
+      expect(res.status).toBe(handle === 'pr-1303' ? 403 : 401);
     }
   });
 
