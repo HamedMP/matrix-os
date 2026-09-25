@@ -2,6 +2,7 @@ import { ShareSnapshotSchema, shareHtml } from "@matrix-os/contracts";
 import type { Context } from "hono";
 import type { Agent } from "undici";
 import { getActiveUserMachineByHandle, type PlatformDB } from "./db.js";
+import { canRouteMachineOnPreviewHost } from "./customer-vps-preview.js";
 import { buildCustomerVpsProxyUrl, isCustomerVpsProxyMachineRoutable } from "./profile-routing.js";
 import { createBoundedRateLimiter, runtimeSelectionSourceKey } from "./request-admission.js";
 
@@ -22,7 +23,7 @@ export function parseChatShareRoute(path: string) {
   return match ? { handle: match[1]!, runtimeSlot: match[2]!, token: match[3]! } : null;
 }
 
-export async function proxyChatShare(c: Context, db: PlatformDB, dispatcher: Agent, edgeSecret?: string) {
+export async function proxyChatShare(c: Context, db: PlatformDB, dispatcher: Agent, edgeSecret?: string, host = "") {
   c.header("Cache-Control", "no-store");
   c.header("CDN-Cache-Control", "no-store");
   c.header("Referrer-Policy", "no-referrer");
@@ -38,7 +39,8 @@ export async function proxyChatShare(c: Context, db: PlatformDB, dispatcher: Age
   sourceFlights.set(source, (sourceFlights.get(source) ?? 0) + 1);
   try {
     const machine = await getActiveUserMachineByHandle(db, route.handle, route.runtimeSlot);
-    if (!machine || !isCustomerVpsProxyMachineRoutable(machine)) return c.text("Shared Chat unavailable", 404);
+    if (!machine || !canRouteMachineOnPreviewHost(host, machine)
+      || !isCustomerVpsProxyMachineRoutable(machine)) return c.text("Shared Chat unavailable", 404);
     // Address comes from the operator-controlled machine registry, never a request URL.
     const url = buildCustomerVpsProxyUrl(machine, `/api/share/chats/${route.token}`, "");
     if (!url) return c.text("Shared Chat unavailable", 404);

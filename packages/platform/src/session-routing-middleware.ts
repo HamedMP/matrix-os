@@ -390,6 +390,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
     const isAppDomain = isAppDomainHost(host);
     const isCodeDomain = isCodeDomainHost(host);
     if (!isAppDomain && !isCodeDomain) return next();
+    const previewHostHandle = previewHandleFromHost(host);
 
     // Device-flow paths are served directly by the platform's auth-routes.ts
     // (registered above). In normal dispatch they never reach this middleware,
@@ -397,7 +398,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
     // a future refactor can't accidentally proxy them into a user container.
     const reqPath = c.req.path;
     if (isAppDomain && parseChatShareRoute(reqPath)) {
-      return proxyChatShare(c, db, customerVpsProxyDispatcher, appEnv.EDGE_ROUTER_SECRET);
+      return proxyChatShare(c, db, customerVpsProxyDispatcher, appEnv.EDGE_ROUTER_SECRET, host);
     }
     if (isAppDomain && reqPath === '/service-worker.js') {
       return appDomainServiceWorkerResponse();
@@ -461,7 +462,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
       }
 
       const runningMachine = await getRunningUserMachineByHandle(db, handle);
-      if (!runningMachine) {
+      if (!runningMachine || !canRouteMachineOnPreviewHost(host, runningMachine)) {
         return c.json({ error: 'VPS unavailable' }, 404);
       }
 
@@ -536,7 +537,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
     const cookieRuntimeSlot = isAppDomain
       ? readShellRuntimeSlotCookie(path, cookieHeader)
       : null;
-    const requestRuntimeSlot = explicitVmRoute?.runtimeSlot ?? (
+    const requestRuntimeSlot = previewHostHandle ?? explicitVmRoute?.runtimeSlot ?? (
       runtimeSelection.source === 'query'
         ? runtimeSelection.slot
         : cookieRuntimeSlot ?? runtimeSelection.slot
@@ -556,7 +557,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
     const publishableKey = appEnv.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
     const authMode = path.startsWith('/sign-up') ? 'sign-up' : 'sign-in';
     const requestedRouteHandle = !explicitVmRoute && isAppDomain
-      ? readAppDomainRouteCookie(path, cookieHeader)
+      ? previewHostHandle ?? readAppDomainRouteCookie(path, cookieHeader)
       : null;
 
     let identity = await resolveAppDomainIdentity({

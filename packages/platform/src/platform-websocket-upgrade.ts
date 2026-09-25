@@ -149,6 +149,7 @@ export function registerPlatformWebSocketUpgradeHandler(
     }
     const isCodeDomain = isCodeDomainHost(host);
     const isAppDomain = isAppDomainHost(host);
+    const previewHostHandle = previewHandleFromHost(host);
     const isCollaborationCandidate = isCollaborationWebSocketCandidate(path);
     // S05: direct sockets are relayed as bytes; the home verifies the ticket in the first frame.
     const isDirectSocket = isAppDomain && Boolean(collaborationDirect) && Boolean(parseRelaySocketPath(path));
@@ -175,7 +176,7 @@ export function registerPlatformWebSocketUpgradeHandler(
       return;
     }
 
-    const requestRuntimeSlot = explicitVmRoute?.runtimeSlot ?? readRuntimeSlot(webSocketProxyPath);
+    const requestRuntimeSlot = previewHostHandle ?? explicitVmRoute?.runtimeSlot ?? readRuntimeSlot(webSocketProxyPath);
     const wsToken = getWebSocketUpgradeToken(webSocketProxyPath);
     let identity: AppDomainIdentity | null;
     try {
@@ -187,7 +188,7 @@ export function registerPlatformWebSocketUpgradeHandler(
         platformJwtSecret,
         legacyContainerRoutingEnabled,
         allowUnroutedClerkIdentity: Boolean(explicitVmRoute),
-        requestedHandle: explicitVmRoute?.handle,
+        requestedHandle: explicitVmRoute?.handle ?? previewHostHandle ?? undefined,
         runtimeSlot: requestRuntimeSlot,
         wsToken,
         clerkPrincipalOnly: isDirectSocket,

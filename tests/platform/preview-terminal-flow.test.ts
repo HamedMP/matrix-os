@@ -145,11 +145,11 @@ function fixture() {
       "content-type": "application/json", "x-platform-preview-terminal": "client-forgery",
       ...init?.headers },
   });
-  const upgrade = async (jwt: string, tabId: string, targetHandle = handle, chatId?: string, host = "app.matrix-os.com") => {
+  const upgrade = async (jwt: string, tabId: string, targetHandle = handle, chatId?: string, host = "app.matrix-os.com", explicit = true) => {
     const upstream = new Transport();
     tls.connect.mockImplementation((_options, connected) => { queueMicrotask(connected); return upstream; });
     const socket = new Transport();
-    const path = `/vm/${targetHandle}/ws/terminal/tab?workspaceId=${workspaceId}&tabId=${tabId}&client=browser&token=${encodeURIComponent(jwt)}${chatId ? `&chat=${chatId}` : ""}`;
+    const path = `${explicit ? `/vm/${targetHandle}` : ""}/ws/terminal/tab?workspaceId=${workspaceId}&tabId=${tabId}&client=browser&token=${encodeURIComponent(jwt)}${chatId ? `&chat=${chatId}` : ""}`;
     const req = { url: path, method: "GET", headers: { host, upgrade: "websocket",
       "x-platform-user-id": owner, "x-platform-verified": "forged", "x-platform-preview-terminal": "forged" } };
     await server.listeners("upgrade")[0](req as IncomingMessage, socket, Buffer.alloc(0));
@@ -181,11 +181,33 @@ describe("Clerk preview collaborator terminal flow", () => {
     const otherHost = `pr-1645.preview.matrix-os.com`;
     vi.stubEnv("MATRIX_APP_DOMAIN_HOSTS", `${ownHost},${otherHost}`);
     const f = fixture();
+    await insertUserMachine(db, {
+      machineId: "a112f401-a9f9-42dd-b2fa-7816c91b4e91", clerkUserId: owner,
+      handle: "owner-primary", runtimeSlot: "primary", provisioningClass: "customer", accessClerkUserIds: [],
+      status: "running", publicIPv4: "203.0.113.42", imageVersion: "test", provisionedAt: createdAt,
+    });
+    const unprefixed = (path: string, host: string) => f.platform.request(path, {
+      headers: { host, authorization: "Bearer clerk-session" },
+    });
     expect((await f.request("/api/terminal/workspaces", undefined, ownHost)).status).toBe(200);
     expect((await f.request("/api/terminal/workspaces", undefined, otherHost)).status).toBe(404);
-    const { token } = await (await f.request("/api/auth/ws-token", undefined, ownHost)).json();
+    expect((await unprefixed("/api/terminal/workspaces", ownHost)).status).toBe(200);
+    expect((await unprefixed("/api/terminal/workspaces", otherHost)).status).toBe(404);
+    const { token } = await (await unprefixed("/api/auth/ws-token", ownHost)).json();
+    f.workspace.tabs.push({ id: "tt_00000000000000000000000000000001", accessScope: "global" });
+    expect((await f.upgrade(token, f.workspace.tabs[0].id, handle, undefined, ownHost, false)).denied).toBe(false);
     expect((await f.upgrade(token, "tt_00000000000000000000000000000001", handle, undefined, otherHost)).denied).toBe(true);
-    expect(tls.connect).not.toHaveBeenCalled();
+    expect((await f.upgrade(token, f.workspace.tabs[0].id, handle, undefined, otherHost, false)).denied).toBe(true);
+    await insertUserMachine(db, {
+      machineId: "faac975b-37d6-4977-9bf2-4ee943b861a2", clerkUserId: "user_other",
+      handle: "pr-1645", runtimeSlot: "pr-1645", provisioningClass: "preview", accessClerkUserIds: [],
+      status: "running", publicIPv4: "203.0.113.43", imageVersion: "test", provisionedAt: createdAt,
+    });
+    const fetcher = vi.mocked(globalThis.fetch);
+    fetcher.mockClear();
+    const webhook = await f.platform.request("/voice/webhook/twilio?handle=pr-1645", { headers: { host: ownHost } });
+    expect(webhook.status).toBe(404);
+    expect(fetcher).not.toHaveBeenCalled();
   });
 
   it("shares tabs across owner and two collaborators through HTTP, token, WS input/output and reconnect", async () => {
