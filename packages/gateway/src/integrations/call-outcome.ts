@@ -71,7 +71,13 @@ export async function integrationActionSuccess(c: Context, input: {
     const failure = classifySymphonyGraphqlFailure(data);
     if (failure) return symphonyFailureResponse(c, failure, action);
   }
-  await db.touchServiceUsage(connectionId);
+  try {
+    await db.touchServiceUsage(connectionId);
+  } catch (err: unknown) {
+    // Usage metadata is best effort after the provider has already succeeded.
+    // Losing that result would encourage the caller to repeat the action.
+    console.error("[integrations] usage timestamp update failed:", err);
+  }
   return c.json({ data, service, action, ...(summary ? { summary } : {}) });
 }
 

@@ -125,6 +125,26 @@ describe("owner-bound integration read-call authority", () => {
     expect((await db.listConnectedServices(ownerId))[0]?.last_used_at).not.toBeNull();
   });
 
+  it("returns a successful read when only the best-effort usage timestamp write fails", async () => {
+    await db.connectService({ userId: ownerId, service: "gmail", pipedreamAccountId: "pd_work",
+      accountLabel: "Work", scopes: ["read"] });
+    const touch = vi.spyOn(db, "touchServiceUsage").mockRejectedValueOnce(new Error("private database detail"));
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const response = await readCall({ service: "gmail", action: "list_labels", label: "Work", params: {} });
+      expect(response.status).toBe(200);
+      const body = await response.text();
+      expect(body).toContain('"labels"');
+      expect(body).not.toContain("private database detail");
+      expect(proxyGet).toHaveBeenCalledTimes(1);
+      expect(touch).toHaveBeenCalledTimes(1);
+      expect(log).toHaveBeenCalledWith(expect.stringContaining("usage"), expect.any(Error));
+    } finally {
+      touch.mockRestore();
+      log.mockRestore();
+    }
+  });
+
   it.each([
     [{ errors: [{ message: "secret provider error", extensions: { code: "UNAUTHENTICATED" } }] }, 422, "configuration_error"],
     [{ errors: [{ message: "secret provider error", extensions: { code: "RATELIMITED" } }] }, 429, "rate_limited"],

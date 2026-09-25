@@ -11,8 +11,7 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import { listServices, getService, getAction } from "./registry.js";
 import type { PipedreamConnectClient } from "./pipedream.js";
 import type { PlatformDb } from "../platform-db.js";
-import { MATRIX_MCP_RUN_CONTEXT_KEY } from "../chat/matrix-mcp-launch.js";
-import { INTEGRATION_READ_SCOPE_HEADER } from "./scope-provenance.js";
+import { isScopedReadCatalogRequest, projectIntegrationCatalog } from "./catalog-projection.js";
 import { createIntegrationReadCallRoutes } from "./read-call.js";
 
 // ---------------------------------------------------------------------------
@@ -376,51 +375,15 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
     authoritative = false,
     readOnly = false,
   ) {
-    const services = await Promise.all(listServices()
-      .filter((service) => readOnly ? service.connectorKind === "pipedream" : service.connectorKind !== "mcp_preset" || mcpPresetBroker)
-      .map(async (s) => {
-        let actions = readOnly
-          ? Object.fromEntries(Object.entries(s.actions).filter(([, action]) => action.risk === "read"))
-          : s.actions;
-        if (capabilityIdentityFailed && s.connectorKind === "mcp_preset") {
-          actions = {};
-        } else if (uid && s.connectorKind === "mcp_preset" && mcpPresetBroker?.listAvailableActions) {
-          try {
-            const availableActions = await mcpPresetBroker.listAvailableActions(uid, s.id);
-            if (availableActions) {
-              actions = Object.fromEntries(
-                Object.entries(s.actions).filter(([actionId]) => availableActions.includes(actionId)),
-              );
-              if (actions.list_notes && mcpPresetBroker.listAvailableActionParams) {
-                const supported = await mcpPresetBroker.listAvailableActionParams(uid, s.id);
-                const names = supported?.list_notes ?? [];
-                actions = {
-                  ...actions,
-                  list_notes: {
-                    ...actions.list_notes,
-                    params: Object.fromEntries(
-                      Object.entries(actions.list_notes.params).filter(([name]) => names.includes(name)),
-                    ),
-                  },
-                };
-              }
-            } else if (authoritative) {
-              actions = {};
-            }
-          } catch (err: unknown) {
-            console.warn(
-              `[integrations] ${s.id} capability projection failed:`,
-              err instanceof Error ? err.message : String(err),
-            );
-            actions = {};
-          }
-        }
-        return {
-          ...s,
-          actions,
-          logoUrl: logoCache.get(s.id) || s.logoUrl,
-        };
-      }));
+    const services = await projectIntegrationCatalog({
+      services: listServices(),
+      uid,
+      capabilityIdentityFailed,
+      authoritative,
+      readOnly,
+      presetBroker: mcpPresetBroker,
+      logoUrl: (service) => logoCache.get(service.id) || service.logoUrl,
+    });
     return c.json(services);
   }
 
@@ -452,10 +415,7 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
       return c.json({ error: "Integration capabilities unavailable" }, 503);
     }
     if (!uid) return c.json({ error: "Unauthorized" }, 401);
-    const runContext = c.get(MATRIX_MCP_RUN_CONTEXT_KEY as never) as { scope?: string } | undefined;
-    const readOnly = runContext?.scope === "integration_read"
-      || c.req.header(INTEGRATION_READ_SCOPE_HEADER) === "read";
-    return availableServices(c, uid, false, true, readOnly);
+    return availableServices(c, uid, false, true, isScopedReadCatalogRequest(c));
   });
 
   // -----------------------------------------------------------------------
