@@ -100,6 +100,7 @@ import type { StandaloneResourceScopeService } from "./standalone-resource-scope
 import type { CollaborationCapabilityRepository } from "./capability-repository.js";
 import type { CollaborationCapabilityEvaluator } from "./capability-evaluator.js";
 import type { ReadinessProbes } from "./readiness-evaluator.js";
+import type { OrganizationDriveService } from "../organization-drive/service.js";
 import {
   CollaborationRepositoryError,
   type CollaborationMemberRecord,
@@ -151,6 +152,7 @@ export interface CollaborationRouteOptions {
   /** S12: catalog, file driver and app instances; file/app routes report unavailable when absent. */
   resources?: CollaborationResourceServices;
   standaloneScope?: StandaloneResourceScopeService;
+  organizationDrive?: OrganizationDriveService;
   resolveParticipant(actorId: string): Promise<Participant>;
   resolveInvitationIdentifier(identifier: string, organizationId: string): Promise<Participant>;
   invitationResolutionRateLimiter?: RateLimiter;

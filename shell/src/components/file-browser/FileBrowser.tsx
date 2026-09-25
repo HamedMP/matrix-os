@@ -18,6 +18,7 @@ import { QuickLook } from "./QuickLook";
 import { FileDownloadProvider } from "./FileDownloadProvider";
 import { FileResourceSharing } from "./FileResourceSharing";
 import { XpExplorer } from "./XpExplorer";
+import { OrganizationDrivesView } from "./OrganizationDrivesView";
 
 interface FileBrowserProps {
   windowId: string;
@@ -27,6 +28,7 @@ interface FileBrowserProps {
 export function FileBrowser({ windowId, mobile = false }: FileBrowserProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [showingTrash, setShowingTrash] = useState(false);
+  const [showingOrganizationDrives, setShowingOrganizationDrives] = useState(false);
   const [renamingPath, setRenamingPath] = useState<string | null>(null);
 
   const currentPath = useFileBrowser((s) => s.currentPath);
@@ -292,13 +294,21 @@ export function FileBrowser({ windowId, mobile = false }: FileBrowserProps) {
       aria-label="File browser"
       // react-doctor-disable-next-line react-doctor/no-noninteractive-tabindex -- intentional focus target: this container hosts the file browser keyboard shortcut handler (arrows, copy/paste, F2, Enter)
       tabIndex={0}
-      onKeyDown={handleKeyDown}
+      onKeyDown={showingOrganizationDrives ? undefined : handleKeyDown}
     >
       <FileDownloadProvider>
-      {selectedKind && selectedPath && !showingTrash && !searchResults ? <div className="flex justify-end border-b px-3 py-1.5">
+      <div className="flex gap-2 border-b px-3 py-2 text-xs">
+        <button type="button" aria-current={!showingOrganizationDrives ? "page" : undefined}
+          onClick={() => setShowingOrganizationDrives(false)}
+          className="rounded px-3 py-1.5 hover:bg-accent aria-[current=page]:bg-accent">My files</button>
+        <button type="button" aria-current={showingOrganizationDrives ? "page" : undefined}
+          onClick={() => setShowingOrganizationDrives(true)}
+          className="rounded px-3 py-1.5 hover:bg-accent aria-[current=page]:bg-accent">Organization drives</button>
+      </div>
+      {selectedKind && selectedPath && !showingTrash && !searchResults && !showingOrganizationDrives ? <div className="flex justify-end border-b px-3 py-1.5">
         <FileResourceSharing key={`${selectedKind}:${selectedPath}`} kind={selectedKind} path={selectedPath} />
       </div> : null}
-      {isXpExplorer ? (
+      {showingOrganizationDrives ? <OrganizationDrivesView /> : isXpExplorer ? (
         <XpExplorer
           renamingPath={renamingPath}
           onStartRename={setRenamingPath}

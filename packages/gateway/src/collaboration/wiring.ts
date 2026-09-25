@@ -81,6 +81,9 @@ import {
 } from "./project-inventory.js";
 import { createProjectSharingService, type ProjectSharingService } from "./project-sharing.js";
 import { createProjectTransitionCoordinator } from "./project-transition-coordinator.js";
+import { bootstrapOrganizationDriveDatabase, type OrganizationDriveDatabase } from "../organization-drive/database.js";
+import { OrganizationDriveService } from "../organization-drive/service.js";
+import type { R2Client } from "../sync/r2-client.js";
 import {
   CollaborationProjectScopeService,
   type CollaborationProjectSource,
@@ -308,6 +311,8 @@ export async function createGatewayCollaboration(options: {
   let resourceServices: CollaborationResourceServices | undefined;
   let standaloneScope: StandaloneResourceScopeService | undefined;
   let ownerResourceDriver: (CollaborationResourceDriver & { close?(): void }) | undefined;
+  let organizationDrive: OrganizationDriveService | undefined;
+  let organizationDriveTimer: ReturnType<typeof setInterval> | undefined;
   function closeResourceServices(): void {
     resourceServices?.uploads?.close();
     ownerResourceDriver?.close?.();
@@ -355,6 +360,23 @@ export async function createGatewayCollaboration(options: {
           authorityRuntimeId: options.config.runtimeId,
         }, () => operation());
       },
+    },
+    async enableOrganizationDrive(r2: R2Client): Promise<void> {
+      if (registered || closing || organizationDrive || !options.config.ownerId) {
+        throw new Error("Organization drive cannot be initialized");
+      }
+      const db = options.db as unknown as Kysely<OrganizationDriveDatabase>;
+      await bootstrapOrganizationDriveDatabase(db);
+      organizationDrive = new OrganizationDriveService({ db, r2, ownerId: options.config.ownerId,
+        runtimeSlot: process.env.MATRIX_RUNTIME_SLOT ?? "primary" });
+      if (options.startTimers !== false) {
+        organizationDriveTimer = setInterval(() => {
+          void organizationDrive?.sweep().catch((error: unknown) => {
+            console.warn("[organization-drive] cleanup unavailable", error instanceof Error ? error.name : "UnknownError");
+          });
+        }, 60_000);
+        organizationDriveTimer.unref();
+      }
     },
     enableProjectGit(input: {
       driver: ProjectGitDriver & {
@@ -619,6 +641,7 @@ export async function createGatewayCollaboration(options: {
         ...(executionPolicies ? { executionPolicies } : {}),
         ...(resourceServices ? { resources: resourceServices } : {}),
         ...(standaloneScope ? { standaloneScope } : {}),
+        ...(organizationDrive ? { organizationDrive } : {}),
         onScopeCommitted: (scopeId) => eventRegistry.broadcastScope(scopeId),
         onRevoked: (scopeId, actorId) => {
           eventRegistry.notifyRevoked(scopeId, actorId);
@@ -692,6 +715,7 @@ export async function createGatewayCollaboration(options: {
     fence(): void {
       closing = true;
       if (cleanupTimer) clearInterval(cleanupTimer);
+      if (organizationDriveTimer) clearInterval(organizationDriveTimer);
       // The control-loss watchdog stops before anything else drains. It reads control
       // freshness and calls interruptForLoss, so a watchdog that outlives the control
       // client's drain reads an ordinary shutdown as a partition and marks healthy runs

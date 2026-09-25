@@ -299,6 +299,7 @@ describe("collaboration direct transport contracts (S02 T011)", () => {
     expect(keys).toContain("POST /api/collaboration/invitations/:invitationId/accept");
     expect(keys).toContain("POST /api/collaboration/scopes/:scopeId/chat/requests/:requestId/retry");
     expect(keys).toContain("POST /api/collaboration/scopes/:scopeId/project/git/actions");
+    expect(keys).toContain("GET /api/collaboration/scopes/:scopeId/drive");
     expect(keys).toContain("GET /api/collaboration/scopes/:scopeId/terminal/ws");
     expect(keys).not.toContain("GET /internal/collaboration/policy");
     expect(keys.some((key) => key.includes("/transfers") || key.includes("/integrations/") || key.includes("/git/operations/"))).toBe(false);

@@ -49,6 +49,7 @@
     "#collaboration-peer": "./src/collaboration-peer.ts",
     "#collaboration-resources": "./src/collaboration-resources.ts",
     "#organization-billing": "./src/organization-billing.ts",
+    "#organization-drive": "./src/organization-drive.ts",
     "#contract-primitives": "./src/primitives.ts",
     "#custom-mcp-availability": "./src/custom-mcp-availability.ts",
     "#custom-mcp-policy": "./src/custom-mcp-policy.ts",

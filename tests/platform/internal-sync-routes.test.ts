@@ -634,6 +634,34 @@ describe("platform/internal-sync-routes", () => {
     expect(res.status).toBe(404);
   });
 
+  it("preserves object size for streamed drive verification", async () => {
+    const bytes = new TextEncoder().encode("hello");
+    r2.getObject.mockResolvedValue({ body: new ReadableStream<Uint8Array>({
+      start(controller) { controller.enqueue(bytes); controller.close(); },
+    }), contentLength: bytes.byteLength, etag: '"etag"' });
+    const app = createTestApp();
+    const res = await app.request(
+      "/internal/containers/alice/sync/object?key=matrixos-sync%2Fuser_alice%2Ffiles%2F.organization-drive%2Forg_authority%2Fobjects%2F00000000-0000-4000-8000-000000000001",
+      { headers: { authorization: `Bearer ${bearerFor("alice", "platform-secret-123")}` } },
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-length")).toBe("5");
+    expect(await res.text()).toBe("hello");
+  });
+
+  it("streams the Node readable body returned by the R2 SDK", async () => {
+    const { Readable } = await import("node:stream");
+    r2.getObject.mockResolvedValue({ body: Readable.from([Buffer.from("hello")]), contentLength: 5 });
+    const app = createTestApp();
+    const res = await app.request(
+      "/internal/containers/alice/sync/object?key=matrixos-sync%2Fuser_alice%2Ffiles%2F.organization-drive%2Forg_authority%2Fobjects%2F00000000-0000-4000-8000-000000000001",
+      { headers: { authorization: `Bearer ${bearerFor("alice", "platform-secret-123")}` } },
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-length")).toBe("5");
+    expect(await res.text()).toBe("hello");
+  });
+
   it("rejects oversized direct object uploads with 413", async () => {
     const app = createTestApp();
     const body = "x";

@@ -22,6 +22,7 @@ import { registerProjectRoutes } from "../../packages/gateway/src/collaboration/
 import { registerLifecycleRoutes } from "../../packages/gateway/src/collaboration/lifecycle-routes.js";
 import { registerExecutionPolicyRoutes } from "../../packages/gateway/src/collaboration/execution-policy-routes.js";
 import { registerResourceRoutes } from "../../packages/gateway/src/collaboration/resource-routes.js";
+import { registerOrganizationDriveRoutes } from "../../packages/gateway/src/organization-drive/routes.js";
 import { handle } from "../../packages/gateway/src/collaboration/route-support.js";
 import {
   collaborationActors,
@@ -95,6 +96,12 @@ const ROUTE_BASELINE: ReadonlyArray<readonly [string, string]> = [
   ["POST", "/api/collaboration/scopes/:scopeId/apps/:appId/view"],
   ["GET", "/api/collaboration/scopes/:scopeId/apps/:appId/assets/:assetPath{.+}"],
   ["POST", "/api/collaboration/scopes/:scopeId/apps/:appId/actions"],
+  ["PUT", "/api/collaboration/scopes/:scopeId/drive"],
+  ["GET", "/api/collaboration/scopes/:scopeId/drive"],
+  ["POST", "/api/collaboration/scopes/:scopeId/drive/uploads"],
+  ["POST", "/api/collaboration/scopes/:scopeId/drive/uploads/:uploadId/commit"],
+  ["DELETE", "/api/collaboration/scopes/:scopeId/drive/uploads/:uploadId"],
+  ["GET", "/api/collaboration/scopes/:scopeId/drive/files/:fileId"],
 ];
 
 const stubOptions = {
@@ -143,6 +150,7 @@ describe("gateway collaboration route registration (S01 foundation)", () => {
     registerLifecycleRoutes(app, stubOptions);
     registerExecutionPolicyRoutes(app, stubOptions);
     registerResourceRoutes(app, stubOptions);
+    registerOrganizationDriveRoutes(app, stubOptions);
     expect(handlerRoutes(app)).toEqual(ROUTE_BASELINE);
   });
 

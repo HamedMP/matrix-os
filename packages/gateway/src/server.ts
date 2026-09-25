@@ -868,6 +868,12 @@ export async function createGateway(config: GatewayConfig) {
   });
 
   const { syncR2, syncPeerRegistry, syncDeps } = await initializeSyncInfrastructure(kyselyInstance);
+  if (gatewayCollaboration && syncR2) {
+    try { await gatewayCollaboration.enableOrganizationDrive(syncR2); }
+    catch (error: unknown) {
+      console.warn("[organization-drive] startup unavailable", error instanceof Error ? error.name : "UnknownError");
+    }
+  }
 
   const geminiLiveConnection: GeminiLiveConnection =
     internalPlatformUrl && internalPlatformToken && internalHandle

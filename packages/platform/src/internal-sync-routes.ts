@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { Readable } from "node:stream";
 import {
   buildSyncStoragePrefix,
   SyncRuntimeSlotSchema,
@@ -43,7 +44,7 @@ interface R2Client {
     parts: Array<{ partNumber: number; etag: string }>,
   ): Promise<{ etag?: string }>;
   abortMultipartUpload(key: string, uploadId: string): Promise<void>;
-  getObject(key: string): Promise<{ body: ReadableStream | null; etag?: string }>;
+  getObject(key: string, options?: { signal?: AbortSignal }): Promise<{ body: unknown; etag?: string; contentLength?: number }>;
   putObject(
     key: string,
     body: string | Uint8Array | ReadableStream<Uint8Array>,
@@ -583,16 +584,27 @@ export function createInternalSyncRoutes(opts: {
     const allowed = requireAllowedKey(c, key);
     if (allowed instanceof Response) return allowed;
     try {
-      const result = await opts.r2.getObject(key);
+      const result = await opts.r2.getObject(key, { signal: AbortSignal.timeout(120_000) });
       if (!result.body) {
         return c.body(null, 404);
+      }
+      const stream = result.body instanceof Readable ? Readable.toWeb(result.body) : result.body;
+      if (!stream || typeof (stream as ReadableStream).getReader !== "function") {
+        throw new Error("Invalid storage stream");
       }
       if (result.etag) {
         c.header("ETag", result.etag);
       }
-      return new Response(result.body as BodyInit, {
+      if (result.contentLength !== undefined && Number.isSafeInteger(result.contentLength) && result.contentLength >= 0) {
+        c.header("Content-Length", String(result.contentLength));
+      }
+      return new Response(stream as BodyInit, {
         status: 200,
-        headers: result.etag ? { ETag: result.etag } : undefined,
+        headers: {
+          ...(result.etag ? { ETag: result.etag } : {}),
+          ...(result.contentLength !== undefined && Number.isSafeInteger(result.contentLength) && result.contentLength >= 0
+            ? { "Content-Length": String(result.contentLength) } : {}),
+        },
       });
     } catch (err) {
       if (isNoSuchKeyError(err)) {
