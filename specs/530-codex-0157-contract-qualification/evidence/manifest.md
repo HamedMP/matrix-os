@@ -1,0 +1,33 @@
+# 0.157.0 qualification evidence manifest
+
+## Inputs and provenance
+
+As checked on 2026-09-26, `pnpm view @openai/codex version --json` returned `"0.157.0"`; this PR qualifies that exact version even if the registry's latest dist-tag advances. The prior failing [two-target scheduled run](https://github.com/HamedMP/matrix-os/actions/runs/36148453143) generated the same 0.157.0 schema SHA-256 on Linux and macOS, then stopped at the explicit unverified-version guard in `scripts/lib/codex-provider-contract-check.mjs` before checking schema bytes. The source snapshot was fetched from the [official `rust-v0.157.0` tag](https://github.com/openai/codex/blob/rust-v0.157.0/codex-rs/exec/src/exec_events.rs). The app-server snapshot came from published `@openai/codex@0.157.0` using `app-server generate-json-schema --experimental`; `codex --version` reported `codex-cli 0.157.0`. The baseline schema came from pinned 0.156.1 with the same command. The two checked-in generated schemas are gzip-compressed only to keep the PR small; the test verifies the decompressed exact bytes.
+
+| Exact input | SHA-256 |
+| --- | --- |
+| [0.157.0 exec source](../../../tests/fixtures/codex-0157/exec-events.rs) | `dafa872d7e86a099e56e28a329dcb9c03db90ed768c3b88cca8c91d46dc1d0e5` |
+| 0.156.1 exec source at the corresponding official tag | `dafa872d7e86a099e56e28a329dcb9c03db90ed768c3b88cca8c91d46dc1d0e5` (byte-identical) |
+| Decompressed [0.156.1 app-server schema](../../../tests/fixtures/codex-0157/app-server-schema-0156.json.gz) | `655adafa0ccea3d84f30bcbdc74e201fa14511c51e08d0cd024a0280daa8bc60` |
+| Decompressed [0.157.0 app-server schema](../../../tests/fixtures/codex-0157/app-server-schema-0157.json.gz) | `d6d70a4b2af4c6bb03dee46af2cda9c8b7b4d656cd5a55c54f748146985cdb43` |
+
+The 0.157.0 full-schema digest matches both jobs in the prior CI run. All 11 required server method/notification **transitive** digests printed there match the current 0.156.1 contract; current-head two-target rerun is still required before green acceptance.
+
+## Complete generated-schema structural comparison
+
+Reproduce with `python3 specs/530-codex-0157-contract-qualification/evidence/compare-schemas.py`. The script compares every existing top-level and nested `v2` definition, not just the variant's unchanged `$ref` string. Four top-level definitions change:
+
+- `ClientRequest` has three **new** Gateway OAuth variants (`cancel`, `login`, `read`), 164→167; no old variant is removed or modified.
+- `ServerNotification` has one **new** `account/gatewayOAuth/changed` variant, 82→83; none of the 82 old variants is modified. “One new notification” does not mean an existing notification payload changed.
+- `InitializeCapabilities` adds optional `explicitGatewayOauth`; existing properties and the required set are unchanged.
+- `v2` adds 14 definitions: `GatewayOAuthCancelResponse`, `GatewayOAuthChangedNotification`, `GatewayOAuthLoginResponse`, `GatewayOAuthReadResponse`, `GatewayOAuthStatus`, `McpResourceReadTarget`, `PluginEntrypoint`, `PluginExtensions`, `PluginIcon`, `PluginQuickAction`, `PluginQuickActionTarget`, `PluginSearchProvider`, `PluginSearchProviderCall`, and `PluginSettings`. No `v2` definition is removed. Exactly five existing `v2` definitions change, **only** by adding optional properties: `McpResourceReadParams.target`, `McpServerStatus.httpOrigin`, `PluginSummary.extensions`, `ThreadItemEntry.startedAtMs`/`completedAtMs`, and `ThreadRealtimeStartParams.backendReasoningStatus`. The comparator asserts that every old property, required list, and other metadata in those definitions is structurally identical as parsed JSON. All other existing `v2` definitions are identical.
+
+The changed `v2` definitions are referenced through existing client request, server notification, and response schemas, so the additive fields matter even where an RPC variant object itself is unchanged. Matrix must retain permissive handling of optional extra fields and explicit approval behavior. This diff establishes additive schema shape; it is not a blanket behavioral compatibility guarantee.
+
+## No-paid process evidence and remaining gates
+
+On 2026-09-25, the published 0.157.0 macOS CLI ran the existing isolated B2 stdio MCP probe in `.superpowers/sdd/plan/evidence/B2-codex-stdio-spike/` with a localhost mock Responses endpoint, fake read-only MCP server, isolated `HOME`/`CODEX_HOME`, and no real credential or paid model. It exited 0: fresh `thread/start` reported `workspaceWrite.networkAccess:false`, MCP status connected, advertised and completed a fake MCP call returning sentinel A; a new-process cold resume completed the tool returning C. A loaded resume supplied B but still invoked A, matching the known 0.156.1 registration-retention constraint. Cold resume without a sandbox override reported `readOnly.networkAccess:false`. Local raw output and commands are retained in the ignored coordinator dossier at `.superpowers/sdd/plan/B1-codex-0157-contract-dossier.md`; that ignored local artifact is **not** available to GitHub reviewers and must be rerun or represented in reviewable CI evidence before acceptance.
+
+Pending before green acceptance: a current-head native process fixture against exact 0.157.0, both-target actual generated-schema CI, all 11 method digest verification, focused contract tests/typecheck, and review of any parser/approval implications. No real account, live customer, or installed-pin acceptance was attempted. The current red test has exactly one expected failure at the 0.157.0 gate; the unknown 0.157.1 and retained 0.156.1 assertions pass.
+
+Red command: `flox activate -- pnpm exec vitest run tests/scripts/check-codex-provider-contracts.test.ts`. Result on the bootstrap head: 8 tests total, 1 expected failure, 7 pass. The failure is `Codex 0.157.0 is not verified; review its exec JSONL schema and update the compatibility contract` at the new exact-fixture assertion; no fixture digest assertion failed.

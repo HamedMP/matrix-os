@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { gunzipSync } from "node:zlib";
 import { describe, expect, it } from "vitest";
 import appServerContract from "../../packages/gateway/src/coding-agents/codex-app-server-contract.json" with { type: "json" };
 import contract from "../../packages/gateway/src/coding-agents/codex-exec-contract.json" with { type: "json" };
@@ -15,6 +16,60 @@ const scriptPath = fileURLToPath(
 );
 
 describe("Codex provider contract checker", () => {
+  it("qualifies exact published Codex 0.157.0 bytes on both supported targets", () => {
+    const version = "0.157.0";
+    const execSchemaBytes = readFileSync(new URL(
+      "../fixtures/codex-0157/exec-events.rs",
+      import.meta.url,
+    ));
+    const appServerSchemaBytes = gunzipSync(readFileSync(new URL(
+      "../fixtures/codex-0157/app-server-schema-0157.json.gz",
+      import.meta.url,
+    )));
+    const digest = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex");
+
+    // The checked-in fixture is the tagged source plus published CLI-generated
+    // schema, not a hand-built approximation of the methods we consume.
+    expect(digest(execSchemaBytes)).toBe(
+      "dafa872d7e86a099e56e28a329dcb9c03db90ed768c3b88cca8c91d46dc1d0e5",
+    );
+    expect(digest(appServerSchemaBytes)).toBe(
+      "d6d70a4b2af4c6bb03dee46af2cda9c8b7b4d656cd5a55c54f748146985cdb43",
+    );
+
+    for (const runtimeTarget of ["darwin-arm64", "linux-x64"]) {
+      expect(() => verifyCodexProviderContracts({
+        version,
+        execContract: contract,
+        appServerContract,
+        execSchemaBytes,
+        appServerSchemaBytes,
+        runtimeTarget,
+      })).not.toThrow();
+    }
+
+  });
+
+  it("retains earlier qualification records and rejects an unknown Codex version", () => {
+    const execSchemaBytes = readFileSync(new URL(
+      "../fixtures/codex-0157/exec-events.rs",
+      import.meta.url,
+    ));
+    const appServerSchemaBytes = gunzipSync(readFileSync(new URL(
+      "../fixtures/codex-0157/app-server-schema-0157.json.gz",
+      import.meta.url,
+    )));
+    expect(contract.verifiedVersions["0.156.1"]).toBeDefined();
+    expect(appServerContract.verifiedVersions["0.156.1"]).toBeDefined();
+    expect(() => verifyCodexProviderContracts({
+      version: "0.157.1",
+      execContract: contract,
+      appServerContract,
+      execSchemaBytes,
+      appServerSchemaBytes,
+    })).toThrow("Codex 0.157.1 is not verified");
+  });
+
   it("trusts the reviewed Codex 0.156.1 provider schemas", () => {
     expect(contract.latestVerifiedVersion).toBe("0.156.1");
     expect(contract.verifiedVersions["0.156.0"]).toEqual({
