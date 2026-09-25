@@ -107,12 +107,13 @@ type SpawnProcess = (
 async function readCodexModels(input: {
   executable: string;
   cwd: string;
+  environment?: Record<string, string>;
   timeoutMs: number;
   spawnProcess: SpawnProcess;
 }): Promise<unknown> {
   const child = input.spawnProcess(input.executable, ["app-server", "--stdio"], {
     cwd: input.cwd,
-    env: process.env,
+    env: { ...process.env, ...input.environment },
     stdio: "pipe",
   });
   child.stderr.resume();
@@ -177,6 +178,7 @@ async function readCodexModels(input: {
 export function createCodexModelCatalogSource(options: {
   executable: string;
   cwd: string;
+  environment?: Record<string, string>;
   timeoutMs?: number;
   cacheTtlMs?: number;
   spawnProcess?: SpawnProcess;
@@ -198,6 +200,7 @@ export function createCodexModelCatalogSource(options: {
       pending = readCodexModels({
         executable: options.executable,
         cwd: options.cwd,
+        environment: options.environment,
         timeoutMs,
         spawnProcess,
       }).then(normalizeCodexModelCatalog).then((value) => {
