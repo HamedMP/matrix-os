@@ -11,6 +11,7 @@ import { registerResourceRoutes } from "./resource-routes.js";
 import type { CollaborationRouteOptions } from "./route-support.js";
 import { registerScopeRoutes } from "./scope-routes.js";
 import { registerTerminalRoutes } from "./terminal-routes.js";
+import { registerOrganizationDriveRoutes } from "../organization-drive/routes.js";
 
 export type { CollaborationRouteOptions, Participant } from "./route-support.js";
 
@@ -63,6 +64,7 @@ export function createCollaborationRoutes(options: CollaborationRouteOptions): H
   registerExecutionPolicyRoutes(routes, options);
   // S12: files, folders and app instances (project-bound and standalone) after the baseline routes.
   registerResourceRoutes(routes, options);
+  registerOrganizationDriveRoutes(routes, options);
 
   return routes;
 }

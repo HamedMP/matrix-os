@@ -63,6 +63,7 @@ export * from "#collaboration-execution";
 export * from "#collaboration-peer";
 export * from "#collaboration-resources";
 export * from "#organization-billing";
+export * from "#organization-drive";
 export * from "#custom-mcp-policy";
 export * from "#hermes-configuration";
 export * from "#kernel-result";
