@@ -1,8 +1,8 @@
-import { CollaborationIdSchema, OrganizationDriveUploadRequestSchema } from "@matrix-os/contracts";
+import { CollaborationIdSchema, OrganizationDrivePathSchema, OrganizationDriveUploadRequestSchema } from "@matrix-os/contracts";
 import type { Context, Hono } from "hono";
 import { z } from "zod/v4";
 import { CollaborationAuthorizationError, type AuthorizedCollaborationContext } from "../collaboration/authority.js";
-import { authorize, handle, readJson, type CollaborationRouteOptions } from "../collaboration/route-support.js";
+import { authorize, exactQuery, handle, readJson, type CollaborationRouteOptions } from "../collaboration/route-support.js";
 import { OrganizationDriveError, type OrganizationDriveService } from "./service.js";
 
 const IdSchema = z.uuid();
@@ -57,10 +57,13 @@ export function registerOrganizationDriveRoutes(routes: Hono, options: RouteOpti
   }));
 
   routes.get(base, async (c) => driveHandle(c, async () => {
+    const query = z.object({ after: OrganizationDrivePathSchema.optional(),
+      limit: z.coerce.number().int().min(1).max(100).default(100) }).strict()
+      .parse(exactQuery(c, ["after", "limit"]));
     const context = await driveContext(options, c, new Uint8Array(), "read");
     const service = required(options);
     return c.json({ organizationId: context.organizationId, scopeId: context.scopeId,
-      ...(await service.usage(identity(context))), files: await service.list(identity(context)) });
+      ...(await service.usage(identity(context))), ...(await service.list({ ...identity(context), ...query })) });
   }));
 
   routes.post(`${base}/uploads`, async (c) => driveHandle(c, async () => {

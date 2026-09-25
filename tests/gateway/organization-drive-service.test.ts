@@ -52,11 +52,11 @@ describe("organization drive service", () => {
       const digest = "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824";
       const reserved = await f.service.reserve({ organizationId: org, scopeId: scope, actorId: actor,
         request: { path: "work/a.txt", size: 5, sha256: digest, requestId: "upload", baseVersion: 0 } });
-      expect(await f.service.list({ organizationId: org, scopeId: scope })).toEqual([]);
+      expect((await f.service.list({ organizationId: org, scopeId: scope })).files).toEqual([]);
       f.setObject(content);
       const committed = await f.service.commit({ organizationId: org, scopeId: scope, actorId: actor, uploadId: reserved.uploadId });
       expect(committed.version).toBe(1);
-      expect((await f.service.list({ organizationId: org, scopeId: scope }))[0]?.path).toBe("work/a.txt");
+      expect((await f.service.list({ organizationId: org, scopeId: scope })).files[0]?.path).toBe("work/a.txt");
       expect(await f.service.commit({ organizationId: org, scopeId: scope, actorId: actor, uploadId: reserved.uploadId })).toEqual(committed);
     } finally { await f.close(); }
   });
@@ -81,7 +81,7 @@ describe("organization drive service", () => {
       f.setObject(new TextEncoder().encode("hello"));
       await expect(f.service.commit({ organizationId: org, scopeId: scope, actorId: actor, uploadId: reserved.uploadId }))
         .rejects.toMatchObject({ code: "checksum" });
-      expect(await f.service.list({ organizationId: org, scopeId: scope })).toEqual([]);
+      expect((await f.service.list({ organizationId: org, scopeId: scope })).files).toEqual([]);
       await expect(f.service.reserve({ organizationId: org, scopeId: scope, actorId: actor,
         request: { path: "a.txt", size: 5, sha256, requestId: "good", baseVersion: 0 } })).resolves.toBeDefined();
     } finally { await f.close(); }
@@ -97,6 +97,26 @@ describe("organization drive service", () => {
       expect(await f.service.usage({ organizationId: org, scopeId: scope })).toMatchObject({ reservedBytes: 0 });
       await expect(f.service.reserve({ organizationId: org, scopeId: scope, actorId: actor,
         request: { path: "a.txt", size: 5, sha256, requestId: "new", baseVersion: 0 } })).resolves.toBeDefined();
+    } finally { await f.close(); }
+  });
+
+  it("pages file paths without hiding a drive once it grows", async () => {
+    const f = await fixture();
+    try {
+      for (const [index, name] of ["a.txt", "b.txt", "c.txt"].entries()) {
+        const fileId = `00000000-0000-4000-8000-${String(index + 10).padStart(12, "0")}`;
+        const versionId = `00000000-0000-4000-8000-${String(index + 20).padStart(12, "0")}`;
+        await sql`INSERT INTO organization_drive_files (id, organization_id, path, current_version)
+          VALUES (${fileId}, ${org}, ${name}, 1)`.execute(f.db);
+        await sql`INSERT INTO organization_drive_versions (id, file_id, version, object_key, size_bytes, sha256, created_by)
+          VALUES (${versionId}, ${fileId}, 1, ${`object-${index}`}, 1, ${sha256}, ${actor})`.execute(f.db);
+      }
+      const first = await f.service.list({ organizationId: org, scopeId: scope, limit: 2 });
+      expect(first.files.map((file) => file.path)).toEqual(["a.txt", "b.txt"]);
+      expect(first.nextCursor).toBe("b.txt");
+      const second = await f.service.list({ organizationId: org, scopeId: scope, after: first.nextCursor, limit: 2 });
+      expect(second.files.map((file) => file.path)).toEqual(["c.txt"]);
+      expect(second.nextCursor).toBeUndefined();
     } finally { await f.close(); }
   });
 });

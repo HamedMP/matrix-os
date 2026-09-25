@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { OrganizationDriveFileSchema, OrganizationDriveUploadRequestSchema, type OrganizationDriveFile, type OrganizationDriveUploadRequest } from "@matrix-os/contracts";
+import { OrganizationDriveFileSchema, OrganizationDrivePathSchema, OrganizationDriveUploadRequestSchema, type OrganizationDriveFile, type OrganizationDriveUploadRequest } from "@matrix-os/contracts";
 import { sql, type Kysely, type Selectable } from "kysely";
 import { buildFileKey } from "../sync/r2-keys.js";
 import { resolveSyncScope } from "../sync/runtime-scope.js";
@@ -68,20 +68,24 @@ export class OrganizationDriveService {
     return { usedBytes: Number(row.used_bytes), reservedBytes: Number(row.reserved_bytes), quotaBytes: Number(row.quota_bytes) };
   }
 
-  async list(input: DriveIdentity): Promise<OrganizationDriveFile[]> {
+  async list(input: DriveIdentity & { after?: string; limit?: number }): Promise<{ files: OrganizationDriveFile[]; nextCursor?: string }> {
     await this.drive(input);
-    const rows = await this.options.db.selectFrom("organization_drive_files as f")
+    const limit = input.limit ?? 100;
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) throw new OrganizationDriveError("conflict");
+    const after = input.after === undefined ? undefined : OrganizationDrivePathSchema.parse(input.after);
+    const query = this.options.db.selectFrom("organization_drive_files as f")
       .innerJoin("organization_drive_versions as v", (join) => join.onRef("v.file_id", "=", "f.id")
         .onRef("v.version", "=", "f.current_version"))
       .select(["f.id", "f.organization_id", "f.path", "f.current_version", "v.size_bytes", "v.sha256", "v.created_by", "f.updated_at"])
-      .where("f.organization_id", "=", input.organizationId).where("f.deleted_at", "is", null)
-      .orderBy("f.path", "asc").limit(1001).execute();
-    if (rows.length > 1000) throw new OrganizationDriveError("unavailable");
-    return rows.map((row) => OrganizationDriveFileSchema.parse({
+      .where("f.organization_id", "=", input.organizationId).where("f.deleted_at", "is", null);
+    const rows = await (after ? query.where("f.path", ">", after) : query)
+      .orderBy("f.path", "asc").limit(limit + 1).execute();
+    const files = rows.slice(0, limit).map((row) => OrganizationDriveFileSchema.parse({
       id: row.id, organizationId: row.organization_id, path: row.path,
       version: row.current_version, size: Number(row.size_bytes), sha256: row.sha256,
       updatedBy: row.created_by, updatedAt: new Date(row.updated_at).toISOString(),
     }));
+    return { files, ...(rows.length > limit && files.length > 0 ? { nextCursor: files.at(-1)!.path } : {}) };
   }
 
   async reserve(input: UploadIdentity & { request: OrganizationDriveUploadRequest }): Promise<{ uploadId: string; putUrl: string; expiresAt: string }> {

@@ -9,7 +9,7 @@ const proof = { "x-matrix-collaboration-proof": "e30" };
 
 function fixture(kind: "folder" | "file" = "folder") {
   const usage = vi.fn().mockResolvedValue({ usedBytes: 0, reservedBytes: 0, quotaBytes: 1_000_000_000_000 });
-  const list = vi.fn().mockResolvedValue([]);
+  const list = vi.fn().mockResolvedValue({ files: [] });
   const enable = vi.fn().mockResolvedValue(undefined);
   const verifyAndAuthorize = vi.fn().mockResolvedValue({ actorId: "user_ash", ownerId: "user_ash",
     organizationId: "org_authority", scopeId, membershipScopeId: scopeId, resourceKind: kind,
