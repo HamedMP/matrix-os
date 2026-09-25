@@ -201,7 +201,9 @@ const ClaudeAllowRuleSchema = z.union([
 ]);
 const ClaudeLaunchSettingsSchema = z.object({
   permissions: z.object({
-    allow: z.array(ClaudeAllowRuleSchema).max(20).optional(),
+    // The sandbox permits 20 writable roots; a scoped Claude Run adds only
+    // the three fixed Custom MCP broker wrappers to that existing ceiling.
+    allow: z.array(ClaudeAllowRuleSchema).max(23).optional(),
     deny: z.array(z.enum(["Edit", "Write", "NotebookEdit"])).max(3).optional(),
   }).strict().optional(),
   sandbox: z.object({
