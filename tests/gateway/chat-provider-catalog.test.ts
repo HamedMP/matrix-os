@@ -723,6 +723,46 @@ describe("canonical Chat Provider catalog", () => {
     ))).toMatchObject({ availability: "available", displayName: "Hermes" });
   });
 
+  it.each(["hermes", "openclaw"] as const)(
+    "keeps saved-off %s unavailable despite an authenticated native runtime",
+    async (kind) => {
+      const nativeSource: AgentRuntimeSource = async (signal) => {
+        const snapshot = await runtimeSource()(signal);
+        return {
+          ...snapshot,
+          runtime: {
+            ...snapshot.runtime,
+            selected: kind,
+            options: snapshot.runtime.options.map((runtime) => ({
+              ...runtime,
+              health: runtime.id === kind ? "healthy" as const : "stopped" as const,
+              selectionState: runtime.id === kind ? "active" as const : "available" as const,
+              configured: runtime.id === kind,
+            })),
+          },
+          providers: snapshot.providers.map((provider) => ({ ...provider, runtime: kind })),
+          messaging: { ...snapshot.messaging, runtime: kind },
+        };
+      };
+      const service = createChatProviderCatalogService({
+        codingProviders: codingRegistry(),
+        agentRuntimeSource: nativeSource,
+        systemRuntimeSources: { [kind]: nativeSource },
+        harnessSettingsSource: harnessSettings([configuredHarness(kind, false)]),
+        executableDriverKinds: [kind],
+      });
+
+      const instance = (await service.getCatalog(principal)).instances.find((candidate) => (
+        candidate.id === `${kind}_default`
+      ));
+      expect(instance).toMatchObject({
+        availability: "unavailable",
+        unavailabilityReason: "disabled_in_settings",
+      });
+      expect(instance?.defaultSelection).toBeUndefined();
+    },
+  );
+
   it("keeps the active Hermes inventory authoritative over a stale settings route", async () => {
     const service = createChatProviderCatalogService({
       codingProviders: codingRegistry(),
