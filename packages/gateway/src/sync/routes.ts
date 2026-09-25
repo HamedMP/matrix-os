@@ -54,6 +54,7 @@ import { createSyncRateLimiter } from "./rate-limiter.js";
 import { MissingSyncUserIdentityError } from "../auth.js";
 import { RequestPrincipalMisconfiguredError, isRequestPrincipalError } from "../request-principal.js";
 import { StagedObjectValidationError } from "./blob-publication.js";
+import type { HomeMirrorReadinessStatus } from "./home-mirror-readiness.js";
 
 const SYNC_BODY_LIMIT = 65536;
 const MULTIPART_COMPLETE_BODY_LIMIT = 1024 * 1024;
@@ -67,6 +68,7 @@ export interface SyncRouteDeps {
   getScope?: (c: any) => SyncScope;
   getUserId?: (c: any) => string;
   getPeerId: (c: any) => string;
+  getHomeMirrorStatus?: () => HomeMirrorReadinessStatus;
   finalizeStagedObject?: CommitDeps["finalizeStagedObject"];
 }
 
@@ -374,6 +376,7 @@ export function createSyncRoutes(deps: SyncRouteDeps): Hono {
       totalSize: Number(meta?.total_size ?? 0),
       lastSyncAt: meta?.updated_at?.getTime() ?? 0,
       pendingConflicts: 0,
+      homeMirror: deps.getHomeMirrorStatus?.() ?? { state: "disabled" },
       protocolVersion: 3,
       capabilities: {
         stagedUploads: true,

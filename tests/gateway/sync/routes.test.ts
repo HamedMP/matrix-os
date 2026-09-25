@@ -615,7 +615,9 @@ describe("GET /api/sync/status", () => {
     mockDb.getManifestMeta.mockResolvedValue({ version: 5, file_count: 100, total_size: 50000n, etag: '"e"', updated_at: new Date(2000) });
     mockDb.getAggregateManifestStats.mockResolvedValue({ fileCount: 500, totalSize: 99999n });
 
-    const app = createTestApp();
+    const app = createTestApp({
+      getHomeMirrorStatus: () => ({ state: "ready" }),
+    });
     const res = await app.request("/api/sync/status");
 
     expect(res.status).toBe(200);
@@ -624,6 +626,7 @@ describe("GET /api/sync/status", () => {
     expect(json.connectedPeers[0].peerId).toBe("p1");
     expect(json.manifestVersion).toBe(5);
     expect(json.fileCount).toBe(100);
+    expect(json.homeMirror).toEqual({ state: "ready" });
     expect(mockPeerRegistry.getTotalPeerCount).toHaveBeenCalledTimes(1);
     expect(mockDb.getAggregateManifestStats).toHaveBeenCalledTimes(1);
   });
@@ -641,6 +644,22 @@ describe("GET /api/sync/status", () => {
     expect(json.manifestVersion).toBe(0);
     expect(json.fileCount).toBe(0);
     expect(json.totalSize).toBe(0);
+    expect(json.homeMirror).toEqual({ state: "disabled" });
+  });
+
+  it("reports a coarse failed home-mirror state without exposing internal errors", async () => {
+    mockPeerRegistry.getPeers.mockReturnValue([]);
+    mockDb.getManifestMeta.mockResolvedValue(null);
+
+    const app = createTestApp({
+      getHomeMirrorStatus: () => ({ state: "failed" }),
+    });
+    const res = await app.request("/api/sync/status");
+
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json.homeMirror).toEqual({ state: "failed" });
+    expect(JSON.stringify(json)).not.toContain("error");
   });
 });
 

@@ -214,6 +214,7 @@ import { createSettingsRoutes } from "./routes/settings.js";
 import { bootstrapSocialSchema, createSocialRoutes, type SocialRoutes } from "./social.js";
 import { createManifestDb } from "./sync/db-impl.js";
 import { createHomeMirror, type HomeMirror } from "./sync/home-mirror.js";
+import { createHomeMirrorReadiness } from "./sync/home-mirror-readiness.js";
 import { initializeSyncInfrastructure } from "./sync/infrastructure.js";
 import { createSyncRoutes, syncApp } from "./sync/routes.js";
 import {
@@ -872,6 +873,7 @@ export async function createGateway(config: GatewayConfig) {
   let homeMirror: HomeMirror | null = null;
   let homeMirrorStart: Promise<void> | null = null;
   const homeMirrorEnabled = process.env.MATRIX_HOME_MIRROR === "true";
+  const homeMirrorReadiness = createHomeMirrorReadiness(homeMirrorEnabled);
   if (homeMirrorEnabled && syncR2 && kyselyInstance) {
     // Loud fail-fast in production: if the orchestrator didn't inject
     // MATRIX_USER_ID, the mirror would fall back to MATRIX_HANDLE (or
@@ -925,13 +927,20 @@ export async function createGateway(config: GatewayConfig) {
         },
       });
       // Start asynchronously so server boot isn't blocked by the initial pull.
-      homeMirrorStart = homeMirror.start().catch((err) => {
+      homeMirrorStart = homeMirror.start().then(() => {
+        homeMirrorReadiness.markReady();
+      }).catch((err) => {
+        homeMirrorReadiness.markFailed();
         console.error("[home-mirror] start failed:", (err as Error).message);
       });
     } catch (err) {
+      homeMirrorReadiness.markFailed();
       console.error("[home-mirror] init failed:", (err as Error).message);
       homeMirror = null;
     }
+  } else if (homeMirrorEnabled) {
+    homeMirrorReadiness.markFailed();
+    console.error("[home-mirror] sync infrastructure is unavailable");
   }
 
   internalIntegrationBaseUrl =
@@ -1753,7 +1762,10 @@ export async function createGateway(config: GatewayConfig) {
 
   // 066: Sync API routes
   if (syncDeps) {
-    app.route("/api/sync", createSyncRoutes(syncDeps));
+    app.route("/api/sync", createSyncRoutes({
+      ...syncDeps,
+      getHomeMirrorStatus: () => homeMirrorReadiness.getStatus(),
+    }));
   } else {
     app.route("/api/sync", syncApp);
   }
