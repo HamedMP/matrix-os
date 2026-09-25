@@ -43,6 +43,17 @@ const GLM_PRICING: FundedPricing = {
   cacheWrite5mRateHundredths: 15, cacheWrite1hRateHundredths: 15,
 };
 
+/** Readiness must agree with the local price gate used before admission. */
+export function fundedModelPriceValidThrough(modelId: string): string | undefined {
+  const pricing = [CURRENT_PRICING, GLM_PRICING].find((item) => item.canonicalModelId === modelId);
+  return pricing?.validThrough;
+}
+
+export function isFundedModelPriceCurrent(modelId: string, now: Date): boolean {
+  const validThrough = fundedModelPriceValidThrough(modelId);
+  return !!validThrough && now.getTime() <= Date.parse(validThrough);
+}
+
 // Retain the previous version only for safe settlement of reservations created
 // before this deployment. It is never selected for new reservations.
 const SETTLEMENT_PRICING: Readonly<Record<string, FundedPricing>> = {

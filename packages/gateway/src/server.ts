@@ -111,6 +111,7 @@ import {
   loadFundedAiRuntimeConfig,
 } from "./funded-ai-credential-manager.js";
 import { createFundedAiFundingSummaryClient } from "./funded-ai-funding-summary-client.js";
+import { createFundedAiRouteReadinessClient } from "./funded-ai-route-readiness-client.js";
 import { createFundedAiReadinessReader } from "./funded-ai-readiness.js";
 import { JevEvaluationRepository } from "./jev/repository.js";
 import { createJevRoutes } from "./jev/routes.js";
@@ -1427,8 +1428,8 @@ export async function createGateway(config: GatewayConfig) {
     fundedCredentialProvider,
     fundedReadinessReader: fundedAiRuntimeConfig && fundedAiFundingSummaryReader
       ? createFundedAiReadinessReader({
-        relayBaseUrl: fundedAiRuntimeConfig.relayBaseUrl,
         summary: fundedAiFundingSummaryReader,
+        routes: createFundedAiRouteReadinessClient(fundedAiRuntimeConfig),
       })
       : undefined,
     driverInventory: createProviderDriverInventoryReader({

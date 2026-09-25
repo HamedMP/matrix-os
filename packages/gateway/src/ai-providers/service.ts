@@ -296,6 +296,12 @@ export class AiProviderService implements AiProviderSnapshotReader {
       "matrix",
       now,
     );
+    const fundedSourceReadiness = (modelId: string): AiProviderReadiness =>
+      (matrixReadiness.state === "ready" || matrixReadiness.safeReason === "credit_required")
+        && !funded?.allowedModelIds.includes(modelId)
+        ? { state: "unavailable", checkedAt: matrixReadiness.checkedAt, staleAfter: null,
+          action: "retry", safeReason: "provider_unavailable" }
+        : matrixReadiness;
     const catalog = buildBundledModelCatalog();
 
     const accessSources: AiAccessSourceView[] = [
@@ -305,7 +311,7 @@ export class AiProviderService implements AiProviderSnapshotReader {
         eligibleModelIds: eligibleModelsForSource("matrix_cloudflare", catalog)
           .filter((model) => funded?.allowedModelIds.includes(model.id)).map((model) => model.id),
         policyVersion: AI_PROVIDER_CATALOG_VERSION,
-      }, matrixReadiness),
+      }, fundedSourceReadiness("@cf/zai-org/glm-5.3-flash")),
       sourceFromReadiness({
         id: "matrix_included",
         displayName: "Matrix AI",
@@ -316,7 +322,7 @@ export class AiProviderService implements AiProviderSnapshotReader {
           .filter((model) => funded?.allowedModelIds.includes(model.id))
           .map((model) => model.id),
         policyVersion: AI_PROVIDER_CATALOG_VERSION,
-      }, matrixReadiness),
+      }, fundedSourceReadiness("claude-sonnet-5")),
       sourceFromReadiness({
         id: "owner_anthropic_key",
         displayName: "Anthropic API key",
