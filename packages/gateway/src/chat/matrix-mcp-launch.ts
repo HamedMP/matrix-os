@@ -20,7 +20,7 @@ export const MATRIX_CUSTOM_MCP_TOOLS = [
   "mcp__matrix-integrations__call_custom_mcp_tool",
 ] as const;
 
-export type MatrixMcpRunScope = "discovery" | "call";
+export type MatrixMcpRunScope = "discovery" | "call" | "integration_read";
 
 export interface MatrixMcpRunContext {
   actorId: string;
@@ -62,6 +62,10 @@ function digest(token: string): string {
 }
 
 function permitted(method: string, path: string, scope: MatrixMcpRunScope): boolean {
+  if (scope === "integration_read") {
+    return (method === "GET" && (path === "/api/integrations" || path === "/api/integrations/agent-catalog"))
+      || (method === "POST" && path === "/api/integrations/read-call");
+  }
   return (method === "GET" && (path === "/api/mcp-servers" || DETAIL_PATH.test(path)))
     || (scope === "call" && method === "POST" && CALL_PATH.test(path));
 }
@@ -98,7 +102,7 @@ export function createMatrixMcpCapabilityRegistry(options: {
         || !SAFE_PRINCIPAL_USER_ID.test(options.configuredOwnerId)
         || input.owner.type !== "personal"
         || input.owner.ownerId !== options.configuredOwnerId
-        || (input.scope !== "discovery" && input.scope !== "call")
+        || (input.scope !== "discovery" && input.scope !== "call" && input.scope !== "integration_read")
         || !input.runId || input.runId.length > 256) return null;
       sweep();
       if (active.size >= MAX_ACTIVE) return null;

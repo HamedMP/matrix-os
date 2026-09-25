@@ -4,6 +4,7 @@ import { KyselyPGlite } from "kysely-pglite";
 import { createPlatformDb, type PlatformDb } from "../../packages/gateway/src/platform-db.js";
 import { createIntegrationRoutes } from "../../packages/gateway/src/integrations/routes.js";
 import type { PipedreamConnectClient } from "../../packages/gateway/src/integrations/pipedream.js";
+import { getAction } from "../../packages/gateway/src/integrations/registry.js";
 
 describe("owner-bound integration read-call authority", () => {
   let pglite: InstanceType<typeof KyselyPGlite>;
@@ -90,6 +91,29 @@ describe("owner-bound integration read-call authority", () => {
       accountLabel: "Work", scopes: ["read"] });
     expect((await readCall({ service: "gmail", action: "not_registered", label: "Work", params: {} })).status).toBe(400);
     expect((await readCall({ service: "gmail", action: "list_labels", label: "   ", params: {} })).status).toBe(400);
+    expect(proxyGet).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when reviewed risk metadata is absent and when a preset cannot select the exact account", async () => {
+    await db.connectService({ userId: ownerId, service: "gmail", pipedreamAccountId: "pd_work",
+      accountLabel: "Work", scopes: ["read"] });
+    const action = getAction("gmail", "list_labels")!;
+    const originalRisk = action.risk;
+    try {
+      action.risk = undefined as never;
+      expect((await readCall({ service: "gmail", action: "list_labels", label: "Work", params: {} })).status).toBe(403);
+    } finally {
+      action.risk = originalRisk;
+    }
+    expect((await readCall({ service: "granola", action: "list_folders", label: "Work", params: {} })).status).toBe(403);
+    expect(proxyGet).not.toHaveBeenCalled();
+    expect(proxyPost).not.toHaveBeenCalled();
+  });
+
+  it("rejects oversized scoped calls before parsing or provider invocation", async () => {
+    const res = await readCall({ service: "gmail", action: "list_labels", label: "Work",
+      params: { huge: "x".repeat(70_000) } });
+    expect(res.status).toBe(413);
     expect(proxyGet).not.toHaveBeenCalled();
   });
 });

@@ -10,6 +10,9 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import { listServices, getService, getAction } from "./registry.js";
 import type { PipedreamConnectClient } from "./pipedream.js";
 import type { PlatformDb } from "../platform-db.js";
+import { MATRIX_MCP_RUN_CONTEXT_KEY } from "../chat/matrix-mcp-launch.js";
+import { INTEGRATION_READ_SCOPE_HEADER } from "./scope-provenance.js";
+import { createIntegrationReadCallRoutes } from "./read-call.js";
 
 // ---------------------------------------------------------------------------
 // Zod schemas
@@ -249,6 +252,7 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
   const { db, pipedream, webhookSecret, resolveUserId, broadcast, mcpPresetBroker } = opts;
   const emit = broadcast ?? (() => {});
   const app = new Hono();
+  app.route("/", createIntegrationReadCallRoutes({ db, pipedream, resolveUserId }));
 
   // Pending labels from /connect that need to survive the OAuth round-trip.
   // Queued per "externalUserId:appSlug", TTL 10 minutes, capped at 1000 entries.
@@ -424,11 +428,14 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
     uid: string | null,
     capabilityIdentityFailed: boolean,
     authoritative = false,
+    readOnly = false,
   ) {
     const services = await Promise.all(listServices()
-      .filter((service) => service.connectorKind !== "mcp_preset" || mcpPresetBroker)
+      .filter((service) => readOnly ? service.connectorKind === "pipedream" : service.connectorKind !== "mcp_preset" || mcpPresetBroker)
       .map(async (s) => {
-        let actions = s.actions;
+        let actions = readOnly
+          ? Object.fromEntries(Object.entries(s.actions).filter(([, action]) => action.risk === "read"))
+          : s.actions;
         if (capabilityIdentityFailed && s.connectorKind === "mcp_preset") {
           actions = {};
         } else if (uid && s.connectorKind === "mcp_preset" && mcpPresetBroker?.listAvailableActions) {
@@ -499,7 +506,10 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
       return c.json({ error: "Integration capabilities unavailable" }, 503);
     }
     if (!uid) return c.json({ error: "Unauthorized" }, 401);
-    return availableServices(c, uid, false, true);
+    const runContext = c.get(MATRIX_MCP_RUN_CONTEXT_KEY as never) as { scope?: string } | undefined;
+    const readOnly = runContext?.scope === "integration_read"
+      || c.req.header(INTEGRATION_READ_SCOPE_HEADER) === "read";
+    return availableServices(c, uid, false, true, readOnly);
   });
 
   // -----------------------------------------------------------------------

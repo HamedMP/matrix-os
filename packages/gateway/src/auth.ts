@@ -364,7 +364,10 @@ export function authMiddleware(
 
     if (presentedToken) {
       const matrixMcpContext = options?.resolveMatrixMcpRunContext?.(presentedToken, c.req.method, normalizedPath);
-      const matrixMcpActor = matrixMcpContext?.actorId ?? options?.resolveMatrixMcpCapability?.(presentedToken, c.req.method, normalizedPath);
+      const matrixMcpActor = matrixMcpContext?.actorId
+        ?? (!options?.resolveMatrixMcpRunContext
+          ? options?.resolveMatrixMcpCapability?.(presentedToken, c.req.method, normalizedPath)
+          : null);
       if (matrixMcpActor) {
         if (c.req.header("x-platform-user-id") || c.req.header("x-platform-verified")) return unauthorized(c);
         setPlatformVerifiedPrincipal(c, matrixMcpActor);
