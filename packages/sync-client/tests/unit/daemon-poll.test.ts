@@ -169,6 +169,28 @@ describe("waitForHomeMirrorReady", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
+  it("retries a JSON 5xx even when its body reports a terminal mirror state", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse({ homeMirror: { state: "failed" } }, 503),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({ homeMirror: { state: "ready" } }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const promise = waitForHomeMirrorReady({ gatewayUrl, token, logger: silentLogger });
+
+    for (let i = 0; i < 2; i++) {
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(2_000);
+    }
+
+    await expect(promise).resolves.toBeUndefined();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it("retries on transient network errors", async () => {
     const fetchMock = vi
       .fn()

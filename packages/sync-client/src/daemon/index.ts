@@ -202,6 +202,13 @@ export async function waitForHomeMirrorReady(
     }
 
     consecutiveNonJson = 0;
+    if (res.status >= 500) {
+      opts.logger.warn(
+        `Sync readiness poll attempt ${attempt}: ${opts.gatewayUrl} returned ${res.status}; retrying`,
+      );
+      await sleep(intervalMs);
+      continue;
+    }
     const homeMirror = typeof body === "object" && body !== null && !Array.isArray(body)
       ? (body as Record<string, unknown>).homeMirror
       : undefined;
@@ -213,13 +220,6 @@ export async function waitForHomeMirrorReady(
     }
     if (state === "disabled") {
       throw new Error("The Matrix home mirror is not enabled on this instance. Update the instance before starting sync.");
-    }
-    if (res.status >= 500) {
-      opts.logger.warn(
-        `Sync readiness poll attempt ${attempt}: ${opts.gatewayUrl} returned ${res.status}; retrying`,
-      );
-      await sleep(intervalMs);
-      continue;
     }
     if (!res.ok) {
       throw new Error(`Sync readiness request to ${opts.gatewayUrl} failed: ${res.status}`);
