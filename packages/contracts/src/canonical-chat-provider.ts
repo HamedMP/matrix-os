@@ -12,7 +12,7 @@ import {
   canonicalReferenceId,
   canonicalSafeLabel,
 } from "#canonical-chat-primitives";
-import { AiProviderLocalObservationSchema } from "./ai-provider.js";
+import { AiProviderLocalObservationSchema } from "#ai-provider";
 
 export { CanonicalProviderDriverKindSchema } from "#canonical-chat-primitives";
 

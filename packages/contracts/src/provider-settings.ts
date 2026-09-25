@@ -1,7 +1,7 @@
 import { z } from "zod/v4";
 import { canonicalReferenceId, canonicalSafeLabel } from "#canonical-chat-primitives";
 import { IsoTimestampSchema, ProviderModelReferenceSchema } from "#contract-primitives";
-import { AiProviderLocalObservationSchema } from "./ai-provider.js";
+import { AiProviderLocalObservationSchema } from "#ai-provider";
 
 function unique(values: readonly string[]): boolean {
   return new Set(values).size === values.length;
