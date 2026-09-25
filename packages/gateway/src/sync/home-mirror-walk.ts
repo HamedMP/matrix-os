@@ -3,7 +3,10 @@ import { join } from "node:path";
 
 const LOCAL_WALK_FILE_CAP = 50_000;
 const LOCAL_WALK_DEPTH_CAP = 64;
-const HOME_MIRROR_TMP_SUFFIX = /\.(?:\d+|matrixos-[0-9a-f-]{36})\.tmp$/i;
+// Only names the mirror itself creates (`<path>.matrixos-<uuid>.tmp`, see
+// pullFile). Other `*.tmp` files belong to the owner and are never removed.
+const HOME_MIRROR_TMP_SUFFIX =
+  /\.matrixos-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.tmp$/i;
 
 export interface WalkFilters {
   /** Directory traversal decision (see shouldPruneHomeMirrorPath). */

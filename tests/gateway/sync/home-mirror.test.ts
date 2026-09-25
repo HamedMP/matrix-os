@@ -1516,8 +1516,10 @@ describe("createHomeMirror", () => {
 
     it("cleans up orphaned temp files on startup", async () => {
       await mkdir(join(tmpRoot, "notes"), { recursive: true });
-      const orphanedTmp = join(tmpRoot, "notes", "stale.md.12345.tmp");
+      const orphanedTmp = join(tmpRoot, "notes", "stale.md.matrixos-0f8b3c7e-1a2b-4c3d-9e8f-0123456789ab.tmp");
+      const ownerTmp = join(tmpRoot, "notes", "report.12345.tmp");
       await writeFile(orphanedTmp, "stale");
+      await writeFile(ownerTmp, "owner tool output");
 
       const mirror = createHomeMirror({
         r2,
@@ -1531,6 +1533,7 @@ describe("createHomeMirror", () => {
       await mirror.start();
 
       await expect(stat(orphanedTmp)).rejects.toThrow(/ENOENT/);
+      expect(await readFile(ownerTmp, "utf8")).toBe("owner tool output");
       await mirror.stop();
     });
 
@@ -1550,12 +1553,15 @@ describe("createHomeMirror", () => {
       });
       await mirror.start();
 
-      const lateOrphan = join(tmpRoot, "notes", "late.md.12345.tmp");
+      const ownerTmp = join(tmpRoot, "notes", "report.12345.tmp");
+      await writeFile(ownerTmp, "owner tool output");
+      const lateOrphan = join(tmpRoot, "notes", "late.md.matrixos-0f8b3c7e-1a2b-4c3d-9e8f-0123456789ab.tmp");
       await writeFile(lateOrphan, "orphaned after startup");
       await waitFor(() => !existsSync(lateOrphan), 5_000);
+      expect(existsSync(ownerTmp)).toBe(true);
 
       await mirror.stop();
-      const afterStop = join(tmpRoot, "notes", "after-stop.md.12345.tmp");
+      const afterStop = join(tmpRoot, "notes", "after-stop.md.matrixos-0f8b3c7e-1a2b-4c3d-9e8f-0123456789ab.tmp");
       await writeFile(afterStop, "no sweeps after stop");
       await settle(300);
       expect(existsSync(afterStop)).toBe(true);
@@ -1577,7 +1583,7 @@ describe("createHomeMirror", () => {
       });
       await mirror.start();
 
-      const inFlight = join(tmpRoot, "notes", "download.md.12345.tmp");
+      const inFlight = join(tmpRoot, "notes", "download.md.matrixos-0f8b3c7e-1a2b-4c3d-9e8f-0123456789ab.tmp");
       await writeFile(inFlight, "still downloading");
       await settle(300);
       expect(existsSync(inFlight)).toBe(true);
@@ -1587,10 +1593,10 @@ describe("createHomeMirror", () => {
     it("never follows symlinked temp names during cleanup", async () => {
       const outside = await mkdtemp(join(tmpdir(), "home-mirror-outside-"));
       try {
-        const target = join(outside, "victim.md.12345.tmp");
+        const target = join(outside, "victim.md.matrixos-0f8b3c7e-1a2b-4c3d-9e8f-0123456789ab.tmp");
         await writeFile(target, "outside data");
         await mkdir(join(tmpRoot, "notes"), { recursive: true });
-        await symlink(target, join(tmpRoot, "notes", "link.md.12345.tmp"));
+        await symlink(target, join(tmpRoot, "notes", "link.md.matrixos-0f8b3c7e-1a2b-4c3d-9e8f-0123456789ab.tmp"));
 
         const mirror = createHomeMirror({
           r2,
