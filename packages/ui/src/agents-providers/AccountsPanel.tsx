@@ -12,6 +12,7 @@ import { RemovalDialog } from "./RemovalDialog.js";
 import type { ProviderSettingsMutationIntent } from "./types.js";
 import { authLabel, titleCase, usageLines } from "./utils.js";
 import { codexLocalObservationLabel } from "../canonical-provider-choice.js";
+import { useLocalObservationExpiry } from "../local-observation-expiry.js";
 
 function AttemptAction({
   attempt,
@@ -70,6 +71,7 @@ export function AccountsPanel({
   onSetupHarness?: (harness: ProviderHarnessKind) => Promise<boolean>;
   onRefresh?: () => void;
 }) {
+  useLocalObservationExpiry(sources.map((source) => source.localObservation?.staleAfter));
   const [removeAccountId, setRemoveAccountId] = useState<string | null>(null);
   const removeAccount = accounts.find((account) => account.id === removeAccountId);
   const [showLoginMethods, setShowLoginMethods] = useState(false);

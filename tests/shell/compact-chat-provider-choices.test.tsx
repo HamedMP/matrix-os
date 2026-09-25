@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
 import React from "react";
 import { readFileSync } from "node:fs";
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { CompactChatProviderChoices } from "../../packages/ui/src/compact-chat-provider-choices.js";
 import type { CanonicalProviderChoice } from "../../packages/ui/src/canonical-provider-choice.js";
 import type { CanonicalProviderCatalog } from "@matrix-os/contracts";
@@ -15,6 +15,7 @@ const matrix: CanonicalProviderChoice = {
   options: [], selectedOptions: [], supportsFileAttachments: true,
 };
 const pi = { ...matrix, instanceId: "pi_work", driverKind: "pi" as const, harnessLabel: "Pi · Work" };
+afterEach(() => vi.useRealTimers());
 
 const support = {
   rootChat: true, resume: true, cancellation: true, attachments: ["file"] as const,
@@ -53,6 +54,8 @@ const catalog: CanonicalProviderCatalog = {
 
 describe("compact shared Chat choices", () => {
   it("keeps a locally configured Codex choice selectable with qualified copy", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-26T00:00:00.000Z"));
     const codex: CanonicalProviderChoice = {
       ...pi, instanceId: "codex_default", driverKind: "codex", harnessLabel: "Codex",
       modelId: "gpt-5.4", modelLabel: "GPT-5.4",
@@ -71,6 +74,8 @@ describe("compact shared Chat choices", () => {
     expect(screen.getByRole("button", { name: "Codex agent, Local login found; access not verified" })).toBeVisible();
     const option = screen.getByRole("option", { name: "GPT-5.4 via Codex" });
     expect(within(option).getByText(/Local login found; access not verified/)).toBeVisible();
+    act(() => vi.advanceTimersByTime(5_001));
+    expect(screen.getByRole("button", { name: "Codex agent, Access not verified" })).toBeVisible();
     fireEvent.click(option);
     expect(select).toHaveBeenCalledWith(codex);
   });

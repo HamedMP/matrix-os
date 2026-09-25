@@ -7,6 +7,7 @@ import type {
 } from "@matrix-os/contracts";
 import type { CanonicalProviderChoice } from "./canonical-provider-choice.js";
 import { canonicalProviderAvailabilityLabel } from "./canonical-provider-choice.js";
+import { useLocalObservationExpiry } from "./local-observation-expiry.js";
 import "./compact-chat-provider-choices.css";
 
 function modelProviderLabel(modelId: string): string | null {
@@ -210,6 +211,7 @@ function TwoPaneChatProviderChoices({
 
 /** Shared presentation: readiness, accounts and funded routes come from the canonical catalog. */
 export function CompactChatProviderChoices(props: CompactChatProviderChoicesProps) {
+  useLocalObservationExpiry(props.catalog?.instances.map((instance) => instance.localObservation?.staleAfter) ?? []);
   return props.catalog
     ? <TwoPaneChatProviderChoices {...props} catalog={props.catalog} />
     : <FlatChatProviderChoices {...props} />;

@@ -19,7 +19,7 @@ function nativeProbeResult(status: AgentStatus | undefined): AgentCredentialProb
   return {
     available: condition === "available", condition,
     ...(status?.id === "codex" ? {
-      localObservation: condition === "available"
+      localObservation: condition === "available" && status.credentialMode === "chatgpt"
         ? "present_unverified" as const
         : condition === "auth_required" ? "absent" as const : "unknown" as const,
     } : {}),

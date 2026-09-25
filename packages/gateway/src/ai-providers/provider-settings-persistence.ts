@@ -91,6 +91,16 @@ async function readBoundedJson(path: string): Promise<unknown> {
   return JSON.parse(await readFile(path, "utf8"));
 }
 
+/** Read saved intent for run admission without canonical inventory or a mutating reconcile. */
+export async function readSavedProviderSettingsConfiguration(path: string): Promise<ProviderSettingsConfiguration | null> {
+  try {
+    return ProviderSettingsConfigurationSchema.parse(await readBoundedJson(path));
+  } catch (error) {
+    if (isMissing(error)) return null;
+    throw error;
+  }
+}
+
 export async function writeProviderJsonAtomic(path: string, value: unknown): Promise<void> {
   const directory = dirname(path);
   await mkdir(directory, { recursive: true, mode: 0o700 });

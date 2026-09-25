@@ -87,11 +87,20 @@ describe("agent credential probe", () => {
       command: "codex",
       displayName: "Codex",
       authState: "ok",
+      credentialMode: "chatgpt",
       errorCode: null,
     }))).resolves.toEqual({
       available: true,
       condition: "available",
       localObservation: "present_unverified",
     });
+    for (const credentialMode of ["api_key", "unknown"] as const) {
+      await expect(resolveAgentCredentialProbe(homePath, "codex", installedStatus({
+        id: "codex", command: "codex", displayName: "Codex", authState: "ok",
+        credentialMode, errorCode: null,
+      }))).resolves.toEqual({
+        available: true, condition: "available", localObservation: "unknown",
+      });
+    }
   });
 });

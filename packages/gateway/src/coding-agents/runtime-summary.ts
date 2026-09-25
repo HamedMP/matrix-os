@@ -16,6 +16,7 @@ import type {
 } from "../onboarding/activation-contracts.js";
 import type { AgentCredentialStatusService } from "../onboarding/agent-credential-status.js";
 import { logCodingAgentWarning } from "./diagnostics.js";
+import type { CodingAgentProviderAdmission } from "./codex-harness-admission.js";
 import {
   applyCredentialState,
   type CodingAgentProviderRegistry,
@@ -62,6 +63,7 @@ export interface CodingAgentProjectSummaryStore {
 
 export interface CodingAgentRuntimeSummaryOptions {
   homePath: string;
+  providerAdmission?: CodingAgentProviderAdmission;
   terminalRegistry?: CodingAgentTerminalWorkspaceRegistry;
   providerRegistry?: Pick<CodingAgentProviderRegistry, "listProviders">;
   agentCredentials?: Pick<AgentCredentialStatusService, "getStatus">;
@@ -292,9 +294,13 @@ export function createCodingAgentRuntimeSummaryService(
         principal,
         options.terminalOwnerId,
       );
-      const providers = options.providerRegistry
+      const rawProviders = options.providerRegistry
         ? await readRegisteredProviders(options.providerRegistry, principal)
         : await readProviders(options.agentCredentials, principal, options.providerIds);
+      const codexEnabled = options.providerAdmission
+        ? await options.providerAdmission.isProviderEnabled("codex") : true;
+      const providers = rawProviders.map((provider) => provider.id === "codex" && !codexEnabled
+        ? { ...provider, availability: "unavailable" as const } : provider);
       const activeThreads = await readActiveThreads(options.threads, principal);
       const attentionThreads = await readAttentionThreads(options.threads, principal);
       const projectSummaryTimeoutMs = Math.min(

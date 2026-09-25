@@ -77,6 +77,7 @@ import { createCodingAgentProviderRegistry } from "./coding-agents/provider-regi
 import { createCodingAgentReviewSummaryStore } from "./coding-agents/review-summary.js";
 import { createCodingAgentRoutes } from "./coding-agents/routes.js";
 import { createCodingAgentRuntimeSummaryService } from "./coding-agents/runtime-summary.js";
+import { createCodexHarnessAdmission } from "./coding-agents/codex-harness-admission.js";
 import { createCodingAgentSessionStopReconciler } from "./coding-agents/session-stop-reconciler.js";
 import { createCodingAgentSourceControlStore } from "./coding-agents/source-control.js";
 import { createCodingAgentThreadRelationValidator } from "./coding-agents/thread-relations.js";
@@ -583,10 +584,12 @@ export async function createGateway(config: GatewayConfig) {
     codingAgentProviders.push(fakeProvider);
     codingAgentRegistryProviders.push(fakeProvider);
   }
+  const codingAgentProviderAdmission = createCodexHarnessAdmission({ homePath });
   codingAgentThreadStore = codingAgentProviders.length > 0
     ? createCodingAgentThreadStore({
       homePath,
       providers: codingAgentProviders,
+      providerAdmission: codingAgentProviderAdmission,
       restoreProviderThread: async (thread) => {
         const restored = !!codingAgentWorkspaceRuntime && !!codexEventBridge
           && await restoreBackgroundChatThread({ thread, sessions: codingAgentWorkspaceRuntime, events: codexEventBridge });
@@ -644,6 +647,7 @@ export async function createGateway(config: GatewayConfig) {
   });
   const codingAgentRuntimeSummaryService = createCodingAgentRuntimeSummaryService({
     homePath,
+    providerAdmission: codingAgentProviderAdmission,
     terminalRegistry: { list: () => terminalWorkspaceRuntime.listWorkspaces() },
     providerRegistry: codingAgentProviderRegistry,
     threads: codingAgentThreadStore,
