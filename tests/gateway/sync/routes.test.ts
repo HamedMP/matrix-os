@@ -682,6 +682,34 @@ describe("GET /api/sync/status", () => {
   });
 });
 
+describe("unconfigured sync routes", () => {
+  it.each([
+    ["POST", "/api/sync/presign", 100_000],
+    ["POST", "/api/sync/multipart/complete", 1_100_000],
+    ["POST", "/api/sync/multipart/abort", 100_000],
+    ["POST", "/api/sync/commit", 100_000],
+    ["POST", "/api/sync/resolve-conflict", 100_000],
+    ["POST", "/api/sync/share", 100_000],
+    ["DELETE", "/api/sync/share", 100_000],
+    ["POST", "/api/sync/share/accept", 100_000],
+  ])("enforces body limits for %s %s", async (method, path, size) => {
+    const app = new Hono();
+    app.route("/api/sync", createUnconfiguredSyncRoutes());
+    const body = "x".repeat(size);
+
+    const res = await app.request(path, {
+      method,
+      headers: {
+        "content-type": "application/json",
+        "content-length": String(Buffer.byteLength(body)),
+      },
+      body,
+    });
+
+    expect(res.status).toBe(413);
+  });
+});
+
 describe("DELETE /api/sync/share", () => {
   beforeEach(() => {
     vi.clearAllMocks();

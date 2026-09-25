@@ -618,20 +618,22 @@ export function createUnconfiguredSyncRoutes(
   deps: UnconfiguredSyncRouteDeps = {},
 ): Hono {
   const app = new Hono();
+  const mutatingBodyLimit = bodyLimit({ maxSize: SYNC_BODY_LIMIT });
+  const multipartCompleteBodyLimit = bodyLimit({ maxSize: MULTIPART_COMPLETE_BODY_LIMIT });
   const unavailable = (c: Context) => c.json({ error: "Not configured" }, 503);
   app.get("/manifest", unavailable);
-  app.post("/presign", unavailable);
-  app.post("/multipart/complete", unavailable);
-  app.post("/multipart/abort", unavailable);
-  app.post("/commit", unavailable);
+  app.post("/presign", mutatingBodyLimit, unavailable);
+  app.post("/multipart/complete", multipartCompleteBodyLimit, unavailable);
+  app.post("/multipart/abort", mutatingBodyLimit, unavailable);
+  app.post("/commit", mutatingBodyLimit, unavailable);
   app.get("/status", (c) => c.json({
     error: "Not configured",
     homeMirror: deps.getHomeMirrorStatus?.() ?? { state: "disabled" },
   }, 503));
-  app.post("/resolve-conflict", unavailable);
-  app.post("/share", unavailable);
-  app.delete("/share", unavailable);
-  app.post("/share/accept", unavailable);
+  app.post("/resolve-conflict", mutatingBodyLimit, unavailable);
+  app.post("/share", mutatingBodyLimit, unavailable);
+  app.delete("/share", mutatingBodyLimit, unavailable);
+  app.post("/share/accept", mutatingBodyLimit, unavailable);
   app.get("/shares", unavailable);
   return app;
 }
