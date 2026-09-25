@@ -231,6 +231,15 @@ export class OrganizationDriveService {
           organization_id: input.organizationId,
           remove_after: new Date(new Date(current.expires_at).getTime() + PUT_URL_GRACE_MS).toISOString(),
           attempts: 0, created_at: timestamp }).onConflict((conflict) => conflict.column("object_key").doNothing()).execute();
+        const scope = await sql<{ resource_id: string }>`SELECT resource_id FROM collaboration_scopes
+          WHERE id = ${input.scopeId} AND deleted_at IS NULL FOR UPDATE`.execute(trx);
+        if (!scope.rows[0]) throw new OrganizationDriveError("conflict");
+        await sql`INSERT INTO collaboration_events (scope_id, scope_seq, event_id, resource_kind, resource_id,
+          revision, authority_generation, event_type, payload, created_at)
+          SELECT ${input.scopeId}, COALESCE(MAX(scope_seq), 0) + 1, ${randomUUID()}, 'folder',
+            ${scope.rows[0].resource_id}, ${nextVersion}, ${Number(drive.authority_generation)},
+            'organization_drive.changed', ${JSON.stringify({ fileId })}::jsonb, ${timestamp}
+          FROM collaboration_events WHERE scope_id = ${input.scopeId}`.execute(trx);
         await trx.deleteFrom("organization_drive_garbage").where("object_key", "=", committedKey).execute();
         return this.fileById(input.organizationId, fileId, trx);
       });
