@@ -22,9 +22,31 @@ it("suppresses the checklist inside custom provider feature dialogs", () => {
   expect(screen.queryByText("Checklist visible")).not.toBeNull();
 });
 it("blocks only the add-credit modal, not the ordinary provider settings panel", () => {
-  const source = { id: "matrix", eligibleModelIds: [], usage: { kind: "unavailable", reason: "unknown", asOf: null }, readiness: { state: "ready", action: "none" } } as React.ComponentProps<typeof GatewayPanel>["source"];
-  const policy = { topUpEnabled: true, monthlyBudgetMicrousd: null, allowedModelIds: [] } as React.ComponentProps<typeof GatewayPanel>["policy"];
-  render(<GettingStartedVisibilityProvider scope="test"><Card /><GatewayPanel source={source} policy={policy} provider={null} disabled={false} canSetBudget={false} canSetAllowlist={false} canAddCredit onMutate={() => {}} onAddCredit={() => {}} onRefresh={() => {}} /></GettingStartedVisibilityProvider>);
+  const now = new Date().toISOString();
+  const source = {
+    id: "matrix", kind: "matrix_gateway", fundingKind: "matrix_included",
+    providerId: "anthropic", accountId: null, displayName: "Matrix AI",
+    eligibleModelIds: ["sonnet"],
+    readiness: { state: "ready", checkedAt: now, staleAfter: null, action: "none", safeReason: null },
+    usage: {
+      kind: "managed_credit", authority: "matrix_ledger", state: "current",
+      scope: "owner_entitlement", currency: "USD", usedMicrousd: 0,
+      remainingMicrousd: 1_000_000, limitMicrousd: 1_000_000,
+      periodStartedAt: now, resetsAt: null, asOf: now,
+      credit: {
+        promotionalBalanceMicrousd: 1_000_000, addonBalanceMicrousd: 0,
+        creditBalanceMicrousd: 1_000_000, reservedMicrousd: 0,
+        remainingBalanceMicrousd: 1_000_000,
+      },
+      budget: {
+        monthlyBudgetMicrousd: 1_000_000, settledThisMonthMicrousd: 0,
+        reservedThisMonthMicrousd: 0, remainingBudgetMicrousd: 1_000_000,
+      },
+    },
+  } as React.ComponentProps<typeof GatewayPanel>["source"];
+  const policy = { accessSourceId: "matrix", topUpEnabled: true, monthlyBudgetMicrousd: null, allowedModelIds: ["sonnet"] } as React.ComponentProps<typeof GatewayPanel>["policy"];
+  const provider = { id: "anthropic", displayName: "Anthropic", models: [{ id: "sonnet", displayName: "Sonnet", enabled: true }] } as React.ComponentProps<typeof GatewayPanel>["provider"];
+  render(<GettingStartedVisibilityProvider scope="test"><Card /><GatewayPanel source={source} policy={policy} provider={provider} disabled={false} canSetBudget={false} canSetAllowlist={false} canAddCredit onMutate={() => {}} onAddCredit={() => {}} onRefresh={() => {}} /></GettingStartedVisibilityProvider>);
   fireEvent.click(screen.getByRole("button", { name: "Open checklist" }));
   expect(screen.queryByText("Checklist visible")).not.toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Add credit" }));

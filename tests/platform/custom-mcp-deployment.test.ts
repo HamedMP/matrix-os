@@ -13,6 +13,7 @@ const baseEnv = Object.fromEntries([
   'MATRIX_APP_URL', 'MATRIX_APP_DOMAIN_HOSTS', 'MATRIX_CODE_DOMAIN_HOSTS',
   'PLATFORM_SPEECH_ENABLED', 'MATRIX_PLATFORM_SPEECH_RUNTIME_ENABLED',
   'MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED', 'MATRIX_FUNDED_AI_RUNTIME_ENABLED',
+  'MATRIX_FUNDED_AI_ADDON_CHECKOUT_ENABLED',
 ].map((name) => [name, 'fixture']));
 baseEnv.PLATFORM_PUBLIC_URL = 'https://app.example.com';
 baseEnv.MATRIX_API_ORIGIN = 'https://api.example.com';
@@ -20,6 +21,7 @@ baseEnv.PLATFORM_SPEECH_ENABLED = 'false';
 baseEnv.MATRIX_PLATFORM_SPEECH_RUNTIME_ENABLED = 'false';
 baseEnv.MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED = 'false';
 baseEnv.MATRIX_FUNDED_AI_RUNTIME_ENABLED = 'false';
+baseEnv.MATRIX_FUNDED_AI_ADDON_CHECKOUT_ENABLED = 'false';
 
 function validate(overrides: Record<string, string>) {
   return spawnSync('bash', ['-c', step('Validate deployment configuration')], {
