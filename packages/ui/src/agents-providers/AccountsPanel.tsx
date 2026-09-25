@@ -11,6 +11,7 @@ import type {
 import { RemovalDialog } from "./RemovalDialog.js";
 import type { ProviderSettingsMutationIntent } from "./types.js";
 import { authLabel, titleCase, usageLines } from "./utils.js";
+import { codexLocalObservationLabel } from "../canonical-provider-choice.js";
 
 function AttemptAction({
   attempt,
@@ -163,7 +164,9 @@ export function AccountsPanel({
                 <span className="matrix-ap-avatar" aria-hidden="true">{account.displayName.slice(0, 1).toUpperCase()}</span>
                 <div>
                   <strong>{account.displayName}</strong>
-                  <span>{authLabel(account.authState)} · {titleCase(account.authMethod)}</span>
+                  <span>{harness.harness === "codex" && source?.id === "owner_openai_profile"
+                    ? codexLocalObservationLabel(source.localObservation)
+                    : authLabel(account.authState)} · {titleCase(account.authMethod)}</span>
                 </div>
                 {selected ? <span className="matrix-ap-selected-tag">Selected</span> : null}
               </div>

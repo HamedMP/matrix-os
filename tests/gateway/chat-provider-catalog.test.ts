@@ -663,7 +663,7 @@ describe("canonical Chat Provider catalog", () => {
     expect(JSON.stringify(catalog)).not.toContain("private path");
   });
 
-  it("keeps terminal-authenticated Codex and Claude independent from owner harness settings", async () => {
+  it("keeps a saved-off Codex route disabled while Claude remains independent", async () => {
     const service = createChatProviderCatalogService({
       codingProviders: codingRegistry([
         codingProvider(),
@@ -683,7 +683,7 @@ describe("canonical Chat Provider catalog", () => {
 
     const catalog = await service.getCatalog(principal);
     expect(catalog.instances.find((instance) => instance.id === "codex_default"))
-      .toMatchObject({ availability: "available", displayName: "Codex" });
+      .toMatchObject({ availability: "unavailable", unavailabilityReason: "disabled_in_settings", displayName: "Codex" });
     expect(catalog.instances.find((instance) => instance.id === "claude_code_default"))
       .toMatchObject({ availability: "available", displayName: "Claude" });
   });
@@ -694,6 +694,10 @@ describe("canonical Chat Provider catalog", () => {
     const aiProviderSource = new AiProviderService({
       homePath,
       env: {},
+      codexLocalObservation: async () => ({
+        accessSourceId: "owner_openai_profile", state: "present_unverified",
+        checkedAt: new Date().toISOString(), staleAfter: new Date(Date.now() + 5_000).toISOString(),
+      }),
       driverInventory: async () => [{
         id: "codex", displayName: "Codex", kind: "cli", installState: "installed",
         health: "unknown", capabilities: ["tools", "resume", "reasoning"], setupActions: [],
@@ -708,6 +712,9 @@ describe("canonical Chat Provider catalog", () => {
         codingProviders: codingRegistry([codingProvider({ availability: "available" })]),
         agentRuntimeSource: runtimeSource(),
         aiProviderSource,
+        harnessSettingsSource: harnessSettings([{
+          ...configuredHarness("codex", true), accessSourceId: "owner_openai_profile",
+        }]),
         executableDriverKinds: ["codex"],
       });
 
@@ -717,6 +724,32 @@ describe("canonical Chat Provider catalog", () => {
       expect(codex?.defaultSelection).toBeDefined();
       expect(validateChatProviderSelection({ catalog, selection: codex!.defaultSelection! }).ok).toBe(true);
       expect(canonicalProviderAvailabilityLabel(codex!)).toBe("Local login found; access not verified");
+      const unbound = createChatProviderCatalogService({
+        codingProviders: codingRegistry([codingProvider({ availability: "available", authStatus: "unknown" })]),
+        agentRuntimeSource: runtimeSource(), aiProviderSource,
+        executableDriverKinds: ["codex"],
+      });
+      const unboundCodex = (await unbound.getCatalog(principal)).instances.find((instance) => instance.id === "codex_default");
+      expect(unboundCodex?.availability).toBe("available");
+      expect(canonicalProviderAvailabilityLabel(unboundCodex!)).toBe("Access not verified");
+      const mismatched = createChatProviderCatalogService({
+        codingProviders: codingRegistry([codingProvider({ availability: "available", authStatus: "unknown" })]),
+        agentRuntimeSource: runtimeSource(), aiProviderSource,
+        harnessSettingsSource: harnessSettings([{ ...configuredHarness("codex", true), accessSourceId: "other_source" }]),
+        executableDriverKinds: ["codex"],
+      });
+      const mismatchedCodex = (await mismatched.getCatalog(principal)).instances.find((instance) => instance.id === "codex_default");
+      expect(mismatchedCodex?.availability).toBe("available");
+      expect(canonicalProviderAvailabilityLabel(mismatchedCodex!)).toBe("Access not verified");
+      const savedOff = createChatProviderCatalogService({
+        codingProviders: codingRegistry([codingProvider({ availability: "available", authStatus: "unknown" })]),
+        agentRuntimeSource: runtimeSource(), aiProviderSource,
+        harnessSettingsSource: harnessSettings([configuredHarness("codex", false)]),
+        executableDriverKinds: ["codex"],
+      });
+      const disabled = (await savedOff.getCatalog(principal)).instances.find((instance) => instance.id === "codex_default");
+      expect(disabled?.availability).toBe("unavailable");
+      expect(canonicalProviderAvailabilityLabel(disabled!)).toBe("Disabled in Settings");
     } finally {
       aiProviderSource.close();
       rmSync(homePath, { recursive: true, force: true });

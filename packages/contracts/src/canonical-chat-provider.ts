@@ -12,6 +12,7 @@ import {
   canonicalReferenceId,
   canonicalSafeLabel,
 } from "#canonical-chat-primitives";
+import { AiProviderLocalObservationSchema } from "./ai-provider.js";
 
 export { CanonicalProviderDriverKindSchema } from "#canonical-chat-primitives";
 
@@ -145,6 +146,7 @@ export const CanonicalProviderInstanceDescriptorSchema = z.object({
   /** Server-projected connection name; display only, never an authorization signal. */
   connectionLabel: canonicalSafeLabel(160, 640).optional(),
   availability: z.enum(["available", "setup_required", "auth_required", "unavailable"]),
+  localObservation: AiProviderLocalObservationSchema.optional(),
   unavailabilityReason: z.enum([
     "disabled_in_settings",
     "settings_unavailable",

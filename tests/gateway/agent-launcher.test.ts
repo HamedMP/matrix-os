@@ -263,6 +263,53 @@ describe("agent-launcher", () => {
     }
   });
 
+  it("recognizes the pinned CLI's stderr-only status and rejects warning-contaminated output", async () => {
+    let codexStatus = "Logged in using ChatGPT\n";
+    const launcher = createAgentLauncher({
+      runtimeHome: "/tmp/codex-stderr-owner", codexExecutable: "/tmp/codex-stderr-bin",
+      runCommand: async (command, args) => command === "/tmp/codex-stderr-bin"
+        ? { stdout: args[0] === "--version" ? `codex-cli ${CODEX_VERIFIED_VERSION}\n` : "",
+          stderr: args[0] === "--version" ? "" : codexStatus }
+        : { stdout: args[0] === "--version" ? "claude 1.0.0\n" : "ok\n", stderr: "" },
+    });
+    const binding = {
+      executable: "/tmp/codex-stderr-bin", runtimeHome: "/tmp/codex-stderr-owner",
+      codexHome: process.env.CODEX_HOME, accessSourceId: "owner_openai_profile",
+    };
+    expect((await launcher.observeCodexLocalCredential(binding)).state).toBe("present_unverified");
+    launcher.invalidateCredentialDetection();
+    codexStatus = "Warning: local configuration changed\nLogged in using ChatGPT\n";
+    expect((await launcher.observeCodexLocalCredential(binding)).state).toBe("unknown");
+  });
+
+  it("does not borrow a newer scan's cache expiry for an invalidated in-flight Codex result", async () => {
+    let releaseOldStatus!: (value: { stdout: string; stderr: string }) => void;
+    let firstStatusStarted!: () => void;
+    const started = new Promise<void>((resolve) => { firstStatusStarted = resolve; });
+    const oldStatus = new Promise<{ stdout: string; stderr: string }>((resolve) => { releaseOldStatus = resolve; });
+    let statusCalls = 0;
+    const launcher = createAgentLauncher({
+      runtimeHome: "/tmp/codex-race-owner", codexExecutable: "/tmp/codex-race-bin",
+      runCommand: async (command, args) => {
+        if (command !== "/tmp/codex-race-bin") return { stdout: args[0] === "--version" ? "claude 1.0.0\n" : "ok\n", stderr: "" };
+        if (args[0] === "--version") return { stdout: `codex-cli ${CODEX_VERIFIED_VERSION}\n`, stderr: "" };
+        statusCalls += 1;
+        if (statusCalls === 1) { firstStatusStarted(); return oldStatus; }
+        throw Object.assign(new Error("Not logged in"), { code: 1, stdout: "", stderr: "Not logged in\n" });
+      },
+    });
+    const binding = {
+      executable: "/tmp/codex-race-bin", runtimeHome: "/tmp/codex-race-owner",
+      codexHome: process.env.CODEX_HOME, accessSourceId: "owner_openai_profile",
+    };
+    const stale = launcher.observeCodexLocalCredential(binding);
+    await started;
+    launcher.invalidateCredentialDetection();
+    expect((await launcher.observeCodexLocalCredential(binding)).state).toBe("absent");
+    releaseOldStatus({ stdout: "Logged in using ChatGPT\n", stderr: "" });
+    expect((await stale).state).toBe("unknown");
+  });
+
   it("does not bind a locally configured API key to the selected Codex profile", async () => {
     const launcher = createAgentLauncher({
       runtimeHome: "/tmp/codex-observation-owner",
@@ -446,7 +493,7 @@ describe("agent-launcher", () => {
         };
       }
       if (command === "codex" && args.join(" ") === "login status" && !codexAuthenticated) {
-        throw Object.assign(new Error("not authenticated"), { code: 1 });
+        throw Object.assign(new Error("not authenticated"), { code: 1, stdout: "Not logged in\n" });
       }
       return { stdout: "ok\n", stderr: "" };
     });

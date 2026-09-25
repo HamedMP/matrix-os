@@ -1,5 +1,6 @@
 import {
   CanonicalProviderCatalogSchema,
+  providerAttemptable,
   type AgentProviderSummary,
   type AgentThreadComposerDraft,
   type CanonicalProviderCatalog,
@@ -140,11 +141,7 @@ function legacyProviderIdForDriver(
 function availabilityForLegacyProvider(
   provider: AgentProviderSummary,
 ): CanonicalProviderInstanceDescriptor["availability"] {
-  if (
-    provider.availability === "available"
-    && provider.installStatus === "installed"
-    && provider.authStatus === "authenticated"
-  ) return "available";
+  if (providerAttemptable(provider)) return "available";
   if (provider.installStatus === "missing" || provider.installStatus === "installing"
     || provider.availability === "setup_required" || provider.availability === "installing") {
     return "setup_required";

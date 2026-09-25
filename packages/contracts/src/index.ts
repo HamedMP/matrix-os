@@ -988,6 +988,14 @@ export function providerReady(provider: AgentProviderSummary): boolean {
     provider.authStatus === "authenticated";
 }
 
+/** Operational admission for a user-initiated run, not a claim of remote authentication. */
+export function providerAttemptable(provider: AgentProviderSummary): boolean {
+  return provider.availability === "available" &&
+    provider.installStatus === "installed" &&
+    (provider.authStatus === "authenticated" ||
+      (provider.kind === "codex" && provider.authStatus === "unknown"));
+}
+
 export function defaultSandboxModeForProvider(
   provider: AgentProviderSummary | undefined,
 ): z.infer<typeof SandboxModeSchema> {
@@ -995,7 +1003,7 @@ export function defaultSandboxModeForProvider(
 }
 
 function defaultComposerProvider(summary: RuntimeSummary): AgentProviderSummary | undefined {
-  return summary.providers.find(providerReady) ?? summary.providers[0];
+  return summary.providers.find(providerAttemptable) ?? summary.providers[0];
 }
 
 function composerIssue(code: z.infer<typeof AgentThreadComposerIssueCodeSchema>, safeMessage: string): AgentThreadComposerIssue {
@@ -1045,7 +1053,7 @@ export function buildCreateAgentThreadRequestFromComposer(input: {
   }
   if (!providerId) {
     issues.push(composerIssue("provider_required", "Choose an agent provider before starting a run."));
-  } else if (!provider || !providerReady(provider)) {
+  } else if (!provider || !providerAttemptable(provider)) {
     issues.push(composerIssue("provider_unavailable", "Selected provider is not ready. Choose another provider or finish setup."));
   }
   if (provider && !provider.supportedModes.includes(mode)) {

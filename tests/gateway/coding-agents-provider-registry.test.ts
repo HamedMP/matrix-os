@@ -10,14 +10,13 @@ import type { RequestPrincipal } from "../../packages/gateway/src/request-princi
 const baseNow = new Date("2026-07-09T12:00:00.000Z");
 const owner: RequestPrincipal = { userId: "owner_user", source: "jwt" };
 
-function providerReady(summary: {
+function routeAttemptable(summary: {
   availability: string;
   installStatus: string;
   authStatus: string;
 }): boolean {
   return summary.availability === "available" &&
-    summary.installStatus === "installed" &&
-    summary.authStatus === "authenticated";
+    summary.installStatus === "installed";
 }
 
 function credentialService(
@@ -50,7 +49,7 @@ function adapter(overrides: Partial<CodingAgentProviderAdapter> = {}): CodingAge
       kind: "codex",
       availability: "available",
       installStatus: "installed",
-      authStatus: "authenticated",
+      authStatus: "unknown",
       supportedModes: ["default", "review"],
       defaultMode: "default",
       setupActions: [],
@@ -69,7 +68,17 @@ function adapter(overrides: Partial<CodingAgentProviderAdapter> = {}): CodingAge
 }
 
 describe("coding-agent provider registry", () => {
-  it("normalizes installed and authenticated providers into safe summaries", async () => {
+  it("keeps locally configured Codex attemptable without claiming remote authentication", async () => {
+    const registry = createCodingAgentProviderRegistry({
+      providers: [adapter()], agentCredentials: credentialService("available"), now: () => baseNow,
+    });
+    const [summary] = await registry.listProviders(owner);
+    expect(summary).toMatchObject({
+      id: "codex", availability: "available", installStatus: "installed",
+      authStatus: "unknown",
+    });
+  });
+  it("normalizes an installed Codex route without a remote authentication claim", async () => {
     const healthCheck = vi.fn(({ signal }: { signal: AbortSignal }) => ({ ok: !signal.aborted }));
     const registry = createCodingAgentProviderRegistry({
       providers: [adapter({ healthCheck })],
@@ -85,7 +94,7 @@ describe("coding-agent provider registry", () => {
       kind: "codex",
       availability: "available",
       installStatus: "installed",
-      authStatus: "authenticated",
+      authStatus: "unknown",
       supportedModes: ["default", "review"],
       defaultMode: "default",
       setupActions: [expect.objectContaining({
@@ -103,7 +112,7 @@ describe("coding-agent provider registry", () => {
   });
 
   it.each([
-    ["available", "available", "installed", "authenticated", true],
+    ["available", "available", "installed", "unknown", true],
     ["missing", "setup_required", "missing", "missing", false],
     ["auth_required", "auth_required", "installed", "missing", false],
     ["expired", "auth_required", "installed", "expired", false],
@@ -125,7 +134,7 @@ describe("coding-agent provider registry", () => {
       const [summary] = await registry.listProviders(owner);
 
       expect(summary).toMatchObject({ availability, installStatus, authStatus });
-      expect(providerReady(summary!)).toBe(ready);
+      expect(routeAttemptable(summary!)).toBe(ready);
       expect(healthCheck).toHaveBeenCalledTimes(ready ? 1 : 0);
     },
   );
@@ -306,7 +315,7 @@ describe("coding-agent provider registry", () => {
       id: "codex",
       availability: "unavailable",
       installStatus: "installed",
-      authStatus: "authenticated",
+      authStatus: "unknown",
       lastCheckedAt: baseNow.toISOString(),
     });
   });

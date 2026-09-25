@@ -1436,6 +1436,12 @@ export async function createGateway(config: GatewayConfig) {
       detectAgentInstallations: agentCredentialLauncher.detectAgentInstallations,
       runtimeSource: agentRuntimeServices.source,
     }),
+    ...(codexExecutable ? { codexLocalObservation: () => agentCredentialLauncher.observeCodexLocalCredential({
+      executable: codexExecutable,
+      runtimeHome: homePath,
+      codexHome: process.env.CODEX_HOME,
+      accessSourceId: "owner_openai_profile",
+    }) } : {}),
   });
   collaborationProviderSnapshots.attach(aiProviderService);
   const providerLoginCoordinator = createProviderTerminalLoginCoordinator({

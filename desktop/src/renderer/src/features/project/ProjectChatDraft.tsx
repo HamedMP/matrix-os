@@ -4,7 +4,7 @@ import { toast } from "sonner";
 import {
   defaultAgentThreadComposerDraft,
   defaultSandboxModeForProvider,
-  providerReady,
+  providerAttemptable,
   type AgentThreadComposerDraft,
   type RuntimeSummary,
 } from "@matrix-os/contracts";
@@ -108,7 +108,7 @@ export function ProjectChatDraft({
   const initialDraft = useMemo(() => {
     const base = defaultAgentThreadComposerDraft(summary);
     const preferred = preferredProviderId
-      ? summary.providers.find((provider) => provider.id === preferredProviderId && providerReady(provider))
+      ? summary.providers.find((provider) => provider.id === preferredProviderId && providerAttemptable(provider))
       : undefined;
     if (!preferred) return base;
     return {

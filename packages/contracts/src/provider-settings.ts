@@ -1,6 +1,7 @@
 import { z } from "zod/v4";
 import { canonicalReferenceId, canonicalSafeLabel } from "#canonical-chat-primitives";
 import { IsoTimestampSchema, ProviderModelReferenceSchema } from "#contract-primitives";
+import { AiProviderLocalObservationSchema } from "./ai-provider.js";
 
 function unique(values: readonly string[]): boolean {
   return new Set(values).size === values.length;
@@ -202,6 +203,7 @@ export const ProviderAccessSourceSchema = z.object({
   accountId: ReferenceIdSchema.nullable(),
   displayName: DisplayNameSchema,
   readiness: ProviderSourceReadinessSchema,
+  localObservation: AiProviderLocalObservationSchema.optional(),
   eligibleModelIds: z.array(ProviderModelReferenceSchema).max(256),
   usage: ProviderUsageSchema,
 }).strict().superRefine((source, ctx) => {

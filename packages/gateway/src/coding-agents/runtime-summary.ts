@@ -124,7 +124,7 @@ function statusToProviderSummary(agent: AgentCredentialSummary): AgentProviderSu
     supportedModes: ["default", "review"],
     defaultMode: "default",
     setupActions: [],
-    lastCheckedAt: agent.verifiedAt ?? undefined,
+    lastCheckedAt: agent.localCheckedAt ?? agent.verifiedAt ?? undefined,
   }, agent);
 }
 

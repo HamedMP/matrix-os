@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   defaultAgentThreadComposerDraft,
   defaultSandboxModeForProvider,
-  providerReady,
+  providerAttemptable,
   type AgentThreadComposerDraft,
   type RuntimeSummary,
 } from "@matrix-os/contracts";
@@ -35,7 +35,7 @@ export function AgentComposer({ summary, seed, focusRequestId, onCreated }: {
     // run. A provider that still needs setup or auth would otherwise replace
     // the ready default and the run would be rejected on submit.
     const preferred = preferredProviderId
-      ? summary.providers.find((provider) => provider.id === preferredProviderId && providerReady(provider))
+      ? summary.providers.find((provider) => provider.id === preferredProviderId && providerAttemptable(provider))
       : undefined;
     if (!preferred) return base;
     return {
