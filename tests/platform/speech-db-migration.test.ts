@@ -54,6 +54,10 @@ describe("speech lifecycle constraint migration", () => {
       await original.executor.insertInto("speech_operations").values(
         legacyInvalidRow("sp_1788998400000_legacyinvalidrow"),
       ).execute();
+      // This fixture represents a database created by an older schema
+      // revision. Clear the current marker before booting the upgrade.
+      await sql`DELETE FROM platform_schema_revisions WHERE scope = 'core'`
+        .execute(original.executor);
 
       upgraded = createPlatformDb({ dialect: instance.dialect });
       await expect(upgraded.ready).resolves.toBeUndefined();
