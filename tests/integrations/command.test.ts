@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { runIntegrationsCommand } from "../../packages/integrations-mcp/dist/command.js";
 import type { GatewayFetcher } from "../../packages/kernel/src/tools/integrations.js";
@@ -13,6 +13,29 @@ function response(body: unknown) {
 }
 
 describe("matrix-integrations terminal fallback", () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  it("preserves run-scoped authority for read-only calls", async () => {
+    const scopedToken = "a".repeat(64);
+    vi.stubEnv("MATRIX_AGENT_INTEGRATIONS_TOKEN", scopedToken);
+    vi.stubEnv("MATRIX_AUTH_TOKEN", undefined);
+    vi.stubEnv("MATRIX_CLERK_USER_ID", undefined);
+    const fetcher = vi.fn<GatewayFetcher>()
+      .mockResolvedValueOnce(response([{ id: "gmail", actions: { list_messages: { risk: "read" } } }]))
+      .mockResolvedValueOnce(response({ messages: [] }));
+
+    await runIntegrationsCommand(
+      ["call", "gmail", "list_messages", "{}", "Work Gmail"],
+      fetcher,
+    );
+
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    for (const [, options] of fetcher.mock.calls) {
+      expect(options?.headers).toMatchObject({ Authorization: `Bearer ${scopedToken}` });
+      expect(options?.headers).not.toHaveProperty("x-platform-user-id");
+    }
+  });
+
   it("calls a read action only for the selected account", async () => {
     const fetcher = vi.fn<GatewayFetcher>()
       .mockResolvedValueOnce(response([{ id: "gmail", actions: { list_messages: { risk: "read" } } }]))
