@@ -99,6 +99,22 @@ loopback gateway URL, Matrix gateway token, and Matrix user ID. Database,
 storage, analytics, Pipedream, and provider credentials cannot be inherited by
 the agent-owned process.
 
+Canonical Claude Chat uses an explicit `matrix-integrations` stdio entry because
+its strict MCP launch excludes the user-scoped registration. The entry invokes
+the launcher with `--require-scoped-capability`, so a missing Run bearer cannot
+fall back to the VPS machine token. The gateway issues that bearer only when
+the Chat owner matches the configured single-owner runtime and the runtime is
+not Preview. A normal Run can read the Custom MCP collection/detail and call an
+exact server ID. Review/read-only Runs receive discovery-only bearers, and
+Claude auto-allows only the two discovery wrappers for them. The Gateway denies
+raw call POSTs from those bearers because Custom MCP tools have no trusted
+read/write classification. Completion, abort, timeout, and gateway shutdown
+revoke every grant. For normal Runs, the broker still enforces tool enablement,
+server revision, and approval policy:
+the Gateway also rejects a Run-bearer request that claims human approval
+before proxying it under the platform machine token. `always_ask` calls remain
+denied until native approval is wired separately.
+
 ## Agent delivery
 
 Matrix bootstrap idempotently registers the server under the stable name
@@ -108,7 +124,7 @@ Matrix bootstrap idempotently registers the server under the stable name
 | --- | --- |
 | Matrix assistant | In-process tools with the same operation names and startup discovery instruction |
 | Codex | User-scoped stdio MCP entry in Codex configuration |
-| Claude Code | User-scoped stdio MCP entry in Claude configuration |
+| Claude Code | User-scoped stdio MCP entry for direct Claude use; canonical Chat passes an explicit strict entry with a scoped Custom MCP Run bearer |
 | Hermes | Native `mcp_servers` entry, discovered in every Hermes conversation |
 | OpenClaw | Native `mcp.servers` entry, available to normal coding and messaging profiles |
 | OpenCode and Pi | Auto-discovered global Matrix OS skill using the credential-isolated `matrix-integrations` command |

@@ -2,6 +2,7 @@ import { createClaudeInputController } from "./claude-input-control.js";
 import { z } from "zod/v4";
 import { classifyClaudeUsageFailure } from "./claude-usage-failure.js";
 import { buildAgentLaunch } from "../agent-launcher.js";
+import type { MatrixMcpCapabilityIssuer } from "./matrix-mcp-launch.js";
 import {
   buildKernelCredentialLaunch,
   type KernelCredentialLaunch,
@@ -217,6 +218,7 @@ export function createClaudeChatProviderAdapter(options: {
   timeoutMs?: number;
   resolveCredentialEnv?: () => Promise<Record<string, string | undefined> | undefined>;
   resolveCredentialLaunch?: () => Promise<KernelCredentialLaunch>;
+  matrixMcpCapabilityIssuer?: MatrixMcpCapabilityIssuer;
 }): CanonicalChatProviderAdapter<ClaudeChatState> {
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const activeRuns = new Map<string, {
@@ -237,41 +239,62 @@ export function createClaudeChatProviderAdapter(options: {
     const cwd = input.executionRoot ?? options.homePath;
     const selectedPermission = permissionMode(input.permissionMode, input.interactionMode);
     const fullAccess = selectedPermission === "bypassPermissions";
-    const launch = buildAgentLaunch({
-      agent: "claude",
-      cwd,
-      runtimeHome: options.homePath,
-      prompt: input.prompt,
-      model: input.selection.model,
-      modelOptions: input.selection.options ?? [],
-      mode: input.interactionMode === "review" ? "review" : "default",
-      approvalPolicy: fullAccess ? "never" : "on-request",
-      sandbox: fullAccess
-        ? { enabled: false, mode: "danger-full-access" }
-        : { enabled: true, mode: "workspace-write", writableRoots: [cwd] },
-      claudePermissionMode: selectedPermission,
-      claudeOutputFormat: "stream-json",
-      claudeIncludePartialMessages: true,
-    });
-    if (resumeState) {
-      const separator = launch.args.indexOf("--");
-      launch.args.splice(separator < 0 ? launch.args.length : separator, 0, "--resume", resumeState.sessionId);
+    const capability = options.matrixMcpCapabilityIssuer?.issue({
+      owner: input.owner,
+      runId: input.runId,
+      // Review is read-only even if its saved permission choice says full access.
+      // Unknown future interaction modes receive discovery only.
+      scope: input.interactionMode === "default" && selectedPermission !== "plan" ? "call" : "discovery",
+    }) ?? null;
+    let launch: ReturnType<typeof buildAgentLaunch>;
+    let credentialLaunch: KernelCredentialLaunch;
+    try {
+      launch = buildAgentLaunch({
+        agent: "claude",
+        cwd,
+        runtimeHome: options.homePath,
+        prompt: input.prompt,
+        model: input.selection.model,
+        modelOptions: input.selection.options ?? [],
+        mode: input.interactionMode === "review" ? "review" : "default",
+        approvalPolicy: fullAccess ? "never" : "on-request",
+        sandbox: fullAccess
+          ? { enabled: false, mode: "danger-full-access" }
+          : { enabled: true, mode: "workspace-write", writableRoots: [cwd] },
+        claudePermissionMode: selectedPermission,
+        claudeOutputFormat: "stream-json",
+        claudeIncludePartialMessages: true,
+        matrixCustomMcp: capability !== null,
+      });
+      if (resumeState) {
+        const separator = launch.args.indexOf("--");
+        launch.args.splice(separator < 0 ? launch.args.length : separator, 0, "--resume", resumeState.sessionId);
+      }
+      const promptSeparator = launch.args.indexOf("--");
+      if (promptSeparator >= 0) launch.args.splice(promptSeparator);
+      launch.args.push("--input-format", "stream-json", "--permission-prompt-tool", "stdio");
+      credentialLaunch = options.resolveCredentialLaunch
+        ? await options.resolveCredentialLaunch()
+        : {
+            env: await (
+              options.resolveCredentialEnv
+              ?? (() => buildKernelCredentialLaunch(options.homePath).then((value) => value.env))
+            )(),
+          };
+    } catch (error: unknown) {
+      capability?.revoke();
+      throw error;
     }
-    const promptSeparator = launch.args.indexOf("--");
-    if (promptSeparator >= 0) launch.args.splice(promptSeparator);
-    launch.args.push("--input-format", "stream-json", "--permission-prompt-tool", "stdio");
-    const credentialLaunch = options.resolveCredentialLaunch
-      ? await options.resolveCredentialLaunch()
-      : {
-          env: await (
-            options.resolveCredentialEnv
-            ?? (() => buildKernelCredentialLaunch(options.homePath).then((value) => value.env))
-          )(),
-        };
     const credentialEnv = credentialLaunch.env;
     const runEnv = credentialEnv === undefined
-      ? launch.env
+      ? capability ? definedEnvironment({ ...process.env, ...launch.env }) : launch.env
       : definedEnvironment({ ...credentialEnv, ...launch.env });
+    if (capability) {
+      // The MCP child receives only this actor/run capability, never the VPS
+      // machine bearer. The wrapper requires the scoped bearer for this launch.
+      delete runEnv.MATRIX_AUTH_TOKEN;
+      runEnv.MATRIX_AGENT_INTEGRATIONS_TOKEN = capability.token;
+    }
 
     const queue = createCanonicalCliEventQueue<CanonicalProviderRunEvent>();
     let buffered = "";
@@ -479,7 +502,7 @@ export function createClaudeChatProviderAdapter(options: {
       args: launch.args,
       cwd: launch.cwd,
       env: runEnv,
-      replaceEnv: credentialEnv !== undefined,
+      replaceEnv: credentialEnv !== undefined || capability !== null,
       signal: processSignal,
       timeoutMs: Math.min(timeoutMs, credentialLaunch.fundedRunTimeoutMs ?? timeoutMs),
       maxStdoutBytes: MAX_STREAM_BYTES,
@@ -543,6 +566,7 @@ export function createClaudeChatProviderAdapter(options: {
       releaseActiveRun();
       flushPendingDelta();
       if (steerPrompt && emittedState && !input.signal.aborted) {
+        capability?.revoke();
         for await (const event of execute({
           ...input,
           prompt: steerPrompt,
@@ -592,9 +616,14 @@ export function createClaudeChatProviderAdapter(options: {
         }),
       }));
       queue.finish();
-    });
+    }).finally(() => capability?.revoke());
 
-    yield* queue.values();
+    try {
+      yield* queue.values();
+    } finally {
+      processController.abort();
+      capability?.revoke();
+    }
   }
 
   return {

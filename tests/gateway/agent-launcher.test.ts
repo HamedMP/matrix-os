@@ -749,6 +749,25 @@ describe("agent-launcher", () => {
     });
   });
 
+  it("keeps the supported twenty Claude writable roots alongside the three scoped broker rules", () => {
+    const writableRoots = Array.from({ length: 20 }, (_, index) => `/home/matrix/home/projects/worktree_${index}`);
+    const launch = buildAgentLaunch({
+      agent: "claude", cwd: writableRoots[0]!, approvalPolicy: "on-request",
+      sandbox: { enabled: true, mode: "workspace-write", writableRoots },
+      matrixCustomMcp: true,
+    });
+    const settings = claudeSettings(launch.args) as {
+      permissions: { allow: string[] }; sandbox: { filesystem: { allowWrite: string[] } };
+    };
+    expect(settings.sandbox.filesystem.allowWrite).toEqual(writableRoots);
+    expect(settings.permissions.allow).toEqual([
+      ...writableRoots.map((root) => `Edit(/${root}/**)`),
+      "mcp__matrix-integrations__list_custom_mcp_servers",
+      "mcp__matrix-integrations__describe_custom_mcp_server",
+      "mcp__matrix-integrations__call_custom_mcp_tool",
+    ]);
+  });
+
   it("enforces read-only Claude launches across built-in edits and subprocesses", () => {
     const cwd = "/home/matrix/home/projects/repo/worktrees/wt_abc123def456";
     const gitCommonDir = "/home/matrix/home/projects/repo/repo/.git";
@@ -776,6 +795,36 @@ describe("agent-launcher", () => {
         filesystem: { denyWrite: [cwd, gitCommonDir] },
       },
     });
+  });
+
+  it("auto-allows only Custom MCP discovery in read-only Claude launches", () => {
+    const cwd = "/home/matrix/home/projects/review";
+    for (const mode of ["read-only", "workspace-write"] as const) {
+      const launch = buildAgentLaunch({
+        agent: "claude", cwd, approvalPolicy: "on-request", mode: "review",
+        sandbox: { enabled: true, mode, writableRoots: [cwd] }, matrixCustomMcp: true,
+      });
+      const settings = claudeSettings(launch.args) as { permissions: { allow: string[] } };
+      expect(settings.permissions.allow).toEqual([
+        "mcp__matrix-integrations__list_custom_mcp_servers",
+        "mcp__matrix-integrations__describe_custom_mcp_server",
+      ]);
+    }
+    const directReadOnly = buildAgentLaunch({
+      agent: "claude", cwd, approvalPolicy: "on-request",
+      sandbox: { enabled: true, mode: "read-only" }, matrixCustomMcp: true,
+    });
+    expect((claudeSettings(directReadOnly.args) as { permissions: { allow: string[] } }).permissions.allow)
+      .not.toContain("mcp__matrix-integrations__call_custom_mcp_tool");
+    const directPlan = buildAgentLaunch({
+      agent: "claude", cwd, approvalPolicy: "on-request", claudePermissionMode: "plan",
+      sandbox: { enabled: true, mode: "workspace-write", writableRoots: [cwd] }, matrixCustomMcp: true,
+    });
+    expect((claudeSettings(directPlan.args) as { permissions: { allow: string[] } }).permissions.allow)
+      .toEqual([
+        "mcp__matrix-integrations__list_custom_mcp_servers",
+        "mcp__matrix-integrations__describe_custom_mcp_server",
+      ]);
   });
 
   it("uses bounded no-prompt controls for Claude workspace and full-access launches", () => {

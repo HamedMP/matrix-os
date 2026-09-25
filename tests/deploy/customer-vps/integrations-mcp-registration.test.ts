@@ -10,6 +10,45 @@ const launcherPath = "distro/customer-vps/host-bin/matrix-integrations-mcp";
 const terminalPath = "distro/customer-vps/host-bin/matrix-integrations";
 
 describe("customer VPS integrations MCP wiring", () => {
+  it("fails a scoped canonical Chat launch before any host-bearer fallback", () => {
+    const result = spawnSync("bash", [launcherPath, "--require-scoped-capability"], {
+      encoding: "utf8",
+      env: { PATH: process.env.PATH ?? "" },
+    });
+    expect(result.status).toBe(3);
+    expect(result.stderr).toContain("run capability is unavailable");
+    expect(result.stderr).not.toContain("Matrix authentication is unavailable");
+  });
+
+  it.each(["", " ", "invalid-token"])("rejects a present invalid MCP Run token before ancestry or host fallback (%j)", (invalidToken) => {
+    const result = spawnSync("bash", [launcherPath], {
+      encoding: "utf8",
+      env: { PATH: process.env.PATH ?? "", MATRIX_AGENT_INTEGRATIONS_TOKEN: invalidToken },
+    });
+    expect(result.status).toBe(3);
+    expect(result.stderr).toContain("run capability or runtime is invalid");
+    expect(result.stderr).not.toContain("Matrix authentication is unavailable");
+  });
+
+  it("accepts bounded host bearer syntax in the MCP launcher's Bash", async () => {
+    const launcher = await readFile(launcherPath, "utf8");
+    const validator = launcher.match(/^valid_host_bearer\(\) \{[\s\S]*?^\}/m)?.[0];
+    expect(validator).toBeDefined();
+    for (const [token, valid] of [
+      ["A".repeat(15), false],
+      ["A".repeat(16), true],
+      ["A".repeat(512), true],
+      ["A".repeat(513), false],
+      ["A".repeat(16) + "!", false],
+    ] as const) {
+      const result = spawnSync("bash", ["-c", `${validator}\nvalid_host_bearer "$TOKEN"`], {
+        encoding: "utf8", env: { PATH: process.env.PATH ?? "", TOKEN: token },
+      });
+      expect(result.status).toBe(valid ? 0 : 1);
+    }
+    expect(launcher).toContain('valid_host_bearer "$MATRIX_AUTH_TOKEN_VALUE"');
+  });
+
   it("ships an executable stdio launcher that isolates host credentials and forwards a scoped Run capability", async () => {
     const launcher = await readFile(launcherPath, "utf8");
 
