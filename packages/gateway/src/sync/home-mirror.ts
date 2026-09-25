@@ -1,14 +1,8 @@
-import { createHash, randomUUID } from "node:crypto";
-import { constants as fsConstants, createReadStream } from "node:fs";
-import { lstat, mkdir, open, readdir, realpath, rename, stat, unlink, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { lstat, mkdir, readdir, realpath, rename, unlink, writeFile } from "node:fs/promises";
 import { dirname, join, relative, sep } from "node:path";
 import { watch, type FSWatcher } from "chokidar";
 import { z } from "zod/v4";
-import {
-  isIgnored as isSyncIgnored,
-  parseSyncIgnore,
-  type SyncIgnorePatterns,
-} from "@finnaai/matrix";
 import type { SyncScope } from "@matrix-os/contracts";
 import {
   applyCommitToManifest,
@@ -18,6 +12,24 @@ import {
   type ManifestDbExecutor,
 } from "./manifest.js";
 import { resolveWithinPrefix } from "./path-validation.js";
+import {
+  hashBuffer,
+  hashFileStream,
+  readLocalFileForPush,
+  streamToBuffer,
+  type LocalPushFile,
+} from "./home-mirror-io.js";
+import {
+  SYNCIGNORE_MAX_BYTES,
+  SYNCIGNORE_PATH,
+  emptyOwnerSyncIgnore,
+  isHomeMirrorIgnored,
+  loadOwnerSyncIgnore,
+  ownerSyncIgnoreKey,
+  parseOwnerSyncIgnore,
+  shouldPruneHomeMirrorPath,
+} from "./home-mirror-ignore.js";
+import type { SyncIgnorePatterns } from "@finnaai/matrix";
 import {
   buildFileKey,
   buildStagingKey,
@@ -31,70 +43,9 @@ import { finalizeStagedObject } from "./blob-publication.js";
 const RECENT_WRITE_CAP = 50_000;
 const DEFAULT_MAX_PUSH_BYTES = 100 * 1024 * 1024;
 const INITIAL_PUSH_CHUNK_SIZE = 50;
-const HASH_STREAM_TIMEOUT_MS = 30_000;
 const LOCAL_WALK_FILE_CAP = 50_000;
 const LOCAL_WALK_DEPTH_CAP = 64;
-const SYNCIGNORE_MAX_BYTES = 64 * 1024;
-const SYNCIGNORE_MAX_PATTERNS = 256;
-const SYNCIGNORE_MAX_PATTERN_LENGTH = 512;
 
-// Folders we never push -- big build outputs, transient state, secrets,
-// or things that would loop on themselves (the home dir itself when run
-// from inside it). Keep this conservative; the user can override with a
-// `.syncignore` in their home root.
-const DEFAULT_IGNORE_DIRS = new Set([
-  "node_modules",
-  ".next",
-  ".git",
-  ".matrixos",
-  "dist",
-  "build",
-  ".cache",
-  ".turbo",
-  "coverage",
-  ".pnpm-store",
-  ".vscode",
-  "tmp",
-  ".ssh",
-  ".gnupg",
-  ".aws",
-  ".pki",
-  ".claude",
-  ".codex",
-  ".hermes",
-  ".local",
-  ".npm",
-  ".rustup",
-  ".elan",
-  ".bun",
-  ".worktrees",
-  ".flox",
-  ".direnv",
-  ".venv",
-  "venv",
-  "target",
-  ".gradle",
-  ".expo",
-]);
-
-const DEFAULT_IGNORE_PATTERNS = [
-  /\.log$/i,
-  /\.tmp$/i,
-  /^\.DS_Store$/,
-  /\.env(\..+)?$/,
-  /^\.credentials\.json$/i,
-  /\.(?:key|pem|token)$/i,
-  /^id_(?:rsa|dsa|ecdsa|ed25519).*$/i,
-];
-const DEFAULT_IGNORE_PATH_PREFIXES = [
-  "data/browser-profiles",
-  ".config/gh",
-  ".config/gcloud",
-  ".config/opencode",
-  ".pi/agent/auth.json",
-  ".cargo/credentials",
-  ".cargo/credentials.toml",
-];
 const HOME_MIRROR_TMP_SUFFIX = /\.(?:\d+|matrixos-[0-9a-f-]{36})\.tmp$/i;
 const RemoteChangeFileSchema = z.object({
   path: z.string().min(1).max(1024),
@@ -129,6 +80,8 @@ export interface HomeMirrorConfig {
   maxPushBytes?: number;
   /** Disable chokidar local watching while keeping explicit push/delete methods available. Used by tests and one-shot sync flows. */
   watchLocalChanges?: boolean;
+  /** Called each time a local watcher (initial or policy rebuild) finishes its initial scan. */
+  onLocalWatcherReady?: () => void;
 }
 
 export interface HomeMirror {
@@ -159,158 +112,8 @@ function createSerialQueue(onError: (err: unknown) => void): {
   };
 }
 
-function parseUserIgnorePatterns(content: string): SyncIgnorePatterns {
-  let patternCount = 0;
-  for (const rawLine of content.split("\n")) {
-    const line = rawLine.trim();
-    if (!line || line.startsWith("#")) continue;
-    const pattern = line.startsWith("!") ? line.slice(1).trim() : line;
-    if (!pattern) continue;
-    if (pattern.length > SYNCIGNORE_MAX_PATTERN_LENGTH) {
-      throw new Error(".syncignore contains an overlong pattern");
-    }
-    patternCount++;
-    if (patternCount > SYNCIGNORE_MAX_PATTERNS) {
-      throw new Error(`.syncignore exceeds ${SYNCIGNORE_MAX_PATTERNS} patterns`);
-    }
-  }
-  return parseSyncIgnore(content);
-}
-
-async function loadUserIgnorePatterns(homeRoot: string): Promise<SyncIgnorePatterns> {
-  const path = join(homeRoot, ".syncignore");
-  let handle: Awaited<ReturnType<typeof open>>;
-  try {
-    handle = await open(path, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
-  } catch (err: unknown) {
-    if (
-      err instanceof Error && "code" in err &&
-      ["ENOENT", "ELOOP"].includes(String((err as NodeJS.ErrnoException).code))
-    ) {
-      return parseSyncIgnore("");
-    }
-    throw err;
-  }
-
-  try {
-    const info = await handle.stat();
-    if (!info.isFile()) return parseSyncIgnore("");
-    if (info.size > SYNCIGNORE_MAX_BYTES) {
-      throw new Error(`.syncignore exceeds ${SYNCIGNORE_MAX_BYTES} bytes`);
-    }
-    const bytes = Buffer.alloc(SYNCIGNORE_MAX_BYTES + 1);
-    const { bytesRead } = await handle.read(bytes, 0, bytes.length, 0);
-    if (bytesRead > SYNCIGNORE_MAX_BYTES) {
-      throw new Error(`.syncignore exceeds ${SYNCIGNORE_MAX_BYTES} bytes`);
-    }
-    return parseUserIgnorePatterns(bytes.subarray(0, bytesRead).toString("utf8"));
-  } finally {
-    await handle.close();
-  }
-}
-
-function isIgnored(
-  relPath: string,
-  extraDirs?: Set<string>,
-  userPatterns: SyncIgnorePatterns = parseSyncIgnore(""),
-): boolean {
-  // Treat the home root itself ("") as NOT ignored -- otherwise chokidar
-  // refuses to descend into it. Only ignore actual entries.
-  if (!relPath || relPath === ".") return false;
-  const normalizedPath = relPath.split(sep).join("/");
-  if (
-    DEFAULT_IGNORE_PATH_PREFIXES.some((prefix) =>
-      normalizedPath === prefix || normalizedPath.startsWith(`${prefix}/`)
-    )
-  ) {
-    return true;
-  }
-  const segments = relPath.split(sep);
-  for (const seg of segments) {
-    if (DEFAULT_IGNORE_DIRS.has(seg)) return true;
-    if (extraDirs?.has(seg)) return true;
-  }
-  const last = segments[segments.length - 1] ?? "";
-  if (DEFAULT_IGNORE_PATTERNS.some((p) => p.test(last))) return true;
-  // The ignore file itself must always remain synchronized so every peer can
-  // converge on the same owner policy. Hard exclusions above remain
-  // non-overridable even when the owner uses a negation pattern.
-  if (normalizedPath === ".syncignore") return false;
-  return isSyncIgnored(normalizedPath, userPatterns);
-}
-
-function hashFileStream(absPath: string): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const h = createHash("sha256");
-    const s = createReadStream(absPath);
-    const timeout = setTimeout(() => {
-      s.destroy(new Error(`hash stream timed out after ${HASH_STREAM_TIMEOUT_MS}ms`));
-    }, HASH_STREAM_TIMEOUT_MS);
-    const cleanup = () => clearTimeout(timeout);
-    s.on("data", (chunk) => h.update(chunk));
-    s.on("end", () => {
-      cleanup();
-      resolve(`sha256:${h.digest("hex")}`);
-    });
-    s.on("error", (err) => {
-      cleanup();
-      reject(err);
-    });
-    s.on("close", cleanup);
-  });
-}
-
-function hashBuffer(buf: Buffer): string {
-  return `sha256:${createHash("sha256").update(buf).digest("hex")}`;
-}
-
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
-}
-
-type LocalPushFile =
-  | { kind: "file"; body: Buffer; hash: string; size: number }
-  | { kind: "too_large"; size: number }
-  | { kind: "skip" };
-
-async function readLocalFileForPush(
-  absPath: string,
-  maxPushBytes: number,
-): Promise<LocalPushFile> {
-  let handle;
-  try {
-    handle = await open(absPath, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0));
-  } catch (err: unknown) {
-    if (
-      err instanceof Error &&
-      "code" in err &&
-      ["ENOENT", "EISDIR", "ELOOP", "ENOTDIR"].includes(
-        String((err as NodeJS.ErrnoException).code),
-      )
-    ) {
-      return { kind: "skip" };
-    }
-    throw err;
-  }
-
-  try {
-    const fileStat = await handle.stat();
-    if (!fileStat.isFile()) {
-      return { kind: "skip" };
-    }
-    if (fileStat.size > maxPushBytes) {
-      return { kind: "too_large", size: fileStat.size };
-    }
-    const body = Buffer.from(await handle.readFile());
-    return {
-      kind: "file",
-      body,
-      hash: hashBuffer(body),
-      size: body.length,
-    };
-  } finally {
-    await handle.close();
-  }
 }
 
 function normalizeRelativePath(userId: string, relPath: string): string {
@@ -319,83 +122,6 @@ function normalizeRelativePath(userId: string, relPath: string): string {
     throw new Error(`invalid path: ${checked.reason}`);
   }
   return checked.key.slice(`matrixos-sync/${userId}/files/`.length);
-}
-
-// AWS SDK v3 returns its own stream type with `transformToByteArray()`,
-// NOT a Web ReadableStream -- calling .getReader() throws "is not a function".
-// Match what manifest.ts does for body decoding (transformToString fallback).
-async function streamToBuffer(body: unknown, maxBytes: number): Promise<Buffer> {
-  const anyBody = body as {
-    transformToByteArray?: () => Promise<Uint8Array>;
-    getReader?: () => ReadableStreamDefaultReader<Uint8Array>;
-    stream?: () => ReadableStream<Uint8Array>;
-    [Symbol.asyncIterator]?: () => AsyncIterator<unknown>;
-  };
-  const toChunk = (value: unknown): Buffer => {
-    if (Buffer.isBuffer(value)) {
-      return value;
-    }
-    if (value instanceof Uint8Array) {
-      return Buffer.from(value);
-    }
-    if (value instanceof ArrayBuffer) {
-      return Buffer.from(value);
-    }
-    if (ArrayBuffer.isView(value)) {
-      return Buffer.from(value.buffer, value.byteOffset, value.byteLength);
-    }
-    throw new Error("Unsupported R2 object chunk type");
-  };
-  const ensureWithinLimit = (size: number): void => {
-    if (size > maxBytes) {
-      throw new Error(`remote blob exceeded ${maxBytes} bytes`);
-    }
-  };
-  const readChunks = async (
-    chunks: AsyncIterable<unknown>,
-  ): Promise<Buffer> => {
-    const parts: Buffer[] = [];
-    let total = 0;
-    for await (const chunk of chunks) {
-      const buf = toChunk(chunk);
-      total += buf.length;
-      ensureWithinLimit(total);
-      parts.push(buf);
-    }
-    return Buffer.concat(parts);
-  };
-  if (typeof anyBody.getReader === "function") {
-    const reader = anyBody.getReader();
-    const chunks: Uint8Array[] = [];
-    let total = 0;
-    for (;;) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      if (value) {
-        total += value.length;
-        ensureWithinLimit(total);
-        chunks.push(value);
-      }
-    }
-    return Buffer.concat(chunks);
-  }
-  if (typeof anyBody.stream === "function") {
-    return streamToBuffer(anyBody.stream(), maxBytes);
-  }
-  if (typeof anyBody[Symbol.asyncIterator] === "function") {
-    return readChunks(body as AsyncIterable<unknown>);
-  }
-  if (body instanceof Uint8Array || body instanceof ArrayBuffer || ArrayBuffer.isView(body)) {
-    const buf = toChunk(body);
-    ensureWithinLimit(buf.length);
-    return buf;
-  }
-  if (typeof anyBody.transformToByteArray === "function") {
-    const bytes = await anyBody.transformToByteArray();
-    ensureWithinLimit(bytes.length);
-    return Buffer.from(bytes);
-  }
-  throw new Error("Unsupported R2 object body type");
 }
 
 export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
@@ -410,17 +136,33 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
     : undefined;
   const maxPushBytes = config.maxPushBytes ?? DEFAULT_MAX_PUSH_BYTES;
 
+  // `watcher` is the live local watcher; `pendingWatcher` is a replacement
+  // that is still scanning during a policy rebuild. Both are closed on stop.
   let watcher: FSWatcher | null = null;
+  let pendingWatcher: FSWatcher | null = null;
   let stopRequested = false;
   let subscribed = false;
   let resolvedHomeRoot = config.homeRoot;
-  let userIgnorePatterns = parseSyncIgnore("");
+  let userIgnorePatterns = emptyOwnerSyncIgnore();
+  // Incremented by start()/stop() so queued policy refreshes from an older
+  // lifecycle can never start watchers or pushes after a stop or restart.
+  let lifecycleGeneration = 0;
+  let watcherTaskChain: Promise<void> = Promise.resolve();
+  let localWatchingEnabled = false;
 
   const ignored = (relPath: string): boolean =>
-    isIgnored(relPath, extraIgnore, userIgnorePatterns);
+    isHomeMirrorIgnored(relPath, extraIgnore, userIgnorePatterns);
+  const pruned = (relPath: string): boolean =>
+    shouldPruneHomeMirrorPath(relPath, extraIgnore, userIgnorePatterns);
+  const isCurrentLifecycle = (generation: number): boolean =>
+    !stopRequested && generation === lifecycleGeneration;
 
-  async function reloadUserIgnorePatterns(): Promise<void> {
-    userIgnorePatterns = await loadUserIgnorePatterns(config.homeRoot);
+  /** Reload owner policy from disk; returns the previous policy when it changed. */
+  async function reloadUserIgnorePatterns(): Promise<SyncIgnorePatterns | null> {
+    const previous = userIgnorePatterns;
+    const next = await loadOwnerSyncIgnore(config.homeRoot);
+    userIgnorePatterns = next;
+    return ownerSyncIgnoreKey(previous) === ownerSyncIgnoreKey(next) ? null : previous;
   }
 
   function assertWithinResolvedHomeRoot(resolvedPath: string): void {
@@ -475,10 +217,10 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
   }
 
   async function releaseResources(): Promise<void> {
-    if (watcher) {
-      await watcher.close();
-      watcher = null;
-    }
+    const watchers = [watcher, pendingWatcher].filter((w): w is FSWatcher => w !== null);
+    watcher = null;
+    pendingWatcher = null;
+    await Promise.all(watchers.map((w) => w.close()));
     if (subscribed && config.peerRegistry) {
       config.peerRegistry.removePeer(registryKey, config.peerId);
       subscribed = false;
@@ -526,9 +268,18 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
 
   async function pushFile(relPath: string): Promise<void> {
     const safeRelPath = normalizeRelativePath(config.userId, relPath);
-    if (safeRelPath === ".syncignore") {
-      await reloadUserIgnorePatterns();
+    const previousPolicy = safeRelPath === SYNCIGNORE_PATH
+      ? await reloadUserIgnorePatterns()
+      : null;
+    try {
+      await publishLocalFile(safeRelPath);
+    } finally {
+      // Publish the policy file first, then bring watches in line with it.
+      if (previousPolicy) await schedulePolicyRefresh(previousPolicy);
     }
+  }
+
+  async function publishLocalFile(safeRelPath: string): Promise<void> {
     if (ignored(safeRelPath)) return;
     const absPath = join(config.homeRoot, safeRelPath);
 
@@ -577,9 +328,17 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
 
   async function pushDelete(relPath: string): Promise<void> {
     const safeRelPath = normalizeRelativePath(config.userId, relPath);
-    if (safeRelPath === ".syncignore") {
-      await reloadUserIgnorePatterns();
+    const previousPolicy = safeRelPath === SYNCIGNORE_PATH
+      ? await reloadUserIgnorePatterns()
+      : null;
+    try {
+      await publishLocalDelete(safeRelPath);
+    } finally {
+      if (previousPolicy) await schedulePolicyRefresh(previousPolicy);
     }
+  }
+
+  async function publishLocalDelete(safeRelPath: string): Promise<void> {
     if (ignored(safeRelPath)) return;
     await enqueue(async () => {
       await withManifestLock(async (lockedStore) => {
@@ -605,11 +364,20 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
     });
   }
 
+  // Remote policy content is validated before it touches disk so a rejected
+  // .syncignore can never replace the last valid owner policy.
+  function validateRemoteBody(safeRelPath: string, body: Buffer): void {
+    if (safeRelPath === SYNCIGNORE_PATH) parseOwnerSyncIgnore(body.toString("utf8"));
+  }
+
   async function pullFile(relPath: string, entry: ManifestEntry): Promise<void> {
     const safeRelPath = normalizeRelativePath(config.userId, relPath);
     const absPath = join(config.homeRoot, safeRelPath);
     if (entry.size > maxPushBytes) {
       throw new Error(`remote file exceeds ${maxPushBytes} bytes`);
+    }
+    if (safeRelPath === SYNCIGNORE_PATH && entry.size > SYNCIGNORE_MAX_BYTES) {
+      throw new Error(`.syncignore exceeds ${SYNCIGNORE_MAX_BYTES} bytes`);
     }
     try {
       const localStat = await lstat(absPath);
@@ -640,6 +408,7 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
     if (hashBuffer(buf) !== entry.hash) {
       throw new Error("downloaded blob hash did not match manifest entry");
     }
+    validateRemoteBody(safeRelPath, buf);
     await ensureWritableParent(absPath);
     const tmpPath = `${absPath}.matrixos-${randomUUID()}.tmp`;
     try {
@@ -692,7 +461,7 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
       const relPath = relDir ? join(relDir, entry.name) : entry.name;
       const absPath = join(dir, entry.name);
       if (entry.isDirectory()) {
-        if (ignored(relPath)) continue;
+        if (pruned(relPath)) continue;
         await cleanupTempFiles(absPath, relPath, depth + 1);
         continue;
       }
@@ -763,10 +532,12 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
 
     for (const entry of entries) {
       const relPath = relDir ? join(relDir, entry.name) : entry.name;
-      if (ignored(relPath)) continue;
       const absPath = join(dir, entry.name);
 
       if (entry.isDirectory()) {
+        // Owner-ignored directories stay walkable while a negation could
+        // re-include a descendant; files below are still filtered one by one.
+        if (pruned(relPath)) continue;
         await collectLocalFiles(absPath, relPath, files, depth + 1);
         continue;
       }
@@ -774,6 +545,7 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
         continue;
       }
       if (entry.isFile()) {
+        if (ignored(relPath)) continue;
         files.push(relPath);
         if (files.length > LOCAL_WALK_FILE_CAP) {
           throw new Error(
@@ -788,12 +560,20 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
 
   async function initialPush(): Promise<void> {
     const relPaths = await collectLocalFiles(config.homeRoot);
+    await pushLocalPaths(relPaths, "initial push", () => !stopRequested);
+  }
+
+  async function pushLocalPaths(
+    relPaths: string[],
+    label: string,
+    shouldContinue: () => boolean,
+  ): Promise<void> {
     if (relPaths.length === 0) return;
     const snapshot = await readManifest(store, scope);
     let pushed = 0;
 
     for (let start = 0; start < relPaths.length; start += INITIAL_PUSH_CHUNK_SIZE) {
-      if (stopRequested) {
+      if (!shouldContinue()) {
         return;
       }
       const relPathChunk = relPaths.slice(start, start + INITIAL_PUSH_CHUNK_SIZE);
@@ -889,7 +669,7 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
     }
 
     if (pushed > 0) {
-      log.info(`initial push: ${pushed} files`);
+      log.info(`${label}: ${pushed} files`);
     }
   }
 
@@ -922,8 +702,9 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
     const files = [...msg.files].sort((left, right) =>
       Number(right.path === ".syncignore") - Number(left.path === ".syncignore")
     );
+    let previousPolicy: SyncIgnorePatterns | null = null;
     for (const f of files) {
-      if (!f.path || (f.path !== ".syncignore" && ignored(f.path))) continue;
+      if (!f.path || (f.path !== SYNCIGNORE_PATH && ignored(f.path))) continue;
       try {
         if (f.action === "delete") {
           await pullDelete(f.path);
@@ -936,13 +717,18 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
             version: 0,
           } as ManifestEntry);
         }
-        if (f.path === ".syncignore") {
-          await reloadUserIgnorePatterns();
+        if (f.path === SYNCIGNORE_PATH) {
+          previousPolicy = (await reloadUserIgnorePatterns()) ?? previousPolicy;
         }
       } catch (err: unknown) {
+        // A rejected policy is logged and skipped; later files in the batch
+        // still apply under the last successfully loaded policy.
         log.error(`remote-change failed for ${f.path}:`, errorMessage(err));
-        if (f.path === ".syncignore") break;
       }
+    }
+    if (previousPolicy) {
+      // Runs outside the serial queue: the refresh enqueues its own pushes.
+      void schedulePolicyRefresh(previousPolicy);
     }
   }
 
@@ -989,9 +775,132 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
     };
   }
 
+  // Watcher creation, policy rebuilds, and newly-included reconciliation all
+  // run on this chain so at most one replacement watcher exists at a time.
+  function runWatcherTask(task: () => Promise<void>): Promise<void> {
+    const next = watcherTaskChain.then(task, task);
+    watcherTaskChain = next.catch((err: unknown) => {
+      log.error("home mirror watcher task failed:", errorMessage(err));
+    });
+    return next;
+  }
+
+  function onLocalEvent(kind: "push" | "delete", absPath: string): void {
+    const rel = relative(config.homeRoot, absPath);
+    if (wasJustWritten(rel)) return;
+    if (kind === "push") {
+      pushFile(rel).catch((err: unknown) => log.error(`push failed for ${rel}: ${errorMessage(err)}`));
+    } else {
+      pushDelete(rel).catch((err: unknown) => log.error(`delete failed for ${rel}: ${errorMessage(err)}`));
+    }
+  }
+
+  function waitForWatcherReady(target: FSWatcher): Promise<void> {
+    // Resolve on `close` too, so a concurrent stop() can't strand us waiting
+    // for a `ready` event that will never fire on a closed watcher.
+    return new Promise<void>((resolve, reject) => {
+      const cleanup = () => {
+        target.off("ready", onReady);
+        target.off("error", onError);
+        target.off("close", onClose);
+      };
+      const onReady = () => {
+        cleanup();
+        resolve();
+      };
+      const onError = (err: unknown) => {
+        cleanup();
+        reject(err instanceof Error ? err : new Error(String(err)));
+      };
+      const onClose = () => {
+        cleanup();
+        resolve();
+      };
+      target.once("ready", onReady);
+      target.once("error", onError);
+      target.once("close", onClose);
+    });
+  }
+
+  // Start a watcher using the current policy and wait for its initial scan
+  // so writes immediately after readiness are not missed on slow
+  // filesystems. Returns null when the lifecycle ended while scanning.
+  async function startLocalWatcher(generation: number): Promise<FSWatcher | null> {
+    const next = watch(config.homeRoot, {
+      persistent: true,
+      ignoreInitial: true,
+      awaitWriteFinish: { stabilityThreshold: 250, pollInterval: 100 },
+      // Directory pruning only; event handlers apply the file-level policy.
+      ignored: (absPath) => pruned(relative(config.homeRoot, absPath)),
+    });
+    pendingWatcher = next;
+    next.on("add", (absPath) => onLocalEvent("push", absPath));
+    next.on("change", (absPath) => onLocalEvent("push", absPath));
+    next.on("unlink", (absPath) => onLocalEvent("delete", absPath));
+    next.on("error", (err: unknown) => {
+      log.error(`home mirror watcher error: ${errorMessage(err)}`);
+    });
+    try {
+      await waitForWatcherReady(next);
+    } catch (err: unknown) {
+      if (pendingWatcher === next) pendingWatcher = null;
+      await next.close();
+      throw err;
+    }
+    if (pendingWatcher === next) pendingWatcher = null;
+    if (!isCurrentLifecycle(generation)) {
+      await next.close();
+      return null;
+    }
+    return next;
+  }
+
+  // Swap in a watcher built from the current policy. The replacement is
+  // ready before the old watcher closes, so no local events fall into a gap;
+  // overlapping events are idempotent because pushes compare hashes.
+  async function replaceLocalWatcher(generation: number): Promise<void> {
+    if (!localWatchingEnabled || !isCurrentLifecycle(generation)) return;
+    const next = await startLocalWatcher(generation);
+    if (!next) return;
+    const previous = watcher;
+    watcher = next;
+    if (previous) await previous.close();
+    if (!isCurrentLifecycle(generation)) return;
+    config.onLocalWatcherReady?.();
+  }
+
+  async function pushNewlyIncluded(
+    previousPolicy: SyncIgnorePatterns,
+    generation: number,
+  ): Promise<void> {
+    const relPaths = await collectLocalFiles(config.homeRoot);
+    const newlyIncluded = relPaths.filter((relPath) =>
+      isHomeMirrorIgnored(relPath, extraIgnore, previousPolicy)
+    );
+    await pushLocalPaths(newlyIncluded, "policy refresh push", () =>
+      isCurrentLifecycle(generation)
+    );
+  }
+
+  // Rebuild watches and publish files the new owner policy newly includes.
+  // Never rejects; failures are logged and the last watcher stays active.
+  function schedulePolicyRefresh(previousPolicy: SyncIgnorePatterns): Promise<void> {
+    const generation = lifecycleGeneration;
+    return runWatcherTask(async () => {
+      if (!isCurrentLifecycle(generation)) return;
+      await replaceLocalWatcher(generation);
+      if (!isCurrentLifecycle(generation)) return;
+      await pushNewlyIncluded(previousPolicy, generation);
+    }).catch((err: unknown) => {
+      log.error("home mirror policy refresh failed:", errorMessage(err));
+    });
+  }
+
   return {
     async start(): Promise<void> {
       stopRequested = false;
+      localWatchingEnabled = false;
+      const generation = ++lifecycleGeneration;
       await mkdir(config.homeRoot, { recursive: true });
       try {
         resolvedHomeRoot = await realpath(config.homeRoot);
@@ -1043,64 +952,9 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
         return;
       }
 
-      watcher = watch(config.homeRoot, {
-        persistent: true,
-        ignoreInitial: true,
-        awaitWriteFinish: { stabilityThreshold: 250, pollInterval: 100 },
-        ignored: (absPath) => {
-          const rel = relative(config.homeRoot, absPath);
-          return ignored(rel);
-        },
-      });
-
-      watcher.on("add", (absPath) => {
-        const rel = relative(config.homeRoot, absPath);
-        if (wasJustWritten(rel)) return;
-        pushFile(rel).catch((err: unknown) => log.error(`push failed for ${rel}: ${errorMessage(err)}`));
-      });
-      watcher.on("change", (absPath) => {
-        const rel = relative(config.homeRoot, absPath);
-        if (wasJustWritten(rel)) return;
-        pushFile(rel).catch((err: unknown) => log.error(`push failed for ${rel}: ${errorMessage(err)}`));
-      });
-      watcher.on("unlink", (absPath) => {
-        const rel = relative(config.homeRoot, absPath);
-        if (wasJustWritten(rel)) return;
-        pushDelete(rel).catch((err: unknown) => log.error(`delete failed for ${rel}: ${errorMessage(err)}`));
-      });
-      watcher.on("error", (err: unknown) => {
-        log.error(`home mirror watcher error: ${errorMessage(err)}`);
-      });
-
-      // Wait for chokidar to finish its initial scan and register inotify
-      // watches before returning. Otherwise a write that lands immediately
-      // after start() resolves can be missed on slow filesystems (notably
-      // GitHub Actions runners), where the watches aren't installed yet.
-      // Resolve on `close` too, so a concurrent stop() can't strand us
-      // waiting for a `ready` event that will never fire on a closed watcher.
+      localWatchingEnabled = true;
       try {
-        await new Promise<void>((resolve, reject) => {
-          const cleanup = () => {
-            watcher?.off("ready", onReady);
-            watcher?.off("error", onError);
-            watcher?.off("close", onClose);
-          };
-          const onReady = () => {
-            cleanup();
-            resolve();
-          };
-          const onError = (err: unknown) => {
-            cleanup();
-            reject(err instanceof Error ? err : new Error(String(err)));
-          };
-          const onClose = () => {
-            cleanup();
-            resolve();
-          };
-          watcher!.once("ready", onReady);
-          watcher!.once("error", onError);
-          watcher!.once("close", onClose);
-        });
+        await runWatcherTask(() => replaceLocalWatcher(generation));
       } catch (err: unknown) {
         // Watcher errored before reaching ready -- close it (and any
         // other resources start() acquired) so we don't leak inotify
@@ -1109,7 +963,7 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
         throw err;
       }
 
-      if (stopRequested) {
+      if (!isCurrentLifecycle(generation)) {
         await releaseResources();
         return;
       }
@@ -1119,6 +973,11 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
 
     async stop(): Promise<void> {
       stopRequested = true;
+      localWatchingEnabled = false;
+      lifecycleGeneration++;
+      await releaseResources();
+      // Let an in-flight rebuild observe the stop and close its replacement.
+      await watcherTaskChain;
       await releaseResources();
       await queue.drain();
     },

@@ -1093,6 +1093,213 @@ describe("createHomeMirror", () => {
       await mirror.stop();
     });
 
+    it("syncs negated descendants of ignored directories without walking pruned siblings", async () => {
+      await mkdir(join(tmpRoot, "projects", "large"), { recursive: true });
+      await writeFile(join(tmpRoot, ".syncignore"), "projects/\n!projects/keep.md\n");
+      await writeFile(join(tmpRoot, "projects", "large", "source.ts"), "ignored project");
+      await writeFile(join(tmpRoot, "projects", "keep.md"), "negated file");
+
+      const mirror = createHomeMirror({
+        r2,
+        manifestDb: db,
+        homeRoot: tmpRoot,
+        userId: "alice",
+        peerId: "gateway-alice",
+        peerRegistry: registry,
+        logger: { info: () => {}, error: () => {} },
+        watchLocalChanges: false,
+      });
+      await mirror.start();
+
+      const manifest = storedManifest(r2);
+      expect(manifest?.files[".syncignore"]?.objectKey).toBeDefined();
+      expect(manifest?.files["projects/keep.md"]?.objectKey).toBeDefined();
+      expect(manifest?.files["projects/large/source.ts"]).toBeUndefined();
+
+      await writeFile(join(tmpRoot, "projects", "large", "later.ts"), "ignored later");
+      await mirror.pushLocalFile("projects/large/later.ts");
+      expect(storedManifest(r2)?.files["projects/large/later.ts"]).toBeUndefined();
+
+      const remote = Buffer.from("remote");
+      r2.store.set("matrixos-sync/alice/files/projects/large/remote.ts", remote);
+      registry.broadcastChange("alice", "laptop-1", {
+        type: "sync:change",
+        files: [{ path: "projects/large/remote.ts", hash: sha256(remote), size: remote.length, action: "update" }],
+        peerId: "laptop-1",
+        manifestVersion: 2,
+      });
+      await settle(80);
+      await expect(stat(join(tmpRoot, "projects", "large", "remote.ts"))).rejects.toThrow(/ENOENT/);
+      await mirror.stop();
+    });
+
+    it("syncignore negations never override hard exclusions during directory traversal", async () => {
+      await mkdir(join(tmpRoot, ".ssh"), { recursive: true });
+      await mkdir(join(tmpRoot, "node_modules", "pkg"), { recursive: true });
+      await writeFile(join(tmpRoot, ".ssh", "config.md"), "ssh config");
+      await writeFile(join(tmpRoot, "node_modules", "pkg", "README.md"), "dependency");
+      await writeFile(join(tmpRoot, ".syncignore"), "!*.md\n!.ssh/config.md\n!node_modules/pkg/README.md\n");
+      await writeFile(join(tmpRoot, "safe.md"), "safe");
+
+      const mirror = createHomeMirror({
+        r2,
+        manifestDb: db,
+        homeRoot: tmpRoot,
+        userId: "alice",
+        peerId: "gateway-alice",
+        peerRegistry: registry,
+        logger: { info: () => {}, error: () => {} },
+        watchLocalChanges: false,
+      });
+      await mirror.start();
+
+      const manifest = storedManifest(r2);
+      expect(manifest?.files["safe.md"]?.objectKey).toBeDefined();
+      expect(manifest?.files[".ssh/config.md"]).toBeUndefined();
+      expect(manifest?.files["node_modules/pkg/README.md"]).toBeUndefined();
+      await mirror.stop();
+    });
+
+    it("watches negated descendants inside ignored directories", async () => {
+      await mkdir(join(tmpRoot, "projects", "large"), { recursive: true });
+      await writeFile(join(tmpRoot, ".syncignore"), "projects/\n!projects/keep.md\n");
+
+      const mirror = createHomeMirror({
+        r2,
+        manifestDb: db,
+        homeRoot: tmpRoot,
+        userId: "alice",
+        peerId: "gateway-alice",
+        peerRegistry: registry,
+        logger: { info: () => {}, error: () => {} },
+      });
+      await mirror.start();
+
+      await writeFile(join(tmpRoot, "projects", "large", "source.ts"), "ignored project");
+      await writeFile(join(tmpRoot, "projects", "keep.md"), "negated file");
+      await waitFor(() => storedManifest(r2)?.files["projects/keep.md"]?.objectKey !== undefined);
+      expect(storedManifest(r2)?.files["projects/large/source.ts"]).toBeUndefined();
+      await mirror.stop();
+    });
+
+    it("rebuilds local watches after .syncignore stops ignoring a directory", async () => {
+      await mkdir(join(tmpRoot, "dynamic"), { recursive: true });
+      await writeFile(join(tmpRoot, ".syncignore"), "dynamic/\n");
+      await writeFile(join(tmpRoot, "dynamic", "existing.md"), "was ignored");
+      let watcherReadyCount = 0;
+
+      const mirror = createHomeMirror({
+        r2,
+        manifestDb: db,
+        homeRoot: tmpRoot,
+        userId: "alice",
+        peerId: "gateway-alice",
+        peerRegistry: registry,
+        logger: { info: () => {}, error: () => {} },
+        onLocalWatcherReady: () => {
+          watcherReadyCount++;
+        },
+      });
+      await mirror.start();
+      expect(watcherReadyCount).toBe(1);
+      expect(storedManifest(r2)?.files["dynamic/existing.md"]).toBeUndefined();
+
+      const nextPolicy = Buffer.from("# dynamic is now synced\n");
+      await writeFile(join(tmpRoot, ".syncignore"), nextPolicy);
+      await waitFor(() =>
+        watcherReadyCount >= 2 &&
+        storedManifest(r2)?.files[".syncignore"]?.hash === sha256(nextPolicy),
+      );
+      await waitFor(() => storedManifest(r2)?.files["dynamic/existing.md"]?.objectKey !== undefined);
+
+      await writeFile(join(tmpRoot, "dynamic", "now.md"), "created after policy change");
+      await waitFor(() => storedManifest(r2)?.files["dynamic/now.md"]?.objectKey !== undefined);
+      await mirror.stop();
+    });
+
+    it("does not start a replacement watcher after stop during a policy reload", async () => {
+      await mkdir(join(tmpRoot, "dynamic"), { recursive: true });
+      await writeFile(join(tmpRoot, ".syncignore"), "dynamic/\n");
+      let watcherReadyCount = 0;
+
+      const mirror = createHomeMirror({
+        r2,
+        manifestDb: db,
+        homeRoot: tmpRoot,
+        userId: "alice",
+        peerId: "gateway-alice",
+        peerRegistry: registry,
+        logger: { info: () => {}, error: () => {} },
+        onLocalWatcherReady: () => {
+          watcherReadyCount++;
+        },
+      });
+      await mirror.start();
+      expect(watcherReadyCount).toBe(1);
+
+      const nextPolicy = Buffer.from("# allow dynamic\n");
+      r2.store.set("matrixos-sync/alice/files/.syncignore", nextPolicy);
+      registry.broadcastChange("alice", "laptop-1", {
+        type: "sync:change",
+        files: [{ path: ".syncignore", hash: sha256(nextPolicy), size: nextPolicy.length, action: "update" }],
+        peerId: "laptop-1",
+        manifestVersion: 2,
+      });
+      await mirror.stop();
+      expect(registry.getPeers("alice").some((peer) => peer.peerId === "gateway-alice")).toBe(false);
+
+      await writeFile(join(tmpRoot, "dynamic", "after-stop.md"), "must not upload");
+      await settle(800);
+      expect(watcherReadyCount).toBe(1);
+      expect(storedManifest(r2)?.files["dynamic/after-stop.md"]).toBeUndefined();
+    });
+
+    it("continues applying peer files after an invalid .syncignore in the same batch", async () => {
+      const logger = { info: vi.fn(), error: vi.fn() };
+      await writeFile(join(tmpRoot, ".syncignore"), "private/\n");
+
+      const mirror = createHomeMirror({
+        r2,
+        manifestDb: db,
+        homeRoot: tmpRoot,
+        userId: "alice",
+        peerId: "gateway-alice",
+        peerRegistry: registry,
+        logger,
+        watchLocalChanges: false,
+      });
+      await mirror.start();
+
+      const invalidPolicy = Buffer.from(`${"x".repeat(600)}\n`);
+      const peerNote = Buffer.from("peer note");
+      const privateNote = Buffer.from("still private");
+      r2.store.set("matrixos-sync/alice/files/.syncignore", invalidPolicy);
+      r2.store.set("matrixos-sync/alice/files/notes/peer.md", peerNote);
+      r2.store.set("matrixos-sync/alice/files/private/secret.md", privateNote);
+      registry.broadcastChange("alice", "laptop-1", {
+        type: "sync:change",
+        files: [
+          { path: ".syncignore", hash: sha256(invalidPolicy), size: invalidPolicy.length, action: "update" },
+          { path: "notes/peer.md", hash: sha256(peerNote), size: peerNote.length, action: "update" },
+          { path: "private/secret.md", hash: sha256(privateNote), size: privateNote.length, action: "update" },
+        ],
+        peerId: "laptop-1",
+        manifestVersion: 2,
+      });
+
+      await waitFor(() => logger.error.mock.calls.some((call) => String(call[0]).includes(".syncignore")));
+      await waitFor(() => (logger.info.mock.calls.some((call) => String(call[0]).includes("notes/peer.md"))));
+      expect((await readFile(join(tmpRoot, "notes", "peer.md"))).equals(peerNote)).toBe(true);
+      expect(await readFile(join(tmpRoot, ".syncignore"), "utf8")).toBe("private/\n");
+      await expect(stat(join(tmpRoot, "private", "secret.md"))).rejects.toThrow(/ENOENT/);
+
+      await mkdir(join(tmpRoot, "private"), { recursive: true });
+      await writeFile(join(tmpRoot, "private", "local.md"), "local private");
+      await mirror.pushLocalFile("private/local.md");
+      expect(storedManifest(r2)?.files["private/local.md"]).toBeUndefined();
+      await mirror.stop();
+    });
+
     it("cleans up orphaned temp files on startup", async () => {
       await mkdir(join(tmpRoot, "notes"), { recursive: true });
       const orphanedTmp = join(tmpRoot, "notes", "stale.md.12345.tmp");

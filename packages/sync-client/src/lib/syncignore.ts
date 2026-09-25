@@ -95,6 +95,35 @@ export function isIgnored(
   return ignored;
 }
 
+/**
+ * Conservative check for whether any negation could un-ignore a strict
+ * descendant of `dirPath`. Walkers and watchers use it to decide whether an
+ * ignored directory may be pruned: a false positive only walks more, while a
+ * false negative would hide a negated file, so ambiguous globs return true.
+ */
+export function mayUnignoreDescendant(
+  dirPath: string,
+  { negations }: SyncIgnorePatterns,
+): boolean {
+  if (negations.length === 0) return false;
+  const dirSegments = dirPath.split("/");
+  return negations.some((negation) => negationMayMatchWithin(dirSegments, negation));
+}
+
+function negationMayMatchWithin(dirSegments: string[], negation: string): boolean {
+  const pattern = negation.endsWith("/") ? negation.slice(0, -1) : negation;
+  // Basename patterns match at any depth; braces and extglobs may hide "/".
+  if (!pattern.includes("/") || /[{}()]/.test(pattern)) return true;
+  const patternSegments = pattern.split("/");
+  for (let i = 0; i < dirSegments.length; i++) {
+    const segment = patternSegments[i];
+    if (segment === undefined) return false;
+    if (segment.includes("**")) return true;
+    if (!picomatch.isMatch(dirSegments[i] ?? "", segment, { dot: true })) return false;
+  }
+  return patternSegments.length > dirSegments.length;
+}
+
 function matchesPattern(
   filePath: string,
   segments: string[],
