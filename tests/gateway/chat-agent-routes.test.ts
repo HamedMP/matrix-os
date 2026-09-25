@@ -28,6 +28,8 @@ describe("Chat Agent HTTP boundary", () => {
   let user: string | null;
   let catalog: ReturnType<typeof createCanonicalProviderCatalogFixture>;
   let app: ReturnType<typeof createChatAgentRoutes>;
+  let gmailAccounts: Array<{ id: string; user_id: string; service: "gmail"; account_label: string;
+    account_email: string | null; status: "active" | "revoked" }>;
   beforeEach(async () => {
     home = await mkdtemp(join(tmpdir(), "matrix-agent-routes-"));
     repository = new ChatRepository((await KyselyPGlite.create()).dialect);
@@ -35,16 +37,20 @@ describe("Chat Agent HTTP boundary", () => {
     agents = new ChatAgentStore({ homePath: home, db: repository.kysely });
     await agents.bootstrap();
     const skillsRoot = join(home, "skills/matrix");
-    for (const [directory, id] of [["integrations", "matrix-integrations"], ["personal-daily-brief", "matrix-personal-daily-brief"]]) {
+    for (const [directory, id] of [["integrations", "matrix-integrations"], ["personal-daily-brief", "matrix-personal-daily-brief"],
+      ["jev-email-triage", "matrix-jev-email-triage"]]) {
       await mkdir(join(skillsRoot, directory), { recursive: true });
       await writeFile(join(skillsRoot, directory, "SKILL.md"),
-        `---\nname: ${id}\ndescription: ${id === "matrix-integrations" ? "Use Matrix integrations safely." : "Prepare a personal daily brief."}\nauthor: Matrix OS\n---\nInstructions for ${id}.\n`);
+        `---\nname: ${id}\ndescription: ${id === "matrix-integrations" ? "Use Matrix integrations safely."
+          : id === "matrix-jev-email-triage" ? "Review Gmail with Jev." : "Prepare a personal daily brief."}\nauthor: Matrix OS\n---\nInstructions for ${id}.\n`);
     }
     const recipes = createChatAgentRecipeResolver({
       skillsRoot,
       services: [{ id: "gmail", name: "Gmail" }, { id: "google_calendar", name: "Google Calendar" }],
     });
     enabled = true; user = owner.ownerId;
+    gmailAccounts = [{ id: "conn_mine", user_id: owner.ownerId, service: "gmail", account_label: "My Gmail",
+      account_email: "me@example.test", status: "active" }];
     catalog = createCanonicalProviderCatalogFixture();
     catalog.drivers.push({ ...catalog.drivers[0]!, kind: "hermes", displayName: "Hermes" });
     catalog.instances.push({ ...catalog.instances[0]!, id: "hermes_default", driverKind: "hermes",
@@ -55,12 +61,51 @@ describe("Chat Agent HTTP boundary", () => {
       context: new ChatAgentContext({ repository, agents, recipes, enabled: () => enabled }), recipes,
       catalog: { getCatalog: async () => catalog }, enabled: () => enabled,
       getPrincipal: () => { if (!user) throw new MissingRequestPrincipalError(); return { userId: user, source: "jwt" }; },
-    });
+      // The server must use its own owner-scoped connection lookup. The client
+      // sends a label, never an account ID or expected email.
+      listGmailAccounts: async (ownerId: string) => gmailAccounts.filter((row) => row.user_id === ownerId),
+    } as Parameters<typeof createChatAgentRoutes>[0]);
   });
   afterEach(async () => {
     await agents.close(); await repository.kysely.destroy(); await rm(home, { recursive: true, force: true });
   });
   const json = (method: string, body: unknown) => ({ method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+
+  it("stamps owner, exact label, connection ID and expected email on Jev creation", async () => {
+    const recipe = { skills: ["matrix-jev-email-triage", "matrix-integrations"],
+      integrations: [{ service: "gmail", accountLabel: "My Gmail" }], output: "Review proposed labels" };
+    const request = { ...fields, clientRequestId: "req_jev_authority", name: "Jev Inbox Triage", recipe };
+    const created = await app.request("/api/chat-agents", json("POST", request));
+    expect(created.status).toBe(201);
+    const agent = await created.json();
+    expect(agent.recipe?.jevInboxTriage).toEqual({ version: 1, ownerId: owner.ownerId, service: "gmail",
+      accountLabel: "My Gmail", connectionId: "conn_mine", expectedEmail: "me@example.test" });
+    const saved = await agents.get(owner, agent.id);
+    expect(saved?.recipe).toEqual(agent.recipe);
+    // A successful create may be followed by a failed library readback. Its
+    // idempotent retry must return the saved bot even if inventory changed.
+    gmailAccounts = [];
+    const retried = await app.request("/api/chat-agents", json("POST", request));
+    expect(retried.status).toBe(201);
+    expect((await retried.json()).id).toBe(agent.id);
+    expect(await agents.list(owner)).toHaveLength(1);
+    expect((await app.request("/api/chat-agents", json("POST", { ...request, name: "Different bot" }))).status).toBe(409);
+  });
+
+  it("fails Jev creation closed for missing, ambiguous, foreign or email-less selected accounts", async () => {
+    const recipe = { skills: ["matrix-jev-email-triage", "matrix-integrations"],
+      integrations: [{ service: "gmail", accountLabel: "My Gmail" }], output: "Review proposed labels" };
+    const request = { ...fields, clientRequestId: "req_jev_rejected", recipe };
+    for (const rows of [[],
+      [gmailAccounts[0], { ...gmailAccounts[0]!, id: "conn_duplicate" }],
+      [{ ...gmailAccounts[0]!, user_id: "another_owner" }],
+      [{ ...gmailAccounts[0]!, account_email: null }],
+      [{ ...gmailAccounts[0]!, status: "revoked" as const }]]) {
+      gmailAccounts = rows as typeof gmailAccounts;
+      expect((await app.request("/api/chat-agents", json("POST", request))).status).toBe(409);
+      expect(await agents.list(owner)).toEqual([]);
+    }
+  });
 
   it("accepts recipe-only PATCH after the saved model becomes unavailable while rejecting a supplied unavailable selection", async () => {
     const created = await (await app.request("/api/chat-agents", json("POST", fields))).json();
@@ -93,6 +138,8 @@ describe("Chat Agent HTTP boundary", () => {
       enabled: true,
       skills: [
         { id: "matrix-integrations", name: "Matrix Integrations", description: "Use Matrix integrations safely.", instructionBytes: 37 },
+        { id: "matrix-jev-email-triage", name: "matrix-jev-email-triage", description: "Review Gmail with Jev.",
+          instructionBytes: Buffer.byteLength("Instructions for matrix-jev-email-triage.") },
         { id: "matrix-personal-daily-brief", name: "Personal Daily Brief", description: "Prepare a personal daily brief.", instructionBytes: 45 },
       ],
       services: [{ id: "gmail", name: "Gmail" }, { id: "google_calendar", name: "Google Calendar" }],

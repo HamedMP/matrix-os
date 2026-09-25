@@ -160,6 +160,18 @@ describe("shared Agents entry", () => {
     ]));
   });
 
+  it("discloses beside the Jev recipe that inbox preview awaits its broker", async () => {
+    const client = clientFixture();
+    client.integrations.mockResolvedValue([{ service: "gmail", account_label: "My Gmail",
+      account_email: "me@example.test", status: "active" }]);
+    client.recipeCatalog.mockResolvedValue({ ...recipeCatalog, skills: [...recipeCatalog.skills,
+      { id: "matrix-jev-email-triage", name: "Jev email triage", description: "Classify mail." }] });
+    render(<ChatAgentsWorkspace><ChatAgentsRailSection client={client} onStartChat={vi.fn()} />
+      <ChatAgentsContent client={client} scopeKey="chat_one"><p>Chat canvas</p></ChatAgentsContent></ChatAgentsWorkspace>);
+    fireEvent.click(await screen.findByRole("button", { name: "Browse agent recipes" }));
+    expect(await screen.findByText(/inbox preview is not available yet/i)).toBeTruthy();
+  });
+
   it("requires an explicit Gmail choice when several user accounts are connected", async () => {
     const client = clientFixture();
     client.recipeCatalog.mockResolvedValue({ ...recipeCatalog, skills: [...recipeCatalog.skills,

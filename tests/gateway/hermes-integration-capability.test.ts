@@ -22,4 +22,28 @@ describe("Hermes integration capability", () => {
     capability.revoke();
     expect((await app.request("/api/integrations", { headers })).status).toBe(401);
   });
+
+  it("rejects generic integration and Jev routes for a Jev Inbox Triage run bearer", async () => {
+    const app = new Hono();
+    app.use("*", authMiddleware("machine-secret"));
+    for (const path of ["/api/integrations/call", "/api/integrations/read-call", "/api/integrations/sync",
+      "/api/integrations/connect", "/api/integrations/disconnect", "/api/jev/evaluate"]) {
+      app.post(path, (c) => c.json({ actor: requireRequestPrincipal(c).userId }));
+    }
+    const issueScoped = issueHermesIntegrationCapability as unknown as (actorId: string, scope: {
+      kind: "jev_inbox_preview"; runId: string; agentId: string; revision: number;
+      account: { service: "gmail"; accountLabel: string; connectionId: string; expectedEmail: string };
+    }) => ReturnType<typeof issueHermesIntegrationCapability>;
+    const capability = issueScoped("user_a", {
+      kind: "jev_inbox_preview", runId: "run_jev_one", agentId: "bot_jevone01", revision: 1,
+      account: { service: "gmail", accountLabel: "My Gmail", connectionId: "conn_own", expectedEmail: "me@example.test" },
+    });
+    try {
+      const headers = { authorization: `Bearer ${capability.token}` };
+      for (const path of ["/api/integrations/call", "/api/integrations/read-call", "/api/integrations/sync",
+        "/api/integrations/connect", "/api/integrations/disconnect", "/api/jev/evaluate"]) {
+        expect((await app.request(path, { method: "POST", headers })).status, path).toBe(401);
+      }
+    } finally { capability.revoke(); }
+  });
 });
