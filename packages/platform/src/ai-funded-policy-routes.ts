@@ -10,6 +10,7 @@ import {
   FundedAiSafeErrorSchema,
   FundedAiReleaseRequestSchema,
   FundedAiRuntimeFundingSummaryResponseSchema,
+  FundedAiRouteReadinessReceiptSchema,
   FundedAiSettlementRequestSchema,
   FundedAiStartRequestSchema,
   IsoTimestampSchema,
@@ -23,6 +24,7 @@ import { RuntimeSlotSchema } from "./customer-vps-schema.js";
 import { getRunningUserMachineByHandle, type PlatformDB } from "./db.js";
 import { AiFundedPolicyError, type AiFundedPolicyRepository } from "./ai-funded-policy-repository.js";
 import { buildPlatformRuntimeVerificationToken, timingSafeTokenEquals } from "./platform-token.js";
+import { FUNDED_PROBE_MODELS, type FundedModelProbeService } from "./ai-funded-model-probes.js";
 
 const RUNTIME_BODY_LIMIT = 1024;
 const RELAY_BODY_LIMIT = 4 * 1024;
@@ -33,6 +35,21 @@ const EmptyQuerySchema = z.object({}).strict();
 const CleanupBodySchema = z.object({ limit: z.number().int().min(1).max(1_000) }).strict();
 const PromotionCampaignSchema = z.string().min(1).max(80).regex(/^[a-z0-9][a-z0-9._-]*$/);
 const PromotionAmountSchema = z.number().int().min(1).max(Number.MAX_SAFE_INTEGER);
+const MAX_PENDING_ROUTE_FUNDING_READS = 8;
+const pendingRouteFundingReads = new Set<Promise<unknown>>();
+
+async function beforeDeadline<T>(work: Promise<T>, deadlineAtMs: number): Promise<T> {
+  const remaining = deadlineAtMs - Date.now();
+  if (remaining <= 0) throw new Error("Funded route readiness timed out");
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([work, new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(() => reject(new Error("Funded route readiness timed out")), remaining);
+    })]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
 
 export type AiFundedPromotionalGrantConfig = { enabled: false } | {
   enabled: true;
@@ -185,6 +202,7 @@ export function createAiFundedRuntimeRoutes(options: {
   repository: AiFundedPolicyRepository;
   topUpEnabled?: boolean;
   promotionalGrant?: AiFundedPromotionalGrantConfig;
+  routeProbes?: FundedModelProbeService;
   now?: () => Date;
 }) {
   if (!options.repository || !options.db) throw new Error("Funded AI runtime dependencies are missing");
@@ -257,6 +275,63 @@ export function createAiFundedRuntimeRoutes(options: {
     } catch (error) {
       return policyErrorResponse(c, error);
     }
+  });
+  app.post("/route-readiness", bodyLimit({ maxSize: RUNTIME_BODY_LIMIT }), async (c) => {
+    const query = RuntimeQuerySchema.safeParse(Object.fromEntries(new URL(c.req.url).searchParams));
+    if (!query.success) return c.json(safeError("invalid_request"), 400);
+    let machine: Awaited<ReturnType<typeof getRunningUserMachineByHandle>>;
+    try { machine = await authenticatedRuntimeMachine(c, options, query.data.runtimeSlot); }
+    catch (error) { return policyErrorResponse(c, error); }
+    if (!machine) return c.json(safeError("unauthorized"), 401);
+    const body = EmptyBodySchema.safeParse(await readStrictJson(c));
+    if (!body.success) return c.json(safeError("invalid_request"), 400);
+    try {
+      const identity = { ownerId: machine.clerkUserId, machineId: machine.machineId, runtimeSlot: machine.runtimeSlot };
+      const deadlineAtMs = Date.now() + 6_000;
+      const read = () => {
+        if (pendingRouteFundingReads.size >= MAX_PENDING_ROUTE_FUNDING_READS) {
+          throw new Error("Funded route funding reads saturated");
+        }
+        const pending = options.repository.getCheckoutFundingSummary(identity, deadlineAtMs);
+        pendingRouteFundingReads.add(pending);
+        void pending.then(() => { pendingRouteFundingReads.delete(pending); },
+          () => { pendingRouteFundingReads.delete(pending); });
+        return beforeDeadline(pending, deadlineAtMs);
+      };
+      const first = await read();
+      const firstNow = now().getTime();
+      const eligible = first.policy.enabled && Date.parse(first.policy.checkedAt) <= firstNow
+        && Date.parse(first.policy.staleAfter) > firstNow && first.funding.remainingBudgetMicrousd > 0
+        ? FUNDED_PROBE_MODELS.filter((model) => first.policy.allowedModelIds.includes(model)) : [];
+      if (Date.now() >= deadlineAtMs) throw new Error("Funded route readiness timed out");
+      const observations = options.routeProbes
+        ? await beforeDeadline(Promise.all(eligible.map(async (model) => ({ model, result: await options.routeProbes!.probe(model) }))), deadlineAtMs)
+        : [];
+      // An upstream probe is asynchronous. Re-read exact owner policy and ledger
+      // before returning any model as ready; do not reuse an old authorization.
+      const latest = await read();
+      const checked = now();
+      const current = checked.getTime();
+      const unchanged = latest.policy.enabled && latest.funding.remainingBudgetMicrousd > 0
+        && latest.policy.globalRevision === first.policy.globalRevision
+        && latest.policy.runtimeRevision === first.policy.runtimeRevision
+        && latest.policy.allowedModelIds.length === first.policy.allowedModelIds.length
+        && latest.policy.allowedModelIds.every((id) => first.policy.allowedModelIds.includes(id))
+        && Date.parse(latest.policy.checkedAt) <= current && Date.parse(latest.policy.staleAfter) > current;
+      const readyModelIds = unchanged ? observations.filter(({ model, result }) =>
+        result.ready && Date.parse(result.checkedAt) <= current && Date.parse(result.staleAfter) > current
+          && latest.policy.allowedModelIds.includes(model)).map(({ model }) => model) : [];
+      const earliestObservation = observations.length > 0
+        ? Math.min(...observations.map(({ result }) => Date.parse(result.staleAfter))) : current + 5_000;
+      const staleAfter = Math.min(current + 30_000, Date.parse(latest.policy.staleAfter), earliestObservation);
+      if (staleAfter <= current) return c.json(safeError("unavailable"), 503);
+      return c.json(FundedAiRouteReadinessReceiptSchema.parse({
+        contractVersion: 1,
+        globalRevision: latest.policy.globalRevision,
+        runtimeRevision: latest.policy.runtimeRevision,
+        checkedAt: checked.toISOString(), staleAfter: new Date(staleAfter).toISOString(), readyModelIds,
+      }), 200);
+    } catch (error) { return policyErrorResponse(c, error); }
   });
   return app;
 }

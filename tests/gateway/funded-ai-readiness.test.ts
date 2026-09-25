@@ -7,25 +7,29 @@ function setup() {
     policy: { enabled: true, globalRevision: 1, runtimeRevision: 1,
       allowedModelIds: ["anthropic/claude-sonnet-5"], monthlyBudgetMicrousd: 10_000_000,
       checkedAt: now.toISOString(), staleAfter: "2026-09-05T12:01:00.000Z" },
-    funding: { asOf: now.toISOString(), periodStart: "2026-09-01T00:00:00.000Z",
+    funding: { topUpEnabled: true, asOf: now.toISOString(), periodStart: "2026-09-01T00:00:00.000Z",
       monthlyBudgetMicrousd: 10_000_000, settledThisMonthMicrousd: 0, reservedMicrousd: 0,
       reservedThisMonthMicrousd: 0, promotionalBalanceMicrousd: 5_000_000,
       addonBalanceMicrousd: 0, creditBalanceMicrousd: 5_000_000,
       remainingBalanceMicrousd: 5_000_000, remainingBudgetMicrousd: 10_000_000 },
   };
-  const fetchFn = vi.fn(async () => new Response(null, { status: 200 }));
   const getFundingSummary = vi.fn(async () => state);
+  const getRouteReadiness = vi.fn(async () => ({ contractVersion: 1 as const,
+    globalRevision: state.policy.globalRevision, runtimeRevision: state.policy.runtimeRevision,
+    checkedAt: now.toISOString(), staleAfter: "2026-09-05T12:00:30.000Z",
+    readyModelIds: [...state.policy.allowedModelIds],
+  }));
   const reader = createFundedAiReadinessReader({
-    relayBaseUrl: "https://relay.example.test", summary: { getFundingSummary },
-    fetchFn: fetchFn as typeof fetch, now: () => now,
+    summary: { getFundingSummary }, routes: { getRouteReadiness }, now: () => now,
   });
-  return { reader, state, fetchFn, getFundingSummary };
+  return { reader, state, getRouteReadiness, getFundingSummary };
 }
 
 describe("funded AI readiness", () => {
   it("does not treat relay process liveness as proof that a funded model can run", async () => {
-    const { reader, state } = setup();
+    const { state, getFundingSummary } = setup();
     state.policy.allowedModelIds = ["anthropic/claude-sonnet-5", "@cf/zai-org/glm-5.3-flash"];
+    const reader = createFundedAiReadinessReader({ summary: { getFundingSummary }, now: () => now });
     // /health reports only that the relay process is running. Neither model
     // has an authenticated, current readiness receipt in this observation.
     expect(await reader.read()).toMatchObject({
@@ -35,14 +39,14 @@ describe("funded AI readiness", () => {
   });
 
   it("shares only in-flight observations and checks revoked policy again after settlement", async () => {
-    const { reader, state, fetchFn, getFundingSummary } = setup();
+    const { reader, state, getRouteReadiness, getFundingSummary } = setup();
     const summary = Promise.withResolvers<typeof state>();
     getFundingSummary.mockImplementationOnce(() => summary.promise);
     const first = reader.read();
     const second = reader.read();
     try {
       expect(getFundingSummary).toHaveBeenCalledTimes(1);
-      expect(fetchFn).toHaveBeenCalledTimes(1);
+      expect(getRouteReadiness).toHaveBeenCalledTimes(1);
     } finally {
       summary.resolve(structuredClone(state));
       const results = await Promise.all([first, second]);
@@ -54,11 +58,11 @@ describe("funded AI readiness", () => {
     state.policy.allowedModelIds = [];
     expect(await reader.read()).toMatchObject({ readiness: { state: "unavailable" }, allowedModelIds: [] });
     expect(getFundingSummary).toHaveBeenCalledTimes(2);
-    expect(fetchFn).toHaveBeenCalledTimes(2);
+    expect(getRouteReadiness).toHaveBeenCalledTimes(2);
   });
 
   it("releases failed shared observations so the next read can recover", async () => {
-    const { reader, state, fetchFn, getFundingSummary } = setup();
+    const { reader, state, getRouteReadiness, getFundingSummary } = setup();
     const summary = Promise.withResolvers<typeof state>();
     getFundingSummary.mockImplementationOnce(() => summary.promise);
     const first = reader.read();
@@ -68,25 +72,26 @@ describe("funded AI readiness", () => {
     expect(results.map((result) => result.readiness.state)).toEqual(["unavailable", "unavailable"]);
     expect((await reader.read()).readiness.state).toBe("ready");
     expect(getFundingSummary).toHaveBeenCalledTimes(2);
-    expect(fetchFn).toHaveBeenCalledTimes(2);
+    expect(getRouteReadiness).toHaveBeenCalledTimes(2);
   });
 
   it("aborts unfinished relay work when the funding summary rejects first", async () => {
-    const health = Promise.withResolvers<Response>();
+    const health = Promise.withResolvers<Awaited<ReturnType<ReturnType<typeof setup>["getRouteReadiness"]>>>();
     const getFundingSummary = vi.fn(async () => { throw new Error("Funding unavailable"); });
     let healthSignal: AbortSignal | undefined;
     const reader = createFundedAiReadinessReader({
-      relayBaseUrl: "https://relay.example.test", summary: { getFundingSummary }, now: () => now,
-      fetchFn: (async (_url, init) => {
-        healthSignal = init?.signal ?? undefined;
+      summary: { getFundingSummary }, now: () => now,
+      routes: { getRouteReadiness: async (options) => {
+        healthSignal = options?.signal;
         return health.promise;
-      }) as typeof fetch,
+      } },
     });
     try {
       expect((await reader.read()).readiness.state).toBe("unavailable");
       expect(healthSignal?.aborted).toBe(true);
     } finally {
-      health.resolve(new Response(null, { status: 200 }));
+      health.resolve({ contractVersion: 1, globalRevision: 1, runtimeRevision: 1,
+        checkedAt: now.toISOString(), staleAfter: "2026-09-05T12:00:30.000Z", readyModelIds: ["anthropic/claude-sonnet-5"] });
     }
   });
 
@@ -120,28 +125,23 @@ describe("funded AI readiness", () => {
     }
   });
 
-  it("requires fresh policy, positive credit/budget, and a bounded relay health check", async () => {
-    const timeoutSignal = new AbortController().signal;
-    const timeout = vi.spyOn(AbortSignal, "timeout").mockReturnValue(timeoutSignal);
-    const { reader, fetchFn } = setup();
+  it("requires fresh policy, positive credit/budget, and a model readiness receipt", async () => {
+    const { reader, getRouteReadiness } = setup();
     expect(await reader.read()).toMatchObject({ readiness: { state: "ready", staleAfter: "2026-09-05T12:00:30.000Z" }, allowedModelIds: ["claude-sonnet-5"] });
-    expect(timeout).toHaveBeenCalledWith(2_000);
-    expect(fetchFn).toHaveBeenCalledWith("https://relay.example.test/health", expect.objectContaining({
-      redirect: "error", signal: expect.any(AbortSignal),
-    }));
-    expect(fetchFn.mock.calls[0]?.[1]?.signal).not.toBe(timeoutSignal);
+    expect(getRouteReadiness).toHaveBeenCalledWith({ signal: expect.any(AbortSignal) });
   });
-  it.each(["disabled", "expired", "future", "budget", "credit"])("fails closed for %s funding", async (reason) => {
+  it.each(["disabled", "expired", "future", "budget", "credit", "stale_ledger"])("fails closed for %s funding", async (reason) => {
     const { reader, state } = setup();
     if (reason === "disabled") { state.policy.enabled = false; state.policy.allowedModelIds = []; }
     if (reason === "expired") state.policy.staleAfter = "2026-09-05T11:59:00.000Z";
     if (reason === "future") { state.policy.checkedAt = "2026-09-05T12:00:30.000Z"; state.funding.asOf = state.policy.checkedAt; }
     if (reason === "budget") { state.funding.settledThisMonthMicrousd = 10_000_000; state.funding.remainingBudgetMicrousd = 0; }
     if (reason === "credit") { state.funding.reservedMicrousd = 5_000_000; state.funding.remainingBalanceMicrousd = 0; }
+    if (reason === "stale_ledger") state.funding.asOf = "2026-09-05T11:54:00.000Z";
     expect((await reader.read()).readiness.state).toBe("unavailable");
   });
   it("distinguishes a healthy zero-credit route from a broken relay", async () => {
-    const { reader, state, fetchFn } = setup();
+    const { reader, state, getRouteReadiness } = setup();
     state.funding.promotionalBalanceMicrousd = 0;
     state.funding.creditBalanceMicrousd = 0;
     state.funding.remainingBalanceMicrousd = 0;
@@ -149,15 +149,39 @@ describe("funded AI readiness", () => {
       readiness: { state: "unavailable", safeReason: "credit_required" },
       allowedModelIds: ["claude-sonnet-5"],
     });
-    fetchFn.mockResolvedValue(new Response(null, { status: 503 }));
+    state.funding.topUpEnabled = false;
+    expect((await reader.read()).readiness.safeReason).toBe("provider_unavailable");
+    state.funding.topUpEnabled = true;
+    getRouteReadiness.mockResolvedValue({ contractVersion: 1, globalRevision: 1, runtimeRevision: 1,
+      checkedAt: now.toISOString(), staleAfter: "2026-09-05T12:00:30.000Z", readyModelIds: [] });
     expect(await reader.read()).toMatchObject({
       readiness: { state: "unavailable", safeReason: "provider_unavailable" },
       allowedModelIds: [],
     });
   });
+  it("keeps GLM and Sonnet independent when only one model has a current receipt", async () => {
+    const { reader, state, getRouteReadiness } = setup();
+    state.policy.allowedModelIds = ["anthropic/claude-sonnet-5", "@cf/zai-org/glm-5.3-flash"];
+    getRouteReadiness.mockResolvedValue({ contractVersion: 1, globalRevision: 1, runtimeRevision: 1,
+      checkedAt: now.toISOString(), staleAfter: "2026-09-05T12:00:30.000Z",
+      readyModelIds: ["@cf/zai-org/glm-5.3-flash"] });
+    expect(await reader.read()).toMatchObject({ readiness: { state: "ready" },
+      allowedModelIds: ["@cf/zai-org/glm-5.3-flash"] });
+  });
+  it("rejects a stale or mismatched model receipt despite positive funding", async () => {
+    const { reader, getRouteReadiness } = setup();
+    getRouteReadiness.mockResolvedValueOnce({ contractVersion: 1, globalRevision: 2, runtimeRevision: 1,
+      checkedAt: now.toISOString(), staleAfter: "2026-09-05T12:00:30.000Z",
+      readyModelIds: ["anthropic/claude-sonnet-5"] });
+    expect((await reader.read()).readiness.state).toBe("unavailable");
+    getRouteReadiness.mockResolvedValueOnce({ contractVersion: 1, globalRevision: 1, runtimeRevision: 1,
+      checkedAt: now.toISOString(), staleAfter: "2026-09-05T11:59:00.000Z",
+      readyModelIds: ["anthropic/claude-sonnet-5"] });
+    expect((await reader.read()).readiness.state).toBe("unavailable");
+  });
   it("does not expose upstream errors or claim readiness when relay or policy calls fail", async () => {
-    const { reader, fetchFn, getFundingSummary } = setup();
-    fetchFn.mockResolvedValue(new Response(null, { status: 503 }));
+    const { reader, getRouteReadiness, getFundingSummary } = setup();
+    getRouteReadiness.mockRejectedValue(new Error("private relay details"));
     expect((await reader.read()).readiness.state).toBe("unavailable");
     getFundingSummary.mockRejectedValue(new Error("private upstream details"));
     expect(JSON.stringify(await reader.read())).not.toContain("private");

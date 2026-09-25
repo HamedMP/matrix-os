@@ -76,6 +76,20 @@ describe("funded relay Cloud Run service", () => {
     }
   });
 
+  it("does not spend an upstream probe after local admission pricing expires", async () => {
+    const config = requireFundedRelayServiceConfig(enabledEnv());
+    const fetchFn = vi.fn<typeof fetch>();
+    const service = createFundedRelayService(config, { fetchFn, now: () => new Date("2026-10-01T00:00:00.000Z") });
+    try {
+      const response = await service.app.request("http://relay.test/ready?model=anthropic%2Fclaude-sonnet-5", {
+        headers: { authorization: `Bearer ${config.relayControlToken}` },
+      });
+      expect(response.status).toBe(503);
+      expect(await response.json()).toEqual({ ready: false });
+      expect(fetchFn).not.toHaveBeenCalled();
+    } finally { await service.close(); }
+  });
+
   it("checks the configured Anthropic gateway by making a bounded inference request", async () => {
     const config = requireFundedRelayServiceConfig(enabledEnv());
     const fetchFn = vi.fn<typeof fetch>().mockResolvedValue(Response.json({

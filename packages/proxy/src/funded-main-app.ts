@@ -8,7 +8,7 @@ import {
   type FundedRelayConfig,
 } from "./funded-relay.js";
 import { FUNDED_SONNET, probeFundedModel } from "./funded-relay-readiness.js";
-import { FUNDED_GLM_FLASH } from "./funded-relay-model.js";
+import { FUNDED_GLM_FLASH, isFundedModelPriceCurrent } from "./funded-relay-model.js";
 
 export interface FundedRelayService {
   app: Hono;
@@ -25,7 +25,7 @@ export function requireFundedRelayServiceConfig(
   return config;
 }
 
-export function createFundedRelayService(config: FundedRelayConfig, options: { fetchFn?: typeof fetch } = {}): FundedRelayService {
+export function createFundedRelayService(config: FundedRelayConfig, options: { fetchFn?: typeof fetch; now?: () => Date } = {}): FundedRelayService {
   const app = new Hono();
   const errorTracker = installPostHogHonoErrorTracking(app, {
     service: "matrix-funded-ai-relay",
@@ -42,6 +42,7 @@ export function createFundedRelayService(config: FundedRelayConfig, options: { f
     }
     const model = c.req.query("model");
     if (model !== FUNDED_GLM_FLASH && model !== FUNDED_SONNET) return c.json({ ready: false }, 400);
+    if (!isFundedModelPriceCurrent(model, (options.now ?? (() => new Date()))())) return c.json({ ready: false }, 503);
     const ready = await probeFundedModel(config, model, options.fetchFn);
     c.header("Cache-Control", "no-store");
     return c.json({ ready }, ready ? 200 : 503);

@@ -2,8 +2,19 @@ import { sql } from 'kysely';
 import { ensureFundedReservationIndexes } from '../../ai-funded-reservation-indexes.js';
 import type { PlatformMigrationExecutor } from '../migration-types.js';
 
-/** Extracted verbatim from packages/platform/src/db.ts migrateSchema (S01 / T007). Order is preserved by migrate.ts. */
+/** Core funded schema, ordered by migrate.ts. */
 export async function migrateAiFunded(db: PlatformMigrationExecutor): Promise<void> {
+  await sql`
+    CREATE TABLE IF NOT EXISTS ai_funded_model_probe_budget (
+      budget_key TEXT PRIMARY KEY CHECK (budget_key = 'global'),
+      day_start TEXT NOT NULL,
+      daily_limit INTEGER NOT NULL CHECK (daily_limit > 0),
+      day_used INTEGER NOT NULL CHECK (day_used >= 0),
+      minute_start TEXT NOT NULL,
+      minute_limit INTEGER NOT NULL CHECK (minute_limit > 0),
+      minute_used INTEGER NOT NULL CHECK (minute_used >= 0)
+    )
+  `.execute(db);
   await sql`
     CREATE TABLE IF NOT EXISTS ai_funded_global_policy (
       policy_id TEXT PRIMARY KEY CHECK (policy_id = 'default'),
