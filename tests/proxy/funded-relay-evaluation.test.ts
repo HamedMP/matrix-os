@@ -174,6 +174,7 @@ describe("funded Jev evaluation relay", () => {
             reservation: {
               reservationId: "reservation_123", requestId: "request_123", modelId: JEV_MODEL_ID,
               reservedMicrousd: 5_000, maxCostMicrousd: 5_000, billingMode: "usage",
+              jevPricingVersion: "typesafe-jev-input-2026-09",
               remainingBalanceMicrousd: 95_000, remainingBudgetMicrousd: 95_000,
               periodStart: "2026-09-01T00:00:00.000Z", expiresAt: "2026-09-22T10:05:00.000Z", status: "reserved",
             },
@@ -343,6 +344,7 @@ describe("funded Jev evaluation relay", () => {
         reservation: {
           reservationId: "reservation_123", requestId: input.requestId, modelId: JEV_MODEL_ID,
           reservedMicrousd: 5_000, maxCostMicrousd: 5_000, billingMode: "usage" as const,
+          jevPricingVersion: "typesafe-jev-input-2026-09",
           remainingBalanceMicrousd: 95_000, remainingBudgetMicrousd: 95_000,
           periodStart: "2026-09-01T00:00:00.000Z", expiresAt: "2026-09-22T10:05:00.000Z",
           status: "reserved" as const,

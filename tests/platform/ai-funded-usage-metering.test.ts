@@ -189,8 +189,14 @@ describe("usage-based funded AI admission", () => {
     await repo.startReservation(key);
     await expect(repo.finalizeReservation({ ...key, mode: "exact", actualCostMicrousd: 12 }))
       .rejects.toBeTruthy();
+    await expect(repo.finalizeReservation({ ...key, mode: "exact", actualCostMicrousd: 12,
+      jevProvenance: { resolvedModel: "jev-1.13.0", pricingVersion: "typesafe-jev-input-2026-08" },
+    })).rejects.toMatchObject({ code: "idempotency_conflict" });
     expect(await db.executor.selectFrom("ai_funded_credit_ledger").selectAll()
       .where("reservation_id", "=", key.reservationId).execute()).toEqual([]);
+    expect(await db.executor.selectFrom("ai_funded_usage_reservations").select(["status", "actual_microusd"])
+      .where("reservation_id", "=", key.reservationId).executeTakeFirstOrThrow())
+      .toEqual({ status: "in_flight", actual_microusd: null });
     const exact = { ...key, mode: "exact" as const, actualCostMicrousd: 12,
       jevProvenance: { resolvedModel: "jev-1.13.0", pricingVersion: versioned.jevPricingVersion } };
     const settled = await repo.finalizeReservation(exact);
@@ -208,6 +214,43 @@ describe("usage-based funded AI admission", () => {
     expect(debits.reduce((total, entry) => total + Number(entry.amount_microusd), 0)).toBe(-12);
   });
 
+  it("rejects Jev provenance on a non-Jev reservation without charging", async () => {
+    const auth = await repo.authorize(request(credential.token, "non_jev_provenance"));
+    const key = { reservationId: auth.reservation.reservationId, tokenId: credential.tokenId };
+    await repo.startReservation(key);
+    await expect(repo.finalizeReservation({ ...key, mode: "exact", actualCostMicrousd: 12,
+      jevProvenance: { resolvedModel: "jev-1.13.0", pricingVersion: "typesafe-jev-input-2026-09" },
+    })).rejects.toMatchObject({ code: "idempotency_conflict" });
+    expect(await db.executor.selectFrom("ai_funded_credit_ledger").selectAll()
+      .where("reservation_id", "=", key.reservationId).execute()).toEqual([]);
+  });
+
+  it("keeps a versioned unknown Jev hold for evidence-bound manual reconciliation without invented provenance", async () => {
+    await repo.updateGlobalPolicy({ expectedRevision: 1, enabled: true, allowedModelIds: [modelId, JEV_MODEL_ID] });
+    await repo.setRuntimePolicy({ identity, expectedRevision: 1, enabled: true,
+      allowedModelIds: [modelId, JEV_MODEL_ID], monthlyBudgetMicrousd: 1_000_000, expiresAt: null });
+    const auth = await repo.authorize({ ...request(credential.token, "jev_versioned_unknown"),
+      modelId: JEV_MODEL_ID, maxCostMicrousd: 5_000, jevPricingVersion: "typesafe-jev-input-2026-09" });
+    const key = { reservationId: auth.reservation.reservationId, tokenId: credential.tokenId };
+    await repo.startReservation(key);
+    await expect(repo.finalizeReservation({ ...key, mode: "conservative" }))
+      .rejects.toMatchObject({ code: "unavailable" });
+    expect(await db.executor.selectFrom("ai_funded_credit_ledger").selectAll()
+      .where("reservation_id", "=", key.reservationId).execute()).toEqual([]);
+    clock = new Date(clock.getTime() + 61_000 + 10 * 60_000);
+    const review = { ...key, expectedRequestId: "jev_versioned_unknown", actualCostMicrousd: 0,
+      evidenceRef: "ENG-11/provider-no-charge-versioned", reviewer: "operator_1" };
+    await expect(repo.reconcileUnknownJevUsage(review))
+      .resolves.toMatchObject({ status: "settled", actualCostMicrousd: 0 });
+    expect(await db.executor.selectFrom("ai_funded_usage_reservations")
+      .select(["resolved_model", "pricing_version", "manual_review_evidence_ref"])
+      .where("reservation_id", "=", key.reservationId).executeTakeFirstOrThrow())
+      .toEqual({ resolved_model: null, pricing_version: null,
+        manual_review_evidence_ref: review.evidenceRef });
+    expect(await db.executor.selectFrom("ai_funded_credit_ledger").selectAll()
+      .where("reservation_id", "=", key.reservationId).execute()).toEqual([]);
+  });
+
   it("keeps historical Jev settlement valid without inventing resolved model or price version", async () => {
     await repo.updateGlobalPolicy({ expectedRevision: 1, enabled: true, allowedModelIds: [modelId, JEV_MODEL_ID] });
     await repo.setRuntimePolicy({ identity, expectedRevision: 1, enabled: true,
@@ -218,13 +261,19 @@ describe("usage-based funded AI admission", () => {
     await repo.startReservation(key);
     await expect(repo.finalizeReservation({ ...key, mode: "exact", actualCostMicrousd: 12 }))
       .resolves.toMatchObject({ status: "settled", actualCostMicrousd: 12 });
+    // Recreate the pre-provenance table shape in this disposable database while
+    // retaining the existing reservation and settlement row.
+    await sql`ALTER TABLE ai_funded_usage_reservations DROP COLUMN resolved_model`.execute(db.executor);
+    await sql`ALTER TABLE ai_funded_usage_reservations DROP COLUMN pricing_version`.execute(db.executor);
     await migrateAiFunded(db.executor);
     await migrateAiFunded(db.executor);
-    const row = await sql<{ resolved_model: string | null; pricing_version: string | null }>`
-      SELECT resolved_model, pricing_version FROM ai_funded_usage_reservations
+    const row = await sql<{ resolved_model: string | null; pricing_version: string | null;
+      status: string; actual_microusd: number }>`
+      SELECT resolved_model, pricing_version, status, actual_microusd FROM ai_funded_usage_reservations
       WHERE reservation_id = ${key.reservationId}
     `.execute(db.executor);
-    expect(row.rows[0]).toEqual({ resolved_model: null, pricing_version: null });
+    expect(row.rows[0]).toEqual({ resolved_model: null, pricing_version: null,
+      status: "settled", actual_microusd: 12 });
   });
 
   it("keeps zero credit and strict maximum-cost admission fail-closed", async () => {

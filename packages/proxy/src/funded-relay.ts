@@ -579,6 +579,7 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
         modelId: JEV_MODEL_ID,
         maxCostMicrousd: config.jevMaxCostMicrousd,
         billingMode: "usage",
+        jevPricingVersion: pricing.version,
       }, state.lifetimeSignal);
     } catch (error) {
       return jevNotStarted(controlPlaneError(c, error));
@@ -587,7 +588,8 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
     if (!identitiesMatch(checked.identity, authorization.identity)
       || reservation.requestId !== requestId || reservation.modelId !== JEV_MODEL_ID
       || reservation.billingMode !== "usage" || reservation.reservedMicrousd <= 0
-      || reservation.reservedMicrousd > config.jevMaxCostMicrousd) {
+      || reservation.reservedMicrousd > config.jevMaxCostMicrousd
+      || reservation.jevPricingVersion !== pricing.version) {
       await releaseBeforeStart(reservation.reservationId, authorization.identity.tokenId);
       return jevNotStarted(errorResponse(c, 503, "api_error", "AI access is temporarily unavailable"));
     }
@@ -612,7 +614,11 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
       reservationId: reservation.reservationId,
       tokenId: authorization.identity.tokenId,
     };
-    const enqueueFinalization = (result: FundedFinalization): void => {
+    const enqueueFinalization = (result: FundedFinalization | {
+      mode: "exact";
+      actualCostMicrousd: number;
+      jevProvenance: { resolvedModel: string; pricingVersion: string };
+    }): void => {
       if (result.mode === "exact" && result.actualCostMicrousd <= config.jevMaxCostMicrousd) {
         settlementQueue.enqueue({ ...finalizationLocator, ...result });
       } else {
@@ -682,7 +688,14 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
         || normalized.actualCostMicrousd > config.jevMaxCostMicrousd) {
         throw new Error("Jev response cost was unavailable or exceeded its bound");
       }
-      enqueueFinalization({ mode: "exact", actualCostMicrousd: normalized.actualCostMicrousd });
+      enqueueFinalization({
+        mode: "exact",
+        actualCostMicrousd: normalized.actualCostMicrousd,
+        jevProvenance: {
+          resolvedModel: normalized.resolvedModel,
+          pricingVersion: normalized.pricingVersion,
+        },
+      });
       resourceLease.release();
       state.resourceLease = null;
       return c.json(normalized.result, 200);
