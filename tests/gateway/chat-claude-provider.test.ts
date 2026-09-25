@@ -43,6 +43,57 @@ const baseInput = {
 };
 
 describe("Claude canonical Chat Provider adapter", () => {
+  it("registers only the scoped Matrix Custom MCP broker on fresh and resumed supervised Runs", async () => {
+    const spawnFn = vi.fn(() => child([
+      JSON.stringify({ type: "result", subtype: "success", is_error: false, result: "done", session_id: "claude_mcp_session" }),
+    ]));
+    const adapter = createClaudeChatProviderAdapter({
+      homePath: "/home/matrix/home",
+      spawnFn,
+      resolveCredentialEnv: async () => ({}),
+    });
+    const supervisedInput = { ...baseInput, permissionMode: "supervised" };
+
+    for await (const _event of adapter.start(supervisedInput)) { /* Drain the Run. */ }
+    for await (const _event of adapter.resume!({
+      ...supervisedInput,
+      runId: "run_claude_resumed",
+      resumeState: { sessionId: "claude_mcp_session" },
+    })) { /* Drain the resumed Run. */ }
+
+    expect(spawnFn).toHaveBeenCalledTimes(2);
+    for (const [index, [, args, options]] of spawnFn.mock.calls.entries()) {
+      const settingSources = args.indexOf("--setting-sources");
+      expect(args[settingSources + 1]).toBe("");
+      expect(args).toContain("--strict-mcp-config");
+      expect(args.slice(args.indexOf("--permission-mode"), args.indexOf("--permission-mode") + 2))
+        .toEqual(["--permission-mode", "default"]);
+
+      const mcpConfigIndexes = args.flatMap((arg: string, offset: number) => arg === "--mcp-config" ? [offset] : []);
+      expect(mcpConfigIndexes).toHaveLength(1);
+      const config = JSON.parse(args[mcpConfigIndexes[0]! + 1]!) as {
+        mcpServers: Record<string, { command: string; args?: string[] }>;
+      };
+      expect(Object.keys(config.mcpServers)).toEqual(["matrix-integrations"]);
+      expect(config.mcpServers["matrix-integrations"]).toEqual({
+        command: "/opt/matrix/bin/matrix-integrations-mcp",
+      });
+      expect(options.env.MATRIX_AGENT_INTEGRATIONS_TOKEN).toMatch(/^[a-f0-9]{64}$/);
+
+      const settings = JSON.parse(args[args.indexOf("--settings") + 1]!) as {
+        sandbox: { enabled: boolean; failIfUnavailable?: boolean };
+        permissions: { allow?: string[] };
+      };
+      expect(settings.sandbox).toMatchObject({ enabled: true, failIfUnavailable: true });
+      expect(settings.permissions.allow?.filter((rule) => rule.startsWith("mcp__"))).toEqual([
+        "mcp__matrix-integrations__list_custom_mcp_servers",
+        "mcp__matrix-integrations__describe_custom_mcp_server",
+        "mcp__matrix-integrations__call_custom_mcp_tool",
+      ]);
+      expect(args.includes("--resume")).toBe(index === 1);
+    }
+  });
+
   it.each([null, 0])("resumes the active Claude session after steer exits with code %s", async (exitCode) => {
     const firstStdout = new FakeStream();
     const firstStderr = new FakeStream();
