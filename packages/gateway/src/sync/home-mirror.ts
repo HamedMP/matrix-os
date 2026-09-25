@@ -609,14 +609,19 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
     const existing = await readManifest(store, scope);
     const files = existing.manifest.files ?? {};
     let pulled = 0;
+    let failed = 0;
     for (const [relPath, entry] of Object.entries(files)) {
       if (!entry.hash || entry.deleted || isIgnored(relPath, extraIgnore)) continue;
       try {
         await pullFile(relPath, entry);
         pulled++;
       } catch (err: unknown) {
+        failed++;
         log.error(`pull failed for ${relPath}:`, errorMessage(err));
       }
+    }
+    if (failed > 0) {
+      throw new Error(`initial pull incomplete: ${failed} file(s) failed`);
     }
     if (pulled > 0) log.info(`initial pull: ${pulled} files`);
   }

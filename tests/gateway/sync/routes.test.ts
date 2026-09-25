@@ -50,7 +50,11 @@ const mockSharing = {
   listShares: vi.fn(),
 };
 
-import { createSyncRoutes, type SyncRouteDeps } from "../../../packages/gateway/src/sync/routes.js";
+import {
+  createSyncRoutes,
+  createUnconfiguredSyncRoutes,
+  type SyncRouteDeps,
+} from "../../../packages/gateway/src/sync/routes.js";
 
 function createTestApp(overrides?: Partial<SyncRouteDeps>) {
   const deps: SyncRouteDeps = {
@@ -615,7 +619,9 @@ describe("GET /api/sync/status", () => {
     mockDb.getManifestMeta.mockResolvedValue({ version: 5, file_count: 100, total_size: 50000n, etag: '"e"', updated_at: new Date(2000) });
     mockDb.getAggregateManifestStats.mockResolvedValue({ fileCount: 500, totalSize: 99999n });
 
-    const app = createTestApp();
+    const app = createTestApp({
+      getHomeMirrorStatus: () => ({ state: "ready" }),
+    });
     const res = await app.request("/api/sync/status");
 
     expect(res.status).toBe(200);
@@ -624,6 +630,7 @@ describe("GET /api/sync/status", () => {
     expect(json.connectedPeers[0].peerId).toBe("p1");
     expect(json.manifestVersion).toBe(5);
     expect(json.fileCount).toBe(100);
+    expect(json.homeMirror).toEqual({ state: "ready" });
     expect(mockPeerRegistry.getTotalPeerCount).toHaveBeenCalledTimes(1);
     expect(mockDb.getAggregateManifestStats).toHaveBeenCalledTimes(1);
   });
@@ -641,6 +648,65 @@ describe("GET /api/sync/status", () => {
     expect(json.manifestVersion).toBe(0);
     expect(json.fileCount).toBe(0);
     expect(json.totalSize).toBe(0);
+    expect(json.homeMirror).toEqual({ state: "disabled" });
+  });
+
+  it("reports a coarse failed home-mirror state without exposing internal errors", async () => {
+    mockPeerRegistry.getPeers.mockReturnValue([]);
+    mockDb.getManifestMeta.mockResolvedValue(null);
+
+    const app = createTestApp({
+      getHomeMirrorStatus: () => ({ state: "failed" }),
+    });
+    const res = await app.request("/api/sync/status");
+
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json.homeMirror).toEqual({ state: "failed" });
+    expect(JSON.stringify(json)).not.toContain("error");
+  });
+
+  it("reports failed readiness when sync infrastructure is unavailable", async () => {
+    const app = new Hono();
+    app.route("/api/sync", createUnconfiguredSyncRoutes({
+      getHomeMirrorStatus: () => ({ state: "failed" }),
+    }));
+
+    const res = await app.request("/api/sync/status");
+
+    expect(res.status).toBe(503);
+    await expect(res.json()).resolves.toEqual({
+      error: "Not configured",
+      homeMirror: { state: "failed" },
+    });
+  });
+});
+
+describe("unconfigured sync routes", () => {
+  it.each([
+    ["POST", "/api/sync/presign", 100_000],
+    ["POST", "/api/sync/multipart/complete", 1_100_000],
+    ["POST", "/api/sync/multipart/abort", 100_000],
+    ["POST", "/api/sync/commit", 100_000],
+    ["POST", "/api/sync/resolve-conflict", 100_000],
+    ["POST", "/api/sync/share", 100_000],
+    ["DELETE", "/api/sync/share", 100_000],
+    ["POST", "/api/sync/share/accept", 100_000],
+  ])("enforces body limits for %s %s", async (method, path, size) => {
+    const app = new Hono();
+    app.route("/api/sync", createUnconfiguredSyncRoutes());
+    const body = "x".repeat(size);
+
+    const res = await app.request(path, {
+      method,
+      headers: {
+        "content-type": "application/json",
+        "content-length": String(Buffer.byteLength(body)),
+      },
+      body,
+    });
+
+    expect(res.status).toBe(413);
   });
 });
 

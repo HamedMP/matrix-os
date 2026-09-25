@@ -212,17 +212,9 @@ import {
 import { createHermesRoutes } from "./routes/hermes.js";
 import { createSettingsRoutes } from "./routes/settings.js";
 import { bootstrapSocialSchema, createSocialRoutes, type SocialRoutes } from "./social.js";
-import { createManifestDb } from "./sync/db-impl.js";
-import { createHomeMirror, type HomeMirror } from "./sync/home-mirror.js";
+import { createGatewayHomeMirrorLifecycle } from "./sync/home-mirror-lifecycle.js";
 import { initializeSyncInfrastructure } from "./sync/infrastructure.js";
-import { createSyncRoutes, syncApp } from "./sync/routes.js";
-import {
-  deriveHomeMirrorSyncIdentity,
-  resolveSyncScope,
-} from "./sync/runtime-scope.js";
-import {
-  type SyncDatabase,
-} from "./sync/sharing-db.js";
+import { createSyncRoutes, createUnconfiguredSyncRoutes } from "./sync/routes.js";
 
 import type { WSContext } from "hono/ws";
 import {
@@ -866,73 +858,14 @@ export async function createGateway(config: GatewayConfig) {
       : process.env.GEMINI_API_KEY ?? "";
 
 
-  // Container-side home mirror: watches the user's home directory and
-  // pushes changes to the same R2 bucket the user's local daemon reads.
-  // Off by default; enable with MATRIX_HOME_MIRROR=true.
-  let homeMirror: HomeMirror | null = null;
-  let homeMirrorStart: Promise<void> | null = null;
-  const homeMirrorEnabled = process.env.MATRIX_HOME_MIRROR === "true";
-  if (homeMirrorEnabled && syncR2 && kyselyInstance) {
-    // Loud fail-fast in production: if the orchestrator didn't inject
-    // MATRIX_USER_ID, the mirror would fall back to MATRIX_HANDLE (or
-    // worse, "default") and publish every user's home directory under a
-    // single shared R2 prefix. Refuse to start rather than corrupt state.
-    if (
-      process.env.NODE_ENV === "production" &&
-      !process.env.MATRIX_USER_ID
-    ) {
-      throw new Error(
-        "[home-mirror] MATRIX_USER_ID is required in production when MATRIX_HOME_MIRROR=true. Check that the platform orchestrator injected it.",
-      );
-    }
-    try {
-      // Keep home-mirror's R2 prefix aligned with what authenticated
-      // HTTP/WS routes use (Clerk userId via claims.sub). The orchestrator
-      // injects MATRIX_USER_ID on every provision/upgrade/rolling-restart.
-      // MATRIX_HANDLE fallback preserves dev-mode behaviour when no Clerk
-      // identity is plumbed through.
-      const baseUserId =
-        process.env.MATRIX_USER_ID ?? process.env.MATRIX_HANDLE ?? "default";
-      if (!process.env.MATRIX_USER_ID) {
-        console.warn(
-          "[home-mirror] MATRIX_USER_ID not set; using MATRIX_HANDLE fallback. This is dev-only behaviour.",
-        );
-      }
-      const scope = resolveSyncScope({
-        ownerId: baseUserId,
-        runtimeSlot: process.env.MATRIX_RUNTIME_SLOT,
-      });
-      const { peerId } = deriveHomeMirrorSyncIdentity({
-        baseUserId,
-        runtimeSlot: process.env.MATRIX_RUNTIME_SLOT,
-      });
-      const manifestDb = createManifestDb(kyselyInstance as Kysely<SyncDatabase>);
-      homeMirror = createHomeMirror({
-        r2: syncR2,
-        manifestDb,
-        homeRoot: homePath,
-        userId: scope.ownerId,
-        scope,
-        peerId,
-        // Subscribe to sync:change broadcasts from other peers so the
-        // container's /home/matrixos/home/ stays in sync with what laptops
-        // commit. Without this the mirror is push-only (container -> R2)
-        // and the three-way loop is broken.
-        peerRegistry: syncPeerRegistry ?? undefined,
-        logger: {
-          info: (msg, ...rest) => console.log(`[home-mirror] ${msg}`, ...rest),
-          error: (msg, ...rest) => console.error(`[home-mirror] ${msg}`, ...rest),
-        },
-      });
-      // Start asynchronously so server boot isn't blocked by the initial pull.
-      homeMirrorStart = homeMirror.start().catch((err) => {
-        console.error("[home-mirror] start failed:", (err as Error).message);
-      });
-    } catch (err) {
-      console.error("[home-mirror] init failed:", (err as Error).message);
-      homeMirror = null;
-    }
-  }
+  const homeMirrorLifecycle = createGatewayHomeMirrorLifecycle({
+    enabled: process.env.MATRIX_HOME_MIRROR === "true",
+    homeRoot: homePath,
+    syncR2,
+    kyselyInstance,
+    peerRegistry: syncPeerRegistry,
+  });
+  const homeMirrorReadiness = homeMirrorLifecycle.readiness;
 
   internalIntegrationBaseUrl =
     internalPlatformUrl && internalHandle
@@ -1753,9 +1686,14 @@ export async function createGateway(config: GatewayConfig) {
 
   // 066: Sync API routes
   if (syncDeps) {
-    app.route("/api/sync", createSyncRoutes(syncDeps));
+    app.route("/api/sync", createSyncRoutes({
+      ...syncDeps,
+      getHomeMirrorStatus: () => homeMirrorReadiness.getStatus(),
+    }));
   } else {
-    app.route("/api/sync", syncApp);
+    app.route("/api/sync", createUnconfiguredSyncRoutes({
+      getHomeMirrorStatus: () => homeMirrorReadiness.getStatus(),
+    }));
   }
 
   // T2030-T2037: Social API routes
@@ -1904,8 +1842,8 @@ export async function createGateway(config: GatewayConfig) {
       await processManager.shutdownAll();
       await forwardTunnelHub.close();
       await watcher.close();
-      await homeMirror?.stop();
-      await homeMirrorStart?.catch((err: unknown) => {
+      await homeMirrorLifecycle.mirror?.stop();
+      await homeMirrorLifecycle.startup?.catch((err: unknown) => {
         logBestEffortFailure("Home mirror startup failed during shutdown", err);
       });
       syncR2?.destroy();
