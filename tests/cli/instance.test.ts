@@ -84,8 +84,8 @@ async function startInstanceServer(): Promise<{ server: Server; platformUrl: str
       res.end(JSON.stringify({ lines: ["ready"] }));
       return;
     }
-    if (req.url === "/api/instance") {
-      res.end(JSON.stringify({ status: "running", handle: "cloud" }));
+    if (req.url === "/api/system/info") {
+      res.end(JSON.stringify({ status: "ok", version: "v-test" }));
       return;
     }
     res.statusCode = 404;
@@ -132,7 +132,7 @@ describe("instance CLI command", () => {
     const { server, platformUrl } = await startInstanceServer();
     try {
       const commands = [
-        ["instance", "info", "--platform", platformUrl, "--token", "cloud-token", "--json"],
+        ["instance", "info", "--gateway", platformUrl, "--token", "cloud-token", "--json"],
         ["instance", "restart", "--platform", platformUrl, "--token", "cloud-token", "--json"],
         ["instance", "logs", "--platform", platformUrl, "--token", "cloud-token", "--json"],
       ];
@@ -146,7 +146,7 @@ describe("instance CLI command", () => {
       }
 
       expect(outputs).toEqual([
-        { v: 1, ok: true, data: { status: "running", handle: "cloud" } },
+        { v: 1, ok: true, data: { status: "ok", version: "v-test" } },
         { v: 1, ok: true, data: { restarted: true } },
         { v: 1, ok: true, data: { lines: ["ready"] } },
       ]);
@@ -169,7 +169,7 @@ describe("instance CLI command", () => {
       if (url.endsWith("/api/instance/logs")) {
         return new Response(JSON.stringify({ lines: ["ready"] }));
       }
-      return new Response(JSON.stringify({ status: "running", handle: "cloud" }));
+      return new Response(JSON.stringify({ status: "ok", version: "v-test" }));
     });
     vi.stubGlobal("fetch", fetchImpl);
     const logs = captureLogs();
@@ -178,7 +178,7 @@ describe("instance CLI command", () => {
     await instanceCommand.subCommands!.restart.run!({ args: { json: true } } as never);
     await instanceCommand.subCommands!.logs.run!({ args: { json: true } } as never);
 
-    expect(fetchImpl).toHaveBeenCalledWith("https://app.matrix-os.com/api/instance", {
+    expect(fetchImpl).toHaveBeenCalledWith("https://app.matrix-os.com/api/system/info", {
       headers: { Authorization: "Bearer cloud-token" },
       signal: expect.any(AbortSignal),
     });
@@ -192,27 +192,18 @@ describe("instance CLI command", () => {
       signal: expect.any(AbortSignal),
     });
     expect(logs.map((line) => JSON.parse(line))).toEqual([
-      { v: 1, ok: true, data: { status: "running", handle: "cloud" } },
+      { v: 1, ok: true, data: { status: "ok", version: "v-test" } },
       { v: 1, ok: true, data: { restarted: true } },
       { v: 1, ok: true, data: { lines: ["ready"] } },
     ]);
   });
 
-  it("returns degraded ready info when management fails but execution succeeds", async () => {
+  it("reads instance info directly from the real gateway system-info endpoint", async () => {
     const fetchImpl = vi.fn(async (url: string) => {
-      if (url === "https://platform.example/api/instance") {
-        return new Response("provider exploded", { status: 503 });
-      }
-      if (url === "https://gateway.example/api/terminal/run") {
-        return new Response(JSON.stringify({
-          stdout: "",
-          stderr: "",
-          exitCode: 0,
-          signal: null,
-          timedOut: false,
-          truncated: false,
-          durationMs: 4,
-        }));
+      if (url === "https://gateway.example/api/system/info") {
+        return new Response(JSON.stringify({ status: "ok", version: "v2026.09.25" }), {
+          headers: { "content-type": "application/json" },
+        });
       }
       throw new Error(`unexpected URL ${url}`);
     });
@@ -235,34 +226,23 @@ describe("instance CLI command", () => {
       v: 1,
       ok: true,
       data: {
-        status: "running",
-        ready: true,
-        source: "execution_probe",
-        management: {
-          status: "degraded",
-          upstream: "platform_instance_api",
-          cause: "http",
-          httpStatus: 503,
-          retryable: true,
-        },
-        nextStep: "Execution is healthy. Retry `matrix instance info` for full metadata.",
+        status: "ok",
+        version: "v2026.09.25",
       },
     });
-    expect(logs[0]).not.toContain("provider exploded");
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
-  it("identifies a management timeout when the execution fallback is healthy", async () => {
+  it("identifies a gateway system-info timeout without probing a bogus platform route", async () => {
     const fetchImpl = vi.fn(async (url: string) => {
-      if (url === "https://platform.example/api/instance") {
+      if (url === "https://gateway.example/api/system/info") {
         throw new DOMException("timed out", "TimeoutError");
       }
-      return new Response(JSON.stringify({
-        exitCode: 0,
-        timedOut: false,
-      }));
+      throw new Error(`unexpected URL ${url}`);
     });
     vi.stubGlobal("fetch", fetchImpl);
-    const logs = captureLogs();
+    const errors: string[] = [];
+    vi.spyOn(console, "error").mockImplementation((line?: unknown) => errors.push(String(line)));
 
     await instanceCommand.subCommands!.info.run!({
       args: {
@@ -272,21 +252,21 @@ describe("instance CLI command", () => {
       },
     } as never);
 
-    expect(JSON.parse(logs[0])).toMatchObject({
+    expect(process.exitCode).toBe(1);
+    expect(JSON.parse(errors[0])).toEqual({
       v: 1,
-      ok: true,
-      data: {
-        ready: true,
-        management: {
-          upstream: "platform_instance_api",
-          cause: "timeout",
-          retryable: true,
-        },
+      error: {
+        code: "instance_request_failed",
+        message: "Instance information request failed.",
+        upstream: "gateway_system_info_api",
+        cause: "timeout",
+        retryable: true,
       },
     });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
-  it("emits actionable sanitized JSON when management and execution both fail", async () => {
+  it("emits sanitized JSON when gateway system info fails", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response("provider exploded", { status: 502 })));
     const errors: string[] = [];
     vi.spyOn(console, "error").mockImplementation((line?: unknown) => {
@@ -299,20 +279,12 @@ describe("instance CLI command", () => {
     expect(JSON.parse(errors[0])).toEqual({
       v: 1,
       error: {
-        code: "instance_unavailable",
-        message: "Instance readiness check failed.",
-        management: {
-          upstream: "platform_instance_api",
-          cause: "http",
-          httpStatus: 502,
-          retryable: true,
-        },
-        execution: {
-          upstream: "instance_execution_api",
-          cause: "request_failed",
-          retryable: true,
-        },
-        nextStep: "Run `matrix doctor`, then retry `matrix instance info`.",
+        code: "instance_request_failed",
+        message: "Instance information request failed.",
+        upstream: "gateway_system_info_api",
+        cause: "http",
+        httpStatus: 502,
+        retryable: true,
       },
     });
     expect(errors[0]).not.toContain("provider exploded");

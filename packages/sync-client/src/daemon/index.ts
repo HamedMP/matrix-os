@@ -71,7 +71,7 @@ interface PollLogger {
   error: (msg: string) => void;
 }
 
-export interface WaitForManifestOptions {
+export interface WaitForHomeMirrorReadyOptions {
   gatewayUrl: string;
   token: string;
   logger: PollLogger;
@@ -82,18 +82,19 @@ export interface WaitForManifestOptions {
 }
 
 /**
- * Polls `/api/sync/manifest` until the gateway reports a populated manifest
- * (manifestVersion > 0 or a non-empty `files` map), then resolves. Throws on
- * auth failure (401/403) or overall timeout. Transient 5xx and network
- * errors are logged and retried.
+ * Polls `/api/sync/status` until the gateway explicitly reports that its home
+ * mirror is ready. An empty manifest is valid: an owner may have no files.
+ * Throws on auth failure, disabled/failed mirror state, an incompatible older
+ * gateway response, or overall timeout. Transient 5xx and network errors are
+ * logged and retried.
  *
  * Rationale: on fresh provisioning, the platform may spin up the container
- * before any file has been mirrored, so the manifest is empty for a few
- * seconds. Starting chokidar against an empty remote leads to confusing
- * "we just uploaded everything local" behavior the first time.
+ * before the home mirror completes its initial reconciliation. Starting
+ * chokidar before that readiness boundary can upload local state while the
+ * remote is still being restored.
  */
-export async function waitForManifest(
-  opts: WaitForManifestOptions,
+export async function waitForHomeMirrorReady(
+  opts: WaitForHomeMirrorReadyOptions,
 ): Promise<void> {
   const timeoutMs = opts.timeoutMs ?? 120_000;
   const intervalMs = opts.intervalMs ?? 2_000;
@@ -111,7 +112,7 @@ export async function waitForManifest(
     const elapsed = Date.now() - start;
     if (elapsed >= timeoutMs) {
       throw new Error(
-        `Timed out waiting for your Matrix instance at ${opts.gatewayUrl}. Check https://app.matrix-os.com that your container is running, then restart the daemon.`,
+        `Timed out waiting for sync readiness at ${opts.gatewayUrl}. Check Matrix Settings → Sync, then restart the daemon.`,
       );
     }
 
@@ -123,7 +124,7 @@ export async function waitForManifest(
 
     let res: Response;
     try {
-      res = await fetch(`${opts.gatewayUrl}/api/sync/manifest`, {
+      res = await fetch(`${opts.gatewayUrl}/api/sync/status`, {
         headers: { authorization: `Bearer ${opts.token}` },
         signal: AbortSignal.timeout(perRequestTimeout),
       });
@@ -133,11 +134,11 @@ export async function waitForManifest(
       // CLAUDE.md § Error Handling. Log a generic message instead.
       if (!(err instanceof Error)) {
         opts.logger.warn(
-          `Manifest poll attempt ${attempt} failed (unexpected non-Error talking to ${opts.gatewayUrl})`,
+          `Sync readiness poll attempt ${attempt} failed (unexpected non-Error talking to ${opts.gatewayUrl})`,
         );
       } else {
         opts.logger.warn(
-          `Manifest poll attempt ${attempt} failed (network error talking to ${opts.gatewayUrl})`,
+          `Sync readiness poll attempt ${attempt} failed (network error talking to ${opts.gatewayUrl})`,
         );
       }
       await sleep(intervalMs);
@@ -148,28 +149,25 @@ export async function waitForManifest(
       throw new Error("Auth token rejected. Re-run `matrix login`.");
     }
 
-    if (res.status >= 500) {
+    const contentType = res.headers.get("content-type") ?? "";
+    const isJson = contentType.toLowerCase().includes("application/json");
+
+    if (res.status >= 500 && !isJson) {
       opts.logger.warn(
-        `Manifest poll attempt ${attempt}: ${opts.gatewayUrl} returned ${res.status}; retrying`,
+        `Sync readiness poll attempt ${attempt}: ${opts.gatewayUrl} returned ${res.status}; retrying`,
       );
       await sleep(intervalMs);
       continue;
-    }
-
-    if (!res.ok) {
-      // 4xx other than auth — surface so ops notice instead of looping forever.
-      throw new Error(`Manifest fetch from ${opts.gatewayUrl} failed: ${res.status}`);
     }
 
     // Guard against gateways that return HTML (misconfigured reverse proxy,
     // captive portal, wrong host) before we feed bytes into res.json(). This
     // keeps the catch-path from ever receiving a SyntaxError whose message
     // could leak response bytes.
-    const contentType = res.headers.get("content-type") ?? "";
-    if (!contentType.toLowerCase().includes("application/json")) {
+    if (!isJson) {
       consecutiveNonJson++;
       opts.logger.warn(
-        `Manifest poll attempt ${attempt}: ${opts.gatewayUrl} returned non-JSON response (content-type: ${contentType || "(none)"})`,
+        `Sync readiness poll attempt ${attempt}: ${opts.gatewayUrl} returned non-JSON response (content-type: ${contentType || "(none)"})`,
       );
       if (consecutiveNonJson >= 3) {
         throw new Error(
@@ -180,13 +178,9 @@ export async function waitForManifest(
       continue;
     }
 
-    let body: {
-      manifestVersion?: number;
-      manifest?: { files?: Record<string, unknown> };
-      files?: Record<string, unknown>;
-    };
+    let body: unknown;
     try {
-      body = (await res.json()) as typeof body;
+      body = await res.json();
     } catch (err: unknown) {
       if (!(err instanceof SyntaxError)) {
         throw err;
@@ -196,7 +190,7 @@ export async function waitForManifest(
       // generic message, bump the counter, hard-fail at 3 strikes.
       consecutiveNonJson++;
       opts.logger.warn(
-        `Manifest poll attempt ${attempt}: ${opts.gatewayUrl} returned malformed JSON despite application/json header`,
+        `Sync readiness poll attempt ${attempt}: ${opts.gatewayUrl} returned malformed JSON despite application/json header`,
       );
       if (consecutiveNonJson >= 3) {
         throw new Error(
@@ -208,16 +202,37 @@ export async function waitForManifest(
     }
 
     consecutiveNonJson = 0;
-    const version = typeof body.manifestVersion === "number" ? body.manifestVersion : 0;
-    const files = body.manifest?.files ?? body.files ?? {};
-    const fileCount = Object.keys(files).length;
-
-    if (version > 0 || fileCount > 0) {
+    const homeMirror = typeof body === "object" && body !== null && !Array.isArray(body)
+      ? (body as Record<string, unknown>).homeMirror
+      : undefined;
+    const state = typeof homeMirror === "object" && homeMirror !== null && !Array.isArray(homeMirror)
+      ? (homeMirror as Record<string, unknown>).state
+      : undefined;
+    if (state === "failed") {
+      throw new Error("The Matrix home mirror failed to start. Check Matrix Settings → Sync and retry.");
+    }
+    if (state === "disabled") {
+      throw new Error("The Matrix home mirror is not enabled on this instance. Update the instance before starting sync.");
+    }
+    if (res.status >= 500) {
+      opts.logger.warn(
+        `Sync readiness poll attempt ${attempt}: ${opts.gatewayUrl} returned ${res.status}; retrying`,
+      );
+      await sleep(intervalMs);
+      continue;
+    }
+    if (!res.ok) {
+      throw new Error(`Sync readiness request to ${opts.gatewayUrl} failed: ${res.status}`);
+    }
+    if (state === "ready") {
       return;
+    }
+    if (state !== "starting") {
+      throw new Error("This Matrix gateway does not report sync readiness. Update the instance before starting sync.");
     }
 
     const elapsedSeconds = Math.floor((Date.now() - start) / 1000);
-    opts.logger.info(`Waiting for your Matrix instance... (${elapsedSeconds}s)`);
+    opts.logger.info(`Waiting for the Matrix home mirror... (${elapsedSeconds}s)`);
     await sleep(intervalMs);
   }
 }
@@ -1563,12 +1578,11 @@ export async function startDaemon(): Promise<void> {
 
   await ipcServer.start();
 
-  // Wait for the gateway's manifest to be populated before we start pushing
-  // local files up. On first provisioning the container may still be seeding
-  // its home directory; if we race past that we end up uploading our local
-  // state into an empty remote instead of merging with what's about to arrive.
+  // Wait for the gateway home mirror's explicit readiness boundary before we
+  // start pushing local files. An empty remote home is valid, so manifest
+  // contents cannot be used as a readiness signal.
   try {
-    await waitForManifest({
+    await waitForHomeMirrorReady({
       gatewayUrl: config.gatewayUrl,
       token: auth.accessToken,
       logger: {
@@ -1578,7 +1592,7 @@ export async function startDaemon(): Promise<void> {
       },
     });
   } catch (err) {
-    logger.error({ err }, "waitForManifest failed; exiting");
+    logger.error({ err }, "waitForHomeMirrorReady failed; exiting");
     throw err;
   }
 
