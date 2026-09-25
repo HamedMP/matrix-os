@@ -45,7 +45,8 @@ export const OrganizationDriveSnapshotSchema = z.object({
   usedBytes: z.number().int().nonnegative(),
   reservedBytes: z.number().int().nonnegative(),
   quotaBytes: z.number().int().positive(),
-  files: z.array(OrganizationDriveFileSchema).max(1000),
+  files: z.array(OrganizationDriveFileSchema).max(100),
+  nextCursor: OrganizationDrivePathSchema.optional(),
 }).strict();
 
 export const OrganizationDriveUploadReservationSchema = z.object({

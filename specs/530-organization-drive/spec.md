@@ -13,6 +13,7 @@ handle or a member's login.
 
 - Files shows each organization drive to current members on Web Canvas, Web
   Desktop and Web Mobile. A member can list, upload and download files.
+  Listings are paged by logical path so drives with more than one page remain usable.
   Upload paths can contain virtual folder segments. The owner enables a drive
   from an existing organization-shared folder scope and grants Contributor
   access to the organization; each member activates that grant. Membership

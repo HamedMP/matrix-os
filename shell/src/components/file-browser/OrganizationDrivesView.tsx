@@ -179,6 +179,21 @@ export function OrganizationDrivesView() {
     } finally { setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000); }
   });
 
+  const loadMore = async (option: DriveOption) => {
+    const cursor = option.snapshot?.nextCursor;
+    if (!api || !cursor || busy) return;
+    setBusy(true); setError(null);
+    try {
+      const page = OrganizationDriveSnapshotSchema.parse(await api.direct.request(option.scopeId, "GET",
+        `${base(option.scopeId)}?after=${encodeURIComponent(cursor)}`));
+      setOptions((current) => current.map((item) => item.scopeId === option.scopeId && item.snapshot
+        ? { ...item, snapshot: { ...page, files: [...item.snapshot.files, ...page.files] } } : item));
+    } catch (failure: unknown) {
+      console.warn("[organization-drive] next page unavailable", failure instanceof Error ? failure.name : "UnknownError");
+      setError(safeError(failure));
+    } finally { setBusy(false); }
+  };
+
   return <div className="flex h-full min-h-0 flex-col p-4 text-sm">
     <div className="mb-3 flex items-center justify-between gap-2">
       <h2 className="text-base font-semibold">Organization drives</h2>
@@ -226,6 +241,8 @@ export function OrganizationDrivesView() {
                   className="rounded border px-2 py-1">Download</button>
               </li>)}
             </ul>
+            {active.snapshot.nextCursor && <button type="button" disabled={busy}
+              onClick={() => void loadMore(active)} className="mt-3 rounded border px-3 py-1.5">Load more files</button>}
             {active.snapshot.files.length === 0 && <p className="text-muted-foreground">No files yet.</p>}
           </>}
         </div>}
