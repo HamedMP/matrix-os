@@ -112,7 +112,7 @@ import {
 } from "./funded-ai-credential-manager.js";
 import { createFundedAiFundingSummaryClient } from "./funded-ai-funding-summary-client.js";
 import { createFundedAiReadinessReader } from "./funded-ai-readiness.js";
-import { JevEvaluationRepository } from "./jev/repository.js";
+import { initializeJevRuntime } from "./jev/runtime.js";
 import { createJevRoutes } from "./jev/routes.js";
 import { createJevService } from "./jev/service.js";
 import { createHeartbeatRunner, type HeartbeatRunner } from "./heartbeat/runner.js";
@@ -1259,17 +1259,16 @@ export async function createGateway(config: GatewayConfig) {
   });
 
   let jevService: ReturnType<typeof createJevService> | null = null;
-  if (fundedCredentialProvider && fundedAiRuntimeConfig && kyselyInstance) {
-    try {
-      const jevRepository = new JevEvaluationRepository(kyselyInstance as Kysely<any>);
-      await jevRepository.bootstrap();
-      jevService = createJevService({
-        store: jevRepository,
-        credentialProvider: fundedCredentialProvider,
-      });
-    } catch (error) {
-      console.error("[jev] Failed to initialize:", error instanceof Error ? error.name : "UnknownError");
-    }
+  let jevRuntime: Awaited<ReturnType<typeof initializeJevRuntime>> = null;
+  try {
+    jevRuntime = await initializeJevRuntime({
+      db: kyselyInstance,
+      credentialProvider: fundedCredentialProvider,
+      fundedRuntimeEnabled: Boolean(fundedAiRuntimeConfig),
+    });
+    jevService = jevRuntime?.service ?? null;
+  } catch (error) {
+    console.error("[jev] Failed to initialize:", error instanceof Error ? error.name : "UnknownError");
   }
 
   watcher.on((change) => {
@@ -1891,6 +1890,7 @@ export async function createGateway(config: GatewayConfig) {
       await agentRuntimeServices.controller.close();
       aiProviderService.close();
       fundedCredentialProvider?.close();
+      await jevRuntime?.cleanup.close();
       await codingAgentTurnLifecycle.shutdown();
       await codexEventBridge?.shutdown();
       codingAgentThreadStream?.shutdown();

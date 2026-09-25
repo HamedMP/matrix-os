@@ -49,6 +49,24 @@ function parseJson(value: unknown): unknown {
   return typeof value === "string" ? JSON.parse(value) as unknown : value;
 }
 
+async function pruneExpiredCompletedResults(db: Kysely<JevDatabase>, retentionCutoff: Date): Promise<void> {
+  await sql`
+    WITH due AS (
+      SELECT owner_id, idempotency_key
+      FROM jev_evaluations
+      WHERE status = 'completed' AND updated_at < ${retentionCutoff}
+      ORDER BY updated_at, owner_id, idempotency_key
+      LIMIT ${RESULT_PRUNE_BATCH_SIZE}
+      FOR UPDATE SKIP LOCKED
+    )
+    UPDATE jev_evaluations AS evaluation
+    SET status = 'completed_pruned', result = NULL
+    FROM due
+    WHERE evaluation.owner_id = due.owner_id
+      AND evaluation.idempotency_key = due.idempotency_key
+  `.execute(db);
+}
+
 export class JevEvaluationRepository implements JevEvaluationStore {
   readonly kysely: Kysely<JevDatabase>;
   private readonly ownsConnection: boolean;
@@ -103,6 +121,10 @@ export class JevEvaluationRepository implements JevEvaluationStore {
       await sql`CREATE INDEX IF NOT EXISTS idx_jev_evaluations_updated_at ON jev_evaluations (updated_at)`
         .execute(trx);
     });
+  }
+
+  async pruneExpiredCompletedResults(): Promise<void> {
+    await pruneExpiredCompletedResults(this.kysely, new Date(this.now().getTime() - RETENTION_MS));
   }
 
   async claim(input: EvaluationKey): Promise<JevEvaluationClaim> {
@@ -165,21 +187,7 @@ export class JevEvaluationRepository implements JevEvaluationStore {
       // Amortize result cleanup without locking the entire expired population.
       // The requested key was resolved under its own lock even if it lies
       // outside this batch or another instance holds it during the sweep.
-      await sql`
-        WITH due AS (
-          SELECT owner_id, idempotency_key
-          FROM jev_evaluations
-          WHERE status = 'completed' AND updated_at < ${retentionCutoff}
-          ORDER BY updated_at, owner_id, idempotency_key
-          LIMIT ${RESULT_PRUNE_BATCH_SIZE}
-          FOR UPDATE SKIP LOCKED
-        )
-        UPDATE jev_evaluations AS evaluation
-        SET status = 'completed_pruned', result = NULL
-        FROM due
-        WHERE evaluation.owner_id = due.owner_id
-          AND evaluation.idempotency_key = due.idempotency_key
-      `.execute(trx);
+      await pruneExpiredCompletedResults(trx, retentionCutoff);
       return outcome;
     });
   }

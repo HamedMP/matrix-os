@@ -102,6 +102,29 @@ describe("Jev evaluation repository", () => {
     expect(retries).toEqual([{ kind: "result_expired" }, { kind: "result_expired" }]);
   });
 
+  it("prunes idle completed payloads in bounded batches without a new claim", async () => {
+    const oldRows = Array.from({ length: 105 }, (_, index) => ({
+      owner_id: key.ownerId,
+      idempotency_key: `thread:idle${index.toString().padStart(3, "0")}`,
+      payload_hash: key.payloadHash,
+      status: "completed" as const,
+      result: JSON.stringify(completed),
+      created_at: clock,
+      updated_at: clock,
+    }));
+    await repository.kysely.insertInto("jev_evaluations").values(oldRows).execute();
+    clock = new Date(clock.getTime() + 7 * 24 * 60 * 60_000 + 1);
+
+    await repository.pruneExpiredCompletedResults();
+    let rows = await repository.kysely.selectFrom("jev_evaluations").select(["status", "result"]).execute();
+    expect(rows.filter((row) => row.status === "completed_pruned" && row.result === null)).toHaveLength(100);
+    expect(rows.filter((row) => row.status === "completed" && row.result !== null)).toHaveLength(5);
+
+    await repository.pruneExpiredCompletedResults();
+    rows = await repository.kysely.selectFrom("jev_evaluations").select(["status", "result"]).execute();
+    expect(rows.filter((row) => row.status === "completed_pruned" && row.result === null)).toHaveLength(105);
+  });
+
   it("migrates an existing Jev table without discarding completed rows", async () => {
     await sql`DROP TABLE jev_evaluations`.execute(repository.kysely);
     await sql`
