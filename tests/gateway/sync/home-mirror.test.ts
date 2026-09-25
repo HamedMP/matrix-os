@@ -1217,6 +1217,61 @@ describe("createHomeMirror", () => {
       await mirror.stop();
     });
 
+    it("keeps a peer's newer version and preserves the stale local copy when policy re-includes a path", async () => {
+      const logger = { info: vi.fn(), error: vi.fn() };
+      await mkdir(join(tmpRoot, "dynamic"), { recursive: true });
+      await writeFile(join(tmpRoot, ".syncignore"), "dynamic/\n");
+      await writeFile(join(tmpRoot, "dynamic", "doc.md"), "old gateway copy");
+      await writeFile(join(tmpRoot, "dynamic", "fresh.md"), "only on gateway");
+      const peerVersion = Buffer.from("newer peer copy");
+      const peerKey = "matrixos-sync/alice/files/dynamic/doc.md";
+      r2.store.set(peerKey, peerVersion);
+      r2.store.set(
+        "matrixos-sync/alice/manifest.json",
+        Buffer.from(JSON.stringify({
+          version: 2,
+          manifestVersion: 1,
+          files: {
+            "dynamic/doc.md": {
+              hash: sha256(peerVersion),
+              size: peerVersion.length,
+              mtime: Date.now(),
+              peerId: "laptop-1",
+              version: 1,
+              objectKey: peerKey,
+            },
+          },
+        })),
+      );
+
+      const mirror = createHomeMirror({
+        r2,
+        manifestDb: db,
+        homeRoot: tmpRoot,
+        userId: "alice",
+        peerId: "gateway-alice",
+        peerRegistry: registry,
+        logger,
+        watchLocalChanges: false,
+      });
+      await mirror.start();
+
+      await writeFile(join(tmpRoot, ".syncignore"), "# dynamic is synced now\n");
+      await mirror.pushLocalFile(".syncignore");
+
+      const manifest = storedManifest(r2);
+      expect(manifest?.files["dynamic/doc.md"]?.hash).toBe(sha256(peerVersion));
+      expect(manifest?.files["dynamic/fresh.md"]?.objectKey).toBeDefined();
+      expect(await readFile(join(tmpRoot, "dynamic", "doc.md"), "utf8")).toBe("newer peer copy");
+      const conflictPath = Object.keys(manifest?.files ?? {}).find((path) =>
+        path.startsWith("dynamic/doc (conflict - gateway-alice - ")
+      );
+      expect(conflictPath).toBeDefined();
+      expect(await readFile(join(tmpRoot, conflictPath!), "utf8")).toBe("old gateway copy");
+      expect(logger.error.mock.calls.some((call) => String(call[0]).includes("conflict"))).toBe(true);
+      await mirror.stop();
+    });
+
     it("does not start a replacement watcher after stop during a policy reload", async () => {
       await mkdir(join(tmpRoot, "dynamic"), { recursive: true });
       await writeFile(join(tmpRoot, ".syncignore"), "dynamic/\n");

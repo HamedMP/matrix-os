@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { constants as fsConstants, createReadStream } from "node:fs";
 import { open } from "node:fs/promises";
+import type { FSWatcher } from "chokidar";
 
 const HASH_STREAM_TIMEOUT_MS = 30_000;
 
@@ -149,4 +150,52 @@ export async function streamToBuffer(body: unknown, maxBytes: number): Promise<B
     return Buffer.from(bytes);
   }
   throw new Error("Unsupported R2 object body type");
+}
+
+export function createSerialQueue(onError: (err: unknown) => void): {
+  enqueue: <T>(fn: () => Promise<T>) => Promise<T>;
+  drain: () => Promise<void>;
+} {
+  let chain: Promise<unknown> = Promise.resolve();
+  const enqueue = <T>(fn: () => Promise<T>): Promise<T> => {
+    const next = chain.then(fn, fn);
+    chain = next.catch((err: unknown) => {
+      onError(err);
+      return undefined;
+    });
+    return next;
+  };
+  return {
+    enqueue,
+    async drain(): Promise<void> {
+      await chain;
+    },
+  };
+}
+
+export function waitForWatcherReady(target: FSWatcher): Promise<void> {
+  // Resolve on `close` too, so a concurrent stop() can't strand us waiting
+  // for a `ready` event that will never fire on a closed watcher.
+  return new Promise<void>((resolve, reject) => {
+    const cleanup = () => {
+      target.off("ready", onReady);
+      target.off("error", onError);
+      target.off("close", onClose);
+    };
+    const onReady = () => {
+      cleanup();
+      resolve();
+    };
+    const onError = (err: unknown) => {
+      cleanup();
+      reject(err instanceof Error ? err : new Error(String(err)));
+    };
+    const onClose = () => {
+      cleanup();
+      resolve();
+    };
+    target.once("ready", onReady);
+    target.once("error", onError);
+    target.once("close", onClose);
+  });
 }

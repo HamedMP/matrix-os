@@ -12,11 +12,14 @@ import {
   type ManifestDbExecutor,
 } from "./manifest.js";
 import { resolveWithinPrefix } from "./path-validation.js";
+import { createConflictCopyPath } from "./conflict.js";
 import {
+  createSerialQueue,
   hashBuffer,
   hashFileStream,
   readLocalFileForPush,
   streamToBuffer,
+  waitForWatcherReady,
   type LocalPushFile,
 } from "./home-mirror-io.js";
 import {
@@ -89,27 +92,6 @@ export interface HomeMirror {
   stop(): Promise<void>;
   pushLocalFile(relPath: string): Promise<void>;
   pushLocalDelete(relPath: string): Promise<void>;
-}
-
-function createSerialQueue(onError: (err: unknown) => void): {
-  enqueue: <T>(fn: () => Promise<T>) => Promise<T>;
-  drain: () => Promise<void>;
-} {
-  let chain: Promise<unknown> = Promise.resolve();
-  const enqueue = <T>(fn: () => Promise<T>): Promise<T> => {
-    const next = chain.then(fn, fn);
-    chain = next.catch((err: unknown) => {
-      onError(err);
-      return undefined;
-    });
-    return next;
-  };
-  return {
-    enqueue,
-    async drain(): Promise<void> {
-      await chain;
-    },
-  };
 }
 
 function errorMessage(err: unknown): string {
@@ -795,33 +777,6 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
     }
   }
 
-  function waitForWatcherReady(target: FSWatcher): Promise<void> {
-    // Resolve on `close` too, so a concurrent stop() can't strand us waiting
-    // for a `ready` event that will never fire on a closed watcher.
-    return new Promise<void>((resolve, reject) => {
-      const cleanup = () => {
-        target.off("ready", onReady);
-        target.off("error", onError);
-        target.off("close", onClose);
-      };
-      const onReady = () => {
-        cleanup();
-        resolve();
-      };
-      const onError = (err: unknown) => {
-        cleanup();
-        reject(err instanceof Error ? err : new Error(String(err)));
-      };
-      const onClose = () => {
-        cleanup();
-        resolve();
-      };
-      target.once("ready", onReady);
-      target.once("error", onError);
-      target.once("close", onClose);
-    });
-  }
-
   // Start a watcher using the current policy and wait for its initial scan
   // so writes immediately after readiness are not missed on slow
   // filesystems. Returns null when the lifecycle ended while scanning.
@@ -869,15 +824,62 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
     config.onLocalWatcherReady?.();
   }
 
+  // A path excluded until now may have changed on another peer meanwhile.
+  // Keep the peer's committed version at the original path and publish the
+  // diverged local bytes as an explicit conflict copy instead of uploading
+  // them over the peer's work.
+  async function preserveDivergedLocalCopy(
+    safeRelPath: string,
+    localBody: Buffer,
+    remoteEntry: ManifestEntry,
+  ): Promise<string | null> {
+    const conflictRelPath = createConflictCopyPath(safeRelPath, config.peerId, new Date());
+    if (ignored(conflictRelPath)) {
+      log.error(`sync conflict for ${safeRelPath}: local copy kept; conflict copy path is ignored`);
+      return null;
+    }
+    const conflictAbsPath = join(config.homeRoot, normalizeRelativePath(config.userId, conflictRelPath));
+    await ensureWritableParent(conflictAbsPath);
+    try {
+      await writeFile(conflictAbsPath, localBody, { flag: "wx" });
+    } catch (err: unknown) {
+      if ((err as NodeJS.ErrnoException).code === "EEXIST") {
+        log.error(`sync conflict for ${safeRelPath}: local copy kept; conflict copy already exists`);
+        return null;
+      }
+      throw err;
+    }
+    await enqueue(() => pullFile(safeRelPath, remoteEntry));
+    log.error(`sync conflict for ${safeRelPath}: kept peer version, saved local copy as ${conflictRelPath}`);
+    return conflictRelPath;
+  }
+
   async function pushNewlyIncluded(
     previousPolicy: SyncIgnorePatterns,
     generation: number,
   ): Promise<void> {
     const relPaths = await collectLocalFiles(config.homeRoot);
-    const newlyIncluded = relPaths.filter((relPath) =>
-      isHomeMirrorIgnored(relPath, extraIgnore, previousPolicy)
-    );
-    await pushLocalPaths(newlyIncluded, "policy refresh push", () =>
+    const snapshot = await readManifest(store, scope);
+    const toPush: string[] = [];
+    for (const relPath of relPaths) {
+      if (!isCurrentLifecycle(generation)) return;
+      if (!isHomeMirrorIgnored(relPath, extraIgnore, previousPolicy)) continue;
+      const safeRelPath = normalizeRelativePath(config.userId, relPath);
+      const remoteEntry = snapshot.manifest.files[safeRelPath];
+      if (!remoteEntry?.hash || remoteEntry.deleted) {
+        toPush.push(safeRelPath);
+        continue;
+      }
+      const localFile = await readLocalFileForPush(join(config.homeRoot, safeRelPath), maxPushBytes);
+      if (localFile.kind !== "file" || localFile.hash === remoteEntry.hash) continue;
+      try {
+        const conflictRelPath = await preserveDivergedLocalCopy(safeRelPath, localFile.body, remoteEntry);
+        if (conflictRelPath) toPush.push(conflictRelPath);
+      } catch (err: unknown) {
+        log.error(`sync conflict handling failed for ${safeRelPath}:`, errorMessage(err));
+      }
+    }
+    await pushLocalPaths(toPush, "policy refresh push", () =>
       isCurrentLifecycle(generation)
     );
   }
