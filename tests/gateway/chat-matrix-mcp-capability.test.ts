@@ -60,6 +60,20 @@ describe("Claude Custom MCP Run capability", () => {
     expect((await app.request("/api/mcp-servers", { headers })).status).toBe(401);
   });
 
+  it("binds review grants to discovery even when the caller asks for an allowed tool", async () => {
+    const registry = createMatrixMcpCapabilityRegistry({ configuredOwnerId: owner.ownerId });
+    const capability = registry.issue({ owner, runId: "run_review", scope: "discovery" })!;
+    const app = new Hono();
+    app.use("*", authMiddleware("machine-secret", { resolveMatrixMcpCapability: registry.resolve }));
+    app.all("*", (c) => c.json({ actor: requireRequestPrincipal(c).userId }));
+    const headers = { authorization: `Bearer ${capability.token}` };
+    expect((await app.request(`/api/mcp-servers/${serverId}`, { headers })).status).toBe(200);
+    expect((await app.request(`/api/mcp-servers/${serverId}/call`, {
+      method: "POST", headers, body: JSON.stringify({ tool: "mutable", approvalGranted: false }),
+    })).status).toBe(401);
+    registry.close();
+  });
+
   it("expires and drains Run grants", () => {
     let clock = 0;
     const registry = createMatrixMcpCapabilityRegistry({ configuredOwnerId: owner.ownerId, now: () => clock });

@@ -101,6 +101,43 @@ describe("Claude canonical Chat Provider adapter", () => {
     }
   });
 
+  it("keeps review Runs discovery-only on fresh and resumed launches despite full-access selection", async () => {
+    const registry = createMatrixMcpCapabilityRegistry({ configuredOwnerId: baseInput.owner.ownerId });
+    const seen: Array<{ args: string[]; token: string }> = [];
+    const spawnFn = vi.fn<CanonicalCliSpawn>((_command, args, options) => {
+      const token = options.env.MATRIX_AGENT_INTEGRATIONS_TOKEN!;
+      seen.push({ args, token });
+      expect(registry.resolve(token, "GET", "/api/mcp-servers")).toBe(baseInput.owner.ownerId);
+      expect(registry.resolve(token, "POST", "/api/mcp-servers/123e4567-e89b-42d3-a456-426614174000/call"))
+        .toBeNull();
+      return child([JSON.stringify({ type: "result", subtype: "success", result: "reviewed", session_id: "review_session" })]);
+    });
+    const adapter = createClaudeChatProviderAdapter({
+      homePath: "/home/matrix/home", spawnFn, resolveCredentialEnv: async () => ({}),
+      matrixMcpCapabilityIssuer: registry,
+    });
+    const input = { ...baseInput, interactionMode: "review", permissionMode: "full_access" };
+    for await (const _event of adapter.start(input)) { /* Drain. */ }
+    for await (const _event of adapter.resume!({
+      ...input, runId: "review_resumed", resumeState: { sessionId: "review_session" },
+    })) { /* Drain. */ }
+    expect(seen).toHaveLength(2);
+    for (const { args, token } of seen) {
+      expect(args.slice(args.indexOf("--permission-mode"), args.indexOf("--permission-mode") + 2))
+        .toEqual(["--permission-mode", "plan"]);
+      const settings = JSON.parse(args[args.indexOf("--settings") + 1]!) as {
+        permissions: { allow: string[]; deny: string[] };
+      };
+      expect(settings.permissions.allow).toEqual([
+        "mcp__matrix-integrations__list_custom_mcp_servers",
+        "mcp__matrix-integrations__describe_custom_mcp_server",
+      ]);
+      expect(settings.permissions.deny).toEqual(["Edit", "Write", "NotebookEdit"]);
+      expect(registry.resolve(token, "GET", "/api/mcp-servers")).toBeNull();
+    }
+    registry.close();
+  });
+
   it("revokes the scoped bearer after completion and a failed CLI start", async () => {
     const registry = createMatrixMcpCapabilityRegistry({ configuredOwnerId: baseInput.owner.ownerId });
     const tokens: string[] = [];

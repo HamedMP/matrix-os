@@ -17,6 +17,9 @@ describe("scoped Custom MCP approval through Gateway and Platform broker", () =>
     const ownerId = "owner_claude";
     const registry = createMatrixMcpCapabilityRegistry({ configuredOwnerId: ownerId });
     const capability = registry.issue({ owner: { type: "personal", ownerId }, runId: "run_approval" })!;
+    const reviewCapability = registry.issue({
+      owner: { type: "personal", ownerId }, runId: "run_review", scope: "discovery",
+    })!;
     const tools = [
       { name: "ask", enabled: true, approval: "always_ask" as const },
       { name: "search", enabled: true, approval: "allow" as const },
@@ -61,6 +64,10 @@ describe("scoped Custom MCP approval through Gateway and Platform broker", () =>
     expect((await post(JSON.stringify({ tool: "search", approvalGranted: true }))).status).toBe(403);
     expect(remoteCall).not.toHaveBeenCalled();
     expect((await post(JSON.stringify({ tool: "search", approvalGranted: false }))).status).toBe(200);
+    expect(remoteCall).toHaveBeenCalledOnce();
+    expect((await post(JSON.stringify({ tool: "search", approvalGranted: false }), {
+      authorization: `Bearer ${reviewCapability.token}`, "content-type": "application/json",
+    })).status).toBe(401);
     expect(remoteCall).toHaveBeenCalledOnce();
     for (const raw of [
       '{"tool":"ask","approvalGranted":false,"approvalGranted":true}',
