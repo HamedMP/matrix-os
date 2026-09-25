@@ -17,7 +17,7 @@ import {
   getRunningUserMachineByHandle,
   getUserMachine,
 } from './db.js';
-import { canClerkUserAccessMachine } from './customer-vps-preview.js';
+import { canClerkUserAccessMachine, canRouteMachineOnPreviewHost, previewHandleFromHost } from './customer-vps-preview.js';
 import type { EntitlementAccessDecision } from './profile-routing.js';
 import {
   getWebSocketUpgradeToken,
@@ -271,7 +271,8 @@ export function registerPlatformWebSocketUpgradeHandler(
         explicitVmRoute.handle,
         explicitVmRoute.runtimeSlot,
       );
-      if (!explicitMachine || (identity.userId && !canClerkUserAccessMachine(explicitMachine, identity.userId))) {
+      if (!explicitMachine || !canRouteMachineOnPreviewHost(host, explicitMachine)
+        || (identity.userId && !canClerkUserAccessMachine(explicitMachine, identity.userId))) {
         socket.destroy();
         return;
       }
@@ -292,6 +293,15 @@ export function registerPlatformWebSocketUpgradeHandler(
     }
     if (runningMachine) {
       runtimeSlot = runningMachine.runtimeSlot;
+    }
+    if ((runningMachine && !canRouteMachineOnPreviewHost(host, runningMachine))
+      || (requestedActiveMachine && !canRouteMachineOnPreviewHost(host, requestedActiveMachine))) {
+      socket.destroy();
+      return;
+    }
+    if (previewHandleFromHost(host) && !runningMachine) {
+      socket.destroy();
+      return;
     }
     const record = legacyContainerRoutingEnabled
       ? await getContainer(db, identity.handle)

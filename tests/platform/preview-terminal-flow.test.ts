@@ -140,17 +140,17 @@ function fixture() {
     codeServerPort: 8080, getRuntimeEntitlementDecision: () => permitted,
     getRuntimeEntitlementDecisionForUser: async () => permitted,
   });
-  const request = (path: string, init?: RequestInit) => platform.request(`/vm/${handle}${path}`, {
-    ...init, headers: { host: "app.matrix-os.com", authorization: "Bearer clerk-session",
+  const request = (path: string, init?: RequestInit, host = "app.matrix-os.com") => platform.request(`/vm/${handle}${path}`, {
+    ...init, headers: { host, authorization: "Bearer clerk-session",
       "content-type": "application/json", "x-platform-preview-terminal": "client-forgery",
       ...init?.headers },
   });
-  const upgrade = async (jwt: string, tabId: string, targetHandle = handle, chatId?: string) => {
+  const upgrade = async (jwt: string, tabId: string, targetHandle = handle, chatId?: string, host = "app.matrix-os.com") => {
     const upstream = new Transport();
     tls.connect.mockImplementation((_options, connected) => { queueMicrotask(connected); return upstream; });
     const socket = new Transport();
     const path = `/vm/${targetHandle}/ws/terminal/tab?workspaceId=${workspaceId}&tabId=${tabId}&client=browser&token=${encodeURIComponent(jwt)}${chatId ? `&chat=${chatId}` : ""}`;
-    const req = { url: path, method: "GET", headers: { host: "app.matrix-os.com", upgrade: "websocket",
+    const req = { url: path, method: "GET", headers: { host, upgrade: "websocket",
       "x-platform-user-id": owner, "x-platform-verified": "forged", "x-platform-preview-terminal": "forged" } };
     await server.listeners("upgrade")[0](req as IncomingMessage, socket, Buffer.alloc(0));
     if (socket.destroyed) return { denied: true };
@@ -176,6 +176,18 @@ function fixture() {
 }
 
 describe("Clerk preview collaborator terminal flow", () => {
+  it("binds a PR hostname to its own preview runtime on HTTP and WebSocket paths", async () => {
+    const ownHost = `pr-1644.preview.matrix-os.com`;
+    const otherHost = `pr-1645.preview.matrix-os.com`;
+    vi.stubEnv("MATRIX_APP_DOMAIN_HOSTS", `${ownHost},${otherHost}`);
+    const f = fixture();
+    expect((await f.request("/api/terminal/workspaces", undefined, ownHost)).status).toBe(200);
+    expect((await f.request("/api/terminal/workspaces", undefined, otherHost)).status).toBe(404);
+    const { token } = await (await f.request("/api/auth/ws-token", undefined, ownHost)).json();
+    expect((await f.upgrade(token, "tt_00000000000000000000000000000001", handle, undefined, otherHost)).denied).toBe(true);
+    expect(tls.connect).not.toHaveBeenCalled();
+  });
+
   it("shares tabs across owner and two collaborators through HTTP, token, WS input/output and reconnect", async () => {
     const f = fixture();
     vi.stubGlobal("window", { location: { origin: "https://app.matrix-os.com", host: "app.matrix-os.com",
