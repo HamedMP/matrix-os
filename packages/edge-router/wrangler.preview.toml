@@ -1,0 +1,17 @@
+name = "matrix-preview-edge-router"
+main = "src/preview.ts"
+compatibility_date = "2026-06-06"
+workers_dev = false
+
+# Activation is intentionally deferred. The existing staging service shares
+# secrets and a service account across PRs. Add this route only after per-PR
+# backend isolation, proxied wildcard DNS, and deep-subdomain TLS are ready:
+# routes = [
+#   { pattern = "*.preview.matrix-os.com/*", zone_name = "matrix-os.com" }
+# ]
+
+# Set PREVIEW_PLATFORM_ORIGIN to the base matrix-platform-preview run.app URL
+# and PREVIEW_EDGE_MASTER_SECRET with `wrangler secret put` before activation.
+# The trusted provisioning service must derive each PR's platform edge secret
+# using HMAC-SHA256(master, "matrix-preview-edge-v1:pr-<N>"). Never mount the
+# master secret in a PR platform revision.
