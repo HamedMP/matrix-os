@@ -8,6 +8,7 @@ export function startJevResultCleanup(options: {
   schedule?: (callback: () => void, intervalMs: number) => unknown;
   cancel?: (handle: unknown) => void;
   onError?: (error: unknown) => void;
+  abortInFlight?: () => void;
 }): { runNow: () => Promise<void>; close: () => Promise<void> } {
   const schedule = options.schedule ?? ((callback, ms) => setInterval(callback, ms));
   const cancel = options.cancel ?? ((handle) => clearInterval(handle as ReturnType<typeof setInterval>));
@@ -54,7 +55,13 @@ export function startJevResultCleanup(options: {
         };
         timeout = setTimeout(() => {
           console.error("[jev] Result cleanup still in flight after shutdown grace");
-          finish();
+          try {
+            options.abortInFlight?.();
+          } catch (error) {
+            console.error("[jev] Result cleanup abort failed:", error instanceof Error ? error.name : "UnknownError");
+          } finally {
+            finish();
+          }
         }, RESULT_CLEANUP_SHUTDOWN_GRACE_MS);
         timeout.unref?.();
         void active.then(finish, finish);

@@ -1263,6 +1263,7 @@ export async function createGateway(config: GatewayConfig) {
   try {
     jevRuntime = await initializeJevRuntime({
       db: kyselyInstance,
+      databaseUrl: kyselyInstance ? databaseUrl : undefined,
       credentialProvider: fundedCredentialProvider,
       fundedRuntimeEnabled: Boolean(fundedAiRuntimeConfig),
     });

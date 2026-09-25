@@ -75,7 +75,7 @@ describe("Jev evaluation repository", () => {
       .resolves.toEqual({ kind: "conflict" });
   });
 
-  it("bounds the expired-result sweep while expiring the requested key outside its batch", async () => {
+  it("expires the requested key without sweeping unrelated owners or keys", async () => {
     const oldRows = Array.from({ length: 105 }, (_, index) => ({
       owner_id: key.ownerId,
       idempotency_key: `thread:bulk${index.toString().padStart(3, "0")}`,
@@ -92,8 +92,8 @@ describe("Jev evaluation repository", () => {
     await expect(repository.claim(target)).resolves.toEqual({ kind: "result_expired" });
     const afterFirstClaim = await repository.kysely.selectFrom("jev_evaluations")
       .select(["idempotency_key", "status", "result"]).execute();
-    expect(afterFirstClaim.filter((row) => row.status === "completed_pruned")).toHaveLength(101);
-    expect(afterFirstClaim.filter((row) => row.status === "completed")).toHaveLength(4);
+    expect(afterFirstClaim.filter((row) => row.status === "completed_pruned")).toHaveLength(1);
+    expect(afterFirstClaim.filter((row) => row.status === "completed")).toHaveLength(104);
     expect(afterFirstClaim.find((row) => row.idempotency_key === target.idempotencyKey))
       .toMatchObject({ status: "completed_pruned", result: null });
 

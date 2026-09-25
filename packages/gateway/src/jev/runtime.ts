@@ -1,11 +1,14 @@
 import type { Kysely } from "kysely";
 import type { MatrixFundedCredentialProvider } from "../funded-ai-credential-manager.js";
+import { createOwnedJevMaintenance, type JevMaintenancePoolFactory } from "./owned-maintenance.js";
 import { JevEvaluationRepository } from "./repository.js";
 import { startJevResultCleanup } from "./result-cleanup.js";
 import { createJevService } from "./service.js";
 
 export async function initializeJevRuntime(options: {
   db: Kysely<any> | null;
+  databaseUrl?: string;
+  maintenancePoolFactory?: JevMaintenancePoolFactory;
   credentialProvider?: MatrixFundedCredentialProvider | null;
   fundedRuntimeEnabled: boolean;
   now?: () => Date;
@@ -24,10 +27,25 @@ export async function initializeJevRuntime(options: {
   const service = options.fundedRuntimeEnabled && options.credentialProvider
     ? createJevService({ store: repository, credentialProvider: options.credentialProvider })
     : null;
-  const cleanup = startJevResultCleanup({
-    repository,
+  const ownedMaintenance = options.databaseUrl
+    ? createOwnedJevMaintenance({
+      databaseUrl: options.databaseUrl,
+      now: options.now,
+      poolFactory: options.maintenancePoolFactory,
+    })
+    : null;
+  const lifecycle = startJevResultCleanup({
+    repository: ownedMaintenance?.repository ?? repository,
+    abortInFlight: ownedMaintenance?.forceReleaseActive,
     schedule: options.schedule,
     cancel: options.cancel,
   });
+  const cleanup = {
+    runNow: lifecycle.runNow,
+    async close() {
+      await lifecycle.close();
+      await ownedMaintenance?.close();
+    },
+  };
   return { service, cleanup };
 }

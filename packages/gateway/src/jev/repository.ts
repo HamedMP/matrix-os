@@ -184,10 +184,8 @@ export class JevEvaluationRepository implements JevEvaluationStore {
         }
       }
 
-      // Amortize result cleanup without locking the entire expired population.
-      // The requested key was resolved under its own lock even if it lies
-      // outside this batch or another instance holds it during the sweep.
-      await pruneExpiredCompletedResults(trx, retentionCutoff);
+      // Background maintenance handles unrelated expired rows. The requested
+      // key is resolved under its own lock before this transaction commits.
       return outcome;
     });
   }
