@@ -2,7 +2,7 @@ import { CUSTOM_MCP_UNAVAILABLE } from '@matrix-os/contracts';
 import { Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { z } from 'zod/v4';
-import { getContainer, getRunningUserMachineByHandle, type PlatformDB } from './db.js';
+import { getContainer, getRunningUserMachineByHandle, type PlatformDB, type UserMachineRecord } from './db.js';
 import { getActivePreviewMachineByHandle } from './customer-vps-preview.js';
 import { buildPlatformVerificationToken, timingSafeTokenEquals } from './platform-token.js';
 import { HANDLE_PATTERN } from './platform-route-utils.js';
@@ -10,6 +10,43 @@ import { HANDLE_PATTERN } from './platform-route-utils.js';
 const HandleSchema = z.string().regex(HANDLE_PATTERN);
 const BODY_LIMIT = 64 * 1024;
 const OAUTH_CALLBACK_PATH = '/api/mcp-servers/oauth/callback';
+
+function isIsolatedPreviewFixture(machine: UserMachineRecord | undefined, handle: string): boolean {
+  return Boolean(machine?.provisioningClass === 'preview'
+    && machine.status === 'running'
+    && machine.runtimeSlot === handle
+    && /^pr-[1-9][0-9]{0,8}$/.test(handle)
+    && machine.clerkUserId === `chat-share-preview-fixture-${handle}`);
+}
+
+/** Resolve the same synthetic Preview owner admitted by the internal route. */
+export async function resolveCustomMcpUserIdForMachine(
+  db: PlatformDB,
+  accounts: {
+    getUserByClerkId(clerkId: string): Promise<{ id: string } | null>;
+    ensureUser(input: {
+      clerkId: string; handle: string; displayName: string; email: string; containerId: string;
+    }): Promise<{ id: string }>;
+  },
+  clerkUserId: string | undefined,
+  handle: string | undefined,
+): Promise<string | null> {
+  if (!clerkUserId || !handle) return null;
+  const existing = await accounts.getUserByClerkId(clerkUserId);
+  if (existing) return existing.id;
+  const preview = await getActivePreviewMachineByHandle(db, handle);
+  const owner = preview && isIsolatedPreviewFixture(preview, handle) && preview.clerkUserId === clerkUserId
+    ? preview
+    : (await getRunningUserMachineByHandle(db, handle)) ?? (await getContainer(db, handle));
+  if (!owner || owner.clerkUserId !== clerkUserId) return null;
+  return (await accounts.ensureUser({
+    clerkId: clerkUserId,
+    handle,
+    displayName: handle,
+    email: `${handle}@matrix-os.local`,
+    containerId: `platform:${clerkUserId}`,
+  })).id;
+}
 
 type McpVariables = {
   platformUserId: string;
@@ -72,11 +109,7 @@ export function registerCustomMcpRoutes(app: Hono<any>, options: {
     const preview = await getActivePreviewMachineByHandle(options.db, handle);
     // Shared preview Terminals can obtain that bearer. The isolated platform
     // preview fixture is the only synthetic account allowed through.
-    const isolatedFixture = preview
-      && preview.status === 'running'
-      && preview.runtimeSlot === handle
-      && /^pr-[1-9][0-9]{0,8}$/.test(handle)
-      && preview.clerkUserId === `chat-share-preview-fixture-${handle}`;
+    const isolatedFixture = isIsolatedPreviewFixture(preview, handle);
     if (preview && !isolatedFixture) return c.json({ error: 'Forbidden' }, 403);
     const record = preview ?? (await getRunningUserMachineByHandle(options.db, handle))
       ?? (await getContainer(options.db, handle));
