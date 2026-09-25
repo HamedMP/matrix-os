@@ -20,6 +20,7 @@ describe("Jev recipe production account lookup", () => {
     const fetcher = vi.fn(async (_url: string, _init: RequestInit) => Response.json([
       { id: "conn_mine", service: "gmail", account_label: "My Gmail", account_email: "me@example.test", status: "active" },
       { id: "conn_calendar", service: "calendar", account_label: "Calendar", account_email: null, status: "active" },
+      { id: "granola_pending", service: "granola", account_label: "Granola", account_email: null, status: "auth_required" },
     ]));
     const lookup = createJevGmailAccountLookup({ db: null,
       internalBaseUrl: "https://platform.internal/internal/containers/owner-handle/integrations",
@@ -39,7 +40,7 @@ describe("Jev recipe production account lookup", () => {
       .update("clerk_own").digest("hex"));
   });
 
-  it.each(["malformed", "oversized", "streamed-overflow", "timeout", "unauthorized", "other-owner"] as const)(
+  it.each(["malformed", "oversized", "streamed-overflow", "timeout", "unauthorized", "other-owner", "invalid-gmail"] as const)(
     "fails closed on %s customer inventory", async (caseName) => {
       const fetcher = vi.fn(async (_url: string, init: RequestInit) => {
         if (caseName === "timeout") throw new DOMException("Timed out", "TimeoutError");
@@ -53,6 +54,8 @@ describe("Jev recipe production account lookup", () => {
             controller.close();
           },
         }));
+        if (caseName === "invalid-gmail") return Response.json([{ id: "conn_mine", service: "gmail",
+          account_label: "My Gmail", account_email: "me@example.test", status: "auth_required" }]);
         const actor = new Headers(init.headers).get("x-platform-user-id");
         return Response.json(actor === "clerk_other" ? [] : [{ id: "conn_mine", service: "gmail",
           account_label: "My Gmail", account_email: "me@example.test", status: "active" }]);

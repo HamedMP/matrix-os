@@ -7,7 +7,7 @@ export function jevAgentInstructions(accountEmail: string): string {
   if (email.length > 256 || !/^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(email)) {
     throw new Error("A connected Gmail email address is required");
   }
-  return `This Agent is bound to the selected Gmail account ${JSON.stringify(email)}, but inbox preview is not available yet. Do not call Gmail or Jev tools. Tell the user that the bounded, read-only inbox workflow is pending. Creating this Agent does not run triage or modify Gmail.`;
+  return `The selected Gmail account displayed ${JSON.stringify(email)} during setup; the server-owned saved account binding is authoritative. Inbox preview is not available yet. Do not call Gmail or Jev tools. Tell the user that the bounded, read-only inbox workflow is pending. Creating this Agent does not run triage or modify Gmail.`;
 }
 
 export function jevAgentRecipe(accountLabel: string): ChatAgentRecipe {

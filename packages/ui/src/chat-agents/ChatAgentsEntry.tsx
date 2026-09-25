@@ -1,7 +1,7 @@
 import { isChatAgentDriver } from "@matrix-os/contracts";
 import type { StartAgentChat } from "./client.js";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { ChatAgentRecipeSchema, type ChatAgent, type ChatAgentRecipeCatalog, type CanonicalProviderCatalog, type CanonicalChatModelSelection } from "@matrix-os/contracts";
+import { ChatAgentRecipeSchema, JevInboxTriageBindingSchema, type ChatAgent, type ChatAgentRecipeCatalog, type CanonicalProviderCatalog, type CanonicalChatModelSelection } from "@matrix-os/contracts";
 import { useChatAgentsNavigation } from "./ChatAgentsNavigation.js";
 import { deriveCanonicalProviderChoices } from "../canonical-provider-choice.js";
 import { accountForNewIntegration } from "./recipe-integrations.js";
@@ -169,10 +169,15 @@ export function ChatAgentsPanel({ client, view = "library", onClose, onSetup, on
       });
       const readback = await client.list();
       const verified = readback.agents.find((agent) => agent.id === saved.id);
+      const savedBinding = JevInboxTriageBindingSchema.safeParse(saved.recipe?.jevInboxTriage);
+      const binding = JevInboxTriageBindingSchema.safeParse(verified?.recipe?.jevInboxTriage);
       if (!verified || verified.recipe?.integrations.some((integration) =>
         integration.service === "gmail" && integration.accountLabel === accountLabel) !== true
-        || verified.recipe.jevInboxTriage?.accountLabel !== accountLabel
-        || verified.recipe.jevInboxTriage.expectedEmail !== matchingAccounts[0].account_email) {
+        || verified.revision !== saved.revision || !savedBinding.success || !binding.success
+        || savedBinding.data.accountLabel !== accountLabel || binding.data.accountLabel !== accountLabel
+        || binding.data.ownerId !== savedBinding.data.ownerId
+        || binding.data.connectionId !== savedBinding.data.connectionId
+        || binding.data.expectedEmail !== savedBinding.data.expectedEmail) {
         setJevError("Agent creation could not be verified in your library. Please check Agents before trying again.");
         return;
       }

@@ -8,13 +8,14 @@ import { resolveIntegrationConnection } from "../integrations/connection-selecti
 
 const PLATFORM_USER_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const MAX_INVENTORY_BYTES = 64 * 1024;
-const PlatformInventorySchema = z.array(z.object({
+const PlatformInventorySchema = z.array(z.unknown()).max(256);
+const PlatformGmailAccountSchema = z.object({
   id: z.string().min(1).max(160),
-  service: z.string().min(1).max(80),
+  service: z.literal("gmail"),
   account_label: z.string().min(1).max(100),
   account_email: z.string().max(320).nullable(),
   status: z.enum(["active", "revoked", "expired"]),
-})).max(256);
+});
 
 export interface GmailAccountRow {
   id: string;
@@ -83,7 +84,13 @@ export async function listOwnerGmailAccountsViaPlatform(options: {
     }
   } finally { reader.releaseLock(); }
   const value: unknown = JSON.parse(Buffer.concat(chunks.map((chunk) => Buffer.from(chunk))).toString("utf8"));
-  return PlatformInventorySchema.parse(value).filter((row) => row.service === "gmail" && row.status === "active");
+  // The inventory also contains unrelated MCP presets with different status
+  // vocabularies. Bound the whole response, then validate only Gmail rows.
+  return PlatformInventorySchema.parse(value)
+    .filter((row): row is Record<string, unknown> => row !== null && typeof row === "object"
+      && !Array.isArray(row) && (row as Record<string, unknown>).service === "gmail")
+    .map((row) => PlatformGmailAccountSchema.parse(row))
+    .filter((row) => row.status === "active");
 }
 
 export function createJevGmailAccountLookup(options: {
