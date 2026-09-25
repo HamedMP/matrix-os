@@ -42,15 +42,14 @@ has_hermes_chat_ancestor() {
   done
   return 1
 }
-scoped_token="${MATRIX_AGENT_INTEGRATIONS_TOKEN:-}"
-if [ -z "$scoped_token" ]; then
-  scoped_token="$(read_ancestor_capability || true)"
+scoped_token_present=0
+if [ "${MATRIX_AGENT_INTEGRATIONS_TOKEN+x}" = x ]; then
+  scoped_token_present=1
+  scoped_token="$MATRIX_AGENT_INTEGRATIONS_TOKEN"
+elif scoped_token="$(read_ancestor_capability)"; then
+  scoped_token_present=1
 fi
-if has_hermes_chat_ancestor && [ -z "$scoped_token" ]; then
-  echo "matrix-integrations: run capability is unavailable" >&2
-  exit 3
-fi
-if [ -n "$scoped_token" ]; then
+if [ "$scoped_token_present" -eq 1 ]; then
   if [[ ! "$scoped_token" =~ ^[a-f0-9]{64}$ ]] || [ ! -x "$NODE_BIN" ] || [ ! -f "$COMMAND_PATH" ]; then
     echo "matrix-integrations: run capability or runtime is invalid" >&2
     exit 3
@@ -60,6 +59,10 @@ if [ -n "$scoped_token" ]; then
     GATEWAY_URL="http://127.0.0.1:4000" \
     MATRIX_AGENT_INTEGRATIONS_TOKEN="$scoped_token" \
     "$NODE_BIN" "$COMMAND_PATH" "$@"
+fi
+if has_hermes_chat_ancestor; then
+  echo "matrix-integrations: run capability is unavailable" >&2
+  exit 3
 fi
 
 if [ ! -r "$HOST_ENV_FILE" ]; then

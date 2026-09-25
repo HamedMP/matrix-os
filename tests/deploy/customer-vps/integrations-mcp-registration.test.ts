@@ -1,5 +1,8 @@
-import { access, readFile } from "node:fs/promises";
+import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { constants } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const registrationPath = "distro/customer-vps/host-bin/matrix-register-integrations-mcp";
@@ -30,6 +33,52 @@ describe("customer VPS integrations MCP wiring", () => {
     expect(terminal).toContain("packages/integrations-mcp/dist/command-cli.js");
     expect(terminal).not.toContain("PIPEDREAM_");
     await expect(access(terminalPath, constants.X_OK)).resolves.toBeUndefined();
+  });
+
+  it("keeps an absent capability on the host path but rejects any supplied malformed capability", async () => {
+    const fixtureDir = await mkdtemp(join(tmpdir(), "matrix-integrations-wrapper-"));
+    try {
+      const hostEnv = join(fixtureDir, "host.env");
+      const nodeBin = join(fixtureDir, "fake-node");
+      const commandPath = join(fixtureDir, "command-cli.js");
+      await writeFile(hostEnv, "MATRIX_AUTH_TOKEN=fixture-host-token\nMATRIX_CLERK_USER_ID=fixture_owner\n");
+      await writeFile(nodeBin, '#!/bin/sh\nprintf "scoped=%s host=%s owner=%s\\n" "${MATRIX_AGENT_INTEGRATIONS_TOKEN-UNSET}" "${MATRIX_AUTH_TOKEN-UNSET}" "${MATRIX_CLERK_USER_ID-UNSET}"\n', { mode: 0o755 });
+      await writeFile(commandPath, "// fixture only\n");
+      const terminal = (await readFile(terminalPath, "utf8"))
+        .replace('HOST_ENV_FILE="/opt/matrix/env/host.env"', `HOST_ENV_FILE="${hostEnv}"`)
+        .replace('NODE_BIN="/opt/matrix/runtime/node/bin/node"', `NODE_BIN="${nodeBin}"`)
+        .replace('COMMAND_PATH="/opt/matrix/app/packages/integrations-mcp/dist/command-cli.js"', `COMMAND_PATH="${commandPath}"`);
+      const run = (scopedToken?: string) => spawnSync("bash", ["-c", terminal, "matrix-integrations", "inventory"], {
+        env: scopedToken === undefined
+          ? { PATH: process.env.PATH ?? "/usr/bin:/bin" }
+          : { PATH: process.env.PATH ?? "/usr/bin:/bin", MATRIX_AGENT_INTEGRATIONS_TOKEN: scopedToken },
+        encoding: "utf8",
+        timeout: 5_000,
+      });
+
+      const absent = run();
+      expect(absent.stderr).not.toContain("run capability or runtime is invalid");
+      if (absent.status === 0) {
+        expect(absent.stdout).toContain("scoped=UNSET host=fixture-host-token owner=fixture_owner");
+      } else {
+        expect(absent.status).toBe(3);
+        expect(absent.stderr).toMatch(/Matrix identity is (invalid|unavailable)/);
+      }
+
+      for (const scopedToken of ["", " ", "not-a-scoped-token"]) {
+        const supplied = run(scopedToken);
+        expect(supplied.status).toBe(3);
+        expect(supplied.stderr).toContain("run capability or runtime is invalid");
+        expect(supplied.stdout).toBe("");
+      }
+
+      const scopedToken = "a".repeat(64);
+      const valid = run(scopedToken);
+      expect(valid.status, valid.stderr).toBe(0);
+      expect(valid.stdout).toContain(`scoped=${scopedToken} host=UNSET owner=UNSET`);
+    } finally {
+      await rm(fixtureDir, { recursive: true, force: true });
+    }
   });
 
   it("idempotently registers the same local MCP server with Codex, Claude, Hermes, and OpenClaw", async () => {
