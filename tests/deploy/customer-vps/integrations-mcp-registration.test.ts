@@ -57,13 +57,8 @@ describe("customer VPS integrations MCP wiring", () => {
       });
 
       const absent = run();
-      expect(absent.stderr).not.toContain("run capability or runtime is invalid");
-      if (absent.status === 0) {
-        expect(absent.stdout).toContain("scoped=UNSET host=fixture-host-token owner=fixture_owner");
-      } else {
-        expect(absent.status).toBe(3);
-        expect(absent.stderr).toMatch(/Matrix identity is (invalid|unavailable)/);
-      }
+      expect(absent.status, absent.stderr).toBe(0);
+      expect(absent.stdout).toContain("scoped=UNSET host=fixture-host-token owner=fixture_owner");
 
       for (const scopedToken of ["", " ", "not-a-scoped-token"]) {
         const supplied = run(scopedToken);
@@ -76,6 +71,21 @@ describe("customer VPS integrations MCP wiring", () => {
       const valid = run(scopedToken);
       expect(valid.status, valid.stderr).toBe(0);
       expect(valid.stdout).toContain(`scoped=${scopedToken} host=UNSET owner=UNSET`);
+
+      for (const hostToken of ["a".repeat(16), "a".repeat(512)]) {
+        await writeFile(hostEnv, `MATRIX_AUTH_TOKEN=${hostToken}\nMATRIX_CLERK_USER_ID=fixture_owner\n`);
+        const accepted = run();
+        expect(accepted.status, accepted.stderr).toBe(0);
+        expect(accepted.stdout).toContain(`scoped=UNSET host=${hostToken} owner=fixture_owner`);
+      }
+
+      for (const hostToken of ["a".repeat(15), "a".repeat(513), "a".repeat(16) + "!"]) {
+        await writeFile(hostEnv, `MATRIX_AUTH_TOKEN=${hostToken}\nMATRIX_CLERK_USER_ID=fixture_owner\n`);
+        const rejected = run();
+        expect(rejected.status).toBe(3);
+        expect(rejected.stderr).toContain("Matrix identity is invalid");
+        expect(rejected.stdout).toBe("");
+      }
     } finally {
       await rm(fixtureDir, { recursive: true, force: true });
     }

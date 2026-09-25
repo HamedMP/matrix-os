@@ -71,7 +71,8 @@ if [ ! -r "$HOST_ENV_FILE" ]; then
 fi
 MATRIX_AUTH_TOKEN_VALUE="$(read_host_value MATRIX_AUTH_TOKEN)" || exit 3
 MATRIX_CLERK_USER_ID_VALUE="$(read_host_value MATRIX_CLERK_USER_ID)" || exit 3
-if [[ ! "$MATRIX_AUTH_TOKEN_VALUE" =~ ^[A-Za-z0-9._~+/=-]{16,512}$ ]] || \
+if [ "${#MATRIX_AUTH_TOKEN_VALUE}" -lt 16 ] || [ "${#MATRIX_AUTH_TOKEN_VALUE}" -gt 512 ] || \
+   [[ ! "$MATRIX_AUTH_TOKEN_VALUE" =~ ^[A-Za-z0-9._~+/=-]+$ ]] || \
    [[ ! "$MATRIX_CLERK_USER_ID_VALUE" =~ ^[A-Za-z0-9_-]{1,128}$ ]]; then
   echo "matrix-integrations: Matrix identity is invalid" >&2
   exit 3
