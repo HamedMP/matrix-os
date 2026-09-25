@@ -395,6 +395,7 @@ export class CustomMcpBroker {
     userId: string;
     actorId: string;
     runId: string;
+    generation: number;
     nativeRequestId: string;
     serverId: string;
     toolName: string;
@@ -414,6 +415,7 @@ export class CustomMcpBroker {
     const expiresAt = new Date(Date.now() + 10 * 60_000);
     const reserved = await this.options.db.reserveCustomMcpToolApproval({
       userId: input.userId, actorId: input.actorId, runId: input.runId,
+      generation: input.generation,
       nativeRequestId: input.nativeRequestId, serverId: input.serverId,
       serverRevision: row.revision, toolName: input.toolName, argsDigest, expiresAt,
     });

@@ -388,6 +388,7 @@ export function createPlatformDb(opts: string | { dialect: any; now?: () => Date
           user_id     UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
           actor_id    TEXT NOT NULL,
           run_id      TEXT NOT NULL,
+          generation  INTEGER NOT NULL DEFAULT 1 CHECK (generation >= 1),
           status      TEXT NOT NULL CHECK (status IN ('active', 'revoked')),
           expires_at  TIMESTAMPTZ NOT NULL,
           created_at  TIMESTAMPTZ NOT NULL,
@@ -402,6 +403,7 @@ export function createPlatformDb(opts: string | { dialect: any; now?: () => Date
           actor_id           TEXT NOT NULL,
           run_id             TEXT NOT NULL,
           lease_id           UUID NOT NULL REFERENCES custom_mcp_run_leases(id) ON DELETE CASCADE,
+          lease_generation   INTEGER NOT NULL DEFAULT 1 CHECK (lease_generation >= 1),
           native_request_id  TEXT NOT NULL,
           server_id          UUID NOT NULL REFERENCES custom_mcp_servers(id) ON DELETE CASCADE,
           server_revision    INTEGER NOT NULL CHECK (server_revision >= 1),
@@ -416,6 +418,10 @@ export function createPlatformDb(opts: string | { dialect: any; now?: () => Date
           UNIQUE(lease_id, native_request_id)
         )
       `.execute(kysely);
+      // A partially initialized B3 test database may have the earlier table
+      // shape. These idempotent additions make re-running migrate safe.
+      await sql`ALTER TABLE custom_mcp_run_leases ADD COLUMN IF NOT EXISTS generation INTEGER NOT NULL DEFAULT 1 CHECK (generation >= 1)`.execute(kysely);
+      await sql`ALTER TABLE custom_mcp_tool_approvals ADD COLUMN IF NOT EXISTS lease_generation INTEGER NOT NULL DEFAULT 1 CHECK (lease_generation >= 1)`.execute(kysely);
       // Existing rows predate this marker. Treat them as already discovered so
       // a later sync cannot silently undo a user's disabled server policy.
       await sql`

@@ -19,7 +19,7 @@ function fixture(prepareKind: "pending" | "allow" = "pending") {
     ? { receipt: "a".repeat(64) } : {});
   const client = { prepare, decide } as unknown as CustomMcpApprovalClient;
   const control = createClaudeCustomMcpApprovalControl({
-    runId: "run_owner", client, emit: event => events.push(event),
+    runId: "run_owner", generation: 1, client, emit: event => events.push(event),
     onError: error => { throw error; },
   });
   const respond = vi.fn(async (value: unknown) => { writes.push(value); });
@@ -32,7 +32,7 @@ describe("supervised Claude Custom MCP permission callback", () => {
     expect(state.control.onToolPermission({ nativeRequestId: "native_1", toolName, input }, state.respond)).toBe(true);
     await flush();
     expect(state.prepare).toHaveBeenCalledWith("run_owner", {
-      nativeRequestId: "native_1", serverId, tool: "read", arguments: args,
+      generation: 1, nativeRequestId: "native_1", serverId, tool: "read", arguments: args,
     });
     expect(state.events[0]).toMatchObject({ type: "approval.requested", approvalId,
       safeDescription: expect.stringContaining('"path":"/public/fixture"') });
@@ -86,6 +86,11 @@ describe("supervised Claude Custom MCP permission callback", () => {
     pending.control.close();
     await expect(pending.control.submit(approvalId, "approve")).rejects.toThrow();
     expect(pending.writes).toHaveLength(3);
+    expect(pending.events.at(-1)).toMatchObject({
+      type: "approval.resolved", approvalId, decision: "cancel",
+    });
+    pending.control.close();
+    expect(pending.events.filter(event => event.type === "approval.resolved" && event.approvalId === approvalId)).toHaveLength(1);
   });
 
   it("bounds concurrent prepares and cancels a native request before Platform replies", async () => {
@@ -95,7 +100,7 @@ describe("supervised Claude Custom MCP permission callback", () => {
     const decide = vi.fn(async () => ({}));
     const client = { prepare: vi.fn(() => new Promise(resolve => { releases.push(resolve); })), decide } as unknown as CustomMcpApprovalClient;
     const control = createClaudeCustomMcpApprovalControl({
-      runId: "run_owner", client, emit: event => events.push(event),
+      runId: "run_owner", generation: 1, client, emit: event => events.push(event),
       onError: error => { throw error; },
     });
     const respond = async (value: unknown) => { writes.push(value); };

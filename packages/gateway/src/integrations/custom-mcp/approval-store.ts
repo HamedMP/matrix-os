@@ -7,6 +7,7 @@ export interface CustomMcpRunLeasesTable {
   user_id: string;
   actor_id: string;
   run_id: string;
+  generation: number;
   status: "active" | "revoked";
   expires_at: Date;
   created_at: Date;
@@ -19,6 +20,7 @@ export interface CustomMcpToolApprovalsTable {
   actor_id: string;
   run_id: string;
   lease_id: string;
+  lease_generation: number;
   native_request_id: string;
   server_id: string;
   server_revision: number;
@@ -35,9 +37,9 @@ export interface CustomMcpToolApprovalsTable {
 export interface CustomMcpApprovalStore {
   registerCustomMcpRunLease(input: {
     userId: string; actorId: string; runId: string; expiresAt: Date;
-  }): Promise<{ id: string } | null>;
+  }): Promise<{ id: string; generation: number } | null>;
   reserveCustomMcpToolApproval(input: {
-    userId: string; actorId: string; runId: string; nativeRequestId: string;
+    userId: string; actorId: string; runId: string; generation: number; nativeRequestId: string;
     serverId: string; serverRevision: number; toolName: string; argsDigest: string;
     expiresAt: Date;
   }): Promise<{ approvalId: string; expiresAt: Date } | null>;
@@ -54,6 +56,9 @@ export interface CustomMcpApprovalStore {
   revokeCustomMcpRunLease(input: {
     userId: string; actorId: string; runId: string;
   }): Promise<boolean>;
+  clearCustomMcpRunApprovals(input: {
+    userId: string; actorId: string; runId: string; generation: number;
+  }): Promise<{ generation: number; invalidated: number } | null>;
   sweepCustomMcpApprovals(now: Date): Promise<number>;
 }
 
@@ -100,7 +105,7 @@ export function createCustomMcpApprovalStore(
           .where("run_id", "=", input.runId).forUpdate().executeTakeFirst();
         if (existing) return existing.status === "active"
           && existing.actor_id === input.actorId && existing.expires_at > current
-          ? { id: existing.id } : null;
+          ? { id: existing.id, generation: existing.generation } : null;
         const count = await trx.selectFrom("custom_mcp_run_leases")
           .select((eb) => eb.fn.countAll<number>().as("count"))
           .where("user_id", "=", input.userId)
@@ -111,15 +116,17 @@ export function createCustomMcpApprovalStore(
         const id = randomUUID();
         await trx.insertInto("custom_mcp_run_leases").values({
           id, user_id: input.userId, actor_id: input.actorId, run_id: input.runId,
-          status: "active", expires_at: new Date(Math.min(input.expiresAt.getTime(), current.getTime() + MAX_RUN_TTL_MS)),
+          status: "active", generation: 1,
+          expires_at: new Date(Math.min(input.expiresAt.getTime(), current.getTime() + MAX_RUN_TTL_MS)),
           created_at: current, updated_at: current,
         }).onConflict((conflict) => conflict.columns(["user_id", "run_id"]).doNothing()).execute();
-        return { id };
+        return { id, generation: 1 };
       });
     },
 
     async reserveCustomMcpToolApproval(input) {
-      if (!validIdentity(input.actorId, input.runId) || !input.nativeRequestId
+      if (!validIdentity(input.actorId, input.runId) || !Number.isSafeInteger(input.generation)
+        || input.generation < 1 || !input.nativeRequestId
         || input.nativeRequestId.length > 256 || !HEX_64.test(input.argsDigest)) return null;
       return db.transaction().execute(async (trx) => {
         const lease = await trx.selectFrom("custom_mcp_run_leases")
@@ -127,14 +134,16 @@ export function createCustomMcpApprovalStore(
           .where("run_id", "=", input.runId).forUpdate().executeTakeFirst();
         const current = now();
         if (!lease || lease.status !== "active" || lease.actor_id !== input.actorId
+          || lease.generation !== input.generation
           || lease.expires_at <= current || input.expiresAt <= current) return null;
         const server = await trx.selectFrom("custom_mcp_servers")
           .selectAll().where("id", "=", input.serverId)
           .where("user_id", "=", input.userId).forUpdate().executeTakeFirst();
         if (!isCurrentServerPolicy(server, input)) return null;
+        const nativeRequestKey = `${input.generation}:${input.nativeRequestId}`;
         const existing = await trx.selectFrom("custom_mcp_tool_approvals")
           .selectAll().where("lease_id", "=", lease.id)
-          .where("native_request_id", "=", input.nativeRequestId).executeTakeFirst();
+          .where("native_request_id", "=", nativeRequestKey).executeTakeFirst();
         if (existing) return existing.status === "pending" && existing.expires_at > now()
           && lease.expires_at > now()
           && existing.server_id === input.serverId
@@ -154,7 +163,8 @@ export function createCustomMcpApprovalStore(
         const id = randomUUID();
         await trx.insertInto("custom_mcp_tool_approvals").values({
           id, user_id: input.userId, actor_id: input.actorId, run_id: input.runId,
-          lease_id: lease.id, native_request_id: input.nativeRequestId,
+          lease_id: lease.id, lease_generation: input.generation,
+          native_request_id: nativeRequestKey,
           server_id: input.serverId, server_revision: input.serverRevision,
           tool_name: input.toolName, args_digest: input.argsDigest,
           status: "pending", receipt_hash: null, expires_at: expiresAt,
@@ -176,7 +186,8 @@ export function createCustomMcpApprovalStore(
         const approval = await trx.selectFrom("custom_mcp_tool_approvals")
           .selectAll().where("id", "=", input.approvalId)
           .where("user_id", "=", input.userId).forUpdate().executeTakeFirst();
-        if (!approval || approval.lease_id !== lease.id || approval.actor_id !== input.actorId
+        if (!approval || approval.lease_id !== lease.id || approval.lease_generation !== lease.generation
+          || approval.actor_id !== input.actorId
           || approval.run_id !== input.runId) return null;
         if (input.decision === "cancel") {
           const cancelTime = now();
@@ -228,7 +239,8 @@ export function createCustomMcpApprovalStore(
           .selectAll().where("id", "=", candidate.id).forUpdate().executeTakeFirst();
         if (!approval || approval.status !== "approved" || approval.expires_at <= current
           || approval.actor_id !== input.actorId || approval.run_id !== input.runId
-          || approval.lease_id !== lease.id || approval.server_id !== input.serverId
+          || approval.lease_id !== lease.id || approval.lease_generation !== lease.generation
+          || approval.server_id !== input.serverId
           || approval.server_revision !== input.serverRevision
           || approval.tool_name !== input.toolName || approval.args_digest !== input.argsDigest) return false;
         const server = await trx.selectFrom("custom_mcp_servers")
@@ -262,6 +274,30 @@ export function createCustomMcpApprovalStore(
             .where("status", "in", ["pending", "approved"]).execute();
         }
         return true;
+      });
+    },
+
+    async clearCustomMcpRunApprovals(input) {
+      if (!validIdentity(input.actorId, input.runId) || !Number.isSafeInteger(input.generation)
+        || input.generation < 1 || input.generation >= 2_147_483_647) return null;
+      return db.transaction().execute(async (trx) => {
+        const lease = await trx.selectFrom("custom_mcp_run_leases")
+          .selectAll().where("user_id", "=", input.userId)
+          .where("run_id", "=", input.runId).forUpdate().executeTakeFirst();
+        const current = now();
+        if (!lease || lease.status !== "active" || lease.actor_id !== input.actorId
+          || lease.generation !== input.generation || lease.expires_at <= current) return null;
+        const invalidated = await trx.updateTable("custom_mcp_tool_approvals")
+          .set({ status: "revoked", receipt_hash: null })
+          .where("lease_id", "=", lease.id)
+          .where("lease_generation", "=", input.generation)
+          .where("status", "in", ["pending", "approved"])
+          .returning("id").execute();
+        const advanced = await trx.updateTable("custom_mcp_run_leases")
+          .set({ generation: input.generation + 1, updated_at: current })
+          .where("id", "=", lease.id).where("status", "=", "active")
+          .where("generation", "=", input.generation).returning("generation").executeTakeFirst();
+        return advanced ? { generation: advanced.generation, invalidated: invalidated.length } : null;
       });
     },
 

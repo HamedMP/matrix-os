@@ -238,6 +238,7 @@ export function createClaudeChatProviderAdapter(options: {
     inputValue: CanonicalProviderRunInput<ClaudeChatState>,
     resumeState?: ClaudeChatState,
     blockIds = { text: 0, reasoning: 0 },
+    approvalReady = true,
   ): AsyncGenerator<CanonicalProviderRunEvent> {
     const input = parseCanonicalProviderRunInput(inputValue);
     const cwd = input.executionRoot ?? options.homePath;
@@ -248,10 +249,11 @@ export function createClaudeChatProviderAdapter(options: {
       runId: input.runId,
       // Review is read-only even if its saved permission choice says full access.
       // Unknown future interaction modes receive discovery only.
-      scope: input.interactionMode === "default" && selectedPermission !== "plan" ? "call" : "discovery",
+      scope: approvalReady && input.interactionMode === "default" && selectedPermission !== "plan" ? "call" : "discovery",
     }) ?? null;
-    let approvalClient = capability && selectedPermission === "default" && input.interactionMode === "default"
+    let approvalClient = approvalReady && capability && selectedPermission === "default" && input.interactionMode === "default"
       ? options.customMcpApprovalClient : undefined;
+    let registeredGeneration: number | undefined;
     let launch: ReturnType<typeof buildAgentLaunch>;
     let credentialLaunch: KernelCredentialLaunch;
     try {
@@ -289,9 +291,12 @@ export function createClaudeChatProviderAdapter(options: {
           };
       if (approvalClient) {
         try {
-          if (!await approvalClient.registerRun(input.runId)) {
+          const registered = await approvalClient.registerRun(input.runId);
+          if (!registered || !Number.isSafeInteger(registered.generation) || registered.generation < 1) {
             console.warn("[chat-claude] Custom MCP approval registration unavailable");
             approvalClient = undefined;
+          } else {
+            registeredGeneration = registered.generation;
           }
         } catch (error: unknown) {
           console.warn("[chat-claude] Custom MCP approval registration failed", error instanceof Error ? error.name : "UnknownError");
@@ -325,31 +330,45 @@ export function createClaudeChatProviderAdapter(options: {
     let resultSubtype: "success" | "error" | "other" | undefined;
     let emittedState = resumeState;
     let steerPrompt: string | undefined;
+    let cancellationRequested = false;
     const processController = new AbortController();
     const processSignal = AbortSignal.any([input.signal, processController.signal]);
     let finishInput: (() => void) | undefined;
     let writeControl: ((frame: string) => Promise<void>) | undefined;
-    const approvalControl = approvalClient ? createClaudeCustomMcpApprovalControl({
-      runId: input.runId, client: approvalClient,
+    const approvalControl = approvalClient && registeredGeneration ? createClaudeCustomMcpApprovalControl({
+      runId: input.runId, generation: registeredGeneration, client: approvalClient,
       emit: event => queue.push(event),
       onError: error => console.warn("[chat-claude] Custom MCP approval failed", error instanceof Error ? error.name : "UnknownError"),
     }) : undefined;
     let approvalRevoked = false;
-    const revokeApproval = () => {
+    let finalRevokePromise: Promise<void> | undefined;
+    let clearApprovalPromise: Promise<boolean> | undefined;
+    const revokeApproval = (reason: "final" | "steer" = "final") => {
       capability?.revoke();
       approvalControl?.close();
+      if (reason === "steer") {
+        if (approvalClient && registeredGeneration && !clearApprovalPromise) {
+          clearApprovalPromise = approvalClient.clearRunApprovals(input.runId, registeredGeneration)
+            .then(result => result.generation === registeredGeneration! + 1)
+            .catch(error => {
+              console.warn("[chat-claude] Custom MCP steer clear failed", error instanceof Error ? error.name : "UnknownError");
+              return false;
+            });
+        }
+        return;
+      }
       if (approvalClient && !approvalRevoked) {
         approvalRevoked = true;
-        void approvalClient.revokeRun(input.runId).catch(error => {
-        console.warn("[chat-claude] Custom MCP Run revoke failed", error instanceof Error ? error.name : "UnknownError");
-      });
+        finalRevokePromise = approvalClient.revokeRun(input.runId).then(() => undefined).catch(error => {
+          console.warn("[chat-claude] Custom MCP Run revoke failed", error instanceof Error ? error.name : "UnknownError");
+        });
       }
     };
     const inputControl = createClaudeInputController({
       write: frame => writeControl ? writeControl(frame) : Promise.reject(new Error("Input transport unavailable")),
       emit: event => queue.push(event),
       onError: () => processController.abort(),
-      onToolPermission: approvalControl?.onToolPermission ?? (capability && selectedPermission === "default"
+      onToolPermission: approvalControl?.onToolPermission ?? (approvalReady && capability && selectedPermission === "default"
         && input.interactionMode === "default" ? (request, respond) => {
           if (request.toolName !== CALL_TOOL) return false;
           // The broker remains the policy authority. An unavailable approval
@@ -368,13 +387,13 @@ export function createClaudeChatProviderAdapter(options: {
       ownerId: input.owner.ownerId,
       ownerType: input.owner.type,
       chatId: input.chatId,
-      abort: () => { revokeApproval(); processController.abort(); },
+      abort: () => { cancellationRequested = true; revokeApproval(); processController.abort(); },
       submitInput: inputControl.submit,
       submitApproval: approvalControl?.submit,
       steer(prompt: string) {
         if (!emittedState) throw new Error("Claude Run state unavailable");
         steerPrompt = prompt;
-        revokeApproval();
+        revokeApproval("steer");
         processController.abort();
       },
     };
@@ -612,21 +631,39 @@ export function createClaudeChatProviderAdapter(options: {
         : { type: "run.completed", outcome: "completed" }));
       queue.finish();
     }).catch(async (error: unknown) => {
-      releaseActiveRun();
       flushPendingDelta();
       if (steerPrompt && emittedState && !input.signal.aborted) {
         capability?.revoke();
+        const cleared = await (clearApprovalPromise ?? Promise.resolve(true));
+        if (cancellationRequested || input.signal.aborted || activeRuns.get(input.runId) !== activeRun) {
+          releaseActiveRun();
+          queue.push(CanonicalProviderRunEventSchema.parse({ type: "run.completed", outcome: "aborted" }));
+          queue.finish();
+          return;
+        }
+        if (!cleared && approvalClient) {
+          revokeApproval();
+          await finalRevokePromise;
+          if (cancellationRequested || input.signal.aborted || activeRuns.get(input.runId) !== activeRun) {
+            releaseActiveRun();
+            queue.push(CanonicalProviderRunEventSchema.parse({ type: "run.completed", outcome: "aborted" }));
+            queue.finish();
+            return;
+          }
+        }
+        releaseActiveRun();
         for await (const event of execute({
           ...input,
           prompt: steerPrompt,
           parts: [{ type: "text", text: steerPrompt }],
           resumeState: emittedState,
-        }, emittedState, blockIds)) {
+        }, emittedState, blockIds, approvalReady && cleared)) {
           queue.push(event);
         }
         queue.finish();
         return;
       }
+      releaseActiveRun();
       if (sawResult && !resultFailed) {
         console.warn("[chat-claude] Claude CLI exited non-zero after a successful result", {
           cliFailureKind: error instanceof CanonicalCliError ? error.kind : "unknown",
@@ -665,13 +702,24 @@ export function createClaudeChatProviderAdapter(options: {
         }),
       }));
       queue.finish();
-    }).finally(() => { revokeApproval(); capability?.revoke(); });
+    }).finally(() => { if (steerPrompt && emittedState && !input.signal.aborted && !cancellationRequested) {
+      capability?.revoke(); approvalControl?.close();
+    } else revokeApproval(); });
 
+    let streamCompleted = false;
     try {
       yield* queue.values();
+      streamCompleted = true;
     } finally {
       processController.abort();
-      revokeApproval();
+      if (!streamCompleted) {
+        cancellationRequested = true;
+        releaseActiveRun();
+        revokeApproval();
+        await finalRevokePromise;
+      } else if (steerPrompt && emittedState && !input.signal.aborted && !cancellationRequested) {
+        capability?.revoke(); approvalControl?.close();
+      } else revokeApproval();
       capability?.revoke();
     }
   }

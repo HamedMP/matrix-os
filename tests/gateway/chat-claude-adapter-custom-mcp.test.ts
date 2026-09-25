@@ -99,7 +99,7 @@ describe("canonical Claude native Custom MCP approval handoff", () => {
       return child;
     });
     const approvalClient = {
-      registerRun: vi.fn(async () => true),
+      registerRun: vi.fn(async () => ({ generation: 1 })),
       prepare: vi.fn(async () => ({ kind: "pending" as const, approvalId,
         expiresAt: new Date(Date.now() + 60_000).toISOString() })),
       decide: vi.fn(async () => ({ receipt: "a".repeat(64) })),

@@ -22,6 +22,7 @@ interface Pending {
 
 export function createClaudeCustomMcpApprovalControl(options: {
   runId: string;
+  generation: number;
   client: CustomMcpApprovalClient;
   emit(event: CanonicalProviderRunEvent): void;
   onError(error: unknown): void;
@@ -64,7 +65,8 @@ export function createClaudeCustomMcpApprovalControl(options: {
       const description = `Server ${input.server_id}\nTool ${input.tool}\nArguments ${JSON.stringify(input.arguments ?? {})}`;
       if (description.length > 4_000) { await deny(respond); return; }
       const result = await options.client.prepare(options.runId, {
-        nativeRequestId, serverId: input.server_id, tool: input.tool, arguments: input.arguments,
+        generation: options.generation, nativeRequestId, serverId: input.server_id,
+        tool: input.tool, arguments: input.arguments,
       });
       if (closed || slot.cancelled) {
         if (result.kind === "pending") await options.client.decide(options.runId, result.approvalId, "cancel");
@@ -159,6 +161,9 @@ export function createClaudeCustomMcpApprovalControl(options: {
       for (const [approvalId, current] of pending) {
         forget(approvalId, current);
         void deny(current.respond).catch(options.onError);
+        options.emit(CanonicalProviderRunEventSchema.parse({
+          type: "approval.resolved", approvalId, decision: "cancel",
+        }));
       }
     },
   };

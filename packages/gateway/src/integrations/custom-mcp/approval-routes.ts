@@ -8,7 +8,9 @@ const BODY_LIMIT = 64 * 1024;
 const RunId = z.string().min(1).max(256).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]*$/);
 const ApprovalId = z.uuid();
 const RegisterBody = z.object({ runId: RunId }).strict();
+const Generation = z.number().int().min(1).max(2_147_483_647);
 const PrepareBody = z.object({
+  generation: Generation,
   nativeRequestId: z.string().min(1).max(256),
   serverId: z.uuid(),
   tool: z.string().min(1).max(128),
@@ -74,7 +76,7 @@ export function createCustomMcpApprovalRoutes(options: {
       const lease = await options.db.registerCustomMcpRunLease({
         ...identity, runId: parsed.data.runId, expiresAt: new Date(Date.now() + 35 * 60_000),
       });
-      return lease ? context.json({ registered: true })
+      return lease ? context.json({ registered: true, generation: lease.generation })
         : context.json({ error: "Custom MCP approval unavailable" }, 409);
     } catch (error) { return failed(context, error); }
   });
@@ -87,7 +89,8 @@ export function createCustomMcpApprovalRoutes(options: {
     if (!runId.success || !parsed.success) return context.json({ error: "Invalid request body" }, 400);
     try {
       return context.json(await options.broker.prepareToolApproval({
-        ...identity, runId: runId.data, nativeRequestId: parsed.data.nativeRequestId,
+        ...identity, runId: runId.data, generation: parsed.data.generation,
+        nativeRequestId: parsed.data.nativeRequestId,
         serverId: parsed.data.serverId, toolName: parsed.data.tool,
         arguments: parsed.data.arguments,
       }));
@@ -132,6 +135,21 @@ export function createCustomMcpApprovalRoutes(options: {
     try {
       const revoked = await options.db.revokeCustomMcpRunLease({ ...identity, runId: runId.data });
       return revoked ? context.json({ revoked: true })
+        : context.json({ error: "Custom MCP approval unavailable" }, 409);
+    } catch (error) { return failed(context, error); }
+  });
+
+  app.post("/runs/:runId/clear", async (context) => {
+    const identity = await principal(context);
+    if (!identity) return context.json({ error: "Unauthorized" }, 401);
+    const runId = RunId.safeParse(context.req.param("runId"));
+    const parsed = z.object({ generation: Generation }).strict().safeParse(await body(context));
+    if (!runId.success || !parsed.success) return context.json({ error: "Invalid request body" }, 400);
+    try {
+      const cleared = await options.db.clearCustomMcpRunApprovals({
+        ...identity, runId: runId.data, generation: parsed.data.generation,
+      });
+      return cleared ? context.json(cleared)
         : context.json({ error: "Custom MCP approval unavailable" }, 409);
     } catch (error) { return failed(context, error); }
   });

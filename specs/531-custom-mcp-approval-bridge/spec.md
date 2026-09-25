@@ -3,6 +3,7 @@
 ## Status and dependency
 
 This is the test-first contract and implementation scope for a stacked change on
+the live-Run proxy provenance prerequisite (#1925), itself stacked on
 `codex/eng25-claude-scoped-mcp` at
 `f7858c60654e5862cf4736afe4743964987e17e8` (#1910). The positive path
 remains a draft pending review and affected-runtime acceptance.
@@ -56,13 +57,13 @@ Platform Postgres/Kysely adds two owner-scoped tables; it does not reuse the
 24-hour *server onboarding* pending expiry as a tool approval timeout:
 
 * `custom_mcp_run_leases`: random lease epoch ID, internal owner UUID, Clerk
-  actor ID, canonical Chat run ID, `active/revoked` state, expiry, created/updated
+  actor ID, canonical Chat run ID, positive segment generation, `active/revoked` state, expiry, created/updated
   timestamps; at most one live owner/run identity. Register from the trusted
   Gateway Chat launch only after checking that the canonical Run is current and
   active, idempotently only for the same actor and active lease. A revoked lease
   row cannot transition back to active.
 * `custom_mcp_tool_approvals`: random challenge ID, owner UUID, actor ID,
-  run ID **and lease epoch ID**, server UUID, authoritative server revision, tool name, canonical
+  run ID, lease epoch ID **and captured segment generation**, server UUID, authoritative server revision, tool name, canonical
   argument SHA-256 digest, `pending/approved/denied/consumed/revoked` state,
   expiry, hash of a random 256-bit receipt, and transition timestamps. The raw
   receipt is returned once to the trusted Gateway callback, never stored,
@@ -111,6 +112,16 @@ weaken `always_ask`. Unknown/missing policy is a denial. Consume performs the
 receipt and lease transition atomically immediately before the remote call;
 one concurrent request wins. The receipt is spent even if the remote call
 later fails or times out, preventing duplicate side effects.
+
+Steering deactivates the old CLI segment and scoped bearer immediately, then
+waits for a machine-authorized transaction that revokes all pending and
+approved challenges in that generation and advances the active lease's
+generation. The next CLI segment captures the returned generation before
+launch; callbacks from the prior segment keep their old captured generation
+and cannot reserve, decide, or consume afterward. If clear fails, the old
+lease receives a best-effort terminal revoke and the resumed segment receives
+discovery-only access. Cancellation or early event-stream close during the
+barrier terminally revokes the lease and never launches another segment.
 
 ## Auth matrix and dispatch path
 

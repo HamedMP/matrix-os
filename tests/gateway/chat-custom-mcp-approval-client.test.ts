@@ -13,15 +13,17 @@ describe("Gateway to Platform Custom MCP approval client", () => {
         ? { kind: "pending", approvalId: "123e4567-e89b-42d3-a456-426614174001",
           expiresAt: new Date(Date.now() + 60_000).toISOString() }
         : context.req.path.includes("/decisions/") ? { receipt: "a".repeat(64) }
-          : context.req.path.endsWith("/revoke") ? { revoked: true } : { registered: true });
+          : context.req.path.endsWith("/revoke") ? { revoked: true }
+            : context.req.path.endsWith("/clear") ? { generation: 2, invalidated: 1 }
+              : { registered: true, generation: 1 });
     });
     const fetcher = vi.fn((url: string, init: RequestInit) => platform.request(url, init));
     const client = createCustomMcpApprovalClient({
       platformUrl: "https://platform.example.test", handle: "owner", token: "machine-token", fetcher,
     });
-    await expect(client.registerRun("run_owner")).resolves.toBe(true);
+    await expect(client.registerRun("run_owner")).resolves.toEqual({ generation: 1 });
     await expect(client.prepare("run_owner", {
-      nativeRequestId: "native_1", serverId: "123e4567-e89b-42d3-a456-426614174000",
+      generation: 1, nativeRequestId: "native_1", serverId: "123e4567-e89b-42d3-a456-426614174000",
       tool: "publish", arguments: { content: "fixture" },
     })).resolves.toMatchObject({ kind: "pending" });
     await expect(client.decide("run_owner", "123e4567-e89b-42d3-a456-426614174001", "approve", {
@@ -29,7 +31,8 @@ describe("Gateway to Platform Custom MCP approval client", () => {
     }))
       .resolves.toEqual({ receipt: "a".repeat(64) });
     await expect(client.revokeRun("run_owner")).resolves.toBe(true);
-    expect(captured).toHaveLength(4);
+    await expect(client.clearRunApprovals("run_owner", 1)).resolves.toEqual({ generation: 2, invalidated: 1 });
+    expect(captured).toHaveLength(5);
     expect(captured.every(({ path, auth }) => path.includes("/mcp-approvals/")
       && auth === "Bearer machine-token")).toBe(true);
     expect(JSON.stringify(captured)).not.toContain("approvalGranted");

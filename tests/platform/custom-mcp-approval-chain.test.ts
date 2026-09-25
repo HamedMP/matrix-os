@@ -79,10 +79,10 @@ describe("authenticated canonical Custom MCP approval chain", () => {
     });
     const approvalClient = createCustomMcpApprovalClient({ platformUrl: "https://platform.example.test",
       handle, token: machineToken, fetcher: (url, init) => platform.request(url, init) });
-    expect(await approvalClient.registerRun(runId)).toBe(true);
+    expect(await approvalClient.registerRun(runId)).toEqual({ generation: 1 });
     const events: Array<{ type: string; approvalId?: string }> = [];
     const nativeResponses: Array<{ behavior: string; updatedInput?: Record<string, unknown> }> = [];
-    const control = createClaudeCustomMcpApprovalControl({ runId, client: approvalClient,
+    const control = createClaudeCustomMcpApprovalControl({ runId, generation: 1, client: approvalClient,
       emit: event => events.push(event), onError: error => { throw error; } });
     const registry = createMatrixMcpCapabilityRegistry({ configuredOwnerId: actorId });
     const capability = registry.issue({ owner: { type: "personal", ownerId: actorId }, runId, scope: "call" })!;

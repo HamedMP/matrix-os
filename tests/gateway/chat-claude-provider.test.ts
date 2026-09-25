@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createClaudeChatProviderAdapter } from "../../packages/gateway/src/chat/claude-provider-adapter.js";
 import type { CanonicalCliSpawn } from "../../packages/gateway/src/chat/cli-process.js";
 import { createMatrixMcpCapabilityRegistry } from "../../packages/gateway/src/chat/matrix-mcp-launch.js";
+import type { CustomMcpApprovalClient } from "../../packages/gateway/src/chat/custom-mcp-approval-client.js";
 
 class FakeStream extends EventEmitter {}
 
@@ -166,15 +167,18 @@ describe("Claude canonical Chat Provider adapter", () => {
   });
 
   it.each([
-    { exitCode: null, review: false },
-    { exitCode: 0, review: false },
-    { exitCode: null, review: true },
-  ])("resumes the active Claude session after steer exits with code $exitCode (review: $review)", async ({ exitCode, review }) => {
+    { exitCode: null, review: false, clearFails: false, cancelDuringClear: false, cancelDuringRevoke: false },
+    { exitCode: 0, review: false, clearFails: false, cancelDuringClear: false, cancelDuringRevoke: false },
+    { exitCode: null, review: true, clearFails: false, cancelDuringClear: false, cancelDuringRevoke: false },
+    { exitCode: null, review: false, clearFails: true, cancelDuringClear: false, cancelDuringRevoke: false },
+    { exitCode: null, review: false, clearFails: false, cancelDuringClear: true, cancelDuringRevoke: false },
+    { exitCode: null, review: false, clearFails: true, cancelDuringClear: false, cancelDuringRevoke: true },
+  ])("handles Claude steer with code $exitCode (review: $review, clearFails: $clearFails, cancel: $cancelDuringClear/$cancelDuringRevoke)", async ({ exitCode, review, clearFails, cancelDuringClear, cancelDuringRevoke }) => {
     const registry = createMatrixMcpCapabilityRegistry({ configuredOwnerId: baseInput.owner.ownerId });
     const callPath = "/api/mcp-servers/123e4567-e89b-42d3-a456-426614174000/call";
     const input = review
       ? { ...baseInput, interactionMode: "review", permissionMode: "full_access" }
-      : baseInput;
+      : { ...baseInput, permissionMode: "supervised" };
     let firstToken = "";
     let secondToken = "";
     const firstStdout = new FakeStream();
@@ -205,13 +209,23 @@ describe("Claude canonical Chat Provider adapter", () => {
         secondToken = options.env.MATRIX_AGENT_INTEGRATIONS_TOKEN!;
         expect(registry.resolve(firstToken, "GET", "/api/mcp-servers")).toBeNull();
         expect(registry.resolve(secondToken, "GET", "/api/mcp-servers")).toBe(baseInput.owner.ownerId);
-        expect(registry.resolve(secondToken, "POST", callPath)).toBe(review ? null : baseInput.owner.ownerId);
+        expect(registry.resolve(secondToken, "POST", callPath)).toBe(review || clearFails ? null : baseInput.owner.ownerId);
         return child([
           JSON.stringify({ type: "result", subtype: "success", is_error: false, result: "222", session_id: "claude_steer_session" }),
         ]);
       });
+    let registration = 0;
+    let finishClear!: (value: { generation: number; invalidated: number }) => void;
+    let finishRevoke!: (value: boolean) => void;
+    const approvalClient = {
+      registerRun: vi.fn(async () => ({ generation: ++registration })),
+      clearRunApprovals: vi.fn(() => new Promise(resolve => { finishClear = resolve; })),
+      revokeRun: vi.fn(() => cancelDuringRevoke
+        ? new Promise<boolean>(resolve => { finishRevoke = resolve; }) : Promise.resolve(true)),
+    } as unknown as CustomMcpApprovalClient;
     const adapter = createClaudeChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn,
-      resolveCredentialEnv: async () => ({}), matrixMcpCapabilityIssuer: registry });
+      resolveCredentialEnv: async () => ({}), matrixMcpCapabilityIssuer: registry,
+      customMcpApprovalClient: review ? undefined : approvalClient });
     const events: unknown[] = [];
     const runPromise = (async () => {
       for await (const event of adapter.start(input)) events.push(event);
@@ -227,6 +241,30 @@ describe("Claude canonical Chat Provider adapter", () => {
       prompt: "Reply 222",
       parts: [{ type: "text", text: "Reply 222" }],
     });
+    if (!review) {
+      await vi.waitFor(() => expect(approvalClient.clearRunApprovals).toHaveBeenCalledWith(baseInput.runId, 1));
+      expect(spawnFn).toHaveBeenCalledTimes(1);
+      if (cancelDuringClear) {
+        await adapter.cancel!({ owner: baseInput.owner, chatId: baseInput.chatId, runId: baseInput.runId });
+        expect(approvalClient.revokeRun).toHaveBeenCalledOnce();
+        finishClear({ generation: 2, invalidated: 0 });
+        await runPromise;
+        expect(spawnFn).toHaveBeenCalledTimes(1);
+        expect(events.at(-1)).toEqual({ type: "run.completed", outcome: "aborted" });
+        expect(registry.resolve(firstToken, "POST", callPath)).toBeNull();
+        return;
+      }
+      finishClear({ generation: clearFails ? 1 : 2, invalidated: 0 });
+      if (cancelDuringRevoke) {
+        await vi.waitFor(() => expect(approvalClient.revokeRun).toHaveBeenCalledOnce());
+        await adapter.cancel!({ owner: baseInput.owner, chatId: baseInput.chatId, runId: baseInput.runId });
+        finishRevoke(true);
+        await runPromise;
+        expect(spawnFn).toHaveBeenCalledTimes(1);
+        expect(events.at(-1)).toEqual({ type: "run.completed", outcome: "aborted" });
+        return;
+      }
+    }
     await runPromise;
 
     expect(firstProcess.kill).toHaveBeenCalled();
@@ -239,6 +277,48 @@ describe("Claude canonical Chat Provider adapter", () => {
     expect(secondToken).not.toBe(firstToken);
     expect(registry.resolve(firstToken, "GET", "/api/mcp-servers")).toBeNull();
     expect(registry.resolve(secondToken, "GET", "/api/mcp-servers")).toBeNull();
+    if (!review) {
+      expect(approvalClient.registerRun).toHaveBeenCalledTimes(clearFails ? 1 : 2);
+      expect(approvalClient.revokeRun).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  it("terminally revokes a steered approval lease when the event consumer closes before clear settles", async () => {
+    const firstStdout = new FakeStream();
+    const firstProcess = new EventEmitter() as EventEmitter & { stdout: FakeStream; stderr: FakeStream; kill: ReturnType<typeof vi.fn> };
+    Object.assign(firstProcess, { stdin: { write: (_chunk: string, callback?: (error?: Error | null) => void) => { callback?.(); return true; } } });
+    firstProcess.stdout = firstStdout;
+    firstProcess.stderr = new FakeStream();
+    firstProcess.kill = vi.fn(() => queueMicrotask(() => firstProcess.emit("exit", null, "SIGTERM")));
+    const spawnFn = vi.fn<CanonicalCliSpawn>(() => {
+      queueMicrotask(() => firstStdout.emit("data", Buffer.from(`${JSON.stringify({
+        type: "system", subtype: "init", session_id: "claude_close_session", model: "claude-sonnet-4-6",
+      })}\n`)));
+      return firstProcess;
+    });
+    let finishClear!: (value: { generation: number; invalidated: number }) => void;
+    const approvalClient = {
+      registerRun: vi.fn(async () => ({ generation: 1 })),
+      clearRunApprovals: vi.fn(() => new Promise(resolve => { finishClear = resolve; })),
+      revokeRun: vi.fn(async () => true),
+    } as unknown as CustomMcpApprovalClient;
+    const adapter = createClaudeChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn,
+      resolveCredentialEnv: async () => ({}),
+      matrixMcpCapabilityIssuer: createMatrixMcpCapabilityRegistry({ configuredOwnerId: baseInput.owner.ownerId }),
+      customMcpApprovalClient: approvalClient });
+    const iterator = adapter.start({ ...baseInput, permissionMode: "supervised" });
+    for await (const event of iterator) {
+      if (event.type !== "state.updated") continue;
+      await adapter.steer!({ owner: baseInput.owner, chatId: baseInput.chatId, runId: baseInput.runId,
+        turnId: baseInput.turnId, clientRequestId: "req_close", prompt: "continue",
+        parts: [{ type: "text", text: "continue" }] });
+      break;
+    }
+    await vi.waitFor(() => expect(approvalClient.clearRunApprovals).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(approvalClient.revokeRun).toHaveBeenCalledOnce());
+    finishClear({ generation: 2, invalidated: 0 });
+    await new Promise(resolve => setTimeout(resolve, 20));
+    expect(spawnFn).toHaveBeenCalledOnce();
   });
 
   it("runs the selected model, effort, permission and streams native deltas", async () => {

@@ -10,14 +10,16 @@ const approvalId = "123e4567-e89b-42d3-a456-426614174001";
 
 describe("server-only Custom MCP approval routes", () => {
   it("derives actor and owner from machine context, and rejects caller-supplied identity", async () => {
-    const register = vi.fn(async () => ({ id: "123e4567-e89b-42d3-a456-426614174002" }));
+    const register = vi.fn(async () => ({ id: "123e4567-e89b-42d3-a456-426614174002", generation: 1 }));
     const reserve = vi.fn(async () => ({ kind: "pending" as const, approvalId, expiresAt: new Date(Date.now() + 60_000).toISOString() }));
     const decide = vi.fn(async () => ({ receipt: "a".repeat(64) }));
     const revoke = vi.fn(async () => true);
+    const clear = vi.fn(async () => ({ generation: 2, invalidated: 1 }));
     const db = {
       registerCustomMcpRunLease: register,
       decideCustomMcpToolApproval: decide,
       revokeCustomMcpRunLease: revoke,
+      clearCustomMcpRunApprovals: clear,
     } as unknown as PlatformDb;
     const broker = { prepareToolApproval: reserve } as unknown as CustomMcpBroker;
     const app = new Hono();
@@ -34,7 +36,7 @@ describe("server-only Custom MCP approval routes", () => {
       userId: "owner-uuid", actorId: "clerk-owner", runId: "run_owner",
     }));
     const prepared = await post("/runs/run_owner/prepare", {
-      nativeRequestId: "native_1", serverId, tool: "publish", arguments: { content: "fixture" },
+      generation: 1, nativeRequestId: "native_1", serverId, tool: "publish", arguments: { content: "fixture" },
     });
     expect(prepared.status).toBe(200);
     expect(reserve).toHaveBeenCalledWith(expect.objectContaining({
@@ -54,6 +56,10 @@ describe("server-only Custom MCP approval routes", () => {
     expect((await post("/runs/run_owner/revoke", {})).status).toBe(200);
     expect(revoke).toHaveBeenCalledWith(expect.objectContaining({
       userId: "owner-uuid", actorId: "clerk-owner", runId: "run_owner",
+    }));
+    expect((await post("/runs/run_owner/clear", { generation: 1 })).status).toBe(200);
+    expect(clear).toHaveBeenCalledWith(expect.objectContaining({
+      userId: "owner-uuid", actorId: "clerk-owner", runId: "run_owner", generation: 1,
     }));
   });
 });

@@ -9,8 +9,9 @@ const PrepareResponse = z.discriminatedUnion("kind", [
 const DecisionResponse = z.object({ receipt: z.string().regex(/^[a-f0-9]{64}$/).optional() }).strict();
 
 export interface CustomMcpApprovalClient {
-  registerRun(runId: string): Promise<boolean>;
+  registerRun(runId: string): Promise<{ generation: number }>;
   prepare(runId: string, input: {
+    generation: number;
     nativeRequestId: string;
     serverId: string;
     tool: string;
@@ -21,6 +22,7 @@ export interface CustomMcpApprovalClient {
   }):
     Promise<z.infer<typeof DecisionResponse>>;
   revokeRun(runId: string): Promise<boolean>;
+  clearRunApprovals(runId: string, generation: number): Promise<{ generation: number; invalidated: number }>;
 }
 
 export function createCustomMcpApprovalClient(options: {
@@ -51,7 +53,9 @@ export function createCustomMcpApprovalClient(options: {
     async registerRun(runId) {
       const id = RunId.parse(runId);
       const result = await post("runs", { runId: id });
-      return z.object({ registered: z.literal(true) }).strict().parse(await result.json()).registered;
+      const registered = z.object({ registered: z.literal(true), generation: z.number().int().min(1) }).strict()
+        .parse(await result.json());
+      return { generation: registered.generation };
     },
     async prepare(runId, input) {
       const id = RunId.parse(runId);
@@ -70,6 +74,12 @@ export function createCustomMcpApprovalClient(options: {
       const id = RunId.parse(runId);
       const result = await post(`runs/${encodeURIComponent(id)}/revoke`, {});
       return z.object({ revoked: z.literal(true) }).strict().parse(await result.json()).revoked;
+    },
+    async clearRunApprovals(runId, generation) {
+      const id = RunId.parse(runId);
+      const result = await post(`runs/${encodeURIComponent(id)}/clear`, { generation });
+      return z.object({ generation: z.number().int().min(1), invalidated: z.number().int().min(0) })
+        .strict().parse(await result.json());
     },
   };
 }

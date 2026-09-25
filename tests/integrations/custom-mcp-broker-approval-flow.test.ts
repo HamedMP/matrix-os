@@ -46,7 +46,7 @@ describe("Custom MCP broker approved dispatch", () => {
   it("reserves an always_ask challenge and dispatches exactly once after a trusted decision", async () => {
     const argumentsValue = { document: "synthetic" };
     const prepared = await (broker as any).prepareToolApproval({ userId, actorId: "actor-owner",
-      runId: "run_owner", nativeRequestId: "native_1", serverId, toolName: "publish",
+      runId: "run_owner", generation: 1, nativeRequestId: "native_1", serverId, toolName: "publish",
       arguments: argumentsValue });
     expect(prepared).toMatchObject({ kind: "pending", approvalId: expect.any(String) });
     const deniedBeforeDecision = broker.callSelectedTool({ userId, serverId, toolName: "publish",
@@ -64,13 +64,13 @@ describe("Custom MCP broker approved dispatch", () => {
 
   it("fast-paths allow without a user prompt and rejects changed input or policy", async () => {
     const prepared = await (broker as any).prepareToolApproval({ userId, actorId: "actor-owner",
-      runId: "run_owner", nativeRequestId: "native_allow", serverId, toolName: "search",
+      runId: "run_owner", generation: 1, nativeRequestId: "native_allow", serverId, toolName: "search",
       arguments: { q: "fixture" } });
     expect(prepared).toEqual({ kind: "allow" });
     await expect(broker.callSelectedTool({ userId, serverId, toolName: "search",
       arguments: { q: "fixture" }, approvalGranted: false })).resolves.toEqual({ ok: true });
     const pending = await (broker as any).prepareToolApproval({ userId, actorId: "actor-owner",
-      runId: "run_owner", nativeRequestId: "native_2", serverId, toolName: "publish",
+      runId: "run_owner", generation: 1, nativeRequestId: "native_2", serverId, toolName: "publish",
       arguments: { document: "original" } });
     const receipt = (await db.decideCustomMcpToolApproval({ userId, actorId: "actor-owner",
       runId: "run_owner", approvalId: pending.approvalId, decision: "approve" }))!.receipt!;

@@ -5,9 +5,9 @@ import { createPlatformDb, type PlatformDb } from "../../packages/gateway/src/pl
 interface ApprovalStoreContract {
   registerCustomMcpRunLease(input: {
     userId: string; actorId: string; runId: string; expiresAt: Date;
-  }): Promise<{ id: string } | null>;
+  }): Promise<{ id: string; generation: number } | null>;
   reserveCustomMcpToolApproval(input: {
-    userId: string; actorId: string; runId: string; nativeRequestId: string;
+    userId: string; actorId: string; runId: string; generation: number; nativeRequestId: string;
     serverId: string; serverRevision: number; toolName: string; argsDigest: string;
     expiresAt: Date;
   }): Promise<{ approvalId: string; expiresAt: Date } | null>;
@@ -24,6 +24,9 @@ interface ApprovalStoreContract {
   revokeCustomMcpRunLease(input: {
     userId: string; actorId: string; runId: string;
   }): Promise<boolean>;
+  clearCustomMcpRunApprovals(input: {
+    userId: string; actorId: string; runId: string; generation: number;
+  }): Promise<{ generation: number; invalidated: number } | null>;
 }
 
 const at = new Date("2026-09-25T00:00:00.000Z");
@@ -68,7 +71,7 @@ describe("Custom MCP durable one-use approval contract", () => {
 
   function approvalInput(userId: string, serverId: string, override: Record<string, unknown> = {}) {
     return {
-      userId, actorId: "clerk-owner", runId: "run_owner", nativeRequestId: "native_1",
+      userId, actorId: "clerk-owner", runId: "run_owner", generation: 1, nativeRequestId: "native_1",
       serverId, serverRevision: 2, toolName: "publish", argsDigest: digest,
       expiresAt: later(10 * 60_000),
       ...override,
@@ -170,6 +173,44 @@ describe("Custom MCP durable one-use approval contract", () => {
       userId, actorId: "clerk-owner", runId: "run_owner", serverId,
       serverRevision: 2, toolName: "publish", argsDigest: digest, receipt,
     })).toBe(false);
+  });
+
+  it("keeps the active Run lease but invalidates old-generation callbacks and receipts at a steer barrier", async () => {
+    const first = await lease(db, userId);
+    expect(first?.generation).toBe(1);
+    const pending = await db.reserveCustomMcpToolApproval(approvalInput(userId, serverId));
+    const receipt = (await db.decideCustomMcpToolApproval({ userId, actorId: "clerk-owner",
+      runId: "run_owner", approvalId: pending!.approvalId, decision: "approve" }))!.receipt!;
+    expect(await db.clearCustomMcpRunApprovals({ userId, actorId: "clerk-owner",
+      runId: "run_owner", generation: 1 })).toEqual({ generation: 2, invalidated: 1 });
+    expect(await lease(db, userId)).toMatchObject({ id: first!.id, generation: 2 });
+    expect(await db.reserveCustomMcpToolApproval(approvalInput(userId, serverId, {
+      generation: 1, nativeRequestId: "late_old_callback",
+    }))).toBeNull();
+    expect(await db.consumeCustomMcpToolApproval({ userId, actorId: "clerk-owner", runId: "run_owner",
+      serverId, serverRevision: 2, toolName: "publish", argsDigest: digest, receipt })).toBe(false);
+    const next = await db.reserveCustomMcpToolApproval(approvalInput(userId, serverId, {
+      generation: 2, nativeRequestId: "native_1",
+    }));
+    expect(next?.approvalId).not.toBe(pending?.approvalId);
+    expect(await db.clearCustomMcpRunApprovals({ userId, actorId: "clerk-owner",
+      runId: "run_owner", generation: 1 })).toBeNull();
+  });
+
+  it("makes clear-versus-consume on an approved receipt one-winner", async () => {
+    await lease(db, userId);
+    const pending = await db.reserveCustomMcpToolApproval(approvalInput(userId, serverId));
+    const receipt = (await db.decideCustomMcpToolApproval({ userId, actorId: "clerk-owner",
+      runId: "run_owner", approvalId: pending!.approvalId, decision: "approve" }))!.receipt!;
+    const [cleared, consumed] = await Promise.all([
+      db.clearCustomMcpRunApprovals({ userId, actorId: "clerk-owner", runId: "run_owner", generation: 1 }),
+      db.consumeCustomMcpToolApproval({ userId, actorId: "clerk-owner", runId: "run_owner",
+        serverId, serverRevision: 2, toolName: "publish", argsDigest: digest, receipt }),
+    ]);
+    expect(cleared?.generation).toBe(2);
+    expect(Number((cleared?.invalidated ?? 0) > 0) + Number(consumed)).toBe(1);
+    expect(await db.consumeCustomMcpToolApproval({ userId, actorId: "clerk-owner", runId: "run_owner",
+      serverId, serverRevision: 2, toolName: "publish", argsDigest: digest, receipt })).toBe(false);
   });
 
   it("lets a native cancel revoke an approved but unconsumed receipt before dispatch", async () => {
