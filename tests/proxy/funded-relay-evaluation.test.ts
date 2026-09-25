@@ -262,6 +262,60 @@ describe("funded Jev evaluation relay", () => {
     await relay.close();
   });
 
+  it.each([
+    ["missing", undefined],
+    ["mismatched", "typesafe-jev-input-2026-08"],
+  ])("releases a %s authorization price version before Jev dispatch", async (_label, version) => {
+    const events: string[] = [];
+    const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      expect(url.startsWith(PLATFORM_URL)).toBe(true);
+      const action = url.slice(`${PLATFORM_URL}/internal/ai/funded/`.length);
+      events.push(action);
+      if (action === "check") {
+        return json({ contractVersion: 1, authorized: true, identity: identity(), policy: policy() });
+      }
+      if (action === "authorize") {
+        expect(JSON.parse(String(init?.body))).toMatchObject({
+          modelId: JEV_MODEL_ID, billingMode: "usage", jevPricingVersion: "typesafe-jev-input-2026-09",
+        });
+        return json({
+          contractVersion: 1, authorized: true, identity: identity(), policy: policy(), funding: funding(5_000),
+          reservation: {
+            reservationId: "reservation_123", requestId: "request_123", modelId: JEV_MODEL_ID,
+            reservedMicrousd: 5_000, maxCostMicrousd: 5_000, billingMode: "usage",
+            ...(version ? { jevPricingVersion: version } : {}),
+            remainingBalanceMicrousd: 95_000, remainingBudgetMicrousd: 95_000,
+            periodStart: "2026-09-01T00:00:00.000Z", expiresAt: "2026-09-22T10:05:00.000Z",
+            status: "reserved",
+          },
+        });
+      }
+      if (action === "release") {
+        expect(JSON.parse(String(init?.body))).toEqual({
+          reservationId: "reservation_123", tokenId: "credential_123", reason: "pre_upstream_failure",
+        });
+        return json({
+          contractVersion: 1, reservationId: "reservation_123", requestId: "request_123",
+          tokenId: "credential_123", releasedMicrousd: 5_000, releasedAt: NOW.toISOString(),
+          reason: "pre_upstream_failure", status: "released", funding: funding(0),
+        });
+      }
+      throw new Error(`Unexpected dispatch after version mismatch: ${url}`);
+    });
+    const config = resolveFundedRelayConfig(environment())!;
+    const relay = createFundedRelay({
+      ...config, fetch: fetchMock as typeof fetch, now: () => NOW, requestIdFactory: () => "request_123",
+    });
+    const app = new Hono();
+    relay.register(app);
+    const response = await app.request("/v1/evaluate", request());
+    expect(response.status).toBe(503);
+    expect(response.headers.get("x-matrix-jev-dispatch")).toBe("not-started");
+    expect(events).toEqual(["check", "authorize", "release"]);
+    await relay.close();
+  });
+
   it("rejects arbitrary questions before policy or upstream calls", async () => {
     const fetchMock = vi.fn();
     const config = resolveFundedRelayConfig(environment());
