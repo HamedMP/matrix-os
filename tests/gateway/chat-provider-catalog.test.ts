@@ -720,7 +720,11 @@ describe("canonical Chat Provider catalog", () => {
 
     expect((await service.getCatalog(principal)).instances.find((instance) => (
       instance.id === "hermes_default"
-    ))).toMatchObject({ availability: "available", displayName: "Hermes" });
+    ))).toMatchObject({
+      availability: "available",
+      displayName: "Hermes",
+      setupActions: [{ id: "hermes_connect" }],
+    });
   });
 
   it.each(["hermes", "openclaw"] as const)(
@@ -763,6 +767,7 @@ describe("canonical Chat Provider catalog", () => {
       expect(instance).toMatchObject({
         availability: "unavailable",
         unavailabilityReason: "disabled_in_settings",
+        setupActions: [],
       });
       expect(instance?.defaultSelection).toBeUndefined();
       expect(settingsSnapshot).toEqual(savedSettings);
@@ -784,6 +789,7 @@ describe("canonical Chat Provider catalog", () => {
       instance.id === "hermes_default"
     ))).toMatchObject({
       availability: "available",
+      setupActions: [{ id: "hermes_connect" }],
       defaultSelection: { instanceId: "hermes_default", model: "anthropic:claude-opus-4-6" },
     });
   });

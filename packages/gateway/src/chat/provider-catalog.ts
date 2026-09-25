@@ -577,7 +577,7 @@ function applyHarnessSettings(input: {
     if (systemHarness !== null && instance.availability === "available" && executable
       && configuredHarnesses.length > 0
       && configuredHarnesses.every((harness) => harness.configuredEnabled === false)) {
-      return unavailableInstance(instance, "disabled_in_settings");
+      return { ...unavailableInstance(instance, "disabled_in_settings"), setupActions: [] };
     }
     const enabledHarness = enabledHarnesses[0];
     const configuredInstance = enabledHarness
