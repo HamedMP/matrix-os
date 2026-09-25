@@ -14,7 +14,7 @@ function rowStatus(harness: ProviderHarnessInstance, source: ProviderAccessSourc
   if (harness.installState === "installing") return "Installing…";
   if (harness.installState !== "installed") return "Check failed";
   if (!harness.enabled && harness.configuredEnabled === true) return "Check connection";
-  if (!harness.enabled) return harness.authState === "authenticated" ? "Disabled · Signed in" : "Disabled";
+  if (!harness.enabled) return harness.authState === "authenticated" ? "Off in Settings · Signed in" : "Off in Settings";
   if (harness.connectivity === "offline" || harness.connectivity === "degraded") return "Check failed";
   if (harness.authState === "authenticating") return "Signing in…";
   if (harness.authState === "unauthenticated" || harness.authState === "expired") return "Sign in";

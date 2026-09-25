@@ -305,7 +305,17 @@ describe("AgentsProvidersView", () => {
       enabled: false, configuredEnabled: false, authState: "authenticated",
     });
     setup({ snapshot: next });
-    expect(screen.getByRole("button", { name: /Hermes.*Disabled.*Signed in/ })).toBeVisible();
+    expect(screen.getByRole("button", { name: /Hermes.*Off in Settings.*Signed in/ })).toBeVisible();
+  });
+
+  it("labels a disabled harness without claiming its CLI login was checked", () => {
+    const next = snapshot();
+    Object.assign(next.harnesses[0]!, {
+      enabled: false, configuredEnabled: false, authState: "unknown",
+    });
+    setup({ snapshot: next });
+    expect(screen.getByRole("button", { name: /Hermes.*Off in Settings/ })).toBeVisible();
+    expect(screen.queryByRole("button", { name: /Hermes.*Signed in/ })).not.toBeInTheDocument();
   });
 
   it.each(["pi", "opencode"] as const)("requires a saved connection before directly enabling %s, but permits disabling", (kind) => {
