@@ -137,7 +137,9 @@ describe("shared Agents entry", () => {
       { id: "matrix-jev-email-triage", name: "Jev email triage", description: "Classify mail." }] });
     client.list.mockResolvedValueOnce({ enabled: true, agents: [] }).mockImplementation(async () => ({
       enabled: true, agents: client.create.mock.calls.length ? [{ ...saved, name: "Jev Inbox Triage",
-        recipe: client.create.mock.calls[0]![0].recipe }] : [],
+        recipe: { ...client.create.mock.calls[0]![0].recipe,
+          jevInboxTriage: { version: 1, ownerId: "test_owner", service: "gmail", accountLabel: "My Gmail",
+            connectionId: "conn_own", expectedEmail: "me@example.test" } } }] : [],
     }));
     const onStartChat = vi.fn();
     render(<ChatAgentsWorkspace><ChatAgentsRailSection client={client} onStartChat={onStartChat} />

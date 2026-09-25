@@ -147,7 +147,7 @@ export function ChatAgentsPanel({ client, view = "library", onClose, onSetup, on
     if (jevPending || jevUnavailable || !onStartChat) return;
     const matchingAccounts = activeConnections("gmail", state.connections).filter((account) => account.account_label === accountLabel);
     if (matchingAccounts.length !== 1 || !matchingAccounts[0]?.account_email) {
-      setJevError("Choose a connected Gmail account with a verified email address before creating this Agent.");
+      setJevError("Choose a connected Gmail account with a recorded email address before creating this Agent.");
       return;
     }
     const hermes = models.find((choice) => choice.driverKind === "hermes");
@@ -170,7 +170,9 @@ export function ChatAgentsPanel({ client, view = "library", onClose, onSetup, on
       const readback = await client.list();
       const verified = readback.agents.find((agent) => agent.id === saved.id);
       if (!verified || verified.recipe?.integrations.some((integration) =>
-        integration.service === "gmail" && integration.accountLabel === accountLabel) !== true) {
+        integration.service === "gmail" && integration.accountLabel === accountLabel) !== true
+        || verified.recipe.jevInboxTriage?.accountLabel !== accountLabel
+        || verified.recipe.jevInboxTriage.expectedEmail !== matchingAccounts[0].account_email) {
         setJevError("Agent creation could not be verified in your library. Please check Agents before trying again.");
         return;
       }

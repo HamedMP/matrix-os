@@ -35,6 +35,10 @@ export function canonicalChatSafeError(
 
 export function mapRepositoryError(error: unknown): never {
   if (error instanceof ChatAgentContextError) {
+    if (error.code === "workflow_unavailable") {
+      throw new CanonicalChatOrchestrationError(canonicalChatSafeError(
+        "service_unavailable", "Inbox preview is not available yet."), 503);
+    }
     throw new CanonicalChatOrchestrationError(error.code === "context_unavailable"
       ? canonicalChatSafeError("resource_unavailable", "The selected Agent or Chat is unavailable.")
       : canonicalChatSafeError("capability_mismatch", error.code === "agent_permission_required"

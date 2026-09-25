@@ -5,13 +5,15 @@ import { KyselyPGlite } from "kysely-pglite";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { createIntegrationsMcpServer } from "../../packages/integrations-mcp/src/server.js";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ChatRepository } from "../../packages/gateway/src/chat/repository.js";
 import { ChatAgentStore } from "../../packages/gateway/src/chat/agent-store.js";
 import { ChatAgentContext } from "../../packages/gateway/src/chat/agent-context.js";
+import { issueHermesIntegrationCapability, resolveHermesIntegrationCapability } from "../../packages/gateway/src/chat/hermes-integration-capability.js";
 import { createChatAgentRoutes } from "../../packages/gateway/src/chat/agent-routes.js";
 import { createChatAgentRecipeResolver } from "../../packages/gateway/src/chat/agent-recipe.js";
 import { MissingRequestPrincipalError } from "../../packages/gateway/src/request-principal.js";
+import { ChatRunContextSchema } from "@matrix-os/contracts";
 import { createCanonicalProviderCatalogFixture } from "../contracts/fixtures/canonical-chat";
 
 const owner = { type: "personal" as const, ownerId: "owner_agent_routes" };
@@ -28,8 +30,11 @@ describe("Chat Agent HTTP boundary", () => {
   let user: string | null;
   let catalog: ReturnType<typeof createCanonicalProviderCatalogFixture>;
   let app: ReturnType<typeof createChatAgentRoutes>;
+  let agentContext: ChatAgentContext;
+  let recipes: ReturnType<typeof createChatAgentRecipeResolver>;
   let gmailAccounts: Array<{ id: string; user_id: string; service: "gmail"; account_label: string;
     account_email: string | null; status: "active" | "revoked" }>;
+  let gmailLookup: (ownerId: string) => Promise<typeof gmailAccounts>;
   beforeEach(async () => {
     home = await mkdtemp(join(tmpdir(), "matrix-agent-routes-"));
     repository = new ChatRepository((await KyselyPGlite.create()).dialect);
@@ -44,27 +49,29 @@ describe("Chat Agent HTTP boundary", () => {
         `---\nname: ${id}\ndescription: ${id === "matrix-integrations" ? "Use Matrix integrations safely."
           : id === "matrix-jev-email-triage" ? "Review Gmail with Jev." : "Prepare a personal daily brief."}\nauthor: Matrix OS\n---\nInstructions for ${id}.\n`);
     }
-    const recipes = createChatAgentRecipeResolver({
+    recipes = createChatAgentRecipeResolver({
       skillsRoot,
       services: [{ id: "gmail", name: "Gmail" }, { id: "google_calendar", name: "Google Calendar" }],
     });
     enabled = true; user = owner.ownerId;
     gmailAccounts = [{ id: "conn_mine", user_id: owner.ownerId, service: "gmail", account_label: "My Gmail",
       account_email: "me@example.test", status: "active" }];
+    gmailLookup = async (ownerId) => gmailAccounts.filter((row) => row.user_id === ownerId);
     catalog = createCanonicalProviderCatalogFixture();
     catalog.drivers.push({ ...catalog.drivers[0]!, kind: "hermes", displayName: "Hermes" });
     catalog.instances.push({ ...catalog.instances[0]!, id: "hermes_default", driverKind: "hermes",
       models: [{ ...catalog.instances[0]!.models[0]!, id: fields.selection.model }],
       supports: { ...catalog.instances[0]!.supports, permissionModes: ["full_access"] },
     });
+    agentContext = new ChatAgentContext({ repository, agents, recipes, enabled: () => enabled });
     app = createChatAgentRoutes({ agents, repository,
-      context: new ChatAgentContext({ repository, agents, recipes, enabled: () => enabled }), recipes,
+      context: agentContext, recipes,
       catalog: { getCatalog: async () => catalog }, enabled: () => enabled,
       getPrincipal: () => { if (!user) throw new MissingRequestPrincipalError(); return { userId: user, source: "jwt" }; },
       // The server must use its own owner-scoped connection lookup. The client
       // sends a label, never an account ID or expected email.
-      listGmailAccounts: async (ownerId: string) => gmailAccounts.filter((row) => row.user_id === ownerId),
-    } as Parameters<typeof createChatAgentRoutes>[0]);
+      listGmailAccounts: (ownerId) => gmailLookup(ownerId),
+    });
   });
   afterEach(async () => {
     await agents.close(); await repository.kysely.destroy(); await rm(home, { recursive: true, force: true });
@@ -92,19 +99,83 @@ describe("Chat Agent HTTP boundary", () => {
     expect((await app.request("/api/chat-agents", json("POST", { ...request, name: "Different bot" }))).status).toBe(409);
   });
 
-  it("fails Jev creation closed for missing, ambiguous, foreign or email-less selected accounts", async () => {
+  it("keeps owner file writes unblocked while the Platform inventory is pending", async () => {
+    let releaseLookup!: () => void;
+    let lookupStarted!: () => void;
+    const started = new Promise<void>((resolve) => { lookupStarted = resolve; });
+    const pending = new Promise<void>((resolve) => { releaseLookup = resolve; });
+    gmailLookup = async () => { lookupStarted(); await pending; return gmailAccounts; };
+    const recipe = { skills: ["matrix-jev-email-triage", "matrix-integrations"],
+      integrations: [{ service: "gmail", accountLabel: "My Gmail" }], output: "Review proposals" };
+    const createSpy = vi.spyOn(agents, "create");
+    const jev = app.request("/api/chat-agents", json("POST", { ...fields,
+      clientRequestId: "req_jev_pending_lookup", recipe }));
+    await started;
+    expect(createSpy).not.toHaveBeenCalled();
+    try {
+      const ordinary = app.request("/api/chat-agents", json("POST", { ...fields,
+        clientRequestId: "req_ordinary_while_lookup" }));
+      const first = await Promise.race([ordinary.then((response) => response.status),
+        new Promise<"timed_out">((resolve) => setTimeout(() => resolve("timed_out"), 1_000))]);
+      expect(first).toBe(201);
+    } finally { releaseLookup(); }
+    expect((await jev).status).toBe(201);
+    expect(await agents.list(owner)).toHaveLength(2);
+  });
+
+  it.each(["missing", "duplicate", "foreign", "email-less", "revoked"] as const)(
+    "fails Jev creation closed for a %s selected account", async (caseName) => {
     const recipe = { skills: ["matrix-jev-email-triage", "matrix-integrations"],
       integrations: [{ service: "gmail", accountLabel: "My Gmail" }], output: "Review proposed labels" };
-    const request = { ...fields, clientRequestId: "req_jev_rejected", recipe };
-    for (const rows of [[],
-      [gmailAccounts[0], { ...gmailAccounts[0]!, id: "conn_duplicate" }],
-      [{ ...gmailAccounts[0]!, user_id: "another_owner" }],
-      [{ ...gmailAccounts[0]!, account_email: null }],
-      [{ ...gmailAccounts[0]!, status: "revoked" as const }]]) {
-      gmailAccounts = rows as typeof gmailAccounts;
-      expect((await app.request("/api/chat-agents", json("POST", request))).status).toBe(409);
-      expect(await agents.list(owner)).toEqual([]);
-    }
+    const selected = gmailAccounts[0]!;
+    gmailAccounts = caseName === "missing" ? []
+      : caseName === "duplicate" ? [selected, { ...selected, id: "conn_duplicate" }]
+      : caseName === "foreign" ? [{ ...selected, user_id: "another_owner" }]
+      : caseName === "email-less" ? [{ ...selected, account_email: null }]
+      : [{ ...selected, status: "revoked" }];
+    const response = await app.request("/api/chat-agents", json("POST", { ...fields, clientRequestId: `req_jev_${caseName}`, recipe }));
+    expect(response.status).toBe(409);
+    expect(await agents.list(owner)).toEqual([]);
+  });
+
+  it("rejects client-forged Jev owner, connection ID and expected email on create and PATCH", async () => {
+    const forged = { version: 1, ownerId: "another_owner", service: "gmail", accountLabel: "My Gmail",
+      connectionId: "conn_foreign", expectedEmail: "attacker@example.test" };
+    const recipe = { skills: ["matrix-jev-email-triage", "matrix-integrations"],
+      integrations: [{ service: "gmail", accountLabel: "My Gmail" }], output: "Review proposed labels",
+      jevInboxTriage: forged };
+    expect((await app.request("/api/chat-agents", json("POST", { ...fields, recipe }))).status).toBe(400);
+    const created = await (await app.request("/api/chat-agents", json("POST", fields))).json();
+    expect((await app.request(`/api/chat-agents/${created.id}`, json("PATCH", { baseRevision: 1, recipe }))).status).toBe(400);
+    expect((await agents.get(owner, created.id))?.revision).toBe(1);
+  });
+
+  it("rebinds a Jev account with a revision change and invalidates the prior run context", async () => {
+    const recipe = { skills: ["matrix-jev-email-triage", "matrix-integrations"],
+      integrations: [{ service: "gmail", accountLabel: "My Gmail" }], output: "Review proposed labels" };
+    const created = await (await app.request("/api/chat-agents", json("POST", {
+      ...fields, clientRequestId: "req_jev_rebind", recipe,
+    }))).json();
+    await repository.create(owner, { id: "chat_jev_rebind", clientRequestId: "req_chat_jev_rebind", title: "Jev review" });
+    const oldContext = ChatRunContextSchema.parse({ version: 1, requestHash: "a".repeat(64), chats: [],
+      agent: { id: created.id, revision: 1, name: created.name, instructions: created.instructions,
+        recipe: await recipes.resolve(created.recipe) } });
+    const capability = issueHermesIntegrationCapability(owner.ownerId, { kind: "jev_inbox_preview", runId: "run_jev_rebind",
+      agentId: created.id, revision: 1, account: { service: "gmail", accountLabel: "My Gmail",
+        connectionId: "conn_mine", expectedEmail: "me@example.test" } });
+    try {
+      gmailAccounts.push({ id: "conn_work", user_id: owner.ownerId, service: "gmail", account_label: "Work",
+        account_email: "work@example.test", status: "active" });
+      const updated = await app.request(`/api/chat-agents/${created.id}`, json("PATCH", { baseRevision: 1,
+        recipe: { ...recipe, integrations: [{ service: "gmail", accountLabel: "Work" }] },
+      }));
+      expect(updated.status).toBe(200);
+      expect(await updated.json()).toMatchObject({ revision: 2,
+        recipe: { jevInboxTriage: { ownerId: owner.ownerId, accountLabel: "Work",
+          connectionId: "conn_work", expectedEmail: "work@example.test" } } });
+      await expect(agentContext.revalidate(owner, "chat_jev_rebind", oldContext)).rejects.toMatchObject({ code: "context_unavailable" });
+      expect(resolveHermesIntegrationCapability(capability.token, "POST", "/api/jev/inbox/preview")).toBeNull();
+    } finally { capability.revoke(); }
   });
 
   it("accepts recipe-only PATCH after the saved model becomes unavailable while rejecting a supplied unavailable selection", async () => {

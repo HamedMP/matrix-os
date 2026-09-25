@@ -27,6 +27,7 @@ import {
 } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { createAgentLauncher } from "./agent-launcher.js";
+import { createJevGmailAccountLookup } from "./chat/jev-recipe-authority.js";
 import { createAgentSandbox } from "./agent-sandbox.js";
 import { createAgentSessionManager } from "./agent-session-manager.js";
 import { createAiGenerationRecorder } from "./ai-analytics.js";
@@ -1584,11 +1585,14 @@ export async function createGateway(config: GatewayConfig) {
   }
 
   if (!providerSettingsStore) throw new Error("Provider settings are unavailable");
+  const lookupJevGmailAccounts = createJevGmailAccountLookup({ db: platformDb,
+    internalBaseUrl: internalIntegrationBaseUrl, machineToken: internalPlatformToken });
   registerCollaborationChatRoutes({
     app, upgradeWebSocket, canonicalChatEventStream, chatRepository, gatewayCollaboration,
     collaborationFailClosedReason, canonicalChatOrchestrator, canonicalChatExecutionRoots,
     canonicalChatCollaborationGuard, projectOwnerToolOutput, canonicalChatRuntime,
     canonicalChatProviderCatalog, aiProviderService, providerSettingsStore,
+    listGmailAccounts: (ownerId) => withCapabilityLookupTimeout(() => lookupJevGmailAccounts(ownerId)),
   });
 
   // T978-T979: Settings API routes

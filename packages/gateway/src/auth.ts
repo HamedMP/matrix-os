@@ -374,7 +374,10 @@ export function authMiddleware(
         c.set(MATRIX_MCP_RUN_CONTEXT_KEY as never, matrixMcpContext ?? { actorId: matrixMcpActor });
         return nextWithReady(c, next);
       }
-      const hermesActor = resolveHermesIntegrationCapability(presentedToken, normalizedPath);
+      // Scope checks use the raw URL path. Hono may decode percent-encoded
+      // aliases before routing, which must not grant a recipe bearer access.
+      const hermesActor = resolveHermesIntegrationCapability(presentedToken, c.req.method,
+        new URL(c.req.raw.url).pathname);
       if (hermesActor) {
         // This run-scoped bearer carries its own actor; caller-supplied
         // platform identity headers are never accepted with it.

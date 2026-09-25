@@ -8,6 +8,8 @@ import { z } from "zod/v4";
 import { CanonicalChatModelReferenceSchema } from "@matrix-os/contracts";
 import { buildAgentRuntimeEnvironment } from "../agent-launcher.js";
 import { issueHermesIntegrationCapability } from "./hermes-integration-capability.js";
+import { jevScopeForRun } from "./jev-run-scope.js";
+import { clearGatewayAuthorityEnvironment } from "./hermes-recipe-environment.js";
 import {
   CanonicalProviderRunEventSchema,
   parseCanonicalProviderRunInput,
@@ -595,13 +597,15 @@ export function createHermesChatProviderAdapter(options: {
 
     const hermesRoot = join(options.homePath, ".hermes", "hermes-agent");
     const existingPythonPath = process.env.PYTHONPATH?.trim();
-    const integrationCapability = issueHermesIntegrationCapability(input.owner.ownerId);
+    const jevScope = jevScopeForRun(input.owner.ownerId, input.runId, input.context);
+    const integrationCapability = issueHermesIntegrationCapability(input.owner.ownerId, jevScope);
     const clientOptions = {
       command: join(hermesRoot, "venv", "bin", "python"),
       args: ["-u", "-m", "tui_gateway.entry"],
       cwd: input.executionRoot ?? options.homePath,
       env: {
         ...buildAgentRuntimeEnvironment(options.homePath),
+        ...(jevScope ? clearGatewayAuthorityEnvironment(process.env) : {}),
         // The MCP child receives a short-lived bearer scoped to this run's
         // authenticated actor and only the integrations/Jev Gateway routes.
         MATRIX_CLERK_USER_ID: input.owner.ownerId,

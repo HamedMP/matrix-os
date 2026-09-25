@@ -19,6 +19,16 @@ export function createJevRoutes(options: {
   resolveOwnerId: (context: Context) => string | null | Promise<string | null>;
 }): Hono {
   const app = new Hono();
+  // PR1 admission only. The bounded mailbox broker arrives with the follow-on
+  // workflow; never route this bearer through the generic Jev evaluator.
+  app.post("/inbox/preview", bodyLimit({
+    maxSize: BODY_LIMIT_BYTES,
+    onError: (c) => c.json({ error: { code: "invalid_request", message: "Jev request is too large" } }, 413),
+  }), async (c) => {
+    const ownerId = await options.resolveOwnerId(c);
+    if (!ownerId) return c.json({ error: { code: "unauthorized", message: "Unauthorized" } }, 401);
+    return c.json({ error: { code: "unavailable", message: "Inbox preview is not available yet" } }, 503);
+  });
   app.post("/evaluate", bodyLimit({
     maxSize: BODY_LIMIT_BYTES,
     onError: (c) => c.json({ error: { code: "invalid_request", message: "Jev request is too large" } }, 413),

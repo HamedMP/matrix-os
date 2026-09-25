@@ -117,6 +117,8 @@ export interface CanonicalProviderRunInput<State = unknown> {
   chatId: string;
   turnId: string;
   runId: string;
+  /** Gateway-persisted admission context; model prompt text never grants tool authority. */
+  context?: import("@matrix-os/contracts").ChatRunContext;
   prompt: string;
   parts: CanonicalChatMessagePart[];
   selection: CanonicalChatModelSelection;

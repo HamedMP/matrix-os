@@ -40,6 +40,7 @@ describe("Hermes Agent invocation through canonical Chat", () => {
     for (const [directory, id, body] of [
       ["personal-daily-brief", "matrix-personal-daily-brief", "Read inbox and calendar for the current day."],
       ["integrations", "matrix-integrations", "Use Matrix integration tools after inventory."],
+      ["jev-email-triage", "matrix-jev-email-triage", "Review only after the broker verifies Gmail profile."],
     ]) {
       await mkdir(join(recipeSkillsRoot, directory), { recursive: true });
       await writeFile(join(recipeSkillsRoot, directory, "SKILL.md"),
@@ -110,6 +111,22 @@ describe("Hermes Agent invocation through canonical Chat", () => {
     await complete();
     return result;
   }
+
+  it("rejects a bound Jev invocation before primary inference or any provider tool is launched", async () => {
+    const recipe = { skills: ["matrix-jev-email-triage", "matrix-integrations"],
+      integrations: [{ service: "gmail", accountLabel: "My Gmail" }], output: "Review proposals" };
+    const binding = { version: 1 as const, ownerId: owner.ownerId, service: "gmail" as const,
+      accountLabel: "My Gmail", connectionId: "conn_own", expectedEmail: "me@example.test" };
+    await agents.update(owner, agentId, { baseRevision: 1, recipe }, { ...recipe, jevInboxTriage: binding });
+    await expect(orchestrator.admitTurn(principal, owner, "chat_parent", await input("req_jev_blocked",
+      [mention("agent", agentId), { type: "text", text: "Preview my Gmail" }]))).rejects.toMatchObject({
+      status: 503, safeError: { code: "service_unavailable", safeMessage: "Inbox preview is not available yet." },
+    });
+    expect(calls).toEqual([]);
+    const detail = await repository.getDetailPage(owner, "chat_parent", { limit: 10 });
+    expect(detail?.runs).toEqual([]);
+    expect(detail?.messages).toEqual([]);
+  });
 
   it.each([undefined, "0"])("admits saved Agents without configuration or with the retired flag %j", async (legacyFlag) => {
     vi.stubEnv("MATRIX_CHAT_AGENTS_ENABLED", legacyFlag);
