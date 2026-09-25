@@ -1,3 +1,7 @@
-/** SHA-256 of migrate.ts and migrations/*.ts, including relative paths.
- * The revision test fails when any schema step changes without an update here. */
-export const PLATFORM_SCHEMA_REVISION = "1cc1cde6f78555813becfb06e7947d5876832f25378e311f7f9212cae520fb1c";
+/** Bump generation and refresh the source fingerprint whenever a core schema
+ * step changes. The test covers migrate.ts, migrations/*.ts, and their DDL
+ * helper. Older Cloud Run instances skip newer generations during rollouts. */
+export const PLATFORM_SCHEMA_REVISION = {
+  generation: 1,
+  fingerprint: "34a1fe0b4b073496afd88c683a53ac5941f7ba4de13a67a88e6d97b62dde952c",
+} as const;

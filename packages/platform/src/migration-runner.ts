@@ -4,7 +4,7 @@ import { sql, type Kysely, type Transaction } from "kysely";
 export async function runPlatformMigration<Database>(
   db: Kysely<Database>,
   migrateSchema: (transaction: Transaction<Database>) => Promise<void>,
-  options: { revision?: string; deadlockAttempts?: number } = {},
+  options: { revision?: { generation: number; fingerprint: string }; deadlockAttempts?: number } = {},
 ): Promise<void> {
   const maxAttempts = options.deadlockAttempts ?? 3;
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
@@ -18,23 +18,33 @@ export async function runPlatformMigration<Database>(
           await sql`
             CREATE TABLE IF NOT EXISTS platform_schema_revisions (
               scope TEXT PRIMARY KEY,
-              revision TEXT NOT NULL,
+              generation INTEGER NOT NULL CHECK (generation > 0),
+              fingerprint TEXT NOT NULL,
               applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
             )
           `.execute(transaction);
-          const applied = await sql<{ revision: string }>`
-            SELECT revision FROM platform_schema_revisions WHERE scope = 'core'
+          const applied = await sql<{ generation: number; fingerprint: string }>`
+            SELECT generation, fingerprint FROM platform_schema_revisions WHERE scope = 'core'
           `.execute(transaction);
-          if (applied.rows[0]?.revision === options.revision) return;
+          const current = applied.rows[0];
+          if (current && current.generation > options.revision.generation) return;
+          if (current?.generation === options.revision.generation) {
+            if (current.fingerprint !== options.revision.fingerprint) {
+              throw new Error('Conflicting platform schema fingerprints for one generation');
+            }
+            return;
+          }
         }
         await migrateSchema(transaction);
         if (options.revision) {
           await sql`
-            INSERT INTO platform_schema_revisions (scope, revision)
-            VALUES ('core', ${options.revision})
+            INSERT INTO platform_schema_revisions (scope, generation, fingerprint)
+            VALUES ('core', ${options.revision.generation}, ${options.revision.fingerprint})
             ON CONFLICT (scope) DO UPDATE SET
-              revision = EXCLUDED.revision,
+              generation = EXCLUDED.generation,
+              fingerprint = EXCLUDED.fingerprint,
               applied_at = NOW()
+            WHERE platform_schema_revisions.generation < EXCLUDED.generation
           `.execute(transaction);
         }
       });
