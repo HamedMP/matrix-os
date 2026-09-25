@@ -6,6 +6,7 @@ import {
 import {
   loadFundedAiRuntimeConfig,
 } from "../../packages/gateway/src/funded-ai-credential-manager.js";
+import { createFundedAiRouteReadinessClient } from "../../packages/gateway/src/funded-ai-route-readiness-client.js";
 
 const NOW = "2026-08-30T10:00:00.000Z";
 const funding = {
@@ -97,5 +98,24 @@ describe("funded AI funding summary client", () => {
     const pending = pendingClient.getFundingSummary();
     deadline.abort();
     await expect(pending).rejects.toBeInstanceOf(FundedAiFundingSummaryClientError);
+  });
+});
+
+describe("funded AI route readiness client", () => {
+  it("uses only the runtime token and validates a bounded model receipt", async () => {
+    const config = runtimeConfig();
+    const receipt = { contractVersion: 1, globalRevision: 4, runtimeRevision: 2,
+      checkedAt: NOW, staleAfter: "2026-08-30T10:00:30.000Z",
+      readyModelIds: ["anthropic/claude-sonnet-5"] };
+    const fetchFn = vi.fn(async () => Response.json(receipt));
+    const client = createFundedAiRouteReadinessClient(config, fetchFn);
+    await expect(client.getRouteReadiness()).resolves.toEqual(receipt);
+    expect(fetchFn).toHaveBeenCalledWith(config.routeReadinessUrl, expect.objectContaining({
+      method: "POST", redirect: "error", signal: expect.any(AbortSignal),
+      headers: expect.objectContaining({ authorization: `Bearer ${"p".repeat(64)}` }), body: "{}",
+    }));
+    const invalid = createFundedAiRouteReadinessClient(config, vi.fn(async () => Response.json({ ...receipt,
+      readyModelIds: ["anthropic/claude-sonnet-5", "anthropic/claude-sonnet-5"] })));
+    await expect(invalid.getRouteReadiness()).rejects.toThrow();
   });
 });

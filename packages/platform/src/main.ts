@@ -258,6 +258,7 @@ export function createApp(deps: {
   internalFundedAiOperatorRoutes?: Hono<any>;
   internalSpeechRuntimeRoutes?: Hono<any>;
   fundedAiRepository?: import('./ai-funded-policy-repository.js').AiFundedPolicyRepository;
+  fundedModelProbes?: import('./ai-funded-model-probes.js').FundedModelProbeService;
   collaboration?: PlatformCollaborationComposition;
   customerVpsService?: CustomerVpsService;
   goldenSnapshotService?: GoldenSnapshotService;
@@ -512,6 +513,7 @@ export function createApp(deps: {
     redditConversions: createRedditConversionsClient({ env: appEnv }),
     prebilling,
     fundedAiRepository: deps.fundedAiRepository,
+    fundedModelProbes: deps.fundedModelProbes,
   }));
 
   // Onboarding journey (spec 092): one server-owned signup-to-ready state every

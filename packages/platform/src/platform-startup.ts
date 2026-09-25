@@ -57,6 +57,7 @@ import {
   loadAiFundedControlPlaneConfig,
 } from './ai-funded-policy-routes.js';
 import { loadAiCreditCheckoutConfig } from './ai-credit-checkout.js';
+import { createFundedModelProbeService, loadFundedModelProbeLimits, type FundedModelProbeService } from './ai-funded-model-probes.js';
 import {
   createR2CapabilityGate,
   createStorageGatedHetznerClient,
@@ -212,6 +213,7 @@ type CreatePlatformApp = (deps: {
   internalFundedAiOperatorRoutes?: Hono<any>;
   internalSpeechRuntimeRoutes?: Hono<any>;
   fundedAiRepository?: AiFundedPolicyRepository;
+  fundedModelProbes?: FundedModelProbeService;
   collaboration?: PlatformCollaborationComposition;
   customerVpsService?: CustomerVpsService;
   goldenSnapshotService?: GoldenSnapshotService;
@@ -321,6 +323,7 @@ async function startPlatformServerWithCleanup(
     ? createSpeechRuntimeRoutes({ db, platformSecret, service: speechService })
     : undefined;
   let fundedAiRepository: AiFundedPolicyRepository | undefined;
+  let fundedModelProbes: FundedModelProbeService | undefined;
   if (fundedAiConfig.enabled) {
     fundedAiRepository = createAiFundedPolicyRepository({
       db,
@@ -329,12 +332,20 @@ async function startPlatformServerWithCleanup(
       issueCooldownMs: fundedAiConfig.issueCooldownMs,
       policyFreshnessMs: fundedAiConfig.policyFreshnessMs,
     });
+    const probeLimits = loadFundedModelProbeLimits(process.env);
+    fundedModelProbes = createFundedModelProbeService({
+      db,
+      relayBaseUrl: process.env.MATRIX_FUNDED_AI_RELAY_URL,
+      relayControlToken: fundedAiConfig.relayControlToken,
+      ...probeLimits,
+    });
     internalFundedAiRuntimeRoutes = createAiFundedRuntimeRoutes({
       db,
       platformSecret: fundedAiConfig.platformSecret,
       repository: fundedAiRepository,
       topUpEnabled: loadAiCreditCheckoutConfig(process.env).enabled,
       promotionalGrant: fundedAiConfig.promotionalGrant,
+      routeProbes: fundedModelProbes,
     });
     internalFundedAiRelayRoutes = createAiFundedRelayRoutes({
       relayControlToken: fundedAiConfig.relayControlToken,
@@ -992,6 +1003,7 @@ async function startPlatformServerWithCleanup(
     internalFundedAiOperatorRoutes,
     internalSpeechRuntimeRoutes,
     fundedAiRepository,
+    fundedModelProbes,
     collaboration,
     customerVpsService,
     goldenSnapshotService,

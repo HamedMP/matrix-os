@@ -210,6 +210,25 @@ export const FundedAiRuntimeFundingSummaryResponseSchema = z.object({
   }
 });
 
+/** Separate from the v1 funding summary so older strict clients keep working. */
+export const FundedAiRouteReadinessReceiptSchema = z.object({
+  contractVersion: z.literal(1),
+  globalRevision: RevisionSchema,
+  runtimeRevision: RevisionSchema,
+  checkedAt: IsoTimestampSchema,
+  staleAfter: IsoTimestampSchema,
+  readyModelIds: z.array(ProviderModelReferenceSchema).max(2)
+    .refine((models) => new Set(models).size === models.length, "Model IDs must be unique"),
+}).strict().superRefine((value, ctx) => {
+  const checked = Date.parse(value.checkedAt);
+  const stale = Date.parse(value.staleAfter);
+  if (stale <= checked || stale - checked > 30_000) {
+    ctx.addIssue({ code: "custom", path: ["staleAfter"], message: "Model readiness freshness is invalid" });
+  }
+});
+
+export type FundedAiRouteReadinessReceipt = z.infer<typeof FundedAiRouteReadinessReceiptSchema>;
+
 export const FundedAiAuthorizationResponseSchema = z.object({
   contractVersion: z.literal(1),
   authorized: z.literal(true),

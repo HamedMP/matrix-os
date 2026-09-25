@@ -56,4 +56,19 @@ describe("Jev Gateway routes", () => {
     expect(response.status).toBe(503);
     expect(await response.json()).toEqual({ error: { code: "unavailable", message: "Jev is temporarily unavailable" } });
   });
+
+  it("distinguishes a pruned completed result from an unknown outcome", async () => {
+    const app = new Hono();
+    app.route("/api/jev", createJevRoutes({
+      service: { evaluate: vi.fn(async () => { throw new JevServiceError("result_expired"); }) },
+      resolveOwnerId: () => "owner_a",
+    }));
+    const response = await app.request("/api/jev/evaluate", {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(valid),
+    });
+    expect(response.status).toBe(410);
+    expect(await response.json()).toEqual({
+      error: { code: "result_expired", message: "This Jev result has expired" },
+    });
+  });
 });

@@ -9,6 +9,7 @@ function safeError(code: JevServiceError["code"]): { error: { code: string; mess
   if (code === "conflict") return { error: { code, message: "This Jev request key was already used" } };
   if (code === "denied") return { error: { code, message: "Jev access is unavailable for this account" } };
   if (code === "in_progress") return { error: { code, message: "This Jev request is already in progress" } };
+  if (code === "result_expired") return { error: { code, message: "This Jev result has expired" } };
   if (code === "unknown") return { error: { code, message: "The Jev request outcome is unknown" } };
   return { error: { code: "unavailable", message: "Jev is temporarily unavailable" } };
 }
@@ -47,7 +48,8 @@ export function createJevRoutes(options: {
       return c.json(result, 200);
     } catch (error) {
       if (error instanceof JevServiceError) {
-        const status = error.code === "conflict" ? 409
+        const status = error.code === "result_expired" ? 410
+          : error.code === "conflict" ? 409
           : error.code === "denied" ? 403
           : error.code === "in_progress" ? 409
           : 503;

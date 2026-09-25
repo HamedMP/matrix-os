@@ -234,7 +234,7 @@ describe("createHomeMirror", () => {
       await mirror.stop();
     });
 
-    it("logs non-Error failures during initial pull without losing the reason", async () => {
+    it("fails startup after an incomplete initial pull without subscribing", async () => {
       const logger = { info: vi.fn(), error: vi.fn() };
       const content = Buffer.from("startup payload");
       const originalGetObject = r2.getObject.bind(r2);
@@ -284,12 +284,13 @@ describe("createHomeMirror", () => {
         peerRegistry: registry,
         logger,
       });
-      await mirror.start();
+      await expect(mirror.start()).rejects.toThrow("initial pull incomplete");
 
       expect(logger.error).toHaveBeenCalledWith(
         "pull failed for notes/startup.md:",
         "non-error initial pull failure",
       );
+      expect(registry.getPeers("alice")).toEqual([]);
 
       await mirror.stop();
     });

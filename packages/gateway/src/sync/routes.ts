@@ -1,4 +1,4 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import type { SyncScope } from "@matrix-os/contracts";
 import { bodyLimit } from "hono/body-limit";
 import { HTTPException } from "hono/http-exception";
@@ -54,6 +54,7 @@ import { createSyncRateLimiter } from "./rate-limiter.js";
 import { MissingSyncUserIdentityError } from "../auth.js";
 import { RequestPrincipalMisconfiguredError, isRequestPrincipalError } from "../request-principal.js";
 import { StagedObjectValidationError } from "./blob-publication.js";
+import type { HomeMirrorReadinessStatus } from "./home-mirror-readiness.js";
 
 const SYNC_BODY_LIMIT = 65536;
 const MULTIPART_COMPLETE_BODY_LIMIT = 1024 * 1024;
@@ -67,6 +68,7 @@ export interface SyncRouteDeps {
   getScope?: (c: any) => SyncScope;
   getUserId?: (c: any) => string;
   getPeerId: (c: any) => string;
+  getHomeMirrorStatus?: () => HomeMirrorReadinessStatus;
   finalizeStagedObject?: CommitDeps["finalizeStagedObject"];
 }
 
@@ -374,6 +376,7 @@ export function createSyncRoutes(deps: SyncRouteDeps): Hono {
       totalSize: Number(meta?.total_size ?? 0),
       lastSyncAt: meta?.updated_at?.getTime() ?? 0,
       pendingConflicts: 0,
+      homeMirror: deps.getHomeMirrorStatus?.() ?? { state: "disabled" },
       protocolVersion: 3,
       capabilities: {
         stagedUploads: true,
@@ -607,18 +610,33 @@ export function createSyncRoutes(deps: SyncRouteDeps): Hono {
   return app;
 }
 
-// Backward-compatible stub for server.ts until deps are wired
-const syncApp = new Hono();
-syncApp.get("/manifest", (c) => c.json({ error: "Not configured" }, 503));
-syncApp.post("/presign", (c) => c.json({ error: "Not configured" }, 503));
-syncApp.post("/multipart/complete", (c) => c.json({ error: "Not configured" }, 503));
-syncApp.post("/multipart/abort", (c) => c.json({ error: "Not configured" }, 503));
-syncApp.post("/commit", (c) => c.json({ error: "Not configured" }, 503));
-syncApp.get("/status", (c) => c.json({ error: "Not configured" }, 503));
-syncApp.post("/resolve-conflict", (c) => c.json({ error: "Not configured" }, 503));
-syncApp.post("/share", (c) => c.json({ error: "Not configured" }, 503));
-syncApp.delete("/share", (c) => c.json({ error: "Not configured" }, 503));
-syncApp.post("/share/accept", (c) => c.json({ error: "Not configured" }, 503));
-syncApp.get("/shares", (c) => c.json({ error: "Not configured" }, 503));
+interface UnconfiguredSyncRouteDeps {
+  getHomeMirrorStatus?: () => HomeMirrorReadinessStatus;
+}
 
-export { syncApp };
+export function createUnconfiguredSyncRoutes(
+  deps: UnconfiguredSyncRouteDeps = {},
+): Hono {
+  const app = new Hono();
+  const mutatingBodyLimit = bodyLimit({ maxSize: SYNC_BODY_LIMIT });
+  const multipartCompleteBodyLimit = bodyLimit({ maxSize: MULTIPART_COMPLETE_BODY_LIMIT });
+  const unavailable = (c: Context) => c.json({ error: "Not configured" }, 503);
+  app.get("/manifest", unavailable);
+  app.post("/presign", mutatingBodyLimit, unavailable);
+  app.post("/multipart/complete", multipartCompleteBodyLimit, unavailable);
+  app.post("/multipart/abort", mutatingBodyLimit, unavailable);
+  app.post("/commit", mutatingBodyLimit, unavailable);
+  app.get("/status", (c) => c.json({
+    error: "Not configured",
+    homeMirror: deps.getHomeMirrorStatus?.() ?? { state: "disabled" },
+  }, 503));
+  app.post("/resolve-conflict", mutatingBodyLimit, unavailable);
+  app.post("/share", mutatingBodyLimit, unavailable);
+  app.delete("/share", mutatingBodyLimit, unavailable);
+  app.post("/share/accept", mutatingBodyLimit, unavailable);
+  app.get("/shares", unavailable);
+  return app;
+}
+
+// Backward-compatible stub for callers that do not have lifecycle state.
+export const syncApp = createUnconfiguredSyncRoutes();
