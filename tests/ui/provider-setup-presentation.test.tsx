@@ -58,7 +58,8 @@ describe("provider setup presentation", () => {
     setup(value);
     const gateway = screen.getByRole("region", { name: "Matrix AI" });
     expect(within(gateway).getByText("Setup needed")).toBeVisible();
-    expect(within(gateway).getByText(/not enabled for this computer/i)).toBeVisible();
+    expect(within(gateway).getByText(/not available on this computer yet/i)).toBeVisible();
+    expect(within(gateway).queryByRole("button", { name: "Add credit" })).not.toBeInTheDocument();
     expect(within(gateway).queryByText(/\$0/)).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Add agent" })).toBeVisible();
   });
