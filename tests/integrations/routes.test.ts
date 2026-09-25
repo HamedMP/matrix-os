@@ -679,6 +679,12 @@ describe("Integration Routes", () => {
   describe("POST /call", () => {
     let serviceId: string;
 
+    const callGmail = (label: string) => ({
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ service: "gmail", action: "get_profile", label }),
+    });
+
     beforeEach(async () => {
       const svc = await db.connectService({
         userId,
@@ -688,6 +694,63 @@ describe("Integration Routes", () => {
         scopes: ["read"],
       });
       serviceId = svc.id;
+    });
+
+    it("rejects a cached duplicate account label before any Gmail provider call", async () => {
+      await db.connectService({
+        userId, service: "gmail", pipedreamAccountId: "pd_acc_call_duplicate",
+        accountLabel: "Call Test", scopes: ["read"],
+      });
+
+      const response = await app.request("/api/integrations/call", callGmail("Call Test"));
+
+      expect(response.status).toBe(409);
+      expect(pipedream.proxyGet).not.toHaveBeenCalled();
+      expect(pipedream.proxyPost).not.toHaveBeenCalled();
+      expect(pipedream.runAction).not.toHaveBeenCalled();
+    });
+
+    it("rejects duplicate account labels discovered on cache miss before any Gmail provider call", async () => {
+      vi.mocked(pipedream.listAccounts).mockResolvedValue([
+        { id: "pd_acc_discovered_one", app: "gmail" },
+        { id: "pd_acc_discovered_two", app: "gmail" },
+      ]);
+
+      const response = await app.request("/api/integrations/call", callGmail("gmail"));
+
+      expect(pipedream.listAccounts).toHaveBeenCalledWith("pd_ext_route");
+      expect(response.status).toBe(409);
+      expect(pipedream.proxyGet).not.toHaveBeenCalled();
+      expect(pipedream.proxyPost).not.toHaveBeenCalled();
+      expect(pipedream.runAction).not.toHaveBeenCalled();
+    });
+
+    it("selects a unique exact label and excludes missing or another owner's labels", async () => {
+      await db.connectService({
+        userId, service: "gmail", pipedreamAccountId: "pd_acc_personal",
+        accountLabel: "Personal", scopes: ["read"],
+      });
+      const other = await db.createUser({
+        clerkId: "clerk_call_other", handle: "callother", displayName: "Other",
+        email: "other@example.com", containerId: "container_call_other",
+      });
+      await db.connectService({
+        userId: other.id, service: "gmail", pipedreamAccountId: "pd_acc_foreign",
+        accountLabel: "Foreign", scopes: ["read"],
+      });
+
+      const selected = await app.request("/api/integrations/call", callGmail("Personal"));
+      expect(selected.status).toBe(200);
+      expect(pipedream.proxyGet).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+        accountId: "pd_acc_personal",
+      }));
+      vi.mocked(pipedream.proxyGet).mockClear();
+
+      for (const label of ["Missing", "Foreign"]) {
+        const response = await app.request("/api/integrations/call", callGmail(label));
+        expect(response.status).toBe(400);
+        expect(pipedream.proxyGet).not.toHaveBeenCalled();
+      }
     });
 
     it("returns 400 when a Granola list parameter is unsupported", async () => {
