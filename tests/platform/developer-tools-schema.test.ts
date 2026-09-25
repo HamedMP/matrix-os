@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import codexContract from '../../packages/gateway/src/coding-agents/codex-exec-contract.json' with { type: 'json' };
+import { CODEX_VERIFIED_VERSION } from '../../packages/contracts/src/index.js';
 import {
   DEFAULT_DEVELOPER_TOOLS,
   DeveloperToolsSchema,
@@ -66,9 +66,9 @@ describe('developer tool selection schema', () => {
       import.meta.url,
     )), 'utf8');
 
-    expect(toolPack).toContain(`CODEX_VERSION="${codexContract.latestVerifiedVersion}"`);
+    expect(toolPack).toContain(`CODEX_VERSION="${CODEX_VERIFIED_VERSION}"`);
     expect(toolPack).toContain('"@openai/codex@${CODEX_VERSION}"');
-    expect(developerTools).toContain(`CODEX_VERSION="${codexContract.latestVerifiedVersion}"`);
+    expect(developerTools).toContain(`CODEX_VERSION="${CODEX_VERIFIED_VERSION}"`);
     expect(developerTools).toContain('codex_version_is_current');
   });
 });
