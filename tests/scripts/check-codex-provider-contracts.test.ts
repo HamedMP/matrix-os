@@ -1,7 +1,10 @@
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { gunzipSync, gzipSync } from "node:zlib";
 import { describe, expect, it } from "vitest";
 import appServerContract from "../../packages/gateway/src/coding-agents/codex-app-server-contract.json" with { type: "json" };
 import contract from "../../packages/gateway/src/coding-agents/codex-exec-contract.json" with { type: "json" };
@@ -13,17 +16,143 @@ import {
 const scriptPath = fileURLToPath(
   new URL("../../scripts/check-codex-exec-contract.mjs", import.meta.url),
 );
+const comparisonScriptPath = fileURLToPath(new URL(
+  "../../specs/532-codex-0157-contract-qualification/evidence/compare-schemas.py",
+  import.meta.url,
+));
+
+type ProtocolVariant = {
+  properties: { method: { enum: string[] } };
+  description?: string;
+};
+type MutableProtocolSchema = {
+  definitions: {
+    ClientRequest: { oneOf: ProtocolVariant[] };
+    ServerNotification: { oneOf: ProtocolVariant[] };
+    v2: { McpServerStatus: { properties: Record<string, unknown> } };
+  };
+};
+
+const comparatorMutations: Array<{
+  label: string;
+  mutate: (schema: MutableProtocolSchema) => void;
+  error: string;
+}> = [
+  {
+    label: "a removed existing client request",
+    mutate: (schema) => {
+      schema.definitions.ClientRequest.oneOf = schema.definitions.ClientRequest.oneOf.filter(
+        (variant) => variant.properties.method.enum[0] !== "initialize",
+      );
+    },
+    error: "removed ClientRequest variants",
+  },
+  {
+    label: "a modified existing server notification",
+    mutate: (schema) => {
+      const variant = schema.definitions.ServerNotification.oneOf.find(
+        (candidate) => candidate.properties.method.enum[0] === "item/started",
+      );
+      if (!variant) throw new Error("Fixture has no item/started notification");
+      variant.description = "mutated fixture";
+    },
+    error: "modified ServerNotification variants",
+  },
+  {
+    label: "an unexpected optional field in a referenced v2 type",
+    mutate: (schema) => {
+      schema.definitions.v2.McpServerStatus.properties.unreviewed = { type: "boolean" };
+    },
+    error: "unexpected McpServerStatus additions",
+  },
+];
 
 describe("Codex provider contract checker", () => {
-  it("trusts the reviewed Codex 0.156.1 provider schemas", () => {
-    expect(contract.latestVerifiedVersion).toBe("0.156.1");
+  it.each(comparatorMutations)("rejects schema comparison mutations: $label", ({ mutate, error }) => {
+    const schema = JSON.parse(gunzipSync(readFileSync(new URL(
+      "../fixtures/codex-0157/app-server-schema-0157.json.gz",
+      import.meta.url,
+    ))).toString("utf8")) as MutableProtocolSchema;
+    mutate(schema);
+    const scratch = mkdtempSync(join(tmpdir(), "codex-0157-schema-mutation-"));
+    try {
+      const mutatedPath = join(scratch, "mutated.json.gz");
+      writeFileSync(mutatedPath, gzipSync(JSON.stringify(schema)));
+      const result = spawnSync("python3", [comparisonScriptPath, "--new-schema", mutatedPath], {
+        encoding: "utf8",
+      });
+      expect(result.error).toBeUndefined();
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain(error);
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
+    }
+  });
+
+  it("qualifies exact published Codex 0.157.0 bytes on both supported targets", () => {
+    const version = "0.157.0";
+    const execSchemaBytes = readFileSync(new URL(
+      "../fixtures/codex-0157/exec-events.rs",
+      import.meta.url,
+    ));
+    const appServerSchemaBytes = gunzipSync(readFileSync(new URL(
+      "../fixtures/codex-0157/app-server-schema-0157.json.gz",
+      import.meta.url,
+    )));
+    const digest = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex");
+
+    // The checked-in fixture is the tagged source plus published CLI-generated
+    // schema, not a hand-built approximation of the methods we consume.
+    expect(digest(execSchemaBytes)).toBe(
+      "dafa872d7e86a099e56e28a329dcb9c03db90ed768c3b88cca8c91d46dc1d0e5",
+    );
+    expect(digest(appServerSchemaBytes)).toBe(
+      "d6d70a4b2af4c6bb03dee46af2cda9c8b7b4d656cd5a55c54f748146985cdb43",
+    );
+
+    for (const runtimeTarget of ["darwin-arm64", "linux-x64"]) {
+      expect(() => verifyCodexProviderContracts({
+        version,
+        execContract: contract,
+        appServerContract,
+        execSchemaBytes,
+        appServerSchemaBytes,
+        runtimeTarget,
+      })).not.toThrow();
+    }
+
+  });
+
+  it("retains earlier qualification records and rejects an unknown Codex version", () => {
+    const execSchemaBytes = readFileSync(new URL(
+      "../fixtures/codex-0157/exec-events.rs",
+      import.meta.url,
+    ));
+    const appServerSchemaBytes = gunzipSync(readFileSync(new URL(
+      "../fixtures/codex-0157/app-server-schema-0157.json.gz",
+      import.meta.url,
+    )));
+    expect(contract.verifiedVersions["0.156.1"]).toBeDefined();
+    expect(appServerContract.verifiedVersions["0.156.1"]).toBeDefined();
+    expect(() => verifyCodexProviderContracts({
+      version: "0.157.1",
+      execContract: contract,
+      appServerContract,
+      execSchemaBytes,
+      appServerSchemaBytes,
+    })).toThrow("Codex 0.157.1 is not verified");
+  });
+
+  it("retains reviewed Codex schemas through 0.157.0", () => {
+    expect(contract.latestVerifiedVersion).toBe("0.157.0");
     expect(contract.verifiedVersions["0.156.0"]).toEqual({
       schemaSha256: "dafa872d7e86a099e56e28a329dcb9c03db90ed768c3b88cca8c91d46dc1d0e5",
     });
     expect(contract.verifiedVersions["0.156.1"]).toEqual({
       schemaSha256: "dafa872d7e86a099e56e28a329dcb9c03db90ed768c3b88cca8c91d46dc1d0e5",
     });
-    expect(appServerContract.latestVerifiedVersion).toBe("0.156.1");
+    expect(contract.verifiedVersions["0.157.0"]).toEqual(contract.verifiedVersions["0.156.1"]);
+    expect(appServerContract.latestVerifiedVersion).toBe("0.157.0");
     expect(appServerContract.verifiedVersions["0.156.0"]).toEqual({
       schemaSha256ByTarget: {
         "darwin-arm64": "655adafa0ccea3d84f30bcbdc74e201fa14511c51e08d0cd024a0280daa8bc60",
@@ -33,6 +162,12 @@ describe("Codex provider contract checker", () => {
     expect(appServerContract.verifiedVersions["0.156.1"]).toEqual(
       appServerContract.verifiedVersions["0.156.0"],
     );
+    expect(appServerContract.verifiedVersions["0.157.0"]).toEqual({
+      schemaSha256ByTarget: {
+        "darwin-arm64": "d6d70a4b2af4c6bb03dee46af2cda9c8b7b4d656cd5a55c54f748146985cdb43",
+        "linux-x64": "d6d70a4b2af4c6bb03dee46af2cda9c8b7b4d656cd5a55c54f748146985cdb43",
+      },
+    });
     expect(appServerContract.requiredServerProtocolSchemaDigests[
       "item/commandExecution/requestApproval"
     ]).toEqual({
