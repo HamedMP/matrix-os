@@ -128,7 +128,8 @@ function TwoPaneChatProviderChoices({
             const unavailable = instance.availability !== "available";
             const locked = lockedInstanceId !== undefined && instance.id !== lockedInstanceId;
             const setupBrowsable = unavailable && Boolean(onSetupAction && instance.setupActions.length);
-            const disabled = (locked && !setupBrowsable) || (unavailable && !setupBrowsable);
+            const disabledReasonBrowsable = instance.unavailabilityReason === "disabled_in_settings";
+            const disabled = (locked || unavailable) && !setupBrowsable && !disabledReasonBrowsable;
             const active = activeInstance?.id === instance.id;
             const availability = canonicalProviderAvailabilityLabel(instance);
             return <button key={instance.id} type="button"
