@@ -5,7 +5,7 @@ import { JevEvaluationRepository } from "./repository.js";
 const CONNECTION_TIMEOUT_MS = 3_000;
 const QUERY_TIMEOUT_MS = 4_000;
 
-type MaintenancePool = Pick<pg.Pool, "connect" | "end">;
+type MaintenancePool = Pick<pg.Pool, "connect" | "end" | "on">;
 export type JevMaintenancePoolFactory = (config: pg.PoolConfig) => MaintenancePool;
 
 export function createOwnedJevMaintenance(options: {
@@ -23,6 +23,9 @@ export function createOwnedJevMaintenance(options: {
     connectionTimeoutMillis: CONNECTION_TIMEOUT_MS,
     query_timeout: QUERY_TIMEOUT_MS,
     statement_timeout: QUERY_TIMEOUT_MS,
+  });
+  pool.on("error", (error: Error) => {
+    console.error("[jev] Idle maintenance pool error:", error instanceof Error ? error.name : "UnknownError");
   });
   let active: { client: pg.PoolClient; released: boolean } | null = null;
   let closing = false;

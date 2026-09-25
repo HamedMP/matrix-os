@@ -1,4 +1,5 @@
 import type pg from "pg";
+import { EventEmitter } from "node:events";
 import { sql } from "kysely";
 import { KyselyPGlite } from "kysely-pglite";
 import { describe, expect, it, vi } from "vitest";
@@ -8,6 +9,25 @@ import { initializeJevRuntime } from "../../packages/gateway/src/jev/runtime.js"
 import { JevEvaluationRepository } from "../../packages/gateway/src/jev/repository.js";
 
 describe("Jev-owned maintenance database", () => {
+  it("logs an idle pool error without exposing its message or crashing", async () => {
+    const pool = Object.assign(new EventEmitter(), {
+      connect: vi.fn(async () => { throw new Error("unused"); }),
+      end: vi.fn(async () => undefined),
+    });
+    const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const maintenance = createOwnedJevMaintenance({
+        databaseUrl: "postgres://isolated-test/owner",
+        poolFactory: () => pool,
+      });
+      expect(() => pool.emit("error", new Error("private database host and token"))).not.toThrow();
+      expect(log).toHaveBeenCalledWith("[jev] Idle maintenance pool error:", "Error");
+      await maintenance.close();
+    } finally {
+      log.mockRestore();
+    }
+  });
+
   it("force-releases only its own stuck client before pool teardown", async () => {
     let resolveQuery: ((result: { command: "UPDATE"; rowCount: number; rows: [] }) => void) | undefined;
     let forced = false;
@@ -18,10 +38,10 @@ describe("Jev-owned maintenance database", () => {
     const end = vi.fn(async () => {
       if (!forced) await new Promise<void>(() => undefined);
     });
-    const pool = {
+    const pool = Object.assign(new EventEmitter(), {
       connect: vi.fn(async () => ({ query, release }) as unknown as pg.PoolClient),
       end,
-    };
+    });
     let config: pg.PoolConfig | undefined;
     const maintenance = createOwnedJevMaintenance({
       databaseUrl: "postgres://isolated-test/owner",
@@ -66,13 +86,13 @@ describe("Jev-owned maintenance database", () => {
     const shared = new JevEvaluationRepository(pglite.dialect);
     const release = vi.fn();
     const end = vi.fn(async () => undefined);
-    const pool = {
+    const pool = Object.assign(new EventEmitter(), {
       connect: vi.fn(async () => ({
         query: vi.fn(async () => ({ command: "UPDATE", rowCount: 0, rows: [] })),
         release,
       }) as unknown as pg.PoolClient),
       end,
-    };
+    });
     const runtime = await initializeJevRuntime({
       db: shared.kysely,
       databaseUrl: "postgres://isolated-test/owner",
@@ -98,12 +118,12 @@ describe("Jev-owned maintenance database", () => {
       const maintenance = createOwnedJevMaintenance({
         databaseUrl: "postgres://isolated-test/owner",
         poolFactory(config) {
-          return {
+          return Object.assign(new EventEmitter(), {
             connect: () => new Promise<pg.PoolClient>((_resolve, reject) => {
               setTimeout(() => reject(new Error("connection timeout")), config.connectionTimeoutMillis);
             }),
             end,
-          };
+          });
         },
       });
       const onError = vi.fn();
@@ -122,5 +142,38 @@ describe("Jev-owned maintenance database", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("destroys a connection acquired after close begins without issuing a query", async () => {
+    let resolveConnect: ((client: pg.PoolClient) => void) | undefined;
+    let resolveEnd: (() => void) | undefined;
+    const query = vi.fn();
+    const release = vi.fn((destroy?: boolean) => {
+      if (destroy === true) resolveEnd?.();
+    });
+    const client = { query, release } as unknown as pg.PoolClient;
+    const end = vi.fn(() => new Promise<void>((resolve) => { resolveEnd = resolve; }));
+    const pool = Object.assign(new EventEmitter(), {
+      connect: vi.fn(() => new Promise<pg.PoolClient>((resolve) => { resolveConnect = resolve; })),
+      end,
+    });
+    const maintenance = createOwnedJevMaintenance({
+      databaseUrl: "postgres://isolated-test/owner",
+      poolFactory: () => pool,
+    });
+    const pending = maintenance.repository.pruneExpiredCompletedResults()
+      .then(() => undefined, (error: unknown) => error);
+    await vi.waitFor(() => expect(pool.connect).toHaveBeenCalledTimes(1));
+
+    const closing = maintenance.close();
+    await vi.waitFor(() => expect(end).toHaveBeenCalledTimes(1));
+    resolveConnect?.(client);
+    await closing;
+    await pending;
+    expect(release).toHaveBeenCalledTimes(1);
+    expect(release).toHaveBeenCalledWith(true);
+    expect(query).not.toHaveBeenCalled();
+    await maintenance.close();
+    expect(end).toHaveBeenCalledTimes(1);
   });
 });

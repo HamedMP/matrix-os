@@ -14,6 +14,27 @@ describe("Jev result cleanup lifecycle", () => {
     })).resolves.toBeNull();
   });
 
+  it("fails closed when an owner database has no maintenance connection URL", async () => {
+    const pglite = await KyselyPGlite.create();
+    const shared = new JevEvaluationRepository(pglite.dialect);
+    let observed: unknown;
+    let runtime: Awaited<ReturnType<typeof initializeJevRuntime>> = null;
+    try {
+      runtime = await initializeJevRuntime({
+        db: shared.kysely,
+        credentialProvider: null,
+        fundedRuntimeEnabled: false,
+        schedule: () => "timer",
+        cancel: () => undefined,
+      });
+    } catch (error) {
+      observed = error;
+    }
+    await runtime?.cleanup.close();
+    await shared.destroy();
+    expect(observed).toMatchObject({ message: "Jev maintenance database URL required" });
+  });
+
   it("starts without a claim, coalesces ticks, and stops before future sweeps", async () => {
     let tick: (() => void) | undefined;
     let finishSweep: (() => void) | undefined;
@@ -99,6 +120,7 @@ describe("Jev result cleanup lifecycle", () => {
 
     const runtime = await initializeJevRuntime({
       db: prior.kysely,
+      maintenanceRepositoryForTests: prior,
       credentialProvider: null,
       fundedRuntimeEnabled: false,
       now: () => clock,

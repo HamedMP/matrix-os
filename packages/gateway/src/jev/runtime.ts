@@ -8,6 +8,7 @@ import { createJevService } from "./service.js";
 export async function initializeJevRuntime(options: {
   db: Kysely<any> | null;
   databaseUrl?: string;
+  maintenanceRepositoryForTests?: Pick<JevEvaluationRepository, "pruneExpiredCompletedResults">;
   maintenancePoolFactory?: JevMaintenancePoolFactory;
   credentialProvider?: MatrixFundedCredentialProvider | null;
   fundedRuntimeEnabled: boolean;
@@ -19,6 +20,9 @@ export async function initializeJevRuntime(options: {
   cleanup: ReturnType<typeof startJevResultCleanup>;
 } | null> {
   if (!options.db) return null;
+  if (!options.databaseUrl && !options.maintenanceRepositoryForTests) {
+    throw new Error("Jev maintenance database URL required");
+  }
 
   // Retention belongs to the owner database lifecycle, even when the paid
   // Jev route is disabled after earlier use. This wrapper never owns the pool.
@@ -34,8 +38,10 @@ export async function initializeJevRuntime(options: {
       poolFactory: options.maintenancePoolFactory,
     })
     : null;
+  const maintenanceRepository = ownedMaintenance?.repository ?? options.maintenanceRepositoryForTests;
+  if (!maintenanceRepository) throw new Error("Jev maintenance repository unavailable");
   const lifecycle = startJevResultCleanup({
-    repository: ownedMaintenance?.repository ?? repository,
+    repository: maintenanceRepository,
     abortInFlight: ownedMaintenance?.forceReleaseActive,
     schedule: options.schedule,
     cancel: options.cancel,
