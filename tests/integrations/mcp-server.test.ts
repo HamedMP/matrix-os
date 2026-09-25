@@ -168,6 +168,31 @@ describe("Matrix integrations MCP server", () => {
     await server.close();
   });
 
+  it("reports an expired Jev result to the agent without presenting a classification", async () => {
+    const fetcher = vi.fn<GatewayFetcher>().mockResolvedValue(response(410, {
+      error: { code: "result_expired", message: "This Jev result has expired" },
+    }));
+    const { client, server } = await connect(fetcher);
+
+    const result = await client.callTool({
+      name: "jev_evaluate",
+      arguments: {
+        state: "bounded evidence",
+        idempotency_key: "gmail.work.thread-1.sha256-fixture",
+        verified: false,
+        age_days: 2,
+      },
+    });
+
+    expect(result.isError).toBe(true);
+    expect(JSON.stringify(result)).toContain("result has expired");
+    expect(JSON.stringify(result)).toContain("No classification was produced");
+    expect(fetcher).toHaveBeenCalledTimes(1);
+
+    await client.close();
+    await server.close();
+  });
+
   it("returns safe Gmail connection context without returning mailbox data", async () => {
     const fetcher = vi.fn<GatewayFetcher>().mockResolvedValue(response(200, [
       {
