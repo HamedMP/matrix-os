@@ -1,0 +1,95 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { Hono } from "hono";
+import { KyselyPGlite } from "kysely-pglite";
+import { createPlatformDb, type PlatformDb } from "../../packages/gateway/src/platform-db.js";
+import { createIntegrationRoutes } from "../../packages/gateway/src/integrations/routes.js";
+import type { PipedreamConnectClient } from "../../packages/gateway/src/integrations/pipedream.js";
+
+describe("owner-bound integration read-call authority", () => {
+  let pglite: InstanceType<typeof KyselyPGlite>;
+  let db: PlatformDb;
+  let app: Hono;
+  let ownerId: string;
+  let provider: PipedreamConnectClient;
+  const proxyGet = vi.fn(async () => ({ labels: [] }));
+  const proxyPost = vi.fn(async () => ({ results: [] }));
+
+  beforeEach(async () => {
+    proxyGet.mockClear();
+    proxyPost.mockClear();
+    pglite = await KyselyPGlite.create();
+    db = createPlatformDb({ dialect: pglite.dialect });
+    await db.migrate();
+    const owner = await db.createUser({
+      clerkId: "owner_read_call", handle: "readcall", displayName: "Read Call", email: "read@example.invalid",
+      containerId: "container_read_call", pipedreamExternalId: "pd_read_call",
+    });
+    ownerId = owner.id;
+    provider = {
+      getAppInfo: vi.fn(async () => null),
+      listAccounts: vi.fn(async () => []),
+      proxyGet,
+      proxyPost,
+    } as unknown as PipedreamConnectClient;
+    app = new Hono();
+    app.route("/api/integrations", createIntegrationRoutes({
+      db, pipedream: provider, webhookSecret: "test-only-webhook-secret",
+      resolveUserId: async () => ownerId,
+    }));
+  });
+
+  afterEach(async () => { await db.destroy(); });
+
+  function readCall(body: unknown): Promise<Response> {
+    return app.request("/api/integrations/read-call", {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
+    });
+  }
+
+  it("calls an explicit read action on the selected owner's exact account, but never a write action", async () => {
+    await db.connectService({ userId: ownerId, service: "gmail", pipedreamAccountId: "pd_work",
+      accountLabel: "Work", scopes: ["read"] });
+    const other = await db.createUser({ clerkId: "other_read_call", handle: "otherread", displayName: "Other",
+      email: "other@example.invalid", containerId: "container_other", pipedreamExternalId: "pd_other" });
+    await db.connectService({ userId: other.id, service: "gmail", pipedreamAccountId: "pd_other",
+      accountLabel: "Work", scopes: ["read"] });
+
+    const read = await readCall({ service: "gmail", action: "list_labels", label: "Work", params: {} });
+    expect(read.status).toBe(200);
+    expect(proxyGet).toHaveBeenCalledWith(expect.objectContaining({ accountId: "pd_work" }));
+    expect(proxyGet).toHaveBeenCalledTimes(1);
+
+    const write = await readCall({ service: "gmail", action: "send_email", label: "Work",
+      params: { to: "recipient@example.invalid", subject: "Test", body: "Test" } });
+    expect(write.status).toBe(403);
+    expect(proxyPost).not.toHaveBeenCalled();
+    expect(proxyGet).toHaveBeenCalledTimes(1);
+  });
+
+  it("allows a registry-declared read even when the provider operation uses POST", async () => {
+    await db.connectService({ userId: ownerId, service: "notion", pipedreamAccountId: "pd_notion",
+      accountLabel: "Research", scopes: ["read"] });
+    const result = await readCall({ service: "notion", action: "search", label: "Research", params: {} });
+    expect(result.status).toBe(200);
+    expect(proxyPost).toHaveBeenCalledWith(expect.objectContaining({ accountId: "pd_notion" }));
+  });
+
+  it("requires one exact label and rejects duplicate matches before reaching the provider", async () => {
+    await db.connectService({ userId: ownerId, service: "gmail", pipedreamAccountId: "pd_first",
+      accountLabel: "Shared", scopes: ["read"] });
+    await db.connectService({ userId: ownerId, service: "gmail", pipedreamAccountId: "pd_second",
+      accountLabel: "Shared", scopes: ["read"] });
+
+    expect((await readCall({ service: "gmail", action: "list_labels", params: {} })).status).toBe(400);
+    expect((await readCall({ service: "gmail", action: "list_labels", label: "Shared", params: {} })).status).toBe(409);
+    expect(proxyGet).not.toHaveBeenCalled();
+  });
+
+  it("fails closed for unknown actions and malformed account labels", async () => {
+    await db.connectService({ userId: ownerId, service: "gmail", pipedreamAccountId: "pd_work",
+      accountLabel: "Work", scopes: ["read"] });
+    expect((await readCall({ service: "gmail", action: "not_registered", label: "Work", params: {} })).status).toBe(400);
+    expect((await readCall({ service: "gmail", action: "list_labels", label: "   ", params: {} })).status).toBe(400);
+    expect(proxyGet).not.toHaveBeenCalled();
+  });
+});
