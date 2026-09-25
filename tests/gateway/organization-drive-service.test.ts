@@ -14,6 +14,13 @@ async function fixture(quotaBytes = 100) {
   const instance = await KyselyPGlite.create();
   const db = new Kysely<OrganizationDriveDatabase>({ dialect: instance.dialect });
   await bootstrapOrganizationDriveDatabase(db);
+  await sql`CREATE TABLE collaboration_scopes (id UUID PRIMARY KEY, resource_id TEXT NOT NULL,
+    revision BIGINT NOT NULL, deleted_at TIMESTAMPTZ)`.execute(db);
+  await sql`CREATE TABLE collaboration_events (scope_id UUID NOT NULL, scope_seq BIGINT NOT NULL,
+    event_id UUID NOT NULL, resource_kind TEXT NOT NULL, resource_id TEXT NOT NULL, revision BIGINT NOT NULL,
+    authority_generation BIGINT NOT NULL, event_type TEXT NOT NULL, payload JSONB NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL, PRIMARY KEY (scope_id, scope_seq))`.execute(db);
+  await sql`INSERT INTO collaboration_scopes (id, resource_id, revision) VALUES (${scope}, 'folder-drive', 1)`.execute(db);
   let object = new Uint8Array();
   const stored = new Map<string, Uint8Array>();
   let nativeStream = false;
@@ -66,6 +73,8 @@ describe("organization drive service", () => {
       const garbage = await f.db.selectFrom("organization_drive_garbage").select("object_key").execute();
       expect(garbage).toHaveLength(1);
       expect(garbage[0]?.object_key).not.toBe(version.object_key);
+      const events = await sql<{ event_type: string }>`SELECT event_type FROM collaboration_events WHERE scope_id = ${scope}`.execute(f.db);
+      expect(events.rows.map((event) => event.event_type)).toEqual(["organization_drive.changed"]);
       f.setObject(new TextEncoder().encode("evil!"));
       expect(f.stored.get(version.object_key)).toEqual(content);
       expect((await f.service.list({ organizationId: org, scopeId: scope })).files[0]?.path).toBe("work/a.txt");
