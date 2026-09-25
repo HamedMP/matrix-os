@@ -101,7 +101,15 @@ describe("standalone CLI binary", () => {
     const configDir = join(homeDir, ".matrixos");
     const profileDir = join(configDir, "profiles", "local");
     const syncPath = join(homeDir, "sync");
+    const requestedPaths: string[] = [];
     const gateway = createServer((req, res) => {
+      requestedPaths.push(req.url ?? "");
+      // The daemon waits for explicit home-mirror readiness before syncing.
+      if (req.url === "/api/sync/status") {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ homeMirror: { state: "ready" } }));
+        return;
+      }
       if (req.url === "/api/sync/manifest") {
         res.writeHead(200, { "content-type": "application/json" });
         res.end(JSON.stringify({
@@ -163,6 +171,7 @@ describe("standalone CLI binary", () => {
       );
 
       expect(daemon.exitCode, `${stdout}\n${stderr}`).toBeNull();
+      expect(requestedPaths).toContain("/api/sync/status");
       expect(log).not.toContain("Could not acquire daemon pid file");
     } finally {
       if (daemon?.exitCode === null && daemon.signalCode === null) {
