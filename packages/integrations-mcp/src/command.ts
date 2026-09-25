@@ -2,6 +2,7 @@ import {
   connectServiceHandler,
   describeServiceHandler,
   disconnectServiceHandler,
+  gatewayAuthHeaders,
   listConnectedServicesHandler,
   listIntegrationInventoryHandler,
   syncServicesHandler,
@@ -18,20 +19,14 @@ const catalogSchema = z.array(z.object({
 }));
 const readOnlyError = "The CLI can only call verified read-only actions; use a native integration tool for writes.";
 
-function authHeaders(): Record<string, string> {
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
-  if (process.env.MATRIX_AUTH_TOKEN) headers.Authorization = `Bearer ${process.env.MATRIX_AUTH_TOKEN}`;
-  if (process.env.MATRIX_CLERK_USER_ID) headers["x-platform-user-id"] = process.env.MATRIX_CLERK_USER_ID;
-  return headers;
-}
-
 async function callReadOnlyService(
   input: { service: string; action: string; params?: Record<string, unknown>; label: string },
   fetcher: GatewayFetcher = fetch as GatewayFetcher,
 ): Promise<string> {
   const base = process.env.GATEWAY_URL ?? "http://localhost:4000";
+  const headers = gatewayAuthHeaders();
   const catalogResponse = await fetcher(`${base}/api/integrations/agent-catalog`, {
-    method: "GET", headers: authHeaders(), signal: AbortSignal.timeout(10_000),
+    method: "GET", headers, signal: AbortSignal.timeout(10_000),
   });
   if (!catalogResponse.ok) throw new Error(readOnlyError);
   const catalog = catalogSchema.safeParse(await catalogResponse.json());
@@ -39,7 +34,7 @@ async function callReadOnlyService(
     throw new Error(readOnlyError);
   }
   const response = await fetcher(`${base}/api/integrations/call`, {
-    method: "POST", headers: authHeaders(), body: JSON.stringify(input), signal: AbortSignal.timeout(35_000),
+    method: "POST", headers, body: JSON.stringify(input), signal: AbortSignal.timeout(35_000),
   });
   if (!response.ok) throw new Error("Integration call failed; check the action parameters and account authorization.");
   return wrapExternalContent(JSON.stringify(await response.json(), null, 2), {
