@@ -7,10 +7,13 @@ import type { OrganizationDriveDatabase, OrganizationDriveUploadsTable } from ".
 
 const MAX_FILE_BYTES = 100 * 1024 * 1024;
 const UPLOAD_TTL_MS = 30 * 60_000;
+const PUT_URL_TTL_SECONDS = 900;
+const PUT_URL_GRACE_MS = 60_000;
 type DriveR2 = {
   getPresignedPutUrl(key: string, size: number, expiresIn?: number): Promise<string>;
   getPresignedGetUrl(key: string, expiresIn?: number): Promise<string>;
   getObject(key: string, options?: { signal?: AbortSignal }): Promise<{ body: unknown; contentLength?: number }>;
+  putObject(key: string, body: Uint8Array, options?: { signal?: AbortSignal }): Promise<unknown>;
   deleteObject(key: string): Promise<void>;
 };
 
@@ -25,6 +28,7 @@ type UploadRow = Selectable<OrganizationDriveUploadsTable>;
 
 /** One selected owner home owns the index. Every route must authorize its scope before calling this service. */
 export class OrganizationDriveService {
+  private activePublications = 0;
   constructor(private readonly options: {
     db: Kysely<OrganizationDriveDatabase>;
     r2: DriveR2;
@@ -105,9 +109,18 @@ export class OrganizationDriveService {
         .where("request_id", "=", request.requestId).executeTakeFirst();
       if (existing) {
         if (existing.path !== request.path || Number(existing.size_bytes) !== request.size || existing.sha256 !== request.sha256
-          || existing.base_version !== (request.baseVersion ?? 0) || existing.status !== "pending"
-          || new Date(existing.expires_at).getTime() <= now.getTime()) throw new OrganizationDriveError("conflict");
-        return existing;
+          || existing.base_version !== (request.baseVersion ?? 0) || existing.status === "committed") throw new OrganizationDriveError("conflict");
+        if (existing.status === "pending" && new Date(existing.expires_at).getTime() > now.getTime()) return existing;
+        if (existing.status === "pending") {
+          await trx.updateTable("organization_drives")
+            .set({ reserved_bytes: sql<number>`reserved_bytes - ${Number(existing.size_bytes)}`, updated_at: now.toISOString() })
+            .where("organization_id", "=", input.organizationId).where("reserved_bytes", ">=", Number(existing.size_bytes))
+            .executeTakeFirstOrThrow();
+        }
+        await trx.insertInto("organization_drive_garbage").values({ object_key: existing.object_key,
+          organization_id: input.organizationId, remove_after: new Date(new Date(existing.expires_at).getTime() + PUT_URL_GRACE_MS).toISOString(),
+          attempts: 0, created_at: now.toISOString() }).onConflict((conflict) => conflict.column("object_key").doNothing()).execute();
+        await trx.deleteFrom("organization_drive_uploads").where("id", "=", existing.id).execute();
       }
       const file = await trx.selectFrom("organization_drive_files").select(["current_version"])
         .where("organization_id", "=", input.organizationId).where("path", "=", request.path)
@@ -130,8 +143,11 @@ export class OrganizationDriveService {
       return { id: candidateId, object_key: objectKey, expires_at: expiry };
     });
     try {
-      return { uploadId: row.id, putUrl: await this.options.r2.getPresignedPutUrl(row.object_key, request.size, 900),
-        expiresAt: new Date(row.expires_at).toISOString() };
+      const remainingSeconds = Math.floor((new Date(row.expires_at).getTime() - this.now().getTime()) / 1000);
+      if (remainingSeconds < 1) throw new OrganizationDriveError("conflict");
+      const urlSeconds = Math.min(PUT_URL_TTL_SECONDS, remainingSeconds);
+      return { uploadId: row.id, putUrl: await this.options.r2.getPresignedPutUrl(row.object_key, request.size, urlSeconds),
+        expiresAt: new Date(this.now().getTime() + urlSeconds * 1000).toISOString() };
     } catch (error: unknown) {
       console.warn("[organization-drive] upload URL unavailable", error instanceof Error ? error.name : "UnknownError");
       if (row.id === candidateId) {
@@ -150,14 +166,26 @@ export class OrganizationDriveService {
     if (upload.status !== "pending" || new Date(upload.expires_at).getTime() <= this.now().getTime()) {
       throw new OrganizationDriveError("conflict");
     }
-    const verified = await this.verifyObject(upload);
+    if (this.activePublications >= 4) throw new OrganizationDriveError("unavailable");
+    this.activePublications += 1;
+    try {
+    const verified = await this.readVerifiedObject(upload);
     if (!verified) {
       await this.abort(input);
       throw new OrganizationDriveError("checksum");
     }
     await input.revalidate?.();
+    const committedKey = buildFileKey(resolveSyncScope({ ownerId: this.options.ownerId, runtimeSlot: this.options.runtimeSlot }),
+      `.organization-drive/${input.organizationId}/versions/${randomUUID()}`);
+    // The pending garbage record makes an interrupted publication discoverable after a crash.
+    await this.queueGarbage(input.organizationId, committedKey, new Date(this.now().getTime() + 5 * 60_000).toISOString());
+    try { await this.options.r2.putObject(committedKey, verified, { signal: AbortSignal.timeout(120_000) }); }
+    catch (error: unknown) {
+      console.warn("[organization-drive] immutable object publication failed", error instanceof Error ? error.name : "UnknownError");
+      throw new OrganizationDriveError("unavailable");
+    }
     try {
-      return await this.options.db.transaction().execute(async (trx) => {
+      const result = await this.options.db.transaction().execute(async (trx) => {
         const drive = await trx.selectFrom("organization_drives").selectAll()
           .where("organization_id", "=", input.organizationId).where("scope_id", "=", input.scopeId).forUpdate().executeTakeFirst();
         if (!drive) throw new OrganizationDriveError("not_found");
@@ -167,7 +195,9 @@ export class OrganizationDriveService {
         if (!current || current.actor_id !== input.actorId || current.organization_id !== input.organizationId) {
           throw new OrganizationDriveError("not_found");
         }
-        if (current.status === "committed") return this.fileById(input.organizationId, current.committed_file_id!, trx);
+        if (current.status === "committed") {
+          return this.fileById(input.organizationId, current.committed_file_id!, trx);
+        }
         if (current.status !== "pending" || new Date(current.expires_at).getTime() <= this.now().getTime()) {
           throw new OrganizationDriveError("conflict");
         }
@@ -186,7 +216,7 @@ export class OrganizationDriveService {
             path: current.path, current_version: nextVersion, deleted_at: null, created_at: timestamp, updated_at: timestamp }).execute();
         }
         await trx.insertInto("organization_drive_versions").values({ id: randomUUID(), file_id: fileId,
-          version: nextVersion, object_key: current.object_key, size_bytes: current.size_bytes,
+          version: nextVersion, object_key: committedKey, size_bytes: current.size_bytes,
           sha256: current.sha256, created_by: input.actorId, created_at: timestamp }).execute();
         await trx.updateTable("organization_drive_uploads").set({ status: "committed", committed_file_id: fileId,
           updated_at: timestamp }).where("id", "=", current.id).execute();
@@ -197,14 +227,21 @@ export class OrganizationDriveService {
           .where("reserved_bytes", ">=", Number(current.size_bytes))
           .returning("organization_id").executeTakeFirst();
         if (!accounted) throw new OrganizationDriveError("conflict");
+        await trx.insertInto("organization_drive_garbage").values({ object_key: current.object_key,
+          organization_id: input.organizationId,
+          remove_after: new Date(new Date(current.expires_at).getTime() + PUT_URL_GRACE_MS).toISOString(),
+          attempts: 0, created_at: timestamp }).onConflict((conflict) => conflict.column("object_key").doNothing()).execute();
+        await trx.deleteFrom("organization_drive_garbage").where("object_key", "=", committedKey).execute();
         return this.fileById(input.organizationId, fileId, trx);
       });
+      return result;
     } catch (error: unknown) {
       if (error instanceof OrganizationDriveError) throw error;
       if (error instanceof Error && "code" in error && error.code === "23505") throw new OrganizationDriveError("conflict");
       console.warn("[organization-drive] commit failed", error instanceof Error ? error.name : "UnknownError");
       throw new OrganizationDriveError("unavailable");
     }
+    } finally { this.activePublications -= 1; }
   }
 
   async get(input: DriveIdentity & { fileId: string }): Promise<{ file: OrganizationDriveFile; getUrl: string }> {
@@ -238,7 +275,9 @@ export class OrganizationDriveService {
         .returning("organization_id").executeTakeFirst();
       if (!accounted) throw new OrganizationDriveError("conflict");
       await trx.insertInto("organization_drive_garbage").values({ object_key: upload.object_key,
-        organization_id: input.organizationId, remove_after: timestamp, attempts: 0, created_at: timestamp })
+        organization_id: input.organizationId,
+        remove_after: new Date(new Date(upload.expires_at).getTime() + PUT_URL_GRACE_MS).toISOString(),
+        attempts: 0, created_at: timestamp })
         .onConflict((conflict) => conflict.column("object_key").doNothing()).execute();
     });
   }
@@ -290,7 +329,13 @@ export class OrganizationDriveService {
       updatedAt: new Date(row.updated_at).toISOString() });
   }
 
-  private async verifyObject(upload: UploadRow): Promise<boolean> {
+  private async queueGarbage(organizationId: string, objectKey: string, removeAfter: string): Promise<void> {
+    await this.options.db.insertInto("organization_drive_garbage").values({ object_key: objectKey,
+      organization_id: organizationId, remove_after: removeAfter, attempts: 0, created_at: this.now().toISOString() })
+      .onConflict((conflict) => conflict.column("object_key").doNothing()).execute();
+  }
+
+  private async readVerifiedObject(upload: UploadRow): Promise<Uint8Array | null> {
     let object: Awaited<ReturnType<DriveR2["getObject"]>>;
     const signal = AbortSignal.timeout(120_000);
     try { object = await this.options.r2.getObject(upload.object_key, { signal }); }
@@ -298,17 +343,19 @@ export class OrganizationDriveService {
       console.warn("[organization-drive] object verification unavailable", error instanceof Error ? error.name : "UnknownError");
       throw new OrganizationDriveError("unavailable");
     }
-    if (!object.body || object.contentLength !== Number(upload.size_bytes)) return false;
+    if (!object.body || object.contentLength !== Number(upload.size_bytes)) return null;
     const hash = createHash("sha256");
     let bytes = 0;
+    const content = new Uint8Array(Number(upload.size_bytes));
     try {
       for await (const chunk of this.objectChunks(object.body, signal)) {
         signal.throwIfAborted();
         bytes += chunk.byteLength;
-        if (bytes > Number(upload.size_bytes) || bytes > MAX_FILE_BYTES) return false;
+        if (bytes > Number(upload.size_bytes) || bytes > MAX_FILE_BYTES) return null;
+        content.set(chunk, bytes - chunk.byteLength);
         hash.update(chunk);
       }
-      return bytes === Number(upload.size_bytes) && hash.digest("hex") === upload.sha256;
+      return bytes === Number(upload.size_bytes) && hash.digest("hex") === upload.sha256 ? content : null;
     } catch (error: unknown) {
       console.warn("[organization-drive] verification stream failed", error instanceof Error ? error.name : "UnknownError");
       throw new OrganizationDriveError("unavailable");

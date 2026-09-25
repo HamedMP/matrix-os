@@ -27,8 +27,10 @@ handle or a member's login.
   atomic across concurrent members.
 - Initial files up to 100 MiB transfer directly between the client and R2
   through bounded, short-lived URLs. A completed object is not visible until Matrix
-  verifies its size and checksum and commits its metadata. Abandoned uploads
-  release their quota and delete staging objects on a recurring sweep.
+  verifies its size and checksum, publishes the verified bytes under a separate
+  key that has no client PUT URL, and commits its metadata. Abandoned uploads
+  release their quota; the recurring sweep deletes staging objects only after
+  every issued PUT URL for that reservation has expired.
 - Revocation blocks new reads, listings, uploads, commits and URL issuance.
   Already issued short-lived URLs expire; the UI must never cache them beyond
   expiry. Credentials stay in the storage broker, not on member computers.
