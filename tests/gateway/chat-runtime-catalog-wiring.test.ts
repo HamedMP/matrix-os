@@ -72,6 +72,7 @@ describe("gateway Chat runtime catalog composition", () => {
       expect(codexOptions.cwd).toBe("/runtime-home");
       expect(codexOptions.environment?.HOME).toBe("/runtime-home");
       expect(codexOptions.environment?.MATRIX_HOME).toBe("/runtime-home");
+      expect(codexOptions.environment?.PATH).toBeDefined();
       expect(mocks.createNative).toHaveBeenCalledWith({ homePath: "/runtime-home" });
     } finally {
       vi.unstubAllEnvs();

@@ -8,6 +8,8 @@ import { createCodexModelCatalogSource, normalizeCodexModelCatalog } from "../..
 describe("Codex model catalog projection", () => {
   it("spawns the configured Codex executable with the owner runtime HOME", async () => {
     vi.stubEnv("HOME", "/gateway-home");
+    vi.stubEnv("CODEX_HOME", "/explicit-codex-home");
+    vi.stubEnv("B4_INHERITED_MARKER", "preserved");
     try {
       const spawnProcess = vi.fn(() => {
         const child = Object.assign(new EventEmitter(), {
@@ -27,9 +29,10 @@ describe("Codex model catalog projection", () => {
         });
         return child as never;
       });
+      const runtimeEnvironment = buildAgentRuntimeEnvironment("/owner-home");
       const source = createCodexModelCatalogSource({
         executable: "/owner-bin/codex", cwd: "/owner-home",
-        environment: buildAgentRuntimeEnvironment("/owner-home"), spawnProcess,
+        environment: runtimeEnvironment, spawnProcess,
       });
 
       await expect(source({ id: "codex", kind: "codex", availability: "available" } as never))
@@ -41,6 +44,9 @@ describe("Codex model catalog projection", () => {
       expect(spawnOptions.stdio).toBe("pipe");
       expect(spawnOptions.env?.HOME).toBe("/owner-home");
       expect(spawnOptions.env?.MATRIX_HOME).toBe("/owner-home");
+      expect(spawnOptions.env?.PATH).toBe(runtimeEnvironment.PATH);
+      expect(spawnOptions.env?.CODEX_HOME).toBe("/explicit-codex-home");
+      expect(spawnOptions.env?.B4_INHERITED_MARKER).toBe("preserved");
     } finally {
       vi.unstubAllEnvs();
     }
