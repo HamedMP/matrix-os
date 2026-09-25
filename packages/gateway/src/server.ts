@@ -202,6 +202,7 @@ import { CanvasSubscriptionHub } from "./canvas/subscriptions.js";
 import { createIntegrationBridgeRoutes } from "./integrations/bridge-routes.js";
 import { createIntegrationProxyResponse } from "./integrations/proxy-response.js";
 import { delegatedIntegrationHeaders } from "./integrations/delegated-identity.js";
+import { integrationProxyHeaders } from "./integrations/custom-mcp/proxy-headers.js";
 import type { PlatformDb } from "./platform-db.js";
 import {
   createHookRunner,
@@ -937,12 +938,7 @@ export async function createGateway(config: GatewayConfig) {
       );
       return c.json({ error: "Bad request" }, 400);
     }
-    const headers = new Headers();
-    for (const [key, value] of Object.entries(c.req.header())) {
-      if (key !== "host" && key !== "authorization" && value) {
-        headers.set(key, value);
-      }
-    }
+    const headers = integrationProxyHeaders(c, routePrefix);
     if (internalAuthToken) {
       headers.set("authorization", `Bearer ${internalAuthToken}`);
       if (routePrefix === "/api/integrations") {
@@ -1249,7 +1245,7 @@ export async function createGateway(config: GatewayConfig) {
   }));
   app.use("*", securityHeadersMiddleware());
   app.use("*", authMiddleware(process.env.MATRIX_AUTH_TOKEN, {
-    resolveMatrixMcpCapability: matrixMcpCapabilities.resolve,
+    resolveMatrixMcpRunContext: matrixMcpCapabilities.resolveRunContext,
   }));
   const legacyProjectPathAdmission = gatewayCollaboration
     ? createLegacyProjectPathAdmission({
