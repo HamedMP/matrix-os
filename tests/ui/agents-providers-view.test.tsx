@@ -280,6 +280,56 @@ afterEach(() => {
 });
 
 describe("AgentsProvidersView", () => {
+  it("shows saved enabled intent separately from a failed connection and permits disabling it", () => {
+    const next = snapshot();
+    const harness = next.harnesses[0]!;
+    Object.assign(harness, {
+      harness: "hermes", displayName: "Hermes", enabled: false,
+      configuredEnabled: true, connectivity: "offline", authState: "unknown",
+      accessSourceId: null,
+    });
+    const { onMutate } = setup({ snapshot: next });
+    expect(screen.getByRole("button", { name: /Hermes.*Check connection/ })).toBeVisible();
+    expect(screen.queryByRole("button", { name: /Hermes.*Disabled/ })).not.toBeInTheDocument();
+    const toggle = screen.getByRole("switch", { name: "Enable Hermes" });
+    expect(toggle).toBeChecked();
+    fireEvent.click(toggle);
+    expect(onMutate).toHaveBeenCalledWith({
+      type: "set_harness_enabled", harnessInstanceId: harness.id, enabled: false,
+    });
+  });
+
+  it.each(["pi", "opencode"] as const)("shows Sign in for saved-on %s when authentication is required", (kind) => {
+    const next = snapshot();
+    Object.assign(next.harnesses[0]!, {
+      harness: kind, displayName: kind === "pi" ? "Pi" : "OpenCode",
+      enabled: false, configuredEnabled: true, authState: "unauthenticated",
+      accessSourceId: "owner_anthropic_key",
+    });
+    setup({ snapshot: next });
+    expect(screen.getByRole("button", { name: new RegExp(`${kind === "pi" ? "Pi" : "OpenCode"}.*Sign in`) })).toBeVisible();
+    expect(screen.queryByRole("button", { name: /Check connection/ })).not.toBeInTheDocument();
+  });
+
+  it("distinguishes a signed-in but deliberately disabled agent", () => {
+    const next = snapshot();
+    Object.assign(next.harnesses[0]!, {
+      enabled: false, configuredEnabled: false, authState: "authenticated",
+    });
+    setup({ snapshot: next });
+    expect(screen.getByRole("button", { name: /Hermes.*Off in Settings.*Signed in/ })).toBeVisible();
+  });
+
+  it("labels a disabled harness without claiming its CLI login was checked", () => {
+    const next = snapshot();
+    Object.assign(next.harnesses[0]!, {
+      enabled: false, configuredEnabled: false, authState: "unknown",
+    });
+    setup({ snapshot: next });
+    expect(screen.getByRole("button", { name: /Hermes.*Off in Settings/ })).toBeVisible();
+    expect(screen.queryByRole("button", { name: /Hermes.*Signed in/ })).not.toBeInTheDocument();
+  });
+
   it.each(["pi", "opencode"] as const)("requires a saved connection before directly enabling %s, but permits disabling", (kind) => {
     const next = snapshot();
     const harness = next.harnesses[0]!;

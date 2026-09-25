@@ -251,6 +251,8 @@ export const ProviderHarnessInstanceSchema = z.object({
   displayName: DisplayNameSchema,
   accentColor: ProviderAccentColorSchema.nullable(),
   enabled: z.boolean(),
+  /** Saved owner intent; exposed only to clients opting into extended capabilities. */
+  configuredEnabled: z.boolean().optional(),
   version: canonicalSafeLabel(64, 256).nullable(),
   installState: ProviderHarnessInstallStateSchema,
   authState: ProviderAuthenticationStateSchema,

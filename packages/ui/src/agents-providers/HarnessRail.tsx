@@ -13,7 +13,13 @@ function rowStatus(harness: ProviderHarnessInstance, source: ProviderAccessSourc
   if (harness.installState === "missing") return "Install";
   if (harness.installState === "installing") return "Installing…";
   if (harness.installState !== "installed") return "Check failed";
-  if (!harness.enabled) return "Disabled";
+  if (!harness.enabled && harness.configuredEnabled === true) {
+    if (harness.authState === "authenticating") return "Signing in…";
+    if (harness.authState === "unauthenticated" || harness.authState === "expired") return "Sign in";
+    if (source?.readiness.state === "auth_required" || source?.readiness.state === "expired") return "Sign in";
+    return "Check connection";
+  }
+  if (!harness.enabled) return harness.authState === "authenticated" ? "Off in Settings · Signed in" : "Off in Settings";
   if (harness.connectivity === "offline" || harness.connectivity === "degraded") return "Check failed";
   if (harness.authState === "authenticating") return "Signing in…";
   if (harness.authState === "unauthenticated" || harness.authState === "expired") return "Sign in";
@@ -42,9 +48,10 @@ export function HarnessRail({ harnesses, sources, selectedId, disabled, canEnabl
       {harnesses.map((harness) => {
         const expanded = harness.id === selectedId;
         const source = sources.find((source) => source.id === harness.accessSourceId);
-        const needsConnection = !harness.enabled && (harness.harness === "pi" || harness.harness === "opencode")
+        const configuredEnabled = harness.configuredEnabled ?? harness.enabled;
+        const needsConnection = !configuredEnabled && (harness.harness === "pi" || harness.harness === "opencode")
           && !isSupportedGenericHarnessCredentialRoute(harness, source);
-        const toggleDisabled = disabled || (!harness.enabled && (harness.installState !== "installed" || needsConnection));
+        const toggleDisabled = disabled || (!configuredEnabled && (harness.installState !== "installed" || needsConnection));
         const status = rowStatus(harness, source);
         const detailsId = `matrix-ap-details-${harness.id}`;
         const connectionHintId = `matrix-ap-connection-hint-${harness.id}`;
@@ -62,7 +69,7 @@ export function HarnessRail({ harnesses, sources, selectedId, disabled, canEnabl
               </button>
               {canEnable(harness) ? (
                 <label className="matrix-ap-switch">
-                  <input type="checkbox" role="switch" aria-label={`Enable ${harness.displayName}`} checked={harness.enabled}
+                  <input type="checkbox" role="switch" aria-label={`Enable ${harness.displayName}`} checked={configuredEnabled}
                     aria-describedby={needsConnection && harness.installState === "installed" ? connectionHintId : undefined}
                     disabled={toggleDisabled} onChange={() => { if (!toggleDisabled) onEnable(harness); }} />
                   <span aria-hidden="true" />

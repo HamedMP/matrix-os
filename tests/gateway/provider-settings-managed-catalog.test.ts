@@ -60,7 +60,7 @@ describe("Matrix routes during native model catalog failure", () => {
     if (failure === "retired_model") input.canonical.models[0]!.status = "retired";
     const snapshot = await projectProviderSettings(input);
     expect(snapshot.harnesses.find((agent) => agent.harness === "pi")).toMatchObject({
-      enabled: false, accessSourceId: null,
+      enabled: false, configuredEnabled: true, accessSourceId: null,
       routeAvailability: failure === "retired_model" ? "catalog_unavailable" : "available",
       ...(failure === "revoked"
         ? { authState: "authenticated", connectivity: "online" }

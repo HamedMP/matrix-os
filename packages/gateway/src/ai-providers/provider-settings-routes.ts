@@ -16,8 +16,12 @@ const PROVIDER_SETTINGS_BODY_LIMIT = 64 * 1024;
 const RefreshQuerySchema = z.enum(["true", "false"]).optional();
 
 function withCapabilities(snapshot: ProviderSettingsSnapshot, include: boolean): ProviderSettingsSnapshot {
-  return include ? { ...snapshot, atomicConnectSupported: snapshot.supportedActions.includes("set_route")
-    && snapshot.supportedActions.includes("set_harness_enabled") } : snapshot;
+  if (include) return { ...snapshot, atomicConnectSupported: snapshot.supportedActions.includes("set_route")
+    && snapshot.supportedActions.includes("set_harness_enabled") };
+  return {
+    ...snapshot,
+    harnesses: snapshot.harnesses.map(({ configuredEnabled: _configuredEnabled, ...harness }) => harness),
+  };
 }
 const DeleteAccountBodySchema = z.object({
   expectedRevision: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
@@ -170,6 +174,8 @@ export function createProviderSettingsRoutes(options: ProviderSettingsRouteOptio
   app.delete("/provider-settings/accounts/:accountId", mutationBodyLimit, async (context) => {
     const authError = authorize(context, options);
     if (authError) return authError;
+    const capabilities = RefreshQuerySchema.safeParse(context.req.query("includeCapabilities"));
+    if (!capabilities.success) return invalidRequest(context);
     const body = DeleteAccountBodySchema.safeParse(await readJson(context));
     if (!body.success) return invalidRequest(context);
     const mutation = ProviderSettingsMutationSchema.safeParse({
@@ -182,7 +188,8 @@ export function createProviderSettingsRoutes(options: ProviderSettingsRouteOptio
     } satisfies ProviderSettingsMutation);
     if (!mutation.success) return invalidRequest(context);
     try {
-      return context.json(await options.store.mutate(mutation.data));
+      const result = await options.store.mutate(mutation.data);
+      return context.json({ ...result, snapshot: withCapabilities(result.snapshot, capabilities.data === "true") });
     } catch (error) {
       return handleStoreError(context, error);
     }

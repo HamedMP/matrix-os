@@ -145,7 +145,8 @@ export function AgentsProvidersView({
           selectedId={collapsedId === selectedId ? null : selectedId}
           disabled={mutationsDisabled}
           canEnable={(item) => configurationHarnessKinds.includes(item.harness) && supports("set_harness_enabled")}
-          onEnable={(item) => { void onMutate({ type: "set_harness_enabled", harnessInstanceId: item.id, enabled: !item.enabled }); }}
+          onEnable={(item) => { void onMutate({ type: "set_harness_enabled", harnessInstanceId: item.id,
+            enabled: !(item.configuredEnabled ?? item.enabled) }); }}
           onSelect={(id) => {
             setCollapsedId(id === selectedId && collapsedId !== id ? id : null);
             onSelectHarness(id);
