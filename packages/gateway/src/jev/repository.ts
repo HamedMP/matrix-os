@@ -11,6 +11,7 @@ import {
 
 const PENDING_STALE_MS = 15 * 60_000;
 const RETENTION_MS = 7 * 24 * 60 * 60_000;
+const RESULT_PRUNE_BATCH_SIZE = 100;
 
 interface JevEvaluationsTable {
   owner_id: string;
@@ -108,14 +109,6 @@ export class JevEvaluationRepository implements JevEvaluationStore {
     const now = this.now();
     const retentionCutoff = new Date(now.getTime() - RETENTION_MS);
     return this.kysely.transaction().execute(async (trx) => {
-      // Prune the result payload, not the owner/key/hash replay barrier. Keep
-      // this transition in the claim transaction so concurrent instances never
-      // observe an absent row between cleanup and the next claim.
-      await trx.updateTable("jev_evaluations")
-        .set({ status: "completed_pruned", result: null })
-        .where("updated_at", "<", retentionCutoff)
-        .where("status", "=", "completed")
-        .execute();
       const inserted = await trx.insertInto("jev_evaluations").values({
         owner_id: input.ownerId,
         idempotency_key: input.idempotencyKey,
@@ -126,28 +119,68 @@ export class JevEvaluationRepository implements JevEvaluationStore {
         updated_at: now,
       }).onConflict((conflict) => conflict.columns(["owner_id", "idempotency_key"]).doNothing())
         .returning("owner_id").executeTakeFirst();
-      if (inserted) return { kind: "claimed" };
-
-      const row = await trx.selectFrom("jev_evaluations").selectAll()
-        .where("owner_id", "=", input.ownerId)
-        .where("idempotency_key", "=", input.idempotencyKey)
-        .forUpdate().executeTakeFirstOrThrow();
-      if (row.payload_hash !== input.payloadHash) return { kind: "conflict" };
-      if (row.status === "completed") {
-        return { kind: "completed", result: JevEmailTriageResultSchema.parse(parseJson(row.result)) };
-      }
-      if (row.status === "completed_pruned") return { kind: "result_expired" };
-      if (row.status === "unknown") return { kind: "unknown" };
-      if (row.status !== "pending") throw new Error("Invalid Jev evaluation status");
-      const updatedAt = row.updated_at instanceof Date ? row.updated_at : new Date(row.updated_at);
-      if (updatedAt.getTime() <= now.getTime() - PENDING_STALE_MS) {
-        await trx.updateTable("jev_evaluations").set({ status: "unknown", updated_at: now })
+      let outcome: JevEvaluationClaim;
+      if (inserted) {
+        outcome = { kind: "claimed" };
+      } else {
+        // Lock the requested key before any cleanup rows. Two callers with
+        // different target keys can then skip one another during the sweep.
+        const row = await trx.selectFrom("jev_evaluations").selectAll()
           .where("owner_id", "=", input.ownerId)
           .where("idempotency_key", "=", input.idempotencyKey)
-          .where("status", "=", "pending").executeTakeFirst();
-        return { kind: "unknown" };
+          .forUpdate().executeTakeFirstOrThrow();
+        if (row.payload_hash !== input.payloadHash) {
+          outcome = { kind: "conflict" };
+        } else if (row.status === "completed") {
+          const updatedAt = row.updated_at instanceof Date ? row.updated_at : new Date(row.updated_at);
+          if (updatedAt < retentionCutoff) {
+            await trx.updateTable("jev_evaluations").set({ status: "completed_pruned", result: null })
+              .where("owner_id", "=", input.ownerId)
+              .where("idempotency_key", "=", input.idempotencyKey)
+              .where("status", "=", "completed").executeTakeFirst();
+            outcome = { kind: "result_expired" };
+          } else {
+            outcome = { kind: "completed", result: JevEmailTriageResultSchema.parse(parseJson(row.result)) };
+          }
+        } else if (row.status === "completed_pruned") {
+          outcome = { kind: "result_expired" };
+        } else if (row.status === "unknown") {
+          outcome = { kind: "unknown" };
+        } else if (row.status === "pending") {
+          const updatedAt = row.updated_at instanceof Date ? row.updated_at : new Date(row.updated_at);
+          if (updatedAt.getTime() <= now.getTime() - PENDING_STALE_MS) {
+            await trx.updateTable("jev_evaluations").set({ status: "unknown", updated_at: now })
+              .where("owner_id", "=", input.ownerId)
+              .where("idempotency_key", "=", input.idempotencyKey)
+              .where("status", "=", "pending").executeTakeFirst();
+            outcome = { kind: "unknown" };
+          } else {
+            outcome = { kind: "pending" };
+          }
+        } else {
+          throw new Error("Invalid Jev evaluation status");
+        }
       }
-      return { kind: "pending" };
+
+      // Amortize result cleanup without locking the entire expired population.
+      // The requested key was resolved under its own lock even if it lies
+      // outside this batch or another instance holds it during the sweep.
+      await sql`
+        WITH due AS (
+          SELECT owner_id, idempotency_key
+          FROM jev_evaluations
+          WHERE status = 'completed' AND updated_at < ${retentionCutoff}
+          ORDER BY updated_at, owner_id, idempotency_key
+          LIMIT ${RESULT_PRUNE_BATCH_SIZE}
+          FOR UPDATE SKIP LOCKED
+        )
+        UPDATE jev_evaluations AS evaluation
+        SET status = 'completed_pruned', result = NULL
+        FROM due
+        WHERE evaluation.owner_id = due.owner_id
+          AND evaluation.idempotency_key = due.idempotency_key
+      `.execute(trx);
+      return outcome;
     });
   }
 

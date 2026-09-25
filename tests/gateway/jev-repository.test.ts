@@ -75,6 +75,33 @@ describe("Jev evaluation repository", () => {
       .resolves.toEqual({ kind: "conflict" });
   });
 
+  it("bounds the expired-result sweep while expiring the requested key outside its batch", async () => {
+    const oldRows = Array.from({ length: 105 }, (_, index) => ({
+      owner_id: key.ownerId,
+      idempotency_key: `thread:bulk${index.toString().padStart(3, "0")}`,
+      payload_hash: key.payloadHash,
+      status: "completed" as const,
+      result: JSON.stringify(completed),
+      created_at: clock,
+      updated_at: clock,
+    }));
+    await repository.kysely.insertInto("jev_evaluations").values(oldRows).execute();
+    clock = new Date(clock.getTime() + 7 * 24 * 60 * 60_000 + 1);
+    const target = { ...key, idempotencyKey: "thread:bulk104" };
+
+    await expect(repository.claim(target)).resolves.toEqual({ kind: "result_expired" });
+    const afterFirstClaim = await repository.kysely.selectFrom("jev_evaluations")
+      .select(["idempotency_key", "status", "result"]).execute();
+    expect(afterFirstClaim.filter((row) => row.status === "completed_pruned")).toHaveLength(101);
+    expect(afterFirstClaim.filter((row) => row.status === "completed")).toHaveLength(4);
+    expect(afterFirstClaim.find((row) => row.idempotency_key === target.idempotencyKey))
+      .toMatchObject({ status: "completed_pruned", result: null });
+
+    const restarted = new JevEvaluationRepository(repository.kysely, { now: () => clock });
+    const retries = await Promise.all([repository.claim(target), restarted.claim(target)]);
+    expect(retries).toEqual([{ kind: "result_expired" }, { kind: "result_expired" }]);
+  });
+
   it("migrates an existing Jev table without discarding completed rows", async () => {
     await sql`DROP TABLE jev_evaluations`.execute(repository.kysely);
     await sql`
