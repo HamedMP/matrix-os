@@ -10,6 +10,16 @@ const launcherPath = "distro/customer-vps/host-bin/matrix-integrations-mcp";
 const terminalPath = "distro/customer-vps/host-bin/matrix-integrations";
 
 describe("customer VPS integrations MCP wiring", () => {
+  it("fails a scoped canonical Chat launch before any host-bearer fallback", () => {
+    const result = spawnSync("bash", [launcherPath, "--require-scoped-capability"], {
+      encoding: "utf8",
+      env: { PATH: process.env.PATH ?? "" },
+    });
+    expect(result.status).toBe(3);
+    expect(result.stderr).toContain("run capability is unavailable");
+    expect(result.stderr).not.toContain("Matrix authentication is unavailable");
+  });
+
   it("ships an executable stdio launcher that isolates host credentials and forwards a scoped Run capability", async () => {
     const launcher = await readFile(launcherPath, "utf8");
 

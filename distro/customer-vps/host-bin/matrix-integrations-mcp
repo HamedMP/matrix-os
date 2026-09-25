@@ -5,6 +5,15 @@ HOST_ENV_FILE="/opt/matrix/env/host.env"
 NODE_BIN="/opt/matrix/runtime/node/bin/node"
 SERVER_PATH="/opt/matrix/app/packages/integrations-mcp/dist/cli.js"
 
+require_scoped=false
+if [ "$#" -gt 0 ]; then
+  if [ "$#" -ne 1 ] || [ "$1" != "--require-scoped-capability" ]; then
+    echo "matrix-integrations-mcp: unsupported launcher arguments" >&2
+    exit 3
+  fi
+  require_scoped=true
+fi
+
 read_host_value() {
   local key value
   key="$1"
@@ -48,6 +57,10 @@ has_hermes_chat_ancestor() {
 scoped_token="${MATRIX_AGENT_INTEGRATIONS_TOKEN:-}"
 if [ -z "$scoped_token" ]; then
   scoped_token="$(read_ancestor_capability || true)"
+fi
+if [ "$require_scoped" = true ] && [ -z "$scoped_token" ]; then
+  echo "matrix-integrations-mcp: run capability is unavailable" >&2
+  exit 3
 fi
 if has_hermes_chat_ancestor && [ -z "$scoped_token" ]; then
   echo "matrix-integrations-mcp: run capability is unavailable" >&2

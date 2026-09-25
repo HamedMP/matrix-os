@@ -2,6 +2,7 @@ import { EventEmitter } from "node:events";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createClaudeChatProviderAdapter } from "../../packages/gateway/src/chat/claude-provider-adapter.js";
 import type { CanonicalCliSpawn } from "../../packages/gateway/src/chat/cli-process.js";
+import { createMatrixMcpCapabilityRegistry } from "../../packages/gateway/src/chat/matrix-mcp-launch.js";
 
 class FakeStream extends EventEmitter {}
 
@@ -55,6 +56,7 @@ describe("Claude canonical Chat Provider adapter", () => {
       homePath: "/home/matrix/home",
       spawnFn,
       resolveCredentialEnv: async () => ({}),
+      matrixMcpCapabilityIssuer: createMatrixMcpCapabilityRegistry({ configuredOwnerId: "owner_claude" }),
     });
     const supervisedInput = { ...baseInput, permissionMode: "supervised" };
 
@@ -81,6 +83,7 @@ describe("Claude canonical Chat Provider adapter", () => {
       expect(Object.keys(config.mcpServers)).toEqual(["matrix-integrations"]);
       expect(config.mcpServers["matrix-integrations"]).toEqual({
         command: "/opt/matrix/bin/matrix-integrations-mcp",
+        args: ["--require-scoped-capability"],
       });
       expect(options.env.MATRIX_AGENT_INTEGRATIONS_TOKEN).toMatch(/^[a-f0-9]{64}$/);
 
@@ -96,6 +99,34 @@ describe("Claude canonical Chat Provider adapter", () => {
       ]);
       expect(args.includes("--resume")).toBe(index === 1);
     }
+  });
+
+  it("revokes the scoped bearer after completion and a failed CLI start", async () => {
+    const registry = createMatrixMcpCapabilityRegistry({ configuredOwnerId: baseInput.owner.ownerId });
+    const tokens: string[] = [];
+    let failStart = false;
+    const spawnFn = vi.fn<CanonicalCliSpawn>((_command, _args, options) => {
+      const token = options.env.MATRIX_AGENT_INTEGRATIONS_TOKEN!;
+      tokens.push(token);
+      expect(options.env.MATRIX_AUTH_TOKEN).toBeUndefined();
+      expect(registry.resolve(token, "GET", "/api/mcp-servers")).toBe(baseInput.owner.ownerId);
+      if (failStart) throw new Error("fixture executable unavailable");
+      return child([JSON.stringify({ type: "result", subtype: "success", result: "done" })]);
+    });
+    const adapter = createClaudeChatProviderAdapter({
+      homePath: "/home/matrix/home", spawnFn,
+      resolveCredentialEnv: async () => ({ MATRIX_AUTH_TOKEN: "machine-secret" }),
+      matrixMcpCapabilityIssuer: registry,
+    });
+
+    for await (const _event of adapter.start(baseInput)) { /* Drain completion. */ }
+    expect(registry.resolve(tokens[0]!, "GET", "/api/mcp-servers")).toBeNull();
+    failStart = true;
+    const events = [];
+    for await (const event of adapter.start({ ...baseInput, runId: "run_failed" })) events.push(event);
+    expect(events.at(-1)).toMatchObject({ type: "run.completed", outcome: "failed" });
+    expect(registry.resolve(tokens[1]!, "GET", "/api/mcp-servers")).toBeNull();
+    expect(tokens[0]).not.toBe(tokens[1]);
   });
 
   it.each([null, 0])("resumes the active Claude session after steer exits with code %s", async (exitCode) => {
