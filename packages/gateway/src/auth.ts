@@ -7,7 +7,7 @@ import {
 } from "./preview-terminal-access.js";
 import { createRateLimiter } from "./security/rate-limiter.js";
 import { resolveHermesIntegrationCapability } from "./chat/hermes-integration-capability.js";
-import { MATRIX_MCP_RUN_CONTEXT_KEY } from "./chat/matrix-mcp-launch.js";
+import { MATRIX_MCP_RUN_CONTEXT_KEY, type MatrixMcpRunContext } from "./chat/matrix-mcp-launch.js";
 import {
   looksLikeJwt,
   readJwtKeyConfig,
@@ -214,6 +214,7 @@ export function authMiddleware(
   options?: {
     webhookProviders?: Set<string>;
     resolveMatrixMcpCapability?: (token: string, method: string, path: string) => string | null;
+    resolveMatrixMcpRunContext?: (token: string, method: string, path: string) => MatrixMcpRunContext | null;
   },
 ): MiddlewareHandler {
   const webhookProviders = options?.webhookProviders ?? new Set<string>();
@@ -362,11 +363,12 @@ export function authMiddleware(
         : null;
 
     if (presentedToken) {
-      const matrixMcpActor = options?.resolveMatrixMcpCapability?.(presentedToken, c.req.method, normalizedPath);
+      const matrixMcpContext = options?.resolveMatrixMcpRunContext?.(presentedToken, c.req.method, normalizedPath);
+      const matrixMcpActor = matrixMcpContext?.actorId ?? options?.resolveMatrixMcpCapability?.(presentedToken, c.req.method, normalizedPath);
       if (matrixMcpActor) {
         if (c.req.header("x-platform-user-id") || c.req.header("x-platform-verified")) return unauthorized(c);
         setPlatformVerifiedPrincipal(c, matrixMcpActor);
-        c.set(MATRIX_MCP_RUN_CONTEXT_KEY as never, { actorId: matrixMcpActor });
+        c.set(MATRIX_MCP_RUN_CONTEXT_KEY as never, matrixMcpContext ?? { actorId: matrixMcpActor });
         return nextWithReady(c, next);
       }
       const hermesActor = resolveHermesIntegrationCapability(presentedToken, normalizedPath);

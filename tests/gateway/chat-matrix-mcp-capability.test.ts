@@ -8,6 +8,42 @@ const serverId = "123e4567-e89b-42d3-a456-426614174000";
 const owner = { type: "personal", ownerId: "owner_claude" };
 
 describe("Claude Custom MCP Run capability", () => {
+  it("exposes the authenticated live Run identity for approval provenance without changing bearer scope", () => {
+    const registry = createMatrixMcpCapabilityRegistry({ configuredOwnerId: owner.ownerId });
+    const capability = registry.issue({ owner, runId: "run_bound", scope: "call" })!;
+    const runContext = (registry as typeof registry & {
+      resolveRunContext?: (token: string, method: string, path: string) =>
+        { actorId: string; runId: string; scope: string } | null;
+    }).resolveRunContext;
+    expect(runContext).toBeTypeOf("function");
+    expect(runContext?.(capability.token, "POST", `/api/mcp-servers/${serverId}/call`))
+      .toEqual({ actorId: owner.ownerId, runId: "run_bound", scope: "call" });
+    expect(runContext?.(capability.token, "POST", "/api/chats/run_bound/approvals"))
+      .toBeNull();
+    capability.revoke();
+    expect(runContext?.(capability.token, "POST", `/api/mcp-servers/${serverId}/call`))
+      .toBeNull();
+    registry.close();
+  });
+
+  it("places only the registry's Run context in authenticated Gateway requests", async () => {
+    const registry = createMatrixMcpCapabilityRegistry({ configuredOwnerId: owner.ownerId });
+    const capability = registry.issue({ owner, runId: "run_verified", scope: "call" })!;
+    const app = new Hono();
+    app.use("*", authMiddleware("machine-secret", {
+      resolveMatrixMcpRunContext: registry.resolveRunContext,
+    }));
+    app.post("*", (context) => context.json(context.get("matrixMcpRunCapability" as never)));
+    const response = await app.request(`/api/mcp-servers/${serverId}/call`, {
+      method: "POST", headers: { authorization: `Bearer ${capability.token}`,
+        "x-matrix-mcp-run-id": "run_forged" },
+    });
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      actorId: owner.ownerId, runId: "run_verified", scope: "call",
+    });
+  });
+
   it("issues only for the configured personal owner outside Preview", () => {
     for (const options of [
       { configuredOwnerId: undefined },

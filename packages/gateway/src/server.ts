@@ -16,7 +16,7 @@ import {
 import { installPostHogHonoErrorTracking, resolveOwnerTelemetryDistinctId } from "@matrix-os/observability";
 import { TerminalRuntimeSocketClient } from "@matrix-os/terminal-runtime";
 import { terminalTasksUnderPressure } from "@matrix-os/terminal-runtime/user-systemd-capacity";
-import { Hono, type Context } from "hono";
+import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { cors } from "hono/cors";
 import { existsSync, readFileSync } from "node:fs";
@@ -200,8 +200,7 @@ import type { CanvasRepository } from "./canvas/repository.js";
 import type { CanvasService } from "./canvas/service.js";
 import { CanvasSubscriptionHub } from "./canvas/subscriptions.js";
 import { createIntegrationBridgeRoutes } from "./integrations/bridge-routes.js";
-import { createIntegrationProxyResponse } from "./integrations/proxy-response.js";
-import { delegatedIntegrationHeaders } from "./integrations/delegated-identity.js";
+import { proxyIntegrationRequest } from "./integrations/platform-proxy.js";
 import type { PlatformDb } from "./platform-db.js";
 import {
   createHookRunner,
@@ -882,26 +881,6 @@ export async function createGateway(config: GatewayConfig) {
       ? `${internalPlatformUrl}/internal/containers/${internalHandle}/integrations`
       : null;
 
-  function buildIntegrationProxyUrl(
-    c: Context,
-    targetBase: string,
-    routePrefix = "/api/integrations",
-  ): string {
-    const targetUrl = new URL(targetBase);
-    const suffix = c.req.path.replace(routePrefix, "") || "";
-    const decodedSuffix = decodeURIComponent(suffix);
-    if (decodedSuffix.split("/").some((segment) => segment === "..")) {
-      throw new Error("Invalid integration proxy path");
-    }
-
-    const basePath = targetUrl.pathname.endsWith("/")
-      ? targetUrl.pathname.slice(0, -1)
-      : targetUrl.pathname;
-    targetUrl.pathname = suffix ? `${basePath}${suffix}` : basePath;
-    targetUrl.search = new URL(c.req.url).search;
-    return targetUrl.toString();
-  }
-
   function logBestEffortFailure(context: string, err: unknown): void {
     console.warn(
       `[gateway] ${context}:`,
@@ -919,51 +898,6 @@ export async function createGateway(config: GatewayConfig) {
     if (!(err instanceof Error && /not open|not opened|closed/i.test(err.message))) {
       logBestEffortFailure(context, err);
     }
-  }
-
-  async function proxyIntegrationRequest(
-    c: Context,
-    targetBase: string,
-    internalAuthToken?: string,
-    routePrefix = "/api/integrations",
-  ): Promise<Response> {
-    let upstreamUrl: string;
-    try {
-      upstreamUrl = buildIntegrationProxyUrl(c, targetBase, routePrefix);
-    } catch (err: unknown) {
-      console.warn(
-        "[integrations] rejected proxy path:",
-        err instanceof Error ? err.message : String(err),
-      );
-      return c.json({ error: "Bad request" }, 400);
-    }
-    const headers = new Headers();
-    for (const [key, value] of Object.entries(c.req.header())) {
-      if (key !== "host" && key !== "authorization" && value) {
-        headers.set(key, value);
-      }
-    }
-    if (internalAuthToken) {
-      headers.set("authorization", `Bearer ${internalAuthToken}`);
-      if (routePrefix === "/api/integrations") {
-        // Platform verifies this machine's token, so sign the authenticated
-        // Gateway principal rather than forwarding any caller-supplied ID.
-        const actorId = requireRequestPrincipal(c).userId;
-        for (const [key, value] of Object.entries(delegatedIntegrationHeaders(actorId, internalAuthToken))) {
-          headers.set(key, value);
-        }
-      }
-    }
-
-    const upstream = await fetch(upstreamUrl, {
-      method: c.req.method,
-      headers,
-      redirect: "manual",
-      signal: AbortSignal.timeout(30_000),
-      body: ["GET", "HEAD"].includes(c.req.method) ? undefined : await c.req.blob(),
-    });
-
-    return createIntegrationProxyResponse(upstream);
   }
 
   // Platform integration services are constructed before auth and mounted below it.
@@ -1249,7 +1183,7 @@ export async function createGateway(config: GatewayConfig) {
   }));
   app.use("*", securityHeadersMiddleware());
   app.use("*", authMiddleware(process.env.MATRIX_AUTH_TOKEN, {
-    resolveMatrixMcpCapability: matrixMcpCapabilities.resolve,
+    resolveMatrixMcpRunContext: matrixMcpCapabilities.resolveRunContext,
   }));
   const legacyProjectPathAdmission = gatewayCollaboration
     ? createLegacyProjectPathAdmission({
@@ -1319,7 +1253,9 @@ export async function createGateway(config: GatewayConfig) {
   const processManager = registerDeferredRuntimeRoutes({
     app, homePath, integrationRoutes, internalIntegrationBaseUrl,
     internalPlatformToken, internalPlatformUrl, internalHandle,
-    proxyIntegrationRequest, devAppAuthBypass: APP_AUTH_DEV_BYPASS,
+    proxyIntegrationRequest: (c, targetBase, machineToken, routePrefix) =>
+      proxyIntegrationRequest(c, { targetBase, machineToken, routePrefix }),
+    devAppAuthBypass: APP_AUTH_DEV_BYPASS,
     posthogErrorTracker, ownerTelemetryDistinctId,
   });
 

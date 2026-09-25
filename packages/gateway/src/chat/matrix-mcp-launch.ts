@@ -22,6 +22,12 @@ export const MATRIX_CUSTOM_MCP_TOOLS = [
 
 export type MatrixMcpRunScope = "discovery" | "call";
 
+export interface MatrixMcpRunContext {
+  actorId: string;
+  runId: string;
+  scope: MatrixMcpRunScope;
+}
+
 /** The configured stdio server only exposes Matrix's stable broker contract. */
 export function matrixMcpConfig(): string {
   return JSON.stringify({
@@ -47,6 +53,7 @@ export interface MatrixMcpCapabilityIssuer {
 
 export interface MatrixMcpCapabilityRegistry extends MatrixMcpCapabilityIssuer {
   resolve(token: string, method: string, path: string): string | null;
+  resolveRunContext(token: string, method: string, path: string): MatrixMcpRunContext | null;
   close(): void;
 }
 
@@ -76,6 +83,15 @@ export function createMatrixMcpCapabilityRegistry(options: {
     }
   }
 
+  function resolveRunContext(token: string, method: string, path: string): MatrixMcpRunContext | null {
+    if (closed || !/^[a-f0-9]{64}$/.test(token)) return null;
+    sweep();
+    const grant = active.get(digest(token));
+    return grant && permitted(method, path, grant.scope)
+      ? { actorId: grant.actorId, runId: grant.runId, scope: grant.scope }
+      : null;
+  }
+
   return {
     issue(input) {
       if (closed || options.previewRuntime || !options.configuredOwnerId
@@ -92,11 +108,9 @@ export function createMatrixMcpCapabilityRegistry(options: {
       return { token, revoke: () => { active.delete(key); } };
     },
     resolve(token, method, path) {
-      if (closed || !/^[a-f0-9]{64}$/.test(token)) return null;
-      sweep();
-      const grant = active.get(digest(token));
-      return grant && permitted(method, path, grant.scope) ? grant.actorId : null;
+      return resolveRunContext(token, method, path)?.actorId ?? null;
     },
+    resolveRunContext,
     close() {
       closed = true;
       active.clear();
