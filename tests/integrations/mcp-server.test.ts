@@ -1,4 +1,5 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { JEV_MODEL_ID } from "@matrix-os/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -29,6 +30,73 @@ afterEach(() => {
 });
 
 describe("Matrix integrations MCP server", () => {
+  it("initializes the bundled stdio process and lists Custom MCP wrappers without model credentials", async () => {
+    const client = new Client({ name: "canonical-claude-launch-fixture", version: "1.0.0" });
+    const transport = new StdioClientTransport({
+      command: process.execPath,
+      args: ["packages/integrations-mcp/dist/cli.js"],
+      env: { PATH: process.env.PATH ?? "", GATEWAY_URL: "http://127.0.0.1:4000" },
+      stderr: "pipe",
+    });
+    try {
+      await client.connect(transport);
+      const names = (await client.listTools()).tools.map((tool) => tool.name);
+      expect(names).toEqual(expect.arrayContaining([
+        "list_custom_mcp_servers",
+        "describe_custom_mcp_server",
+        "call_custom_mcp_tool",
+        "jev_evaluate",
+      ]));
+    } finally {
+      await client.close();
+    }
+  });
+
+  it("routes a synthetic public-doc lookup through list, describe, and broker call without approval bypass", async () => {
+    const serverId = "123e4567-e89b-42d3-a456-426614174000";
+    const token = "a".repeat(64);
+    vi.stubEnv("MATRIX_AGENT_INTEGRATIONS_TOKEN", token);
+    const fetcher = vi.fn<GatewayFetcher>(async (url, init) => {
+      const path = new URL(url).pathname;
+      if (path === "/api/mcp-servers" && init.method === "GET") return response(200, [{
+        id: serverId, name: "Public docs fixture", url: "https://docs.example.test/mcp",
+        status: "ready", enabled: true, revision: 10,
+      }]);
+      if (path === `/api/mcp-servers/${serverId}` && init.method === "GET") return response(200, {
+        id: serverId, name: "Public docs fixture", status: "ready", enabled: true, revision: 10,
+        tools: [{ name: "search", description: "Search public documentation", enabled: true,
+          approval: "allow", inputSchema: { type: "object", properties: { query: { type: "string" } } } }],
+      });
+      if (path === `/api/mcp-servers/${serverId}/call` && init.method === "POST") {
+        return response(200, { result: "Synthetic public documentation result" });
+      }
+      return response(404, {});
+    });
+    const { client, server } = await connect(fetcher);
+    try {
+      const inventory = await client.callTool({ name: "list_custom_mcp_servers" });
+      expect(JSON.stringify(inventory.content)).toContain("Public docs fixture");
+      const description = await client.callTool({
+        name: "describe_custom_mcp_server", arguments: { server_id: serverId },
+      });
+      expect(JSON.stringify(description.content)).toContain("search [approval: allow]");
+      const result = await client.callTool({
+        name: "call_custom_mcp_tool", arguments: { server_id: serverId, tool: "search", arguments: { query: "public docs" } },
+      });
+      expect(JSON.stringify(result.content)).toContain("Synthetic public documentation result");
+      const request = fetcher.mock.calls[2]!;
+      expect(request[1]).toMatchObject({
+        method: "POST", headers: { Authorization: `Bearer ${token}` },
+      });
+      expect(JSON.parse(request[1].body as string)).toEqual({
+        tool: "search", arguments: { query: "public docs" }, approvalGranted: false,
+      });
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+
   it("advertises the stable integration tool contract to every MCP client", async () => {
     const fetcher = vi.fn<GatewayFetcher>();
     const { client, server } = await connect(fetcher);

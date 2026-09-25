@@ -11,6 +11,7 @@ import {
 } from "@matrix-os/contracts";
 import { CodexExecutableSchema } from "./coding-agents/codex-executable.js";
 import { codexExecContractStatus } from "./coding-agents/codex-version.js";
+import { MATRIX_CUSTOM_MCP_DISCOVERY_TOOLS, MATRIX_CUSTOM_MCP_TOOLS, matrixMcpConfig } from "./chat/matrix-mcp-launch.js";
 
 export const SupportedAgentSchema = z.enum(["claude", "codex", "opencode", "pi"]);
 export type SupportedAgent = z.infer<typeof SupportedAgentSchema>;
@@ -55,6 +56,7 @@ export interface AgentLaunchInput {
   claudePermissionMode?: "default" | "acceptEdits" | "plan" | "auto" | "dontAsk" | "bypassPermissions";
   claudeOutputFormat?: "stream-json";
   claudeIncludePartialMessages?: boolean;
+  matrixCustomMcp?: boolean;
 }
 
 export interface AgentLaunchSpec {
@@ -193,9 +195,15 @@ const ClaudeEditPermissionRuleSchema = z.string()
   .min(1)
   .max(4128)
   .regex(/^Edit\(\/\/[^)\r\n]+\/\*\*\)$/);
+const ClaudeAllowRuleSchema = z.union([
+  ClaudeEditPermissionRuleSchema,
+  z.enum(MATRIX_CUSTOM_MCP_TOOLS),
+]);
 const ClaudeLaunchSettingsSchema = z.object({
   permissions: z.object({
-    allow: z.array(ClaudeEditPermissionRuleSchema).max(20).optional(),
+    // The sandbox permits 20 writable roots; a scoped Claude Run adds only
+    // the three fixed Custom MCP broker wrappers to that existing ceiling.
+    allow: z.array(ClaudeAllowRuleSchema).max(23).optional(),
     deny: z.array(z.enum(["Edit", "Write", "NotebookEdit"])).max(3).optional(),
   }).strict().optional(),
   sandbox: z.object({
@@ -249,7 +257,8 @@ function claudeLaunchSettings(input: AgentLaunchInput): z.infer<typeof ClaudeLau
   if (!sandbox) {
     throw new Error("Claude sandbox preflight is required");
   }
-  const readOnlyMode = input.mode === "plan" || input.mode === "review";
+  const readOnlyMode = input.mode === "plan" || input.mode === "review"
+    || sandbox.mode === "read-only" || claudePermissionMode(input) === "plan";
   if (!readOnlyMode && (!sandbox.enabled || sandbox.mode === "danger-full-access")) {
     return ClaudeLaunchSettingsSchema.parse({ sandbox: { enabled: false } });
   }
@@ -261,9 +270,12 @@ function claudeLaunchSettings(input: AgentLaunchInput): z.infer<typeof ClaudeLau
     (input.approvalPolicy === "on-request" || input.approvalPolicy === "never") &&
     input.mode !== "plan" &&
     input.mode !== "review";
+  const mcpTools = input.matrixCustomMcp
+    ? [...(mode === "read-only" ? MATRIX_CUSTOM_MCP_DISCOVERY_TOOLS : MATRIX_CUSTOM_MCP_TOOLS)]
+    : [];
   if (mode === "read-only") {
     return ClaudeLaunchSettingsSchema.parse({
-      permissions: { deny: ["Edit", "Write", "NotebookEdit"] },
+      permissions: { ...(mcpTools.length ? { allow: mcpTools } : {}), deny: ["Edit", "Write", "NotebookEdit"] },
       sandbox: {
         enabled: true,
         failIfUnavailable: true,
@@ -277,9 +289,9 @@ function claudeLaunchSettings(input: AgentLaunchInput): z.infer<typeof ClaudeLau
   return ClaudeLaunchSettingsSchema.parse({
     permissions: scopedEdits
       ? {
-          allow: (sandbox.writableRoots ?? []).map(claudeEditPermissionRule),
+          allow: [...(sandbox.writableRoots ?? []).map(claudeEditPermissionRule), ...mcpTools],
         }
-      : { deny: ["Edit", "Write", "NotebookEdit"] },
+      : { ...(mcpTools.length ? { allow: mcpTools } : {}), deny: ["Edit", "Write", "NotebookEdit"] },
     sandbox: {
       enabled: true,
       failIfUnavailable: true,
@@ -301,6 +313,7 @@ function claudeLaunchArgs(input: AgentLaunchInput): string[] {
     "--permission-mode",
     permissionMode,
     "--strict-mcp-config",
+    ...(input.matrixCustomMcp ? ["--mcp-config", matrixMcpConfig()] : []),
     "--no-chrome",
     ...(input.model ? ["--model", input.model] : []),
     ...(modelOption(input, "effort") ? ["--effort", modelOption(input, "effort")!] : []),

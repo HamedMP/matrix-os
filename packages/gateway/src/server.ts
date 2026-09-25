@@ -46,6 +46,7 @@ import type { createGatewayChatEventStream } from "./chat/gateway-event-stream.j
 import { createHermesChatProviderAdapter } from "./chat/hermes-provider-adapter.js";
 import { withCanonicalIdleChat } from "./chat/idle-runtime-admission.js";
 import { createKernelChatProviderAdapter } from "./chat/kernel-provider-adapter.js";
+import { createMatrixMcpCapabilityRegistry } from "./chat/matrix-mcp-launch.js";
 import { createOpenClawChatProviderAdapter } from "./chat/openclaw-provider-adapter.js";
 import { CanonicalChatOrchestrator } from "./chat/orchestrator.js";
 import { createOwnerToolOutputProjection } from "./chat/owner-tool-output.js";
@@ -303,6 +304,14 @@ export async function createGateway(config: GatewayConfig) {
   });
 
   const app = new Hono();
+  const matrixMcpCapabilities = createMatrixMcpCapabilityRegistry({
+    // The VPS runner projects its single owner into both variables. If they
+    // disagree, this runtime cannot safely bind a Chat owner to its broker.
+    configuredOwnerId: process.env.MATRIX_CLERK_USER_ID === process.env.MATRIX_USER_ID
+      ? process.env.MATRIX_CLERK_USER_ID
+      : undefined,
+    previewRuntime: process.env.MATRIX_PREVIEW_RUNTIME === "true",
+  });
   const posthogErrorTracker = installPostHogHonoErrorTracking(app, {
     service: "matrix-gateway",
   });
@@ -1239,7 +1248,9 @@ export async function createGateway(config: GatewayConfig) {
     },
   }));
   app.use("*", securityHeadersMiddleware());
-  app.use("*", authMiddleware(process.env.MATRIX_AUTH_TOKEN));
+  app.use("*", authMiddleware(process.env.MATRIX_AUTH_TOKEN, {
+    resolveMatrixMcpCapability: matrixMcpCapabilities.resolve,
+  }));
   const legacyProjectPathAdmission = gatewayCollaboration
     ? createLegacyProjectPathAdmission({
         homePath,
@@ -1517,6 +1528,7 @@ export async function createGateway(config: GatewayConfig) {
       canonicalAdapters.push(createClaudeChatProviderAdapter({
         homePath,
         resolveCredentialLaunch: resolveClaudeCredentialLaunch,
+        matrixMcpCapabilityIssuer: matrixMcpCapabilities,
       }));
     }
     if (codingAgentThreadStore) {
@@ -1782,6 +1794,7 @@ export async function createGateway(config: GatewayConfig) {
     pluginRegistry,
     hookRunner,
     async close() {
+      matrixMcpCapabilities.close();
       workspaceStartupRecoveryController.close();
       await terminalPasteAssetCleanup.close();
       await chatIdleReaper?.close().catch((error: unknown) => {

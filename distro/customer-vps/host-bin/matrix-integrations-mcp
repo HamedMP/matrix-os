@@ -5,12 +5,28 @@ HOST_ENV_FILE="/opt/matrix/env/host.env"
 NODE_BIN="/opt/matrix/runtime/node/bin/node"
 SERVER_PATH="/opt/matrix/app/packages/integrations-mcp/dist/cli.js"
 
+require_scoped=false
+if [ "$#" -gt 0 ]; then
+  if [ "$#" -ne 1 ] || [ "$1" != "--require-scoped-capability" ]; then
+    echo "matrix-integrations-mcp: unsupported launcher arguments" >&2
+    exit 3
+  fi
+  require_scoped=true
+fi
+
 read_host_value() {
   local key value
   key="$1"
   value="$(awk -F= -v key="$key" '$1 == key {sub(/^[^=]*=/, ""); print; exit}' "$HOST_ENV_FILE")"
   [ -n "$value" ] || return 1
   printf '%s\n' "$value"
+}
+
+valid_host_bearer() {
+  local value="$1"
+  # macOS Bash 3.2's regex engine rejects interval bounds above 255.
+  [ "${#value}" -ge 16 ] && [ "${#value}" -le 512 ] &&
+    [[ "$value" =~ ^[A-Za-z0-9._~+/=-]+$ ]]
 }
 
 # Hermes sanitizes the stdio MCP child's environment. Recover only the
@@ -45,9 +61,18 @@ has_hermes_chat_ancestor() {
   done
   return 1
 }
-scoped_token="${MATRIX_AGENT_INTEGRATIONS_TOKEN:-}"
-if [ -z "$scoped_token" ]; then
+if [ "${MATRIX_AGENT_INTEGRATIONS_TOKEN+x}" = x ]; then
+  scoped_token="$MATRIX_AGENT_INTEGRATIONS_TOKEN"
+  if [[ ! "$scoped_token" =~ ^[a-f0-9]{64}$ ]]; then
+    echo "matrix-integrations-mcp: run capability or runtime is invalid" >&2
+    exit 3
+  fi
+else
   scoped_token="$(read_ancestor_capability || true)"
+fi
+if [ "$require_scoped" = true ] && [ -z "$scoped_token" ]; then
+  echo "matrix-integrations-mcp: run capability is unavailable" >&2
+  exit 3
 fi
 if has_hermes_chat_ancestor && [ -z "$scoped_token" ]; then
   echo "matrix-integrations-mcp: run capability is unavailable" >&2
@@ -77,7 +102,7 @@ MATRIX_CLERK_USER_ID_VALUE="$(read_host_value MATRIX_CLERK_USER_ID)" || {
   echo "matrix-integrations-mcp: Matrix identity is unavailable" >&2
   exit 3
 }
-if [[ ! "$MATRIX_AUTH_TOKEN_VALUE" =~ ^[A-Za-z0-9._~+/=-]{16,512}$ ]] || \
+if ! valid_host_bearer "$MATRIX_AUTH_TOKEN_VALUE" || \
    [[ ! "$MATRIX_CLERK_USER_ID_VALUE" =~ ^[A-Za-z0-9_-]{1,128}$ ]]; then
   echo "matrix-integrations-mcp: Matrix identity is invalid" >&2
   exit 3

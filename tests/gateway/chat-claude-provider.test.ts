@@ -1,8 +1,12 @@
 import { EventEmitter } from "node:events";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createClaudeChatProviderAdapter } from "../../packages/gateway/src/chat/claude-provider-adapter.js";
+import type { CanonicalCliSpawn } from "../../packages/gateway/src/chat/cli-process.js";
+import { createMatrixMcpCapabilityRegistry } from "../../packages/gateway/src/chat/matrix-mcp-launch.js";
 
 class FakeStream extends EventEmitter {}
+
+afterEach(() => vi.unstubAllEnvs());
 
 function child(lines: string[], exitCode = 0, stderrLines: string[] = []) {
   const stdout = new FakeStream();
@@ -43,7 +47,137 @@ const baseInput = {
 };
 
 describe("Claude canonical Chat Provider adapter", () => {
-  it.each([null, 0])("resumes the active Claude session after steer exits with code %s", async (exitCode) => {
+  it("registers only the scoped Matrix Custom MCP broker on fresh and resumed supervised Runs", async () => {
+    vi.stubEnv("MATRIX_CLERK_USER_ID", "owner_claude");
+    const spawnFn = vi.fn<CanonicalCliSpawn>(() => child([
+      JSON.stringify({ type: "result", subtype: "success", is_error: false, result: "done", session_id: "claude_mcp_session" }),
+    ]));
+    const adapter = createClaudeChatProviderAdapter({
+      homePath: "/home/matrix/home",
+      spawnFn,
+      resolveCredentialEnv: async () => ({}),
+      matrixMcpCapabilityIssuer: createMatrixMcpCapabilityRegistry({ configuredOwnerId: "owner_claude" }),
+    });
+    const supervisedInput = { ...baseInput, permissionMode: "supervised" };
+
+    for await (const _event of adapter.start(supervisedInput)) { /* Drain the Run. */ }
+    for await (const _event of adapter.resume!({
+      ...supervisedInput,
+      runId: "run_claude_resumed",
+      resumeState: { sessionId: "claude_mcp_session" },
+    })) { /* Drain the resumed Run. */ }
+
+    expect(spawnFn).toHaveBeenCalledTimes(2);
+    for (const [index, [, args, options]] of spawnFn.mock.calls.entries()) {
+      const settingSources = args.indexOf("--setting-sources");
+      expect(args[settingSources + 1]).toBe("");
+      expect(args).toContain("--strict-mcp-config");
+      expect(args.slice(args.indexOf("--permission-mode"), args.indexOf("--permission-mode") + 2))
+        .toEqual(["--permission-mode", "default"]);
+
+      const mcpConfigIndexes = args.flatMap((arg: string, offset: number) => arg === "--mcp-config" ? [offset] : []);
+      expect(mcpConfigIndexes).toHaveLength(1);
+      const config = JSON.parse(args[mcpConfigIndexes[0]! + 1]!) as {
+        mcpServers: Record<string, { command: string; args?: string[] }>;
+      };
+      expect(Object.keys(config.mcpServers)).toEqual(["matrix-integrations"]);
+      expect(config.mcpServers["matrix-integrations"]).toEqual({
+        command: "/opt/matrix/bin/matrix-integrations-mcp",
+        args: ["--require-scoped-capability"],
+      });
+      expect(options.env.MATRIX_AGENT_INTEGRATIONS_TOKEN).toMatch(/^[a-f0-9]{64}$/);
+
+      const settings = JSON.parse(args[args.indexOf("--settings") + 1]!) as {
+        sandbox: { enabled: boolean; failIfUnavailable?: boolean };
+        permissions: { allow?: string[] };
+      };
+      expect(settings.sandbox).toMatchObject({ enabled: true, failIfUnavailable: true });
+      expect(settings.permissions.allow?.filter((rule) => rule.startsWith("mcp__"))).toEqual([
+        "mcp__matrix-integrations__list_custom_mcp_servers",
+        "mcp__matrix-integrations__describe_custom_mcp_server",
+        "mcp__matrix-integrations__call_custom_mcp_tool",
+      ]);
+      expect(args.includes("--resume")).toBe(index === 1);
+    }
+  });
+
+  it("keeps review Runs discovery-only on fresh and resumed launches despite full-access selection", async () => {
+    const registry = createMatrixMcpCapabilityRegistry({ configuredOwnerId: baseInput.owner.ownerId });
+    const seen: Array<{ args: string[]; token: string }> = [];
+    const spawnFn = vi.fn<CanonicalCliSpawn>((_command, args, options) => {
+      const token = options.env.MATRIX_AGENT_INTEGRATIONS_TOKEN!;
+      seen.push({ args, token });
+      expect(registry.resolve(token, "GET", "/api/mcp-servers")).toBe(baseInput.owner.ownerId);
+      expect(registry.resolve(token, "POST", "/api/mcp-servers/123e4567-e89b-42d3-a456-426614174000/call"))
+        .toBeNull();
+      return child([JSON.stringify({ type: "result", subtype: "success", result: "reviewed", session_id: "review_session" })]);
+    });
+    const adapter = createClaudeChatProviderAdapter({
+      homePath: "/home/matrix/home", spawnFn, resolveCredentialEnv: async () => ({}),
+      matrixMcpCapabilityIssuer: registry,
+    });
+    const input = { ...baseInput, interactionMode: "review", permissionMode: "full_access" };
+    for await (const _event of adapter.start(input)) { /* Drain. */ }
+    for await (const _event of adapter.resume!({
+      ...input, runId: "review_resumed", resumeState: { sessionId: "review_session" },
+    })) { /* Drain. */ }
+    expect(seen).toHaveLength(2);
+    for (const { args, token } of seen) {
+      expect(args.slice(args.indexOf("--permission-mode"), args.indexOf("--permission-mode") + 2))
+        .toEqual(["--permission-mode", "plan"]);
+      const settings = JSON.parse(args[args.indexOf("--settings") + 1]!) as {
+        permissions: { allow: string[]; deny: string[] };
+      };
+      expect(settings.permissions.allow).toEqual([
+        "mcp__matrix-integrations__list_custom_mcp_servers",
+        "mcp__matrix-integrations__describe_custom_mcp_server",
+      ]);
+      expect(settings.permissions.deny).toEqual(["Edit", "Write", "NotebookEdit"]);
+      expect(registry.resolve(token, "GET", "/api/mcp-servers")).toBeNull();
+    }
+    registry.close();
+  });
+
+  it("revokes the scoped bearer after completion and a failed CLI start", async () => {
+    const registry = createMatrixMcpCapabilityRegistry({ configuredOwnerId: baseInput.owner.ownerId });
+    const tokens: string[] = [];
+    let failStart = false;
+    const spawnFn = vi.fn<CanonicalCliSpawn>((_command, _args, options) => {
+      const token = options.env.MATRIX_AGENT_INTEGRATIONS_TOKEN!;
+      tokens.push(token);
+      expect(options.env.MATRIX_AUTH_TOKEN).toBeUndefined();
+      expect(registry.resolve(token, "GET", "/api/mcp-servers")).toBe(baseInput.owner.ownerId);
+      if (failStart) throw new Error("fixture executable unavailable");
+      return child([JSON.stringify({ type: "result", subtype: "success", result: "done" })]);
+    });
+    const adapter = createClaudeChatProviderAdapter({
+      homePath: "/home/matrix/home", spawnFn,
+      resolveCredentialEnv: async () => ({ MATRIX_AUTH_TOKEN: "machine-secret" }),
+      matrixMcpCapabilityIssuer: registry,
+    });
+
+    for await (const _event of adapter.start(baseInput)) { /* Drain completion. */ }
+    expect(registry.resolve(tokens[0]!, "GET", "/api/mcp-servers")).toBeNull();
+    failStart = true;
+    const events = [];
+    for await (const event of adapter.start({ ...baseInput, runId: "run_failed" })) events.push(event);
+    expect(events.at(-1)).toMatchObject({ type: "run.completed", outcome: "failed" });
+    expect(registry.resolve(tokens[1]!, "GET", "/api/mcp-servers")).toBeNull();
+    expect(tokens[0]).not.toBe(tokens[1]);
+  });
+
+  it.each([
+    { exitCode: null, review: false },
+    { exitCode: 0, review: false },
+    { exitCode: null, review: true },
+  ])("resumes the active Claude session after steer exits with code $exitCode (review: $review)", async ({ exitCode, review }) => {
+    const registry = createMatrixMcpCapabilityRegistry({ configuredOwnerId: baseInput.owner.ownerId });
+    const callPath = "/api/mcp-servers/123e4567-e89b-42d3-a456-426614174000/call";
+    const input = review
+      ? { ...baseInput, interactionMode: "review", permissionMode: "full_access" }
+      : baseInput;
+    let firstToken = "";
+    let secondToken = "";
     const firstStdout = new FakeStream();
     const firstStderr = new FakeStream();
     const firstProcess = new EventEmitter() as EventEmitter & {
@@ -55,8 +189,11 @@ describe("Claude canonical Chat Provider adapter", () => {
     firstProcess.stdout = firstStdout;
     firstProcess.stderr = firstStderr;
     firstProcess.kill = vi.fn(() => queueMicrotask(() => firstProcess.emit("exit", exitCode, exitCode === null ? "SIGTERM" : null)));
-    const spawnFn = vi.fn()
-      .mockImplementationOnce(() => {
+    const spawnFn = vi.fn<CanonicalCliSpawn>()
+      .mockImplementationOnce((_command, _args, options) => {
+        firstToken = options.env.MATRIX_AGENT_INTEGRATIONS_TOKEN!;
+        expect(registry.resolve(firstToken, "GET", "/api/mcp-servers")).toBe(baseInput.owner.ownerId);
+        expect(registry.resolve(firstToken, "POST", callPath)).toBe(review ? null : baseInput.owner.ownerId);
         queueMicrotask(() => firstStdout.emit("data", Buffer.from(`${JSON.stringify({
           type: "system",
           subtype: "init",
@@ -65,13 +202,20 @@ describe("Claude canonical Chat Provider adapter", () => {
         })}\n`)));
         return firstProcess;
       })
-      .mockImplementationOnce(() => child([
-        JSON.stringify({ type: "result", subtype: "success", is_error: false, result: "222", session_id: "claude_steer_session" }),
-      ]));
-    const adapter = createClaudeChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn });
+      .mockImplementationOnce((_command, _args, options) => {
+        secondToken = options.env.MATRIX_AGENT_INTEGRATIONS_TOKEN!;
+        expect(registry.resolve(firstToken, "GET", "/api/mcp-servers")).toBeNull();
+        expect(registry.resolve(secondToken, "GET", "/api/mcp-servers")).toBe(baseInput.owner.ownerId);
+        expect(registry.resolve(secondToken, "POST", callPath)).toBe(review ? null : baseInput.owner.ownerId);
+        return child([
+          JSON.stringify({ type: "result", subtype: "success", is_error: false, result: "222", session_id: "claude_steer_session" }),
+        ]);
+      });
+    const adapter = createClaudeChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn,
+      resolveCredentialEnv: async () => ({}), matrixMcpCapabilityIssuer: registry });
     const events: unknown[] = [];
     const runPromise = (async () => {
-      for await (const event of adapter.start(baseInput)) events.push(event);
+      for await (const event of adapter.start(input)) events.push(event);
     })();
     await vi.waitFor(() => expect(events).toContainEqual(expect.objectContaining({ type: "state.updated" })));
 
@@ -93,6 +237,9 @@ describe("Claude canonical Chat Provider adapter", () => {
     ]));
     expect(events).toContainEqual({ type: "assistant.delta", delta: "222" });
     expect(events.at(-1)).toEqual({ type: "run.completed", outcome: "completed" });
+    expect(secondToken).not.toBe(firstToken);
+    expect(registry.resolve(firstToken, "GET", "/api/mcp-servers")).toBeNull();
+    expect(registry.resolve(secondToken, "GET", "/api/mcp-servers")).toBeNull();
   });
 
   it("runs the selected model, effort, permission and streams native deltas", async () => {
@@ -848,6 +995,7 @@ describe("Claude canonical Chat Provider adapter", () => {
   });
 
   it("keeps the native Claude session checkpoint when a running turn is cancelled", async () => {
+    const registry = createMatrixMcpCapabilityRegistry({ configuredOwnerId: baseInput.owner.ownerId });
     const controller = new AbortController();
     const stdout = new FakeStream();
     const stderr = new FakeStream();
@@ -861,10 +1009,14 @@ describe("Claude canonical Chat Provider adapter", () => {
     process.stderr = stderr;
     process.kill = vi.fn(() => queueMicrotask(() => process.emit("exit", null, "SIGTERM")));
     const spawnFn = vi.fn(() => process);
-    const adapter = createClaudeChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn });
+    const adapter = createClaudeChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn,
+      resolveCredentialEnv: async () => ({}), matrixMcpCapabilityIssuer: registry });
     const iterator = adapter.start({ ...baseInput, signal: controller.signal })[Symbol.asyncIterator]();
     const stateEvent = iterator.next();
     await vi.waitFor(() => expect(spawnFn).toHaveBeenCalledOnce());
+    const token = spawnFn.mock.calls[0]?.[2].env.MATRIX_AGENT_INTEGRATIONS_TOKEN;
+    expect(token).toMatch(/^[a-f0-9]{64}$/);
+    expect(registry.resolve(token!, "GET", "/api/mcp-servers")).toBe(baseInput.owner.ownerId);
     stdout.emit("data", Buffer.from(`${JSON.stringify({
       type: "system",
       session_id: "claude_cancel_session",
@@ -884,6 +1036,7 @@ describe("Claude canonical Chat Provider adapter", () => {
     });
     await expect(iterator.next()).resolves.toEqual({ done: true, value: undefined });
     expect(process.kill).toHaveBeenCalledWith("SIGTERM");
+    expect(registry.resolve(token!, "GET", "/api/mcp-servers")).toBeNull();
   });
 
   it("trusts a successful result event even when Claude exits non-zero afterward", async () => {
