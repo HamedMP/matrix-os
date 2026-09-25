@@ -1,5 +1,6 @@
 import type { Context } from "hono";
 import { MATRIX_MCP_RUN_CONTEXT_KEY, type MatrixMcpRunContext } from "../../chat/matrix-mcp-launch.js";
+import { INTEGRATION_READ_SCOPE_HEADER } from "../scope-provenance.js";
 
 /** Copy client headers for Platform proxying; Run identity is always server-derived. */
 export function integrationProxyHeaders(context: Context, routePrefix: string): Headers {
@@ -8,6 +9,7 @@ export function integrationProxyHeaders(context: Context, routePrefix: string): 
     const normalized = key.toLowerCase();
     if (normalized !== "host" && normalized !== "authorization"
       && normalized !== "x-matrix-mcp-run-id"
+      && normalized !== INTEGRATION_READ_SCOPE_HEADER
       && normalized !== "x-matrix-custom-mcp-approval-proof" && value) headers.set(key, value);
   }
   if (routePrefix === "/api/mcp-servers") {
