@@ -744,11 +744,16 @@ describe("canonical Chat Provider catalog", () => {
           messaging: { ...snapshot.messaging, runtime: kind },
         };
       };
+      const settingsSnapshot = await harnessSettings([{
+        ...configuredHarness(kind, false),
+        configuredEnabled: false,
+      }]).getSnapshot();
+      const savedSettings = structuredClone(settingsSnapshot);
       const service = createChatProviderCatalogService({
         codingProviders: codingRegistry(),
         agentRuntimeSource: nativeSource,
         systemRuntimeSources: { [kind]: nativeSource },
-        harnessSettingsSource: harnessSettings([configuredHarness(kind, false)]),
+        harnessSettingsSource: { getSnapshot: async () => settingsSnapshot },
         executableDriverKinds: [kind],
       });
 
@@ -760,8 +765,28 @@ describe("canonical Chat Provider catalog", () => {
         unavailabilityReason: "disabled_in_settings",
       });
       expect(instance?.defaultSelection).toBeUndefined();
+      expect(settingsSnapshot).toEqual(savedSettings);
     },
   );
+
+  it("keeps native Hermes inventory available when a saved-on route projects as unavailable", async () => {
+    const service = createChatProviderCatalogService({
+      codingProviders: codingRegistry(),
+      agentRuntimeSource: runtimeSource(),
+      harnessSettingsSource: harnessSettings([{
+        ...configuredHarness("hermes", false),
+        configuredEnabled: true,
+      }]),
+      executableDriverKinds: ["hermes"],
+    });
+
+    expect((await service.getCatalog(principal)).instances.find((instance) => (
+      instance.id === "hermes_default"
+    ))).toMatchObject({
+      availability: "available",
+      defaultSelection: { instanceId: "hermes_default", model: "anthropic:claude-opus-4-6" },
+    });
+  });
 
   it("keeps the active Hermes inventory authoritative over a stale settings route", async () => {
     const service = createChatProviderCatalogService({
