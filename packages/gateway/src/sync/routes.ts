@@ -1,4 +1,4 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import type { SyncScope } from "@matrix-os/contracts";
 import { bodyLimit } from "hono/body-limit";
 import { HTTPException } from "hono/http-exception";
@@ -610,18 +610,31 @@ export function createSyncRoutes(deps: SyncRouteDeps): Hono {
   return app;
 }
 
-// Backward-compatible stub for server.ts until deps are wired
-const syncApp = new Hono();
-syncApp.get("/manifest", (c) => c.json({ error: "Not configured" }, 503));
-syncApp.post("/presign", (c) => c.json({ error: "Not configured" }, 503));
-syncApp.post("/multipart/complete", (c) => c.json({ error: "Not configured" }, 503));
-syncApp.post("/multipart/abort", (c) => c.json({ error: "Not configured" }, 503));
-syncApp.post("/commit", (c) => c.json({ error: "Not configured" }, 503));
-syncApp.get("/status", (c) => c.json({ error: "Not configured" }, 503));
-syncApp.post("/resolve-conflict", (c) => c.json({ error: "Not configured" }, 503));
-syncApp.post("/share", (c) => c.json({ error: "Not configured" }, 503));
-syncApp.delete("/share", (c) => c.json({ error: "Not configured" }, 503));
-syncApp.post("/share/accept", (c) => c.json({ error: "Not configured" }, 503));
-syncApp.get("/shares", (c) => c.json({ error: "Not configured" }, 503));
+interface UnconfiguredSyncRouteDeps {
+  getHomeMirrorStatus?: () => HomeMirrorReadinessStatus;
+}
 
-export { syncApp };
+export function createUnconfiguredSyncRoutes(
+  deps: UnconfiguredSyncRouteDeps = {},
+): Hono {
+  const app = new Hono();
+  const unavailable = (c: Context) => c.json({ error: "Not configured" }, 503);
+  app.get("/manifest", unavailable);
+  app.post("/presign", unavailable);
+  app.post("/multipart/complete", unavailable);
+  app.post("/multipart/abort", unavailable);
+  app.post("/commit", unavailable);
+  app.get("/status", (c) => c.json({
+    error: "Not configured",
+    homeMirror: deps.getHomeMirrorStatus?.() ?? { state: "disabled" },
+  }, 503));
+  app.post("/resolve-conflict", unavailable);
+  app.post("/share", unavailable);
+  app.delete("/share", unavailable);
+  app.post("/share/accept", unavailable);
+  app.get("/shares", unavailable);
+  return app;
+}
+
+// Backward-compatible stub for callers that do not have lifecycle state.
+export const syncApp = createUnconfiguredSyncRoutes();

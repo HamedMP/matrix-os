@@ -50,7 +50,11 @@ const mockSharing = {
   listShares: vi.fn(),
 };
 
-import { createSyncRoutes, type SyncRouteDeps } from "../../../packages/gateway/src/sync/routes.js";
+import {
+  createSyncRoutes,
+  createUnconfiguredSyncRoutes,
+  type SyncRouteDeps,
+} from "../../../packages/gateway/src/sync/routes.js";
 
 function createTestApp(overrides?: Partial<SyncRouteDeps>) {
   const deps: SyncRouteDeps = {
@@ -660,6 +664,21 @@ describe("GET /api/sync/status", () => {
     const json = await res.json();
     expect(json.homeMirror).toEqual({ state: "failed" });
     expect(JSON.stringify(json)).not.toContain("error");
+  });
+
+  it("reports failed readiness when sync infrastructure is unavailable", async () => {
+    const app = new Hono();
+    app.route("/api/sync", createUnconfiguredSyncRoutes({
+      getHomeMirrorStatus: () => ({ state: "failed" }),
+    }));
+
+    const res = await app.request("/api/sync/status");
+
+    expect(res.status).toBe(503);
+    await expect(res.json()).resolves.toEqual({
+      error: "Not configured",
+      homeMirror: { state: "failed" },
+    });
   });
 });
 
