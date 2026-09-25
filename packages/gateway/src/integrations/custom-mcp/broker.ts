@@ -358,7 +358,10 @@ export class CustomMcpBroker {
       }
       let argsDigest: string;
       try { argsDigest = customMcpArgumentsDigest(input.arguments); }
-      catch { throw new CustomMcpBrokerError("invalid"); }
+      catch (error) {
+        console.warn("[custom-mcp] invalid approval arguments:", error instanceof Error ? "error" : "non-error");
+        throw new CustomMcpBrokerError("invalid");
+      }
       const consumed = await this.options.db.consumeCustomMcpToolApproval({
         userId: input.userId, actorId: input.actorId, runId: input.runId,
         serverId: input.serverId, serverRevision: row.revision,
@@ -410,7 +413,10 @@ export class CustomMcpBroker {
       || local?.revision !== row.revision) throw new CustomMcpBrokerError("forbidden");
     let argsDigest: string;
     try { argsDigest = customMcpArgumentsDigest(input.arguments); }
-    catch { throw new CustomMcpBrokerError("invalid"); }
+    catch (error) {
+      console.warn("[custom-mcp] invalid approval arguments:", error instanceof Error ? "error" : "non-error");
+      throw new CustomMcpBrokerError("invalid");
+    }
     if (tool.approval === "allow" && localTool.approval === "allow") return { kind: "allow" };
     const expiresAt = new Date(Date.now() + 10 * 60_000);
     const reserved = await this.options.db.reserveCustomMcpToolApproval({
