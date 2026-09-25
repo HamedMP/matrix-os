@@ -3,6 +3,7 @@ import {
   JEV_EMAIL_TRIAGE_INSTRUCTIONS,
   JEV_EMAIL_TRIAGE_RECIPE_ID,
   JEV_MODEL_ID,
+  JEV_PRICING_VERSION,
   JevEmailTriageResultSchema,
   type JevEmailTriageResult,
 } from "@matrix-os/contracts";
@@ -11,7 +12,6 @@ import { z } from "zod/v4";
 const MAX_STATE_BYTES = 32 * 1024;
 const JEV_INPUT_PRICE_NANOUSD_PER_TOKEN = 42n;
 const JEV_PRICING_VALID_THROUGH = "2026-09-30T23:59:59.999Z";
-const JEV_PRICING_VERSION = "typesafe-jev-input-2026-09";
 const NANOUSD_PER_USD = 1_000_000_000n;
 const NANOUSD_PER_MICROUSD = 1_000n;
 const textEncoder = new TextEncoder();
@@ -81,6 +81,8 @@ export interface SerializedFundedJevEvaluationRequest {
 export interface NormalizedFundedJevEvaluation {
   result: JevEmailTriageResult;
   actualCostMicrousd: number | null;
+  resolvedModel: string;
+  pricingVersion: typeof JEV_PRICING_VERSION;
 }
 
 export interface JevPricingSnapshot {
@@ -148,10 +150,13 @@ export function normalizeFundedJevEvaluationResponse(input: {
       outputTokens: upstream.usage.output_tokens,
     },
     cost: { gatewayUsd },
+    provenance: { resolvedModel: upstream.model, pricingVersion: input.pricing.version },
   });
   return {
     result,
     actualCostMicrousd: jevInputTokensToMicrousd(upstream.usage.input_tokens, input.pricing),
+    resolvedModel: upstream.model,
+    pricingVersion: input.pricing.version,
   };
 }
 

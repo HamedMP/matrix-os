@@ -25,6 +25,7 @@ import {
   type FundedAiReleaseResponse,
   type FundedAiSettlementResponse,
   type FundedAiStartResponse,
+  JevProvenanceSchema,
 } from "@matrix-os/contracts";
 import { sql } from "kysely";
 import { z } from "zod/v4";
@@ -430,6 +431,7 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
       tokenId: tokenMatch[1], requestId: request.requestId,
       modelId: request.modelId, maxCostMicrousd: request.maxCostMicrousd,
       ...(request.billingMode ? { billingMode: request.billingMode } : {}),
+      ...(request.jevPricingVersion ? { jevPricingVersion: request.jevPricingVersion } : {}),
     })).digest("hex");
     await options.db.ready;
     return options.db.transaction(async (trx) => {
@@ -574,6 +576,7 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
           modelId: request.modelId,
           reservedMicrousd: holdMicrousd,
           ...(request.billingMode ? { billingMode: request.billingMode, maxCostMicrousd: request.maxCostMicrousd } : {}),
+          ...(request.jevPricingVersion ? { jevPricingVersion: request.jevPricingVersion } : {}),
           remainingBalanceMicrousd: remainingBalance,
           remainingBudgetMicrousd: remainingBudget,
           periodStart,
@@ -605,6 +608,8 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
         promotional_reserved_microusd: fundingSources.promotionalReservedMicrousd,
         addon_reserved_microusd: fundingSources.addonReservedMicrousd,
         actual_microusd: null,
+        resolved_model: null,
+        pricing_version: null,
         period_start: periodStart,
         status: "reserved",
         created_at: checkedAt,
@@ -707,6 +712,7 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
     reservationId: string;
     tokenId: string;
     actualCostMicrousd: number | null;
+    jevProvenance?: z.infer<typeof JevProvenanceSchema>;
     manualReview?: { expectedRequestId: string; evidenceRef: string; reviewer: string };
   }, finalizationMode: "exact" | "conservative"): Promise<{
     response: FundedAiSettlementResponse;
@@ -728,6 +734,24 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
         .where("token_id", "=", request.tokenId).forUpdate().executeTakeFirstOrThrow();
       const reserved = exactInteger(reservation.reserved_microusd);
       const usageLimit = usageReservationLimit(reservation.authorization_response);
+      const storedJevPricingVersion = reservation.model_id === JEV_MODEL_ID
+        ? FundedAiAuthorizationResponseSchema.parse(JSON.parse(reservation.authorization_response))
+          .reservation.jevPricingVersion
+        : undefined;
+      if (reservation.model_id !== JEV_MODEL_ID && request.jevProvenance !== undefined) {
+        throw new AiFundedPolicyError("idempotency_conflict");
+      }
+      if (reservation.model_id === JEV_MODEL_ID) {
+        if (request.jevProvenance !== undefined
+          && (storedJevPricingVersion === undefined
+            || request.jevProvenance.pricingVersion !== storedJevPricingVersion)) {
+          throw new AiFundedPolicyError("idempotency_conflict");
+        }
+        if (storedJevPricingVersion !== undefined && !request.manualReview
+          && finalizationMode === "exact" && request.jevProvenance === undefined) {
+          throw new AiFundedPolicyError("idempotency_conflict");
+        }
+      }
       if (request.manualReview) {
         if (reservation.model_id !== JEV_MODEL_ID || usageLimit === null
           || reservation.request_id !== request.manualReview.expectedRequestId) {
@@ -746,6 +770,10 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
       const actualCostMicrousd = request.actualCostMicrousd ?? reserved;
       if (reservation.status === "settled") {
         if (exactInteger(reservation.actual_microusd) !== actualCostMicrousd) {
+          throw new AiFundedPolicyError("idempotency_conflict");
+        }
+        if (reservation.resolved_model !== (request.jevProvenance?.resolvedModel ?? null)
+          || reservation.pricing_version !== (request.jevProvenance?.pricingVersion ?? null)) {
           throw new AiFundedPolicyError("idempotency_conflict");
         }
         if (request.manualReview && (reservation.manual_review_evidence_ref !== request.manualReview.evidenceRef
@@ -787,6 +815,8 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
           .where("reservation_id", "=", reservation.reservation_id).executeTakeFirstOrThrow();
         if (latest.status === "settled" && exactInteger(latest.actual_microusd) === actualCostMicrousd
           && latest.settlement_response !== null
+          && latest.resolved_model === (request.jevProvenance?.resolvedModel ?? null)
+          && latest.pricing_version === (request.jevProvenance?.pricingVersion ?? null)
           && (!request.manualReview || (latest.manual_review_evidence_ref === request.manualReview.evidenceRef
             && latest.manual_review_actor === request.manualReview.reviewer))) {
           return {
@@ -847,6 +877,8 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
       const updated = await trx.executor.updateTable("ai_funded_usage_reservations").set({
         status: "settled",
         actual_microusd: actualCostMicrousd,
+        resolved_model: request.jevProvenance?.resolvedModel ?? null,
+        pricing_version: request.jevProvenance?.pricingVersion ?? null,
         settled_at: checkedAt,
         finalization_mode: finalizationMode,
         ...(request.manualReview ? {
@@ -896,6 +928,8 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
       reservationId: request.reservationId,
       tokenId: request.tokenId,
       actualCostMicrousd: request.mode === "exact" ? request.actualCostMicrousd : null,
+      ...(request.mode === "exact" && request.jevProvenance
+        ? { jevProvenance: request.jevProvenance } : {}),
     }, request.mode);
     return FundedAiFinalizationResponseSchema.parse({
       ...settlement.response,
