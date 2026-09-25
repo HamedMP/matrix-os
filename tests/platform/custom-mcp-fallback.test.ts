@@ -2,7 +2,7 @@ import { createHmac } from 'node:crypto';
 import { Hono } from 'hono';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createApp } from '../../packages/platform/src/main.js';
-import { resolveCustomMcpUserIdForMachine } from '../../packages/platform/src/custom-mcp-route-registration.js';
+import { getCustomMcpProjectionMachine, resolveCustomMcpUserIdForMachine } from '../../packages/platform/src/custom-mcp-route-registration.js';
 import { createCustomMcpRoutes } from '../../packages/gateway/src/integrations/custom-mcp/routes.js';
 import { insertUserMachine, type PlatformDB } from '../../packages/platform/src/db.js';
 import { issueSyncJwt } from '../../packages/platform/src/sync-jwt.js';
@@ -125,7 +125,10 @@ describe('Custom MCP route boundary', () => {
       status: 'running',
       provisionedAt: '2026-09-25T00:00:00.000Z',
     });
-    const ensureUser = vi.fn().mockResolvedValue({ id: 'fixture-user' });
+    const ensureUser = vi.fn(async (input: { handle: string }) => {
+      if (input.handle === handle) throw new Error('users_handle_key');
+      return { id: 'fixture-user' };
+    });
     const routes = createCustomMcpRoutes({
       broker: { list: vi.fn().mockResolvedValue([]) } as unknown as Parameters<typeof createCustomMcpRoutes>[0]['broker'],
       resolveUserId: (c) => resolveCustomMcpUserIdForMachine(db, {
@@ -145,7 +148,31 @@ describe('Custom MCP route boundary', () => {
     });
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual([]);
-    expect(ensureUser).toHaveBeenCalledWith(expect.objectContaining({ clerkId: fixtureId }));
+    expect(ensureUser).toHaveBeenCalledWith(expect.objectContaining({ clerkId: fixtureId, handle: `~preview:${handle}` }));
+    await expect(getCustomMcpProjectionMachine(db, { handle: `~preview:${handle}`, clerk_id: fixtureId })).resolves.toMatchObject({
+      machineId: '00000000-0000-4000-8000-000000001311', handle, clerkUserId: fixtureId,
+    });
+  });
+
+  it('moves an existing synthetic fixture account to its isolated key', async () => {
+    const handle = 'pr-1310';
+    const fixtureId = `chat-share-preview-fixture-${handle}`;
+    await insertUserMachine(db, {
+      machineId: '00000000-0000-4000-8000-000000001312',
+      clerkUserId: fixtureId,
+      handle,
+      runtimeSlot: handle,
+      provisioningClass: 'preview',
+      status: 'running',
+      provisionedAt: '2026-09-25T00:00:00.000Z',
+    });
+    const ensureUser = vi.fn().mockResolvedValue({ id: 'fixture-user' });
+    const accountId = await resolveCustomMcpUserIdForMachine(db, {
+      getUserByClerkId: vi.fn().mockResolvedValue({ id: 'fixture-user' }),
+      ensureUser,
+    }, fixtureId, handle);
+    expect(accountId).toBe('fixture-user');
+    expect(ensureUser).toHaveBeenCalledWith(expect.objectContaining({ handle: `~preview:${handle}` }));
   });
 
   it.each([false, true])('returns unavailable for disabled routes (internal=%s)', async (internal) => {

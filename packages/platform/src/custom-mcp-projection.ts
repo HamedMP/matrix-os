@@ -25,7 +25,7 @@ export interface CustomMcpProjectionUser {
 
 export function createCustomMcpProjectionRequest(options: {
   getUser(userId: string): Promise<CustomMcpProjectionUser | null>;
-  getMachine(handle: string): Promise<(CustomerVpsProxyMachine & { clerkUserId: string }) | null | undefined>;
+  getMachine(user: CustomMcpProjectionUser): Promise<(CustomerVpsProxyMachine & { clerkUserId: string; handle: string }) | null | undefined>;
   platformSecret: string;
   dispatcher?: Agent;
   fetchFn?: typeof fetch;
@@ -33,7 +33,7 @@ export function createCustomMcpProjectionRequest(options: {
   return async (userId: string, method: 'GET' | 'POST' | 'DELETE', serverId?: string, body?: unknown): Promise<unknown> => {
     const user = await options.getUser(userId);
     if (!user) throw new Error('Custom MCP owner is unavailable');
-    const machine = await options.getMachine(user.handle);
+    const machine = await options.getMachine(user);
     if (!machine || machine.clerkUserId !== user.clerk_id) {
       throw new Error('Custom MCP owner runtime is unavailable');
     }
@@ -42,7 +42,7 @@ export function createCustomMcpProjectionRequest(options: {
       redirect: 'error',
       signal: AbortSignal.timeout(10_000),
       headers: {
-        authorization: `Bearer ${buildPlatformVerificationToken(user.handle, options.platformSecret)}`,
+        authorization: `Bearer ${buildPlatformVerificationToken(machine.handle, options.platformSecret)}`,
         'x-matrix-clerk-user-id': user.clerk_id,
         host: 'app.matrix-os.com',
         'x-forwarded-host': 'app.matrix-os.com',

@@ -64,7 +64,7 @@ import {
 } from './r2-capability.js';
 import { bootstrapPlatformCollaboration } from './collaboration/bootstrap.js';
 import type { PlatformCollaborationComposition } from './collaboration/wiring.js';
-import { resolveCustomMcpUserIdForMachine } from './custom-mcp-route-registration.js';
+import { getCustomMcpProjectionMachine, resolveCustomMcpUserIdForMachine } from './custom-mcp-route-registration.js';
 import { createSpeechRuntimeRoutes } from './speech/routes.js';
 import {
   PlatformSpeechConfigError,
@@ -570,7 +570,7 @@ async function startPlatformServerWithCleanup(
       resolveCustomMcpUserIdForMachine(db, customDb, clerkUserId, handle);
     const projectionRequest = createCustomMcpProjectionRequest({
       getUser: (userId) => customDb.getUserById(userId),
-      getMachine: (handle) => getRunningUserMachineByHandle(db, handle),
+      getMachine: (user) => getCustomMcpProjectionMachine(db, user),
       platformSecret,
       dispatcher: customerVpsProxyDispatcher,
     });
