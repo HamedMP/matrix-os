@@ -49,6 +49,35 @@ describe("Jev result cleanup lifecycle", () => {
     expect(pruneExpiredCompletedResults).toHaveBeenCalledTimes(2);
   });
 
+  it("bounds shutdown when an in-flight sweep never settles", async () => {
+    vi.useFakeTimers();
+    const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      let tick: (() => void) | undefined;
+      const pruneExpiredCompletedResults = vi.fn(() => new Promise<void>(() => undefined));
+      const cancel = vi.fn();
+      const lifecycle = startJevResultCleanup({
+        repository: { pruneExpiredCompletedResults },
+        schedule(callback) { tick = callback; return "timer"; },
+        cancel,
+      });
+
+      let closed = false;
+      void lifecycle.close().then(() => { closed = true; });
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(closed).toBe(true);
+      expect(cancel).toHaveBeenCalledWith("timer");
+      expect(log).toHaveBeenCalledWith("[jev] Result cleanup still in flight after shutdown grace");
+      tick?.();
+      await lifecycle.runNow();
+      await lifecycle.close();
+      expect(pruneExpiredCompletedResults).toHaveBeenCalledTimes(1);
+    } finally {
+      log.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
   it("maintains prior Jev data while the funded route is disabled", async () => {
     const pglite = await KyselyPGlite.create();
     let clock = new Date("2026-09-22T10:00:00.000Z");
