@@ -3,6 +3,7 @@ import { bodyLimit } from "hono/body-limit";
 import { z } from "zod/v4";
 import type { PlatformDb } from "../platform-db.js";
 import { executeIntegrationAction } from "./action-execution.js";
+import { integrationActionFailure, integrationActionSuccess } from "./call-outcome.js";
 import { resolveIntegrationConnection } from "./connection-selection.js";
 import { validateActionParams } from "./parameter-validation.js";
 import type { PipedreamConnectClient } from "./pipedream.js";
@@ -65,10 +66,16 @@ export function createIntegrationReadCallRoutes(options: {
         actionId: action,
         params,
       });
-      return c.json({ data, service, action, ...(summary ? { summary } : {}) });
+      return integrationActionSuccess(c, {
+        db: options.db,
+        connectionId: selected.connection.id,
+        service,
+        action,
+        data,
+        summary,
+      });
     } catch (err: unknown) {
-      console.error("[integrations] Scoped read call failed:", err);
-      return c.json({ error: "Integration call failed" }, 502);
+      return integrationActionFailure(c, err, service, action);
     }
   });
   return app;

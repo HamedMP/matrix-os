@@ -116,4 +116,43 @@ describe("owner-bound integration read-call authority", () => {
     expect(res.status).toBe(413);
     expect(proxyGet).not.toHaveBeenCalled();
   });
+
+  it("updates selected connection usage only after a successful scoped read", async () => {
+    await db.connectService({ userId: ownerId, service: "gmail", pipedreamAccountId: "pd_work",
+      accountLabel: "Work", scopes: ["read"] });
+    expect((await db.listConnectedServices(ownerId))[0]?.last_used_at).toBeNull();
+    expect((await readCall({ service: "gmail", action: "list_labels", label: "Work", params: {} })).status).toBe(200);
+    expect((await db.listConnectedServices(ownerId))[0]?.last_used_at).not.toBeNull();
+  });
+
+  it.each([
+    [{ errors: [{ message: "secret provider error", extensions: { code: "UNAUTHENTICATED" } }] }, 422, "configuration_error"],
+    [{ errors: [{ message: "secret provider error", extensions: { code: "RATELIMITED" } }] }, 429, "rate_limited"],
+    [{ errors: [{ message: "secret provider error", extensions: { code: "INTERNAL_ERROR" } }] }, 503, "transient_failure"],
+    [{ errors: [{ message: "secret provider error", extensions: { code: "BAD_USER_INPUT" } }] }, 200, "OPERATION_FAILED"],
+  ] as const)("classifies Linear GraphQL read failures before success and usage (%s)", async (providerBody, status, code) => {
+    await db.connectService({ userId: ownerId, service: "linear", pipedreamAccountId: "pd_linear",
+      accountLabel: "Work", scopes: ["read"] });
+    proxyPost.mockResolvedValueOnce(providerBody as never);
+    const result = await readCall({ service: "linear", action: "symphony_viewer", label: "Work", params: {} });
+    expect(result.status).toBe(status);
+    const text = await result.text();
+    expect(text).toContain(code);
+    expect(text).not.toContain("secret provider error");
+    expect((await db.listConnectedServices(ownerId))[0]?.last_used_at).toBeNull();
+  });
+
+  it.each([
+    [{ statusCode: 400, body: { errors: [{ extensions: { code: "RATELIMITED" } }] } }, 429, "rate_limited"],
+    [{ statusCode: 401 }, 422, "provider_rejected"],
+    [{ statusCode: 429, headers: { "retry-after": "17" } }, 429, "retry_after"],
+  ] as const)("preserves Linear provider rejection classification (%s)", async (upstream, status, code) => {
+    await db.connectService({ userId: ownerId, service: "linear", pipedreamAccountId: "pd_linear",
+      accountLabel: "Work", scopes: ["read"] });
+    proxyPost.mockRejectedValueOnce(upstream);
+    const result = await readCall({ service: "linear", action: "symphony_viewer", label: "Work", params: {} });
+    expect(result.status).toBe(status);
+    expect(await result.text()).toContain(code);
+    expect((await db.listConnectedServices(ownerId))[0]?.last_used_at).toBeNull();
+  });
 });
