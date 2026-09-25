@@ -13,7 +13,7 @@ const ACTION_TIMEOUT_MS = 35_000; // Pipedream actions timeout at 30s
 export function gatewayAuthHeaders(): Record<string, string> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   const scopedToken = process.env.MATRIX_AGENT_INTEGRATIONS_TOKEN;
-  if (scopedToken) {
+  if (scopedToken !== undefined) {
     if (!/^[a-f0-9]{64}$/.test(scopedToken)) throw new Error("InvalidAgentIntegrationCapability");
     headers.Authorization = `Bearer ${scopedToken}`;
     return headers;
