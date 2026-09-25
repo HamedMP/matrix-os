@@ -1,6 +1,6 @@
 # Codex 0.157.0 provider contract qualification
 
-**Status:** Red test only; approval to promote the verified contract records is pending.
+**Status:** Exact 0.157.0 contract records implemented; current-head two-target CI and review are pending. Installer promotion remains out of scope.
 
 The scheduled Codex provider contract workflow resolved published `@openai/codex@0.157.0` and failed on both `linux-x64` and `darwin-arm64` at the intentional `latestVerifiedVersion` guard. The installed customer tool remains pinned to 0.156.1. This work qualifies the **exact** 0.157.0 exec JSONL source and experimental app-server protocol against Matrix's provider adapter; it does not promote the customer installer, permit arbitrary future versions, or change Claude MCP behavior.
 
@@ -14,6 +14,6 @@ The scheduled Codex provider contract workflow resolved published `@openai/codex
 
 ## Red-to-green boundary
 
-The checked-in [test](../../tests/scripts/check-codex-provider-contracts.test.ts) reads pinned upstream source and generated schema bytes. It fails at `Codex 0.157.0 is not verified` before the current checker reaches digest comparison. The green step is limited to exact, reviewed version records in the two contract JSON files, with required semantic digests retained only if both generated targets confirm them. Do not suppress or widen the guard. The [evidence manifest](evidence/manifest.md) records source provenance, structural diff, hashes, process evidence, and remaining validation.
+The checked-in [test](../../tests/scripts/check-codex-provider-contracts.test.ts) reads pinned upstream source and generated schema bytes. It failed at `Codex 0.157.0 is not verified` on the bootstrap head, before the checker reached digest comparison. The green change adds only the exact version records to the two contract JSON files; required semantic digests remain subject to current-head verification on both generated targets. The guard is unchanged. The [evidence manifest](evidence/manifest.md) records source provenance, structural diff, hashes, process evidence, and remaining validation.
 
 Public documentation is a separate deliverable if a subsequent installer promotion changes supported user-facing Codex behavior: assess and, if needed, open a documentation PR in `FinnaAI/matrix-os-site/content/docs/`. This test-only qualification does not change the public product contract.
