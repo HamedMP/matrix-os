@@ -673,6 +673,15 @@ describe("agent-launcher", () => {
     });
     expect((claudeSettings(directReadOnly.args) as { permissions: { allow: string[] } }).permissions.allow)
       .not.toContain("mcp__matrix-integrations__call_custom_mcp_tool");
+    const directPlan = buildAgentLaunch({
+      agent: "claude", cwd, approvalPolicy: "on-request", claudePermissionMode: "plan",
+      sandbox: { enabled: true, mode: "workspace-write", writableRoots: [cwd] }, matrixCustomMcp: true,
+    });
+    expect((claudeSettings(directPlan.args) as { permissions: { allow: string[] } }).permissions.allow)
+      .toEqual([
+        "mcp__matrix-integrations__list_custom_mcp_servers",
+        "mcp__matrix-integrations__describe_custom_mcp_server",
+      ]);
   });
 
   it("uses bounded no-prompt controls for Claude workspace and full-access launches", () => {

@@ -22,6 +22,13 @@ read_host_value() {
   printf '%s\n' "$value"
 }
 
+valid_host_bearer() {
+  local value="$1"
+  # macOS Bash 3.2's regex engine rejects interval bounds above 255.
+  [ "${#value}" -ge 16 ] && [ "${#value}" -le 512 ] &&
+    [[ "$value" =~ ^[A-Za-z0-9._~+/=-]+$ ]]
+}
+
 # Hermes sanitizes the stdio MCP child's environment. Recover only the
 # run-scoped bearer from its process ancestry; never pass the host machine
 # token into a Hermes-owned MCP process.
@@ -95,7 +102,7 @@ MATRIX_CLERK_USER_ID_VALUE="$(read_host_value MATRIX_CLERK_USER_ID)" || {
   echo "matrix-integrations-mcp: Matrix identity is unavailable" >&2
   exit 3
 }
-if [[ ! "$MATRIX_AUTH_TOKEN_VALUE" =~ ^[A-Za-z0-9._~+/=-]{16,512}$ ]] || \
+if ! valid_host_bearer "$MATRIX_AUTH_TOKEN_VALUE" || \
    [[ ! "$MATRIX_CLERK_USER_ID_VALUE" =~ ^[A-Za-z0-9_-]{1,128}$ ]]; then
   echo "matrix-integrations-mcp: Matrix identity is invalid" >&2
   exit 3

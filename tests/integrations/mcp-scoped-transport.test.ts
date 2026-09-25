@@ -15,7 +15,7 @@ describe("scoped Claude-to-Matrix MCP transport", () => {
   it("initializes stdio, forwards list/describe/call through actor-bound Gateway auth, and denies reuse after revoke", async () => {
     const ownerId = "owner_claude";
     const registry = createMatrixMcpCapabilityRegistry({ configuredOwnerId: ownerId });
-    const capability = registry.issue({ owner: { type: "personal", ownerId }, runId: "run_fixture" })!;
+    const capability = registry.issue({ owner: { type: "personal", ownerId }, runId: "run_fixture", scope: "call" })!;
     const fakeBrokerCall = vi.fn(async (actor: string, tool: string, approved: boolean) => {
       expect(actor).toBe(ownerId);
       expect(tool).toBe("search");

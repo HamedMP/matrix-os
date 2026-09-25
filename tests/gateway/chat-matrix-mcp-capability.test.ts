@@ -15,17 +15,18 @@ describe("Claude Custom MCP Run capability", () => {
       { configuredOwnerId: "owner_claude", previewRuntime: true },
     ]) {
       const registry = createMatrixMcpCapabilityRegistry(options);
-      expect(registry.issue({ owner, runId: "run_a" })).toBeNull();
+      expect(registry.issue({ owner, runId: "run_a", scope: "call" })).toBeNull();
     }
     const registry = createMatrixMcpCapabilityRegistry({ configuredOwnerId: owner.ownerId });
-    expect(registry.issue({ owner: { type: "organization", ownerId: owner.ownerId }, runId: "run_a" })).toBeNull();
-    expect(registry.issue({ owner: { type: "personal", ownerId: "another_owner" }, runId: "run_a" })).toBeNull();
-    expect(registry.issue({ owner, runId: "run_a" })?.token).toMatch(/^[a-f0-9]{64}$/);
+    expect(registry.issue({ owner: { type: "organization", ownerId: owner.ownerId }, runId: "run_a", scope: "call" })).toBeNull();
+    expect(registry.issue({ owner: { type: "personal", ownerId: "another_owner" }, runId: "run_a", scope: "call" })).toBeNull();
+    expect(registry.issue({ owner, runId: "run_a", scope: "unknown" as never })).toBeNull();
+    expect(registry.issue({ owner, runId: "run_a", scope: "call" })?.token).toMatch(/^[a-f0-9]{64}$/);
   });
 
   it("binds the actor to only collection/detail reads and an exact UUID call", async () => {
     const registry = createMatrixMcpCapabilityRegistry({ configuredOwnerId: owner.ownerId });
-    const capability = registry.issue({ owner, runId: "run_a" })!;
+    const capability = registry.issue({ owner, runId: "run_a", scope: "call" })!;
     const app = new Hono();
     app.use("*", authMiddleware("machine-secret", { resolveMatrixMcpCapability: registry.resolve }));
     app.all("*", (c) => c.json({ actor: requireRequestPrincipal(c).userId }));
@@ -66,7 +67,7 @@ describe("Claude Custom MCP Run capability", () => {
     const app = new Hono();
     app.use("*", authMiddleware("machine-secret", { resolveMatrixMcpCapability: registry.resolve }));
     app.all("*", (c) => c.json({ actor: requireRequestPrincipal(c).userId }));
-    const headers = { authorization: `Bearer ${capability.token}` };
+    const headers = { authorization: `Bearer ${capability.token}`, "x-real-ip": "198.51.100.248" };
     expect((await app.request(`/api/mcp-servers/${serverId}`, { headers })).status).toBe(200);
     expect((await app.request(`/api/mcp-servers/${serverId}/call`, {
       method: "POST", headers, body: JSON.stringify({ tool: "mutable", approvalGranted: false }),
@@ -77,23 +78,23 @@ describe("Claude Custom MCP Run capability", () => {
   it("expires and drains Run grants", () => {
     let clock = 0;
     const registry = createMatrixMcpCapabilityRegistry({ configuredOwnerId: owner.ownerId, now: () => clock });
-    const capability = registry.issue({ owner, runId: "run_a" })!;
+    const capability = registry.issue({ owner, runId: "run_a", scope: "call" })!;
     expect(registry.resolve(capability.token, "GET", "/api/mcp-servers")).toBe(owner.ownerId);
     clock = 35 * 60_000;
     expect(registry.resolve(capability.token, "GET", "/api/mcp-servers")).toBeNull();
-    const next = registry.issue({ owner, runId: "run_b" })!;
+    const next = registry.issue({ owner, runId: "run_b", scope: "call" })!;
     registry.close();
     expect(registry.resolve(next.token, "GET", "/api/mcp-servers")).toBeNull();
-    expect(registry.issue({ owner, runId: "run_c" })).toBeNull();
+    expect(registry.issue({ owner, runId: "run_c", scope: "call" })).toBeNull();
   });
 
   it("caps active grants and frees a slot on revocation", () => {
     const registry = createMatrixMcpCapabilityRegistry({ configuredOwnerId: owner.ownerId });
-    const capabilities = Array.from({ length: 128 }, (_, index) => registry.issue({ owner, runId: `run_${index}` }));
+    const capabilities = Array.from({ length: 128 }, (_, index) => registry.issue({ owner, runId: `run_${index}`, scope: "call" }));
     expect(capabilities.every(Boolean)).toBe(true);
-    expect(registry.issue({ owner, runId: "over_limit" })).toBeNull();
+    expect(registry.issue({ owner, runId: "over_limit", scope: "call" })).toBeNull();
     capabilities[0]!.revoke();
-    const replacement = registry.issue({ owner, runId: "replacement" });
+    const replacement = registry.issue({ owner, runId: "replacement", scope: "call" });
     expect(replacement?.token).toMatch(/^[a-f0-9]{64}$/);
     expect(registry.resolve(capabilities[0]!.token, "GET", "/api/mcp-servers")).toBeNull();
     registry.close();

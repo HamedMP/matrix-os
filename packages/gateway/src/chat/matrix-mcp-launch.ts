@@ -10,11 +10,17 @@ const CALL_PATH = new RegExp(`^/api/mcp-servers/${SERVER_ID}/call$`);
 /** Set only by Gateway auth after a live scoped Run bearer resolves. */
 export const MATRIX_MCP_RUN_CONTEXT_KEY = "matrixMcpRunCapability";
 
-export const MATRIX_CUSTOM_MCP_TOOLS = [
+export const MATRIX_CUSTOM_MCP_DISCOVERY_TOOLS = [
   "mcp__matrix-integrations__list_custom_mcp_servers",
   "mcp__matrix-integrations__describe_custom_mcp_server",
+] as const;
+
+export const MATRIX_CUSTOM_MCP_TOOLS = [
+  ...MATRIX_CUSTOM_MCP_DISCOVERY_TOOLS,
   "mcp__matrix-integrations__call_custom_mcp_tool",
 ] as const;
+
+export type MatrixMcpRunScope = "discovery" | "call";
 
 /** The configured stdio server only exposes Matrix's stable broker contract. */
 export function matrixMcpConfig(): string {
@@ -36,7 +42,7 @@ export interface MatrixMcpRunCapability {
 }
 
 export interface MatrixMcpCapabilityIssuer {
-  issue(input: { owner: { type: string; ownerId: string }; runId: string }): MatrixMcpRunCapability | null;
+  issue(input: { owner: { type: string; ownerId: string }; runId: string; scope: MatrixMcpRunScope }): MatrixMcpRunCapability | null;
 }
 
 export interface MatrixMcpCapabilityRegistry extends MatrixMcpCapabilityIssuer {
@@ -48,9 +54,9 @@ function digest(token: string): string {
   return createHash("sha256").update(token).digest("hex");
 }
 
-function permitted(method: string, path: string): boolean {
+function permitted(method: string, path: string, scope: MatrixMcpRunScope): boolean {
   return (method === "GET" && (path === "/api/mcp-servers" || DETAIL_PATH.test(path)))
-    || (method === "POST" && CALL_PATH.test(path));
+    || (scope === "call" && method === "POST" && CALL_PATH.test(path));
 }
 
 /** A bounded, owner-bound, run-lifetime capability for Custom MCP only. */
@@ -59,7 +65,7 @@ export function createMatrixMcpCapabilityRegistry(options: {
   previewRuntime?: boolean;
   now?: () => number;
 }): MatrixMcpCapabilityRegistry {
-  const active = new Map<string, { actorId: string; runId: string; expiresAt: number }>();
+  const active = new Map<string, { actorId: string; runId: string; scope: MatrixMcpRunScope; expiresAt: number }>();
   const now = options.now ?? Date.now;
   let closed = false;
 
@@ -76,18 +82,20 @@ export function createMatrixMcpCapabilityRegistry(options: {
         || !SAFE_PRINCIPAL_USER_ID.test(options.configuredOwnerId)
         || input.owner.type !== "personal"
         || input.owner.ownerId !== options.configuredOwnerId
+        || (input.scope !== "discovery" && input.scope !== "call")
         || !input.runId || input.runId.length > 256) return null;
       sweep();
       if (active.size >= MAX_ACTIVE) return null;
       const token = randomBytes(32).toString("hex");
       const key = digest(token);
-      active.set(key, { actorId: input.owner.ownerId, runId: input.runId, expiresAt: now() + LIFETIME_MS });
+      active.set(key, { actorId: input.owner.ownerId, runId: input.runId, scope: input.scope, expiresAt: now() + LIFETIME_MS });
       return { token, revoke: () => { active.delete(key); } };
     },
     resolve(token, method, path) {
-      if (closed || !/^[a-f0-9]{64}$/.test(token) || !permitted(method, path)) return null;
+      if (closed || !/^[a-f0-9]{64}$/.test(token)) return null;
       sweep();
-      return active.get(digest(token))?.actorId ?? null;
+      const grant = active.get(digest(token));
+      return grant && permitted(method, path, grant.scope) ? grant.actorId : null;
     },
     close() {
       closed = true;

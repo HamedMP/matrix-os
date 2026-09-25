@@ -11,7 +11,7 @@ import {
 } from "@matrix-os/contracts";
 import { CodexExecutableSchema } from "./coding-agents/codex-executable.js";
 import { codexExecContractStatus } from "./coding-agents/codex-version.js";
-import { MATRIX_CUSTOM_MCP_TOOLS, matrixMcpConfig } from "./chat/matrix-mcp-launch.js";
+import { MATRIX_CUSTOM_MCP_DISCOVERY_TOOLS, MATRIX_CUSTOM_MCP_TOOLS, matrixMcpConfig } from "./chat/matrix-mcp-launch.js";
 
 export const SupportedAgentSchema = z.enum(["claude", "codex", "opencode", "pi"]);
 export type SupportedAgent = z.infer<typeof SupportedAgentSchema>;
@@ -257,7 +257,8 @@ function claudeLaunchSettings(input: AgentLaunchInput): z.infer<typeof ClaudeLau
   if (!sandbox) {
     throw new Error("Claude sandbox preflight is required");
   }
-  const readOnlyMode = input.mode === "plan" || input.mode === "review";
+  const readOnlyMode = input.mode === "plan" || input.mode === "review"
+    || sandbox.mode === "read-only" || claudePermissionMode(input) === "plan";
   if (!readOnlyMode && (!sandbox.enabled || sandbox.mode === "danger-full-access")) {
     return ClaudeLaunchSettingsSchema.parse({ sandbox: { enabled: false } });
   }
@@ -269,7 +270,9 @@ function claudeLaunchSettings(input: AgentLaunchInput): z.infer<typeof ClaudeLau
     (input.approvalPolicy === "on-request" || input.approvalPolicy === "never") &&
     input.mode !== "plan" &&
     input.mode !== "review";
-  const mcpTools = input.matrixCustomMcp ? [...MATRIX_CUSTOM_MCP_TOOLS] : [];
+  const mcpTools = input.matrixCustomMcp
+    ? [...(mode === "read-only" ? MATRIX_CUSTOM_MCP_DISCOVERY_TOOLS : MATRIX_CUSTOM_MCP_TOOLS)]
+    : [];
   if (mode === "read-only") {
     return ClaudeLaunchSettingsSchema.parse({
       permissions: { ...(mcpTools.length ? { allow: mcpTools } : {}), deny: ["Edit", "Write", "NotebookEdit"] },

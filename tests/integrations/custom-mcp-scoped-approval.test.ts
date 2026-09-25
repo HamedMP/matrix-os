@@ -16,7 +16,7 @@ describe("scoped Custom MCP approval through Gateway and Platform broker", () =>
   it("cannot turn a Claude Run bearer into an always_ask approval while preserving allowed and human calls", async () => {
     const ownerId = "owner_claude";
     const registry = createMatrixMcpCapabilityRegistry({ configuredOwnerId: ownerId });
-    const capability = registry.issue({ owner: { type: "personal", ownerId }, runId: "run_approval" })!;
+    const capability = registry.issue({ owner: { type: "personal", ownerId }, runId: "run_approval", scope: "call" })!;
     const reviewCapability = registry.issue({
       owner: { type: "personal", ownerId }, runId: "run_review", scope: "discovery",
     })!;

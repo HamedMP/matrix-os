@@ -242,6 +242,9 @@ export function createClaudeChatProviderAdapter(options: {
     const capability = options.matrixMcpCapabilityIssuer?.issue({
       owner: input.owner,
       runId: input.runId,
+      // Review is read-only even if its saved permission choice says full access.
+      // Unknown future interaction modes receive discovery only.
+      scope: input.interactionMode === "default" && selectedPermission !== "plan" ? "call" : "discovery",
     }) ?? null;
     let launch: ReturnType<typeof buildAgentLaunch>;
     let credentialLaunch: KernelCredentialLaunch;

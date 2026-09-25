@@ -30,7 +30,7 @@ describe("customer VPS integrations MCP wiring", () => {
     expect(result.stderr).not.toContain("Matrix authentication is unavailable");
   });
 
-  it("accepts bounded host bearer syntax on the installed macOS Bash used for launcher checks", async () => {
+  it("accepts bounded host bearer syntax in the MCP launcher's Bash", async () => {
     const launcher = await readFile(launcherPath, "utf8");
     const validator = launcher.match(/^valid_host_bearer\(\) \{[\s\S]*?^\}/m)?.[0];
     expect(validator).toBeDefined();

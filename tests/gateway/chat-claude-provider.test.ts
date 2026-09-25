@@ -166,8 +166,16 @@ describe("Claude canonical Chat Provider adapter", () => {
     expect(tokens[0]).not.toBe(tokens[1]);
   });
 
-  it.each([null, 0])("resumes the active Claude session after steer exits with code %s", async (exitCode) => {
+  it.each([
+    { exitCode: null, review: false },
+    { exitCode: 0, review: false },
+    { exitCode: null, review: true },
+  ])("resumes the active Claude session after steer exits with code $exitCode (review: $review)", async ({ exitCode, review }) => {
     const registry = createMatrixMcpCapabilityRegistry({ configuredOwnerId: baseInput.owner.ownerId });
+    const callPath = "/api/mcp-servers/123e4567-e89b-42d3-a456-426614174000/call";
+    const input = review
+      ? { ...baseInput, interactionMode: "review", permissionMode: "full_access" }
+      : baseInput;
     let firstToken = "";
     let secondToken = "";
     const firstStdout = new FakeStream();
@@ -185,6 +193,7 @@ describe("Claude canonical Chat Provider adapter", () => {
       .mockImplementationOnce((_command, _args, options) => {
         firstToken = options.env.MATRIX_AGENT_INTEGRATIONS_TOKEN!;
         expect(registry.resolve(firstToken, "GET", "/api/mcp-servers")).toBe(baseInput.owner.ownerId);
+        expect(registry.resolve(firstToken, "POST", callPath)).toBe(review ? null : baseInput.owner.ownerId);
         queueMicrotask(() => firstStdout.emit("data", Buffer.from(`${JSON.stringify({
           type: "system",
           subtype: "init",
@@ -197,6 +206,7 @@ describe("Claude canonical Chat Provider adapter", () => {
         secondToken = options.env.MATRIX_AGENT_INTEGRATIONS_TOKEN!;
         expect(registry.resolve(firstToken, "GET", "/api/mcp-servers")).toBeNull();
         expect(registry.resolve(secondToken, "GET", "/api/mcp-servers")).toBe(baseInput.owner.ownerId);
+        expect(registry.resolve(secondToken, "POST", callPath)).toBe(review ? null : baseInput.owner.ownerId);
         return child([
           JSON.stringify({ type: "result", subtype: "success", is_error: false, result: "222", session_id: "claude_steer_session" }),
         ]);
@@ -205,7 +215,7 @@ describe("Claude canonical Chat Provider adapter", () => {
       resolveCredentialEnv: async () => ({}), matrixMcpCapabilityIssuer: registry });
     const events: unknown[] = [];
     const runPromise = (async () => {
-      for await (const event of adapter.start(baseInput)) events.push(event);
+      for await (const event of adapter.start(input)) events.push(event);
     })();
     await vi.waitFor(() => expect(events).toContainEqual(expect.objectContaining({ type: "state.updated" })));
 
