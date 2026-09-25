@@ -17,7 +17,7 @@ const scriptPath = fileURLToPath(
   new URL("../../scripts/check-codex-exec-contract.mjs", import.meta.url),
 );
 const comparisonScriptPath = fileURLToPath(new URL(
-  "../../specs/530-codex-0157-contract-qualification/evidence/compare-schemas.py",
+  "../../specs/532-codex-0157-contract-qualification/evidence/compare-schemas.py",
   import.meta.url,
 ));
 

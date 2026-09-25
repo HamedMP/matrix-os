@@ -15,7 +15,7 @@ The 0.157.0 full-schema digest matches both jobs in the prior CI run. All 11 req
 
 ## Complete generated-schema structural comparison
 
-Reproduce with `python3 specs/530-codex-0157-contract-qualification/evidence/compare-schemas.py`. The script asserts the exact expected additions and compares every existing top-level and nested `v2` definition, not just the variant's unchanged `$ref` string. Mutation tests pass a temporary `--new-schema` fixture and require rejection of a removed request, modified notification, or unreviewed optional `v2` field; the pinned fixtures remain untouched. Four top-level definitions change:
+Reproduce with `python3 specs/532-codex-0157-contract-qualification/evidence/compare-schemas.py`. The script asserts the exact expected additions and compares every existing top-level and nested `v2` definition, not just the variant's unchanged `$ref` string. Mutation tests pass a temporary `--new-schema` fixture and require rejection of a removed request, modified notification, or unreviewed optional `v2` field; the pinned fixtures remain untouched. Four top-level definitions change:
 
 - `ClientRequest` has three **new** Gateway OAuth variants (`cancel`, `login`, `read`), 164→167; no old variant is removed or modified.
 - `ServerNotification` has one **new** `account/gatewayOAuth/changed` variant, 82→83; none of the 82 old variants is modified. “One new notification” does not mean an existing notification payload changed.
