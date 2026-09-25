@@ -1,5 +1,5 @@
 import { z } from "zod/v4";
-import { CollaborationActorIdSchema, CollaborationOrganizationIdSchema, CollaborationRuntimeIdSchema } from "./collaboration.js";
+import { CollaborationActorIdSchema, CollaborationOrganizationIdSchema, CollaborationRuntimeIdSchema } from "#collaboration";
 
 const utf8 = new TextEncoder();
 const Sha256Schema = z.string().regex(/^[a-f0-9]{64}$/);
