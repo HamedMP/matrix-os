@@ -5,6 +5,7 @@ import type { PlatformDb } from "../platform-db.js";
 import type { PipedreamConnectClient } from "./pipedream.js";
 import { formatActionParamValidationError, validateActionParams } from "./parameter-validation.js";
 import { getAction, getService } from "./registry.js";
+import { AMBIGUOUS_CONNECTION_ERROR, resolveIntegrationConnection } from "./connection-selection.js";
 import {
   executeIntegrationAction,
   getErrorStatusCode,
@@ -83,12 +84,14 @@ export function createIntegrationBridgeRoutes(options: IntegrationBridgeRoutesOp
     if (!userId) return context.json({ error: "Unauthorized" }, 401);
 
     const connections = await options.platformDb.listConnectedServices(userId);
-    const connection = label
-      ? connections.find((item) => item.service === service && item.account_label === label)
-      : connections.find((item) => item.service === service);
-    if (!connection) {
+    const selection = resolveIntegrationConnection(connections, service, label);
+    if (selection.kind === "ambiguous") {
+      return context.json({ error: AMBIGUOUS_CONNECTION_ERROR }, 409);
+    }
+    if (selection.kind === "missing") {
       return context.json({ error: `Service ${service} is not connected` }, 404);
     }
+    const connection = selection.connection;
 
     const fullUser = await options.platformDb.getUserById(userId);
     const externalId = fullUser?.pipedream_external_id || userId;

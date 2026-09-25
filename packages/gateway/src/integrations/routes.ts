@@ -1,6 +1,7 @@
 import { SYMPHONY_LINEAR_ACTIONS, classifySymphonyGraphqlFailure, type SymphonyGraphqlFailure } from "./symphony-linear.js";
 import { executeIntegrationAction, IntegrationActionNotImplementedError } from "./action-execution.js";
 import { formatActionParamValidationError, validateActionParams } from "./parameter-validation.js";
+import { AMBIGUOUS_CONNECTION_ERROR, resolveIntegrationConnection } from "./connection-selection.js";
 import { Hono, type Context } from "hono";
 import type { ServiceDefinition } from "./types.js";
 import { bodyLimit } from "hono/body-limit";
@@ -182,20 +183,6 @@ const PROFILE_ENDPOINTS: Record<string, {
     extract: (d) => d?.email ?? d?.username,
   },
 };
-
-// Shared lookup used by /call's cache-hit and cache-miss paths. Returns the
-// first active connection matching the service, or -- if a label is provided
-// -- the connection whose account_label exactly matches.
-function findConnection<T extends { service: string; account_label: string }>(
-  connections: T[],
-  service: string,
-  label?: string,
-): T | undefined {
-  if (label) {
-    return connections.find((s) => s.service === service && s.account_label === label);
-  }
-  return connections.find((s) => s.service === service);
-}
 
 async function resolveAccountEmail(
   pipedream: PipedreamConnectClient,
@@ -838,7 +825,9 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
     // retry, the agent saw "not connected" forever and looped on new connect
     // links.
     const connections = await db.listConnectedServices(uid);
-    let connection = findConnection(connections, service, label);
+    let selection = resolveIntegrationConnection(connections, service, label);
+    if (selection.kind === "ambiguous") return c.json({ error: AMBIGUOUS_CONNECTION_ERROR }, 409);
+    let connection = selection.kind === "found" ? selection.connection : undefined;
 
     if (!connection && service === "linear" && Object.hasOwn(SYMPHONY_LINEAR_ACTIONS, action)) {
       return c.json({ error: "Integration setup required", code: "not_connected" }, 404);
@@ -876,7 +865,9 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
           );
           // Re-read after the upserts and retry the lookup.
           const refreshed = await db.listConnectedServices(uid);
-          connection = findConnection(refreshed, service, label);
+          selection = resolveIntegrationConnection(refreshed, service, label);
+          if (selection.kind === "ambiguous") return c.json({ error: AMBIGUOUS_CONNECTION_ERROR }, 409);
+          connection = selection.kind === "found" ? selection.connection : undefined;
         }
       } catch (err) {
         // Sync-on-miss is best-effort. If Pipedream is down or the listAccounts

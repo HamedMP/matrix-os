@@ -705,6 +705,7 @@ describe("Integration Routes", () => {
       const response = await app.request("/api/integrations/call", callGmail("Call Test"));
 
       expect(response.status).toBe(409);
+      expect(await response.json()).toEqual({ error: "Integration account label is ambiguous" });
       expect(pipedream.proxyGet).not.toHaveBeenCalled();
       expect(pipedream.proxyPost).not.toHaveBeenCalled();
       expect(pipedream.runAction).not.toHaveBeenCalled();
@@ -712,15 +713,43 @@ describe("Integration Routes", () => {
 
     it("rejects duplicate account labels discovered on cache miss before any Gmail provider call", async () => {
       vi.mocked(pipedream.listAccounts).mockResolvedValue([
-        { id: "pd_acc_discovered_one", app: "gmail" },
-        { id: "pd_acc_discovered_two", app: "gmail" },
+        { id: "pd_acc_discovered_one", app: "gmail", email: "one@example.test" },
+        { id: "pd_acc_discovered_two", app: "gmail", email: "two@example.test" },
       ]);
 
       const response = await app.request("/api/integrations/call", callGmail("gmail"));
 
       expect(pipedream.listAccounts).toHaveBeenCalledWith("pd_ext_route");
       expect(response.status).toBe(409);
+      expect(await response.json()).toEqual({ error: "Integration account label is ambiguous" });
       expect(pipedream.proxyGet).not.toHaveBeenCalled();
+      expect(pipedream.proxyPost).not.toHaveBeenCalled();
+      expect(pipedream.runAction).not.toHaveBeenCalled();
+    });
+
+    it("allows only email metadata lookup before rejecting discovered duplicate labels", async () => {
+      vi.mocked(pipedream.listAccounts).mockResolvedValue([
+        { id: "pd_acc_discovered_one", app: "gmail" },
+        { id: "pd_acc_discovered_two", app: "gmail" },
+      ]);
+
+      const response = await app.request("/api/integrations/call", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ service: "gmail", action: "list_messages", label: "gmail" }),
+      });
+
+      expect(response.status).toBe(409);
+      expect(await response.json()).toEqual({ error: "Integration account label is ambiguous" });
+      expect(pipedream.proxyGet).toHaveBeenCalledTimes(2);
+      expect(pipedream.proxyGet).toHaveBeenCalledWith(expect.objectContaining({
+        accountId: "pd_acc_discovered_one",
+        url: "https://gmail.googleapis.com/gmail/v1/users/me/profile",
+      }));
+      expect(pipedream.proxyGet).toHaveBeenCalledWith(expect.objectContaining({
+        accountId: "pd_acc_discovered_two",
+        url: "https://gmail.googleapis.com/gmail/v1/users/me/profile",
+      }));
       expect(pipedream.proxyPost).not.toHaveBeenCalled();
       expect(pipedream.runAction).not.toHaveBeenCalled();
     });

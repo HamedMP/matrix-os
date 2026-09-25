@@ -27,6 +27,7 @@ describe("integration bridge route extraction", () => {
     const response = await app.request("/", callGmail("Shared"));
 
     expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({ error: "Integration account label is ambiguous" });
     expect(pipedream.proxyGet).not.toHaveBeenCalled();
     expect(pipedream.proxyPost).not.toHaveBeenCalled();
     expect(pipedream.runAction).not.toHaveBeenCalled();
