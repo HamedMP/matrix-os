@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  createRefreshGuard,
   loadDiscoveryItems,
   loadDriveSnapshotPages,
 } from "../../shell/src/components/file-browser/organization-drive-paging";
@@ -115,5 +116,34 @@ describe("organization drive snapshot paging", () => {
 
     expect(result.pages).toBe(20);
     expect(request).toHaveBeenCalledTimes(20);
+  });
+});
+
+describe("organization drive refresh guard", () => {
+  it("drops a refresh that started before a newer page load finished", () => {
+    const guard = createRefreshGuard();
+    const refresh = guard.begin();
+    guard.invalidate();
+
+    expect(guard.isCurrent(refresh)).toBe(false);
+    expect(guard.isCurrent(guard.begin())).toBe(true);
+  });
+
+  it("keeps only the latest of overlapping refreshes", () => {
+    const guard = createRefreshGuard();
+    const first = guard.begin();
+    const second = guard.begin();
+
+    expect(guard.isCurrent(first)).toBe(false);
+    expect(guard.isCurrent(second)).toBe(true);
+  });
+
+  it("reports whether a refresh is still in flight", () => {
+    const guard = createRefreshGuard();
+    expect(guard.inFlight()).toBe(false);
+    const refresh = guard.begin();
+    expect(guard.inFlight()).toBe(true);
+    guard.finish(refresh);
+    expect(guard.inFlight()).toBe(false);
   });
 });

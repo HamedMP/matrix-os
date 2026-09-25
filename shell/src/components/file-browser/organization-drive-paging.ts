@@ -46,3 +46,17 @@ export async function loadDriveSnapshotPages(request: Get, scopeId: string,
   }
   return { snapshot, pages: loaded };
 }
+
+// Latest-wins guard: a refresh result applies only if no newer refresh started
+// and no page load finished while it was in flight.
+export function createRefreshGuard() {
+  let epoch = 0;
+  let pending: number | null = null;
+  return {
+    begin() { epoch += 1; pending = epoch; return epoch; },
+    invalidate() { epoch += 1; },
+    isCurrent(token: number) { return token === epoch; },
+    finish(token: number) { if (pending === token) pending = null; },
+    inFlight() { return pending !== null; },
+  };
+}
