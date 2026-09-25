@@ -1,7 +1,6 @@
 "use client";
 
 import {
-  CollaborationDiscoveryResponseSchema,
   CollaborationGrantSchema,
   CollaborationScopeSchema,
   OrganizationDriveDownloadSchema,
@@ -10,10 +9,11 @@ import {
   type OrganizationDriveFile,
 } from "@matrix-os/contracts";
 import type { CollaborationDirectApi } from "@matrix-os/ui";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { z } from "zod/v4";
 import { useBrowserOrigin } from "@/hooks/useBrowserOrigin";
 import { createShellCollaborationApi } from "@/lib/collaboration";
+import { driveBasePath as base, loadDiscoveryItems, loadDriveSnapshotPages } from "./organization-drive-paging";
 
 const OrganizationsSchema = z.object({ organizations: z.array(z.object({
   organizationId: z.string(), name: z.string(),
@@ -22,16 +22,16 @@ const GrantsSchema = z.array(CollaborationGrantSchema).max(100);
 
 type DriveOption = { scopeId: string; organizationId: string; name: string;
   state: "ready" | "enable" | "pending"; canManage?: boolean; grantId?: string;
-  snapshot?: z.infer<typeof OrganizationDriveSnapshotSchema> };
+  snapshot?: z.infer<typeof OrganizationDriveSnapshotSchema>; pages?: number };
+type PageCounts = Record<string, number>;
 
-function base(scopeId: string) { return `/api/collaboration/scopes/${scopeId}/drive`; }
-
-async function inspectScope(api: CollaborationDirectApi, scopeId: string, organizationId: string, name: string): Promise<DriveOption | null> {
+async function inspectScope(api: CollaborationDirectApi, scopeId: string, organizationId: string, name: string,
+  pages: number): Promise<DriveOption | null> {
   const scope = CollaborationScopeSchema.parse(await api.direct.request(scopeId, "GET", `/api/collaboration/scopes/${scopeId}`));
   if (scope.kind !== "folder" || scope.organizationId !== organizationId) return null;
   try {
-    const snapshot = OrganizationDriveSnapshotSchema.parse(await api.direct.request(scopeId, "GET", base(scopeId)));
-    return { scopeId, organizationId, name, state: "ready", canManage: scope.role === "owner", snapshot };
+    const loaded = await loadDriveSnapshotPages((path) => api.direct.request(scopeId, "GET", path), scopeId, pages);
+    return { scopeId, organizationId, name, state: "ready", canManage: scope.role === "owner", ...loaded };
   } catch (error: unknown) {
     // An existing folder share can be selected as the drive by its owner.
     if (scope.role === "owner") return { scopeId, organizationId, name, state: "enable", canManage: true };
@@ -40,9 +40,10 @@ async function inspectScope(api: CollaborationDirectApi, scopeId: string, organi
   }
 }
 
-async function loadOptions(api: CollaborationDirectApi): Promise<DriveOption[]> {
+async function loadOptions(api: CollaborationDirectApi, pageCounts: PageCounts): Promise<DriveOption[]> {
+  const get = (path: string) => api.get(path);
   const [inbox, shared, organizations] = await Promise.all([
-    loadDiscovery(api, "inbox"), loadDiscovery(api, "shared"), api.get("/api/organizations"),
+    loadDiscoveryItems(get, "inbox"), loadDiscoveryItems(get, "shared"), api.get("/api/organizations"),
   ]);
   const names = new Map(OrganizationsSchema.parse(organizations).organizations.map((org) => [org.organizationId, org.name]));
   const items = [...inbox, ...shared];
@@ -63,7 +64,7 @@ async function loadOptions(api: CollaborationDirectApi): Promise<DriveOption[]> 
   }
   for (let offset = 0; offset < accepted.length; offset += 4) {
     const batch = await Promise.all(accepted.slice(offset, offset + 4).map(async (item) => {
-      try { return await inspectScope(api, item.scopeId, item.organizationId, item.name); }
+      try { return await inspectScope(api, item.scopeId, item.organizationId, item.name, pageCounts[item.scopeId] ?? 1); }
       catch (error: unknown) {
         console.warn("[organization-drive] share unavailable", error instanceof Error ? error.name : "UnknownError");
         return null;
@@ -72,22 +73,6 @@ async function loadOptions(api: CollaborationDirectApi): Promise<DriveOption[]> 
     for (const option of batch) if (option) options.push(option);
   }
   return options;
-}
-
-async function loadDiscovery(api: CollaborationDirectApi, kind: "inbox" | "shared") {
-  const items: Array<z.infer<typeof CollaborationDiscoveryResponseSchema>["items"][number]> = [];
-  const seen = new Set<string>();
-  let cursor: string | undefined;
-  for (let pageNumber = 0; pageNumber < 100; pageNumber += 1) {
-    const suffix = cursor ? `&cursor=${encodeURIComponent(cursor)}` : "";
-    const page = CollaborationDiscoveryResponseSchema.parse(await api.get(`/api/collaboration/${kind}?limit=100${suffix}`));
-    items.push(...page.items);
-    if (!page.nextCursor) return items;
-    if (seen.has(page.nextCursor)) throw new Error("CollaborationDiscoveryCursorLoop");
-    seen.add(page.nextCursor);
-    cursor = page.nextCursor;
-  }
-  throw new Error("CollaborationDiscoveryPageLimit");
 }
 
 function safeError(error: unknown): string {
@@ -104,10 +89,14 @@ export function OrganizationDrivesView() {
   const [busy, setBusy] = useState(false);
   const [folder, setFolder] = useState("");
   const [error, setError] = useState<string | null>(null);
+  // Pages loaded per drive, so refreshes keep files the member already paged in.
+  const pageCounts = useRef<PageCounts>({});
   const load = useCallback(async () => {
     if (!api) return;
     try {
-      const next = await loadOptions(api);
+      const next = await loadOptions(api, pageCounts.current);
+      pageCounts.current = Object.fromEntries(next.filter((option) => option.pages)
+        .map((option) => [option.scopeId, option.pages ?? 1]));
       setOptions(next);
       setSelected((current) => current && next.some((option) => option.scopeId === current)
         ? current : next[0]?.scopeId ?? null);
@@ -222,8 +211,10 @@ export function OrganizationDrivesView() {
     try {
       const page = OrganizationDriveSnapshotSchema.parse(await api.direct.request(option.scopeId, "GET",
         `${base(option.scopeId)}?after=${encodeURIComponent(cursor)}`));
+      const pages = (option.pages ?? 1) + 1;
+      pageCounts.current = { ...pageCounts.current, [option.scopeId]: pages };
       setOptions((current) => current.map((item) => item.scopeId === option.scopeId && item.snapshot
-        ? { ...item, snapshot: { ...page, files: [...item.snapshot.files, ...page.files] } } : item));
+        ? { ...item, pages, snapshot: { ...page, files: [...item.snapshot.files, ...page.files] } } : item));
     } catch (failure: unknown) {
       console.warn("[organization-drive] next page unavailable", failure instanceof Error ? failure.name : "UnknownError");
       setError(safeError(failure));
