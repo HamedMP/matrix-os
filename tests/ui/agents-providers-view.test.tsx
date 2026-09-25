@@ -299,6 +299,18 @@ describe("AgentsProvidersView", () => {
     });
   });
 
+  it.each(["pi", "opencode"] as const)("shows Sign in for saved-on %s when authentication is required", (kind) => {
+    const next = snapshot();
+    Object.assign(next.harnesses[0]!, {
+      harness: kind, displayName: kind === "pi" ? "Pi" : "OpenCode",
+      enabled: false, configuredEnabled: true, authState: "unauthenticated",
+      accessSourceId: "owner_anthropic_key",
+    });
+    setup({ snapshot: next });
+    expect(screen.getByRole("button", { name: new RegExp(`${kind === "pi" ? "Pi" : "OpenCode"}.*Sign in`) })).toBeVisible();
+    expect(screen.queryByRole("button", { name: /Check connection/ })).not.toBeInTheDocument();
+  });
+
   it("distinguishes a signed-in but deliberately disabled agent", () => {
     const next = snapshot();
     Object.assign(next.harnesses[0]!, {

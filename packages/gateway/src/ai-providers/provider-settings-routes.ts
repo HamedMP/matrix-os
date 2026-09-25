@@ -174,6 +174,8 @@ export function createProviderSettingsRoutes(options: ProviderSettingsRouteOptio
   app.delete("/provider-settings/accounts/:accountId", mutationBodyLimit, async (context) => {
     const authError = authorize(context, options);
     if (authError) return authError;
+    const capabilities = RefreshQuerySchema.safeParse(context.req.query("includeCapabilities"));
+    if (!capabilities.success) return invalidRequest(context);
     const body = DeleteAccountBodySchema.safeParse(await readJson(context));
     if (!body.success) return invalidRequest(context);
     const mutation = ProviderSettingsMutationSchema.safeParse({
@@ -186,7 +188,8 @@ export function createProviderSettingsRoutes(options: ProviderSettingsRouteOptio
     } satisfies ProviderSettingsMutation);
     if (!mutation.success) return invalidRequest(context);
     try {
-      return context.json(await options.store.mutate(mutation.data));
+      const result = await options.store.mutate(mutation.data);
+      return context.json({ ...result, snapshot: withCapabilities(result.snapshot, capabilities.data === "true") });
     } catch (error) {
       return handleStoreError(context, error);
     }
