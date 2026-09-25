@@ -1,4 +1,4 @@
-import { readdir, unlink } from "node:fs/promises";
+import { lstat, readdir, unlink } from "node:fs/promises";
 import { join } from "node:path";
 
 const LOCAL_WALK_FILE_CAP = 50_000;
@@ -13,9 +13,21 @@ export interface WalkFilters {
   log: { error: (msg: string, ...args: unknown[]) => void };
 }
 
+function isMissing(err: unknown): boolean {
+  return err instanceof Error && "code" in err &&
+    (err as NodeJS.ErrnoException).code === "ENOENT";
+}
+
+/**
+ * Remove orphaned home-mirror temp files. Entries are re-checked with
+ * `lstat()` so symlinks or swapped entries are never unlinked, and files
+ * younger than `minAgeMs` are kept so in-flight downloads survive periodic
+ * sweeps (startup passes 0 because no download can be in flight yet).
+ */
 export async function cleanupTempFiles(
   dir: string,
   filters: WalkFilters,
+  minAgeMs: number,
   relDir = "",
   depth = 0,
 ): Promise<void> {
@@ -30,23 +42,21 @@ export async function cleanupTempFiles(
     const absPath = join(dir, entry.name);
     if (entry.isDirectory()) {
       if (filters.pruned(relPath)) continue;
-      await cleanupTempFiles(absPath, filters, relPath, depth + 1);
+      await cleanupTempFiles(absPath, filters, minAgeMs, relPath, depth + 1);
       continue;
     }
-    if (entry.isFile() && HOME_MIRROR_TMP_SUFFIX.test(entry.name)) {
-      try {
-        await unlink(absPath);
-      } catch (err: unknown) {
-        if (
-          !(err instanceof Error) ||
-          !("code" in err) ||
-          (err as NodeJS.ErrnoException).code !== "ENOENT"
-        ) {
-          filters.log.error(
-            `cleanup failed for orphaned temp ${relPath}:`,
-            err instanceof Error ? err.message : String(err),
-          );
-        }
+    if (!entry.isFile() || !HOME_MIRROR_TMP_SUFFIX.test(entry.name)) continue;
+    try {
+      const info = await lstat(absPath);
+      if (!info.isFile()) continue;
+      if (minAgeMs > 0 && Date.now() - info.mtimeMs < minAgeMs) continue;
+      await unlink(absPath);
+    } catch (err: unknown) {
+      if (!isMissing(err)) {
+        filters.log.error(
+          `cleanup failed for orphaned temp ${relPath}:`,
+          err instanceof Error ? err.message : String(err),
+        );
       }
     }
   }

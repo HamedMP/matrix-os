@@ -47,6 +47,8 @@ import { finalizeStagedObject } from "./blob-publication.js";
 const RECENT_WRITE_CAP = 50_000;
 const DEFAULT_MAX_PUSH_BYTES = 100 * 1024 * 1024;
 const INITIAL_PUSH_CHUNK_SIZE = 50;
+const DEFAULT_TEMP_CLEANUP_INTERVAL_MS = 30 * 60 * 1000;
+const DEFAULT_TEMP_FILE_MAX_AGE_MS = 15 * 60 * 1000;
 
 const RemoteChangeFileSchema = z.object({
   path: z.string().min(1).max(1024),
@@ -81,6 +83,10 @@ export interface HomeMirrorConfig {
   maxPushBytes?: number;
   /** Disable chokidar local watching while keeping explicit push/delete methods available. Used by tests and one-shot sync flows. */
   watchLocalChanges?: boolean;
+  /** Interval for recurring orphaned temp-file sweeps. Defaults to 30 minutes. */
+  tempCleanupIntervalMs?: number;
+  /** Minimum age before a recurring sweep removes a temp file. Defaults to 15 minutes. */
+  tempFileMaxAgeMs?: number;
   /** Called each time a local watcher (initial or policy rebuild) finishes its initial scan. */
   onLocalWatcherReady?: () => void;
 }
@@ -115,6 +121,8 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
     ? new Set(config.extraIgnoreDirs)
     : undefined;
   const maxPushBytes = config.maxPushBytes ?? DEFAULT_MAX_PUSH_BYTES;
+  const tempCleanupIntervalMs = config.tempCleanupIntervalMs ?? DEFAULT_TEMP_CLEANUP_INTERVAL_MS;
+  const tempFileMaxAgeMs = config.tempFileMaxAgeMs ?? DEFAULT_TEMP_FILE_MAX_AGE_MS;
 
   // `watcher` is the live local watcher; `pendingWatcher` is a replacement
   // that is still scanning during a policy rebuild. Both are closed on stop.
@@ -128,6 +136,8 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
   // lifecycle can never start watchers or pushes after a stop or restart.
   let lifecycleGeneration = 0;
   let watcherTaskChain: Promise<void> = Promise.resolve();
+  let tempCleanupTimer: ReturnType<typeof setInterval> | null = null;
+  let tempCleanupInFlight: Promise<void> | null = null;
   let localWatchingEnabled = false;
 
   const ignored = (relPath: string): boolean =>
@@ -198,6 +208,10 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
   }
 
   async function releaseResources(): Promise<void> {
+    if (tempCleanupTimer) {
+      clearInterval(tempCleanupTimer);
+      tempCleanupTimer = null;
+    }
     const watchers = [watcher, pendingWatcher].filter((w): w is FSWatcher => w !== null);
     watcher = null;
     pendingWatcher = null;
@@ -681,6 +695,21 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
     };
   }
 
+  // Recurring sweep for temp files orphaned after startup (e.g. a download
+  // interrupted by an I/O error). Skips overlapping runs; cleared on stop.
+  function scheduleTempCleanup(generation: number): void {
+    if (tempCleanupTimer) clearInterval(tempCleanupTimer);
+    tempCleanupTimer = setInterval(() => {
+      if (tempCleanupInFlight || !isCurrentLifecycle(generation)) return;
+      tempCleanupInFlight = cleanupTempFiles(config.homeRoot, walkFilters, tempFileMaxAgeMs)
+        .catch((err: unknown) => log.error("temp file sweep failed:", errorMessage(err)))
+        .finally(() => {
+          tempCleanupInFlight = null;
+        });
+    }, tempCleanupIntervalMs);
+    tempCleanupTimer.unref?.();
+  }
+
   // Watcher creation, policy rebuilds, and newly-included reconciliation all
   // run on this chain so at most one replacement watcher exists at a time.
   function runWatcherTask(task: () => Promise<void>): Promise<void> {
@@ -772,6 +801,28 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
     return null;
   }
 
+  // Apply the peer's current state at a re-included path. Runs in the serial
+  // queue and re-reads the manifest, because a peer may have committed again
+  // after the refresh snapshot; a local edit made since the snapshot is left
+  // for the watcher instead of being replaced.
+  async function applyCurrentPeerState(
+    safeRelPath: string,
+    expectedLocalHash: string,
+  ): Promise<void> {
+    const current = (await readManifest(store, scope)).manifest.files[safeRelPath];
+    if (!current?.hash) return;
+    const localFile = await readLocalFileForPush(join(config.homeRoot, safeRelPath), maxPushBytes);
+    if (localFile.kind === "file" && localFile.hash !== expectedLocalHash) {
+      log.error(`sync conflict for ${safeRelPath}: local copy changed during policy refresh; left in place`);
+      return;
+    }
+    if (current.deleted) {
+      await pullDelete(safeRelPath);
+    } else {
+      await pullFile(safeRelPath, current);
+    }
+  }
+
   // A path excluded until now may have changed on another peer meanwhile.
   // The peer's committed state (new version or deletion) wins at the original
   // path; diverged local bytes are published as an explicit conflict copy.
@@ -786,7 +837,7 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
     if (localFile.kind !== "file") return null;
     if (localFile.hash === remoteEntry.hash) {
       // Unchanged since the peer's version: follow a deletion, else in sync.
-      if (remoteEntry.deleted) await enqueue(() => pullDelete(safeRelPath));
+      if (remoteEntry.deleted) await enqueue(() => applyCurrentPeerState(safeRelPath, localFile.hash));
       return null;
     }
     const conflictRelPath = await writeConflictCopy(safeRelPath, localFile);
@@ -794,9 +845,7 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
       log.error(`sync conflict for ${safeRelPath}: no usable conflict copy name; local copy left unsynced`);
       return null;
     }
-    await enqueue(() =>
-      remoteEntry.deleted ? pullDelete(safeRelPath) : pullFile(safeRelPath, remoteEntry)
-    );
+    await enqueue(() => applyCurrentPeerState(safeRelPath, localFile.hash));
     log.error(`sync conflict for ${safeRelPath}: kept peer state, saved local copy as ${conflictRelPath}`);
     return conflictRelPath;
   }
@@ -859,7 +908,7 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
       if (stopRequested) return;
       await reloadUserIgnorePatterns();
       if (stopRequested) return;
-      await cleanupTempFiles(config.homeRoot, walkFilters);
+      await cleanupTempFiles(config.homeRoot, walkFilters, 0);
       if (stopRequested) return;
       await initialPull();
       if (stopRequested) return;
@@ -892,6 +941,8 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
         return;
       }
 
+      scheduleTempCleanup(generation);
+
       if (config.watchLocalChanges === false) {
         log.info(`home mirror started for ${config.homeRoot} (peer=${config.peerId})`);
         return;
@@ -921,8 +972,10 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
       localWatchingEnabled = false;
       lifecycleGeneration++;
       await releaseResources();
-      // Let an in-flight rebuild observe the stop and close its replacement.
+      // Let an in-flight rebuild observe the stop and close its replacement,
+      // and let a running temp sweep finish before stop() resolves.
       await watcherTaskChain;
+      await tempCleanupInFlight;
       await releaseResources();
       await queue.drain();
     },

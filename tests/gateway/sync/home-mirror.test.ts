@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdtemp, readFile, rm, stat, writeFile, mkdir, unlink } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { mkdtemp, readFile, rm, stat, symlink, writeFile, mkdir, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { createHomeMirror as createHomeMirrorImpl } from "../../../packages/gateway/src/sync/home-mirror.js";
@@ -8,7 +9,13 @@ import {
   type PeerRegistry,
 } from "../../../packages/gateway/src/sync/ws-events.js";
 import type { R2Client } from "../../../packages/gateway/src/sync/r2-client.js";
-import type { ManifestDb } from "../../../packages/gateway/src/sync/manifest.js";
+import {
+  applyCommitToManifest,
+  readManifest,
+  writeManifest,
+  type ManifestDb,
+} from "../../../packages/gateway/src/sync/manifest.js";
+import { resolveSyncScope } from "../../../packages/gateway/src/sync/runtime-scope.js";
 
 function sha256(buf: Buffer): string {
   const { createHash } = require("node:crypto");
@@ -1366,6 +1373,46 @@ describe("createHomeMirror", () => {
         await mirror.stop();
       });
 
+      it("rechecks the current manifest before applying a re-include deletion", async () => {
+        const deletedVersion = Buffer.from("v1");
+        const readded = Buffer.from("v2 re-added by peer");
+        await writeFile(join(tmpRoot, "dynamic", "gone.md"), deletedVersion);
+        seedRemote({ "dynamic/gone.md": { hash: sha256(deletedVersion), deleted: true } });
+        const nextPolicy = Buffer.from("# dynamic synced\n");
+        const scope = resolveSyncScope({ ownerId: "alice" });
+        const readdedKey = "matrixos-sync/alice/files/dynamic/gone-v2.md";
+        r2.store.set(readdedKey, readded);
+
+        // Simulate a peer re-adding the file right after the refresh takes its
+        // manifest snapshot (the first manifest read that already includes the
+        // new policy) but before the queued deletion runs.
+        let armed = true;
+        const originalGetObject = r2.getObject.bind(r2);
+        r2.getObject = async (key: string) => {
+          const result = await originalGetObject(key);
+          if (!armed || !key.includes("/manifests/")) return result;
+          const raw = r2.store.get(key)!.toString("utf8");
+          const parsed = JSON.parse(raw) as { files: Record<string, { hash: string }> };
+          if (parsed.files[".syncignore"]?.hash !== sha256(nextPolicy)) return result;
+          armed = false;
+          const current = await readManifest({ r2, db }, scope);
+          const next = applyCommitToManifest(
+            current.manifest,
+            [{ path: "dynamic/gone.md", hash: sha256(readded), size: readded.length, action: "add", objectKey: readdedKey }],
+            "laptop-1",
+          );
+          await writeManifest({ r2, db }, scope, next, current.manifestVersion + 1);
+          return { ...result, body: { async transformToByteArray() { return new Uint8Array(Buffer.from(raw)); }, async text() { return raw; } } as never };
+        };
+
+        const { mirror } = await startThenReinclude(nextPolicy.toString("utf8"));
+
+        expect(armed).toBe(false);
+        expect(await readFile(join(tmpRoot, "dynamic", "gone.md"), "utf8")).toBe("v2 re-added by peer");
+        expect(storedManifest(r2)?.files["dynamic/gone.md"]?.hash).toBe(sha256(readded));
+        await mirror.stop();
+      });
+
       it("falls back to a synchronizable copy name when the owner policy ignores conflict names", async () => {
         const peerVersion = Buffer.from("newer peer copy");
         await writeFile(join(tmpRoot, "dynamic", "doc.md"), "local edit");
@@ -1485,6 +1532,83 @@ describe("createHomeMirror", () => {
 
       await expect(stat(orphanedTmp)).rejects.toThrow(/ENOENT/);
       await mirror.stop();
+    });
+
+    it("sweeps aged orphaned temp files periodically and stops sweeping after stop", async () => {
+      await mkdir(join(tmpRoot, "notes"), { recursive: true });
+      const mirror = createHomeMirror({
+        r2,
+        manifestDb: db,
+        homeRoot: tmpRoot,
+        userId: "alice",
+        peerId: "gateway-alice",
+        peerRegistry: registry,
+        logger: { info: () => {}, error: () => {} },
+        watchLocalChanges: false,
+        tempCleanupIntervalMs: 50,
+        tempFileMaxAgeMs: 0,
+      });
+      await mirror.start();
+
+      const lateOrphan = join(tmpRoot, "notes", "late.md.12345.tmp");
+      await writeFile(lateOrphan, "orphaned after startup");
+      await waitFor(() => !existsSync(lateOrphan), 5_000);
+
+      await mirror.stop();
+      const afterStop = join(tmpRoot, "notes", "after-stop.md.12345.tmp");
+      await writeFile(afterStop, "no sweeps after stop");
+      await settle(300);
+      expect(existsSync(afterStop)).toBe(true);
+    });
+
+    it("keeps fresh temp files during periodic sweeps so in-flight downloads survive", async () => {
+      await mkdir(join(tmpRoot, "notes"), { recursive: true });
+      const mirror = createHomeMirror({
+        r2,
+        manifestDb: db,
+        homeRoot: tmpRoot,
+        userId: "alice",
+        peerId: "gateway-alice",
+        peerRegistry: registry,
+        logger: { info: () => {}, error: () => {} },
+        watchLocalChanges: false,
+        tempCleanupIntervalMs: 50,
+        tempFileMaxAgeMs: 60_000,
+      });
+      await mirror.start();
+
+      const inFlight = join(tmpRoot, "notes", "download.md.12345.tmp");
+      await writeFile(inFlight, "still downloading");
+      await settle(300);
+      expect(existsSync(inFlight)).toBe(true);
+      await mirror.stop();
+    });
+
+    it("never follows symlinked temp names during cleanup", async () => {
+      const outside = await mkdtemp(join(tmpdir(), "home-mirror-outside-"));
+      try {
+        const target = join(outside, "victim.md.12345.tmp");
+        await writeFile(target, "outside data");
+        await mkdir(join(tmpRoot, "notes"), { recursive: true });
+        await symlink(target, join(tmpRoot, "notes", "link.md.12345.tmp"));
+
+        const mirror = createHomeMirror({
+          r2,
+          manifestDb: db,
+          homeRoot: tmpRoot,
+          userId: "alice",
+          peerId: "gateway-alice",
+          peerRegistry: registry,
+          logger: { info: () => {}, error: () => {} },
+          watchLocalChanges: false,
+        });
+        await mirror.start();
+
+        expect(await readFile(target, "utf8")).toBe("outside data");
+        await mirror.stop();
+      } finally {
+        await rm(outside, { recursive: true, force: true });
+      }
     });
 
     it("skips local startup push for files over the configured max size", async () => {
