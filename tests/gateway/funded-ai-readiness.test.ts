@@ -23,6 +23,17 @@ function setup() {
 }
 
 describe("funded AI readiness", () => {
+  it("does not treat relay process liveness as proof that a funded model can run", async () => {
+    const { reader, state } = setup();
+    state.policy.allowedModelIds = ["anthropic/claude-sonnet-5", "@cf/zai-org/glm-5.3-flash"];
+    // /health reports only that the relay process is running. Neither model
+    // has an authenticated, current readiness receipt in this observation.
+    expect(await reader.read()).toMatchObject({
+      readiness: { state: "unavailable", safeReason: "provider_unavailable" },
+      allowedModelIds: [],
+    });
+  });
+
   it("shares only in-flight observations and checks revoked policy again after settlement", async () => {
     const { reader, state, fetchFn, getFundingSummary } = setup();
     const summary = Promise.withResolvers<typeof state>();

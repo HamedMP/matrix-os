@@ -129,6 +129,19 @@ describe("AiProviderService", () => {
     expect(JSON.stringify(snapshot)).not.toContain("platform-secret");
   });
 
+  it("does not mark GLM ready when only the Sonnet funded route has been verified", async () => {
+    const service = createService({ platformKey: "platform-secret" });
+    try {
+      const snapshot = await service.getSnapshot();
+      expect(snapshot.accessSources.find((source) => source.id === "matrix_included"))
+        .toMatchObject({ state: "ready", eligibleModelIds: ["claude-sonnet-5"] });
+      expect(snapshot.accessSources.find((source) => source.id === "matrix_cloudflare"))
+        .toMatchObject({ state: "unavailable", eligibleModelIds: [] });
+    } finally {
+      service.close();
+    }
+  });
+
   it("adds only validated real driver inventory while keeping the kernel driver canonical", async () => {
     const snapshot = await createService({
       driverInventory: async () => [{
