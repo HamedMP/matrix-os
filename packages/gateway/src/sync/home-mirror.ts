@@ -29,6 +29,9 @@ const INITIAL_PUSH_CHUNK_SIZE = 50;
 const HASH_STREAM_TIMEOUT_MS = 30_000;
 const LOCAL_WALK_FILE_CAP = 50_000;
 const LOCAL_WALK_DEPTH_CAP = 64;
+const SYNCIGNORE_MAX_BYTES = 64 * 1024;
+const SYNCIGNORE_MAX_PATTERNS = 256;
+const SYNCIGNORE_MAX_PATTERN_LENGTH = 512;
 
 // Folders we never push -- big build outputs, transient state, secrets,
 // or things that would loop on themselves (the home dir itself when run
@@ -47,6 +50,26 @@ const DEFAULT_IGNORE_DIRS = new Set([
   ".pnpm-store",
   ".vscode",
   "tmp",
+  ".ssh",
+  ".gnupg",
+  ".aws",
+  ".pki",
+  ".claude",
+  ".codex",
+  ".hermes",
+  ".local",
+  ".npm",
+  ".rustup",
+  ".elan",
+  ".bun",
+  ".worktrees",
+  ".flox",
+  ".direnv",
+  ".venv",
+  "venv",
+  "target",
+  ".gradle",
+  ".expo",
 ]);
 
 const DEFAULT_IGNORE_PATTERNS = [
@@ -54,9 +77,18 @@ const DEFAULT_IGNORE_PATTERNS = [
   /\.tmp$/i,
   /^\.DS_Store$/,
   /\.env(\..+)?$/,
+  /^\.credentials\.json$/i,
+  /\.(?:key|pem|token)$/i,
+  /^id_(?:rsa|dsa|ecdsa|ed25519).*$/i,
 ];
 const DEFAULT_IGNORE_PATH_PREFIXES = [
   "data/browser-profiles",
+  ".config/gh",
+  ".config/gcloud",
+  ".config/opencode",
+  ".pi/agent/auth.json",
+  ".cargo/credentials",
+  ".cargo/credentials.toml",
 ];
 const HOME_MIRROR_TMP_SUFFIX = /\.(?:\d+|matrixos-[0-9a-f-]{36})\.tmp$/i;
 const RemoteChangeFileSchema = z.object({
@@ -122,7 +154,75 @@ function createSerialQueue(onError: (err: unknown) => void): {
   };
 }
 
-function isIgnored(relPath: string, extraDirs?: Set<string>): boolean {
+function matchesUserIgnorePattern(normalizedPath: string, pattern: string): boolean {
+  const normalizedPattern = pattern.replace(/^\/+/, "");
+  if (!normalizedPattern) return false;
+  if (normalizedPattern.endsWith("/")) {
+    const dir = normalizedPattern.slice(0, -1);
+    if (dir.includes("/")) {
+      return normalizedPath === dir || normalizedPath.startsWith(`${dir}/`);
+    }
+    return normalizedPath.split("/").includes(dir);
+  }
+  if (normalizedPattern.startsWith("*.") && !normalizedPattern.slice(2).includes("*")) {
+    return normalizedPath.toLowerCase().endsWith(normalizedPattern.slice(1).toLowerCase());
+  }
+  return normalizedPath === normalizedPattern || normalizedPath.startsWith(`${normalizedPattern}/`);
+}
+
+function parseUserIgnorePatterns(content: string): string[] {
+  const patterns: string[] = [];
+  for (const rawLine of content.split("\n")) {
+    const pattern = rawLine.trim();
+    if (!pattern || pattern.startsWith("#") || pattern.startsWith("!")) continue;
+    if (pattern.length > SYNCIGNORE_MAX_PATTERN_LENGTH) {
+      throw new Error(".syncignore contains an overlong pattern");
+    }
+    patterns.push(pattern);
+    if (patterns.length > SYNCIGNORE_MAX_PATTERNS) {
+      throw new Error(`.syncignore exceeds ${SYNCIGNORE_MAX_PATTERNS} patterns`);
+    }
+  }
+  return patterns;
+}
+
+async function loadUserIgnorePatterns(homeRoot: string): Promise<string[]> {
+  const path = join(homeRoot, ".syncignore");
+  let handle: Awaited<ReturnType<typeof open>>;
+  try {
+    handle = await open(path, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
+  } catch (err: unknown) {
+    if (
+      err instanceof Error && "code" in err &&
+      ["ENOENT", "ELOOP"].includes(String((err as NodeJS.ErrnoException).code))
+    ) {
+      return [];
+    }
+    throw err;
+  }
+
+  try {
+    const info = await handle.stat();
+    if (!info.isFile()) return [];
+    if (info.size > SYNCIGNORE_MAX_BYTES) {
+      throw new Error(`.syncignore exceeds ${SYNCIGNORE_MAX_BYTES} bytes`);
+    }
+    const bytes = Buffer.alloc(SYNCIGNORE_MAX_BYTES + 1);
+    const { bytesRead } = await handle.read(bytes, 0, bytes.length, 0);
+    if (bytesRead > SYNCIGNORE_MAX_BYTES) {
+      throw new Error(`.syncignore exceeds ${SYNCIGNORE_MAX_BYTES} bytes`);
+    }
+    return parseUserIgnorePatterns(bytes.subarray(0, bytesRead).toString("utf8"));
+  } finally {
+    await handle.close();
+  }
+}
+
+function isIgnored(
+  relPath: string,
+  extraDirs?: Set<string>,
+  userPatterns: readonly string[] = [],
+): boolean {
   // Treat the home root itself ("") as NOT ignored -- otherwise chokidar
   // refuses to descend into it. Only ignore actual entries.
   if (!relPath || relPath === ".") return false;
@@ -140,7 +240,8 @@ function isIgnored(relPath: string, extraDirs?: Set<string>): boolean {
     if (extraDirs?.has(seg)) return true;
   }
   const last = segments[segments.length - 1] ?? "";
-  return DEFAULT_IGNORE_PATTERNS.some((p) => p.test(last));
+  if (DEFAULT_IGNORE_PATTERNS.some((p) => p.test(last))) return true;
+  return userPatterns.some((pattern) => matchesUserIgnorePattern(normalizedPath, pattern));
 }
 
 function hashFileStream(absPath: string): Promise<string> {
@@ -318,6 +419,10 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
   let stopRequested = false;
   let subscribed = false;
   let resolvedHomeRoot = config.homeRoot;
+  let userIgnorePatterns: string[] = [];
+
+  const ignored = (relPath: string): boolean =>
+    isIgnored(relPath, extraIgnore, userIgnorePatterns);
 
   function assertWithinResolvedHomeRoot(resolvedPath: string): void {
     if (
@@ -422,7 +527,7 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
 
   async function pushFile(relPath: string): Promise<void> {
     const safeRelPath = normalizeRelativePath(config.userId, relPath);
-    if (isIgnored(safeRelPath, extraIgnore)) return;
+    if (ignored(safeRelPath)) return;
     const absPath = join(config.homeRoot, safeRelPath);
 
     await enqueue(async () => {
@@ -470,7 +575,7 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
 
   async function pushDelete(relPath: string): Promise<void> {
     const safeRelPath = normalizeRelativePath(config.userId, relPath);
-    if (isIgnored(safeRelPath, extraIgnore)) return;
+    if (ignored(safeRelPath)) return;
     await enqueue(async () => {
       await withManifestLock(async (lockedStore) => {
         const existing = await readManifest(lockedStore, scope);
@@ -582,7 +687,7 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
       const relPath = relDir ? join(relDir, entry.name) : entry.name;
       const absPath = join(dir, entry.name);
       if (entry.isDirectory()) {
-        if (isIgnored(relPath, extraIgnore)) continue;
+        if (ignored(relPath)) continue;
         await cleanupTempFiles(absPath, relPath, depth + 1);
         continue;
       }
@@ -611,7 +716,7 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
     let pulled = 0;
     let failed = 0;
     for (const [relPath, entry] of Object.entries(files)) {
-      if (!entry.hash || entry.deleted || isIgnored(relPath, extraIgnore)) continue;
+      if (!entry.hash || entry.deleted || ignored(relPath)) continue;
       try {
         await pullFile(relPath, entry);
         pulled++;
@@ -641,7 +746,7 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
 
     for (const entry of entries) {
       const relPath = relDir ? join(relDir, entry.name) : entry.name;
-      if (isIgnored(relPath, extraIgnore)) continue;
+      if (ignored(relPath)) continue;
       const absPath = join(dir, entry.name);
 
       if (entry.isDirectory()) {
@@ -797,7 +902,7 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
   async function handleRemoteChange(msg: z.infer<typeof RemoteChangeMessageSchema>): Promise<void> {
     const files = msg.files;
     for (const f of files) {
-      if (!f.path || isIgnored(f.path, extraIgnore)) continue;
+      if (!f.path || ignored(f.path)) continue;
       try {
         if (f.action === "delete") {
           await pullDelete(f.path);
@@ -873,6 +978,8 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
         resolvedHomeRoot = config.homeRoot;
       }
       if (stopRequested) return;
+      userIgnorePatterns = await loadUserIgnorePatterns(config.homeRoot);
+      if (stopRequested) return;
       await cleanupTempFiles(config.homeRoot);
       if (stopRequested) return;
       await initialPull();
@@ -917,7 +1024,7 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
         awaitWriteFinish: { stabilityThreshold: 250, pollInterval: 100 },
         ignored: (absPath) => {
           const rel = relative(config.homeRoot, absPath);
-          return isIgnored(rel, extraIgnore);
+          return ignored(rel);
         },
       });
 
