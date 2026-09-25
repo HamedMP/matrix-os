@@ -1,4 +1,6 @@
 import { createClaudeInputController } from "./claude-input-control.js";
+import { CALL_TOOL, createClaudeCustomMcpApprovalControl } from "./claude-custom-mcp-approval.js";
+import type { CustomMcpApprovalClient } from "./custom-mcp-approval-client.js";
 import { z } from "zod/v4";
 import { classifyClaudeUsageFailure } from "./claude-usage-failure.js";
 import { buildAgentLaunch } from "../agent-launcher.js";
@@ -219,6 +221,7 @@ export function createClaudeChatProviderAdapter(options: {
   resolveCredentialEnv?: () => Promise<Record<string, string | undefined> | undefined>;
   resolveCredentialLaunch?: () => Promise<KernelCredentialLaunch>;
   matrixMcpCapabilityIssuer?: MatrixMcpCapabilityIssuer;
+  customMcpApprovalClient?: CustomMcpApprovalClient;
 }): CanonicalChatProviderAdapter<ClaudeChatState> {
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const activeRuns = new Map<string, {
@@ -228,6 +231,7 @@ export function createClaudeChatProviderAdapter(options: {
     abort: () => void;
     steer: (prompt: string) => void;
     submitInput: ReturnType<typeof createClaudeInputController>["submit"];
+    submitApproval?: ReturnType<typeof createClaudeCustomMcpApprovalControl>["submit"];
   }>();
 
   async function* execute(
@@ -246,6 +250,8 @@ export function createClaudeChatProviderAdapter(options: {
       // Unknown future interaction modes receive discovery only.
       scope: input.interactionMode === "default" && selectedPermission !== "plan" ? "call" : "discovery",
     }) ?? null;
+    let approvalClient = capability && selectedPermission === "default" && input.interactionMode === "default"
+      ? options.customMcpApprovalClient : undefined;
     let launch: ReturnType<typeof buildAgentLaunch>;
     let credentialLaunch: KernelCredentialLaunch;
     try {
@@ -281,6 +287,17 @@ export function createClaudeChatProviderAdapter(options: {
               ?? (() => buildKernelCredentialLaunch(options.homePath).then((value) => value.env))
             )(),
           };
+      if (approvalClient) {
+        try {
+          if (!await approvalClient.registerRun(input.runId)) {
+            console.warn("[chat-claude] Custom MCP approval registration unavailable");
+            approvalClient = undefined;
+          }
+        } catch (error: unknown) {
+          console.warn("[chat-claude] Custom MCP approval registration failed", error instanceof Error ? error.name : "UnknownError");
+          approvalClient = undefined;
+        }
+      }
     } catch (error: unknown) {
       capability?.revoke();
       throw error;
@@ -312,20 +329,52 @@ export function createClaudeChatProviderAdapter(options: {
     const processSignal = AbortSignal.any([input.signal, processController.signal]);
     let finishInput: (() => void) | undefined;
     let writeControl: ((frame: string) => Promise<void>) | undefined;
+    const approvalControl = approvalClient ? createClaudeCustomMcpApprovalControl({
+      runId: input.runId, client: approvalClient,
+      emit: event => queue.push(event),
+      onError: error => console.warn("[chat-claude] Custom MCP approval failed", error instanceof Error ? error.name : "UnknownError"),
+    }) : undefined;
+    let approvalRevoked = false;
+    const revokeApproval = () => {
+      capability?.revoke();
+      approvalControl?.close();
+      if (approvalClient && !approvalRevoked) {
+        approvalRevoked = true;
+        void approvalClient.revokeRun(input.runId).catch(error => {
+        console.warn("[chat-claude] Custom MCP Run revoke failed", error instanceof Error ? error.name : "UnknownError");
+      });
+      }
+    };
     const inputControl = createClaudeInputController({
       write: frame => writeControl ? writeControl(frame) : Promise.reject(new Error("Input transport unavailable")),
       emit: event => queue.push(event),
       onError: () => processController.abort(),
+      onToolPermission: approvalControl?.onToolPermission ?? (capability && selectedPermission === "default"
+        && input.interactionMode === "default" ? (request, respond) => {
+          if (request.toolName !== CALL_TOOL) return false;
+          // The broker remains the policy authority. An unavailable approval
+          // bridge can use allow-policy tools, while always_ask has no receipt.
+          const unapprovedInput = Object.fromEntries(Object.entries(request.input)
+            .filter(([key]) => key !== "approval_receipt"));
+          void respond({ behavior: "allow", updatedInput: unapprovedInput }).catch(error => {
+            console.warn("[chat-claude] Custom MCP permission response failed", error instanceof Error ? error.name : "UnknownError");
+            processController.abort();
+          });
+          return true;
+        } : undefined),
+      onToolPermissionCancel: approvalControl?.onToolPermissionCancel,
     });
     const activeRun = {
       ownerId: input.owner.ownerId,
       ownerType: input.owner.type,
       chatId: input.chatId,
-      abort: () => processController.abort(),
+      abort: () => { revokeApproval(); processController.abort(); },
       submitInput: inputControl.submit,
+      submitApproval: approvalControl?.submit,
       steer(prompt: string) {
         if (!emittedState) throw new Error("Claude Run state unavailable");
         steerPrompt = prompt;
+        revokeApproval();
         processController.abort();
       },
     };
@@ -616,12 +665,13 @@ export function createClaudeChatProviderAdapter(options: {
         }),
       }));
       queue.finish();
-    }).finally(() => capability?.revoke());
+    }).finally(() => { revokeApproval(); capability?.revoke(); });
 
     try {
       yield* queue.values();
     } finally {
       processController.abort();
+      revokeApproval();
       capability?.revoke();
     }
   }
@@ -637,6 +687,20 @@ export function createClaudeChatProviderAdapter(options: {
       const active = activeRuns.get(input.runId);
       if (!active || active.ownerId !== input.owner.ownerId || active.ownerType !== input.owner.type || active.chatId !== input.chatId) throw new Error("Input Run unavailable");
       await active.submitInput(input);
+    },
+    async submitApproval(input) {
+      const active = activeRuns.get(input.runId);
+      if (!active || active.ownerId !== input.owner.ownerId || active.ownerType !== input.owner.type
+        || active.chatId !== input.chatId || !active.submitApproval) throw new Error("Approval Run unavailable");
+      await active.submitApproval(input.approvalId, input.decision, {
+        chatId: input.chatId, clientRequestId: input.clientRequestId,
+        platformApprovalProof: input.platformApprovalProof,
+      });
+    },
+    async cancel(input) {
+      const active = activeRuns.get(input.runId);
+      if (active && active.ownerId === input.owner.ownerId && active.ownerType === input.owner.type
+        && active.chatId === input.chatId) active.abort();
     },
     async steer(input) {
       const active = activeRuns.get(input.runId);

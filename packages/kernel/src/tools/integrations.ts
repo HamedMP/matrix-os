@@ -511,9 +511,9 @@ export async function describeCustomMcpServerHandler(
 }
 
 export async function callCustomMcpToolHandler(
-  input: { server_id: string; tool: string; arguments?: Record<string, unknown> },
+  input: { server_id: string; tool: string; arguments?: Record<string, unknown>; approval_receipt?: string },
   fetcher: GatewayFetcher = defaultFetcher(),
-  approvalGranted = false,
+  _approvalGranted = false,
 ): Promise<ToolResult> {
   try {
     const response = await fetcher(
@@ -527,7 +527,8 @@ export async function callCustomMcpToolHandler(
           // Only the in-process kernel passes true, after its native approval
           // hook. External stdio MCP clients leave this false; `allow` tools
           // still work, while `always_ask` fails closed at the broker.
-          approvalGranted,
+          approvalGranted: false,
+          ...(input.approval_receipt ? { approvalReceipt: input.approval_receipt } : {}),
         }),
         signal: AbortSignal.timeout(ACTION_TIMEOUT_MS),
       },

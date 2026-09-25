@@ -1,10 +1,11 @@
-# Custom MCP per-call approval bridge (B3, RED contract)
+# Custom MCP per-call approval bridge (B3, implementation draft)
 
 ## Status and dependency
 
-This is the test-first contract for a stacked change on `codex/eng25-claude-scoped-mcp`
-at `f7858c60654e5862cf4736afe4743964987e17e8` (#1910). This commit adds
-tests and design only. It does not grant approval or change execution behavior.
+This is the test-first contract and implementation scope for a stacked change on
+`codex/eng25-claude-scoped-mcp` at
+`f7858c60654e5862cf4736afe4743964987e17e8` (#1910). The positive path
+remains a draft pending review and affected-runtime acceptance.
 The external fleet recovery plan is
 `2026-09-24/matrix-release-regression/specs/530-ai-integrations-recovery/plan.md`.
 
@@ -37,6 +38,17 @@ bearer's path permissions. B2 owns a disjoint `integration_read` scope and
 read-only integration call; these changes must not alias its scope to the B3
 `call` grant. The Gateway approval path must never accept a caller-provided
 run ID or actor header as provenance.
+
+Platform mints a short-lived, domain-separated HMAC approval proof only after
+its authoritative resolver has verified a Clerk session or platform sync JWT
+for the exact canonical approval POST. It binds owner handle, actor, chat,
+Run, approval ID, per-call decision, client request ID, canonical request-body
+digest, expiry, and nonce. Platform strips any caller-supplied proof header and
+overwrites it. Gateway carries that proof through the active canonical Run;
+the machine bearer alone cannot mint or submit approval. The internal decision
+route verifies the tuple and current expiry again inside the locked decision
+transaction. Preview, mobile-session, and static-route identity sources cannot
+mint proof. A missing or unverifiable Platform proof cannot grant `always_ask`.
 
 ## Additive persistence and resource bounds
 
@@ -135,13 +147,34 @@ wrapper forwards the separate receipt field to Gateway and strips it before
 remote dispatch. A callback is not assumed to fire in other permission modes;
 the broker remains the final enforcement boundary.
 
-Gateway revokes its bearer at cancellation onset and commits Platform lease
-revoke before reporting cancellation complete. Revoke marks pending and
-approved challenges invalid in the same transaction. If revoke wins the
-database race, consume cannot dispatch. If consume commits first, the remote
-call may already have begun; abort it best effort, but do not claim a remote
-side effect was rolled back. On Platform outage, keep the decision pending or
-error; never infer approval or successful cancellation from a failed RPC.
+Gateway revokes its bearer at cancellation onset and requests Platform lease
+revoke. Revoke marks pending and approved challenges invalid in the same
+transaction. A per-challenge native cancel also revokes an approved but
+unconsumed receipt under the lease lock. If cancellation wins the database
+race, consume cannot dispatch. If consume commits first, the remote call may
+already have begun; abort it best effort, but do not claim a remote side
+effect was rolled back. On an uncertain decision RPC, deny the native call and
+resolve the local prompt without reissuing approval. Failed Platform revoke
+cannot be reported as a confirmed server-side revocation.
+
+If lease registration fails before Claude launch, ordinary Chat remains usable:
+the exact Custom MCP tool reaches the broker without a receipt. Current
+`allow` policy may pass; `always_ask` remains denied. The fallback strips any
+model-supplied receipt before forwarding.
+
+## Focused extraction plan
+
+Approval-specific state and proof logic live in `approval-store.ts`,
+`approval-routes.ts`, `approval-digest.ts`, `claude-custom-mcp-approval.ts`,
+and Platform's `custom-mcp-approval-proof.ts` and
+`custom-mcp-approval-route-options.ts`. `platform-db.ts` retains schema
+migration and thin store delegation; a future database migration refactor
+should move the Custom MCP DDL into a migration module without changing its
+transaction or index semantics. The existing
+`session-routing-middleware.ts` and `chat/orchestrator.ts` exceed 1,000 lines;
+future scoped cleanup can extract approval proxying and canonical approval
+submission respectively while preserving the current auth and active-Run
+checks. This PR adds only narrow calls to those composition files.
 
 ## RED → GREEN acceptance matrix
 

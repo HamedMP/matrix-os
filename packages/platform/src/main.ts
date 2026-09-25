@@ -252,6 +252,7 @@ export function createApp(deps: {
   internalIntegrationRoutes?: Hono<any>;
   customMcpRoutes?: Hono<any>;
   internalCustomMcpRoutes?: Hono<any>;
+  internalCustomMcpApprovalRoutes?: Hono<any>;
   internalSyncRoutes?: Hono<any>;
   internalFundedAiRuntimeRoutes?: Hono<any>;
   internalFundedAiRelayRoutes?: Hono<any>;
@@ -652,6 +653,7 @@ export function createApp(deps: {
     platformSecret,
     customMcpRoutes: deps.customMcpRoutes,
     internalCustomMcpRoutes: deps.internalCustomMcpRoutes,
+    internalCustomMcpApprovalRoutes: deps.internalCustomMcpApprovalRoutes,
   });
   if (deps.internalIntegrationRoutes) {
     const internalIntegrationApp = new Hono<{

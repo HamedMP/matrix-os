@@ -40,6 +40,7 @@ import { createBackgroundAgentRuntime } from "./background-agent-runtime.js";
 import { formatForChannel } from "./channels/format.js";
 import { withAsyncChatInput } from "./chat/async-input-adapter.js";
 import { createClaudeChatProviderAdapter } from "./chat/claude-provider-adapter.js";
+import { createCustomMcpApprovalClient } from "./chat/custom-mcp-approval-client.js";
 import { createCanonicalCodingChatProviderAdapter } from "./chat/coding-provider-adapter.js";
 import type { ChatExecutionRootResolver } from "./chat/execution-root.js";
 import type { createGatewayChatEventStream } from "./chat/gateway-event-stream.js";
@@ -1465,6 +1466,9 @@ export async function createGateway(config: GatewayConfig) {
         homePath,
         resolveCredentialLaunch: resolveClaudeCredentialLaunch,
         matrixMcpCapabilityIssuer: matrixMcpCapabilities,
+        customMcpApprovalClient: internalPlatformUrl && internalPlatformToken && internalHandle
+          ? createCustomMcpApprovalClient({ platformUrl: internalPlatformUrl, token: internalPlatformToken, handle: internalHandle })
+          : undefined,
       }));
     }
     if (codingAgentThreadStore) {

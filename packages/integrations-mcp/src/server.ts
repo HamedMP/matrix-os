@@ -134,6 +134,7 @@ export function createIntegrationsMcpServer(
         server_id: z.uuid(),
         tool: z.string().min(1).max(128),
         arguments: z.record(z.string(), z.unknown()).optional(),
+        approval_receipt: z.string().regex(/^[a-f0-9]{64}$/).optional(),
       },
       annotations: { destructiveHint: true },
     },

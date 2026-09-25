@@ -5,6 +5,7 @@ import {
   encryptCustomMcpCredential,
 } from "./crypto.js";
 import { MAX_CUSTOM_MCP_TOOLS, RemoteMcpClient } from "./client.js";
+import { customMcpArgumentsDigest } from "./approval-digest.js";
 import { validateCustomMcpUrl } from "./security.js";
 import type {
   CustomMcpApproval,
@@ -336,8 +337,12 @@ export class CustomMcpBroker {
     toolName: string;
     arguments?: Record<string, unknown>;
     localProjection: CustomMcpServerProjection | null;
-    approvalGranted: boolean;
+    approvalGranted?: boolean;
+    approvalReceipt?: string;
+    actorId?: string;
+    runId?: string;
   }): Promise<unknown> {
+    if (input.approvalGranted === true) throw new CustomMcpBrokerError("forbidden");
     const row = await this.requirePrivate(input.userId, input.serverId);
     if (!row.enabled || row.status !== "ready") throw new CustomMcpBrokerError("forbidden");
     const tool = row.enforcement_projection.find((candidate) => candidate.name === input.toolName);
@@ -347,9 +352,19 @@ export class CustomMcpBroker {
       || input.localProjection?.revision !== row.revision) {
       throw new CustomMcpBrokerError("forbidden");
     }
-    if ((tool.approval === "always_ask" || localTool.approval === "always_ask")
-      && !input.approvalGranted) {
-      throw new CustomMcpBrokerError("forbidden", "Tool approval is required");
+    if (tool.approval === "always_ask" || localTool.approval === "always_ask") {
+      if (!input.actorId || !input.runId || !input.approvalReceipt) {
+        throw new CustomMcpBrokerError("forbidden", "Tool approval is required");
+      }
+      let argsDigest: string;
+      try { argsDigest = customMcpArgumentsDigest(input.arguments); }
+      catch { throw new CustomMcpBrokerError("invalid"); }
+      const consumed = await this.options.db.consumeCustomMcpToolApproval({
+        userId: input.userId, actorId: input.actorId, runId: input.runId,
+        serverId: input.serverId, serverRevision: row.revision,
+        toolName: input.toolName, argsDigest, receipt: input.approvalReceipt,
+      });
+      if (!consumed) throw new CustomMcpBrokerError("forbidden", "Tool approval is required");
     }
     return this.client.callTool({
       serverId: row.id,
@@ -365,12 +380,46 @@ export class CustomMcpBroker {
     serverId: string;
     toolName: string;
     arguments?: Record<string, unknown>;
-    approvalGranted: boolean;
+    approvalGranted?: boolean;
+    approvalReceipt?: string;
+    actorId?: string;
+    runId?: string;
   }): Promise<unknown> {
     const localProjection = this.options.projection.read
       ? await this.options.projection.read(input.userId, input.serverId)
       : null;
     return this.callTool({ ...input, localProjection });
+  }
+
+  async prepareToolApproval(input: {
+    userId: string;
+    actorId: string;
+    runId: string;
+    nativeRequestId: string;
+    serverId: string;
+    toolName: string;
+    arguments?: Record<string, unknown>;
+  }): Promise<{ kind: "allow" } | { kind: "pending"; approvalId: string; expiresAt: string }> {
+    const row = await this.requirePrivate(input.userId, input.serverId);
+    const local = this.options.projection.read
+      ? await this.options.projection.read(input.userId, input.serverId) : null;
+    const tool = row.enforcement_projection.find((candidate) => candidate.name === input.toolName);
+    const localTool = local?.tools.find((candidate) => candidate.name === input.toolName);
+    if (!row.enabled || row.status !== "ready" || !tool?.enabled || !localTool?.enabled
+      || local?.revision !== row.revision) throw new CustomMcpBrokerError("forbidden");
+    let argsDigest: string;
+    try { argsDigest = customMcpArgumentsDigest(input.arguments); }
+    catch { throw new CustomMcpBrokerError("invalid"); }
+    if (tool.approval === "allow" && localTool.approval === "allow") return { kind: "allow" };
+    const expiresAt = new Date(Date.now() + 10 * 60_000);
+    const reserved = await this.options.db.reserveCustomMcpToolApproval({
+      userId: input.userId, actorId: input.actorId, runId: input.runId,
+      nativeRequestId: input.nativeRequestId, serverId: input.serverId,
+      serverRevision: row.revision, toolName: input.toolName, argsDigest, expiresAt,
+    });
+    if (!reserved) throw new CustomMcpBrokerError("forbidden", "Tool approval is unavailable");
+    return { kind: "pending", approvalId: reserved.approvalId,
+      expiresAt: reserved.expiresAt.toISOString() };
   }
 
   async remove(userId: string, serverId: string): Promise<void> {

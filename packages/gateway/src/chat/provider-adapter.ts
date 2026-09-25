@@ -73,6 +73,7 @@ export const CanonicalProviderRunEventSchema = z.discriminatedUnion("type", [
     approvalId: SafeProviderRefSchema,
     title: z.string().trim().min(1).max(160),
     risk: z.enum(["low", "medium", "high"]),
+    safeDescription: z.string().min(1).max(4_000).optional(),
     allowedDecisions: z.array(CanonicalChatApprovalDecisionSchema).min(1).max(4),
   }).strict(),
   z.object({
@@ -178,6 +179,7 @@ export interface CanonicalChatProviderAdapter<State = unknown> {
     approvalId: string;
     decision: CanonicalChatApprovalDecision;
     clientRequestId: string;
+    platformApprovalProof?: string;
     state?: State;
   }): Promise<void>;
 }

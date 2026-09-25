@@ -37,6 +37,7 @@ import {
 } from './runtime-mode.js';
 import { resolvePlatformIntegrationConfig } from './integration-config.js';
 import { buildPlatformVerificationToken } from './platform-token.js';
+import { createInternalCustomMcpApprovalRouteOptions } from './custom-mcp-approval-route-options.js';
 import { createCustomMcpProjectionRequest } from './custom-mcp-projection.js';
 import {
   createGranolaPresetBroker,
@@ -88,6 +89,7 @@ export function parseGoldenSnapshotReconciliationInterval(raw: string | undefine
 interface GatewayPlatformDb {
   migrate(): Promise<void>;
   destroy(): Promise<void>;
+  sweepCustomMcpApprovals(now: Date): Promise<number>;
   getUserByClerkId(clerkId: string): Promise<GatewayPlatformUser | null>;
   getUserById(id: string): Promise<GatewayPlatformUser | null>;
   ensureUser(input: {
@@ -123,6 +125,9 @@ interface GatewayCustomMcpModules {
   crypto: { parseCustomMcpEncryptionKey(value?: string): Buffer };
   routes: {
     createCustomMcpRoutes(options: Record<string, unknown>): Hono;
+  };
+  approvalRoutes: {
+    createCustomMcpApprovalRoutes(options: Record<string, unknown>): Hono;
   };
 }
 
@@ -207,6 +212,7 @@ type CreatePlatformApp = (deps: {
   internalIntegrationRoutes?: Hono<any>;
   customMcpRoutes?: Hono<any>;
   internalCustomMcpRoutes?: Hono<any>;
+  internalCustomMcpApprovalRoutes?: Hono<any>;
   internalSyncRoutes?: Hono<any>;
   internalFundedAiRuntimeRoutes?: Hono<any>;
   internalFundedAiRelayRoutes?: Hono<any>;
@@ -451,6 +457,7 @@ async function startPlatformServerWithCleanup(
   let internalIntegrationRoutes: Hono | undefined;
   let customMcpRoutes: Hono | undefined;
   let internalCustomMcpRoutes: Hono | undefined;
+  let internalCustomMcpApprovalRoutes: Hono | undefined;
   let customMcpSweepInterval: NodeJS.Timeout | undefined;
   let customMcpShutdown: (() => Promise<void>) | undefined;
   let managedMcpPresetBroker: ManagedMcpPresetBroker | undefined;
@@ -556,11 +563,12 @@ async function startPlatformServerWithCleanup(
     ].some((secret) => Boolean(secret) && secret === encryptionKeyRaw)) {
       throw new Error('MCP_CREDENTIAL_ENCRYPTION_KEY is required and must not reuse another platform secret');
     }
-    const [brokerModule, oauthModule, cryptoModule, routesModule, dbModule] = await Promise.all([
+    const [brokerModule, oauthModule, cryptoModule, routesModule, approvalRoutesModule, dbModule] = await Promise.all([
       importRuntimeModule<GatewayCustomMcpModules['broker']>('../../gateway/dist/integrations/custom-mcp/broker.js'),
       importRuntimeModule<GatewayCustomMcpModules['oauth']>('../../gateway/dist/integrations/custom-mcp/oauth.js'),
       importRuntimeModule<GatewayCustomMcpModules['crypto']>('../../gateway/dist/integrations/custom-mcp/crypto.js'),
       importRuntimeModule<GatewayCustomMcpModules['routes']>('../../gateway/dist/integrations/custom-mcp/routes.js'),
+      importRuntimeModule<GatewayCustomMcpModules['approvalRoutes']>('../../gateway/dist/integrations/custom-mcp/approval-routes.js'),
       importRuntimeModule<GatewayPlatformDbModule>('../../gateway/dist/platform-db.js'),
     ]);
     const encryptionKey = cryptoModule.parseCustomMcpEncryptionKey(encryptionKeyRaw);
@@ -628,12 +636,21 @@ async function startPlatformServerWithCleanup(
       broker,
       oauth: oauthManager,
       allowToolCalls: true,
+      resolveActorId: (c: Context) => c.get('internalContainerClerkUserId') as string | null,
       resolveUserId: async (c: Context) => resolveCustomMcpUserId(
         c.get('internalContainerClerkUserId') as string | undefined,
         c.get('internalContainerHandle') as string | undefined,
       ),
     });
-    const sweepPending = () => broker.sweepPending().catch((error: unknown) => {
+    internalCustomMcpApprovalRoutes = approvalRoutesModule.createCustomMcpApprovalRoutes(createInternalCustomMcpApprovalRouteOptions({
+      db: customDb,
+      broker,
+      platformSecret,
+      resolveUserId: resolveCustomMcpUserId,
+    }));
+    const sweepPending = () => Promise.all([
+      broker.sweepPending(), customDb.sweepCustomMcpApprovals(new Date()),
+    ]).catch((error: unknown) => {
       console.error('[custom-mcp] pending sweep failed:', error instanceof Error ? error.message : String(error));
     });
     void sweepPending();
@@ -997,6 +1014,7 @@ async function startPlatformServerWithCleanup(
     internalIntegrationRoutes,
     customMcpRoutes,
     internalCustomMcpRoutes,
+    internalCustomMcpApprovalRoutes,
     internalSyncRoutes,
     internalFundedAiRuntimeRoutes,
     internalFundedAiRelayRoutes,

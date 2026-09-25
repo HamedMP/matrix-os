@@ -40,7 +40,7 @@ export function canonicalChatApprovals(detail: Pick<CanonicalChatDetailResponse,
     if (approvals.has(identity)) continue;
     approvals.set(identity, {
       id: activity.id, runId: activity.runId, approvalId: activity.approvalId,
-      title: activity.title, description: "The agent is waiting for your decision.",
+      title: activity.title, description: activity.safeDescription ?? "The agent is waiting for your decision.",
       risk: activity.risk, allowedDecisions: activity.allowedDecisions,
       pending: false, timestamp: Date.parse(activity.occurredAt),
     });

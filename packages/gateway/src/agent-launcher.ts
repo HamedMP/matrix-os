@@ -271,7 +271,8 @@ function claudeLaunchSettings(input: AgentLaunchInput): z.infer<typeof ClaudeLau
     input.mode !== "plan" &&
     input.mode !== "review";
   const mcpTools = input.matrixCustomMcp
-    ? [...(mode === "read-only" ? MATRIX_CUSTOM_MCP_DISCOVERY_TOOLS : MATRIX_CUSTOM_MCP_TOOLS)]
+    ? [...(mode === "read-only" || claudePermissionMode(input) === "default"
+      ? MATRIX_CUSTOM_MCP_DISCOVERY_TOOLS : MATRIX_CUSTOM_MCP_TOOLS)]
     : [];
   if (mode === "read-only") {
     return ClaudeLaunchSettingsSchema.parse({

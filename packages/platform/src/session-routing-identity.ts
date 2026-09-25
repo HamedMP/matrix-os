@@ -373,6 +373,7 @@ export async function resolveAppDomainIdentity(opts: {
     return {
       handle: '',
       userId: result.userId,
+      source: 'auth',
     };
   }
 
@@ -390,6 +391,7 @@ export async function resolveAppDomainIdentity(opts: {
         handle: requestedMachine.handle,
         userId: result.userId,
         runtimeSlot: requestedMachine.runtimeSlot,
+        source: 'auth',
       };
     }
   }
@@ -401,6 +403,7 @@ export async function resolveAppDomainIdentity(opts: {
     return {
       handle: record.handle,
       userId: result.userId,
+      source: 'auth',
     };
   }
   let machine = opts.runtimeSlot !== 'primary'
@@ -414,6 +417,7 @@ export async function resolveAppDomainIdentity(opts: {
       return {
         handle: '',
         userId: result.userId,
+        source: 'auth',
       };
     }
     return null;
@@ -423,6 +427,7 @@ export async function resolveAppDomainIdentity(opts: {
     handle: machine.handle,
     userId: result.userId,
     runtimeSlot: machine.runtimeSlot,
+    source: 'auth',
   };
 }
 

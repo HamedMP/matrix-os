@@ -28,4 +28,11 @@ describe("Custom MCP platform startup wiring", () => {
     expect(source).toContain("clientId: oauthClientId");
     expect(source).toContain("createGranolaPresetBroker({ broker, oauth: oauthManager })");
   });
+
+  it("registers the built approval route with the Platform-owned store and proof verifier", async () => {
+    const source = await readFile("packages/platform/src/platform-startup.ts", "utf8");
+    expect(source).toContain("../../gateway/dist/integrations/custom-mcp/approval-routes.js");
+    expect(source).toMatch(/createCustomMcpApprovalRoutes\(createInternalCustomMcpApprovalRouteOptions\(\{[\s\S]*db: customDb,[\s\S]*broker,[\s\S]*platformSecret,[\s\S]*resolveUserId: resolveCustomMcpUserId/);
+    expect(source).toContain("internalCustomMcpApprovalRoutes,");
+  });
 });
