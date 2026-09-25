@@ -1272,6 +1272,118 @@ describe("createHomeMirror", () => {
       await mirror.stop();
     });
 
+    describe("policy re-inclusion conflicts", () => {
+      const today = () => new Date().toISOString().split("T")[0]!;
+
+      function seedRemote(files: Record<string, { body?: Buffer; hash: string; deleted?: boolean }>) {
+        const entries: Record<string, unknown> = {};
+        for (const [path, file] of Object.entries(files)) {
+          const objectKey = `matrixos-sync/alice/files/${path}`;
+          if (file.body) r2.store.set(objectKey, file.body);
+          entries[path] = {
+            hash: file.hash,
+            size: file.deleted ? 0 : file.body?.length ?? 0,
+            mtime: Date.now(),
+            peerId: "laptop-1",
+            version: 1,
+            ...(file.deleted ? { deleted: true, deletedAt: Date.now() } : { objectKey }),
+          };
+        }
+        r2.store.set(
+          "matrixos-sync/alice/manifest.json",
+          Buffer.from(JSON.stringify({ version: 2, manifestVersion: 1, files: entries })),
+        );
+      }
+
+      async function startThenReinclude(nextPolicy: string) {
+        const logger = { info: vi.fn(), error: vi.fn() };
+        const mirror = createHomeMirror({
+          r2,
+          manifestDb: db,
+          homeRoot: tmpRoot,
+          userId: "alice",
+          peerId: "gateway-alice",
+          peerRegistry: registry,
+          logger,
+          watchLocalChanges: false,
+        });
+        await mirror.start();
+        await writeFile(join(tmpRoot, ".syncignore"), nextPolicy);
+        await mirror.pushLocalFile(".syncignore");
+        return { mirror, logger };
+      }
+
+      beforeEach(async () => {
+        await mkdir(join(tmpRoot, "dynamic"), { recursive: true });
+        await writeFile(join(tmpRoot, ".syncignore"), "dynamic/\n");
+      });
+
+      it("applies a peer deletion when the re-included local copy is the deleted version", async () => {
+        await writeFile(join(tmpRoot, "dynamic", "gone.md"), "v1");
+        seedRemote({ "dynamic/gone.md": { hash: sha256(Buffer.from("v1")), deleted: true } });
+
+        const { mirror } = await startThenReinclude("# dynamic synced\n");
+
+        await expect(stat(join(tmpRoot, "dynamic", "gone.md"))).rejects.toThrow(/ENOENT/);
+        const entry = storedManifest(r2)?.files["dynamic/gone.md"] as { deleted?: boolean } | undefined;
+        expect(entry?.deleted).toBe(true);
+        await mirror.stop();
+      });
+
+      it("keeps a peer deletion and publishes a locally edited copy as a conflict copy", async () => {
+        await writeFile(join(tmpRoot, "dynamic", "edited.md"), "local edit");
+        seedRemote({ "dynamic/edited.md": { hash: sha256(Buffer.from("v1")), deleted: true } });
+
+        const { mirror, logger } = await startThenReinclude("# dynamic synced\n");
+
+        await expect(stat(join(tmpRoot, "dynamic", "edited.md"))).rejects.toThrow(/ENOENT/);
+        const manifest = storedManifest(r2);
+        expect((manifest?.files["dynamic/edited.md"] as { deleted?: boolean } | undefined)?.deleted).toBe(true);
+        const conflictPath = `dynamic/edited (conflict - gateway-alice - ${today()}).md`;
+        expect(manifest?.files[conflictPath]?.objectKey).toBeDefined();
+        expect(await readFile(join(tmpRoot, conflictPath), "utf8")).toBe("local edit");
+        expect(logger.error.mock.calls.some((call) => String(call[0]).includes("conflict"))).toBe(true);
+        await mirror.stop();
+      });
+
+      it("chooses a distinct conflict copy when the default name already holds other bytes", async () => {
+        const peerVersion = Buffer.from("newer peer copy");
+        await writeFile(join(tmpRoot, "dynamic", "doc.md"), "second local edit");
+        const earlierCopy = `dynamic/doc (conflict - gateway-alice - ${today()}).md`;
+        await writeFile(join(tmpRoot, earlierCopy), "first local edit");
+        seedRemote({ "dynamic/doc.md": { body: peerVersion, hash: sha256(peerVersion) } });
+
+        const { mirror } = await startThenReinclude("# dynamic synced\n");
+
+        expect(await readFile(join(tmpRoot, "dynamic", "doc.md"), "utf8")).toBe("newer peer copy");
+        expect(await readFile(join(tmpRoot, earlierCopy), "utf8")).toBe("first local edit");
+        const manifest = storedManifest(r2);
+        const secondCopy = Object.keys(manifest?.files ?? {}).find((path) =>
+          path !== earlierCopy && path.startsWith("dynamic/doc (conflict - gateway-alice-")
+        );
+        expect(secondCopy).toBeDefined();
+        expect(await readFile(join(tmpRoot, secondCopy!), "utf8")).toBe("second local edit");
+        await mirror.stop();
+      });
+
+      it("falls back to a synchronizable copy name when the owner policy ignores conflict names", async () => {
+        const peerVersion = Buffer.from("newer peer copy");
+        await writeFile(join(tmpRoot, "dynamic", "doc.md"), "local edit");
+        seedRemote({ "dynamic/doc.md": { body: peerVersion, hash: sha256(peerVersion) } });
+
+        const { mirror } = await startThenReinclude("*conflict*\n");
+
+        expect(await readFile(join(tmpRoot, "dynamic", "doc.md"), "utf8")).toBe("newer peer copy");
+        const manifest = storedManifest(r2);
+        const copy = Object.keys(manifest?.files ?? {}).find((path) =>
+          path.startsWith("dynamic/doc (gateway-alice copy ")
+        );
+        expect(copy).toBeDefined();
+        expect(await readFile(join(tmpRoot, copy!), "utf8")).toBe("local edit");
+        await mirror.stop();
+      });
+    });
+
     it("does not start a replacement watcher after stop during a policy reload", async () => {
       await mkdir(join(tmpRoot, "dynamic"), { recursive: true });
       await writeFile(join(tmpRoot, ".syncignore"), "dynamic/\n");

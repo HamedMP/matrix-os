@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { lstat, mkdir, readdir, realpath, rename, unlink, writeFile } from "node:fs/promises";
+import { lstat, mkdir, realpath, rename, unlink, writeFile } from "node:fs/promises";
 import { dirname, join, relative, sep } from "node:path";
 import { watch, type FSWatcher } from "chokidar";
 import { z } from "zod/v4";
@@ -12,7 +12,8 @@ import {
   type ManifestDbExecutor,
 } from "./manifest.js";
 import { resolveWithinPrefix } from "./path-validation.js";
-import { createConflictCopyPath } from "./conflict.js";
+import { conflictCopyCandidates } from "./home-mirror-conflict.js";
+import { cleanupTempFiles, collectLocalFiles } from "./home-mirror-walk.js";
 import {
   createSerialQueue,
   hashBuffer,
@@ -46,10 +47,7 @@ import { finalizeStagedObject } from "./blob-publication.js";
 const RECENT_WRITE_CAP = 50_000;
 const DEFAULT_MAX_PUSH_BYTES = 100 * 1024 * 1024;
 const INITIAL_PUSH_CHUNK_SIZE = 50;
-const LOCAL_WALK_FILE_CAP = 50_000;
-const LOCAL_WALK_DEPTH_CAP = 64;
 
-const HOME_MIRROR_TMP_SUFFIX = /\.(?:\d+|matrixos-[0-9a-f-]{36})\.tmp$/i;
 const RemoteChangeFileSchema = z.object({
   path: z.string().min(1).max(1024),
   hash: z.string().regex(/^sha256:[a-f0-9]{64}$/),
@@ -136,6 +134,7 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
     isHomeMirrorIgnored(relPath, extraIgnore, userIgnorePatterns);
   const pruned = (relPath: string): boolean =>
     shouldPruneHomeMirrorPath(relPath, extraIgnore, userIgnorePatterns);
+  const walkFilters = { pruned, ignored, log };
   const isCurrentLifecycle = (generation: number): boolean =>
     !stopRequested && generation === lifecycleGeneration;
 
@@ -432,40 +431,6 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
     log.info(`pulled ${safeRelPath} (${buf.length}B)`);
   }
 
-  async function cleanupTempFiles(dir: string, relDir = "", depth = 0): Promise<void> {
-    if (depth > LOCAL_WALK_DEPTH_CAP) {
-      throw new Error(
-        `temp file cleanup exceeded max depth of ${LOCAL_WALK_DEPTH_CAP}`,
-      );
-    }
-    const entries = await readdir(dir, { withFileTypes: true });
-    for (const entry of entries) {
-      const relPath = relDir ? join(relDir, entry.name) : entry.name;
-      const absPath = join(dir, entry.name);
-      if (entry.isDirectory()) {
-        if (pruned(relPath)) continue;
-        await cleanupTempFiles(absPath, relPath, depth + 1);
-        continue;
-      }
-      if (entry.isFile() && HOME_MIRROR_TMP_SUFFIX.test(entry.name)) {
-        try {
-          await unlink(absPath);
-        } catch (err: unknown) {
-          if (
-            !(err instanceof Error) ||
-            !("code" in err) ||
-            (err as NodeJS.ErrnoException).code !== "ENOENT"
-          ) {
-            log.error(
-              `cleanup failed for orphaned temp ${relPath}:`,
-              err instanceof Error ? err.message : String(err),
-            );
-          }
-        }
-      }
-    }
-  }
-
   async function initialPull(): Promise<void> {
     const existing = await readManifest(store, scope);
     const files = existing.manifest.files ?? {};
@@ -499,49 +464,8 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
     if (pulled > 0) log.info(`initial pull: ${pulled} files`);
   }
 
-  async function collectLocalFiles(
-    dir: string,
-    relDir = "",
-    files: string[] = [],
-    depth = 0,
-  ): Promise<string[]> {
-    if (depth > LOCAL_WALK_DEPTH_CAP) {
-      throw new Error(
-        `local file walk exceeded max depth of ${LOCAL_WALK_DEPTH_CAP}`,
-      );
-    }
-    const entries = await readdir(dir, { withFileTypes: true });
-
-    for (const entry of entries) {
-      const relPath = relDir ? join(relDir, entry.name) : entry.name;
-      const absPath = join(dir, entry.name);
-
-      if (entry.isDirectory()) {
-        // Owner-ignored directories stay walkable while a negation could
-        // re-include a descendant; files below are still filtered one by one.
-        if (pruned(relPath)) continue;
-        await collectLocalFiles(absPath, relPath, files, depth + 1);
-        continue;
-      }
-      if (entry.isSymbolicLink()) {
-        continue;
-      }
-      if (entry.isFile()) {
-        if (ignored(relPath)) continue;
-        files.push(relPath);
-        if (files.length > LOCAL_WALK_FILE_CAP) {
-          throw new Error(
-            `local file walk exceeded ${LOCAL_WALK_FILE_CAP.toLocaleString()} files`,
-          );
-        }
-      }
-    }
-
-    return files;
-  }
-
   async function initialPush(): Promise<void> {
-    const relPaths = await collectLocalFiles(config.homeRoot);
+    const relPaths = await collectLocalFiles(config.homeRoot, walkFilters);
     await pushLocalPaths(relPaths, "initial push", () => !stopRequested);
   }
 
@@ -824,33 +748,56 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
     config.onLocalWatcherReady?.();
   }
 
-  // A path excluded until now may have changed on another peer meanwhile.
-  // Keep the peer's committed version at the original path and publish the
-  // diverged local bytes as an explicit conflict copy instead of uploading
-  // them over the peer's work.
-  async function preserveDivergedLocalCopy(
+  // Write the diverged local bytes to the first free, synchronizable
+  // conflict-copy name. Reuses an existing copy only when it already holds
+  // the same bytes. Returns null when no candidate could be used.
+  async function writeConflictCopy(
     safeRelPath: string,
-    localBody: Buffer,
-    remoteEntry: ManifestEntry,
+    localFile: Extract<LocalPushFile, { kind: "file" }>,
   ): Promise<string | null> {
-    const conflictRelPath = createConflictCopyPath(safeRelPath, config.peerId, new Date());
-    if (ignored(conflictRelPath)) {
-      log.error(`sync conflict for ${safeRelPath}: local copy kept; conflict copy path is ignored`);
+    const candidates = conflictCopyCandidates(safeRelPath, config.peerId, localFile.hash, new Date());
+    for (const candidate of candidates) {
+      if (ignored(candidate)) continue;
+      const absPath = join(config.homeRoot, normalizeRelativePath(config.userId, candidate));
+      await ensureWritableParent(absPath);
+      try {
+        await writeFile(absPath, localFile.body, { flag: "wx" });
+        return candidate;
+      } catch (err: unknown) {
+        if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+      }
+      const existing = await readLocalFileForPush(absPath, maxPushBytes);
+      if (existing.kind === "file" && existing.hash === localFile.hash) return candidate;
+    }
+    return null;
+  }
+
+  // A path excluded until now may have changed on another peer meanwhile.
+  // The peer's committed state (new version or deletion) wins at the original
+  // path; diverged local bytes are published as an explicit conflict copy.
+  // Returns the path to publish, or null when nothing should be uploaded.
+  async function reconcileReincludedPath(
+    safeRelPath: string,
+    remoteEntry: ManifestEntry | undefined,
+  ): Promise<string | null> {
+    if (!remoteEntry?.hash) return safeRelPath;
+    const absPath = join(config.homeRoot, safeRelPath);
+    const localFile = await readLocalFileForPush(absPath, maxPushBytes);
+    if (localFile.kind !== "file") return null;
+    if (localFile.hash === remoteEntry.hash) {
+      // Unchanged since the peer's version: follow a deletion, else in sync.
+      if (remoteEntry.deleted) await enqueue(() => pullDelete(safeRelPath));
       return null;
     }
-    const conflictAbsPath = join(config.homeRoot, normalizeRelativePath(config.userId, conflictRelPath));
-    await ensureWritableParent(conflictAbsPath);
-    try {
-      await writeFile(conflictAbsPath, localBody, { flag: "wx" });
-    } catch (err: unknown) {
-      if ((err as NodeJS.ErrnoException).code === "EEXIST") {
-        log.error(`sync conflict for ${safeRelPath}: local copy kept; conflict copy already exists`);
-        return null;
-      }
-      throw err;
+    const conflictRelPath = await writeConflictCopy(safeRelPath, localFile);
+    if (!conflictRelPath) {
+      log.error(`sync conflict for ${safeRelPath}: no usable conflict copy name; local copy left unsynced`);
+      return null;
     }
-    await enqueue(() => pullFile(safeRelPath, remoteEntry));
-    log.error(`sync conflict for ${safeRelPath}: kept peer version, saved local copy as ${conflictRelPath}`);
+    await enqueue(() =>
+      remoteEntry.deleted ? pullDelete(safeRelPath) : pullFile(safeRelPath, remoteEntry)
+    );
+    log.error(`sync conflict for ${safeRelPath}: kept peer state, saved local copy as ${conflictRelPath}`);
     return conflictRelPath;
   }
 
@@ -858,23 +805,19 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
     previousPolicy: SyncIgnorePatterns,
     generation: number,
   ): Promise<void> {
-    const relPaths = await collectLocalFiles(config.homeRoot);
+    const relPaths = await collectLocalFiles(config.homeRoot, walkFilters);
     const snapshot = await readManifest(store, scope);
     const toPush: string[] = [];
     for (const relPath of relPaths) {
       if (!isCurrentLifecycle(generation)) return;
       if (!isHomeMirrorIgnored(relPath, extraIgnore, previousPolicy)) continue;
       const safeRelPath = normalizeRelativePath(config.userId, relPath);
-      const remoteEntry = snapshot.manifest.files[safeRelPath];
-      if (!remoteEntry?.hash || remoteEntry.deleted) {
-        toPush.push(safeRelPath);
-        continue;
-      }
-      const localFile = await readLocalFileForPush(join(config.homeRoot, safeRelPath), maxPushBytes);
-      if (localFile.kind !== "file" || localFile.hash === remoteEntry.hash) continue;
       try {
-        const conflictRelPath = await preserveDivergedLocalCopy(safeRelPath, localFile.body, remoteEntry);
-        if (conflictRelPath) toPush.push(conflictRelPath);
+        const publishPath = await reconcileReincludedPath(
+          safeRelPath,
+          snapshot.manifest.files[safeRelPath],
+        );
+        if (publishPath) toPush.push(publishPath);
       } catch (err: unknown) {
         log.error(`sync conflict handling failed for ${safeRelPath}:`, errorMessage(err));
       }
@@ -916,7 +859,7 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
       if (stopRequested) return;
       await reloadUserIgnorePatterns();
       if (stopRequested) return;
-      await cleanupTempFiles(config.homeRoot);
+      await cleanupTempFiles(config.homeRoot, walkFilters);
       if (stopRequested) return;
       await initialPull();
       if (stopRequested) return;
