@@ -180,7 +180,32 @@ def assert_sandbox(response):
     assert sandbox["type"] == "workspaceWrite" and sandbox["networkAccess"] is False
 
 
-try:
+def verify_init_failure_cleanup():
+    class ForcedInitFailure(Server):
+        def call(self, method, params, timeout=20):
+            raise RuntimeError("forced fixture initialize failure")
+
+    server = ForcedInitFailure.__new__(ForcedInitFailure)
+    try:
+        try:
+            server.__init__()
+            raise AssertionError("Expected constructor failure")
+        except RuntimeError as error:
+            assert str(error) == "forced fixture initialize failure"
+        assert server.proc.poll() is not None, "Failed initialization left child running"
+        assert server.selector.get_map() is None, "Selector leaked"
+        assert server.proc.stdin.closed and server.proc.stdout.closed, "Child pipe leaked"
+        assert server.stderr.closed, "Stderr file leaked"
+        print("forced-init-cleanup: PASS", flush=True)
+    finally:
+        # Cleanup the deliberately failing RED case too.
+        server.close()
+        server.selector.close()
+        server.proc.stdin.close()
+        server.proc.stdout.close()
+
+
+def exercise():
     first = Server()
     try:
         started = first.call("thread/start", {
@@ -216,6 +241,12 @@ try:
     finally:
         second.close()
 
+
+try:
+    if "--verify-init-cleanup" in sys.argv:
+        verify_init_failure_cleanup()
+    else:
+        exercise()
 finally:
     print("mcp-events:", MCP_LOG.read_text() if MCP_LOG.exists() else "none", flush=True)
     print("mock-requests:", BASE.joinpath("mock-request-summary.jsonl").read_text() if BASE.joinpath("mock-request-summary.jsonl").exists() else "none", flush=True)
