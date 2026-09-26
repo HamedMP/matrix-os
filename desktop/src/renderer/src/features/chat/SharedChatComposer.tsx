@@ -169,6 +169,7 @@ export function SharedChatComposer({
   resourceSearch,
   onAttach,
   onProviderSetup,
+  onProviderPickerOpen,
   onNewChat,
   attachments,
   leadingControls,
@@ -207,6 +208,7 @@ export function SharedChatComposer({
     action: CanonicalProviderSetupAction,
   ) => void;
   onNewChat?: () => void;
+  onProviderPickerOpen?: () => void;
   attachments?: ReactNode;
   leadingControls?: ReactNode;
   footer?: ReactNode;
@@ -541,6 +543,7 @@ export function SharedChatComposer({
               unavailableProviderLabel={unavailableProviderLabel}
               menuSide={menuSide}
               onSetupAction={onProviderSetup}
+              onOpen={onProviderPickerOpen}
               onNewChat={onNewChat}
               onChange={onSelectionChange}
             />

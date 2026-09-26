@@ -86,7 +86,8 @@ export function HermesPane({ active = true }: { active?: boolean } = {}) {
     () => createLegacyGlobalProviderCatalog({ hasProject: projects.length > 0 }),
     [projects.length],
   );
-  const canonicalProviderCatalog = useChatProviderCatalog(fallbackCatalog, { active }).catalog;
+  const liveProviderCatalog = useChatProviderCatalog(fallbackCatalog, { active });
+  const canonicalProviderCatalog = liveProviderCatalog.catalog;
   const providerCatalog = useMemo(
     () => filterCatalogForLegacyGlobal(canonicalProviderCatalog),
     [canonicalProviderCatalog],
@@ -255,6 +256,7 @@ export function HermesPane({ active = true }: { active?: boolean } = {}) {
           disabled={uploadingAttachments}
           canSubmit={composerReady}
           catalog={providerCatalog}
+          onProviderPickerOpen={liveProviderCatalog.refresh}
           selection={canonicalSelection}
           onSelectionChange={(selection) => {
             const instance = providerCatalog.instances.find((candidate) => candidate.id === selection.instanceId);
