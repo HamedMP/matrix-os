@@ -76,8 +76,8 @@ describe("Pi native terminal outcomes", () => {
         selection: { instanceId: "pi_default", model: "openai-codex/gpt-5.3-codex-spark" },
         interactionMode: "default", permissionMode: "supervised", signal: AbortSignal.timeout(5_000),
       })) events.push(event);
-      expect(events).toContainEqual(expect.objectContaining({ type: "run.failed", error: expect.objectContaining({ code: "run_failed" }) }));
-      expect(events).toContainEqual({ type: "run.completed", outcome: "failed" });
+      expect(events).toContainEqual(expect.objectContaining({ type: "run.completed", outcome: "failed", error: expect.objectContaining({ code: "run_failed", safeMessage: "The coding Provider Run failed." }) }));
+      expect(events.some(event => event.type === "run.completed" && event.outcome === "completed")).toBe(false);
       expect(JSON.stringify(events)).not.toContain(rawError);
       expect(events.some(event => event.type === "assistant.delta")).toBe(false);
     } finally { await threads.shutdownTurns(); }
