@@ -33,6 +33,8 @@ export function ConnectionChoices({ snapshot, harness, gatewaySource, gatewaySel
     ? null : configuredSourceId;
   const savedTarget = boundTargets.find(({ source, model }) => source.id === savedSourceId
     && source.providerId === harness.route.providerId && model.id === harness.route.modelId);
+  const catalogRecovery = savedSourceId !== null && harness.configuredAccessSourceId === savedSourceId
+    && !savedTarget && harness.routeAvailability === "catalog_unavailable";
   const freshTargets = ownAccountTargets(snapshot, harness);
   const ownTarget = savedSourceId !== null
     ? freshTargets.find(({ source, model }) => source.id === savedSourceId && model.id === harness.route.modelId)
@@ -52,18 +54,21 @@ export function ConnectionChoices({ snapshot, harness, gatewaySource, gatewaySel
       let target = savedSourceId !== null
         ? freshAtClick.find(({ source, model }) => source.id === savedSourceId && model.id === harness.route.modelId)
         : preferredOwnAccountTarget(freshAtClick, harness);
-      if (savedSourceId !== null && !savedTarget) { setFailed(true); return; }
+      if (savedSourceId !== null && !savedTarget && !catalogRecovery) { setFailed(true); return; }
       let current = snapshot;
-      if (!target && staleNative && canSetRoute && onRefreshForConnection) {
+      if (!target && (staleNative || catalogRecovery) && canSetRoute && onRefreshForConnection) {
         const refreshed = await onRefreshForConnection();
         if (!mounted.current || currentHarness.current !== harness.id) return;
         const refreshedHarness = refreshed?.harnesses.find((candidate) => candidate.id === harness.id && candidate.harness === harness.harness);
         target = refreshed && refreshedHarness?.installState === "installed" && refreshed.access.mode === "writable"
           && refreshed.supportedActions.includes("set_route")
+          && refreshedHarness.routeAvailability !== "catalog_unavailable"
           && refreshedHarness.route.providerId === harness.route.providerId && refreshedHarness.route.modelId === harness.route.modelId
           && refreshedHarness.selectedAccountId === harness.selectedAccountId
-          ? ownAccountTargets(refreshed, refreshedHarness).find(({ source, model }) => source.id === staleNative.source.id
-            && source.providerId === staleNative.source.providerId && model.id === staleNative.model.id && source.accountId === staleNative.source.accountId
+          ? ownAccountTargets(refreshed, refreshedHarness).find(({ source, model }) => source.id === savedSourceId
+            && source.providerId === harness.route.providerId && model.id === harness.route.modelId
+            && source.kind === "harness_profile" && source.harness === harness.harness
+            && source.accountId === (staleNative ? staleNative.source.accountId : null)
             && (refreshedHarness.configuredAccessSourceId ?? refreshedHarness.accessSourceId) === savedSourceId) : undefined;
         if (!target || !refreshed || (!refreshedHarness?.enabled && refreshed.atomicConnectSupported !== true)) {
           setFailed(true); return;
@@ -95,6 +100,7 @@ export function ConnectionChoices({ snapshot, harness, gatewaySource, gatewaySel
         <strong>Own account</strong><span>{ownSelected ? "Selected" : `Connect through ${harness.displayName}`}</span>
       </button>
     </div>
+    {catalogRecovery ? <p className="matrix-ap-help" role="status">Saved connection unavailable. Try Own account to refresh this connection.</p> : null}
     {needsUpdate ? <p className="matrix-ap-help" role="status">Update this computer to connect and enable an agent in one step.</p> : null}
     {failed ? <p role="alert" className="matrix-ap-help">Connection could not be updated. Try again.</p> : null}
   </div>;
