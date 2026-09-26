@@ -10,7 +10,7 @@ import { AiProviderSnapshotV3Schema, type ProviderAccessSource } from "@matrix-o
 
 afterEach(cleanup);
 
-async function projected(kind: "pi" | "opencode", fresh = false, savedKey = false, removed = false) {
+async function projected(kind: "pi" | "opencode", fresh = false, savedKey = false, removed = false, unconfigured = false, matrix = false) {
   const now = new Date();
   const canonical = providerSettingsCanonicalFixture();
   canonical.refreshedAt = now.toISOString();
@@ -38,7 +38,7 @@ async function projected(kind: "pi" | "opencode", fresh = false, savedKey = fals
     config: { schemaVersion: 1, revision: 1, accountProfiles: [], gatewayPolicy: null, receipts: [], harnesses: [{
       id: kind, driverId: kind, harness: kind, displayName: kind, accentColor: null, enabled: true,
       enablementOrigin: "owner_configuration", selectedAccountId: savedKey ? "owner_anthropic" : null,
-      accessSourceId: savedKey ? key.id : native.id,
+      accessSourceId: unconfigured ? null : matrix ? "matrix_included" : savedKey ? key.id : native.id,
       route: { kind: "configurable", providerId: "anthropic", modelId: "claude-sonnet-5" },
     }] }, genericModelCatalog: { providers: [], accessSources: removed ? [] : [native], failures: [] },
   });
@@ -79,8 +79,9 @@ it("does not substitute the ready API key when refreshing the saved profile fail
   expect(mutate).not.toHaveBeenCalled();
 });
 
-it("preserves an intentionally configured ready API key instead of selecting a native profile", async () => {
+it.each(["modern", "legacy"])("preserves an intentionally configured %s ready API key instead of selecting a native profile", async (version) => {
   const snapshot = await projected("pi", false, true);
+  if (version === "legacy") delete snapshot.harnesses[0]!.configuredAccessSourceId;
   const refresh = vi.fn();
   const mutate = mount(snapshot, refresh);
   fireEvent.click(screen.getByRole("button", { name: /Own account/ }));
@@ -129,4 +130,24 @@ it.each(["missing profile", "changed binding", "wrong harness", "wrong account",
   await waitFor(() => expect(screen.getByRole("alert")).toBeVisible());
   expect(refresh).toHaveBeenCalledOnce();
   expect(mutate).not.toHaveBeenCalled();
+});
+
+// Explicit null from the new server differs from missing metadata on an older server.
+it("allows an ordinary available selection when the authoritative server confirms no saved binding", async () => {
+  const snapshot = await projected("pi", false, false, false, true);
+  expect(snapshot.harnesses[0]).toMatchObject({ configuredAccessSourceId: null, accessSourceId: null });
+  const refresh = vi.fn();
+  const mutate = mount(snapshot, refresh);
+  fireEvent.click(screen.getByRole("button", { name: /Own account/ }));
+  await waitFor(() => expect(mutate).toHaveBeenCalledWith(expect.objectContaining({ accessSourceId: "owner_anthropic_key" })));
+  expect(refresh).not.toHaveBeenCalled();
+});
+
+it("allows an explicit funding-choice change from saved Matrix AI to an available own account", async () => {
+  const snapshot = await projected("pi", false, false, false, false, true);
+  const refresh = vi.fn();
+  const mutate = mount(snapshot, refresh);
+  fireEvent.click(screen.getByRole("button", { name: /Own account/ }));
+  await waitFor(() => expect(mutate).toHaveBeenCalledWith(expect.objectContaining({ accessSourceId: "owner_anthropic_key" })));
+  expect(refresh).not.toHaveBeenCalled();
 });

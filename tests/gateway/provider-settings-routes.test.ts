@@ -1,6 +1,8 @@
+import { z } from "zod/v4";
 import { Hono } from "hono";
 import { describe, expect, it, vi } from "vitest";
 import {
+  ProviderHarnessInstanceSchema,
   ProviderSettingsMutationResponseSchema,
   ProviderSettingsSnapshotSchema,
   type ProviderSettingsMutation,
@@ -130,6 +132,8 @@ describe("provider settings routes", () => {
     expect(legacy).not.toHaveProperty("atomicConnectSupported");
     expect(legacy.harnesses[0]).not.toHaveProperty("configuredEnabled");
     expect(legacy.harnesses[0]).not.toHaveProperty("configuredAccessSourceId");
+    const { configuredAccessSourceId: _configuredBinding, ...legacyShape } = ProviderHarnessInstanceSchema.shape;
+    expect(z.object(legacyShape).strict().safeParse(legacy.harnesses[0]).success).toBe(true);
     expect(legacy.harnesses[0]).not.toHaveProperty("enablementOrigin");
     expect(legacy.accessSources[0]).not.toHaveProperty("localObservation");
     const modern = await (await app.request("/api/ai/provider-settings?includeCapabilities=true")).json();
