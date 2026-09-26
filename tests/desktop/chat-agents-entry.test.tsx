@@ -180,7 +180,7 @@ describe("shared Agents entry", () => {
     render(<ChatAgentsWorkspace><ChatAgentsRailSection client={client} onStartChat={vi.fn()} />
       <ChatAgentsContent client={client} scopeKey="chat_one"><p>Chat canvas</p></ChatAgentsContent></ChatAgentsWorkspace>);
     fireEvent.click(await screen.findByRole("button", { name: "Browse agent recipes" }));
-    expect(await screen.findByText(/inbox preview is not available yet/i)).toBeTruthy();
+    expect(await screen.findByText(/requires the selected Hermes owner API-key route and funded Jev readiness/i)).toBeTruthy();
   });
 
   it("accepts server-stamped readback when the account email changes after the panel loaded", async () => {

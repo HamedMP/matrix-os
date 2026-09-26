@@ -1,3 +1,4 @@
+import type { ProviderSnapshotReadOptions } from "./snapshot-read-options.js";
 import {
   AiProviderReadinessSchema,
   AiProviderSnapshotV3Schema,
@@ -41,7 +42,7 @@ export interface AiProviderHealthProbe {
 }
 
 export interface AiProviderSnapshotReader {
-  getSnapshot(options?: { refresh?: boolean }): Promise<AiProviderSnapshotV3>;
+  getSnapshot(options?: ProviderSnapshotReadOptions): Promise<AiProviderSnapshotV3>;
 }
 
 interface AiProviderServiceOptions {
@@ -315,7 +316,7 @@ export class AiProviderService implements AiProviderSnapshotReader {
     }
   }
 
-  async getSnapshot(options: { refresh?: boolean } = {}): Promise<AiProviderSnapshotV3> {
+  async getSnapshot(options: ProviderSnapshotReadOptions = {}): Promise<AiProviderSnapshotV3> {
     const snapshotTime = this.#now();
     const now = snapshotTime.toISOString();
     const { credentials, savedModel } = await this.#credentials.read();
@@ -323,7 +324,7 @@ export class AiProviderService implements AiProviderSnapshotReader {
     // funding and credential checks behind its bounded inventory deadline.
     const [drivers, funded, apiKeyReadiness, profileReadiness, codexLocalObservation] = await Promise.all([
       this.#drivers(),
-      credentials.matrixIncluded.state === "ready" && this.#fundedReadiness
+      !options.suppressFundedProbes && credentials.matrixIncluded.state === "ready" && this.#fundedReadiness
         ? this.#fundedReadiness.read()
         : undefined,
       this.#resolveOwnerReadiness(

@@ -8,12 +8,14 @@ import { resolveIntegrationConnection } from "./connection-selection.js";
 import { validateActionParams } from "./parameter-validation.js";
 import type { PipedreamConnectClient } from "./pipedream.js";
 import { getAction, getService } from "./registry.js";
+import { executeJevBoundRead, JevBoundReadError, JevReadBindingSchema } from "./jev-bound-read.js";
 
 const ReadCallBodySchema = z.strictObject({
   service: z.string().min(1).max(100),
   action: z.string().min(1).max(100),
   label: z.string().trim().min(1).max(100),
   params: z.record(z.string(), z.unknown()).optional(),
+  binding: JevReadBindingSchema.optional(),
 });
 
 /** The dedicated scoped route never syncs, chooses an account, or calls a preset without exact selection. */
@@ -39,7 +41,10 @@ export function createIntegrationReadCallRoutes(options: {
     }
     const parsed = ReadCallBodySchema.safeParse(body);
     if (!parsed.success) return c.json({ error: "Invalid request body" }, 400);
-    const { service, action, label, params } = parsed.data;
+    const { service, action, label, params, binding } = parsed.data;
+    if (binding && (service !== "gmail" || label !== binding.accountLabel)) {
+      return c.json({ error: "Action not permitted" }, 403);
+    }
     const def = getService(service);
     const actionDef = getAction(service, action);
     if (!def || !actionDef) return c.json({ error: "Unknown integration action" }, 400);
@@ -56,6 +61,11 @@ export function createIntegrationReadCallRoutes(options: {
     const user = await options.db.getUserById(uid);
     if (!user?.pipedream_external_id) return c.json({ error: "Integration unavailable" }, 503);
     try {
+      if (binding) {
+        const data = await executeJevBoundRead({ ownerId: uid, externalUserId: user.pipedream_external_id,
+          connection: selected.connection, binding, action, params, pipedream: options.pipedream, signal: c.req.raw.signal });
+        return integrationActionSuccess(c, { db: options.db, connectionId: selected.connection.id, service, action, data });
+      }
       const { data, summary } = await executeIntegrationAction({
         pipedream: options.pipedream,
         externalUserId: user.pipedream_external_id,
@@ -75,6 +85,7 @@ export function createIntegrationReadCallRoutes(options: {
         summary,
       });
     } catch (err: unknown) {
+      if (err instanceof JevBoundReadError) return c.json({ error: "Integration read unavailable" }, err.code === "denied" ? 403 : 503);
       return integrationActionFailure(c, err, service, action);
     }
   });

@@ -11,6 +11,8 @@ import {
   FundedAiReleaseRequestSchema,
   FundedAiRuntimeFundingSummaryResponseSchema,
   FundedAiRouteReadinessReceiptSchema,
+  FundedAiRouteReadinessRequestSchema,
+  JEV_MODEL_ID,
   FundedAiSettlementRequestSchema,
   FundedAiStartRequestSchema,
   IsoTimestampSchema,
@@ -283,7 +285,7 @@ export function createAiFundedRuntimeRoutes(options: {
     try { machine = await authenticatedRuntimeMachine(c, options, query.data.runtimeSlot); }
     catch (error) { return policyErrorResponse(c, error); }
     if (!machine) return c.json(safeError("unauthorized"), 401);
-    const body = EmptyBodySchema.safeParse(await readStrictJson(c));
+    const body = FundedAiRouteReadinessRequestSchema.safeParse(await readStrictJson(c));
     if (!body.success) return c.json(safeError("invalid_request"), 400);
     const deadlineAtMs = Date.now() + 6_000;
     const controller = new AbortController();
@@ -307,11 +309,13 @@ export function createAiFundedRuntimeRoutes(options: {
       const firstNow = now().getTime();
       const eligible = first.policy.enabled && Date.parse(first.policy.checkedAt) <= firstNow
         && Date.parse(first.policy.staleAfter) > firstNow && first.funding.remainingBudgetMicrousd > 0
-        ? FUNDED_PROBE_MODELS.filter((model) => first.policy.allowedModelIds.includes(model)) : [];
+        ? (body.data.modelId === JEV_MODEL_ID ? [JEV_MODEL_ID] : FUNDED_PROBE_MODELS)
+          .filter((model) => first.policy.allowedModelIds.includes(model)) : [];
       if (Date.now() >= deadlineAtMs) throw new Error("Funded route readiness timed out");
       const observations = options.routeProbes
         ? await beforeDeadline(Promise.all(eligible.map(async (model) => ({ model, result: await options.routeProbes!.probe(model, {
           signal: controller.signal, deadlineAtMs,
+          ...(model === JEV_MODEL_ID ? { runtime: { identity, globalRevision: first.policy.globalRevision, runtimeRevision: first.policy.runtimeRevision } } : {}),
         }) }))), deadlineAtMs)
         : [];
       // An upstream probe is asynchronous. Re-read exact owner policy and ledger

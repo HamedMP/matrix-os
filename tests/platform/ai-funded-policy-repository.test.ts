@@ -177,7 +177,14 @@ describe("funded AI policy repository", () => {
     await expect(repo.authorize({ credential: issued.credential.token, requestId: "request_1", modelId: models[0], maxCostMicrousd: 100 }))
       .resolves.toMatchObject({ authorized: true, identity });
 
-    await repo.revokeRuntimeCredential({ tokenId: issued.credential.tokenId, identity });
+    expect(await repo.revokeRuntimeCredential({ tokenId: issued.credential.tokenId,
+      identity: { ...identity, ownerId: "other_owner" } })).toBe(false);
+    expect((await db.executor.selectFrom("ai_runtime_credentials").select("revoked_at")
+      .where("token_id", "=", issued.credential.tokenId).executeTakeFirstOrThrow()).revoked_at).toBeNull();
+    expect(await repo.revokeRuntimeCredential({ tokenId: issued.credential.tokenId, identity })).toBe(true);
+    expect((await db.executor.selectFrom("ai_runtime_credentials").select("revoked_at")
+      .where("token_id", "=", issued.credential.tokenId).executeTakeFirstOrThrow()).revoked_at).not.toBeNull();
+    expect(await repo.revokeRuntimeCredential({ tokenId: issued.credential.tokenId, identity })).toBe(false);
     await expect(repo.authorize({ credential: issued.credential.token, requestId: "request_2", modelId: models[0], maxCostMicrousd: 100 }))
       .rejects.toMatchObject({ code: "unauthorized" });
 

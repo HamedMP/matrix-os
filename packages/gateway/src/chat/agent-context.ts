@@ -3,6 +3,7 @@ import {
   CanonicalChatIdSchema, CanonicalCreateChatTurnRequestSchema, ChatRunContextSchema,
   type CanonicalChatMessage, type CanonicalCreateChatTurnRequest,
   type ChatContextSnapshot, type ChatRunContext,
+  type ChatAgent,
 } from "@matrix-os/contracts";
 import { ChatAgentStoreError, type ChatAgentStore } from "./agent-store.js";
 import {
@@ -13,7 +14,7 @@ import type { ChatOwner } from "./records.js";
 import type { ChatRepository } from "./repository.js";
 
 export class ChatAgentContextError extends Error {
-  constructor(readonly code: "feature_disabled" | "context_unavailable" | "agent_permission_required" | "workflow_unavailable") {
+  constructor(readonly code: "feature_disabled" | "context_unavailable" | "agent_permission_required" | "workflow_unavailable" | "workflow_setup_required" | "workflow_funding_required") {
     super(code);
     this.name = "ChatAgentContextError";
   }
@@ -51,6 +52,7 @@ export class ChatAgentContext {
     agents: Pick<ChatAgentStore, "get">;
     recipes?: ChatAgentRecipeResolver;
     enabled: () => boolean;
+    admitJevWorkflow?: (owner: ChatOwner, agent: ChatAgent) => Promise<void>;
   }) {}
 
   private async snapshot(owner: ChatOwner, chatId: string, limit: number): Promise<ChatContextSnapshot> {
@@ -106,7 +108,8 @@ export class ChatAgentContext {
       throw new ChatAgentContextError("context_unavailable");
     }
     if (agent?.recipe?.skills.includes("matrix-jev-email-triage")) {
-      throw new ChatAgentContextError("workflow_unavailable");
+      if (!this.options.admitJevWorkflow) throw new ChatAgentContextError("workflow_unavailable");
+      await this.options.admitJevWorkflow(owner, agent);
     }
     const recipe = agent ? await this.resolveRecipe(agent) : undefined;
     const current = await this.options.repository.getDetailPage(owner, chatId, { limit: 40 });
@@ -166,7 +169,8 @@ export class ChatAgentContext {
           || JSON.stringify(oldBinding) !== JSON.stringify(currentBinding)) {
           throw new ChatAgentContextError("context_unavailable");
         }
-        throw new ChatAgentContextError("workflow_unavailable");
+        if (!this.options.admitJevWorkflow) throw new ChatAgentContextError("workflow_unavailable");
+        await this.options.admitJevWorkflow(owner, currentAgent);
       }
       if (context.agent.recipe) {
         if (!this.options.recipes) throw new ChatAgentContextError("context_unavailable");

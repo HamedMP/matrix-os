@@ -46,7 +46,11 @@ describe("Hermes canonical Chat Provider adapter", () => {
     for (const key of gatewaySecrets) vi.stubEnv(key, `fixture_secret_${key}`);
     try {
       const gateway = fakeGateway();
-      const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn: gateway.spawnFn });
+      const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn: gateway.spawnFn, jev: {
+        verifyRuntime: async () => undefined, resolveCredentials: async () => ({ provider: "anthropic", model: "claude-sonnet-4-6",
+          apiMode: "anthropic_messages", baseUrl: "https://api.anthropic.com", env: { ANTHROPIC_API_KEY: "synthetic-key" } }),
+        preflight: async () => undefined, clearRun: () => undefined, summary: () => null,
+      } });
       const context = ChatRunContextSchema.parse({
         version: 1, requestHash: "a".repeat(64), chats: [],
         agent: { id: "bot_jevone01", revision: 1, name: "Jev Inbox Triage", instructions: "Preview only",
@@ -61,6 +65,7 @@ describe("Hermes canonical Chat Provider adapter", () => {
       for (const key of gatewaySecrets) expect(gateway.spawnFn.mock.calls[0]?.[2]?.env?.[key], key).toBeFalsy();
       expect(resolveHermesIntegrationCapability(token!, "POST", "/api/jev/inbox/preview")).toBe(baseInput.owner.ownerId);
       expect(resolveHermesIntegrationCapability(token!, "POST", "/api/integrations/call")).toBeNull();
+      gateway.event("session.info", { lazy: false, tools: { matrix_jev_recipe: ["mcp__matrix_jev_recipe__jev_inbox_preview"] } });
       await vi.waitFor(() => expect(gateway.requests.some(({ method }) => method === "prompt.submit")).toBe(true));
       gateway.event("message.complete", { text: "Preview unavailable", status: "complete" });
       await events;

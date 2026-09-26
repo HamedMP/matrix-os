@@ -16,7 +16,7 @@ for arg in "$@"; do
         exit 3
       fi
       require_scoped=true ;;
-    --tool-surface=full|--tool-surface=custom-mcp-call|--tool-surface=custom-mcp-discovery)
+    --tool-surface=full|--tool-surface=custom-mcp-call|--tool-surface=custom-mcp-discovery|--tool-surface=jev-inbox-preview)
       if [ "$surface_seen" = true ]; then
         echo "matrix-integrations-mcp: unsupported launcher arguments" >&2
         exit 3

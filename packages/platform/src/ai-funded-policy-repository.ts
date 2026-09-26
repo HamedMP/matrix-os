@@ -339,8 +339,8 @@ export function createAiFundedPolicyRepository(options: AiFundedPolicyRepository
     const result = await options.db.executor.updateTable("ai_runtime_credentials").set({ revoked_at: now().toISOString() })
       .where("token_id", "=", input.tokenId).where("owner_id", "=", identity.ownerId)
       .where("machine_id", "=", identity.machineId).where("runtime_slot", "=", identity.runtimeSlot)
-      .where("revoked_at", "is", null).executeTakeFirst();
-    return Number(result.numUpdatedRows) === 1;
+      .where("revoked_at", "is", null).returning("token_id").executeTakeFirst();
+    return result?.token_id === input.tokenId;
   }
 
   const metering = createAiFundedMeteringRepository({

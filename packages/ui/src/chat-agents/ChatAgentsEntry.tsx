@@ -7,7 +7,7 @@ import { deriveCanonicalProviderChoices } from "../canonical-provider-choice.js"
 import { accountForNewIntegration } from "./recipe-integrations.js";
 import { recipeSkillsFit } from "./recipe-skills.js";
 import { activeConnections } from "./recipe-integrations.js";
-import { JEV_AGENT_DESCRIPTION, JEV_AGENT_NAME, jevAgentInstructions, jevAgentRecipe } from "./jev-agent-template.js";
+import { JEV_AGENT_DESCRIPTION, JEV_AGENT_NAME, jevAgentInstructions, jevAgentRecipe, jevAgentSelection } from "./jev-agent-template.js";
 import { AgentEditor, type AgentDraft } from "./AgentEditor.js";
 import { AgentAvatar } from "./AgentAvatar.js";
 import { AgentRecipesPanel } from "./AgentRecipesPanel.js";
@@ -135,11 +135,12 @@ export function ChatAgentsPanel({ client, view = "library", onClose, onSetup, on
     isChatAgentDriver(choice.driverKind) && choice.interactionModes.includes("default") && choice.permissionModes.includes("full_access")) : [], [state.catalog]);
   const [jevPending, setJevPending] = useState(false);
   const [jevError, setJevError] = useState("");
+  const jevSelection = jevAgentSelection(state.catalog ?? undefined);
   const jevUnavailable = state.loading || state.recipeLoading ? "Loading available accounts and Agent capabilities…"
     : !state.enabled ? "Agents are disabled for this computer."
     : state.connectionError || state.recipeError ? "Account or recipe options are unavailable. Try again later."
     : state.agents.length >= 100 ? "The 100-Agent limit has been reached. Archive an Agent before using this recipe."
-    : !models.some((choice) => choice.driverKind === "hermes") ? "Connect Hermes in Agents & providers first."
+    : !jevSelection ? "Choose a ready default Hermes route in Agents & providers first."
     : !state.recipeCatalog?.enabled || !["matrix-jev-email-triage", "matrix-integrations"].every((id) =>
       state.recipeCatalog?.skills.some((skill) => skill.id === id)) ? "Jev Agent skills are unavailable on this computer."
     : "";
@@ -150,7 +151,7 @@ export function ChatAgentsPanel({ client, view = "library", onClose, onSetup, on
       setJevError("Choose a connected Gmail account with a recorded email address before creating this Agent.");
       return;
     }
-    const hermes = models.find((choice) => choice.driverKind === "hermes");
+    const hermes = jevSelection ? models.find((choice) => choice.instanceId === jevSelection.instanceId && choice.modelId === jevSelection.model) : undefined;
     const recipe = jevAgentRecipe(accountLabel);
     if (!hermes || !ChatAgentRecipeSchema.safeParse(recipe).success
       || !recipeSkillsFit(recipe.skills, state.recipeCatalog?.skills ?? [])) return;

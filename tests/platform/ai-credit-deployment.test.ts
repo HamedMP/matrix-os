@@ -21,6 +21,7 @@ const env = {
   PLATFORM_SPEECH_ENABLED: "false", MATRIX_PLATFORM_SPEECH_RUNTIME_ENABLED: "false",
   MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED: "false", MATRIX_FUNDED_AI_RUNTIME_ENABLED: "false",
   MATRIX_FUNDED_AI_ADDON_CHECKOUT_ENABLED: "false", MATRIX_FUNDED_AI_RELAY_URL: "",
+  MATRIX_FUNDED_AI_MODEL_PROBE_DAILY_LIMIT: "10", MATRIX_FUNDED_AI_MODEL_PROBE_MINUTE_LIMIT: "1",
   STRIPE_PRICE_AI_CREDIT_USD_5: "", STRIPE_PRICE_AI_CREDIT_USD_10: "",
   STRIPE_PRICE_AI_CREDIT_USD_25: "",
 };
@@ -81,4 +82,45 @@ describe("Matrix AI credit Cloud Run deployment", () => {
     expect(enabled.stdout).toContain("STRIPE_PRICE_AI_CREDIT_USD_10=price_credit10");
     expect(enabled.stdout).toContain("STRIPE_PRICE_AI_CREDIT_USD_25=price_credit25");
   });
+});
+
+
+describe("Matrix AI route-probe deployment wiring", () => {
+  const enabled = { MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED: "true", MATRIX_FUNDED_AI_RUNTIME_ENABLED: "true",
+    MATRIX_FUNDED_AI_ADDON_CHECKOUT_ENABLED: "false", MATRIX_FUNDED_AI_RELAY_URL: "https://relay.example.com",
+    MATRIX_FUNDED_AI_MODEL_PROBE_DAILY_LIMIT: "10", MATRIX_FUNDED_AI_MODEL_PROBE_MINUTE_LIMIT: "1" };
+
+  it.each([
+    { MATRIX_FUNDED_AI_MODEL_PROBE_DAILY_LIMIT: "" },
+    { MATRIX_FUNDED_AI_MODEL_PROBE_MINUTE_LIMIT: "" },
+    { MATRIX_FUNDED_AI_MODEL_PROBE_DAILY_LIMIT: "0" },
+    { MATRIX_FUNDED_AI_MODEL_PROBE_MINUTE_LIMIT: "0" },
+    { MATRIX_FUNDED_AI_MODEL_PROBE_DAILY_LIMIT: "10001" },
+    { MATRIX_FUNDED_AI_MODEL_PROBE_MINUTE_LIMIT: "101" },
+    { MATRIX_FUNDED_AI_MODEL_PROBE_MINUTE_LIMIT: "11" },
+    { MATRIX_FUNDED_AI_MODEL_PROBE_DAILY_LIMIT: "1.5" },
+    { MATRIX_FUNDED_AI_MODEL_PROBE_MINUTE_LIMIT: "typo" },
+  ])("rejects an enabled deployment without a valid bounded probe budget: %j", (invalid) => {
+    expect(validate({ ...enabled, ...invalid }).status).not.toBe(0);
+  });
+
+  it("accepts reviewed positive limits while preserving disabled checkout", () => {
+    expect(validate(enabled).status).toBe(0);
+    expect(workflow.jobs.deploy.env.MATRIX_FUNDED_AI_ADDON_CHECKOUT_ENABLED).toContain("'false'");
+  });
+
+  it.each(["MATRIX_FUNDED_AI_MODEL_PROBE_DAILY_LIMIT", "MATRIX_FUNDED_AI_MODEL_PROBE_MINUTE_LIMIT"])(
+    "wires %s from GitHub variables to the actual Cloud Run deployment", (key) => {
+      expect(workflow.jobs.deploy.env[key]).toContain(`vars.${key}`);
+      const script = step("Deploy tagged revision").split("candidate_url=")[0];
+      const deployed = spawnSync("bash", ["-c", `
+        gcloud() { if [ "$2 $3" = "services describe" ]; then return 1; fi; printf '%s\\n' "$@"; }
+        ${script}
+        printf '%s\\n' "$deploy_json"
+      `], { encoding: "utf8", env: { ...env, ...Object.fromEntries(
+        Object.keys(workflow.jobs.deploy.env).map((name) => [name, "fixture"])),
+        IMAGE_DIGEST: "image@sha256:fixture", ...enabled } });
+      expect(deployed.status, deployed.stderr).toBe(0);
+      expect(deployed.stdout).toContain(`${key}=${enabled[key as keyof typeof enabled]}`);
+    });
 });

@@ -119,6 +119,7 @@ import { createFundedAiRouteReadinessClient } from "./funded-ai-route-readiness-
 import { createFundedAiReadinessReader } from "./funded-ai-readiness.js";
 import { initializeJevRuntime } from "./jev/runtime.js";
 import { createJevRoutes } from "./jev/routes.js";
+import { createProductionJevInboxRuntime } from "./jev/inbox-production.js";
 import { createJevService } from "./jev/service.js";
 import { createHeartbeatRunner, type HeartbeatRunner } from "./heartbeat/runner.js";
 import { createInteractionLogger, type InteractionLogger } from "./logger.js";
@@ -1154,6 +1155,20 @@ export async function createGateway(config: GatewayConfig) {
   } catch (error) {
     console.error("[jev] Failed to initialize:", error instanceof Error ? error.name : "UnknownError");
   }
+  // Keep recipe authority, transport, launch policy and route composition in
+  // inbox-production; this large entry point supplies existing dependencies only.
+  const jevInboxOwnerId = process.env.MATRIX_USER_ID?.trim();
+  const jevInboxRuntime = jevInboxOwnerId ? createProductionJevInboxRuntime({
+    homePath, ownerId: jevInboxOwnerId, fundedOwnerId: fundedAiRuntimeConfig?.identity.ownerId,
+    settings: { getSnapshot: options => {
+      if (!providerSettingsStore) throw new Error("Provider settings are unavailable");
+      return providerSettingsStore.getSnapshot(options);
+    } },
+    getAgent: (ownerId, agentId) => canonicalChatRuntime?.agents.get({ type: "personal", ownerId }, agentId) ?? Promise.resolve(null),
+    service: jevService, summary: fundedAiFundingSummaryReader,
+    routes: fundedAiRuntimeConfig ? createFundedAiRouteReadinessClient(fundedAiRuntimeConfig) : undefined,
+    internalBaseUrl: internalIntegrationBaseUrl, machineToken: internalPlatformToken, db: platformDb, pipedream: pipedreamClient,
+  }) : null;
 
   watcher.on((change) => {
     broadcast(change);
@@ -1209,7 +1224,7 @@ export async function createGateway(config: GatewayConfig) {
     fundedAiRuntimeConfig?.identity.ownerId,
     process.env.MATRIX_USER_ID?.trim(),
   ].filter((value): value is string => Boolean(value)));
-  app.route("/api/jev", createJevRoutes({
+  app.route("/api/jev", jevInboxRuntime?.routes ?? createJevRoutes({
     service: jevService,
     resolveOwnerId: (c) => {
       const principal = requireRequestPrincipal(c);
@@ -1469,7 +1484,7 @@ export async function createGateway(config: GatewayConfig) {
   if (chatRepository && canonicalChatExecutionRoots) {
     const canonicalAdapters: CanonicalChatProviderAdapter[] = [
       createKernelChatProviderAdapter({ dispatcher }),
-      createHermesChatProviderAdapter({ homePath, toolOutputKey }),
+      createHermesChatProviderAdapter({ homePath, toolOutputKey, ...(jevInboxRuntime ? { jev: jevInboxRuntime.launch } : {}) }),
       createOpenClawChatProviderAdapter({ rpc: openClawRpc, homePath }),
     ];
     if (codingAgentProviders.some((provider) => provider.providerId === "claude")) {
@@ -1519,6 +1534,7 @@ export async function createGateway(config: GatewayConfig) {
         onSharedEvent: (scopeId: string) => gatewayCollaboration!.eventRegistry.broadcastScope(scopeId),
       } : {}),
       onAiGeneration: recordAiGeneration,
+      ...(jevInboxRuntime ? { admitJevWorkflow: (owner, agent) => jevInboxRuntime.admit(owner.ownerId, agent) } : {}),
     });
     canonicalChatOrchestrator = canonicalChatRuntime.orchestrator;
     backgroundChatProjection.setReconciler(ownerId => canonicalChatOrchestrator?.reconcileActiveRuns({ type: "personal", ownerId }) ?? Promise.resolve());
@@ -1748,6 +1764,7 @@ export async function createGateway(config: GatewayConfig) {
     pluginRegistry,
     hookRunner,
     async close() {
+      jevInboxRuntime?.close();
       matrixMcpCapabilities.close();
       workspaceStartupRecoveryController.close();
       await terminalPasteAssetCleanup.close();

@@ -11,6 +11,7 @@ import { createCanonicalChatRuntime } from "../../packages/gateway/src/chat/runt
 import { CanonicalChatOrchestrator } from "../../packages/gateway/src/chat/orchestrator.js";
 import { CanonicalChatProviderRegistry, type CanonicalChatProviderAdapter, type CanonicalProviderRunInput } from "../../packages/gateway/src/chat/provider-adapter.js";
 import { createCanonicalProviderCatalogFixture } from "../contracts/fixtures/canonical-chat";
+import { ChatAgentContextError } from "../../packages/gateway/src/chat/agent-context.js";
 
 const owner = { type: "personal" as const, ownerId: "owner_bot_runs" };
 const principal = { userId: owner.ownerId, source: "jwt" as const };
@@ -33,6 +34,7 @@ describe("Hermes Agent invocation through canonical Chat", () => {
   let failBeforeCheckpoint: "failed" | "aborted" | undefined;
   let agentId: string;
   let recipeSkillsRoot: string;
+  let jevAdmission: "ready" | "setup" | "funding" | undefined;
 
   beforeEach(async () => {
     home = await mkdtemp(join(tmpdir(), "matrix-agent-execution-"));
@@ -48,7 +50,7 @@ describe("Hermes Agent invocation through canonical Chat", () => {
     }
     repository = new ChatRepository((await KyselyPGlite.create()).dialect);
     await repository.bootstrap();
-    enabled = true; failBeforeCheckpoint = undefined; failHermes = false; calls = []; release = undefined; hold = undefined;
+    enabled = true; jevAdmission = undefined; failBeforeCheckpoint = undefined; failHermes = false; calls = []; release = undefined; hold = undefined;
     const catalog = createCanonicalProviderCatalogFixture();
     const hermes = { ...catalog.instances[0]!, id: "hermes_default", driverKind: "hermes" as const,
       models: [{ ...catalog.instances[0]!.models[0]!, id: agentSelection.model }],
@@ -77,6 +79,11 @@ describe("Hermes Agent invocation through canonical Chat", () => {
     };
     const runtime = await createCanonicalChatRuntime({
       homePath: home, recipeSkillsRoot, enabled: () => enabled,
+      admitJevWorkflow: async (actor, agent) => {
+        expect(actor).toEqual(owner); expect(agent.id).toBe(agentId);
+        if (jevAdmission !== "ready") throw new ChatAgentContextError(jevAdmission === "setup" ? "workflow_setup_required"
+          : jevAdmission === "funding" ? "workflow_funding_required" : "workflow_unavailable");
+      },
       repository, catalog: { getCatalog: async () => catalog },
       adapters: new CanonicalChatProviderRegistry([adapter("codex"), adapter("hermes")]),
     });
@@ -126,6 +133,26 @@ describe("Hermes Agent invocation through canonical Chat", () => {
     const detail = await repository.getDetailPage(owner, "chat_parent", { limit: 10 });
     expect(detail?.runs).toEqual([]);
     expect(detail?.messages).toEqual([]);
+  });
+
+  it.each(["ready", "setup", "funding"] as const)("server admission controls bound Jev workflow (%s)", async (mode) => {
+    jevAdmission = mode;
+    const recipe = { skills: ["matrix-jev-email-triage", "matrix-integrations"],
+      integrations: [{ service: "gmail", accountLabel: "My Gmail" }], output: "Read-only proposals" };
+    await agents.update(owner, agentId, { baseRevision: 1, recipe }, { ...recipe,
+      jevInboxTriage: { version: 1, ownerId: owner.ownerId, service: "gmail", accountLabel: "My Gmail",
+        connectionId: "conn_own", expectedEmail: "me@example.test" } });
+    const pending = orchestrator.admitTurn(principal, owner, "chat_parent", await input(`req_jev_${mode}`,
+      [mention("agent", agentId), { type: "text", text: "Review my selected Gmail thread" }]));
+    if (mode === "ready") {
+      await pending; await complete(); expect(calls.map(call => call.driver)).toEqual(["hermes"]);
+      expect(calls[0]?.input.context?.agent?.recipe?.jevInboxTriage?.connectionId).toBe("conn_own");
+    } else {
+      await expect(pending).rejects.toMatchObject({ safeError: { safeMessage: mode === "setup"
+        ? "Inbox triage requires a ready selected Hermes owner API-key account. Check Agents & providers."
+        : "Inbox triage funding is unavailable. Check Matrix AI readiness and retry." } });
+      expect(calls).toEqual([]);
+    }
   });
 
   it.each([undefined, "0"])("admits saved Agents without configuration or with the retired flag %j", async (legacyFlag) => {

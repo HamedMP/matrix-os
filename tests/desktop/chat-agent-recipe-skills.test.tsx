@@ -23,12 +23,15 @@ function Editor({ catalog = { enabled: true, skills, services: [] }, selected = 
 }
 
 describe("installed Recipe skill selection", () => {
-  it("keeps the selected Gmail identity as a setup hint while preview is unavailable", () => {
+  it("keeps selected identity a hint and requests only the receipt-bound read-only broker", () => {
     expect(jevAgentRecipe("my-work-gmail").integrations).toEqual([{ service: "gmail", accountLabel: "my-work-gmail" }]);
     expect(jevAgentInstructions("owner@example.com")).toContain('"owner@example.com"');
     expect(jevAgentInstructions("owner@example.com")).toContain("server-owned saved account binding is authoritative");
-    expect(jevAgentInstructions("owner@example.com")).toContain("Inbox preview is not available yet");
-    expect(jevAgentInstructions("owner@example.com")).toContain("Do not call Gmail or Jev tools");
+    expect(jevAgentInstructions("owner@example.com")).toContain("jev_inbox_preview");
+    expect(jevAgentInstructions("owner@example.com")).toContain("receipt");
+    expect(jevAgentInstructions("owner@example.com")).toContain("Do not use generic Gmail or Jev evaluation tools");
+    expect(jevAgentInstructions("owner@example.com")).toContain("setup or funding unavailable");
+    expect(jevAgentRecipe("my-work-gmail").output).not.toContain("applied");
     expect(jevAgentInstructions("owner@example.com")).toContain("Creating this Agent does not run triage or modify Gmail");
     expect(() => jevAgentInstructions("gmail")).toThrow();
   });
