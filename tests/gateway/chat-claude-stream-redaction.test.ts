@@ -293,6 +293,17 @@ describe("Claude streamed assistant text redaction", () => {
     ]);
   });
 
+  it.each([
+    ["第一段中文", "第二段中文", "第一段中文", "第二段中文"],
+    ["first.", "第二段中文", "first.", "第二段中文"],
+  ])("keeps ordinary adjacent text blocks in distinct durable messages (%s)", async (first, second, expectedFirst, expectedSecond) => {
+    const events = await runLines(separateTextBlocks([first, second]));
+    expect([...assembledAssistantMessages(events)]).toEqual([
+      ["claude_text_0", expectedFirst],
+      ["claude_text_1", expectedSecond],
+    ]);
+  });
+
   it("keeps a credential continuation with its originating message ID", async () => {
     const events = await runLines(separateTextBlocks(["Bearer ", "fixture-secret-token done"]));
     const deltas = events.filter((event) => event.type === "assistant.delta");
@@ -318,6 +329,14 @@ describe("Claude streamed assistant text redaction", () => {
   it.each(["/指南", "/guide"])("preserves a Chinese relative path ending %s across chunks", (suffix) => {
     const projector = createAssistantTextStreamProjector({ homePath: "/home/matrix/home" });
     expect(projector.push("文档") + projector.push(suffix) + projector.flush()).toBe(`文档${suffix}`);
+  });
+
+  it("keeps a Chinese relative path continuation on its original message", async () => {
+    const events = await runLines(separateTextBlocks(["文档", "/guide next"]));
+    expect([...assembledAssistantMessages(events)]).toEqual([
+      ["claude_text_0", "文档/guide "],
+      ["claude_text_1", "next"],
+    ]);
   });
 
   it("keeps a bounded overflow marker with the first block and new text with the second", async () => {

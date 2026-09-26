@@ -131,7 +131,18 @@ export function createAssistantTextStreamProjector(options: { homePath: string; 
       }
       return projected;
     },
-    flushBoundary(): string {
+    flushBoundary(nextCharacter?: string): string {
+      if (pending && nextCharacter && nextCharacter !== "/"
+        && pending.codePointAt(0)! > 0x7f
+        && pending === String.fromCodePoint(pending.codePointAt(0)!)
+        && sanitizeAssistantText(pending, options) === pending) {
+        // Unspaced prose keeps one character for slash lookbehind. Once a
+        // different block starts without a slash, that character is complete
+        // and belongs to the original message.
+        const projected = pending;
+        pending = "";
+        return projected;
+      }
       if (droppingOversizedToken || pending.includes("/") || ACTIVE_BEARER.test(pending)
         || DANGLING_SECRET_ASSIGNMENT.test(pending)
         || incompleteSecretKeyword()

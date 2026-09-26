@@ -387,8 +387,8 @@ export function createClaudeChatProviderAdapter(options: {
       if (projected) enqueueDelta(projected, projectedMessageId);
       projectedMessageId = undefined;
     };
-    const flushSafeProjectedText = () => {
-      const projected = textProjector.flushBoundary();
+    const flushSafeProjectedText = (nextCharacter?: string) => {
+      const projected = textProjector.flushBoundary(nextCharacter);
       if (projected) enqueueDelta(projected, projectedMessageId);
       if (!textProjector.hasPending()) projectedMessageId = undefined;
     };
@@ -397,7 +397,9 @@ export function createClaudeChatProviderAdapter(options: {
       projectedMessageId = undefined;
     };
     const projectDelta = (delta: string, messageId?: string) => {
-      if (projectedMessageId !== messageId) flushSafeProjectedText();
+      if (projectedMessageId !== messageId) {
+        flushSafeProjectedText(String.fromCodePoint(delta.codePointAt(0)!));
+      }
       if (textProjector.hasPending() && projectedMessageId !== messageId) {
         // A token started in the previous text block. Attribute only its
         // continuation to that block; the rest belongs to the new block.
