@@ -242,6 +242,18 @@ describe("Claude streamed assistant text redaction", () => {
       forbidden: "fixture-secret-value",
     },
     {
+      name: "Bearer keyword split",
+      parts: ["Bear", "er fixture-secret-token"],
+      expected: "Bearer [redacted]",
+      forbidden: "fixture-secret-token",
+    },
+    {
+      name: "assignment keyword split",
+      parts: ["ACCESS_TO", "KEN=fixture-secret-value"],
+      expected: "[redacted credential]",
+      forbidden: "fixture-secret-value",
+    },
+    {
       name: "private path",
       parts: ["Inspect /private/", "secret/file"],
       expected: "Inspect [redacted path]",
@@ -258,6 +270,20 @@ describe("Claude streamed assistant text redaction", () => {
     const deltas = events.filter((event) => event.type === "assistant.delta").map((event) => event.delta);
     for (const delta of deltas) expect(delta).not.toContain(forbidden);
     expect(deltas.join("")).toBe(expected);
+  });
+
+  it.each([
+    { value: "Bearer fixture-secret-token", expected: "Bearer [redacted]" },
+    { value: "ACCESS_TOKEN=fixture-secret-value", expected: "[redacted credential]" },
+    { value: "Inspect /private/secret/file", expected: "Inspect [redacted path]" },
+    { value: "URL: https://learn.microsoft.com/azure/azure-functions", expected: "URL: https://learn.microsoft.com/azure/azure-functions" },
+  ])("keeps every text-block split of $value equivalent to a full safe projection", ({ value, expected }) => {
+    for (let split = 1; split < value.length; split++) {
+      const projector = createAssistantTextStreamProjector({ homePath: "/home/matrix/home" });
+      const projected = projector.push(value.slice(0, split)) + projector.flushBoundary()
+        + projector.push(value.slice(split)) + projector.flush();
+      expect(projected).toBe(expected);
+    }
   });
 
   it("replaces an overlong token once and drops its remainder until whitespace", () => {

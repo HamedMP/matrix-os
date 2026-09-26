@@ -6,6 +6,10 @@ const ABSOLUTE_PATH = /(^|[\s"'`(=:<>|;&])\/(?=[A-Za-z0-9._~-])(?!\/)[^\s"'`<>)]
 const DANGLING_BEARER = /(?:^|[^A-Za-z0-9_])Bearer\s+$/i;
 const ACTIVE_BEARER = /(?:^|[^A-Za-z0-9_])Bearer\s+/i;
 const DANGLING_SECRET_ASSIGNMENT = /(?:^|[^A-Za-z0-9_])(?:API[_-]?(?:KEY|TOKEN)|ACCESS[_-]?TOKEN|SECRET|PASSWORD|CREDENTIAL)\s*(?:=\s*)?$/i;
+const SECRET_KEYWORDS = [
+  "bearer", "apikey", "api_key", "api-key", "apitoken", "api_token", "api-token",
+  "accesstoken", "access_token", "access-token", "secret", "password", "credential",
+] as const;
 const ASSISTANT_TEXT_TAIL_LIMIT = 2_048;
 
 function normalizedRoot(value: string): string {
@@ -85,6 +89,10 @@ export function createAssistantTextStreamProjector(options: { homePath: string; 
     }
     return false;
   };
+  const incompleteSecretKeyword = () => {
+    const token = /[A-Za-z][A-Za-z0-9_-]*$/u.exec(pending)?.[0].toLowerCase();
+    return token !== undefined && SECRET_KEYWORDS.some((keyword) => keyword.startsWith(token));
+  };
 
   return {
     push(value: string): string {
@@ -125,6 +133,7 @@ export function createAssistantTextStreamProjector(options: { homePath: string; 
     flushBoundary(): string {
       if (droppingOversizedToken || pending.includes("/") || ACTIVE_BEARER.test(pending)
         || DANGLING_SECRET_ASSIGNMENT.test(pending)
+        || incompleteSecretKeyword()
         || sanitizeAssistantText(pending, options) !== pending) return "";
       const projected = pending;
       pending = "";
