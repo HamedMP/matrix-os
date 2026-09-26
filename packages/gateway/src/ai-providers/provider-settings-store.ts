@@ -134,9 +134,9 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
     try { return await operation(); } finally { release(); }
   }
 
-  async #canonical(refresh = false, suppressFundedProbes = false): Promise<AiProviderSnapshotV3> {
+  async #canonical(refresh = false, suppressFundedProbes = false, ownerKeyPreflight?: ProviderSnapshotReadOptions["ownerKeyPreflight"], signal?: AbortSignal): Promise<AiProviderSnapshotV3> {
     try {
-      const snapshot = AiProviderSnapshotV3Schema.parse(await this.#reader.getSnapshot({ refresh, ...(suppressFundedProbes ? { suppressFundedProbes: true } : {}) }));
+      const snapshot = AiProviderSnapshotV3Schema.parse(await this.#reader.getSnapshot({ refresh, ...(suppressFundedProbes ? { suppressFundedProbes: true } : {}), ...(ownerKeyPreflight ? { ownerKeyPreflight } : {}), ...(signal ? { signal } : {}) }));
       const age = this.#now().getTime() - Date.parse(snapshot.refreshedAt);
       if (!Number.isFinite(age) || age < -60_000 || age > this.#maxProjectionAgeMs) {
         throw new Error("Stale canonical provider projection");
@@ -235,7 +235,7 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
         throw new ProviderSettingsStoreError("runtime_unavailable", 503);
       }
       const refresh = options.refresh === true;
-      const inventory = this.#canonical(refresh, options.suppressFundedProbes === true);
+      const inventory = this.#canonical(refresh, options.suppressFundedProbes === true, options.ownerKeyPreflight, options.signal);
       // Begin these bounded observations inside the serialized read, not behind
       // inventory. Never share results across mutations or authorize from them alone.
       const [canonical, enrichment] = await Promise.all([

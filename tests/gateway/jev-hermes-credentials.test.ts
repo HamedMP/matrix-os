@@ -17,7 +17,7 @@ describe("recipe-only exact server-selected Hermes API-key credential", () => {
     try {
       expect(await resolve("owner_fixture", selection)).toEqual({ provider: "anthropic", model: "claude-sonnet-5", apiMode: "anthropic_messages",
         env: { ANTHROPIC_API_KEY: "sk-ant-api03-synthetic-only" }, baseUrl: "https://api.anthropic.com" });
-      expect(getSnapshot).toHaveBeenCalledWith({ refresh: true, suppressFundedProbes: true });
+      expect(getSnapshot).toHaveBeenCalledWith({ refresh: true, suppressFundedProbes: true, ownerKeyPreflight: { modelId: "claude-sonnet-5", credentialFingerprint: expect.stringMatching(/^[a-f0-9]{64}$/) }, signal: expect.any(AbortSignal) });
     } finally { await rm(home, { recursive: true, force: true }); }
   });
   it.each(["owner", "model", "harness", "oauth", "source", "account", "multiple", "stale", "disabled", "offline", "empty", "symlink", "oversized"])("fails closed for %s without ambient/provider fallback", async (mode) => {

@@ -1,3 +1,4 @@
+import { OwnerAnthropicKeyConfig, ownerKeyFingerprint } from "../ai-providers/owner-key-preflight.js";
 import type { ProviderSnapshotReadOptions } from "../ai-providers/snapshot-read-options.js";
 import { join } from "node:path";
 import { z } from "zod/v4";
@@ -11,7 +12,7 @@ export class JevHermesSetupError extends Error {
 }
 const Selection = z.strictObject({ instanceId: z.literal("hermes_default"),
   model: z.string().min(1).max(200).regex(/^anthropic:[A-Za-z0-9][A-Za-z0-9._-]{0,159}$/) });
-const Config = z.object({ kernel: z.object({ anthropicApiKey: z.string().trim().min(1).max(4096).regex(/^sk-ant-api[A-Za-z0-9_-]+$/) }) });
+const Config = OwnerAnthropicKeyConfig;
 /** Server-only fixed credential source. Never loads the owner's Hermes profile or copies it to a child. */
 export function createJevHermesCredentialResolver(options: {
   homePath: string; ownerId: string | null;
@@ -25,7 +26,12 @@ export function createJevHermesCredentialResolver(options: {
     if (!parsed.success) throw new JevHermesSetupError();
     const model = parsed.data.model.slice("anthropic:".length);
     return boundedOperation(async (deadline) => {
-      const value = ProviderSettingsSnapshotSchema.parse(await options.settings.getSnapshot({ refresh: true, suppressFundedProbes: true }));
+      const before = await readBoundedJsonFileWithIdentity(join(options.homePath, "system/config.json"), 64 * 1024);
+      const keyBefore = Config.safeParse(before?.value);
+      if (!keyBefore.success) throw new JevHermesSetupError();
+      const fingerprint = ownerKeyFingerprint(keyBefore.data.kernel.anthropicApiKey);
+      const value = ProviderSettingsSnapshotSchema.parse(await options.settings.getSnapshot({ refresh: true, suppressFundedProbes: true,
+        ownerKeyPreflight: { modelId: model, credentialFingerprint: fingerprint }, signal: deadline }));
       deadline.throwIfAborted();
       const current = (options.now ?? Date.now)();
       const fresh = (timestamp: string | null) => timestamp !== null && current - Date.parse(timestamp) >= 0
@@ -46,7 +52,8 @@ export function createJevHermesCredentialResolver(options: {
       const config = await readBoundedJsonFileWithIdentity(join(options.homePath, "system/config.json"), 64 * 1024);
       deadline.throwIfAborted();
       const selectedKey = Config.safeParse(config?.value);
-      if (!selectedKey.success) throw new JevHermesSetupError();
+      if (!selectedKey.success || ownerKeyFingerprint(selectedKey.data.kernel.anthropicApiKey) !== fingerprint
+        || JSON.stringify(config?.identity) !== JSON.stringify(before?.identity)) throw new JevHermesSetupError();
       return { provider: "anthropic", model, apiMode: "anthropic_messages", baseUrl: "https://api.anthropic.com",
         env: { ANTHROPIC_API_KEY: selectedKey.data.kernel.anthropicApiKey } };
     }, 10_000, signal);

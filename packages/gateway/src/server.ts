@@ -1,3 +1,4 @@
+import { createOwnerAnthropicKeyPreflight } from "./ai-providers/owner-key-preflight.js";
 import { serve } from "@hono/node-server";
 import { createNodeWebSocket } from "@hono/node-ws";
 import {
@@ -1393,6 +1394,7 @@ export async function createGateway(config: GatewayConfig) {
   await agentRuntimeServices.controller.reconcile();
   const aiProviderService = new AiProviderService({
     homePath,
+    healthProbe: createOwnerAnthropicKeyPreflight({ homePath }),
     fundedCredentialProvider,
     fundedReadinessReader: fundedAiRuntimeConfig && fundedAiFundingSummaryReader
       ? createFundedAiReadinessReader({
