@@ -35,10 +35,13 @@ function signHs256Jwt(
 
 function mockContext(path: string, authHeader?: string, ip?: string, url?: string) {
   const store = new Map<string, unknown>();
+  const requestUrl = url ?? `http://localhost:4000${path}`;
   return {
     req: {
       path,
-      url: url ?? `http://localhost:4000${path}`,
+      url: requestUrl,
+      raw: new Request(requestUrl),
+      method: "GET",
       header: (name: string) => {
         if (name === "Authorization") return authHeader;
         if (name === "X-Forwarded-For" && ip) return ip;

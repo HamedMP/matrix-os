@@ -23,11 +23,13 @@ function Editor({ catalog = { enabled: true, skills, services: [] }, selected = 
 }
 
 describe("installed Recipe skill selection", () => {
-  it("binds Jev to the current user's connected Gmail account, never a template author's mailbox", () => {
+  it("keeps the selected Gmail identity as a setup hint while preview is unavailable", () => {
     expect(jevAgentRecipe("my-work-gmail").integrations).toEqual([{ service: "gmail", accountLabel: "my-work-gmail" }]);
     expect(jevAgentInstructions("owner@example.com")).toContain('"owner@example.com"');
-    expect(jevAgentInstructions("owner@example.com")).toContain("stop before reading mail");
-    expect(jevAgentInstructions("owner@example.com")).toContain("get_profile");
+    expect(jevAgentInstructions("owner@example.com")).toContain("server-owned saved account binding is authoritative");
+    expect(jevAgentInstructions("owner@example.com")).toContain("Inbox preview is not available yet");
+    expect(jevAgentInstructions("owner@example.com")).toContain("Do not call Gmail or Jev tools");
+    expect(jevAgentInstructions("owner@example.com")).toContain("Creating this Agent does not run triage or modify Gmail");
     expect(() => jevAgentInstructions("gmail")).toThrow();
   });
   it("searches names and descriptions without dropping selections across searches", () => {

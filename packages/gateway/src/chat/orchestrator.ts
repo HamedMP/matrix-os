@@ -686,6 +686,7 @@ export class CanonicalChatOrchestrator {
         chatId: run.chatId,
         turnId: run.turnId,
         runId: run.id,
+        ...(run.context ? { context: run.context } : {}),
         prompt: contextPrompt(promptOverride ?? promptFor(message.parts), run.context),
         parts: message.parts,
         selection: run.selection,

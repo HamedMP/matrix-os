@@ -4,10 +4,13 @@ import { authMiddleware } from "../../packages/gateway/src/auth.js";
 function mockContext(path: string, authHeader?: string) {
   let status = 200;
   let body: unknown = undefined;
+  const url = `http://localhost:4000${path}`;
   return {
     ctx: {
       req: {
         path,
+        url,
+        raw: new Request(url),
         header: (name: string) =>
           name === "Authorization" ? authHeader : undefined,
       },

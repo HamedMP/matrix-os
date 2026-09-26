@@ -37,6 +37,7 @@ describe("server-resolved Chat mention context", () => {
     for (const [directory, id, description, body] of [
       ["personal-daily-brief", "matrix-personal-daily-brief", "Prepare a personal daily brief.", "Read inbox and calendar without writing."],
       ["integrations", "matrix-integrations", "Use Matrix integrations safely.", "Use the real Matrix integration tools."],
+      ["jev-email-triage", "matrix-jev-email-triage", "Review Gmail with Jev.", "Review one selected thread without writing."],
     ]) {
       await mkdir(join(skillsRoot, directory), { recursive: true });
       await writeFile(join(skillsRoot, directory, "SKILL.md"),
@@ -98,6 +99,20 @@ describe("server-resolved Chat mention context", () => {
     await context.revalidate(owner, "chat_current", prepared.context);
     await agents.update(owner, agent.id, { baseRevision: 2, archived: true });
     await expect(context.revalidate(owner, "chat_current", prepared.context)).rejects.toMatchObject({ code: "context_unavailable" });
+  });
+
+  it("reads a legacy Jev bot but refuses an unbound run before any tool can execute", async () => {
+    const legacy = await agents.create(owner, {
+      clientRequestId: "req_legacy_jev", name: "Legacy Jev", description: "Old recipe",
+      instructions: "The mailbox is me@example.test; follow the skill.",
+      selection: { instanceId: "hermes_default", model: "openai:gpt-5.6-sol" },
+      recipe: { skills: ["matrix-jev-email-triage", "matrix-integrations"],
+        integrations: [{ service: "gmail", accountLabel: "My Gmail" }], output: "Proposals" },
+    });
+    expect((await agents.get(owner, legacy.id))?.id).toBe(legacy.id);
+    await expect(context.prepare(owner, "chat_current", {
+      ...request, parts: [...request.parts, mention("agent", legacy.id)],
+    })).rejects.toMatchObject({ code: "context_unavailable" });
   });
 
   it("pins recipe instructions and renders explicit integration and output guidance", async () => {

@@ -1,6 +1,6 @@
 # Feature specification: Jev email triage
 
-Updated: 2026-09-22. Status: implementation approved; runtime acceptance pending.
+Updated: 2026-09-26. Status: implementation approved; owner-matched runtime acceptance pending.
 Tracking: [ENG-11](https://linear.app/matrix-os/issue/ENG-11), [OM-286](https://linear.app/matrix-os/issue/OM-286), [GitHub #1800](https://github.com/HamedMP/matrix-os/issues/1800), [spec PR #1812](https://github.com/HamedMP/matrix-os/pull/1812).
 
 The team narrowed the first milestone from ENG-11's earlier three-recipe and generic `use-jevs` proposal to this one Gmail workflow. [ENG-11's current scope](https://linear.app/matrix-os/issue/ENG-11/jev-inbox-triage-recipe-via-matrix-ai-gateway) explicitly supersedes that 2026-09-21 proposal; the research and routing recipes and generic skill remain follow-up scope. The initial demo and release acceptance are read-only: no unattended label or archive mutation is accepted. The implementation may offer a separately requested, action-specific Gmail write after explicit user authorization or an existing automation grant, but neither creating the bot nor receiving a Jev result grants that authority.
@@ -13,10 +13,14 @@ The capability has three explicit layers:
 
 1. The Matrix Jev Gateway authenticates the runtime, meters the request, resolves a versioned recipe, bounds work, calls Jev, validates the result and returns a typed response.
 2. The immutable `email-triage-v1` recipe defines seven independent Boolean questions and their output contract.
-3. The bundled `matrix-jev-email-triage` agent skill binds the user's selected Gmail account when creating the bot, verifies that account with a live Gmail `get_profile` call before reading mail, gathers minimal thread context, calls the recipe and calculates conservative deterministic label and archive proposals. It applies them only in a separately authorized action.
+3. A Gateway recipe broker binds the owner's selected Gmail account in the saved bot, verifies the pinned connection with a live Gmail `get_profile` before each mailbox read, bounds one selected thread, and constructs Jev evidence and deterministic proposals. The bundled `matrix-jev-email-triage` skill guides the interaction but cannot grant mailbox or Jev authority.
 4. The Matrix Agent Recipes market includes a Jev Inbox Triage card. **Build in Chat** creates a reusable Hermes bot using the current user's authenticated Agent API and Gmail connection from Services, verifies that the bot appears in that user's Agent library with the selected Gmail account, then opens it in Chat. Users do not author a setup prompt.
 
-Jev classifies. It never receives action authority and never directly mutates Gmail. Labels and archiving are agent-side policy using existing Matrix integration tools and their existing authorization behavior.
+Jev classifies. It never receives action authority and never directly mutates Gmail. The first acceptance milestone returns read-only proposals only. A separate future milestone must review any label or archive action under explicit authorization.
+
+The initial security PR is an intermediate prerequisite: it saves a server-stamped owner/account binding and **rejects Jev-bot invocation before a harness, primary inference, Gmail, or Jev starts**, with a safe unavailable result. The scoped bearer seam is preparation for the later broker; it does not itself isolate a model with shell access. Native Hermes currently inherits the Gateway process environment, and a host-service child may run as the same `matrix` user that can read `/opt/matrix/env/host.env`. Therefore the Jev workflow must remain blocked until the functional phase proves credential, file, and process isolation (or a supported restricted no-shell harness tool mode) as well as bounded Pipedream read transport. Environment scrubbing is defense in depth, not that proof. This PR is not a claim that inbox triage works or is ready to deploy alone. The functional phase must still support a bounded snippet pass and, when verification is needed, the latest four messages of the one selected thread; a snippet-only release does not satisfy this specification.
+
+Gateway composition extraction plan: `server.ts` currently assembles the Chat route's stores, provider catalog, and integration lookup in a large startup function. Keep PR1's account-resolution logic in `chat/jev-recipe-authority.ts` and its route handoff in `server/collaboration-chat-routes.ts`. After the stacked MCP authority changes land, extract the Chat dependency assembly into a focused `server/collaboration-chat-composition.ts` with typed owner-inventory inputs and explicit startup ordering. Preserve the proxy-only customer VPS path and its timeout/cap tests while moving the wiring; do not combine this refactor with PR1's fail-closed authority change.
 
 The original directory name `526-jev-byok` is retained for review-link continuity. Personal Jev keys are not in scope.
 
@@ -75,7 +79,9 @@ After a successful run, Matrix can process only new or changed Gmail threads and
 - **FR-009**: Upstream 429 or explicit retryable failures MAY be retried with bounded backoff under the same logical request. Final failure MUST remain visible and MUST NOT be represented as a classification.
 - **FR-010**: Raw email bodies, provider credentials and Matrix runtime credentials MUST NOT appear in normal logs. Operational logs MAY include request ID, owner-safe runtime reference, recipe/version, status, latency and bounded usage/cost metadata.
 - **FR-011**: Email subject, body, links and attachments MUST be treated as untrusted evidence. No instruction contained in email content may alter the recipe, policy or tool authorization.
-- **FR-011a**: Bot creation MUST save the Gmail account selected by the current user. Each run MUST call Gmail `get_profile` for that selected integration account label and compare its live `emailAddress` exactly with the saved account before any mailbox search or message read. Cached inventory metadata or the generic `gmail` label is not sufficient proof; missing, ambiguous or mismatched identity MUST stop the run.
+- **FR-011a**: The authenticated server MUST resolve exactly one active Gmail row for the selected owner and exact account label, then save the row's connection ID and cached email as structured expected identity in the bot. Client text, instructions, and cached inventory are not live proof. Missing, ambiguous, foreign, revoked, or email-less selections MUST fail closed.
+- **FR-011b**: A Jev bot run MUST use a distinct, bounded recipe capability tied to owner, run, agent revision, and saved account after restricted execution is proven. Generic integration/Jev endpoints MUST reject that capability; ordinary agents retain their existing permission and approval behavior. Until then, the canonical server MUST reject even bound Jev invocations before creating a Run or launching a harness. Legacy Jev bots without a binding remain readable but cannot execute the recipe until their owner explicitly reselects an account and the broker is available.
+- **FR-011c**: Before any mailbox search/read or funded Jev evaluation, the server MUST recheck the current bot/account binding and call Gmail `get_profile` for the pinned connection. The live `emailAddress` MUST exactly match the saved expected email. Missing, ambiguous, mismatched, revoked, or changed identity stops before mailbox search/read and Jev dispatch. The same selected connection MUST be used for profile and requested read; the model cannot supply a verified flag.
 - **FR-012**: The skill MUST process only new or content-changed threads when reliable Gmail history and content fingerprints are available.
 - **FR-013**: The skill MUST use a snippet first pass and MUST fetch bounded full context when cold outreach, urgency or reply evidence crosses the configured verification trigger.
 - **FR-014**: Full verification MUST use no more than the latest four messages, ordered oldest to newest, with bounded cleaned text and relevant metadata.
@@ -102,11 +108,11 @@ After a successful run, Matrix can process only new or changed Gmail threads and
 
 - **SC-001**: A supported agent classifies a controlled Gmail inbox end to end using one Jev request per evaluated state and returns all seven probabilities.
 - **SC-002**: Fixture tests cover every label, overlapping labels, each Review path and the strict archive gate with 100% deterministic-policy branch coverage.
-- **SC-003**: Duplicate invocation tests demonstrate one upstream dispatch and one set of Gmail mutations for the same owner, thread, recipe and fingerprint.
+- **SC-003**: First-release duplicate invocation tests demonstrate one upstream dispatch for the same owner, thread, recipe and fingerprint, with zero Gmail mutations. Any future authorized write requires its own idempotency evidence.
 - **SC-004**: Owner isolation, disabled policy, zero credit, malformed response, timeout and unavailable-upstream tests make no Gmail mutations and expose only safe errors.
 - **SC-005**: A personal-primary-model acceptance run completes Jev triage through Matrix AI without changing primary provider settings.
 - **SC-006**: Normal logs contain no raw fixture body or credentials; observability still identifies recipe, request, latency, status and usage/cost outcome.
-- **SC-007**: An exact-head demo shows inbox labels and at least one authorized cold-outreach archive, plus the visible Review/failure behavior.
+- **SC-007**: First-release exact-head evidence shows owner-matched bounded reads, proposed labels, Review/failure behavior, and zero Gmail mutations. An authorized archive demo is a separately requested later milestone.
 - **SC-008**: The implementation, tests, public documentation and demo evidence pass required CI and review gates before release.
 
 ## Assumptions

@@ -298,15 +298,14 @@ describe("coding agent thread stream", () => {
     const next = async () => undefined;
     const calls: string[] = [];
     const middleware = authMiddleware("secret-token");
-    const makeContext = (path: string, token?: string) => ({
-      req: {
-        path,
-        url: `http://localhost${path}${token ? `?token=${token}` : ""}`,
-        header: () => undefined,
-      },
-      json: (body: unknown, status: number) => ({ body, status }),
-      set: () => undefined,
-    });
+    const makeContext = (path: string, token?: string) => {
+      const url = `http://localhost${path}${token ? `?token=${token}` : ""}`;
+      return {
+        req: { path, url, raw: new Request(url), method: "GET", header: () => undefined },
+        json: (body: unknown, status: number) => ({ body, status }),
+        set: () => undefined,
+      };
+    };
 
     await middleware(makeContext("/ws/coding-agents/thread/thread_abc", "secret-token") as never, async () => {
       calls.push("ok");

@@ -11,6 +11,17 @@ const valid = {
 };
 
 describe("Jev Gateway routes", () => {
+  it("reports the recipe preview unavailable without dispatching Jev", async () => {
+    const evaluate = vi.fn();
+    const app = new Hono();
+    app.route("/api/jev", createJevRoutes({ service: { evaluate }, resolveOwnerId: () => "owner_a" }));
+    const response = await app.request("/api/jev/inbox/preview", { method: "POST",
+      headers: { "content-type": "application/json" }, body: JSON.stringify({ threadId: "synthetic" }) });
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({ error: { code: "unavailable", message: "Inbox preview is not available yet" } });
+    expect(evaluate).not.toHaveBeenCalled();
+  });
+
   it("accepts only the bounded public recipe contract", async () => {
     const evaluate = vi.fn(async () => ({
       requestId: "jev_req_request_123", recipe: "email-triage-v1" as const, model: JEV_MODEL_ID,

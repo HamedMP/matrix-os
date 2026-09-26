@@ -13,7 +13,7 @@ import type { ChatOwner } from "./records.js";
 import type { ChatRepository } from "./repository.js";
 
 export class ChatAgentContextError extends Error {
-  constructor(readonly code: "feature_disabled" | "context_unavailable" | "agent_permission_required") {
+  constructor(readonly code: "feature_disabled" | "context_unavailable" | "agent_permission_required" | "workflow_unavailable") {
     super(code);
     this.name = "ChatAgentContextError";
   }
@@ -101,6 +101,13 @@ export class ChatAgentContext {
     if (chatReferences.some((reference) => reference.id === chatId)) throw new ChatAgentContextError("context_unavailable");
     const agent = agentReference ? await this.agent(owner, agentReference.id) : undefined;
     if (agent && input.permissionMode !== "full_access") throw new ChatAgentContextError("agent_permission_required");
+    if (agent?.recipe?.skills.includes("matrix-jev-email-triage") &&
+      (!agent.recipe.jevInboxTriage || agent.recipe.jevInboxTriage.ownerId !== owner.ownerId)) {
+      throw new ChatAgentContextError("context_unavailable");
+    }
+    if (agent?.recipe?.skills.includes("matrix-jev-email-triage")) {
+      throw new ChatAgentContextError("workflow_unavailable");
+    }
     const recipe = agent ? await this.resolveRecipe(agent) : undefined;
     const current = await this.options.repository.getDetailPage(owner, chatId, { limit: 40 });
     if (!current || current.record.chat.lifecycle !== "active" || current.record.chat.collaboration) {
@@ -147,7 +154,20 @@ export class ChatAgentContext {
     if (!context) return;
     if ((context.agent || context.chats.length) && !this.options.enabled()) throw new ChatAgentContextError("feature_disabled");
     if (context.agent) {
-      await this.agent(owner, context.agent.id);
+      const currentAgent = await this.agent(owner, context.agent.id);
+      const admittedJev = context.agent.recipe?.skills.some((skill) => skill.id === "matrix-jev-email-triage") ?? false;
+      const currentJev = currentAgent.recipe?.skills.includes("matrix-jev-email-triage") ?? false;
+      if (admittedJev || currentJev) {
+        const oldBinding = context.agent.recipe?.jevInboxTriage;
+        const currentBinding = currentAgent.recipe?.jevInboxTriage;
+        if (!admittedJev || !currentJev || !oldBinding || !currentBinding
+          || oldBinding.ownerId !== owner.ownerId || currentBinding.ownerId !== owner.ownerId
+          || currentAgent.revision !== context.agent.revision
+          || JSON.stringify(oldBinding) !== JSON.stringify(currentBinding)) {
+          throw new ChatAgentContextError("context_unavailable");
+        }
+        throw new ChatAgentContextError("workflow_unavailable");
+      }
       if (context.agent.recipe) {
         if (!this.options.recipes) throw new ChatAgentContextError("context_unavailable");
         try {

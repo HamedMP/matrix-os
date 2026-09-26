@@ -12,6 +12,8 @@ import { isRequestPrincipalError, mapRequestPrincipalError, type RequestPrincipa
 import { ChatAgentStoreError, type ChatAgentStore } from "./agent-store.js";
 import { ChatAgentContextError, type ChatAgentContext } from "./agent-context.js";
 import type { ChatAgentRecipeResolver } from "./agent-recipe.js";
+import { bindJevInboxRecipe, JevRecipeBindingError, type GmailAccountRow } from "./jev-recipe-authority.js";
+import { revokeHermesJevCapabilitiesForAgent } from "./hermes-integration-capability.js";
 import type { ChatRepository } from "./repository.js";
 import { validateChatProviderSelection, type ChatProviderCatalogService } from "./provider-catalog.js";
 
@@ -28,6 +30,7 @@ export function createChatAgentRoutes(options: {
   enabled(): boolean;
   catalog: Pick<ChatProviderCatalogService, "getCatalog">;
   getPrincipal(context: Context): RequestPrincipal;
+  listGmailAccounts?: (ownerId: string) => Promise<readonly GmailAccountRow[]>;
 }): Hono {
   const routes = new Hono();
   const limit = bodyLimit({ maxSize: 40 * 1024, onError: (c) => c.json({ error: "Request too large" }, 413) });
@@ -46,6 +49,11 @@ export function createChatAgentRoutes(options: {
     }
     if (error instanceof ChatAgentStoreError && error.code === "agent_conflict") {
       return context.json({ error: "Agent changed. Refresh and try again." }, 409);
+    }
+    if (error instanceof JevRecipeBindingError) {
+      return context.json({ error: error.code === "account_unavailable"
+        ? "Selected Gmail account is unavailable. Refresh and try again."
+        : "Agents are temporarily unavailable." }, error.code === "account_unavailable" ? 409 : 503);
     }
     console.warn("[chat-agents] Request failed:", error instanceof Error ? error.name : "UnknownError");
     return context.json({ error: "Agents are temporarily unavailable." }, 503);
@@ -83,8 +91,21 @@ export function createChatAgentRoutes(options: {
     if (!options.enabled()) return c.json({ error: "Agents are disabled." }, 409);
     const { agents } = requireServices();
     const input = CreateChatAgentRequestSchema.parse(await c.req.json());
+    const scope = { type: "personal" as const, ownerId: principal.userId };
+    const existing = await agents.findCreated(scope, input);
+    if (existing) return c.json(ChatAgentSchema.parse(existing), 201);
     if (!await validSelection(principal, input.selection)) return c.json({ error: "Choose an available Agent model." }, 400);
-    return c.json(ChatAgentSchema.parse(await agents.create({ type: "personal", ownerId: principal.userId }, input)), 201);
+    let recipe;
+    try {
+      recipe = input.recipe ? await bindJevInboxRecipe({ ownerId: principal.userId, recipe: input.recipe,
+        listGmailAccounts: options.listGmailAccounts }) : undefined;
+    } catch (error: unknown) {
+      // A concurrent identical create can commit while inventory is failing.
+      const saved = await agents.findCreated(scope, input);
+      if (saved) return c.json(ChatAgentSchema.parse(saved), 201);
+      throw error;
+    }
+    return c.json(ChatAgentSchema.parse(await agents.create(scope, input, recipe)), 201);
   });
   routes.patch("/api/chat-agents/:agentId", limit, async (c) => {
     const principal = options.getPrincipal(c);
@@ -93,7 +114,11 @@ export function createChatAgentRoutes(options: {
     const { agents } = requireServices();
     const input = UpdateChatAgentRequestSchema.parse(await c.req.json());
     if (input.selection && !await validSelection(principal, input.selection)) return c.json({ error: "Choose an available Agent model." }, 400);
-    return c.json(ChatAgentSchema.parse(await agents.update({ type: "personal", ownerId: principal.userId }, id, input)));
+    const recipe = input.recipe ? await bindJevInboxRecipe({ ownerId: principal.userId, recipe: input.recipe,
+      listGmailAccounts: options.listGmailAccounts }) : undefined;
+    const updated = await agents.update({ type: "personal", ownerId: principal.userId }, id, input, recipe);
+    revokeHermesJevCapabilitiesForAgent(principal.userId, id);
+    return c.json(ChatAgentSchema.parse(updated));
   });
   routes.get("/api/chat-mentions", async (c) => {
     const scope = owner(c);

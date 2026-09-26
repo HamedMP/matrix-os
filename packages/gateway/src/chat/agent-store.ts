@@ -7,7 +7,7 @@ import { z } from "zod/v4";
 import {
   CanonicalOwnerScopeSchema, ChatAgentIdSchema, ChatAgentSchema,
   CreateChatAgentRequestSchema, UpdateChatAgentRequestSchema,
-  type ChatAgent, type CreateChatAgentRequest, type UpdateChatAgentRequest,
+  type ChatAgent, type CreateChatAgentRequest, type UpdateChatAgentRequest, type StoredChatAgentRecipe,
 } from "@matrix-os/contracts";
 import { resolveWithinHome } from "../path-security.js";
 import type { ChatDatabase } from "./database.js";
@@ -159,7 +159,21 @@ export class ChatAgentStore {
     return agents.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt) || a.id.localeCompare(b.id));
   }
 
-  async create(owner: ChatOwner, inputValue: CreateChatAgentRequest): Promise<ChatAgent> {
+  async findCreated(owner: ChatOwner, inputValue: CreateChatAgentRequest): Promise<ChatAgent | null> {
+    const input = CreateChatAgentRequestSchema.parse(inputValue);
+    const ownerKey = this.ownerKey(owner);
+    const id = `bot_${digest(`${ownerKey}:${input.clientRequestId}`).slice(0, 32)}`;
+    const { clientRequestId: _requestId, ...fields } = input;
+    const directory = await this.directory([ownerKey]);
+    const existing = directory ? await this.read(join(directory, `${id}.md`)) : null;
+    if (!existing) return null;
+    if (existing.agent.id !== id) throw new ChatAgentStoreError("agent_unavailable");
+    if (existing.createHash !== digest(JSON.stringify(fields))) throw new ChatAgentStoreError("agent_conflict");
+    return existing.agent;
+  }
+
+  async create(owner: ChatOwner, inputValue: CreateChatAgentRequest,
+    resolvedRecipe?: StoredChatAgentRecipe): Promise<ChatAgent> {
     const input = CreateChatAgentRequestSchema.parse(inputValue);
     const ownerKey = this.ownerKey(owner);
     const id = `bot_${digest(`${ownerKey}:${input.clientRequestId}`).slice(0, 32)}`;
@@ -175,13 +189,16 @@ export class ChatAgentStore {
       }
       if ((await this.list(owner, true)).length >= MAX_AGENTS) throw new ChatAgentStoreError("agent_capacity");
       const now = (this.options.now?.() ?? new Date()).toISOString();
-      const agent = ChatAgentSchema.parse({ ...fields, id, revision: 1, archived: false, createdAt: now, updatedAt: now });
+      const recipe = resolvedRecipe ?? fields.recipe;
+      const agent = ChatAgentSchema.parse({ ...fields, ...(recipe ? { recipe } : {}),
+        id, revision: 1, archived: false, createdAt: now, updatedAt: now });
       await this.write(directory, { agent, createHash }, true);
       return agent;
     });
   }
 
-  async update(owner: ChatOwner, agentId: string, inputValue: UpdateChatAgentRequest): Promise<ChatAgent> {
+  async update(owner: ChatOwner, agentId: string, inputValue: UpdateChatAgentRequest,
+    resolvedRecipe?: StoredChatAgentRecipe): Promise<ChatAgent> {
     const id = ChatAgentIdSchema.parse(agentId);
     const { baseRevision, recipe, ...patch } = UpdateChatAgentRequestSchema.parse(inputValue);
     return this.withOwnerLock(owner, async () => {
@@ -194,7 +211,7 @@ export class ChatAgentStore {
       const agent = ChatAgentSchema.parse({
         ...(recipe === null ? withoutRecipe : existing.agent),
         ...patch,
-        ...(recipe && { recipe }),
+        ...(recipe && { recipe: resolvedRecipe ?? recipe }),
         revision: baseRevision + 1,
         updatedAt: (this.options.now?.() ?? new Date()).toISOString() });
       await this.write(directory!, { agent, createHash: existing.createHash }, false);
