@@ -533,11 +533,19 @@ describe("Claude streamed assistant text redaction", () => {
     ]);
   });
 
-  it("drops nested unresolved prefixes before a steered continuation starts", async () => {
+  it.each([
+    { parts: ["before steer"], expected: "before steer", name: "ordinary safe tail" },
+    { parts: ["Visible Bear"], expected: "Visible ", name: "incomplete Bearer keyword" },
+    { parts: ["Visible ACCESS_TO"], expected: "Visible ", name: "incomplete assignment keyword" },
+    { parts: ["Visible Bearer fixture-secret-token"], expected: "Visible ", name: "unfinished Bearer value" },
+    { parts: ["Visible https://example.test/guide"], expected: "Visible ", name: "unfinished URL" },
+    { parts: ["Visible /private/file"], expected: "Visible ", name: "unfinished private path" },
+    { parts: ["Visible /private/file", "Be", "Be"], expected: "Visible ", name: "nonempty nested boundary probe" },
+  ])("preserves only $name before a steered continuation starts", async ({ parts, expected }) => {
     let spawned = 0;
     const initialLines = [
       JSON.stringify({ type: "system", session_id: "claude_probe_steer" }),
-      ...separateTextBlocks(["Visible /private/file", "Be", "Be"]).slice(0, -1),
+      ...separateTextBlocks(parts).slice(0, -1),
     ];
     const adapter = createClaudeChatProviderAdapter({
       homePath: "/home/matrix/home",
@@ -551,7 +559,7 @@ describe("Claude streamed assistant text redaction", () => {
     for await (const event of adapter.start(input)) events.push(event);
     expect(spawned).toBe(2);
     expect(events.filter((event) => event.type === "assistant.delta").map((event) => event.delta).join(""))
-      .toBe("Visible Safe fresh text");
+      .toBe(`${expected}Safe fresh text`);
     expect(events.at(-1)).toMatchObject({ type: "run.completed", outcome: "completed" });
   });
 

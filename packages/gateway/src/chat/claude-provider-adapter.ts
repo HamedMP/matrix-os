@@ -768,7 +768,16 @@ export function createClaudeChatProviderAdapter(options: {
       queue.finish();
     }).catch(async (error: unknown) => {
       if (sawResult && !resultFailed) flushProjectedText();
-      else discardProjectedText();
+      else {
+        if (error instanceof CanonicalCliError && error.kind === "aborted" && !resultFailed
+          && steerPrompt && emittedState && !input.signal.aborted && !cancellationRequested
+          && activeRuns.get(input.runId) === activeRun && !boundaryProbe) {
+          // An accepted Steer ends this text context. Preserve an ordinary
+          // safe tail, but leave path/URL/credential candidates for discard.
+          flushSafeProjectedText("\n");
+        }
+        discardProjectedText();
+      }
       flushPendingDelta();
       if (steerPrompt && emittedState && !input.signal.aborted) {
         capability?.revoke();

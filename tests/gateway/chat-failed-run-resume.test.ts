@@ -155,7 +155,9 @@ describe("Chat native session continuity", () => {
     try {
       await vi.waitFor(async () => {
         const history = await repository.exportChat(owner, "chat_steer");
-        expect(history?.messages.at(-1)?.parts).toEqual([{ type: "text", text: "before steer" }]);
+        // The un-delimited tail stays withheld until a safe text boundary;
+        // accepted Steer must preserve it in the final durable message below.
+        expect(history?.messages.at(-1)?.parts).toEqual([{ type: "text", text: "before " }]);
       });
       await orchestrator.steerRun(owner, "chat_steer", accepted.run.id, {
         expectedTurnId: accepted.turn.id, clientRequestId: "req_steer_now",
