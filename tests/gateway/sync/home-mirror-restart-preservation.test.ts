@@ -99,7 +99,7 @@ describe("home mirror restart preserves local boot state", () => {
     const first = make();
     await first.start();
     await first.stop();
-    return { root, make };
+    return { root, make, r2, manifestDb };
   }
   it("does not replace an owner soul edited after its last persisted mirror snapshot", async () => {
     const { root, make } = await fixture("system/soul.md", "original soul");
@@ -117,4 +117,44 @@ describe("home mirror restart preserves local boot state", () => {
     await make().start();
     expect(await readFile(join(root, ".matrix-version"), "utf8")).toBe(version);
   });
+  it("flushes an immediate owner edit on graceful stop before the watcher debounce", async () => {
+    const { root, make } = await fixture("system/soul.md", "original soul");
+    const active = make();
+    await active.start();
+    await writeFile(join(root, "system/soul.md"), "last moment owner edit");
+    await active.stop();
+    await make().start();
+    expect(await readFile(join(root, "system/soul.md"), "utf8")).toBe("last moment owner edit");
+  });
+  it("pulls a remote-only edit when the local file still matches its durable baseline", async () => {
+    const { root, make, r2, manifestDb } = await fixture("system/soul.md", "original soul");
+    const otherRoot = await mkdtemp(join(tmpdir(), "matrix-other-peer-")); roots.push(otherRoot);
+    const other = createHomeMirror({ r2, manifestDb, homeRoot: otherRoot,
+      userId: "synthetic-owner", peerId: "other", watchLocalChanges: false,
+      logger: { info: () => {}, error: () => {} } }); mirrors.push(other);
+    await other.start();
+    await writeFile(join(otherRoot, "system/soul.md"), "remote edit");
+    await other.pushLocalFile("system/soul.md"); await other.stop();
+    await make().start();
+    expect(await readFile(join(root, "system/soul.md"), "utf8")).toBe("remote edit");
+  });
+  it("preserves both originals on divergent edits without publishing over the remote", async () => {
+    const { root, make, r2, manifestDb } = await fixture("system/soul.md", "original soul");
+    const otherRoot = await mkdtemp(join(tmpdir(), "matrix-other-peer-")); roots.push(otherRoot);
+    const other = createHomeMirror({ r2, manifestDb, homeRoot: otherRoot,
+      userId: "synthetic-owner", peerId: "other", watchLocalChanges: false,
+      logger: { info: () => {}, error: () => {} } }); mirrors.push(other);
+    await other.start();
+    await writeFile(join(otherRoot, "system/soul.md"), "remote divergent edit");
+    await other.pushLocalFile("system/soul.md"); await other.stop();
+    await writeFile(join(root, "system/soul.md"), "local divergent edit");
+    await make().start();
+    expect(await readFile(join(root, "system/soul.md"), "utf8")).toBe("local divergent edit");
+    const state = JSON.parse(await readFile(join(root, ".matrix-home-mirror", "state.json"), "utf8"));
+    const conflict = state.conflicts["system/soul.md"];
+    expect(await readFile(join(root, ".matrix-home-mirror", conflict.artifact), "utf8")).toBe("remote divergent edit");
+    await other.start();
+    expect(await readFile(join(otherRoot, "system/soul.md"), "utf8")).toBe("remote divergent edit");
+  });
+
 });
