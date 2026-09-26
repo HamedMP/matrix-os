@@ -51,6 +51,32 @@ async function selected(f: ReturnType<typeof fixture>) {
   if (discovery.kind !== "discovery") throw new Error("fixture discovery failed");
   return f.execute({ operation: "select", receipt: discovery.receipt, threadId: discovery.threads[0]!.id });
 }
+it.each(["list_threads", "get_thread_ids", "get_message"])("permits an explicit retry after a transient %s read failure", async action => {
+  const f = fixture(); const original = f.read.getMockImplementation()!; let failed = false;
+  f.read.mockImplementation(async (...args) => {
+    if (args[2] === action && !failed) { failed = true; throw new Error("Synthetic transient read failure"); }
+    return original(...args);
+  });
+  if (action === "list_threads") {
+    await expect(f.execute({ operation: "discover" })).rejects.toThrow();
+    await expect(f.execute({ operation: "discover" })).resolves.toMatchObject({ kind: "discovery" });
+  } else {
+    const discovery = await f.execute({ operation: "discover" });
+    if (discovery.kind !== "discovery") throw new Error("Synthetic discovery missing");
+    const input = { operation: "select", receipt: discovery.receipt, threadId: "thread_fixture" };
+    await expect(f.execute(input)).rejects.toThrow();
+    await expect(f.execute(input)).resolves.toMatchObject({ kind: "evidence" });
+  }
+  expect(f.evaluate).not.toHaveBeenCalled();
+});
+it("does not retry an ambiguously failed paid evaluation", async () => {
+  const f = fixture(); const evidence = await selected(f);
+  if (evidence.kind !== "evidence") throw new Error("Synthetic evidence missing");
+  f.evaluate.mockRejectedValue(new Error("Synthetic ambiguous settlement"));
+  const input = { operation: "evaluate", receipt: evidence.receipt };
+  await expect(f.execute(input)).rejects.toThrow(); await expect(f.execute(input)).rejects.toThrow();
+  expect(f.evaluate).toHaveBeenCalledOnce();
+});
 it("exposes only completed server summary for the same live run/account/revision", async () => {
   const f = fixture(); expect(f.broker.presentation(ownerId, scope)).toBeNull();
   const evidence = await selected(f);

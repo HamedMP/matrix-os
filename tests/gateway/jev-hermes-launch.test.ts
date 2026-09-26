@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import { access } from "node:fs/promises";
+import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { spawn, execFileSync } from "node:child_process";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { ChatRunContextSchema } from "@matrix-os/contracts";
 import { createHermesChatProviderAdapter } from "../../packages/gateway/src/chat/hermes-provider-adapter.js";
 import { createHermesStdioClient } from "../../packages/gateway/src/chat/hermes-stdio-client.js";
@@ -25,6 +28,29 @@ function fixture() {
   return { gateway, adapter, resolveCredentials, verifyRuntime, preflight, clearRun, summary };
 }
 describe("production isolated Hermes recipe launch", () => {
+  it.each(["sitecustomize.py", "usercustomize.py", "startup.pth"])("native credential-bearing startup cannot execute unchecked %s", async hook => {
+    const directory = await mkdtemp(join(tmpdir(), "jev-native-startup-"));
+    const root = join(directory, ".hermes/hermes-agent"); const marker = join(directory, "startup-marker");
+    const reached = join(directory, "entry-reached");
+    await mkdir(join(root, "venv/bin"), { recursive: true }); await mkdir(join(root, "tui_gateway"));
+    execFileSync("python3", ["-I", "-m", "venv", "--without-pip", join(root, "venv")]);
+    const version = execFileSync(join(root, "venv/bin/python"), ["-I", "-S", "-c", "import sys; print(str(sys.version_info.major)+'.'+str(sys.version_info.minor))"], { encoding: "utf8" }).trim();
+    const site = join(root, "venv/lib", `python${version}`, "site-packages");
+    await writeFile(join(site, "fixture_dependency.py"), "VALUE = 'synthetic-dependency'\n");
+    const payload = `import os; open(${JSON.stringify(marker)}, 'w').write(os.getenv('ANTHROPIC_API_KEY', 'absent'))\n`;
+    await writeFile(hook.endsWith(".pth") ? join(site, hook) : join(root, hook), payload);
+    await writeFile(join(root, "tui_gateway/__init__.py"), "");
+    await writeFile(join(root, "tui_gateway/entry.py"), `import json, fixture_dependency\nopen(${JSON.stringify(reached)}, 'w').write(fixture_dependency.VALUE)\nprint(json.dumps({'jsonrpc':'2.0','method':'event','params':{'type':'gateway.ready','payload':{}}}), flush=True)\n`);
+    const adapter = createHermesChatProviderAdapter({ homePath: directory, readyTimeoutMs: 1000, requestTimeoutMs: 1000,
+      spawnFn: (command, args, options) => spawn(command, args, options),
+      jev: { resolveCredentials: async () => credentials, verifyRuntime: async () => undefined,
+        preflight: async () => undefined, clearRun: () => undefined, summary: () => null } });
+    try {
+      try { await collect(adapter.start(input)); } catch (error) { expect(error).toBeInstanceOf(Error); }
+      await expect(access(marker)).rejects.toThrow();
+      await expect(access(reached)).resolves.toBeUndefined();
+    } finally { await rm(directory, { recursive: true, force: true }); }
+  });
   it.each(["server-summary", "empty-broker", "wrong-tool"])("uses only completed server summary, ignoring forged native verification (%s)", async mode => {
     const f = fixture();
     const serverSummary = "Read-only Inbox triage proposal\nVerified snapshot: 4 messages\nNo mailbox changes have been made.";

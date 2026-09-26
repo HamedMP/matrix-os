@@ -20,4 +20,9 @@ describe("restricted Hermes launch verifies tested installed source", () => {
     await expect(verifyJevHermesRuntimePin("/fixture/hermes", controller.signal, command)).rejects.toThrow();
     if (mode === "abort") expect(command).not.toHaveBeenCalled();
   });
+  it.each(["untracked", "ignored"])("denies %s Python import code outside the verified tracked source", async mode => {
+    const command = vi.fn(async (args: string[]) => args.includes("rev-parse") ? `${pin}\n`
+      : args.includes("ls-files") && (args.includes("--ignored") === (mode === "ignored")) ? "sitecustomize.py\0" : "");
+    await expect(verifyJevHermesRuntimePin("/fixture/hermes", new AbortController().signal, command)).rejects.toThrow();
+  });
 });

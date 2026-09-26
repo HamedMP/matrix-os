@@ -37,6 +37,16 @@ it("coalesces exact owner observations, isolates another owner, and revokes only
   const rows = await db.executor.selectFrom("ai_runtime_credentials").select(["owner_id", "revoked_at"]).execute();
   expect(rows).toHaveLength(2); expect(rows.every(row => row.revoked_at !== null)).toBe(true);
 });
+it("a settled readiness probe leaves the first ordinary credential available within thirty seconds", async () => {
+  const f = await fixture();
+  expect((await f.service.probe(JEV_MODEL_ID, { runtime: f.runtime("a") })).ready).toBe(true);
+  const ordinary = await f.repository.issueRuntimeCredential(f.runtime("a").identity);
+  expect(ordinary.identity).toEqual(f.runtime("a").identity);
+  await expect(f.repository.issueRuntimeCredential(f.runtime("a").identity)).rejects.toMatchObject({ code: "rate_limited" });
+  const row = await db.executor.selectFrom("ai_runtime_credentials").select("revoked_at")
+    .where("token_id", "=", ordinary.credential.tokenId).executeTakeFirstOrThrow();
+  expect(row.revoked_at).toBeNull();
+});
 it("never probes Jev without explicit exact runtime identity and revisions", async () => {
   const f = await fixture();
   expect((await f.service.probe(JEV_MODEL_ID)).ready).toBe(false);

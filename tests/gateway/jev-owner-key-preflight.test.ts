@@ -7,7 +7,7 @@ import { AiProviderService } from "../../packages/gateway/src/ai-providers/servi
 import { ProviderSettingsStore } from "../../packages/gateway/src/ai-providers/provider-settings-store.js";
 import { createProductionJevInboxRuntime } from "../../packages/gateway/src/jev/inbox-production.js";
 
-async function fixture() {
+async function fixture(fundingSummaryReader?: import("../../packages/gateway/src/funded-ai-funding-summary-client.js").FundedAiFundingSummaryReader) {
   const directory = await mkdtemp(join(tmpdir(), "jev-owner-health-")); const homePath = join(directory, "home");
   await mkdir(join(homePath, "system/ai-providers"), { recursive: true });
   await writeFile(join(homePath, "system/config.json"), JSON.stringify({ kernel: { anthropicApiKey: "sk-ant-api03-synthetic-only" } }));
@@ -26,13 +26,30 @@ async function fixture() {
   // Exact production construction: no synthetic ready observation and no ambient credentials.
   const service = new AiProviderService({ homePath, env: {}, healthProbe: createOwnerAnthropicKeyPreflight({ homePath }), driverInventory: async () => [{ id: "hermes", displayName: "Hermes",
     kind: "cli", installState: "installed", health: "ready", capabilities: ["tools", "resume"], setupActions: [] }] });
-  const settings = new ProviderSettingsStore({ homePath, privateRootPath: join(directory, "private"), providerSnapshotReader: service });
+  const settings = new ProviderSettingsStore({ homePath, privateRootPath: join(directory, "private"), providerSnapshotReader: service, fundingSummaryReader });
   const runtime = createProductionJevInboxRuntime({ homePath, ownerId: "owner_fixture", settings, getAgent: async () => null,
     service: null, internalBaseUrl: null });
   return { homePath, settings, count,
     resolve: (signal = new AbortController().signal) => runtime.launch.resolveCredentials("owner_fixture", { instanceId: "hermes_default", model: "anthropic:claude-sonnet-5" }, signal),
     close: async () => { runtime.close(); service.close(); vi.unstubAllGlobals(); await rm(directory, { recursive: true, force: true }); } };
 }
+it("recipe resolution skips funding enrichment and cannot stall the next serialized ordinary read", async () => {
+  const release = Promise.withResolvers<never>();
+  const funding = { getFundingSummary: vi.fn(async () => release.promise) };
+  const f = await fixture(funding);
+  try {
+    const result = await Promise.race([f.resolve().then(() => "resolved"), new Promise(resolve => setTimeout(() => resolve("stalled"), 500))]);
+    expect(result).toBe("resolved"); expect(funding.getFundingSummary).not.toHaveBeenCalled();
+    funding.getFundingSummary.mockRejectedValue(new Error("Synthetic ordinary unavailable"));
+    await f.settings.getSnapshot({ refresh: true });
+    expect(funding.getFundingSummary).toHaveBeenCalledOnce();
+  } finally { release.reject(new Error("Synthetic release")); await f.close(); }
+});
+it("owner auth health fetch combines an explicit two-second timeout with caller cancellation", async () => {
+  const f = await fixture(); const timeout = vi.spyOn(AbortSignal, "timeout");
+  try { await f.resolve(); expect(timeout).toHaveBeenCalledWith(2_000); }
+  finally { timeout.mockRestore(); await f.close(); }
+});
 it("a production owner-key recipe gains exact-model auth health through V3, without a synthetic healthProbe", async () => {
   const f = await fixture();
   try {
