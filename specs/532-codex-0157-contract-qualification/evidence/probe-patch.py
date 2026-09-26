@@ -13,6 +13,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from probe_turns import await_turn
 from probe_rpc import Server
+from probe_responses import response_item
 
 
 SCRATCH = tempfile.TemporaryDirectory(prefix="eng26-codex-spike-")
@@ -38,9 +39,7 @@ class MockHandler(BaseHTTPRequestHandler):
         outputs = [item for item in request.get("input", []) if item.get("type") == "function_call_output"]
         with BASE.joinpath("mock-request-summary.jsonl").open("a") as log:
             log.write(json.dumps({"request_number": request_number, "path": self.path, "tool_names": names, "mcp_tool": next((tool for tool in request.get("tools", []) if tool.get("name") == "mcp__matrix_integrations"), None), "function_call_outputs": outputs}) + "\n")
-        item = ({"type": "function_call", "call_id": f"call_scope_{request_number}", "namespace": "mcp__matrix_integrations", "name": "echo_scope", "arguments": "{}"}
-                if request_number % 2 == 1 else
-                {"type": "message", "role": "assistant", "id": f"msg_spike_{request_number}", "content": [{"type": "output_text", "text": "mock answer"}]})
+        item = response_item(request)
         events = [
             {"type": "response.created", "response": {"id": f"resp_spike_{request_number}"}},
             {"type": "response.output_item.done", "item": item},
