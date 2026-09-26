@@ -165,7 +165,7 @@ it.each(["pi", "opencode"] as const)("recovers exact saved %s intent after its c
   expect(mutate).not.toHaveBeenCalledWith(expect.objectContaining({ accessSourceId: "owner_anthropic_key" }));
 });
 
-it.each(["missing source", "changed binding", "wrong provider", "wrong harness", "wrong account", "wrong model", "stale", "null refresh"])("denies catalog recovery with %s and never substitutes the ready key", async (negative) => {
+it.each(["missing source", "changed binding", "wrong provider", "wrong harness", "wrong account", "wrong model", "stale", "catalog still unavailable", "alternate key same ID", "changed selected account", "null refresh"])("denies catalog recovery with %s and never substitutes the ready key", async (negative) => {
   const snapshot = await projected("pi", false, false, true, false, false, true);
   const fresh = await projected("pi", true);
   const native = fresh.accessSources.find((source) => source.kind === "harness_profile")!;
@@ -176,6 +176,9 @@ it.each(["missing source", "changed binding", "wrong provider", "wrong harness",
   if (negative === "wrong account") native.accountId = "other_account";
   if (negative === "wrong model") native.eligibleModelIds = [];
   if (negative === "stale") native.localObservation!.staleAfter = new Date(Date.now() - 1).toISOString();
+  if (negative === "catalog still unavailable") fresh.harnesses[0]!.routeAvailability = "catalog_unavailable";
+  if (negative === "changed selected account") fresh.harnesses[0]!.selectedAccountId = "other_account";
+  if (negative === "alternate key same ID") { native.kind = "provider_account"; native.accountId = "owner_anthropic"; native.readiness.state = "ready"; }
   const refresh = vi.fn().mockResolvedValue(negative === "null refresh" ? null : fresh);
   const mutate = mount(snapshot, refresh);
   fireEvent.click(screen.getByRole("button", { name: /Own account/ }));
