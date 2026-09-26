@@ -11,8 +11,12 @@ const hash = (s: string) => `sha256:${createHash("sha256").update(s).digest("hex
 it("reconciles owner edits made during initial publication before the watcher handoff", async () => {
   const root = await mkdtemp(join(tmpdir(), "mirror-startup-handoff-"));
   const r2 = createFakeR2(); const db = createFakeManifestDb();
+  const diagnostics: string[] = [];
   const mirror = createHomeMirror({ r2, manifestDb: db, homeRoot: root,
-    userId: "synthetic-owner", peerId: "synthetic-peer", logger: { info: () => {}, error: () => {} } });
+    userId: "synthetic-owner", peerId: "synthetic-peer", logger: {
+      info: message => { if (diagnostics.length < 40) diagnostics.push(message.split(" ").slice(0, 3).join(" ")); },
+      error: () => { if (diagnostics.length < 40) diagnostics.push("mirror_error"); },
+    } });
   let release!: () => void; let entered!: () => void;
   const pending = new Promise<void>(resolve => { release = resolve; });
   const arrived = new Promise<void>(resolve => { entered = resolve; });
@@ -31,7 +35,9 @@ it("reconciles owner edits made during initial publication before the watcher ha
     await vi.waitFor(async () => {
       const current = await readManifest({ r2, db }, "synthetic-owner");
       expect(current.manifest.files["probe.md"]?.hash).toBe(hash("watcher control"));
-    }, { timeout: 3_000, interval: 25 });
+    }, { timeout: 3_000, interval: 25 }).catch(error => {
+      console.error("synthetic watcher diagnostic", diagnostics); throw error;
+    });
     const current = await readManifest({ r2, db }, "synthetic-owner");
     expect(current.manifest.files["system/soul.md"]?.hash).toBe(hash("new owner synthetic soul"));
     expect(await readFile(join(root, "system/soul.md"), "utf8")).toBe("new owner synthetic soul");

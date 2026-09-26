@@ -1449,18 +1449,9 @@ describe("createHomeMirror", () => {
     it("batches startup manifest persistence into a single locked write", async () => {
       await writeFile(join(tmpRoot, "one.md"), "one");
       await writeFile(join(tmpRoot, "two.md"), "two");
-      const upsertMeta = vi.fn(async () => {});
-      const advanceMeta = vi.fn(async () => true);
-      const lockSpy = vi.fn(async (_userId: string, fn: (executor: unknown) => Promise<unknown>) => fn(undefined));
-
-      db = {
-        async getManifestMeta() {
-          return null;
-        },
-        upsertManifestMeta: upsertMeta,
-        advanceManifestMeta: advanceMeta,
-        withAdvisoryLock: lockSpy,
-      } as unknown as ManifestDb;
+      db = createFakeManifestDb();
+      const advanceMeta = vi.spyOn(db, "advanceManifestMeta");
+      const lockSpy = vi.spyOn(db, "withAdvisoryLock");
 
       const mirror = createHomeMirror({
         r2,
@@ -1475,6 +1466,7 @@ describe("createHomeMirror", () => {
 
       expect(lockSpy).toHaveBeenCalledTimes(1);
       expect(advanceMeta).toHaveBeenCalledTimes(1);
+      expect((await db.getManifestMeta("alice"))?.version).toBe(1);
 
       await mirror.stop();
     });
@@ -1483,18 +1475,9 @@ describe("createHomeMirror", () => {
       for (let i = 0; i < 51; i++) {
         await writeFile(join(tmpRoot, `batch-${i}.md`), `file-${i}`);
       }
-      const upsertMeta = vi.fn(async () => {});
-      const advanceMeta = vi.fn(async () => true);
-      const lockSpy = vi.fn(async (_userId: string, fn: (executor: unknown) => Promise<unknown>) => fn(undefined));
-
-      db = {
-        async getManifestMeta() {
-          return null;
-        },
-        upsertManifestMeta: upsertMeta,
-        advanceManifestMeta: advanceMeta,
-        withAdvisoryLock: lockSpy,
-      } as unknown as ManifestDb;
+      db = createFakeManifestDb();
+      const advanceMeta = vi.spyOn(db, "advanceManifestMeta");
+      const lockSpy = vi.spyOn(db, "withAdvisoryLock");
 
       const mirror = createHomeMirror({
         r2,
@@ -1509,6 +1492,7 @@ describe("createHomeMirror", () => {
 
       expect(lockSpy).toHaveBeenCalledTimes(2);
       expect(advanceMeta).toHaveBeenCalledTimes(2);
+      expect((await db.getManifestMeta("alice"))?.version).toBe(2);
 
       await mirror.stop();
     });

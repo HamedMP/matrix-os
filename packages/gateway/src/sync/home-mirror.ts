@@ -1042,6 +1042,14 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
         return;
       }
 
+      // Reconcile edits made during the initial push before ignoreInitial watcher
+      // registration. Later edits already enter the same serial publication queue.
+      await initialPush();
+      if (stopRequested) {
+        await releaseResources();
+        return;
+      }
+
       readyForFlush = true;
       log.info(`home mirror started for ${config.homeRoot} (peer=${config.peerId})`);
       } catch (error: unknown) {
