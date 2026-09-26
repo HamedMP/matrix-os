@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { lstat, mkdir, realpath, rename, unlink, writeFile } from "node:fs/promises";
-import { dirname, join, relative, sep } from "node:path";
-import { watch, type FSWatcher } from "chokidar";
+import { dirname, join, sep } from "node:path";
 import { z } from "zod/v4";
 import type { SyncScope } from "@matrix-os/contracts";
 import {
@@ -17,7 +16,6 @@ import {
   hashBuffer,
   hashFileStream,
   readLocalFileForPush,
-  waitForWatcherReady,
   type LocalPushFile,
 } from "./home-mirror-io.js";
 import {
@@ -31,6 +29,7 @@ import {
   shouldPruneHomeMirrorPath,
 } from "./home-mirror-ignore.js";
 import { cleanupTempFiles, collectLocalFiles } from "./home-mirror-walk.js";
+import { HomeMirrorWatcher } from "./home-mirror-watcher.js";
 import type { SyncIgnorePatterns } from "@finnaai/matrix";
 import {
   buildBlobKey,
@@ -129,10 +128,6 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
   const tempCleanupIntervalMs = config.tempCleanupIntervalMs ?? DEFAULT_TEMP_CLEANUP_INTERVAL_MS;
   const tempFileMaxAgeMs = config.tempFileMaxAgeMs ?? DEFAULT_TEMP_FILE_MAX_AGE_MS;
 
-  // `watcher` is the live local watcher; `pendingWatcher` is a replacement
-  // that is still scanning during a policy rebuild. Both are closed on stop.
-  let watcher: FSWatcher | null = null;
-  let pendingWatcher: FSWatcher | null = null;
   let stopRequested = false;
   let subscribed = false;
   let resolvedHomeRoot = config.homeRoot;
@@ -146,7 +141,6 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
   // Incremented by start()/stop() so queued policy refreshes from an older
   // lifecycle can never start watchers or pushes after a stop or restart.
   let lifecycleGeneration = 0;
-  let watcherTaskChain: Promise<void> = Promise.resolve();
   let localWatchingEnabled = false;
   let tempCleanupTimer: ReturnType<typeof setInterval> | null = null;
   let tempCleanupInFlight: Promise<void> | null = null;
@@ -158,6 +152,14 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
   const walkFilters = { pruned, ignored, log, signal: () => shutdownSignal };
   const isCurrentLifecycle = (generation: number): boolean =>
     !stopRequested && generation === lifecycleGeneration;
+  const watchers = new HomeMirrorWatcher({
+    homeRoot: config.homeRoot,
+    pruned,
+    onEvent: onLocalEvent,
+    onError: (message) => log.error(message),
+    isCurrent: isCurrentLifecycle,
+    onReady: config.onLocalWatcherReady,
+  });
 
   /** Reload owner policy from disk; returns the previous policy when it changed. */
   async function reloadUserIgnorePatterns(): Promise<SyncIgnorePatterns | null> {
@@ -245,10 +247,7 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
       config.peerRegistry.removePeer(registryKey, config.peerId);
       subscribed = false;
     }
-    const watchers = [watcher, pendingWatcher].filter((w): w is FSWatcher => w !== null);
-    watcher = null;
-    pendingWatcher = null;
-    await Promise.all(watchers.map((w) => w.close()));
+    await watchers.close();
   }
 
   async function withManifestLock<T>(
@@ -834,18 +833,7 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
     tempCleanupTimer.unref?.();
   }
 
-  // Watcher creation, policy rebuilds, and newly-included publication all
-  // run on this chain so at most one replacement watcher exists at a time.
-  function runWatcherTask(task: () => Promise<void>): Promise<void> {
-    const next = watcherTaskChain.then(task, task);
-    watcherTaskChain = next.catch((err: unknown) => {
-      log.error("home mirror watcher task failed:", errorMessage(err));
-    });
-    return next;
-  }
-
-  function onLocalEvent(kind: "push" | "delete", absPath: string): void {
-    const rel = relative(config.homeRoot, absPath);
+  function onLocalEvent(kind: "push" | "delete", rel: string): void {
     if (wasJustWritten(rel)) return;
     if (kind === "push") {
       pushFile(rel).catch((err: unknown) => log.error(`push failed for ${rel}: ${errorMessage(err)}`));
@@ -854,51 +842,41 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
     }
   }
 
-  // Start a watcher using the current policy and wait for its initial scan
-  // so writes immediately after readiness are not missed on slow
-  // filesystems. Returns null when the lifecycle ended while scanning.
-  async function startLocalWatcher(generation: number): Promise<FSWatcher | null> {
-    const next = watch(config.homeRoot, {
-      persistent: true,
-      ignoreInitial: true,
-      awaitWriteFinish: { stabilityThreshold: 250, pollInterval: 100 },
-      // Directory pruning only; event handlers apply the file-level policy.
-      ignored: (absPath) => pruned(relative(config.homeRoot, absPath)),
-    });
-    pendingWatcher = next;
-    next.on("add", (absPath) => onLocalEvent("push", absPath));
-    next.on("change", (absPath) => onLocalEvent("push", absPath));
-    next.on("unlink", (absPath) => onLocalEvent("delete", absPath));
-    next.on("error", (err: unknown) => {
-      log.error(`home mirror watcher error: ${errorMessage(err)}`);
-    });
-    try {
-      await waitForWatcherReady(next);
-    } catch (err: unknown) {
-      if (pendingWatcher === next) pendingWatcher = null;
-      await next.close();
-      throw err;
-    }
-    if (pendingWatcher === next) pendingWatcher = null;
-    if (!isCurrentLifecycle(generation)) {
-      await next.close();
-      return null;
-    }
-    return next;
-  }
-
-  // Swap in a watcher built from the current policy. The replacement is
-  // ready before the old watcher closes, so no local events fall into a gap;
-  // overlapping events are idempotent because pushes compare hashes.
   async function replaceLocalWatcher(generation: number): Promise<void> {
     if (!localWatchingEnabled || !isCurrentLifecycle(generation)) return;
-    const next = await startLocalWatcher(generation);
-    if (!next) return;
-    const previous = watcher;
-    watcher = next;
-    if (previous) await previous.close();
-    if (!isCurrentLifecycle(generation)) return;
-    config.onLocalWatcherReady?.();
+    await watchers.replace(generation);
+  }
+
+  // Apply peer state for paths the new owner policy newly includes, through
+  // the same reconciliation as every other pull: unambiguous peer versions
+  // and deletions land in the home; ambiguous divergence is recorded, not
+  // resolved in either direction. Runs inside the serial queue.
+  async function pullNewlyIncluded(
+    previousPolicy: SyncIgnorePatterns,
+    generation: number,
+  ): Promise<void> {
+    const { manifest } = await readManifest(store, scope);
+    for (const [relPath, entry] of Object.entries(manifest.files)) {
+      if (!isCurrentLifecycle(generation)) return;
+      if (!entry.hash || ignored(relPath)) continue;
+      if (!isHomeMirrorIgnored(relPath, extraIgnore, previousPolicy)) continue;
+      try {
+        if (!entry.deleted) {
+          await pullFile(relPath, entry);
+          continue;
+        }
+        const safeRelPath = normalizeRelativePath(config.userId, relPath);
+        const local = await readLocalFileForPush(join(config.homeRoot, safeRelPath), maxPushBytes);
+        // The peer deleted exactly the bytes held here: that version is the
+        // shared baseline, so applying the deletion loses no local edit.
+        if (local.kind === "file" && local.hash === entry.hash && localState.hash(safeRelPath) === undefined) {
+          await localState.remember(safeRelPath, entry.hash);
+        }
+        await pullDelete(safeRelPath);
+      } catch (err: unknown) {
+        log.error(`policy refresh pull failed for ${relPath}:`, errorMessage(err));
+      }
+    }
   }
 
   // Publish files the new owner policy newly includes. They go through the
@@ -917,13 +895,16 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
     );
   }
 
-  // Rebuild watches and publish files the new owner policy newly includes.
+  // Rebuild watches, then apply peer state and publish local files for paths
+  // the new owner policy newly includes.
   // Never rejects; failures are logged and the last watcher stays active.
   function schedulePolicyRefresh(previousPolicy: SyncIgnorePatterns): Promise<void> {
     const generation = lifecycleGeneration;
-    return runWatcherTask(async () => {
+    return watchers.run(async () => {
       if (!isCurrentLifecycle(generation)) return;
       await replaceLocalWatcher(generation);
+      if (!isCurrentLifecycle(generation)) return;
+      await enqueue(() => pullNewlyIncluded(previousPolicy, generation));
       if (!isCurrentLifecycle(generation)) return;
       await pushNewlyIncluded(previousPolicy, generation);
     }).catch((err: unknown) => {
@@ -999,7 +980,7 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
 
       localWatchingEnabled = true;
       try {
-        await runWatcherTask(() => replaceLocalWatcher(generation));
+        await watchers.run(() => replaceLocalWatcher(generation));
       } catch (err: unknown) {
         // Watcher errored before reaching ready -- close it (and any
         // other resources start() acquired) so we don't leak inotify
@@ -1047,7 +1028,7 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
               await releaseResources();
               // Let an in-flight rebuild observe the stop and close its
               // replacement, and let a running temp sweep finish.
-              await watcherTaskChain;
+              await watchers.idle();
               await tempCleanupInFlight;
               await releaseResources();
               await queue.drain();

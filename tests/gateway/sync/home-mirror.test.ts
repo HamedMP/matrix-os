@@ -1289,29 +1289,43 @@ describe("createHomeMirror", () => {
         await mirror.stop();
       });
 
-      it("never resurrects a peer deletion when policy re-includes the path", async () => {
-        await writeFile(join(tmpRoot, "dynamic", "gone.md"), "v1");
-        await writeFile(join(tmpRoot, "dynamic", "edited.md"), "local edit");
-        seedRemote({
-          "dynamic/gone.md": { hash: sha256(Buffer.from("v1")), deleted: true },
-          "dynamic/edited.md": { hash: sha256(Buffer.from("v1")), deleted: true },
-        });
+      it("pulls peer files added while the path was excluded", async () => {
+        const peerOnly = Buffer.from("added by peer while excluded");
+        seedRemote({ "dynamic/remote-only.md": { body: peerOnly, hash: sha256(peerOnly) } });
 
         const { mirror } = await startThenReinclude("# dynamic synced\n");
 
-        const manifest = storedManifest(r2);
-        for (const path of ["dynamic/gone.md", "dynamic/edited.md"]) {
-          expect((manifest?.files[path] as { deleted?: boolean } | undefined)?.deleted).toBe(true);
-        }
-        expect(await readFile(join(tmpRoot, "dynamic", "gone.md"), "utf8")).toBe("v1");
-        expect(await readFile(join(tmpRoot, "dynamic", "edited.md"), "utf8")).toBe("local edit");
+        expect(await readFile(join(tmpRoot, "dynamic", "remote-only.md"), "utf8")).toBe("added by peer while excluded");
         await mirror.stop();
       });
 
-      it("keeps a peer re-add committed after the refresh snapshot", async () => {
+      it("applies a peer deletion of the exact local version when policy re-includes the path", async () => {
+        await writeFile(join(tmpRoot, "dynamic", "gone.md"), "v1");
+        seedRemote({ "dynamic/gone.md": { hash: sha256(Buffer.from("v1")), deleted: true } });
+
+        const { mirror } = await startThenReinclude("# dynamic synced\n");
+
+        await expect(stat(join(tmpRoot, "dynamic", "gone.md"))).rejects.toThrow(/ENOENT/);
+        expect((storedManifest(r2)?.files["dynamic/gone.md"] as { deleted?: boolean } | undefined)?.deleted).toBe(true);
+        await mirror.stop();
+      });
+
+      it("keeps a locally edited copy and the tombstone when a peer deleted an older version", async () => {
+        await writeFile(join(tmpRoot, "dynamic", "edited.md"), "local edit");
+        seedRemote({ "dynamic/edited.md": { hash: sha256(Buffer.from("v1")), deleted: true } });
+
+        const { mirror, logger } = await startThenReinclude("# dynamic synced\n");
+
+        expect((storedManifest(r2)?.files["dynamic/edited.md"] as { deleted?: boolean } | undefined)?.deleted).toBe(true);
+        expect(await readFile(join(tmpRoot, "dynamic", "edited.md"), "utf8")).toBe("local edit");
+        expect(logger.error.mock.calls.some((call) => String(call[0]).includes("delete_conflict_preserved"))).toBe(true);
+        await mirror.stop();
+      });
+
+      it("keeps a peer re-add committed after the publish snapshot", async () => {
         const deletedVersion = Buffer.from("v1");
         const readded = Buffer.from("v2 re-added by peer");
-        await writeFile(join(tmpRoot, "dynamic", "gone.md"), deletedVersion);
+        await writeFile(join(tmpRoot, "dynamic", "gone.md"), "local edit");
         seedRemote({ "dynamic/gone.md": { hash: sha256(deletedVersion), deleted: true } });
         const nextPolicy = Buffer.from("# dynamic synced\n");
         const scope = resolveSyncScope({ ownerId: "alice" });
@@ -1319,9 +1333,10 @@ describe("createHomeMirror", () => {
         r2.store.set(readdedKey, readded);
 
         // Simulate a peer re-adding the file right after the refresh takes its
-        // manifest snapshot (the first manifest read that already includes the
-        // new policy) but before the locked publish runs.
+        // publish snapshot (the second manifest read that already includes the
+        // new policy; the first is the pull side) but before the locked publish.
         let armed = true;
+        let matchingReads = 0;
         const originalGetObject = r2.getObject.bind(r2);
         r2.getObject = async (key: string) => {
           const result = await originalGetObject(key);
@@ -1329,6 +1344,7 @@ describe("createHomeMirror", () => {
           const raw = r2.store.get(key)!.toString("utf8");
           const parsed = JSON.parse(raw) as { files: Record<string, { hash: string }> };
           if (parsed.files[".syncignore"]?.hash !== sha256(nextPolicy)) return result;
+          if (++matchingReads < 2) return result;
           armed = false;
           const current = await readManifest({ r2, db }, scope);
           const next = applyCommitToManifest(
@@ -1344,7 +1360,7 @@ describe("createHomeMirror", () => {
 
         expect(armed).toBe(false);
         expect(storedManifest(r2)?.files["dynamic/gone.md"]?.hash).toBe(sha256(readded));
-        expect(await readFile(join(tmpRoot, "dynamic", "gone.md"), "utf8")).toBe("v1");
+        expect(await readFile(join(tmpRoot, "dynamic", "gone.md"), "utf8")).toBe("local edit");
         await mirror.stop();
       });
     });
