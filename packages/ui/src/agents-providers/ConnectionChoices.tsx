@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { isSupportedGenericHarnessCredentialRoute, type ProviderAccessSource, type ProviderHarnessInstance, type ProviderSettingsSnapshot } from "@matrix-os/contracts";
+import { isLocallyObservedNativeHarnessRoute, isSupportedGenericHarnessCredentialRoute, type ProviderAccessSource, type ProviderHarnessInstance, type ProviderSettingsSnapshot } from "@matrix-os/contracts";
+import { useLocalObservationExpiry } from "../local-observation-expiry.js";
 import type { ProviderSettingsMutationIntent } from "./types.js";
 
 /** Connection is a funding choice, never a synthetic model provider. */
@@ -16,14 +17,18 @@ export function ConnectionChoices({ snapshot, harness, gatewaySource, gatewaySel
 }) {
   const [pending, setPending] = useState(false);
   const [failed, setFailed] = useState(false);
+  useLocalObservationExpiry(snapshot.accessSources.map((source) => source.localObservation?.staleAfter));
   if ((harness.harness !== "pi" && harness.harness !== "opencode") || harness.installState !== "installed") return null;
   const ownTargets = snapshot.accessSources.flatMap((source) => {
     if (source.kind === "matrix_gateway") return [];
-    if (source.readiness.state !== "ready") return [];
     const provider = snapshot.modelProviders.find((candidate) => candidate.id === source.providerId);
     return provider?.models.filter((model) => model.enabled && source.eligibleModelIds.includes(model.id)
       && isSupportedGenericHarnessCredentialRoute({ ...harness, accessSourceId: source.id,
-        route: { kind: "configurable", providerId: source.providerId, modelId: model.id } }, source))
+        route: { kind: "configurable", providerId: source.providerId, modelId: model.id } }, source)
+      && (source.readiness.state === "ready" || isLocallyObservedNativeHarnessRoute({
+        ...harness, accessSourceId: source.id,
+        route: { kind: "configurable", providerId: source.providerId, modelId: model.id },
+      }, source)))
       .map((model) => ({ source, model })) ?? [];
   });
   const ownTarget = ownTargets.find(({ source, model }) => source.id === harness.accessSourceId && model.id === harness.route.modelId)
@@ -39,7 +44,7 @@ export function ConnectionChoices({ snapshot, harness, gatewaySource, gatewaySel
         ? await onMutate({ type: "set_route", harnessInstanceId: harness.id,
           route: { kind: "configurable", providerId: ownTarget.source.providerId, modelId: ownTarget.model.id },
           accessSourceId: ownTarget.source.id, accountId: ownTarget.source.accountId,
-          ...(ownTarget.source.readiness.state === "ready" && snapshot.atomicConnectSupported === true ? { enableHarness: true } : {}) })
+          ...(snapshot.atomicConnectSupported === true ? { enableHarness: true } : {}) })
         : await onSetupHarness?.();
       if (result === false) setFailed(true);
     } catch (error) {

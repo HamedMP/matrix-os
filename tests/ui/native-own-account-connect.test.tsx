@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import React from "react";
 import "@testing-library/jest-dom/vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ProviderAccessSource, ProviderHarnessInstance, ProviderSettingsSnapshot } from "@matrix-os/contracts";
 import { ConnectionChoices } from "../../packages/ui/src/agents-providers/ConnectionChoices";
@@ -43,7 +43,7 @@ function mount(kind: "pi" | "opencode", alter?: (source: ProviderAccessSource) =
   return { ...value, onMutate, onSetupHarness };
 }
 
-afterEach(cleanup);
+afterEach(() => { cleanup(); vi.useRealTimers(); });
 
 describe("native own-account connection", () => {
   it.each(["pi", "opencode"] as const)("atomically connects disabled %s through its exact fresh observed native profile", async (kind) => {
@@ -63,10 +63,23 @@ describe("native own-account connection", () => {
     ["wrong account", (s: ProviderAccessSource) => { s.accountId = "other_account"; }],
     ["missing model", (s: ProviderAccessSource) => { s.eligibleModelIds = []; }],
     ["denied", (s: ProviderAccessSource) => { s.readiness.state = "auth_required"; }],
+    ["future observation", (s: ProviderAccessSource) => { s.localObservation!.checkedAt = new Date(Date.now() + 30_000).toISOString(); }],
+    ["absent profile", (s: ProviderAccessSource) => { s.localObservation!.state = "absent"; }],
   ] as const)("does not activate %s native evidence", async (_name, alter) => {
     const { onMutate, onSetupHarness } = mount("pi", alter);
     fireEvent.click(screen.getByRole("button", { name: /Own account/ }));
     await waitFor(() => expect(onSetupHarness).toHaveBeenCalledOnce());
+    expect(onMutate).not.toHaveBeenCalled();
+  });
+
+  it("expires a mounted native connection option without activating stale evidence", async () => {
+    vi.useFakeTimers();
+    const { onMutate, onSetupHarness } = mount("pi", (source) => {
+      source.localObservation!.staleAfter = new Date(Date.now() + 50).toISOString();
+    });
+    await act(async () => { await vi.advanceTimersByTimeAsync(51); });
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: /Own account/ })); });
+    expect(onSetupHarness).toHaveBeenCalledOnce();
     expect(onMutate).not.toHaveBeenCalled();
   });
 });
