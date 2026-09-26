@@ -145,7 +145,13 @@ function ConnectedAgentsProvidersAdapter({
         setActionError(null);
         void controller.refresh();
       }}
+      onRefreshForConnection={async () => {
+        if (!isIdentityCurrent()) return null;
+        const snapshot = await controller.refreshForConnection();
+        return isIdentityCurrent() ? snapshot : null;
+      }}
       onMutate={(intent) => {
+        if (!isIdentityCurrent()) return Promise.resolve(false);
         setActionError(null);
         return controller.mutate(intent, {
           onLoginAction: (action) => {

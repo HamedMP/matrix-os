@@ -43,6 +43,11 @@ export function AgentSection({
         error={controller.error}
         onSelectHarness={controller.onSelectHarness}
         onRefresh={() => { void controller.refresh(); }}
+        onRefreshForConnection={async () => {
+          if (getGatewayUrl() !== identityKey) return null;
+          const snapshot = await controller.refreshForConnection();
+          return getGatewayUrl() === identityKey ? snapshot : null;
+        }}
         onMutate={(intent) => controller.mutate(intent, {
           onLoginAction: (action) => {
             if (getGatewayUrl() !== identityKey) return;

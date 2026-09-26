@@ -142,6 +142,13 @@ export class ProviderSettingsController {
     if (!this.disposed) await this.runRefresh(options.refresh ?? true);
   };
 
+  refreshForConnection = async (): Promise<ProviderSettingsSnapshot | null> => {
+    if (this.disposed) return null;
+    if (this.pendingMutations > 0) await this.mutationTail;
+    if (this.disposed || !await this.runRefresh(true) || this.disposed) return null;
+    return this.state.snapshot;
+  };
+
   mutate = (intent: ProviderSettingsMutationIntent, options?: ProviderSettingsMutationOptions): Promise<boolean> => {
     if (this.disposed) return Promise.resolve(false);
     this.pendingMutations += 1;
@@ -313,6 +320,7 @@ export class ProviderSettingsController {
 export interface UseProviderSettingsControllerResult extends ProviderSettingsControllerState {
   onSelectHarness: (harnessInstanceId: string) => void;
   refresh: () => Promise<void>;
+  refreshForConnection: () => Promise<ProviderSettingsSnapshot | null>;
   mutate: (intent: ProviderSettingsMutationIntent, options?: ProviderSettingsMutationOptions) => Promise<boolean>;
 }
 
@@ -366,6 +374,7 @@ export function useProviderSettingsController(
     ...state,
     onSelectHarness: controller.selectHarness,
     refresh: controller.refresh,
+    refreshForConnection: controller.refreshForConnection,
     mutate: controller.mutate,
   };
 }

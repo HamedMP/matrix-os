@@ -57,6 +57,7 @@ export interface AgentsProvidersViewProps {
   error?: string | null;
   onSelectHarness: (harnessInstanceId: string) => void;
   onRefresh: () => void;
+  onRefreshForConnection?: () => Promise<ProviderSettingsSnapshot | null>;
   onMutate: (intent: ProviderSettingsMutationIntent) => Promise<boolean> | void;
   onSetupHarness?: (harness: ProviderHarnessKind) => Promise<boolean>;
   onOpenTerminal: (terminalSessionId: string) => void;

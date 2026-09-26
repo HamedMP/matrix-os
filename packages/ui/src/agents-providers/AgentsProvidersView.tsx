@@ -30,6 +30,7 @@ export function AgentsProvidersView({
   error = null,
   onSelectHarness,
   onRefresh,
+  onRefreshForConnection,
   onMutate,
   onOpenTerminal,
   onOpenBrowser,
@@ -156,6 +157,7 @@ export function AgentsProvidersView({
               <ConnectionChoices snapshot={snapshot} harness={harness} gatewaySource={gatewaySource}
                 gatewaySelected={gatewaySelected} onUseGateway={useGateway} canSetRoute={genericConfiguration && supports("set_route")}
                 disabled={mutationsDisabled} onMutate={onMutate}
+                onRefreshForConnection={onRefreshForConnection}
                 onSetupHarness={onSetupHarness ? () => onSetupHarness(harness.harness) : undefined} />
               {!gatewaySelected || (harness.harness !== "pi" && harness.harness !== "opencode") || harness.accountIds.length > 0 ? <SavedAccounts collapsed={gatewaySelected && (harness.harness === "pi" || harness.harness === "opencode")}><AccountsPanel
                 harness={harness}
