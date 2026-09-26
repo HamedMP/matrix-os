@@ -10,6 +10,32 @@ const launcherPath = "distro/customer-vps/host-bin/matrix-integrations-mcp";
 const terminalPath = "distro/customer-vps/host-bin/matrix-integrations";
 
 describe("customer VPS integrations MCP wiring", () => {
+  it.each(["full", "custom-mcp-call", "custom-mcp-discovery"])("forwards the %s selector through the installed credential-isolating wrapper", async surface => {
+    const fixtureDir = await mkdtemp(join(tmpdir(), "matrix-mcp-surface-wrapper-"));
+    try {
+      const serverPath = join(fixtureDir, "server.cjs");
+      await writeFile(serverPath, `console.log(JSON.stringify({args:process.argv.slice(2),scoped:process.env.MATRIX_AGENT_INTEGRATIONS_TOKEN==="${"a".repeat(64)}",host:process.env.MATRIX_AUTH_TOKEN!==undefined,privateValue:process.env.PRIVATE_FIXTURE!==undefined}));`);
+      const launcher = (await readFile(launcherPath, "utf8"))
+        .replace('NODE_BIN="/opt/matrix/runtime/node/bin/node"', `NODE_BIN="${process.execPath}"`)
+        .replace('SERVER_PATH="/opt/matrix/app/packages/integrations-mcp/dist/cli.js"', `SERVER_PATH="${serverPath}"`);
+      const result = spawnSync("bash", ["-c", launcher, "surface-fixture", "--require-scoped-capability", `--tool-surface=${surface}`], {
+        encoding: "utf8", timeout: 5_000,
+        env: { PATH: process.env.PATH ?? "", MATRIX_AGENT_INTEGRATIONS_TOKEN: "a".repeat(64), MATRIX_AUTH_TOKEN: "must-not-forward", PRIVATE_FIXTURE: "must-not-forward" },
+      });
+      expect(result.status).toBe(0);
+      expect(JSON.parse(result.stdout)).toEqual({ args: [`--tool-surface=${surface}`], scoped: true, host: false, privateValue: false });
+    } finally { await rm(fixtureDir, { recursive: true, force: true }); }
+  });
+
+  it("rejects unknown or duplicate selector arguments before reading credentials", () => {
+    for (const args of [["--tool-surface=unknown"], ["--tool-surface=full", "--tool-surface=custom-mcp-call"]]) {
+      const result = spawnSync("bash", [launcherPath, ...args], { encoding: "utf8", env: { PATH: process.env.PATH ?? "" } });
+      expect(result.status).toBe(3);
+      expect(result.stderr).toContain("unsupported launcher arguments");
+      expect(result.stderr).not.toContain("Matrix identity is unavailable");
+    }
+  });
+
   it("fails a scoped canonical Chat launch before any host-bearer fallback", () => {
     const result = spawnSync("bash", [launcherPath, "--require-scoped-capability"], {
       encoding: "utf8",

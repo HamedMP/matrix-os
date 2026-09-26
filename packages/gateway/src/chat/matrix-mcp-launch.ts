@@ -29,14 +29,14 @@ export interface MatrixMcpRunContext {
 }
 
 /** The configured stdio server only exposes Matrix's stable broker contract. */
-export function matrixMcpConfig(): string {
+export function matrixMcpConfig(scope: "call" | "discovery" = "call"): string {
   return JSON.stringify({
     mcpServers: {
       "matrix-integrations": {
         command: "/opt/matrix/bin/matrix-integrations-mcp",
         // An argv flag survives MCP child environment sanitization and makes
         // the host launcher deny machine-bearer fallback for this Chat Run.
-        args: ["--require-scoped-capability"],
+        args: ["--require-scoped-capability", `--tool-surface=custom-mcp-${scope}`],
       },
     },
   });

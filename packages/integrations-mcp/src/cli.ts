@@ -1,12 +1,18 @@
 #!/usr/bin/env node
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 
-import { createIntegrationsMcpServer } from "./server.js";
-
-const server = createIntegrationsMcpServer();
-const transport = new StdioServerTransport();
+import { createIntegrationsMcpServer, IntegrationsMcpToolSurfaceSchema } from "./server.js";
 
 try {
+  const args = process.argv.slice(2);
+  if (args.length > 1 || (args.length === 1 && !args[0]!.startsWith("--tool-surface="))) {
+    throw new Error("Invalid tool surface arguments");
+  }
+  const toolSurface = IntegrationsMcpToolSurfaceSchema.parse(
+    args.length ? args[0]!.slice("--tool-surface=".length) : "full",
+  );
+  const server = createIntegrationsMcpServer({ toolSurface });
+  const transport = new StdioServerTransport();
   await server.connect(transport);
 } catch (err: unknown) {
   // stdout belongs exclusively to the MCP protocol.

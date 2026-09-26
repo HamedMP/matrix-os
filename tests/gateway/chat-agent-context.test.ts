@@ -145,6 +145,11 @@ describe("server-resolved Chat mention context", () => {
     expect(prompt).toContain("describe_service for each selected service before call_service");
     expect(prompt).toContain("ask the user which account to use");
     expect(prompt).toContain("do not grant write permission");
+    const deferred = contextPrompt("Prepare the next steps", prepared.context, { deferIntegrationGuidance: true });
+    expect(deferred).not.toContain("call list_integration_inventory");
+    expect(deferred).not.toContain("describe_service for each selected service");
+    expect(deferred).toContain("gmail (account not specified)");
+    expect(deferred).toContain("Read inbox and calendar without writing.");
 
     await writeFile(join(home, "skills/matrix/personal-daily-brief/SKILL.md"),
       "---\nname: matrix-personal-daily-brief\ndescription: Edited\nauthor: Matrix OS\n---\nEdited future instructions.\n");
@@ -223,4 +228,35 @@ describe("server-resolved Chat mention context", () => {
     expect(prepared.context?.chats[0]?.truncated).toBe(true);
     expect(prepared.context?.chats[0]?.text).not.toContain("INTERNAL_TOOL_OUTPUT");
   });
+});
+
+it("marks unavailable ordinary integration steps while retaining real pinned and custom skill text", async () => {
+  const resolver = createChatAgentRecipeResolver({
+    skillsRoot: join(process.cwd(), "skills/matrix"), services: [{ id: "gmail", name: "Gmail" }],
+  });
+  const recipe = await resolver.resolve({
+    skills: ["matrix-integrations"], integrations: [{ service: "gmail" }], output: "Public summary",
+  });
+  const bundledBody = recipe.skills[0]!.instructions;
+  expect(bundledBody).toContain("call `list_integration_inventory`");
+  expect(bundledBody).toContain("`call_service`");
+  const customBody = "Custom integration notes: retain this instruction exactly. Summarize the supplied public notes without using account tools.";
+  const context = {
+    version: 1 as const, requestHash: "a".repeat(64), chats: [],
+    agent: { id: "bot_12345678", revision: 1, name: "Pinned recipe", instructions: "Preserve all source instructions.",
+      recipe: { ...recipe, skills: [...recipe.skills, {
+        id: "custom-integration-notes", name: "Matrix Integrations Custom", instructions: customBody, sha256: "b".repeat(64),
+      }] } },
+  };
+  const annotation = "Ordinary Matrix integration steps in the pinned skills are unavailable on this route; do not execute them.";
+  const scoped = contextPrompt("Find public documentation", context, { deferIntegrationGuidance: true });
+  expect(scoped).toContain(annotation);
+  expect(scoped).toContain(bundledBody);
+  expect(scoped).toContain(customBody);
+  expect(scoped).not.toContain("Before making integration calls, call list_integration_inventory");
+  const full = contextPrompt("Find public documentation", context);
+  expect(full).not.toContain(annotation);
+  expect(full).toContain(bundledBody);
+  expect(full).toContain(customBody);
+  expect(full).toContain("Before making integration calls, call list_integration_inventory");
 });

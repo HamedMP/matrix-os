@@ -6,13 +6,28 @@ NODE_BIN="/opt/matrix/runtime/node/bin/node"
 SERVER_PATH="/opt/matrix/app/packages/integrations-mcp/dist/cli.js"
 
 require_scoped=false
-if [ "$#" -gt 0 ]; then
-  if [ "$#" -ne 1 ] || [ "$1" != "--require-scoped-capability" ]; then
-    echo "matrix-integrations-mcp: unsupported launcher arguments" >&2
-    exit 3
-  fi
-  require_scoped=true
-fi
+tool_surface="full"
+surface_seen=false
+for arg in "$@"; do
+  case "$arg" in
+    --require-scoped-capability)
+      if [ "$require_scoped" = true ]; then
+        echo "matrix-integrations-mcp: unsupported launcher arguments" >&2
+        exit 3
+      fi
+      require_scoped=true ;;
+    --tool-surface=full|--tool-surface=custom-mcp-call|--tool-surface=custom-mcp-discovery)
+      if [ "$surface_seen" = true ]; then
+        echo "matrix-integrations-mcp: unsupported launcher arguments" >&2
+        exit 3
+      fi
+      tool_surface="${arg#--tool-surface=}"
+      surface_seen=true ;;
+    *)
+      echo "matrix-integrations-mcp: unsupported launcher arguments" >&2
+      exit 3 ;;
+  esac
+done
 
 read_host_value() {
   local key value
@@ -87,7 +102,7 @@ if [ -n "$scoped_token" ]; then
     PATH="/opt/matrix/runtime/node/bin:/usr/local/bin:/usr/bin:/bin" \
     GATEWAY_URL="http://127.0.0.1:4000" \
     MATRIX_AGENT_INTEGRATIONS_TOKEN="$scoped_token" \
-    "$NODE_BIN" "$SERVER_PATH"
+    "$NODE_BIN" "$SERVER_PATH" "--tool-surface=$tool_surface"
 fi
 
 if [ ! -r "$HOST_ENV_FILE" ]; then
@@ -123,4 +138,4 @@ exec /usr/bin/env -i \
   GATEWAY_URL="http://127.0.0.1:4000" \
   MATRIX_AUTH_TOKEN="$MATRIX_AUTH_TOKEN_VALUE" \
   MATRIX_CLERK_USER_ID="$MATRIX_CLERK_USER_ID_VALUE" \
-  "$NODE_BIN" "$SERVER_PATH"
+  "$NODE_BIN" "$SERVER_PATH" "--tool-surface=$tool_surface"

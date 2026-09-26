@@ -84,7 +84,7 @@ describe("Claude canonical Chat Provider adapter", () => {
       expect(Object.keys(config.mcpServers)).toEqual(["matrix-integrations"]);
       expect(config.mcpServers["matrix-integrations"]).toEqual({
         command: "/opt/matrix/bin/matrix-integrations-mcp",
-        args: ["--require-scoped-capability"],
+        args: ["--require-scoped-capability", "--tool-surface=custom-mcp-call"],
       });
       expect(options.env.MATRIX_AGENT_INTEGRATIONS_TOKEN).toMatch(/^[a-f0-9]{64}$/);
 
@@ -123,6 +123,10 @@ describe("Claude canonical Chat Provider adapter", () => {
     })) { /* Drain. */ }
     expect(seen).toHaveLength(2);
     for (const { args, token } of seen) {
+      const config = JSON.parse(args[args.indexOf("--mcp-config") + 1]!);
+      expect(config.mcpServers["matrix-integrations"].args).toEqual([
+        "--require-scoped-capability", "--tool-surface=custom-mcp-discovery",
+      ]);
       expect(args.slice(args.indexOf("--permission-mode"), args.indexOf("--permission-mode") + 2))
         .toEqual(["--permission-mode", "plan"]);
       const settings = JSON.parse(args[args.indexOf("--settings") + 1]!) as {
