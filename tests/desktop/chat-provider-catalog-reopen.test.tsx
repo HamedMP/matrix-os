@@ -4,6 +4,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CanonicalProviderCatalogSchema, type CanonicalProviderCatalog } from "@matrix-os/contracts";
 import { HermesPane } from "../../desktop/src/renderer/src/features/chat/ChatTab";
+import { useBoard } from "../../desktop/src/renderer/src/stores/board";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
 import { useCodingAgentWorkspace } from "../../desktop/src/renderer/src/stores/coding-agent-workspace";
 import { CanonicalChatWorkspace } from "../../desktop/src/renderer/src/features/chat/CanonicalChatWorkspace";
@@ -40,7 +41,7 @@ function CatalogComposer({ api }: { api: { get: () => Promise<unknown> } }) {
     onSelectionChange={() => undefined} instanceLocked={false} onProviderPickerOpen={state.refresh} /></>;
 }
 const openPicker = () => fireEvent.click(screen.getByRole("button", { name: "Choose model and provider" }));
-afterEach(() => { cleanup(); useConnection.setState(useConnection.getInitialState(), true); useCodingAgentWorkspace.setState(useCodingAgentWorkspace.getInitialState(), true); });
+afterEach(() => { cleanup(); useConnection.setState(useConnection.getInitialState(), true); useCodingAgentWorkspace.setState(useCodingAgentWorkspace.getInitialState(), true); useBoard.setState(useBoard.getInitialState(), true); });
 describe("native Chat catalog freshness", () => {
   it("reloads saved-off truth when the normal picker is reopened without a cold restart", async () => {
     const get = vi.fn().mockResolvedValueOnce(oldCatalog).mockResolvedValue(newCatalog);
@@ -160,6 +161,34 @@ describe("native Chat catalog freshness", () => {
     await act(async () => undefined);
     if (savedOff) {
       expect(screen.getByText("Disabled in Settings")).not.toBeNull();
+      expect(screen.queryByText("Owner model")).toBeNull();
+    } else {
+      expect(trigger.getAttribute("data-provider-instance")).toBe("pi_owner");
+      expect(trigger.getAttribute("data-model")).toBe("model");
+    }
+  });
+
+  it.each([true, false])("keeps same-runtime truth when projects change and revalidation fails (savedOff=%s)", async (savedOff) => {
+    useBoard.setState({ projects: [] });
+    const trusted = catalog("trusted_before_project_change", savedOff);
+    let failRefresh = false;
+    const get = vi.fn(async (path: string) => {
+      if (!path.startsWith("/api/chat-providers")) return {};
+      if (failRefresh) throw new Error("refresh_unavailable");
+      return trusted;
+    });
+    window.operator = { invoke: vi.fn(async () => ({ ok: true })), on: vi.fn(() => () => undefined) };
+    render(<CanonicalChatWorkspace client={createCanonicalChatWorkspaceClient()}
+      api={{ get } as unknown as ApiClient} projectId={null} active initialView="draft" />);
+    const trigger = await screen.findByRole("button", { name: "Choose model and provider" });
+    await waitFor(() => expect(trigger.hasAttribute("disabled")).toBe(false));
+    failRefresh = true;
+    act(() => useBoard.setState({ projects: [{ slug: "new-project", name: "New project" }] }));
+    await waitFor(() => expect(get.mock.calls.filter(([path]) => path.startsWith("/api/chat-providers"))).toHaveLength(2));
+    await act(async () => undefined);
+    if (savedOff) {
+      fireEvent.click(trigger);
+      await screen.findByText("Disabled in Settings");
       expect(screen.queryByText("Owner model")).toBeNull();
     } else {
       expect(trigger.getAttribute("data-provider-instance")).toBe("pi_owner");
