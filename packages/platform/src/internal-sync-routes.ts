@@ -47,6 +47,7 @@ interface R2Client {
   putObject(
     key: string,
     body: string | Uint8Array | ReadableStream<Uint8Array>,
+    options?: { contentLength?: number },
   ): Promise<{ etag?: string }>;
   deleteObject(key: string): Promise<void>;
 }
@@ -608,8 +609,13 @@ export function createInternalSyncRoutes(opts: {
     }
     const allowed = requireAllowedKey(c, key);
     if (allowed instanceof Response) return allowed;
-    const body = c.req.raw.body ?? new Uint8Array();
-    const result = await opts.r2.putObject(key, body);
+    // Storage needs the exact length to stream; chunked bodies are buffered within the body limit.
+    const declared = c.req.header("content-length");
+    const contentLength = declared && /^\d{1,12}$/.test(declared) ? Number(declared) : undefined;
+    const result = contentLength !== undefined && c.req.raw.body
+      && contentLength <= INTERNAL_SYNC_OBJECT_BODY_LIMIT
+      ? await opts.r2.putObject(key, c.req.raw.body, { contentLength })
+      : await opts.r2.putObject(key, new Uint8Array(await c.req.arrayBuffer()));
     return c.json({ etag: result.etag ?? null });
   });
 

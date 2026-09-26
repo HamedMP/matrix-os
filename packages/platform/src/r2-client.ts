@@ -1,3 +1,5 @@
+import { Readable } from "node:stream";
+import type { ReadableStream as NodeWebReadableStream } from "node:stream/web";
 import { buildFileKey, buildManifestKey } from "./r2-keys.js";
 
 async function loadS3() {
@@ -40,7 +42,7 @@ export interface R2Client {
   putObject(
     key: string,
     body: string | Uint8Array | ReadableStream<Uint8Array>,
-    options?: { signal?: AbortSignal },
+    options?: { signal?: AbortSignal; contentLength?: number },
   ): Promise<{ etag?: string }>;
   headObject(
     key: string,
@@ -212,12 +214,17 @@ export async function createR2Client(config: R2ClientConfig): Promise<R2Client> 
     async putObject(
       key: string,
       body: string | Uint8Array | ReadableStream<Uint8Array>,
-      options?: { signal?: AbortSignal },
+      options?: { signal?: AbortSignal; contentLength?: number },
     ): Promise<{ etag?: string }> {
+      // The SDK's checksum middleware cannot hash a web stream or a stream of unknown length.
+      if (body instanceof ReadableStream && options?.contentLength === undefined) {
+        throw new Error("Streaming uploads require a content length");
+      }
       const command = new PutObjectCommand({
         Bucket: bucket,
         Key: key,
-        Body: body,
+        Body: body instanceof ReadableStream ? Readable.fromWeb(body as NodeWebReadableStream<Uint8Array>) : body,
+        ...(options?.contentLength !== undefined ? { ContentLength: options.contentLength } : {}),
       });
       const response = await s3.send(command, {
         abortSignal: options?.signal ?? AbortSignal.timeout(R2_WRITE_TIMEOUT_MS),

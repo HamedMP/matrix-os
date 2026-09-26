@@ -88,4 +88,28 @@ describe("platform R2 client", () => {
     });
     client.destroy();
   });
+
+  it("sends streamed bodies as a Node stream with their declared length", async () => {
+    const { S3Client, PutObjectCommand } = await import("@aws-sdk/client-s3");
+    const { Readable } = await import("node:stream");
+    const send = vi.spyOn(S3Client.prototype, "send").mockResolvedValue({ ETag: '"put"' } as never);
+    const client = await createR2Client({
+      endpoint: "https://r2.example.com",
+      accessKeyId: "access-key",
+      secretAccessKey: "secret-key",
+      bucket: "matrixos-sync",
+    });
+
+    await expect(client.putObject("user/files/a.bin", new Response("hello").body!, { contentLength: 5 }))
+      .resolves.toEqual({ etag: '"put"' });
+    const command = send.mock.calls[0]?.[0] as InstanceType<typeof PutObjectCommand>;
+    expect(command).toBeInstanceOf(PutObjectCommand);
+    expect(command.input.Body).toBeInstanceOf(Readable);
+    expect(command.input.ContentLength).toBe(5);
+
+    await expect(client.putObject("user/files/b.bin", new Response("hello").body!))
+      .rejects.toThrow("Streaming uploads require a content length");
+    expect(send).toHaveBeenCalledTimes(1);
+    client.destroy();
+  });
 });

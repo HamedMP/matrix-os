@@ -242,6 +242,23 @@ describe("R2 client", () => {
       expect(timeoutSpy).toHaveBeenLastCalledWith(30_000);
       expect(result.etag).toBe('"def456"');
     });
+
+    it("sends streamed bodies as a Node stream with their declared length", async () => {
+      mockSend.mockResolvedValue({ ETag: '"stream"' });
+      const { Readable } = await import("node:stream");
+
+      await client.putObject("key", new Response("hello").body!, { contentLength: 5 });
+
+      const [command] = mockSend.mock.calls[0]!;
+      expect(command.Body).toBeInstanceOf(Readable);
+      expect(command.ContentLength).toBe(5);
+    });
+
+    it("rejects a streamed body without a length instead of letting the SDK fail", async () => {
+      await expect(client.putObject("key", new Response("hello").body!))
+        .rejects.toThrow("Streaming uploads require a content length");
+      expect(mockSend).not.toHaveBeenCalled();
+    });
   });
 
   describe("deleteObject", () => {

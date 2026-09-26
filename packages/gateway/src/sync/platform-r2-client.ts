@@ -135,17 +135,22 @@ export function createPlatformR2Client(config: {
     async putObject(
       key: string,
       body: string | Uint8Array | ReadableStream<Uint8Array> | Readable,
-      options?: { signal?: AbortSignal },
+      options?: { signal?: AbortSignal; contentLength?: number },
     ): Promise<{ etag?: string }> {
+      // A declared length lets the broker stream to storage; without one it buffers within its body limit.
+      const streamed = !(body instanceof Uint8Array) && typeof body !== "string";
       const res = await request(`/object?key=${encodeURIComponent(key)}`, {
         method: "PUT",
+        ...(streamed && options?.contentLength !== undefined
+          ? { headers: { "content-length": String(options.contentLength) } }
+          : {}),
         body: body instanceof Uint8Array
           ? Buffer.from(body)
           : body instanceof Readable
             ? Readable.toWeb(body) as BodyInit
             : body,
         signal: options?.signal,
-        ...(body instanceof Readable ? { duplex: "half" } : {}),
+        ...(streamed ? { duplex: "half" } : {}),
       } as RequestInit & { duplex?: "half" }, INTERNAL_SYNC_WRITE_TIMEOUT_MS);
       const data = await expectJson<{ etag: string | null }>(res);
       return { etag: data.etag ?? undefined };

@@ -143,7 +143,7 @@ export async function finalizeStagedObject(input: {
 async function uploadValidatedBlob(r2: R2Client, key: string, path: string, size: number, signal: AbortSignal): Promise<void> {
   if (size <= 100 * 1024 * 1024) {
     const body = createReadStream(path);
-    try { await r2.putObject(key, body, { signal }); }
+    try { await r2.putObject(key, body, { signal, contentLength: size }); }
     finally { body.destroy(); }
     return;
   }
