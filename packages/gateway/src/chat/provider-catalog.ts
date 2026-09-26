@@ -579,6 +579,14 @@ function applyHarnessSettings(input: {
     const nativeTerminalProfile = (generic === "pi" || generic === "opencode")
       && instance.availability === "available"
       && input.credentialedDriverKinds?.includes(generic);
+    // configuredEnabled is the owner's saved switch; enabled is only the
+    // current route's operational projection. Native fallback cannot bypass
+    // an explicit off switch, even when that runtime is stopped.
+    if (configuredHarnesses.length > 0
+      && configuredHarnesses.every((harness) => harness.configuredEnabled === false)
+      && instance.availability !== "setup_required") {
+      return { ...unavailableInstance(instance, "disabled_in_settings"), setupActions: [] };
+    }
     if (settingsHarness !== null && input.settingsRequired && enabledHarnesses.length === 0) {
       if ((generic === "pi" || generic === "opencode")
         && configuredHarnesses.some((harness) => harness.routeAvailability === "catalog_unavailable")) {
@@ -590,11 +598,6 @@ function applyHarnessSettings(input: {
           : unavailableInstance(instance, "runtime_not_runnable");
       }
       return unavailableInstance(instance, "disabled_in_settings");
-    }
-    if (systemHarness !== null && instance.availability === "available" && executable
-      && configuredHarnesses.length > 0
-      && configuredHarnesses.every((harness) => harness.configuredEnabled === false)) {
-      return { ...unavailableInstance(instance, "disabled_in_settings"), setupActions: [] };
     }
     const enabledHarness = enabledHarnesses[0];
     const configuredInstance = enabledHarness

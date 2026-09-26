@@ -469,6 +469,41 @@ describe("canonical Chat Provider catalog", () => {
     },
   );
 
+  it.each(["pi", "opencode"] as const)(
+    "keeps explicitly saved-off %s unavailable despite a native Terminal profile",
+    async (kind) => {
+      const configured = { ...configuredHarness(kind, false), configuredEnabled: false };
+      const service = createChatProviderCatalogService({
+        codingProviders: codingRegistry([codingProvider({
+          id: kind,
+          displayName: configured.displayName,
+          kind,
+          availability: "available",
+          defaultModel: "openai:gpt-5.6-sol",
+          setupActions: [],
+        })]),
+        agentRuntimeSource: runtimeSource(),
+        harnessSettingsSource: harnessSettings([configured]),
+        executableDriverKinds: [kind],
+        credentialedDriverKinds: [kind],
+      });
+
+      const catalog = await service.getCatalog(principal);
+      const instance = catalog.instances.find((candidate) => candidate.id === `${kind}_default`)!;
+      expect(instance).toMatchObject({
+        availability: "unavailable",
+        unavailabilityReason: "disabled_in_settings",
+        models: [],
+        setupActions: [],
+      });
+      expect(instance.defaultSelection).toBeUndefined();
+      expect(validateChatProviderSelection({
+        catalog,
+        selection: { instanceId: instance.id, model: "openai:gpt-5.6-sol" },
+      })).toMatchObject({ ok: false, error: { code: "provider_unavailable" } });
+    },
+  );
+
   it.each([
     ["pi", "throws"] as const,
     ["pi", "returns no catalog"] as const,
@@ -628,7 +663,10 @@ describe("canonical Chat Provider catalog", () => {
     const service = createChatProviderCatalogService({
       codingProviders: codingRegistry([]),
       agentRuntimeSource: runtimeSource(),
-      harnessSettingsSource: harnessSettings([configuredHarness("pi", false)]),
+      harnessSettingsSource: harnessSettings([{
+        ...configuredHarness("pi", false),
+        configuredEnabled: false,
+      }]),
       executableDriverKinds: ["pi"],
       credentialedDriverKinds: ["pi"],
     });
@@ -842,6 +880,29 @@ describe("canonical Chat Provider catalog", () => {
       expect(settingsSnapshot).toEqual(savedSettings);
     },
   );
+
+  it("keeps saved-off OpenClaw inspectable when its installed runtime is stopped", async () => {
+    const service = createChatProviderCatalogService({
+      codingProviders: codingRegistry(),
+      agentRuntimeSource: runtimeSource(),
+      harnessSettingsSource: harnessSettings([{
+        ...configuredHarness("openclaw", false),
+        configuredEnabled: false,
+      }]),
+      executableDriverKinds: ["openclaw"],
+    });
+
+    const instance = (await service.getCatalog(principal)).instances.find((candidate) => (
+      candidate.id === "openclaw_default"
+    ));
+    expect(instance).toMatchObject({
+      availability: "unavailable",
+      unavailabilityReason: "disabled_in_settings",
+      models: [],
+      setupActions: [],
+    });
+    expect(instance?.defaultSelection).toBeUndefined();
+  });
 
   it("keeps native Hermes inventory available when a saved-on route projects as unavailable", async () => {
     const service = createChatProviderCatalogService({
@@ -1979,6 +2040,31 @@ describe("canonical Provider selection policy", () => {
 });
 
 describe("GET /api/chat-providers", () => {
+  it("returns a stopped saved-off OpenClaw as disabled without a Connect action", async () => {
+    const service = createChatProviderCatalogService({
+      codingProviders: codingRegistry(),
+      agentRuntimeSource: runtimeSource(),
+      harnessSettingsSource: harnessSettings([{
+        ...configuredHarness("openclaw", false),
+        configuredEnabled: false,
+      }]),
+      executableDriverKinds: ["openclaw"],
+    });
+    const app = new Hono().route("/", createChatProviderRoutes({
+      catalog: service,
+      getPrincipal: () => principal,
+    }));
+
+    const response = await app.request("/api/chat-providers?refresh=true&includeConnectionLabels=true");
+    expect(response.status).toBe(200);
+    const catalog = CanonicalProviderCatalogSchema.parse(await response.json());
+    expect(catalog.instances.find((instance) => instance.id === "openclaw_default")).toMatchObject({
+      availability: "unavailable",
+      unavailabilityReason: "disabled_in_settings",
+      setupActions: [],
+    });
+  });
+
   it("returns the safe catalog for the verified principal", async () => {
     const catalog = selectionCatalog();
     const getCatalog = vi.fn(async () => catalog);

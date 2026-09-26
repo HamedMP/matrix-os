@@ -168,4 +168,35 @@ describe("compact shared Chat choices", () => {
     expect(select).not.toHaveBeenCalled();
     expect(setup).not.toHaveBeenCalled();
   });
+
+  it.each([
+    ["openclaw", "OpenClaw", "system_agent"],
+    ["pi", "Pi", "coding_agent"],
+    ["opencode", "OpenCode", "coding_agent"],
+  ] as const)("shows saved-off %s without setup or selectable models", (kind, name, capabilityClass) => {
+    const select = vi.fn();
+    const setup = vi.fn();
+    const disabledInstance = {
+      ...catalog.instances[1]!, id: `${kind}_default`, driverKind: kind,
+      displayName: name, availability: "unavailable" as const,
+      unavailabilityReason: "disabled_in_settings" as const,
+      models: [], setupActions: [], defaultSelection: undefined,
+    };
+    const disabledCatalog: CanonicalProviderCatalog = {
+      ...catalog,
+      drivers: [{ kind, displayName: name, adapterVersion: "1", capabilityClass }],
+      instances: [disabledInstance],
+    };
+    render(<CompactChatProviderChoices catalog={disabledCatalog} choices={[]} selected={null}
+      onSelect={select} onSetupAction={setup} />);
+
+    const button = screen.getByRole("button", { name: `${name} agent, Disabled in Settings` });
+    expect(button).toBeEnabled();
+    fireEvent.click(button);
+    expect(screen.getByText("Disabled in Settings")).toBeVisible();
+    expect(screen.queryByRole("option")).toBeNull();
+    expect(screen.queryByRole("button", { name: `Connect ${name}` })).toBeNull();
+    expect(select).not.toHaveBeenCalled();
+    expect(setup).not.toHaveBeenCalled();
+  });
 });

@@ -312,7 +312,6 @@ function projectHarness(input: {
   const modelProvider = input.modelProviders.find((candidate) => candidate.id === input.stored.route.providerId);
   const model = modelProvider?.models.find((candidate) => candidate.id === input.stored.route.modelId);
   const routeAvailable = model?.enabled === true;
-  if (!routeAvailable && !input.catalogUnavailable) return null;
   const driverId = resolveProviderSettingsDriverId({
     driverId: input.stored.driverId,
     harness: input.stored.harness,
@@ -345,11 +344,11 @@ function projectHarness(input: {
     && (source.kind === "matrix_gateway" || sourceEligible)
     ? source.readiness
     : {
-    state: input.catalogUnavailable ? "unavailable" as const : "unknown" as const,
+    state: routeCatalogUnavailable ? "unavailable" as const : "unknown" as const,
     checkedAt: null,
     staleAfter: null,
     action: "retry" as const,
-    safeReason: input.catalogUnavailable ? "provider_unavailable" as const : "unknown" as const,
+    safeReason: routeCatalogUnavailable ? "provider_unavailable" as const : "unknown" as const,
   };
   const accounts = input.accounts.filter((account) => account.providerId === input.stored.route.providerId);
   const visibleMethods = input.loginMethods === undefined
