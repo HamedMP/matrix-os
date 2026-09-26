@@ -22,6 +22,11 @@ import type { Manifest, ManifestEntry } from "./types.js";
 import type { PeerRegistry, SyncPeerConnection } from "./ws-events.js";
 import { resolveSyncScope, syncScopeRegistryKey } from "./runtime-scope.js";
 import { finalizeStagedObject } from "./blob-publication.js";
+import { HomeMirrorState, MIRROR_STATE_DIR } from "./home-mirror-state.js";
+import { HomeMirrorReconciliation } from "./home-mirror-reconciliation.js";
+import { awaitMirrorOperation } from "./home-mirror-abort.js";
+import { streamToBuffer } from "./home-mirror-body.js";
+import { createMirrorR2 } from "./home-mirror-r2.js";
 
 const RECENT_WRITE_CAP = 50_000;
 const DEFAULT_MAX_PUSH_BYTES = 100 * 1024 * 1024;
@@ -47,6 +52,7 @@ const DEFAULT_IGNORE_DIRS = new Set([
   ".pnpm-store",
   ".vscode",
   "tmp",
+  MIRROR_STATE_DIR,
 ]);
 
 const DEFAULT_IGNORE_PATTERNS = [
@@ -127,6 +133,7 @@ function isIgnored(relPath: string, extraDirs?: Set<string>): boolean {
   // refuses to descend into it. Only ignore actual entries.
   if (!relPath || relPath === ".") return false;
   const normalizedPath = relPath.split(sep).join("/");
+  if (normalizedPath === ".matrix-version" || normalizedPath === ".template-manifest.json") return true;
   if (
     DEFAULT_IGNORE_PATH_PREFIXES.some((prefix) =>
       normalizedPath === prefix || normalizedPath.startsWith(`${prefix}/`)
@@ -227,80 +234,6 @@ function normalizeRelativePath(userId: string, relPath: string): string {
 
 // AWS SDK v3 returns its own stream type with `transformToByteArray()`,
 // NOT a Web ReadableStream -- calling .getReader() throws "is not a function".
-// Match what manifest.ts does for body decoding (transformToString fallback).
-async function streamToBuffer(body: unknown, maxBytes: number): Promise<Buffer> {
-  const anyBody = body as {
-    transformToByteArray?: () => Promise<Uint8Array>;
-    getReader?: () => ReadableStreamDefaultReader<Uint8Array>;
-    stream?: () => ReadableStream<Uint8Array>;
-    [Symbol.asyncIterator]?: () => AsyncIterator<unknown>;
-  };
-  const toChunk = (value: unknown): Buffer => {
-    if (Buffer.isBuffer(value)) {
-      return value;
-    }
-    if (value instanceof Uint8Array) {
-      return Buffer.from(value);
-    }
-    if (value instanceof ArrayBuffer) {
-      return Buffer.from(value);
-    }
-    if (ArrayBuffer.isView(value)) {
-      return Buffer.from(value.buffer, value.byteOffset, value.byteLength);
-    }
-    throw new Error("Unsupported R2 object chunk type");
-  };
-  const ensureWithinLimit = (size: number): void => {
-    if (size > maxBytes) {
-      throw new Error(`remote blob exceeded ${maxBytes} bytes`);
-    }
-  };
-  const readChunks = async (
-    chunks: AsyncIterable<unknown>,
-  ): Promise<Buffer> => {
-    const parts: Buffer[] = [];
-    let total = 0;
-    for await (const chunk of chunks) {
-      const buf = toChunk(chunk);
-      total += buf.length;
-      ensureWithinLimit(total);
-      parts.push(buf);
-    }
-    return Buffer.concat(parts);
-  };
-  if (typeof anyBody.getReader === "function") {
-    const reader = anyBody.getReader();
-    const chunks: Uint8Array[] = [];
-    let total = 0;
-    for (;;) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      if (value) {
-        total += value.length;
-        ensureWithinLimit(total);
-        chunks.push(value);
-      }
-    }
-    return Buffer.concat(chunks);
-  }
-  if (typeof anyBody.stream === "function") {
-    return streamToBuffer(anyBody.stream(), maxBytes);
-  }
-  if (typeof anyBody[Symbol.asyncIterator] === "function") {
-    return readChunks(body as AsyncIterable<unknown>);
-  }
-  if (body instanceof Uint8Array || body instanceof ArrayBuffer || ArrayBuffer.isView(body)) {
-    const buf = toChunk(body);
-    ensureWithinLimit(buf.length);
-    return buf;
-  }
-  if (typeof anyBody.transformToByteArray === "function") {
-    const bytes = await anyBody.transformToByteArray();
-    ensureWithinLimit(bytes.length);
-    return Buffer.from(bytes);
-  }
-  throw new Error("Unsupported R2 object body type");
-}
 
 export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
   const scope = config.scope ?? resolveSyncScope({ ownerId: config.userId });
@@ -318,6 +251,12 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
   let stopRequested = false;
   let subscribed = false;
   let resolvedHomeRoot = config.homeRoot;
+  let readyForFlush = false;
+  let lifecycle = new AbortController();
+  let shutdownSignal: AbortSignal | undefined;
+  let stopping: Promise<void> | undefined;
+  let shutdownDrained = true;
+  const r2 = createMirrorR2(config.r2, () => lifecycle.signal);
 
   function assertWithinResolvedHomeRoot(resolvedPath: string): void {
     if (
@@ -362,7 +301,18 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
     return true;
   };
 
-  const store = { r2: config.r2, db: config.manifestDb };
+  const store = { r2, db: config.manifestDb };
+  const localState = new HomeMirrorState(config.homeRoot, (category) => log.error(`mirror reconciliation: ${category}`));
+
+  const reconciliation = new HomeMirrorReconciliation(localState, async (relPath, entry) => {
+    const current = entry.objectKey ? null : await readManifest(store, scope);
+    const key = entry.objectKey ?? current?.manifest.files[relPath]?.objectKey ?? buildFileKey(scope, relPath);
+    const object = await r2.getObject(key);
+    if (!object.body || entry.size > maxPushBytes) throw new Error("conflict content unavailable");
+    const bytes = await awaitMirrorOperation(streamToBuffer(object.body, maxPushBytes, lifecycle.signal), lifecycle.signal);
+    if (bytes.length !== entry.size) throw new Error("conflict content size mismatch");
+    return bytes;
+  });
 
   async function ensureWritableParent(absPath: string): Promise<void> {
     const parentDir = dirname(absPath);
@@ -384,9 +334,11 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
   async function withManifestLock<T>(
     fn: (lockedStore: typeof store & { dbExecutor: ManifestDbExecutor }) => Promise<T>,
   ): Promise<T> {
-    return config.manifestDb.withAdvisoryLock(scope, async (dbExecutor) =>
-      fn({ ...store, dbExecutor }),
-    );
+    const signal = lifecycle.signal;
+    return config.manifestDb.withAdvisoryLock(scope, async (dbExecutor) => {
+      signal.throwIfAborted();
+      return fn({ ...store, dbExecutor });
+    });
   }
 
   // Broadcast a sync:change to every registered peer EXCEPT this mirror so
@@ -436,18 +388,20 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
       }
 
       const stagingId = randomUUID();
-      await config.r2.putObject(buildStagingKey(scope, stagingId), localFile.body);
+      await r2.putObject(buildStagingKey(scope, stagingId), localFile.body);
       const { objectKey } = await finalizeStagedObject({
-        r2: config.r2,
+        r2,
         scope,
         stagingId,
         expectedHash: localFile.hash,
         expectedSize: localFile.size,
+        signal: lifecycle.signal,
       });
 
       await withManifestLock(async (lockedStore) => {
         const existing = await readManifest(lockedStore, scope);
         const currentEntry = existing.manifest.files[safeRelPath];
+        if (!await reconciliation.canPublish(safeRelPath, localFile.hash, currentEntry)) return;
         if (currentEntry?.hash === localFile.hash && !currentEntry.deleted) {
           // Already in manifest with same hash -- skip the upload.
           return;
@@ -461,7 +415,9 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
         );
 
         const newVersion = existing.manifestVersion + 1;
+        lifecycle.signal.throwIfAborted();
         await writeManifest(lockedStore, scope, next, newVersion);
+        await localState.remember(safeRelPath, localFile.hash);
         broadcastChange({ path: safeRelPath, hash: localFile.hash, size: localFile.size, action }, newVersion);
         log.info(`pushed ${safeRelPath} (${localFile.size}B)`);
       });
@@ -470,12 +426,13 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
 
   async function pushDelete(relPath: string): Promise<void> {
     const safeRelPath = normalizeRelativePath(config.userId, relPath);
-    if (isIgnored(safeRelPath, extraIgnore)) return;
+    if (isIgnored(safeRelPath, extraIgnore) || localState.blocked(safeRelPath)) return;
     await enqueue(async () => {
       await withManifestLock(async (lockedStore) => {
         const existing = await readManifest(lockedStore, scope);
         const entry = existing.manifest.files[safeRelPath];
         if (!entry || entry.deleted) return;
+        if (entry.hash !== localState.hash(safeRelPath)) return;
 
         const next: Manifest = applyCommitToManifest(
           existing.manifest,
@@ -484,8 +441,10 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
         );
 
         const newVersion = existing.manifestVersion + 1;
+        lifecycle.signal.throwIfAborted();
         await writeManifest(lockedStore, scope, next, newVersion);
 
+        await localState.forget(safeRelPath);
         broadcastChange(
           { path: safeRelPath, hash: entry.hash, size: 0, action: "delete" },
           newVersion,
@@ -501,6 +460,7 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
     if (entry.size > maxPushBytes) {
       throw new Error(`remote file exceeds ${maxPushBytes} bytes`);
     }
+    let expectedHash: string | null = null;
     try {
       const localStat = await lstat(absPath);
       if (localStat.isSymbolicLink()) {
@@ -508,7 +468,8 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
       }
       if (localStat.isFile()) {
         const localHash = await hashFileStream(absPath);
-        if (localHash === entry.hash) return;
+        expectedHash = localHash;
+        if (!await reconciliation.shouldPull(safeRelPath, localHash, entry)) return;
       }
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
@@ -520,10 +481,10 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
       key = current.manifest.files[safeRelPath]?.objectKey
         ?? buildFileKey(scope, safeRelPath);
     }
-    const obj = await config.r2.getObject(key);
+    const obj = await r2.getObject(key);
     if (!obj.body) return;
 
-    const buf = await streamToBuffer(obj.body, maxPushBytes);
+    const buf = await awaitMirrorOperation(streamToBuffer(obj.body, maxPushBytes, lifecycle.signal), lifecycle.signal);
     if (buf.length !== entry.size) {
       throw new Error("downloaded blob size did not match manifest entry");
     }
@@ -535,9 +496,18 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
     try {
       await writeFile(tmpPath, buf, { flag: "wx" });
       assertWithinResolvedHomeRoot(await realpath(tmpPath));
-      markWritten(safeRelPath);
       await ensureWritableParent(absPath);
+      const current = await readLocalFileForPush(absPath, maxPushBytes);
+      const currentHash = current.kind === "file" ? current.hash : null;
+      if (currentHash !== expectedHash) {
+        await localState.preserve(safeRelPath, currentHash ?? hashBuffer(Buffer.alloc(0)), entry.hash, buf);
+        await unlink(tmpPath);
+        return;
+      }
+      lifecycle.signal.throwIfAborted();
+      markWritten(safeRelPath);
       await rename(tmpPath, absPath);
+      await localState.remember(safeRelPath, entry.hash);
       try {
         assertWithinResolvedHomeRoot(await realpath(absPath));
       } catch (err: unknown) {
@@ -637,9 +607,11 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
         `local file walk exceeded max depth of ${LOCAL_WALK_DEPTH_CAP}`,
       );
     }
+    shutdownSignal?.throwIfAborted();
     const entries = await readdir(dir, { withFileTypes: true });
 
     for (const entry of entries) {
+      shutdownSignal?.throwIfAborted();
       const relPath = relDir ? join(relDir, entry.name) : entry.name;
       if (isIgnored(relPath, extraIgnore)) continue;
       const absPath = join(dir, entry.name);
@@ -664,17 +636,18 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
     return files;
   }
 
-  async function initialPush(): Promise<void> {
+  async function initialPush(shutdownDeadline?: number): Promise<void> {
     const relPaths = await collectLocalFiles(config.homeRoot);
     if (relPaths.length === 0) return;
     const snapshot = await readManifest(store, scope);
     let pushed = 0;
 
-    for (let start = 0; start < relPaths.length; start += INITIAL_PUSH_CHUNK_SIZE) {
-      if (stopRequested) {
+    const chunkSize = shutdownDeadline ? 1 : INITIAL_PUSH_CHUNK_SIZE;
+    for (let start = 0; start < relPaths.length; start += chunkSize) {
+      if ((shutdownDeadline !== undefined && Date.now() >= shutdownDeadline) || (stopRequested && shutdownDeadline === undefined)) {
         return;
       }
-      const relPathChunk = relPaths.slice(start, start + INITIAL_PUSH_CHUNK_SIZE);
+      const relPathChunk = relPaths.slice(start, start + chunkSize);
       const localFiles: Array<{
         path: string;
         file: Extract<LocalPushFile, { kind: "file" }>;
@@ -693,9 +666,10 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
         }
         const snapshotEntry = snapshot.manifest.files[safeRelPath];
         if (snapshotEntry?.hash === localFile.hash && !snapshotEntry.deleted) {
+          await localState.remember(safeRelPath, localFile.hash);
           continue;
         }
-        localFiles.push({ path: safeRelPath, file: localFile });
+        if (!localState.blocked(safeRelPath)) localFiles.push({ path: safeRelPath, file: localFile });
       }
 
       if (localFiles.length === 0) {
@@ -706,13 +680,14 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
         const finalizedFiles: Array<(typeof localFiles)[number] & { objectKey: string }> = [];
         for (const local of localFiles) {
           const stagingId = randomUUID();
-          await config.r2.putObject(buildStagingKey(scope, stagingId), local.file.body);
+          await r2.putObject(buildStagingKey(scope, stagingId), local.file.body);
           const finalized = await finalizeStagedObject({
-            r2: config.r2,
+            r2,
             scope,
             stagingId,
             expectedHash: local.file.hash,
             expectedSize: local.file.size,
+            signal: lifecycle.signal,
           });
           finalizedFiles.push({ ...local, objectKey: finalized.objectKey });
         }
@@ -727,6 +702,7 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
           }> = [];
           for (const { path: safeRelPath, file: localFile, objectKey } of finalizedFiles) {
               const currentEntry = nextManifest.files[safeRelPath];
+              if (!await reconciliation.canPublish(safeRelPath, localFile.hash, currentEntry)) continue;
               if (currentEntry?.hash === localFile.hash && !currentEntry.deleted) {
                 continue;
               }
@@ -757,7 +733,9 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
           }
 
           const newVersion = existing.manifestVersion + 1;
+          lifecycle.signal.throwIfAborted();
           await writeManifest(lockedStore, scope, nextManifest, newVersion);
+          for (const file of changedFiles) await localState.remember(file.path, file.hash);
           broadcastChanges(changedFiles, newVersion);
           return changedFiles.length;
         });
@@ -780,11 +758,16 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
         log.error(`refusing to delete symlink ${safeRelPath}`);
         return;
       }
+      if (localStat.isFile() && await hashFileStream(absPath) !== localState.hash(safeRelPath)) {
+        log.error("mirror reconciliation: delete_conflict_preserved");
+        return;
+      }
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === "ENOENT") return;
       throw err;
     }
     await unlink(absPath);
+    await localState.forget(safeRelPath);
     markWritten(safeRelPath);
     log.info(`pulled delete ${safeRelPath}`);
   }
@@ -861,7 +844,13 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
 
   return {
     async start(): Promise<void> {
+      if (!shutdownDrained) throw new Error("mirror shutdown incomplete");
       stopRequested = false;
+      lifecycle = new AbortController();
+      shutdownSignal = undefined;
+      stopping = undefined;
+      readyForFlush = false;
+      try {
       await mkdir(config.homeRoot, { recursive: true });
       try {
         resolvedHomeRoot = await realpath(config.homeRoot);
@@ -873,6 +862,7 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
         resolvedHomeRoot = config.homeRoot;
       }
       if (stopRequested) return;
+      await localState.load();
       await cleanupTempFiles(config.homeRoot);
       if (stopRequested) return;
       await initialPull();
@@ -907,6 +897,7 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
       }
 
       if (config.watchLocalChanges === false) {
+        readyForFlush = true;
         log.info(`home mirror started for ${config.homeRoot} (peer=${config.peerId})`);
         return;
       }
@@ -982,13 +973,41 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
         return;
       }
 
+      readyForFlush = true;
       log.info(`home mirror started for ${config.homeRoot} (peer=${config.peerId})`);
+      } catch (error: unknown) {
+        if (!(error instanceof Error) || !stopRequested || error !== lifecycle.signal.reason) throw error;
+        // A concurrent explicit stop cancels startup without leaving a subscription.
+      }
     },
 
     async stop(): Promise<void> {
-      stopRequested = true;
-      await releaseResources();
-      await queue.drain();
+      if (stopping) return stopping;
+      stopping = (async () => {
+        stopRequested = true;
+        shutdownSignal = lifecycle.signal;
+        shutdownDrained = false;
+        const deadline = Date.now() + 10_000;
+        const timer = setTimeout(() => lifecycle.abort(new Error("mirror shutdown deadline exceeded")), 10_000);
+        try {
+          const work = (async () => {
+            try {
+              await releaseResources();
+              await queue.drain();
+              if (readyForFlush) await initialPush(deadline);
+            } finally { shutdownDrained = true; }
+          })();
+          await awaitMirrorOperation(work, lifecycle.signal);
+        } catch (error: unknown) {
+          log.error("mirror reconciliation: shutdown_flush_failed", error instanceof Error ? "error" : "non-error");
+        } finally {
+          clearTimeout(timer);
+          lifecycle.abort(new Error("mirror stopped"));
+          readyForFlush = false;
+          localState.close();
+        }
+      })();
+      return stopping;
     },
 
     async pushLocalFile(relPath: string): Promise<void> {

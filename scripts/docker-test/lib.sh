@@ -237,3 +237,35 @@ summary() {
     return 0
   fi
 }
+
+# Evidence of an accepted mirror publication, rather than a sleep or health-only gate.
+# The host-local hash is written only after the remote manifest commit succeeds.
+wait_for_mirror_hash() {
+  local container="$1"
+  local rel_path="$2"
+  local timeout="${3:-60}"
+  local elapsed=0
+  while [ "$elapsed" -lt "$timeout" ]; do
+    if $COMPOSE exec -T "$container" node -e '
+      const fs = require("node:fs");
+      const crypto = require("node:crypto");
+      const path = require("node:path");
+      const rel = process.argv[1];
+      if (!rel || path.isAbsolute(rel) || rel.split("/").some(p => p === ".." || p === "")) process.exit(1);
+      try {
+        const home = process.env.MATRIX_HOME;
+        const bytes = fs.readFileSync(path.join(home, rel));
+        const state = JSON.parse(fs.readFileSync(path.join(home, ".matrix-home-mirror/state.json"), "utf8"));
+        const hash = "sha256:" + crypto.createHash("sha256").update(bytes).digest("hex");
+        process.exit(state.hashes[rel] === hash && !state.conflicts[rel] ? 0 : 1);
+      } catch { process.exit(1); }
+    ' "$rel_path"; then
+      echo -e "  ${GREEN}READY${NC} Mirror accepted current content hash for $rel_path"
+      return 0
+    fi
+    sleep 2
+    elapsed=$((elapsed + 2))
+  done
+  echo -e "  ${RED}TIMEOUT${NC} Mirror did not accept current content hash for $rel_path"
+  return 1
+}

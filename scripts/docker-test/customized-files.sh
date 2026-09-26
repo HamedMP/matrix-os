@@ -36,6 +36,8 @@ assert_file_contains "dev" "/home/matrixos/home/system/soul.md" \
 assert_file_contains "dev" "/home/matrixos/home/.agents/skills/custom-skill/SKILL.md" \
   "CUSTOM" "skill has custom content before restart"
 
+wait_for_mirror_hash "dev" "system/soul.md"
+
 # Remove sync log to get fresh entries
 $COMPOSE exec -T dev rm -f /home/matrixos/home/system/logs/template-sync.log
 
