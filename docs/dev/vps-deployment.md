@@ -333,6 +333,12 @@ Replace the placeholders with the real values. `S3_ENDPOINT` and `S3_PUBLIC_ENDP
 
 Customer VPSes get machine-specific env through cloud-init and `/opt/matrix/env/host.env`. The host env includes `PLATFORM_INTERNAL_URL`, `UPGRADE_TOKEN`, `MATRIX_HANDLE`, and `DATABASE_URL`. It must not include R2/S3 credentials, a bucket-wide storage prefix, or platform-only secrets such as `PIPEDREAM_CLIENT_SECRET`. Storage and integration routes stay on the platform and are reached through `PLATFORM_INTERNAL_URL` using the per-host token.
 
+#### Organization drives
+
+An organization drive uses one selected member VPS as its temporary authority. That VPS owns the drive's Postgres index, versions, upload reservations and 1 TB default quota. Object bytes use opaque keys under that VPS's broker-scoped R2 prefix. The platform keeps organization membership and routing metadata; it does not hold file paths or content. To enable a drive, share a folder scope with the organization, then choose **Enable drive for organization** in Web Files. Current members activate the organization grant before using the drive from their own Web Desktop, Web Canvas or Web Mobile session. The initial direct upload limit is 100 MiB per file.
+
+Browser transfers to presigned R2 URLs require a bucket CORS rule for the exact deployed web origin. For example, set `AllowedOrigins` to `https://app.matrix-os.com`, `AllowedMethods` to `GET` and `PUT`, and `AllowedHeaders` to the headers the client actually sends. Add explicit development origins separately. Keep the bucket private; presigned URLs grant short-lived access. Cloudflare documents the [R2 CORS policy and presigned URL behavior](https://developers.cloudflare.com/r2/buckets/cors/). The packaged Electron Desktop renderer needs a native transfer bridge before it can use this drive.
+
 After editing platform `.env`, restart platform services on the platform VPS. After editing a customer VPS env file, restart that VPS's host services:
 
 ```bash
