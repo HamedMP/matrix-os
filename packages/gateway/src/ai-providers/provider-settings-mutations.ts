@@ -169,7 +169,8 @@ export function applyProviderConfigurationMutation(input: {
         && input.snapshot.accessSources.find((candidate) => candidate.id === account.accessSourceId);
       if (!account || !source || source.providerId !== harness.route.providerId
         || !source.eligibleModelIds.includes(harness.route.modelId)
-        || !genericHarnessRouteIsSupported({ ...harness, accessSourceId: source.id }, source)) {
+        || !genericHarnessRouteIsSupported({ ...harness, accessSourceId: source.id }, source)
+        || (harness.enabled && !mayEnableObservedNativeRoute({ ...harness, accessSourceId: source.id }, source, input.now ?? new Date()))) {
         throw new ProviderSettingsStoreError("invalid_route", 400);
       }
       harness.selectedAccountId = account.id;
@@ -184,7 +185,8 @@ export function applyProviderConfigurationMutation(input: {
         || input.snapshot.gatewayPolicy?.allowedModelIds.includes(harness.route.modelId);
       if (!source || !gatewayAllowed || source.providerId !== harness.route.providerId
         || !source.eligibleModelIds.includes(harness.route.modelId)
-        || !genericHarnessRouteIsSupported({ ...harness, accessSourceId: source.id }, source)) {
+        || !genericHarnessRouteIsSupported({ ...harness, accessSourceId: source.id }, source)
+        || (harness.enabled && !mayEnableObservedNativeRoute({ ...harness, accessSourceId: source.id }, source, input.now ?? new Date()))) {
         throw new ProviderSettingsStoreError("invalid_route", 400);
       }
       harness.accessSourceId = source.id;

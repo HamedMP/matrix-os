@@ -280,9 +280,12 @@ function reconcileProviderSettingsConfiguration(
     if (genericModelCatalog && existing?.enablementOrigin === "generated_default"
       && (existing.harness === "pi" || existing.harness === "opencode")) {
       const native = generatedNativeHarnessConfiguration(driver, genericModelCatalog, now);
-      const next = native ? { ...existing, enabled: native.enabled, selectedAccountId: null, accessSourceId: native.accessSourceId, route: native.route }
-        : { ...existing, enabled: false };
-      if (JSON.stringify(existing) !== JSON.stringify(next)) { Object.assign(existing, next); changed = true; }
+      // Bind an unconfigured generated default once. Fresh availability never
+      // rewrites durable permission or replaces a previously usable native route.
+      if (!existing.enabled && native?.enabled) {
+        Object.assign(existing, { enabled: true, selectedAccountId: null, accessSourceId: native.accessSourceId, route: native.route });
+        changed = true;
+      }
     }
     if (!fallback || config.harnesses.some((harness) => harness.driverId === driver.id)) continue;
     if (config.harnesses.length >= 128) break;

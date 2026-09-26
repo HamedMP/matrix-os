@@ -63,8 +63,7 @@ const defaultRun: RunCommand = async (command, args, options) => {
 };
 
 function providerId(slug: string): string | null {
-  const value = slug.toLowerCase().replace(/[^a-z0-9_.:-]/g, "_").slice(0, 96);
-  return /^[a-z0-9][a-z0-9_.:-]{0,95}$/.test(value) && !value.includes("..") ? value : null;
+  return /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,95}$/.test(slug) && !slug.includes("..") ? slug : null;
 }
 
 function words(value: string): string[] {
@@ -101,14 +100,14 @@ function modelDisplayName(slug: string): string {
 }
 
 function route(providerSlug: string, modelSlug: string): GenericHarnessModelRoute | null {
-  const normalizedProvider = providerId(providerSlug);
+  const exactProvider = providerId(providerSlug);
   const modelId = `${providerSlug}:${modelSlug}`;
-  if (normalizedProvider === null || !ProviderModelReferenceSchema.safeParse(modelId).success) return null;
+  if (exactProvider === null || !ProviderModelReferenceSchema.safeParse(modelId).success) return null;
   const providerName = providerDisplayName(providerSlug);
   const modelName = modelDisplayName(modelSlug);
   if (!providerName || !modelName) return null;
   const candidate = {
-    providerId: normalizedProvider,
+    providerId: exactProvider,
     providerDisplayName: providerName,
     modelId,
     modelDisplayName: modelName,

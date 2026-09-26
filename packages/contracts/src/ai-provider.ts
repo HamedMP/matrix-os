@@ -215,7 +215,7 @@ export const AiProviderInstanceViewSchema = z.object({
 export const AiNativeHarnessCatalogSchema = z.object({
   profiles: z.array(z.object({
     harness: z.enum(["pi", "opencode"]),
-    providerId: z.string().max(96).regex(/^[a-z0-9][a-z0-9_.:-]*$/),
+    providerId: canonicalReferenceId(96),
     providerDisplayName: canonicalSafeLabel(120, 480),
     models: z.array(z.object({ id: ProviderModelReferenceSchema, displayName: canonicalSafeLabel(120, 480), enabled: z.boolean() }).strict()).max(256),
     defaultModelId: ProviderModelReferenceSchema.nullable(),

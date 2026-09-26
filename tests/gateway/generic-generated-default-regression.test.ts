@@ -27,13 +27,13 @@ function post(body: unknown): Request {
   });
 }
 
-async function fixture(kind: typeof kinds[number], reconcile: boolean, multipleProviders = false) {
+async function fixture(kind: typeof kinds[number], reconcile: boolean, multipleProviders = false, hasDefault = true) {
   const homePath = await mkdtemp(join(tmpdir(), "generated-harness-default-"));
   const canonical = providerSettingsCanonicalFixture();
   {
     const directory = kind === "pi" ? join(homePath, ".pi/agent") : join(homePath, ".config/opencode");
     await mkdir(directory, { recursive: true });
-    await writeFile(join(directory, kind === "pi" ? "settings.json" : "opencode.json"), JSON.stringify(
+    await writeFile(join(directory, kind === "pi" ? "settings.json" : "opencode.json"), JSON.stringify(!hasDefault ? {} :
       kind === "pi" ? { defaultProvider: multipleProviders ? "z-working" : "native", defaultModel: multipleProviders ? "saved-model" : "working-model" }
         : { model: multipleProviders ? "z-working/saved-model" : "native/working-model" }));
   }
@@ -110,7 +110,7 @@ describe("generated Settings defaults preserve existing native coding routes", (
       expect(after.harnesses.find((row: { harness: string }) => row.harness === kind)).toEqual(bound);
       f.nativeCatalogMode.fail = false;
       // Admission reads durable permission, not an availability side effect from a prior GET.
-      expect((await f.app.request(post({ providerId: kind, prompt: "Inspect", clientRequestId: `recovered_${kind}` }))).status).toBe(202);
+      expect((await f.app.request(post({ providerId: kind, prompt: "Inspect", clientRequestId: `req_recovered_${kind}` }))).status).toBe(202);
       expect((await f.store.getSnapshot({ refresh: true })).harnesses.find((row) => row.harness === kind)?.enabled).toBe(true);
     } finally { await f.cleanup(); }
   });
@@ -122,6 +122,45 @@ describe("generated Settings defaults preserve existing native coding routes", (
       const row = snapshot.harnesses.find((entry) => entry.harness === kind)!;
       await expect(f.store.mutate({ type: "select_access_source", expectedRevision: snapshot.revision,
         idempotencyKey: `absent_select_${kind}`, harnessInstanceId: row.id, accessSourceId: `harness_${kind}_native` })).rejects.toThrow("invalid_route");
+    } finally { await f.cleanup(); }
+  });
+  it.each(kinds)("temporary %s metadata loss preserves permission and fails actual launch closed until recovery", async (kind) => {
+    const f = await fixture(kind, false);
+    try {
+      const path = join(homePathFor(f.homePath, kind), "auth.json");
+      const auth = await readFile(path, "utf8");
+      const before = await readFile(f.store.configurationPath, "utf8");
+      await writeFile(path, "{}");
+      const unavailable = await f.store.getSnapshot();
+      expect(unavailable.harnesses.find((row) => row.harness === kind)).toMatchObject({ configuredEnabled: true, enabled: false });
+      expect(await readFile(f.store.configurationPath, "utf8")).toBe(before);
+      const resolve = createCodingHarnessCredentialResolver({ harness: kind, homePath: f.homePath, settings: f.store, now: () => PROVIDER_SETTINGS_NOW });
+      await expect(resolve()).rejects.toThrow();
+      await writeFile(path, auth);
+      await expect(resolve()).resolves.toEqual({ env: {} });
+    } finally { await f.cleanup(); }
+  });
+  it.each(kinds)("a changed %s CLI default cannot rebind an already usable generated route", async (kind) => {
+    const f = await fixture(kind, false, true);
+    try {
+      const before = await readFile(f.store.configurationPath, "utf8");
+      const path = kind === "pi" ? join(f.homePath, ".pi/agent/settings.json") : join(f.homePath, ".config/opencode/opencode.json");
+      await writeFile(path, JSON.stringify(kind === "pi" ? { defaultProvider: "a-no-auth", defaultModel: "listed-model" } : { model: "a-no-auth/listed-model" }));
+      expect((await f.store.getSnapshot()).harnesses.find((row) => row.harness === kind))
+        .toMatchObject({ enabled: true, accessSourceId: `harness_${kind}_z-working`, route: { modelId: "z-working:saved-model" } });
+      expect(await readFile(f.store.configurationPath, "utf8")).toBe(before);
+    } finally { await f.cleanup(); }
+  });
+  it.each(kinds)("disabled %s source selection remains allowed without local credentials", async (kind) => {
+    const f = await fixture(kind, false);
+    try {
+      const first = await f.store.getSnapshot();
+      await f.store.mutate({ type: "set_harness_enabled", expectedRevision: first.revision, idempotencyKey: `off_select_${kind}`, harnessInstanceId: `harness_${kind}`, enabled: false });
+      await writeFile(join(homePathFor(f.homePath, kind), "auth.json"), "{}");
+      const snapshot = await f.store.getSnapshot();
+      const result = await f.store.mutate({ type: "select_access_source", expectedRevision: snapshot.revision,
+        idempotencyKey: `disabled_select_${kind}`, harnessInstanceId: `harness_${kind}`, accessSourceId: `harness_${kind}_native` });
+      expect(result.snapshot.harnesses.find((row) => row.harness === kind)).toMatchObject({ configuredEnabled: false, enabled: false });
     } finally { await f.cleanup(); }
   });
   for (const reconcile of [false, true]) {
@@ -238,12 +277,14 @@ describe("generated Settings defaults preserve existing native coding routes", (
       expect(unavailable.enabled).toBe(false);
       expect(unavailable.authState).not.toBe("authenticated");
       expect((await f.catalog.getCatalog(principal)).instances.find((entry) => entry.driverKind === kind)?.availability).not.toBe("available");
-      expect((await f.app.request(post({ providerId: kind, prompt: "Inspect", clientRequestId: `req_${kind}_missing_auth` }))).status).toBe(400);
+      // Durable admission permits an attempt; the actual credential launch stays fail closed.
+      const resolver = createCodingHarnessCredentialResolver({ harness: kind, homePath: f.homePath, settings: f.store, now: () => PROVIDER_SETTINGS_NOW });
+      await expect(resolver()).rejects.toThrow();
     } finally { await f.cleanup(); }
   });
 
   it.each(kinds)("%s without a saved CLI default can explicitly select its matched local native route", async (kind) => {
-    const f = await fixture(kind, false);
+    const f = await fixture(kind, false, false, false);
     try {
       const configPath = kind === "pi" ? join(f.homePath, ".pi/agent/settings.json") : join(f.homePath, ".config/opencode/opencode.json");
       await writeFile(configPath, "{}");

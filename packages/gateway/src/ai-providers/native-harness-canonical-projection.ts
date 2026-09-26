@@ -3,21 +3,31 @@ import type { GenericHarnessModelCatalog, GenericHarnessModelCatalogReader } fro
 
 type Catalog = NonNullable<AiProviderSnapshotV3["nativeHarnessCatalog"]>;
 const unknownObservation = { state: "unknown" as const, checkedAt: null, staleAfter: null };
+function canonicalCatalog(catalog: GenericHarnessModelCatalog): Catalog {
+  const profiles: Catalog["profiles"] = [];
+  const failures: Catalog["failures"] = [];
+  for (const harness of ["pi", "opencode"] as const) {
+    if (catalog.failures.includes(harness)) { failures.push(harness); continue; }
+    const result = AiNativeHarnessCatalogSchema.safeParse({ profiles: catalog.accessSources
+      .filter((source) => source.kind === "harness_profile" && source.harness === harness).map((source) => ({
+        harness, providerId: source.providerId,
+        providerDisplayName: catalog.providers.find((provider) => provider.id === source.providerId)?.displayName,
+        models: (catalog.providers.find((provider) => provider.id === source.providerId)?.models ?? [])
+          .filter((model) => source.eligibleModelIds.includes(model.id)),
+        defaultModelId: source.eligibleModelIds.includes(catalog.nativeDefaults?.[harness] ?? "")
+          ? catalog.nativeDefaults?.[harness] ?? null : null,
+        localObservation: source.localObservation ?? unknownObservation,
+      })), failures: [] });
+    if (result.success) profiles.push(...result.data.profiles);
+    else failures.push(harness);
+  }
+  return AiNativeHarnessCatalogSchema.parse({ profiles, failures });
+}
 export function createCanonicalNativeHarnessCatalogReader(reader: GenericHarnessModelCatalogReader): (refresh: boolean) => Promise<Catalog> {
   let pending: Promise<Catalog> | null = null;
   return async (refresh) => {
     if (!pending) {
-      const attempt = Promise.resolve().then(() => reader.getCatalog({ refresh })).then((catalog) =>
-        AiNativeHarnessCatalogSchema.parse({ profiles: catalog.accessSources.filter((source) => source.kind === "harness_profile").map((source) => ({
-          harness: source.harness, providerId: source.providerId,
-          providerDisplayName: catalog.providers.find((provider) => provider.id === source.providerId)?.displayName,
-          models: (catalog.providers.find((provider) => provider.id === source.providerId)?.models ?? [])
-            .filter((model) => source.eligibleModelIds.includes(model.id)),
-          defaultModelId: (source.harness === "pi" || source.harness === "opencode") && source.eligibleModelIds.includes(catalog.nativeDefaults?.[source.harness] ?? "")
-            ? catalog.nativeDefaults?.[source.harness] ?? null : null,
-          localObservation: source.localObservation ?? unknownObservation,
-        })), failures: catalog.failures })
-      ).catch((error: unknown): Catalog => {
+      const attempt = Promise.resolve().then(() => reader.getCatalog({ refresh })).then(canonicalCatalog).catch((error: unknown): Catalog => {
         console.warn("[ai-providers] Native catalog unavailable", { errorClass: error instanceof Error ? error.name : "Unknown" });
         return { profiles: [], failures: ["pi", "opencode"] };
       });
