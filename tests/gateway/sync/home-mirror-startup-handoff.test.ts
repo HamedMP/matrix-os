@@ -1,6 +1,6 @@
 import { expect, it, vi } from "vitest";
 import { createHash } from "node:crypto";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHomeMirror } from "../../../packages/gateway/src/sync/home-mirror.js";
@@ -94,4 +94,47 @@ it.each(["owner-edit", "stop"])("preserves %s during the watcher-ready catch-up"
     }
     expect(await readFile(join(root, "note.md"), "utf8")).toBe(kind === "stop" ? "first owner edit" : "newest owner edit");
   } finally { releaseFirst?.(); releaseSecond?.(); await starting; await mirror.stop(); vi.restoreAllMocks(); await rm(root, { recursive: true, force: true }); }
+}, 10_000);
+
+
+it("flushes remaining owner edits and known deletions when stopped during watcher-ready catch-up", async () => {
+  const root = await mkdtemp(join(tmpdir(), "mirror-startup-stop-flush-"));
+  const r2 = createFakeR2(); const db = createFakeManifestDb();
+  const mirror = createHomeMirror({ r2, manifestDb: db, homeRoot: root,
+    userId: "synthetic-owner", peerId: "synthetic-peer", logger: { info: () => {}, error: () => {} } });
+  let release!: () => void; let arrived!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const entered = new Promise<void>(resolve => { arrived = resolve; });
+  const advance = db.advanceManifestMeta.bind(db);
+  vi.spyOn(db, "advanceManifestMeta").mockImplementation(async (scope, expected, next, executor) => {
+    const accepted = await advance(scope, expected, next, executor);
+    if (accepted && next.version === 1) await writeFile(join(root, "anchor.md"), "catch-up anchor");
+    return accepted;
+  });
+  const put = r2.putObject.bind(r2); let generations = 0;
+  vi.spyOn(r2, "putObject").mockImplementation(async (key, body, options) => {
+    if (key.includes("/manifests/") && ++generations === 2) { arrived(); await gate; }
+    return put(key, body, options);
+  });
+  let starting: Promise<void> | undefined; let stopping: Promise<void> | undefined;
+  const timers: ReturnType<typeof setTimeout>[] = [];
+  try {
+    await writeFile(join(root, "anchor.md"), "initial anchor");
+    await writeFile(join(root, "remaining.md"), "accepted remaining");
+    await writeFile(join(root, "deleted.md"), "accepted deletion baseline");
+    starting = mirror.start();
+    await Promise.race([entered, new Promise<never>((_, reject) => timers.push(setTimeout(() => reject(new Error("catch-up not entered")), 2_000)))]);
+    const accepted = await readManifest({ r2, db }, "synthetic-owner");
+    expect(accepted.manifest.files["remaining.md"].hash).toBe(hash("accepted remaining"));
+    expect(accepted.manifest.files["deleted.md"].deleted).not.toBe(true);
+    await writeFile(join(root, "remaining.md"), "latest owner remaining");
+    await unlink(join(root, "deleted.md"));
+    stopping = mirror.stop(); release();
+    await Promise.race([Promise.all([starting, stopping]), new Promise<never>((_, reject) => timers.push(setTimeout(() => reject(new Error("stop was not bounded")), 3_000)))]);
+    const final = await readManifest({ r2, db }, "synthetic-owner");
+    expect.soft(final.manifest.files["remaining.md"].hash).toBe(hash("latest owner remaining"));
+    expect.soft(final.manifest.files["deleted.md"].deleted).toBe(true);
+    expect(await readFile(join(root, "remaining.md"), "utf8")).toBe("latest owner remaining");
+    await expect(readFile(join(root, "deleted.md"))).rejects.toMatchObject({ code: "ENOENT" });
+  } finally { for (const timer of timers) clearTimeout(timer); release?.(); await starting; await stopping; await mirror.stop(); vi.restoreAllMocks(); await rm(root, { recursive: true, force: true }); }
 }, 10_000);
