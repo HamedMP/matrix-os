@@ -35,3 +35,15 @@ it("preserves existing default API deadlines alongside lifecycle cancellation", 
     expect(timeout.mock.calls.map(([ms]) => ms)).toEqual([10_000, 30_000]);
   } finally { timeout.mockRestore(); controller.abort(); }
 });
+
+it("enforces default deadlines even when a caller supplies its own non-aborted signal", async () => {
+  const lifecycle = new AbortController(); const caller = new AbortController();
+  const r2 = createFakeR2(); r2.store.set("synthetic", Buffer.from("bytes"));
+  const timeout = vi.spyOn(AbortSignal, "timeout");
+  try {
+    const wrapped = createMirrorR2(r2, () => lifecycle.signal);
+    await wrapped.getObject("synthetic", { signal: caller.signal });
+    await wrapped.putObject("synthetic", Buffer.from("bytes"), { signal: caller.signal });
+    expect(timeout.mock.calls.map(([ms]) => ms)).toEqual([10_000, 30_000]);
+  } finally { timeout.mockRestore(); lifecycle.abort(); caller.abort(); }
+});
