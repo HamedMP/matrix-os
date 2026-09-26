@@ -5,7 +5,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Hono } from "hono";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { AiProviderSnapshotV3Schema, type AgentProviderSummary } from "@matrix-os/contracts";
 import { createGenericHarnessModelCatalogReader } from "../../packages/gateway/src/ai-providers/generic-harness-model-catalog.js";
 import { createCanonicalNativeHarnessCatalogReader } from "../../packages/gateway/src/ai-providers/native-harness-canonical-projection.js";
@@ -18,6 +18,7 @@ import { PROVIDER_SETTINGS_NOW, providerSettingsCanonicalFixture } from "./provi
 
 const principal = { userId: "owner_user", source: "jwt" as const };
 const kinds = ["pi", "opencode"] as const;
+afterEach(() => vi.unstubAllEnvs());
 function homePathFor(homePath: string, kind: typeof kinds[number]) {
   return kind === "pi" ? join(homePath, ".pi/agent") : join(homePath, ".local/share/opencode");
 }
@@ -97,6 +98,14 @@ async function fixture(kind: typeof kinds[number], reconcile: boolean, multipleP
 }
 
 describe("generated Settings defaults preserve existing native coding routes", () => {
+  it("isolates its fixture OpenCode config and data from an unrelated ambient XDG scope", async () => {
+    vi.stubEnv("XDG_CONFIG_HOME", "/tmp/matrix-fixture-external-xdg");
+    const f = await fixture("opencode", false);
+    try {
+      expect((await f.nativeCatalog.getCatalog()).nativeDefaults?.opencode).toBe("native:working-model");
+      expect((await f.store.getSnapshot()).harnesses.find((row) => row.harness === "opencode")?.enabled).toBe(true);
+    } finally { await f.cleanup(); }
+  });
   it.each(kinds)("a transient %s discovery failure does not overwrite bound durable enablement", async (kind) => {
     const f = await fixture(kind, false);
     try {
