@@ -3,6 +3,9 @@ import React from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CanonicalProviderCatalogSchema, type CanonicalProviderCatalog } from "@matrix-os/contracts";
+import { HermesPane } from "../../desktop/src/renderer/src/features/chat/ChatTab";
+import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
+import { useCodingAgentWorkspace } from "../../desktop/src/renderer/src/stores/coding-agent-workspace";
 import { CanonicalChatWorkspace } from "../../desktop/src/renderer/src/features/chat/CanonicalChatWorkspace";
 import { createCanonicalChatWorkspaceClient } from "./canonical-chat-workspace-test-utils";
 import type { ApiClient } from "../../desktop/src/renderer/src/lib/api";
@@ -31,13 +34,13 @@ function deferred<T>() {
 }
 function CatalogComposer({ api }: { api: { get: () => Promise<unknown> } }) {
   const state = useChatProviderCatalog(oldCatalog, { api });
-  return <><output>{state.catalog.revision}</output><SharedChatComposer value="" onChange={() => undefined}
+  return <><output>{state.catalog.revision}</output><output data-testid="catalog-status">{state.status}</output><output data-testid="availability">{state.catalog.instances[0]?.availability}</output><SharedChatComposer value="" onChange={() => undefined}
     onSubmit={() => undefined} busy={false} catalog={state.catalog}
     selection={{ instanceId: "pi_owner", model: "model", options: [], interactionMode: "default", permissionMode: "supervised" }}
     onSelectionChange={() => undefined} instanceLocked={false} onProviderPickerOpen={state.refresh} /></>;
 }
 const openPicker = () => fireEvent.click(screen.getByRole("button", { name: "Choose model and provider" }));
-afterEach(() => cleanup());
+afterEach(() => { cleanup(); useConnection.setState(useConnection.getInitialState(), true); useCodingAgentWorkspace.setState(useCodingAgentWorkspace.getInitialState(), true); });
 describe("native Chat catalog freshness", () => {
   it("reloads saved-off truth when the normal picker is reopened without a cold restart", async () => {
     const get = vi.fn().mockResolvedValueOnce(oldCatalog).mockResolvedValue(newCatalog);
@@ -72,6 +75,57 @@ describe("native Chat catalog freshness", () => {
     expect(get).toHaveBeenCalledTimes(2);
   });
 
+  it.each([true, false])("retains last same-runtime catalog on reopen failure (savedOff=%s)", async (savedOff) => {
+    const trusted = catalog("trusted_owner_catalog", savedOff);
+    const get = vi.fn().mockResolvedValueOnce(trusted).mockRejectedValue(new Error("refresh_failed"));
+    render(<CatalogComposer api={{ get }} />);
+    await screen.findByText("trusted_owner_catalog");
+    openPicker();
+    await waitFor(() => expect(screen.getByTestId("catalog-status").textContent).toBe("error"));
+    expect(screen.getByText("trusted_owner_catalog")).not.toBeNull();
+    if (savedOff) {
+      expect(screen.getByText("Disabled in Settings")).not.toBeNull();
+      expect(screen.queryByText("Owner model")).toBeNull();
+    } else {
+      const trigger = screen.getByRole("button", { name: "Choose model and provider" });
+      expect(trigger.getAttribute("data-provider-instance")).toBe("pi_owner");
+      expect(trigger.getAttribute("data-model")).toBe("model");
+    }
+  });
+
+  it("fails closed on initial and replaced-API errors instead of borrowing old trusted truth", async () => {
+    const firstApi = { get: vi.fn().mockResolvedValue(newCatalog) };
+    const view = render(<CatalogComposer api={firstApi} />);
+    await screen.findByText("after_update");
+    const replacementApi = { get: vi.fn().mockRejectedValue(new Error("new_runtime_unavailable")) };
+    view.rerender(<CatalogComposer api={replacementApi} />);
+    await waitFor(() => expect(screen.getByTestId("catalog-status").textContent).toBe("error"));
+    expect(screen.getByText("before_update")).not.toBeNull();
+    expect(screen.getByTestId("availability").textContent).toBe("unavailable");
+    view.unmount();
+    render(<CatalogComposer api={replacementApi} />);
+    await waitFor(() => expect(screen.getByTestId("catalog-status").textContent).toBe("error"));
+    expect(screen.getByTestId("availability").textContent).toBe("unavailable");
+  });
+
+  it("reopens the actual HermesPane picker with a forced read and updated saved-Off choices", async () => {
+    const get = vi.fn().mockResolvedValueOnce(oldCatalog).mockResolvedValueOnce(oldCatalog).mockResolvedValue(newCatalog);
+    window.operator = { invoke: vi.fn(async () => ({ value: null })), on: vi.fn(() => () => undefined) };
+    useConnection.setState({ api: { get } as unknown as ApiClient });
+    useCodingAgentWorkspace.setState({ status: "ready" });
+    render(<HermesPane />);
+    await waitFor(() => expect(get).toHaveBeenCalledTimes(1));
+    openPicker();
+    await waitFor(() => expect(get).toHaveBeenCalledTimes(2));
+    expect(screen.queryByText("Disabled in Settings")).toBeNull();
+    openPicker();
+    openPicker();
+    await screen.findByText("Disabled in Settings");
+    expect(get).toHaveBeenCalledTimes(3);
+    expect(get).toHaveBeenLastCalledWith("/api/chat-providers?refresh=true&includeConnectionLabels=true");
+    expect(screen.queryByText("Owner model")).toBeNull();
+  });
+
   it("wires reopening through the production canonical workspace composer", async () => {
     const get = vi.fn(async (path: string) => path.startsWith("/api/chat-providers") ? oldCatalog : {});
     window.operator = { invoke: vi.fn(async () => ({ ok: true })), on: vi.fn(() => () => undefined) };
@@ -85,6 +139,32 @@ describe("native Chat catalog freshness", () => {
     await screen.findByText("Disabled in Settings");
     expect(get.mock.calls.filter(([path]) => path.startsWith("/api/chat-providers"))).toHaveLength(readsBefore + 1);
     view.unmount();
+  });
+
+  it.each([true, false])("preserves production workspace truth on reopen failure (savedOff=%s)", async (savedOff) => {
+    const trusted = catalog("trusted_workspace", savedOff);
+    let failRefresh = false;
+    const get = vi.fn(async (path: string) => {
+      if (!path.startsWith("/api/chat-providers")) return {};
+      if (failRefresh) throw new Error("refresh_unavailable");
+      return trusted;
+    });
+    window.operator = { invoke: vi.fn(async () => ({ ok: true })), on: vi.fn(() => () => undefined) };
+    render(<CanonicalChatWorkspace client={createCanonicalChatWorkspaceClient()}
+      api={{ get } as unknown as ApiClient} projectId={null} active initialView="draft" />);
+    const trigger = await screen.findByRole("button", { name: "Choose model and provider" });
+    await waitFor(() => expect(trigger.hasAttribute("disabled")).toBe(false));
+    failRefresh = true;
+    fireEvent.click(trigger);
+    await waitFor(() => expect(get.mock.calls.filter(([path]) => path.startsWith("/api/chat-providers"))).toHaveLength(2));
+    await act(async () => undefined);
+    if (savedOff) {
+      expect(screen.getByText("Disabled in Settings")).not.toBeNull();
+      expect(screen.queryByText("Owner model")).toBeNull();
+    } else {
+      expect(trigger.getAttribute("data-provider-instance")).toBe("pi_owner");
+      expect(trigger.getAttribute("data-model")).toBe("model");
+    }
   });
 
   it.each(["success", "error"] as const)("ignores an older %s after a newer catalog response", async (outcome) => {

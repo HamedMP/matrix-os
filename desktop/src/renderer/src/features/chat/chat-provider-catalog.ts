@@ -53,6 +53,7 @@ export function useChatProviderCatalog(
   useEffect(() => {
     let cancelled = false;
     let requestSequence = 0;
+    let lastTrustedCatalog: CanonicalProviderCatalog | null = null;
     if (!active || !api || typeof api.get !== "function") {
       refreshRef.current = () => undefined;
       setState({ catalog: fallback, status: "fallback" });
@@ -64,13 +65,19 @@ export function useChatProviderCatalog(
     const update = () => {
       const request = ++requestSequence;
       void fetchCanonicalProviderCatalog(api, true).then((catalog) => {
-        if (!cancelled && request === requestSequence) setState({ catalog, status: "ready" });
+        if (!cancelled && request === requestSequence) {
+          lastTrustedCatalog = catalog;
+          setState({ catalog, status: "ready" });
+        }
       }).catch((error: unknown) => {
         console.warn(
           "[chat] Provider catalog unavailable:",
           error instanceof Error ? error.name : "UnknownError",
         );
-        if (!cancelled && request === requestSequence) setState({ catalog: fallback, status: "error" });
+        if (!cancelled && request === requestSequence) setState({
+          catalog: lastTrustedCatalog ?? failClosedProviderCatalog(fallback),
+          status: "error",
+        });
       });
     };
     refreshRef.current = update;

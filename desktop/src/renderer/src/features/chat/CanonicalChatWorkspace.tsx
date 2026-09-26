@@ -152,7 +152,7 @@ export function CanonicalChatWorkspace({
   });
   const unavailableCatalog = useMemo(() => failClosedProviderCatalog(fallbackCatalog), [fallbackCatalog]);
   const providerCatalog = catalog ?? (
-    liveCatalog.status === "ready" ? liveCatalog.catalog : unavailableCatalog
+    liveCatalog.status === "ready" || liveCatalog.status === "error" ? liveCatalog.catalog : unavailableCatalog
   );
   const controller = useCanonicalChatRouteController({
     client,
@@ -220,7 +220,7 @@ export function CanonicalChatWorkspace({
   );
   const { selection, onSelectionChange } = useCanonicalComposerSelection({
     catalog: providerCatalog,
-    catalogReady: Boolean(catalog || liveCatalog.status === "ready"),
+    catalogReady: Boolean(catalog || liveCatalog.status === "ready" || liveCatalog.status === "error"),
     initializeImmediately: Boolean(catalog),
     chatId: controller.detail?.record.chat.id ?? null,
     currentSelection: controller.detail?.record.chat.currentSelection,
