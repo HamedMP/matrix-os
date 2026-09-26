@@ -341,6 +341,7 @@ async function startPlatformServerWithCleanup(
     const probeLimits = loadFundedModelProbeLimits(process.env);
     fundedModelProbes = createFundedModelProbeService({
       db,
+      credentials: fundedAiRepository,
       relayBaseUrl: process.env.MATRIX_FUNDED_AI_RELAY_URL,
       relayControlToken: fundedAiConfig.relayControlToken,
       ...probeLimits,

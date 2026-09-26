@@ -1,6 +1,7 @@
 import type { ServiceAction, ServiceDefinition } from "./types.js";
 import type { PipedreamConnectClient } from "./pipedream.js";
 import { validateActionParams } from "./parameter-validation.js";
+import { BoundedPipedreamReadError } from "./pipedream-bounded-get.js";
 
 export class IntegrationActionNotImplementedError extends Error {
   readonly serviceId: string;
@@ -32,6 +33,15 @@ export async function executeIntegrationAction(opts: {
 
   if (actionDef.paramsSchema && !validateActionParams(actionDef, params).valid) {
     throw new Error("Invalid action parameters");
+  }
+  // New thread discovery/ID actions always use a raw capped response, including
+  // ordinary callers; a generic SDK parse is not a byte limit.
+  if (serviceId === "gmail" && (actionId === "list_threads" || actionId === "get_thread_ids")) {
+    if (!pipedream.boundedGmailGet) throw new BoundedPipedreamReadError();
+    const identity = { externalUserId, accountId: connection.pipedream_account_id };
+    return { data: await pipedream.boundedGmailGet(actionId === "list_threads"
+      ? { ...identity, kind: "threads" }
+      : { ...identity, kind: "thread-ids", id: String(params?.threadId) }) };
   }
 
   // Discovered components have different parameter/cursor contracts.

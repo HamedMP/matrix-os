@@ -1,6 +1,8 @@
 import { JevEvaluateRequestSchema, type JevEmailTriageResult } from "@matrix-os/contracts";
 import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
+import { InboxPreviewInput, InboxPreviewError, type JevInboxBroker } from "./inbox-broker.js";
+import type { HermesJevScope } from "../chat/hermes-integration-capability.js";
 import { JevServiceError, type JevService } from "./service.js";
 
 const BODY_LIMIT_BYTES = 40 * 1024;
@@ -17,17 +19,42 @@ function safeError(code: JevServiceError["code"]): { error: { code: string; mess
 export function createJevRoutes(options: {
   service: Pick<JevService, "evaluate"> | null;
   resolveOwnerId: (context: Context) => string | null | Promise<string | null>;
+  inboxBroker?: Pick<JevInboxBroker, "execute">;
+  resolveRecipeScope?: (context: Context) => { ownerId: string; scope: HermesJevScope } | null;
 }): Hono {
   const app = new Hono();
-  // PR1 admission only. The bounded mailbox broker arrives with the follow-on
-  // workflow; never route this bearer through the generic Jev evaluator.
   app.post("/inbox/preview", bodyLimit({
     maxSize: BODY_LIMIT_BYTES,
     onError: (c) => c.json({ error: { code: "invalid_request", message: "Jev request is too large" } }, 413),
   }), async (c) => {
-    const ownerId = await options.resolveOwnerId(c);
-    if (!ownerId) return c.json({ error: { code: "unauthorized", message: "Unauthorized" } }, 401);
-    return c.json({ error: { code: "unavailable", message: "Inbox preview is not available yet" } }, 503);
+    // Preserve unavailable behavior until the production restricted launch is wired.
+    if (!options.inboxBroker || !options.resolveRecipeScope) {
+      if (!await options.resolveOwnerId(c)) return c.json({ error: { code: "unauthorized", message: "Unauthorized" } }, 401);
+      return c.json({ error: { code: "unavailable", message: "Inbox preview is not available yet" } }, 503);
+    }
+    const binding = options.resolveRecipeScope(c);
+    if (!binding) return c.json(safeError("denied"), 403);
+    if (!c.req.header("content-type")?.toLowerCase().startsWith("application/json")) {
+      return c.json({ error: { code: "invalid_request", message: "Content-Type must be application/json" } }, 415);
+    }
+    let value: unknown;
+    try { value = await c.req.json(); }
+    catch (error) {
+      if (error instanceof Error && error.name === "BodyLimitError") return c.json({ error: { code: "invalid_request", message: "Jev request is too large" } }, 413);
+      console.warn("[jev] Preview body read failed", { errorName: error instanceof Error ? error.name : "UnknownError" });
+      return c.json({ error: { code: "invalid_request", message: "Invalid Jev request" } }, 400);
+    }
+    const input = InboxPreviewInput.safeParse(value);
+    if (!input.success) return c.json({ error: { code: "invalid_request", message: "Invalid Jev request" } }, 400);
+    try {
+      return c.json(await options.inboxBroker.execute(binding.ownerId, binding.scope, input.data, c.req.raw.signal), 200);
+    } catch (error) {
+      if (error instanceof InboxPreviewError) return c.json(safeError(error.code === "denied" ? "denied" : "unavailable"),
+        error.code === "denied" ? 403 : 503);
+      if (error instanceof JevServiceError) return c.json(safeError(error.code), error.code === "denied" ? 403 : 503);
+      console.warn("[jev] Preview failed", { errorName: error instanceof Error ? error.name : "UnknownError" });
+      return c.json(safeError("unavailable"), 503);
+    }
   });
   app.post("/evaluate", bodyLimit({
     maxSize: BODY_LIMIT_BYTES,

@@ -1,3 +1,4 @@
+import type { ProviderSnapshotReadOptions } from "./snapshot-read-options.js";
 import { createProviderRuntimeRecoveryReader } from "./provider-runtime-recovery-reader.js";
 import { randomUUID } from "node:crypto";
 import { basename, dirname, join, resolve } from "node:path";
@@ -67,7 +68,7 @@ export type {
   ProviderSettingsRuntimeCoordinator,
 } from "./provider-settings-coordinators.js";
 export interface ProviderSettingsStoreWriter {
-  getSnapshot(options?: { refresh?: boolean }): Promise<ProviderSettingsSnapshot>;
+  getSnapshot(options?: ProviderSnapshotReadOptions): Promise<ProviderSettingsSnapshot>;
   mutate(mutation: ProviderSettingsMutation): Promise<ProviderSettingsMutationResponse>;
 }
 interface ProviderSettingsStoreOptions {
@@ -136,9 +137,9 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
     try { return await operation(); } finally { release(); }
   }
 
-  async #canonical(refresh = false): Promise<AiProviderSnapshotV3> {
+  async #canonical(refresh = false, suppressFundedProbes = false, ownerKeyPreflight?: ProviderSnapshotReadOptions["ownerKeyPreflight"], signal?: AbortSignal): Promise<AiProviderSnapshotV3> {
     try {
-      const snapshot = AiProviderSnapshotV3Schema.parse(await this.#reader.getSnapshot({ refresh }));
+      const snapshot = AiProviderSnapshotV3Schema.parse(await this.#reader.getSnapshot({ refresh, ...(suppressFundedProbes ? { suppressFundedProbes: true } : {}), ...(ownerKeyPreflight ? { ownerKeyPreflight } : {}), ...(signal ? { signal } : {}) }));
       const age = this.#now().getTime() - Date.parse(snapshot.refreshedAt);
       if (!Number.isFinite(age) || age < -60_000 || age > this.#maxProjectionAgeMs) {
         throw new Error("Stale canonical provider projection");
@@ -231,17 +232,17 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
     });
   }
 
-  async getSnapshot(options: { refresh?: boolean } = {}): Promise<ProviderSettingsSnapshot> {
+  async getSnapshot(options: ProviderSnapshotReadOptions = {}): Promise<ProviderSettingsSnapshot> {
     return await this.#serialize(async () => {
       await this.#readRuntimeRecovery(options.refresh === true);
       const refresh = options.refresh === true;
-      const inventory = this.#canonical(refresh);
+      const inventory = this.#canonical(refresh, options.suppressFundedProbes === true, options.ownerKeyPreflight, options.signal);
       // Begin these bounded observations inside the serialized read, not behind
       // inventory. Never share results across mutations or authorize from them alone.
       const [canonical, enrichment] = await Promise.all([
         inventory,
         readProviderSettingsEnrichment({
-          canonical: inventory, fundingSummary: this.#fundingSummary,
+          canonical: inventory, fundingSummary: options.suppressFundedProbes === true ? undefined : this.#fundingSummary,
           genericModelCatalog: this.#genericModelCatalog, refresh,
           catalogFailureHarnesses: ["pi", "opencode"],
         }),

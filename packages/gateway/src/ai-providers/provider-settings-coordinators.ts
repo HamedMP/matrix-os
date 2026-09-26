@@ -1,3 +1,4 @@
+import type { ProviderSnapshotReadOptions } from "./snapshot-read-options.js";
 import type {
   AiProviderSnapshotV3,
   ProviderConnectionAttempt,
@@ -13,7 +14,7 @@ import type { ProviderConfigurationMutation } from "./provider-settings-mutation
 import type { ProviderSettingsDependencyReader } from "./provider-settings-projector.js";
 
 export interface CanonicalProviderSnapshotReader {
-  getSnapshot(options?: { refresh?: boolean }): Promise<AiProviderSnapshotV3>;
+  getSnapshot(options?: ProviderSnapshotReadOptions): Promise<AiProviderSnapshotV3>;
 }
 
 export interface ProviderAccountDependencyCoordinator extends ProviderSettingsDependencyReader {

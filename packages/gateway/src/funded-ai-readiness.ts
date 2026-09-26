@@ -11,7 +11,7 @@ export interface FundedAiReadiness {
   readiness: AiProviderReadiness;
   allowedModelIds: string[];
 }
-export interface FundedAiReadinessReader { read(): Promise<FundedAiReadiness> }
+export interface FundedAiReadinessReader { read(options?: { signal?: AbortSignal }): Promise<FundedAiReadiness> }
 
 export function createFundedAiReadinessReader(options: {
   summary: FundedAiFundingSummaryReader;
@@ -21,7 +21,7 @@ export function createFundedAiReadinessReader(options: {
   const now = options.now ?? (() => new Date());
   let inFlight: Promise<FundedAiReadiness> | undefined;
 
-  async function readFresh(): Promise<FundedAiReadiness> {
+  async function readFresh(callerSignal?: AbortSignal): Promise<FundedAiReadiness> {
     const checkedAt = now();
     const unavailable: FundedAiReadiness = {
       readiness: { state: "unavailable", checkedAt: checkedAt.toISOString(), staleAfter: null,
@@ -32,10 +32,14 @@ export function createFundedAiReadinessReader(options: {
     const controller = new AbortController();
     // The controller cancels sibling work when either dependency settles with
     // an error; the platform timeout independently bounds the external fetch.
-    const signal = controller.signal;
+    const signal = callerSignal ? AbortSignal.any([callerSignal, controller.signal]) : controller.signal;
     let timeout: ReturnType<typeof setTimeout> | undefined;
+    let onAbort: (() => void) | undefined;
     try {
+      if (signal.aborted) return unavailable;
       const deadline = new Promise<never>((_resolve, reject) => {
+        onAbort = () => reject(new Error("Funded readiness cancelled"));
+        signal.addEventListener("abort", onAbort, { once: true });
         timeout = setTimeout(() => {
           controller.abort();
           reject(new Error("Funded readiness deadline exceeded"));
@@ -48,6 +52,7 @@ export function createFundedAiReadinessReader(options: {
       const { policy, funding } = FundedAiRuntimeFundingSummaryResponseSchema.parse({ contractVersion: 1, ...raw });
       const receipt = FundedAiRouteReadinessReceiptSchema.parse(rawReceipt);
       const current = now().getTime();
+      signal.throwIfAborted();
       const ledgerAsOf = Date.parse(funding.asOf);
       if (!policy.enabled || Date.parse(policy.checkedAt) > current
         || Date.parse(policy.staleAfter) <= current || funding.remainingBudgetMicrousd === 0
@@ -77,12 +82,16 @@ export function createFundedAiReadinessReader(options: {
       return unavailable;
     } finally {
       if (timeout !== undefined) clearTimeout(timeout);
+      if (onAbort) signal.removeEventListener("abort", onAbort);
       controller.abort();
     }
   }
 
   return {
-    read() {
+    read(call = {}) {
+      // An execution observer owns cancellation; it cannot abort another
+      // concurrent Settings observer's shared observation.
+      if (call.signal) return readFresh(call.signal);
       // Share only concurrent observations for this runtime. Never retain a
       // settled authorization decision: the next read must see policy changes.
       inFlight ??= readFresh().finally(() => { inFlight = undefined; });

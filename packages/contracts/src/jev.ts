@@ -2,6 +2,7 @@ import { z } from "zod/v4";
 
 export const JEV_EMAIL_TRIAGE_RECIPE_ID = "email-triage-v1" as const;
 export const JEV_MODEL_ID = "typesafe/jev" as const;
+export const JevInboxGmailIdSchema = z.string().min(1).max(160).regex(/^[A-Za-z0-9_-]+$/);
 export const JEV_PRICING_VERSION = "typesafe-jev-input-2026-09" as const;
 export const JevProvenanceSchema = z.object({
   resolvedModel: z.string().min(1).max(128).regex(/^jev-[a-zA-Z0-9._-]+$/),

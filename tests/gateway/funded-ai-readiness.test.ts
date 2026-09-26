@@ -26,6 +26,17 @@ function setup() {
 }
 
 describe("funded AI readiness", () => {
+  it("cancels an explicit recipe readiness observer without returning a late ready decision", async () => {
+    const f = setup(); const pending = Promise.withResolvers<Awaited<ReturnType<typeof f.getRouteReadiness>>>();
+    let observed: AbortSignal | undefined;
+    const reader = createFundedAiReadinessReader({ summary: { getFundingSummary: f.getFundingSummary }, now: () => now,
+      routes: { getRouteReadiness: async options => { observed = options?.signal; return pending.promise; } } });
+    const controller = new AbortController(); const result = reader.read({ signal: controller.signal });
+    controller.abort();
+    try { expect(observed?.aborted).toBe(true); }
+    finally { pending.resolve(await f.getRouteReadiness()); }
+    expect((await result).readiness.state).toBe("unavailable");
+  });
   it("does not treat relay process liveness as proof that a funded model can run", async () => {
     const { state, getFundingSummary } = setup();
     state.policy.allowedModelIds = ["anthropic/claude-sonnet-5", "@cf/zai-org/glm-5.3-flash"];

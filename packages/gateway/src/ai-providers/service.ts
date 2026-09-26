@@ -1,3 +1,4 @@
+import type { ProviderSnapshotReadOptions } from "./snapshot-read-options.js";
 import { createCanonicalNativeHarnessCatalogReader } from "./native-harness-canonical-projection.js";
 import type { GenericHarnessModelCatalogReader } from "./generic-harness-model-catalog.js";
 import {
@@ -39,11 +40,11 @@ const KERNEL_CAPABILITIES = [
 ] as const;
 
 export interface AiProviderHealthProbe {
-  (sourceId: string, signal: AbortSignal): Promise<AiProviderReadiness | null>;
+  (sourceId: string, signal: AbortSignal, context?: ProviderSnapshotReadOptions["ownerKeyPreflight"]): Promise<AiProviderReadiness | null>;
 }
 
 export interface AiProviderSnapshotReader {
-  getSnapshot(options?: { refresh?: boolean }): Promise<AiProviderSnapshotV3>;
+  getSnapshot(options?: ProviderSnapshotReadOptions): Promise<AiProviderSnapshotV3>;
 }
 
 interface AiProviderServiceOptions {
@@ -278,15 +279,20 @@ export class AiProviderService implements AiProviderSnapshotReader {
     kind: "api_key" | "profile",
     now: string,
     refresh: boolean,
+    context?: ProviderSnapshotReadOptions["ownerKeyPreflight"],
+    parent?: AbortSignal,
   ): Promise<AiProviderReadiness> {
+    parent?.throwIfAborted();
     const fallback = readinessForObservation(observation, kind, now);
     if (observation !== "unverified" || !this.#healthProbe) return fallback;
-    if (refresh) this.#healthCache.delete(sourceId);
-    const cached = this.#healthCache.get(sourceId);
+    if (!context && refresh) this.#healthCache.delete(sourceId);
+    const cached = context ? undefined : this.#healthCache.get(sourceId);
     if (cached) return cached;
 
     const controller = new AbortController();
     let timeout: ReturnType<typeof setTimeout> | undefined;
+    const onAbort = () => controller.abort();
+    parent?.addEventListener("abort", onAbort, { once: true });
     const deadline = new Promise<never>((_resolve, reject) => {
       timeout = setTimeout(() => {
         controller.abort();
@@ -295,11 +301,12 @@ export class AiProviderService implements AiProviderSnapshotReader {
     });
     try {
       const result = await Promise.race([
-        this.#healthProbe(sourceId, controller.signal),
+        context ? this.#healthProbe(sourceId, controller.signal, context) : this.#healthProbe(sourceId, controller.signal),
         deadline,
       ]);
+      parent?.throwIfAborted();
       const readiness = result === null ? fallback : AiProviderReadinessSchema.parse(result);
-      this.#healthCache.set(sourceId, readiness);
+      if (!context) this.#healthCache.set(sourceId, readiness);
       return readiness;
     } catch (err) {
       console.warn(
@@ -313,14 +320,16 @@ export class AiProviderService implements AiProviderSnapshotReader {
         action: "retry",
         safeReason: controller.signal.aborted ? "timeout" : "unknown",
       };
-      this.#healthCache.set(sourceId, unavailable);
+      if (!context) this.#healthCache.set(sourceId, unavailable);
       return unavailable;
     } finally {
       if (timeout !== undefined) clearTimeout(timeout);
+      parent?.removeEventListener("abort", onAbort);
     }
   }
 
-  async getSnapshot(options: { refresh?: boolean } = {}): Promise<AiProviderSnapshotV3> {
+  async getSnapshot(options: ProviderSnapshotReadOptions = {}): Promise<AiProviderSnapshotV3> {
+    options.signal?.throwIfAborted();
     const snapshotTime = this.#now();
     const now = snapshotTime.toISOString();
     const { credentials, savedModel } = await this.#credentials.read();
@@ -328,11 +337,11 @@ export class AiProviderService implements AiProviderSnapshotReader {
     // funding and credential checks behind its bounded inventory deadline.
     const [drivers, funded, apiKeyReadiness, profileReadiness, codexLocalObservation, nativeHarnessCatalog] = await Promise.all([
       this.#drivers(),
-      credentials.matrixIncluded.state === "ready" && this.#fundedReadiness
+      !options.suppressFundedProbes && credentials.matrixIncluded.state === "ready" && this.#fundedReadiness
         ? this.#fundedReadiness.read()
         : undefined,
       this.#resolveOwnerReadiness(
-        "owner_anthropic_key", credentials.ownerApiKey.state, "api_key", now, options.refresh === true,
+        "owner_anthropic_key", credentials.ownerApiKey.state, "api_key", now, options.refresh === true, options.ownerKeyPreflight, options.signal,
       ),
       this.#resolveOwnerReadiness(
         "owner_anthropic_profile", credentials.ownerProfile.state, "profile", now, options.refresh === true,
@@ -340,6 +349,7 @@ export class AiProviderService implements AiProviderSnapshotReader {
       this.#readCodexLocalObservation(),
       this.#nativeHarnessCatalogReader ? this.#nativeHarnessCatalogReader(options.refresh === true) : undefined,
     ]);
+    options.signal?.throwIfAborted();
     const codexDriver = drivers.find((driver) => driver.id === "codex");
     // Driver health and CLI login are local observations. Neither proves the
     // selected OpenAI account or model can complete a remote request.

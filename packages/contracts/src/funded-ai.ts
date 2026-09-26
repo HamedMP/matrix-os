@@ -211,6 +211,7 @@ export const FundedAiRuntimeFundingSummaryResponseSchema = z.object({
 });
 
 /** Separate from the v1 funding summary so older strict clients keep working. */
+export const FundedAiRouteReadinessRequestSchema = z.object({ modelId: z.literal(JEV_MODEL_ID).optional() }).strict();
 export const FundedAiRouteReadinessReceiptSchema = z.object({
   contractVersion: z.literal(1),
   globalRevision: RevisionSchema,

@@ -11,7 +11,7 @@ import { z } from "zod/v4";
 
 const MAX_STATE_BYTES = 32 * 1024;
 const JEV_INPUT_PRICE_NANOUSD_PER_TOKEN = 42n;
-const JEV_PRICING_VALID_THROUGH = "2026-09-30T23:59:59.999Z";
+export const JEV_PRICING_VALID_THROUGH = "2026-09-30T23:59:59.999Z";
 const NANOUSD_PER_USD = 1_000_000_000n;
 const NANOUSD_PER_MICROUSD = 1_000n;
 const textEncoder = new TextEncoder();

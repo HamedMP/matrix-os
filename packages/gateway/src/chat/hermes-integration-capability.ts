@@ -44,6 +44,14 @@ export function revokeHermesJevCapabilitiesForAgent(actorId: string, agentId: st
   }
 }
 
+/** Scope comes only from the active server-issued capability; generic bearers have no recipe authority. */
+export function resolveHermesJevScope(token: string): { ownerId: string; scope: HermesJevScope } | null {
+  if (!/^[a-f0-9]{64}$/.test(token)) return null;
+  sweep(Date.now());
+  const record = active.get(digest(token));
+  return record?.scope ? { ownerId: record.actorId, scope: structuredClone(record.scope) } : null;
+}
+
 export function resolveHermesIntegrationCapability(token: string, method: string, path: string): string | null;
 export function resolveHermesIntegrationCapability(token: string, path: string): string | null;
 export function resolveHermesIntegrationCapability(token: string, methodOrPath: string, pathArg?: string): string | null {
