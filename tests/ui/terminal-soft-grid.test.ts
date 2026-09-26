@@ -313,6 +313,22 @@ describe("shared terminal grid presentation", () => {
     expect(host.scrollTop).toBeCloseTo(bottom);
   });
 
+  it("resumes bottom follow when a resize precedes the queued scroll layout", () => {
+    const { host, root, geometry, layout } = setup();
+    layout(1_600, 500);
+    Object.defineProperty(host, "scrollHeight", { get: () => Number.parseFloat(root.parentElement!.style.height) });
+    const oldBottom = host.scrollHeight - host.clientHeight;
+    expect(oldBottom).toBeGreaterThan(0);
+    root.addEventListener("wheel", (event) => event.preventDefault());
+    root.dispatchEvent(new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaY: -2_000 }));
+    expect(host.scrollTop).toBe(0);
+    // The browser reports scroll asynchronously. Return to the old bottom and
+    // shrink before the scheduled presentation frame has acknowledged it.
+    host.scrollTop = oldBottom;
+    layout(1_600, 300);
+    expect(geometry.visualHeight() - host.scrollTop).toBeLessThanOrEqual(host.clientHeight + 0.5);
+  });
+
   it("does not pull a deliberate bottom pan back to a prompt near the top", () => {
     const { host, root, terminal, layout, presentation } = setup();
     Object.defineProperty(terminal, "buffer", { value: { active: { baseY: 0, viewportY: 0, cursorY: 0, cursorX: 0 } } });

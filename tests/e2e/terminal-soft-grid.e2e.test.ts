@@ -87,6 +87,37 @@ describe("real terminal renderer soft-grid resizing", () => {
   }
 
   it.each([
+    { surface: "web", name: "Web Desktop" },
+    { surface: "electron", name: "Electron Desktop" },
+  ].filter((entry) => !nativeElectron || entry.surface === "electron"))("resumes bottom follow before a queued scroll layout in $name", async ({ surface }) => {
+    const page = electron ? await electron.firstWindow() : await browser.newPage({ viewport: { width: 1450, height: 1050 } });
+    try {
+      await page.goto(`${origin}/?surface=${surface}`);
+      await page.locator("[data-terminal-grid-stage]").waitFor();
+      await page.locator("#terminal-window").evaluate((element) => { (element as HTMLElement).style.height = "350px"; });
+      await expect.poll(async () => {
+        const g = await geometry(page);
+        return { clipped: g.scrollHeight > g.clientHeight, bottom: g.bottom - g.visibleBottom };
+      }, { timeout: 5_000 }).toMatchObject({ clipped: true, bottom: expect.any(Number) });
+      await expect.poll(async () => { const g = await geometry(page); return g.bottom - g.visibleBottom; }, { timeout: 5_000 }).toBeLessThanOrEqual(1);
+      const history = await page.locator("[data-terminal-viewport]").evaluate((element) => {
+        const host = element as HTMLElement;
+        host.dispatchEvent(new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaY: -2_000 }));
+        const away = host.scrollTop;
+        const oldBottom = host.scrollHeight - host.clientHeight;
+        host.scrollTop = host.scrollHeight;
+        const returned = host.scrollTop;
+        document.getElementById("terminal-window")!.style.height = "250px";
+        return { away, oldBottom, returned };
+      });
+      expect(history.away).toBe(0);
+      expect(history.oldBottom).toBeGreaterThan(0);
+      expect(history.returned).toBeCloseTo(history.oldBottom, 0);
+      await expect.poll(async () => { const g = await geometry(page); return g.bottom - g.visibleBottom; }, { timeout: 5_000 }).toBeLessThanOrEqual(1);
+    } finally { if (!electron) await page.close(); }
+  });
+
+  it.each([
     { surface: "web", zoom: 1 }, { surface: "web", zoom: 0.75 }, { surface: "electron", zoom: 1 },
   ].filter((entry) => !nativeElectron || entry.surface === "electron"))("wires native history polling and drag in $surface at $zoom", async ({ surface, zoom }) => {
     const page = electron ? await electron.firstWindow() : await browser.newPage({ viewport: { width: 1450, height: 1050 } });
