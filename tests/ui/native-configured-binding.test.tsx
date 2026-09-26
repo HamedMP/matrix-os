@@ -10,7 +10,7 @@ import { AiProviderSnapshotV3Schema, type ProviderAccessSource } from "@matrix-o
 
 afterEach(cleanup);
 
-async function projected(kind: "pi" | "opencode", fresh = false, savedKey = false, removed = false, unconfigured = false, matrix = false) {
+async function projected(kind: "pi" | "opencode", fresh = false, savedKey = false, removed = false, unconfigured = false, matrix = false, catalogFailed = false) {
   const now = new Date();
   const canonical = providerSettingsCanonicalFixture();
   canonical.refreshedAt = now.toISOString();
@@ -40,7 +40,7 @@ async function projected(kind: "pi" | "opencode", fresh = false, savedKey = fals
       enablementOrigin: "owner_configuration", selectedAccountId: savedKey ? "owner_anthropic" : null,
       accessSourceId: unconfigured ? null : matrix ? "matrix_included" : savedKey ? key.id : native.id,
       route: { kind: "configurable", providerId: "anthropic", modelId: "claude-sonnet-5" },
-    }] }, genericModelCatalog: { providers: [], accessSources: removed ? [] : [native], failures: [] },
+    }] }, genericModelCatalog: { providers: [], accessSources: removed ? [] : [native], failures: catalogFailed ? [kind] : [] },
   });
   snapshot.atomicConnectSupported = true;
   return snapshot;
@@ -150,4 +150,36 @@ it("allows an explicit funding-choice change from saved Matrix AI to an availabl
   fireEvent.click(screen.getByRole("button", { name: /Own account/ }));
   await waitFor(() => expect(mutate).toHaveBeenCalledWith(expect.objectContaining({ accessSourceId: "owner_anthropic_key" })));
   expect(refresh).not.toHaveBeenCalled();
+});
+
+
+it.each(["pi", "opencode"] as const)("recovers exact saved %s intent after its catalog omitted the native source", async (kind) => {
+  const snapshot = await projected(kind, false, false, true, false, false, true);
+  expect(snapshot.harnesses[0]).toMatchObject({ configuredAccessSourceId: `harness_${kind}_anthropic`, accessSourceId: null, routeAvailability: "catalog_unavailable" });
+  const refresh = vi.fn().mockResolvedValue(await projected(kind, true));
+  const mutate = mount(snapshot, refresh);
+  expect(screen.getByRole("status")).toHaveTextContent("Saved connection unavailable");
+  fireEvent.click(screen.getByRole("button", { name: /Own account/ }));
+  await waitFor(() => expect(refresh).toHaveBeenCalledOnce());
+  await waitFor(() => expect(mutate).toHaveBeenCalledWith(expect.objectContaining({ accessSourceId: `harness_${kind}_anthropic`, accountId: null })));
+  expect(mutate).not.toHaveBeenCalledWith(expect.objectContaining({ accessSourceId: "owner_anthropic_key" }));
+});
+
+it.each(["missing source", "changed binding", "wrong provider", "wrong harness", "wrong account", "wrong model", "stale", "null refresh"])("denies catalog recovery with %s and never substitutes the ready key", async (negative) => {
+  const snapshot = await projected("pi", false, false, true, false, false, true);
+  const fresh = await projected("pi", true);
+  const native = fresh.accessSources.find((source) => source.kind === "harness_profile")!;
+  if (negative === "missing source") fresh.accessSources = fresh.accessSources.filter((source) => source !== native);
+  if (negative === "changed binding") fresh.harnesses[0]!.configuredAccessSourceId = "owner_anthropic_key";
+  if (negative === "wrong provider") native.providerId = "openai";
+  if (negative === "wrong harness") native.harness = "opencode";
+  if (negative === "wrong account") native.accountId = "other_account";
+  if (negative === "wrong model") native.eligibleModelIds = [];
+  if (negative === "stale") native.localObservation!.staleAfter = new Date(Date.now() - 1).toISOString();
+  const refresh = vi.fn().mockResolvedValue(negative === "null refresh" ? null : fresh);
+  const mutate = mount(snapshot, refresh);
+  fireEvent.click(screen.getByRole("button", { name: /Own account/ }));
+  await waitFor(() => expect(refresh).toHaveBeenCalledOnce());
+  await waitFor(() => expect(screen.getByRole("alert")).toBeVisible());
+  expect(mutate).not.toHaveBeenCalled();
 });
