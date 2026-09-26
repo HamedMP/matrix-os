@@ -8,7 +8,7 @@
 import { createHash, createHmac, randomBytes } from "node:crypto";
 import type { AddressInfo } from "node:net";
 import { serve } from "@hono/node-server";
-import { CreateBucketCommand, S3Client } from "@aws-sdk/client-s3";
+import { CreateBucketCommand, DeleteBucketCommand, DeleteObjectsCommand, ListObjectsV2Command, S3Client } from "@aws-sdk/client-s3";
 import { Kysely, sql } from "kysely";
 import { KyselyPGlite } from "kysely-pglite";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -19,6 +19,7 @@ import { createR2Client, type R2Client } from "../../packages/gateway/src/sync/r
 import { insertContainer, type PlatformDB } from "../../packages/platform/src/db.js";
 import { Hono } from "hono";
 import { createInternalSyncRoutes } from "../../packages/platform/src/internal-sync-routes.js";
+import { createR2Client as createPlatformStorageClient } from "../../packages/platform/src/r2-client.js";
 import { createTestPlatformDb, destroyTestPlatformDb } from "../platform/platform-db-test-helper.js";
 
 const endpoint = process.env.MATRIX_TEST_S3_ENDPOINT;
@@ -45,24 +46,28 @@ async function download(url: string): Promise<Uint8Array> {
 describe.skipIf(!endpoint)("organization drive on real storage", () => {
   let platformDb: PlatformDB;
   let server: ReturnType<typeof serve>;
+  let s3: S3Client;
   let direct: R2Client;
+  let platformStorage: Awaited<ReturnType<typeof createPlatformStorageClient>>;
   let driveDb: Kysely<OrganizationDriveDatabase>;
   let service: OrganizationDriveService;
   let clock = new Date();
 
   beforeAll(async () => {
-    const s3 = new S3Client({ region: "auto", endpoint, forcePathStyle: true,
+    s3 = new S3Client({ region: "auto", endpoint, forcePathStyle: true,
       credentials: { accessKeyId: "matrixos", secretAccessKey: "matrixos123" } });
     await s3.send(new CreateBucketCommand({ Bucket: bucket }));
-    s3.destroy();
     direct = await createR2Client({ accessKeyId: "matrixos", secretAccessKey: "matrixos123", bucket,
       endpoint, publicEndpoint: endpoint, forcePathStyle: true });
+    // The platform broker uses its own storage client in production.
+    platformStorage = await createPlatformStorageClient({ accessKeyId: "matrixos", secretAccessKey: "matrixos123",
+      bucket, endpoint, publicEndpoint: endpoint, forcePathStyle: true });
 
     ({ db: platformDb } = await createTestPlatformDb());
     await insertContainer(platformDb, { handle, clerkUserId: owner, port: 5001, shellPort: 6001, status: "running" });
     // Same mount as packages/platform/src/main.ts.
     const app = new Hono().route("/internal/containers/:handle/sync", createInternalSyncRoutes({
-      db: platformDb, r2: direct, platformSecret: secret, r2PrefixRoot: "matrixos-sync" }));
+      db: platformDb, r2: platformStorage, platformSecret: secret, r2PrefixRoot: "matrixos-sync" }));
     server = serve({ fetch: app.fetch, port: 0, hostname: "127.0.0.1" });
     await new Promise((resolve) => server.once("listening", resolve));
     const port = (server.address() as AddressInfo).port;
@@ -90,6 +95,12 @@ describe.skipIf(!endpoint)("organization drive on real storage", () => {
     await new Promise((resolve) => server?.close(resolve));
     await destroyTestPlatformDb(platformDb);
     direct?.destroy?.();
+    platformStorage?.destroy();
+    const listed = await s3.send(new ListObjectsV2Command({ Bucket: bucket }));
+    const objects = (listed.Contents ?? []).flatMap((item) => (item.Key ? [{ Key: item.Key }] : []));
+    if (objects.length > 0) await s3.send(new DeleteObjectsCommand({ Bucket: bucket, Delete: { Objects: objects } }));
+    await s3.send(new DeleteBucketCommand({ Bucket: bucket }));
+    s3.destroy();
   });
 
   it("owner uploads through a presigned URL, commits, lists and downloads the verified bytes", async () => {
