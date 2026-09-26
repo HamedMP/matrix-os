@@ -17,7 +17,7 @@ async function fixture() {
       status: "running", imageVersion: "fixture", provisionedAt: new Date().toISOString(), activationState: "authorized" });
     await repository.setRuntimePolicy({ identity, expectedRevision: 0, enabled: true, allowedModelIds: [JEV_MODEL_ID], monthlyBudgetMicrousd: 1_000_000, expiresAt: null });
   }
-  const issue = vi.spyOn(repository, "issueRuntimeCredential");
+  const issue = vi.spyOn(repository, "issueJevProbeCredential");
   const revoke = vi.spyOn(repository, "revokeRuntimeCredential");
   const fetchFn = vi.fn<typeof fetch>(async (raw, init) => {
     expect(new URL(String(raw)).pathname).toBe("/v1/jev-readiness");
@@ -70,12 +70,12 @@ it("does not populate ready cache after cancellation and revokes the delayed tem
   // A changed revision never reuses the cancelled observation.
   expect((await f.service.probe(JEV_MODEL_ID, { runtime: { ...f.runtime("a"), globalRevision: 2 } })).ready).toBe(false);
 });
-it("does not revoke an ordinary already-issued credential when a separate probe is denied by cooldown", async () => {
+it("does not revoke or rotate an ordinary credential when a separate capped probe completes", async () => {
   const f = await fixture(); const identity = f.runtime("a").identity;
   const ordinary = await f.repository.issueRuntimeCredential(identity);
-  expect((await f.service.probe(JEV_MODEL_ID, { runtime: f.runtime("a") })).ready).toBe(false);
+  expect((await f.service.probe(JEV_MODEL_ID, { runtime: f.runtime("a") })).ready).toBe(true);
   const row = await db.executor.selectFrom("ai_runtime_credentials").select("revoked_at").where("token_id", "=", ordinary.credential.tokenId).executeTakeFirstOrThrow();
-  expect(row.revoked_at).toBeNull(); expect(f.fetchFn).not.toHaveBeenCalled(); expect(f.revoke).not.toHaveBeenCalled();
+  expect(row.revoked_at).toBeNull(); expect(f.fetchFn).toHaveBeenCalledOnce(); expect(f.revoke).toHaveBeenCalledOnce();
 });
 it("revokes the temporary token when a relay body stalls past caller cancellation", async () => {
   const f = await fixture(); const cancelled = vi.fn();

@@ -46,7 +46,8 @@ export function createOwnerAnthropicKeyPreflight(options: { homePath: string; fe
     if (sourceId !== "owner_anthropic_key" || !parsed.success) return null;
     // At most one unfinished operation, including a dependency ignoring abort.
     if (unfinished) return null;
-    const execute = async (signal: AbortSignal): Promise<AiProviderReadiness | null> => {
+    const execute = async (parentSignal: AbortSignal): Promise<AiProviderReadiness | null> => {
+      const signal = AbortSignal.any([parentSignal, AbortSignal.timeout(2_000)]);
       const initial = await binding(parsed.data, signal);
       if (!initial) return null;
       if (cached && cached.fingerprint === initial.fingerprint && cached.expires > now()) return { ...cached.readiness };

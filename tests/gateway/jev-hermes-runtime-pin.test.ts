@@ -3,9 +3,9 @@ import { verifyJevHermesRuntimePin } from "../../packages/gateway/src/chat/jev-h
 const pin = "d337b736aa1e8ebecfab043842d13e4a2d2f48a3";
 describe("restricted Hermes launch verifies tested installed source", () => {
   it("requires exact pin and no tracked modifications with bounded non-shell commands", async () => {
-    const command = vi.fn(async (_args: string[], _signal: AbortSignal) => `${pin}\n`);
+    const command = vi.fn(async (args: string[], _signal: AbortSignal) => args.includes("rev-parse") ? `${pin}\n` : "");
     await verifyJevHermesRuntimePin("/home/matrix/home/.hermes/hermes-agent", new AbortController().signal, command);
-    expect(command).toHaveBeenCalledTimes(2);
+    expect(command).toHaveBeenCalledTimes(4);
     expect(command.mock.calls[0]![0]).toContain("rev-parse");
     expect(command.mock.calls[1]![0]).toContain("diff-index");
     expect(command.mock.calls[1]![0]).toContain("--no-ext-diff");
@@ -25,4 +25,10 @@ describe("restricted Hermes launch verifies tested installed source", () => {
       : args.includes("ls-files") && (args.includes("--ignored") === (mode === "ignored")) ? "sitecustomize.py\0" : "");
     await expect(verifyJevHermesRuntimePin("/fixture/hermes", new AbortController().signal, command)).rejects.toThrow();
   });
+});
+
+it("does not reject benign preexisting CPython source caches that the isolated launcher will bypass", async () => {
+  const command = vi.fn(async (args: string[]) => args.includes("rev-parse") ? `${pin}\n`
+    : args.includes("ls-files") ? "tools/__pycache__/fixture.cpython-311.pyc\0" : "");
+  await expect(verifyJevHermesRuntimePin("/fixture/hermes", new AbortController().signal, command)).resolves.toBeUndefined();
 });

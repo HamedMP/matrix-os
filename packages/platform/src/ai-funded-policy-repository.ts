@@ -2,6 +2,7 @@ import { createHmac, randomBytes, randomUUID } from "node:crypto";
 import {
   FUNDED_AI_AUDIENCE,
   FUNDED_AI_SCOPE,
+  JEV_MODEL_ID,
   FundedAiGlobalPolicySchema,
   FundedAiRuntimeCredentialIssueResponseSchema,
   IsoTimestampSchema,
@@ -234,7 +235,7 @@ export function createAiFundedPolicyRepository(options: AiFundedPolicyRepository
     });
   }
 
-  async function issueRuntimeCredential(identityInput: FundedAiIdentity): Promise<FundedAiRuntimeCredentialIssueResponse> {
+  async function issueCredential(identityInput: FundedAiIdentity, probe = false): Promise<FundedAiRuntimeCredentialIssueResponse> {
     const identity = IdentitySchema.parse(identityInput);
     await options.db.ready;
     const checked = now();
@@ -283,6 +284,11 @@ export function createAiFundedPolicyRepository(options: AiFundedPolicyRepository
               ON runtime_model.value = global_model.value
           )
       ), leased AS (
+        ${probe ? sql`
+          SELECT eligible.* FROM eligible
+          WHERE EXISTS (SELECT 1 FROM jsonb_array_elements_text(eligible.global_models::jsonb) model(value) WHERE model.value = ${JEV_MODEL_ID})
+            AND EXISTS (SELECT 1 FROM jsonb_array_elements_text(eligible.runtime_models::jsonb) model(value) WHERE model.value = ${JEV_MODEL_ID})
+        ` : sql`
         UPDATE ai_funded_runtime_policies runtime
         SET next_issue_at = ${nextIssueAt}
         FROM eligible
@@ -290,6 +296,7 @@ export function createAiFundedPolicyRepository(options: AiFundedPolicyRepository
           AND runtime.next_issue_at <= ${checkedAt}
         RETURNING eligible.global_revision, eligible.runtime_revision,
           eligible.global_models, eligible.runtime_models, eligible.monthly_budget_microusd
+        `}
       ), inserted AS (
         INSERT INTO ai_runtime_credentials (
           token_id, token_hash, owner_id, machine_id, runtime_slot,
@@ -357,7 +364,10 @@ export function createAiFundedPolicyRepository(options: AiFundedPolicyRepository
     getRuntimePolicy,
     updateGlobalPolicy,
     setRuntimePolicy,
-    issueRuntimeCredential,
+    issueRuntimeCredential: (identity: FundedAiIdentity) => issueCredential(identity),
+    // Internal sole fixed Jev probe. Admission/rate caps belong to the existing
+    // probe service; this must not consume the VPS persistent issuance cooldown.
+    issueJevProbeCredential: (identity: FundedAiIdentity) => issueCredential(identity, true),
     revokeRuntimeCredential,
     ...metering,
   };

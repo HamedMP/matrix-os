@@ -242,7 +242,7 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
       const [canonical, enrichment] = await Promise.all([
         inventory,
         readProviderSettingsEnrichment({
-          canonical: inventory, fundingSummary: this.#fundingSummary,
+          canonical: inventory, fundingSummary: options.suppressFundedProbes === true ? undefined : this.#fundingSummary,
           genericModelCatalog: this.#genericModelCatalog, refresh,
           catalogFailureHarnesses: ["pi", "opencode"],
         }),

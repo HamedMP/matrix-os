@@ -94,16 +94,25 @@ export function createJevInboxBroker(options: {
           records.set(runKey, record);
         }
         const current = record;
-        if (!current.discovering) current.discovering = (async () => {
-          await profile(ownerId, scope, current, signal);
-          const data = Discovery.parse(await options.read(ownerId, scope, "list_threads", {}, signal));
-          alive(ownerId, scope, current, signal);
-          const threads = data.threads ?? [];
-          if (new Set(threads.map((t) => t.id)).size !== threads.length) throw new InboxPreviewError("unavailable");
-          current.discovery = { kind: "discovery", receipt: current.discoveryReceipt, readonly: true,
-            threads: threads.map((t) => ({ id: t.id, snippet: t.snippet ?? "" })) };
-          return current.discovery;
-        })();
+        if (!current.discovering) {
+          const attempt = (async () => {
+            await profile(ownerId, scope, current, signal);
+            const data = Discovery.parse(await options.read(ownerId, scope, "list_threads", {}, signal));
+            alive(ownerId, scope, current, signal);
+            const threads = data.threads ?? [];
+            if (new Set(threads.map((t) => t.id)).size !== threads.length) throw new InboxPreviewError("unavailable");
+            current.discovery = { kind: "discovery", receipt: current.discoveryReceipt, readonly: true,
+              threads: threads.map((t) => ({ id: t.id, snippet: t.snippet ?? "" })) };
+            return current.discovery;
+          })();
+          current.discovering = attempt;
+          void attempt.catch((error: unknown) => {
+            console.warn("[jev] Read attempt unavailable", { errorName: error instanceof Error ? error.name : "UnknownError" });
+            // Explicit read retries only; never clear a newer or revoked run.
+            if (records.get(runKey) === current && current.expiresAt > now()
+              && current.fingerprint === fingerprint(scope) && current.discovering === attempt) current.discovering = undefined;
+          });
+        }
         return current.discovering;
       }
       if (!record) throw new InboxPreviewError("denied");
@@ -114,7 +123,7 @@ export function createJevInboxBroker(options: {
         if (!current.selecting) {
           const selection = { threadId: input.threadId, receipt: randomBytes(32).toString("hex") };
           current.selection = selection;
-          current.selecting = (async () => {
+          const attempt = (async () => {
             await profile(ownerId, scope, current, signal);
             let identity: ReturnType<typeof threadIdentity>;
             try { identity = threadIdentity(await options.read(ownerId, scope, "get_thread_ids", { threadId: input.threadId }, signal), input.threadId); }
@@ -140,6 +149,12 @@ export function createJevInboxBroker(options: {
               return markReview(current);
             }
           })();
+          current.selecting = attempt;
+          void attempt.catch((error: unknown) => {
+            console.warn("[jev] Read attempt unavailable", { errorName: error instanceof Error ? error.name : "UnknownError" });
+            if (records.get(runKey) === current && current.expiresAt > now()
+              && current.fingerprint === fingerprint(scope) && current.selecting === attempt) current.selecting = undefined;
+          });
         }
         return current.selecting;
       }

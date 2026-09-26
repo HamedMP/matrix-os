@@ -43,7 +43,7 @@ it("recipe resolution skips funding enrichment and cannot stall the next seriali
     funding.getFundingSummary.mockRejectedValue(new Error("Synthetic ordinary unavailable"));
     await f.settings.getSnapshot({ refresh: true });
     expect(funding.getFundingSummary).toHaveBeenCalledOnce();
-  } finally { release.reject(new Error("Synthetic release")); await f.close(); }
+  } finally { release.reject(new Error("Synthetic release")); await expect(release.promise).rejects.toThrow("Synthetic release"); await f.close(); }
 });
 it("owner auth health fetch combines an explicit two-second timeout with caller cancellation", async () => {
   const f = await fixture(); const timeout = vi.spyOn(AbortSignal, "timeout");

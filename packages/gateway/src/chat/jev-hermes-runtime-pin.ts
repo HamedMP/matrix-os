@@ -2,6 +2,9 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { join } from "node:path";
 import { boundedOperation } from "../bounded-operation.js";
+import { hermesDependencyArguments } from "./jev-hermes-python.js";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 const PIN = "d337b736aa1e8ebecfab043842d13e4a2d2f48a3";
 const run = promisify(execFile);
 const command = async (args: string[], signal: AbortSignal) => {
@@ -20,6 +23,21 @@ export async function verifyJevHermesRuntimePin(root: string, signal: AbortSigna
     if (revision.trim() !== PIN) throw new Error("Restricted runtime setup required");
     await runCommand([...common, "diff-index", "--quiet", "--no-ext-diff", "--no-textconv", "HEAD", "--"], deadline);
     deadline.throwIfAborted();
+    // Tracked cleanliness does not cover importable additions or ignored caches.
+    // Installed venv packages remain an explicit dependency trust boundary;
+    // the isolated launcher separately bypasses all site/.pth startup hooks.
+    for (const ignored of [false, true]) {
+      const files = await runCommand([...common, "ls-files", "--others", ...(ignored ? ["--ignored"] : []),
+        "--exclude-standard", "-z", "--", "*.py", "*.pyc", "*.pyo", "*.pth", "*.so", "*.zip",
+        ":(exclude)venv/**", ":(exclude,glob)**/__pycache__/*.cpython-*.pyc"], deadline);
+      deadline.throwIfAborted();
+      // Source caches are never loaded: both Python paths use a fresh private
+      // cache prefix. Reject raw/sourceless bytecode and all added import code.
+      if (files.split("\0").some(path => /\.(?:py|pyc|pyo|pth|so|zip)$/i.test(path)
+        && !/(?:^|\/)__pycache__\/[^/]+\.cpython-\d+(?:\.opt-\d+)?\.pyc$/.test(path))) {
+        throw new Error("Restricted runtime setup required");
+      }
+    }
   }, 15_000, signal);
 }
 
@@ -32,9 +50,12 @@ export async function verifyJevHermesDependencies(root: string, signal: AbortSig
   }): Promise<void> {
   signal.throwIfAborted();
   await boundedOperation(async (deadline) => {
-    const version = await runPython(join(root, "venv", "bin", "python"), ["-I", "-B", "-c",
-      'import anthropic; import importlib.metadata; print(importlib.metadata.version("anthropic"))'], deadline);
-    deadline.throwIfAborted();
-    if (version !== "0.87.0\n") throw new Error("Restricted runtime setup required");
+    const cachePrefix = await mkdtemp(join(tmpdir(), "matrix-jev-dependency-cache-"));
+    try {
+      deadline.throwIfAborted();
+      const version = await runPython(join(root, "venv", "bin", "python"), hermesDependencyArguments(root, cachePrefix), deadline);
+      deadline.throwIfAborted();
+      if (version !== "0.87.0\n") throw new Error("Restricted runtime setup required");
+    } finally { await rm(cachePrefix, { recursive: true, force: true }); }
   }, 10_000, signal);
 }

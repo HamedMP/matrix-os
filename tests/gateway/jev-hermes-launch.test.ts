@@ -28,7 +28,7 @@ function fixture() {
   return { gateway, adapter, resolveCredentials, verifyRuntime, preflight, clearRun, summary };
 }
 describe("production isolated Hermes recipe launch", () => {
-  it.each(["sitecustomize.py", "usercustomize.py", "startup.pth"])("native credential-bearing startup cannot execute unchecked %s", async hook => {
+  it.each(["sitecustomize.py", "usercustomize.py", "startup.pth", "cached-bytecode", "benign-cache"])("native credential-bearing startup cannot execute unchecked %s", async hook => {
     const directory = await mkdtemp(join(tmpdir(), "jev-native-startup-"));
     const root = join(directory, ".hermes/hermes-agent"); const marker = join(directory, "startup-marker");
     const reached = join(directory, "entry-reached");
@@ -38,9 +38,15 @@ describe("production isolated Hermes recipe launch", () => {
     const site = join(root, "venv/lib", `python${version}`, "site-packages");
     await writeFile(join(site, "fixture_dependency.py"), "VALUE = 'synthetic-dependency'\n");
     const payload = `import os; open(${JSON.stringify(marker)}, 'w').write(os.getenv('ANTHROPIC_API_KEY', 'absent'))\n`;
-    await writeFile(hook.endsWith(".pth") ? join(site, hook) : join(root, hook), payload);
+    await writeFile(join(root, "fixture_source.py"), "VALUE = 'verified-source'\n");
+    if (hook === "cached-bytecode" || hook === "benign-cache") {
+      execFileSync(join(root, "venv/bin/python"), ["-I", "-c", `import py_compile, pathlib, marshal
++path = ${JSON.stringify(join(root, "fixture_source.py"))}
++cache = py_compile.compile(path, doraise=True)
++${hook === "cached-bytecode" ? `target = pathlib.Path(cache); header = target.read_bytes()[:16]; target.write_bytes(header + marshal.dumps(compile(${JSON.stringify(payload + "VALUE = 'verified-source'\n")}, path, 'exec')))` : ""}`.replace(/^\+/gm, "")]);
+    } else await writeFile(hook.endsWith(".pth") ? join(site, hook) : join(root, hook), payload);
     await writeFile(join(root, "tui_gateway/__init__.py"), "");
-    await writeFile(join(root, "tui_gateway/entry.py"), `import json, fixture_dependency\nopen(${JSON.stringify(reached)}, 'w').write(fixture_dependency.VALUE)\nprint(json.dumps({'jsonrpc':'2.0','method':'event','params':{'type':'gateway.ready','payload':{}}}), flush=True)\n`);
+    await writeFile(join(root, "tui_gateway/entry.py"), `import json, fixture_dependency, fixture_source\nassert fixture_source.VALUE == 'verified-source'\nopen(${JSON.stringify(reached)}, 'w').write(fixture_dependency.VALUE)\nprint(json.dumps({'jsonrpc':'2.0','method':'event','params':{'type':'gateway.ready','payload':{}}}), flush=True)\n`);
     const adapter = createHermesChatProviderAdapter({ homePath: directory, readyTimeoutMs: 1000, requestTimeoutMs: 1000,
       spawnFn: (command, args, options) => spawn(command, args, options),
       jev: { resolveCredentials: async () => credentials, verifyRuntime: async () => undefined,
@@ -92,7 +98,8 @@ describe("production isolated Hermes recipe launch", () => {
       expect(f.gateway.requests.some((r) => r.method === "prompt.submit")).toBe(false); expect(f.preflight).not.toHaveBeenCalled();
       const launch = f.gateway.spawnFn.mock.calls[0]![2];
       expect(launch.cwd).not.toBe(input.executionRoot); expect(launch.env.HOME).toBe(launch.cwd);
-      expect(launch.env.UPGRADE_TOKEN).toBeUndefined(); expect(launch.env.PYTHONPATH).not.toContain("unsafe");
+      expect(launch.env.UPGRADE_TOKEN).toBeUndefined(); expect(launch.env.PYTHONPATH).toBeUndefined();
+      expect(f.gateway.spawnFn.mock.calls[0]![1]).toContain("-S");
       expect(launch.env.ANTHROPIC_API_KEY).toBe(credentials.env.ANTHROPIC_API_KEY);
       f.gateway.event("session.info", { lazy: false, tools: { matrix_jev_recipe: ["mcp__matrix_jev_recipe__jev_inbox_preview"] } });
       await vi.waitFor(() => expect(f.gateway.requests.some((r) => r.method === "prompt.submit")).toBe(true));

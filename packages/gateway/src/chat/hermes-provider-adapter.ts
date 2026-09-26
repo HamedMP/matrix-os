@@ -1,4 +1,5 @@
 import { createHermesSubagentActivity } from "./hermes-subagent-activity.js";
+import { restrictedHermesPythonArguments } from "./jev-hermes-python.js";
 import { hermesToolHasPrivateContext, hermesToolOutput } from "./hermes-tool-output.js";
 import { ChatSteerNotDeliveredError } from "./steer-delivery-error.js";
 import { createHermesInputController } from "./hermes-input-control.js";
@@ -629,7 +630,7 @@ export function createHermesChatProviderAdapter(options: {
     const executionCwd = restrictedProfile?.homePath ?? input.executionRoot ?? options.homePath;
     const clientOptions = {
       command: join(hermesRoot, "venv", "bin", "python"),
-      args: ["-u", "-m", "tui_gateway.entry"],
+      args: restrictedProfile ? restrictedHermesPythonArguments(hermesRoot, join(restrictedProfile.homePath, "pycache")) : ["-u", "-m", "tui_gateway.entry"],
       cwd: executionCwd,
       inheritEnvironment: !restrictedProfile,
       env: {
@@ -639,7 +640,7 @@ export function createHermesChatProviderAdapter(options: {
         MATRIX_CLERK_USER_ID: input.owner.ownerId,
         MATRIX_AGENT_INTEGRATIONS_TOKEN: integrationCapability.token,
         HERMES_PYTHON_SRC_ROOT: hermesRoot,
-        PYTHONPATH: !restrictedProfile && existingPythonPath ? `${hermesRoot}${delimiter}${existingPythonPath}` : hermesRoot,
+        ...(!restrictedProfile ? { PYTHONPATH: existingPythonPath ? `${hermesRoot}${delimiter}${existingPythonPath}` : hermesRoot } : {}),
         PYTHONUNBUFFERED: "1",
         // This adapter owns one finite turn, not a persistent notification consumer.
         // Hermes joins parallel children inline instead of detaching their results.

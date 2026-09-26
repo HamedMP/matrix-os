@@ -5,7 +5,7 @@ import type { AiFundedPolicyRepository } from "./ai-funded-policy-repository.js"
 export const JevProbeRuntimeSchema = z.object({ identity: FundedAiIdentitySchema,
   globalRevision: z.number().int().min(0), runtimeRevision: z.number().int().min(0) }).strict();
 export type JevProbeRuntime = z.infer<typeof JevProbeRuntimeSchema>;
-export type JevProbeCredentials = Pick<AiFundedPolicyRepository, "issueRuntimeCredential" | "revokeRuntimeCredential">;
+export type JevProbeCredentials = Pick<AiFundedPolicyRepository, "issueJevProbeCredential" | "revokeRuntimeCredential">;
 const MAX_PENDING = 8;
 const pending = new Set<Promise<string | undefined>>();
 export async function probeWithSignal<T>(operation: () => Promise<T>, signal: AbortSignal): Promise<T> {
@@ -34,7 +34,7 @@ export async function probeOwnerFundedJev(input: {
   input.signal.throwIfAborted();
   if (pending.size >= MAX_PENDING) return undefined;
   const operation = (async () => {
-    const lease = FundedAiRuntimeCredentialIssueResponseSchema.parse(await input.credentials.issueRuntimeCredential(input.runtime.identity));
+    const lease = FundedAiRuntimeCredentialIssueResponseSchema.parse(await input.credentials.issueJevProbeCredential(input.runtime.identity));
     try {
       input.signal.throwIfAborted();
       if (JSON.stringify(lease.identity) !== JSON.stringify(input.runtime.identity)

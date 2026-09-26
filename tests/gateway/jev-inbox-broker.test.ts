@@ -77,6 +77,33 @@ it("does not retry an ambiguously failed paid evaluation", async () => {
   await expect(f.execute(input)).rejects.toThrow(); await expect(f.execute(input)).rejects.toThrow();
   expect(f.evaluate).toHaveBeenCalledOnce();
 });
+it("an explicit read retry reauthorizes before any upstream request", async () => {
+  const f = fixture(); const original = f.read.getMockImplementation()!;
+  f.read.mockImplementation(async (...args) => {
+    if (args[2] === "list_threads") throw new Error("Synthetic transient failure");
+    return original(...args);
+  });
+  await expect(f.execute({ operation: "discover" })).rejects.toThrow();
+  const count = f.read.mock.calls.length;
+  f.authorize.mockRejectedValue(new Error("Synthetic revoked authority"));
+  await expect(f.execute({ operation: "discover" })).rejects.toThrow();
+  expect(f.read).toHaveBeenCalledTimes(count); expect(f.evaluate).not.toHaveBeenCalled();
+});
+it("a rejected old discovery cannot clear a replacement run's cached attempt", async () => {
+  const f = fixture(); const barrier = Promise.withResolvers<unknown>();
+  const original = f.read.getMockImplementation()!; let waiting = false;
+  f.read.mockImplementation(async (...args) => {
+    if (args[2] === "list_threads" && !waiting) { waiting = true; return barrier.promise; }
+    return original(...args);
+  });
+  const old = f.execute({ operation: "discover" }); const rejected = expect(old).rejects.toThrow();
+  await vi.waitFor(() => expect(waiting).toBe(true));
+  f.broker.clearRun(ownerId, scope.runId);
+  const fresh = await f.execute({ operation: "discover" });
+  barrier.reject(new Error("Synthetic delayed old failure")); await rejected;
+  await expect(f.execute({ operation: "discover" })).resolves.toEqual(fresh);
+  expect(f.read.mock.calls.filter(call => call[2] === "list_threads")).toHaveLength(2);
+});
 it("exposes only completed server summary for the same live run/account/revision", async () => {
   const f = fixture(); expect(f.broker.presentation(ownerId, scope)).toBeNull();
   const evidence = await selected(f);
