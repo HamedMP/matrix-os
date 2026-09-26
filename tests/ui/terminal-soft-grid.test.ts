@@ -68,6 +68,19 @@ describe("shared terminal grid presentation", () => {
     expect(geometry.visualHeight()).toBeLessThanOrEqual(600.5);
   });
 
+  it.each(["", "auto"])("owns outer scroll anchoring while presented and restores '%s' on teardown", (anchor) => {
+    const { host, presentation, layout } = setup();
+    host.style.overflowAnchor = anchor;
+    layout(1_600, 300);
+    expect(host.style.overflowAnchor).toBe("none");
+    presentation.reset();
+    expect(host.style.overflowAnchor).toBe(anchor);
+    layout(1_600, 300);
+    expect(host.style.overflowAnchor).toBe("none");
+    presentation.dispose();
+    expect(host.style.overflowAnchor).toBe(anchor);
+  });
+
   it("keeps deliberate outer-grid panning through repeated resizes", () => {
     const { host, layout } = setup();
     layout(1_600, 300);
