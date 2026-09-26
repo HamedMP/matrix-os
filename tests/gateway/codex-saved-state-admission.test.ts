@@ -82,14 +82,14 @@ describe("saved Codex harness authority at Workspace and Project admission", () 
     }
   });
 
-  it("fails closed for malformed saved settings without changing other harnesses", async () => {
+  it("fails closed for malformed saved settings across supported harnesses", async () => {
     const homePath = await mkdtemp(join(tmpdir(), "codex-bad-settings-"));
     try {
       const admission = createCodexHarnessAdmission({ homePath });
       await mkdir(join(homePath, "system/ai-providers"), { recursive: true });
       await writeFile(join(homePath, "system/ai-providers/settings.json"), "{bad json");
       await expect(admission.isProviderEnabled("codex")).resolves.toBe(false);
-      await expect(admission.isProviderEnabled("claude")).resolves.toBe(true);
+      await expect(admission.isProviderEnabled("claude")).resolves.toBe(false);
     } finally {
       await rm(homePath, { recursive: true, force: true });
     }
