@@ -6,11 +6,29 @@ const ABSOLUTE_PATH = /(^|[\s"'`(=:<>|;&])\/(?=[A-Za-z0-9._~-])(?!\/)[^\s"'`<>)]
 const DANGLING_BEARER = /(?:^|[^A-Za-z0-9_])Bearer\s+$/i;
 const ACTIVE_BEARER = /(?:^|[^A-Za-z0-9_])Bearer\s+/i;
 const DANGLING_SECRET_ASSIGNMENT = /(?:^|[^A-Za-z0-9_])(?:API[_-]?(?:KEY|TOKEN)|ACCESS[_-]?TOKEN|SECRET|PASSWORD|CREDENTIAL)\s*(?:=\s*)?$/i;
+const DANGLING_SECRET_VALUE = /(^|[^A-Za-z0-9_])(?:API[_-]?(?:KEY|TOKEN)|ACCESS[_-]?TOKEN|SECRET|PASSWORD|CREDENTIAL)\s*=\s*$/i;
 const SECRET_KEYWORDS = [
   "bearer", "apikey", "api_key", "api-key", "apitoken", "api_token", "api-token",
   "accesstoken", "access_token", "access-token", "secret", "password", "credential",
 ] as const;
 const ASSISTANT_TEXT_TAIL_LIMIT = 2_048;
+export const ASSISTANT_CREDENTIAL_BOUNDARY_PROBE_LIMIT = 64;
+
+/** Classify only the bounded beginning of a new text block. */
+export function classifyAssistantCredentialBoundaryPrefix(value: string): "pending" | "standalone" | "continuation" {
+  const prefix = value.toLowerCase();
+  if ("bearer".startsWith(prefix)) return "pending";
+  if (prefix.startsWith("bearer") && /^\s/u.test(prefix.slice("bearer".length))) return "standalone";
+  for (const keyword of SECRET_KEYWORDS) {
+    if (keyword === "bearer") continue;
+    if (keyword.startsWith(prefix)) return "pending";
+    if (!prefix.startsWith(keyword)) continue;
+    const suffix = prefix.slice(keyword.length);
+    if (suffix === "" || /^\s+$/u.test(suffix)) return "pending";
+    if (/^\s*=$/u.test(suffix)) return "standalone";
+  }
+  return "continuation";
+}
 
 function normalizedRoot(value: string): string {
   return value.replace(/[\\/]+$/, "");
@@ -93,6 +111,18 @@ export function createAssistantTextStreamProjector(options: { homePath: string; 
     const token = /[A-Za-z][A-Za-z0-9_-]*$/u.exec(pending)?.[0].toLowerCase();
     return token !== undefined && SECRET_KEYWORDS.some((keyword) => keyword.startsWith(token));
   };
+  const finishPending = () => {
+    if (droppingOversizedToken) {
+      droppingOversizedToken = false;
+      pending = "";
+      return "";
+    }
+    const safeTail = pending
+      .replace(DANGLING_BEARER, (match) => `${match.slice(0, match.toLowerCase().indexOf("bearer"))}Bearer [redacted]`)
+      .replace(DANGLING_SECRET_VALUE, (_match, prefix: string) => `${prefix}[redacted credential]`);
+    pending = "";
+    return sanitizeAssistantText(safeTail, options);
+  };
 
   return {
     push(value: string): string {
@@ -150,16 +180,8 @@ export function createAssistantTextStreamProjector(options: { homePath: string; 
     hasPending(): boolean {
       return pending.length > 0 || droppingOversizedToken;
     },
-    flush(): string {
-      if (droppingOversizedToken) {
-        droppingOversizedToken = false;
-        pending = "";
-        return "";
-      }
-      const projected = sanitizeAssistantText(pending, options);
-      pending = "";
-      return projected;
-    },
+    flush: finishPending,
+    flushIndependentBoundary: finishPending,
     discard(): void {
       pending = "";
       droppingOversizedToken = false;

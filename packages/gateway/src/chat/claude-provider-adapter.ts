@@ -23,6 +23,8 @@ import {
   type CanonicalCliSpawn,
 } from "./cli-process.js";
 import {
+  ASSISTANT_CREDENTIAL_BOUNDARY_PROBE_LIMIT,
+  classifyAssistantCredentialBoundaryPrefix,
   createAssistantTextStreamProjector,
   safeToolPreview,
   sanitizeAssistantText,
@@ -417,6 +419,12 @@ export function createClaudeChatProviderAdapter(options: {
       executionRoot: input.executionRoot,
     });
     let projectedMessageId: string | undefined;
+    let boundaryProbe: {
+      originMessageId?: string;
+      text: string;
+      segments: Array<{ messageId?: string; text: string }>;
+    } | undefined;
+    let droppingBoundaryProbe = false;
     const textMessageByIndex = new Map<number, string>();
     const toolInputByIndex = new Map<number, string>();
     const toolNameByIndex = new Map<number, string>();
@@ -451,6 +459,14 @@ export function createClaudeChatProviderAdapter(options: {
     };
 
     const flushProjectedText = () => {
+      if (boundaryProbe) {
+        const projected = textProjector.flushIndependentBoundary();
+        if (projected) enqueueDelta(projected, projectedMessageId);
+        enqueueDelta("[redacted]", boundaryProbe.originMessageId);
+        boundaryProbe = undefined;
+        projectedMessageId = undefined;
+      }
+      droppingBoundaryProbe = false;
       const projected = textProjector.flush();
       if (projected) enqueueDelta(projected, projectedMessageId);
       projectedMessageId = undefined;
@@ -463,8 +479,15 @@ export function createClaudeChatProviderAdapter(options: {
     const discardProjectedText = () => {
       textProjector.discard();
       projectedMessageId = undefined;
+      boundaryProbe = undefined;
+      droppingBoundaryProbe = false;
     };
-    const projectDelta = (delta: string, messageId?: string) => {
+    const flushIndependentProjectedText = () => {
+      const projected = textProjector.flushIndependentBoundary();
+      if (projected) enqueueDelta(projected, projectedMessageId);
+      projectedMessageId = undefined;
+    };
+    const projectResolvedDelta = (delta: string, messageId?: string) => {
       if (projectedMessageId !== messageId) {
         flushSafeProjectedText(String.fromCodePoint(delta.codePointAt(0)!));
       }
@@ -488,6 +511,43 @@ export function createClaudeChatProviderAdapter(options: {
       projectedMessageId = messageId;
       const projected = textProjector.push(delta);
       if (projected) enqueueDelta(projected, messageId);
+    };
+    const projectDelta = (delta: string, messageId?: string) => {
+      if (droppingBoundaryProbe) return;
+      if (!boundaryProbe && projectedMessageId !== messageId) {
+        flushSafeProjectedText(String.fromCodePoint(delta.codePointAt(0)!));
+        if (textProjector.hasPending() && projectedMessageId !== messageId) {
+          boundaryProbe = { originMessageId: messageId, text: "", segments: [] };
+        }
+      }
+      if (!boundaryProbe) {
+        projectResolvedDelta(delta, messageId);
+        return;
+      }
+      let offset = 0;
+      for (const character of delta) {
+        const probe = boundaryProbe;
+        probe.text += character;
+        const last = probe.segments.at(-1);
+        if (last && last.messageId === messageId) last.text += character;
+        else probe.segments.push({ messageId, text: character });
+        offset += character.length;
+        if (probe.text.length > ASSISTANT_CREDENTIAL_BOUNDARY_PROBE_LIMIT) {
+          flushIndependentProjectedText();
+          enqueueDelta("[redacted]", probe.originMessageId);
+          boundaryProbe = undefined;
+          droppingBoundaryProbe = true;
+          return;
+        }
+        const status = classifyAssistantCredentialBoundaryPrefix(probe.text);
+        if (status === "pending") continue;
+        boundaryProbe = undefined;
+        if (status === "standalone") flushIndependentProjectedText();
+        for (const segment of probe.segments) projectResolvedDelta(segment.text, segment.messageId);
+        const remainder = delta.slice(offset);
+        if (remainder) projectResolvedDelta(remainder, messageId);
+        return;
+      }
     };
 
     const parseLine = (raw: string) => {
