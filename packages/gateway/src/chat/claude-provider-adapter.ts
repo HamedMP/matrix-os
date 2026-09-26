@@ -398,6 +398,23 @@ export function createClaudeChatProviderAdapter(options: {
     };
     const projectDelta = (delta: string, messageId?: string) => {
       if (projectedMessageId !== messageId) flushSafeProjectedText();
+      if (textProjector.hasPending() && projectedMessageId !== messageId) {
+        // A token started in the previous text block. Attribute only its
+        // continuation to that block; the rest belongs to the new block.
+        let offset = 0;
+        for (const character of delta) {
+          const projected = textProjector.push(character);
+          if (projected) enqueueDelta(projected, projectedMessageId);
+          offset += character.length;
+          if (!textProjector.hasPending()) {
+            projectedMessageId = messageId;
+            const remainder = textProjector.push(delta.slice(offset));
+            if (remainder) enqueueDelta(remainder, messageId);
+            return;
+          }
+        }
+        return;
+      }
       projectedMessageId = messageId;
       const projected = textProjector.push(delta);
       if (projected) enqueueDelta(projected, messageId);

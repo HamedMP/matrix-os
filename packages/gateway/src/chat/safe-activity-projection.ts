@@ -119,9 +119,10 @@ export function createAssistantTextStreamProjector(options: { homePath: string; 
           && !ACTIVE_BEARER.test(pending)
           && sanitizeAssistantText(pending, options) === pending) {
           // Ordinary unspaced Unicode prose can stream; path/URL and secret
-          // candidates stay whole so a later chunk cannot expose a suffix.
-          projected += pending;
-          pending = "";
+          // candidates stay whole. Keep one character so a later slash can
+          // still be recognized as part of a relative path.
+          projected += pending.slice(0, -character.length);
+          pending = character;
         } else if (pending.length > ASSISTANT_TEXT_TAIL_LIMIT) {
           pending = "";
           droppingOversizedToken = true;
@@ -134,6 +135,8 @@ export function createAssistantTextStreamProjector(options: { homePath: string; 
       if (droppingOversizedToken || pending.includes("/") || ACTIVE_BEARER.test(pending)
         || DANGLING_SECRET_ASSIGNMENT.test(pending)
         || incompleteSecretKeyword()
+        || /https?:$/iu.test(pending)
+        || /[\p{L}\p{N}_~-]$/u.test(pending)
         || sanitizeAssistantText(pending, options) !== pending) return "";
       const projected = pending;
       pending = "";

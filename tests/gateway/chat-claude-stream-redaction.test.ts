@@ -94,6 +94,17 @@ async function streamedAssistantDeltas(chunks: string[]): Promise<string[]> {
   return deltas;
 }
 
+// The canonical orchestrator appends each delta to its provider message ID.
+function assembledAssistantMessages(events: CanonicalProviderRunEvent[]): Map<string, string> {
+  const messages = new Map<string, string>();
+  for (const event of events) {
+    if (event.type !== "assistant.delta") continue;
+    const id = event.messageId ?? "default";
+    messages.set(id, (messages.get(id) ?? "") + event.delta);
+  }
+  return messages;
+}
+
 describe("Claude streamed assistant text redaction", () => {
   it("preserves a public HTTPS documentation URL split at path boundaries", async () => {
     const deltas = await streamedAssistantDeltas([
@@ -270,6 +281,53 @@ describe("Claude streamed assistant text redaction", () => {
     const deltas = events.filter((event) => event.type === "assistant.delta").map((event) => event.delta);
     for (const delta of deltas) expect(delta).not.toContain(forbidden);
     expect(deltas.join("")).toBe(expected);
+  });
+
+  it("preserves a relative path split across text blocks under its originating message", async () => {
+    const events = await runLines(separateTextBlocks(["docs", "/guide next"]));
+    const deltas = events.filter((event) => event.type === "assistant.delta");
+    expect(deltas.map((event) => event.delta).join("")).toBe("docs/guide next");
+    expect([...assembledAssistantMessages(events)]).toEqual([
+      ["claude_text_0", "docs/guide "],
+      ["claude_text_1", "next"],
+    ]);
+  });
+
+  it("keeps a credential continuation with its originating message ID", async () => {
+    const events = await runLines(separateTextBlocks(["Bearer ", "fixture-secret-token done"]));
+    const deltas = events.filter((event) => event.type === "assistant.delta");
+    expect(deltas.map((event) => event.delta).join("")).toBe("Bearer [redacted] done");
+    expect([...assembledAssistantMessages(events)]).toEqual([
+      ["claude_text_0", "Bearer [redacted] "],
+      ["claude_text_1", "done"],
+    ]);
+  });
+
+  it.each([
+    ["URL: https:", "//learn.microsoft.com/azure"],
+    ["URL: https:/", "/learn.microsoft.com/azure"],
+  ])("does not detach a public URL when its scheme is split between text blocks (%s)", async (first, second) => {
+    const events = await runLines(separateTextBlocks([first, second]));
+    const deltas = events.filter((event) => event.type === "assistant.delta");
+    expect(deltas.map((event) => event.delta).join("")).toBe("URL: https://learn.microsoft.com/azure");
+    expect([...assembledAssistantMessages(events)]).toEqual([
+      ["claude_text_0", "URL: https://learn.microsoft.com/azure"],
+    ]);
+  });
+
+  it.each(["/指南", "/guide"])("preserves a Chinese relative path ending %s across chunks", (suffix) => {
+    const projector = createAssistantTextStreamProjector({ homePath: "/home/matrix/home" });
+    expect(projector.push("文档") + projector.push(suffix) + projector.flush()).toBe(`文档${suffix}`);
+  });
+
+  it("keeps a bounded overflow marker with the first block and new text with the second", async () => {
+    const events = await runLines(separateTextBlocks(["x".repeat(3_000), "more safe"]));
+    const deltas = events.filter((event) => event.type === "assistant.delta");
+    expect(deltas.map((event) => event.delta).join("")).toBe("[redacted] safe");
+    expect([...assembledAssistantMessages(events)]).toEqual([
+      ["claude_text_0", "[redacted] "],
+      ["claude_text_1", "safe"],
+    ]);
   });
 
   it.each([
