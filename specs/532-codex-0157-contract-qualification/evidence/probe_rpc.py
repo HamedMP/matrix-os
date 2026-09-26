@@ -45,28 +45,61 @@ class Server:
     def notify(self, method, params):
         self.send({"method": method, "params": params})
 
+    def _next_message(self, deadline):
+        while time.monotonic() < deadline:
+            if b"\n" in self.buffer:
+                line, _, rest = self.buffer.partition(b"\n")
+                self.buffer = bytearray(rest)
+                try:
+                    return json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+            for _key, _mask in self.selector.select(deadline - time.monotonic()):
+                data = os.read(self.proc.stdout.fileno(), 65536)
+                if not data:
+                    raise RuntimeError("app-server closed while reading")
+                self.buffer.extend(data)
+                if len(self.buffer) > 1024 * 1024:
+                    raise RuntimeError("Fixture RPC buffer exceeded 1 MiB")
+        raise TimeoutError("Fixture RPC message timeout")
+
+    def _retain(self, message):
+        size = len(json.dumps(message).encode())
+        if size > 1024 * 1024:
+            raise RuntimeError("Fixture notification exceeded 1 MiB")
+        self.notifications.append((message, size))
+        self.notification_bytes += size
+        while len(self.notifications) > 256 or self.notification_bytes > 1024 * 1024:
+            _, evicted_size = self.notifications.popleft()
+            self.notification_bytes -= evicted_size
+
     def call(self, method, params, timeout=20):
         self.next_id += 1
         wanted = self.next_id
         self.send({"id": wanted, "method": method, "params": params})
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
-            remaining = deadline - time.monotonic()
-            for _key, _mask in self.selector.select(remaining):
-                data = os.read(self.proc.stdout.fileno(), 65536)
-                if not data:
-                    raise RuntimeError(f"app-server closed during {method}")
-                self.buffer.extend(data)
-                while b"\n" in self.buffer:
-                    line, _, rest = self.buffer.partition(b"\n")
-                    self.buffer = bytearray(rest)
-                    try:
-                        msg = json.loads(line)
-                    except json.JSONDecodeError:
-                        continue
-                    if msg.get("id") == wanted:
-                        return msg
+            message = self._next_message(deadline)
+            if message.get("id") == wanted:
+                return message
+            self._retain(message)
         raise TimeoutError(method)
+
+    def wait_completed(self, thread_id, turn_id, timeout=20):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            for retained in self.notifications:
+                message, size = retained
+                params = message.get("params", {})
+                turn = params.get("turn", {})
+                if (message.get("method") == "turn/completed"
+                        and params.get("threadId") == thread_id and turn.get("id") == turn_id):
+                    self.notifications.remove(retained)
+                    self.notification_bytes -= size
+                    print("completion-event:", json.dumps(params, separators=(",", ":")), flush=True)
+                    return turn
+            self._retain(self._next_message(deadline))
+        raise TimeoutError(f"No completion event for started turn {turn_id}")
 
     def close(self):
         if self.proc is not None and self.proc.poll() is None:

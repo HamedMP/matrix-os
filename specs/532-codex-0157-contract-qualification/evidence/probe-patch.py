@@ -158,6 +158,7 @@ def exercise():
         print("resume-loaded:", json.dumps(summary(loaded), separators=(",", ":")))
         print("status-loaded:", json.dumps(summary(status(first, thread_id)), separators=(",", ":")))
         loaded_turn = first.call("turn/start", {"threadId": thread_id, "input": [{"type": "text", "text": "call echo_scope again"}]})
+        print("loaded-turn-start:", json.dumps(summary(loaded_turn), separators=(",", ":")))
         print("loaded-turn:", json.dumps(checked_turn(first, thread_id, loaded_turn["result"]["turn"]["id"], "A"), separators=(",", ":"))[:3000])
     finally:
         first.close()
@@ -169,6 +170,7 @@ def exercise():
         print("resume-cold:", json.dumps(summary(cold), separators=(",", ":")))
         print("status-cold:", json.dumps(summary(status(second, thread_id)), separators=(",", ":")))
         cold_turn = second.call("turn/start", {"threadId": thread_id, "input": [{"type": "text", "text": "call echo_scope on cold resume"}]})
+        print("cold-turn-start:", json.dumps(summary(cold_turn), separators=(",", ":")))
         print("cold-turn:", json.dumps(checked_turn(second, thread_id, cold_turn["result"]["turn"]["id"], "C"), separators=(",", ":"))[:3000])
     finally:
         second.close()

@@ -4,6 +4,31 @@
   "exit": 0,
   "turns": [
     {
+      "startedTurnId": "01a0db94-ba3d-7031-a30a-5eeaba79cc8a",
+      "completedEvent": {
+        "threadId": "01a0db94-b9d5-7872-97fc-f7cb92730009",
+        "turn": {
+          "id": "01a0db94-ba3d-7031-a30a-5eeaba79cc8a",
+          "items": [
+            {
+              "type": "agentMessage",
+              "id": "msg_spike_2",
+              "text": "mock answer",
+              "phase": null,
+              "memoryCitation": null,
+              "delivery": null,
+              "questions": null
+            }
+          ],
+          "itemsView": "summary",
+          "status": "completed",
+          "error": null,
+          "startedAt": 1790390352,
+          "completedAt": 1790390352,
+          "durationMs": 76
+        }
+      },
+      "readTurnId": "01a0db94-ba3d-7031-a30a-5eeaba79cc8a",
       "status": "completed",
       "error": null,
       "mcpCalls": [
@@ -20,6 +45,31 @@
       ]
     },
     {
+      "startedTurnId": "01a0db94-baad-78e1-9212-a2c508920fff",
+      "completedEvent": {
+        "threadId": "01a0db94-b9d5-7872-97fc-f7cb92730009",
+        "turn": {
+          "id": "01a0db94-baad-78e1-9212-a2c508920fff",
+          "items": [
+            {
+              "type": "agentMessage",
+              "id": "msg_spike_4",
+              "text": "mock answer",
+              "phase": null,
+              "memoryCitation": null,
+              "delivery": null,
+              "questions": null
+            }
+          ],
+          "itemsView": "summary",
+          "status": "completed",
+          "error": null,
+          "startedAt": 1790390352,
+          "completedAt": 1790390352,
+          "durationMs": 24
+        }
+      },
+      "readTurnId": "01a0db94-baad-78e1-9212-a2c508920fff",
       "status": "completed",
       "error": null,
       "mcpCalls": [
@@ -36,6 +86,31 @@
       ]
     },
     {
+      "startedTurnId": "01a0db94-bb76-7f91-8867-55107f719c61",
+      "completedEvent": {
+        "threadId": "01a0db94-b9d5-7872-97fc-f7cb92730009",
+        "turn": {
+          "id": "01a0db94-bb76-7f91-8867-55107f719c61",
+          "items": [
+            {
+              "type": "agentMessage",
+              "id": "msg_spike_6",
+              "text": "mock answer",
+              "phase": null,
+              "memoryCitation": null,
+              "delivery": null,
+              "questions": null
+            }
+          ],
+          "itemsView": "summary",
+          "status": "completed",
+          "error": null,
+          "startedAt": 1790390352,
+          "completedAt": 1790390352,
+          "durationMs": 28
+        }
+      },
+      "readTurnId": "01a0db94-bb76-7f91-8867-55107f719c61",
       "status": "completed",
       "error": null,
       "mcpCalls": [
@@ -69,5 +144,24 @@
       "stdout closed",
       "stderr closed"
     ]
-  }
+  },
+  "historicalC589ResumeProof": "invalid: read was not matched to turn/start ID",
+  "exactIdProjectionExperiments": [
+    {
+      "stage": "fresh",
+      "exit": 1,
+      "readStatus": "interrupted",
+      "readCompletedAt": null,
+      "readError": null,
+      "terminalEventObserved": false
+    },
+    {
+      "stage": "loaded",
+      "exit": 1,
+      "readStatus": "interrupted",
+      "readCompletedAt": null,
+      "readError": null,
+      "terminalEventObserved": false
+    }
+  ]
 }
