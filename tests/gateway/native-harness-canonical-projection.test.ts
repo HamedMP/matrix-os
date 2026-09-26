@@ -12,6 +12,40 @@ import { createProviderSettingsRoutes } from "../../packages/gateway/src/ai-prov
 const now = new Date("2026-09-26T00:00:00Z");
 afterEach(() => vi.useRealTimers());
 describe("canonical native model scope", () => {
+  it("isolates an invalid OpenCode profile instead of poisoning valid Pi", async () => {
+    const source = (harness: "pi" | "opencode", model: string) => ({ id: `harness_${harness}_native`, kind: "harness_profile" as const,
+      harness, fundingKind: "owner_account" as const, providerId: "native", accountId: null, displayName: harness,
+      eligibleModelIds: [model], readiness: { state: "unknown" as const, checkedAt: null, staleAfter: null, action: "retry" as const, safeReason: "unknown" as const },
+      localObservation: { state: "unknown" as const, checkedAt: null, staleAfter: null },
+      usage: { kind: "unavailable" as const, authority: "unavailable" as const, state: "not_applicable" as const, scope: "access_source" as const, reason: "provider_does_not_report" as const, asOf: null } });
+    const read = createCanonicalNativeHarnessCatalogReader({ getCatalog: async () => ({
+      providers: [{ id: "native", displayName: "Native", models: [{ id: "native:pi", displayName: "Pi", enabled: true }, { id: "wrong:open", displayName: "Open", enabled: true }] }],
+      accessSources: [source("pi", "native:pi"), source("opencode", "wrong:open")], failures: [],
+    }) });
+    expect(await read(false)).toMatchObject({ profiles: [{ harness: "pi", models: [{ id: "native:pi" }] }], failures: ["opencode"] });
+  });
+  it("preserves exact OpenCode provider case without rejecting valid Pi through producer and Settings", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "native-case-provider-"));
+    for (const dir of [".pi/agent", ".config/opencode", ".local/share/opencode"]) await mkdir(join(homePath, dir), { recursive: true });
+    await writeFile(join(homePath, ".pi/agent/settings.json"), '{"defaultProvider":"native","defaultModel":"pi-model"}');
+    await writeFile(join(homePath, ".pi/agent/auth.json"), '{"native":{"type":"api_key","key":"fixture"}}');
+    await writeFile(join(homePath, ".config/opencode/opencode.json"), '{"model":"Foo/model"}');
+    await writeFile(join(homePath, ".local/share/opencode/auth.json"), '{"Foo":{"type":"api","key":"fixture"}}');
+    const reader = createGenericHarnessModelCatalogReader({ homePath, enabledHarnesses: ["pi", "opencode"], now: () => now,
+      run: async (command) => ({ stdout: command.endsWith("pi") ? "provider model\nnative pi-model" : "Foo/model", stderr: "" }) });
+    const producer = new AiProviderService({ homePath, env: {}, now: () => now, nativeHarnessCatalogReader: reader,
+      driverInventory: async () => ["pi", "opencode"].map((id) => ({ id, displayName: id, kind: "cli", installState: "installed", health: "unknown", capabilities: ["tools"], setupActions: [] })) });
+    try {
+      const canonical = await producer.getSnapshot();
+      expect(canonical.nativeHarnessCatalog?.failures).toEqual([]);
+      expect(canonical.nativeHarnessCatalog?.profiles.find((profile) => profile.harness === "opencode"))
+        .toMatchObject({ providerId: "Foo", defaultModelId: "Foo:model", models: [{ id: "Foo:model" }] });
+      const store = new ProviderSettingsStore({ homePath, now: () => now, providerSnapshotReader: producer });
+      const snapshot = await store.getSnapshot();
+      expect(snapshot.harnesses.find((row) => row.harness === "pi")).toMatchObject({ enabled: true, route: { modelId: "native:pi-model" } });
+      expect(snapshot.harnesses.find((row) => row.harness === "opencode")).toMatchObject({ enabled: true, route: { providerId: "Foo", modelId: "Foo:model" } });
+    } finally { producer.close(); await rm(homePath, { recursive: true, force: true }); }
+  });
   it("keeps disjoint Pi/OpenCode inventories under the same provider separate through Settings and Hono", async () => {
     const homePath = await mkdtemp(join(tmpdir(), "native-shared-provider-"));
     for (const dir of [".pi/agent", ".config/opencode", ".local/share/opencode"]) await mkdir(join(homePath, dir), { recursive: true });

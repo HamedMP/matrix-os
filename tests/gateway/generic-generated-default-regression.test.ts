@@ -8,6 +8,7 @@ import { Hono } from "hono";
 import { describe, expect, it, vi } from "vitest";
 import { AiProviderSnapshotV3Schema, type AgentProviderSummary } from "@matrix-os/contracts";
 import { createGenericHarnessModelCatalogReader } from "../../packages/gateway/src/ai-providers/generic-harness-model-catalog.js";
+import { createCanonicalNativeHarnessCatalogReader } from "../../packages/gateway/src/ai-providers/native-harness-canonical-projection.js";
 import { ProviderSettingsStore } from "../../packages/gateway/src/ai-providers/provider-settings-store.js";
 import { createChatProviderCatalogService, validateChatProviderSelection } from "../../packages/gateway/src/chat/provider-catalog.js";
 import { createCodexHarnessAdmission } from "../../packages/gateway/src/coding-agents/codex-harness-admission.js";
@@ -46,11 +47,11 @@ async function fixture(kind: typeof kinds[number], reconcile: boolean, multipleP
       return { stdout: multipleProviders
         ? kind === "pi" ? "provider model context max-out thinking images\na-no-auth listed-model 200000 32000 yes no\nz-working saved-model 200000 32000 yes no" : "a-no-auth/listed-model\nz-working/saved-model"
         : kind === "pi" ? "provider model context max-out thinking images\nnative working-model 200000 32000 yes no" : "native/working-model", stderr: "" }; } });
+  const readNative = createCanonicalNativeHarnessCatalogReader(nativeCatalog);
   const store = new ProviderSettingsStore({
-    genericModelCatalogReader: nativeCatalog,
-    homePath, providerSnapshotReader: { getSnapshot: async () => AiProviderSnapshotV3Schema.parse(canonical) },
+    homePath, providerSnapshotReader: { getSnapshot: async ({ refresh } = {}) => AiProviderSnapshotV3Schema.parse({ ...canonical, nativeHarnessCatalog: await readNative(refresh ?? false) }) },
     now: () => PROVIDER_SETTINGS_NOW,
-    runtimeCoordinator: { supportedActions: ["set_harness_enabled", "update_harness", "set_route"], supportedHarnessKinds: [kind],
+    runtimeCoordinator: { supportedActions: ["set_harness_enabled", "update_harness", "set_route", "select_access_source"], supportedHarnessKinds: [kind],
       isRecoveryReady: () => true, reconcilePending: async () => undefined,
       applyConfiguration: async () => undefined, rollbackConfiguration: async () => undefined },
   });
@@ -96,6 +97,33 @@ async function fixture(kind: typeof kinds[number], reconcile: boolean, multipleP
 }
 
 describe("generated Settings defaults preserve existing native coding routes", () => {
+  it.each(kinds)("a transient %s discovery failure does not overwrite bound durable enablement", async (kind) => {
+    const f = await fixture(kind, false);
+    try {
+      const before = JSON.parse(await readFile(f.store.configurationPath, "utf8"));
+      const bound = before.harnesses.find((row: { harness: string }) => row.harness === kind);
+      expect(bound.enabled).toBe(true);
+      f.nativeCatalogMode.fail = true;
+      const failed = await f.store.getSnapshot({ refresh: true });
+      expect(failed.harnesses.find((row) => row.harness === kind)?.enabled).toBe(false);
+      const after = JSON.parse(await readFile(f.store.configurationPath, "utf8"));
+      expect(after.harnesses.find((row: { harness: string }) => row.harness === kind)).toEqual(bound);
+      f.nativeCatalogMode.fail = false;
+      // Admission reads durable permission, not an availability side effect from a prior GET.
+      expect((await f.app.request(post({ providerId: kind, prompt: "Inspect", clientRequestId: `recovered_${kind}` }))).status).toBe(202);
+      expect((await f.store.getSnapshot({ refresh: true })).harnesses.find((row) => row.harness === kind)?.enabled).toBe(true);
+    } finally { await f.cleanup(); }
+  });
+  it.each(kinds)("enabled %s source selection requires fresh exact local observation", async (kind) => {
+    const f = await fixture(kind, false);
+    try {
+      await writeFile(join(homePathFor(f.homePath, kind), "auth.json"), "{}");
+      const snapshot = await f.store.getSnapshot();
+      const row = snapshot.harnesses.find((entry) => entry.harness === kind)!;
+      await expect(f.store.mutate({ type: "select_access_source", expectedRevision: snapshot.revision,
+        idempotencyKey: `absent_select_${kind}`, harnessInstanceId: row.id, accessSourceId: `harness_${kind}_native` })).rejects.toThrow("invalid_route");
+    } finally { await f.cleanup(); }
+  });
   for (const reconcile of [false, true]) {
     it.each(kinds)(`${reconcile ? "reconciled" : "initial"} generated %s configuration does not disable its working native Chat route`, async (kind) => {
       const f = await fixture(kind, reconcile);
