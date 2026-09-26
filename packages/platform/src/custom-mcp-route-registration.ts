@@ -1,5 +1,5 @@
 import { CUSTOM_MCP_UNAVAILABLE } from '@matrix-os/contracts';
-import { Hono } from 'hono';
+import { Hono, type Context, type Next } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { z } from 'zod/v4';
 import { getContainer, getRunningUserMachineByHandle, type PlatformDB, type UserMachineRecord } from './db.js';
@@ -95,6 +95,7 @@ export function registerCustomMcpRoutes(app: Hono<any>, options: {
   platformSecret: string;
   customMcpRoutes?: Hono<any>;
   internalCustomMcpRoutes?: Hono<any>;
+  internalCustomMcpApprovalRoutes?: Hono<any>;
 }): void {
   const external = new Hono<{ Variables: McpVariables }>();
   external.use('*', bodyLimit({ maxSize: BODY_LIMIT }), async (c, next) => {
@@ -113,8 +114,7 @@ export function registerCustomMcpRoutes(app: Hono<any>, options: {
   mountBackend(external, options.customMcpRoutes);
   app.route('/api/mcp-servers', external);
 
-  const internal = new Hono<{ Variables: McpVariables }>();
-  internal.use('*', bodyLimit({ maxSize: BODY_LIMIT }), async (c, next) => {
+  const internalAuth = async (c: Context<{ Variables: McpVariables }>, next: Next) => {
     const parsedHandle = HandleSchema.safeParse(c.req.param('handle'));
     if (!parsedHandle.success) return c.json({ error: 'Invalid handle' }, 400);
     if (!options.platformSecret) {
@@ -140,7 +140,13 @@ export function registerCustomMcpRoutes(app: Hono<any>, options: {
     c.set('internalContainerHandle', handle);
     c.set('internalContainerClerkUserId', record.clerkUserId);
     return next();
-  });
-  mountBackend(internal, options.internalCustomMcpRoutes);
-  app.route('/internal/containers/:handle/mcp-servers', internal);
+  };
+  const mountInternal = (backend?: Hono<any>) => {
+    const internal = new Hono<{ Variables: McpVariables }>();
+    internal.use('*', bodyLimit({ maxSize: BODY_LIMIT }), internalAuth);
+    mountBackend(internal, backend);
+    return internal;
+  };
+  app.route('/internal/containers/:handle/mcp-servers', mountInternal(options.internalCustomMcpRoutes));
+  app.route('/internal/containers/:handle/mcp-approvals', mountInternal(options.internalCustomMcpApprovalRoutes));
 }

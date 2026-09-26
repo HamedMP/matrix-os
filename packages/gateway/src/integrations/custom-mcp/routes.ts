@@ -38,7 +38,8 @@ const OAuthCallbackSchema = z.object({
 const ToolCallSchema = z.object({
   tool: z.string().min(1).max(128),
   arguments: z.record(z.string(), z.unknown()).optional(),
-  approvalGranted: z.boolean(),
+  approvalGranted: z.literal(false),
+  approvalReceipt: z.string().regex(/^[a-f0-9]{64}$/).optional(),
 }).strict();
 
 export interface CustomMcpOAuthFlow {
@@ -49,6 +50,7 @@ export interface CustomMcpOAuthFlow {
 export interface CustomMcpRoutesOptions {
   broker: CustomMcpBroker;
   resolveUserId: (context: Context) => Promise<string | null>;
+  resolveActorId?: (context: Context) => string | null;
   oauth?: CustomMcpOAuthFlow;
   allowToolCalls?: boolean;
   now?: () => number;
@@ -259,6 +261,10 @@ export function createCustomMcpRoutes(options: CustomMcpRoutesOptions): Hono {
         return context.json({ error: "Invalid request body" }, 400);
       }
       const parsed = ToolCallSchema.safeParse(body);
+      if (body && typeof body === "object" && !Array.isArray(body)
+        && (body as Record<string, unknown>).approvalGranted === true) {
+        return context.json({ error: "Tool approval is unavailable" }, 403);
+      }
       if (!parsed.success) return context.json({ error: "Invalid request body" }, 400);
       try {
         return context.json(await options.broker.callSelectedTool({
@@ -267,6 +273,9 @@ export function createCustomMcpRoutes(options: CustomMcpRoutesOptions): Hono {
           toolName: parsed.data.tool,
           arguments: parsed.data.arguments,
           approvalGranted: parsed.data.approvalGranted,
+          approvalReceipt: parsed.data.approvalReceipt,
+          actorId: options.resolveActorId?.(context) ?? undefined,
+          runId: context.req.header("x-matrix-mcp-run-id"),
         }));
       } catch (error) {
         return brokerError(context, error);

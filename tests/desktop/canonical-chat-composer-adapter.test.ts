@@ -61,6 +61,15 @@ function summaryFixture(): RuntimeSummary {
 }
 
 describe("canonical composer legacy Project adapter", () => {
+  it("keeps an installed available Codex route selectable in legacy Project chat when remote auth is unknown", () => {
+    const summary = summaryFixture();
+    summary.providers[0]!.authStatus = "unknown";
+    const catalog = createLegacyProjectProviderCatalog(summary);
+    const codex = catalog.instances.find((instance) => instance.driverKind === "codex");
+    expect(codex?.availability).toBe("available");
+    const selection = createCanonicalComposerSelection(catalog, codex?.id);
+    expect(legacyProjectSelectionExecutable(catalog, summary, selection)).toBe(true);
+  });
   it("keeps only the executable legacy Hermes route available while the canonical catalog loads", () => {
     const catalog = createLegacyGlobalProviderCatalog({ hasProject: true });
     expect(catalog.instances).toMatchObject([

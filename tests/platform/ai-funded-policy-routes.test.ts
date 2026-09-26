@@ -8,6 +8,7 @@ import {
   FundedAiPolicyCheckResponseSchema,
   FundedAiRuntimeCredentialIssueResponseSchema,
   FundedAiRuntimeFundingSummaryResponseSchema,
+  FundedAiRouteReadinessReceiptSchema,
   FundedAiSettlementResponseSchema,
   FundedAiStartResponseSchema,
 } from "@matrix-os/contracts";
@@ -26,6 +27,11 @@ import {
   buildPlatformSpeechRuntimeVerificationToken,
 } from "../../packages/platform/src/platform-token.js";
 import { createTestPlatformDb, destroyTestPlatformDb } from "./platform-db-test-helper.js";
+import type { FundedModelProbeService } from "../../packages/platform/src/ai-funded-model-probes.js";
+import { loadFundedAiRuntimeConfig } from "../../packages/gateway/src/funded-ai-credential-manager.js";
+import { createFundedAiFundingSummaryClient } from "../../packages/gateway/src/funded-ai-funding-summary-client.js";
+import { createFundedAiRouteReadinessClient } from "../../packages/gateway/src/funded-ai-route-readiness-client.js";
+import { createFundedAiReadinessReader } from "../../packages/gateway/src/funded-ai-readiness.js";
 
 const platformSecret = "platform-secret-for-tests-123456789";
 const relayControlToken = "relay-control-token-for-tests-123456";
@@ -66,7 +72,7 @@ describe("funded AI policy routes", () => {
     vi.restoreAllMocks();
   });
 
-  async function createTestApp(options: { promotionalGrantEnabled?: boolean; topUpEnabled?: boolean } = {}) {
+  async function createTestApp(options: { promotionalGrantEnabled?: boolean; topUpEnabled?: boolean; routeProbes?: FundedModelProbeService } = {}) {
     const repository = createAiFundedPolicyRepository({
       db, credentialHashSecret: hashSecret, now: () => new Date(now),
       tokenIdFactory: () => "credential_123", tokenSecretFactory: () => "s".repeat(43),
@@ -106,6 +112,7 @@ describe("funded AI policy routes", () => {
           repository,
           topUpEnabled: options.topUpEnabled,
           promotionalGrant,
+          routeProbes: options.routeProbes,
           now: () => new Date(now),
         }),
         internalFundedAiRelayRoutes: createAiFundedRelayRoutes({ relayControlToken, repository }),
@@ -119,6 +126,85 @@ describe("funded AI policy routes", () => {
       }),
     };
   }
+
+  it("returns a model receipt only for healthy eligible models without claiming promotion credit", async () => {
+    const probe = vi.fn(async (model: string) => ({
+      ready: model === modelId, checkedAt: now,
+      staleAfter: "2026-08-30T20:00:30.000Z",
+    }));
+    const { app, repository } = await createTestApp({ promotionalGrantEnabled: true, routeProbes: { probe } });
+    const identity = { ownerId: "user_alice", machineId: "machine_123", runtimeSlot: "primary" };
+    const before = await repository.getCheckoutFundingSummary(identity, Date.now() + 6_000);
+    const response = await app.request("/internal/containers/alice/ai/route-readiness?runtimeSlot=primary", {
+      method: "POST", headers: { authorization: `Bearer ${bearerFor("alice")}`, "content-type": "application/json" }, body: "{}",
+    });
+    expect(response.status).toBe(200);
+    expect(FundedAiRouteReadinessReceiptSchema.parse(await response.json()).readyModelIds).toEqual([modelId]);
+    expect(probe).toHaveBeenCalledExactlyOnceWith(modelId, expect.objectContaining({
+      signal: expect.any(AbortSignal), deadlineAtMs: expect.any(Number),
+    }));
+    const after = await repository.getCheckoutFundingSummary(identity, Date.now() + 6_000);
+    expect(after.funding.creditBalanceMicrousd).toBe(before.funding.creditBalanceMicrousd);
+  });
+
+  it("wires an exact runtime token through Platform receipt to Gateway readiness", async () => {
+    const probe = vi.fn(async () => ({ ready: true, checkedAt: now, staleAfter: "2026-08-30T20:00:30.000Z" }));
+    const { app } = await createTestApp({ routeProbes: { probe } });
+    const config = loadFundedAiRuntimeConfig({ MATRIX_FUNDED_AI_ENABLED: "true",
+      MATRIX_FUNDED_AI_RELAY_URL: "https://relay.example.test", PLATFORM_INTERNAL_URL: "https://platform.example.test",
+      MATRIX_FUNDED_AI_RUNTIME_TOKEN: bearerFor("alice"), MATRIX_HANDLE: "alice",
+      MATRIX_CLERK_USER_ID: "user_alice", MATRIX_MACHINE_ID: "machine_123", MATRIX_RUNTIME_SLOT: "primary" })!;
+    const fetchFn = ((url: string, init?: RequestInit) => app.request(url, init)) as typeof fetch;
+    const reader = createFundedAiReadinessReader({
+      summary: createFundedAiFundingSummaryClient(config, { fetchFn }),
+      routes: createFundedAiRouteReadinessClient(config, fetchFn),
+      now: () => new Date(now),
+    });
+    expect(await reader.read()).toMatchObject({ readiness: { state: "ready" }, allowedModelIds: ["claude-sonnet-5"] });
+    expect(probe).toHaveBeenCalledExactlyOnceWith(modelId, expect.objectContaining({
+      signal: expect.any(AbortSignal), deadlineAtMs: expect.any(Number),
+    }));
+  });
+
+  it("fails closed after an asynchronous probe when owner policy is revoked", async () => {
+    let repository!: ReturnType<typeof createAiFundedPolicyRepository>;
+    const probe = vi.fn(async () => {
+      await repository.setRuntimePolicy({
+        identity: { ownerId: "user_alice", machineId: "machine_123", runtimeSlot: "primary" },
+        expectedRevision: 1, enabled: false, allowedModelIds: [], expiresAt: null,
+        monthlyBudgetMicrousd: 1_000,
+      });
+      return { ready: true, checkedAt: now, staleAfter: "2026-08-30T20:00:30.000Z" };
+    });
+    const created = await createTestApp({ routeProbes: { probe } });
+    repository = created.repository;
+    const response = await created.app.request("/internal/containers/alice/ai/route-readiness?runtimeSlot=primary", {
+      method: "POST", headers: { authorization: `Bearer ${bearerFor("alice")}`, "content-type": "application/json" }, body: "{}",
+    });
+    expect(response.status).toBe(200);
+    expect(FundedAiRouteReadinessReceiptSchema.parse(await response.json()).readyModelIds).toEqual([]);
+  });
+
+  it("requires exact runtime authentication before any model probe", async () => {
+    const probe = vi.fn(async () => ({ ready: true, checkedAt: now, staleAfter: "2026-08-30T20:00:30.000Z" }));
+    const { app } = await createTestApp({ routeProbes: { probe } });
+    const response = await app.request("/internal/containers/alice/ai/route-readiness?runtimeSlot=primary", {
+      method: "POST", headers: { authorization: "Bearer wrong", "content-type": "application/json" }, body: "{}",
+    });
+    expect(response.status).toBe(401);
+    expect(probe).not.toHaveBeenCalled();
+  });
+
+  it("bounds a stalled no-grant funding read and never starts a late paid probe", async () => {
+    const probe = vi.fn(async () => ({ ready: true, checkedAt: now, staleAfter: "2026-08-30T20:00:30.000Z" }));
+    const { app, repository } = await createTestApp({ routeProbes: { probe } });
+    vi.spyOn(repository, "getCheckoutFundingSummary").mockImplementation(() => new Promise(() => undefined));
+    const response = await app.request("/internal/containers/alice/ai/route-readiness?runtimeSlot=primary", {
+      method: "POST", headers: { authorization: `Bearer ${bearerFor("alice")}`, "content-type": "application/json" }, body: "{}",
+    });
+    expect(response.status).toBe(503);
+    expect(probe).not.toHaveBeenCalled();
+  }, 10_000);
 
   it("normalizes relay control token transport whitespace without changing identity or hash secrets", () => {
     expect(loadAiFundedControlPlaneConfig({

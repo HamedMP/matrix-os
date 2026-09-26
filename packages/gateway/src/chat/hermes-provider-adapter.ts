@@ -1,4 +1,5 @@
 import { createHermesSubagentActivity } from "./hermes-subagent-activity.js";
+import { restrictedHermesPythonArguments } from "./jev-hermes-python.js";
 import { hermesToolHasPrivateContext, hermesToolOutput } from "./hermes-tool-output.js";
 import { ChatSteerNotDeliveredError } from "./steer-delivery-error.js";
 import { createHermesInputController } from "./hermes-input-control.js";
@@ -7,7 +8,11 @@ import { createHash } from "node:crypto";
 import { z } from "zod/v4";
 import { CanonicalChatModelReferenceSchema } from "@matrix-os/contracts";
 import { buildAgentRuntimeEnvironment } from "../agent-launcher.js";
-import { issueHermesIntegrationCapability } from "./hermes-integration-capability.js";
+import { issueHermesIntegrationCapability, resolveHermesIntegrationCapability } from "./hermes-integration-capability.js";
+import { jevScopeForRun } from "./jev-run-scope.js";
+import { createJevHermesProfile, createJevHermesCatalogGate } from "./jev-hermes-profile.js";
+import type { JevHermesCredentials } from "./jev-hermes-credentials.js";
+import type { HermesJevScope } from "./hermes-integration-capability.js";
 import {
   CanonicalProviderRunEventSchema,
   parseCanonicalProviderRunInput,
@@ -289,6 +294,13 @@ export function createHermesChatProviderAdapter(options: {
   timeoutMs?: number;
   readyTimeoutMs?: number;
   requestTimeoutMs?: number;
+  jev?: {
+    resolveCredentials(ownerId: string, selection: unknown, signal: AbortSignal): Promise<JevHermesCredentials>;
+    verifyRuntime(root: string, signal: AbortSignal): Promise<void>;
+    preflight(ownerId: string, scope: HermesJevScope, signal: AbortSignal): Promise<void>;
+    clearRun(ownerId: string, runId: string): void;
+    summary(ownerId: string, scope: HermesJevScope): string | null;
+  };
 }): CanonicalChatProviderAdapter<HermesChatState> {
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const approvals = createHermesApprovalController();
@@ -309,6 +321,11 @@ export function createHermesChatProviderAdapter(options: {
     if (input.permissionMode !== "full_access") throw new Error("Unsupported Hermes permission mode");
     if (input.interactionMode !== "default") throw new Error("Unsupported Hermes interaction mode");
     const selected = selection(input.selection.model);
+    const jevScope = jevScopeForRun(input.owner.ownerId, input.runId, input.context);
+    const catalogGate = jevScope ? createJevHermesCatalogGate() : undefined;
+    if (jevScope && !options.jev) throw new Error("Restricted Inbox setup required");
+    // Isolated recipe runs never resume an owner-profile native checkpoint.
+    if (jevScope) resumeState = undefined;
     const queue = createCanonicalCliEventQueue<CanonicalProviderRunEvent>();
     const completion = deferred<HermesCompletionResult>();
     let liveSessionId: string | undefined;
@@ -421,6 +438,7 @@ export function createHermesChatProviderAdapter(options: {
     };
 
     const handleEvent = (event: HermesGatewayEvent) => {
+      catalogGate?.observe(event);
       if (completionSettled || !liveSessionId || event.session_id !== liveSessionId) return;
       if (event.type === "message.delta") {
         const parsed = HermesDeltaSchema.parse(event.payload);
@@ -557,6 +575,14 @@ export function createHermesChatProviderAdapter(options: {
           status: failed ? "failed" : "completed",
           summary: hermesActivitySummary(activity.kind, failed),
         });
+        if (jevScope) {
+          const validTool = (stored?.name ?? hermesToolName(parsed.data.name)) === "mcp__matrix_jev_recipe__jev_inbox_preview";
+          const active = resolveHermesIntegrationCapability(integrationCapability.token, "POST", "/api/jev/inbox/preview") === input.owner.ownerId;
+          const summary = validTool && active && !failed ? options.jev!.summary(input.owner.ownerId, jevScope) : null;
+          queue.push({ type: "tool.output", toolCallId: activityId,
+            text: summary ?? "Inbox review has no verified proposal. No mailbox changes have been made.", truncated: false });
+          return;
+        }
         const output = hermesToolOutput(stored?.name ?? hermesToolName(parsed.data.name), parsed.data.result,
           (stored?.privateContext ?? true) || hermesToolHasPrivateContext(parsed.data.args),
           options.toolOutputKey ? { key: options.toolOutputKey, toolCallId: activityId } : undefined);
@@ -595,19 +621,26 @@ export function createHermesChatProviderAdapter(options: {
 
     const hermesRoot = join(options.homePath, ".hermes", "hermes-agent");
     const existingPythonPath = process.env.PYTHONPATH?.trim();
-    const integrationCapability = issueHermesIntegrationCapability(input.owner.ownerId);
+    if (jevScope) await options.jev!.verifyRuntime(hermesRoot, input.signal);
+    const credentials = jevScope ? await options.jev!.resolveCredentials(input.owner.ownerId, input.selection, input.signal) : undefined;
+    const integrationCapability = issueHermesIntegrationCapability(input.owner.ownerId, jevScope);
+    let restrictedProfile: Awaited<ReturnType<typeof createJevHermesProfile>> | undefined;
+    try { if (credentials) restrictedProfile = await createJevHermesProfile(credentials, integrationCapability.token); }
+    catch (error) { integrationCapability.revoke(); throw error; }
+    const executionCwd = restrictedProfile?.homePath ?? input.executionRoot ?? options.homePath;
     const clientOptions = {
       command: join(hermesRoot, "venv", "bin", "python"),
-      args: ["-u", "-m", "tui_gateway.entry"],
-      cwd: input.executionRoot ?? options.homePath,
+      args: restrictedProfile ? restrictedHermesPythonArguments(hermesRoot, join(restrictedProfile.homePath, "pycache")) : ["-u", "-m", "tui_gateway.entry"],
+      cwd: executionCwd,
+      inheritEnvironment: !restrictedProfile,
       env: {
-        ...buildAgentRuntimeEnvironment(options.homePath),
+        ...(restrictedProfile?.env ?? buildAgentRuntimeEnvironment(options.homePath)),
         // The MCP child receives a short-lived bearer scoped to this run's
         // authenticated actor and only the integrations/Jev Gateway routes.
         MATRIX_CLERK_USER_ID: input.owner.ownerId,
         MATRIX_AGENT_INTEGRATIONS_TOKEN: integrationCapability.token,
         HERMES_PYTHON_SRC_ROOT: hermesRoot,
-        PYTHONPATH: existingPythonPath ? `${hermesRoot}${delimiter}${existingPythonPath}` : hermesRoot,
+        ...(!restrictedProfile ? { PYTHONPATH: existingPythonPath ? `${hermesRoot}${delimiter}${existingPythonPath}` : hermesRoot } : {}),
         PYTHONUNBUFFERED: "1",
         // This adapter owns one finite turn, not a persistent notification consumer.
         // Hermes joins parallel children inline instead of detaching their results.
@@ -688,12 +721,13 @@ export function createHermesChatProviderAdapter(options: {
           : await withinRun(client.request("session.create", {
               cols: 120,
               source: "matrix-os-desktop",
-              cwd: input.executionRoot ?? options.homePath,
+              cwd: executionCwd,
               provider: selected.provider,
               model: selected.model,
             }));
         const session = HermesSessionSchema.parse(rawSession);
         liveSessionId = session.session_id;
+        catalogGate?.setSession(liveSessionId);
         durableSessionId = session.stored_session_id ?? session.session_key ?? resumeState?.sessionId;
         if (!durableSessionId) throw new Error("Hermes did not return a durable session");
         if (durableSessionId !== resumeState?.sessionId) {
@@ -734,7 +768,7 @@ export function createHermesChatProviderAdapter(options: {
           })));
           if (modelConfig.confirm_required) throw new Error("Hermes model selection requires confirmation");
         }
-        const expectedCwd = input.executionRoot ?? options.homePath;
+        const expectedCwd = executionCwd;
         const cwdResponse = HermesCwdResponseSchema.parse(await withinRun(client.request("session.cwd.set", {
           session_id: liveSessionId,
           cwd: expectedCwd,
@@ -746,6 +780,11 @@ export function createHermesChatProviderAdapter(options: {
           value: "1",
           scope: "session",
         })));
+        startupSignal.throwIfAborted();
+        if (jevScope) {
+          await withinRun(catalogGate!.ready(startupSignal));
+          await withinRun(options.jev!.preflight(input.owner.ownerId, jevScope, startupSignal));
+        }
         startupSignal.throwIfAborted();
         HermesPromptResponseSchema.parse(await withinRun(client.request("prompt.submit", {
           session_id: liveSessionId,
@@ -830,6 +869,7 @@ export function createHermesChatProviderAdapter(options: {
         };
       } finally {
         integrationCapability.revoke();
+        if (jevScope) options.jev!.clearRun(input.owner.ownerId, input.runId);
         releaseSteerRun?.();
         releaseApprovalRun?.();
         releaseInputRun?.();
@@ -844,6 +884,10 @@ export function createHermesChatProviderAdapter(options: {
           input.onCleanupConfirmed?.();
           emitAgentActivity({ activityId: "run_cleanup", kind: "phase", label: "Stopping",
             summary: "The agent process stopped.", status: "completed" });
+        }
+        if (restrictedProfile) {
+          try { await restrictedProfile.close(); }
+          catch (error) { console.warn("[jev] Isolated profile cleanup failed", { errorName: error instanceof Error ? error.name : "UnknownError" }); }
         }
         if (terminal) queue.push(CanonicalProviderRunEventSchema.parse(terminal));
         queue.finish();

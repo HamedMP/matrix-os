@@ -1,6 +1,7 @@
 import { z } from "zod/v4";
 import { canonicalReferenceId } from "#canonical-chat-primitives";
 import { IsoTimestampSchema, ProviderModelReferenceSchema } from "#contract-primitives";
+import { JEV_MODEL_ID, JEV_PRICING_VERSION, JevProvenanceSchema } from "#jev";
 
 export const FUNDED_AI_AUDIENCE = "matrix-funded-relay" as const;
 export const FUNDED_AI_SCOPE = "ai:invoke" as const;
@@ -127,7 +128,13 @@ export const FundedAiAuthorizationRequestSchema = z.object({
   /** Strict hold, or maximum platform liability when billingMode is usage. */
   maxCostMicrousd: MicrousdSchema.min(1),
   billingMode: z.literal("usage").optional(),
-}).strict();
+  jevPricingVersion: z.literal(JEV_PRICING_VERSION).optional(),
+}).strict().superRefine((value, ctx) => {
+  if (value.jevPricingVersion !== undefined
+    && (value.modelId !== JEV_MODEL_ID || value.billingMode !== "usage")) {
+    ctx.addIssue({ code: "custom", path: ["jevPricingVersion"], message: "Jev pricing requires Jev usage authorization" });
+  }
+});
 
 export const FundedAiPolicyCheckRequestSchema = z.object({
   credential: OpaqueCredentialSchema,
@@ -203,6 +210,26 @@ export const FundedAiRuntimeFundingSummaryResponseSchema = z.object({
   }
 });
 
+/** Separate from the v1 funding summary so older strict clients keep working. */
+export const FundedAiRouteReadinessRequestSchema = z.object({ modelId: z.literal(JEV_MODEL_ID).optional() }).strict();
+export const FundedAiRouteReadinessReceiptSchema = z.object({
+  contractVersion: z.literal(1),
+  globalRevision: RevisionSchema,
+  runtimeRevision: RevisionSchema,
+  checkedAt: IsoTimestampSchema,
+  staleAfter: IsoTimestampSchema,
+  readyModelIds: z.array(ProviderModelReferenceSchema).max(2)
+    .refine((models) => new Set(models).size === models.length, "Model IDs must be unique"),
+}).strict().superRefine((value, ctx) => {
+  const checked = Date.parse(value.checkedAt);
+  const stale = Date.parse(value.staleAfter);
+  if (stale <= checked || stale - checked > 30_000) {
+    ctx.addIssue({ code: "custom", path: ["staleAfter"], message: "Model readiness freshness is invalid" });
+  }
+});
+
+export type FundedAiRouteReadinessReceipt = z.infer<typeof FundedAiRouteReadinessReceiptSchema>;
+
 export const FundedAiAuthorizationResponseSchema = z.object({
   contractVersion: z.literal(1),
   authorized: z.literal(true),
@@ -221,6 +248,7 @@ export const FundedAiAuthorizationResponseSchema = z.object({
     reservedMicrousd: MicrousdSchema.min(1),
     billingMode: z.literal("usage").optional(),
     maxCostMicrousd: MicrousdSchema.min(1).optional(),
+    jevPricingVersion: JevProvenanceSchema.shape.pricingVersion.optional(),
     remainingBalanceMicrousd: MicrousdSchema,
     remainingBudgetMicrousd: MicrousdSchema,
     periodStart: IsoTimestampSchema,
@@ -250,6 +278,11 @@ export const FundedAiAuthorizationResponseSchema = z.object({
       message: "Strict reservations do not expose a separate liability ceiling",
     });
   }
+  if (reservation.jevPricingVersion !== undefined
+    && (reservation.modelId !== JEV_MODEL_ID || reservation.billingMode !== "usage")) {
+    ctx.addIssue({ code: "custom", path: ["reservation", "jevPricingVersion"],
+      message: "Jev pricing requires Jev usage authorization" });
+  }
 });
 
 export const FundedAiSettlementRequestSchema = z.object({
@@ -264,6 +297,7 @@ export const FundedAiFinalizationRequestSchema = z.discriminatedUnion("mode", [
     tokenId: TokenIdSchema,
     mode: z.literal("exact"),
     actualCostMicrousd: MicrousdSchema,
+    jevProvenance: JevProvenanceSchema.optional(),
   }).strict(),
   z.object({
     reservationId: canonicalReferenceId(160),

@@ -1,3 +1,4 @@
+import { registerGatewayShutdown } from "./process-shutdown.js";
 import { resolve, dirname } from "node:path";
 import { join } from "node:path";
 import { mkdirSync, readdirSync, unlinkSync } from "node:fs";
@@ -91,11 +92,12 @@ if (proxyUrl) {
     .catch((e) => console.warn(`Proxy registration failed: ${(e as Error).message}`));
 }
 
-process.on("SIGINT", async () => {
-  posthogProcessErrors.dispose();
-  await gateway.close();
-  await processPosthogErrorTracker.shutdown();
-  process.exit(0);
+// Graceful shutdown shares one idempotent path for user interrupts and host stops.
+registerGatewayShutdown({
+  process,
+  disposeProcessErrors: () => posthogProcessErrors.dispose(),
+  closeGateway: () => gateway.close(),
+  shutdownTelemetry: () => processPosthogErrorTracker.shutdown(),
 });
 
 // Heap snapshot on SIGUSR2 — `kill -USR2 <gateway-pid>` writes a .heapsnapshot

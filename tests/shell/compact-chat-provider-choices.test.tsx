@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
 import React from "react";
 import { readFileSync } from "node:fs";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { CompactChatProviderChoices } from "../../packages/ui/src/compact-chat-provider-choices.js";
 import type { CanonicalProviderChoice } from "../../packages/ui/src/canonical-provider-choice.js";
 import type { CanonicalProviderCatalog } from "@matrix-os/contracts";
@@ -15,6 +15,7 @@ const matrix: CanonicalProviderChoice = {
   options: [], selectedOptions: [], supportsFileAttachments: true,
 };
 const pi = { ...matrix, instanceId: "pi_work", driverKind: "pi" as const, harnessLabel: "Pi · Work" };
+afterEach(() => vi.useRealTimers());
 
 const support = {
   rootChat: true, resume: true, cancellation: true, attachments: ["file"] as const,
@@ -52,6 +53,32 @@ const catalog: CanonicalProviderCatalog = {
 };
 
 describe("compact shared Chat choices", () => {
+  it("keeps a locally configured Codex choice selectable with qualified copy", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-26T00:00:00.000Z"));
+    const codex: CanonicalProviderChoice = {
+      ...pi, instanceId: "codex_default", driverKind: "codex", harnessLabel: "Codex",
+      modelId: "gpt-5.4", modelLabel: "GPT-5.4",
+    };
+    const codexCatalog: CanonicalProviderCatalog = {
+      ...catalog,
+      drivers: [...catalog.drivers, { kind: "codex", displayName: "Codex", adapterVersion: "1", capabilityClass: "coding_agent" }],
+      instances: [...catalog.instances, {
+        ...catalog.instances[1]!, id: "codex_default", driverKind: "codex", displayName: "Codex",
+        localObservation: { state: "present_unverified", checkedAt: new Date().toISOString(), staleAfter: new Date(Date.now() + 5_000).toISOString() },
+        models: [{ ...catalog.instances[1]!.models[0]!, id: "gpt-5.4", displayName: "GPT-5.4" }],
+      }],
+    };
+    const select = vi.fn();
+    render(<CompactChatProviderChoices catalog={codexCatalog} choices={[codex]} selected={codex} onSelect={select} />);
+    expect(screen.getByRole("button", { name: "Codex agent, Local login found; access not verified" })).toBeVisible();
+    const option = screen.getByRole("option", { name: "GPT-5.4 via Codex" });
+    expect(within(option).getByText(/Local login found; access not verified/)).toBeVisible();
+    act(() => vi.advanceTimersByTime(5_001));
+    expect(screen.getByRole("button", { name: "Codex agent, Access not verified" })).toBeVisible();
+    fireEvent.click(option);
+    expect(select).toHaveBeenCalledWith(codex);
+  });
   it("ships scoped picker colors for both Electron and Web themes", () => {
     render(<CompactChatProviderChoices choices={[matrix]} selected={matrix} onSelect={vi.fn()} />);
     expect(screen.getByRole("searchbox")).toHaveClass("matrix-chat-model-search");
@@ -110,5 +137,66 @@ describe("compact shared Chat choices", () => {
     expect(screen.getByText("Authentication required")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Connect OpenCode" }));
     expect(setup).toHaveBeenCalledWith(catalog.instances[2], catalog.instances[2]?.setupActions[0]);
+  });
+
+  it("lets owners inspect a saved-off system harness without offering connection or model selection", () => {
+    const select = vi.fn();
+    const setup = vi.fn();
+    const disabledHermes = {
+      ...catalog.instances[1]!, id: "hermes_default", driverKind: "hermes" as const,
+      displayName: "Hermes", availability: "unavailable" as const,
+      unavailabilityReason: "disabled_in_settings" as const,
+      models: [], setupActions: [],
+    };
+    const systemCatalog: CanonicalProviderCatalog = {
+      ...catalog,
+      drivers: [...catalog.drivers, {
+        kind: "hermes", displayName: "Hermes", adapterVersion: "1", capabilityClass: "system_agent",
+      }],
+      instances: [...catalog.instances, disabledHermes],
+    };
+    render(<CompactChatProviderChoices catalog={systemCatalog} choices={[matrix, pi]} selected={pi}
+      onSelect={select} onSetupAction={setup} />);
+
+    const button = screen.getByRole("button", { name: "Hermes agent, Disabled in Settings" });
+    expect(button).toBeEnabled();
+    fireEvent.click(button);
+    expect(button).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByText("Disabled in Settings")).toBeVisible();
+    expect(screen.queryByRole("option")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Connect Hermes" })).toBeNull();
+    expect(select).not.toHaveBeenCalled();
+    expect(setup).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["openclaw", "OpenClaw", "system_agent"],
+    ["pi", "Pi", "coding_agent"],
+    ["opencode", "OpenCode", "coding_agent"],
+  ] as const)("shows saved-off %s without setup or selectable models", (kind, name, capabilityClass) => {
+    const select = vi.fn();
+    const setup = vi.fn();
+    const disabledInstance = {
+      ...catalog.instances[1]!, id: `${kind}_default`, driverKind: kind,
+      displayName: name, availability: "unavailable" as const,
+      unavailabilityReason: "disabled_in_settings" as const,
+      models: [], setupActions: [], defaultSelection: undefined,
+    };
+    const disabledCatalog: CanonicalProviderCatalog = {
+      ...catalog,
+      drivers: [{ kind, displayName: name, adapterVersion: "1", capabilityClass }],
+      instances: [disabledInstance],
+    };
+    render(<CompactChatProviderChoices catalog={disabledCatalog} choices={[]} selected={null}
+      onSelect={select} onSetupAction={setup} />);
+
+    const button = screen.getByRole("button", { name: `${name} agent, Disabled in Settings` });
+    expect(button).toBeEnabled();
+    fireEvent.click(button);
+    expect(screen.getByText("Disabled in Settings")).toBeVisible();
+    expect(screen.queryByRole("option")).toBeNull();
+    expect(screen.queryByRole("button", { name: `Connect ${name}` })).toBeNull();
+    expect(select).not.toHaveBeenCalled();
+    expect(setup).not.toHaveBeenCalled();
   });
 });

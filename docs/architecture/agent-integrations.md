@@ -45,6 +45,13 @@ platform stores AES-256-GCM encrypted OAuth/static credentials; the VPS stores
 only the non-secret revisioned enforcement projection in
 `~/system/mcp-servers.json`. Calls require the intersection of both copies.
 
+Canonical Claude Chat advertises only its issued Custom MCP surface: list and
+describe for discovery-only runs, plus the broker call wrapper when calls are
+authorized. Ordinary integration inventory is not advertised on this route.
+Existing full integration clients retain their complete tool inventory. The
+advertisement selector never expands the actor-bound Gateway grant or bypasses
+tool approval.
+
 The MCP and OAuth HTTPS transports pin the validated DNS address for both
 single-address and all-address lookup callbacks used by Node automatic
 address-family selection. Neither callback performs a second DNS lookup.
@@ -99,6 +106,31 @@ loopback gateway URL, Matrix gateway token, and Matrix user ID. Database,
 storage, analytics, Pipedream, and provider credentials cannot be inherited by
 the agent-owned process.
 
+Canonical Claude Chat uses an explicit `matrix-integrations` stdio entry because
+its strict MCP launch excludes the user-scoped registration. The entry invokes
+the launcher with `--require-scoped-capability`, so a missing Run bearer cannot
+fall back to the VPS machine token. The gateway issues that bearer only when
+the Chat owner matches the configured single-owner runtime and the runtime is
+not Preview. A normal Run can read the Custom MCP collection/detail and call an
+exact server ID. Review/read-only Runs receive discovery-only bearers, and
+Claude auto-allows only the two discovery wrappers for them. The Gateway denies
+raw call POSTs from those bearers because Custom MCP tools have no trusted
+read/write classification. Completion, abort, timeout, and gateway shutdown
+revoke every grant. For normal Runs, the broker still enforces tool enablement,
+server revision, and approval policy:
+the Gateway also rejects a Run-bearer request that claims human approval
+before proxying it under the platform machine token. For a personal-owner
+canonical Claude Chat Run in supervised/default permission mode, the native
+`can_use_tool` callback can reserve one `always_ask` challenge. Platform mints
+a short-lived proof only for the authenticated owner's exact canonical Chat
+decision; the broker exchanges it for a one-use receipt bound to the Run,
+server revision, tool, and arguments. The receipt is consumed before remote
+dispatch. Current `allow` policy uses a fast path without a prompt. If the
+approval bridge is unavailable, ordinary Chat and `allow` tools continue,
+while `always_ask` fails closed. Review/plan remains discovery-only;
+`always_ask` is unsupported for other Claude permission modes, Codex,
+Hermes, and direct terminal agents pending native transport validation.
+
 ## Agent delivery
 
 Matrix bootstrap idempotently registers the server under the stable name
@@ -108,7 +140,7 @@ Matrix bootstrap idempotently registers the server under the stable name
 | --- | --- |
 | Matrix assistant | In-process tools with the same operation names and startup discovery instruction |
 | Codex | User-scoped stdio MCP entry in Codex configuration |
-| Claude Code | User-scoped stdio MCP entry in Claude configuration |
+| Claude Code | User-scoped stdio MCP entry for direct Claude use; canonical Chat passes an explicit strict entry with a scoped Custom MCP Run bearer |
 | Hermes | Native `mcp_servers` entry, discovered in every Hermes conversation |
 | OpenClaw | Native `mcp.servers` entry, available to normal coding and messaging profiles |
 | OpenCode and Pi | Auto-discovered global Matrix OS skill using the credential-isolated `matrix-integrations` command |
@@ -145,8 +177,10 @@ gateway identity at execution time.
 - Custom MCP URL validation, DNS pinning, no-redirect requests, bounds, and
   timeouts apply at creation, discovery, and calls.
 - Custom MCP output and descriptions are treated as untrusted external content.
-- Managed writes and `always_ask` Custom MCP tools use the native Matrix
-  approval bridge. Custom subagents need an explicit `mcp` frontmatter grant.
+- Managed writes still require their existing permission controls.
+  `always_ask` Custom MCP calls use the native approval bridge only for
+  canonical supervised/default Claude Chat; unsupported harnesses fail closed.
+  Custom subagents need an explicit `mcp` frontmatter grant.
 - Connection discovery returns labels, status, and email identity only; not provider data.
 - Every action resolves account ownership server-side and validates the service, action, and parameters.
 - Disconnect is explicitly marked destructive in MCP metadata and requires a Matrix connection ID.
@@ -155,6 +189,23 @@ gateway identity at execution time.
 - Agent-supplied environment variables cannot replace the MCP executable, Node runtime, gateway host, or credential source.
 
 ## Validation
+
+### Approval card details and outcomes
+
+Chat approval cards use the same run-scoped request and recorded decision across
+supported surfaces. Known Custom MCP requests display the server identifier,
+tool identifier, and a bounded summary of ordinary argument names and types.
+Every argument value is withheld, including URLs, file paths, and payloads;
+the summary therefore cannot establish the exact target of a call. Malformed
+details show a neutral privacy placeholder. Existing unrelated command, file,
+and patch approval review text retains its current formatting.
+
+Recorded decisions display Approved, Declined, or Cancelled. An ended run with
+no recorded decision stays neutral and does not imply approval. Submission and
+authorization policies are unchanged; display details do not prove the native
+approval bridge is available for a particular harness or runtime.
+
+### Automated checks
 
 Automated validation covers:
 

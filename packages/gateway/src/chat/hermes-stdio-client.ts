@@ -120,6 +120,7 @@ export function createHermesStdioClient(options: {
   args: string[];
   cwd: string;
   env: Record<string, string>;
+  inheritEnvironment?: boolean;
   spawnFn?: HermesGatewaySpawn;
   readyTimeoutMs?: number;
   requestTimeoutMs?: number;
@@ -147,7 +148,7 @@ export function createHermesStdioClient(options: {
   });
   const child = (options.spawnFn ?? defaultSpawn)(options.command, options.args, {
     cwd: options.cwd,
-    env: { ...process.env, ...options.env } as Record<string, string>,
+    env: options.inheritEnvironment === false ? { ...options.env } : { ...process.env, ...options.env } as Record<string, string>,
     stdio: ["pipe", "pipe", "pipe"],
   });
 

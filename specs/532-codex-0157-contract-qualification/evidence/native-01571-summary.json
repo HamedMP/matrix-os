@@ -1,0 +1,168 @@
+{
+  "cliVersion": "0.157.1",
+  "provider": "localhost fake Responses; no real inference credentials",
+  "exit": 0,
+  "turns": [
+    {
+      "startedTurnId": "01a0db97-40e3-76b1-b709-b15337bdfab0",
+      "completedEvent": {
+        "threadId": "01a0db97-4079-7eb3-8ae1-c0420ffb6ca2",
+        "turn": {
+          "id": "01a0db97-40e3-76b1-b709-b15337bdfab0",
+          "items": [
+            {
+              "type": "agentMessage",
+              "id": "msg_call_scope_a0f75a344bfb69db1f8ce686",
+              "text": "mock answer",
+              "phase": null,
+              "memoryCitation": null,
+              "delivery": null,
+              "questions": null
+            }
+          ],
+          "itemsView": "summary",
+          "status": "completed",
+          "error": null,
+          "startedAt": 1790390517,
+          "completedAt": 1790390518,
+          "durationMs": 77
+        }
+      },
+      "readTurnId": "01a0db97-40e3-76b1-b709-b15337bdfab0",
+      "status": "completed",
+      "error": null,
+      "mcpCalls": [
+        {
+          "status": "completed",
+          "tool": "echo_scope",
+          "content": [
+            {
+              "type": "text",
+              "text": "A"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "startedTurnId": "01a0db97-4156-7b00-97ca-498f7af3e131",
+      "completedEvent": {
+        "threadId": "01a0db97-4079-7eb3-8ae1-c0420ffb6ca2",
+        "turn": {
+          "id": "01a0db97-4156-7b00-97ca-498f7af3e131",
+          "items": [
+            {
+              "type": "agentMessage",
+              "id": "msg_call_scope_db4aab0fab944b9c242bb480",
+              "text": "mock answer",
+              "phase": null,
+              "memoryCitation": null,
+              "delivery": null,
+              "questions": null
+            }
+          ],
+          "itemsView": "summary",
+          "status": "completed",
+          "error": null,
+          "startedAt": 1790390518,
+          "completedAt": 1790390518,
+          "durationMs": 25
+        }
+      },
+      "readTurnId": "01a0db97-4156-7b00-97ca-498f7af3e131",
+      "status": "completed",
+      "error": null,
+      "mcpCalls": [
+        {
+          "status": "completed",
+          "tool": "echo_scope",
+          "content": [
+            {
+              "type": "text",
+              "text": "A"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "startedTurnId": "01a0db97-4228-7c81-a6e4-2116b5c4920a",
+      "completedEvent": {
+        "threadId": "01a0db97-4079-7eb3-8ae1-c0420ffb6ca2",
+        "turn": {
+          "id": "01a0db97-4228-7c81-a6e4-2116b5c4920a",
+          "items": [
+            {
+              "type": "agentMessage",
+              "id": "msg_call_scope_0e7e9a058b7daa3c81593469",
+              "text": "mock answer",
+              "phase": null,
+              "memoryCitation": null,
+              "delivery": null,
+              "questions": null
+            }
+          ],
+          "itemsView": "summary",
+          "status": "completed",
+          "error": null,
+          "startedAt": 1790390518,
+          "completedAt": 1790390518,
+          "durationMs": 28
+        }
+      },
+      "readTurnId": "01a0db97-4228-7c81-a6e4-2116b5c4920a",
+      "status": "completed",
+      "error": null,
+      "mcpCalls": [
+        {
+          "status": "completed",
+          "tool": "echo_scope",
+          "content": [
+            {
+              "type": "text",
+              "text": "C"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "earlierAugmentedRun": {
+    "exit": 1,
+    "fixtureError": "AssertionError: Turn did not complete",
+    "nativeTerminalStatus": "not recorded",
+    "nativeTerminalError": "not recorded"
+  },
+  "forcedInitializeFailureCleanup": {
+    "redExit": 1,
+    "redAssertion": "Failed initialization left child running",
+    "greenExit": 0,
+    "assertedResources": [
+      "child terminated/reaped",
+      "selector closed",
+      "stdin closed",
+      "stdout closed",
+      "stderr closed"
+    ]
+  },
+  "historicalC589ResumeProof": "invalid: read was not matched to turn/start ID",
+  "exactIdProjectionExperiments": [
+    {
+      "stage": "fresh",
+      "exit": 1,
+      "readStatus": "interrupted",
+      "readCompletedAt": null,
+      "readError": null,
+      "terminalEventObserved": false
+    },
+    {
+      "stage": "loaded",
+      "exit": 1,
+      "readStatus": "interrupted",
+      "readCompletedAt": null,
+      "readError": null,
+      "terminalEventObserved": false
+    }
+  ],
+  "fakeResponsesSelection": "stateless current latest user boundary and exact matching output; retry/history controls 4/4 passed"
+}

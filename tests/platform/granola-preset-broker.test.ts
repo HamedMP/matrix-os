@@ -20,7 +20,10 @@ function createDependencies(status = "ready") {
       getPreset: vi.fn().mockResolvedValue(row),
       ensurePreset: vi.fn().mockResolvedValue(row),
       activatePreset: vi.fn().mockResolvedValue({ ...row, status: "ready" }),
-      callSelectedTool: vi.fn().mockResolvedValue({ meetings: [] }),
+      callSelectedTool: vi.fn(async (input: { approvalGranted?: boolean }) => {
+        if (input.approvalGranted === true) throw new Error("Untrusted approval Boolean");
+        return { meetings: [] };
+      }),
       remove: vi.fn().mockResolvedValue(undefined),
     },
     oauth: {
@@ -81,7 +84,6 @@ describe("Granola preset broker", () => {
       serverId: "granola-server",
       toolName: "get_meetings",
       arguments: { meeting_id: "meeting-1" },
-      approvalGranted: true,
     });
     expect(dependencies.broker.remove).toHaveBeenCalledWith("user-1", "granola-server");
   });

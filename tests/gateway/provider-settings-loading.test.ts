@@ -5,6 +5,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import type { AiProviderSnapshotV3 } from "@matrix-os/contracts";
 import { ProviderSettingsStore } from "../../packages/gateway/src/ai-providers/provider-settings-store.js";
 import { readProviderSettingsEnrichment } from "../../packages/gateway/src/ai-providers/provider-settings-enrichment.js";
+import { AiProviderService } from "../../packages/gateway/src/ai-providers/service.js";
 import { PROVIDER_SETTINGS_NOW, providerSettingsCanonicalFixture } from "./provider-settings-test-support.js";
 
 let homePath: string;
@@ -63,7 +64,7 @@ it("does not project prefetched funding when canonical inventory has no Matrix s
   expect(await request).toEqual({ genericModelCatalog: undefined });
 });
 
-it("starts funding and model discovery before canonical inventory finishes, without borrowing readiness", async () => {
+it("starts funding before inventory but defers legacy discovery until canonical authority is known", async () => {
   homePath = await mkdtemp(join(tmpdir(), "provider-loading-"));
   const inventory = Promise.withResolvers<AiProviderSnapshotV3>();
   const getSnapshot = vi.fn(() => inventory.promise);
@@ -78,13 +79,45 @@ it("starts funding and model discovery before canonical inventory finishes, with
   try {
     await vi.waitFor(() => expect(getSnapshot).toHaveBeenCalledOnce());
     expect(getFundingSummary).toHaveBeenCalledOnce();
-    expect(getCatalog).toHaveBeenCalledWith({ refresh: true });
+    expect(getCatalog).not.toHaveBeenCalled();
   } finally {
     inventory.resolve(providerSettingsCanonicalFixture());
     const snapshot = await request;
     expect(getFundingSummary).toHaveBeenCalledOnce();
     expect(getCatalog).toHaveBeenCalledOnce();
+    expect(getCatalog).toHaveBeenCalledWith({ refresh: true });
     expect(snapshot.gatewayPolicy?.allowedModelIds).toEqual([]);
     expect(snapshot.accessSources.find((source) => source.id === "matrix_included")?.eligibleModelIds).toEqual([]);
+  }
+});
+
+it("never invokes a stale compatibility reader when canonical native failure is authoritative", async () => {
+  const canonical = providerSettingsCanonicalFixture();
+  const getCatalog = vi.fn(async () => ({ providers: [], accessSources: [], failures: [] }));
+  const result = await readProviderSettingsEnrichment({
+    canonical: { ...canonical, nativeHarnessCatalog: { profiles: [], failures: ["opencode"] } },
+    genericModelCatalog: { getCatalog }, catalogFailureHarnesses: [], refresh: true,
+  });
+  expect(getCatalog).not.toHaveBeenCalled();
+  expect(result.genericModelCatalog).toMatchObject({ providers: [], accessSources: [], failures: ["opencode"] });
+});
+
+it("actual V3 producer starts native discovery while driver inventory remains pending", async () => {
+  homePath = await mkdtemp(join(tmpdir(), "provider-producer-loading-"));
+  const inventory = Promise.withResolvers<AiProviderSnapshotV3["drivers"]>();
+  const driverInventory = vi.fn(() => inventory.promise);
+  const getCatalog = vi.fn(async () => ({ providers: [], accessSources: [], failures: [] }));
+  const producer = new AiProviderService({ homePath, env: {}, now: () => PROVIDER_SETTINGS_NOW,
+    driverInventory, nativeHarnessCatalogReader: { getCatalog } });
+  const request = producer.getSnapshot({ refresh: true });
+  try {
+    await vi.waitFor(() => expect(driverInventory).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(getCatalog).toHaveBeenCalledWith({ refresh: true }));
+  } finally {
+    inventory.resolve([]);
+    const canonical = await request;
+    expect(getCatalog).toHaveBeenCalledOnce();
+    expect(canonical.nativeHarnessCatalog).toEqual({ profiles: [], failures: [] });
+    producer.close();
   }
 });

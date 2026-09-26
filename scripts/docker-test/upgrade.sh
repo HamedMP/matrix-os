@@ -19,6 +19,8 @@ $COMPOSE up $COMPOSE_UP_FLAGS -d dev
 
 wait_for_healthy "dev" "${DOCKER_HEALTH_TIMEOUT:-180}"
 
+wait_for_mirror_hash "dev" "system/soul.md"
+
 # Simulate old version: downgrade .matrix-version to 0.3.0
 echo -e "${YELLOW}[SETUP]${NC} Simulating v0.3.0 state..."
 $COMPOSE exec -T dev sh -c 'echo "0.3.0" > /home/matrixos/home/.matrix-version'

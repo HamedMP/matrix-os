@@ -12,14 +12,11 @@ import {
   type ManifestDbExecutor,
 } from "./manifest.js";
 import { resolveWithinPrefix } from "./path-validation.js";
-import { conflictCopyCandidates } from "./home-mirror-conflict.js";
-import { cleanupTempFiles, collectLocalFiles } from "./home-mirror-walk.js";
 import {
   createSerialQueue,
   hashBuffer,
   hashFileStream,
   readLocalFileForPush,
-  streamToBuffer,
   waitForWatcherReady,
   type LocalPushFile,
 } from "./home-mirror-io.js";
@@ -33,8 +30,10 @@ import {
   parseOwnerSyncIgnore,
   shouldPruneHomeMirrorPath,
 } from "./home-mirror-ignore.js";
+import { cleanupTempFiles, collectLocalFiles } from "./home-mirror-walk.js";
 import type { SyncIgnorePatterns } from "@finnaai/matrix";
 import {
+  buildBlobKey,
   buildFileKey,
   buildStagingKey,
   type R2Client,
@@ -43,6 +42,12 @@ import type { Manifest, ManifestEntry } from "./types.js";
 import type { PeerRegistry, SyncPeerConnection } from "./ws-events.js";
 import { resolveSyncScope, syncScopeRegistryKey } from "./runtime-scope.js";
 import { finalizeStagedObject } from "./blob-publication.js";
+import { HomeMirrorState } from "./home-mirror-state.js";
+import { HomeMirrorReconciliation } from "./home-mirror-reconciliation.js";
+import { awaitMirrorOperation } from "./home-mirror-abort.js";
+import { streamToBuffer } from "./home-mirror-body.js";
+import { MirrorPublicationChanged, publishMirrorManifest } from "./home-mirror-publication.js";
+import { createMirrorR2 } from "./home-mirror-r2.js";
 
 const RECENT_WRITE_CAP = 50_000;
 const DEFAULT_MAX_PUSH_BYTES = 100 * 1024 * 1024;
@@ -131,20 +136,26 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
   let stopRequested = false;
   let subscribed = false;
   let resolvedHomeRoot = config.homeRoot;
+  let readyForFlush = false;
+  let lifecycle = new AbortController();
+  let shutdownSignal: AbortSignal | undefined;
+  let stopping: Promise<void> | undefined;
+  let shutdownDrained = true;
+  const r2 = createMirrorR2(config.r2, () => lifecycle.signal);
   let userIgnorePatterns = emptyOwnerSyncIgnore();
   // Incremented by start()/stop() so queued policy refreshes from an older
   // lifecycle can never start watchers or pushes after a stop or restart.
   let lifecycleGeneration = 0;
   let watcherTaskChain: Promise<void> = Promise.resolve();
+  let localWatchingEnabled = false;
   let tempCleanupTimer: ReturnType<typeof setInterval> | null = null;
   let tempCleanupInFlight: Promise<void> | null = null;
-  let localWatchingEnabled = false;
 
   const ignored = (relPath: string): boolean =>
     isHomeMirrorIgnored(relPath, extraIgnore, userIgnorePatterns);
   const pruned = (relPath: string): boolean =>
     shouldPruneHomeMirrorPath(relPath, extraIgnore, userIgnorePatterns);
-  const walkFilters = { pruned, ignored, log };
+  const walkFilters = { pruned, ignored, log, signal: () => shutdownSignal };
   const isCurrentLifecycle = (generation: number): boolean =>
     !stopRequested && generation === lifecycleGeneration;
 
@@ -199,7 +210,25 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
     return true;
   };
 
-  const store = { r2: config.r2, db: config.manifestDb };
+  const store = { r2, db: config.manifestDb };
+  const localState = new HomeMirrorState(config.homeRoot, (category) => log.error(`mirror reconciliation: ${category}`));
+
+  const reconciliation = new HomeMirrorReconciliation(localState, async (relPath, entry) => {
+    const current = entry.objectKey ? null : await readManifest(store, scope);
+    const key = entry.objectKey ?? current?.manifest.files[relPath]?.objectKey ?? buildFileKey(scope, relPath);
+    assertRemoteObjectKey(key, relPath, entry.hash);
+    const object = await r2.getObject(key);
+    if (!object.body || entry.size > maxPushBytes) throw new Error("conflict content unavailable");
+    const bytes = await awaitMirrorOperation(streamToBuffer(object.body, maxPushBytes, lifecycle.signal), lifecycle.signal);
+    if (bytes.length !== entry.size) throw new Error("conflict content size mismatch");
+    return bytes;
+  });
+
+  function assertRemoteObjectKey(key: string, path: string, hash: string): void {
+    if (key !== buildBlobKey(scope, hash) && key !== buildFileKey(scope, path)) {
+      throw new Error("invalid mirror object key");
+    }
+  }
 
   async function ensureWritableParent(absPath: string): Promise<void> {
     const parentDir = dirname(absPath);
@@ -212,22 +241,24 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
       clearInterval(tempCleanupTimer);
       tempCleanupTimer = null;
     }
-    const watchers = [watcher, pendingWatcher].filter((w): w is FSWatcher => w !== null);
-    watcher = null;
-    pendingWatcher = null;
-    await Promise.all(watchers.map((w) => w.close()));
     if (subscribed && config.peerRegistry) {
       config.peerRegistry.removePeer(registryKey, config.peerId);
       subscribed = false;
     }
+    const watchers = [watcher, pendingWatcher].filter((w): w is FSWatcher => w !== null);
+    watcher = null;
+    pendingWatcher = null;
+    await Promise.all(watchers.map((w) => w.close()));
   }
 
   async function withManifestLock<T>(
-    fn: (lockedStore: typeof store & { dbExecutor: ManifestDbExecutor }) => Promise<T>,
+    fn: (lockedStore: typeof store & { dbExecutor: ManifestDbExecutor; signal: AbortSignal }) => Promise<T>,
   ): Promise<T> {
-    return config.manifestDb.withAdvisoryLock(scope, async (dbExecutor) =>
-      fn({ ...store, dbExecutor }),
-    );
+    const signal = lifecycle.signal;
+    return config.manifestDb.withAdvisoryLock(scope, async (dbExecutor) => {
+      signal.throwIfAborted();
+      return fn({ ...store, dbExecutor, signal });
+    });
   }
 
   // Broadcast a sync:change to every registered peer EXCEPT this mirror so
@@ -261,6 +292,20 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
     });
   }
 
+  async function matchesLocal(path: string, hash: string): Promise<boolean> {
+    const absPath = join(config.homeRoot, path);
+    assertWithinResolvedHomeRoot(await realpath(dirname(absPath)));
+    const current = await readLocalFileForPush(absPath, maxPushBytes);
+    return current.kind === "file" && current.hash === hash;
+  }
+  async function publishCurrent(
+    lockedStore: Parameters<typeof writeManifest>[0], next: Manifest, version: number,
+    changes: ReadonlyArray<{ path: string; hash: string }>,
+  ): Promise<boolean> {
+    return publishMirrorManifest({ lockedStore, scope, next, version, changes, state: localState,
+      matchesLocal, changed: () => log.info("local_changed_before_publication") });
+  }
+
   async function pushFile(relPath: string): Promise<void> {
     const safeRelPath = normalizeRelativePath(config.userId, relPath);
     const previousPolicy = safeRelPath === SYNCIGNORE_PATH
@@ -289,18 +334,21 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
       }
 
       const stagingId = randomUUID();
-      await config.r2.putObject(buildStagingKey(scope, stagingId), localFile.body);
+      await r2.putObject(buildStagingKey(scope, stagingId), localFile.body);
       const { objectKey } = await finalizeStagedObject({
-        r2: config.r2,
+        r2,
         scope,
         stagingId,
         expectedHash: localFile.hash,
         expectedSize: localFile.size,
+        signal: lifecycle.signal,
       });
 
       await withManifestLock(async (lockedStore) => {
         const existing = await readManifest(lockedStore, scope);
         const currentEntry = existing.manifest.files[safeRelPath];
+        if (!await matchesLocal(safeRelPath, localFile.hash)) return;
+        if (!await reconciliation.canPublish(safeRelPath, localFile.hash, currentEntry)) return;
         if (currentEntry?.hash === localFile.hash && !currentEntry.deleted) {
           // Already in manifest with same hash -- skip the upload.
           return;
@@ -314,10 +362,67 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
         );
 
         const newVersion = existing.manifestVersion + 1;
-        await writeManifest(lockedStore, scope, next, newVersion);
+        lifecycle.signal.throwIfAborted();
+        if (!await publishCurrent(lockedStore, next, newVersion, [{ path: safeRelPath, hash: localFile.hash }])) return;
+        await localState.remember(safeRelPath, localFile.hash);
         broadcastChange({ path: safeRelPath, hash: localFile.hash, size: localFile.size, action }, newVersion);
         log.info(`pushed ${safeRelPath} (${localFile.size}B)`);
       });
+    });
+  }
+
+  async function isLocalMissing(safeRelPath: string): Promise<boolean> {
+    const absPath = join(config.homeRoot, safeRelPath);
+    let parent = dirname(absPath);
+    for (;;) {
+      try { assertWithinResolvedHomeRoot(await realpath(parent)); break; }
+      catch (error: unknown) {
+        if (!(error instanceof Error) || !("code" in error) || error.code !== "ENOENT") throw error;
+        if (parent === config.homeRoot) throw error;
+        parent = dirname(parent);
+      }
+    }
+    try { await lstat(absPath); return false; }
+    catch (error: unknown) {
+      if (error instanceof Error && "code" in error && error.code === "ENOENT") return true;
+      throw error;
+    }
+  }
+
+  /** Already queued remote changes must not enqueue behind themselves. */
+  async function reconcileLocalDeletion(safeRelPath: string): Promise<void> {
+    if (ignored(safeRelPath) || localState.blocked(safeRelPath)) return;
+    await withManifestLock(async (lockedStore) => {
+      const existing = await readManifest(lockedStore, scope);
+      const entry = existing.manifest.files[safeRelPath];
+      if (!entry || entry.deleted) return;
+      const baseline = localState.hash(safeRelPath);
+      if (!baseline || !await isLocalMissing(safeRelPath)) return;
+      if (entry.hash !== baseline) {
+        await reconciliation.preserveDeletion(safeRelPath, entry);
+        return;
+      }
+
+      const next: Manifest = applyCommitToManifest(
+        existing.manifest,
+        [{ path: safeRelPath, hash: entry.hash, size: 0, action: "delete" }],
+        config.peerId,
+      );
+
+      const newVersion = existing.manifestVersion + 1;
+      lifecycle.signal.throwIfAborted();
+      try {
+        await writeManifest(lockedStore, scope, next, newVersion, async () => {
+          if (!await isLocalMissing(safeRelPath)) throw new MirrorPublicationChanged();
+        });
+      } catch (error: unknown) { if (error instanceof MirrorPublicationChanged) return; throw error; }
+
+      await localState.forget(safeRelPath);
+      broadcastChange(
+        { path: safeRelPath, hash: entry.hash, size: 0, action: "delete" },
+        newVersion,
+      );
+      log.info(`deleted ${safeRelPath}`);
     });
   }
 
@@ -327,36 +432,10 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
       ? await reloadUserIgnorePatterns()
       : null;
     try {
-      await publishLocalDelete(safeRelPath);
+      await enqueue(() => reconcileLocalDeletion(safeRelPath));
     } finally {
       if (previousPolicy) await schedulePolicyRefresh(previousPolicy);
     }
-  }
-
-  async function publishLocalDelete(safeRelPath: string): Promise<void> {
-    if (ignored(safeRelPath)) return;
-    await enqueue(async () => {
-      await withManifestLock(async (lockedStore) => {
-        const existing = await readManifest(lockedStore, scope);
-        const entry = existing.manifest.files[safeRelPath];
-        if (!entry || entry.deleted) return;
-
-        const next: Manifest = applyCommitToManifest(
-          existing.manifest,
-          [{ path: safeRelPath, hash: entry.hash, size: 0, action: "delete" }],
-          config.peerId,
-        );
-
-        const newVersion = existing.manifestVersion + 1;
-        await writeManifest(lockedStore, scope, next, newVersion);
-
-        broadcastChange(
-          { path: safeRelPath, hash: entry.hash, size: 0, action: "delete" },
-          newVersion,
-        );
-        log.info(`deleted ${safeRelPath}`);
-      });
-    });
   }
 
   // Remote policy content is validated before it touches disk so a rejected
@@ -374,6 +453,7 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
     if (safeRelPath === SYNCIGNORE_PATH && entry.size > SYNCIGNORE_MAX_BYTES) {
       throw new Error(`.syncignore exceeds ${SYNCIGNORE_MAX_BYTES} bytes`);
     }
+    let expectedHash: string | null = null;
     try {
       const localStat = await lstat(absPath);
       if (localStat.isSymbolicLink()) {
@@ -381,10 +461,15 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
       }
       if (localStat.isFile()) {
         const localHash = await hashFileStream(absPath);
-        if (localHash === entry.hash) return;
+        expectedHash = localHash;
+        if (!await reconciliation.shouldPull(safeRelPath, localHash, entry)) return;
       }
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+      if (localState.hash(safeRelPath) !== undefined) {
+        await reconcileLocalDeletion(safeRelPath);
+        return;
+      }
     }
 
     let key = entry.objectKey;
@@ -393,10 +478,11 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
       key = current.manifest.files[safeRelPath]?.objectKey
         ?? buildFileKey(scope, safeRelPath);
     }
-    const obj = await config.r2.getObject(key);
+    assertRemoteObjectKey(key, safeRelPath, entry.hash);
+    const obj = await r2.getObject(key);
     if (!obj.body) return;
 
-    const buf = await streamToBuffer(obj.body, maxPushBytes);
+    const buf = await awaitMirrorOperation(streamToBuffer(obj.body, maxPushBytes, lifecycle.signal), lifecycle.signal);
     if (buf.length !== entry.size) {
       throw new Error("downloaded blob size did not match manifest entry");
     }
@@ -409,9 +495,18 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
     try {
       await writeFile(tmpPath, buf, { flag: "wx" });
       assertWithinResolvedHomeRoot(await realpath(tmpPath));
-      markWritten(safeRelPath);
       await ensureWritableParent(absPath);
+      const current = await readLocalFileForPush(absPath, maxPushBytes);
+      const currentHash = current.kind === "file" ? current.hash : null;
+      if (currentHash !== expectedHash) {
+        await localState.preserve(safeRelPath, currentHash ?? hashBuffer(Buffer.alloc(0)), entry.hash, buf);
+        await unlink(tmpPath);
+        return;
+      }
+      lifecycle.signal.throwIfAborted();
+      markWritten(safeRelPath);
       await rename(tmpPath, absPath);
+      await localState.remember(safeRelPath, entry.hash);
       try {
         assertWithinResolvedHomeRoot(await realpath(absPath));
       } catch (err: unknown) {
@@ -450,10 +545,10 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
     const files = existing.manifest.files ?? {};
     let pulled = 0;
     let failed = 0;
-    const remoteIgnore = files[".syncignore"];
+    const remoteIgnore = files[SYNCIGNORE_PATH];
     if (remoteIgnore?.hash && !remoteIgnore.deleted) {
       try {
-        await pullFile(".syncignore", remoteIgnore);
+        await pullFile(SYNCIGNORE_PATH, remoteIgnore);
         await reloadUserIgnorePatterns();
         pulled++;
       } catch (err: unknown) {
@@ -462,7 +557,7 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
       }
     }
     for (const [relPath, entry] of Object.entries(files)) {
-      if (relPath === ".syncignore") continue;
+      if (relPath === SYNCIGNORE_PATH) continue;
       if (!entry.hash || entry.deleted || ignored(relPath)) continue;
       try {
         await pullFile(relPath, entry);
@@ -478,25 +573,43 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
     if (pulled > 0) log.info(`initial pull: ${pulled} files`);
   }
 
-  async function initialPush(): Promise<void> {
+  async function initialPush(shutdownDeadline?: number): Promise<void> {
     const relPaths = await collectLocalFiles(config.homeRoot, walkFilters);
-    await pushLocalPaths(relPaths, "initial push", () => !stopRequested);
+    if (shutdownDeadline !== undefined) {
+      // Only a durable prior baseline makes absence a known owner deletion.
+      // pushDelete rechecks both remote hash and local absence inside the lock.
+      for (const path of localState.paths()) {
+        lifecycle.signal.throwIfAborted();
+        if (Date.now() >= shutdownDeadline) return;
+        if (!ignored(path) && await isLocalMissing(path)) await pushDelete(path);
+      }
+    }
+    await pushLocalPaths(
+      relPaths,
+      "initial push",
+      shutdownDeadline ? 1 : INITIAL_PUSH_CHUNK_SIZE,
+      () => shutdownDeadline !== undefined ? Date.now() < shutdownDeadline : !stopRequested,
+    );
   }
 
+  // Publish local files in chunks. Every publish goes through the manifest
+  // lock and reconciliation.canPublish, so a diverged remote version or a
+  // tombstone is preserved rather than overwritten or resurrected.
   async function pushLocalPaths(
     relPaths: string[],
     label: string,
+    chunkSize: number,
     shouldContinue: () => boolean,
   ): Promise<void> {
     if (relPaths.length === 0) return;
     const snapshot = await readManifest(store, scope);
     let pushed = 0;
 
-    for (let start = 0; start < relPaths.length; start += INITIAL_PUSH_CHUNK_SIZE) {
+    for (let start = 0; start < relPaths.length; start += chunkSize) {
       if (!shouldContinue()) {
         return;
       }
-      const relPathChunk = relPaths.slice(start, start + INITIAL_PUSH_CHUNK_SIZE);
+      const relPathChunk = relPaths.slice(start, start + chunkSize);
       const localFiles: Array<{
         path: string;
         file: Extract<LocalPushFile, { kind: "file" }>;
@@ -515,9 +628,10 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
         }
         const snapshotEntry = snapshot.manifest.files[safeRelPath];
         if (snapshotEntry?.hash === localFile.hash && !snapshotEntry.deleted) {
+          await localState.remember(safeRelPath, localFile.hash);
           continue;
         }
-        localFiles.push({ path: safeRelPath, file: localFile });
+        if (!localState.blocked(safeRelPath)) localFiles.push({ path: safeRelPath, file: localFile });
       }
 
       if (localFiles.length === 0) {
@@ -528,13 +642,14 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
         const finalizedFiles: Array<(typeof localFiles)[number] & { objectKey: string }> = [];
         for (const local of localFiles) {
           const stagingId = randomUUID();
-          await config.r2.putObject(buildStagingKey(scope, stagingId), local.file.body);
+          await r2.putObject(buildStagingKey(scope, stagingId), local.file.body);
           const finalized = await finalizeStagedObject({
-            r2: config.r2,
+            r2,
             scope,
             stagingId,
             expectedHash: local.file.hash,
             expectedSize: local.file.size,
+            signal: lifecycle.signal,
           });
           finalizedFiles.push({ ...local, objectKey: finalized.objectKey });
         }
@@ -549,6 +664,8 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
           }> = [];
           for (const { path: safeRelPath, file: localFile, objectKey } of finalizedFiles) {
               const currentEntry = nextManifest.files[safeRelPath];
+              if (!await matchesLocal(safeRelPath, localFile.hash)) continue;
+              if (!await reconciliation.canPublish(safeRelPath, localFile.hash, currentEntry)) continue;
               if (currentEntry?.hash === localFile.hash && !currentEntry.deleted) {
                 continue;
               }
@@ -579,7 +696,9 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
           }
 
           const newVersion = existing.manifestVersion + 1;
-          await writeManifest(lockedStore, scope, nextManifest, newVersion);
+          lifecycle.signal.throwIfAborted();
+          if (!await publishCurrent(lockedStore, nextManifest, newVersion, changedFiles)) return 0;
+          for (const file of changedFiles) await localState.remember(file.path, file.hash);
           broadcastChanges(changedFiles, newVersion);
           return changedFiles.length;
         });
@@ -602,11 +721,16 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
         log.error(`refusing to delete symlink ${safeRelPath}`);
         return;
       }
+      if (localStat.isFile() && await hashFileStream(absPath) !== localState.hash(safeRelPath)) {
+        log.error("mirror reconciliation: delete_conflict_preserved");
+        return;
+      }
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === "ENOENT") return;
       throw err;
     }
     await unlink(absPath);
+    await localState.forget(safeRelPath);
     markWritten(safeRelPath);
     log.info(`pulled delete ${safeRelPath}`);
   }
@@ -620,7 +744,7 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
     // Apply policy changes before other files in the same broadcast so a
     // freshly restored or updated .syncignore governs the whole batch.
     const files = [...msg.files].sort((left, right) =>
-      Number(right.path === ".syncignore") - Number(left.path === ".syncignore")
+      Number(right.path === SYNCIGNORE_PATH) - Number(left.path === SYNCIGNORE_PATH)
     );
     let previousPolicy: SyncIgnorePatterns | null = null;
     for (const f of files) {
@@ -710,7 +834,7 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
     tempCleanupTimer.unref?.();
   }
 
-  // Watcher creation, policy rebuilds, and newly-included reconciliation all
+  // Watcher creation, policy rebuilds, and newly-included publication all
   // run on this chain so at most one replacement watcher exists at a time.
   function runWatcherTask(task: () => Promise<void>): Promise<void> {
     const next = watcherTaskChain.then(task, task);
@@ -777,101 +901,18 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
     config.onLocalWatcherReady?.();
   }
 
-  // Write the diverged local bytes to the first free, synchronizable
-  // conflict-copy name. Reuses an existing copy only when it already holds
-  // the same bytes. Returns null when no candidate could be used.
-  async function writeConflictCopy(
-    safeRelPath: string,
-    localFile: Extract<LocalPushFile, { kind: "file" }>,
-  ): Promise<string | null> {
-    const candidates = conflictCopyCandidates(safeRelPath, config.peerId, localFile.hash, new Date());
-    for (const candidate of candidates) {
-      if (ignored(candidate)) continue;
-      const absPath = join(config.homeRoot, normalizeRelativePath(config.userId, candidate));
-      await ensureWritableParent(absPath);
-      try {
-        await writeFile(absPath, localFile.body, { flag: "wx" });
-        return candidate;
-      } catch (err: unknown) {
-        if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
-      }
-      const existing = await readLocalFileForPush(absPath, maxPushBytes);
-      if (existing.kind === "file" && existing.hash === localFile.hash) return candidate;
-    }
-    return null;
-  }
-
-  // Apply the peer's current state at a re-included path. Runs in the serial
-  // queue and re-reads the manifest, because a peer may have committed again
-  // after the refresh snapshot; a local edit made since the snapshot is left
-  // for the watcher instead of being replaced.
-  async function applyCurrentPeerState(
-    safeRelPath: string,
-    expectedLocalHash: string,
-  ): Promise<void> {
-    const current = (await readManifest(store, scope)).manifest.files[safeRelPath];
-    if (!current?.hash) return;
-    const localFile = await readLocalFileForPush(join(config.homeRoot, safeRelPath), maxPushBytes);
-    if (localFile.kind === "file" && localFile.hash !== expectedLocalHash) {
-      log.error(`sync conflict for ${safeRelPath}: local copy changed during policy refresh; left in place`);
-      return;
-    }
-    if (current.deleted) {
-      await pullDelete(safeRelPath);
-    } else {
-      await pullFile(safeRelPath, current);
-    }
-  }
-
-  // A path excluded until now may have changed on another peer meanwhile.
-  // The peer's committed state (new version or deletion) wins at the original
-  // path; diverged local bytes are published as an explicit conflict copy.
-  // Returns the path to publish, or null when nothing should be uploaded.
-  async function reconcileReincludedPath(
-    safeRelPath: string,
-    remoteEntry: ManifestEntry | undefined,
-  ): Promise<string | null> {
-    if (!remoteEntry?.hash) return safeRelPath;
-    const absPath = join(config.homeRoot, safeRelPath);
-    const localFile = await readLocalFileForPush(absPath, maxPushBytes);
-    if (localFile.kind !== "file") return null;
-    if (localFile.hash === remoteEntry.hash) {
-      // Unchanged since the peer's version: follow a deletion, else in sync.
-      if (remoteEntry.deleted) await enqueue(() => applyCurrentPeerState(safeRelPath, localFile.hash));
-      return null;
-    }
-    const conflictRelPath = await writeConflictCopy(safeRelPath, localFile);
-    if (!conflictRelPath) {
-      log.error(`sync conflict for ${safeRelPath}: no usable conflict copy name; local copy left unsynced`);
-      return null;
-    }
-    await enqueue(() => applyCurrentPeerState(safeRelPath, localFile.hash));
-    log.error(`sync conflict for ${safeRelPath}: kept peer state, saved local copy as ${conflictRelPath}`);
-    return conflictRelPath;
-  }
-
+  // Publish files the new owner policy newly includes. They go through the
+  // same locked reconciliation as every other publish, so a path that
+  // diverged on another peer while excluded is preserved as a conflict.
   async function pushNewlyIncluded(
     previousPolicy: SyncIgnorePatterns,
     generation: number,
   ): Promise<void> {
     const relPaths = await collectLocalFiles(config.homeRoot, walkFilters);
-    const snapshot = await readManifest(store, scope);
-    const toPush: string[] = [];
-    for (const relPath of relPaths) {
-      if (!isCurrentLifecycle(generation)) return;
-      if (!isHomeMirrorIgnored(relPath, extraIgnore, previousPolicy)) continue;
-      const safeRelPath = normalizeRelativePath(config.userId, relPath);
-      try {
-        const publishPath = await reconcileReincludedPath(
-          safeRelPath,
-          snapshot.manifest.files[safeRelPath],
-        );
-        if (publishPath) toPush.push(publishPath);
-      } catch (err: unknown) {
-        log.error(`sync conflict handling failed for ${safeRelPath}:`, errorMessage(err));
-      }
-    }
-    await pushLocalPaths(toPush, "policy refresh push", () =>
+    const newlyIncluded = relPaths.filter((relPath) =>
+      isHomeMirrorIgnored(relPath, extraIgnore, previousPolicy)
+    );
+    await pushLocalPaths(newlyIncluded, "policy refresh push", INITIAL_PUSH_CHUNK_SIZE, () =>
       isCurrentLifecycle(generation)
     );
   }
@@ -892,9 +933,15 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
 
   return {
     async start(): Promise<void> {
+      if (!shutdownDrained) throw new Error("mirror shutdown incomplete");
       stopRequested = false;
+      lifecycle = new AbortController();
+      shutdownSignal = undefined;
+      stopping = undefined;
+      readyForFlush = false;
       localWatchingEnabled = false;
       const generation = ++lifecycleGeneration;
+      try {
       await mkdir(config.homeRoot, { recursive: true });
       try {
         resolvedHomeRoot = await realpath(config.homeRoot);
@@ -906,6 +953,7 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
         resolvedHomeRoot = config.homeRoot;
       }
       if (stopRequested) return;
+      await localState.load();
       await reloadUserIgnorePatterns();
       if (stopRequested) return;
       await cleanupTempFiles(config.homeRoot, walkFilters, 0);
@@ -944,6 +992,7 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
       scheduleTempCleanup(generation);
 
       if (config.watchLocalChanges === false) {
+        readyForFlush = true;
         log.info(`home mirror started for ${config.homeRoot} (peer=${config.peerId})`);
         return;
       }
@@ -964,20 +1013,58 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
         return;
       }
 
+      readyForFlush = true;
+      // Reconcile edits made during the initial push before ignoreInitial watcher
+      // registration. Later edits already enter the same serial publication queue.
+      await initialPush();
+      if (stopRequested) {
+        await releaseResources();
+        return;
+      }
+
       log.info(`home mirror started for ${config.homeRoot} (peer=${config.peerId})`);
+      } catch (error: unknown) {
+        if (error instanceof Error && stopRequested && error === lifecycle.signal.reason) return;
+        localState.close();
+        await releaseResources();
+        throw error;
+      }
     },
 
     async stop(): Promise<void> {
-      stopRequested = true;
-      localWatchingEnabled = false;
-      lifecycleGeneration++;
-      await releaseResources();
-      // Let an in-flight rebuild observe the stop and close its replacement,
-      // and let a running temp sweep finish before stop() resolves.
-      await watcherTaskChain;
-      await tempCleanupInFlight;
-      await releaseResources();
-      await queue.drain();
+      if (stopping) return stopping;
+      stopping = (async () => {
+        stopRequested = true;
+        localWatchingEnabled = false;
+        lifecycleGeneration++;
+        shutdownSignal = lifecycle.signal;
+        shutdownDrained = false;
+        const deadline = Date.now() + 10_000;
+        const timer = setTimeout(() => lifecycle.abort(new Error("mirror shutdown deadline exceeded")), 10_000);
+        try {
+          const work = (async () => {
+            try {
+              await releaseResources();
+              // Let an in-flight rebuild observe the stop and close its
+              // replacement, and let a running temp sweep finish.
+              await watcherTaskChain;
+              await tempCleanupInFlight;
+              await releaseResources();
+              await queue.drain();
+              if (readyForFlush) await initialPush(deadline);
+            } finally { shutdownDrained = true; }
+          })();
+          await awaitMirrorOperation(work, lifecycle.signal);
+        } catch (error: unknown) {
+          log.error("mirror reconciliation: shutdown_flush_failed", error instanceof Error ? "error" : "non-error");
+        } finally {
+          clearTimeout(timer);
+          lifecycle.abort(new Error("mirror stopped"));
+          readyForFlush = false;
+          localState.close();
+        }
+      })();
+      return stopping;
     },
 
     async pushLocalFile(relPath: string): Promise<void> {

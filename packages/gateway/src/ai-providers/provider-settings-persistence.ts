@@ -12,6 +12,8 @@ import {
   type ProviderHarnessKind,
 } from "@matrix-os/contracts";
 import { z } from "zod/v4";
+import type { GenericHarnessModelCatalog } from "./generic-harness-model-catalog.js";
+import { generatedNativeHarnessConfiguration } from "./provider-generated-native-route.js";
 import { resolveProviderSettingsDriverId } from "./provider-settings-driver-id.js";
 
 const MAX_FILE_BYTES = 1024 * 1024;
@@ -25,6 +27,7 @@ export const HarnessConfigurationSchema = z.object({
   displayName: z.string().min(1).max(120),
   accentColor: ProviderAccentColorSchema.nullable(),
   enabled: z.boolean(),
+  enablementOrigin: z.enum(["generated_default", "owner_configuration"]).optional(),
   selectedAccountId: SafeRefSchema.nullable(),
   accessSourceId: SafeRefSchema.nullable(),
   route: ProviderHarnessRouteSchema,
@@ -89,6 +92,16 @@ async function readBoundedJson(path: string): Promise<unknown> {
     throw new Error("Unsafe provider settings file");
   }
   return JSON.parse(await readFile(path, "utf8"));
+}
+
+/** Read saved intent for run admission without canonical inventory or a mutating reconcile. */
+export async function readSavedProviderSettingsConfiguration(path: string): Promise<ProviderSettingsConfiguration | null> {
+  try {
+    return ProviderSettingsConfigurationSchema.parse(await readBoundedJson(path));
+  } catch (error) {
+    if (isMissing(error)) return null;
+    throw error;
+  }
 }
 
 export async function writeProviderJsonAtomic(path: string, value: unknown): Promise<void> {
@@ -198,8 +211,12 @@ function sourceForHarness(
 function defaultHarnessConfiguration(
   driver: AiProviderSnapshotV3["drivers"][number],
   canonical: AiProviderSnapshotV3,
+  genericModelCatalog?: GenericHarnessModelCatalog,
+  now = new Date(),
 ): HarnessConfiguration | null {
   if (driver.installState !== "installed") return null;
+  const native = generatedNativeHarnessConfiguration(driver, genericModelCatalog, now);
+  if (native) return native;
   const harness = harnessKindForDriver(driver.id);
   if (harness === null) return null;
   const source = sourceForHarness(harness, canonical);
@@ -224,6 +241,7 @@ function defaultHarnessConfiguration(
     displayName: driver.displayName,
     accentColor: null,
     enabled: harness === "claude" || harness === "codex",
+    enablementOrigin: "generated_default",
     selectedAccountId: accountId,
     accessSourceId: source.id,
     route: {
@@ -237,6 +255,7 @@ function defaultHarnessConfiguration(
 function reconcileProviderSettingsConfiguration(
   config: ProviderSettingsConfiguration,
   canonical: AiProviderSnapshotV3,
+  genericModelCatalog?: GenericHarnessModelCatalog, now = new Date(),
 ): { config: ProviderSettingsConfiguration; changed: boolean } {
   let changed = false;
   const realClaude = canonical.drivers.find((driver) => driver.id === "claude_code");
@@ -256,7 +275,18 @@ function reconcileProviderSettingsConfiguration(
     }];
   });
   for (const driver of canonical.drivers) {
-    const fallback = defaultHarnessConfiguration(driver, canonical);
+    const fallback = defaultHarnessConfiguration(driver, canonical, genericModelCatalog, now);
+    const existing = config.harnesses.find((harness) => harness.driverId === driver.id);
+    if (genericModelCatalog && existing?.enablementOrigin === "generated_default"
+      && (existing.harness === "pi" || existing.harness === "opencode")) {
+      const native = generatedNativeHarnessConfiguration(driver, genericModelCatalog, now);
+      // Bind an unconfigured generated default once. Fresh availability never
+      // rewrites durable permission or replaces a previously usable native route.
+      if (!existing.enabled && native?.enabled) {
+        Object.assign(existing, { enabled: true, selectedAccountId: null, accessSourceId: native.accessSourceId, route: native.route });
+        changed = true;
+      }
+    }
     if (!fallback || config.harnesses.some((harness) => harness.driverId === driver.id)) continue;
     if (config.harnesses.length >= 128) break;
     config.harnesses.push(fallback);
@@ -271,9 +301,9 @@ function reconcileProviderSettingsConfiguration(
   return { config, changed };
 }
 
-export function initialProviderSettingsConfiguration(canonical: AiProviderSnapshotV3): ProviderSettingsConfiguration {
+export function initialProviderSettingsConfiguration(canonical: AiProviderSnapshotV3, genericModelCatalog?: GenericHarnessModelCatalog, now = new Date()): ProviderSettingsConfiguration {
   const harnesses = canonical.drivers.flatMap((driver) => {
-    const harness = defaultHarnessConfiguration(driver, canonical);
+    const harness = defaultHarnessConfiguration(driver, canonical, genericModelCatalog, now);
     return harness ? [harness] : [];
   });
   const gateway = canonical.accessSources.find((source) =>
@@ -301,7 +331,7 @@ export function providerDriverId(kind: ProviderHarnessKind, canonical: AiProvide
 
 export async function readProviderSettingsConfiguration(
   path: string,
-  canonical: AiProviderSnapshotV3,
+  canonical: AiProviderSnapshotV3, genericModelCatalog?: GenericHarnessModelCatalog, now = new Date(),
 ): Promise<ProviderSettingsConfiguration> {
   let value: ProviderSettingsConfiguration;
   try {
@@ -309,13 +339,13 @@ export async function readProviderSettingsConfiguration(
     await chmod(path, 0o600);
   } catch (error) {
     if (isMissing(error)) {
-      const initial = initialProviderSettingsConfiguration(canonical);
+      const initial = initialProviderSettingsConfiguration(canonical, genericModelCatalog, now);
       await writeProviderJsonAtomic(path, initial);
       return initial;
     }
     throw error;
   }
-  const reconciled = reconcileProviderSettingsConfiguration(value, canonical);
+  const reconciled = reconcileProviderSettingsConfiguration(value, canonical, genericModelCatalog, now);
   if (!reconciled.changed) return reconciled.config;
   const validated = ProviderSettingsConfigurationSchema.parse(reconciled.config);
   await writeProviderJsonAtomic(path, validated);

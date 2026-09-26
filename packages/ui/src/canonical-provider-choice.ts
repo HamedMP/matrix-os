@@ -3,6 +3,7 @@ import type {
   CanonicalProviderDriverKind,
   CanonicalProviderInstanceDescriptor,
   CanonicalProviderOptionDescriptor,
+  AiProviderLocalObservation,
 } from "@matrix-os/contracts";
 
 export interface CanonicalProviderChoice {
@@ -82,11 +83,24 @@ const UNAVAILABLE_LABELS: Record<
 export function canonicalProviderAvailabilityLabel(
   instance: CanonicalProviderInstanceDescriptor,
 ): string {
-  if (instance.availability === "available") return "Available";
+  if (instance.availability === "available") return (instance.driverKind === "codex" || instance.localObservation !== undefined)
+    ? codexLocalObservationLabel(instance.localObservation)
+    : "Available";
   if (instance.unavailabilityReason) return UNAVAILABLE_LABELS[instance.unavailabilityReason];
   if (instance.availability === "setup_required") return "Setup required";
   if (instance.availability === "auth_required") return "Authentication required";
   return "Unavailable";
+}
+
+export function codexLocalObservationLabel(observation?: AiProviderLocalObservation): string {
+  const checkedAt = observation?.checkedAt ? Date.parse(observation.checkedAt) : NaN;
+  const staleAfter = observation?.staleAfter ? Date.parse(observation.staleAfter) : NaN;
+  const now = Date.now();
+  if (!Number.isFinite(checkedAt) || !Number.isFinite(staleAfter)
+    || checkedAt > now || staleAfter <= now) return "Access not verified";
+  if (observation?.state === "present_unverified") return "Local login found; access not verified";
+  if (observation?.state === "absent") return "Local login missing";
+  return "Access not verified";
 }
 
 export function deriveCanonicalProviderChoices(

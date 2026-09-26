@@ -29,7 +29,7 @@ async function cancelResponse(response: Response): Promise<void> {
   });
 }
 
-async function readBoundedJson(response: Response): Promise<unknown> {
+export async function readBoundedFundedJson(response: Response): Promise<unknown> {
   const declared = Number(response.headers.get("content-length"));
   if (Number.isFinite(declared) && declared > MAX_RESPONSE_BYTES) {
     await cancelResponse(response);
@@ -107,7 +107,7 @@ export function createFundedAiFundingSummaryClient(
           throw new FundedAiFundingSummaryClientError();
         }
         const parsed = FundedAiRuntimeFundingSummaryResponseSchema.safeParse(
-          await readBoundedJson(response),
+          await readBoundedFundedJson(response),
         );
         if (!parsed.success) throw new FundedAiFundingSummaryClientError();
         return { funding: parsed.data.funding, policy: parsed.data.policy };

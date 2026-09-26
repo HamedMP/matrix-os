@@ -252,12 +252,14 @@ export function createApp(deps: {
   internalIntegrationRoutes?: Hono<any>;
   customMcpRoutes?: Hono<any>;
   internalCustomMcpRoutes?: Hono<any>;
+  internalCustomMcpApprovalRoutes?: Hono<any>;
   internalSyncRoutes?: Hono<any>;
   internalFundedAiRuntimeRoutes?: Hono<any>;
   internalFundedAiRelayRoutes?: Hono<any>;
   internalFundedAiOperatorRoutes?: Hono<any>;
   internalSpeechRuntimeRoutes?: Hono<any>;
   fundedAiRepository?: import('./ai-funded-policy-repository.js').AiFundedPolicyRepository;
+  fundedModelProbes?: import('./ai-funded-model-probes.js').FundedModelProbeService;
   collaboration?: PlatformCollaborationComposition;
   customerVpsService?: CustomerVpsService;
   goldenSnapshotService?: GoldenSnapshotService;
@@ -512,6 +514,7 @@ export function createApp(deps: {
     redditConversions: createRedditConversionsClient({ env: appEnv }),
     prebilling,
     fundedAiRepository: deps.fundedAiRepository,
+    fundedModelProbes: deps.fundedModelProbes,
   }));
 
   // Onboarding journey (spec 092): one server-owned signup-to-ready state every
@@ -650,6 +653,7 @@ export function createApp(deps: {
     platformSecret,
     customMcpRoutes: deps.customMcpRoutes,
     internalCustomMcpRoutes: deps.internalCustomMcpRoutes,
+    internalCustomMcpApprovalRoutes: deps.internalCustomMcpApprovalRoutes,
   });
   if (deps.internalIntegrationRoutes) {
     const internalIntegrationApp = new Hono<{

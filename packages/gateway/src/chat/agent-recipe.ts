@@ -4,9 +4,9 @@ import { join, resolve } from "node:path";
 import { discoverRecipeSkills } from "./agent-recipe-skills.js";
 import {
   ChatAgentRecipeCatalogSchema,
-  ChatAgentRecipeSchema,
+  StoredChatAgentRecipeSchema,
   ResolvedChatAgentRecipeSchema,
-  type ChatAgentRecipe,
+  type StoredChatAgentRecipe,
   type ChatAgentRecipeCatalog,
   type ResolvedChatAgentRecipe,
 } from "@matrix-os/contracts";
@@ -15,7 +15,7 @@ type PublicService = { id: string; name: string };
 
 export interface ChatAgentRecipeResolver {
   catalog(): Promise<ChatAgentRecipeCatalog>;
-  resolve(recipe: ChatAgentRecipe): Promise<ResolvedChatAgentRecipe>;
+  resolve(recipe: StoredChatAgentRecipe): Promise<ResolvedChatAgentRecipe>;
   revalidate(snapshot: ResolvedChatAgentRecipe): Promise<void>;
 }
 
@@ -92,7 +92,7 @@ export function createChatAgentRecipeResolver(options: {
     },
     async resolve(recipeValue) {
       try {
-        const recipe = ChatAgentRecipeSchema.parse(recipeValue);
+        const recipe = StoredChatAgentRecipeSchema.parse(recipeValue);
         validateServices(recipe.integrations);
         const installed = recipe.skills.length ? await discoverRecipeSkills(options) : [];
         const skills = recipe.skills.map((id) => {
@@ -100,7 +100,8 @@ export function createChatAgentRecipeResolver(options: {
           if (!skill) throw new ChatAgentRecipeResolverError("recipe_unavailable");
           return { id, name: skill.name, instructions: skill.instructions, sha256: skill.sha256 };
         });
-        return ResolvedChatAgentRecipeSchema.parse({ skills, integrations: recipe.integrations, output: recipe.output });
+        return ResolvedChatAgentRecipeSchema.parse({ skills, integrations: recipe.integrations, output: recipe.output,
+          ...(recipe.jevInboxTriage ? { jevInboxTriage: recipe.jevInboxTriage } : {}) });
       } catch (error: unknown) {
         return unavailable(error);
       }

@@ -7,6 +7,7 @@ import {
   parseSyncIgnore,
   type SyncIgnorePatterns,
 } from "@finnaai/matrix";
+import { MIRROR_STATE_DIR } from "./home-mirror-state.js";
 
 export const SYNCIGNORE_PATH = ".syncignore";
 export const SYNCIGNORE_MAX_BYTES = 64 * 1024;
@@ -50,6 +51,7 @@ const DEFAULT_IGNORE_DIRS = new Set([
   "target",
   ".gradle",
   ".expo",
+  MIRROR_STATE_DIR,
 ]);
 
 const DEFAULT_IGNORE_PATTERNS = [
@@ -61,6 +63,8 @@ const DEFAULT_IGNORE_PATTERNS = [
   /\.(?:key|pem|token)$/i,
   /^id_(?:rsa|dsa|ecdsa|ed25519).*$/i,
 ];
+// Root files owned by OS template sync, never by the owner's synced tree.
+const DEFAULT_IGNORE_ROOT_FILES = new Set([".matrix-version", ".template-manifest.json"]);
 const DEFAULT_IGNORE_PATH_PREFIXES = [
   "data/browser-profiles",
   ".config/gh",
@@ -141,6 +145,7 @@ function toPosixPath(relPath: string): string {
 export function isHardExcluded(relPath: string, extraDirs?: Set<string>): boolean {
   if (!relPath || relPath === ".") return false;
   const normalizedPath = toPosixPath(relPath);
+  if (DEFAULT_IGNORE_ROOT_FILES.has(normalizedPath)) return true;
   if (
     DEFAULT_IGNORE_PATH_PREFIXES.some((prefix) =>
       normalizedPath === prefix || normalizedPath.startsWith(`${prefix}/`)

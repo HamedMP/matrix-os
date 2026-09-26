@@ -16,7 +16,14 @@ function nativeProbeResult(status: AgentStatus | undefined): AgentCredentialProb
           : status?.authState === "ok"
             ? "available"
             : "check_failed";
-  return { available: condition === "available", condition };
+  return {
+    available: condition === "available", condition,
+    ...(status?.id === "codex" ? {
+      localObservation: condition === "available" && status.credentialMode === "chatgpt"
+        ? "present_unverified" as const
+        : condition === "auth_required" ? "absent" as const : "unknown" as const,
+    } : {}),
+  };
 }
 
 export async function resolveAgentCredentialProbe(

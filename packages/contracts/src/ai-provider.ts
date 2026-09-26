@@ -67,6 +67,13 @@ export const AiProviderReadinessSchema = z.object({
   }
 });
 
+/** Evidence of local CLI configuration only. It never establishes remote access. */
+export const AiProviderLocalObservationSchema = z.object({
+  state: z.enum(["present_unverified", "absent", "unknown"]),
+  checkedAt: NullableTimestampSchema,
+  staleAfter: NullableTimestampSchema,
+}).strict();
+
 export const AiAccessSourceViewSchema = AiProviderReadinessSchema.extend({
   id: AiProviderIdSchema,
   displayName: canonicalSafeLabel(120, 480),
@@ -75,6 +82,7 @@ export const AiAccessSourceViewSchema = AiProviderReadinessSchema.extend({
   accountLabel: canonicalSafeLabel(120, 480).nullable(),
   eligibleModelIds: z.array(ProviderModelReferenceSchema).max(64),
   policyVersion: AiPolicyVersionSchema,
+  localObservation: AiProviderLocalObservationSchema.optional(),
 }).strict().superRefine((source, ctx) => {
   if (!unique(source.eligibleModelIds)) {
     ctx.addIssue({ code: "custom", path: ["eligibleModelIds"], message: "Duplicate eligible model" });
@@ -203,8 +211,31 @@ export const AiProviderInstanceViewSchema = z.object({
   }
 });
 
+/** Native CLI catalogs support arbitrary provider IDs without inventing funded accounts. */
+export const AiNativeHarnessCatalogSchema = z.object({
+  profiles: z.array(z.object({
+    harness: z.enum(["pi", "opencode"]),
+    providerId: canonicalReferenceId(96),
+    providerDisplayName: canonicalSafeLabel(120, 480),
+    models: z.array(z.object({ id: ProviderModelReferenceSchema, displayName: canonicalSafeLabel(120, 480), enabled: z.boolean() }).strict()).max(256),
+    defaultModelId: ProviderModelReferenceSchema.nullable(),
+    localObservation: AiProviderLocalObservationSchema,
+  }).strict()).max(48),
+  failures: z.array(z.enum(["pi", "opencode"])).max(2),
+}).strict().superRefine((catalog, ctx) => {
+  if (!unique(catalog.profiles.map((profile) => `${profile.harness}:${profile.providerId}`)) || !unique(catalog.failures))
+    ctx.addIssue({ code: "custom", message: "Duplicate native catalog scope" });
+  for (const harness of ["pi", "opencode"]) if (catalog.profiles.filter((profile) => profile.harness === harness && profile.defaultModelId !== null).length > 1)
+    ctx.addIssue({ code: "custom", message: "Ambiguous native default" });
+  catalog.profiles.forEach((profile, index) => {
+    if (!profile.models.every((model) => model.id.startsWith(`${profile.providerId}:`)) || !unique(profile.models.map((model) => model.id)) || (profile.defaultModelId !== null && !profile.models.some((model) => model.id === profile.defaultModelId && model.enabled)))
+      ctx.addIssue({ code: "custom", path: ["profiles", index], message: "Invalid native default or model inventory" });
+  });
+});
+
 export const AiProviderSnapshotV3Schema = z.object({
   contractVersion: z.literal(3),
+  nativeHarnessCatalog: AiNativeHarnessCatalogSchema.optional(),
   revision: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
   refreshedAt: IsoTimestampSchema,
   accessSources: z.array(AiAccessSourceViewSchema).max(16),
@@ -294,6 +325,7 @@ export const AiProviderSnapshotV3Schema = z.object({
 export type AiProviderVendor = z.infer<typeof AiProviderVendorSchema>;
 export type AiProviderReadinessState = z.infer<typeof AiProviderReadinessStateSchema>;
 export type AiProviderReadiness = z.infer<typeof AiProviderReadinessSchema>;
+export type AiProviderLocalObservation = z.infer<typeof AiProviderLocalObservationSchema>;
 export type AiAccessSourceView = z.infer<typeof AiAccessSourceViewSchema>;
 export type AiProviderAccountView = z.infer<typeof AiProviderAccountViewSchema>;
 export type AiProviderDriverCapability = z.infer<typeof AiProviderDriverCapabilitySchema>;

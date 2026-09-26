@@ -16,6 +16,7 @@ import type {
 } from "../onboarding/activation-contracts.js";
 import type { AgentCredentialStatusService } from "../onboarding/agent-credential-status.js";
 import { logCodingAgentWarning } from "./diagnostics.js";
+import type { CodingAgentProviderAdmission } from "./codex-harness-admission.js";
 import {
   applyCredentialState,
   type CodingAgentProviderRegistry,
@@ -62,6 +63,7 @@ export interface CodingAgentProjectSummaryStore {
 
 export interface CodingAgentRuntimeSummaryOptions {
   homePath: string;
+  providerAdmission?: CodingAgentProviderAdmission;
   terminalRegistry?: CodingAgentTerminalWorkspaceRegistry;
   providerRegistry?: Pick<CodingAgentProviderRegistry, "listProviders">;
   agentCredentials?: Pick<AgentCredentialStatusService, "getStatus">;
@@ -124,7 +126,7 @@ function statusToProviderSummary(agent: AgentCredentialSummary): AgentProviderSu
     supportedModes: ["default", "review"],
     defaultMode: "default",
     setupActions: [],
-    lastCheckedAt: agent.verifiedAt ?? undefined,
+    lastCheckedAt: agent.localCheckedAt ?? agent.verifiedAt ?? undefined,
   }, agent);
 }
 
@@ -292,9 +294,16 @@ export function createCodingAgentRuntimeSummaryService(
         principal,
         options.terminalOwnerId,
       );
-      const providers = options.providerRegistry
+      const rawProviders = options.providerRegistry
         ? await readRegisteredProviders(options.providerRegistry, principal)
         : await readProviders(options.agentCredentials, principal, options.providerIds);
+      const providers = await Promise.all(rawProviders.map(async (provider) => {
+        // Missing binaries remain the primary setup action, even when saved off.
+        if (provider.installStatus === "missing") return provider;
+        const enabled = options.providerAdmission
+          ? await options.providerAdmission.isProviderEnabled(provider.id) : true;
+        return enabled ? provider : { ...provider, availability: "unavailable" as const };
+      }));
       const activeThreads = await readActiveThreads(options.threads, principal);
       const attentionThreads = await readAttentionThreads(options.threads, principal);
       const projectSummaryTimeoutMs = Math.min(

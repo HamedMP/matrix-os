@@ -11,7 +11,10 @@ const RequestSchema = z.object({ type: z.literal("control_request"), request_id:
   request: z.object({ subtype: z.literal("can_use_tool"), tool_name: z.string().min(1).max(256), input: z.record(z.string(), z.unknown()) }),
 });
 type InputEvent = Extract<CanonicalProviderRunEvent, { type: "input.requested" }>;
-export function createClaudeInputController(options: { write(frame: string): Promise<void>; emit(event: CanonicalProviderRunEvent): void; onError?(error: unknown): void }) {
+export function createClaudeInputController(options: { write(frame: string): Promise<void>; emit(event: CanonicalProviderRunEvent): void; onError?(error: unknown): void;
+  onToolPermission?: (request: { nativeRequestId: string; toolName: string; input: Record<string, unknown> }, respond: (response: unknown) => Promise<void>) => boolean;
+  onToolPermissionCancel?: (nativeRequestId: string) => void;
+}) {
   const pending = new Map<string, { nativeId: string; input: Record<string, unknown>; questions: z.infer<typeof QuestionSchema>[]; event: InputEvent }>();
   const submit = inputSubmissionGate();
   const respond = (requestId: string, response: unknown) => options.write(`${JSON.stringify({ type: "control_response", response: { subtype: "success", request_id: requestId, response } })}\n`);
@@ -20,6 +23,7 @@ export function createClaudeInputController(options: { write(frame: string): Pro
       const frame = z.object({ type: z.string(), request_id: z.string().optional() }).passthrough().parse(value);
       if (frame.type === "control_cancel_request") {
         if (frame.request_id) {
+          options.onToolPermissionCancel?.(frame.request_id);
           const requestId = nativeInputId(frame.request_id);
           if (pending.delete(requestId)) options.emit(CanonicalProviderRunEventSchema.parse({ type: "input.resolved", requestId, reason: "cancelled" }));
         }
@@ -28,6 +32,8 @@ export function createClaudeInputController(options: { write(frame: string): Pro
       if (frame.type !== "control_request") return false;
       const request = RequestSchema.parse(value);
       if (request.request.tool_name !== "AskUserQuestion") {
+        if (options.onToolPermission?.({ nativeRequestId: request.request_id, toolName: request.request.tool_name,
+          input: request.request.input }, response => respond(request.request_id, response))) return true;
         // Do not turn the stdio permission callback into implicit tool approval.
         void respond(request.request_id, { behavior: "deny", message: "Tool approval is unavailable in this Chat connection." }).catch(error => {
           console.warn("[chat-claude] Permission response failed", error instanceof Error ? error.name : "UnknownError");

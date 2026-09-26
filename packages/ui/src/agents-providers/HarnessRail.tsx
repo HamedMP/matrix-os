@@ -2,6 +2,8 @@ import type { ReactNode } from "react";
 import { isSupportedGenericHarnessCredentialRoute } from "@matrix-os/contracts";
 import type { ProviderAccessSource, ProviderHarnessInstance, ProviderHarnessKind } from "@matrix-os/contracts";
 import { CODING_AGENT_ARTWORK, codingAgentArtworkSrc } from "../coding-agent-artwork.js";
+import { codexLocalObservationLabel } from "../canonical-provider-choice.js";
+import { useLocalObservationExpiry } from "../local-observation-expiry.js";
 
 /** The same shipped artwork and backgrounds used by both Terminal menus. */
 export function HarnessIcon({ harness }: { harness: ProviderHarnessKind }) {
@@ -20,6 +22,7 @@ function rowStatus(harness: ProviderHarnessInstance, source: ProviderAccessSourc
     return "Check connection";
   }
   if (!harness.enabled) return harness.authState === "authenticated" ? "Off in Settings · Signed in" : "Off in Settings";
+  if ((harness.harness === "codex" || source?.localObservation !== undefined)) return codexLocalObservationLabel(source?.localObservation);
   if (harness.connectivity === "offline" || harness.connectivity === "degraded") return "Check failed";
   if (harness.authState === "authenticating") return "Signing in…";
   if (harness.authState === "unauthenticated" || harness.authState === "expired") return "Sign in";
@@ -42,6 +45,7 @@ export function HarnessRail({ harnesses, sources, selectedId, disabled, canEnabl
   onEnable: (harness: ProviderHarnessInstance) => void;
   renderDetails: (harness: ProviderHarnessInstance) => ReactNode;
 }) {
+  useLocalObservationExpiry(sources.map((source) => source.localObservation?.staleAfter));
   return (
     <section className="matrix-ap-agent-list" aria-label="Installed agents">
       <div className="matrix-ap-list-heading"><h2>Agents</h2><p>Installed on this computer</p></div>

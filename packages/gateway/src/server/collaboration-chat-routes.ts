@@ -4,6 +4,7 @@ import { createNodeWebSocket } from "@hono/node-ws";
 import { AiProviderService } from "../ai-providers/service.js";
 import { createAiProviderRoutes } from "../ai-providers/routes.js";
 import { ProviderSettingsStore } from "../ai-providers/provider-settings-store.js";
+import type { GmailAccountRow } from "../chat/jev-recipe-authority.js";
 import { createProviderSettingsRoutes } from "../ai-providers/provider-settings-routes.js";
 import { createChatAgentRoutes } from "../chat/agent-routes.js";
 import { registerCanonicalChatEventHttpRoute } from "../chat/event-http-route.js";
@@ -40,6 +41,7 @@ export interface CollaborationChatRouteOptions {
   canonicalChatProviderCatalog: ReturnType<typeof createGatewayChatProviderCatalog>["catalog"];
   aiProviderService: AiProviderService;
   providerSettingsStore: ProviderSettingsStore;
+  listGmailAccounts?: (ownerId: string) => Promise<readonly GmailAccountRow[]>;
 }
 
 export function registerCollaborationChatRoutes(options: CollaborationChatRouteOptions): void {
@@ -47,7 +49,7 @@ export function registerCollaborationChatRoutes(options: CollaborationChatRouteO
     gatewayCollaboration, collaborationFailClosedReason, canonicalChatOrchestrator,
     canonicalChatExecutionRoots, canonicalChatCollaborationGuard, projectOwnerToolOutput,
     canonicalChatRuntime, canonicalChatProviderCatalog, aiProviderService,
-    providerSettingsStore } = options;
+    providerSettingsStore, listGmailAccounts } = options;
   if (canonicalChatEventStream) {
     registerCanonicalChatEventWebSocketRoute({
       app,
@@ -83,6 +85,7 @@ export function registerCollaborationChatRoutes(options: CollaborationChatRouteO
     } : {}),
     enabled: () => true,
     catalog: canonicalChatProviderCatalog,
+    listGmailAccounts,
     getPrincipal: (c) => requireRequestPrincipal(c),
   }));
   app.route("/", createChatProviderRoutes({

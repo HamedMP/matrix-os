@@ -60,6 +60,21 @@ describe('Custom MCP route boundary', () => {
     expect(response.status).toBe(403);
   });
 
+  it('keeps approval decisions on a separate machine-only namespace', async () => {
+    const approvals = new Hono();
+    approvals.post('/runs', (c) => c.json({ actorId: c.get('internalContainerClerkUserId') }));
+    const server = createApp({ db, orchestrator: stubOrchestrator(), platformSecret: secret,
+      internalCustomMcpApprovalRoutes: approvals });
+    const path = '/internal/containers/alice/mcp-approvals/runs';
+    expect((await server.request(path, { method: 'POST' })).status).toBe(401);
+    const permitted = await server.request(path, { method: 'POST', headers: headers(true) });
+    expect(permitted.status).toBe(200);
+    await expect(permitted.json()).resolves.toEqual({ actorId: 'user_alice' });
+    expect((await server.request('/api/mcp-servers/approvals/runs', {
+      method: 'POST', headers: headers(false),
+    })).status).not.toBe(200);
+  });
+
   it.each(['running', 'provisioning'] as const)('does not select a customer MCP owner when a %s preview shares its handle', async (previewStatus) => {
     await insertUserMachine(db, {
       machineId: '00000000-0000-4000-8000-000000001308',

@@ -1,5 +1,7 @@
+import { qualifyGeneratedNativeSource } from "./provider-generated-native-route.js";
 import {
   ProviderSettingsSnapshotSchema,
+  isLocallyObservedNativeHarnessRoute,
   type AiProviderReadiness,
   type AiProviderSnapshotV3,
   type FundedAiEffectivePolicy,
@@ -101,6 +103,17 @@ function selectedCanonicalSources(
   return { sourceByAccount, sourceIds };
 }
 
+function unavailableOwnerUsageReason(state: AiProviderReadiness["state"]):
+  "provider_does_not_report" | "not_authenticated" | "unknown" {
+  if (state === "ready") return "provider_does_not_report";
+  if (state === "auth_required" || state === "invalid" || state === "expired") {
+    return "not_authenticated";
+  }
+  // A missing usage reader does not turn an unknown or failed readiness check
+  // into evidence that the owner is signed out.
+  return "unknown";
+}
+
 function projectAccessSources(
   canonical: AiProviderSnapshotV3,
   config: ProviderSettingsConfiguration,
@@ -143,6 +156,7 @@ function projectAccessSources(
       providerId: source.vendor,
       accountId: accountBySource.get(source.id) ?? null,
       displayName: source.displayName,
+      ...(source.localObservation ? { localObservation: source.localObservation } : {}),
       readiness: {
         state: source.state,
         checkedAt: source.checkedAt,
@@ -190,7 +204,7 @@ function projectAccessSources(
         state: "unavailable" as const,
         scope: matrix ? "owner_entitlement" as const : "account" as const,
         reason: matrix ? "ledger_not_available" as const
-          : source.state === "ready" ? "provider_does_not_report" as const : "not_authenticated" as const,
+          : unavailableOwnerUsageReason(source.state),
         asOf: null,
       },
     };
@@ -311,7 +325,6 @@ function projectHarness(input: {
   const modelProvider = input.modelProviders.find((candidate) => candidate.id === input.stored.route.providerId);
   const model = modelProvider?.models.find((candidate) => candidate.id === input.stored.route.modelId);
   const routeAvailable = model?.enabled === true;
-  if (!routeAvailable && !input.catalogUnavailable) return null;
   const driverId = resolveProviderSettingsDriverId({
     driverId: input.stored.driverId,
     harness: input.stored.harness,
@@ -325,15 +338,18 @@ function projectHarness(input: {
     && source.eligibleModelIds.includes(input.stored.route.modelId)
     && (source.kind !== "harness_profile" || source.harness === input.stored.harness)
     && (source.kind !== "matrix_gateway" || input.allowedGatewayModels.has(input.stored.route.modelId));
+  const generatedNative = input.stored.enablementOrigin === "generated_default"
+    && (input.stored.harness === "pi" || input.stored.harness === "opencode");
   const managedCatalogRoute = source?.kind === "matrix_gateway"
-    && source.providerId === input.stored.route.providerId;
+    && source.providerId === input.stored.route.providerId && !generatedNative;
   const routeCatalogUnavailable = !routeAvailable
     || (input.catalogUnavailable && !managedCatalogRoute);
   const nativeCredentialRoute = input.stored.harness === "pi" || input.stored.harness === "opencode";
   const routeSourceEligible = sourceEligible === true && !routeCatalogUnavailable
     && (source.kind === "matrix_gateway"
       ? isFreshReady(source.readiness, input.now)
-      : !nativeCredentialRoute || isAuthenticatedProviderReady(source.readiness, input.now));
+      : !nativeCredentialRoute || isAuthenticatedProviderReady(source.readiness, input.now)
+        || isLocallyObservedNativeHarnessRoute(input.stored, source, input.now));
   const executionRouteAvailable = source?.kind === "matrix_gateway" || nativeCredentialRoute
     ? routeSourceEligible
     : !routeCatalogUnavailable;
@@ -344,11 +360,11 @@ function projectHarness(input: {
     && (source.kind === "matrix_gateway" || sourceEligible)
     ? source.readiness
     : {
-    state: input.catalogUnavailable ? "unavailable" as const : "unknown" as const,
+    state: routeCatalogUnavailable ? "unavailable" as const : "unknown" as const,
     checkedAt: null,
     staleAfter: null,
     action: "retry" as const,
-    safeReason: input.catalogUnavailable ? "provider_unavailable" as const : "unknown" as const,
+    safeReason: routeCatalogUnavailable ? "provider_unavailable" as const : "unknown" as const,
   };
   const accounts = input.accounts.filter((account) => account.providerId === input.stored.route.providerId);
   const visibleMethods = input.loginMethods === undefined
@@ -361,7 +377,8 @@ function projectHarness(input: {
     accentColor: input.stored.accentColor,
     enabled: Boolean(executionRouteAvailable
       && input.stored.enabled && driver?.installState === "installed"),
-    configuredEnabled: input.stored.enabled,
+    configuredEnabled: generatedNative ? true : input.stored.enabled,
+    ...(input.stored.enablementOrigin ? { enablementOrigin: input.stored.enablementOrigin } : {}),
     version: null,
     installState: driver?.installState ?? "missing",
     authState: authState(readiness),
@@ -409,10 +426,13 @@ export async function projectProviderSettings(input: {
     fundedPolicyAuthoritative,
     input.now,
   );
+  const generatedSourceIds = new Set(input.config.harnesses.filter((harness) => harness.enablementOrigin === "generated_default")
+    .flatMap((harness) => harness.accessSourceId ? [harness.accessSourceId] : []));
   const sources: ProviderAccessSource[] = [
     ...projected.sources,
     ...(input.genericModelCatalog?.accessSources ?? []).filter((source) =>
-      !projected.sources.some((candidate) => candidate.id === source.id)),
+      !projected.sources.some((candidate) => candidate.id === source.id))
+      .map((source) => qualifyGeneratedNativeSource(source, input.canonical, generatedSourceIds)),
   ];
   const sourceByAccount = projected.sourceByAccount;
   const accounts = await projectAccounts({

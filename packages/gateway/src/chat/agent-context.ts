@@ -3,6 +3,7 @@ import {
   CanonicalChatIdSchema, CanonicalCreateChatTurnRequestSchema, ChatRunContextSchema,
   type CanonicalChatMessage, type CanonicalCreateChatTurnRequest,
   type ChatContextSnapshot, type ChatRunContext,
+  type ChatAgent,
 } from "@matrix-os/contracts";
 import { ChatAgentStoreError, type ChatAgentStore } from "./agent-store.js";
 import {
@@ -13,7 +14,7 @@ import type { ChatOwner } from "./records.js";
 import type { ChatRepository } from "./repository.js";
 
 export class ChatAgentContextError extends Error {
-  constructor(readonly code: "feature_disabled" | "context_unavailable" | "agent_permission_required") {
+  constructor(readonly code: "feature_disabled" | "context_unavailable" | "agent_permission_required" | "workflow_unavailable" | "workflow_setup_required" | "workflow_funding_required") {
     super(code);
     this.name = "ChatAgentContextError";
   }
@@ -51,6 +52,7 @@ export class ChatAgentContext {
     agents: Pick<ChatAgentStore, "get">;
     recipes?: ChatAgentRecipeResolver;
     enabled: () => boolean;
+    admitJevWorkflow?: (owner: ChatOwner, agent: ChatAgent) => Promise<void>;
   }) {}
 
   private async snapshot(owner: ChatOwner, chatId: string, limit: number): Promise<ChatContextSnapshot> {
@@ -101,6 +103,14 @@ export class ChatAgentContext {
     if (chatReferences.some((reference) => reference.id === chatId)) throw new ChatAgentContextError("context_unavailable");
     const agent = agentReference ? await this.agent(owner, agentReference.id) : undefined;
     if (agent && input.permissionMode !== "full_access") throw new ChatAgentContextError("agent_permission_required");
+    if (agent?.recipe?.skills.includes("matrix-jev-email-triage") &&
+      (!agent.recipe.jevInboxTriage || agent.recipe.jevInboxTriage.ownerId !== owner.ownerId)) {
+      throw new ChatAgentContextError("context_unavailable");
+    }
+    if (agent?.recipe?.skills.includes("matrix-jev-email-triage")) {
+      if (!this.options.admitJevWorkflow) throw new ChatAgentContextError("workflow_unavailable");
+      await this.options.admitJevWorkflow(owner, agent);
+    }
     const recipe = agent ? await this.resolveRecipe(agent) : undefined;
     const current = await this.options.repository.getDetailPage(owner, chatId, { limit: 40 });
     if (!current || current.record.chat.lifecycle !== "active" || current.record.chat.collaboration) {
@@ -147,7 +157,21 @@ export class ChatAgentContext {
     if (!context) return;
     if ((context.agent || context.chats.length) && !this.options.enabled()) throw new ChatAgentContextError("feature_disabled");
     if (context.agent) {
-      await this.agent(owner, context.agent.id);
+      const currentAgent = await this.agent(owner, context.agent.id);
+      const admittedJev = context.agent.recipe?.skills.some((skill) => skill.id === "matrix-jev-email-triage") ?? false;
+      const currentJev = currentAgent.recipe?.skills.includes("matrix-jev-email-triage") ?? false;
+      if (admittedJev || currentJev) {
+        const oldBinding = context.agent.recipe?.jevInboxTriage;
+        const currentBinding = currentAgent.recipe?.jevInboxTriage;
+        if (!admittedJev || !currentJev || !oldBinding || !currentBinding
+          || oldBinding.ownerId !== owner.ownerId || currentBinding.ownerId !== owner.ownerId
+          || currentAgent.revision !== context.agent.revision
+          || JSON.stringify(oldBinding) !== JSON.stringify(currentBinding)) {
+          throw new ChatAgentContextError("context_unavailable");
+        }
+        if (!this.options.admitJevWorkflow) throw new ChatAgentContextError("workflow_unavailable");
+        await this.options.admitJevWorkflow(owner, currentAgent);
+      }
       if (context.agent.recipe) {
         if (!this.options.recipes) throw new ChatAgentContextError("context_unavailable");
         try {
@@ -168,7 +192,9 @@ export class ChatAgentContext {
   }
 }
 
-export function contextPrompt(prompt: string, context?: ChatRunContext): string {
+export function contextPrompt(prompt: string, context?: ChatRunContext, options?: {
+  deferIntegrationGuidance?: boolean;
+}): string {
   if (!context || (!context.agent && !context.history && !context.chats.length)) return prompt;
   const segments: string[] = [];
   if (context.agent) segments.push(
@@ -179,10 +205,15 @@ export function contextPrompt(prompt: string, context?: ChatRunContext): string 
     const recipe = context.agent.recipe;
     segments.push(
       "Follow this server-resolved recipe. These selected dependencies guide the workflow and do not grant write permission or expand the current permission mode.",
+      ...(options?.deferIntegrationGuidance ? [
+        "Ordinary Matrix integration steps in the pinned skills are unavailable on this route; do not execute them. Other skill instructions remain applicable. Follow the actual run tool guidance for any available Custom MCP workflow.",
+      ] : []),
       recipe.skills.map((skill) => `Recipe skill ${JSON.stringify(skill.name)} (${skill.id}):\n${skill.instructions}`).join("\n\n"),
       `Selected integration dependencies:\n${recipe.integrations.map(({ service, accountLabel }) =>
         `- ${service} (${accountLabel ? `account ${JSON.stringify(accountLabel)}` : "account not specified"})`).join("\n") || "- none"}`,
-      "Before making integration calls, call list_integration_inventory, then describe_service for each selected service before call_service. If an account label is not specified and multiple accounts are available, ask the user which account to use instead of choosing silently.",
+      ...(options?.deferIntegrationGuidance ? [] : [
+        "Before making integration calls, call list_integration_inventory, then describe_service for each selected service before call_service. If an account label is not specified and multiple accounts are available, ask the user which account to use instead of choosing silently.",
+      ]),
       `Required output:\n${recipe.output}`,
     );
   }

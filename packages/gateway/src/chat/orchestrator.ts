@@ -686,7 +686,10 @@ export class CanonicalChatOrchestrator {
         chatId: run.chatId,
         turnId: run.turnId,
         runId: run.id,
-        prompt: contextPrompt(promptOverride ?? promptFor(message.parts), run.context),
+        ...(run.context ? { context: run.context } : {}),
+        prompt: contextPrompt(promptOverride ?? promptFor(message.parts), run.context, {
+          deferIntegrationGuidance: run.driverKind === "claude_code",
+        }),
         parts: message.parts,
         selection: run.selection,
         interactionMode: run.interactionMode,
@@ -1188,6 +1191,7 @@ export class CanonicalChatOrchestrator {
     runId: string,
     approvalId: string,
     inputValue: CanonicalSubmitChatApprovalRequest,
+    provenance?: { platformApprovalProof?: string },
   ): Promise<CanonicalChatApprovalSubmissionResponse> {
     await this.assertPersonalExecutionAllowed(owner, chatId);
     const input = CanonicalSubmitChatApprovalRequestSchema.parse(inputValue);
@@ -1219,6 +1223,7 @@ export class CanonicalChatOrchestrator {
         approvalId,
         decision: input.decision,
         clientRequestId: input.clientRequestId,
+        ...(provenance?.platformApprovalProof ? { platformApprovalProof: provenance.platformApprovalProof } : {}),
         ...(state ? { state: active.adapter.parseState(state.state) } : {}),
       });
     } catch (error: unknown) {

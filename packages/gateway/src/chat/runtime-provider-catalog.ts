@@ -1,4 +1,5 @@
 import { loadSkills } from "@matrix-os/kernel";
+import { buildAgentRuntimeEnvironment } from "../agent-launcher.js";
 import { buildKernelCredentialLaunch } from "../kernel-credentials.js";
 import type { MatrixFundedCredentialProvider } from "../funded-ai-credential-manager.js";
 import { createRuntimeClaudeModelCatalogSource } from "./claude-runtime-model-catalog.js";
@@ -17,7 +18,11 @@ type RuntimeCatalogOptions = Omit<Parameters<typeof createChatProviderCatalogSer
 export function createGatewayChatProviderCatalog(options: RuntimeCatalogOptions) {
   const { homePath, codexExecutable, fundedCredentialProvider, ...catalogOptions } = options;
   const codexModelCatalogSource = codexExecutable
-    ? createCodexModelCatalogSource({ executable: codexExecutable, cwd: homePath })
+    ? createCodexModelCatalogSource({
+      executable: codexExecutable,
+      cwd: homePath,
+      environment: buildAgentRuntimeEnvironment(homePath),
+    })
     : undefined;
   const nativeCodingModelCatalogSource = createNativeCodingModelCatalogSource({ homePath });
   const resolveClaudeCredentialLaunch = () => buildKernelCredentialLaunch(

@@ -1,11 +1,8 @@
 import { ChatAttachments, ChatContextReceipt, CanonicalChatInputForm, type ChatMessageAttachment } from "@matrix-os/ui";
 import { UserMessage } from "./user-message";
 import {
-  CheckCircle2,
   ChevronRight,
   CircleAlert,
-  MessageCircle,
-  ShieldAlert,
 } from "@renderer/lib/hugeicons";
 import { useEffect, useRef, useState } from "react";
 import {
@@ -14,6 +11,7 @@ import {
   ConversationItem,
 } from "./conversation";
 import { ConversationActivityGroup } from "./activity";
+import { RequestApprovalOutcome, RequestStatusIcon } from "./request-outcome";
 import { Bubble, BubbleContent } from "./bubble";
 import { Marker, MarkerContent } from "./marker";
 import { Message, MessageContent, MessageMetadata, MessageResponse } from "./message";
@@ -288,7 +286,6 @@ function Request({
         : undefined} />
     </ConversationItem>
   );
-  const Icon = request.requestKind === "approval" ? ShieldAlert : MessageCircle;
   return (
     <ConversationItem messageId={`request:${request.id}`}>
       <div
@@ -298,9 +295,7 @@ function Request({
         style={{ borderColor: "var(--border-default)", background: "var(--bg-sunken)" }}
       >
         <div className="flex min-w-0 items-start gap-2.5">
-          {request.state === "resolved"
-            ? <CheckCircle2 aria-hidden className="mt-0.5 size-4 shrink-0" style={{ color: "var(--success)" }} />
-            : <Icon aria-hidden className="mt-0.5 size-4 shrink-0" style={{ color: "var(--text-secondary)" }} />}
+          <RequestStatusIcon request={request} />
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
               <p className="font-medium">{request.label}</p>
@@ -310,7 +305,8 @@ function Request({
                 </span>
               ) : null}
             </div>
-            {request.detail ? <p className="mt-1 text-sm" style={{ color: "var(--text-secondary)" }}>{request.detail}</p> : null}
+            {request.detail ? <p className="mt-1 whitespace-pre-wrap text-sm" style={{ color: "var(--text-secondary)" }}>{request.detail}</p> : null}
+            <RequestApprovalOutcome request={request} />
             {request.state === "waiting" && inputAction ? (
               <form
                 className="mt-2 flex min-w-0 gap-2"

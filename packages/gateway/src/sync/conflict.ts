@@ -40,19 +40,15 @@ export function mergeText(
   };
 }
 
-export function sanitizeConflictPeerId(peerId: string): string {
-  return peerId
-    .replace(/[^A-Za-z0-9_-]+/g, "_")
-    .replace(/_+/g, "_")
-    .replace(/^_+|_+$/g, "") || "unknown";
-}
-
 export function createConflictCopyPath(
   originalPath: string,
   peerId: string,
   date: Date,
 ): string {
-  const safePeerId = sanitizeConflictPeerId(peerId);
+  const safePeerId = peerId
+    .replace(/[^A-Za-z0-9_-]+/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^_+|_+$/g, "") || "unknown";
   const dateStr = date.toISOString().split("T")[0]!;
   const lastDot = originalPath.lastIndexOf(".");
   const lastSlash = originalPath.lastIndexOf("/");

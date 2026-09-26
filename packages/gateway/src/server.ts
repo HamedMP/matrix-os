@@ -1,3 +1,4 @@
+import { createOwnerAnthropicKeyPreflight } from "./ai-providers/owner-key-preflight.js";
 import { serve } from "@hono/node-server";
 import { createNodeWebSocket } from "@hono/node-ws";
 import {
@@ -16,7 +17,7 @@ import {
 import { installPostHogHonoErrorTracking, resolveOwnerTelemetryDistinctId } from "@matrix-os/observability";
 import { TerminalRuntimeSocketClient } from "@matrix-os/terminal-runtime";
 import { terminalTasksUnderPressure } from "@matrix-os/terminal-runtime/user-systemd-capacity";
-import { Hono, type Context } from "hono";
+import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { cors } from "hono/cors";
 import { existsSync, readFileSync } from "node:fs";
@@ -27,6 +28,7 @@ import {
 } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { createAgentLauncher } from "./agent-launcher.js";
+import { createJevGmailAccountLookup } from "./chat/jev-recipe-authority.js";
 import { createAgentSandbox } from "./agent-sandbox.js";
 import { createAgentSessionManager } from "./agent-session-manager.js";
 import { createAiGenerationRecorder } from "./ai-analytics.js";
@@ -40,12 +42,14 @@ import { createBackgroundAgentRuntime } from "./background-agent-runtime.js";
 import { formatForChannel } from "./channels/format.js";
 import { withAsyncChatInput } from "./chat/async-input-adapter.js";
 import { createClaudeChatProviderAdapter } from "./chat/claude-provider-adapter.js";
+import { createCustomMcpApprovalClient } from "./chat/custom-mcp-approval-client.js";
 import { createCanonicalCodingChatProviderAdapter } from "./chat/coding-provider-adapter.js";
 import type { ChatExecutionRootResolver } from "./chat/execution-root.js";
 import type { createGatewayChatEventStream } from "./chat/gateway-event-stream.js";
 import { createHermesChatProviderAdapter } from "./chat/hermes-provider-adapter.js";
 import { withCanonicalIdleChat } from "./chat/idle-runtime-admission.js";
 import { createKernelChatProviderAdapter } from "./chat/kernel-provider-adapter.js";
+import { createMatrixMcpCapabilityRegistry } from "./chat/matrix-mcp-launch.js";
 import { createOpenClawChatProviderAdapter } from "./chat/openclaw-provider-adapter.js";
 import { CanonicalChatOrchestrator } from "./chat/orchestrator.js";
 import { createOwnerToolOutputProjection } from "./chat/owner-tool-output.js";
@@ -77,6 +81,7 @@ import { createCodingAgentProviderRegistry } from "./coding-agents/provider-regi
 import { createCodingAgentReviewSummaryStore } from "./coding-agents/review-summary.js";
 import { createCodingAgentRoutes } from "./coding-agents/routes.js";
 import { createCodingAgentRuntimeSummaryService } from "./coding-agents/runtime-summary.js";
+import { createCodexHarnessAdmission } from "./coding-agents/codex-harness-admission.js";
 import { createCodingAgentSessionStopReconciler } from "./coding-agents/session-stop-reconciler.js";
 import { createCodingAgentSourceControlStore } from "./coding-agents/source-control.js";
 import { createCodingAgentThreadRelationValidator } from "./coding-agents/thread-relations.js";
@@ -111,9 +116,11 @@ import {
   loadFundedAiRuntimeConfig,
 } from "./funded-ai-credential-manager.js";
 import { createFundedAiFundingSummaryClient } from "./funded-ai-funding-summary-client.js";
+import { createFundedAiRouteReadinessClient } from "./funded-ai-route-readiness-client.js";
 import { createFundedAiReadinessReader } from "./funded-ai-readiness.js";
-import { JevEvaluationRepository } from "./jev/repository.js";
+import { initializeJevRuntime } from "./jev/runtime.js";
 import { createJevRoutes } from "./jev/routes.js";
+import { createProductionJevInboxRuntime } from "./jev/inbox-production.js";
 import { createJevService } from "./jev/service.js";
 import { createHeartbeatRunner, type HeartbeatRunner } from "./heartbeat/runner.js";
 import { createInteractionLogger, type InteractionLogger } from "./logger.js";
@@ -198,8 +205,7 @@ import type { CanvasRepository } from "./canvas/repository.js";
 import type { CanvasService } from "./canvas/service.js";
 import { CanvasSubscriptionHub } from "./canvas/subscriptions.js";
 import { createIntegrationBridgeRoutes } from "./integrations/bridge-routes.js";
-import { createIntegrationProxyResponse } from "./integrations/proxy-response.js";
-import { delegatedIntegrationHeaders } from "./integrations/delegated-identity.js";
+import { proxyIntegrationRequest } from "./integrations/platform-proxy.js";
 import type { PlatformDb } from "./platform-db.js";
 import {
   createHookRunner,
@@ -302,6 +308,14 @@ export async function createGateway(config: GatewayConfig) {
   });
 
   const app = new Hono();
+  const matrixMcpCapabilities = createMatrixMcpCapabilityRegistry({
+    // The VPS runner projects its single owner into both variables. If they
+    // disagree, this runtime cannot safely bind a Chat owner to its broker.
+    configuredOwnerId: process.env.MATRIX_CLERK_USER_ID === process.env.MATRIX_USER_ID
+      ? process.env.MATRIX_CLERK_USER_ID
+      : undefined,
+    previewRuntime: process.env.MATRIX_PREVIEW_RUNTIME === "true",
+  });
   const posthogErrorTracker = installPostHogHonoErrorTracking(app, {
     service: "matrix-gateway",
   });
@@ -582,10 +596,12 @@ export async function createGateway(config: GatewayConfig) {
     codingAgentProviders.push(fakeProvider);
     codingAgentRegistryProviders.push(fakeProvider);
   }
+  const codingAgentProviderAdmission = createCodexHarnessAdmission({ homePath });
   codingAgentThreadStore = codingAgentProviders.length > 0
     ? createCodingAgentThreadStore({
       homePath,
       providers: codingAgentProviders,
+      providerAdmission: codingAgentProviderAdmission,
       restoreProviderThread: async (thread) => {
         const restored = !!codingAgentWorkspaceRuntime && !!codexEventBridge
           && await restoreBackgroundChatThread({ thread, sessions: codingAgentWorkspaceRuntime, events: codexEventBridge });
@@ -643,6 +659,7 @@ export async function createGateway(config: GatewayConfig) {
   });
   const codingAgentRuntimeSummaryService = createCodingAgentRuntimeSummaryService({
     homePath,
+    providerAdmission: codingAgentProviderAdmission,
     terminalRegistry: { list: () => terminalWorkspaceRuntime.listWorkspaces() },
     providerRegistry: codingAgentProviderRegistry,
     threads: codingAgentThreadStore,
@@ -872,26 +889,6 @@ export async function createGateway(config: GatewayConfig) {
       ? `${internalPlatformUrl}/internal/containers/${internalHandle}/integrations`
       : null;
 
-  function buildIntegrationProxyUrl(
-    c: Context,
-    targetBase: string,
-    routePrefix = "/api/integrations",
-  ): string {
-    const targetUrl = new URL(targetBase);
-    const suffix = c.req.path.replace(routePrefix, "") || "";
-    const decodedSuffix = decodeURIComponent(suffix);
-    if (decodedSuffix.split("/").some((segment) => segment === "..")) {
-      throw new Error("Invalid integration proxy path");
-    }
-
-    const basePath = targetUrl.pathname.endsWith("/")
-      ? targetUrl.pathname.slice(0, -1)
-      : targetUrl.pathname;
-    targetUrl.pathname = suffix ? `${basePath}${suffix}` : basePath;
-    targetUrl.search = new URL(c.req.url).search;
-    return targetUrl.toString();
-  }
-
   function logBestEffortFailure(context: string, err: unknown): void {
     console.warn(
       `[gateway] ${context}:`,
@@ -909,51 +906,6 @@ export async function createGateway(config: GatewayConfig) {
     if (!(err instanceof Error && /not open|not opened|closed/i.test(err.message))) {
       logBestEffortFailure(context, err);
     }
-  }
-
-  async function proxyIntegrationRequest(
-    c: Context,
-    targetBase: string,
-    internalAuthToken?: string,
-    routePrefix = "/api/integrations",
-  ): Promise<Response> {
-    let upstreamUrl: string;
-    try {
-      upstreamUrl = buildIntegrationProxyUrl(c, targetBase, routePrefix);
-    } catch (err: unknown) {
-      console.warn(
-        "[integrations] rejected proxy path:",
-        err instanceof Error ? err.message : String(err),
-      );
-      return c.json({ error: "Bad request" }, 400);
-    }
-    const headers = new Headers();
-    for (const [key, value] of Object.entries(c.req.header())) {
-      if (key !== "host" && key !== "authorization" && value) {
-        headers.set(key, value);
-      }
-    }
-    if (internalAuthToken) {
-      headers.set("authorization", `Bearer ${internalAuthToken}`);
-      if (routePrefix === "/api/integrations") {
-        // Platform verifies this machine's token, so sign the authenticated
-        // Gateway principal rather than forwarding any caller-supplied ID.
-        const actorId = requireRequestPrincipal(c).userId;
-        for (const [key, value] of Object.entries(delegatedIntegrationHeaders(actorId, internalAuthToken))) {
-          headers.set(key, value);
-        }
-      }
-    }
-
-    const upstream = await fetch(upstreamUrl, {
-      method: c.req.method,
-      headers,
-      redirect: "manual",
-      signal: AbortSignal.timeout(30_000),
-      body: ["GET", "HEAD"].includes(c.req.method) ? undefined : await c.req.blob(),
-    });
-
-    return createIntegrationProxyResponse(upstream);
   }
 
   // Platform integration services are constructed before auth and mounted below it.
@@ -1192,18 +1144,32 @@ export async function createGateway(config: GatewayConfig) {
   });
 
   let jevService: ReturnType<typeof createJevService> | null = null;
-  if (fundedCredentialProvider && fundedAiRuntimeConfig && kyselyInstance) {
-    try {
-      const jevRepository = new JevEvaluationRepository(kyselyInstance as Kysely<any>);
-      await jevRepository.bootstrap();
-      jevService = createJevService({
-        store: jevRepository,
-        credentialProvider: fundedCredentialProvider,
-      });
-    } catch (error) {
-      console.error("[jev] Failed to initialize:", error instanceof Error ? error.name : "UnknownError");
-    }
+  let jevRuntime: Awaited<ReturnType<typeof initializeJevRuntime>> = null;
+  try {
+    jevRuntime = await initializeJevRuntime({
+      db: kyselyInstance,
+      databaseUrl: kyselyInstance ? databaseUrl : undefined,
+      credentialProvider: fundedCredentialProvider,
+      fundedRuntimeEnabled: Boolean(fundedAiRuntimeConfig),
+    });
+    jevService = jevRuntime?.service ?? null;
+  } catch (error) {
+    console.error("[jev] Failed to initialize:", error instanceof Error ? error.name : "UnknownError");
   }
+  // Keep recipe authority, transport, launch policy and route composition in
+  // inbox-production; this large entry point supplies existing dependencies only.
+  const jevInboxOwnerId = process.env.MATRIX_USER_ID?.trim();
+  const jevInboxRuntime = jevInboxOwnerId ? createProductionJevInboxRuntime({
+    homePath, ownerId: jevInboxOwnerId, fundedOwnerId: fundedAiRuntimeConfig?.identity.ownerId,
+    settings: { getSnapshot: options => {
+      if (!providerSettingsStore) throw new Error("Provider settings are unavailable");
+      return providerSettingsStore.getSnapshot(options);
+    } },
+    getAgent: (ownerId, agentId) => canonicalChatRuntime?.agents.get({ type: "personal", ownerId }, agentId) ?? Promise.resolve(null),
+    service: jevService, summary: fundedAiFundingSummaryReader,
+    routes: fundedAiRuntimeConfig ? createFundedAiRouteReadinessClient(fundedAiRuntimeConfig) : undefined,
+    internalBaseUrl: internalIntegrationBaseUrl, machineToken: internalPlatformToken, db: platformDb, pipedream: pipedreamClient,
+  }) : null;
 
   watcher.on((change) => {
     broadcast(change);
@@ -1238,7 +1204,9 @@ export async function createGateway(config: GatewayConfig) {
     },
   }));
   app.use("*", securityHeadersMiddleware());
-  app.use("*", authMiddleware(process.env.MATRIX_AUTH_TOKEN));
+  app.use("*", authMiddleware(process.env.MATRIX_AUTH_TOKEN, {
+    resolveMatrixMcpRunContext: matrixMcpCapabilities.resolveRunContext,
+  }));
   const legacyProjectPathAdmission = gatewayCollaboration
     ? createLegacyProjectPathAdmission({
         homePath,
@@ -1257,7 +1225,7 @@ export async function createGateway(config: GatewayConfig) {
     fundedAiRuntimeConfig?.identity.ownerId,
     process.env.MATRIX_USER_ID?.trim(),
   ].filter((value): value is string => Boolean(value)));
-  app.route("/api/jev", createJevRoutes({
+  app.route("/api/jev", jevInboxRuntime?.routes ?? createJevRoutes({
     service: jevService,
     resolveOwnerId: (c) => {
       const principal = requireRequestPrincipal(c);
@@ -1307,7 +1275,9 @@ export async function createGateway(config: GatewayConfig) {
   const processManager = registerDeferredRuntimeRoutes({
     app, homePath, integrationRoutes, internalIntegrationBaseUrl,
     internalPlatformToken, internalPlatformUrl, internalHandle,
-    proxyIntegrationRequest, devAppAuthBypass: APP_AUTH_DEV_BYPASS,
+    proxyIntegrationRequest: (c, targetBase, machineToken, routePrefix) =>
+      proxyIntegrationRequest(c, { targetBase, machineToken, routePrefix }),
+    devAppAuthBypass: APP_AUTH_DEV_BYPASS,
     posthogErrorTracker, ownerTelemetryDistinctId,
   });
 
@@ -1422,19 +1392,33 @@ export async function createGateway(config: GatewayConfig) {
     openClawRpc,
   });
   await agentRuntimeServices.controller.reconcile();
-  const aiProviderService = new AiProviderService({
+  const genericHarnessModelCatalog = createGenericHarnessModelCatalogReader({
     homePath,
+    enabledHarnesses: codingAgentWorkspaceAgents.filter(
+      (agent): agent is "pi" | "opencode" => agent === "pi" || agent === "opencode",
+    ),
+  });
+  const aiProviderService = new AiProviderService({
+    nativeHarnessCatalogReader: genericHarnessModelCatalog,
+    homePath,
+    healthProbe: createOwnerAnthropicKeyPreflight({ homePath }),
     fundedCredentialProvider,
     fundedReadinessReader: fundedAiRuntimeConfig && fundedAiFundingSummaryReader
       ? createFundedAiReadinessReader({
-        relayBaseUrl: fundedAiRuntimeConfig.relayBaseUrl,
         summary: fundedAiFundingSummaryReader,
+        routes: createFundedAiRouteReadinessClient(fundedAiRuntimeConfig),
       })
       : undefined,
     driverInventory: createProviderDriverInventoryReader({
       detectAgentInstallations: agentCredentialLauncher.detectAgentInstallations,
       runtimeSource: agentRuntimeServices.source,
     }),
+    ...(codexExecutable ? { codexLocalObservation: () => agentCredentialLauncher.observeCodexLocalCredential({
+      executable: codexExecutable,
+      runtimeHome: homePath,
+      codexHome: process.env.CODEX_HOME,
+      accessSourceId: "owner_openai_profile",
+    }) } : {}),
   });
   collaborationProviderSnapshots.attach(aiProviderService);
   const providerLoginCoordinator = createProviderTerminalLoginCoordinator({
@@ -1457,12 +1441,6 @@ export async function createGateway(config: GatewayConfig) {
     ),
   });
   await reconcileProviderRuntimeAtStartup(providerGenericHarnessCoordinator);
-  const genericHarnessModelCatalog = createGenericHarnessModelCatalogReader({
-    homePath,
-    enabledHarnesses: codingAgentWorkspaceAgents.filter(
-      (agent): agent is "pi" | "opencode" => agent === "pi" || agent === "opencode",
-    ),
-  });
   providerSettingsStore = new ProviderSettingsStore({
     homePath,
     providerSnapshotReader: aiProviderService,
@@ -1470,7 +1448,6 @@ export async function createGateway(config: GatewayConfig) {
     accountLifecycle: providerAccountLifecycle,
     fundingSummaryReader: fundedAiFundingSummaryReader,
     runtimeCoordinator: providerGenericHarnessCoordinator,
-    genericModelCatalogReader: genericHarnessModelCatalog,
   });
   const canonicalExecutableDriverKinds = [
     "kernel" as const,
@@ -1509,13 +1486,17 @@ export async function createGateway(config: GatewayConfig) {
   if (chatRepository && canonicalChatExecutionRoots) {
     const canonicalAdapters: CanonicalChatProviderAdapter[] = [
       createKernelChatProviderAdapter({ dispatcher }),
-      createHermesChatProviderAdapter({ homePath, toolOutputKey }),
+      createHermesChatProviderAdapter({ homePath, toolOutputKey, ...(jevInboxRuntime ? { jev: jevInboxRuntime.launch } : {}) }),
       createOpenClawChatProviderAdapter({ rpc: openClawRpc, homePath }),
     ];
     if (codingAgentProviders.some((provider) => provider.providerId === "claude")) {
       canonicalAdapters.push(createClaudeChatProviderAdapter({
         homePath,
         resolveCredentialLaunch: resolveClaudeCredentialLaunch,
+        matrixMcpCapabilityIssuer: matrixMcpCapabilities,
+        customMcpApprovalClient: internalPlatformUrl && internalPlatformToken && internalHandle
+          ? createCustomMcpApprovalClient({ platformUrl: internalPlatformUrl, token: internalPlatformToken, handle: internalHandle })
+          : undefined,
       }));
     }
     if (codingAgentThreadStore) {
@@ -1555,6 +1536,7 @@ export async function createGateway(config: GatewayConfig) {
         onSharedEvent: (scopeId: string) => gatewayCollaboration!.eventRegistry.broadcastScope(scopeId),
       } : {}),
       onAiGeneration: recordAiGeneration,
+      ...(jevInboxRuntime ? { admitJevWorkflow: (owner, agent) => jevInboxRuntime.admit(owner.ownerId, agent) } : {}),
     });
     canonicalChatOrchestrator = canonicalChatRuntime.orchestrator;
     backgroundChatProjection.setReconciler(ownerId => canonicalChatOrchestrator?.reconcileActiveRuns({ type: "personal", ownerId }) ?? Promise.resolve());
@@ -1635,11 +1617,14 @@ export async function createGateway(config: GatewayConfig) {
   }
 
   if (!providerSettingsStore) throw new Error("Provider settings are unavailable");
+  const lookupJevGmailAccounts = createJevGmailAccountLookup({ db: platformDb,
+    internalBaseUrl: internalIntegrationBaseUrl, machineToken: internalPlatformToken });
   registerCollaborationChatRoutes({
     app, upgradeWebSocket, canonicalChatEventStream, chatRepository, gatewayCollaboration,
     collaborationFailClosedReason, canonicalChatOrchestrator, canonicalChatExecutionRoots,
     canonicalChatCollaborationGuard, projectOwnerToolOutput, canonicalChatRuntime,
     canonicalChatProviderCatalog, aiProviderService, providerSettingsStore,
+    listGmailAccounts: (ownerId) => withCapabilityLookupTimeout(() => lookupJevGmailAccounts(ownerId)),
   });
 
   // T978-T979: Settings API routes
@@ -1781,6 +1766,8 @@ export async function createGateway(config: GatewayConfig) {
     pluginRegistry,
     hookRunner,
     async close() {
+      jevInboxRuntime?.close();
+      matrixMcpCapabilities.close();
       workspaceStartupRecoveryController.close();
       await terminalPasteAssetCleanup.close();
       await chatIdleReaper?.close().catch((error: unknown) => {
@@ -1829,6 +1816,7 @@ export async function createGateway(config: GatewayConfig) {
       await agentRuntimeServices.controller.close();
       aiProviderService.close();
       fundedCredentialProvider?.close();
+      await jevRuntime?.cleanup.close();
       await codingAgentTurnLifecycle.shutdown();
       await codexEventBridge?.shutdown();
       codingAgentThreadStream?.shutdown();

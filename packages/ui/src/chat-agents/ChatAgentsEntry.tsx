@@ -1,13 +1,13 @@
 import { isChatAgentDriver } from "@matrix-os/contracts";
 import type { StartAgentChat } from "./client.js";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { ChatAgentRecipeSchema, type ChatAgent, type ChatAgentRecipeCatalog, type CanonicalProviderCatalog, type CanonicalChatModelSelection } from "@matrix-os/contracts";
+import { ChatAgentRecipeSchema, JevInboxTriageBindingSchema, type ChatAgent, type ChatAgentRecipeCatalog, type CanonicalProviderCatalog, type CanonicalChatModelSelection } from "@matrix-os/contracts";
 import { useChatAgentsNavigation } from "./ChatAgentsNavigation.js";
 import { deriveCanonicalProviderChoices } from "../canonical-provider-choice.js";
 import { accountForNewIntegration } from "./recipe-integrations.js";
 import { recipeSkillsFit } from "./recipe-skills.js";
 import { activeConnections } from "./recipe-integrations.js";
-import { JEV_AGENT_DESCRIPTION, JEV_AGENT_NAME, jevAgentInstructions, jevAgentRecipe } from "./jev-agent-template.js";
+import { JEV_AGENT_DESCRIPTION, JEV_AGENT_NAME, jevAgentInstructions, jevAgentRecipe, jevAgentSelection } from "./jev-agent-template.js";
 import { AgentEditor, type AgentDraft } from "./AgentEditor.js";
 import { AgentAvatar } from "./AgentAvatar.js";
 import { AgentRecipesPanel } from "./AgentRecipesPanel.js";
@@ -135,11 +135,12 @@ export function ChatAgentsPanel({ client, view = "library", onClose, onSetup, on
     isChatAgentDriver(choice.driverKind) && choice.interactionModes.includes("default") && choice.permissionModes.includes("full_access")) : [], [state.catalog]);
   const [jevPending, setJevPending] = useState(false);
   const [jevError, setJevError] = useState("");
+  const jevSelection = jevAgentSelection(state.catalog ?? undefined);
   const jevUnavailable = state.loading || state.recipeLoading ? "Loading available accounts and Agent capabilities…"
     : !state.enabled ? "Agents are disabled for this computer."
     : state.connectionError || state.recipeError ? "Account or recipe options are unavailable. Try again later."
     : state.agents.length >= 100 ? "The 100-Agent limit has been reached. Archive an Agent before using this recipe."
-    : !models.some((choice) => choice.driverKind === "hermes") ? "Connect Hermes in Agents & providers first."
+    : !jevSelection ? "Choose a ready default Hermes route in Agents & providers first."
     : !state.recipeCatalog?.enabled || !["matrix-jev-email-triage", "matrix-integrations"].every((id) =>
       state.recipeCatalog?.skills.some((skill) => skill.id === id)) ? "Jev Agent skills are unavailable on this computer."
     : "";
@@ -147,10 +148,10 @@ export function ChatAgentsPanel({ client, view = "library", onClose, onSetup, on
     if (jevPending || jevUnavailable || !onStartChat) return;
     const matchingAccounts = activeConnections("gmail", state.connections).filter((account) => account.account_label === accountLabel);
     if (matchingAccounts.length !== 1 || !matchingAccounts[0]?.account_email) {
-      setJevError("Choose a connected Gmail account with a verified email address before creating this Agent.");
+      setJevError("Choose a connected Gmail account with a recorded email address before creating this Agent.");
       return;
     }
-    const hermes = models.find((choice) => choice.driverKind === "hermes");
+    const hermes = jevSelection ? models.find((choice) => choice.instanceId === jevSelection.instanceId && choice.modelId === jevSelection.model) : undefined;
     const recipe = jevAgentRecipe(accountLabel);
     if (!hermes || !ChatAgentRecipeSchema.safeParse(recipe).success
       || !recipeSkillsFit(recipe.skills, state.recipeCatalog?.skills ?? [])) return;
@@ -169,8 +170,15 @@ export function ChatAgentsPanel({ client, view = "library", onClose, onSetup, on
       });
       const readback = await client.list();
       const verified = readback.agents.find((agent) => agent.id === saved.id);
+      const savedBinding = JevInboxTriageBindingSchema.safeParse(saved.recipe?.jevInboxTriage);
+      const binding = JevInboxTriageBindingSchema.safeParse(verified?.recipe?.jevInboxTriage);
       if (!verified || verified.recipe?.integrations.some((integration) =>
-        integration.service === "gmail" && integration.accountLabel === accountLabel) !== true) {
+        integration.service === "gmail" && integration.accountLabel === accountLabel) !== true
+        || verified.revision !== saved.revision || !savedBinding.success || !binding.success
+        || savedBinding.data.accountLabel !== accountLabel || binding.data.accountLabel !== accountLabel
+        || binding.data.ownerId !== savedBinding.data.ownerId
+        || binding.data.connectionId !== savedBinding.data.connectionId
+        || binding.data.expectedEmail !== savedBinding.data.expectedEmail) {
         setJevError("Agent creation could not be verified in your library. Please check Agents before trying again.");
         return;
       }

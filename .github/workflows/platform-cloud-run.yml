@@ -89,6 +89,8 @@ jobs:
       MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED: ${{ vars.MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED || 'false' }}
       MATRIX_FUNDED_AI_RUNTIME_ENABLED: ${{ vars.MATRIX_FUNDED_AI_RUNTIME_ENABLED || 'false' }}
       MATRIX_FUNDED_AI_RELAY_URL: ${{ vars.MATRIX_FUNDED_AI_RELAY_URL }}
+      MATRIX_FUNDED_AI_MODEL_PROBE_DAILY_LIMIT: ${{ vars.MATRIX_FUNDED_AI_MODEL_PROBE_DAILY_LIMIT || '0' }}
+      MATRIX_FUNDED_AI_MODEL_PROBE_MINUTE_LIMIT: ${{ vars.MATRIX_FUNDED_AI_MODEL_PROBE_MINUTE_LIMIT || '0' }}
       MATRIX_FUNDED_AI_ADDON_CHECKOUT_ENABLED: ${{ vars.MATRIX_FUNDED_AI_ADDON_CHECKOUT_ENABLED || 'false' }}
       STRIPE_PRICE_AI_CREDIT_USD_5: ${{ vars.STRIPE_PRICE_AI_CREDIT_USD_5 }}
       STRIPE_PRICE_AI_CREDIT_USD_10: ${{ vars.STRIPE_PRICE_AI_CREDIT_USD_10 }}
@@ -192,6 +194,18 @@ jobs:
             exit 1
           fi
           if [ "$MATRIX_FUNDED_AI_RUNTIME_ENABLED" = "true" ]; then
+            for name in MATRIX_FUNDED_AI_MODEL_PROBE_DAILY_LIMIT MATRIX_FUNDED_AI_MODEL_PROBE_MINUTE_LIMIT; do
+              if ! [[ "${!name:-}" =~ ^[1-9][0-9]{0,4}$ ]]; then
+                echo "$name must be a positive bounded integer when funded AI is enabled." >&2
+                exit 1
+              fi
+            done
+            if [ "$MATRIX_FUNDED_AI_MODEL_PROBE_DAILY_LIMIT" -gt 10000 ] ||
+               [ "$MATRIX_FUNDED_AI_MODEL_PROBE_MINUTE_LIMIT" -gt 100 ] ||
+               [ "$MATRIX_FUNDED_AI_MODEL_PROBE_MINUTE_LIMIT" -gt "$MATRIX_FUNDED_AI_MODEL_PROBE_DAILY_LIMIT" ]; then
+              echo "Funded model probe limits exceed the supported budget bounds." >&2
+              exit 1
+            fi
             if ! [[ "$MATRIX_FUNDED_AI_RELAY_URL" =~ ^https://[^/?#]+/?$ ]]; then
               echo "MATRIX_FUNDED_AI_RELAY_URL must be an HTTPS origin when funded AI is enabled." >&2
               exit 1
@@ -759,6 +773,7 @@ jobs:
           funded_ai_secret_bindings=""
           if [ "$MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED" = "true" ]; then
             funded_ai_env_bindings="${funded_ai_env_bindings}|MATRIX_FUNDED_AI_RELAY_URL=${MATRIX_FUNDED_AI_RELAY_URL}"
+            funded_ai_env_bindings="${funded_ai_env_bindings}|MATRIX_FUNDED_AI_MODEL_PROBE_DAILY_LIMIT=${MATRIX_FUNDED_AI_MODEL_PROBE_DAILY_LIMIT}|MATRIX_FUNDED_AI_MODEL_PROBE_MINUTE_LIMIT=${MATRIX_FUNDED_AI_MODEL_PROBE_MINUTE_LIMIT}"
             funded_ai_secret_bindings=",AI_RELAY_CONTROL_TOKEN=ai-relay-control-token:latest,AI_FUNDED_CREDENTIAL_HASH_SECRET=ai-funded-credential-hash-secret:latest"
           fi
           if [ "$MATRIX_FUNDED_AI_ADDON_CHECKOUT_ENABLED" = "true" ]; then

@@ -46,6 +46,24 @@ postgres) and its own named volumes. Slot ownership lives in
 
 ## Preview VPS — the verify loop
 
+### Per-PR hostname migration
+
+The target browser URL is `https://pr-<N>.preview.matrix-os.com`. A dedicated
+Preview edge Worker is prepared to route the exact hostname to the matching
+tagged revision of `matrix-platform-preview`; `preview.matrix-os.com` can then
+become the stable entry host. **Do not deploy its wildcard route yet.** The current
+`preview-vps` workflow still provisions under the production platform, and
+the share connector still uses production Clerk identities. Keep using the
+current `/vm/pr-<N>` URL until the Preview-owned VPS and separate identity
+path in [spec 530](../../specs/530-per-pr-preview-hostnames/spec.md) is complete.
+
+The platform workflow still uses a shared staging database, secrets, and
+service account across PR revisions. Before activating the new route, give
+each PR its own database, service identity, secrets, and VPS; provision a
+separate Preview Clerk instance, proxied wildcard DNS, and TLS coverage for
+the deeper `*.preview.matrix-os.com` subdomains. Audit parent-domain cookies
+and CSRF boundaries before exposing unmerged PR JavaScript at this hostname.
+
 ### Host configuration safety
 
 Preview host configuration changes must preserve the existing file owner,

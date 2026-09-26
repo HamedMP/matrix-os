@@ -7,6 +7,7 @@ import {
 } from "./preview-terminal-access.js";
 import { createRateLimiter } from "./security/rate-limiter.js";
 import { resolveHermesIntegrationCapability } from "./chat/hermes-integration-capability.js";
+import { MATRIX_MCP_RUN_CONTEXT_KEY, type MatrixMcpRunContext } from "./chat/matrix-mcp-launch.js";
 import {
   looksLikeJwt,
   readJwtKeyConfig,
@@ -210,7 +211,11 @@ function getTrustedProxyClientIp(c: { req: { header: (name: string) => string | 
 
 export function authMiddleware(
   token: string | undefined,
-  options?: { webhookProviders?: Set<string> },
+  options?: {
+    webhookProviders?: Set<string>;
+    resolveMatrixMcpCapability?: (token: string, method: string, path: string) => string | null;
+    resolveMatrixMcpRunContext?: (token: string, method: string, path: string) => MatrixMcpRunContext | null;
+  },
 ): MiddlewareHandler {
   const webhookProviders = options?.webhookProviders ?? new Set<string>();
 
@@ -358,7 +363,21 @@ export function authMiddleware(
         : null;
 
     if (presentedToken) {
-      const hermesActor = resolveHermesIntegrationCapability(presentedToken, normalizedPath);
+      const matrixMcpContext = options?.resolveMatrixMcpRunContext?.(presentedToken, c.req.method, normalizedPath);
+      const matrixMcpActor = matrixMcpContext?.actorId
+        ?? (!options?.resolveMatrixMcpRunContext
+          ? options?.resolveMatrixMcpCapability?.(presentedToken, c.req.method, normalizedPath)
+          : null);
+      if (matrixMcpActor) {
+        if (c.req.header("x-platform-user-id") || c.req.header("x-platform-verified")) return unauthorized(c);
+        setPlatformVerifiedPrincipal(c, matrixMcpActor);
+        c.set(MATRIX_MCP_RUN_CONTEXT_KEY as never, matrixMcpContext ?? { actorId: matrixMcpActor });
+        return nextWithReady(c, next);
+      }
+      // Scope checks use the raw URL path. Hono may decode percent-encoded
+      // aliases before routing, which must not grant a recipe bearer access.
+      const hermesActor = resolveHermesIntegrationCapability(presentedToken, c.req.method,
+        new URL(c.req.raw.url).pathname);
       if (hermesActor) {
         // This run-scoped bearer carries its own actor; caller-supplied
         // platform identity headers are never accepted with it.

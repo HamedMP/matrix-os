@@ -93,7 +93,18 @@ describe("funded AI add-on checkout", () => {
       resolveClerkUserId: () => Promise.resolve(userId),
       now: () => new Date("2026-08-31T10:00:00.000Z"),
       fundedAiRepository: repository,
-      fundedRelayHealthFetch: relayHealthFetch,
+      fundedModelProbes: env.AI_RELAY_CONTROL_TOKEN && env.MATRIX_FUNDED_AI_RELAY_URL ? {
+        probe: async (model) => {
+          const response = await relayHealthFetch(
+            `https://relay.example.test/ready?model=${encodeURIComponent(model)}`,
+            { redirect: "error", signal: AbortSignal.timeout(2_000),
+              headers: { authorization: `Bearer ${env.AI_RELAY_CONTROL_TOKEN}` } },
+          );
+          const body: unknown = response.ok ? await response.json() : null;
+          return { ready: !!body && typeof body === "object" && "ready" in body && body.ready === true,
+            checkedAt: "2026-08-31T10:00:00.000Z", staleAfter: "2026-08-31T10:00:30.000Z" };
+        },
+      } : undefined,
     }));
     return hono;
   }

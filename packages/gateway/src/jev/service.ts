@@ -13,7 +13,7 @@ import type { JevEvaluationStore } from "./repository.js";
 const RESPONSE_LIMIT_BYTES = 64 * 1024;
 const EVALUATION_TIMEOUT_MS = 30_000;
 
-export type JevServiceErrorCode = "conflict" | "denied" | "in_progress" | "unknown" | "unavailable";
+export type JevServiceErrorCode = "conflict" | "denied" | "in_progress" | "result_expired" | "unknown" | "unavailable";
 
 export class JevServiceError extends Error {
   constructor(readonly code: JevServiceErrorCode, options?: ErrorOptions) {
@@ -76,6 +76,7 @@ export function createJevService(options: {
       const claim = await options.store.claim(key);
       if (claim.kind === "completed") return claim.result;
       if (claim.kind === "conflict") throw new JevServiceError("conflict");
+      if (claim.kind === "result_expired") throw new JevServiceError("result_expired");
       if (claim.kind === "unknown") throw new JevServiceError("unknown");
       if (claim.kind === "pending") throw new JevServiceError("in_progress");
 

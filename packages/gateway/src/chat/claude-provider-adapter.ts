@@ -1,7 +1,10 @@
 import { createClaudeInputController } from "./claude-input-control.js";
+import { CALL_TOOL, createClaudeCustomMcpApprovalControl } from "./claude-custom-mcp-approval.js";
+import type { CustomMcpApprovalClient } from "./custom-mcp-approval-client.js";
 import { z } from "zod/v4";
 import { classifyClaudeUsageFailure } from "./claude-usage-failure.js";
 import { buildAgentLaunch } from "../agent-launcher.js";
+import type { MatrixMcpCapabilityIssuer } from "./matrix-mcp-launch.js";
 import {
   buildKernelCredentialLaunch,
   type KernelCredentialLaunch,
@@ -20,6 +23,10 @@ import {
   type CanonicalCliSpawn,
 } from "./cli-process.js";
 import {
+  ASSISTANT_CREDENTIAL_BOUNDARY_PROBE_LIMIT,
+  classifyAssistantCredentialBoundaryPrefix,
+  createAssistantTextStreamProjector,
+  isCompleteAssistantCredentialKeyword,
   safeToolPreview,
   sanitizeAssistantText,
 } from "./safe-activity-projection.js";
@@ -217,6 +224,8 @@ export function createClaudeChatProviderAdapter(options: {
   timeoutMs?: number;
   resolveCredentialEnv?: () => Promise<Record<string, string | undefined> | undefined>;
   resolveCredentialLaunch?: () => Promise<KernelCredentialLaunch>;
+  matrixMcpCapabilityIssuer?: MatrixMcpCapabilityIssuer;
+  customMcpApprovalClient?: CustomMcpApprovalClient;
 }): CanonicalChatProviderAdapter<ClaudeChatState> {
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const activeRuns = new Map<string, {
@@ -226,52 +235,107 @@ export function createClaudeChatProviderAdapter(options: {
     abort: () => void;
     steer: (prompt: string) => void;
     submitInput: ReturnType<typeof createClaudeInputController>["submit"];
+    submitApproval?: ReturnType<typeof createClaudeCustomMcpApprovalControl>["submit"];
   }>();
 
   async function* execute(
     inputValue: CanonicalProviderRunInput<ClaudeChatState>,
     resumeState?: ClaudeChatState,
     blockIds = { text: 0, reasoning: 0 },
+    approvalReady = true,
   ): AsyncGenerator<CanonicalProviderRunEvent> {
     const input = parseCanonicalProviderRunInput(inputValue);
     const cwd = input.executionRoot ?? options.homePath;
     const selectedPermission = permissionMode(input.permissionMode, input.interactionMode);
     const fullAccess = selectedPermission === "bypassPermissions";
-    const launch = buildAgentLaunch({
-      agent: "claude",
-      cwd,
-      runtimeHome: options.homePath,
-      prompt: input.prompt,
-      model: input.selection.model,
-      modelOptions: input.selection.options ?? [],
-      mode: input.interactionMode === "review" ? "review" : "default",
-      approvalPolicy: fullAccess ? "never" : "on-request",
-      sandbox: fullAccess
-        ? { enabled: false, mode: "danger-full-access" }
-        : { enabled: true, mode: "workspace-write", writableRoots: [cwd] },
-      claudePermissionMode: selectedPermission,
-      claudeOutputFormat: "stream-json",
-      claudeIncludePartialMessages: true,
-    });
-    if (resumeState) {
-      const separator = launch.args.indexOf("--");
-      launch.args.splice(separator < 0 ? launch.args.length : separator, 0, "--resume", resumeState.sessionId);
+    // Presentation is projected from the exact scope requested at issuance.
+    // A presentation selector never authorizes a Gateway request.
+    const mcpScope = approvalReady && input.interactionMode === "default" && selectedPermission !== "plan"
+      ? "call" : "discovery";
+    const capability = options.matrixMcpCapabilityIssuer?.issue({
+      owner: input.owner,
+      runId: input.runId,
+      // Review is read-only even if its saved permission choice says full access.
+      // Unknown future interaction modes receive discovery only.
+      scope: mcpScope,
+    }) ?? null;
+    const recipeGuidance = input.context?.agent?.recipe
+      ? "Selected integration dependencies are unavailable through this route. "
+        + (capability
+          ? "Discover Custom MCP servers with list_custom_mcp_servers, then inspect enabled tools with describe_custom_mcp_server. "
+            + (mcpScope === "call"
+              ? "Use call_custom_mcp_tool only when the user needs an enabled tool; the broker owns tool policy and approval."
+              : "This run supports discovery only; remote tool calls are unavailable.")
+          : "No Matrix tools are available for this run.")
+      : undefined;
+    const nativePrompt = recipeGuidance ? `${input.prompt}\n\n${recipeGuidance}` : input.prompt;
+    let approvalClient = approvalReady && capability && selectedPermission === "default" && input.interactionMode === "default"
+      ? options.customMcpApprovalClient : undefined;
+    let registeredGeneration: number | undefined;
+    let launch: ReturnType<typeof buildAgentLaunch>;
+    let credentialLaunch: KernelCredentialLaunch;
+    try {
+      launch = buildAgentLaunch({
+        agent: "claude",
+        cwd,
+        runtimeHome: options.homePath,
+        prompt: input.prompt,
+        model: input.selection.model,
+        modelOptions: input.selection.options ?? [],
+        mode: input.interactionMode === "review" ? "review" : "default",
+        approvalPolicy: fullAccess ? "never" : "on-request",
+        sandbox: fullAccess
+          ? { enabled: false, mode: "danger-full-access" }
+          : { enabled: true, mode: "workspace-write", writableRoots: [cwd] },
+        claudePermissionMode: selectedPermission,
+        claudeOutputFormat: "stream-json",
+        claudeIncludePartialMessages: true,
+        matrixCustomMcp: capability !== null,
+        matrixCustomMcpScope: mcpScope,
+      });
+      if (resumeState) {
+        const separator = launch.args.indexOf("--");
+        launch.args.splice(separator < 0 ? launch.args.length : separator, 0, "--resume", resumeState.sessionId);
+      }
+      const promptSeparator = launch.args.indexOf("--");
+      if (promptSeparator >= 0) launch.args.splice(promptSeparator);
+      launch.args.push("--input-format", "stream-json", "--permission-prompt-tool", "stdio");
+      credentialLaunch = options.resolveCredentialLaunch
+        ? await options.resolveCredentialLaunch()
+        : {
+            env: await (
+              options.resolveCredentialEnv
+              ?? (() => buildKernelCredentialLaunch(options.homePath).then((value) => value.env))
+            )(),
+          };
+      if (approvalClient) {
+        try {
+          const registered = await approvalClient.registerRun(input.runId);
+          if (!registered || !Number.isSafeInteger(registered.generation) || registered.generation < 1) {
+            console.warn("[chat-claude] Custom MCP approval registration unavailable");
+            approvalClient = undefined;
+          } else {
+            registeredGeneration = registered.generation;
+          }
+        } catch (error: unknown) {
+          console.warn("[chat-claude] Custom MCP approval registration failed", error instanceof Error ? error.name : "UnknownError");
+          approvalClient = undefined;
+        }
+      }
+    } catch (error: unknown) {
+      capability?.revoke();
+      throw error;
     }
-    const promptSeparator = launch.args.indexOf("--");
-    if (promptSeparator >= 0) launch.args.splice(promptSeparator);
-    launch.args.push("--input-format", "stream-json", "--permission-prompt-tool", "stdio");
-    const credentialLaunch = options.resolveCredentialLaunch
-      ? await options.resolveCredentialLaunch()
-      : {
-          env: await (
-            options.resolveCredentialEnv
-            ?? (() => buildKernelCredentialLaunch(options.homePath).then((value) => value.env))
-          )(),
-        };
     const credentialEnv = credentialLaunch.env;
     const runEnv = credentialEnv === undefined
-      ? launch.env
+      ? capability ? definedEnvironment({ ...process.env, ...launch.env }) : launch.env
       : definedEnvironment({ ...credentialEnv, ...launch.env });
+    if (capability) {
+      // The MCP child receives only this actor/run capability, never the VPS
+      // machine bearer. The wrapper requires the scoped bearer for this launch.
+      delete runEnv.MATRIX_AUTH_TOKEN;
+      runEnv.MATRIX_AGENT_INTEGRATIONS_TOKEN = capability.token;
+    }
 
     const queue = createCanonicalCliEventQueue<CanonicalProviderRunEvent>();
     let buffered = "";
@@ -285,24 +349,70 @@ export function createClaudeChatProviderAdapter(options: {
     let resultSubtype: "success" | "error" | "other" | undefined;
     let emittedState = resumeState;
     let steerPrompt: string | undefined;
+    let cancellationRequested = false;
     const processController = new AbortController();
     const processSignal = AbortSignal.any([input.signal, processController.signal]);
     let finishInput: (() => void) | undefined;
     let writeControl: ((frame: string) => Promise<void>) | undefined;
+    const approvalControl = approvalClient && registeredGeneration ? createClaudeCustomMcpApprovalControl({
+      runId: input.runId, generation: registeredGeneration, client: approvalClient,
+      emit: event => queue.push(event),
+      onError: error => console.warn("[chat-claude] Custom MCP approval failed", error instanceof Error ? error.name : "UnknownError"),
+    }) : undefined;
+    let approvalRevoked = false;
+    let finalRevokePromise: Promise<void> | undefined;
+    let clearApprovalPromise: Promise<boolean> | undefined;
+    const revokeApproval = (reason: "final" | "steer" = "final") => {
+      capability?.revoke();
+      approvalControl?.close();
+      if (reason === "steer") {
+        if (approvalClient && registeredGeneration && !clearApprovalPromise) {
+          clearApprovalPromise = approvalClient.clearRunApprovals(input.runId, registeredGeneration)
+            .then(result => result.generation === registeredGeneration! + 1)
+            .catch(error => {
+              console.warn("[chat-claude] Custom MCP steer clear failed", error instanceof Error ? error.name : "UnknownError");
+              return false;
+            });
+        }
+        return;
+      }
+      if (approvalClient && !approvalRevoked) {
+        approvalRevoked = true;
+        finalRevokePromise = approvalClient.revokeRun(input.runId).then(() => undefined).catch(error => {
+          console.warn("[chat-claude] Custom MCP Run revoke failed", error instanceof Error ? error.name : "UnknownError");
+        });
+      }
+    };
     const inputControl = createClaudeInputController({
       write: frame => writeControl ? writeControl(frame) : Promise.reject(new Error("Input transport unavailable")),
       emit: event => queue.push(event),
       onError: () => processController.abort(),
+      onToolPermission: approvalControl?.onToolPermission ?? (approvalReady && capability && selectedPermission === "default"
+        && input.interactionMode === "default" ? (request, respond) => {
+          if (request.toolName !== CALL_TOOL) return false;
+          // The broker remains the policy authority. An unavailable approval
+          // bridge can use allow-policy tools, while always_ask has no receipt.
+          const unapprovedInput = Object.fromEntries(Object.entries(request.input)
+            .filter(([key]) => key !== "approval_receipt"));
+          void respond({ behavior: "allow", updatedInput: unapprovedInput }).catch(error => {
+            console.warn("[chat-claude] Custom MCP permission response failed", error instanceof Error ? error.name : "UnknownError");
+            processController.abort();
+          });
+          return true;
+        } : undefined),
+      onToolPermissionCancel: approvalControl?.onToolPermissionCancel,
     });
     const activeRun = {
       ownerId: input.owner.ownerId,
       ownerType: input.owner.type,
       chatId: input.chatId,
-      abort: () => processController.abort(),
+      abort: () => { cancellationRequested = true; revokeApproval(); processController.abort(); },
       submitInput: inputControl.submit,
+      submitApproval: approvalControl?.submit,
       steer(prompt: string) {
         if (!emittedState) throw new Error("Claude Run state unavailable");
         steerPrompt = prompt;
+        revokeApproval("steer");
         processController.abort();
       },
     };
@@ -320,6 +430,17 @@ export function createClaudeChatProviderAdapter(options: {
     let pendingDelta = "";
     let pendingDeltaMessageId: string | undefined;
     let deltaFlushScheduled = false;
+    const textProjector = createAssistantTextStreamProjector({
+      homePath: options.homePath,
+      executionRoot: input.executionRoot,
+    });
+    let projectedMessageId: string | undefined;
+    let boundaryProbe: {
+      originMessageId?: string;
+      text: string;
+      segments: Array<{ messageId?: string; text: string }>;
+    } | undefined;
+    let droppingBoundaryProbe = false;
     const textMessageByIndex = new Map<number, string>();
     const toolInputByIndex = new Map<number, string>();
     const toolNameByIndex = new Map<number, string>();
@@ -353,10 +474,142 @@ export function createClaudeChatProviderAdapter(options: {
       }
     };
 
+    const redactProbeSegments = (segments: Array<{ messageId?: string; text: string }>) => {
+      for (let index = 0; index < segments.length; index++) {
+        const messageId = segments[index]!.messageId;
+        if (segments.findIndex((segment) => segment.messageId === messageId) === index) {
+          enqueueDelta("[redacted]", messageId);
+        }
+      }
+    };
+
+    const flushProjectedText = () => {
+      if (boundaryProbe) {
+        // At successful completion, an exact keyword cannot acquire a later
+        // marker. Release it only when the old context cannot make it a token.
+        const ordinaryCompletedKeyword = textProjector.hasNonCredentialPathContext()
+          && isCompleteAssistantCredentialKeyword(boundaryProbe.text);
+        const projected = textProjector.flushIndependentBoundary();
+        if (projected) enqueueDelta(projected, projectedMessageId);
+        if (ordinaryCompletedKeyword) {
+          for (const segment of boundaryProbe.segments) {
+            const word = sanitizeAssistantText(segment.text, {
+              homePath: options.homePath, executionRoot: input.executionRoot,
+            });
+            if (word) enqueueDelta(word, segment.messageId);
+          }
+        } else redactProbeSegments(boundaryProbe.segments);
+        boundaryProbe = undefined;
+        projectedMessageId = undefined;
+      }
+      droppingBoundaryProbe = false;
+      const projected = textProjector.flush();
+      if (projected) enqueueDelta(projected, projectedMessageId);
+      projectedMessageId = undefined;
+    };
+    const flushSafeProjectedText = (nextCharacter?: string) => {
+      const projected = textProjector.flushBoundary(nextCharacter);
+      if (projected) enqueueDelta(projected, projectedMessageId);
+      if (!textProjector.hasPending()) projectedMessageId = undefined;
+    };
+    const discardProjectedText = () => {
+      textProjector.discard();
+      projectedMessageId = undefined;
+      boundaryProbe = undefined;
+      droppingBoundaryProbe = false;
+    };
+    const flushIndependentProjectedText = () => {
+      const projected = textProjector.flushIndependentBoundary();
+      if (projected) enqueueDelta(projected, projectedMessageId);
+      projectedMessageId = undefined;
+    };
+    const projectResolvedDelta = (delta: string, messageId?: string) => {
+      if (projectedMessageId !== messageId) {
+        flushSafeProjectedText(String.fromCodePoint(delta.codePointAt(0)!));
+      }
+      if (textProjector.hasPending() && projectedMessageId !== messageId) {
+        // A token started in the previous text block. Attribute only its
+        // continuation to that block; the rest belongs to the new block.
+        let offset = 0;
+        for (const character of delta) {
+          const projected = textProjector.push(character);
+          if (projected) enqueueDelta(projected, projectedMessageId);
+          offset += character.length;
+          if (!textProjector.hasPending()) {
+            projectedMessageId = messageId;
+            const remainder = textProjector.push(delta.slice(offset));
+            if (remainder) enqueueDelta(remainder, messageId);
+            return;
+          }
+        }
+        return;
+      }
+      projectedMessageId = messageId;
+      const projected = textProjector.push(delta);
+      if (projected) enqueueDelta(projected, messageId);
+    };
+    const projectDelta = (delta: string, messageId?: string) => {
+      if (droppingBoundaryProbe) return;
+      if (!boundaryProbe && projectedMessageId !== messageId) {
+        flushSafeProjectedText(String.fromCodePoint(delta.codePointAt(0)!));
+        if (textProjector.hasPending() && projectedMessageId !== messageId) {
+          boundaryProbe = { originMessageId: messageId, text: "", segments: [] };
+        }
+      }
+      if (!boundaryProbe) {
+        projectResolvedDelta(delta, messageId);
+        return;
+      }
+      let offset = 0;
+      for (const character of delta) {
+        const probe = boundaryProbe;
+        probe.text += character;
+        const last = probe.segments.at(-1);
+        if (last && last.messageId === messageId) last.text += character;
+        else probe.segments.push({ messageId, text: character });
+        offset += character.length;
+        if (probe.text.length > ASSISTANT_CREDENTIAL_BOUNDARY_PROBE_LIMIT) {
+          flushIndependentProjectedText();
+          enqueueDelta("[redacted]", probe.originMessageId);
+          boundaryProbe = undefined;
+          droppingBoundaryProbe = true;
+          return;
+        }
+        // A later block can restart a standalone credential while an earlier
+        // block's prefix is unresolved. Classify only observed block starts,
+        // within the same capped probe, before replaying any raw candidate.
+        let suffix = "";
+        let standaloneIndex: number | undefined;
+        let hasPendingCandidate = false;
+        for (let index = probe.segments.length - 1; index >= 0; index--) {
+          suffix = probe.segments[index]!.text + suffix;
+          const status = classifyAssistantCredentialBoundaryPrefix(suffix);
+          if (status === "standalone") standaloneIndex = index;
+          if (status === "pending") hasPendingCandidate = true;
+        }
+        if (standaloneIndex === undefined && hasPendingCandidate) continue;
+        boundaryProbe = undefined;
+        if (standaloneIndex !== undefined) {
+          flushIndependentProjectedText();
+          redactProbeSegments(probe.segments.slice(0, standaloneIndex));
+        }
+        for (const segment of probe.segments.slice(standaloneIndex ?? 0)) {
+          projectResolvedDelta(segment.text, segment.messageId);
+        }
+        const remainder = delta.slice(offset);
+        if (remainder) projectResolvedDelta(remainder, messageId);
+        return;
+      }
+    };
+
     const parseLine = (raw: string) => {
       if (!raw.trim()) return;
       const line = ClaudeStreamLineSchema.parse(JSON.parse(raw));
       if (inputControl.handle(line)) return;
+      if (line.type === "result") {
+        if (line.is_error === true || line.subtype === "error") discardProjectedText();
+        else flushProjectedText();
+      }
       if (usageFailure?.category !== "quota_exhausted") {
         usageFailure = classifyClaudeUsageFailure(line) ?? usageFailure;
       }
@@ -379,10 +632,7 @@ export function createClaudeChatProviderAdapter(options: {
         : undefined;
       if (delta) {
         streamedText = true;
-        enqueueDelta(sanitizeAssistantText(delta, {
-          homePath: options.homePath,
-          executionRoot: input.executionRoot,
-        }), line.event?.index === undefined ? undefined : textMessageByIndex.get(line.event.index));
+        projectDelta(delta, line.event?.index === undefined ? undefined : textMessageByIndex.get(line.event.index));
       }
       if (line.type === "stream_event" && line.event?.type === "content_block_delta"
         && line.event.index !== undefined && line.event.delta?.type === "input_json_delta"
@@ -394,6 +644,7 @@ export function createClaudeChatProviderAdapter(options: {
       }
       if (line.type === "stream_event" && line.event?.type === "content_block_start"
         && line.event.index !== undefined && line.event.content_block) {
+        flushSafeProjectedText();
         flushPendingDelta();
         const block = line.event.content_block;
         if (block.type === "text") {
@@ -423,6 +674,7 @@ export function createClaudeChatProviderAdapter(options: {
       }
       if (line.type === "stream_event" && line.event?.type === "content_block_stop"
         && line.event.index !== undefined) {
+        flushSafeProjectedText();
         flushPendingDelta();
         const activity = activityByIndex.get(line.event.index);
         if (activity) {
@@ -479,7 +731,7 @@ export function createClaudeChatProviderAdapter(options: {
       args: launch.args,
       cwd: launch.cwd,
       env: runEnv,
-      replaceEnv: credentialEnv !== undefined,
+      replaceEnv: credentialEnv !== undefined || capability !== null,
       signal: processSignal,
       timeoutMs: Math.min(timeoutMs, credentialLaunch.fundedRunTimeoutMs ?? timeoutMs),
       maxStdoutBytes: MAX_STREAM_BYTES,
@@ -488,7 +740,7 @@ export function createClaudeChatProviderAdapter(options: {
       onStart(write, end) {
         writeControl = write;
         finishInput = end;
-        void write(`${JSON.stringify({ type: "user", session_id: resumeState?.sessionId ?? "", message: { role: "user", content: input.prompt }, parent_tool_use_id: null })}\n`).catch(error => {
+        void write(`${JSON.stringify({ type: "user", session_id: resumeState?.sessionId ?? "", message: { role: "user", content: nativePrompt }, parent_tool_use_id: null })}\n`).catch(error => {
           console.warn("[chat-claude] Initial input write failed", error instanceof Error ? error.name : "UnknownError");
           processController.abort();
         });
@@ -506,6 +758,8 @@ export function createClaudeChatProviderAdapter(options: {
     }).then(() => {
       releaseActiveRun();
       if (buffered.trim()) parseLine(buffered);
+      if (sawResult && !resultFailed) flushProjectedText();
+      else discardProjectedText();
       flushPendingDelta();
       emitBufferedResult();
       const classifiedFailure = usageFailure ?? (resultFailed
@@ -540,20 +794,50 @@ export function createClaudeChatProviderAdapter(options: {
         : { type: "run.completed", outcome: "completed" }));
       queue.finish();
     }).catch(async (error: unknown) => {
-      releaseActiveRun();
+      if (sawResult && !resultFailed) flushProjectedText();
+      else {
+        if (error instanceof CanonicalCliError && error.kind === "aborted" && !resultFailed
+          && steerPrompt && emittedState && !input.signal.aborted && !cancellationRequested
+          && activeRuns.get(input.runId) === activeRun && !boundaryProbe) {
+          // An accepted Steer ends this text context. Preserve an ordinary
+          // safe tail, but leave path/URL/credential candidates for discard.
+          flushSafeProjectedText("\n");
+        }
+        discardProjectedText();
+      }
       flushPendingDelta();
       if (steerPrompt && emittedState && !input.signal.aborted) {
+        capability?.revoke();
+        const cleared = await (clearApprovalPromise ?? Promise.resolve(true));
+        if (cancellationRequested || input.signal.aborted || activeRuns.get(input.runId) !== activeRun) {
+          releaseActiveRun();
+          queue.push(CanonicalProviderRunEventSchema.parse({ type: "run.completed", outcome: "aborted" }));
+          queue.finish();
+          return;
+        }
+        if (!cleared && approvalClient) {
+          revokeApproval();
+          await finalRevokePromise;
+          if (cancellationRequested || input.signal.aborted || activeRuns.get(input.runId) !== activeRun) {
+            releaseActiveRun();
+            queue.push(CanonicalProviderRunEventSchema.parse({ type: "run.completed", outcome: "aborted" }));
+            queue.finish();
+            return;
+          }
+        }
+        releaseActiveRun();
         for await (const event of execute({
           ...input,
           prompt: steerPrompt,
           parts: [{ type: "text", text: steerPrompt }],
           resumeState: emittedState,
-        }, emittedState, blockIds)) {
+        }, emittedState, blockIds, approvalReady && cleared)) {
           queue.push(event);
         }
         queue.finish();
         return;
       }
+      releaseActiveRun();
       if (sawResult && !resultFailed) {
         console.warn("[chat-claude] Claude CLI exited non-zero after a successful result", {
           cliFailureKind: error instanceof CanonicalCliError ? error.kind : "unknown",
@@ -592,9 +876,27 @@ export function createClaudeChatProviderAdapter(options: {
         }),
       }));
       queue.finish();
-    });
+    }).finally(() => { if (steerPrompt && emittedState && !input.signal.aborted && !cancellationRequested) {
+      capability?.revoke(); approvalControl?.close();
+    } else revokeApproval(); });
 
-    yield* queue.values();
+    let streamCompleted = false;
+    try {
+      yield* queue.values();
+      streamCompleted = true;
+    } finally {
+      processController.abort();
+      discardProjectedText();
+      if (!streamCompleted) {
+        cancellationRequested = true;
+        releaseActiveRun();
+        revokeApproval();
+        await finalRevokePromise;
+      } else if (steerPrompt && emittedState && !input.signal.aborted && !cancellationRequested) {
+        capability?.revoke(); approvalControl?.close();
+      } else revokeApproval();
+      capability?.revoke();
+    }
   }
 
   return {
@@ -608,6 +910,20 @@ export function createClaudeChatProviderAdapter(options: {
       const active = activeRuns.get(input.runId);
       if (!active || active.ownerId !== input.owner.ownerId || active.ownerType !== input.owner.type || active.chatId !== input.chatId) throw new Error("Input Run unavailable");
       await active.submitInput(input);
+    },
+    async submitApproval(input) {
+      const active = activeRuns.get(input.runId);
+      if (!active || active.ownerId !== input.owner.ownerId || active.ownerType !== input.owner.type
+        || active.chatId !== input.chatId || !active.submitApproval) throw new Error("Approval Run unavailable");
+      await active.submitApproval(input.approvalId, input.decision, {
+        chatId: input.chatId, clientRequestId: input.clientRequestId,
+        platformApprovalProof: input.platformApprovalProof,
+      });
+    },
+    async cancel(input) {
+      const active = activeRuns.get(input.runId);
+      if (active && active.ownerId === input.owner.ownerId && active.ownerType === input.owner.type
+        && active.chatId === input.chatId) active.abort();
     },
     async steer(input) {
       const active = activeRuns.get(input.runId);

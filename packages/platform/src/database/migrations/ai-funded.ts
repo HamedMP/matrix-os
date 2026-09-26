@@ -2,8 +2,19 @@ import { sql } from 'kysely';
 import { ensureFundedReservationIndexes } from '../../ai-funded-reservation-indexes.js';
 import type { PlatformMigrationExecutor } from '../migration-types.js';
 
-/** Extracted verbatim from packages/platform/src/db.ts migrateSchema (S01 / T007). Order is preserved by migrate.ts. */
+/** Core funded schema, ordered by migrate.ts. */
 export async function migrateAiFunded(db: PlatformMigrationExecutor): Promise<void> {
+  await sql`
+    CREATE TABLE IF NOT EXISTS ai_funded_model_probe_budget (
+      budget_key TEXT PRIMARY KEY CHECK (budget_key = 'global'),
+      day_start TEXT NOT NULL,
+      daily_limit INTEGER NOT NULL CHECK (daily_limit > 0),
+      day_used INTEGER NOT NULL CHECK (day_used >= 0),
+      minute_start TEXT NOT NULL,
+      minute_limit INTEGER NOT NULL CHECK (minute_limit > 0),
+      minute_used INTEGER NOT NULL CHECK (minute_used >= 0)
+    )
+  `.execute(db);
   await sql`
     CREATE TABLE IF NOT EXISTS ai_funded_global_policy (
       policy_id TEXT PRIMARY KEY CHECK (policy_id = 'default'),
@@ -113,6 +124,8 @@ export async function migrateAiFunded(db: PlatformMigrationExecutor): Promise<vo
       promotional_reserved_microusd BIGINT CHECK (promotional_reserved_microusd >= 0),
       addon_reserved_microusd BIGINT CHECK (addon_reserved_microusd >= 0),
       actual_microusd BIGINT CHECK (actual_microusd >= 0),
+      resolved_model TEXT,
+      pricing_version TEXT,
       period_start TEXT NOT NULL,
       status TEXT NOT NULL CHECK (status IN ('reserved', 'starting', 'in_flight', 'settling', 'releasing', 'settled', 'released', 'expired')),
       created_at TEXT NOT NULL,
@@ -136,6 +149,8 @@ export async function migrateAiFunded(db: PlatformMigrationExecutor): Promise<vo
   await sql`ALTER TABLE ai_funded_usage_reservations ADD COLUMN IF NOT EXISTS manual_review_evidence_ref TEXT`.execute(db);
   await sql`ALTER TABLE ai_funded_usage_reservations ADD COLUMN IF NOT EXISTS manual_review_actor TEXT`.execute(db);
   await sql`ALTER TABLE ai_funded_usage_reservations ADD COLUMN IF NOT EXISTS manual_reviewed_at TEXT`.execute(db);
+  await sql`ALTER TABLE ai_funded_usage_reservations ADD COLUMN IF NOT EXISTS resolved_model TEXT`.execute(db);
+  await sql`ALTER TABLE ai_funded_usage_reservations ADD COLUMN IF NOT EXISTS pricing_version TEXT`.execute(db);
   // Existing reservations intentionally remain NULL/NULL: historical rows do
   // not contain evidence of which funding source paid for them. Runtime expiry
   // reconciliation protects promotion only through explicit allocation rows.

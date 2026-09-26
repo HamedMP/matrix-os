@@ -2,7 +2,7 @@ import { z } from "zod/v4";
 import { CanonicalChatDetailResponseSchema, CanonicalChatRecordSchema, CanonicalChatStreamEventSchema, CanonicalChatStreamServerFrameSchema } from "#canonical-chat-api";
 import { CanonicalChatMessageSchema } from "#canonical-chat";
 import type { CanonicalChatSafeError } from "#canonical-chat";
-export { canonicalChatApprovals, type CanonicalChatApprovalView } from "#canonical-chat-approvals";
+export { canonicalChatApprovals, canonicalChatApprovalOutcome, type CanonicalChatApprovalView } from "#canonical-chat-approvals";
 
 // Opt-in v2 frames. Never send these to an unversioned notification client.
 export const CanonicalChatContentSchema = z.object({

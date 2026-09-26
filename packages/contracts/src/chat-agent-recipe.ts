@@ -32,6 +32,19 @@ export const ChatAgentRecipeSchema = z.object({
   .refine(hasUniqueSkills, { message: "Recipe skills must be unique", path: ["skills"] })
   .refine(hasUniqueIntegrations, { message: "Recipe integrations must be unique", path: ["integrations"] });
 
+/** Gateway-owned account binding. Never accepted in create or patch request bodies. */
+export const JevInboxTriageBindingSchema = z.object({
+  version: z.literal(1),
+  ownerId: z.string().min(1).max(160),
+  service: z.literal("gmail"),
+  accountLabel: AccountLabelSchema,
+  connectionId: z.string().min(1).max(160),
+  expectedEmail: z.email().max(320),
+}).strict();
+export const StoredChatAgentRecipeSchema = ChatAgentRecipeSchema.safeExtend({
+  jevInboxTriage: JevInboxTriageBindingSchema.optional(),
+});
+
 const CatalogSkillSchema = z.object({
   id: ChatAgentRecipeSkillIdSchema,
   name: canonicalSafeLabel(120, 480),
@@ -58,6 +71,7 @@ export const ResolvedChatAgentRecipeSchema = z.object({
   }).strict()).max(CHAT_AGENT_RECIPE_MAX_SKILLS),
   integrations: z.array(RecipeIntegrationSchema).max(8),
   output: RecipeOutputSchema,
+  jevInboxTriage: JevInboxTriageBindingSchema.optional(),
 }).strict()
   .refine((value) => new Set(value.skills.map((skill) => skill.id)).size === value.skills.length, {
     message: "Resolved recipe skills must be unique",
@@ -70,5 +84,7 @@ export const ResolvedChatAgentRecipeSchema = z.object({
   ) <= CHAT_AGENT_RECIPE_MAX_INSTRUCTION_BYTES, { message: "Resolved recipe instructions exceed their byte limit", path: ["skills"] });
 
 export type ChatAgentRecipe = z.infer<typeof ChatAgentRecipeSchema>;
+export type StoredChatAgentRecipe = z.infer<typeof StoredChatAgentRecipeSchema>;
+export type JevInboxTriageBinding = z.infer<typeof JevInboxTriageBindingSchema>;
 export type ChatAgentRecipeCatalog = z.infer<typeof ChatAgentRecipeCatalogSchema>;
 export type ResolvedChatAgentRecipe = z.infer<typeof ResolvedChatAgentRecipeSchema>;

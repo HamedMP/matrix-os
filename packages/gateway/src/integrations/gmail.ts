@@ -39,6 +39,16 @@ export const GMAIL_SERVICE: ServiceDefinition = {
       paramsSchema: z.strictObject({}),
       directApi: { method: "GET", url: `${BASE}/profile` },
     },
+    list_threads: {
+      risk: "read", description: "List one bounded Inbox thread page",
+      params: {}, paramsSchema: z.strictObject({}),
+      directApi: { method: "GET", url: `${BASE}/threads?labelIds=INBOX&maxResults=30` },
+    },
+    get_thread_ids: {
+      risk: "read", description: "Read bounded message IDs for one thread without fetching message bodies",
+      params: { threadId: { type: "string", required: true } }, paramsSchema: z.strictObject({ threadId: identifier }),
+      directApi: { method: "GET", url: (p) => `${BASE}/threads/${encodeURIComponent(String(p.threadId))}?format=full&fields=id,historyId,messages(id,internalDate)` },
+    },
     list_messages: {
       risk: "read",
       description: "List a page of email messages; use nextPageToken to continue",

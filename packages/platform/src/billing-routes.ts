@@ -216,7 +216,7 @@ export function createBillingRoutes(options: {
   prebilling?: PrebillingCheckoutCoordinator;
   fundedAiRepository?: Pick<import('./ai-funded-policy-repository.js').AiFundedPolicyRepository,
     'grantCreditInTransaction' | 'getCheckoutFundingSummary'>;
-  fundedRelayHealthFetch?: typeof fetch;
+  fundedModelProbes?: import('./ai-funded-model-probes.js').FundedModelProbeService;
   redditConversions?: RedditConversionsClient;
   /**
    * Optional product telemetry sink. Fire-and-forget: implementations must
@@ -630,9 +630,7 @@ export function createBillingRoutes(options: {
       if (!persisted && !await isAiCreditCheckoutRouteHealthy({
         repository: options.fundedAiRepository,
         identity: { ownerId: clerkUserId, machineId: machine.machineId, runtimeSlot: machine.runtimeSlot },
-        relayBaseUrl: env.MATRIX_FUNDED_AI_RELAY_URL,
-        relayControlToken: env.AI_RELAY_CONTROL_TOKEN,
-        fetchFn: options.fundedRelayHealthFetch,
+        modelProbes: options.fundedModelProbes,
         now,
       })) return c.json(BILLING_UNAVAILABLE_RESPONSE, 503);
       const claim = persisted ?? await prepareAiCreditCheckoutClaim(options.db, {

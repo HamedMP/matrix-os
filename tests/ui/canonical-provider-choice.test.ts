@@ -73,6 +73,18 @@ describe("managed model default parity", () => {
 });
 
 describe("canonical Provider choice presentation", () => {
+  it("downgrades expired Codex local evidence to generic unverified copy without removing the route", () => {
+    const codex = {
+      ...catalog.instances[0]!, driverKind: "codex" as const,
+      localObservation: {
+        state: "present_unverified" as const,
+        checkedAt: new Date(Date.now() - 10_000).toISOString(),
+        staleAfter: new Date(Date.now() - 5_000).toISOString(),
+      },
+    };
+    expect(canonicalProviderAvailabilityLabel(codex)).toBe("Access not verified");
+    expect(deriveCanonicalProviderChoices({ ...catalog, instances: [codex] })).toHaveLength(1);
+  });
   it("derives only runnable exact instance/model choices", () => {
     expect(deriveCanonicalProviderChoices(catalog)).toEqual([{
       instanceId: "pi_default",
@@ -97,4 +109,12 @@ describe("canonical Provider choice presentation", () => {
       unavailabilityReason: "disabled_in_settings",
     })).toBe("Disabled in Settings");
   });
+});
+
+it.each(["pi", "opencode"] as const)("%s shows local observation rather than Available remote-access copy", (driverKind) => {
+  const now = Date.now();
+  const instance = { ...catalog.instances[0]!, driverKind, localObservation: { state: "present_unverified" as const,
+    checkedAt: new Date(now - 100).toISOString(), staleAfter: new Date(now + 5000).toISOString() } };
+  expect(canonicalProviderAvailabilityLabel(instance)).toBe("Local login found; access not verified");
+  expect(canonicalProviderAvailabilityLabel({ ...instance, localObservation: { ...instance.localObservation, staleAfter: new Date(now - 1).toISOString() } })).toBe("Access not verified");
 });

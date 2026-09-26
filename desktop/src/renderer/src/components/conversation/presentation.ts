@@ -1,4 +1,4 @@
-import type { ChatSubagent } from "@matrix-os/contracts";
+import type { ChatSubagent, CanonicalChatApprovalDecision } from "@matrix-os/contracts";
 import type { ChatRunContext, CanonicalChatExecutionRootRef, CanonicalChatInputView, CanonicalSubmitChatInputRequest } from "@matrix-os/contracts";
 export type ConversationMessageRole = "user" | "assistant";
 
@@ -90,6 +90,7 @@ export interface ConversationRequestPresentation {
   input?: CanonicalChatInputView;
   requestKind: "approval" | "input";
   requestId: string;
+  decision?: CanonicalChatApprovalDecision;
   state: "waiting" | "resolved";
   label: string;
   detail?: string;

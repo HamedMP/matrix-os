@@ -1,5 +1,7 @@
 import type { CanonicalChatDetailResponse } from "./canonical-chat-api.js";
 import type { CanonicalChatApprovalDecision } from "./canonical-chat.js";
+import { canonicalChatApprovalDisplay } from "#canonical-chat-approval-display";
+export { canonicalChatApprovalOutcome } from "#canonical-chat-approval-display";
 
 export interface CanonicalChatApprovalView {
   id: string;
@@ -10,6 +12,7 @@ export interface CanonicalChatApprovalView {
   risk: "low" | "medium" | "high";
   allowedDecisions: CanonicalChatApprovalDecision[];
   pending: boolean;
+  decision?: CanonicalChatApprovalDecision;
   timestamp: number;
   beforeMessageId?: string;
 }
@@ -20,27 +23,27 @@ export interface CanonicalChatApprovalView {
  */
 export function canonicalChatApprovals(detail: Pick<CanonicalChatDetailResponse, "runs" | "turns" | "messages" | "activities">): CanonicalChatApprovalView[] {
   const approvals = new Map<string, CanonicalChatApprovalView>();
-  const resolved = new Set<string>();
+  const resolved = new Map<string, CanonicalChatApprovalDecision>();
   const key = (runId: string, approvalId: string) => `${runId}\0${approvalId}`;
   for (const message of detail.messages) {
     if (!message.runId) continue;
     for (const part of message.parts) {
-      if (part.type === "approval_result") resolved.add(key(message.runId, part.approvalId));
+      if (part.type === "approval_result") resolved.set(key(message.runId, part.approvalId), part.decision);
       if (part.type !== "approval_request") continue;
       approvals.set(key(message.runId, part.approvalId), {
-        ...part, id: message.id, runId: message.runId,
+        ...part, ...canonicalChatApprovalDisplay(part.title, part.description), id: message.id, runId: message.runId,
         pending: false, timestamp: Date.parse(message.createdAt),
       });
     }
   }
   for (const activity of detail.activities) {
-    if (activity.type === "approval.resolved") resolved.add(key(activity.runId, activity.approvalId));
+    if (activity.type === "approval.resolved") resolved.set(key(activity.runId, activity.approvalId), activity.decision);
     if (activity.type !== "approval.requested") continue;
     const identity = key(activity.runId, activity.approvalId);
     if (approvals.has(identity)) continue;
     approvals.set(identity, {
       id: activity.id, runId: activity.runId, approvalId: activity.approvalId,
-      title: activity.title, description: "The agent is waiting for your decision.",
+      ...canonicalChatApprovalDisplay(activity.title, activity.safeDescription ?? "The agent is waiting for your decision."),
       risk: activity.risk, allowedDecisions: activity.allowedDecisions,
       pending: false, timestamp: Date.parse(activity.occurredAt),
     });
@@ -52,6 +55,7 @@ export function canonicalChatApprovals(detail: Pick<CanonicalChatDetailResponse,
     const input = detail.messages.find(m => m.id === turn?.inputMessageId);
     const next = input && detail.messages.find(m => m.role === "user" && m.seq > input.seq && m.turnId !== run.turnId);
     return [{ ...approval,
+      ...(resolved.has(identity) ? { decision: resolved.get(identity) } : {}),
       pending: ["accepted", "running", "waiting_for_approval", "waiting_for_input"].includes(run.status)
         && !resolved.has(identity),
       ...(next ? { beforeMessageId: next.id } : {}),

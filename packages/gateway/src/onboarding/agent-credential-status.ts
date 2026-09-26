@@ -16,6 +16,7 @@ export interface AgentCredentialStatusService {
 export interface AgentCredentialProbeResult {
   available: boolean;
   condition?: "available" | "missing" | "auth_required" | "check_failed" | "version_unsupported";
+  localObservation?: "present_unverified" | "absent" | "unknown";
   /** @deprecated Use condition: "missing". */
   missing?: boolean;
 }
@@ -67,6 +68,8 @@ function claudeSummary(
 function codexSummary(
   condition: NonNullable<AgentCredentialProbeResult["condition"]>,
   verifiedAt: string | undefined,
+  localCheckedAt?: string,
+  localObservation?: AgentCredentialProbeResult["localObservation"],
 ): AgentCredentialSummary {
   return {
     agent: "codex",
@@ -75,6 +78,8 @@ function codexSummary(
     workflows: ["coding"],
     degradedWorkflows: condition === "available" ? [] : ["coding"],
     verifiedAt: verifiedAt ?? null,
+    ...(localCheckedAt ? { localCheckedAt } : {}),
+    ...(localObservation ? { localObservation } : {}),
     nextAction: condition === "available"
       ? null
       : condition === "missing"
@@ -157,7 +162,7 @@ export function createAgentCredentialStatusService(options: {
         routingExplanation: "Hermes remains the Matrix system agent while Claude and Codex add optional specialist paths when connected.",
         agents: [
           claudeSummary(claudeCondition, claudeCondition === "available" ? verifiedAt : undefined),
-          codexSummary(codexCondition, codexCondition === "available" ? verifiedAt : undefined),
+          codexSummary(codexCondition, undefined, verifiedAt, codex.localObservation),
           hermesSummary(),
         ],
       };
@@ -196,7 +201,8 @@ export function createAgentCredentialStatusService(options: {
       }
       const verifiedAt = now().toISOString();
       options.onChange?.(ownerId);
-      return { agent, status: "available", verifiedAt };
+      return { agent, status: "available", verifiedAt,
+        ...(agent === "codex" ? { verificationScope: "local_cli" as const } : {}) };
     }
     const verifiedAt = now().toISOString();
     const state = getState(ownerId);

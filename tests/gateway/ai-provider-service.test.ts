@@ -8,7 +8,10 @@ import {
   type AiProviderHealthProbe,
 } from "../../packages/gateway/src/ai-providers/service.js";
 import { initialProviderSettingsConfiguration } from "../../packages/gateway/src/ai-providers/provider-settings-persistence.js";
+import { projectProviderSettings } from "../../packages/gateway/src/ai-providers/provider-settings-projector.js";
 import type { MatrixFundedCredentialProvider } from "../../packages/gateway/src/funded-ai-credential-manager.js";
+import { createAgentLauncher } from "../../packages/gateway/src/agent-launcher.js";
+import { CODEX_VERIFIED_VERSION } from "../../packages/contracts/src/index.js";
 
 const NOW = new Date("2026-08-29T21:00:00.000Z");
 
@@ -40,6 +43,12 @@ describe("AiProviderService", () => {
     healthProbe?: AiProviderHealthProbe;
     healthTimeoutMs?: number;
     driverInventory?: () => Promise<AiProviderSnapshotV3["drivers"]>;
+    codexLocalObservation?: () => Promise<{
+      accessSourceId: string;
+      state: "present_unverified" | "absent" | "unknown";
+      checkedAt: string | null;
+      staleAfter: string | null;
+    }>;
   } = {}) {
     return new AiProviderService({
       homePath,
@@ -60,8 +69,99 @@ describe("AiProviderService", () => {
       driverInventory: options.driverInventory === undefined
         ? undefined
         : async () => options.driverInventory!(),
+      codexLocalObservation: options.codexLocalObservation,
     });
   }
+
+  it.each([
+    { sourceId: "owner_openai_profile", checkedAt: NOW.toISOString(), staleAfter: new Date(NOW.getTime() + 5_000).toISOString(), expected: "present_unverified" },
+    { sourceId: "other_source", checkedAt: NOW.toISOString(), staleAfter: new Date(NOW.getTime() + 5_000).toISOString(), expected: "unknown" },
+    { sourceId: "owner_openai_profile", checkedAt: NOW.toISOString(), staleAfter: new Date(NOW.getTime() - 1).toISOString(), expected: "unknown" },
+    { sourceId: "owner_openai_profile", checkedAt: new Date(NOW.getTime() + 1).toISOString(), staleAfter: new Date(NOW.getTime() + 5_000).toISOString(), expected: "unknown" },
+  ] as const)("projects only a fresh, source-matched Codex local observation: $expected ($sourceId)", async ({ sourceId, checkedAt, staleAfter, expected }) => {
+    const service = createService({
+      driverInventory: async () => [{
+        id: "codex", displayName: "Codex", kind: "cli", installState: "installed",
+        health: "unknown", capabilities: ["tools", "resume", "reasoning"], setupActions: [],
+      }],
+      codexLocalObservation: async () => ({
+        accessSourceId: sourceId, state: "present_unverified", checkedAt, staleAfter,
+      }),
+    });
+    try {
+      const snapshot = await service.getSnapshot();
+      const source = snapshot.accessSources.find((item) => item.id === "owner_openai_profile");
+      expect(source?.localObservation?.state).toBe(expected);
+      expect(source?.state).toBe("unknown");
+      expect(snapshot.accounts.find((item) => item.id === "owner_codex")?.state).toBe("unknown");
+      expect(snapshot.instances.find((item) => item.driverId === "codex")?.readiness.state).toBe("unknown");
+      expect(snapshot.active.providerInstanceId).toBeNull();
+      expect(AiProviderSnapshotV3Schema.safeParse(snapshot).success).toBe(true);
+    } finally {
+      service.close();
+    }
+  });
+
+  it("returns a generic unverified Codex observation when the bounded local probe fails", async () => {
+    const service = createService({
+      driverInventory: async () => [{
+        id: "codex", displayName: "Codex", kind: "cli", installState: "installed",
+        health: "unknown", capabilities: ["tools", "resume", "reasoning"], setupActions: [],
+      }],
+      codexLocalObservation: async () => { throw new Error("private credential material"); },
+    });
+    try {
+      const snapshot = await service.getSnapshot();
+      expect(snapshot.accessSources.find((item) => item.id === "owner_openai_profile")?.localObservation?.state).toBe("unknown");
+      expect(JSON.stringify(snapshot)).not.toContain("private credential material");
+    } finally {
+      service.close();
+    }
+  });
+
+  it("carries the real owner-scoped Codex probe into V3 without promoting remote readiness", async () => {
+    const executable = "/tmp/fixture-codex-bin";
+    const runCommand = vi.fn(async (command: string, args: string[], options: { env?: Record<string, string> }) => {
+      if (command !== executable) {
+        return { stdout: args[0] === "--version" ? "claude 1.0.0\n" : "ok\n", stderr: "" };
+      }
+      expect(options.env?.HOME).toBe(homePath);
+      return { stdout: args[0] === "--version"
+        ? `codex-cli ${CODEX_VERIFIED_VERSION}\n`
+        : "Logged in using ChatGPT\n", stderr: "" };
+    });
+    const launcher = createAgentLauncher({
+      runCommand, cwd: homePath, runtimeHome: homePath, codexExecutable: executable,
+      now: () => NOW.getTime(),
+    });
+    const service = createService({
+      driverInventory: async () => [{
+        id: "codex", displayName: "Codex", kind: "cli", installState: "installed",
+        health: "unknown", capabilities: ["tools", "resume", "reasoning"], setupActions: [],
+      }],
+      codexLocalObservation: () => launcher.observeCodexLocalCredential({
+        executable, runtimeHome: homePath, codexHome: process.env.CODEX_HOME,
+        accessSourceId: "owner_openai_profile",
+      }),
+    });
+    try {
+      const snapshot = await service.getSnapshot();
+      expect(snapshot.accessSources.find((item) => item.id === "owner_openai_profile")?.localObservation)
+        .toMatchObject({ state: "present_unverified", checkedAt: NOW.toISOString() });
+      expect(snapshot.accounts.find((item) => item.id === "owner_codex")?.state).toBe("unknown");
+      expect(snapshot.instances.find((item) => item.driverId === "codex")?.readiness.state).toBe("unknown");
+      const settings = await projectProviderSettings({
+        canonical: snapshot, config: initialProviderSettingsConfiguration(snapshot),
+        now: NOW, supportedActions: [],
+      });
+      expect(settings.accessSources.find((item) => item.id === "owner_openai_profile")?.localObservation?.state)
+        .toBe("present_unverified");
+      expect(settings.accounts.find((item) => item.id === "owner_codex")?.authState).toBe("unknown");
+      expect(runCommand).toHaveBeenCalledWith(executable, ["login", "status"], expect.any(Object));
+    } finally {
+      service.close();
+    }
+  });
 
   it("requires an authoritative readiness reader even when funded credentials are configured", async () => {
     const service = new AiProviderService({ homePath, fundedCredentialProvider: fundedProvider() });
@@ -129,7 +229,20 @@ describe("AiProviderService", () => {
     expect(JSON.stringify(snapshot)).not.toContain("platform-secret");
   });
 
-  it("adds only validated real driver inventory while keeping the kernel driver canonical", async () => {
+  it("does not mark GLM ready when only the Sonnet funded route has been verified", async () => {
+    const service = createService({ platformKey: "platform-secret" });
+    try {
+      const snapshot = await service.getSnapshot();
+      expect(snapshot.accessSources.find((source) => source.id === "matrix_included"))
+        .toMatchObject({ state: "ready", eligibleModelIds: ["claude-sonnet-5"] });
+      expect(snapshot.accessSources.find((source) => source.id === "matrix_cloudflare"))
+        .toMatchObject({ state: "unavailable", eligibleModelIds: [] });
+    } finally {
+      service.close();
+    }
+  });
+
+  it("keeps Codex remote readiness unknown even if a local driver is reported healthy", async () => {
     const snapshot = await createService({
       driverInventory: async () => [{
         id: "codex",
@@ -146,7 +259,7 @@ describe("AiProviderService", () => {
       expect.objectContaining({
         id: "owner_openai_profile",
         vendor: "openai",
-        state: "ready",
+        state: "unknown",
       }),
     ]));
     expect(snapshot.accounts).toEqual(expect.arrayContaining([
@@ -154,7 +267,7 @@ describe("AiProviderService", () => {
         id: "owner_codex",
         vendor: "openai",
         authMethod: "provider_profile",
-        state: "ready",
+        state: "unknown",
       }),
     ]));
     expect(snapshot.models).toEqual(expect.arrayContaining([
@@ -167,7 +280,7 @@ describe("AiProviderService", () => {
         vendor: "openai",
         accountId: "owner_codex",
         accessSourceId: "owner_openai_profile",
-        defaultModelId: "provider-default",
+        defaultModelId: null,
       }),
     ]));
     expect(initialProviderSettingsConfiguration(snapshot).harnesses).toEqual([

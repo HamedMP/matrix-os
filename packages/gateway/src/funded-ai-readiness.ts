@@ -1,5 +1,6 @@
-import { FundedAiRuntimeFundingSummaryResponseSchema, type AiProviderReadiness } from "@matrix-os/contracts";
+import { FundedAiRouteReadinessReceiptSchema, FundedAiRuntimeFundingSummaryResponseSchema, type AiProviderReadiness } from "@matrix-os/contracts";
 import type { FundedAiFundingSummaryReader } from "./funded-ai-funding-summary-client.js";
+import type { FundedAiRouteReadinessReader } from "./funded-ai-route-readiness-client.js";
 
 // The funding-summary client owns its bounded 5s request. Keep this outer
 // deadline slightly longer so a cold control plane gets the full request
@@ -10,64 +11,69 @@ export interface FundedAiReadiness {
   readiness: AiProviderReadiness;
   allowedModelIds: string[];
 }
-export interface FundedAiReadinessReader { read(): Promise<FundedAiReadiness> }
+export interface FundedAiReadinessReader { read(options?: { signal?: AbortSignal }): Promise<FundedAiReadiness> }
 
 export function createFundedAiReadinessReader(options: {
-  relayBaseUrl: string;
   summary: FundedAiFundingSummaryReader;
-  fetchFn?: typeof fetch;
+  routes?: FundedAiRouteReadinessReader;
   now?: () => Date;
 }): FundedAiReadinessReader {
-  // Operator configuration, never a user-supplied URL. No redirects are permitted.
-  const healthUrl = new URL("/health", options.relayBaseUrl);
-  if (healthUrl.protocol !== "https:" || healthUrl.username || healthUrl.password) {
-    throw new Error("Invalid funded relay health configuration");
-  }
-  const fetchFn = options.fetchFn ?? fetch;
   const now = options.now ?? (() => new Date());
   let inFlight: Promise<FundedAiReadiness> | undefined;
 
-  async function readFresh(): Promise<FundedAiReadiness> {
+  async function readFresh(callerSignal?: AbortSignal): Promise<FundedAiReadiness> {
     const checkedAt = now();
     const unavailable: FundedAiReadiness = {
       readiness: { state: "unavailable", checkedAt: checkedAt.toISOString(), staleAfter: null,
         action: "retry", safeReason: "provider_unavailable" },
       allowedModelIds: [],
     };
+    if (!options.routes) return unavailable;
     const controller = new AbortController();
     // The controller cancels sibling work when either dependency settles with
     // an error; the platform timeout independently bounds the external fetch.
-    const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(2_000)]);
+    const signal = callerSignal ? AbortSignal.any([callerSignal, controller.signal]) : controller.signal;
     let timeout: ReturnType<typeof setTimeout> | undefined;
+    let onAbort: (() => void) | undefined;
     try {
+      if (signal.aborted) return unavailable;
       const deadline = new Promise<never>((_resolve, reject) => {
+        onAbort = () => reject(new Error("Funded readiness cancelled"));
+        signal.addEventListener("abort", onAbort, { once: true });
         timeout = setTimeout(() => {
           controller.abort();
           reject(new Error("Funded readiness deadline exceeded"));
         }, READINESS_DEADLINE_MS);
       });
-      const [raw, healthy] = await Promise.race([Promise.all([
+      const [raw, rawReceipt] = await Promise.race([Promise.all([
         options.summary.getFundingSummary({ signal }),
-        fetchFn(healthUrl.toString(), { redirect: "error", signal }).then(async (response) => {
-          await response.body?.cancel();
-          return response.ok;
-        }),
+        options.routes.getRouteReadiness({ signal }),
       ]), deadline]);
       const { policy, funding } = FundedAiRuntimeFundingSummaryResponseSchema.parse({ contractVersion: 1, ...raw });
+      const receipt = FundedAiRouteReadinessReceiptSchema.parse(rawReceipt);
       const current = now().getTime();
-      if (!healthy || !policy.enabled || Date.parse(policy.checkedAt) > current
-        || Date.parse(policy.staleAfter) <= current || funding.remainingBudgetMicrousd === 0) return unavailable;
-      const allowedModelIds = policy.allowedModelIds.map((id) => id.replace(/^anthropic\//, ""));
+      signal.throwIfAborted();
+      const ledgerAsOf = Date.parse(funding.asOf);
+      if (!policy.enabled || Date.parse(policy.checkedAt) > current
+        || Date.parse(policy.staleAfter) <= current || funding.remainingBudgetMicrousd === 0
+        || ledgerAsOf > current + 60_000 || current - ledgerAsOf > 5 * 60_000) return unavailable;
+      if (receipt.globalRevision !== policy.globalRevision || receipt.runtimeRevision !== policy.runtimeRevision
+        || Date.parse(receipt.checkedAt) > current || Date.parse(receipt.staleAfter) <= current
+        || receipt.readyModelIds.some((id) => !policy.allowedModelIds.includes(id))) return unavailable;
+      const allowedModelIds = policy.allowedModelIds
+        .filter((id) => receipt.readyModelIds.includes(id))
+        .map((id) => id.replace(/^anthropic\//, ""));
       if (allowedModelIds.length === 0) return unavailable;
-      if (funding.remainingBalanceMicrousd === 0) return {
+      const staleAfter = new Date(Math.min(Date.parse(policy.staleAfter), Date.parse(receipt.staleAfter), checkedAt.getTime() + 30_000)).toISOString();
+      if (funding.remainingBalanceMicrousd === 0) return funding.topUpEnabled === true ? {
         readiness: { state: "unavailable", checkedAt: checkedAt.toISOString(),
-          staleAfter: new Date(Math.min(Date.parse(policy.staleAfter), checkedAt.getTime() + 30_000)).toISOString(),
+          staleAfter,
           action: "retry", safeReason: "credit_required" },
         allowedModelIds,
-      };
+      } : unavailable;
       return {
         readiness: { state: "ready", checkedAt: checkedAt.toISOString(),
-          staleAfter: new Date(Math.min(Date.parse(policy.staleAfter), checkedAt.getTime() + 30_000)).toISOString(),
+          staleAfter,
           action: "none", safeReason: null },
         allowedModelIds,
       };
@@ -76,12 +82,16 @@ export function createFundedAiReadinessReader(options: {
       return unavailable;
     } finally {
       if (timeout !== undefined) clearTimeout(timeout);
+      if (onAbort) signal.removeEventListener("abort", onAbort);
       controller.abort();
     }
   }
 
   return {
-    read() {
+    read(call = {}) {
+      // An execution observer owns cancellation; it cannot abort another
+      // concurrent Settings observer's shared observation.
+      if (call.signal) return readFresh(call.signal);
       // Share only concurrent observations for this runtime. Never retain a
       // settled authorization decision: the next read must see policy changes.
       inFlight ??= readFresh().finally(() => { inFlight = undefined; });

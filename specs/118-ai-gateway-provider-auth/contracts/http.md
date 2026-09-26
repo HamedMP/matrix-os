@@ -18,10 +18,35 @@ All route schemas use `zod/v4`. Every mutating route uses Hono `bodyLimit` befor
 | `POST` | `/v1/messages/count_tokens` | central relay | Same relay service credential | 256 KiB | Optional funded token-count endpoint |
 | `GET` | `/health/ready` | central relay | Platform/internal health auth; never public detail | n/a | Coarse readiness |
 | `POST` | `/internal/containers/:handle/ai/funding-summary` | platform internal | Exact per-handle platform HMAC; owner/machine/runtime derived from the running machine record | 1 KiB | Identity-free authoritative Matrix credit and monthly-budget summary |
+| `POST` | `/internal/containers/:handle/ai/route-readiness` | platform internal | Exact per-handle platform HMAC; owner/machine/runtime derived from the running machine record | 1 KiB | No-grant, model-specific readiness receipt bound to current policy revisions |
 | `POST` | `/billing/ai-credit/checkout` | platform | Authenticated Clerk owner; active machine/runtime derived server-side | 16 KiB | Create hosted Stripe Checkout for one server-owned add-on package |
 | `POST` | `/billing/webhooks/stripe` | platform | Stripe signature over the exact raw body | 1 MiB | Verify paid add-on completion and atomically record receipt + ledger grant |
 
 The exact prefix can be adapted to existing `/api/settings` compatibility routes. Compatibility routes must call the same service and return the canonical state; they cannot maintain a second provider truth.
+
+The funding-summary and route-readiness request bodies are strict-empty schemas;
+their queries require the validated runtime slot. Route-readiness returns only
+model IDs, current policy revisions, and bounded observation timestamps. The
+relay control credential remains on Platform. With no explicit daily and minute
+operator probe-count limits (`MATRIX_FUNDED_AI_MODEL_PROBE_DAILY_LIMIT` and
+`MATRIX_FUNDED_AI_MODEL_PROBE_MINUTE_LIMIT`), Platform makes no paid upstream probes. Admission
+for both counters is one conditional Postgres write; a receipt never substitutes
+for execution-time policy and credit authorization. Probe-count limits bound
+calls, not verified dollar spend. The limits must match across Platform replicas;
+a same-day mismatch fails closed until the next UTC day. GLM Flash and Sonnet 5 are the only currently
+probed models; Jev requires its own priced, exact-wire readiness path.
+
+The authenticated relay `GET /ready?model=<canonical-id>` success response is
+`{ "ready": true, "priceValidThrough": "<ISO timestamp>" }`. The timestamp
+comes from the same local model price table used for admission. Platform accepts
+only this bounded success shape and caps positive cache freshness at both 30
+seconds and `priceValidThrough`; a missing timestamp or a price that expires
+during the probe fails closed. Runtime route-readiness and checkout pass their
+request deadlines into the shared probe service. It cancels an abandoned probe
+when its last caller expires; a second active caller may continue the same
+coalesced probe. Deploy the relay response before Platform requires the new
+field: the old Platform ignores the extra field, while the new Platform safely
+rejects a bare `{"ready":true}` from an old relay.
 
 The funding-summary request body and query are both strict-empty schemas. Its
 response contains only `contractVersion` plus reconciled microusd funding

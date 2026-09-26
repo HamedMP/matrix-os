@@ -22,6 +22,7 @@ function mockContext(path: string, authHeader?: string, queryToken?: string, ip?
     req: {
       path,
       url,
+      raw: new Request(url),
       header: (name: string) => {
         const lower = name.toLowerCase();
         if (name === "Authorization") return authHeader;

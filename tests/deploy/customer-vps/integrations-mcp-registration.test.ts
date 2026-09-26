@@ -1,5 +1,8 @@
-import { access, readFile } from "node:fs/promises";
+import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { constants } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const registrationPath = "distro/customer-vps/host-bin/matrix-register-integrations-mcp";
@@ -7,6 +10,71 @@ const launcherPath = "distro/customer-vps/host-bin/matrix-integrations-mcp";
 const terminalPath = "distro/customer-vps/host-bin/matrix-integrations";
 
 describe("customer VPS integrations MCP wiring", () => {
+  it.each(["full", "custom-mcp-call", "custom-mcp-discovery", "jev-inbox-preview"])("forwards the %s selector through the installed credential-isolating wrapper", async surface => {
+    const fixtureDir = await mkdtemp(join(tmpdir(), "matrix-mcp-surface-wrapper-"));
+    try {
+      const serverPath = join(fixtureDir, "server.cjs");
+      await writeFile(serverPath, `console.log(JSON.stringify({args:process.argv.slice(2),scoped:process.env.MATRIX_AGENT_INTEGRATIONS_TOKEN==="${"a".repeat(64)}",host:process.env.MATRIX_AUTH_TOKEN!==undefined,privateValue:process.env.PRIVATE_FIXTURE!==undefined}));`);
+      const launcher = (await readFile(launcherPath, "utf8"))
+        .replace('NODE_BIN="/opt/matrix/runtime/node/bin/node"', `NODE_BIN="${process.execPath}"`)
+        .replace('SERVER_PATH="/opt/matrix/app/packages/integrations-mcp/dist/cli.js"', `SERVER_PATH="${serverPath}"`);
+      const result = spawnSync("bash", ["-c", launcher, "surface-fixture", "--require-scoped-capability", `--tool-surface=${surface}`], {
+        encoding: "utf8", timeout: 5_000,
+        env: { PATH: process.env.PATH ?? "", MATRIX_AGENT_INTEGRATIONS_TOKEN: "a".repeat(64), MATRIX_AUTH_TOKEN: "must-not-forward", PRIVATE_FIXTURE: "must-not-forward" },
+      });
+      expect(result.status).toBe(0);
+      expect(JSON.parse(result.stdout)).toEqual({ args: [`--tool-surface=${surface}`], scoped: true, host: false, privateValue: false });
+    } finally { await rm(fixtureDir, { recursive: true, force: true }); }
+  });
+
+  it("rejects unknown or duplicate selector arguments before reading credentials", () => {
+    for (const args of [["--tool-surface=unknown"], ["--tool-surface=full", "--tool-surface=custom-mcp-call"]]) {
+      const result = spawnSync("bash", [launcherPath, ...args], { encoding: "utf8", env: { PATH: process.env.PATH ?? "" } });
+      expect(result.status).toBe(3);
+      expect(result.stderr).toContain("unsupported launcher arguments");
+      expect(result.stderr).not.toContain("Matrix identity is unavailable");
+    }
+  });
+
+  it("fails a scoped canonical Chat launch before any host-bearer fallback", () => {
+    const result = spawnSync("bash", [launcherPath, "--require-scoped-capability"], {
+      encoding: "utf8",
+      env: { PATH: process.env.PATH ?? "" },
+    });
+    expect(result.status).toBe(3);
+    expect(result.stderr).toContain("run capability is unavailable");
+    expect(result.stderr).not.toContain("Matrix authentication is unavailable");
+  });
+
+  it.each(["", " ", "invalid-token"])("rejects a present invalid MCP Run token before ancestry or host fallback (%j)", (invalidToken) => {
+    const result = spawnSync("bash", [launcherPath], {
+      encoding: "utf8",
+      env: { PATH: process.env.PATH ?? "", MATRIX_AGENT_INTEGRATIONS_TOKEN: invalidToken },
+    });
+    expect(result.status).toBe(3);
+    expect(result.stderr).toContain("run capability or runtime is invalid");
+    expect(result.stderr).not.toContain("Matrix authentication is unavailable");
+  });
+
+  it("accepts bounded host bearer syntax in the MCP launcher's Bash", async () => {
+    const launcher = await readFile(launcherPath, "utf8");
+    const validator = launcher.match(/^valid_host_bearer\(\) \{[\s\S]*?^\}/m)?.[0];
+    expect(validator).toBeDefined();
+    for (const [token, valid] of [
+      ["A".repeat(15), false],
+      ["A".repeat(16), true],
+      ["A".repeat(512), true],
+      ["A".repeat(513), false],
+      ["A".repeat(16) + "!", false],
+    ] as const) {
+      const result = spawnSync("bash", ["-c", `${validator}\nvalid_host_bearer "$TOKEN"`], {
+        encoding: "utf8", env: { PATH: process.env.PATH ?? "", TOKEN: token },
+      });
+      expect(result.status).toBe(valid ? 0 : 1);
+    }
+    expect(launcher).toContain('valid_host_bearer "$MATRIX_AUTH_TOKEN_VALUE"');
+  });
+
   it("ships an executable stdio launcher that isolates host credentials and forwards a scoped Run capability", async () => {
     const launcher = await readFile(launcherPath, "utf8");
 
@@ -30,6 +98,62 @@ describe("customer VPS integrations MCP wiring", () => {
     expect(terminal).toContain("packages/integrations-mcp/dist/command-cli.js");
     expect(terminal).not.toContain("PIPEDREAM_");
     await expect(access(terminalPath, constants.X_OK)).resolves.toBeUndefined();
+  });
+
+  it("keeps an absent capability on the host path but rejects any supplied malformed capability", async () => {
+    const fixtureDir = await mkdtemp(join(tmpdir(), "matrix-integrations-wrapper-"));
+    try {
+      const hostEnv = join(fixtureDir, "host.env");
+      const nodeBin = join(fixtureDir, "fake-node");
+      const commandPath = join(fixtureDir, "command-cli.js");
+      await writeFile(hostEnv, "MATRIX_AUTH_TOKEN=fixture-host-token\nMATRIX_CLERK_USER_ID=fixture_owner\n");
+      await writeFile(nodeBin, '#!/bin/sh\nprintf "scoped=%s host=%s owner=%s\\n" "${MATRIX_AGENT_INTEGRATIONS_TOKEN-UNSET}" "${MATRIX_AUTH_TOKEN-UNSET}" "${MATRIX_CLERK_USER_ID-UNSET}"\n', { mode: 0o755 });
+      await writeFile(commandPath, "// fixture only\n");
+      const terminal = (await readFile(terminalPath, "utf8"))
+        .replace('HOST_ENV_FILE="/opt/matrix/env/host.env"', `HOST_ENV_FILE="${hostEnv}"`)
+        .replace('NODE_BIN="/opt/matrix/runtime/node/bin/node"', `NODE_BIN="${nodeBin}"`)
+        .replace('COMMAND_PATH="/opt/matrix/app/packages/integrations-mcp/dist/command-cli.js"', `COMMAND_PATH="${commandPath}"`);
+      const run = (scopedToken?: string) => spawnSync("bash", ["-c", terminal, "matrix-integrations", "inventory"], {
+        env: scopedToken === undefined
+          ? { PATH: process.env.PATH ?? "/usr/bin:/bin" }
+          : { PATH: process.env.PATH ?? "/usr/bin:/bin", MATRIX_AGENT_INTEGRATIONS_TOKEN: scopedToken },
+        encoding: "utf8",
+        timeout: 5_000,
+      });
+
+      const absent = run();
+      expect(absent.status, absent.stderr).toBe(0);
+      expect(absent.stdout).toContain("scoped=UNSET host=fixture-host-token owner=fixture_owner");
+
+      for (const scopedToken of ["", " ", "not-a-scoped-token"]) {
+        const supplied = run(scopedToken);
+        expect(supplied.status).toBe(3);
+        expect(supplied.stderr).toContain("run capability or runtime is invalid");
+        expect(supplied.stdout).toBe("");
+      }
+
+      const scopedToken = "a".repeat(64);
+      const valid = run(scopedToken);
+      expect(valid.status, valid.stderr).toBe(0);
+      expect(valid.stdout).toContain(`scoped=${scopedToken} host=UNSET owner=UNSET`);
+
+      for (const hostToken of ["a".repeat(16), "a".repeat(512)]) {
+        await writeFile(hostEnv, `MATRIX_AUTH_TOKEN=${hostToken}\nMATRIX_CLERK_USER_ID=fixture_owner\n`);
+        const accepted = run();
+        expect(accepted.status, accepted.stderr).toBe(0);
+        expect(accepted.stdout).toContain(`scoped=UNSET host=${hostToken} owner=fixture_owner`);
+      }
+
+      for (const hostToken of ["a".repeat(15), "a".repeat(513), "a".repeat(16) + "!"]) {
+        await writeFile(hostEnv, `MATRIX_AUTH_TOKEN=${hostToken}\nMATRIX_CLERK_USER_ID=fixture_owner\n`);
+        const rejected = run();
+        expect(rejected.status).toBe(3);
+        expect(rejected.stderr).toContain("Matrix identity is invalid");
+        expect(rejected.stdout).toBe("");
+      }
+    } finally {
+      await rm(fixtureDir, { recursive: true, force: true });
+    }
   });
 
   it("idempotently registers the same local MCP server with Codex, Claude, Hermes, and OpenClaw", async () => {

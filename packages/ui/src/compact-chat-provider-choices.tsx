@@ -7,6 +7,7 @@ import type {
 } from "@matrix-os/contracts";
 import type { CanonicalProviderChoice } from "./canonical-provider-choice.js";
 import { canonicalProviderAvailabilityLabel } from "./canonical-provider-choice.js";
+import { useLocalObservationExpiry } from "./local-observation-expiry.js";
 import "./compact-chat-provider-choices.css";
 
 function modelProviderLabel(modelId: string): string | null {
@@ -128,7 +129,8 @@ function TwoPaneChatProviderChoices({
             const unavailable = instance.availability !== "available";
             const locked = lockedInstanceId !== undefined && instance.id !== lockedInstanceId;
             const setupBrowsable = unavailable && Boolean(onSetupAction && instance.setupActions.length);
-            const disabled = (locked && !setupBrowsable) || (unavailable && !setupBrowsable);
+            const disabledReasonBrowsable = instance.unavailabilityReason === "disabled_in_settings";
+            const disabled = (locked || unavailable) && !setupBrowsable && !disabledReasonBrowsable;
             const active = activeInstance?.id === instance.id;
             const availability = canonicalProviderAvailabilityLabel(instance);
             return <button key={instance.id} type="button"
@@ -167,6 +169,7 @@ function TwoPaneChatProviderChoices({
         {activeChoices.map((choice) => {
           const active = choice.instanceId === selected?.instanceId && choice.modelId === selected.modelId;
           const locked = lockedInstanceId !== undefined && choice.instanceId !== lockedInstanceId;
+          const choiceInstance = catalog.instances.find((instance) => instance.id === choice.instanceId);
           return <button key={`${choice.instanceId}:${choice.modelId}`} type="button" role="option"
             aria-label={`${choice.modelLabel} via ${choice.harnessLabel}${choice.connectionLabel && choice.connectionLabel !== choice.harnessLabel ? ` · ${choice.connectionLabel}` : ""}`}
             aria-selected={active} disabled={locked}
@@ -184,7 +187,7 @@ function TwoPaneChatProviderChoices({
             <span className="min-w-0 flex-1">
               <span className="block truncate font-medium">{choice.modelLabel}</span>
               <span className="matrix-chat-model-secondary block truncate text-xs">
-                {modelProviderLabel(choice.modelId) ? `${modelProviderLabel(choice.modelId)} · ` : ""}{choice.harnessLabel}{choice.connectionLabel && choice.connectionLabel !== choice.harnessLabel ? ` · ${choice.connectionLabel}` : ""} · Available
+                {modelProviderLabel(choice.modelId) ? `${modelProviderLabel(choice.modelId)} · ` : ""}{choice.harnessLabel}{choice.connectionLabel && choice.connectionLabel !== choice.harnessLabel ? ` · ${choice.connectionLabel}` : ""} · {choiceInstance ? canonicalProviderAvailabilityLabel(choiceInstance) : "Access not verified"}
               </span>
             </span>
             {active && <span aria-hidden="true">✓</span>}
@@ -208,6 +211,7 @@ function TwoPaneChatProviderChoices({
 
 /** Shared presentation: readiness, accounts and funded routes come from the canonical catalog. */
 export function CompactChatProviderChoices(props: CompactChatProviderChoicesProps) {
+  useLocalObservationExpiry(props.catalog?.instances.map((instance) => instance.localObservation?.staleAfter) ?? []);
   return props.catalog
     ? <TwoPaneChatProviderChoices {...props} catalog={props.catalog} />
     : <FlatChatProviderChoices {...props} />;

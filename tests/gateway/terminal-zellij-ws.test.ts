@@ -1403,6 +1403,8 @@ describe("zellij terminal WebSocket", () => {
       req: {
         path: "/ws/terminal/tab",
         url,
+        raw: new Request(url),
+        method: "GET",
         header: (name: string) => (
           name.toLowerCase() === "authorization" ? authorization : undefined
         ),

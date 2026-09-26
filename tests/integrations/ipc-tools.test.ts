@@ -145,6 +145,17 @@ describe("connect_service handler", () => {
     expect(() => gatewayAuthHeaders()).toThrow("LegacyAgentDelegationRejected");
     vi.unstubAllEnvs();
   });
+
+  it.each(["", " "])("rejects present malformed scoped token %j before host fallback", (scopedToken) => {
+    vi.stubEnv("MATRIX_AUTH_TOKEN", "test-only-runtime-token");
+    process.env.MATRIX_CLERK_USER_ID = "preview_host_owner";
+    process.env.MATRIX_AGENT_INTEGRATIONS_TOKEN = scopedToken;
+    try {
+      expect(() => gatewayAuthHeaders()).toThrow("InvalidAgentIntegrationCapability");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
 });
 
 describe("integration discovery", () => {

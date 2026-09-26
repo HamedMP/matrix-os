@@ -15,7 +15,9 @@ import {
   normalizeFundedJevEvaluationResponse,
   reviewedJevPricing,
   serializeFundedJevEvaluationRequest,
+  JEV_PRICING_VALID_THROUGH,
 } from "./funded-relay-evaluation.js";
+import { JEV_READINESS_PATH, jevProbeControlAuthorized, fixedJevProbeRequest, assertJevProbeSettlement } from "./funded-relay-jev-probe.js";
 import { estimateWorstCaseMicrousd, FUNDED_GLM_FLASH, mapFundedModel, maximumFundedInputTokens } from "./funded-relay-model.js";
 import { serializeFundedOpenAiRequest, workersAiTarget } from "./funded-relay-openai-request.js";
 import { normalizeWorkersAiResponse } from "./funded-relay-workers-response.js";
@@ -533,7 +535,7 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
     }
   }
 
-  async function handleEvaluation(c: Context, state: ActiveRequestState): Promise<Response> {
+  async function handleEvaluation(c: Context, state: ActiveRequestState, probe = false): Promise<Response> {
     if (!config.workersAiToken) {
       return jevNotStarted(errorResponse(c, 503, "api_error", "AI access is temporarily unavailable"));
     }
@@ -546,7 +548,7 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
     }
     let requestBody: string;
     try {
-      const body: unknown = JSON.parse(await c.req.text());
+      const body: unknown = probe ? fixedJevProbeRequest() : JSON.parse(await c.req.text());
       requestBody = serializeFundedJevEvaluationRequest(body).body;
     } catch (error) {
       if (error instanceof Error && error.name === "BodyLimitError") throw error;
@@ -579,6 +581,7 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
         modelId: JEV_MODEL_ID,
         maxCostMicrousd: config.jevMaxCostMicrousd,
         billingMode: "usage",
+        jevPricingVersion: pricing.version,
       }, state.lifetimeSignal);
     } catch (error) {
       return jevNotStarted(controlPlaneError(c, error));
@@ -587,7 +590,8 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
     if (!identitiesMatch(checked.identity, authorization.identity)
       || reservation.requestId !== requestId || reservation.modelId !== JEV_MODEL_ID
       || reservation.billingMode !== "usage" || reservation.reservedMicrousd <= 0
-      || reservation.reservedMicrousd > config.jevMaxCostMicrousd) {
+      || reservation.reservedMicrousd > config.jevMaxCostMicrousd
+      || reservation.jevPricingVersion !== pricing.version) {
       await releaseBeforeStart(reservation.reservationId, authorization.identity.tokenId);
       return jevNotStarted(errorResponse(c, 503, "api_error", "AI access is temporarily unavailable"));
     }
@@ -612,7 +616,11 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
       reservationId: reservation.reservationId,
       tokenId: authorization.identity.tokenId,
     };
-    const enqueueFinalization = (result: FundedFinalization): void => {
+    const enqueueFinalization = (result: FundedFinalization | {
+      mode: "exact";
+      actualCostMicrousd: number;
+      jevProvenance: { resolvedModel: string; pricingVersion: string };
+    }): void => {
       if (result.mode === "exact" && result.actualCostMicrousd <= config.jevMaxCostMicrousd) {
         settlementQueue.enqueue({ ...finalizationLocator, ...result });
       } else {
@@ -682,10 +690,32 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
         || normalized.actualCostMicrousd > config.jevMaxCostMicrousd) {
         throw new Error("Jev response cost was unavailable or exceeded its bound");
       }
-      enqueueFinalization({ mode: "exact", actualCostMicrousd: normalized.actualCostMicrousd });
+      const finalization = {
+        mode: "exact",
+        actualCostMicrousd: normalized.actualCostMicrousd,
+        jevProvenance: {
+          resolvedModel: normalized.resolvedModel,
+          pricingVersion: normalized.pricingVersion,
+        },
+      } as const;
+      if (probe) {
+        try {
+          const settled = await platform.finalize({ ...finalizationLocator, ...finalization }, state.lifetimeSignal);
+          assertJevProbeSettlement(settled, { ...finalizationLocator, requestId, actualCostMicrousd: normalized.actualCostMicrousd });
+          state.lifetimeSignal.throwIfAborted();
+          const latest = await platform.check(checkInput.data, state.lifetimeSignal);
+          if (!identitiesMatch(checked.identity, latest.identity)
+            || checked.policy.globalRevision !== latest.policy.globalRevision
+            || checked.policy.runtimeRevision !== latest.policy.runtimeRevision) throw new Error("Jev probe authorization changed");
+          reviewedJevPricing(now()); state.lifetimeSignal.throwIfAborted();
+        } catch (error) {
+          enqueueFinalization(finalization);
+          throw error;
+        }
+      } else enqueueFinalization(finalization);
       resourceLease.release();
       state.resourceLease = null;
-      return c.json(normalized.result, 200);
+      return probe ? c.json({ ready: true, priceValidThrough: JEV_PRICING_VALID_THROUGH }, 200) : c.json(normalized.result, 200);
     } catch (error) {
       if (!started) {
         await releaseBeforeStart(reservation.reservationId, authorization.identity.tokenId);
@@ -708,11 +738,15 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
   return {
     register(app) {
       app.use("/v1/*", async (c, next) => {
+        if (c.req.path === JEV_READINESS_PATH
+          && !jevProbeControlAuthorized(c.req.header("authorization"), config.relayControlToken)) {
+          return errorResponse(c, 403, "permission_error", "AI access is unavailable");
+        }
         const providedKey = fundedCredential(c);
         if (!isFundedProxyApiKey(providedKey)) return next();
         if (c.req.method !== "POST") return errorResponse(c, 404, "not_found_error", "AI route not found");
         if (c.req.path !== MESSAGES_PATH && c.req.path !== COUNT_TOKENS_PATH
-          && c.req.path !== CHAT_COMPLETIONS_PATH && c.req.path !== EVALUATE_PATH) {
+          && c.req.path !== CHAT_COMPLETIONS_PATH && c.req.path !== EVALUATE_PATH && c.req.path !== JEV_READINESS_PATH) {
           return errorResponse(c, 404, "not_found_error", "AI route not found");
         }
         const search = new URL(c.req.url).search;
@@ -763,11 +797,26 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
       app.use(MESSAGES_PATH, async (c, next) => requestStates.has(c) ? messagesLimit(c, next) : next());
       app.use(CHAT_COMPLETIONS_PATH, async (c, next) => requestStates.has(c) ? messagesLimit(c, next) : next());
       app.use(EVALUATE_PATH, async (c, next) => requestStates.has(c) ? messagesLimit(c, next) : next());
+      app.use(JEV_READINESS_PATH, limit(1024));
+      app.use(JEV_READINESS_PATH, async (c, next) => {
+        if (!requestStates.has(c)) return next();
+        try {
+          const body: unknown = JSON.parse(await c.req.text());
+          if (!body || typeof body !== "object" || Array.isArray(body) || Object.keys(body).length !== 0) {
+            return errorResponse(c, 400, "invalid_request_error", "Invalid AI request");
+          }
+        } catch (error) {
+          console.warn("[proxy] Invalid Jev probe body", { errorName: error instanceof Error ? error.name : "UnknownError" });
+          return errorResponse(c, 400, "invalid_request_error", "Invalid AI request");
+        }
+        return next();
+      });
       app.use(COUNT_TOKENS_PATH, async (c, next) => requestStates.has(c) ? countLimit(c, next) : next());
       app.all("/v1/*", async (c, next) => {
         const state = requestStates.get(c);
         if (!state) return next();
-        return c.req.path === EVALUATE_PATH ? handleEvaluation(c, state) : handle(c, state);
+        return c.req.path === EVALUATE_PATH || c.req.path === JEV_READINESS_PATH
+          ? handleEvaluation(c, state, c.req.path === JEV_READINESS_PATH) : handle(c, state);
       });
     },
     async close() {

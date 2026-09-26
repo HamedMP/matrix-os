@@ -1,15 +1,5 @@
 import type { Metadata, Viewport } from "next";
-import {
-  Bricolage_Grotesque,
-  Cormorant_Garamond,
-  Geist,
-  Geist_Mono,
-  Instrument_Sans,
-  Instrument_Serif,
-  Inter,
-  JetBrains_Mono,
-  Orbitron,
-} from "next/font/google";
+import "./fonts.css";
 import { ClerkProvider } from "@clerk/nextjs";
 import { platformShellAssetPath } from "@/lib/platform-shell-assets";
 import { buildShellMetadata } from "@/lib/shell-metadata";
@@ -24,68 +14,6 @@ import { InstallPrompt } from "@/components/pwa/InstallPrompt";
 import { PostHogIdentify } from "@/components/PostHogIdentify";
 import { Toaster } from "@/components/ui/sonner";
 import { AppProviders } from "./providers";
-
-const inter = Inter({
-  variable: "--font-inter",
-  subsets: ["latin"],
-  preload: false,
-});
-
-// Default shell sans — matches the landing site's --font-sans (Instrument Sans).
-const instrumentSans = Instrument_Sans({
-  variable: "--font-instrument",
-  subsets: ["latin"],
-  preload: false,
-});
-
-const instrumentSerif = Instrument_Serif({
-  variable: "--font-serif-display",
-  subsets: ["latin"],
-  weight: "400",
-  style: ["normal", "italic"],
-  preload: false,
-});
-
-const jetbrainsMono = JetBrains_Mono({
-  variable: "--font-jetbrains",
-  subsets: ["latin"],
-  preload: false,
-});
-
-const cormorant = Cormorant_Garamond({
-  variable: "--font-serif",
-  subsets: ["latin"],
-  weight: ["300", "400", "500"],
-  preload: false,
-});
-
-const orbitron = Orbitron({
-  variable: "--font-orbitron",
-  subsets: ["latin"],
-  weight: ["400", "500", "600", "700"],
-  preload: false,
-});
-
-const geistSans = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
-  preload: false,
-});
-
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
-  preload: false,
-});
-
-// Landing/brand display face. `block` prevents the Matrix loading wordmark from
-// visibly swapping between a fallback face and Bricolage during hydration.
-const bricolage = Bricolage_Grotesque({
-  variable: "--font-bricolage",
-  subsets: ["latin"],
-  display: "block",
-  preload: false,
-});
 
 export async function generateMetadata(): Promise<Metadata> {
   const metadata = await buildShellMetadata(process.env.GATEWAY_URL);
@@ -140,7 +68,7 @@ export default function RootLayout({
       // replay without rebuilding the bundle.
       data-posthog-disable-replay={process.env.POSTHOG_DISABLE_REPLAY ? "1" : undefined}
     >
-      <body className={`${inter.variable} ${instrumentSans.variable} ${instrumentSerif.variable} ${jetbrainsMono.variable} ${cormorant.variable} ${orbitron.variable} ${geistSans.variable} ${geistMono.variable} ${bricolage.variable}`}>
+      <body className="matrix-shell-fonts">
         <AppProviders>{children}</AppProviders>
         {includePostHogIdentify ? <PostHogIdentify /> : null}
         <PwaRegister />

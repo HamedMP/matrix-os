@@ -2,6 +2,14 @@ import { z } from "zod/v4";
 
 export const JEV_EMAIL_TRIAGE_RECIPE_ID = "email-triage-v1" as const;
 export const JEV_MODEL_ID = "typesafe/jev" as const;
+export const JevInboxGmailIdSchema = z.string().min(1).max(160).regex(/^[A-Za-z0-9_-]+$/);
+export const JEV_PRICING_VERSION = "typesafe-jev-input-2026-09" as const;
+export const JevProvenanceSchema = z.object({
+  resolvedModel: z.string().min(1).max(128).regex(/^jev-[a-zA-Z0-9._-]+$/),
+  // Historical results must remain readable after a future reviewed price
+  // version replaces the one accepted for new authorizations.
+  pricingVersion: z.string().max(80).regex(/^typesafe-jev-input-\d{4}-\d{2}$/),
+}).strict();
 export const JEV_EMAIL_TRIAGE_ANSWER_IDS = [
   "urgent",
   "needs_reply",
@@ -66,6 +74,7 @@ export const JevEmailTriageResultSchema = z.object({
   cost: z.object({
     gatewayUsd: z.string().regex(/^(?:0|[1-9]\d*)(?:\.\d{1,12})?$/),
   }).strict().optional(),
+  provenance: JevProvenanceSchema.optional(),
 }).strict().superRefine((result, context) => {
   const actualIds = new Set(result.answers.map((answer) => answer.id));
   for (const id of JEV_EMAIL_TRIAGE_ANSWER_IDS) {

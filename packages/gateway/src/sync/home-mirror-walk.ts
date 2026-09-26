@@ -14,6 +14,8 @@ export interface WalkFilters {
   /** File-level ignore decision (see isHomeMirrorIgnored). */
   ignored: (relPath: string) => boolean;
   log: { error: (msg: string, ...args: unknown[]) => void };
+  /** Aborts an in-progress walk during shutdown. */
+  signal?: () => AbortSignal | undefined;
 }
 
 function isMissing(err: unknown): boolean {
@@ -77,9 +79,11 @@ export async function collectLocalFiles(
       `local file walk exceeded max depth of ${LOCAL_WALK_DEPTH_CAP}`,
     );
   }
+  filters.signal?.()?.throwIfAborted();
   const entries = await readdir(dir, { withFileTypes: true });
 
   for (const entry of entries) {
+    filters.signal?.()?.throwIfAborted();
     const relPath = relDir ? join(relDir, entry.name) : entry.name;
     const absPath = join(dir, entry.name);
 
