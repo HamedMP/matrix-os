@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import React from "react";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { cleanup, render, screen } from "@testing-library/react";
 import { canonicalChatApprovals, type CanonicalChatDetailResponse, type CanonicalChatApprovalDecision } from "@matrix-os/contracts";
 import { createCanonicalChatFixture } from "../contracts/fixtures/canonical-chat";
@@ -36,7 +36,8 @@ function resolve(detail: CanonicalChatDetailResponse, decision: CanonicalChatApp
     occurredAt: run.updatedAt, type: "approval.resolved", approvalId: "approval-fetch", decision });
 }
 
-afterEach(cleanup);
+beforeEach(() => vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} }));
+afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 it.each([false, true])("shows a bounded private-value-free Custom MCP summary (legacy=%s)", legacy => {
   const detail = fixture(legacy);
@@ -66,6 +67,35 @@ it("does not expose arbitrary argument names or nested values", () => {
   expect(summary).toContain("url: object (value withheld)");
 });
 
+it.each([`Server ${server}\nTool fetch\nBearer fixture-injected-token\nArguments {}`,
+  `Server ${server}\nTool fetch\nArguments []`, `Server ${server}\nTool fetch\nArguments null`])("rejects an injected or non-object Custom MCP envelope", text => {
+  expect(canonicalChatApprovals(fixture(false, text))[0]!.description).toBe("Details withheld for privacy.");
+});
+
+it.each([false, true])("does not echo an invalid Custom MCP tool in its title (legacy=%s)", legacy => {
+  const detail = fixture(legacy, `Server ${server}\nTool fetch\nBearer fixture-injected-token\nArguments {}`);
+  const rawTitle = "Allow fetch Bearer fixture-injected-token?";
+  if (legacy) {
+    const part = detail.messages.at(-1)!.parts[0]!;
+    if (part.type === "approval_request") part.title = rawTitle;
+  } else {
+    const activity = detail.activities[0]!;
+    if (activity.type === "approval.requested") activity.title = rawTitle;
+  }
+  expect(canonicalChatApprovals(detail)[0]!.title).toBe("Review Custom MCP request");
+  expect(canonicalChatPresentation(detail)[0]!.work.find(item => item.kind === "request")).toMatchObject({ label: "Review Custom MCP request" });
+});
+
+it.each([`Server ${server}\nTool fetch`, `Server ${server}\nTool fetch\nArgument`,
+  `Server ${server}\nTool fetch\nArguments`].flatMap(text => [false, true].map(legacy => ({ text, legacy }))))("withholds a recognizable truncated Custom MCP envelope (legacy=$legacy)", ({ text, legacy }) => {
+  expect(canonicalChatApprovals(fixture(legacy, text))[0]).toMatchObject({ title: "Review Custom MCP request", description: "Details withheld for privacy." });
+});
+
+it("preserves unrelated legacy server/tool prose without the Custom MCP identity format", () => {
+  const text = "Server restart command\nTool bun run test\nReview patch before continuing.";
+  expect(canonicalChatApprovals(fixture(true, text))[0]!.description).toBe(text);
+});
+
 it("renders native details in the actual Electron transcript projection", () => {
   render(<ConversationTranscript turns={canonicalChatPresentation(fixture())} callbacks={{ copyText: vi.fn() }} />);
   expect(screen.getByText(new RegExp(`Server ${server}`))).toBeTruthy();
@@ -91,9 +121,9 @@ it.each((["approve", "approve_for_session", "decline", "cancel"] as const).flatM
 it.each([["approve", "Approved"], ["approve_for_session", "Approved"], ["decline", "Declined"], ["cancel", "Cancelled"]] as const)("renders explicit %s outcome", (decision, label) => {
   const detail = fixture();
   resolve(detail, decision);
-  const { container } = render(<ConversationTranscript turns={canonicalChatPresentation(detail)} callbacks={{ copyText: vi.fn() }} />);
+  render(<ConversationTranscript turns={canonicalChatPresentation(detail)} callbacks={{ copyText: vi.fn() }} />);
   expect(screen.getByText(label)).toBeTruthy();
-  if (decision === "decline" || decision === "cancel") expect(container.querySelector('svg[style*="var(--success)"]')).toBeNull();
+  if (decision === "decline" || decision === "cancel") expect(screen.getByRole("group", { name: /Approval resolved:/ }).querySelector('svg[style*="var(--success)"]')).toBeNull();
 });
 
 it.each([["approve", "Approved"], ["approve_for_session", "Approved"], ["decline", "Declined"], ["cancel", "Cancelled"]] as const)("renders the same %s outcome in the shared Web approval component", (decision, label) => {
@@ -107,9 +137,9 @@ it.each([["approve", "Approved"], ["approve_for_session", "Approved"], ["decline
 it.each(["completed", "failed", "aborted"] as const)("keeps %s without a recorded decision neutral", status => {
   const detail = fixture();
   detail.runs[0]!.status = status;
-  const { container } = render(<ConversationTranscript turns={canonicalChatPresentation(detail)} callbacks={{ copyText: vi.fn() }} />);
+  render(<ConversationTranscript turns={canonicalChatPresentation(detail).map(turn => ({ ...turn, expandedByDefault: true }))} callbacks={{ copyText: vi.fn() }} />);
   expect(screen.getByText("Approval ended without a recorded decision")).toBeTruthy();
-  expect(container.querySelector('svg[style*="var(--success)"]')).toBeNull();
+  expect(screen.getByRole("group", { name: /Approval resolved:/ }).querySelector('svg[style*="var(--success)"]')).toBeNull();
 });
 
 it("does not borrow an identical approval ID's decision from another run", () => {

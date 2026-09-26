@@ -1,5 +1,6 @@
 import {
   CanonicalChatRunIdSchema,
+  canonicalChatApprovalOutcome,
   type CanonicalChatApprovalDecision,
 } from "@matrix-os/contracts";
 import type { ChatMessage } from "@/lib/chat";
@@ -17,6 +18,7 @@ interface CanonicalApprovalView {
   risk: "low" | "medium" | "high";
   allowedDecisions: CanonicalChatApprovalDecision[];
   pending: boolean;
+  decision?: CanonicalChatApprovalDecision;
 }
 
 export function canonicalApproval(message: ChatMessage): CanonicalApprovalView | null {
@@ -30,7 +32,8 @@ export function canonicalApproval(message: ChatMessage): CanonicalApprovalView |
   const allowedDecisions = candidate.allowedDecisions.filter((decision): decision is CanonicalChatApprovalDecision =>
     typeof decision === "string" && APPROVAL_DECISIONS.has(decision as CanonicalChatApprovalDecision));
   if (allowedDecisions.length === 0) return null;
-  return { ...candidate, runId: runId.data, allowedDecisions } as CanonicalApprovalView;
+  const decision = candidate.decision && APPROVAL_DECISIONS.has(candidate.decision) ? candidate.decision : undefined;
+  return { ...candidate, runId: runId.data, allowedDecisions, decision } as CanonicalApprovalView;
 }
 
 function approvalLabel(decision: CanonicalChatApprovalDecision): string {
@@ -55,7 +58,7 @@ export function CanonicalApprovalMessage({
     <div className="space-y-2 rounded-md border border-warning/30 bg-warning/5 px-3 py-2 text-xs">
       <div>
         <p className="font-medium text-foreground">{approval.title}</p>
-        <p className="text-muted-foreground">{approval.description}</p>
+        <p className="whitespace-pre-wrap text-muted-foreground">{approval.description}</p>
       </div>
       {approval.pending && onSubmit ? (
         <div className="flex flex-wrap gap-2">
@@ -72,7 +75,7 @@ export function CanonicalApprovalMessage({
             </Button>
           ))}
         </div>
-      ) : <p className="text-muted-foreground">{approval.pending ? "Approval unavailable" : "Resolved"}</p>}
+      ) : <p className="text-muted-foreground">{approval.pending ? "Approval unavailable" : canonicalChatApprovalOutcome(approval.decision)}</p>}
     </div>
   );
 }

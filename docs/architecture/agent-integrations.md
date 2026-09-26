@@ -183,6 +183,23 @@ gateway identity at execution time.
 
 ## Validation
 
+### Approval card details and outcomes
+
+Chat approval cards use the same run-scoped request and recorded decision across
+supported surfaces. Known Custom MCP requests display the server identifier,
+tool identifier, and a bounded summary of ordinary argument names and types.
+Every argument value is withheld, including URLs, file paths, and payloads;
+the summary therefore cannot establish the exact target of a call. Malformed
+details show a neutral privacy placeholder. Existing unrelated command, file,
+and patch approval review text retains its current formatting.
+
+Recorded decisions display Approved, Declined, or Cancelled. An ended run with
+no recorded decision stays neutral and does not imply approval. Submission and
+authorization policies are unchanged; display details do not prove the native
+approval bridge is available for a particular harness or runtime.
+
+### Automated checks
+
 Automated validation covers:
 
 - the real MCP client/server tool catalog and gateway calls;

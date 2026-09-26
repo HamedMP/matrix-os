@@ -22,7 +22,12 @@ remain unchanged. A separate owner investigates the actual Approve failure.
    most 4,000 input characters, strict UUID and ASCII tool identifier (1-128
    characters), and one plain top-level JSON object. It does not descend into
    values. Malformed/oversized Custom MCP envelopes show only a neutral privacy
-   placeholder; no raw input fallback.
+   placeholder and a neutral `Review Custom MCP request` title; no raw input
+   fallback. Valid envelopes derive the title from the strictly parsed tool
+   identifier, rather than echoing an independently supplied title. A strict
+   Server UUID plus Tool prefix identifies a truncated Custom MCP description
+   even when its Arguments marker is missing; unrelated legacy server prose
+   without that identity format remains unchanged.
 3. Display the server UUID and tool, plus at most 12 argument entries and at
    most 1,200 total output characters. Allowlisted names are url, query, path,
    limit, offset, page, cursor, id, name, content, payload, and timeout. Unknown
