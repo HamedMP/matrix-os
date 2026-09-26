@@ -688,7 +688,8 @@ export function canonicalChatPresentation(input: {
       if (seenApprovals.has(item.requestId)) return [];
       seenApprovals.add(item.requestId);
       const approval = approvalViews.find(view => view.runId === run?.id && view.approvalId === item.requestId);
-      return [approval?.pending ? item : { ...item, state: "resolved", actions: undefined }];
+      return [{ ...item, label: approval?.title ?? item.label, detail: approval?.description, decision: approval?.decision,
+        state: approval?.pending ? "waiting" : "resolved", actions: approval?.pending ? item.actions : undefined }];
     });
     const timeline = [
       ...work.map((item, index) => ({

@@ -32,7 +32,21 @@ it("submits a one-time decision to the selected chat and run, then refreshes", a
 it("does not render action buttons on a settled approval", () => {
   render(<CanonicalApprovalMessage {...props} approval={{ ...approval, pending: false, allowedDecisions: [...approval.allowedDecisions] }} />);
   expect(screen.queryByText("Approve")).toBeNull();
-  expect(screen.getByText("Resolved")).toBeTruthy();
+  expect(screen.getByText("Approval ended without a recorded decision")).toBeTruthy();
+});
+
+it.each([["approve", "Approved"], ["approve_for_session", "Approved"], ["decline", "Declined"], ["cancel", "Cancelled"]] as const)("renders recorded %s in Native Mobile", (decision, label) => {
+  render(<CanonicalApprovalMessage {...props} approval={{ ...approval, decision, pending: false, allowedDecisions: [...approval.allowedDecisions] }} />);
+  expect(screen.getByText(label)).toBeTruthy();
+  expect(screen.queryByText("Approve")).toBeNull();
+});
+
+it("keeps an accepted submission neutral until the recorded decision arrives", async () => {
+  jest.spyOn(global, "fetch").mockResolvedValue({ ok: true, json: async () => ({ approvalId: "approval_test", decision: "approve", submission: "accepted" }) } as Response);
+  render(<CanonicalApprovalMessage {...props} approval={{ ...approval, allowedDecisions: [...approval.allowedDecisions] }} />);
+  fireEvent.press(screen.getByText("Approve"));
+  await waitFor(() => expect(screen.getByText("Decision submitted. Waiting for confirmation.")).toBeTruthy());
+  expect(screen.queryByText("Approved")).toBeNull();
 });
 
 it("keeps failed submissions recoverable and never displays a raw server error", async () => {

@@ -5,6 +5,7 @@ import { useAuth } from "@clerk/clerk-expo";
 import {
   CanonicalChatApprovalSubmissionResponseSchema,
   CanonicalSubmitChatApprovalRequestSchema,
+  canonicalChatApprovalOutcome,
   type CanonicalChatApprovalDecision,
   type CanonicalChatApprovalView,
 } from "@matrix-os/contracts";
@@ -59,7 +60,7 @@ export function CanonicalApprovalMessage({ approval, chatId, gatewayUrl, onSettl
         onPress={() => void submit(decision)}>
         <Text style={styles.text}>{decision === "approve_for_session" ? "Approve for session" : decision.charAt(0).toUpperCase() + decision.slice(1)}</Text>
       </Pressable>)}
-    </View> : <Text style={styles.text}>Resolved</Text>}
+    </View> : <Text style={styles.text}>{approval.pending ? "Decision submitted. Waiting for confirmation." : canonicalChatApprovalOutcome(approval.decision)}</Text>}
     {error ? <Text accessibilityRole="alert" style={styles.text}>{error}</Text> : null}
   </View>;
 }
