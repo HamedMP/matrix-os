@@ -31,7 +31,6 @@ export interface GranolaPresetRuntime {
     serverId: string;
     toolName: string;
     arguments?: Record<string, unknown>;
-    approvalGranted: boolean;
   }): Promise<unknown>;
   remove(userId: string, serverId: string): Promise<void>;
 }
@@ -144,7 +143,6 @@ export function createGranolaPresetBroker(dependencies: {
           serverId: row.id,
           toolName: call.toolName,
           arguments: call.arguments,
-          approvalGranted: true,
         }));
       }
       return results[0];

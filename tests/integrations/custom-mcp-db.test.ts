@@ -25,6 +25,33 @@ describe("Custom MCP platform persistence", () => {
 
   afterEach(async () => db.destroy());
 
+  it("migrates durable bounded Run leases and one-use approval records alongside server revisions", async () => {
+    const result = await pglite.client.query<{ table_name: string }>(`
+      SELECT table_name FROM information_schema.tables
+      WHERE table_schema = current_schema()
+        AND table_name IN ('custom_mcp_run_leases', 'custom_mcp_tool_approvals')
+      ORDER BY table_name
+    `);
+    expect(result.rows.map((row) => row.table_name)).toEqual([
+      "custom_mcp_run_leases",
+      "custom_mcp_tool_approvals",
+    ]);
+    await pglite.client.query("ALTER TABLE custom_mcp_run_leases DROP COLUMN generation");
+    await pglite.client.query("ALTER TABLE custom_mcp_tool_approvals DROP COLUMN lease_generation");
+    await db.migrate();
+    const columns = await pglite.client.query<{ table_name: string; column_name: string }>(`
+      SELECT table_name, column_name FROM information_schema.columns
+      WHERE table_schema = current_schema()
+        AND ((table_name = 'custom_mcp_run_leases' AND column_name = 'generation')
+          OR (table_name = 'custom_mcp_tool_approvals' AND column_name = 'lease_generation'))
+      ORDER BY table_name
+    `);
+    expect(columns.rows).toEqual([
+      { table_name: "custom_mcp_run_leases", column_name: "generation" },
+      { table_name: "custom_mcp_tool_approvals", column_name: "lease_generation" },
+    ]);
+  });
+
   it("creates pending records and never exposes encrypted credentials in public rows", async () => {
     const row = await db.createCustomMcpServer({
       userId,

@@ -13,7 +13,7 @@ const serverId = "123e4567-e89b-42d3-a456-426614174000";
 const callPath = `/api/mcp-servers/${serverId}/call`;
 
 describe("scoped Custom MCP approval through Gateway and Platform broker", () => {
-  it("cannot turn a Claude Run bearer into an always_ask approval while preserving allowed and human calls", async () => {
+  it("cannot turn either a scoped Run bearer or a machine bearer into a user approval Boolean", async () => {
     const ownerId = "owner_claude";
     const registry = createMatrixMcpCapabilityRegistry({ configuredOwnerId: ownerId });
     const capability = registry.issue({ owner: { type: "personal", ownerId }, runId: "run_approval", scope: "call" })!;
@@ -84,8 +84,8 @@ describe("scoped Custom MCP approval through Gateway and Platform broker", () =>
     expect(remoteCall).toHaveBeenCalledOnce();
     expect((await post(JSON.stringify({ tool: "ask", approvalGranted: true }), {
       authorization: "Bearer gateway-machine-secret", "content-type": "application/json",
-    })).status).toBe(200);
-    expect(remoteCall).toHaveBeenCalledTimes(2);
+    })).status).toBe(403);
+    expect(remoteCall).toHaveBeenCalledOnce();
     registry.close();
   });
 });

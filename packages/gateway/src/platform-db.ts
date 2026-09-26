@@ -1,6 +1,12 @@
 import { Kysely, PostgresDialect, sql, type InsertObject } from "kysely";
 import pg from "pg";
 import { randomUUID } from "node:crypto";
+import {
+  createCustomMcpApprovalStore,
+  type CustomMcpApprovalStore,
+  type CustomMcpRunLeasesTable,
+  type CustomMcpToolApprovalsTable,
+} from "./integrations/custom-mcp/approval-store.js";
 import type {
   CustomMcpAuthMode,
   CustomMcpServer,
@@ -100,6 +106,8 @@ export interface PlatformDatabase {
   event_subscriptions: EventSubscriptionsTable;
   billing: BillingTable;
   custom_mcp_servers: CustomMcpServersTable;
+  custom_mcp_run_leases: CustomMcpRunLeasesTable;
+  custom_mcp_tool_approvals: CustomMcpToolApprovalsTable;
 }
 
 // ---------------------------------------------------------------------------
@@ -168,7 +176,7 @@ export type CustomMcpServerBrokerRow = CustomMcpServersTable;
 // PlatformDb interface
 // ---------------------------------------------------------------------------
 
-export interface PlatformDb {
+export interface PlatformDb extends CustomMcpApprovalStore {
   migrate(): Promise<void>;
 
   createUser(input: CreateUserInput): Promise<UsersTable>;
@@ -232,12 +240,13 @@ export interface PlatformDb {
 // Factory
 // ---------------------------------------------------------------------------
 
-export function createPlatformDb(opts: string | { dialect: any }): PlatformDb {
+export function createPlatformDb(opts: string | { dialect: any; now?: () => Date }): PlatformDb {
   let kysely: Kysely<PlatformDatabase>;
   let pool: pg.Pool | null = null;
 
   if (typeof opts === "string") {
-    pool = new pg.Pool({ connectionString: opts, max: 10 });
+    pool = new pg.Pool({ connectionString: opts, max: 10,
+      connectionTimeoutMillis: 5_000, statement_timeout: 5_000 });
     pool.on("error", (err) => {
       console.error("[platform-db] Idle pool client error:", err.message);
     });
@@ -277,6 +286,7 @@ export function createPlatformDb(opts: string | { dialect: any }): PlatformDb {
   }
 
   const db: PlatformDb = {
+    ...createCustomMcpApprovalStore(kysely, typeof opts === "string" ? undefined : opts.now),
     async migrate(): Promise<void> {
       await sql`
         CREATE TABLE IF NOT EXISTS users (
@@ -371,6 +381,47 @@ export function createPlatformDb(opts: string | { dialect: any }): PlatformDb {
         )
       `.execute(kysely);
       await sql`ALTER TABLE custom_mcp_servers ADD COLUMN IF NOT EXISTS preset_id TEXT`.execute(kysely);
+
+      await sql`
+        CREATE TABLE IF NOT EXISTS custom_mcp_run_leases (
+          id          UUID PRIMARY KEY,
+          user_id     UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          actor_id    TEXT NOT NULL,
+          run_id      TEXT NOT NULL,
+          generation  INTEGER NOT NULL DEFAULT 1 CHECK (generation >= 1),
+          status      TEXT NOT NULL CHECK (status IN ('active', 'revoked')),
+          expires_at  TIMESTAMPTZ NOT NULL,
+          created_at  TIMESTAMPTZ NOT NULL,
+          updated_at  TIMESTAMPTZ NOT NULL,
+          UNIQUE(user_id, run_id)
+        )
+      `.execute(kysely);
+      await sql`
+        CREATE TABLE IF NOT EXISTS custom_mcp_tool_approvals (
+          id                 UUID PRIMARY KEY,
+          user_id            UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          actor_id           TEXT NOT NULL,
+          run_id             TEXT NOT NULL,
+          lease_id           UUID NOT NULL REFERENCES custom_mcp_run_leases(id) ON DELETE CASCADE,
+          lease_generation   INTEGER NOT NULL DEFAULT 1 CHECK (lease_generation >= 1),
+          native_request_id  TEXT NOT NULL,
+          server_id          UUID NOT NULL REFERENCES custom_mcp_servers(id) ON DELETE CASCADE,
+          server_revision    INTEGER NOT NULL CHECK (server_revision >= 1),
+          tool_name          TEXT NOT NULL,
+          args_digest        TEXT NOT NULL,
+          status             TEXT NOT NULL CHECK (status IN ('pending', 'approved', 'denied', 'consumed', 'revoked')),
+          receipt_hash       TEXT,
+          expires_at         TIMESTAMPTZ NOT NULL,
+          created_at         TIMESTAMPTZ NOT NULL,
+          decided_at         TIMESTAMPTZ,
+          consumed_at        TIMESTAMPTZ,
+          UNIQUE(lease_id, native_request_id)
+        )
+      `.execute(kysely);
+      // A partially initialized B3 test database may have the earlier table
+      // shape. These idempotent additions make re-running migrate safe.
+      await sql`ALTER TABLE custom_mcp_run_leases ADD COLUMN IF NOT EXISTS generation INTEGER NOT NULL DEFAULT 1 CHECK (generation >= 1)`.execute(kysely);
+      await sql`ALTER TABLE custom_mcp_tool_approvals ADD COLUMN IF NOT EXISTS lease_generation INTEGER NOT NULL DEFAULT 1 CHECK (lease_generation >= 1)`.execute(kysely);
       // Existing rows predate this marker. Treat them as already discovered so
       // a later sync cannot silently undo a user's disabled server policy.
       await sql`
@@ -398,6 +449,11 @@ export function createPlatformDb(opts: string | { dialect: any }): PlatformDb {
       await sql`CREATE INDEX IF NOT EXISTS idx_custom_mcp_servers_user ON custom_mcp_servers(user_id)`.execute(kysely);
       await sql`CREATE INDEX IF NOT EXISTS idx_custom_mcp_pending_expiry ON custom_mcp_servers(pending_expires_at) WHERE status = 'pending'`.execute(kysely);
       await sql`CREATE UNIQUE INDEX IF NOT EXISTS idx_custom_mcp_user_preset ON custom_mcp_servers(user_id, preset_id) WHERE preset_id IS NOT NULL`.execute(kysely);
+      await sql`CREATE INDEX IF NOT EXISTS idx_custom_mcp_run_leases_owner_active ON custom_mcp_run_leases(user_id, expires_at) WHERE status = 'active'`.execute(kysely);
+      await sql`CREATE INDEX IF NOT EXISTS idx_custom_mcp_run_leases_expiry ON custom_mcp_run_leases(expires_at)`.execute(kysely);
+      await sql`CREATE INDEX IF NOT EXISTS idx_custom_mcp_tool_approvals_live ON custom_mcp_tool_approvals(lease_id, expires_at) WHERE status = 'pending'`.execute(kysely);
+      await sql`CREATE INDEX IF NOT EXISTS idx_custom_mcp_tool_approvals_expiry ON custom_mcp_tool_approvals(expires_at)`.execute(kysely);
+      await sql`CREATE UNIQUE INDEX IF NOT EXISTS idx_custom_mcp_tool_approvals_receipt ON custom_mcp_tool_approvals(receipt_hash) WHERE receipt_hash IS NOT NULL`.execute(kysely);
     },
 
     async createUser(input: CreateUserInput): Promise<UsersTable> {

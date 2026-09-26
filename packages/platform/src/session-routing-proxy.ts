@@ -21,6 +21,7 @@ const SENSITIVE_PROXY_HEADERS = new Set([
   NATIVE_APP_SESSION_PROXY_HEADER,
   PLATFORM_SESSION_PROXY_HEADER,
   'x-matrix-code-proxy-token',
+  'x-matrix-custom-mcp-approval-proof',
 ]);
 
 export function applyCookieRoutedShellAssetCacheHeaders(headers: Headers): void {
