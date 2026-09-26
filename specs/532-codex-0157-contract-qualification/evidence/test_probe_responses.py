@@ -22,6 +22,15 @@ class CurrentTurnResponses(unittest.TestCase):
         self.assertNotEqual(new_call["call_id"], prior_call["call_id"])
         self.assertEqual(response_item(request), new_call)
 
+    def test_same_prompt_new_turn_does_not_reuse_prior_call(self):
+        prompt = user("repeat")
+        prior = response_item({"input": [prompt]})
+        next_request = {"input": [prompt, {"type": "function_call_output", "call_id": prior["call_id"], "output": "A"}, prompt]}
+        next_call = response_item(next_request)
+        self.assertEqual(next_call["type"], "function_call")
+        self.assertNotEqual(next_call["call_id"], prior["call_id"])
+        self.assertEqual(response_item(next_request), next_call)
+
     def test_only_current_matching_output_completes_and_retries_stay_final(self):
         current = user("current")
         call = response_item({"input": [current]})

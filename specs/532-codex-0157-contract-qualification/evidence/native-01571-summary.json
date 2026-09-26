@@ -4,15 +4,15 @@
   "exit": 0,
   "turns": [
     {
-      "startedTurnId": "01a0db94-ba3d-7031-a30a-5eeaba79cc8a",
+      "startedTurnId": "01a0db97-40e3-76b1-b709-b15337bdfab0",
       "completedEvent": {
-        "threadId": "01a0db94-b9d5-7872-97fc-f7cb92730009",
+        "threadId": "01a0db97-4079-7eb3-8ae1-c0420ffb6ca2",
         "turn": {
-          "id": "01a0db94-ba3d-7031-a30a-5eeaba79cc8a",
+          "id": "01a0db97-40e3-76b1-b709-b15337bdfab0",
           "items": [
             {
               "type": "agentMessage",
-              "id": "msg_spike_2",
+              "id": "msg_call_scope_a0f75a344bfb69db1f8ce686",
               "text": "mock answer",
               "phase": null,
               "memoryCitation": null,
@@ -23,12 +23,12 @@
           "itemsView": "summary",
           "status": "completed",
           "error": null,
-          "startedAt": 1790390352,
-          "completedAt": 1790390352,
-          "durationMs": 76
+          "startedAt": 1790390517,
+          "completedAt": 1790390518,
+          "durationMs": 77
         }
       },
-      "readTurnId": "01a0db94-ba3d-7031-a30a-5eeaba79cc8a",
+      "readTurnId": "01a0db97-40e3-76b1-b709-b15337bdfab0",
       "status": "completed",
       "error": null,
       "mcpCalls": [
@@ -45,15 +45,15 @@
       ]
     },
     {
-      "startedTurnId": "01a0db94-baad-78e1-9212-a2c508920fff",
+      "startedTurnId": "01a0db97-4156-7b00-97ca-498f7af3e131",
       "completedEvent": {
-        "threadId": "01a0db94-b9d5-7872-97fc-f7cb92730009",
+        "threadId": "01a0db97-4079-7eb3-8ae1-c0420ffb6ca2",
         "turn": {
-          "id": "01a0db94-baad-78e1-9212-a2c508920fff",
+          "id": "01a0db97-4156-7b00-97ca-498f7af3e131",
           "items": [
             {
               "type": "agentMessage",
-              "id": "msg_spike_4",
+              "id": "msg_call_scope_db4aab0fab944b9c242bb480",
               "text": "mock answer",
               "phase": null,
               "memoryCitation": null,
@@ -64,12 +64,12 @@
           "itemsView": "summary",
           "status": "completed",
           "error": null,
-          "startedAt": 1790390352,
-          "completedAt": 1790390352,
-          "durationMs": 24
+          "startedAt": 1790390518,
+          "completedAt": 1790390518,
+          "durationMs": 25
         }
       },
-      "readTurnId": "01a0db94-baad-78e1-9212-a2c508920fff",
+      "readTurnId": "01a0db97-4156-7b00-97ca-498f7af3e131",
       "status": "completed",
       "error": null,
       "mcpCalls": [
@@ -86,15 +86,15 @@
       ]
     },
     {
-      "startedTurnId": "01a0db94-bb76-7f91-8867-55107f719c61",
+      "startedTurnId": "01a0db97-4228-7c81-a6e4-2116b5c4920a",
       "completedEvent": {
-        "threadId": "01a0db94-b9d5-7872-97fc-f7cb92730009",
+        "threadId": "01a0db97-4079-7eb3-8ae1-c0420ffb6ca2",
         "turn": {
-          "id": "01a0db94-bb76-7f91-8867-55107f719c61",
+          "id": "01a0db97-4228-7c81-a6e4-2116b5c4920a",
           "items": [
             {
               "type": "agentMessage",
-              "id": "msg_spike_6",
+              "id": "msg_call_scope_0e7e9a058b7daa3c81593469",
               "text": "mock answer",
               "phase": null,
               "memoryCitation": null,
@@ -105,12 +105,12 @@
           "itemsView": "summary",
           "status": "completed",
           "error": null,
-          "startedAt": 1790390352,
-          "completedAt": 1790390352,
+          "startedAt": 1790390518,
+          "completedAt": 1790390518,
           "durationMs": 28
         }
       },
-      "readTurnId": "01a0db94-bb76-7f91-8867-55107f719c61",
+      "readTurnId": "01a0db97-4228-7c81-a6e4-2116b5c4920a",
       "status": "completed",
       "error": null,
       "mcpCalls": [
@@ -163,5 +163,6 @@
       "readError": null,
       "terminalEventObserved": false
     }
-  ]
+  ],
+  "fakeResponsesSelection": "stateless current latest user boundary and exact matching output; retry/history controls 4/4 passed"
 }

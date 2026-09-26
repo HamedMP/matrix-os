@@ -34,6 +34,9 @@ class MockHandler(BaseHTTPRequestHandler):
         MockHandler.request_count += 1
         request_number = MockHandler.request_count
         length = int(self.headers.get("content-length", "0"))
+        if length < 0 or length > 1024 * 1024:
+            self.send_error(413, "Fixture request exceeds 1 MiB")
+            return
         request = json.loads(self.rfile.read(length))
         names = [tool.get("name") for tool in request.get("tools", [])]
         outputs = [item for item in request.get("input", []) if item.get("type") == "function_call_output"]
