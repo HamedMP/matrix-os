@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { createHash } from "node:crypto";
 import { createHomeMirror } from "../../../packages/gateway/src/sync/home-mirror.js";
 import { readManifest } from "../../../packages/gateway/src/sync/manifest.js";
@@ -43,16 +43,25 @@ describe("reviewed mirror startup and publication boundaries", () => {
     expect(await readFile(join(root, "note.md"), "utf8")).toBe("accepted original");
     expect((await remote()).manifest.files["note.md"].deleted).not.toBe(true);
   });
-  it.each(["single", "batch"])("does not accept captured stale bytes when the owner edits before %s publication", async kind => {
-    const { root, make, db, remote } = await fixture(); const active = make();
+  it.each([
+    ["single", "lock"], ["batch", "lock"], ["single", "generation"], ["batch", "generation"],
+  ])("does not accept captured stale bytes for %s publication paused at %s", async (kind, seam) => {
+    const { root, make, db, r2, remote } = await fixture(); const active = make();
     if (kind === "single") await active.start();
     await writeFile(join(root, "note.md"), "captured stale edit");
     let release!: () => void; let arrived!: () => void;
     const pending = new Promise<void>(resolve => { release = resolve; }); const entered = new Promise<void>(resolve => { arrived = resolve; });
     const lock = db.withAdvisoryLock.bind(db); let paused = false;
-    vi.spyOn(db, "withAdvisoryLock").mockImplementation(async (scope, callback) => {
+    if (seam === "lock") vi.spyOn(db, "withAdvisoryLock").mockImplementation(async (scope, callback) => {
       if (!paused) { paused = true; arrived(); await pending; } return lock(scope, callback);
     });
+    else {
+      const put = r2.putObject.bind(r2);
+      vi.spyOn(r2, "putObject").mockImplementation(async (key, body, options) => {
+        if (!paused && key.includes("/manifests/")) { paused = true; arrived(); await pending; }
+        return put(key, body, options);
+      });
+    }
     const operation = kind === "single" ? active.pushLocalFile("note.md") : active.start();
     try { await entered; await writeFile(join(root, "note.md"), "newer owner edit"); }
     finally { release(); }
@@ -61,6 +70,28 @@ describe("reviewed mirror startup and publication boundaries", () => {
     const state = JSON.parse(await readFile(join(root, ".matrix-home-mirror/state.json"), "utf8"));
     expect(state.hashes["note.md"]).toBe(hash("accepted original"));
     expect(await readFile(join(root, "note.md"), "utf8")).toBe("newer owner edit");
+  });
+  it("preflights projected baseline capacity before accepting a startup publication", async () => {
+    const { root, make, remote } = await fixture();
+    const target = join(root, ".matrix-home-mirror/state.json");
+    const state = JSON.parse(await readFile(target, "utf8"));
+    const prefix = `system/${"a".repeat(200)}/${"b".repeat(200)}/${"c".repeat(200)}/${"d".repeat(200)}/`;
+    let size = Buffer.byteLength(JSON.stringify(state));
+    for (let i = 0; ; i++) {
+      const path = `${prefix}${i}.md`; const bytes = Buffer.byteLength(JSON.stringify(path)) + Buffer.byteLength(JSON.stringify(hash("accepted original"))) + 2;
+      if (size + bytes >= 8 * 1024 * 1024 - 128) break;
+      state.hashes[path] = hash("accepted original"); size += bytes;
+    }
+    const stored = JSON.stringify(state); await writeFile(target, stored);
+    const path = `${prefix}new-long-valid-path.md`;
+    await mkdir(dirname(join(root, path)), { recursive: true }); await writeFile(join(root, path), "new original");
+    const before = await remote();
+    await expect(make().start()).rejects.toThrow();
+    const after = await remote();
+    expect(after.manifestVersion).toBe(before.manifestVersion);
+    expect(after.manifest.files[path]).toBeUndefined();
+    expect(await readFile(target, "utf8")).toBe(stored);
+    expect(await readFile(join(root, path), "utf8")).toBe("new original");
   });
   it.each(["pull", "conflict"])("bounds a stalled iterator body after headers during normal %s", async kind => {
     const { root, make, r2 } = await fixture(); const otherRoot = await mkdtemp(join(tmpdir(), "mirror-review-remote-")); roots.push(otherRoot);
