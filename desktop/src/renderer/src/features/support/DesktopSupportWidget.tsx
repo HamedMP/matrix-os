@@ -93,7 +93,7 @@ async function loadDesktopSupportProperties(api: ApiClient): Promise<SupportChat
 function applyDesktopSupportProperties(properties: SupportChatProperties): void {
   if (!properties.matrix_bundle_version) posthog.unregister("matrix_bundle_version");
   if (!properties.matrix_desktop_version) posthog.unregister("matrix_desktop_version");
-  posthog.register(properties);
+  posthog.register({ ...properties, platform: "desktop" });
   posthog.setPersonProperties(properties);
 }
 
