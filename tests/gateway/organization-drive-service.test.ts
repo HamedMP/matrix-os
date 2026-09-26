@@ -5,9 +5,9 @@ import { describe, expect, it } from "vitest";
 import { bootstrapOrganizationDriveDatabase, type OrganizationDriveDatabase } from "../../packages/gateway/src/organization-drive/database.js";
 import { OrganizationDriveService } from "../../packages/gateway/src/organization-drive/service.js";
 
-const org = "org_authority";
+const org = "org_example";
 const scope = "00000000-0000-4000-8000-000000000001";
-const actor = "user_ash";
+const actor = "user_owner";
 const sha256 = "a".repeat(64);
 
 async function fixture(quotaBytes = 100) {
@@ -36,8 +36,8 @@ async function fixture(quotaBytes = 100) {
     putObject: async (key: string, bytes: Uint8Array) => { stored.set(key, new Uint8Array(bytes)); },
     deleteObject: async (key: string) => { stored.delete(key); },
   };
-  const service = new OrganizationDriveService({ db, r2, ownerId: "user_ash", runtimeSlot: "primary" });
-  await service.enable({ organizationId: org, scopeId: scope, runtimeId: "vps:ash", generation: 1, quotaBytes });
+  const service = new OrganizationDriveService({ db, r2, ownerId: "user_owner", runtimeSlot: "primary" });
+  await service.enable({ organizationId: org, scopeId: scope, runtimeId: "vps:owner", generation: 1, quotaBytes });
   return { db, service, stored, setObject(value: Uint8Array) { object = value; },
     setNativeObject(value: Uint8Array) { object = value; nativeStream = true; }, close: () => db.destroy() };
 }

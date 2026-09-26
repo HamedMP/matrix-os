@@ -10,11 +10,11 @@ const SCOPE_ID = "00000000-0000-4000-8000-0000000000aa";
 function discoveryItem(index: number) {
   return {
     scopeId: `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
-    runtimeId: "runtime_ash",
-    ownerId: "user_ash",
+    runtimeId: "runtime_owner",
+    ownerId: "user_owner",
     kind: "folder",
     authorityGeneration: 1,
-    organizationId: "org_authority",
+    organizationId: "org_example",
     status: "accepted",
   };
 }
@@ -22,19 +22,19 @@ function discoveryItem(index: number) {
 function file(index: number) {
   return {
     id: `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
-    organizationId: "org_authority",
+    organizationId: "org_example",
     path: `reports/file-${index}.txt`,
     version: 1,
     size: 5,
     sha256: "a".repeat(64),
-    updatedBy: "user_ash",
+    updatedBy: "user_owner",
     updatedAt: "2026-09-25T00:00:00.000Z",
   };
 }
 
 function snapshot(fileIndex: number, nextCursor?: string) {
   return {
-    organizationId: "org_authority",
+    organizationId: "org_example",
     scopeId: SCOPE_ID,
     usedBytes: 5,
     reservedBytes: 0,

@@ -11,10 +11,10 @@ function fixture(kind: "folder" | "file" = "folder") {
   const usage = vi.fn().mockResolvedValue({ usedBytes: 0, reservedBytes: 0, quotaBytes: 1_000_000_000_000 });
   const list = vi.fn().mockResolvedValue({ files: [] });
   const enable = vi.fn().mockResolvedValue(undefined);
-  const verifyAndAuthorize = vi.fn().mockResolvedValue({ actorId: "user_ash", ownerId: "user_ash",
-    organizationId: "org_authority", scopeId, membershipScopeId: scopeId, resourceKind: kind,
+  const verifyAndAuthorize = vi.fn().mockResolvedValue({ actorId: "user_owner", ownerId: "user_owner",
+    organizationId: "org_example", scopeId, membershipScopeId: scopeId, resourceKind: kind,
     resourceId: "00000000-0000-4000-8000-000000000002", role: "owner", authEpoch: 1,
-    authorityRuntimeId: "vps:ash", authorityGeneration: 1, capability: "read" });
+    authorityRuntimeId: "vps:owner", authorityGeneration: 1, capability: "read" });
   const app = new Hono();
   registerOrganizationDriveRoutes(app, { verifier: { verifyAndAuthorize },
     authority: {}, organizationDrive: { usage, list, enable } } as unknown as CollaborationRouteOptions);
@@ -26,9 +26,9 @@ describe("organization drive HTTP boundary", () => {
     const f = fixture();
     const result = await f.app.request(path, { headers: proof });
     expect(result.status).toBe(200);
-    expect(await result.json()).toMatchObject({ organizationId: "org_authority", files: [] });
-    expect(f.usage).toHaveBeenCalledWith({ organizationId: "org_authority", scopeId,
-      authorityRuntimeId: "vps:ash", authorityGeneration: 1 });
+    expect(await result.json()).toMatchObject({ organizationId: "org_example", files: [] });
+    expect(f.usage).toHaveBeenCalledWith({ organizationId: "org_example", scopeId,
+      authorityRuntimeId: "vps:owner", authorityGeneration: 1 });
   });
 
   it("rejects a non-folder scope before touching the drive", async () => {
@@ -42,7 +42,7 @@ describe("organization drive HTTP boundary", () => {
     const f = fixture();
     const result = await f.app.request(path, { method: "PUT", headers: { ...proof, "Content-Type": "application/json" }, body: "{}" });
     expect(result.status).toBe(200);
-    expect(f.enable).toHaveBeenCalledWith({ organizationId: "org_authority", scopeId,
-      authorityRuntimeId: "vps:ash", authorityGeneration: 1, runtimeId: "vps:ash", generation: 1 });
+    expect(f.enable).toHaveBeenCalledWith({ organizationId: "org_example", scopeId,
+      authorityRuntimeId: "vps:owner", authorityGeneration: 1, runtimeId: "vps:owner", generation: 1 });
   });
 });

@@ -24,10 +24,10 @@ import { createTestPlatformDb, destroyTestPlatformDb } from "../platform/platfor
 const endpoint = process.env.MATRIX_TEST_S3_ENDPOINT;
 const secret = "platform-secret-organization-drive-e2e";
 const handle = "ash";
-const org = "org_authority";
+const org = "org_example";
 const scope = "00000000-0000-4000-8000-00000000d001";
-const owner = "user_ash";
-const member = "user_nithin";
+const owner = "user_owner";
+const member = "user_member";
 const bucket = `orgdrive-${Date.now()}`;
 
 const sha = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
@@ -82,7 +82,7 @@ describe.skipIf(!endpoint)("organization drive on real storage", () => {
     await sql`INSERT INTO collaboration_scopes (id, resource_id, revision) VALUES (${scope}, 'folder-drive', 1)`.execute(driveDb);
     service = new OrganizationDriveService({ db: driveDb, r2: brokered, ownerId: owner, runtimeSlot: "primary",
       now: () => clock });
-    await service.enable({ ...ids, runtimeId: "vps:ash", generation: 1 });
+    await service.enable({ ...ids, runtimeId: "vps:owner", generation: 1 });
   }, 60_000);
 
   afterAll(async () => {
@@ -94,12 +94,12 @@ describe.skipIf(!endpoint)("organization drive on real storage", () => {
 
   it("owner uploads through a presigned URL, commits, lists and downloads the verified bytes", async () => {
     const bytes = new Uint8Array(randomBytes(3 * 1024 * 1024));
-    const reserved = await service.reserve({ ...ids, actorId: owner, request: { path: "transcripts/ash.txt",
+    const reserved = await service.reserve({ ...ids, actorId: owner, request: { path: "reports/notes.txt",
       size: bytes.byteLength, sha256: sha(bytes), requestId: "owner-1", baseVersion: 0 } });
     expect((await put(reserved.putUrl, bytes)).ok).toBe(true);
     const file = await service.commit({ ...ids, actorId: owner, uploadId: reserved.uploadId });
-    expect(file).toMatchObject({ path: "transcripts/ash.txt", version: 1, size: bytes.byteLength, sha256: sha(bytes) });
-    expect((await service.list(ids)).files.map((entry) => entry.path)).toEqual(["transcripts/ash.txt"]);
+    expect(file).toMatchObject({ path: "reports/notes.txt", version: 1, size: bytes.byteLength, sha256: sha(bytes) });
+    expect((await service.list(ids)).files.map((entry) => entry.path)).toEqual(["reports/notes.txt"]);
     const { getUrl } = await service.get({ ...ids, fileId: file.id });
     expect(sha(await download(getUrl))).toBe(sha(bytes));
     expect(await service.usage(ids)).toMatchObject({ usedBytes: bytes.byteLength, reservedBytes: 0 });
@@ -113,13 +113,13 @@ describe.skipIf(!endpoint)("organization drive on real storage", () => {
   it("member uploads a new version; a stale base version conflicts", async () => {
     const [current] = (await service.list(ids)).files;
     const bytes = new TextEncoder().encode("member edit");
-    const reserved = await service.reserve({ ...ids, actorId: member, request: { path: "transcripts/ash.txt",
+    const reserved = await service.reserve({ ...ids, actorId: member, request: { path: "reports/notes.txt",
       size: bytes.byteLength, sha256: sha(bytes), requestId: "member-1", baseVersion: current!.version } });
     expect((await put(reserved.putUrl, bytes)).ok).toBe(true);
     const file = await service.commit({ ...ids, actorId: member, uploadId: reserved.uploadId });
     expect(file).toMatchObject({ version: 2, updatedBy: member });
     expect(new TextDecoder().decode(await download((await service.get({ ...ids, fileId: file.id })).getUrl))).toBe("member edit");
-    await expect(service.reserve({ ...ids, actorId: owner, request: { path: "transcripts/ash.txt",
+    await expect(service.reserve({ ...ids, actorId: owner, request: { path: "reports/notes.txt",
       size: 3, sha256: sha(new Uint8Array(3)), requestId: "stale", baseVersion: 1 } })).rejects.toMatchObject({ code: "conflict" });
   });
 

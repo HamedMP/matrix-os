@@ -641,7 +641,7 @@ describe("platform/internal-sync-routes", () => {
     }), contentLength: bytes.byteLength, etag: '"etag"' });
     const app = createTestApp();
     const res = await app.request(
-      "/internal/containers/alice/sync/object?key=matrixos-sync%2Fuser_alice%2Ffiles%2F.organization-drive%2Forg_authority%2Fobjects%2F00000000-0000-4000-8000-000000000001",
+      "/internal/containers/alice/sync/object?key=matrixos-sync%2Fuser_alice%2Ffiles%2F.organization-drive%2Forg_example%2Fobjects%2F00000000-0000-4000-8000-000000000001",
       { headers: { authorization: `Bearer ${bearerFor("alice", "platform-secret-123")}` } },
     );
     expect(res.status).toBe(200);
@@ -654,7 +654,7 @@ describe("platform/internal-sync-routes", () => {
     r2.getObject.mockResolvedValue({ body: Readable.from([Buffer.from("hello")]), contentLength: 5 });
     const app = createTestApp();
     const res = await app.request(
-      "/internal/containers/alice/sync/object?key=matrixos-sync%2Fuser_alice%2Ffiles%2F.organization-drive%2Forg_authority%2Fobjects%2F00000000-0000-4000-8000-000000000001",
+      "/internal/containers/alice/sync/object?key=matrixos-sync%2Fuser_alice%2Ffiles%2F.organization-drive%2Forg_example%2Fobjects%2F00000000-0000-4000-8000-000000000001",
       { headers: { authorization: `Bearer ${bearerFor("alice", "platform-secret-123")}` } },
     );
     expect(res.status).toBe(200);
