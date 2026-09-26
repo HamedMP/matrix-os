@@ -403,6 +403,15 @@ describe("Claude streamed assistant text redaction", () => {
     ]);
   });
 
+  it("marks each unresolved nested prefix under its own message at success", async () => {
+    const events = await runLines(separateTextBlocks(["/private/file", "Be", "Be"]));
+    expect([...assembledAssistantMessages(events)]).toEqual([
+      ["claude_text_0", "[redacted path]"],
+      ["claude_text_1", "[redacted]"],
+      ["claude_text_2", "[redacted]"],
+    ]);
+  });
+
   it.each([
     ["Bearer ", "Bearer [redacted]"],
     ["ACCESS_TOKEN=", "[redacted credential]"],
@@ -444,6 +453,108 @@ describe("Claude streamed assistant text redaction", () => {
     ]);
   });
 
+  it.each([
+    ["c", "Be", "Bearer fixture-secret-token done", "c", "Bearer [redacted] done", "fixture-secret-token"],
+    ["/private/file", "Be", "Bearer fixture-secret-token done", "[redacted path]", "Bearer [redacted] done", "fixture-secret-token"],
+    ["c", "ACCESS_TO", "ACCESS_TOKEN=fixture-secret-value done", "c", "[redacted credential] done", "fixture-secret-value"],
+    ["/private/file", "ACCESS_TO", "ACCESS_TOKEN=fixture-secret-value done", "[redacted path]", "[redacted credential] done", "fixture-secret-value"],
+  ])("keeps a third-block standalone credential separate from an unfinished prior prefix (%s, %s)", async (
+    first, ambiguous, independent, expectedFirst, expectedThird, forbidden,
+  ) => {
+    const markerIndex = independent.includes("=") ? independent.indexOf("=") : independent.indexOf(" ");
+    for (let split = 1; split <= markerIndex + 1; split++) {
+      const events = await runLines(separateTextBlocksWithChunks([
+        [first], [ambiguous], [independent.slice(0, split), independent.slice(split)],
+      ]));
+      for (const event of events) {
+        if (event.type === "assistant.delta") expect(event.delta).not.toContain(forbidden);
+      }
+      expect([...assembledAssistantMessages(events)]).toEqual([
+        ["claude_text_0", expectedFirst],
+        ["claude_text_1", "[redacted]"],
+        ["claude_text_2", expectedThird],
+      ]);
+    }
+  });
+
+  it("keeps a true third-block Bearer keyword continuation on its original message", async () => {
+    const events = await runLines(separateTextBlocks(["c", "Be", "arer fixture-secret-token done"]));
+    expect([...assembledAssistantMessages(events)]).toEqual([
+      ["claude_text_0", "c"],
+      ["claude_text_1", "Bearer [redacted] "],
+      ["claude_text_2", "done"],
+    ]);
+  });
+
+  it.each([
+    ["Bearer fixture-secret-token done", "Bearer [redacted] done", "fixture-secret-token"],
+    ["aCcEsS_ToKeN=fixture-secret-value done", "[redacted credential] done", "fixture-secret-value"],
+  ])("keeps a nested four-block credential restart separate (%s)", async (independent, expected, forbidden) => {
+    const events = await runLines(separateTextBlocks(["/private/file", "Be", "Be", independent]));
+    for (const event of events) {
+      if (event.type === "assistant.delta") expect(event.delta).not.toContain(forbidden);
+    }
+    expect([...assembledAssistantMessages(events)]).toEqual([
+      ["claude_text_0", "[redacted path]"],
+      ["claude_text_1", "[redacted]"],
+      ["claude_text_2", "[redacted]"],
+      ["claude_text_3", expected],
+    ]);
+  });
+
+  it("recognizes a credential restarting across the last two of five text blocks", async () => {
+    const events = await runLines(separateTextBlocks(["c", "Be", "Be", "Be", "arer fixture-secret-token done"]));
+    expect([...assembledAssistantMessages(events)]).toEqual([
+      ["claude_text_0", "c"],
+      ["claude_text_1", "[redacted]"],
+      ["claude_text_2", "[redacted]"],
+      ["claude_text_3", "Bearer [redacted] "],
+      ["claude_text_4", "done"],
+    ]);
+  });
+
+  it("preserves a true Bearer keyword continuation over four text blocks", async () => {
+    const events = await runLines(separateTextBlocks(["c", "B", "ea", "rer fixture-secret-token done"]));
+    expect([...assembledAssistantMessages(events)]).toEqual([
+      ["claude_text_0", "c"],
+      ["claude_text_1", "Bearer [redacted] "],
+      ["claude_text_3", "done"],
+    ]);
+  });
+
+  it.each([
+    ["docs", "/gu", "ide", " next", "docs/guide "],
+    ["https:", "/", "/example.test", "/guide next", "https://example.test/guide "],
+  ])("preserves a four-block path or URL continuation and later text IDs (%s)", async (first, second, third, fourth, expected) => {
+    const events = await runLines(separateTextBlocks([first, second, third, fourth]));
+    expect([...assembledAssistantMessages(events)]).toEqual([
+      ["claude_text_0", expected],
+      ["claude_text_3", "next"],
+    ]);
+  });
+
+  it("drops nested unresolved prefixes before a steered continuation starts", async () => {
+    let spawned = 0;
+    const initialLines = [
+      JSON.stringify({ type: "system", session_id: "claude_probe_steer" }),
+      ...separateTextBlocks(["Visible /private/file", "Be", "Be"]).slice(0, -1),
+    ];
+    const adapter = createClaudeChatProviderAdapter({
+      homePath: "/home/matrix/home",
+      spawnFn: vi.fn(() => ++spawned === 1
+        ? child(initialLines, { afterLines: () => {
+          void adapter.steer({ owner: input.owner, chatId: input.chatId, runId: input.runId, prompt: "Continue safely" });
+        } })
+        : child(streamLines(["Safe fresh text"]))),
+    });
+    const events: CanonicalProviderRunEvent[] = [];
+    for await (const event of adapter.start(input)) events.push(event);
+    expect(spawned).toBe(2);
+    expect(events.filter((event) => event.type === "assistant.delta").map((event) => event.delta).join(""))
+      .toBe("Visible Safe fresh text");
+    expect(events.at(-1)).toMatchObject({ type: "run.completed", outcome: "completed" });
+  });
+
   it("drops an unresolved new-block credential prefix when the CLI fails", async () => {
     const lines = separateTextBlocks(["Visible /private/file", "Be"]).slice(0, -1);
     const events = await runLines(lines, { exitCode: 1 });
@@ -461,12 +572,29 @@ describe("Claude streamed assistant text redaction", () => {
     expect(events.at(-1)).toEqual({ type: "run.completed", outcome: "aborted" });
   });
 
+  it("drops all nested unresolved prefixes on abort", async () => {
+    const controller = new AbortController();
+    const lines = separateTextBlocks(["Visible /private/file", "Be", "Be"]).slice(0, -1);
+    const events = await runLines(lines, { signal: controller.signal, afterLines: () => controller.abort() });
+    expect(events.filter((event) => event.type === "assistant.delta").map((event) => event.delta).join(""))
+      .toBe("Visible ");
+    expect(events.at(-1)).toEqual({ type: "run.completed", outcome: "aborted" });
+  });
+
   it("caps an undecidable new-block assignment prefix without publishing later text", async () => {
     const events = await runLines(separateTextBlocks(["Bearer ", `ACCESS_TOKEN${" ".repeat(80)}=fixture-secret-value done`]));
     const messages = assembledAssistantMessages(events);
     expect(messages.get("claude_text_0")).toBe("Bearer [redacted]");
     expect(messages.get("claude_text_1")).toBe("[redacted]");
     expect([...messages.values()].join("")).not.toContain("fixture-secret-value");
+  });
+
+  it("keeps nested prefix overflow bounded to one marker at the first unresolved origin", async () => {
+    const events = await runLines(separateTextBlocks(["c", "Be", "Be", `API_KEY${" ".repeat(80)}=fixture-secret-value done`]));
+    expect([...assembledAssistantMessages(events)]).toEqual([
+      ["claude_text_0", "c"],
+      ["claude_text_1", "[redacted]"],
+    ]);
   });
 
   it.each(["secretary", "Bearerish"])("keeps a keyword-like %s token inside a prior Bearer context", async (token) => {

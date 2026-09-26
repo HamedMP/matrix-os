@@ -458,11 +458,20 @@ export function createClaudeChatProviderAdapter(options: {
       }
     };
 
+    const redactProbeSegments = (segments: Array<{ messageId?: string; text: string }>) => {
+      for (let index = 0; index < segments.length; index++) {
+        const messageId = segments[index]!.messageId;
+        if (segments.findIndex((segment) => segment.messageId === messageId) === index) {
+          enqueueDelta("[redacted]", messageId);
+        }
+      }
+    };
+
     const flushProjectedText = () => {
       if (boundaryProbe) {
         const projected = textProjector.flushIndependentBoundary();
         if (projected) enqueueDelta(projected, projectedMessageId);
-        enqueueDelta("[redacted]", boundaryProbe.originMessageId);
+        redactProbeSegments(boundaryProbe.segments);
         boundaryProbe = undefined;
         projectedMessageId = undefined;
       }
@@ -539,11 +548,27 @@ export function createClaudeChatProviderAdapter(options: {
           droppingBoundaryProbe = true;
           return;
         }
-        const status = classifyAssistantCredentialBoundaryPrefix(probe.text);
-        if (status === "pending") continue;
+        // A later block can restart a standalone credential while an earlier
+        // block's prefix is unresolved. Classify only observed block starts,
+        // within the same capped probe, before replaying any raw candidate.
+        let suffix = "";
+        let standaloneIndex: number | undefined;
+        let hasPendingCandidate = false;
+        for (let index = probe.segments.length - 1; index >= 0; index--) {
+          suffix = probe.segments[index]!.text + suffix;
+          const status = classifyAssistantCredentialBoundaryPrefix(suffix);
+          if (status === "standalone") standaloneIndex = index;
+          if (status === "pending") hasPendingCandidate = true;
+        }
+        if (standaloneIndex === undefined && hasPendingCandidate) continue;
         boundaryProbe = undefined;
-        if (status === "standalone") flushIndependentProjectedText();
-        for (const segment of probe.segments) projectResolvedDelta(segment.text, segment.messageId);
+        if (standaloneIndex !== undefined) {
+          flushIndependentProjectedText();
+          redactProbeSegments(probe.segments.slice(0, standaloneIndex));
+        }
+        for (const segment of probe.segments.slice(standaloneIndex ?? 0)) {
+          projectResolvedDelta(segment.text, segment.messageId);
+        }
         const remainder = delta.slice(offset);
         if (remainder) projectResolvedDelta(remainder, messageId);
         return;
