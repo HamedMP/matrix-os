@@ -321,13 +321,13 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
   }
 
   async function releaseResources(): Promise<void> {
-    if (watcher) {
-      await watcher.close();
-      watcher = null;
-    }
     if (subscribed && config.peerRegistry) {
       config.peerRegistry.removePeer(registryKey, config.peerId);
       subscribed = false;
+    }
+    if (watcher) {
+      await watcher.close();
+      watcher = null;
     }
   }
 
@@ -424,6 +424,24 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
     });
   }
 
+  async function isLocalMissing(safeRelPath: string): Promise<boolean> {
+    const absPath = join(config.homeRoot, safeRelPath);
+    let parent = dirname(absPath);
+    for (;;) {
+      try { assertWithinResolvedHomeRoot(await realpath(parent)); break; }
+      catch (error: unknown) {
+        if (!(error instanceof Error) || !("code" in error) || error.code !== "ENOENT") throw error;
+        if (parent === config.homeRoot) throw error;
+        parent = dirname(parent);
+      }
+    }
+    try { await lstat(absPath); return false; }
+    catch (error: unknown) {
+      if (error instanceof Error && "code" in error && error.code === "ENOENT") return true;
+      throw error;
+    }
+  }
+
   async function pushDelete(relPath: string): Promise<void> {
     const safeRelPath = normalizeRelativePath(config.userId, relPath);
     if (isIgnored(safeRelPath, extraIgnore) || localState.blocked(safeRelPath)) return;
@@ -432,7 +450,7 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
         const existing = await readManifest(lockedStore, scope);
         const entry = existing.manifest.files[safeRelPath];
         if (!entry || entry.deleted) return;
-        if (entry.hash !== localState.hash(safeRelPath)) return;
+        if (entry.hash !== localState.hash(safeRelPath) || !await isLocalMissing(safeRelPath)) return;
 
         const next: Manifest = applyCommitToManifest(
           existing.manifest,
@@ -638,6 +656,15 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
 
   async function initialPush(shutdownDeadline?: number): Promise<void> {
     const relPaths = await collectLocalFiles(config.homeRoot);
+    if (shutdownDeadline !== undefined) {
+      // Only a durable prior baseline makes absence a known owner deletion.
+      // pushDelete rechecks both remote hash and local absence inside the lock.
+      for (const path of localState.paths()) {
+        lifecycle.signal.throwIfAborted();
+        if (Date.now() >= shutdownDeadline) return;
+        if (!isIgnored(path, extraIgnore) && await isLocalMissing(path)) await pushDelete(path);
+      }
+    }
     if (relPaths.length === 0) return;
     const snapshot = await readManifest(store, scope);
     let pushed = 0;

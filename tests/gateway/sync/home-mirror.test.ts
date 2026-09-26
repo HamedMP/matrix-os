@@ -1104,7 +1104,10 @@ describe("createHomeMirror", () => {
       await mirror.start();
 
       await writeFile(join(tmpRoot, "notes.txt"), "hello");
-      await waitFor(() => Boolean(storedManifest(r2)?.files["notes.txt"]?.objectKey));
+      await waitFor(() => Boolean(storedManifest(r2)?.files["notes.txt"]?.objectKey)).catch(error => {
+        console.error("synthetic-watch-diagnostic", JSON.stringify({ info: logger.info.mock.calls, error: logger.error.mock.calls }));
+        throw error;
+      });
       await waitFor(() =>
         logger.info.mock.calls.some(([message]) =>
           String(message).startsWith("pushed notes.txt"),

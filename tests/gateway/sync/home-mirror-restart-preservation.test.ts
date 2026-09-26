@@ -3,6 +3,7 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHomeMirror } from "../../../packages/gateway/src/sync/home-mirror.js";
+import { readManifest } from "../../../packages/gateway/src/sync/manifest.js";
 import { ensureHome } from "../../../packages/kernel/src/boot.js";
 import { createFakeR2, createFakeManifestDb } from "./fixtures/home-mirror-storage.js";
 
@@ -22,9 +23,9 @@ describe("home mirror restart preserves local boot state", () => {
     await writeFile(join(root, path), original);
     const r2 = createFakeR2();
     const manifestDb = createFakeManifestDb();
-    const make = () => {
+    const make = (watchLocalChanges = false) => {
       const mirror = createHomeMirror({ r2, manifestDb, homeRoot: root,
-        userId: "synthetic-owner", peerId: "synthetic-gateway", watchLocalChanges: false,
+        userId: "synthetic-owner", peerId: "synthetic-gateway", watchLocalChanges,
         logger: { info: () => {}, error: () => {} } });
       mirrors.push(mirror);
       return mirror;
@@ -58,6 +59,40 @@ describe("home mirror restart preserves local boot state", () => {
     await active.stop();
     await make().start();
     expect(await readFile(join(root, "system/soul.md"), "utf8")).toBe("last moment owner edit");
+  });
+  it("flushes an immediate known-baseline unlink before the watcher debounce", async () => {
+    const { root, make, r2, manifestDb } = await fixture("system/soul.md", "owner soul");
+    const active = make(true); await active.start();
+    await rm(join(root, "system/soul.md")); await active.stop();
+    const remote = await readManifest({ r2, db: manifestDb }, "synthetic-owner");
+    expect(remote.manifest.files["system/soul.md"].deleted).toBe(true);
+    await make().start();
+    await expect(readFile(join(root, "system/soul.md"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+  it("does not tombstone an owner file recreated while the final deletion lock is pending", async () => {
+    const { root, make, manifestDb, r2 } = await fixture("system/soul.md", "prior soul");
+    const active = make(); await active.start(); await rm(join(root, "system/soul.md"));
+    let release!: () => void; let arrived!: () => void;
+    const pending = new Promise<void>(resolve => { release = resolve; });
+    const entered = new Promise<void>(resolve => { arrived = resolve; });
+    const lock = manifestDb.withAdvisoryLock.bind(manifestDb); let paused = false;
+    vi.spyOn(manifestDb, "withAdvisoryLock").mockImplementation(async (scope, callback) => {
+      if (!paused) { paused = true; arrived(); await pending; } return lock(scope, callback);
+    });
+    const stopping = active.stop(); await entered;
+    await writeFile(join(root, "system/soul.md"), "recreated owner soul"); release(); await stopping;
+    const remote = await readManifest({ r2, db: manifestDb }, "synthetic-owner");
+    expect(remote.manifest.files["system/soul.md"].deleted).not.toBe(true);
+    await make().start();
+    expect(await readFile(join(root, "system/soul.md"), "utf8")).toBe("recreated owner soul");
+  });
+  it("does not infer deletion from an absent path with an unknown baseline", async () => {
+    const { root, make, r2, manifestDb } = await fixture("system/soul.md", "remote owner soul");
+    await rm(join(root, ".matrix-home-mirror/state.json"));
+    await rm(join(root, "system/soul.md")); await make().start();
+    expect(await readFile(join(root, "system/soul.md"), "utf8")).toBe("remote owner soul");
+    const remote = await readManifest({ r2, db: manifestDb }, "synthetic-owner");
+    expect(remote.manifest.files["system/soul.md"].deleted).not.toBe(true);
   });
   it("pulls a remote-only edit when the local file still matches its durable baseline", async () => {
     const { root, make, r2, manifestDb } = await fixture("system/soul.md", "original soul");

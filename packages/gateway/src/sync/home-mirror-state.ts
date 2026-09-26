@@ -78,6 +78,7 @@ export class HomeMirrorState {
     }, 5 * 60_000);
     this.timer.unref();
   }
+  paths(): string[] { return Object.keys(this.state.hashes); }
   hash(path: string): string | undefined { return Object.hasOwn(this.state.hashes, path) ? this.state.hashes[path] : undefined; }
   blocked(path: string): boolean { return Object.hasOwn(this.state.conflicts, path); }
   async remember(path: string, hash: string): Promise<void> {
