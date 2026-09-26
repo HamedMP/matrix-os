@@ -110,6 +110,7 @@ describe("generic provider harness lifecycle coordinator", () => {
     inactiveOpenClawHealth?: "healthy" | "stopped" | "unknown";
     inactiveOpenClawInstallState?: "installed" | "missing";
     receiptWriter?: typeof writeProviderJsonAtomic;
+    runtimeSourceUnavailable?: () => boolean;
   } = {}) {
     homePath = await mkdtemp(join(tmpdir(), "provider-generic-harness-"));
     await mkdir(join(homePath, "system"), { recursive: true });
@@ -139,7 +140,9 @@ describe("generic provider harness lifecycle coordinator", () => {
         },
       };
     });
-    const runtimeSource = async () => ({
+    const runtimeSource = async () => {
+      if (options.runtimeSourceUnavailable?.()) throw new Error("Runtime temporarily unavailable");
+      return ({
       runtime: {
         selected,
         options: [
@@ -176,6 +179,7 @@ describe("generic provider harness lifecycle coordinator", () => {
         configured: true,
       },
     });
+    };
     const restart = () => createProviderGenericHarnessCoordinator({
       homePath: homePath!,
       runtimeController: { update },
@@ -1025,6 +1029,29 @@ describe("generic provider harness lifecycle coordinator", () => {
     expect(update).toHaveBeenCalledTimes(4);
     expect(update).toHaveBeenNthCalledWith(3, expect.objectContaining({ messagingModel: "claude-sonnet-5" }));
     expect(update).toHaveBeenNthCalledWith(4, expect.objectContaining({ messagingModel: "claude-haiku-5" }));
+  });
+
+  it("Settings Retry retires a prepared marker already at its before route without updating the runtime", async () => {
+    let unavailable = true;
+    const { coordinator, update } = await makeCoordinator({ runtimeSourceUnavailable: () => unavailable });
+    await writeProviderJsonAtomic(join(homePath!, "system/ai-providers/runtime-receipts.json"), {
+      version: 1, receipts: [{ key: "prepared_before_active", payloadHash: "a".repeat(64), state: "prepared",
+        beforeRoute: { harness: "hermes", providerId: "anthropic", modelId: "claude-sonnet-5" },
+        afterRoute: { harness: "hermes", providerId: "anthropic", modelId: "claude-opus-5" }, beforeRevision: 4 }],
+    });
+    await reconcileProviderRuntimeAtStartup(coordinator);
+    expect(coordinator.isRecoveryReady()).toBe(false);
+    unavailable = false;
+    const canonical = genericCanonical();
+    const store = new ProviderSettingsStore({ homePath: homePath!, runtimeCoordinator: coordinator,
+      providerSnapshotReader: { getSnapshot: async () => canonical }, now: () => new Date(canonical.refreshedAt) });
+    await expect(store.getSnapshot()).rejects.toMatchObject({ code: "runtime_unavailable", status: 503 });
+    expect(update).not.toHaveBeenCalled();
+    await expect(store.getSnapshot({ refresh: true })).resolves.toMatchObject({ projectionOf: { contract: "AiProviderSnapshotV3" } });
+    expect(coordinator.isRecoveryReady()).toBe(true);
+    expect(update).not.toHaveBeenCalled();
+    const receipts = JSON.parse(await readFile(join(homePath!, "system/ai-providers/runtime-receipts.json"), "utf8"));
+    expect(receipts.receipts).toEqual([]);
   });
 
   it("sweeps a prepared receipt after gateway coordinator restart", async () => {

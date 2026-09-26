@@ -1,3 +1,4 @@
+import { createProviderRuntimeRecoveryReader } from "./provider-runtime-recovery-reader.js";
 import { randomUUID } from "node:crypto";
 import { basename, dirname, join, resolve } from "node:path";
 import {
@@ -97,6 +98,7 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
   readonly #maxProjectionAgeMs: number;
   readonly #fundingSummary?: FundedAiFundingSummaryReader;
   readonly #genericModelCatalog?: GenericHarnessModelCatalogReader;
+  readonly #readRuntimeRecovery: (refresh: boolean) => Promise<void>;
   #writeTail: Promise<void> = Promise.resolve();
 
   constructor(options: ProviderSettingsStoreOptions) {
@@ -123,6 +125,7 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
     );
     this.#fundingSummary = options.fundingSummaryReader;
     this.#genericModelCatalog = options.genericModelCatalogReader;
+    this.#readRuntimeRecovery = createProviderRuntimeRecoveryReader(this.#runtime);
   }
 
   async #serialize<T>(operation: () => Promise<T>): Promise<T> {
@@ -150,9 +153,9 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
     }
   }
 
-  async #configuration(canonical: AiProviderSnapshotV3): Promise<ProviderSettingsConfiguration> {
+  async #configuration(canonical: AiProviderSnapshotV3, enrichment?: ProviderSettingsEnrichment): Promise<ProviderSettingsConfiguration> {
     try {
-      return await readProviderSettingsConfiguration(this.configurationPath, canonical);
+      return await readProviderSettingsConfiguration(this.configurationPath, canonical, enrichment?.genericModelCatalog, this.#now());
     } catch (error) {
       console.warn(
         "[provider-settings] Owner provider configuration unavailable:",
@@ -230,9 +233,7 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
 
   async getSnapshot(options: { refresh?: boolean } = {}): Promise<ProviderSettingsSnapshot> {
     return await this.#serialize(async () => {
-      if (this.#runtime && !this.#runtime.isRecoveryReady()) {
-        throw new ProviderSettingsStoreError("runtime_unavailable", 503);
-      }
+      await this.#readRuntimeRecovery(options.refresh === true);
       const refresh = options.refresh === true;
       const inventory = this.#canonical(refresh);
       // Begin these bounded observations inside the serialized read, not behind
@@ -245,7 +246,7 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
           catalogFailureHarnesses: ["pi", "opencode"],
         }),
       ]);
-      return await this.#project(canonical, await this.#configuration(canonical), refresh, enrichment);
+      return await this.#project(canonical, await this.#configuration(canonical, enrichment), refresh, enrichment);
     });
   }
 
@@ -401,7 +402,9 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
     if (!parsed.success) throw new ProviderSettingsStoreError("invalid_request", 400);
     return await this.#serialize(async () => {
       let canonical = await this.#canonical();
-      let config = await this.#configuration(canonical);
+      const enrichment = await readProviderSettingsEnrichment({ canonical, fundingSummary: this.#fundingSummary,
+        genericModelCatalog: this.#genericModelCatalog, refresh: false, catalogFailureHarnesses: ["pi", "opencode"] });
+      let config = await this.#configuration(canonical, enrichment);
       const mutation = parsed.data;
       const payloadHash = hashProviderSettingsMutation(mutation);
       const duplicate = config.receipts.find((receipt) => receipt.key === mutation.idempotencyKey);
@@ -443,6 +446,7 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
         canonical,
         snapshot,
         id: this.#id,
+        now: this.#now(),
       });
       if (handled) {
         runtimeMutation = {

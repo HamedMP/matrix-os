@@ -39,8 +39,11 @@ describe("provider settings configuration mutations", () => {
     const base = { expectedRevision: 0, idempotencyKey: "supported_matrix", route, accessSourceId: "matrix_included", accountId: null };
     expect(applyProviderConfigurationMutation({ mutation: { ...base, type: "add_harness", harness, displayName: harness }, config,
       snapshot, canonical: providerSettingsCanonicalFixture(), id: () => "new" })).toBe(true);
+    expect(config.harnesses[0]?.enablementOrigin).toBe("owner_configuration");
+    config.harnesses[0]!.enablementOrigin = "generated_default";
     expect(applyProviderConfigurationMutation({ mutation: { ...base, type: "set_route", harnessInstanceId: "harness_new" }, config,
       snapshot, canonical: providerSettingsCanonicalFixture(), id: () => "unused" })).toBe(true);
+    expect(config.harnesses[0]?.enablementOrigin).toBe("owner_configuration");
   });
 
   it("switches provider, model, source, and account as one route mutation", () => {

@@ -22,7 +22,7 @@ function rowStatus(harness: ProviderHarnessInstance, source: ProviderAccessSourc
     return "Check connection";
   }
   if (!harness.enabled) return harness.authState === "authenticated" ? "Off in Settings · Signed in" : "Off in Settings";
-  if (harness.harness === "codex") return codexLocalObservationLabel(source?.localObservation);
+  if ((harness.harness === "codex" || source?.localObservation !== undefined)) return codexLocalObservationLabel(source?.localObservation);
   if (harness.connectivity === "offline" || harness.connectivity === "degraded") return "Check failed";
   if (harness.authState === "authenticating") return "Signing in…";
   if (harness.authState === "unauthenticated" || harness.authState === "expired") return "Sign in";

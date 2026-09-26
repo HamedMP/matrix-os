@@ -1,5 +1,6 @@
 import {
   isNativeGenericHarnessCredentialRoute,
+  isLocallyObservedNativeHarnessRoute,
   isPortableGenericHarnessCredentialRoute,
   type ProviderHarnessKind,
   type ProviderSettingsSnapshot,
@@ -50,6 +51,7 @@ export function createCodingHarnessCredentialResolver(options: {
   homePath: string;
   settings: HarnessSettingsReader;
   baseEnv?: NodeJS.ProcessEnv;
+  now?: () => Date;
   fundedProvider?: MatrixFundedCredentialProvider;
   resolveCredentialLaunch?: CredentialLaunchFn;
 }): CodingHarnessCredentialResolver {
@@ -63,7 +65,7 @@ export function createCodingHarnessCredentialResolver(options: {
       (candidate) => candidate.harness === options.harness && candidate.enabled,
     );
     if (enabled.length === 0) {
-      if (await hasNativeHarnessAuth(options.homePath, options.harness)) {
+      if (!snapshot.harnesses.some((candidate) => candidate.harness === options.harness) && await hasNativeHarnessAuth(options.homePath, options.harness)) {
         signal?.throwIfAborted();
         return { env: {} };
       }
@@ -71,11 +73,12 @@ export function createCodingHarnessCredentialResolver(options: {
     }
     if (enabled.length !== 1) throw new Error(SAFE_ERROR);
     const harness = enabled[0]!;
-    if (harness.authState !== "authenticated"
-      || harness.connectivity !== "online") {
+    const source = snapshot.accessSources.find((candidate) => candidate.id === harness.accessSourceId);
+    const localAttempt = isLocallyObservedNativeHarnessRoute(harness, source, options.now?.() ?? new Date());
+    if (!localAttempt && (harness.authState !== "authenticated"
+      || harness.connectivity !== "online")) {
       throw new Error(SAFE_ERROR);
     }
-    const source = snapshot.accessSources.find((candidate) => candidate.id === harness.accessSourceId);
     if (isNativeGenericHarnessCredentialRoute(harness, source)) {
       // Pi/OpenCode own this profile under HOME. The child environment remains
       // allowlisted by the adapter and receives no gateway/provider secrets.

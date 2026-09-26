@@ -110,3 +110,11 @@ describe("canonical Provider choice presentation", () => {
     })).toBe("Disabled in Settings");
   });
 });
+
+it.each(["pi", "opencode"] as const)("%s shows local observation rather than Available remote-access copy", (driverKind) => {
+  const now = Date.now();
+  const instance = { ...catalog.instances[0]!, driverKind, localObservation: { state: "present_unverified" as const,
+    checkedAt: new Date(now - 100).toISOString(), staleAfter: new Date(now + 5000).toISOString() } };
+  expect(canonicalProviderAvailabilityLabel(instance)).toBe("Local login found; access not verified");
+  expect(canonicalProviderAvailabilityLabel({ ...instance, localObservation: { ...instance.localObservation, staleAfter: new Date(now - 1).toISOString() } })).toBe("Access not verified");
+});

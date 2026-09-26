@@ -3,6 +3,7 @@ import { z } from "zod/v4";
 import type { AiProviderSnapshotReader } from "./service.js";
 
 const ProviderQuerySchema = z.object({
+  includeNativeProfiles: z.enum(["true", "false"]).optional(),
   refresh: z.enum(["true", "false"]).optional(),
 }).strict();
 
@@ -19,9 +20,12 @@ export function createAiProviderRoutes(options: {
     const query = ProviderQuerySchema.safeParse(context.req.query());
     if (!query.success) return context.json({ error: "Invalid provider status query" }, 400);
     try {
-      return context.json(await options.service.getSnapshot({
+      const snapshot = await options.service.getSnapshot({
         refresh: query.data.refresh === "true",
-      }));
+      });
+      if (query.data.includeNativeProfiles === "true") return context.json(snapshot);
+      const { nativeHarnessCatalog: _nativeHarnessCatalog, ...legacySnapshot } = snapshot;
+      return context.json(legacySnapshot);
     } catch (err) {
       console.warn(
         "[ai-providers] Failed to build provider status:",
