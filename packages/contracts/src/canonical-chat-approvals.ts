@@ -1,7 +1,7 @@
 import type { CanonicalChatDetailResponse } from "./canonical-chat-api.js";
 import type { CanonicalChatApprovalDecision } from "./canonical-chat.js";
-import { canonicalChatApprovalDisplay } from "./canonical-chat-approval-display.js";
-export { canonicalChatApprovalOutcome } from "./canonical-chat-approval-display.js";
+import { canonicalChatApprovalDisplay } from "#canonical-chat-approval-display";
+export { canonicalChatApprovalOutcome } from "#canonical-chat-approval-display";
 
 export interface CanonicalChatApprovalView {
   id: string;
