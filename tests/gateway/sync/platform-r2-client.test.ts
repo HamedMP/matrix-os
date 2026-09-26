@@ -107,4 +107,22 @@ describe("platform R2 client", () => {
     expect(init?.signal).toBeInstanceOf(AbortSignal);
     expect(timeoutSpy).toHaveBeenLastCalledWith(30_000);
   });
+  it("declares the known length of a streamed upload so the broker can stream it", async () => {
+    const { Readable } = await import("node:stream");
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ etag: null }), { status: 200 }),
+    );
+    const client = createPlatformR2Client({
+      baseUrl: "http://distro-platform-1:9000",
+      handle: "alice",
+      token: "upgrade-token",
+    });
+
+    await client.putObject("matrixos-sync/user_alice/files/blob.bin", Readable.from([Buffer.from("hello")]),
+      { contentLength: 5 });
+
+    const [, init] = fetchMock.mock.calls[0]!;
+    expect(new Headers(init?.headers).get("content-length")).toBe("5");
+    expect((init as RequestInit & { duplex?: string }).duplex).toBe("half");
+  });
 });
