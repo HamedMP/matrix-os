@@ -355,6 +355,22 @@ describe("shared terminal grid presentation", () => {
     expect(host.scrollTop).toBeCloseTo(oldBottom - 20);
   });
 
+  it("preserves a deliberate downward wheel after shrink before queued layout", () => {
+    const { host, root, geometry, layout, presentation } = setup();
+    layout(1_600, 500);
+    Object.defineProperty(host, "scrollHeight", { get: () => Number.parseFloat(root.parentElement!.style.height) });
+    const oldBottom = host.scrollTop;
+    geometry.setHostSize(1_600, 300);
+    root.addEventListener("wheel", (event) => event.preventDefault());
+    root.dispatchEvent(new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaY: 20 }));
+    const chosenPan = host.scrollTop;
+    expect(chosenPan).toBeGreaterThan(oldBottom);
+    expect(chosenPan).toBeLessThan(host.scrollHeight - host.clientHeight);
+    presentation.schedule();
+    flush();
+    expect(host.scrollTop).toBe(chosenPan);
+  });
+
   it.each(["font", "grid", "content", "scrollback"])("does not resume from the old bottom after a %s change", (change) => {
     const { host, root, terminal, layout } = setup();
     layout(1_600, 500);
