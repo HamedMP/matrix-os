@@ -297,10 +297,13 @@ export function createCodingAgentRuntimeSummaryService(
       const rawProviders = options.providerRegistry
         ? await readRegisteredProviders(options.providerRegistry, principal)
         : await readProviders(options.agentCredentials, principal, options.providerIds);
-      const codexEnabled = options.providerAdmission
-        ? await options.providerAdmission.isProviderEnabled("codex") : true;
-      const providers = rawProviders.map((provider) => provider.id === "codex" && !codexEnabled
-        ? { ...provider, availability: "unavailable" as const } : provider);
+      const providers = await Promise.all(rawProviders.map(async (provider) => {
+        // Missing binaries remain the primary setup action, even when saved off.
+        if (provider.installStatus === "missing") return provider;
+        const enabled = options.providerAdmission
+          ? await options.providerAdmission.isProviderEnabled(provider.id) : true;
+        return enabled ? provider : { ...provider, availability: "unavailable" as const };
+      }));
       const activeThreads = await readActiveThreads(options.threads, principal);
       const attentionThreads = await readAttentionThreads(options.threads, principal);
       const projectSummaryTimeoutMs = Math.min(
