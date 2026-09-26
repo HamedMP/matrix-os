@@ -1,0 +1,3 @@
+interface:
+  display_name: "Animation Performance"
+  short_description: "Hold 60fps in animations, from the animations.dev course"
