@@ -326,6 +326,7 @@ describe("platform proxy routing", () => {
     const headers = init?.headers as Headers;
     expect(headers.get("authorization")).toBeTruthy();
     expect(headers.get("x-platform-user-id")).toBe("user_alice");
+    expect(headers.get("x-matrix-native-app-session")).toBe("1");
   });
 
   it("reports recovering VPS status for sync JWT gateway health instead of returning unauthorized", async () => {

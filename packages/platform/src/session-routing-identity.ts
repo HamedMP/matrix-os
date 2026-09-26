@@ -39,6 +39,8 @@ export interface AppDomainIdentity {
   userId: string;
   runtimeSlot?: string;
   source?: 'auth' | 'mobile-session' | 'static-route';
+  /** True only after the bearer itself has passed Matrix sync-JWT verification. */
+  verifiedSyncBearer?: boolean;
 }
 
 export interface SyncBearerIdentity {
@@ -278,6 +280,7 @@ export async function resolveAppDomainIdentity(opts: {
   if (bearerToken && opts.platformJwtSecret) {
     try {
       const claims = await verifySyncJwt(bearerToken, { secret: opts.platformJwtSecret });
+      const verifiedSyncBearer = opts.authHeader?.startsWith('Bearer ') === true;
       if (bearerToken === appSessionToken && opts.clerkAuth) {
         const clerkToken = opts.clerkAuth.extractToken(undefined, opts.cookieHeader);
         if (clerkToken) {
@@ -307,6 +310,7 @@ export async function resolveAppDomainIdentity(opts: {
             userId: claims.sub,
             runtimeSlot: requestedMachine.runtimeSlot,
             source: 'auth',
+            verifiedSyncBearer,
           };
         }
       }
@@ -316,6 +320,7 @@ export async function resolveAppDomainIdentity(opts: {
           userId: claims.sub,
           runtimeSlot,
           source: 'auth',
+          verifiedSyncBearer,
         };
       }
       const record = opts.legacyContainerRoutingEnabled === false
@@ -326,6 +331,7 @@ export async function resolveAppDomainIdentity(opts: {
           handle: record.handle,
           userId: record.clerkUserId,
           source: 'auth',
+          verifiedSyncBearer,
         };
       }
       const machine = await getRunningUserMachineByHandle(opts.db, claims.handle, runtimeSlot);
@@ -335,6 +341,7 @@ export async function resolveAppDomainIdentity(opts: {
           userId: claims.sub,
           runtimeSlot: machine.runtimeSlot,
           source: 'auth',
+          verifiedSyncBearer,
         };
       }
       const activeMachine = await getActiveUserMachineByHandle(opts.db, claims.handle, runtimeSlot);
@@ -346,6 +353,7 @@ export async function resolveAppDomainIdentity(opts: {
         userId: claims.sub,
         runtimeSlot: activeMachine.runtimeSlot,
         source: 'auth',
+        verifiedSyncBearer,
       };
     } catch (err: unknown) {
       if (!isSyncJwtAuthError(err)) {
@@ -438,7 +446,7 @@ export function shouldMarkNativeAppSession(
   platformJwtSecret: string,
 ): boolean {
   if (identity.source !== 'auth') return false;
-  if (authHeader?.startsWith('Bearer ')) return true;
+  if (identity.verifiedSyncBearer && authHeader?.startsWith('Bearer ')) return true;
   return isValidNativeAppSessionProof(
     readCookie(cookieHeader, APP_SESSION_COOKIE),
     readCookie(cookieHeader, NATIVE_APP_SESSION_COOKIE),
