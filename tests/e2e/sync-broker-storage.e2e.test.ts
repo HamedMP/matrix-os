@@ -39,6 +39,7 @@ describe.skipIf(!endpoint)("platform-brokered sync writes on real storage", () =
   let bucket: string;
   let direct: R2Client;
   let brokered: R2Client;
+  let platformStorage: Awaited<ReturnType<typeof createPlatformStorageClient>>;
   const brokerWrites: Array<number | undefined> = [];
 
   beforeAll(async () => {
@@ -49,7 +50,7 @@ describe.skipIf(!endpoint)("platform-brokered sync writes on real storage", () =
     direct = await createR2Client({ accessKeyId: "matrixos", secretAccessKey: "matrixos123", bucket,
       endpoint, forcePathStyle: true });
     // The platform broker uses its own storage client in production.
-    const platformStorage = await createPlatformStorageClient({ accessKeyId: "matrixos",
+    platformStorage = await createPlatformStorageClient({ accessKeyId: "matrixos",
       secretAccessKey: "matrixos123", bucket, endpoint, forcePathStyle: true });
     const brokerStorage = { ...platformStorage, putObject: (...args: Parameters<typeof platformStorage.putObject>) => {
       brokerWrites.push(args[2]?.contentLength);
@@ -70,6 +71,7 @@ describe.skipIf(!endpoint)("platform-brokered sync writes on real storage", () =
     await new Promise((resolve) => server?.close(resolve));
     await destroyTestPlatformDb(db);
     direct?.destroy();
+    platformStorage?.destroy();
     const listed = await s3.send(new ListObjectsV2Command({ Bucket: bucket }));
     const objects = (listed.Contents ?? []).flatMap((item) => (item.Key ? [{ Key: item.Key }] : []));
     if (objects.length > 0) await s3.send(new DeleteObjectsCommand({ Bucket: bucket, Delete: { Objects: objects } }));
