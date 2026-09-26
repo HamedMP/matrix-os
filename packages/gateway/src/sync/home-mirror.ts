@@ -14,6 +14,7 @@ import {
 } from "./manifest.js";
 import { resolveWithinPrefix } from "./path-validation.js";
 import {
+  buildBlobKey,
   buildFileKey,
   buildStagingKey,
   type R2Client,
@@ -307,12 +308,19 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
   const reconciliation = new HomeMirrorReconciliation(localState, async (relPath, entry) => {
     const current = entry.objectKey ? null : await readManifest(store, scope);
     const key = entry.objectKey ?? current?.manifest.files[relPath]?.objectKey ?? buildFileKey(scope, relPath);
+    assertRemoteObjectKey(key, relPath, entry.hash);
     const object = await r2.getObject(key);
     if (!object.body || entry.size > maxPushBytes) throw new Error("conflict content unavailable");
     const bytes = await awaitMirrorOperation(streamToBuffer(object.body, maxPushBytes, lifecycle.signal), lifecycle.signal);
     if (bytes.length !== entry.size) throw new Error("conflict content size mismatch");
     return bytes;
   });
+
+  function assertRemoteObjectKey(key: string, path: string, hash: string): void {
+    if (key !== buildBlobKey(scope, hash) && key !== buildFileKey(scope, path)) {
+      throw new Error("invalid mirror object key");
+    }
+  }
 
   async function ensureWritableParent(absPath: string): Promise<void> {
     const parentDir = dirname(absPath);
@@ -499,6 +507,7 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
       key = current.manifest.files[safeRelPath]?.objectKey
         ?? buildFileKey(scope, safeRelPath);
     }
+    assertRemoteObjectKey(key, safeRelPath, entry.hash);
     const obj = await r2.getObject(key);
     if (!obj.body) return;
 
@@ -1003,8 +1012,10 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
       readyForFlush = true;
       log.info(`home mirror started for ${config.homeRoot} (peer=${config.peerId})`);
       } catch (error: unknown) {
-        if (!(error instanceof Error) || !stopRequested || error !== lifecycle.signal.reason) throw error;
-        // A concurrent explicit stop cancels startup without leaving a subscription.
+        if (error instanceof Error && stopRequested && error === lifecycle.signal.reason) return;
+        localState.close();
+        await releaseResources();
+        throw error;
       }
     },
 

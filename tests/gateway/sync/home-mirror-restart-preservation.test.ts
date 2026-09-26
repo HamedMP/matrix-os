@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHomeMirror } from "../../../packages/gateway/src/sync/home-mirror.js";
@@ -134,6 +135,23 @@ describe("home mirror restart preserves local boot state", () => {
     expect(await readFile(join(root, "system/soul.md"), "utf8")).toBe("local original");
     const state = JSON.parse(await readFile(statePath, "utf8"));
     expect(await readFile(join(root, ".matrix-home-mirror", state.conflicts["system/soul.md"].artifact), "utf8")).toBe("remote original");
+  });
+
+  it.each(["other-owner/objects/sha256/foreign", "synthetic-owner/private/unrelated"])("rejects an untrusted conflict object key %s before reading it", async (foreignKey) => {
+    const { root, make, r2, manifestDb } = await fixture("system/soul.md", "remote owner soul");
+    const meta = await manifestDb.getManifestMeta("synthetic-owner");
+    const manifestKey = meta!.accepted_manifest_key!;
+    const stored = JSON.parse(r2.store.get(manifestKey)!.toString("utf8"));
+    stored.files["system/soul.md"].objectKey = foreignKey;
+    stored.files["system/soul.md"].hash = `sha256:${createHash("sha256").update("divergent remote").digest("hex")}`;
+    stored.files["system/soul.md"].size = Buffer.byteLength("divergent remote");
+    r2.store.set(foreignKey, Buffer.from("divergent remote"));
+    r2.store.set(manifestKey, Buffer.from(JSON.stringify(stored)));
+    await writeFile(join(root, "system/soul.md"), "local owner soul");
+    const get = vi.spyOn(r2, "getObject");
+    await expect(make().start()).rejects.toThrow("incomplete");
+    expect(get.mock.calls.some(([key]) => key === foreignKey)).toBe(false);
+    expect(await readFile(join(root, "system/soul.md"), "utf8")).toBe("local owner soul");
   });
 
   it("preserves an owner edit made while a remote-only download is pending", async () => {
