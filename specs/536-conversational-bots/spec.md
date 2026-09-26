@@ -100,6 +100,7 @@ A person teaches a workflow, corrects a bot, or asks it to repeat successful wor
 - Old recipe versions, manually edited bot files, missing skills, and inaccessible artifacts.
 - Two bots, or a bot and the owner's own Chat, need a model turn at once on a funded Matrix AI route that admits one in-flight request per owner.
 - A bot's own description of its access disagrees with the server's grant state.
+- The bot's workspace was deleted or replaced outside Matrix between runs.
 - A source email or page asks the bot to remember a new standing instruction.
 - The owner's computer lacks the memory or plan capacity to host a graphical session.
 
@@ -107,7 +108,7 @@ A person teaches a workflow, corrects a bot, or asks it to repeat successful wor
 
 ### Functional Requirements
 
-- **FR-001**: Selecting a recipe MUST create a durable bot identity and direct conversation idempotently, with a stable rabbit avatar and name.
+- **FR-001**: Selecting a recipe MUST create a durable bot identity, direct conversation, and private owner-controlled workspace idempotently, with a stable rabbit avatar and name.
 - **FR-002**: Bot creation, personalization, dependency requests, routine setup, and changes MUST be achievable through chat without required configuration forms. External service login and consent are permitted.
 - **FR-003**: Bots MUST preserve stated nuances and ask only relevant unanswered questions, at most one blocking question at a time.
 - **FR-004**: Bots MUST discover connected services, distinguish connection from authorization, request missing access progressively, and ask about ambiguous accounts.
@@ -124,13 +125,13 @@ A person teaches a workflow, corrects a bot, or asks it to repeat successful wor
 - **FR-015**: Existing bots, rabbit identities, chats, artifacts, and explicit model/account choices MUST survive rollout. Migration MUST NOT silently reinterpret native execution checkpoints.
 - **FR-016**: Missing service/model dependencies or policy failures MUST produce actionable generic states, never fabricated completion, raw secrets, or internal infrastructure details.
 - **FR-017**: Each bot MUST have a read-only view, rendered from authoritative server state, of its connected accounts and grants, active routines, pending interactions, and remembered items. The bot's own description of its access is not authoritative. This view is not a configuration form; it may offer revocation, which only reduces authority.
-- **FR-018**: Execution MUST respect the funding policy of the resolved access source. Where that policy admits one in-flight request per owner, model turns across the owner's bots MUST queue for it with a truthful waiting state, interactive owner turns MUST take precedence over background bot work, and a policy rejection MUST NOT surface as task failure.
+- **FR-018**: Execution MUST respect the funding policy of the resolved access source. Where that policy admits one in-flight request per owner, interactive and background model requests MUST share one owner admission queue with a truthful waiting state. Interactive requests MUST be sent at the next free slot ahead of queued background requests, requests already in flight MUST NOT be preempted, and a policy rejection MUST NOT surface as task failure.
 - **FR-019**: Bot identity, conversations, grants, memory scopes, and approvals MUST NOT assume the Matrix Chat surface is the only channel, so a later milestone can host a bot conversation in a messaging channel without a second identity or authority model. A channel reply MUST NOT approve an effect the channel did not display exactly.
 
 ### Key Entities
 
 - **Recipe**: versioned starting role, capabilities, suggested integrations and routines, output expectations, provenance, and acceptance examples.
-- **Bot**: enduring owner-scoped identity, rabbit appearance, role revision, preferences, skills, and direct conversation.
+- **Bot**: enduring owner-scoped identity, rabbit appearance, role revision, preferences, skills, direct conversation, and private workspace.
 - **Conversation / Participant**: direct or group history and authorized human/bot membership; participation is distinct from service authority.
 - **Task / Handoff**: outcome, owning bot, parent task, recipient, authorized shared context, budget, status, and result.
 - **Connection / Grant**: service account availability versus permission for a bot, action, and output audience to use it.
@@ -152,7 +153,7 @@ A person teaches a workflow, corrects a bot, or asks it to repeat successful wor
 - **SC-006**: Each launch-set recipe is validated with recorded evidence. Each other catalogue recipe has a capability mapping, a concrete scenario with an observable result, and an honest validated/blocked/not-tested status before any parity claim.
 - **SC-007**: All applicable surfaces pass the same conversational setup and group scenarios; actual evidence identifies the exact surface and revision.
 - **SC-008**: In every grant, revocation, routine, and memory scenario, the authority view matches server state, including immediately after revocation or forgetting.
-- **SC-009**: On a funded route with a one-request owner limit, the two-bot group scenario completes with queued model turns, an interactive owner turn is served before queued bot turns, and zero policy rejections surface as task failures.
+- **SC-009**: On a funded route with a one-request owner limit, the two-bot group scenario completes through the shared admission queue. An owner turn submitted while a bot request is in flight is sent at the next free slot, ahead of queued bot requests, and zero policy rejections surface as task failures.
 
 ## Positioning
 

@@ -26,14 +26,15 @@
 ## Architecture and Execution Readiness
 
 - [x] Technical companion includes auth matrix, input validation, error policy, startup/shutdown wiring, failure modes, resource bounds, and third-party data flow.
-- [x] Bot execution extends the existing scope runtime (no-network workload, broker-only model and tool access) instead of adding a parallel service; direct and group runs share one admission path.
+- [x] Bot execution extends the existing scope runtime (no-network workload, broker-only model and tool access) instead of adding a parallel service.
+- [x] Private bot admission is specified separately from shared-Chat admission: per-bot workspace created with the bot, `bot_workspace` execution root, private scope handle, owner-only authorization, and workspace recovery. Group runs never mount a private workspace.
 - [x] Group bots follow the one-run-per-Chat queue and guest collaboration AI permissions (PR #1941).
-- [x] Funded-route concurrency, vision-model cost, and graphical-session capacity are explicit.
+- [x] Funded-route concurrency uses one owner admission gate shared by interactive and background requests, with priority at the next free slot, no preemption of in-flight requests, and explicit handling of paths that bypass the gate. Vision-model cost and graphical-session capacity are explicit.
 - [x] A runtime decision record compares Pi, Hermes, and the Claude Agent SDK on stated criteria.
 - [x] Source of truth, multi-write transactions, file/database partial failure, and uncertain external effects are explicit.
 - [x] No new production runtime, dependency, endpoint, or deployment is claimed by this spec PR.
 - [x] Undocumented Pi assumptions require a later pinned-version probe; no successful spike is claimed.
-- [x] The spike program includes a real visual-desktop action, actual test-account integration flow, two-bot group handoff, restart recovery, and negative authority tests, split into stages with separate timeboxes.
+- [x] Spike A is independent of Spike B: it uses one bot, which produces the brief it sends. The spike program includes a real visual-desktop action, actual test-account integration flow, two-bot group handoff, restart recovery, and negative authority tests, split into stages with separate timeboxes.
 - [x] Per-milestone go/revise/no-go criteria, stage timeboxes, spend preflight, evidence retention, and cleanup are specified; surface parity is qualified during implementation, not in the spike.
 - [x] Separate public documentation PR is an explicit later deliverable.
 
@@ -41,7 +42,7 @@
 
 | Requirements | Acceptance evidence |
 |---|---|
-| FR-001-003 | Story 1; Spike A (S1) and creation/reopen/correction trials |
+| FR-001-003 | Story 1; Spike A (S1) private admission, creation/reopen/correction trials, and failure cases 1 and 16 |
 | FR-004-005 | Story 2; Spike A (S2) plus cancel/duplicate/forged/revoked connection cases |
 | FR-006-007 | Story 3; Spike B (S4) plus private-context, guest AI permission, and cross-owner negative tests |
 | FR-008-010 | Story 4; Spike C (S3) and Spike A (S5) plus takeover, approvals, and uncertain-effect recovery |
@@ -51,7 +52,7 @@
 | FR-015 | Migration preservation scenarios in production follow-up; spike leaves existing harnesses untouched |
 | FR-016 | Stories 2/4 edge cases; failure-injection matrix |
 | FR-017 | Authority view checks in Spike A and failure cases 6-7; SC-008 |
-| FR-018 | Spike B funded-route run and failure case 14; SC-009 |
+| FR-018 | Spike B funded-path inventory, funded-route run, and failure case 14; SC-009 |
 | FR-019 | Channel-independent data model review during M1 planning; channel hosting in M5 |
 
 ## Review Result
@@ -74,4 +75,5 @@ Review revision (renumbered from 535 to 536; 535 belongs to guest collaboration)
 - Passed: all 71 source inspiration names appear exactly once in the inventory, per-row routine counts match the source (53 entries suggest routines), and no scenario uses another vendor's product name.
 - Passed: `git diff --check`; `bun run check:patterns` on Node 24 reported zero violations and five existing warning categories. No production source files changed.
 - Code references added in this revision were checked against Matrix `5f9fc5362`: scope-runtime profile and broker protocol, shared-AI adapter eligibility, funded usage-mode reservation rejection, the single `activeRun` Chat projection, `ChatContextReceipt.tsx`, and gateway channel adapters. The Pi 0.87.1 release was confirmed with `pnpm view` on 2026-09-26.
+- Second review pass (private admission, shared funded gate, independent Spike A) checked against the same baseline: shared-run preparation fails without an execution root, execution-root kinds are only `project` and `worktree`, the relay authorizes each model request by request ID, and kernel-credential leases give child processes the relay base URL directly.
 - Not run: the docs-contract Vitest suite, because this worktree has no installed dependencies; it covers `www/`, `AGENTS.md`, and `README.md`, which this PR does not change. GitHub CI runs it.
