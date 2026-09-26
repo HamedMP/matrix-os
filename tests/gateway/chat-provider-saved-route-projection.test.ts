@@ -38,6 +38,7 @@ describe("saved harness intent through Settings projection and Chat catalog", ()
     ["opencode", "retired", false, true], ["opencode", "unavailable", false, true],
     ["pi", "retired", true, true], ["opencode", "unavailable", true, true],
     ["pi", "retired", false, false],
+    ["pi", "missing_model", false, true], ["opencode", "missing_provider", false, true],
   ] as const)("keeps %s saved intent when its selected model is %s (enabled=%s, installed=%s)", async (kind, modelStatus, enabled, installed) => {
     const homePath = await mkdtemp(join(tmpdir(), "saved-harness-route-"));
     try {
@@ -47,14 +48,18 @@ describe("saved harness intent through Settings projection and Chat catalog", ()
         installState: installed ? "installed" : "missing", health: "ready", capabilities: ["tools", "resume"],
         setupActions: [],
       });
-      canonical.models.find((model) => model.id === "claude-sonnet-5")!.status = modelStatus;
+      if (modelStatus === "retired" || modelStatus === "unavailable") {
+        canonical.models.find((model) => model.id === "claude-sonnet-5")!.status = modelStatus;
+      }
+      const routeProviderId = modelStatus === "missing_provider" ? "removed_vendor" : "anthropic";
+      const routeModelId = modelStatus.startsWith("missing_") ? "removed_model" : "claude-sonnet-5";
       await writeProviderJsonAtomic(join(homePath, "system/ai-providers/settings.json"), {
         schemaVersion: 1, revision: 1, accountProfiles: [], gatewayPolicy: null, receipts: [],
         harnesses: [{
           id: `harness_${kind}`, driverId: kind, harness: kind,
           displayName: kind === "pi" ? "Pi" : "OpenCode", accentColor: null,
           enabled, selectedAccountId: "owner_anthropic", accessSourceId: "owner_anthropic_profile",
-          route: { kind: "configurable", providerId: "anthropic", modelId: "claude-sonnet-5" },
+          route: { kind: "configurable", providerId: routeProviderId, modelId: routeModelId },
         }],
       });
       const store = new ProviderSettingsStore({
@@ -66,9 +71,15 @@ describe("saved harness intent through Settings projection and Chat catalog", ()
         configuredEnabled: enabled, enabled: false, routeAvailability: "catalog_unavailable",
         connectivity: "offline", authState: "unknown", accessSourceId: null, selectedAccountId: null,
       });
-      expect(settings.modelProviders.find((provider) => provider.id === "anthropic")?.models.find((model) => (
-        model.id === "claude-sonnet-5"
-      ))?.enabled).toBe(false);
+      if (modelStatus.startsWith("missing_")) {
+        expect(settings.modelProviders.find((provider) => provider.id === routeProviderId)?.models.some((model) => (
+          model.id === routeModelId
+        ))).not.toBe(true);
+      } else {
+        expect(settings.modelProviders.find((provider) => provider.id === "anthropic")?.models.find((model) => (
+          model.id === "claude-sonnet-5"
+        ))?.enabled).toBe(false);
+      }
       expect(ProviderSettingsConfigurationSchema.parse(JSON.parse(await readFile(
         join(homePath, "system/ai-providers/settings.json"), "utf8",
       ))).harnesses[0]?.enabled).toBe(enabled);
