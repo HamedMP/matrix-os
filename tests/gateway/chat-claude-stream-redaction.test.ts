@@ -61,15 +61,19 @@ function streamLines(chunks: string[], options: { stop?: boolean; result?: boole
   ];
 }
 
-function separateTextBlocks(parts: string[]): string[] {
+function separateTextBlocksWithChunks(parts: string[][]): string[] {
   return [
-    ...parts.flatMap((text, index) => [
+    ...parts.flatMap((chunks, index) => [
       JSON.stringify({ type: "stream_event", event: { type: "content_block_start", index, content_block: { type: "text" } } }),
-      JSON.stringify({ type: "stream_event", event: { type: "content_block_delta", index, delta: { type: "text_delta", text } } }),
+      ...chunks.map((text) => JSON.stringify({ type: "stream_event", event: { type: "content_block_delta", index, delta: { type: "text_delta", text } } })),
       JSON.stringify({ type: "stream_event", event: { type: "content_block_stop", index } }),
     ]),
-    JSON.stringify({ type: "result", subtype: "success", result: parts.join(""), session_id: "claude_block_redaction" }),
+    JSON.stringify({ type: "result", subtype: "success", result: parts.flat().join(""), session_id: "claude_block_redaction" }),
   ];
+}
+
+function separateTextBlocks(parts: string[]): string[] {
+  return separateTextBlocksWithChunks(parts.map((part) => [part]));
 }
 
 async function runLines(
@@ -296,11 +300,42 @@ describe("Claude streamed assistant text redaction", () => {
   it.each([
     ["第一段中文", "第二段中文", "第一段中文", "第二段中文"],
     ["first.", "第二段中文", "first.", "第二段中文"],
+    ["Hello", "world", "Hello", "world"],
   ])("keeps ordinary adjacent text blocks in distinct durable messages (%s)", async (first, second, expectedFirst, expectedSecond) => {
     const events = await runLines(separateTextBlocks([first, second]));
     expect([...assembledAssistantMessages(events)]).toEqual([
       ["claude_text_0", expectedFirst],
       ["claude_text_1", expectedSecond],
+    ]);
+  });
+
+  it.each([
+    ["Bearer fixture-secret-token done", "Bearer [redacted] done", "fixture-secret-token"],
+    ["ACCESS_TOKEN=fixture-secret-value done", "[redacted credential] done", "fixture-secret-value"],
+  ])("does not concatenate an unrelated first block with a split new-block credential (%s)", async (second, expected, forbidden) => {
+    for (let split = 1; split < second.length; split++) {
+      const events = await runLines(separateTextBlocksWithChunks([["Hello"], [second.slice(0, split), second.slice(split)]]));
+      const deltas = events.filter((event) => event.type === "assistant.delta");
+      for (const event of deltas) expect(event.delta).not.toContain(forbidden);
+      expect([...assembledAssistantMessages(events)]).toEqual([
+        ["claude_text_0", "Hello"],
+        ["claude_text_1", expected],
+      ]);
+    }
+  });
+
+  it.each([
+    ["Bear", "er fixture-secret-token done", "Bearer [redacted] ", "fixture-secret-token"],
+    ["ACCESS_TO", "KEN=fixture-secret-value done", "[redacted credential] ", "fixture-secret-value"],
+  ])("preserves a new credential prefix through a third text block (%s)", async (start, continuation, expected, forbidden) => {
+    const events = await runLines(separateTextBlocks(["Hello", start, continuation]));
+    for (const event of events) {
+      if (event.type === "assistant.delta") expect(event.delta).not.toContain(forbidden);
+    }
+    expect([...assembledAssistantMessages(events)]).toEqual([
+      ["claude_text_0", "Hello"],
+      ["claude_text_1", expected],
+      ["claude_text_2", "done"],
     ]);
   });
 

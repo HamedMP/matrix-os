@@ -132,23 +132,17 @@ export function createAssistantTextStreamProjector(options: { homePath: string; 
       return projected;
     },
     flushBoundary(nextCharacter?: string): string {
-      if (pending && nextCharacter && nextCharacter !== "/"
-        && pending.codePointAt(0)! > 0x7f
-        && pending === String.fromCodePoint(pending.codePointAt(0)!)
-        && sanitizeAssistantText(pending, options) === pending) {
-        // Unspaced prose keeps one character for slash lookbehind. Once a
-        // different block starts without a slash, that character is complete
-        // and belongs to the original message.
-        const projected = pending;
-        pending = "";
-        return projected;
-      }
       if (droppingOversizedToken || pending.includes("/") || ACTIVE_BEARER.test(pending)
         || DANGLING_SECRET_ASSIGNMENT.test(pending)
         || incompleteSecretKeyword()
         || /https?:$/iu.test(pending)
-        || /[\p{L}\p{N}_~-]$/u.test(pending)
         || sanitizeAssistantText(pending, options) !== pending) return "";
+      // At a new text block, a plain word is complete unless the new block
+      // starts a slash continuation (relative path) or a URL scheme colon.
+      // Releasing it preserves the new block's word boundary for credentials.
+      if ((nextCharacter === undefined || nextCharacter === "/"
+        || (nextCharacter === ":" && /https?$/iu.test(pending)))
+        && /[\p{L}\p{N}_~-]$/u.test(pending)) return "";
       const projected = pending;
       pending = "";
       return projected;
