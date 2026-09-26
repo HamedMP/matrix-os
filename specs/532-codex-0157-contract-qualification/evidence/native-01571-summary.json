@@ -57,5 +57,17 @@
     "fixtureError": "AssertionError: Turn did not complete",
     "nativeTerminalStatus": "not recorded",
     "nativeTerminalError": "not recorded"
+  },
+  "forcedInitializeFailureCleanup": {
+    "redExit": 1,
+    "redAssertion": "Failed initialization left child running",
+    "greenExit": 0,
+    "assertedResources": [
+      "child terminated/reaped",
+      "selector closed",
+      "stdin closed",
+      "stdout closed",
+      "stderr closed"
+    ]
   }
 }

@@ -72,17 +72,23 @@ class Server:
         Path(env["HOME"]).mkdir(exist_ok=True)
         self.stderr_path = BASE / f"app-server-{time.time_ns()}.stderr"
         self.stderr = self.stderr_path.open("wb")
-        self.proc = subprocess.Popen(
-            [str(CODEX), "app-server", "--stdio"],
-            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=self.stderr,
-            cwd=str(BASE), env=env, bufsize=0,
-        )
-        self.selector = selectors.DefaultSelector()
-        self.selector.register(self.proc.stdout, selectors.EVENT_READ)
-        self.buffer = bytearray()
-        self.next_id = 0
-        self.call("initialize", {"clientInfo": {"name": "matrix-spike", "title": "Matrix Spike", "version": "1"}, "capabilities": {"experimentalApi": True}})
-        self.notify("initialized", {})
+        self.proc = None
+        self.selector = None
+        try:
+            self.proc = subprocess.Popen(
+                [str(CODEX), "app-server", "--stdio"],
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=self.stderr,
+                cwd=str(BASE), env=env, bufsize=0,
+            )
+            self.selector = selectors.DefaultSelector()
+            self.selector.register(self.proc.stdout, selectors.EVENT_READ)
+            self.buffer = bytearray()
+            self.next_id = 0
+            self.call("initialize", {"clientInfo": {"name": "matrix-spike", "title": "Matrix Spike", "version": "1"}, "capabilities": {"experimentalApi": True}})
+            self.notify("initialized", {})
+        except BaseException:
+            self.close()
+            raise
 
     def send(self, item):
         self.proc.stdin.write((json.dumps(item, separators=(",", ":")) + "\n").encode())
@@ -115,12 +121,19 @@ class Server:
         raise TimeoutError(method)
 
     def close(self):
-        self.proc.terminate()
-        try:
-            self.proc.wait(timeout=4)
-        except subprocess.TimeoutExpired:
-            self.proc.kill()
-            self.proc.wait(timeout=4)
+        if self.proc is not None and self.proc.poll() is None:
+            self.proc.terminate()
+            try:
+                self.proc.wait(timeout=4)
+            except subprocess.TimeoutExpired:
+                self.proc.kill()
+                self.proc.wait(timeout=4)
+        if self.selector is not None:
+            self.selector.close()
+        if self.proc is not None:
+            for pipe in (self.proc.stdin, self.proc.stdout):
+                if pipe is not None:
+                    pipe.close()
         self.stderr.close()
         lines = self.stderr_path.read_text(errors="replace").splitlines()
         interesting = [line for line in lines if re.search(r"error|failed|request|proxy|127\.0\.0\.1|mock|connection", line, re.IGNORECASE)]
