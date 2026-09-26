@@ -1,0 +1,612 @@
+/* Self-hosted font faces from the exact Fontsource 5.3.0 packages in pnpm-lock.yaml.
+ * Each package retains its SIL Open Font License (OFL-1.1). Preserve its subset
+ * unicode ranges. Internal Matrix aliases isolate shell faces from terminal CSS;
+ * the physical font families are unchanged. Fallback metrics match the prior Next 16.2.6 Google loader.
+ */
+
+/* @fontsource-variable/inter@5.3.0: wght.css */
+/* inter-cyrillic-ext-wght-normal */
+@font-face {
+  font-family: 'Matrix Inter';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url(../../node_modules/@fontsource-variable/inter/files/inter-cyrillic-ext-wght-normal.woff2) format('woff2-variations');
+  unicode-range: U+0460-052F,U+1C80-1C8A,U+20B4,U+2DE0-2DFF,U+A640-A69F,U+FE2E-FE2F;
+}
+
+/* inter-cyrillic-wght-normal */
+@font-face {
+  font-family: 'Matrix Inter';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url(../../node_modules/@fontsource-variable/inter/files/inter-cyrillic-wght-normal.woff2) format('woff2-variations');
+  unicode-range: U+0301,U+0400-045F,U+0490-0491,U+04B0-04B1,U+2116;
+}
+
+/* inter-greek-ext-wght-normal */
+@font-face {
+  font-family: 'Matrix Inter';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url(../../node_modules/@fontsource-variable/inter/files/inter-greek-ext-wght-normal.woff2) format('woff2-variations');
+  unicode-range: U+1F00-1FFF;
+}
+
+/* inter-greek-wght-normal */
+@font-face {
+  font-family: 'Matrix Inter';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url(../../node_modules/@fontsource-variable/inter/files/inter-greek-wght-normal.woff2) format('woff2-variations');
+  unicode-range: U+0370-0377,U+037A-037F,U+0384-038A,U+038C,U+038E-03A1,U+03A3-03FF;
+}
+
+/* inter-vietnamese-wght-normal */
+@font-face {
+  font-family: 'Matrix Inter';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url(../../node_modules/@fontsource-variable/inter/files/inter-vietnamese-wght-normal.woff2) format('woff2-variations');
+  unicode-range: U+0102-0103,U+0110-0111,U+0128-0129,U+0168-0169,U+01A0-01A1,U+01AF-01B0,U+0300-0301,U+0303-0304,U+0308-0309,U+0323,U+0329,U+1EA0-1EF9,U+20AB;
+}
+
+/* inter-latin-ext-wght-normal */
+@font-face {
+  font-family: 'Matrix Inter';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url(../../node_modules/@fontsource-variable/inter/files/inter-latin-ext-wght-normal.woff2) format('woff2-variations');
+  unicode-range: U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF;
+}
+
+/* inter-latin-wght-normal */
+@font-face {
+  font-family: 'Matrix Inter';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url(../../node_modules/@fontsource-variable/inter/files/inter-latin-wght-normal.woff2) format('woff2-variations');
+  unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;
+}
+@font-face {
+  font-family: 'Matrix Inter Fallback';
+  src: local('Arial');
+  ascent-override: 90.44%;
+  descent-override: 22.52%;
+  line-gap-override: 0.00%;
+  size-adjust: 107.12%;
+}
+
+/* @fontsource-variable/instrument-sans@5.3.0: wght.css */
+/* instrument-sans-latin-ext-wght-normal */
+@font-face {
+  font-family: 'Matrix Instrument Sans';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 400 700;
+  src: url(../../node_modules/@fontsource-variable/instrument-sans/files/instrument-sans-latin-ext-wght-normal.woff2) format('woff2-variations');
+  unicode-range: U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF;
+}
+
+/* instrument-sans-latin-wght-normal */
+@font-face {
+  font-family: 'Matrix Instrument Sans';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 400 700;
+  src: url(../../node_modules/@fontsource-variable/instrument-sans/files/instrument-sans-latin-wght-normal.woff2) format('woff2-variations');
+  unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;
+}
+@font-face {
+  font-family: 'Matrix Instrument Sans Fallback';
+  src: local('Arial');
+  ascent-override: 94.42%;
+  descent-override: 24.33%;
+  line-gap-override: 0.00%;
+  size-adjust: 102.74%;
+}
+
+/* @fontsource/instrument-serif@5.3.0: 400.css, 400-italic.css */
+/* instrument-serif-latin-ext-400-normal */
+@font-face {
+  font-family: 'Matrix Instrument Serif';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 400;
+  src: url(../../node_modules/@fontsource/instrument-serif/files/instrument-serif-latin-ext-400-normal.woff2) format('woff2'), url(../../node_modules/@fontsource/instrument-serif/files/instrument-serif-latin-ext-400-normal.woff) format('woff');
+  unicode-range: U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF;
+}
+
+/* instrument-serif-latin-400-normal */
+@font-face {
+  font-family: 'Matrix Instrument Serif';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 400;
+  src: url(../../node_modules/@fontsource/instrument-serif/files/instrument-serif-latin-400-normal.woff2) format('woff2'), url(../../node_modules/@fontsource/instrument-serif/files/instrument-serif-latin-400-normal.woff) format('woff');
+  unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;
+}
+/* instrument-serif-latin-ext-400-italic */
+@font-face {
+  font-family: 'Matrix Instrument Serif';
+  font-style: italic;
+  font-display: swap;
+  font-weight: 400;
+  src: url(../../node_modules/@fontsource/instrument-serif/files/instrument-serif-latin-ext-400-italic.woff2) format('woff2'), url(../../node_modules/@fontsource/instrument-serif/files/instrument-serif-latin-ext-400-italic.woff) format('woff');
+  unicode-range: U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF;
+}
+
+/* instrument-serif-latin-400-italic */
+@font-face {
+  font-family: 'Matrix Instrument Serif';
+  font-style: italic;
+  font-display: swap;
+  font-weight: 400;
+  src: url(../../node_modules/@fontsource/instrument-serif/files/instrument-serif-latin-400-italic.woff2) format('woff2'), url(../../node_modules/@fontsource/instrument-serif/files/instrument-serif-latin-400-italic.woff) format('woff');
+  unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;
+}
+@font-face {
+  font-family: 'Matrix Instrument Serif Fallback';
+  src: local('Times New Roman');
+  ascent-override: 117.94%;
+  descent-override: 36.93%;
+  line-gap-override: 0.00%;
+  size-adjust: 83.94%;
+}
+
+/* @fontsource-variable/jetbrains-mono@5.3.0: wght.css */
+/* jetbrains-mono-cyrillic-ext-wght-normal */
+@font-face {
+  font-family: 'Matrix JetBrains Mono';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 800;
+  src: url(../../node_modules/@fontsource-variable/jetbrains-mono/files/jetbrains-mono-cyrillic-ext-wght-normal.woff2) format('woff2-variations');
+  unicode-range: U+0460-052F,U+1C80-1C8A,U+20B4,U+2DE0-2DFF,U+A640-A69F,U+FE2E-FE2F;
+}
+
+/* jetbrains-mono-cyrillic-wght-normal */
+@font-face {
+  font-family: 'Matrix JetBrains Mono';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 800;
+  src: url(../../node_modules/@fontsource-variable/jetbrains-mono/files/jetbrains-mono-cyrillic-wght-normal.woff2) format('woff2-variations');
+  unicode-range: U+0301,U+0400-045F,U+0490-0491,U+04B0-04B1,U+2116;
+}
+
+/* jetbrains-mono-greek-wght-normal */
+@font-face {
+  font-family: 'Matrix JetBrains Mono';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 800;
+  src: url(../../node_modules/@fontsource-variable/jetbrains-mono/files/jetbrains-mono-greek-wght-normal.woff2) format('woff2-variations');
+  unicode-range: U+0370-0377,U+037A-037F,U+0384-038A,U+038C,U+038E-03A1,U+03A3-03FF;
+}
+
+/* jetbrains-mono-vietnamese-wght-normal */
+@font-face {
+  font-family: 'Matrix JetBrains Mono';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 800;
+  src: url(../../node_modules/@fontsource-variable/jetbrains-mono/files/jetbrains-mono-vietnamese-wght-normal.woff2) format('woff2-variations');
+  unicode-range: U+0102-0103,U+0110-0111,U+0128-0129,U+0168-0169,U+01A0-01A1,U+01AF-01B0,U+0300-0301,U+0303-0304,U+0308-0309,U+0323,U+0329,U+1EA0-1EF9,U+20AB;
+}
+
+/* jetbrains-mono-latin-ext-wght-normal */
+@font-face {
+  font-family: 'Matrix JetBrains Mono';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 800;
+  src: url(../../node_modules/@fontsource-variable/jetbrains-mono/files/jetbrains-mono-latin-ext-wght-normal.woff2) format('woff2-variations');
+  unicode-range: U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF;
+}
+
+/* jetbrains-mono-latin-wght-normal */
+@font-face {
+  font-family: 'Matrix JetBrains Mono';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 800;
+  src: url(../../node_modules/@fontsource-variable/jetbrains-mono/files/jetbrains-mono-latin-wght-normal.woff2) format('woff2-variations');
+  unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;
+}
+@font-face {
+  font-family: 'Matrix JetBrains Mono Fallback';
+  src: local('Arial');
+  ascent-override: 75.79%;
+  descent-override: 22.29%;
+  line-gap-override: 0.00%;
+  size-adjust: 134.59%;
+}
+
+/* @fontsource/cormorant-garamond@5.3.0: 300.css, 400.css, 500.css */
+/* cormorant-garamond-cyrillic-ext-300-normal */
+@font-face {
+  font-family: 'Matrix Cormorant Garamond';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 300;
+  src: url(../../node_modules/@fontsource/cormorant-garamond/files/cormorant-garamond-cyrillic-ext-300-normal.woff2) format('woff2'), url(../../node_modules/@fontsource/cormorant-garamond/files/cormorant-garamond-cyrillic-ext-300-normal.woff) format('woff');
+  unicode-range: U+0460-052F,U+1C80-1C8A,U+20B4,U+2DE0-2DFF,U+A640-A69F,U+FE2E-FE2F;
+}
+
+/* cormorant-garamond-cyrillic-300-normal */
+@font-face {
+  font-family: 'Matrix Cormorant Garamond';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 300;
+  src: url(../../node_modules/@fontsource/cormorant-garamond/files/cormorant-garamond-cyrillic-300-normal.woff2) format('woff2'), url(../../node_modules/@fontsource/cormorant-garamond/files/cormorant-garamond-cyrillic-300-normal.woff) format('woff');
+  unicode-range: U+0301,U+0400-045F,U+0490-0491,U+04B0-04B1,U+2116;
+}
+
+/* cormorant-garamond-vietnamese-300-normal */
+@font-face {
+  font-family: 'Matrix Cormorant Garamond';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 300;
+  src: url(../../node_modules/@fontsource/cormorant-garamond/files/cormorant-garamond-vietnamese-300-normal.woff2) format('woff2'), url(../../node_modules/@fontsource/cormorant-garamond/files/cormorant-garamond-vietnamese-300-normal.woff) format('woff');
+  unicode-range: U+0102-0103,U+0110-0111,U+0128-0129,U+0168-0169,U+01A0-01A1,U+01AF-01B0,U+0300-0301,U+0303-0304,U+0308-0309,U+0323,U+0329,U+1EA0-1EF9,U+20AB;
+}
+
+/* cormorant-garamond-latin-ext-300-normal */
+@font-face {
+  font-family: 'Matrix Cormorant Garamond';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 300;
+  src: url(../../node_modules/@fontsource/cormorant-garamond/files/cormorant-garamond-latin-ext-300-normal.woff2) format('woff2'), url(../../node_modules/@fontsource/cormorant-garamond/files/cormorant-garamond-latin-ext-300-normal.woff) format('woff');
+  unicode-range: U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF;
+}
+
+/* cormorant-garamond-latin-300-normal */
+@font-face {
+  font-family: 'Matrix Cormorant Garamond';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 300;
+  src: url(../../node_modules/@fontsource/cormorant-garamond/files/cormorant-garamond-latin-300-normal.woff2) format('woff2'), url(../../node_modules/@fontsource/cormorant-garamond/files/cormorant-garamond-latin-300-normal.woff) format('woff');
+  unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;
+}
+/* cormorant-garamond-cyrillic-ext-400-normal */
+@font-face {
+  font-family: 'Matrix Cormorant Garamond';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 400;
+  src: url(../../node_modules/@fontsource/cormorant-garamond/files/cormorant-garamond-cyrillic-ext-400-normal.woff2) format('woff2'), url(../../node_modules/@fontsource/cormorant-garamond/files/cormorant-garamond-cyrillic-ext-400-normal.woff) format('woff');
+  unicode-range: U+0460-052F,U+1C80-1C8A,U+20B4,U+2DE0-2DFF,U+A640-A69F,U+FE2E-FE2F;
+}
+
+/* cormorant-garamond-cyrillic-400-normal */
+@font-face {
+  font-family: 'Matrix Cormorant Garamond';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 400;
+  src: url(../../node_modules/@fontsource/cormorant-garamond/files/cormorant-garamond-cyrillic-400-normal.woff2) format('woff2'), url(../../node_modules/@fontsource/cormorant-garamond/files/cormorant-garamond-cyrillic-400-normal.woff) format('woff');
+  unicode-range: U+0301,U+0400-045F,U+0490-0491,U+04B0-04B1,U+2116;
+}
+
+/* cormorant-garamond-vietnamese-400-normal */
+@font-face {
+  font-family: 'Matrix Cormorant Garamond';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 400;
+  src: url(../../node_modules/@fontsource/cormorant-garamond/files/cormorant-garamond-vietnamese-400-normal.woff2) format('woff2'), url(../../node_modules/@fontsource/cormorant-garamond/files/cormorant-garamond-vietnamese-400-normal.woff) format('woff');
+  unicode-range: U+0102-0103,U+0110-0111,U+0128-0129,U+0168-0169,U+01A0-01A1,U+01AF-01B0,U+0300-0301,U+0303-0304,U+0308-0309,U+0323,U+0329,U+1EA0-1EF9,U+20AB;
+}
+
+/* cormorant-garamond-latin-ext-400-normal */
+@font-face {
+  font-family: 'Matrix Cormorant Garamond';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 400;
+  src: url(../../node_modules/@fontsource/cormorant-garamond/files/cormorant-garamond-latin-ext-400-normal.woff2) format('woff2'), url(../../node_modules/@fontsource/cormorant-garamond/files/cormorant-garamond-latin-ext-400-normal.woff) format('woff');
+  unicode-range: U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF;
+}
+
+/* cormorant-garamond-latin-400-normal */
+@font-face {
+  font-family: 'Matrix Cormorant Garamond';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 400;
+  src: url(../../node_modules/@fontsource/cormorant-garamond/files/cormorant-garamond-latin-400-normal.woff2) format('woff2'), url(../../node_modules/@fontsource/cormorant-garamond/files/cormorant-garamond-latin-400-normal.woff) format('woff');
+  unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;
+}
+/* cormorant-garamond-cyrillic-ext-500-normal */
+@font-face {
+  font-family: 'Matrix Cormorant Garamond';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 500;
+  src: url(../../node_modules/@fontsource/cormorant-garamond/files/cormorant-garamond-cyrillic-ext-500-normal.woff2) format('woff2'), url(../../node_modules/@fontsource/cormorant-garamond/files/cormorant-garamond-cyrillic-ext-500-normal.woff) format('woff');
+  unicode-range: U+0460-052F,U+1C80-1C8A,U+20B4,U+2DE0-2DFF,U+A640-A69F,U+FE2E-FE2F;
+}
+
+/* cormorant-garamond-cyrillic-500-normal */
+@font-face {
+  font-family: 'Matrix Cormorant Garamond';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 500;
+  src: url(../../node_modules/@fontsource/cormorant-garamond/files/cormorant-garamond-cyrillic-500-normal.woff2) format('woff2'), url(../../node_modules/@fontsource/cormorant-garamond/files/cormorant-garamond-cyrillic-500-normal.woff) format('woff');
+  unicode-range: U+0301,U+0400-045F,U+0490-0491,U+04B0-04B1,U+2116;
+}
+
+/* cormorant-garamond-vietnamese-500-normal */
+@font-face {
+  font-family: 'Matrix Cormorant Garamond';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 500;
+  src: url(../../node_modules/@fontsource/cormorant-garamond/files/cormorant-garamond-vietnamese-500-normal.woff2) format('woff2'), url(../../node_modules/@fontsource/cormorant-garamond/files/cormorant-garamond-vietnamese-500-normal.woff) format('woff');
+  unicode-range: U+0102-0103,U+0110-0111,U+0128-0129,U+0168-0169,U+01A0-01A1,U+01AF-01B0,U+0300-0301,U+0303-0304,U+0308-0309,U+0323,U+0329,U+1EA0-1EF9,U+20AB;
+}
+
+/* cormorant-garamond-latin-ext-500-normal */
+@font-face {
+  font-family: 'Matrix Cormorant Garamond';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 500;
+  src: url(../../node_modules/@fontsource/cormorant-garamond/files/cormorant-garamond-latin-ext-500-normal.woff2) format('woff2'), url(../../node_modules/@fontsource/cormorant-garamond/files/cormorant-garamond-latin-ext-500-normal.woff) format('woff');
+  unicode-range: U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF;
+}
+
+/* cormorant-garamond-latin-500-normal */
+@font-face {
+  font-family: 'Matrix Cormorant Garamond';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 500;
+  src: url(../../node_modules/@fontsource/cormorant-garamond/files/cormorant-garamond-latin-500-normal.woff2) format('woff2'), url(../../node_modules/@fontsource/cormorant-garamond/files/cormorant-garamond-latin-500-normal.woff) format('woff');
+  unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;
+}
+@font-face {
+  font-family: 'Matrix Cormorant Garamond Fallback';
+  src: local('Times New Roman');
+  ascent-override: 95.27%;
+  descent-override: 29.59%;
+  line-gap-override: 0.00%;
+  size-adjust: 96.98%;
+}
+
+/* @fontsource/orbitron@5.3.0: 400.css, 500.css, 600.css, 700.css */
+/* orbitron-latin-400-normal */
+@font-face {
+  font-family: 'Matrix Orbitron';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 400;
+  src: url(../../node_modules/@fontsource/orbitron/files/orbitron-latin-400-normal.woff2) format('woff2'), url(../../node_modules/@fontsource/orbitron/files/orbitron-latin-400-normal.woff) format('woff');
+  unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;
+}
+/* orbitron-latin-500-normal */
+@font-face {
+  font-family: 'Matrix Orbitron';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 500;
+  src: url(../../node_modules/@fontsource/orbitron/files/orbitron-latin-500-normal.woff2) format('woff2'), url(../../node_modules/@fontsource/orbitron/files/orbitron-latin-500-normal.woff) format('woff');
+  unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;
+}
+/* orbitron-latin-600-normal */
+@font-face {
+  font-family: 'Matrix Orbitron';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 600;
+  src: url(../../node_modules/@fontsource/orbitron/files/orbitron-latin-600-normal.woff2) format('woff2'), url(../../node_modules/@fontsource/orbitron/files/orbitron-latin-600-normal.woff) format('woff');
+  unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;
+}
+/* orbitron-latin-700-normal */
+@font-face {
+  font-family: 'Matrix Orbitron';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 700;
+  src: url(../../node_modules/@fontsource/orbitron/files/orbitron-latin-700-normal.woff2) format('woff2'), url(../../node_modules/@fontsource/orbitron/files/orbitron-latin-700-normal.woff) format('woff');
+  unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;
+}
+@font-face {
+  font-family: 'Matrix Orbitron Fallback';
+  src: local('Arial');
+  ascent-override: 81.50%;
+  descent-override: 19.59%;
+  line-gap-override: 0.00%;
+  size-adjust: 124.05%;
+}
+
+/* @fontsource-variable/geist@5.3.0: wght.css */
+/* geist-cyrillic-ext-wght-normal */
+@font-face {
+  font-family: 'Matrix Geist';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url(../../node_modules/@fontsource-variable/geist/files/geist-cyrillic-ext-wght-normal.woff2) format('woff2-variations');
+  unicode-range: U+0460-052F,U+1C80-1C8A,U+20B4,U+2DE0-2DFF,U+A640-A69F,U+FE2E-FE2F;
+}
+
+/* geist-cyrillic-wght-normal */
+@font-face {
+  font-family: 'Matrix Geist';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url(../../node_modules/@fontsource-variable/geist/files/geist-cyrillic-wght-normal.woff2) format('woff2-variations');
+  unicode-range: U+0301,U+0400-045F,U+0490-0491,U+04B0-04B1,U+2116;
+}
+
+/* geist-vietnamese-wght-normal */
+@font-face {
+  font-family: 'Matrix Geist';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url(../../node_modules/@fontsource-variable/geist/files/geist-vietnamese-wght-normal.woff2) format('woff2-variations');
+  unicode-range: U+0102-0103,U+0110-0111,U+0128-0129,U+0168-0169,U+01A0-01A1,U+01AF-01B0,U+0300-0301,U+0303-0304,U+0308-0309,U+0323,U+0329,U+1EA0-1EF9,U+20AB;
+}
+
+/* geist-latin-ext-wght-normal */
+@font-face {
+  font-family: 'Matrix Geist';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url(../../node_modules/@fontsource-variable/geist/files/geist-latin-ext-wght-normal.woff2) format('woff2-variations');
+  unicode-range: U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF;
+}
+
+/* geist-latin-wght-normal */
+@font-face {
+  font-family: 'Matrix Geist';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url(../../node_modules/@fontsource-variable/geist/files/geist-latin-wght-normal.woff2) format('woff2-variations');
+  unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;
+}
+@font-face {
+  font-family: 'Matrix Geist Fallback';
+  src: local('Arial');
+  ascent-override: 95.94%;
+  descent-override: 28.16%;
+  line-gap-override: 0.00%;
+  size-adjust: 104.76%;
+}
+
+/* @fontsource-variable/geist-mono@5.3.0: wght.css */
+/* geist-mono-cyrillic-ext-wght-normal */
+@font-face {
+  font-family: 'Matrix Geist Mono';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url(../../node_modules/@fontsource-variable/geist-mono/files/geist-mono-cyrillic-ext-wght-normal.woff2) format('woff2-variations');
+  unicode-range: U+0460-052F,U+1C80-1C8A,U+20B4,U+2DE0-2DFF,U+A640-A69F,U+FE2E-FE2F;
+}
+
+/* geist-mono-cyrillic-wght-normal */
+@font-face {
+  font-family: 'Matrix Geist Mono';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url(../../node_modules/@fontsource-variable/geist-mono/files/geist-mono-cyrillic-wght-normal.woff2) format('woff2-variations');
+  unicode-range: U+0301,U+0400-045F,U+0490-0491,U+04B0-04B1,U+2116;
+}
+
+/* geist-mono-symbols2-wght-normal */
+@font-face {
+  font-family: 'Matrix Geist Mono';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url(../../node_modules/@fontsource-variable/geist-mono/files/geist-mono-symbols2-wght-normal.woff2) format('woff2-variations');
+  unicode-range: U+2000-2001,U+2004-2008,U+200A,U+23B8-23BD,U+2500-259F;
+}
+
+/* geist-mono-vietnamese-wght-normal */
+@font-face {
+  font-family: 'Matrix Geist Mono';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url(../../node_modules/@fontsource-variable/geist-mono/files/geist-mono-vietnamese-wght-normal.woff2) format('woff2-variations');
+  unicode-range: U+0102-0103,U+0110-0111,U+0128-0129,U+0168-0169,U+01A0-01A1,U+01AF-01B0,U+0300-0301,U+0303-0304,U+0308-0309,U+0323,U+0329,U+1EA0-1EF9,U+20AB;
+}
+
+/* geist-mono-latin-ext-wght-normal */
+@font-face {
+  font-family: 'Matrix Geist Mono';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url(../../node_modules/@fontsource-variable/geist-mono/files/geist-mono-latin-ext-wght-normal.woff2) format('woff2-variations');
+  unicode-range: U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF;
+}
+
+/* geist-mono-latin-wght-normal */
+@font-face {
+  font-family: 'Matrix Geist Mono';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url(../../node_modules/@fontsource-variable/geist-mono/files/geist-mono-latin-wght-normal.woff2) format('woff2-variations');
+  unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;
+}
+@font-face {
+  font-family: 'Matrix Geist Mono Fallback';
+  src: local('Arial');
+  ascent-override: 74.67%;
+  descent-override: 21.92%;
+  line-gap-override: 0.00%;
+  size-adjust: 134.59%;
+}
+
+/* @fontsource-variable/bricolage-grotesque@5.3.0: wght.css */
+/* bricolage-grotesque-vietnamese-wght-normal */
+@font-face {
+  font-family: 'Matrix Bricolage Grotesque';
+  font-style: normal;
+  font-display: block;
+  font-weight: 200 800;
+  src: url(../../node_modules/@fontsource-variable/bricolage-grotesque/files/bricolage-grotesque-vietnamese-wght-normal.woff2) format('woff2-variations');
+  unicode-range: U+0102-0103,U+0110-0111,U+0128-0129,U+0168-0169,U+01A0-01A1,U+01AF-01B0,U+0300-0301,U+0303-0304,U+0308-0309,U+0323,U+0329,U+1EA0-1EF9,U+20AB;
+}
+
+/* bricolage-grotesque-latin-ext-wght-normal */
+@font-face {
+  font-family: 'Matrix Bricolage Grotesque';
+  font-style: normal;
+  font-display: block;
+  font-weight: 200 800;
+  src: url(../../node_modules/@fontsource-variable/bricolage-grotesque/files/bricolage-grotesque-latin-ext-wght-normal.woff2) format('woff2-variations');
+  unicode-range: U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF;
+}
+
+/* bricolage-grotesque-latin-wght-normal */
+@font-face {
+  font-family: 'Matrix Bricolage Grotesque';
+  font-style: normal;
+  font-display: block;
+  font-weight: 200 800;
+  src: url(../../node_modules/@fontsource-variable/bricolage-grotesque/files/bricolage-grotesque-latin-wght-normal.woff2) format('woff2-variations');
+  unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;
+}
+@font-face {
+  font-family: 'Matrix Bricolage Grotesque Fallback';
+  src: local('Arial');
+  ascent-override: 88.21%;
+  descent-override: 25.61%;
+  line-gap-override: 0.00%;
+  size-adjust: 105.43%;
+}
+
+.matrix-shell-fonts {
+  --font-inter: 'Matrix Inter', 'Matrix Inter Fallback';
+  --font-instrument: 'Matrix Instrument Sans', 'Matrix Instrument Sans Fallback';
+  --font-serif-display: 'Matrix Instrument Serif', 'Matrix Instrument Serif Fallback';
+  --font-jetbrains: 'Matrix JetBrains Mono', 'Matrix JetBrains Mono Fallback';
+  --font-serif: 'Matrix Cormorant Garamond', 'Matrix Cormorant Garamond Fallback';
+  --font-orbitron: 'Matrix Orbitron', 'Matrix Orbitron Fallback';
+  --font-geist-sans: 'Matrix Geist', 'Matrix Geist Fallback';
+  --font-geist-mono: 'Matrix Geist Mono', 'Matrix Geist Mono Fallback';
+  --font-bricolage: 'Matrix Bricolage Grotesque', 'Matrix Bricolage Grotesque Fallback';
+}

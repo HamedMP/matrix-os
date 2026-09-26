@@ -21,7 +21,7 @@ const faces = (css: string) => [...css.matchAll(/@font-face\s*\{([^}]+)\}/g)].ma
 describe("production shell fonts preserve pinned faces without network fetching", () => {
   it.each(families)("preserves %s subsets, weights, styles and variable", (family, variable, name, files) => {
     const css = readFileSync("shell/src/app/fonts.css", "utf8");
-    const actual = faces(css).filter(face => face["font-family"] === `'${family}'`);
+    const actual = faces(css).filter(face => face["font-family"] === `'Matrix ${family}'`);
     const root = resolve("shell/node_modules", name);
     const metadata = JSON.parse(readFileSync(resolve(root, "metadata.json"), "utf8"));
     const pkg = JSON.parse(readFileSync(resolve(root, "package.json"), "utf8"));
@@ -35,7 +35,12 @@ describe("production shell fonts preserve pinned faces without network fetching"
       expect(path).not.toMatch(/https?:/);
       expect(readFileSync(resolve("shell/src/app", path)).subarray(0, 4).toString("ascii")).toBe("wOF2");
     }
-    expect(css).toContain(`${variable}: '${family}', '${family} Fallback'`);
+    expect(css).toContain(`${variable}: 'Matrix ${family}', 'Matrix ${family} Fallback'`);
+  });
+  it("keeps body faces separate from terminal-only global font imports", () => {
+    const body = faces(readFileSync("shell/src/app/fonts.css", "utf8")).map(face => face["font-family"]);
+    const terminal = faces(readFileSync("shell/node_modules/@fontsource/jetbrains-mono/400.css", "utf8")).map(face => face["font-family"]);
+    expect(body.filter(family => terminal.includes(family))).toEqual([]);
   });
   it("uses offline faces on the actual document path", () => {
     const layout = readFileSync("shell/src/app/layout.tsx", "utf8");
