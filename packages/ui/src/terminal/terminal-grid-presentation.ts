@@ -84,6 +84,7 @@ export function createTerminalGridPresentation(options: GridPresentationOptions)
   let previousPan: { top: number; left: number } | null = null;
   let previousViewportHeight: number | null = null;
   let wheelPannedAway = false;
+  let pannedAfterViewportChange = false;
   let presentationScale = 1;
   let settledLayout: { metrics: number[]; layout: ReturnType<typeof computeSoftGridLayout> } | null = null;
   let scrollbar: ReturnType<typeof createTerminalScrollbar> | undefined;
@@ -101,13 +102,20 @@ export function createTerminalGridPresentation(options: GridPresentationOptions)
     event.preventDefault();
   };
 
+  const markPannedAway = () => {
+    wheelPannedAway = true;
+    // A newer deliberate pan belongs to the changed viewport, not a queued
+    // return to the preceding layout's bottom.
+    pannedAfterViewportChange ||= previousViewportHeight !== null && host.clientHeight !== previousViewportHeight;
+  };
+
   const onWheel = (event: WheelEvent & { matrixGridCorrected?: boolean }) => {
     if (event.matrixGridCorrected || event.defaultPrevented || !element || !stage || !(event.target instanceof Element) || !host.contains(event.target)) return;
     const scale = presentationScale * (options.getParentScale?.() ?? 1);
     if (!Number.isFinite(scale) || scale <= 0) return;
     const pan = panTerminalGrid(event, host, stage, contentGrid ?? options.getTerminal());
     if (pan.verticalPanned) {
-      wheelPannedAway = true;
+      markPannedAway();
     }
     if (pan.panned) {
       event.preventDefault();
@@ -185,7 +193,7 @@ export function createTerminalGridPresentation(options: GridPresentationOptions)
     const unchangedGrid = settledLayout?.metrics.every((value, index) =>
       index === 1 || value === metrics[index]) &&
       contentGrid?.rows === content.rows && contentGrid.cols === content.cols;
-    const bottomViewportHeight = unchangedGrid && previousViewportHeight !== null
+    const bottomViewportHeight = unchangedGrid && !pannedAfterViewportChange && previousViewportHeight !== null
       ? Math.max(host.clientHeight, previousViewportHeight) : host.clientHeight;
     if (wheelPannedAway && host.scrollTop >= host.scrollHeight - bottomViewportHeight - 0.01 && cursorTop >= host.scrollTop) {
       wheelPannedAway = false;
@@ -264,10 +272,11 @@ export function createTerminalGridPresentation(options: GridPresentationOptions)
       left: host.scrollLeft,
     };
     previousViewportHeight = host.clientHeight;
+    pannedAfterViewportChange = false;
     if (!scrollbar && terminal.buffer && terminal.scrollToLine && terminal.onScroll && host.parentElement) {
       scrollbar = createTerminalScrollbar({ host, root, nativeHistory: options.nativeHistory, terminal: {
         buffer: terminal.buffer, scrollToLine: terminal.scrollToLine.bind(terminal), onScroll: terminal.onScroll.bind(terminal),
-      }, getCellHeight: () => visualCellHeight, getTailHeight: () => liveContentHeight, onPan: () => { wheelPannedAway = true; } });
+      }, getCellHeight: () => visualCellHeight, getTailHeight: () => liveContentHeight, onPan: markPannedAway });
     }
     scrollbar?.sync();
     if (visibleWidth !== viewportWidth || visibleHeight !== viewportHeight) schedule();
@@ -296,6 +305,7 @@ export function createTerminalGridPresentation(options: GridPresentationOptions)
     previousPan = null;
     previousViewportHeight = null;
     wheelPannedAway = false;
+    pannedAfterViewportChange = false;
     settledLayout = null;
     host.style.overflowX = "hidden";
     host.style.overflowY = "hidden";
