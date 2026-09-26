@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   AiProviderSnapshotV3Schema,
+  AiNativeHarnessCatalogSchema,
   type AiProviderSnapshotV3,
 } from "@matrix-os/contracts";
 
@@ -198,5 +199,26 @@ describe("AI provider snapshot V3", () => {
         id: `matrix_included_${index}`,
       })),
     }).success).toBe(false);
+  });
+});
+
+describe("native harness canonical projection bounds", () => {
+  const profile = { harness: "pi" as const, providerId: "custom-provider", providerDisplayName: "Custom Provider",
+    models: [{ id: "custom-provider:local-model", displayName: "Local model", enabled: true }], defaultModelId: "custom-provider:local-model",
+    localObservation: { state: "present_unverified" as const, checkedAt: now, staleAfter: "2026-08-29T20:30:05.000Z" } };
+  it("represents arbitrary native provider IDs without a funded account or authenticated claim", () => {
+    const native = AiNativeHarnessCatalogSchema.parse({ profiles: [profile], failures: [] });
+    const value = snapshotFixture(); value.nativeHarnessCatalog = native;
+    expect(AiProviderSnapshotV3Schema.parse(value).nativeHarnessCatalog).toEqual(native);
+    expect(native.profiles[0]).not.toHaveProperty("readiness");
+  });
+  it("rejects duplicate scopes, cross-provider models, ambiguous defaults, and excessive records", () => {
+    const variants = [
+      { profiles: [profile, profile], failures: [] },
+      { profiles: [{ ...profile, models: [{ id: "another:model", displayName: "Other", enabled: true }] }], failures: [] },
+      { profiles: [profile, { ...profile, providerId: "other", models: [{ id: "other:model", displayName: "Other", enabled: true }], defaultModelId: "other:model" }], failures: [] },
+      { profiles: Array.from({ length: 49 }, () => profile), failures: [] },
+    ];
+    for (const variant of variants) expect(AiNativeHarnessCatalogSchema.safeParse(variant).success).toBe(false);
   });
 });

@@ -1,3 +1,4 @@
+import { createGenericNativeProfileObserver } from "./generic-native-profile-observation.js";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import {
@@ -29,6 +30,7 @@ export interface GenericHarnessModelRoute {
 }
 
 export interface GenericHarnessModelCatalog {
+  nativeDefaults?: Partial<Record<"pi" | "opencode", string>>;
   providers: ProviderModelProvider[];
   accessSources: ProviderAccessSource[];
   failures: Array<Extract<ProviderGenericHarnessKind, "pi" | "opencode">>;
@@ -248,18 +250,31 @@ export function createGenericHarnessModelCatalogReader(options: {
   const enabled = [...new Set(options.enabledHarnesses)].filter(
     (harness): harness is CodingHarness => harness === "pi" || harness === "opencode",
   );
+  const profileObservers = enabled.map((harness) => ({ harness, observe: createGenericNativeProfileObserver() }));
   const run = options.run ?? defaultRun;
   const now = options.now ?? (() => new Date());
   let cached: { expiresAt: number; value: GenericHarnessModelCatalog } | null = null;
 
+  async function observe(value: GenericHarnessModelCatalog, env: Record<string, string>): Promise<GenericHarnessModelCatalog> {
+    const nativeDefaults: Partial<Record<CodingHarness, string>> = {};
+    const observations = await Promise.all(enabled.map(async (harness) => ({ harness, result: await profileObservers.find((observer) => observer.harness === harness)!.observe({
+      homePath: options.homePath, harness, providerIds: value.accessSources.filter((source) => source.harness === harness).map((source) => source.providerId),
+      env, now: now(),
+    }) })));
+    for (const { harness, result } of observations) if (result.defaultModel) nativeDefaults[harness] = result.defaultModel;
+    return { ...value, nativeDefaults, accessSources: value.accessSources.map((source) => {
+      const observed = observations.find((entry) => entry.harness === source.harness)?.result.observations[source.providerId];
+      return { ...source, localObservation: observed ?? { state: "unknown", checkedAt: null, staleAfter: null }, readiness: { state: "unknown" as const, checkedAt: null, staleAfter: null, action: "retry" as const, safeReason: "unknown" as const } };
+    }) };
+  }
   return {
     async getCatalog(input: { refresh?: boolean } = {}): Promise<GenericHarnessModelCatalog> {
       const currentTime = now();
-      if (!input.refresh && cached && cached.expiresAt > currentTime.getTime()) return cached.value;
       const runtimeEnv = buildAgentRuntimeEnvironment(options.homePath);
       const env = buildPiChildEnvironment(runtimeEnv);
       env.NO_COLOR = "1";
       delete env.FORCE_COLOR;
+      if (!input.refresh && cached && cached.expiresAt > currentTime.getTime()) return observe(cached.value, env);
       const results = await Promise.allSettled(enabled.map(async (harness) => {
         const command = harness === "pi" ? resolvePiCommand(undefined, env) : "opencode";
         const args = harness === "pi" ? [
@@ -323,7 +338,7 @@ export function createGenericHarnessModelCatalogReader(options: {
           : []);
       const value = { providers, accessSources, failures: [...failures] };
       cached = { expiresAt: currentTime.getTime() + CACHE_TTL_MS, value };
-      return value;
+      return observe(value, env);
     },
   };
 }

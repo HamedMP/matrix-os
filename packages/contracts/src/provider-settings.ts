@@ -255,6 +255,8 @@ export const ProviderHarnessInstanceSchema = z.object({
   enabled: z.boolean(),
   /** Saved owner intent; exposed only to clients opting into extended capabilities. */
   configuredEnabled: z.boolean().optional(),
+  /** Absent on historical rows; never infer an owner decision from a generated default. */
+  enablementOrigin: z.enum(["generated_default", "owner_configuration"]).optional(),
   version: canonicalSafeLabel(64, 256).nullable(),
   installState: ProviderHarnessInstallStateSchema,
   authState: ProviderAuthenticationStateSchema,
@@ -698,4 +700,17 @@ export function isSupportedGenericHarnessCredentialRoute(
     return isRunnableGenericHarnessCredentialRoute(harness, source);
   }
   return true;
+}
+
+/** A bound local profile permits an owner-initiated attempt, never remote-auth readiness. */
+export function isLocallyObservedNativeHarnessRoute(
+  harness: Pick<ProviderHarnessInstance, "harness" | "accessSourceId" | "route">,
+  source: ProviderAccessSource | null | undefined, now: Date = new Date(),
+): boolean {
+  if (!isNativeGenericHarnessCredentialRoute(harness, source) || !source
+    || !source.eligibleModelIds.includes(harness.route.modelId)
+    || source.readiness.state !== "unknown" || source.localObservation?.state !== "present_unverified") return false;
+  const checkedAt = Date.parse(source.localObservation.checkedAt ?? "");
+  const staleAfter = Date.parse(source.localObservation.staleAfter ?? "");
+  return Number.isFinite(checkedAt) && Number.isFinite(staleAfter) && checkedAt <= now.getTime() && staleAfter > now.getTime();
 }

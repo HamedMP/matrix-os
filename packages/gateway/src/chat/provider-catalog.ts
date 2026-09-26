@@ -5,6 +5,7 @@ import {
   CanonicalProviderCatalogSchema,
   CODEX_VERIFIED_NPM_PACKAGE,
   isRunnableGenericHarnessCredentialRoute,
+  isLocallyObservedNativeHarnessRoute,
   type AgentProviderDescriptor,
   type AgentProviderSummary,
   type AgentRuntimeDescriptor,
@@ -528,6 +529,7 @@ function configuredSystemInstance(
 }
 
 function applyHarnessSettings(input: {
+  now: Date;
   instances: InstanceDraft[];
   settings: ProviderSettingsSnapshot | null;
   settingsRequired: boolean;
@@ -579,6 +581,12 @@ function applyHarnessSettings(input: {
     const nativeTerminalProfile = (generic === "pi" || generic === "opencode")
       && instance.availability === "available"
       && input.credentialedDriverKinds?.includes(generic);
+    // A generated native route cannot override explicit negative CLI admission.
+    if ((generic === "pi" || generic === "opencode") && configuredHarnesses.length > 0
+      && configuredHarnesses.every((harness) => harness.enablementOrigin === "generated_default")
+      && instance.availability !== "available") {
+      return unavailableInstance(instance, unavailableReasonFor(instance));
+    }
     // configuredEnabled is the owner's saved switch; enabled is only the
     // current route's operational projection. Native fallback cannot bypass
     // an explicit off switch, even when that runtime is stopped.
@@ -588,10 +596,19 @@ function applyHarnessSettings(input: {
       return { ...unavailableInstance(instance, "disabled_in_settings"), setupActions: [] };
     }
     if (settingsHarness !== null && input.settingsRequired && enabledHarnesses.length === 0) {
+      if ((generic === "pi" || generic === "opencode") && configuredHarnesses.length > 0
+        && configuredHarnesses.every((harness) => harness.enablementOrigin === "generated_default")) {
+        return unavailableInstance(instance, "runtime_unavailable");
+      }
       if ((generic === "pi" || generic === "opencode")
         && configuredHarnesses.some((harness) => harness.routeAvailability === "catalog_unavailable")) {
         return unavailableInstance(instance, "runtime_unavailable");
       }
+      const observedSavedNativeRoute = configuredHarnesses.some((harness) => input.settings?.accessSources.some((source) =>
+        source.kind === "harness_profile" && source.harness === harness.harness
+        && source.providerId === harness.route.providerId && source.eligibleModelIds.includes(harness.route.modelId)
+        && source.localObservation !== undefined));
+      if (observedSavedNativeRoute) return unavailableInstance(instance, "runtime_unavailable");
       if (nativeTerminalProfile) {
         return executable
           ? { ...instance, unavailabilityReason: undefined }
@@ -611,7 +628,9 @@ function applyHarnessSettings(input: {
     if (enabledHarnesses.length > 1) {
       return unavailableInstance(instance, "multiple_profiles_unsupported");
     }
-    if (enabledHarness && systemHarness === null
+    const locallyObservedNative = enabledHarness && isLocallyObservedNativeHarnessRoute(enabledHarness,
+      input.settings?.accessSources.find((source) => source.id === enabledHarness.accessSourceId), input.now);
+    if (enabledHarness && systemHarness === null && !locallyObservedNative
       && (enabledHarness.authState !== "authenticated" || enabledHarness.accessSourceId === null)) {
       return unavailableInstance(configuredInstance, "authentication_required");
     }
@@ -622,7 +641,7 @@ function applyHarnessSettings(input: {
       && (enabledHarness.authState === "unauthenticated" || enabledHarness.accessSourceId === null)) {
       return unavailableInstance(configuredInstance, "authentication_required");
     }
-    if (enabledHarness && systemHarness === null && enabledHarness.connectivity !== "online") {
+    if (enabledHarness && systemHarness === null && !locallyObservedNative && enabledHarness.connectivity !== "online") {
       return unavailableInstance(configuredInstance, "runtime_unavailable");
     }
     if (enabledHarness && systemHarness !== null && enabledHarness.connectivity === "offline") {
@@ -726,6 +745,7 @@ export function createChatProviderCatalogService(options: {
   harnessSettingsSource?: HarnessSettingsSnapshotReader;
   executableDriverKinds?: readonly CanonicalProviderDriverKind[];
   credentialedDriverKinds?: readonly CanonicalProviderDriverKind[];
+  now?: () => Date;
   runtimeTimeoutMs?: number;
   skillsSource?: () => Array<{ name: string; description: string }>;
   codingModelCatalogSource?: (
@@ -845,6 +865,7 @@ export function createChatProviderCatalogService(options: {
         : undefined;
       const executableDriverKinds = options.executableDriverKinds;
       const instances = applyHarnessSettings({
+        now: options.now?.() ?? new Date(),
         instances: [
         ...managedChatInstances(aiSnapshot, skills),
         ...systemInstances,

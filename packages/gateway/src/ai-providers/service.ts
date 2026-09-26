@@ -1,3 +1,5 @@
+import { createCanonicalNativeHarnessCatalogReader } from "./native-harness-canonical-projection.js";
+import type { GenericHarnessModelCatalogReader } from "./generic-harness-model-catalog.js";
 import {
   AiProviderReadinessSchema,
   AiProviderSnapshotV3Schema,
@@ -45,6 +47,7 @@ export interface AiProviderSnapshotReader {
 }
 
 interface AiProviderServiceOptions {
+  nativeHarnessCatalogReader?: GenericHarnessModelCatalogReader;
   homePath: string;
   env?: NodeJS.ProcessEnv;
   now?: () => Date;
@@ -184,6 +187,7 @@ export class AiProviderService implements AiProviderSnapshotReader {
   readonly #healthCache: ProviderHealthCache<AiProviderReadiness>;
   readonly #ownsHealthCache: boolean;
   readonly #healthTimeoutMs: number;
+  readonly #nativeHarnessCatalogReader?: (refresh: boolean) => Promise<NonNullable<AiProviderSnapshotV3["nativeHarnessCatalog"]>>;
   readonly #driverInventory?: AiProviderServiceOptions["driverInventory"];
   readonly #fundedReadiness?: FundedAiReadinessReader;
   readonly #codexLocalObservation?: AiProviderServiceOptions["codexLocalObservation"];
@@ -204,6 +208,7 @@ export class AiProviderService implements AiProviderSnapshotReader {
       Math.min(options.healthTimeoutMs ?? HEALTH_TIMEOUT_MS, HEALTH_TIMEOUT_MS),
     );
     this.#driverInventory = options.driverInventory;
+    this.#nativeHarnessCatalogReader = options.nativeHarnessCatalogReader ? createCanonicalNativeHarnessCatalogReader(options.nativeHarnessCatalogReader) : undefined;
     this.#fundedReadiness = options.fundedReadinessReader;
     this.#codexLocalObservation = options.codexLocalObservation;
   }
@@ -321,7 +326,7 @@ export class AiProviderService implements AiProviderSnapshotReader {
     const { credentials, savedModel } = await this.#credentials.read();
     // These observations are independent. A slow CLI must not serialize the
     // funding and credential checks behind its bounded inventory deadline.
-    const [drivers, funded, apiKeyReadiness, profileReadiness, codexLocalObservation] = await Promise.all([
+    const [drivers, funded, apiKeyReadiness, profileReadiness, codexLocalObservation, nativeHarnessCatalog] = await Promise.all([
       this.#drivers(),
       credentials.matrixIncluded.state === "ready" && this.#fundedReadiness
         ? this.#fundedReadiness.read()
@@ -333,6 +338,7 @@ export class AiProviderService implements AiProviderSnapshotReader {
         "owner_anthropic_profile", credentials.ownerProfile.state, "profile", now, options.refresh === true,
       ),
       this.#readCodexLocalObservation(),
+      this.#nativeHarnessCatalogReader ? this.#nativeHarnessCatalogReader(options.refresh === true) : undefined,
     ]);
     const codexDriver = drivers.find((driver) => driver.id === "codex");
     // Driver health and CLI login are local observations. Neither proves the
@@ -512,6 +518,7 @@ export class AiProviderService implements AiProviderSnapshotReader {
 
     return AiProviderSnapshotV3Schema.parse({
       contractVersion: 3,
+      ...(nativeHarnessCatalog ? { nativeHarnessCatalog } : {}),
       revision: 0,
       refreshedAt: now,
       accessSources,

@@ -1,5 +1,6 @@
 import {
   isSupportedGenericHarnessCredentialRoute,
+  isLocallyObservedNativeHarnessRoute,
   type AiProviderSnapshotV3,
   type ProviderAccessSource,
   type ProviderHarnessInstance,
@@ -26,6 +27,14 @@ function genericHarnessRouteIsSupported(
   return isSupportedGenericHarnessCredentialRoute(harness, source);
 }
 
+function mayEnableObservedNativeRoute(
+  harness: Pick<ProviderHarnessInstance, "harness" | "accessSourceId" | "route">,
+  source: ProviderAccessSource | undefined, now: Date,
+): boolean {
+  return source?.kind !== "harness_profile" || source.localObservation === undefined
+    || isLocallyObservedNativeHarnessRoute(harness, source, now);
+}
+
 function accountMatchesSource(
   source: ProviderAccessSource,
   account: ProviderSettingsSnapshot["accounts"][number] | null,
@@ -41,6 +50,7 @@ export function applyProviderConfigurationMutation(input: {
   canonical: AiProviderSnapshotV3;
   snapshot: ProviderSettingsSnapshot;
   id: () => string;
+  now?: Date;
 }): boolean {
   const mutation = input.mutation as ProviderConfigurationMutation;
   const harness = "harnessInstanceId" in mutation
@@ -75,6 +85,7 @@ export function applyProviderConfigurationMutation(input: {
         displayName: mutation.displayName,
         accentColor: mutation.accentColor ?? null,
         enabled: false,
+        enablementOrigin: "owner_configuration",
         selectedAccountId: account?.id ?? null,
         accessSourceId: source.id,
         route: mutation.route,
@@ -104,10 +115,12 @@ export function applyProviderConfigurationMutation(input: {
         throw new ProviderSettingsStoreError("invalid_request", 400);
       }
       const source = input.snapshot.accessSources.find((candidate) => candidate.id === harness.accessSourceId);
-      if (mutation.enabled && !genericHarnessRouteIsSupported(harness, source)) {
+      if (mutation.enabled && (!genericHarnessRouteIsSupported(harness, source)
+        || !mayEnableObservedNativeRoute(harness, source, input.now ?? new Date()))) {
         throw new ProviderSettingsStoreError("invalid_route", 400);
       }
       harness.enabled = mutation.enabled;
+      harness.enablementOrigin = "owner_configuration";
       return true;
     }
     case "set_route": {
@@ -138,7 +151,12 @@ export function applyProviderConfigurationMutation(input: {
         }, source)) {
         throw new ProviderSettingsStoreError("invalid_route", 400);
       }
+      if ((harness.enabled || mutation.enableHarness === true)
+        && !mayEnableObservedNativeRoute({ ...harness, route: mutation.route, accessSourceId: source.id }, source, input.now ?? new Date())) {
+        throw new ProviderSettingsStoreError("invalid_route", 400);
+      }
       harness.route = mutation.route;
+      harness.enablementOrigin = "owner_configuration";
       harness.accessSourceId = source.id;
       harness.selectedAccountId = account?.id ?? null;
       if (mutation.enableHarness === true) harness.enabled = true;
@@ -155,6 +173,7 @@ export function applyProviderConfigurationMutation(input: {
         throw new ProviderSettingsStoreError("invalid_route", 400);
       }
       harness.selectedAccountId = account.id;
+      harness.enablementOrigin = "owner_configuration";
       harness.accessSourceId = account.accessSourceId;
       return true;
     }
@@ -170,6 +189,7 @@ export function applyProviderConfigurationMutation(input: {
       }
       harness.accessSourceId = source.id;
       harness.selectedAccountId = source.accountId;
+      harness.enablementOrigin = "owner_configuration";
       return true;
     }
     case "set_gateway_budget":
