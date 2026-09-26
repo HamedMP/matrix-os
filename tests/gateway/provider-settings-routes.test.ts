@@ -117,7 +117,7 @@ describe("provider settings routes", () => {
       } }],
       harnesses: [{
         id: "harness_claude", harness: "claude", displayName: "Claude", accentColor: null,
-        enabled: false, configuredEnabled: true, version: null,
+        enabled: false, configuredEnabled: true, enablementOrigin: "generated_default", version: null,
         installState: "installed", authState: "unknown", loginMethods: ["terminal"],
         recommendedLoginMethod: "terminal", connectivity: "offline", accountIds: [],
         selectedAccountId: null, accessSourceId: null,
@@ -129,10 +129,12 @@ describe("provider settings routes", () => {
     const legacy = await (await app.request("/api/ai/provider-settings")).json();
     expect(legacy).not.toHaveProperty("atomicConnectSupported");
     expect(legacy.harnesses[0]).not.toHaveProperty("configuredEnabled");
+    expect(legacy.harnesses[0]).not.toHaveProperty("enablementOrigin");
     expect(legacy.accessSources[0]).not.toHaveProperty("localObservation");
     const modern = await (await app.request("/api/ai/provider-settings?includeCapabilities=true")).json();
     expect(modern).toHaveProperty("atomicConnectSupported", true);
     expect(modern.harnesses[0]).toHaveProperty("configuredEnabled", true);
+    expect(modern.harnesses[0]).not.toHaveProperty("enablementOrigin");
     expect(modern.accessSources[0].localObservation).toMatchObject({ state: "present_unverified" });
     expect(ProviderSettingsSnapshotSchema.safeParse(modern).success).toBe(true);
     expect((await app.request("/api/ai/provider-settings?includeCapabilities=maybe")).status).toBe(400);

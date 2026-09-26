@@ -34,6 +34,15 @@ describe("AI provider routes", () => {
     expect(getSnapshot).toHaveBeenCalledWith({ refresh: false });
   });
 
+  it("strips new native metadata for historical clients and exposes it only on explicit opt-in", async () => {
+    const native = { profiles: [], failures: ["pi" as const] };
+    const app = new Hono();
+    app.route("/api/ai", createAiProviderRoutes({ service: { getSnapshot: async () => ({ ...emptySnapshot, nativeHarnessCatalog: native }) }, getPrincipal: () => ({ userId: "owner_123" }) }));
+    expect(await (await app.request("/api/ai/providers")).json()).toEqual(emptySnapshot);
+    const current = await (await app.request("/api/ai/providers?includeNativeProfiles=true")).json();
+    expect(AiProviderSnapshotV3Schema.parse(current).nativeHarnessCatalog).toEqual(native);
+    expect((await app.request("/api/ai/providers?includeNativeProfiles=yes")).status).toBe(400);
+  });
   it("supports an explicit bounded refresh and rejects unknown query values", async () => {
     const getSnapshot = vi.fn(async () => emptySnapshot);
     const app = new Hono();

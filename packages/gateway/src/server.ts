@@ -1392,7 +1392,14 @@ export async function createGateway(config: GatewayConfig) {
     openClawRpc,
   });
   await agentRuntimeServices.controller.reconcile();
+  const genericHarnessModelCatalog = createGenericHarnessModelCatalogReader({
+    homePath,
+    enabledHarnesses: codingAgentWorkspaceAgents.filter(
+      (agent): agent is "pi" | "opencode" => agent === "pi" || agent === "opencode",
+    ),
+  });
   const aiProviderService = new AiProviderService({
+    nativeHarnessCatalogReader: genericHarnessModelCatalog,
     homePath,
     healthProbe: createOwnerAnthropicKeyPreflight({ homePath }),
     fundedCredentialProvider,
@@ -1434,12 +1441,6 @@ export async function createGateway(config: GatewayConfig) {
     ),
   });
   await reconcileProviderRuntimeAtStartup(providerGenericHarnessCoordinator);
-  const genericHarnessModelCatalog = createGenericHarnessModelCatalogReader({
-    homePath,
-    enabledHarnesses: codingAgentWorkspaceAgents.filter(
-      (agent): agent is "pi" | "opencode" => agent === "pi" || agent === "opencode",
-    ),
-  });
   providerSettingsStore = new ProviderSettingsStore({
     homePath,
     providerSnapshotReader: aiProviderService,
@@ -1447,7 +1448,6 @@ export async function createGateway(config: GatewayConfig) {
     accountLifecycle: providerAccountLifecycle,
     fundingSummaryReader: fundedAiFundingSummaryReader,
     runtimeCoordinator: providerGenericHarnessCoordinator,
-    genericModelCatalogReader: genericHarnessModelCatalog,
   });
   const canonicalExecutableDriverKinds = [
     "kernel" as const,

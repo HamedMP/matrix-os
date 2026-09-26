@@ -1,3 +1,5 @@
+import { useLocalObservationExpiry } from "../local-observation-expiry.js";
+import { codexLocalObservationLabel } from "../canonical-provider-choice.js";
 import { useEffect, useState } from "react";
 import type {
   ProviderAccessSource,
@@ -73,6 +75,7 @@ export function HarnessEditor({
   const provider = providerFor(snapshot, harness);
   const model = provider?.models.find((candidate) => candidate.id === harness.route.modelId) ?? null;
   const accessSource = snapshot.accessSources.find((source) => source.id === harness.accessSourceId) ?? null;
+  useLocalObservationExpiry([accessSource?.localObservation?.staleAfter]);
   const savedSourceUnsupported = accessSource !== null && !isSupportedGenericHarnessCredentialRoute(harness, accessSource);
   const account = snapshot.accounts.find((candidate) => candidate.id === harness.selectedAccountId) ?? null;
   const sources = snapshot.accessSources.filter((source) => source.providerId === harness.route.providerId
@@ -214,7 +217,7 @@ export function HarnessEditor({
           {accessSource?.kind === "harness_profile" ? (
             <div className="matrix-ap-field">
               <span>Authentication</span>
-              <div className="matrix-ap-readonly-value">Managed by {harness.displayName}</div>
+              <div className="matrix-ap-readonly-value">{accessSource.localObservation ? codexLocalObservationLabel(accessSource.localObservation) : `Managed by ${harness.displayName}`}</div>
             </div>
           ) : (
             <label className="matrix-ap-field">

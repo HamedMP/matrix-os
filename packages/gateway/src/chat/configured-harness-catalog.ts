@@ -30,7 +30,7 @@ export function configuredHarnessInstanceFromAiSnapshot(input: {
   harness: Pick<ProviderHarnessInstance, "route" | "accessSourceId">;
   aiSnapshot?: AiProviderSnapshotV3;
   settings: Pick<ProviderSettingsSnapshot, "modelProviders"> & {
-    accessSources: Array<Pick<ProviderAccessSource, "id" | "kind">>;
+    accessSources: Array<Pick<ProviderAccessSource, "id" | "kind" | "localObservation">>;
   };
 }): InstanceDraft {
   if (input.instance.availability !== "available") {
@@ -63,6 +63,7 @@ export function configuredHarnessInstanceFromAiSnapshot(input: {
   return {
     ...input.instance,
     // Only the selected source determines this label. Never expose credential/profile details.
+    ...(source?.kind === "harness_profile" && source.localObservation ? { localObservation: source.localObservation } : {}),
     connectionLabel: source ? source.kind === "matrix_gateway" ? "Matrix AI" : "Own account" : undefined,
     models: [model],
     options: [],

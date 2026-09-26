@@ -308,6 +308,24 @@ describe("AgentsProvidersView", () => {
     rerender(<AgentsProvidersView {...props} snapshot={next} />);
     expect(screen.getByRole("button", { name: /Codex.*Off in Settings/ })).toBeVisible();
   });
+  it.each(["pi", "opencode"] as const)("shows %s local profile observation without claiming authenticated access", (harness) => {
+    vi.useFakeTimers(); vi.setSystemTime(new Date("2026-09-26T00:00:00Z"));
+    const next = snapshot();
+    const source = { ...next.accessSources[0]!, id: `harness_${harness}_anthropic`, kind: "harness_profile" as const,
+      harness, accountId: null, fundingKind: "owner_account" as const,
+      readiness: { state: "unknown" as const, checkedAt: null, staleAfter: null, action: "retry" as const, safeReason: "unknown" as const },
+      localObservation: { state: "present_unverified" as const, checkedAt: new Date().toISOString(), staleAfter: new Date(Date.now() + 5000).toISOString() } };
+    next.accessSources.push(source);
+    next.harnesses = [{ ...next.harnesses[0]!, id: `harness_${harness}`, harness, displayName: harness,
+      enabled: true, configuredEnabled: true, authState: "unknown", connectivity: "unknown",
+      selectedAccountId: null, accountIds: [], accessSourceId: source.id }];
+    setup({ snapshot: next, selectedHarnessId: `harness_${harness}` });
+    expect(screen.getByRole("button", { name: new RegExp(`${harness}.*Local login found; access not verified`) })).toBeVisible();
+    expect(screen.getAllByText("Local login found; access not verified")).toHaveLength(2);
+    act(() => vi.advanceTimersByTime(5001));
+    expect(screen.queryByText("Local login found; access not verified")).not.toBeInTheDocument();
+    expect(screen.getAllByText("Access not verified")).toHaveLength(2);
+  });
   it("shows saved enabled intent separately from a failed connection and permits disabling it", () => {
     const next = snapshot();
     const harness = next.harnesses[0]!;

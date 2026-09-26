@@ -1,3 +1,4 @@
+import { projectCanonicalNativeHarnessCatalog } from "./native-harness-canonical-projection.js";
 import {
   FundedAiEffectivePolicySchema,
   FundedAiFundingSummarySchema,
@@ -32,6 +33,8 @@ export async function readProviderSettingsEnrichment(input: {
       }
     })(),
     (async () => {
+      const canonical = await input.canonical;
+      if (canonical.nativeHarnessCatalog) return projectCanonicalNativeHarnessCatalog(canonical.nativeHarnessCatalog);
       if (!input.genericModelCatalog) return undefined;
       try {
         return await input.genericModelCatalog.getCatalog({ refresh: input.refresh });
