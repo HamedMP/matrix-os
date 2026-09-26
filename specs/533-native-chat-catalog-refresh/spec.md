@@ -12,6 +12,7 @@ Web Canvas and Web Desktop keep their existing catalog transport. This fix conce
 - Opening the picker requests one bounded forced catalog refresh. Closing it and ordinary renders do not request a refresh. No polling timer is introduced.
 - Responses publish in request order: a late older success or failure cannot replace the newest request's result. Results from an inactive, unmounted, or replaced API scope cannot publish.
 - Refresh does not change owner configuration or directly select a route. Existing selection reconciliation, locked Chat bindings, server admission, and fail-closed fetch-error behavior remain authoritative.
+- A fallback/project-list change is not a runtime boundary: one API-bound trusted snapshot survives it, including failed revalidation. Inactivation, replacement of the API, and unmount clear that snapshot. Old fallback-effect responses cannot update the UI or the trusted snapshot.
 - A newest refresh failure reports error while preserving the last trusted catalog only within the same mounted API scope. Initial/replaced-API failure uses a conservative fail-closed catalog; it must not promote a saved-Off harness or erase an unchanged valid selection.
 - No new persistence, transaction, credential delivery, permission, or funding path exists. Existing API authentication and the selected runtime scope apply.
 

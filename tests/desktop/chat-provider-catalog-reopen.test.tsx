@@ -33,8 +33,8 @@ function deferred<T>() {
   const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; });
   return { promise, resolve, reject };
 }
-function CatalogComposer({ api }: { api: { get: () => Promise<unknown> } }) {
-  const state = useChatProviderCatalog(oldCatalog, { api });
+function CatalogComposer({ api, active = true, fallback = oldCatalog }: { api: { get: () => Promise<unknown> }; active?: boolean; fallback?: CanonicalProviderCatalog }) {
+  const state = useChatProviderCatalog(fallback, { api, active });
   return <><output>{state.catalog.revision}</output><output data-testid="catalog-status">{state.status}</output><output data-testid="availability">{state.catalog.instances[0]?.availability}</output><SharedChatComposer value="" onChange={() => undefined}
     onSubmit={() => undefined} busy={false} catalog={state.catalog}
     selection={{ instanceId: "pi_owner", model: "model", options: [], interactionMode: "default", permissionMode: "supervised" }}
@@ -194,6 +194,40 @@ describe("native Chat catalog freshness", () => {
       expect(trigger.getAttribute("data-provider-instance")).toBe("pi_owner");
       expect(trigger.getAttribute("data-model")).toBe("model");
     }
+  });
+
+  it("discards inactive trusted snapshots before a new active read fails", async () => {
+    const get = vi.fn().mockResolvedValueOnce(newCatalog).mockRejectedValue(new Error("reactivated_unavailable"));
+    const api = { get };
+    const view = render(<CatalogComposer api={api} />);
+    await screen.findByText("after_update");
+    view.rerender(<CatalogComposer api={api} active={false} />);
+    openPicker();
+    expect(get).toHaveBeenCalledTimes(1);
+    view.rerender(<CatalogComposer api={api} />);
+    await waitFor(() => expect(screen.getByTestId("catalog-status").textContent).toBe("error"));
+    expect(screen.getByText("before_update")).not.toBeNull();
+    expect(screen.getByTestId("availability").textContent).toBe("unavailable");
+  });
+
+  it("ignores old fallback-effect responses in both UI and the trusted error snapshot", async () => {
+    const older = deferred<CanonicalProviderCatalog>();
+    const newer = deferred<CanonicalProviderCatalog>();
+    const get = vi.fn().mockResolvedValueOnce(oldCatalog).mockImplementationOnce(() => older.promise)
+      .mockImplementationOnce(() => newer.promise).mockRejectedValue(new Error("current_refresh_failed"));
+    const api = { get };
+    const view = render(<CatalogComposer api={api} />);
+    await waitFor(() => expect(get).toHaveBeenCalledTimes(1));
+    act(() => window.dispatchEvent(new Event("focus")));
+    view.rerender(<CatalogComposer api={api} fallback={catalog("project_changed_fallback")} />);
+    await waitFor(() => expect(get).toHaveBeenCalledTimes(3));
+    await act(async () => newer.resolve(newCatalog));
+    await act(async () => older.resolve(oldCatalog));
+    expect(screen.getByText("after_update")).not.toBeNull();
+    openPicker();
+    await waitFor(() => expect(screen.getByTestId("catalog-status").textContent).toBe("error"));
+    expect(screen.getByText("after_update")).not.toBeNull();
+    expect(screen.getByText("Disabled in Settings")).not.toBeNull();
   });
 
   it.each(["success", "error"] as const)("ignores an older %s after a newer catalog response", async (outcome) => {

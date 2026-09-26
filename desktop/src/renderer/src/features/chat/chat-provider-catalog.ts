@@ -47,26 +47,33 @@ export function useChatProviderCatalog(
     status: "fallback" | "loading" | "ready" | "error";
   }>(() => ({ catalog: fallback, status: api && active ? "loading" : "fallback" }));
 
+  const trustedCatalogRef = useRef<{ api: Pick<ApiClient, "get">; catalog: CanonicalProviderCatalog } | null>(null);
   const refreshRef = useRef<() => void>(() => undefined);
   const refresh = useCallback(() => refreshRef.current(), []);
+
+  useEffect(() => () => { trustedCatalogRef.current = null; }, []);
 
   useEffect(() => {
     let cancelled = false;
     let requestSequence = 0;
-    let lastTrustedCatalog: CanonicalProviderCatalog | null = null;
+    let lastTrustedCatalog = trustedCatalogRef.current?.api === api
+      ? trustedCatalogRef.current.catalog : null;
     if (!active || !api || typeof api.get !== "function") {
+      trustedCatalogRef.current = null;
       refreshRef.current = () => undefined;
       setState({ catalog: fallback, status: "fallback" });
       return () => {
         cancelled = true;
       };
     }
-    setState({ catalog: fallback, status: "loading" });
+    if (!lastTrustedCatalog) trustedCatalogRef.current = null;
+    setState({ catalog: lastTrustedCatalog ?? fallback, status: lastTrustedCatalog ? "ready" : "loading" });
     const update = () => {
       const request = ++requestSequence;
       void fetchCanonicalProviderCatalog(api, true).then((catalog) => {
         if (!cancelled && request === requestSequence) {
           lastTrustedCatalog = catalog;
+          trustedCatalogRef.current = { api, catalog };
           setState({ catalog, status: "ready" });
         }
       }).catch((error: unknown) => {
