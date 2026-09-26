@@ -656,6 +656,7 @@ export function CanonicalChatWorkspace({
           draft.trim() || referenceTokens.length > 0 || attachments.items.length > 0
         ))}
         catalog={providerCatalog}
+        onProviderPickerOpen={catalog ? undefined : liveCatalog.refresh}
         selection={selection}
         onSelectionChange={onSelectionChange}
         onProviderSetup={(instance, action) => void handleProviderSetup(instance, action)}

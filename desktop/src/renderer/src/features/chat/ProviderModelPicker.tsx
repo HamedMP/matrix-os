@@ -11,7 +11,7 @@ import { openProviderSettings } from "../settings/open-provider-settings";
 import { DESKTOP_Z_INDEX } from "../../design/layering";
 
 export function ProviderModelPicker({ catalog, selection, instanceLocked, disabled = false,
-  unavailableProviderLabel, menuSide = "top", onSetupAction, onNewChat, onChange,
+  unavailableProviderLabel, menuSide = "top", onSetupAction, onNewChat, onChange, onOpen,
 }: {
   catalog: CanonicalProviderCatalog;
   selection: CanonicalComposerSelection | null;
@@ -21,12 +21,16 @@ export function ProviderModelPicker({ catalog, selection, instanceLocked, disabl
   menuSide?: "top" | "bottom";
   onSetupAction?: (instance: CanonicalProviderInstanceDescriptor, action: CanonicalProviderSetupAction) => void;
   onNewChat?: () => void;
+  onOpen?: () => void;
   onChange: (selection: CanonicalComposerSelection) => void;
 }) {
   const [open, setOpen] = useState(false);
   const selectedInstance = catalog.instances.find((instance) => instance.id === selection?.instanceId);
   const selectedModel = selectedInstance?.models.find((model) => model.id === selection?.model);
-  return <><Popover.Root open={open && !disabled} onOpenChange={setOpen}>
+  return <><Popover.Root open={open && !disabled} onOpenChange={(nextOpen) => {
+    setOpen(nextOpen);
+    if (nextOpen) onOpen?.();
+  }}>
     <Popover.Trigger asChild>
       <button type="button" disabled={disabled} aria-label="Choose model and provider"
         data-provider-instance={selectedInstance?.id ?? ""} data-model={selectedModel?.id ?? ""}

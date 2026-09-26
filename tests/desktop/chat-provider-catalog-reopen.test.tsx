@@ -3,6 +3,9 @@ import React from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CanonicalProviderCatalogSchema, type CanonicalProviderCatalog } from "@matrix-os/contracts";
+import { CanonicalChatWorkspace } from "../../desktop/src/renderer/src/features/chat/CanonicalChatWorkspace";
+import { createCanonicalChatWorkspaceClient } from "./canonical-chat-workspace-test-utils";
+import type { ApiClient } from "../../desktop/src/renderer/src/lib/api";
 import { SharedChatComposer } from "../../desktop/src/renderer/src/features/chat/SharedChatComposer";
 import { useChatProviderCatalog } from "../../desktop/src/renderer/src/features/chat/chat-provider-catalog";
 
@@ -30,7 +33,7 @@ function CatalogComposer({ api }: { api: { get: () => Promise<unknown> } }) {
   const state = useChatProviderCatalog(oldCatalog, { api });
   return <><output>{state.catalog.revision}</output><SharedChatComposer value="" onChange={() => undefined}
     onSubmit={() => undefined} busy={false} catalog={state.catalog}
-    selection={{ instanceId: "pi_owner", model: "model", options: {}, skills: [], commands: [] }}
+    selection={{ instanceId: "pi_owner", model: "model", options: [], interactionMode: "default", permissionMode: "supervised" }}
     onSelectionChange={() => undefined} instanceLocked={false} onProviderPickerOpen={state.refresh} /></>;
 }
 const openPicker = () => fireEvent.click(screen.getByRole("button", { name: "Choose model and provider" }));
@@ -51,6 +54,37 @@ describe("native Chat catalog freshness", () => {
     expect(get).toHaveBeenCalledTimes(2);
     openPicker();
     await waitFor(() => expect(get).toHaveBeenCalledTimes(3));
+  });
+
+  it("keeps an unchanged owner route selected without fetching on ordinary renders", async () => {
+    const refreshed = catalog("same_route_refreshed");
+    const get = vi.fn().mockResolvedValueOnce(oldCatalog).mockResolvedValue(refreshed);
+    const api = { get };
+    const view = render(<CatalogComposer api={api} />);
+    await waitFor(() => expect(get).toHaveBeenCalledTimes(1));
+    view.rerender(<CatalogComposer api={api} />);
+    expect(get).toHaveBeenCalledTimes(1);
+    openPicker();
+    await screen.findByText("same_route_refreshed");
+    const trigger = screen.getByRole("button", { name: "Choose model and provider" });
+    expect(trigger.getAttribute("data-provider-instance")).toBe("pi_owner");
+    expect(trigger.getAttribute("data-model")).toBe("model");
+    expect(get).toHaveBeenCalledTimes(2);
+  });
+
+  it("wires reopening through the production canonical workspace composer", async () => {
+    const get = vi.fn(async (path: string) => path.startsWith("/api/chat-providers") ? oldCatalog : {});
+    window.operator = { invoke: vi.fn(async () => ({ ok: true })), on: vi.fn(() => () => undefined) };
+    const view = render(<CanonicalChatWorkspace client={createCanonicalChatWorkspaceClient()}
+      api={{ get } as unknown as ApiClient} projectId={null} active initialView="draft" />);
+    const trigger = await screen.findByRole("button", { name: "Choose model and provider" });
+    await waitFor(() => expect(trigger.hasAttribute("disabled")).toBe(false));
+    const readsBefore = get.mock.calls.filter(([path]) => path.startsWith("/api/chat-providers")).length;
+    get.mockImplementation(async (path) => path.startsWith("/api/chat-providers") ? newCatalog : {});
+    fireEvent.click(trigger);
+    await screen.findByText("Disabled in Settings");
+    expect(get.mock.calls.filter(([path]) => path.startsWith("/api/chat-providers"))).toHaveLength(readsBefore + 1);
+    view.unmount();
   });
 
   it.each(["success", "error"] as const)("ignores an older %s after a newer catalog response", async (outcome) => {
