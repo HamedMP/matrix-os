@@ -101,6 +101,17 @@ function selectedCanonicalSources(
   return { sourceByAccount, sourceIds };
 }
 
+function unavailableOwnerUsageReason(state: AiProviderReadiness["state"]):
+  "provider_does_not_report" | "not_authenticated" | "unknown" {
+  if (state === "ready") return "provider_does_not_report";
+  if (state === "auth_required" || state === "invalid" || state === "expired") {
+    return "not_authenticated";
+  }
+  // A missing usage reader does not turn an unknown or failed readiness check
+  // into evidence that the owner is signed out.
+  return "unknown";
+}
+
 function projectAccessSources(
   canonical: AiProviderSnapshotV3,
   config: ProviderSettingsConfiguration,
@@ -191,7 +202,7 @@ function projectAccessSources(
         state: "unavailable" as const,
         scope: matrix ? "owner_entitlement" as const : "account" as const,
         reason: matrix ? "ledger_not_available" as const
-          : source.state === "ready" ? "provider_does_not_report" as const : "not_authenticated" as const,
+          : unavailableOwnerUsageReason(source.state),
         asOf: null,
       },
     };
