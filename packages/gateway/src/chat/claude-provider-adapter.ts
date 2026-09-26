@@ -26,6 +26,7 @@ import {
   ASSISTANT_CREDENTIAL_BOUNDARY_PROBE_LIMIT,
   classifyAssistantCredentialBoundaryPrefix,
   createAssistantTextStreamProjector,
+  isCompleteAssistantCredentialKeyword,
   safeToolPreview,
   sanitizeAssistantText,
 } from "./safe-activity-projection.js";
@@ -469,9 +470,20 @@ export function createClaudeChatProviderAdapter(options: {
 
     const flushProjectedText = () => {
       if (boundaryProbe) {
+        // At successful completion, an exact keyword cannot acquire a later
+        // marker. Release it only when the old context cannot make it a token.
+        const ordinaryCompletedKeyword = textProjector.hasNonCredentialPathContext()
+          && isCompleteAssistantCredentialKeyword(boundaryProbe.text);
         const projected = textProjector.flushIndependentBoundary();
         if (projected) enqueueDelta(projected, projectedMessageId);
-        redactProbeSegments(boundaryProbe.segments);
+        if (ordinaryCompletedKeyword) {
+          for (const segment of boundaryProbe.segments) {
+            const word = sanitizeAssistantText(segment.text, {
+              homePath: options.homePath, executionRoot: input.executionRoot,
+            });
+            if (word) enqueueDelta(word, segment.messageId);
+          }
+        } else redactProbeSegments(boundaryProbe.segments);
         boundaryProbe = undefined;
         projectedMessageId = undefined;
       }

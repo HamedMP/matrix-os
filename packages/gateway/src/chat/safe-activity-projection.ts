@@ -14,6 +14,10 @@ const SECRET_KEYWORDS = [
 const ASSISTANT_TEXT_TAIL_LIMIT = 2_048;
 export const ASSISTANT_CREDENTIAL_BOUNDARY_PROBE_LIMIT = 64;
 
+export function isCompleteAssistantCredentialKeyword(value: string): boolean {
+  return SECRET_KEYWORDS.some((keyword) => keyword === value.toLowerCase());
+}
+
 /** Classify only the bounded beginning of a new text block. */
 export function classifyAssistantCredentialBoundaryPrefix(value: string): "pending" | "standalone" | "continuation" {
   const prefix = value.toLowerCase();
@@ -179,6 +183,11 @@ export function createAssistantTextStreamProjector(options: { homePath: string; 
     },
     hasPending(): boolean {
       return pending.length > 0 || droppingOversizedToken;
+    },
+    hasNonCredentialPathContext(): boolean {
+      return !droppingOversizedToken && pending.includes("/")
+        && !SECRET_TEXT.test(pending) && !ACTIVE_BEARER.test(pending)
+        && !DANGLING_SECRET_ASSIGNMENT.test(pending) && !incompleteSecretKeyword();
     },
     flush: finishPending,
     flushIndependentBoundary: finishPending,

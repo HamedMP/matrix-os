@@ -413,6 +413,57 @@ describe("Claude streamed assistant text redaction", () => {
   });
 
   it.each([
+    ["https://example.test/guide", "https://example.test/guide"],
+    ["/private/file", "[redacted path]"],
+    ["docs/guide", "docs/guide"],
+  ])("preserves a completed ordinary keyword after noncredential %s context", async (first, expectedFirst) => {
+    for (const word of ["secret", "SeCrEt", "PASSWORD", "api-key"]) {
+      for (let split = 1; split < word.length; split++) {
+        const events = await runLines(separateTextBlocksWithChunks([[first], [word.slice(0, split), word.slice(split)]]));
+        expect([...assembledAssistantMessages(events)]).toEqual([
+          ["claude_text_0", expectedFirst],
+          ["claude_text_1", word],
+        ]);
+      }
+    }
+  });
+
+  it.each(["Bearer ", "ACCESS_TOKEN=", "Bear", "ACCESS_TO"])("does not release a completed keyword as a token after %s context", async (first) => {
+    const events = await runLines(separateTextBlocks([first, "secret"]));
+    for (const event of events) {
+      if (event.type === "assistant.delta") expect(event.delta).not.toContain("secret");
+    }
+  });
+
+  it.each([
+    "Bearer https://example.test/guide",
+    "ACCESS_TOKEN=https://example.test/guide",
+    "https://example.test/?ACCESS_TOKEN=fixture-secret-value",
+  ])("does not release an ordinary keyword after credential-looking URL context (%s)", async (first) => {
+    const events = await runLines(separateTextBlocks([first, "secret"]));
+    expect(assembledAssistantMessages(events).get("claude_text_1")).toBe("[redacted]");
+  });
+
+  it("preserves a completed ordinary keyword split across message IDs after a URL", async () => {
+    const events = await runLines(separateTextBlocks(["https://example.test/guide", "se", "cret"]));
+    expect([...assembledAssistantMessages(events)]).toEqual([
+      ["claude_text_0", "https://example.test/guide"],
+      ["claude_text_1", "se"],
+      ["claude_text_2", "cret"],
+    ]);
+  });
+
+  it.each(["Be", "se", "ACCESS_TO"])("does not release incomplete %s at successful completion after a URL", async (prefix) => {
+    const events = await runLines(separateTextBlocks(["https://example.test/guide", prefix]));
+    expect(assembledAssistantMessages(events).get("claude_text_1")).toBe("[redacted]");
+  });
+
+  it("does not release a complete keyword after old path context overflow", async () => {
+    const events = await runLines(separateTextBlocks([`https://example.test/${"x".repeat(3_000)}`, "secret"]));
+    expect(assembledAssistantMessages(events).get("claude_text_1")).toBe("[redacted]");
+  });
+
+  it.each([
     ["Bearer ", "Bearer [redacted]"],
     ["ACCESS_TOKEN=", "[redacted credential]"],
   ])("does not flush a dangling %s prefix raw at successful completion", async (prefix, expected) => {
