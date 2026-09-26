@@ -485,6 +485,7 @@ export function createCanonicalChatService(
       runId: string,
       approvalId: string,
       input: CanonicalSubmitChatApprovalRequest,
+      provenance?: Parameters<CanonicalChatRouteService["submitApproval"]>[5],
     ): Promise<CanonicalChatApprovalSubmissionResponse> {
       await assertPersonalExecutionAllowed(owner, chatId);
       if (!options.orchestrator) throw new Error("Canonical Chat orchestration unavailable");
@@ -494,6 +495,7 @@ export function createCanonicalChatService(
         runId,
         approvalId,
         CanonicalSubmitChatApprovalRequestSchema.parse(input),
+        provenance,
       );
     },
 
