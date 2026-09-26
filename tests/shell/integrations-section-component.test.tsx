@@ -14,6 +14,7 @@ vi.mock("@/lib/websocket-auth", () => ({
 
 vi.mock("@/lib/gateway", () => ({
   getGatewayUrl: () => "http://gateway.test",
+  getPersonalApiUrl: () => "http://platform.test",
   getGatewayWs: () => "ws://gateway.test/ws",
 }));
 

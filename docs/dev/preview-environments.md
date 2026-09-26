@@ -113,10 +113,18 @@ accounts. A collaborator with a shared Terminal can read the machine credential,
 so the platform rejects personal-account requests on both internal routes,
 including requests claiming the owner or another collaborator. An isolated
 platform-preview Custom MCP fixture uses a synthetic owner and remains available.
-Personal integrations remain
-available through the platform's Clerk-authenticated routes under each actor's own
-account. Use synthetic fixtures for in-VPS integration acceptance tests until a
-user-bound capability is available that the shared machine cannot mint.
+Web Canvas, Web Desktop, and Electron Desktop send personal Integrations and
+Custom MCP settings requests directly to the platform's actor-authenticated
+routes, even while displaying an explicit `pr-N` runtime. Each signed-in
+engineer uses their own platform account. The shared Preview VPS still cannot
+read or execute those personal credentials through its gateway, Chat agents, or
+Terminal. Use synthetic fixtures for in-VPS acceptance tests. To validate an
+engineer's real account end to end through agent and Terminal flows, use a
+runtime isolated to that engineer; do not relax the shared Preview internal-route
+guard. The platform preview revision uses staging data and does not currently
+mount live Pipedream credentials, so test live Integration OAuth against the
+regular platform actor route and use the platform preview for fixture-backed
+backend checks.
 
 ### Shared preview Terminal authorization
 

@@ -4,7 +4,7 @@ import { McpServerDiagnostics } from "@matrix-os/ui";
 
 import { CUSTOM_MCP_UNAVAILABLE, CUSTOM_MCP_UNAVAILABLE_MESSAGE, rebaseCustomMcpPolicy } from "@matrix-os/contracts";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { getGatewayUrl } from "@/lib/gateway";
+import { getPersonalApiUrl } from "@/lib/gateway";
 
 type AuthMode = "none" | "oauth" | "bearer" | "api_key";
 type McpStatus = "pending" | "auth_required" | "ready" | "degraded" | "disabled" | "action_required";
@@ -26,7 +26,7 @@ interface McpServer {
   tools: McpTool[];
 }
 
-const GATEWAY = getGatewayUrl();
+const GATEWAY = getPersonalApiUrl();
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;

@@ -15,6 +15,17 @@ export function getGatewayUrl(): string {
   return process.env.GATEWAY_URL ?? "http://localhost:4000";
 }
 
+/** Shared Preview personal settings use the signed-in actor's platform route. */
+export function getPersonalApiUrl(): string {
+  if (typeof window === "undefined") {
+    return process.env.GATEWAY_URL ?? "http://localhost:4000";
+  }
+  const prefix = getExplicitVmPrefix();
+  return /^\/vm\/pr-[1-9][0-9]{0,8}(?:\/|$)/.test(prefix)
+    ? window.location.origin
+    : window.location.origin + prefix;
+}
+
 /**
  * Resolve the gateway WebSocket URL.
  * Browser: current host through the shell proxy, with the same explicit-vm

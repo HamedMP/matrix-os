@@ -30,12 +30,15 @@ describe("buildGatewayUrl", () => {
     ).toBe("https://app.matrix-os.com/api/projects/x/tasks?limit=50&runtime=vm-2");
   });
 
-  it("routes Preview Custom MCP requests through the selected VPS", () => {
+  it("keeps Preview personal integrations and Custom MCP on the actor-authenticated platform", () => {
     expect(buildGatewayUrl("https://app.matrix-os.com", "/api/mcp-servers", "pr-1871")).toBe(
-      "https://app.matrix-os.com/vm/pr-1871/api/mcp-servers",
+      "https://app.matrix-os.com/api/mcp-servers",
     );
     expect(buildGatewayUrl("https://app.matrix-os.com", "/api/mcp-servers/abc/discover", "pr-1871")).toBe(
-      "https://app.matrix-os.com/vm/pr-1871/api/mcp-servers/abc/discover",
+      "https://app.matrix-os.com/api/mcp-servers/abc/discover",
+    );
+    expect(buildGatewayUrl("https://app.matrix-os.com", "/api/integrations", "pr-1871")).toBe(
+      "https://app.matrix-os.com/api/integrations",
     );
     expect(buildGatewayUrl("https://app.matrix-os.com", "/api/apps", "pr-1871")).toBe(
       "https://app.matrix-os.com/api/apps?runtime=pr-1871",
