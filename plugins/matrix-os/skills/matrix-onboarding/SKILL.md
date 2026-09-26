@@ -46,7 +46,7 @@ matrix status
 matrix instance info --json
 ```
 
-`matrix instance info` may return `ready: true` and `source: execution_probe` when the platform management endpoint is degraded but command execution is healthy. Continue in that case, report the degraded management status, and retry later for full metadata. Stop only when both the management request and execution probe fail.
+`matrix instance info --json` reads authenticated instance metadata from the gateway. A successful structured response confirms metadata reachability, not command execution. Use `matrix doctor` and a separate bounded one-shot `matrix run --project main -- true` command when execution health is required; do not infer execution readiness from `matrix instance info`.
 
 3. Check the selected coding agent inside its own observable tabs:
 

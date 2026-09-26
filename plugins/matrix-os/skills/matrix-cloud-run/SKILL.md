@@ -37,7 +37,7 @@ matrix status
 matrix instance info --json
 ```
 
-If `matrix instance info` reports `ready: true` with `source: execution_probe`, continue and report that the management plane is degraded. Treat it as unavailable only when both management and execution checks fail.
+`matrix instance info --json` reads authenticated instance metadata from the gateway. A successful structured response confirms metadata reachability, not command execution. Use `matrix doctor` and a separate bounded one-shot `matrix run --project main -- true` command when execution health is required; do not infer execution readiness from `matrix instance info`.
 
 If login is missing or expired, run `matrix login --profile cloud` and let the user complete browser/device authentication. If the instance is not provisioned, use `https://app.matrix-os.com` and wait until it is ready.
 

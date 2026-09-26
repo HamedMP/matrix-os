@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { waitForManifest } from "../../src/daemon/index.js";
+import { waitForHomeMirrorReady } from "../../src/daemon/index.js";
 
 const gatewayUrl = "http://localhost:4000";
 const token = "test-token";
@@ -26,40 +26,33 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe("waitForManifest", () => {
-  it("returns immediately when the manifest is populated on first call", async () => {
+describe("waitForHomeMirrorReady", () => {
+  it("returns immediately when the home mirror is ready, even with an empty manifest", async () => {
     const fetchMock = vi.fn().mockResolvedValueOnce(
       jsonResponse({
-        manifestVersion: 1,
-        manifest: {
-          files: { "a.md": { hash: "h", size: 1, mtime: 0, peerId: "p", version: 1 } },
-        },
+        homeMirror: { state: "ready" },
+        manifestVersion: 0,
+        fileCount: 0,
       }),
     );
     vi.stubGlobal("fetch", fetchMock);
 
     await expect(
-      waitForManifest({ gatewayUrl, token, logger: silentLogger }),
+      waitForHomeMirrorReady({ gatewayUrl, token, logger: silentLogger }),
     ).resolves.toBeUndefined();
     expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledWith(`${gatewayUrl}/api/sync/status`, expect.any(Object));
   });
 
-  it("polls until the manifest is populated", async () => {
+  it("polls while the home mirror is starting", async () => {
     const fetchMock = vi
       .fn()
-      .mockResolvedValueOnce(jsonResponse({ manifestVersion: 0, manifest: { files: {} } }))
-      .mockResolvedValueOnce(jsonResponse({ manifestVersion: 0, manifest: { files: {} } }))
-      .mockResolvedValueOnce(
-        jsonResponse({
-          manifestVersion: 2,
-          manifest: {
-            files: { "a.md": { hash: "h", size: 1, mtime: 0, peerId: "p", version: 1 } },
-          },
-        }),
-      );
+      .mockResolvedValueOnce(jsonResponse({ homeMirror: { state: "starting" } }))
+      .mockResolvedValueOnce(jsonResponse({ homeMirror: { state: "starting" } }))
+      .mockResolvedValueOnce(jsonResponse({ homeMirror: { state: "ready" } }));
     vi.stubGlobal("fetch", fetchMock);
 
-    const promise = waitForManifest({ gatewayUrl, token, logger: silentLogger });
+    const promise = waitForHomeMirrorReady({ gatewayUrl, token, logger: silentLogger });
 
     // Drain three polls separated by ~2s waits. Each iteration: await pending
     // microtasks so the fetch promise settles, then advance the 2s sleep timer.
@@ -72,7 +65,7 @@ describe("waitForManifest", () => {
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
-  it("throws after 120s of empty manifests", async () => {
+  it("throws after 120s while the home mirror remains starting", async () => {
     // Use mockImplementation so each poll gets a fresh Response. `mockResolvedValue`
     // returns the same instance, and Response bodies are single-use — the second
     // res.json() call would throw "body already used" and trick the non-JSON
@@ -80,11 +73,11 @@ describe("waitForManifest", () => {
     const fetchMock = vi
       .fn()
       .mockImplementation(async () =>
-        jsonResponse({ manifestVersion: 0, manifest: { files: {} } }),
+        jsonResponse({ homeMirror: { state: "starting" } }),
       );
     vi.stubGlobal("fetch", fetchMock);
 
-    const promise = waitForManifest({ gatewayUrl, token, logger: silentLogger });
+    const promise = waitForHomeMirrorReady({ gatewayUrl, token, logger: silentLogger });
     // Prevent unhandled rejection warnings while timers advance.
     const caught = promise.catch((err) => err);
 
@@ -96,7 +89,53 @@ describe("waitForManifest", () => {
 
     const err = await caught;
     expect(err).toBeInstanceOf(Error);
-    expect((err as Error).message).toMatch(/Timed out waiting for your Matrix instance/);
+    expect((err as Error).message).toMatch(/Timed out waiting for sync readiness/);
+  });
+
+  it.each(["failed", "disabled"])("fails immediately when the home mirror is %s", async (state) => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      jsonResponse({ homeMirror: { state } }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      waitForHomeMirrorReady({ gatewayUrl, token, logger: silentLogger }),
+    ).rejects.toThrow(state === "failed" ? /failed to start/ : /not enabled/);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("fails immediately when an unconfigured gateway returns disabled with 503", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      jsonResponse({ homeMirror: { state: "disabled" } }, 503),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      waitForHomeMirrorReady({ gatewayUrl, token, logger: silentLogger }),
+    ).rejects.toThrow(/not enabled/);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("fails clearly when the gateway does not expose home-mirror readiness", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      jsonResponse({ manifestVersion: 2, fileCount: 3 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      waitForHomeMirrorReady({ gatewayUrl, token, logger: silentLogger }),
+    ).rejects.toThrow(/does not report sync readiness/);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("fails clearly when the readiness response is JSON null", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse(null));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      waitForHomeMirrorReady({ gatewayUrl, token, logger: silentLogger }),
+    ).rejects.toThrow(/does not report sync readiness/);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("throws immediately on 401", async () => {
@@ -106,7 +145,7 @@ describe("waitForManifest", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     await expect(
-      waitForManifest({ gatewayUrl, token, logger: silentLogger }),
+      waitForHomeMirrorReady({ gatewayUrl, token, logger: silentLogger }),
     ).rejects.toThrow(/Auth token rejected/);
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
@@ -118,25 +157,42 @@ describe("waitForManifest", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     await expect(
-      waitForManifest({ gatewayUrl, token, logger: silentLogger }),
+      waitForHomeMirrorReady({ gatewayUrl, token, logger: silentLogger }),
     ).rejects.toThrow(/Auth token rejected/);
   });
 
-  it("retries on 5xx and continues when the manifest becomes available", async () => {
+  it("retries on 5xx and continues when the home mirror becomes ready", async () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(new Response("boom", { status: 503 }))
       .mockResolvedValueOnce(
-        jsonResponse({
-          manifestVersion: 1,
-          manifest: {
-            files: { "a.md": { hash: "h", size: 1, mtime: 0, peerId: "p", version: 1 } },
-          },
-        }),
+        jsonResponse({ homeMirror: { state: "ready" } }),
       );
     vi.stubGlobal("fetch", fetchMock);
 
-    const promise = waitForManifest({ gatewayUrl, token, logger: silentLogger });
+    const promise = waitForHomeMirrorReady({ gatewayUrl, token, logger: silentLogger });
+
+    for (let i = 0; i < 2; i++) {
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(2_000);
+    }
+
+    await expect(promise).resolves.toBeUndefined();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("retries a JSON 5xx even when its body reports a terminal mirror state", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse({ homeMirror: { state: "failed" } }, 503),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({ homeMirror: { state: "ready" } }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const promise = waitForHomeMirrorReady({ gatewayUrl, token, logger: silentLogger });
 
     for (let i = 0; i < 2; i++) {
       await vi.advanceTimersByTimeAsync(0);
@@ -152,16 +208,11 @@ describe("waitForManifest", () => {
       .fn()
       .mockRejectedValueOnce(new Error("ECONNREFUSED"))
       .mockResolvedValueOnce(
-        jsonResponse({
-          manifestVersion: 1,
-          manifest: {
-            files: { "a.md": { hash: "h", size: 1, mtime: 0, peerId: "p", version: 1 } },
-          },
-        }),
+        jsonResponse({ homeMirror: { state: "ready" } }),
       );
     vi.stubGlobal("fetch", fetchMock);
 
-    const promise = waitForManifest({ gatewayUrl, token, logger: silentLogger });
+    const promise = waitForHomeMirrorReady({ gatewayUrl, token, logger: silentLogger });
 
     for (let i = 0; i < 2; i++) {
       await vi.advanceTimersByTimeAsync(0);
@@ -182,16 +233,11 @@ describe("waitForManifest", () => {
         }),
       )
       .mockResolvedValueOnce(
-        jsonResponse({
-          manifestVersion: 1,
-          manifest: {
-            files: { "a.md": { hash: "h", size: 1, mtime: 0, peerId: "p", version: 1 } },
-          },
-        }),
+        jsonResponse({ homeMirror: { state: "ready" } }),
       );
     vi.stubGlobal("fetch", fetchMock);
 
-    const promise = waitForManifest({ gatewayUrl, token, logger: silentLogger });
+    const promise = waitForHomeMirrorReady({ gatewayUrl, token, logger: silentLogger });
 
     for (let i = 0; i < 2; i++) {
       await vi.advanceTimersByTimeAsync(0);
@@ -212,7 +258,7 @@ describe("waitForManifest", () => {
     );
     vi.stubGlobal("fetch", fetchMock);
 
-    const promise = waitForManifest({ gatewayUrl, token, logger: silentLogger });
+    const promise = waitForHomeMirrorReady({ gatewayUrl, token, logger: silentLogger });
     const caught = promise.catch((err) => err);
 
     // 3 polls, each followed by the 2s sleep. Can't just advance 6s in one
@@ -231,7 +277,7 @@ describe("waitForManifest", () => {
   });
 
   it("resets the non-JSON strike counter when a valid JSON response arrives", async () => {
-    // Two non-JSON hits, then a valid (but empty) response resets the counter,
+    // Two non-JSON hits, then a valid starting response resets the counter,
     // then two more non-JSON hits — should NOT hard-fail because counter was
     // reset after the valid response.
     const htmlRes = () =>
@@ -244,21 +290,16 @@ describe("waitForManifest", () => {
       .mockResolvedValueOnce(htmlRes())
       .mockResolvedValueOnce(htmlRes())
       .mockResolvedValueOnce(
-        jsonResponse({ manifestVersion: 0, manifest: { files: {} } }),
+        jsonResponse({ homeMirror: { state: "starting" } }),
       )
       .mockResolvedValueOnce(htmlRes())
       .mockResolvedValueOnce(htmlRes())
       .mockResolvedValueOnce(
-        jsonResponse({
-          manifestVersion: 1,
-          manifest: {
-            files: { "a.md": { hash: "h", size: 1, mtime: 0, peerId: "p", version: 1 } },
-          },
-        }),
+        jsonResponse({ homeMirror: { state: "ready" } }),
       );
     vi.stubGlobal("fetch", fetchMock);
 
-    const promise = waitForManifest({ gatewayUrl, token, logger: silentLogger });
+    const promise = waitForHomeMirrorReady({ gatewayUrl, token, logger: silentLogger });
 
     for (let i = 0; i < 6; i++) {
       await vi.advanceTimersByTimeAsync(0);
@@ -273,11 +314,11 @@ describe("waitForManifest", () => {
     const fetchMock = vi
       .fn()
       .mockImplementation(async () =>
-        jsonResponse({ manifestVersion: 0, manifest: { files: {} } }),
+        jsonResponse({ homeMirror: { state: "starting" } }),
       );
     vi.stubGlobal("fetch", fetchMock);
 
-    const promise = waitForManifest({ gatewayUrl, token, logger: silentLogger });
+    const promise = waitForHomeMirrorReady({ gatewayUrl, token, logger: silentLogger });
     const caught = promise.catch((err) => err);
 
     for (let i = 0; i < 80; i++) {
@@ -304,16 +345,11 @@ describe("waitForManifest", () => {
         new SyntaxError("Unexpected token '<', \"<html>secret</html>\" is not valid JSON"),
       )
       .mockResolvedValueOnce(
-        jsonResponse({
-          manifestVersion: 1,
-          manifest: {
-            files: { "a.md": { hash: "h", size: 1, mtime: 0, peerId: "p", version: 1 } },
-          },
-        }),
+        jsonResponse({ homeMirror: { state: "ready" } }),
       );
     vi.stubGlobal("fetch", fetchMock);
 
-    const promise = waitForManifest({ gatewayUrl, token, logger });
+    const promise = waitForHomeMirrorReady({ gatewayUrl, token, logger });
 
     for (let i = 0; i < 2; i++) {
       await vi.advanceTimersByTimeAsync(0);

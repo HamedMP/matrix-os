@@ -1,8 +1,6 @@
-import { createHash, randomUUID } from "node:crypto";
-import { constants as fsConstants, createReadStream } from "node:fs";
-import { lstat, mkdir, open, readdir, realpath, rename, stat, unlink, writeFile } from "node:fs/promises";
-import { dirname, join, relative, sep } from "node:path";
-import { watch, type FSWatcher } from "chokidar";
+import { randomUUID } from "node:crypto";
+import { lstat, mkdir, realpath, rename, unlink, writeFile } from "node:fs/promises";
+import { dirname, join, sep } from "node:path";
 import { z } from "zod/v4";
 import type { SyncScope } from "@matrix-os/contracts";
 import {
@@ -14,6 +12,26 @@ import {
 } from "./manifest.js";
 import { resolveWithinPrefix } from "./path-validation.js";
 import {
+  createSerialQueue,
+  hashBuffer,
+  hashFileStream,
+  readLocalFileForPush,
+  type LocalPushFile,
+} from "./home-mirror-io.js";
+import {
+  SYNCIGNORE_MAX_BYTES,
+  SYNCIGNORE_PATH,
+  emptyOwnerSyncIgnore,
+  isHomeMirrorIgnored,
+  loadOwnerSyncIgnore,
+  ownerSyncIgnoreKey,
+  parseOwnerSyncIgnore,
+  shouldPruneHomeMirrorPath,
+} from "./home-mirror-ignore.js";
+import { cleanupTempFiles, collectLocalFiles } from "./home-mirror-walk.js";
+import { HomeMirrorWatcher } from "./home-mirror-watcher.js";
+import type { SyncIgnorePatterns } from "@finnaai/matrix";
+import {
   buildBlobKey,
   buildFileKey,
   buildStagingKey,
@@ -23,7 +41,7 @@ import type { Manifest, ManifestEntry } from "./types.js";
 import type { PeerRegistry, SyncPeerConnection } from "./ws-events.js";
 import { resolveSyncScope, syncScopeRegistryKey } from "./runtime-scope.js";
 import { finalizeStagedObject } from "./blob-publication.js";
-import { HomeMirrorState, MIRROR_STATE_DIR } from "./home-mirror-state.js";
+import { HomeMirrorState } from "./home-mirror-state.js";
 import { HomeMirrorReconciliation } from "./home-mirror-reconciliation.js";
 import { awaitMirrorOperation } from "./home-mirror-abort.js";
 import { streamToBuffer } from "./home-mirror-body.js";
@@ -33,40 +51,9 @@ import { createMirrorR2 } from "./home-mirror-r2.js";
 const RECENT_WRITE_CAP = 50_000;
 const DEFAULT_MAX_PUSH_BYTES = 100 * 1024 * 1024;
 const INITIAL_PUSH_CHUNK_SIZE = 50;
-const HASH_STREAM_TIMEOUT_MS = 30_000;
-const LOCAL_WALK_FILE_CAP = 50_000;
-const LOCAL_WALK_DEPTH_CAP = 64;
+const DEFAULT_TEMP_CLEANUP_INTERVAL_MS = 30 * 60 * 1000;
+const DEFAULT_TEMP_FILE_MAX_AGE_MS = 15 * 60 * 1000;
 
-// Folders we never push -- big build outputs, transient state, secrets,
-// or things that would loop on themselves (the home dir itself when run
-// from inside it). Keep this conservative; the user can override with a
-// `.syncignore` in their home root.
-const DEFAULT_IGNORE_DIRS = new Set([
-  "node_modules",
-  ".next",
-  ".git",
-  ".matrixos",
-  "dist",
-  "build",
-  ".cache",
-  ".turbo",
-  "coverage",
-  ".pnpm-store",
-  ".vscode",
-  "tmp",
-  MIRROR_STATE_DIR,
-]);
-
-const DEFAULT_IGNORE_PATTERNS = [
-  /\.log$/i,
-  /\.tmp$/i,
-  /^\.DS_Store$/,
-  /\.env(\..+)?$/,
-];
-const DEFAULT_IGNORE_PATH_PREFIXES = [
-  "data/browser-profiles",
-];
-const HOME_MIRROR_TMP_SUFFIX = /\.(?:\d+|matrixos-[0-9a-f-]{36})\.tmp$/i;
 const RemoteChangeFileSchema = z.object({
   path: z.string().min(1).max(1024),
   hash: z.string().regex(/^sha256:[a-f0-9]{64}$/),
@@ -100,6 +87,12 @@ export interface HomeMirrorConfig {
   maxPushBytes?: number;
   /** Disable chokidar local watching while keeping explicit push/delete methods available. Used by tests and one-shot sync flows. */
   watchLocalChanges?: boolean;
+  /** Interval for recurring orphaned temp-file sweeps. Defaults to 30 minutes. */
+  tempCleanupIntervalMs?: number;
+  /** Minimum age before a recurring sweep removes a temp file. Defaults to 15 minutes. */
+  tempFileMaxAgeMs?: number;
+  /** Called each time a local watcher (initial or policy rebuild) finishes its initial scan. */
+  onLocalWatcherReady?: () => void;
 }
 
 export interface HomeMirror {
@@ -109,121 +102,8 @@ export interface HomeMirror {
   pushLocalDelete(relPath: string): Promise<void>;
 }
 
-function createSerialQueue(onError: (err: unknown) => void): {
-  enqueue: <T>(fn: () => Promise<T>) => Promise<T>;
-  drain: () => Promise<void>;
-} {
-  let chain: Promise<unknown> = Promise.resolve();
-  const enqueue = <T>(fn: () => Promise<T>): Promise<T> => {
-    const next = chain.then(fn, fn);
-    chain = next.catch((err: unknown) => {
-      onError(err);
-      return undefined;
-    });
-    return next;
-  };
-  return {
-    enqueue,
-    async drain(): Promise<void> {
-      await chain;
-    },
-  };
-}
-
-function isIgnored(relPath: string, extraDirs?: Set<string>): boolean {
-  // Treat the home root itself ("") as NOT ignored -- otherwise chokidar
-  // refuses to descend into it. Only ignore actual entries.
-  if (!relPath || relPath === ".") return false;
-  const normalizedPath = relPath.split(sep).join("/");
-  if (normalizedPath === ".matrix-version" || normalizedPath === ".template-manifest.json") return true;
-  if (
-    DEFAULT_IGNORE_PATH_PREFIXES.some((prefix) =>
-      normalizedPath === prefix || normalizedPath.startsWith(`${prefix}/`)
-    )
-  ) {
-    return true;
-  }
-  const segments = relPath.split(sep);
-  for (const seg of segments) {
-    if (DEFAULT_IGNORE_DIRS.has(seg)) return true;
-    if (extraDirs?.has(seg)) return true;
-  }
-  const last = segments[segments.length - 1] ?? "";
-  return DEFAULT_IGNORE_PATTERNS.some((p) => p.test(last));
-}
-
-function hashFileStream(absPath: string): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const h = createHash("sha256");
-    const s = createReadStream(absPath);
-    const timeout = setTimeout(() => {
-      s.destroy(new Error(`hash stream timed out after ${HASH_STREAM_TIMEOUT_MS}ms`));
-    }, HASH_STREAM_TIMEOUT_MS);
-    const cleanup = () => clearTimeout(timeout);
-    s.on("data", (chunk) => h.update(chunk));
-    s.on("end", () => {
-      cleanup();
-      resolve(`sha256:${h.digest("hex")}`);
-    });
-    s.on("error", (err) => {
-      cleanup();
-      reject(err);
-    });
-    s.on("close", cleanup);
-  });
-}
-
-function hashBuffer(buf: Buffer): string {
-  return `sha256:${createHash("sha256").update(buf).digest("hex")}`;
-}
-
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
-}
-
-type LocalPushFile =
-  | { kind: "file"; body: Buffer; hash: string; size: number }
-  | { kind: "too_large"; size: number }
-  | { kind: "skip" };
-
-async function readLocalFileForPush(
-  absPath: string,
-  maxPushBytes: number,
-): Promise<LocalPushFile> {
-  let handle;
-  try {
-    handle = await open(absPath, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0));
-  } catch (err: unknown) {
-    if (
-      err instanceof Error &&
-      "code" in err &&
-      ["ENOENT", "EISDIR", "ELOOP", "ENOTDIR"].includes(
-        String((err as NodeJS.ErrnoException).code),
-      )
-    ) {
-      return { kind: "skip" };
-    }
-    throw err;
-  }
-
-  try {
-    const fileStat = await handle.stat();
-    if (!fileStat.isFile()) {
-      return { kind: "skip" };
-    }
-    if (fileStat.size > maxPushBytes) {
-      return { kind: "too_large", size: fileStat.size };
-    }
-    const body = Buffer.from(await handle.readFile());
-    return {
-      kind: "file",
-      body,
-      hash: hashBuffer(body),
-      size: body.length,
-    };
-  } finally {
-    await handle.close();
-  }
 }
 
 function normalizeRelativePath(userId: string, relPath: string): string {
@@ -233,9 +113,6 @@ function normalizeRelativePath(userId: string, relPath: string): string {
   }
   return checked.key.slice(`matrixos-sync/${userId}/files/`.length);
 }
-
-// AWS SDK v3 returns its own stream type with `transformToByteArray()`,
-// NOT a Web ReadableStream -- calling .getReader() throws "is not a function".
 
 export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
   const scope = config.scope ?? resolveSyncScope({ ownerId: config.userId });
@@ -248,8 +125,9 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
     ? new Set(config.extraIgnoreDirs)
     : undefined;
   const maxPushBytes = config.maxPushBytes ?? DEFAULT_MAX_PUSH_BYTES;
+  const tempCleanupIntervalMs = config.tempCleanupIntervalMs ?? DEFAULT_TEMP_CLEANUP_INTERVAL_MS;
+  const tempFileMaxAgeMs = config.tempFileMaxAgeMs ?? DEFAULT_TEMP_FILE_MAX_AGE_MS;
 
-  let watcher: FSWatcher | null = null;
   let stopRequested = false;
   let subscribed = false;
   let resolvedHomeRoot = config.homeRoot;
@@ -259,6 +137,37 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
   let stopping: Promise<void> | undefined;
   let shutdownDrained = true;
   const r2 = createMirrorR2(config.r2, () => lifecycle.signal);
+  let userIgnorePatterns = emptyOwnerSyncIgnore();
+  // Incremented by start()/stop() so queued policy refreshes from an older
+  // lifecycle can never start watchers or pushes after a stop or restart.
+  let lifecycleGeneration = 0;
+  let localWatchingEnabled = false;
+  let tempCleanupTimer: ReturnType<typeof setInterval> | null = null;
+  let tempCleanupInFlight: Promise<void> | null = null;
+
+  const ignored = (relPath: string): boolean =>
+    isHomeMirrorIgnored(relPath, extraIgnore, userIgnorePatterns);
+  const pruned = (relPath: string): boolean =>
+    shouldPruneHomeMirrorPath(relPath, extraIgnore, userIgnorePatterns);
+  const walkFilters = { pruned, ignored, log, signal: () => shutdownSignal };
+  const isCurrentLifecycle = (generation: number): boolean =>
+    !stopRequested && generation === lifecycleGeneration;
+  const watchers = new HomeMirrorWatcher({
+    homeRoot: config.homeRoot,
+    pruned,
+    onEvent: onLocalEvent,
+    onError: (message) => log.error(message),
+    isCurrent: isCurrentLifecycle,
+    onReady: config.onLocalWatcherReady,
+  });
+
+  /** Reload owner policy from disk; returns the previous policy when it changed. */
+  async function reloadUserIgnorePatterns(): Promise<SyncIgnorePatterns | null> {
+    const previous = userIgnorePatterns;
+    const next = await loadOwnerSyncIgnore(config.homeRoot);
+    userIgnorePatterns = next;
+    return ownerSyncIgnoreKey(previous) === ownerSyncIgnoreKey(next) ? null : previous;
+  }
 
   function assertWithinResolvedHomeRoot(resolvedPath: string): void {
     if (
@@ -330,14 +239,15 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
   }
 
   async function releaseResources(): Promise<void> {
+    if (tempCleanupTimer) {
+      clearInterval(tempCleanupTimer);
+      tempCleanupTimer = null;
+    }
     if (subscribed && config.peerRegistry) {
       config.peerRegistry.removePeer(registryKey, config.peerId);
       subscribed = false;
     }
-    if (watcher) {
-      await watcher.close();
-      watcher = null;
-    }
+    await watchers.close();
   }
 
   async function withManifestLock<T>(
@@ -397,7 +307,19 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
 
   async function pushFile(relPath: string): Promise<void> {
     const safeRelPath = normalizeRelativePath(config.userId, relPath);
-    if (isIgnored(safeRelPath, extraIgnore)) return;
+    const previousPolicy = safeRelPath === SYNCIGNORE_PATH
+      ? await reloadUserIgnorePatterns()
+      : null;
+    try {
+      await publishLocalFile(safeRelPath);
+    } finally {
+      // Publish the policy file first, then bring watches in line with it.
+      if (previousPolicy) await schedulePolicyRefresh(previousPolicy);
+    }
+  }
+
+  async function publishLocalFile(safeRelPath: string): Promise<void> {
+    if (ignored(safeRelPath)) return;
     const absPath = join(config.homeRoot, safeRelPath);
 
     await enqueue(async () => {
@@ -468,7 +390,7 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
 
   /** Already queued remote changes must not enqueue behind themselves. */
   async function reconcileLocalDeletion(safeRelPath: string): Promise<void> {
-    if (isIgnored(safeRelPath, extraIgnore) || localState.blocked(safeRelPath)) return;
+    if (ignored(safeRelPath) || localState.blocked(safeRelPath)) return;
     await withManifestLock(async (lockedStore) => {
       const existing = await readManifest(lockedStore, scope);
       const entry = existing.manifest.files[safeRelPath];
@@ -505,7 +427,20 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
 
   async function pushDelete(relPath: string): Promise<void> {
     const safeRelPath = normalizeRelativePath(config.userId, relPath);
-    await enqueue(() => reconcileLocalDeletion(safeRelPath));
+    const previousPolicy = safeRelPath === SYNCIGNORE_PATH
+      ? await reloadUserIgnorePatterns()
+      : null;
+    try {
+      await enqueue(() => reconcileLocalDeletion(safeRelPath));
+    } finally {
+      if (previousPolicy) await schedulePolicyRefresh(previousPolicy);
+    }
+  }
+
+  // Remote policy content is validated before it touches disk so a rejected
+  // .syncignore can never replace the last valid owner policy.
+  function validateRemoteBody(safeRelPath: string, body: Buffer): void {
+    if (safeRelPath === SYNCIGNORE_PATH) parseOwnerSyncIgnore(body.toString("utf8"));
   }
 
   async function pullFile(relPath: string, entry: ManifestEntry): Promise<void> {
@@ -513,6 +448,9 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
     const absPath = join(config.homeRoot, safeRelPath);
     if (entry.size > maxPushBytes) {
       throw new Error(`remote file exceeds ${maxPushBytes} bytes`);
+    }
+    if (safeRelPath === SYNCIGNORE_PATH && entry.size > SYNCIGNORE_MAX_BYTES) {
+      throw new Error(`.syncignore exceeds ${SYNCIGNORE_MAX_BYTES} bytes`);
     }
     let expectedHash: string | null = null;
     try {
@@ -550,6 +488,7 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
     if (hashBuffer(buf) !== entry.hash) {
       throw new Error("downloaded blob hash did not match manifest entry");
     }
+    validateRemoteBody(safeRelPath, buf);
     await ensureWritableParent(absPath);
     const tmpPath = `${absPath}.matrixos-${randomUUID()}.tmp`;
     try {
@@ -600,47 +539,25 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
     log.info(`pulled ${safeRelPath} (${buf.length}B)`);
   }
 
-  async function cleanupTempFiles(dir: string, relDir = "", depth = 0): Promise<void> {
-    if (depth > LOCAL_WALK_DEPTH_CAP) {
-      throw new Error(
-        `temp file cleanup exceeded max depth of ${LOCAL_WALK_DEPTH_CAP}`,
-      );
-    }
-    const entries = await readdir(dir, { withFileTypes: true });
-    for (const entry of entries) {
-      const relPath = relDir ? join(relDir, entry.name) : entry.name;
-      const absPath = join(dir, entry.name);
-      if (entry.isDirectory()) {
-        if (isIgnored(relPath, extraIgnore)) continue;
-        await cleanupTempFiles(absPath, relPath, depth + 1);
-        continue;
-      }
-      if (entry.isFile() && HOME_MIRROR_TMP_SUFFIX.test(entry.name)) {
-        try {
-          await unlink(absPath);
-        } catch (err: unknown) {
-          if (
-            !(err instanceof Error) ||
-            !("code" in err) ||
-            (err as NodeJS.ErrnoException).code !== "ENOENT"
-          ) {
-            log.error(
-              `cleanup failed for orphaned temp ${relPath}:`,
-              err instanceof Error ? err.message : String(err),
-            );
-          }
-        }
-      }
-    }
-  }
-
   async function initialPull(): Promise<void> {
     const existing = await readManifest(store, scope);
     const files = existing.manifest.files ?? {};
     let pulled = 0;
     let failed = 0;
+    const remoteIgnore = files[SYNCIGNORE_PATH];
+    if (remoteIgnore?.hash && !remoteIgnore.deleted) {
+      try {
+        await pullFile(SYNCIGNORE_PATH, remoteIgnore);
+        await reloadUserIgnorePatterns();
+        pulled++;
+      } catch (err: unknown) {
+        log.error("pull failed for .syncignore:", errorMessage(err));
+        throw new Error("initial pull incomplete: .syncignore could not be applied");
+      }
+    }
     for (const [relPath, entry] of Object.entries(files)) {
-      if (!entry.hash || entry.deleted || isIgnored(relPath, extraIgnore)) continue;
+      if (relPath === SYNCIGNORE_PATH) continue;
+      if (!entry.hash || entry.deleted || ignored(relPath)) continue;
       try {
         await pullFile(relPath, entry);
         pulled++;
@@ -655,64 +572,40 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
     if (pulled > 0) log.info(`initial pull: ${pulled} files`);
   }
 
-  async function collectLocalFiles(
-    dir: string,
-    relDir = "",
-    files: string[] = [],
-    depth = 0,
-  ): Promise<string[]> {
-    if (depth > LOCAL_WALK_DEPTH_CAP) {
-      throw new Error(
-        `local file walk exceeded max depth of ${LOCAL_WALK_DEPTH_CAP}`,
-      );
-    }
-    shutdownSignal?.throwIfAborted();
-    const entries = await readdir(dir, { withFileTypes: true });
-
-    for (const entry of entries) {
-      shutdownSignal?.throwIfAborted();
-      const relPath = relDir ? join(relDir, entry.name) : entry.name;
-      if (isIgnored(relPath, extraIgnore)) continue;
-      const absPath = join(dir, entry.name);
-
-      if (entry.isDirectory()) {
-        await collectLocalFiles(absPath, relPath, files, depth + 1);
-        continue;
-      }
-      if (entry.isSymbolicLink()) {
-        continue;
-      }
-      if (entry.isFile()) {
-        files.push(relPath);
-        if (files.length > LOCAL_WALK_FILE_CAP) {
-          throw new Error(
-            `local file walk exceeded ${LOCAL_WALK_FILE_CAP.toLocaleString()} files`,
-          );
-        }
-      }
-    }
-
-    return files;
-  }
-
   async function initialPush(shutdownDeadline?: number): Promise<void> {
-    const relPaths = await collectLocalFiles(config.homeRoot);
+    const relPaths = await collectLocalFiles(config.homeRoot, walkFilters);
     if (shutdownDeadline !== undefined) {
       // Only a durable prior baseline makes absence a known owner deletion.
       // pushDelete rechecks both remote hash and local absence inside the lock.
       for (const path of localState.paths()) {
         lifecycle.signal.throwIfAborted();
         if (Date.now() >= shutdownDeadline) return;
-        if (!isIgnored(path, extraIgnore) && await isLocalMissing(path)) await pushDelete(path);
+        if (!ignored(path) && await isLocalMissing(path)) await pushDelete(path);
       }
     }
+    await pushLocalPaths(
+      relPaths,
+      "initial push",
+      shutdownDeadline ? 1 : INITIAL_PUSH_CHUNK_SIZE,
+      () => shutdownDeadline !== undefined ? Date.now() < shutdownDeadline : !stopRequested,
+    );
+  }
+
+  // Publish local files in chunks. Every publish goes through the manifest
+  // lock and reconciliation.canPublish, so a diverged remote version or a
+  // tombstone is preserved rather than overwritten or resurrected.
+  async function pushLocalPaths(
+    relPaths: string[],
+    label: string,
+    chunkSize: number,
+    shouldContinue: () => boolean,
+  ): Promise<void> {
     if (relPaths.length === 0) return;
     const snapshot = await readManifest(store, scope);
     let pushed = 0;
 
-    const chunkSize = shutdownDeadline ? 1 : INITIAL_PUSH_CHUNK_SIZE;
     for (let start = 0; start < relPaths.length; start += chunkSize) {
-      if ((shutdownDeadline !== undefined && Date.now() >= shutdownDeadline) || (stopRequested && shutdownDeadline === undefined)) {
+      if (!shouldContinue()) {
         return;
       }
       const relPathChunk = relPaths.slice(start, start + chunkSize);
@@ -814,7 +707,7 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
     }
 
     if (pushed > 0) {
-      log.info(`initial push: ${pushed} files`);
+      log.info(`${label}: ${pushed} files`);
     }
   }
 
@@ -847,9 +740,14 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
   // back up to R2. Errors are logged per-file; one bad file doesn't stop
   // the rest. Returns after all files have been processed.
   async function handleRemoteChange(msg: z.infer<typeof RemoteChangeMessageSchema>): Promise<void> {
-    const files = msg.files;
+    // Apply policy changes before other files in the same broadcast so a
+    // freshly restored or updated .syncignore governs the whole batch.
+    const files = [...msg.files].sort((left, right) =>
+      Number(right.path === SYNCIGNORE_PATH) - Number(left.path === SYNCIGNORE_PATH)
+    );
+    let previousPolicy: SyncIgnorePatterns | null = null;
     for (const f of files) {
-      if (!f.path || isIgnored(f.path, extraIgnore)) continue;
+      if (!f.path || (f.path !== SYNCIGNORE_PATH && ignored(f.path))) continue;
       try {
         if (f.action === "delete") {
           await pullDelete(f.path);
@@ -862,9 +760,18 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
             version: 0,
           } as ManifestEntry);
         }
+        if (f.path === SYNCIGNORE_PATH) {
+          previousPolicy = (await reloadUserIgnorePatterns()) ?? previousPolicy;
+        }
       } catch (err: unknown) {
+        // A rejected policy is logged and skipped; later files in the batch
+        // still apply under the last successfully loaded policy.
         log.error(`remote-change failed for ${f.path}:`, errorMessage(err));
       }
+    }
+    if (previousPolicy) {
+      // Runs outside the serial queue: the refresh enqueues its own pushes.
+      void schedulePolicyRefresh(previousPolicy);
     }
   }
 
@@ -911,6 +818,100 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
     };
   }
 
+  // Recurring sweep for temp files orphaned after startup (e.g. a download
+  // interrupted by an I/O error). Skips overlapping runs; cleared on stop.
+  function scheduleTempCleanup(generation: number): void {
+    if (tempCleanupTimer) clearInterval(tempCleanupTimer);
+    tempCleanupTimer = setInterval(() => {
+      if (tempCleanupInFlight || !isCurrentLifecycle(generation)) return;
+      tempCleanupInFlight = cleanupTempFiles(config.homeRoot, walkFilters, tempFileMaxAgeMs)
+        .catch((err: unknown) => log.error("temp file sweep failed:", errorMessage(err)))
+        .finally(() => {
+          tempCleanupInFlight = null;
+        });
+    }, tempCleanupIntervalMs);
+    tempCleanupTimer.unref?.();
+  }
+
+  function onLocalEvent(kind: "push" | "delete", rel: string): void {
+    if (wasJustWritten(rel)) return;
+    if (kind === "push") {
+      pushFile(rel).catch((err: unknown) => log.error(`push failed for ${rel}: ${errorMessage(err)}`));
+    } else {
+      pushDelete(rel).catch((err: unknown) => log.error(`delete failed for ${rel}: ${errorMessage(err)}`));
+    }
+  }
+
+  async function replaceLocalWatcher(generation: number): Promise<void> {
+    if (!localWatchingEnabled || !isCurrentLifecycle(generation)) return;
+    await watchers.replace(generation);
+  }
+
+  // Apply peer state for paths the new owner policy newly includes, through
+  // the same reconciliation as every other pull: unambiguous peer versions
+  // and deletions land in the home; ambiguous divergence is recorded, not
+  // resolved in either direction. Runs inside the serial queue.
+  async function pullNewlyIncluded(
+    previousPolicy: SyncIgnorePatterns,
+    generation: number,
+  ): Promise<void> {
+    const { manifest } = await readManifest(store, scope);
+    for (const [relPath, entry] of Object.entries(manifest.files)) {
+      if (!isCurrentLifecycle(generation)) return;
+      if (!entry.hash || ignored(relPath)) continue;
+      if (!isHomeMirrorIgnored(relPath, extraIgnore, previousPolicy)) continue;
+      try {
+        if (!entry.deleted) {
+          await pullFile(relPath, entry);
+          continue;
+        }
+        const safeRelPath = normalizeRelativePath(config.userId, relPath);
+        const local = await readLocalFileForPush(join(config.homeRoot, safeRelPath), maxPushBytes);
+        // The peer deleted exactly the bytes held here: that version is the
+        // shared baseline, so applying the deletion loses no local edit.
+        if (local.kind === "file" && local.hash === entry.hash && localState.hash(safeRelPath) === undefined) {
+          await localState.remember(safeRelPath, entry.hash);
+        }
+        await pullDelete(safeRelPath);
+      } catch (err: unknown) {
+        log.error(`policy refresh pull failed for ${relPath}:`, errorMessage(err));
+      }
+    }
+  }
+
+  // Publish files the new owner policy newly includes. They go through the
+  // same locked reconciliation as every other publish, so a path that
+  // diverged on another peer while excluded is preserved as a conflict.
+  async function pushNewlyIncluded(
+    previousPolicy: SyncIgnorePatterns,
+    generation: number,
+  ): Promise<void> {
+    const relPaths = await collectLocalFiles(config.homeRoot, walkFilters);
+    const newlyIncluded = relPaths.filter((relPath) =>
+      isHomeMirrorIgnored(relPath, extraIgnore, previousPolicy)
+    );
+    await pushLocalPaths(newlyIncluded, "policy refresh push", INITIAL_PUSH_CHUNK_SIZE, () =>
+      isCurrentLifecycle(generation)
+    );
+  }
+
+  // Rebuild watches, then apply peer state and publish local files for paths
+  // the new owner policy newly includes.
+  // Never rejects; failures are logged and the last watcher stays active.
+  function schedulePolicyRefresh(previousPolicy: SyncIgnorePatterns): Promise<void> {
+    const generation = lifecycleGeneration;
+    return watchers.run(async () => {
+      if (!isCurrentLifecycle(generation)) return;
+      await replaceLocalWatcher(generation);
+      if (!isCurrentLifecycle(generation)) return;
+      await enqueue(() => pullNewlyIncluded(previousPolicy, generation));
+      if (!isCurrentLifecycle(generation)) return;
+      await pushNewlyIncluded(previousPolicy, generation);
+    }).catch((err: unknown) => {
+      log.error("home mirror policy refresh failed:", errorMessage(err));
+    });
+  }
+
   return {
     async start(): Promise<void> {
       if (!shutdownDrained) throw new Error("mirror shutdown incomplete");
@@ -919,6 +920,8 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
       shutdownSignal = undefined;
       stopping = undefined;
       readyForFlush = false;
+      localWatchingEnabled = false;
+      const generation = ++lifecycleGeneration;
       try {
       await mkdir(config.homeRoot, { recursive: true });
       try {
@@ -932,7 +935,9 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
       }
       if (stopRequested) return;
       await localState.load();
-      await cleanupTempFiles(config.homeRoot);
+      await reloadUserIgnorePatterns();
+      if (stopRequested) return;
+      await cleanupTempFiles(config.homeRoot, walkFilters, 0);
       if (stopRequested) return;
       await initialPull();
       if (stopRequested) return;
@@ -965,70 +970,17 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
         return;
       }
 
+      scheduleTempCleanup(generation);
+
       if (config.watchLocalChanges === false) {
         readyForFlush = true;
         log.info(`home mirror started for ${config.homeRoot} (peer=${config.peerId})`);
         return;
       }
 
-      watcher = watch(config.homeRoot, {
-        persistent: true,
-        ignoreInitial: true,
-        awaitWriteFinish: { stabilityThreshold: 250, pollInterval: 100 },
-        ignored: (absPath) => {
-          const rel = relative(config.homeRoot, absPath);
-          return isIgnored(rel, extraIgnore);
-        },
-      });
-
-      watcher.on("add", (absPath) => {
-        const rel = relative(config.homeRoot, absPath);
-        if (wasJustWritten(rel)) return;
-        pushFile(rel).catch((err: unknown) => log.error(`push failed for ${rel}: ${errorMessage(err)}`));
-      });
-      watcher.on("change", (absPath) => {
-        const rel = relative(config.homeRoot, absPath);
-        if (wasJustWritten(rel)) return;
-        pushFile(rel).catch((err: unknown) => log.error(`push failed for ${rel}: ${errorMessage(err)}`));
-      });
-      watcher.on("unlink", (absPath) => {
-        const rel = relative(config.homeRoot, absPath);
-        if (wasJustWritten(rel)) return;
-        pushDelete(rel).catch((err: unknown) => log.error(`delete failed for ${rel}: ${errorMessage(err)}`));
-      });
-      watcher.on("error", (err: unknown) => {
-        log.error(`home mirror watcher error: ${errorMessage(err)}`);
-      });
-
-      // Wait for chokidar to finish its initial scan and register inotify
-      // watches before returning. Otherwise a write that lands immediately
-      // after start() resolves can be missed on slow filesystems (notably
-      // GitHub Actions runners), where the watches aren't installed yet.
-      // Resolve on `close` too, so a concurrent stop() can't strand us
-      // waiting for a `ready` event that will never fire on a closed watcher.
+      localWatchingEnabled = true;
       try {
-        await new Promise<void>((resolve, reject) => {
-          const cleanup = () => {
-            watcher?.off("ready", onReady);
-            watcher?.off("error", onError);
-            watcher?.off("close", onClose);
-          };
-          const onReady = () => {
-            cleanup();
-            resolve();
-          };
-          const onError = (err: unknown) => {
-            cleanup();
-            reject(err instanceof Error ? err : new Error(String(err)));
-          };
-          const onClose = () => {
-            cleanup();
-            resolve();
-          };
-          watcher!.once("ready", onReady);
-          watcher!.once("error", onError);
-          watcher!.once("close", onClose);
-        });
+        await watchers.run(() => replaceLocalWatcher(generation));
       } catch (err: unknown) {
         // Watcher errored before reaching ready -- close it (and any
         // other resources start() acquired) so we don't leak inotify
@@ -1037,7 +989,7 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
         throw err;
       }
 
-      if (stopRequested) {
+      if (!isCurrentLifecycle(generation)) {
         await releaseResources();
         return;
       }
@@ -1064,6 +1016,8 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
       if (stopping) return stopping;
       stopping = (async () => {
         stopRequested = true;
+        localWatchingEnabled = false;
+        lifecycleGeneration++;
         shutdownSignal = lifecycle.signal;
         shutdownDrained = false;
         const deadline = Date.now() + 10_000;
@@ -1071,6 +1025,11 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
         try {
           const work = (async () => {
             try {
+              await releaseResources();
+              // Let an in-flight rebuild observe the stop and close its
+              // replacement, and let a running temp sweep finish.
+              await watchers.idle();
+              await tempCleanupInFlight;
               await releaseResources();
               await queue.drain();
               if (readyForFlush) await initialPush(deadline);

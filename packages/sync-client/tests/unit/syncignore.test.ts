@@ -5,6 +5,7 @@ import {
   DEFAULT_PATTERNS,
   loadSyncIgnore,
   isIgnored,
+  mayUnignoreDescendant,
   parseSyncIgnore,
   type SyncIgnorePatterns,
 } from "../../src/lib/syncignore.js";
@@ -247,5 +248,31 @@ describe("loadSyncIgnore", () => {
     const patterns = await loadSyncIgnore(subDir);
 
     expect(patterns.patterns.length).toBe(DEFAULT_PATTERNS.length);
+  });
+});
+
+describe("mayUnignoreDescendant", () => {
+  it("keeps an ignored directory reachable when a path negation targets a descendant", () => {
+    const patterns = parseSyncIgnore("projects/\n!projects/keep.md\n");
+    expect(isIgnored("projects", patterns)).toBe(true);
+    expect(mayUnignoreDescendant("projects", patterns)).toBe(true);
+    expect(mayUnignoreDescendant("projects/large", patterns)).toBe(false);
+    expect(mayUnignoreDescendant("other", patterns)).toBe(false);
+  });
+
+  it("treats basename negations as able to match at any depth", () => {
+    const patterns = parseSyncIgnore("build-output/\n!*.md\n");
+    expect(mayUnignoreDescendant("build-output/deep/tree", patterns)).toBe(true);
+  });
+
+  it("follows globstar, segment globs, and brace negations conservatively", () => {
+    expect(mayUnignoreDescendant("a/b/c", parseSyncIgnore("a/\n!a/**/keep.md\n"))).toBe(true);
+    expect(mayUnignoreDescendant("a/x", parseSyncIgnore("a/\n!a/*/keep.md\n"))).toBe(true);
+    expect(mayUnignoreDescendant("b/x", parseSyncIgnore("b/\n!a/*/keep.md\n"))).toBe(false);
+    expect(mayUnignoreDescendant("a/x", parseSyncIgnore("a/\n!{a,b}/x/keep.md\n"))).toBe(true);
+  });
+
+  it("returns false without negations", () => {
+    expect(mayUnignoreDescendant("projects", parseSyncIgnore("projects/\n"))).toBe(false);
   });
 });

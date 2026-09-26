@@ -179,10 +179,10 @@ Always create Matrix CLI tabs for remote commands, including readiness probes an
 Each project owns one workspace; concurrent work gets another tab. Report the returned tab ID and
 its `matrix shell connect --project <project> --tab <tab-id>` command immediately.
 
-`matrix instance info --json` can return `ready: true` with `source: execution_probe` when the
-management endpoint is degraded but command execution is healthy. Continue in that state, report
-the degraded management plane, and retry later for full metadata. Stop only if both the management
-request and execution probe fail.
+`matrix instance info --json` reads authenticated instance metadata from the gateway. A successful
+structured response confirms metadata reachability, not command execution. Use `matrix doctor` and
+a separate bounded one-shot `matrix run --project main -- true` command when a workflow requires an
+execution health check; do not infer execution readiness from `matrix instance info`.
 
 Use the reserved `main` workspace for setup workflows so the user, Matrix web terminal, Claude, Codex, or Hermes can all view the same tab:
 

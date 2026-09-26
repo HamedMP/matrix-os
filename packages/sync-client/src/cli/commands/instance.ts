@@ -2,7 +2,6 @@ import { defineCommand } from "citty";
 import { formatCliError, formatCliSuccess, isFetchTimeoutError } from "../output.js";
 import { resolveCliProfile } from "../profiles.js";
 import { requireCliAuthToken } from "../auth-state.js";
-import { createShellClient } from "../shell-client.js";
 
 const INSTANCE_USAGE = "Usage: matrix instance info|restart|logs";
 const INSTANCE_SUBCOMMANDS = new Set(["info", "restart", "logs"]);
@@ -18,10 +17,11 @@ const INSTANCE_VALUE_OPTIONS = new Set(
 
 interface InstanceRequestOptions {
   method?: "GET" | "POST";
+  target?: "gateway" | "platform";
 }
 
 interface InstanceFailureDetails extends Record<string, unknown> {
-  upstream: "platform_instance_api" | "instance_execution_api";
+  upstream: "gateway_system_info_api" | "platform_instance_api";
   cause: string;
   retryable: boolean;
   httpStatus?: number;
@@ -40,12 +40,16 @@ function codedInstanceError(
   return Object.assign(new Error(message), { code, ...(details ? { details } : {}) });
 }
 
-function managementFailure(
+function requestFailure(
+  upstream: InstanceFailureDetails["upstream"],
   cause: InstanceFailureDetails["cause"],
   options: { httpStatus?: number; retryable?: boolean } = {},
 ): InstanceError {
-  return codedInstanceError("instance_request_failed", "Instance management request failed.", {
-    upstream: "platform_instance_api",
+  const message = upstream === "gateway_system_info_api"
+    ? "Instance information request failed."
+    : "Instance management request failed.";
+  return codedInstanceError("instance_request_failed", message, {
+    upstream,
     cause,
     ...(options.httpStatus === undefined ? {} : { httpStatus: options.httpStatus }),
     retryable: options.retryable ?? true,
@@ -88,28 +92,22 @@ function hasInstanceSubCommand(rawArgs: string[] | undefined): boolean {
 
 function writeError(err: unknown, json: boolean): void {
   const code = errorCode(err, "instance_request_failed");
+  const details = safeDetails(err);
   const safeMessage =
     (code === "not_authenticated" || code === "auth_expired") && err instanceof Error
       ? err.message
       : code === "instance_request_failed"
-        ? "Instance management request failed."
-        : code === "instance_unavailable"
-          ? "Instance readiness check failed."
-          : undefined;
-  const details = safeDetails(err);
+        ? details?.upstream === "gateway_system_info_api"
+          ? "Instance information request failed."
+          : "Instance management request failed."
+        : undefined;
   if (json) {
     console.error(formatCliError(code, safeMessage, details));
     return;
   }
   const nextStep = typeof details?.nextStep === "string" ? ` ${details.nextStep}` : "";
-  const management = details?.management;
   const directStatus = typeof details?.httpStatus === "number" ? ` HTTP ${details.httpStatus}.` : "";
-  const degradedStatus =
-    typeof management === "object" && management !== null && "httpStatus" in management &&
-      typeof (management as { httpStatus?: unknown }).httpStatus === "number"
-      ? ` Management API returned HTTP ${(management as { httpStatus: number }).httpStatus}.`
-      : "";
-  console.error(`${safeMessage ?? `Error: Request failed (${code})`}${directStatus}${degradedStatus}${nextStep}`);
+  console.error(`${safeMessage ?? `Error: Request failed (${code})`}${directStatus}${nextStep}`);
 }
 
 async function requestInstance(
@@ -119,19 +117,24 @@ async function requestInstance(
 ): Promise<Record<string, unknown>> {
   const profile = await resolveCliProfile(args);
   const token = await requireCliAuthToken(profile);
+  const target = options.target ?? "platform";
+  const baseUrl = target === "gateway" ? profile.gatewayUrl : profile.platformUrl;
+  const upstream: InstanceFailureDetails["upstream"] = target === "gateway"
+    ? "gateway_system_info_api"
+    : "platform_instance_api";
 
   let res: Response;
   try {
-    res = await fetch(`${profile.platformUrl}${path}`, {
+    res = await fetch(`${baseUrl}${path}`, {
       ...(options.method ? { method: options.method } : {}),
       headers: { Authorization: `Bearer ${token}` },
       signal: AbortSignal.timeout(10_000),
     });
   } catch (err: unknown) {
-    throw managementFailure(isFetchTimeoutError(err) ? "timeout" : "network");
+    throw requestFailure(upstream, isFetchTimeoutError(err) ? "timeout" : "network");
   }
   if (!res.ok) {
-    throw managementFailure("http", {
+    throw requestFailure(upstream, "http", {
       httpStatus: res.status,
       retryable: res.status === 408 || res.status === 425 || res.status === 429 || res.status >= 500,
     });
@@ -140,82 +143,20 @@ async function requestInstance(
   try {
     data = await res.json();
   } catch (err: unknown) {
-    throw managementFailure(
+    throw requestFailure(
+      upstream,
       err instanceof SyntaxError ? "invalid_response" : "response_read_failed",
       { retryable: false },
     );
   }
   if (typeof data !== "object" || data === null || Array.isArray(data)) {
-    throw managementFailure("invalid_response", { retryable: false });
+    throw requestFailure(upstream, "invalid_response", { retryable: false });
   }
   return data as Record<string, unknown>;
 }
 
-async function probeInstanceExecution(args: Record<string, unknown>): Promise<void> {
-  const profile = await resolveCliProfile(args);
-  const token = await requireCliAuthToken(profile);
-  try {
-    const result = await createShellClient({ gatewayUrl: profile.gatewayUrl, token }).runCommand({
-      command: ["true"],
-      timeoutMs: 10_000,
-    });
-    if (result.timedOut) {
-      throw codedInstanceError("request_timeout", "Request failed");
-    }
-    if (result.exitCode !== 0) {
-      throw codedInstanceError("command_failed", "Request failed");
-    }
-  } catch (err: unknown) {
-    const code = errorCode(err, "request_failed");
-    throw codedInstanceError("instance_execution_failed", "Instance execution probe failed.", {
-      upstream: "instance_execution_api",
-      cause: code === "request_timeout" ? "timeout" : code,
-      retryable: true,
-    });
-  }
-}
-
 async function runInstanceInfo(args: Record<string, unknown>): Promise<void> {
-  const json = args.json === true;
-  try {
-    const data = await requestInstance(args, "/api/instance");
-    console.log(json ? formatCliSuccess(data) : JSON.stringify(data, null, 2));
-  } catch (managementError: unknown) {
-    if (errorCode(managementError, "instance_request_failed") !== "instance_request_failed") {
-      writeError(managementError, json);
-      process.exitCode = 1;
-      return;
-    }
-    try {
-      await probeInstanceExecution(args);
-      const data = {
-        status: "running",
-        ready: true,
-        source: "execution_probe",
-        management: {
-          status: "degraded",
-          ...safeDetails(managementError),
-        },
-        nextStep: "Execution is healthy. Retry `matrix instance info` for full metadata.",
-      };
-      console.log(json ? formatCliSuccess(data) : JSON.stringify(data, null, 2));
-    } catch (executionError: unknown) {
-      writeError(codedInstanceError("instance_unavailable", "Instance readiness check failed.", {
-        management: safeDetails(managementError) ?? {
-          upstream: "platform_instance_api",
-          cause: "request_failed",
-          retryable: true,
-        },
-        execution: safeDetails(executionError) ?? {
-          upstream: "instance_execution_api",
-          cause: "request_failed",
-          retryable: true,
-        },
-        nextStep: "Run `matrix doctor`, then retry `matrix instance info`.",
-      }), json);
-      process.exitCode = 1;
-    }
-  }
+  await runInstanceCommand(args, "/api/system/info", { target: "gateway" });
 }
 
 async function runInstanceCommand(

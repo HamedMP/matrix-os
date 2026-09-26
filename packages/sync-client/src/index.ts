@@ -3,6 +3,7 @@ export {
   DEFAULT_PATTERNS,
   parseSyncIgnore,
   isIgnored,
+  mayUnignoreDescendant,
   loadSyncIgnore,
   type SyncIgnorePatterns,
 } from "./lib/syncignore.js";
