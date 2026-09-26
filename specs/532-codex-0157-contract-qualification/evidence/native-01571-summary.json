@@ -1,0 +1,61 @@
+{
+  "cliVersion": "0.157.1",
+  "provider": "localhost fake Responses; no real inference credentials",
+  "exit": 0,
+  "turns": [
+    {
+      "status": "completed",
+      "error": null,
+      "mcpCalls": [
+        {
+          "status": "completed",
+          "tool": "echo_scope",
+          "content": [
+            {
+              "type": "text",
+              "text": "A"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "status": "completed",
+      "error": null,
+      "mcpCalls": [
+        {
+          "status": "completed",
+          "tool": "echo_scope",
+          "content": [
+            {
+              "type": "text",
+              "text": "A"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "status": "completed",
+      "error": null,
+      "mcpCalls": [
+        {
+          "status": "completed",
+          "tool": "echo_scope",
+          "content": [
+            {
+              "type": "text",
+              "text": "C"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "earlierAugmentedRun": {
+    "exit": 1,
+    "fixtureError": "AssertionError: Turn did not complete",
+    "nativeTerminalStatus": "not recorded",
+    "nativeTerminalError": "not recorded"
+  }
+}
