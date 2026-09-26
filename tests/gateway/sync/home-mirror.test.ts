@@ -1104,7 +1104,10 @@ describe("createHomeMirror", () => {
       await mirror.start();
 
       await writeFile(join(tmpRoot, "notes.txt"), "hello");
-      await waitFor(() => Boolean(storedManifest(r2)?.files["notes.txt"]?.objectKey));
+      await waitFor(() => Boolean(storedManifest(r2)?.files["notes.txt"]?.objectKey)).catch(error => {
+        console.error("synthetic-watch-diagnostic", JSON.stringify({ info: logger.info.mock.calls, error: logger.error.mock.calls }));
+        throw error;
+      });
       await waitFor(() =>
         logger.info.mock.calls.some(([message]) =>
           String(message).startsWith("pushed notes.txt"),
@@ -1221,7 +1224,7 @@ describe("createHomeMirror", () => {
       await mirror.stop();
     });
 
-    it("records the hash for the exact bytes uploaded", async () => {
+    it("keeps captured blob identity without accepting bytes superseded during staging", async () => {
       const filePath = join(tmpRoot, "race.txt");
       const originalPutObject = r2.putObject.bind(r2);
       vi.spyOn(r2, "putObject").mockImplementation(async (key, body) => {
@@ -1246,10 +1249,21 @@ describe("createHomeMirror", () => {
       await writeFile(filePath, "old bytes");
       await mirror.pushLocalFile("race.txt");
 
+      expect(storedManifest(r2)?.files["race.txt"]).toBeUndefined();
+      const baseline = await readFile(join(tmpRoot, ".matrix-home-mirror/state.json"), "utf8").then(text => JSON.parse(text), (error: unknown) => {
+        if (!(error instanceof Error) || !("code" in error) || error.code !== "ENOENT") throw error;
+        return { hashes: {} };
+      });
+      expect(baseline.hashes["race.txt"]).toBeUndefined();
+      expect(await readFile(filePath, "utf8")).toBe("new bytes that should not affect the uploaded hash");
+      const captured = r2.store.get(`matrixos-sync/alice/objects/sha256/${sha256(Buffer.from("old bytes")).slice(7)}`);
+      expect(captured).toEqual(Buffer.from("old bytes"));
+      vi.restoreAllMocks();
+      await mirror.pushLocalFile("race.txt");
       const manifest = storedManifest(r2);
       expect(manifest).toBeDefined();
       const uploaded = r2.store.get(manifest!.files["race.txt"]!.objectKey!);
-      expect(uploaded).toBeDefined();
+      expect(uploaded).toEqual(Buffer.from("new bytes that should not affect the uploaded hash"));
       expect(manifest!.files["race.txt"]?.hash).toBe(sha256(uploaded!));
       expect(manifest!.files["race.txt"]?.size).toBe(uploaded!.length);
 
@@ -1435,18 +1449,9 @@ describe("createHomeMirror", () => {
     it("batches startup manifest persistence into a single locked write", async () => {
       await writeFile(join(tmpRoot, "one.md"), "one");
       await writeFile(join(tmpRoot, "two.md"), "two");
-      const upsertMeta = vi.fn(async () => {});
-      const advanceMeta = vi.fn(async () => true);
-      const lockSpy = vi.fn(async (_userId: string, fn: (executor: unknown) => Promise<unknown>) => fn(undefined));
-
-      db = {
-        async getManifestMeta() {
-          return null;
-        },
-        upsertManifestMeta: upsertMeta,
-        advanceManifestMeta: advanceMeta,
-        withAdvisoryLock: lockSpy,
-      } as unknown as ManifestDb;
+      db = createFakeManifestDb();
+      const advanceMeta = vi.spyOn(db, "advanceManifestMeta");
+      const lockSpy = vi.spyOn(db, "withAdvisoryLock");
 
       const mirror = createHomeMirror({
         r2,
@@ -1461,6 +1466,7 @@ describe("createHomeMirror", () => {
 
       expect(lockSpy).toHaveBeenCalledTimes(1);
       expect(advanceMeta).toHaveBeenCalledTimes(1);
+      expect((await db.getManifestMeta("alice"))?.version).toBe(1);
 
       await mirror.stop();
     });
@@ -1469,18 +1475,9 @@ describe("createHomeMirror", () => {
       for (let i = 0; i < 51; i++) {
         await writeFile(join(tmpRoot, `batch-${i}.md`), `file-${i}`);
       }
-      const upsertMeta = vi.fn(async () => {});
-      const advanceMeta = vi.fn(async () => true);
-      const lockSpy = vi.fn(async (_userId: string, fn: (executor: unknown) => Promise<unknown>) => fn(undefined));
-
-      db = {
-        async getManifestMeta() {
-          return null;
-        },
-        upsertManifestMeta: upsertMeta,
-        advanceManifestMeta: advanceMeta,
-        withAdvisoryLock: lockSpy,
-      } as unknown as ManifestDb;
+      db = createFakeManifestDb();
+      const advanceMeta = vi.spyOn(db, "advanceManifestMeta");
+      const lockSpy = vi.spyOn(db, "withAdvisoryLock");
 
       const mirror = createHomeMirror({
         r2,
@@ -1495,6 +1492,7 @@ describe("createHomeMirror", () => {
 
       expect(lockSpy).toHaveBeenCalledTimes(2);
       expect(advanceMeta).toHaveBeenCalledTimes(2);
+      expect((await db.getManifestMeta("alice"))?.version).toBe(2);
 
       await mirror.stop();
     });

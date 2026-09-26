@@ -17,8 +17,8 @@ async function loadS3() {
 }
 
 const DEFAULT_PRESIGN_EXPIRY = 900; // 15 minutes
-const R2_READ_TIMEOUT_MS = 10_000;
-const R2_WRITE_TIMEOUT_MS = 30_000;
+export const R2_READ_TIMEOUT_MS = 10_000;
+export const R2_WRITE_TIMEOUT_MS = 30_000;
 export interface R2ClientConfig {
   accountId?: string;
   accessKeyId: string;

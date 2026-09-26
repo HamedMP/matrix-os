@@ -237,3 +237,76 @@ summary() {
     return 0
   fi
 }
+
+# Evidence of an accepted mirror publication, rather than a sleep or health-only gate.
+# The host-local hash is written only after the remote manifest commit succeeds.
+wait_for_mirror_hash() {
+  local container="$1"
+  local rel_path="$2"
+  local timeout="${3:-60}"
+  local elapsed=0
+  while [ "$elapsed" -lt "$timeout" ]; do
+    if $COMPOSE exec -T "$container" node -e '
+      const fs = require("node:fs");
+      const crypto = require("node:crypto");
+      const path = require("node:path");
+      const rel = process.argv[1];
+      if (!rel || path.isAbsolute(rel) || rel.split("/").some(p => p === ".." || p === "")) process.exit(1);
+      try {
+        const home = process.env.MATRIX_HOME;
+        const bytes = fs.readFileSync(path.join(home, rel));
+        const state = JSON.parse(fs.readFileSync(path.join(home, ".matrix-home-mirror/state.json"), "utf8"));
+        const hash = "sha256:" + crypto.createHash("sha256").update(bytes).digest("hex");
+        process.exit(state.hashes[rel] === hash && !state.conflicts[rel] ? 0 : 1);
+      } catch { process.exit(1); }
+    ' "$rel_path"; then
+      echo -e "  ${GREEN}READY${NC} Mirror accepted current content hash for $rel_path"
+      return 0
+    fi
+    sleep 2
+    elapsed=$((elapsed + 2))
+  done
+  echo -e "  ${RED}TIMEOUT${NC} Mirror did not accept current content hash for $rel_path"
+  diagnose_mirror_before_cleanup "$container" "$rel_path"
+  return 1
+}
+
+
+# Emit coarse fixture evidence before the EXIT trap removes containers/volumes.
+# Never print owner content, hashes, environment, credentials, or raw log bodies.
+diagnose_mirror_before_cleanup() {
+  local container="$1"
+  local rel_path="$2"
+  timeout 10s $COMPOSE exec -T "$container" node -e '
+    const fs = require("node:fs"), path = require("node:path"), crypto = require("node:crypto");
+    const readBounded = (name, limit) => {
+      const fd = fs.openSync(name, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+      try {
+        if (!fs.fstatSync(fd).isFile()) throw new Error("not regular");
+        const buffer = Buffer.alloc(limit + 1), size = fs.readSync(fd, buffer, 0, buffer.length, 0);
+        if (size > limit) throw new Error("too large");
+        return buffer.subarray(0, size);
+      } finally { fs.closeSync(fd); }
+    };
+    const rel = process.argv[1], home = process.env.MATRIX_HOME;
+    const result = { state: "unavailable", baselineMatchesCurrent: false, conflict: false };
+    if (home && rel && !path.isAbsolute(rel) && !rel.split("/").some(p => p === ".." || p === "")) {
+      try {
+        const state = JSON.parse(readBounded(path.join(home, ".matrix-home-mirror/state.json"), 8 * 1024 * 1024).toString("utf8"));
+        const bytes = readBounded(path.join(home, rel), 1024 * 1024);
+        result.state = "readable";
+        result.baselineMatchesCurrent = state.hashes?.[rel] === "sha256:" + crypto.createHash("sha256").update(bytes).digest("hex");
+        result.conflict = Boolean(state.conflicts?.[rel]);
+      } catch (error) { result.state = error.code === "ENOENT" ? "missing" : "unreadable"; }
+    }
+    console.log("MIRROR_DIAGNOSTIC " + JSON.stringify(result));
+  ' "$rel_path" 2>/dev/null || echo 'MIRROR_DIAGNOSTIC {"state":"probe_unavailable"}'
+  timeout 10s $COMPOSE logs --no-color --tail 200 "$container" 2>/dev/null | node -e '
+    let text = ""; process.stdin.on("data", bytes => { text = (text + bytes.toString()).slice(-262144); });
+    process.stdin.on("end", () => {
+      const patterns = { started: "home mirror started", initialPush: "initial push:", infrastructureUnavailable: "sync infrastructure is unavailable", startFailed: "[home-mirror] start failed", changedBeforePublication: "local_changed_before_publication", pushFailed: "push failed for", reconciliation: "mirror reconciliation:" };
+      const counts = Object.fromEntries(Object.entries(patterns).map(([key, phrase]) => [key, text.split(phrase).length - 1]));
+      console.log("MIRROR_LOG_CATEGORIES " + JSON.stringify(counts));
+    });
+  ' || echo 'MIRROR_LOG_CATEGORIES {"probe":"unavailable"}'
+}
