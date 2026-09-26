@@ -280,6 +280,34 @@ afterEach(() => {
 });
 
 describe("AgentsProvidersView", () => {
+  it("shows the same bounded Codex local status in the rail and account without claiming authentication", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-26T00:00:00.000Z"));
+    const next = snapshot();
+    const source = next.accessSources.find((item) => item.id === "owner_openai_profile")!;
+    source.readiness = { state: "unknown", checkedAt: now, staleAfter: null, action: "retry", safeReason: "unknown" };
+    source.localObservation = { state: "present_unverified", checkedAt: new Date().toISOString(), staleAfter: new Date(Date.now() + 5_000).toISOString() };
+    const account = next.accounts.find((item) => item.id === "account_openai")!;
+    account.authState = "unknown";
+    next.harnesses = [{
+      ...next.harnesses[0]!, id: "harness_codex", harness: "codex", displayName: "Codex",
+      enabled: true, configuredEnabled: true, authState: "unknown", connectivity: "unknown",
+      selectedAccountId: "account_openai", accountIds: ["account_openai"],
+      accessSourceId: "owner_openai_profile",
+      route: { kind: "fixed", providerId: "openai", modelId: "openai/gpt-5.6" },
+    }];
+    const { rerender, props } = setup({ snapshot: next, selectedHarnessId: "harness_codex" });
+    expect(screen.getByRole("button", { name: /Codex.*Local login found; access not verified/ })).toBeVisible();
+    expect(screen.getAllByText(/Local login found; access not verified/)).toHaveLength(2);
+    expect(screen.queryByText("Authenticated · Oauth")).not.toBeInTheDocument();
+    act(() => vi.advanceTimersByTime(5_001));
+    expect(screen.getAllByText(/Access not verified/)).toHaveLength(2);
+    expect(screen.queryByText(/Local login found; access not verified/)).not.toBeInTheDocument();
+    next.harnesses[0]!.enabled = false;
+    next.harnesses[0]!.configuredEnabled = false;
+    rerender(<AgentsProvidersView {...props} snapshot={next} />);
+    expect(screen.getByRole("button", { name: /Codex.*Off in Settings/ })).toBeVisible();
+  });
   it("shows saved enabled intent separately from a failed connection and permits disabling it", () => {
     const next = snapshot();
     const harness = next.harnesses[0]!;

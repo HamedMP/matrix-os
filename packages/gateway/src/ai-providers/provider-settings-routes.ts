@@ -21,6 +21,7 @@ function withCapabilities(snapshot: ProviderSettingsSnapshot, include: boolean):
   return {
     ...snapshot,
     harnesses: snapshot.harnesses.map(({ configuredEnabled: _configuredEnabled, ...harness }) => harness),
+    accessSources: snapshot.accessSources.map(({ localObservation: _localObservation, ...source }) => source),
   };
 }
 const DeleteAccountBodySchema = z.object({

@@ -143,6 +143,7 @@ function projectAccessSources(
       providerId: source.vendor,
       accountId: accountBySource.get(source.id) ?? null,
       displayName: source.displayName,
+      ...(source.localObservation ? { localObservation: source.localObservation } : {}),
       readiness: {
         state: source.state,
         checkedAt: source.checkedAt,

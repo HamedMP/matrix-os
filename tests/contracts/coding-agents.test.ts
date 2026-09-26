@@ -1056,6 +1056,29 @@ describe("coding agent contracts", () => {
     });
   });
 
+  it("admits an installed available Codex run with unknown remote authentication", () => {
+    const summary = RuntimeSummarySchema.parse({
+      runtime: { id: "rt_primary", label: "Primary Matrix computer", status: "available" },
+      capabilities: [{ id: "codingAgentsThreadCreate", enabled: true }],
+      providers: [{
+        id: "codex", kind: "codex", displayName: "Codex",
+        availability: "available", installStatus: "installed", authStatus: "unknown",
+        supportedModes: ["default"], defaultMode: "default", setupActions: [],
+      }],
+      projects: { items: [], hasMore: false, limit: 20 },
+      activeThreads: { items: [], hasMore: false, limit: 20 },
+      terminalWorkspaces: { items: [], hasMore: false, limit: 20 },
+      recentActivity: { items: [], hasMore: false, limit: 30 },
+      limits: { maxPromptBytes: 24000, maxAttachmentCount: 8, maxTerminalInputBytes: 65536, maxListItems: 50 },
+      serverTime: now,
+    });
+    expect(buildCreateAgentThreadRequestFromComposer({
+      draft: { providerId: "codex", prompt: "Inspect this project" },
+      summary,
+      clientRequestId: "req_codex_unknown_remote_auth",
+    })).toMatchObject({ ok: true, request: { providerId: "codex" } });
+  });
+
   it("returns safe composer issues for unavailable or invalid create inputs", () => {
     const summary = RuntimeSummarySchema.parse({
       runtime: {

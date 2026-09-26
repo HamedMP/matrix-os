@@ -67,6 +67,13 @@ export const AiProviderReadinessSchema = z.object({
   }
 });
 
+/** Evidence of local CLI configuration only. It never establishes remote access. */
+export const AiProviderLocalObservationSchema = z.object({
+  state: z.enum(["present_unverified", "absent", "unknown"]),
+  checkedAt: NullableTimestampSchema,
+  staleAfter: NullableTimestampSchema,
+}).strict();
+
 export const AiAccessSourceViewSchema = AiProviderReadinessSchema.extend({
   id: AiProviderIdSchema,
   displayName: canonicalSafeLabel(120, 480),
@@ -75,6 +82,7 @@ export const AiAccessSourceViewSchema = AiProviderReadinessSchema.extend({
   accountLabel: canonicalSafeLabel(120, 480).nullable(),
   eligibleModelIds: z.array(ProviderModelReferenceSchema).max(64),
   policyVersion: AiPolicyVersionSchema,
+  localObservation: AiProviderLocalObservationSchema.optional(),
 }).strict().superRefine((source, ctx) => {
   if (!unique(source.eligibleModelIds)) {
     ctx.addIssue({ code: "custom", path: ["eligibleModelIds"], message: "Duplicate eligible model" });
@@ -294,6 +302,7 @@ export const AiProviderSnapshotV3Schema = z.object({
 export type AiProviderVendor = z.infer<typeof AiProviderVendorSchema>;
 export type AiProviderReadinessState = z.infer<typeof AiProviderReadinessStateSchema>;
 export type AiProviderReadiness = z.infer<typeof AiProviderReadinessSchema>;
+export type AiProviderLocalObservation = z.infer<typeof AiProviderLocalObservationSchema>;
 export type AiAccessSourceView = z.infer<typeof AiAccessSourceViewSchema>;
 export type AiProviderAccountView = z.infer<typeof AiProviderAccountViewSchema>;
 export type AiProviderDriverCapability = z.infer<typeof AiProviderDriverCapabilitySchema>;

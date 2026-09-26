@@ -30,6 +30,15 @@ export interface AgentStatus {
   workspaceCompatibility: AgentWorkspaceCompatibility;
   version?: string;
   errorCode: string | null;
+  /** Local CLI configuration mode only; never a remote-authentication claim. */
+  credentialMode?: "chatgpt" | "api_key" | "unknown";
+}
+
+export interface CodexLocalCredentialObservation {
+  accessSourceId: string;
+  state: "present_unverified" | "absent" | "unknown";
+  checkedAt: string | null;
+  staleAfter: string | null;
 }
 
 export interface AgentLaunchSandbox {
@@ -340,6 +349,24 @@ function isAuthenticationRequiredError(err: unknown): boolean {
   return typeof commandErrorCode(err) === "number";
 }
 
+function codexStatusOutput(err: unknown): string | undefined {
+  if (!err || typeof err !== "object") return undefined;
+  const output = err as { stdout?: unknown; stderr?: unknown };
+  const lines = [output.stdout, output.stderr]
+    .filter((value): value is string => typeof value === "string")
+    .flatMap((value) => value.split(/\r?\n/))
+    .map((value) => value.trim())
+    .filter(Boolean);
+  return lines.length === 1 ? lines[0] : undefined;
+}
+
+function codexCredentialMode(output: { stdout: string; stderr: string }): NonNullable<AgentStatus["credentialMode"]> {
+  const line = codexStatusOutput(output);
+  if (line === "Logged in using ChatGPT") return "chatgpt";
+  if (line?.startsWith("Logged in using an API key")) return "api_key";
+  return "unknown";
+}
+
 function workspaceCompatibility(
   id: SupportedAgent,
   version: string | undefined,
@@ -451,6 +478,7 @@ export function createAgentLauncher(options: {
   const runCommand = options.runCommand ?? defaultRunCommand;
   const cwd = options.cwd ?? process.cwd();
   const detectEnv = buildAgentRuntimeEnvironment(options.runtimeHome);
+  const codexHome = process.env.CODEX_HOME;
   const now = options.now ?? Date.now;
   type DetectionResult = { agents: AgentStatus[] };
   let installationScanInFlight: Promise<DetectionResult> | null = null;
@@ -503,15 +531,21 @@ export function createAgentLauncher(options: {
     }
 
     try {
-      await runCommand(commandFor(id), authStatusArgs(id), {
+      const result = await runCommand(commandFor(id), authStatusArgs(id), {
         cwd,
         timeout: DETECT_TIMEOUT_MS,
         env: detectEnv,
       });
-      return { ...installation, authState: "ok", errorCode: null };
+      return {
+        ...installation, authState: "ok", errorCode: null,
+        ...(id === "codex" ? { credentialMode: codexCredentialMode(result) } : {}),
+      };
     } catch (err: unknown) {
       if (isExecutableMissingError(err)) return unavailableAgentStatus(id, "missing");
-      if (isAuthenticationRequiredError(err)) {
+      const authRequired = id === "codex"
+        ? typeof commandErrorCode(err) === "number" && codexStatusOutput(err) === "Not logged in"
+        : isAuthenticationRequiredError(err);
+      if (authRequired) {
         console.warn(`[agent-launcher] ${AGENTS[id].command} credential probe failed: auth_required`);
         return { ...installation, authState: "required", errorCode: "agent_auth_required" };
       }
@@ -565,9 +599,58 @@ export function createAgentLauncher(options: {
     credentialScanInFlight = null;
   }
 
+  async function observeCodexLocalCredential(input: {
+    executable: string;
+    runtimeHome: string;
+    codexHome?: string;
+    accessSourceId: string;
+  }): Promise<CodexLocalCredentialObservation> {
+    const unknown: CodexLocalCredentialObservation = {
+      accessSourceId: "owner_openai_profile", state: "unknown", checkedAt: null, staleAfter: null,
+    };
+    // This observation applies only to the exact CLI context the gateway uses
+    // for the selected owner profile. A configured key is a different source.
+    if (input.accessSourceId !== "owner_openai_profile"
+      || !options.codexExecutable
+      || input.executable !== commandFor("codex")
+      || input.runtimeHome !== detectEnv.HOME
+      || input.codexHome !== codexHome
+      || process.env.CODEX_HOME !== codexHome) return unknown;
+
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const detected = await Promise.race([
+        detectAgentCredentials(),
+        new Promise<never>((_resolve, reject) => {
+          timer = setTimeout(() => reject(new Error("Codex local observation timed out")), DETECT_TIMEOUT_MS);
+          timer.unref?.();
+        }),
+      ]);
+      const status = detected.agents.find((agent) => agent.id === "codex");
+      const cached = credentialScanCache;
+      if (!status || !cached || cached.result !== detected || now() >= cached.expiresAt
+        || status.workspaceCompatibility !== "compatible") return unknown;
+      const checkedAt = new Date(cached.expiresAt - DETECT_CACHE_TTL_MS).toISOString();
+      const staleAfter = new Date(cached.expiresAt).toISOString();
+      if (status.authState === "ok" && status.credentialMode === "chatgpt") {
+        return { accessSourceId: "owner_openai_profile", state: "present_unverified", checkedAt, staleAfter };
+      }
+      if (status.authState === "required") {
+        return { accessSourceId: "owner_openai_profile", state: "absent", checkedAt, staleAfter };
+      }
+      return unknown;
+    } catch (error: unknown) {
+      console.warn("[agent-launcher] Codex local observation failed:", error instanceof Error ? error.name : "UnknownError");
+      return unknown;
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+
   return {
     detectAgentInstallations,
     detectAgentCredentials,
+    observeCodexLocalCredential,
     invalidateCredentialDetection,
     /** @deprecated Use detectAgentInstallations for executable availability. */
     detectAgents: detectAgentInstallations,

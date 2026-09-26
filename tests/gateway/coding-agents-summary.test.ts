@@ -130,7 +130,7 @@ describe("coding agent runtime summary", () => {
       expect.objectContaining({
         id: "codex",
         availability: "available",
-        authStatus: "authenticated",
+        authStatus: "unknown",
         installStatus: "installed",
       }),
     ]);
@@ -145,7 +145,7 @@ describe("coding agent runtime summary", () => {
   });
 
   it.each([
-    ["available", "available", "installed", "authenticated"],
+    ["available", "available", "installed", "unknown"],
     ["missing", "setup_required", "missing", "missing"],
     ["auth_required", "auth_required", "installed", "missing"],
     ["expired", "auth_required", "installed", "expired"],

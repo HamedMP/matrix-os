@@ -75,17 +75,32 @@ describe("agent credential probe", () => {
     }))).resolves.toEqual({ available: false, condition: "version_unsupported" });
   });
 
-  it("keeps Codex and platform-only Claude results tied to the native credential probe", async () => {
+  it("keeps platform-only Claude tied to the native probe and separates Codex local login from remote verification", async () => {
     await expect(resolveAgentCredentialProbe(homePath, "claude", installedStatus())).resolves.toEqual({
       available: false,
       condition: "auth_required",
     });
+    // The pinned CLI can report local login for a deliberately invalid API key.
+    // An authState of "ok" is therefore local configuration, not remote proof.
     await expect(resolveAgentCredentialProbe(homePath, "codex", installedStatus({
       id: "codex",
       command: "codex",
       displayName: "Codex",
       authState: "ok",
+      credentialMode: "chatgpt",
       errorCode: null,
-    }))).resolves.toEqual({ available: true, condition: "available" });
+    }))).resolves.toEqual({
+      available: true,
+      condition: "available",
+      localObservation: "present_unverified",
+    });
+    for (const credentialMode of ["api_key", "unknown"] as const) {
+      await expect(resolveAgentCredentialProbe(homePath, "codex", installedStatus({
+        id: "codex", command: "codex", displayName: "Codex", authState: "ok",
+        credentialMode, errorCode: null,
+      }))).resolves.toEqual({
+        available: true, condition: "available", localObservation: "unknown",
+      });
+    }
   });
 });
