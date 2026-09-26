@@ -2,6 +2,26 @@ import { getActiveUserMachineByHandle, type PlatformDB, type UserMachineRecord }
 import { CustomerVpsError } from './customer-vps-errors.js';
 import { PREVIEW_RUNTIME_SLOT_PATTERN } from './customer-vps-schema.js';
 
+const PR_PREVIEW_HOST_PATTERN = /^pr-([1-9][0-9]{0,8})\.preview\.matrix-os\.com$/;
+
+export function previewHandleFromHost(host: string): string | null {
+  const normalized = host.trim().toLowerCase().replace(/:\d+$/, '');
+  const match = PR_PREVIEW_HOST_PATTERN.exec(normalized);
+  return match ? `pr-${match[1]}` : null;
+}
+
+/** The PR host is a hard machine boundary on HTTP and WebSocket proxy paths. */
+export function canRouteMachineOnPreviewHost(
+  host: string,
+  machine: Pick<UserMachineRecord, 'handle' | 'runtimeSlot' | 'provisioningClass'>,
+): boolean {
+  const previewHandle = previewHandleFromHost(host);
+  if (!previewHandle) return true;
+  return machine.provisioningClass === 'preview'
+    && machine.handle === previewHandle
+    && machine.runtimeSlot === previewHandle;
+}
+
 export function isPreviewMachine(
   machine: Pick<UserMachineRecord, 'handle' | 'runtimeSlot' | 'provisioningClass'>,
 ): boolean {

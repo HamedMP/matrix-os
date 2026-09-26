@@ -23,7 +23,7 @@ import {
   getRunningUserMachineByHandle,
   updateLastActive,
 } from './db.js';
-import { canClerkUserAccessMachine } from './customer-vps-preview.js';
+import { canClerkUserAccessMachine, canRouteMachineOnPreviewHost, previewHandleFromHost } from './customer-vps-preview.js';
 import { issueSyncJwt } from './sync-jwt.js';
 import {
   buildCustomerVpsProxyUrl,
@@ -439,6 +439,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
     const isAppDomain = isAppDomainHost(host);
     const isCodeDomain = isCodeDomainHost(host);
     if (!isAppDomain && !isCodeDomain) return next();
+    const previewHostHandle = previewHandleFromHost(host);
 
     // Device-flow paths are served directly by the platform's auth-routes.ts
     // (registered above). In normal dispatch they never reach this middleware,
@@ -446,7 +447,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
     // a future refactor can't accidentally proxy them into a user container.
     const reqPath = c.req.path;
     if (isAppDomain && parseChatShareRoute(reqPath)) {
-      return proxyChatShare(c, db, customerVpsProxyDispatcher, appEnv.EDGE_ROUTER_SECRET);
+      return proxyChatShare(c, db, customerVpsProxyDispatcher, appEnv.EDGE_ROUTER_SECRET, host);
     }
     if (isAppDomain && reqPath === '/service-worker.js') {
       return appDomainServiceWorkerResponse();
@@ -510,7 +511,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
       }
 
       const runningMachine = await getRunningUserMachineByHandle(db, handle);
-      if (!runningMachine) {
+      if (!runningMachine || !canRouteMachineOnPreviewHost(host, runningMachine)) {
         return c.json({ error: 'VPS unavailable' }, 404);
       }
 
@@ -585,7 +586,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
     const cookieRuntimeSlot = isAppDomain
       ? readShellRuntimeSlotCookie(path, cookieHeader)
       : null;
-    const requestRuntimeSlot = explicitVmRoute?.runtimeSlot ?? (
+    const requestRuntimeSlot = previewHostHandle ?? explicitVmRoute?.runtimeSlot ?? (
       runtimeSelection.source === 'query'
         ? runtimeSelection.slot
         : cookieRuntimeSlot ?? runtimeSelection.slot
@@ -605,7 +606,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
     const publishableKey = appEnv.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
     const authMode = path.startsWith('/sign-up') ? 'sign-up' : 'sign-in';
     const requestedRouteHandle = !explicitVmRoute && isAppDomain
-      ? readAppDomainRouteCookie(path, cookieHeader)
+      ? previewHostHandle ?? readAppDomainRouteCookie(path, cookieHeader)
       : null;
 
     let identity = await resolveAppDomainIdentity({
@@ -721,7 +722,8 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
           runtimeSelection.source === 'query' ? requestRuntimeSlot : undefined
         ),
       );
-      if (!machine || (identity.userId && !canClerkUserAccessMachine(machine, identity.userId))) {
+      if (!machine || !canRouteMachineOnPreviewHost(host, machine)
+        || (identity.userId && !canClerkUserAccessMachine(machine, identity.userId))) {
         applyNoStoreHeaders(c);
         return c.text('Matrix OS computer unavailable', 404);
       }
@@ -892,6 +894,11 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
     if (runningMachine) {
       runtimeSlot = runningMachine.runtimeSlot;
     }
+    if ((runningMachine && !canRouteMachineOnPreviewHost(host, runningMachine))
+      || (requestedActiveMachine && !canRouteMachineOnPreviewHost(host, requestedActiveMachine))) {
+      applyNoStoreHeaders(c);
+      return c.text('Matrix OS computer unavailable', 404);
+    }
     const entitlement = runningMachine
       ? await getRuntimeEntitlementDecisionForUser(
         db,
@@ -1057,6 +1064,10 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
       ? await getAccessibleActiveUserMachineByClerkId(db, identity.userId, runtimeSlot)
       : await getActiveUserMachineByHandle(db, identity.handle));
     if (activeMachine) {
+      if (!canRouteMachineOnPreviewHost(host, activeMachine)) {
+        applyNoStoreHeaders(c);
+        return c.text('Matrix OS computer unavailable', 404);
+      }
       if (!entitlement.runtimeProxyAllowed) {
         const recovery = await maybeServeBillingRecoveryShell(
           c,
@@ -1091,6 +1102,11 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
 
     if (signupBillingHandoff) {
       return proxyAuthShell(c, host, { redirectToBillingOnFailure: false });
+    }
+
+    if (previewHandleFromHost(host)) {
+      applyNoStoreHeaders(c);
+      return c.text('Matrix OS computer unavailable', 404);
     }
 
     if (!legacyContainerRoutingEnabled) {

@@ -17,7 +17,7 @@ import {
   getRunningUserMachineByHandle,
   getUserMachine,
 } from './db.js';
-import { canClerkUserAccessMachine } from './customer-vps-preview.js';
+import { canClerkUserAccessMachine, canRouteMachineOnPreviewHost, previewHandleFromHost } from './customer-vps-preview.js';
 import type { EntitlementAccessDecision } from './profile-routing.js';
 import {
   getWebSocketUpgradeToken,
@@ -149,6 +149,7 @@ export function registerPlatformWebSocketUpgradeHandler(
     }
     const isCodeDomain = isCodeDomainHost(host);
     const isAppDomain = isAppDomainHost(host);
+    const previewHostHandle = previewHandleFromHost(host);
     const isCollaborationCandidate = isCollaborationWebSocketCandidate(path);
     // S05: direct sockets are relayed as bytes; the home verifies the ticket in the first frame.
     const isDirectSocket = isAppDomain && Boolean(collaborationDirect) && Boolean(parseRelaySocketPath(path));
@@ -175,7 +176,7 @@ export function registerPlatformWebSocketUpgradeHandler(
       return;
     }
 
-    const requestRuntimeSlot = explicitVmRoute?.runtimeSlot ?? readRuntimeSlot(webSocketProxyPath);
+    const requestRuntimeSlot = previewHostHandle ?? explicitVmRoute?.runtimeSlot ?? readRuntimeSlot(webSocketProxyPath);
     const wsToken = getWebSocketUpgradeToken(webSocketProxyPath);
     let identity: AppDomainIdentity | null;
     try {
@@ -187,7 +188,7 @@ export function registerPlatformWebSocketUpgradeHandler(
         platformJwtSecret,
         legacyContainerRoutingEnabled,
         allowUnroutedClerkIdentity: Boolean(explicitVmRoute),
-        requestedHandle: explicitVmRoute?.handle,
+        requestedHandle: explicitVmRoute?.handle ?? previewHostHandle ?? undefined,
         runtimeSlot: requestRuntimeSlot,
         wsToken,
         clerkPrincipalOnly: isDirectSocket,
@@ -271,7 +272,8 @@ export function registerPlatformWebSocketUpgradeHandler(
         explicitVmRoute.handle,
         explicitVmRoute.runtimeSlot,
       );
-      if (!explicitMachine || (identity.userId && !canClerkUserAccessMachine(explicitMachine, identity.userId))) {
+      if (!explicitMachine || !canRouteMachineOnPreviewHost(host, explicitMachine)
+        || (identity.userId && !canClerkUserAccessMachine(explicitMachine, identity.userId))) {
         socket.destroy();
         return;
       }
@@ -292,6 +294,15 @@ export function registerPlatformWebSocketUpgradeHandler(
     }
     if (runningMachine) {
       runtimeSlot = runningMachine.runtimeSlot;
+    }
+    if ((runningMachine && !canRouteMachineOnPreviewHost(host, runningMachine))
+      || (requestedActiveMachine && !canRouteMachineOnPreviewHost(host, requestedActiveMachine))) {
+      socket.destroy();
+      return;
+    }
+    if (previewHandleFromHost(host) && !runningMachine) {
+      socket.destroy();
+      return;
     }
     const record = legacyContainerRoutingEnabled
       ? await getContainer(db, identity.handle)

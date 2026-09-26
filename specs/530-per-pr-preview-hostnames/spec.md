@@ -46,6 +46,15 @@ The Preview edge Worker validates the PR hostname and maps it to the tagged
 staging platform revision. Its route and secret bindings must stay undeployed
 until the following are complete:
 
+The platform HTTP and WebSocket runtime proxies now require an exact matching
+`pr-N` Preview machine and runtime slot when reached through
+`pr-N.preview.matrix-os.com`. The hostname selects the runtime for unprefixed
+requests even when the actor also owns a primary computer. Shared Chat and
+voice webhook proxy paths apply the same machine check. Missing or cross-PR
+machines fail closed. This is
+only a routing guard; the PR hostname must remain inactive until the separate
+identity, data, and service boundaries below are in place.
+
 1. Cloudflare proxied wildcard DNS, a certificate covering
    `*.preview.matrix-os.com`, and the dedicated Worker with Preview-only
    `PREVIEW_PLATFORM_ORIGIN` and `PREVIEW_EDGE_MASTER_SECRET` bindings. A

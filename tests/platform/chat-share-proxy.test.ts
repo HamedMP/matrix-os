@@ -49,6 +49,19 @@ it("renders validated snapshots without forwarding caller credentials", async ()
   expect(await unsafe.text()).toBe("Shared Chat unavailable");
 });
 
+it("rejects a shared Chat capability from another PR hostname before fetching its runtime", async () => {
+  const machine = { handle: "pr-1645", runtimeSlot: "pr-1645", provisioningClass: "preview",
+    status: "running", publicIPv4: "203.0.113.10" };
+  vi.mocked(getActiveUserMachineByHandle).mockResolvedValue(machine as never);
+  const fetcher = vi.fn();
+  vi.stubGlobal("fetch", fetcher);
+  const app = new Hono();
+  app.all("*", (c) => proxyChatShare(c, {} as never, {} as never, undefined, "pr-1644.preview.matrix-os.com"));
+  const response = await app.request("/shared/chat/pr-1645/pr-1645/" + "a".repeat(64));
+  expect(response.status).toBe(404);
+  expect(fetcher).not.toHaveBeenCalled();
+});
+
 it("reserves relay concurrency for other readers and releases it after completion", async () => {
   vi.stubEnv("K_SERVICE", "");
   vi.mocked(getActiveUserMachineByHandle).mockResolvedValue({ status: "running", publicIPv4: "203.0.113.10" } as never);
