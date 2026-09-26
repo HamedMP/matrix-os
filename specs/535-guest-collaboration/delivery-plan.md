@@ -8,7 +8,8 @@ Each milestone is a usable vertical slice with contracts, home/platform wiring, 
 
 | Milestone | Usable outcome and included stories | Required gate |
 | --- | --- | --- |
-| M1: Account-only participation | Story 1 plus Story 6: existing organization members without computers open shared Chat/project/terminal using the common UI | Real zero-machine/zero-subscription account; no provisioning/billing requests; platform entry and auth-return routing; Web Canvas, Web Desktop, Electron Desktop and Web Mobile evidence; Native Mobile transport/account-only-entry repair |
+| M0: Foundation validation | No new user capability: the existing organization collaboration is proven live so later milestones build on verified behavior | Fix not-found masking (#1829) first; rewrite the stale cross-account Playwright suite; land the unattended four-identity fixture (FR-029); run real-Postgres collaboration suites in CI; run the foundation journeys listed below on a disposable host and record outcomes |
+| M1: Account-only participation | Story 1 plus Story 6: organization members with zero or several computers join an organization in-product and open every shareable resource type using the common UI | Real zero-machine/zero-subscription account; no provisioning/billing requests, including the unrouted-account billing fallback; platform entry and auth-return routing; in-product organization create/switch/member invitation with the active organization reaching Share on every surface (FR-024); recipient views for file, folder, app instance and navigable projects (FR-025); file-share conflict detection (FR-026); terminal Share on Web Desktop and Electron chrome (#1798); Web Canvas, Web Desktop, Electron Desktop and Web Mobile evidence; Native Mobile transport repair (#1881) and account-only entry |
 | M2: External invitations | Story 2 plus Story 6: email-before-signup invitations to personal resources and policy-allowed organization resources | Recipient proof, owner consent/history preview, guest grant admission, email outbox, minimal org external-sharing setting, pending/expiry/capacity races, outsider/sibling denial and revocation on all supported surfaces |
 | M3: Presence and coordination | Story 3 plus Story 6: online state, typing activity without draft content, mentions and personal unread activity | Eight-person presence/reconnect tests, TTL/cap/shutdown proof, notification deduplication, permission-safe previews and keyboard/screen-reader checks |
 | M4: Shared document | Story 4 plus Story 6: one document beside Chat with concurrent edits, cursors, comments, version history, undo/export | Editor spike, durable merge protocol, real-host simultaneous clients, anchor/restore tests, identity-safe local recovery and surface parity |
@@ -35,11 +36,30 @@ All five surfaces participate where the milestone introduces an applicable capab
 1. **Specification checks (this PR):** review requirements for testability, validate relative links and requirement IDs, check diff whitespace and repository patterns. No code behavior or runtime test result is claimed.
 2. **Fail-first implementation:** contracts and capability derivations; account-only route/bootstrap; invitation identity/state transitions; notification audiences; editor operations; proposal decisions. Test user-observable and security outcomes rather than copying implementation.
 3. **Real Postgres:** simultaneous invite/accept/revoke, pending-capacity reservation, policy disable/role downgrade, document edits/restore, idempotent proposal apply and funding reservation. Missing database configuration means unrun, not passed.
-4. **Live cross-account path:** owner on a disposable enrolled VPS; an existing org member without a machine; a new external guest; an outsider. Use the real platform, relay, home and actual auth sessions. Confirm zero recipient machines, subscription/checkout activity and AI credentials before and after the entire journey.
+4. **Live cross-account path:** owner on a disposable enrolled VPS; an existing org member without a machine; a member with several computers; a new external guest; an outsider. Use the real platform, relay, home and actual auth sessions, signed in through the unattended fixture (FR-029) rather than hand-captured browser state. Keep the outsider off any preview-access allowlist so preview proofs cannot mask the organization and guest checks. Confirm zero recipient machines, subscription/checkout activity and AI credentials before and after the entire journey.
 5. **Failures and adversarial access:** forged/expired/replayed invitation proofs, wrong email/account, stale org membership, forwarded URLs, parent/sibling references, attachment/search/export leakage, cross-origin returns, prompt-injected broader tools, revoked sockets/queues, stale proposals, duplicate paid requests and unreachable policy services.
 6. **Recovery:** kill browser connections, background the phone, interrupt owner gateway/runtime during a run, restart the host and disconnect the funding source. Verify saved/unsaved states, operation deduplication, expiry, owner export and no implicit payer change or second authority.
 7. **Usability/performance:** ten first-time recipients; eight simultaneous participants under the network conditions in SC-003; at least 100 randomized edit/reconnect sequences; keyboard/screen-reader completion with focus restoration and non-disruptive status announcements. Capture the exact commit, bundle version, actor roles and sanitized outcomes per surface.
 8. **Compatibility:** existing org-member shares, snapshots, ordinary personal Chat, private drafts, owner boot/billing, unsupported-host negotiation and Native Mobile transport. Re-run documented regressions instead of relying on old screenshots.
+
+## Relationship to the organization-collaboration live validation
+
+The live-validation handoff for organization collaboration (PR #1892) lists 26 acceptance journeys, none yet run against real infrastructure. It is not superseded: M0 runs its foundation journeys, and this specification changes the expected outcome of others.
+
+| Journeys in the handoff | Status under this specification |
+| --- | --- |
+| Relay transparency, membership freshness, sandbox/Git shell enforcement, cancel/approval authority, home losing a run, Git identity, Chat root inventory, shared Codex/Claude coding | Still valid; run in M0 as the foundation. Add guest grants to the revocation, cancel and run-loss cases once M2 lands |
+| Organization gate | Outcome changes in M2: an outsider stays denied everywhere except resources carrying an accepted recipient-bound guest grant |
+| Group Chat, standalone shares, explicit join | Outcome changes: "no account created" becomes "free account, never a machine or subscription"; add pending email invitations and each resource type as a guest grant |
+| Owner source | Outcome changes: guest AI is unavailable until M5 confinement passes; the preview states whose computer and funding source runs the work |
+| Ready-to-work preview | Outcome changes: the preview names a guest audience and the owner's computer and bill |
+| Cutover inventory of person-to-person records | Outcome changes: recipient-bound guest grants are a new home-authorized grant type, not a revived legacy path; rollback still never restores legacy authorization |
+| Surfaces | Outcome changes: the platform-served account-only frame is the primary surface for machine-free accounts; owner-side parity (#1798) and Native Mobile transport (#1881) remain required |
+| Scale | Outcome changes: add per-account relay limits and usage accounting for machine-free accounts (FR-028) |
+| Peer path; invitation cost quotes | Superseded: the relay is the transport, and machine-free participation replaces the no-compute invitation option |
+| Coarse roles, granular sharing, Chat disclosure ceilings, integration delegation, ownership, transfer, Matrix groups | Remain deferred; Chat disclosure ceilings rise in priority because guests may join broad Chats |
+
+Agent-runnable today against a `preview-vps` host: the web journeys for the organization gate, group Chat, standalone shares, explicit join, cancel/approval, inventory, ready-to-work and surfaces, plus relay, restart and scale checks over root SSH. Human steps remain for the test organization setup, provider and forge credentials for shared coding and Git identity, Clerk webhook fault injection, Electron packaging and physical Native Mobile devices.
 
 Production customer runtime verification uses exact VPS-native host bundles and health checks. Deployment and paid test-host provisioning are separate implementation/release actions; this spec PR performs neither. After live verification, ask whether to delete a disposable paid test VM to avoid continuing charges. Never use the user's primary computer as the default risky test host.
 
@@ -49,6 +69,6 @@ Each milestone includes a separate PR to the private `FinnaAI/matrix-os-site` re
 
 ## Review and completion
 
-Implementation plans must reference FR-001 through FR-023 and SC-001 through SC-008, enumerate exact routes and authorization, and assign every milestone its acceptance evidence and documentation PR. Record any explicit surface limitation as a product decision before implementation, not as a late exception after a failed check.
+Implementation plans must reference FR-001 through FR-029 and SC-001 through SC-009, enumerate exact routes and authorization, and assign every milestone its acceptance evidence and documentation PR. Record any explicit surface limitation as a product decision before implementation, not as a late exception after a failed check.
 
 PRs use Conventional Commit titles, source-of-truth/transaction/orphan/auth/deferred invariants, and current-head Greptile 5/5 before merge. Add `ready-for-ci` after current-head 5/5. Opening this spec PR does not authorize merging it, starting implementation, deploying or purchasing infrastructure.

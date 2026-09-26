@@ -35,9 +35,11 @@
 
 The first review clarified that spec 124 already promises no recipient computer, so M1 repairs/proves the entry flow instead of inventing new hosting. The guest relationship extends both ticket issuance and home authority without weakening existing org-member checks. External guest AI requires constrained tools; existing member integration authority is not an implicit guest grant. Online co-editing preserves unsaved local work without claiming independent offline authorities. The concrete editor protocol, route paths, retention values and source-specific limit adapters are intentionally technical-planning decisions with required proof gates, not unresolved product choices.
 
+The second review added organization membership independent of machine count in both directions (FR-024), recipient views for every shareable type (FR-025), file-share conflict detection (FR-026), unavailable-versus-not-found distinction (FR-027), relay bounds for machine-free accounts (FR-028) and an unattended cross-account fixture (FR-029, SC-009). It recorded baseline blockers with file references and current limits in `architecture.md`, added an M0 foundation-validation milestone, and mapped the organization-collaboration live-validation journeys (PR #1892) to this specification in `delivery-plan.md`.
+
 ## Validation executed for this spec PR
 
-- Requirement numbering: 23 unique sequential FR IDs and eight unique sequential SC IDs; passed.
+- Requirement numbering: 29 unique sequential FR IDs and nine unique sequential SC IDs; passed.
 - Relative Markdown links, balanced fenced blocks, absent clarification placeholders and feature-pointer JSON; passed.
 - Static public-site-boundary assertions from `tests/repository/site-extraction.test.ts`, evaluated directly without Vitest; passed.
 - The canonical Vitest docs-contract invocation could not run because this isolated checkout has no installed `vitest` executable. This is not a passing test-suite claim; CI must run it with the frozen dependencies.

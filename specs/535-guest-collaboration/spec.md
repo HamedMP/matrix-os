@@ -32,6 +32,10 @@ An invited person signs in or creates a free account and immediately joins share
 3. **Given** access to resources on two owners' computers, **when** the recipient switches resources, **then** each opens on its own host without creating copies or changing their selected personal computer.
 4. **Given** the recipient later purchases a computer, **when** they return to existing shares, **then** the same identities, permissions, drafts and destinations continue to work.
 5. **Given** a signed-in free account with no shares, **when** it opens Shared with me, **then** it sees an empty state and can sign out without entering onboarding; starting its own hosted work is a separate optional action.
+6. **Given** an organization owner or admin, **when** they invite a person to the organization by email from Matrix, **then** the person can accept with a free account and becomes a member without owning a computer; organization-wide shares appear as pending in their Shared with me.
+7. **Given** a member who owns several computers, **when** they open a share or switch their selected personal computer, **then** the share stays connected to its resource home and Shared with me lists the same items whichever of their computers is selected.
+8. **Given** an owner whose shared resources live on several computers, **when** one of those computers is offline, **then** only that computer's resources show host unavailable; every share stays bound to its own home.
+9. **Given** a shared file, folder or app instance, **when** the recipient opens it, **then** it opens in its own resource view with role-appropriate actions; it never falls back to opening a Chat or to a list of identifiers.
 
 ### User Story 2 - Invite a specific person outside the team (Priority: P1)
 
@@ -126,6 +130,10 @@ An owner and collaborators can trust attribution, access changes and recovery wh
 - Host machine deleted, subscription suspended, or owner account removed: explain unavailability, follow existing retention/export policy and never bill a guest as fallback.
 - Multiple tabs/devices per actor; background phone suspension; presence expiry; duplicated/out-of-order events; comments whose anchors disappear; deleted documents with pending edits.
 - Source-specific spend cannot be measured or reserved: show usage as unknown, use enforceable request/concurrency limits, and do not promise a hard currency cap.
+- The platform cannot load the shell for an account without a routed computer: a shared or invitation destination shows a retryable unavailable state and keeps the destination; it never falls back to billing setup.
+- The owner saves a shared file by writing a replacement and renaming it, or edits it outside the share while a Contributor saves: the share survives the replacement and the Contributor sees a conflict instead of overwriting the owner's edit.
+- A server dependency is missing on the home: the collaboration route or socket reports a generic unavailable state, never a not-found that reads as "not shared" or "access removed".
+- An account belongs to several organizations: sharing shows and lets the owner switch the organization context in the product; an organization-bound resource never silently moves to another organization.
 
 ## Requirements *(mandatory)*
 
@@ -154,10 +162,17 @@ An owner and collaborators can trust attribution, access changes and recovery wh
 - **FR-021**: Invitation, role, grant, source-policy, proposal, restore and deletion actions MUST be attributable and exportable within the authorized owner boundary. Platform metadata MUST not become an alternate content store.
 - **FR-022**: Capacities, retention, expiry, recovery and timeout policies MUST be bounded and tested before each milestone ships. Limits MUST yield actionable states without creating additional compute.
 - **FR-023**: Each delivered milestone MUST include real separate-account acceptance evidence, owner-host failure/revocation tests, and a separate public documentation PR in `FinnaAI/matrix-os-site/content/docs/`.
+- **FR-024**: Organization membership MUST be independent of machine ownership in both directions: an account with zero, one or several computers can be invited to, join and leave an organization. The product MUST let an account create an organization, switch its active organization, and let owners/admins invite members by email, on every OS view; Share controls MUST receive the active organization on every surface, including Electron Desktop.
+- **FR-025**: Every shareable resource type (Chat, project, terminal, file, folder, app instance, and documents once delivered) MUST have a recipient view in both the account-only frame and the full OS view that calls that type's scoped home operations. A project MUST open as navigable Chats, files and terminals, not identifiers.
+- **FR-026**: Shared file and folder writes MUST detect every intervening change to the target, including owner edits made outside the share, and MUST keep the share bound to the logical file across atomic replace-and-rename saves.
+- **FR-027**: Collaboration routes and sockets MUST distinguish missing server configuration or dependencies (generic unavailable, retryable), host offline, and revoked or absent access. Missing dependencies MUST never answer as not-found.
+- **FR-028**: Relay use by accounts without their own computer MUST be bounded per account (concurrent collaboration sockets and transferred bytes) and recorded as metadata-only usage, because the platform carries that traffic without a paying runtime.
+- **FR-029**: The repository MUST provide a cross-account test fixture that signs in the owner, a machine-free organization member, a new external guest and an outsider without interactive login, so the journeys in this specification run unattended against a disposable host.
 
 ### Key Entities
 
 - **Account**: stable authenticated person, optionally owns zero or more machines; buying compute does not change identity.
+- **Organization membership**: an account's role in an organization; created by in-product or identity-provider invitation, never by or for a machine, and never required for a personal guest grant.
 - **Invitation**: owner, resource, intended verified recipient, preset, guest AI permission, expiry and acceptance/decline/revocation state.
 - **Access grant**: resource-scoped relationship, subject, personal or organization policy boundary, capabilities, revision, expiry and revocation cause; multiple grant sources are evaluated explicitly.
 - **Resource home**: existing authoritative owner host; independent of the recipient's devices or machines.
@@ -189,3 +204,4 @@ An owner and collaborators can trust attribution, access changes and recovery wh
 - **SC-006**: The same revision/proposal journey succeeds on Web Canvas, Web Desktop, Electron Desktop, Web Mobile and Native Mobile before full feature completion, with per-surface evidence and no client-side permission disagreement.
 - **SC-007**: All stale AI proposals, unauthorized approvals, exhausted-limit requests and revoked queued requests in the acceptance matrix are rejected or paused without overwriting human edits, changing payer or duplicating paid work.
 - **SC-008**: Every milestone passes host-offline, restart, account-switch and sign-out tests, preserves acknowledged content and private drafts as specified, and publishes documentation of its actual availability and limits.
+- **SC-009**: The four-identity cross-account suite (owner, machine-free member, new external guest, outsider) runs without interactive sign-in against a disposable host for every milestone, and a member with several computers passes the same journeys with each of their computers selected.
