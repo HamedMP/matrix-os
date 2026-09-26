@@ -3,6 +3,36 @@ import { isAbsolute, relative, sep } from "node:path";
 const SECRET_TEXT = /(?:authorization\s*[:=]|bearer\s+|(?:api[_-]?(?:key|token)|access[_-]?token|secret|password|credential)\s*[:=]|\bprivate\s+raw\b|ghp_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9_-]+)/i;
 const SECRET_ASSIGNMENT = /\b(?:API[_-]?KEY|API[_-]?TOKEN|ACCESS[_-]?TOKEN|SECRET|PASSWORD|CREDENTIAL)\s*=\s*[^\s,;]+/gi;
 const ABSOLUTE_PATH = /(^|[\s"'`(=:<>|;&])\/(?=[A-Za-z0-9._~-])(?!\/)[^\s"'`<>)]*/g;
+const DANGLING_BEARER = /(?:^|[^A-Za-z0-9_])Bearer\s+$/i;
+const ACTIVE_BEARER = /(?:^|[^A-Za-z0-9_])Bearer\s+/i;
+const DANGLING_SECRET_ASSIGNMENT = /(?:^|[^A-Za-z0-9_])(?:API[_-]?(?:KEY|TOKEN)|ACCESS[_-]?TOKEN|SECRET|PASSWORD|CREDENTIAL)\s*(?:=\s*)?$/i;
+const DANGLING_SECRET_VALUE = /(^|[^A-Za-z0-9_])(?:API[_-]?(?:KEY|TOKEN)|ACCESS[_-]?TOKEN|SECRET|PASSWORD|CREDENTIAL)\s*=\s*$/i;
+const SECRET_KEYWORDS = [
+  "bearer", "apikey", "api_key", "api-key", "apitoken", "api_token", "api-token",
+  "accesstoken", "access_token", "access-token", "secret", "password", "credential",
+] as const;
+const ASSISTANT_TEXT_TAIL_LIMIT = 2_048;
+export const ASSISTANT_CREDENTIAL_BOUNDARY_PROBE_LIMIT = 64;
+
+export function isCompleteAssistantCredentialKeyword(value: string): boolean {
+  return SECRET_KEYWORDS.some((keyword) => keyword === value.toLowerCase());
+}
+
+/** Classify only the bounded beginning of a new text block. */
+export function classifyAssistantCredentialBoundaryPrefix(value: string): "pending" | "standalone" | "continuation" {
+  const prefix = value.toLowerCase();
+  if ("bearer".startsWith(prefix)) return "pending";
+  if (prefix.startsWith("bearer") && /^\s/u.test(prefix.slice("bearer".length))) return "standalone";
+  for (const keyword of SECRET_KEYWORDS) {
+    if (keyword === "bearer") continue;
+    if (keyword.startsWith(prefix)) return "pending";
+    if (!prefix.startsWith(keyword)) continue;
+    const suffix = prefix.slice(keyword.length);
+    if (suffix === "" || /^\s+$/u.test(suffix)) return "pending";
+    if (/^\s*=$/u.test(suffix)) return "standalone";
+  }
+  return "continuation";
+}
 
 function normalizedRoot(value: string): string {
   return value.replace(/[\\/]+$/, "");
@@ -63,6 +93,109 @@ export function sanitizeAssistantText(
     .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]+/gi, "Bearer [redacted]")
     .replace(SECRET_ASSIGNMENT, "[redacted credential]")
     .replace(ABSOLUTE_PATH, (match, prefix: string) => `${prefix}[redacted path]`);
+}
+
+/** Project streamed text only after its path or credential token is complete. */
+export function createAssistantTextStreamProjector(options: { homePath: string; executionRoot?: string }) {
+  let pending = "";
+  let droppingOversizedToken = false;
+  const spacedRoots = [options.homePath, options.executionRoot]
+    .filter((root): root is string => root !== undefined && /\s/u.test(root))
+    .map((root) => `${normalizedRoot(root)}/`);
+  const incompleteKnownRoot = () => {
+    for (let index = pending.indexOf("/"); index >= 0; index = pending.indexOf("/", index + 1)) {
+      const prefix = index === 0 ? "" : pending[index - 1]!;
+      if (prefix && !/[\s"'`(=:<>|;&]/u.test(prefix)) continue;
+      const suffix = pending.slice(index);
+      if (spacedRoots.some((root) => root.startsWith(suffix))) return true;
+    }
+    return false;
+  };
+  const incompleteSecretKeyword = () => {
+    const token = /[A-Za-z][A-Za-z0-9_-]*$/u.exec(pending)?.[0].toLowerCase();
+    return token !== undefined && SECRET_KEYWORDS.some((keyword) => keyword.startsWith(token));
+  };
+  const finishPending = () => {
+    if (droppingOversizedToken) {
+      droppingOversizedToken = false;
+      pending = "";
+      return "";
+    }
+    const safeTail = pending
+      .replace(DANGLING_BEARER, (match) => `${match.slice(0, match.toLowerCase().indexOf("bearer"))}Bearer [redacted]`)
+      .replace(DANGLING_SECRET_VALUE, (_match, prefix: string) => `${prefix}[redacted credential]`);
+    pending = "";
+    return sanitizeAssistantText(safeTail, options);
+  };
+
+  return {
+    push(value: string): string {
+      let projected = "";
+      for (const character of value) {
+        if (droppingOversizedToken) {
+          if (/\s/u.test(character)) {
+            droppingOversizedToken = false;
+            projected += character;
+          }
+          continue;
+        }
+
+        pending += character;
+        if (/\s/u.test(character)
+          && !DANGLING_BEARER.test(pending)
+          && !DANGLING_SECRET_ASSIGNMENT.test(pending)
+          && !incompleteKnownRoot()) {
+          projected += sanitizeAssistantText(pending, options);
+          pending = "";
+        } else if (character.codePointAt(0)! > 0x7f
+          && !/\s/u.test(character)
+          && !pending.includes("/")
+          && !ACTIVE_BEARER.test(pending)
+          && sanitizeAssistantText(pending, options) === pending) {
+          // Ordinary unspaced Unicode prose can stream; path/URL and secret
+          // candidates stay whole. Keep one character so a later slash can
+          // still be recognized as part of a relative path.
+          projected += pending.slice(0, -character.length);
+          pending = character;
+        } else if (pending.length > ASSISTANT_TEXT_TAIL_LIMIT) {
+          pending = "";
+          droppingOversizedToken = true;
+          projected += "[redacted]";
+        }
+      }
+      return projected;
+    },
+    flushBoundary(nextCharacter?: string): string {
+      if (droppingOversizedToken || pending.includes("/") || ACTIVE_BEARER.test(pending)
+        || DANGLING_SECRET_ASSIGNMENT.test(pending)
+        || incompleteSecretKeyword()
+        || /https?:$/iu.test(pending)
+        || sanitizeAssistantText(pending, options) !== pending) return "";
+      // At a new text block, a plain word is complete unless the new block
+      // starts a slash continuation (relative path) or a URL scheme colon.
+      // Releasing it preserves the new block's word boundary for credentials.
+      if ((nextCharacter === undefined || nextCharacter === "/"
+        || (nextCharacter === ":" && /https?$/iu.test(pending)))
+        && /[\p{L}\p{N}_~-]$/u.test(pending)) return "";
+      const projected = pending;
+      pending = "";
+      return projected;
+    },
+    hasPending(): boolean {
+      return pending.length > 0 || droppingOversizedToken;
+    },
+    hasNonCredentialPathContext(): boolean {
+      return !droppingOversizedToken && pending.includes("/")
+        && !SECRET_TEXT.test(pending) && !ACTIVE_BEARER.test(pending)
+        && !DANGLING_SECRET_ASSIGNMENT.test(pending) && !incompleteSecretKeyword();
+    },
+    flush: finishPending,
+    flushIndependentBoundary: finishPending,
+    discard(): void {
+      pending = "";
+      droppingOversizedToken = false;
+    },
+  };
 }
 
 export function safeToolPreview(

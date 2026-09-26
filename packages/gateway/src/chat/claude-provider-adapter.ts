@@ -23,6 +23,10 @@ import {
   type CanonicalCliSpawn,
 } from "./cli-process.js";
 import {
+  ASSISTANT_CREDENTIAL_BOUNDARY_PROBE_LIMIT,
+  classifyAssistantCredentialBoundaryPrefix,
+  createAssistantTextStreamProjector,
+  isCompleteAssistantCredentialKeyword,
   safeToolPreview,
   sanitizeAssistantText,
 } from "./safe-activity-projection.js";
@@ -411,6 +415,17 @@ export function createClaudeChatProviderAdapter(options: {
     let pendingDelta = "";
     let pendingDeltaMessageId: string | undefined;
     let deltaFlushScheduled = false;
+    const textProjector = createAssistantTextStreamProjector({
+      homePath: options.homePath,
+      executionRoot: input.executionRoot,
+    });
+    let projectedMessageId: string | undefined;
+    let boundaryProbe: {
+      originMessageId?: string;
+      text: string;
+      segments: Array<{ messageId?: string; text: string }>;
+    } | undefined;
+    let droppingBoundaryProbe = false;
     const textMessageByIndex = new Map<number, string>();
     const toolInputByIndex = new Map<number, string>();
     const toolNameByIndex = new Map<number, string>();
@@ -444,10 +459,142 @@ export function createClaudeChatProviderAdapter(options: {
       }
     };
 
+    const redactProbeSegments = (segments: Array<{ messageId?: string; text: string }>) => {
+      for (let index = 0; index < segments.length; index++) {
+        const messageId = segments[index]!.messageId;
+        if (segments.findIndex((segment) => segment.messageId === messageId) === index) {
+          enqueueDelta("[redacted]", messageId);
+        }
+      }
+    };
+
+    const flushProjectedText = () => {
+      if (boundaryProbe) {
+        // At successful completion, an exact keyword cannot acquire a later
+        // marker. Release it only when the old context cannot make it a token.
+        const ordinaryCompletedKeyword = textProjector.hasNonCredentialPathContext()
+          && isCompleteAssistantCredentialKeyword(boundaryProbe.text);
+        const projected = textProjector.flushIndependentBoundary();
+        if (projected) enqueueDelta(projected, projectedMessageId);
+        if (ordinaryCompletedKeyword) {
+          for (const segment of boundaryProbe.segments) {
+            const word = sanitizeAssistantText(segment.text, {
+              homePath: options.homePath, executionRoot: input.executionRoot,
+            });
+            if (word) enqueueDelta(word, segment.messageId);
+          }
+        } else redactProbeSegments(boundaryProbe.segments);
+        boundaryProbe = undefined;
+        projectedMessageId = undefined;
+      }
+      droppingBoundaryProbe = false;
+      const projected = textProjector.flush();
+      if (projected) enqueueDelta(projected, projectedMessageId);
+      projectedMessageId = undefined;
+    };
+    const flushSafeProjectedText = (nextCharacter?: string) => {
+      const projected = textProjector.flushBoundary(nextCharacter);
+      if (projected) enqueueDelta(projected, projectedMessageId);
+      if (!textProjector.hasPending()) projectedMessageId = undefined;
+    };
+    const discardProjectedText = () => {
+      textProjector.discard();
+      projectedMessageId = undefined;
+      boundaryProbe = undefined;
+      droppingBoundaryProbe = false;
+    };
+    const flushIndependentProjectedText = () => {
+      const projected = textProjector.flushIndependentBoundary();
+      if (projected) enqueueDelta(projected, projectedMessageId);
+      projectedMessageId = undefined;
+    };
+    const projectResolvedDelta = (delta: string, messageId?: string) => {
+      if (projectedMessageId !== messageId) {
+        flushSafeProjectedText(String.fromCodePoint(delta.codePointAt(0)!));
+      }
+      if (textProjector.hasPending() && projectedMessageId !== messageId) {
+        // A token started in the previous text block. Attribute only its
+        // continuation to that block; the rest belongs to the new block.
+        let offset = 0;
+        for (const character of delta) {
+          const projected = textProjector.push(character);
+          if (projected) enqueueDelta(projected, projectedMessageId);
+          offset += character.length;
+          if (!textProjector.hasPending()) {
+            projectedMessageId = messageId;
+            const remainder = textProjector.push(delta.slice(offset));
+            if (remainder) enqueueDelta(remainder, messageId);
+            return;
+          }
+        }
+        return;
+      }
+      projectedMessageId = messageId;
+      const projected = textProjector.push(delta);
+      if (projected) enqueueDelta(projected, messageId);
+    };
+    const projectDelta = (delta: string, messageId?: string) => {
+      if (droppingBoundaryProbe) return;
+      if (!boundaryProbe && projectedMessageId !== messageId) {
+        flushSafeProjectedText(String.fromCodePoint(delta.codePointAt(0)!));
+        if (textProjector.hasPending() && projectedMessageId !== messageId) {
+          boundaryProbe = { originMessageId: messageId, text: "", segments: [] };
+        }
+      }
+      if (!boundaryProbe) {
+        projectResolvedDelta(delta, messageId);
+        return;
+      }
+      let offset = 0;
+      for (const character of delta) {
+        const probe = boundaryProbe;
+        probe.text += character;
+        const last = probe.segments.at(-1);
+        if (last && last.messageId === messageId) last.text += character;
+        else probe.segments.push({ messageId, text: character });
+        offset += character.length;
+        if (probe.text.length > ASSISTANT_CREDENTIAL_BOUNDARY_PROBE_LIMIT) {
+          flushIndependentProjectedText();
+          enqueueDelta("[redacted]", probe.originMessageId);
+          boundaryProbe = undefined;
+          droppingBoundaryProbe = true;
+          return;
+        }
+        // A later block can restart a standalone credential while an earlier
+        // block's prefix is unresolved. Classify only observed block starts,
+        // within the same capped probe, before replaying any raw candidate.
+        let suffix = "";
+        let standaloneIndex: number | undefined;
+        let hasPendingCandidate = false;
+        for (let index = probe.segments.length - 1; index >= 0; index--) {
+          suffix = probe.segments[index]!.text + suffix;
+          const status = classifyAssistantCredentialBoundaryPrefix(suffix);
+          if (status === "standalone") standaloneIndex = index;
+          if (status === "pending") hasPendingCandidate = true;
+        }
+        if (standaloneIndex === undefined && hasPendingCandidate) continue;
+        boundaryProbe = undefined;
+        if (standaloneIndex !== undefined) {
+          flushIndependentProjectedText();
+          redactProbeSegments(probe.segments.slice(0, standaloneIndex));
+        }
+        for (const segment of probe.segments.slice(standaloneIndex ?? 0)) {
+          projectResolvedDelta(segment.text, segment.messageId);
+        }
+        const remainder = delta.slice(offset);
+        if (remainder) projectResolvedDelta(remainder, messageId);
+        return;
+      }
+    };
+
     const parseLine = (raw: string) => {
       if (!raw.trim()) return;
       const line = ClaudeStreamLineSchema.parse(JSON.parse(raw));
       if (inputControl.handle(line)) return;
+      if (line.type === "result") {
+        if (line.is_error === true || line.subtype === "error") discardProjectedText();
+        else flushProjectedText();
+      }
       if (usageFailure?.category !== "quota_exhausted") {
         usageFailure = classifyClaudeUsageFailure(line) ?? usageFailure;
       }
@@ -470,10 +617,7 @@ export function createClaudeChatProviderAdapter(options: {
         : undefined;
       if (delta) {
         streamedText = true;
-        enqueueDelta(sanitizeAssistantText(delta, {
-          homePath: options.homePath,
-          executionRoot: input.executionRoot,
-        }), line.event?.index === undefined ? undefined : textMessageByIndex.get(line.event.index));
+        projectDelta(delta, line.event?.index === undefined ? undefined : textMessageByIndex.get(line.event.index));
       }
       if (line.type === "stream_event" && line.event?.type === "content_block_delta"
         && line.event.index !== undefined && line.event.delta?.type === "input_json_delta"
@@ -485,6 +629,7 @@ export function createClaudeChatProviderAdapter(options: {
       }
       if (line.type === "stream_event" && line.event?.type === "content_block_start"
         && line.event.index !== undefined && line.event.content_block) {
+        flushSafeProjectedText();
         flushPendingDelta();
         const block = line.event.content_block;
         if (block.type === "text") {
@@ -514,6 +659,7 @@ export function createClaudeChatProviderAdapter(options: {
       }
       if (line.type === "stream_event" && line.event?.type === "content_block_stop"
         && line.event.index !== undefined) {
+        flushSafeProjectedText();
         flushPendingDelta();
         const activity = activityByIndex.get(line.event.index);
         if (activity) {
@@ -597,6 +743,8 @@ export function createClaudeChatProviderAdapter(options: {
     }).then(() => {
       releaseActiveRun();
       if (buffered.trim()) parseLine(buffered);
+      if (sawResult && !resultFailed) flushProjectedText();
+      else discardProjectedText();
       flushPendingDelta();
       emitBufferedResult();
       const classifiedFailure = usageFailure ?? (resultFailed
@@ -631,6 +779,17 @@ export function createClaudeChatProviderAdapter(options: {
         : { type: "run.completed", outcome: "completed" }));
       queue.finish();
     }).catch(async (error: unknown) => {
+      if (sawResult && !resultFailed) flushProjectedText();
+      else {
+        if (error instanceof CanonicalCliError && error.kind === "aborted" && !resultFailed
+          && steerPrompt && emittedState && !input.signal.aborted && !cancellationRequested
+          && activeRuns.get(input.runId) === activeRun && !boundaryProbe) {
+          // An accepted Steer ends this text context. Preserve an ordinary
+          // safe tail, but leave path/URL/credential candidates for discard.
+          flushSafeProjectedText("\n");
+        }
+        discardProjectedText();
+      }
       flushPendingDelta();
       if (steerPrompt && emittedState && !input.signal.aborted) {
         capability?.revoke();
@@ -712,6 +871,7 @@ export function createClaudeChatProviderAdapter(options: {
       streamCompleted = true;
     } finally {
       processController.abort();
+      discardProjectedText();
       if (!streamCompleted) {
         cancellationRequested = true;
         releaseActiveRun();
