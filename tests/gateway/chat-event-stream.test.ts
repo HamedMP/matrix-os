@@ -234,10 +234,13 @@ describe("canonical Chat event stream", () => {
   it("preserves legacy Chat WebSocket auth without allowing REST query tokens", async () => {
     const middleware = authMiddleware("secret-token");
     const calls: string[] = [];
-    const context = (path: string) => ({
-      req: { path, url: `http://localhost${path}?token=secret-token`, header: () => undefined },
-      json: (body: unknown, status: number) => ({ body, status }), set: () => undefined,
-    });
+    const context = (path: string) => {
+      const url = `http://localhost${path}?token=secret-token`;
+      return {
+        req: { path, url, raw: new Request(url), method: "GET", header: () => undefined },
+        json: (body: unknown, status: number) => ({ body, status }), set: () => undefined,
+      };
+    };
     const removed = await middleware(context("/ws/chats/events") as never, async () => { calls.push("ws"); });
     const rest = await middleware(context("/api/chats") as never, async () => { calls.push("rest"); });
     expect(calls).toEqual(["ws"]);
