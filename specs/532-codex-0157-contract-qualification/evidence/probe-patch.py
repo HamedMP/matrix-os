@@ -11,6 +11,7 @@ import threading
 import re
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from probe_turns import await_turn
 
 
 SCRATCH = tempfile.TemporaryDirectory(prefix="eng26-codex-spike-")
@@ -168,18 +169,10 @@ def status(server, thread_id):
     return result
 
 
-def await_turn(server, thread_id):
-    for _ in range(40):
-        result = server.call("thread/read", {"threadId": thread_id, "includeTurns": True})
-        turns = result.get("result", {}).get("thread", {}).get("turns", [])
-        if turns and turns[-1].get("status") not in ("inProgress", "notStarted"):
-            return turns[-1]
-        time.sleep(0.25)
-    return turns[-1] if turns else None
 
 
-def checked_turn(server, thread_id, expected):
-    turn = await_turn(server, thread_id)
+def checked_turn(server, thread_id, turn_id, expected):
+    turn = await_turn(server, thread_id, turn_id)
     print("terminal-turn:", json.dumps(turn, separators=(",", ":")), flush=True)
     assert turn and turn["status"] == "completed", f"Turn did not complete: {turn}"
     calls = [item for item in turn["items"] if item["type"] == "mcpToolCall"]
@@ -233,13 +226,13 @@ def exercise():
         print("status-start:", json.dumps(summary(status(first, thread_id)), separators=(",", ":")))
         turn = first.call("turn/start", {"threadId": thread_id, "input": [{"type": "text", "text": "say mock answer"}]})
         print("turn-start:", json.dumps(summary(turn), separators=(",", ":")))
-        print("first-turn:", json.dumps(checked_turn(first, thread_id, "A"), separators=(",", ":"))[:3000])
+        print("first-turn:", json.dumps(checked_turn(first, thread_id, turn["result"]["turn"]["id"], "A"), separators=(",", ":"))[:3000])
         loaded = first.call("thread/resume", {"threadId": thread_id, "excludeTurns": True, "config": mcp_config("B")})
         assert_sandbox(loaded)
         print("resume-loaded:", json.dumps(summary(loaded), separators=(",", ":")))
         print("status-loaded:", json.dumps(summary(status(first, thread_id)), separators=(",", ":")))
-        first.call("turn/start", {"threadId": thread_id, "input": [{"type": "text", "text": "call echo_scope again"}]})
-        print("loaded-turn:", json.dumps(checked_turn(first, thread_id, "A"), separators=(",", ":"))[:3000])
+        loaded_turn = first.call("turn/start", {"threadId": thread_id, "input": [{"type": "text", "text": "call echo_scope again"}]})
+        print("loaded-turn:", json.dumps(checked_turn(first, thread_id, loaded_turn["result"]["turn"]["id"], "A"), separators=(",", ":"))[:3000])
     finally:
         first.close()
 
@@ -249,8 +242,8 @@ def exercise():
         assert_sandbox(cold)
         print("resume-cold:", json.dumps(summary(cold), separators=(",", ":")))
         print("status-cold:", json.dumps(summary(status(second, thread_id)), separators=(",", ":")))
-        second.call("turn/start", {"threadId": thread_id, "input": [{"type": "text", "text": "call echo_scope on cold resume"}]})
-        print("cold-turn:", json.dumps(checked_turn(second, thread_id, "C"), separators=(",", ":"))[:3000])
+        cold_turn = second.call("turn/start", {"threadId": thread_id, "input": [{"type": "text", "text": "call echo_scope on cold resume"}]})
+        print("cold-turn:", json.dumps(checked_turn(second, thread_id, cold_turn["result"]["turn"]["id"], "C"), separators=(",", ":"))[:3000])
     finally:
         second.close()
 
