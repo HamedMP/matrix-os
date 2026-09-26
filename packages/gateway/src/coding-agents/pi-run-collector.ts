@@ -2,6 +2,7 @@ import { AgentThreadEventSchema, type AgentThreadEvent } from "@matrix-os/contra
 import { safeDisplayPath } from "../chat/safe-activity-projection.js";
 import { logCodingAgentWarning } from "./diagnostics.js";
 import { chunkAssistantText, chunkDisplayText } from "./pi-output-chunks.js";
+import { createPiRunOutcomeTracker, type PiNativeRunOutcome } from "./pi-run-outcome.js";
 const MAX_TEXT_CHARS = 24_000;
 const MAX_SESSION_ID_CHARS = 64;
 
@@ -45,6 +46,7 @@ interface PiRunCollectorOptions {
 export interface PiCollectedRun {
   events: AgentThreadEvent[];
   sessionId: string | null;
+  outcome: PiNativeRunOutcome;
 }
 
 // Aggregating reducer: pi streams fine-grained deltas, but the provider
@@ -53,6 +55,7 @@ export interface PiCollectedRun {
 // keeps chatty runs under the 500-event provider cap.
 export function createPiRunCollector(options: PiRunCollectorOptions) {
   const events: AgentThreadEvent[] = [];
+  const nativeOutcome = createPiRunOutcomeTracker();
   let sessionId: string | null = null;
   let dropped = 0;
   let assistantText = "";
@@ -159,6 +162,7 @@ export function createPiRunCollector(options: PiRunCollectorOptions) {
   }
 
   function feedEvent(event: Record<string, unknown>): void {
+    nativeOutcome.observe(event);
     switch (event.type) {
       case "session": {
         if (typeof event.id === "string" && event.id.length > 0 && event.id.length <= MAX_SESSION_ID_CHARS) {
@@ -272,8 +276,8 @@ export function createPiRunCollector(options: PiRunCollectorOptions) {
         return;
       }
       default:
-        // agent_start/end, turn_start/end, agent_settled, queue_update,
-        // compaction_*, auto_retry_*: lifecycle is store-owned; ignore.
+        // Native terminal/retry outcome was observed above. Other lifecycle
+        // presentation is store-owned; no provider error text is emitted.
         return;
     }
   }
@@ -308,8 +312,7 @@ export function createPiRunCollector(options: PiRunCollectorOptions) {
       if (dropped > 0) {
         logCodingAgentWarning("pi provider dropped events beyond the run cap", new Error(`dropped=${dropped}`));
       }
-      return { events, sessionId };
+      return { events, sessionId, outcome: nativeOutcome.current() };
     },
   };
 }
-

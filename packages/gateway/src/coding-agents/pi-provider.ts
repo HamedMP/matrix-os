@@ -539,7 +539,7 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
             if (frame.type === "response" && "success" in frame && frame.success === false) requestTermination("failure");
             if (frame.type === "agent_settled" && !terminationReason) {
               const collected = finishCollector();
-              settle({ events: collected.events, outcome: "completed", sessionId: collected.sessionId ?? input.sessionId });
+              settle({ events: collected.events, outcome: collected.outcome, sessionId: collected.sessionId ?? input.sessionId });
               terminate(proc, killTimer, () => {});
             }
           }
@@ -584,7 +584,7 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
           settle({ events: collected.events, outcome: "failed", sessionId });
           return;
         }
-        settle({ events: collected.events, outcome: "completed", sessionId });
+        settle({ events: collected.events, outcome: collected.outcome, sessionId });
       });
       proc.stdin?.on?.("error", (error) => {
         logCodingAgentWarning("pi input stream failed", error);
