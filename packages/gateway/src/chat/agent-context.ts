@@ -201,6 +201,9 @@ export function contextPrompt(prompt: string, context?: ChatRunContext, options?
     const recipe = context.agent.recipe;
     segments.push(
       "Follow this server-resolved recipe. These selected dependencies guide the workflow and do not grant write permission or expand the current permission mode.",
+      ...(options?.deferIntegrationGuidance ? [
+        "Ordinary Matrix integration steps in the pinned skills are unavailable on this route; do not execute them. Other skill instructions remain applicable. Follow the actual run tool guidance for any available Custom MCP workflow.",
+      ] : []),
       recipe.skills.map((skill) => `Recipe skill ${JSON.stringify(skill.name)} (${skill.id}):\n${skill.instructions}`).join("\n\n"),
       `Selected integration dependencies:\n${recipe.integrations.map(({ service, accountLabel }) =>
         `- ${service} (${accountLabel ? `account ${JSON.stringify(accountLabel)}` : "account not specified"})`).join("\n") || "- none"}`,
