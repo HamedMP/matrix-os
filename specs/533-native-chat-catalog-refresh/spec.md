@@ -13,6 +13,7 @@ Web Canvas and Web Desktop keep their existing catalog transport. This fix conce
 - Responses publish in request order: a late older success or failure cannot replace the newest request's result. Results from an inactive, unmounted, or replaced API scope cannot publish.
 - Refresh does not change owner configuration or directly select a route. Existing selection reconciliation, locked Chat bindings, server admission, and fail-closed fetch-error behavior remain authoritative.
 - A fallback/project-list change is not a runtime boundary: one API-bound trusted snapshot survives it, including failed revalidation. Inactivation, replacement of the API, and unmount clear that snapshot. Old fallback-effect responses cannot update the UI or the trusted snapshot.
+- Same-API fallback changes preserve the latest error while revalidation is pending; only a successful read can clear it. Project draft actions remain blocked throughout that interval.
 - A newest refresh failure reports error while preserving the last trusted catalog only within the same mounted API scope. Initial/replaced-API failure uses a conservative fail-closed catalog; it must not promote a saved-Off harness or erase an unchanged valid selection.
 - No new persistence, transaction, credential delivery, permission, or funding path exists. Existing API authentication and the selected runtime scope apply.
 
@@ -23,6 +24,7 @@ Web Canvas and Web Desktop keep their existing catalog transport. This fix conce
 3. Resolve a newer read before an older success, then repeat with an older error. Both must retain the newer catalog.
 4. Exercise the actual CanonicalChatWorkspace → SharedChatComposer → picker wiring, alongside existing focus/visibility, inactive-surface, shared-composer, and native workspace regression tests.
 
-5. Exercise actual HermesPane reopen wiring and same-runtime saved-Off/valid-route refresh errors, plus initial and replaced-API fail-closed controls.
+5. Exercise actual ProjectChatDraft and AgentConversationView reopen wiring, alongside CanonicalChatWorkspace and HermesPane, covering all four native hook consumers.
+6. Exercise actual HermesPane reopen wiring and same-runtime saved-Off/valid-route refresh errors, plus initial and replaced-API fail-closed controls.
 
 Root owns matching-version Electron Desktop/cloud acceptance. Build/test success is not deployed acceptance. The public documentation companion belongs in the existing private site draft PR #130 after runtime acceptance, using proposed/unreleased wording until publication is authorized.

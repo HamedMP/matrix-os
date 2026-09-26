@@ -67,7 +67,11 @@ export function useChatProviderCatalog(
       };
     }
     if (!lastTrustedCatalog) trustedCatalogRef.current = null;
-    setState({ catalog: lastTrustedCatalog ?? fallback, status: lastTrustedCatalog ? "ready" : "loading" });
+    const retainedCatalog = lastTrustedCatalog;
+    setState((current) => ({
+      catalog: retainedCatalog ?? fallback,
+      status: retainedCatalog ? current.status === "error" ? "error" : "ready" : "loading",
+    }));
     const update = () => {
       const request = ++requestSequence;
       void fetchCanonicalProviderCatalog(api, true).then((catalog) => {

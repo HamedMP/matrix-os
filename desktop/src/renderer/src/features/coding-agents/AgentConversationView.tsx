@@ -632,7 +632,8 @@ function ConversationComposer({
   const fallbackCatalog = useMemo(() => summary
     ? createLegacyProjectProviderCatalog(summary)
     : { revision: "legacy_empty", drivers: [], instances: [] }, [summary]);
-  const loadedCatalog = useChatProviderCatalog(fallbackCatalog, { active }).catalog;
+  const liveCatalog = useChatProviderCatalog(fallbackCatalog, { active });
+  const loadedCatalog = liveCatalog.catalog;
   const projectCatalog = useMemo(() => summary
     ? filterCatalogForLegacyProject(loadedCatalog, summary)
     : fallbackCatalog, [fallbackCatalog, loadedCatalog, summary]);
@@ -738,6 +739,7 @@ function ConversationComposer({
             && (message.trim().length > 0 || attachments.items.length > 0 || referenceTokens.length > 0)
           }
           catalog={projectCatalog}
+          onProviderPickerOpen={liveCatalog.refresh}
           selection={selection}
           onSelectionChange={setSelection}
           onProviderSetup={(instance, action) => void handleProviderSetup(instance, action)}

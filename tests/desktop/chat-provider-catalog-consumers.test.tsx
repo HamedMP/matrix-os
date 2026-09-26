@@ -24,7 +24,7 @@ const summary: RuntimeSummary = {
   serverTime: "2026-09-26T00:00:00.000Z",
 };
 const disabledCatalog = { ...providerCatalog, revision: "saved_off", instances: providerCatalog.instances.map(instance => ({
-  ...instance, availability: "unavailable" as const, unavailabilityReason: "disabled_in_settings" as const,
+  ...instance, catalogRevision: "saved_off", availability: "unavailable" as const, unavailabilityReason: "disabled_in_settings" as const,
   models: [], defaultSelection: undefined,
 })) };
 const thread = { thread: { id: "thread_alpha", providerId: "codex", title: "Existing chat", status: "completed",
@@ -60,7 +60,7 @@ describe("native catalog consumer wiring", () => {
     await waitFor(() => expect((screen.getByRole("button", { name: "Send" }) as HTMLButtonElement).disabled).toBe(false));
     fireEvent(window, new Event("focus"));
     await waitFor(() => expect((screen.getByRole("button", { name: "Send" }) as HTMLButtonElement).disabled).toBe(true));
-    view.rerender(draft({ ...summary, serverTime: "2026-09-26T00:01:00.000Z" }));
+    view.rerender(draft({ ...summary, projects: { ...summary.projects, items: [{ id: "new-project", label: "New project", status: "available", taskCount: 0, threadCount: 0, attentionCount: 0 }] } }));
     await waitFor(() => expect(get).toHaveBeenCalledTimes(3));
     expect((screen.getByRole("button", { name: "Send" }) as HTMLButtonElement).disabled).toBe(true);
     await act(async () => pending.resolve(providerCatalog));
