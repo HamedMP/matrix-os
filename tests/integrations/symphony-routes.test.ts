@@ -23,6 +23,20 @@ describe('Symphony integration route contract', () => {
     expect(await response.json()).toMatchObject({ data: { data: { viewer: { id: 'owner' } } } });
     expect(pipedream.proxyPost).toHaveBeenCalledWith(expect.objectContaining({ externalUserId: 'owner', accountId: 'account_owner', url: 'https://api.linear.app/graphql' }));
   });
+  it('preserves a successful general call when usage accounting fails', async () => {
+    const { call, pipedream, db } = fixture();
+    db.touchServiceUsage.mockRejectedValueOnce(new Error('private database detail'));
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const response = await call();
+      expect(response.status).toBe(200);
+      expect(await response.text()).not.toContain('private database detail');
+      expect(pipedream.proxyPost).toHaveBeenCalledTimes(1);
+      expect(log).toHaveBeenCalledWith(expect.stringContaining('usage'), expect.any(Error));
+    } finally {
+      log.mockRestore();
+    }
+  });
   it('does not discover accounts when Linear is disconnected', async () => {
     const { call, pipedream } = fixture(false);
     expect((await call()).status).toBe(404);
