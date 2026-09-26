@@ -3,7 +3,7 @@ import { awaitMirrorOperation } from "./home-mirror-abort.js";
 
 export function createMirrorR2(client: R2Client, getSignal: () => AbortSignal): R2Client {
   const operationSignal = (defaultTimeout: number, signal?: AbortSignal) =>
-    AbortSignal.any([signal ?? AbortSignal.timeout(defaultTimeout), getSignal()]);
+    AbortSignal.any([AbortSignal.timeout(defaultTimeout), getSignal(), ...(signal ? [signal] : [])]);
   return {
     ...client,
     getObject: async (key, options) => {
