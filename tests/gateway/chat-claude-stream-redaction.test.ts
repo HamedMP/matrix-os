@@ -179,6 +179,34 @@ describe("Claude streamed assistant text redaction", () => {
     expect(projector.flush()).toBe("again");
   });
 
+  it("streams ordinary Chinese prose without spaces or false overflow redaction", () => {
+    const projector = createAssistantTextStreamProjector({ homePath: "/home/matrix/home" });
+    const sentence = "这是普通中文回答。";
+    const first = projector.push(sentence);
+    const rest = projector.push(sentence.repeat(299)) + projector.flush();
+    expect(first.length).toBeGreaterThan(0);
+    expect(first + rest).toBe(sentence.repeat(300));
+  });
+
+  it("keeps a long unspaced Chinese Claude answer intact across streamed deltas", async () => {
+    const sentence = "这是普通中文回答。";
+    const deltas = await streamedAssistantDeltas(Array.from({ length: 3 }, () => sentence.repeat(100)));
+    expect(deltas.join("")).toBe(sentence.repeat(300));
+    expect(deltas[0]?.length).toBeGreaterThan(0);
+  });
+
+  it("does not release Chinese text inside a private path or assigned credential", () => {
+    const path = createAssistantTextStreamProjector({ homePath: "/home/matrix/home" });
+    const pathDeltas = [path.push("查看 /private/"), path.push("秘密文件"), path.flush()];
+    expect(pathDeltas[1]).toBe("");
+    expect(pathDeltas.join("")).toBe("查看 [redacted path]");
+
+    const credential = createAssistantTextStreamProjector({ homePath: "/home/matrix/home" });
+    const credentialDeltas = [credential.push("ACCESS_TOKEN="), credential.push("机密值"), credential.flush()];
+    expect(credentialDeltas[1]).toBe("");
+    expect(credentialDeltas.join("")).toBe("[redacted credential]");
+  });
+
   it("replaces an overlong token once and drops its remainder until whitespace", () => {
     const projector = createAssistantTextStreamProjector({ homePath: "/home/matrix/home" });
     expect(projector.push("x".repeat(3_000) + " safe ")).toBe("[redacted] safe ");

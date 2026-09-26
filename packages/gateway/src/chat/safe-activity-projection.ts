@@ -4,6 +4,7 @@ const SECRET_TEXT = /(?:authorization\s*[:=]|bearer\s+|(?:api[_-]?(?:key|token)|
 const SECRET_ASSIGNMENT = /\b(?:API[_-]?KEY|API[_-]?TOKEN|ACCESS[_-]?TOKEN|SECRET|PASSWORD|CREDENTIAL)\s*=\s*[^\s,;]+/gi;
 const ABSOLUTE_PATH = /(^|[\s"'`(=:<>|;&])\/(?=[A-Za-z0-9._~-])(?!\/)[^\s"'`<>)]*/g;
 const DANGLING_BEARER = /(?:^|[^A-Za-z0-9_])Bearer\s+$/i;
+const ACTIVE_BEARER = /(?:^|[^A-Za-z0-9_])Bearer\s+/i;
 const DANGLING_SECRET_ASSIGNMENT = /(?:^|[^A-Za-z0-9_])(?:API[_-]?(?:KEY|TOKEN)|ACCESS[_-]?TOKEN|SECRET|PASSWORD|CREDENTIAL)\s*(?:=\s*)?$/i;
 const ASSISTANT_TEXT_TAIL_LIMIT = 2_048;
 
@@ -90,6 +91,15 @@ export function createAssistantTextStreamProjector(options: { homePath: string; 
           && !DANGLING_BEARER.test(pending)
           && !DANGLING_SECRET_ASSIGNMENT.test(pending)) {
           projected += sanitizeAssistantText(pending, options);
+          pending = "";
+        } else if (character.codePointAt(0)! > 0x7f
+          && !/\s/u.test(character)
+          && !pending.includes("/")
+          && !ACTIVE_BEARER.test(pending)
+          && sanitizeAssistantText(pending, options) === pending) {
+          // Ordinary unspaced Unicode prose can stream; path/URL and secret
+          // candidates stay whole so a later chunk cannot expose a suffix.
+          projected += pending;
           pending = "";
         } else if (pending.length > ASSISTANT_TEXT_TAIL_LIMIT) {
           pending = "";
