@@ -565,7 +565,7 @@ describe("AgentsProvidersView", () => {
   it("connects and enables a disabled OpenCode agent through its ready own profile", async () => {
     const next = snapshot();
     const harness = next.harnesses[0]!;
-    Object.assign(harness, { harness: "opencode", displayName: "OpenCode", enabled: false, accountIds: [], selectedAccountId: null, accessSourceId: null });
+    Object.assign(harness, { harness: "opencode", displayName: "OpenCode", enabled: false, accountIds: [], selectedAccountId: null, accessSourceId: null, configuredAccessSourceId: null });
     next.accessSources = [{ ...next.accessSources[0]!, id: "native_opencode", kind: "harness_profile", fundingKind: "owner_account", harness: "opencode", displayName: "OpenCode profile" }];
     const onMutate = vi.fn().mockResolvedValue(true);
     setup({ snapshot: next, onMutate });

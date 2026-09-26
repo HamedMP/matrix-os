@@ -255,6 +255,8 @@ export const ProviderHarnessInstanceSchema = z.object({
   enabled: z.boolean(),
   /** Saved owner intent; exposed only to clients opting into extended capabilities. */
   configuredEnabled: z.boolean().optional(),
+  /** Durable read-only binding; may outlive an unavailable or removed source. Never execution authority. */
+  configuredAccessSourceId: ReferenceIdSchema.nullable().optional(),
   /** Absent on historical rows; never infer an owner decision from a generated default. */
   enablementOrigin: z.enum(["generated_default", "owner_configuration"]).optional(),
   version: canonicalSafeLabel(64, 256).nullable(),

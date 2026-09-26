@@ -378,6 +378,7 @@ function projectHarness(input: {
     enabled: Boolean(executionRouteAvailable
       && input.stored.enabled && driver?.installState === "installed"),
     configuredEnabled: generatedNative ? true : input.stored.enabled,
+    configuredAccessSourceId: input.stored.accessSourceId,
     ...(input.stored.enablementOrigin ? { enablementOrigin: input.stored.enablementOrigin } : {}),
     version: null,
     installState: driver?.installState ?? "missing",

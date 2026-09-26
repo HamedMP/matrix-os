@@ -113,6 +113,7 @@ describe("provider setup presentation", () => {
 
   it("selects only a ready compatible own-account source and fails closed without one", async () => {
     const value = fundedSnapshot();
+    value.harnesses[0]!.configuredAccessSourceId = null;
     const base = value.accessSources[0]!;
     value.accessSources.push({
       ...base,

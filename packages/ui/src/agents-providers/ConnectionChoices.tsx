@@ -25,19 +25,34 @@ export function ConnectionChoices({ snapshot, harness, gatewaySource, gatewaySel
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   useLocalObservationExpiry(snapshot.accessSources.map((source) => source.localObservation?.staleAfter));
   if ((harness.harness !== "pi" && harness.harness !== "opencode") || harness.installState !== "installed") return null;
-  const ownTarget = preferredOwnAccountTarget(ownAccountTargets(snapshot, harness), harness);
   const boundTargets = ownAccountTargets(snapshot, harness, false);
-  const staleNative = preferredOwnAccountTarget(boundTargets.filter(({ source }) => source.kind === "harness_profile"
-    && source.readiness.state === "unknown" && source.localObservation?.state === "present_unverified"), harness);
-  const ownSelected = !gatewaySelected && boundTargets.some(({ source, model }) => source.id === harness.accessSourceId
-    && model.id === harness.route.modelId && source.accountId === harness.selectedAccountId);
+  const legacyBindingUnknown = harness.configuredAccessSourceId === undefined && harness.accessSourceId === null;
+  const configuredSourceId = harness.configuredAccessSourceId ?? harness.accessSourceId;
+  // Own account is an explicit funding change when the saved choice is Matrix AI.
+  const savedSourceId = snapshot.accessSources.some((source) => source.id === configuredSourceId && source.kind === "matrix_gateway")
+    ? null : configuredSourceId;
+  const savedTarget = boundTargets.find(({ source, model }) => source.id === savedSourceId
+    && source.providerId === harness.route.providerId && model.id === harness.route.modelId);
+  const freshTargets = ownAccountTargets(snapshot, harness);
+  const ownTarget = savedSourceId !== null
+    ? freshTargets.find(({ source, model }) => source.id === savedSourceId && model.id === harness.route.modelId)
+    : preferredOwnAccountTarget(freshTargets, harness);
+  const staleNative = savedTarget?.source.kind === "harness_profile" && savedTarget.source.readiness.state === "unknown"
+    && savedTarget.source.localObservation?.state === "present_unverified" ? savedTarget : undefined;
+  const ownSelected = !gatewaySelected && savedTarget !== undefined
+    && (savedTarget.source.kind === "harness_profile" ? savedTarget.source.accountId === null : savedTarget.source.accountId === harness.selectedAccountId);
   const usingGateway = gatewaySelected && harness.enabled;
   const needsUpdate = !harness.enabled && snapshot.atomicConnectSupported !== true;
   const selectOwn = async () => {
     setFailed(false);
     setPending(true);
     try {
-      let target = preferredOwnAccountTarget(ownAccountTargets(snapshot, harness), harness);
+      if (legacyBindingUnknown) { setFailed(true); return; }
+      const freshAtClick = ownAccountTargets(snapshot, harness);
+      let target = savedSourceId !== null
+        ? freshAtClick.find(({ source, model }) => source.id === savedSourceId && model.id === harness.route.modelId)
+        : preferredOwnAccountTarget(freshAtClick, harness);
+      if (savedSourceId !== null && !savedTarget) { setFailed(true); return; }
       let current = snapshot;
       if (!target && staleNative && canSetRoute && onRefreshForConnection) {
         const refreshed = await onRefreshForConnection();
@@ -45,13 +60,17 @@ export function ConnectionChoices({ snapshot, harness, gatewaySource, gatewaySel
         const refreshedHarness = refreshed?.harnesses.find((candidate) => candidate.id === harness.id && candidate.harness === harness.harness);
         target = refreshed && refreshedHarness?.installState === "installed" && refreshed.access.mode === "writable"
           && refreshed.supportedActions.includes("set_route")
+          && refreshedHarness.route.providerId === harness.route.providerId && refreshedHarness.route.modelId === harness.route.modelId
+          && refreshedHarness.selectedAccountId === harness.selectedAccountId
           ? ownAccountTargets(refreshed, refreshedHarness).find(({ source, model }) => source.id === staleNative.source.id
-            && source.providerId === staleNative.source.providerId && model.id === staleNative.model.id) : undefined;
+            && source.providerId === staleNative.source.providerId && model.id === staleNative.model.id && source.accountId === staleNative.source.accountId
+            && (refreshedHarness.configuredAccessSourceId ?? refreshedHarness.accessSourceId) === savedSourceId) : undefined;
         if (!target || !refreshed || (!refreshedHarness?.enabled && refreshed.atomicConnectSupported !== true)) {
           setFailed(true); return;
         }
         current = refreshed;
       }
+      if (savedSourceId !== null && !target) { setFailed(true); return; }
       const result = target && canSetRoute
         ? await onMutate({ type: "set_route", harnessInstanceId: harness.id,
           route: { kind: "configurable", providerId: target.source.providerId, modelId: target.model.id },
@@ -72,7 +91,7 @@ export function ConnectionChoices({ snapshot, harness, gatewaySource, gatewaySel
         <span>{gatewaySelected ? "Matrix credit · no separate login" : gatewaySource?.readiness.state === "ready" && onUseGateway ? "Matrix credit · no separate login" : "Not available for this connection"}</span>
       </button>
       <button type="button" className="matrix-ap-connection-choice" aria-pressed={ownSelected}
-        disabled={disabled || pending || needsUpdate || !(ownTarget && canSetRoute) && !(staleNative && canSetRoute && onRefreshForConnection) && !onSetupHarness} onClick={() => { void selectOwn(); }}>
+        disabled={disabled || pending || needsUpdate || !(ownTarget && canSetRoute) && !(staleNative && canSetRoute && onRefreshForConnection) && !(savedSourceId !== null && canSetRoute) && !onSetupHarness} onClick={() => { void selectOwn(); }}>
         <strong>Own account</strong><span>{ownSelected ? "Selected" : `Connect through ${harness.displayName}`}</span>
       </button>
     </div>
