@@ -31,7 +31,17 @@ Compare against `pi-coding-agent` SDK only if the core forces substantial duplic
 
 Run Pi as a third pinned adapter inside the existing scope runtime, not in the gateway process and not in a new parallel service. The worker inherits the profile's dynamic user, private network, private root, and resource caps. It holds no provider credentials: model calls leave through broker inference actions whose access source Provider V3 resolved at admission, and every tool call leaves through the broker as a run-bound capability request. The broker, not the worker, reaches integrations, the computer service, owner files outside the scope root, and handoff dispatch.
 
-Direct and group bot runs enter the same boundary. A direct-chat run is admitted by the owner principal. A group run is admitted through the existing shared-AI eligibility and scope-bound run path. In both cases the gateway binds these into the signed run context at admission: bot ID and role revision, conversation and participant set, task and handoff identity, resolved access source, and the capability set of account, action, and audience grants. The broker checks that context on every request. A worker cannot widen it; a handoff produces a newly admitted run with a capability subset. The spike must validate group handoffs through the same admission path production will use.
+### Private and Group Admission
+
+Private and group bot runs share the profile, supervisor, and broker, but they are admitted differently, and private admission is new work. Shared-Chat admission today requires a collaboration scope, `request_ai` authority on that scope, and a Chat execution root (`project` or `worktree`) whose fingerprint the sandbox manifest mounts. A run without a root fails as `unavailable` (`createSharedChatSandboxManifest` in `gateway/src/collaboration/shared-ai-runtime.ts`). A newly created recipe bot's direct chat has none of these.
+
+- **Private bot workspace**: the reserved creation operation also creates one workspace per bot. Its path is derived server-side from the owner and the operation's fixed bot ID under the owner's Matrix home, validated with `resolveWithinHome`, and created exclusively. It never comes from client input or model output. Artifacts the bot produces for its owner live there as owner files.
+- **Execution root**: add a `bot_workspace` execution-root kind, keyed by bot ID, that the same resolver validates and fingerprints like `project` and `worktree` roots. Do not create hidden projects to reuse the existing kinds. Adding the kind is a contract change: renderers and compatibility projections must accept or explicitly ignore it.
+- **Private scope**: private runs use a runtime scope handle derived from the bot ID, not a collaboration scope. Admission authorizes the owner principal as owner of both the bot and its direct chat. No shared-scope role reaches it, and shared routes cannot address a private handle.
+- **Group runs**: admitted through the existing collaboration scope and `request_ai` authority, subject to guest AI permission. A group run mounts the shared Chat's execution root, or a task-scoped workspace created for the group task when the Chat has none. It never mounts the bot's private workspace; private artifacts enter only as an explicitly granted, bounded copy. The spike must validate group handoffs through this same admission path.
+- **Binding**: for both kinds the gateway binds into the signed run context: bot ID and role revision, conversation and participant set, task and handoff identity, resolved access source, execution root and fingerprint, and the capability set of account, action, and audience grants. The broker checks it on every request. A worker cannot widen it; a handoff produces a newly admitted run with a capability subset.
+- **Recovery**: a crash after the workspace exists but before the chat commits leaves a recoverable operation that reconciliation completes with the same IDs. An empty workspace from an abandoned operation may be removed; a non-empty one is retained and surfaced. At run time, `invalid_root` (workspace deleted or replaced) and `root_changed` (fingerprint drift) produce a recoverable blocked state. The workspace is recreated only after owner confirmation, and a replaced path is never followed. Archiving a bot keeps its workspace; deleting it requires explicit owner confirmation after an export offer.
+- **Spike questions**: whether the supervisor's scope-handle namespace and manifest accept a non-collaboration handle without weakening shared-scope checks, and whether `bot_workspace` fits the resolver's fingerprint and revalidation rules.
 
 Browser and desktop control cannot run inside a workload without network access. The computer is a separate supervised service with its own Unix identity, owner-private browser profiles, and filtered egress: pinned DNS resolution, private, link-local, and metadata ranges blocked, redirects revalidated, and subresources and downloads covered. The worker reaches it only through broker computer actions that carry the observation ID and fencing generation. The agent loop keeps its no-network guarantee, and SSRF enforcement stays in one egress point.
 
@@ -101,8 +111,18 @@ A bot's description of its own access is model output and is not authoritative. 
 ## Model Access, Funding, and Concurrency
 
 - Each run resolves one access source through Provider V3 and records it with the run.
-- On Matrix AI usage-mode routes the owner has one funded request in flight. The bot scheduler queues model turns across the owner's bots for that slot instead of surfacing `rate_limited` as task failure, and queued turns show a waiting state. Interactive owner turns take precedence over background bot work. Own-account access sources may use the per-owner worker limit concurrently.
-- Group handoffs on a funded route therefore alternate model turns. The active-work deadline excludes queue wait; a separate queue-wait bound ends in a truthful blocked state.
+- Own-account access sources bypass the gate below and may use the per-owner worker limit concurrently.
+
+### Owner Funded-Admission Gate
+
+The platform reserves the funded slot per model request when the relay calls `/authorize` with a request ID, and it rejects a competing request instead of queueing it. A queue that covers only bots cannot give the owner's own Chat priority, because whichever request reaches the relay first wins. Interactive and background work therefore share one admission point.
+
+- **One gate**: the gateway owns one admission gate per owner and funded access source. Every Matrix-managed funded request uses it: canonical Chat adapters, app AI, Jev, and scope-runtime broker inference for bots. Each request carries a class: interactive (a turn a person is waiting on, including an authorized collaborator's) or background (bot tasks, handoffs, routines).
+- **Priority at the next slot**: the gate releases one request at a time. When the slot frees, the oldest waiting interactive request goes first, then the oldest background request. Priority applies per model request, not per run. A background run does not hold the slot between its model calls, so an interactive turn goes out at the next free slot.
+- **Running requests**: a request already sent to the relay is never preempted or cancelled for priority. It completes, fails, or is cancelled by its own requester, and the slot frees when the platform settles its reservation.
+- **Bounds**: at most 64 waiting requests per owner. Waiting is bounded at 2 minutes for interactive and 10 minutes for background requests, after which the request ends in a truthful blocked state. Cancellation removes the entry, and shutdown ends waiting entries with a retryable state. Waiting time does not consume a run's funded credential lifetime; the credential is issued or refreshed when the request leaves the gate. The active-work deadline excludes gate wait.
+- **Paths that bypass the gate**: processes that receive a relay base URL directly, such as kernel-credential leases that set `ANTHROPIC_BASE_URL` (`gateway/src/kernel-credentials.ts`), bypass the gate today. Interactive paths must go through a gateway-local relay endpoint that applies the gate, or the priority guarantee does not hold. A background path may instead treat a relay `rate_limited` as retryable: the request re-enters the gate at its class with bounded backoff (at most three re-entries) and shows as waiting, not failed. Spike B must list every funded path and which option it uses.
+- **Group consequence**: bots in a group on a funded route take turns at the slot, and an owner turn goes out ahead of queued bot requests.
 - Computer use needs a vision-capable model with reliable coordinate grounding. The managed GLM default is not assumed to qualify. The spike selects one explicitly vision-capable access source and records per-step and per-task cost. Before computer use runs on funded credit, the owner sees the cost basis; starter credit is not assumed to cover computer-use tasks.
 - Task currency budgets use the same reservation path as other funded requests; there is no parallel accounting.
 
@@ -155,11 +175,11 @@ Candidate modules are new small services; names below describe intended responsi
 
 1. Open the existing owner DB resource, initialize migrations, and bootstrap the existing bot definition store.
 2. Initialize bot-operation reconciliation, task/event/outbox repositories, grant policy, and pending-interaction service using that shared DB. Only the DB owner closes it.
-3. Connect the integration broker client and Provider V3 resolver; register capabilities only when their dependencies are present. Surface missing optional capabilities without claiming readiness.
+3. Connect the integration broker client and Provider V3 resolver, and start the owner funded-admission gate before any funded request path is registered; register capabilities only when their dependencies are present. Surface missing optional capabilities without claiming readiness.
 4. Initialize the computer service client, egress policy, screenshot store, controller leases, and the scope-runtime supervisor client. Reconcile running workloads and expired leases before dispatch.
 5. Register the Pi adapter with scope-runtime eligibility and the canonical run pipeline; inject repositories, tool services, policy, memory, funding-slot scheduler, and event sink. Bridge Pi schema types behind Zod contracts; never use globalThis.
 6. Mount authenticated HTTP/WS controls and shared UI clients; start bounded outbox dispatch and recurring cleanup last.
-7. Shutdown stops admission, drains/clears subscribers, stops dispatch, persists pending controls, then detaches only durably supervised workers or confirms termination. Preserve uncertain worker/resource ownership. Close owned services and DB last.
+7. Shutdown stops admission, ends funded-gate waiters with a retryable state, drains/clears subscribers, stops dispatch, persists pending controls, then detaches only durably supervised workers or confirms termination. Preserve uncertain worker/resource ownership. Close owned services and DB last.
 
 ## Resource Limits and Failure Modes
 
@@ -168,7 +188,9 @@ Proposed spike limits are enforced server-side and adjustable only through valid
 | Resource | Initial bound and recovery policy |
 |---|---|
 | Bots | Existing 100 per owner; archive does not silently erase history |
-| Workers/group | Two concurrent workers per owner where the access source permits concurrency; on Matrix AI usage-mode routes model turns queue for the owner's single funded slot, with a 10-minute queue-wait bound; max two bots in spike group; production admission cap initially eight bots/group |
+| Workers/group | Two concurrent workers per owner where the access source permits concurrency; on Matrix AI usage-mode routes model requests go through the owner funded-admission gate; max two bots in spike group; production admission cap initially eight bots/group |
+| Funded-admission gate | One gate per owner and funded access source; 64 waiting requests; 2-minute interactive and 10-minute background wait bounds; at most three re-entries after a bypass collision; waiters end with a retryable state on shutdown |
+| Bot workspaces | One per bot, created with the bot; counted against the owner's existing storage; archive retains, deletion requires owner confirmation |
 | Task tree | 12 handoffs, depth 3, 60 tool actions, 10-minute active-work deadline, and separately enforced shared token/currency budget; all descendants charge the same parent budget |
 | Pending interactions | 32 per owner; one blocking question per task; 24-hour expiry persisted; OAuth pending state at most 15 minutes; expired waits release active workers |
 | Tool/network calls | API 10s, browser/download 30s, bounded command 60s; caller cancellation plus AbortSignal timeout; at most two retries for proven idempotent transient failures |
