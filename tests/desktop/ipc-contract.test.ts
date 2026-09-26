@@ -7,6 +7,22 @@ import {
 import type { CreateAgentThreadRequest } from "@matrix-os/contracts";
 
 describe("IPC contract", () => {
+  it("allows browser source IDs but never arbitrary local file paths", () => {
+    const sources = INVOKE_CHANNELS["browser:list-import-sources"];
+    const imported = INVOKE_CHANNELS["browser:import-pages"];
+    expect(sources.request.safeParse({}).success).toBe(true);
+    expect(imported.request.safeParse({ sourceId: "chrome:Default" }).success).toBe(true);
+    expect(imported.request.safeParse({ sourceId: "arc:sidebar" }).success).toBe(true);
+    expect(imported.request.safeParse({ sourceId: "../../Cookies" }).success).toBe(false);
+    expect(imported.request.safeParse({ sourceId: "chrome:Default", path: "/private/secret" }).success).toBe(false);
+    expect(imported.response.safeParse({ pages: [{
+      title: "Example", url: "https://example.com/", folder: "Bookmarks bar",
+    }] }).success).toBe(true);
+    expect(imported.response.safeParse({ pages: [{
+      title: "Bad", url: "file:///private/key", folder: "Bookmarks bar",
+    }] }).success).toBe(false);
+  });
+
   it("accepts only sign-up and sign-in intents for Electron Desktop device auth", () => {
     const request = INVOKE_CHANNELS["auth:start-device-flow"].request;
 

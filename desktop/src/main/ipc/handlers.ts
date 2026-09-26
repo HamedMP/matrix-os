@@ -26,6 +26,9 @@ export interface HandlerContext {
   store: LocalStore;
   embeds: EmbedService;
   openExternal: (url: string) => Promise<void>;
+  listBrowserImportSources: () => Promise<InvokeResponse<"browser:list-import-sources">["sources"]>;
+  importBrowserPages: (sourceId: InvokeRequest<"browser:import-pages">["sourceId"])
+    => Promise<InvokeResponse<"browser:import-pages">>;
   setBadgeCount: (count: number) => void;
   notify: (input: { threadId: string; title: string; body: string; kind: string }) => void;
   onRuntimeChanged: (slot: string) => void;
@@ -177,6 +180,10 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): 
   if (typeof downloadFile !== "function" || typeof cancelFileDownload !== "function") {
     throw new Error("download service unavailable");
   }
+  const { listBrowserImportSources, importBrowserPages } = ctx;
+  if (typeof listBrowserImportSources !== "function" || typeof importBrowserPages !== "function") {
+    throw new Error("browser import unavailable");
+  }
   function handle<C extends InvokeChannel>(channel: C, handler: Handler<C>): void {
     ipcMain.handle(channel, async (_event, rawPayload) => {
       const parsedRequest = INVOKE_CHANNELS[channel].request.safeParse(rawPayload ?? {});
@@ -316,6 +323,9 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): 
     }
     return { ok: true };
   });
+
+  handle("browser:list-import-sources", async () => ({ sources: await listBrowserImportSources() }));
+  handle("browser:import-pages", ({ sourceId }) => importBrowserPages(sourceId));
 
   handle("shell:open-external", async ({ url }) => {
     await ctx.openExternal(url);
