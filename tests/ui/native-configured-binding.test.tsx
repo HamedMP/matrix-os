@@ -110,7 +110,7 @@ it("does not guess a legacy saved binding from an expired profile and a ready ke
   expect(refresh).not.toHaveBeenCalled();
 });
 
-it.each(["missing profile", "changed binding", "wrong harness", "wrong account", "wrong model", "expired", "future", "denied"])("denies %s after the real projected refresh without an API-key fallback", async (negative) => {
+it.each(["missing profile", "changed binding", "wrong harness", "wrong account", "wrong model", "changed model route", "changed selected account", "expired", "future", "denied"])("denies %s after the real projected refresh without an API-key fallback", async (negative) => {
   const fresh = await projected("pi", true);
   const native = fresh.accessSources.find((source) => source.kind === "harness_profile")!;
   if (negative === "missing profile") fresh.accessSources = fresh.accessSources.filter((source) => source !== native);
@@ -118,6 +118,8 @@ it.each(["missing profile", "changed binding", "wrong harness", "wrong account",
   if (negative === "wrong harness") native.harness = "opencode";
   if (negative === "wrong account") native.accountId = "other_account";
   if (negative === "wrong model") native.eligibleModelIds = [];
+  if (negative === "changed model route") fresh.harnesses[0]!.route.modelId = "claude-opus-5";
+  if (negative === "changed selected account") fresh.harnesses[0]!.selectedAccountId = "other_account";
   if (negative === "expired") native.localObservation!.staleAfter = new Date(Date.now() - 1).toISOString();
   if (negative === "future") native.localObservation!.checkedAt = new Date(Date.now() + 30_000).toISOString();
   if (negative === "denied") native.readiness.state = "auth_required";
