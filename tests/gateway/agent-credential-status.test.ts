@@ -66,9 +66,12 @@ describe("agent credential status routes", () => {
       agent: "codex",
       status: "available",
       verifiedAt: "2026-05-23T00:00:00.000Z",
+      verificationScope: "local_cli",
     });
     const body = await (await app.request("/credentials/status")).json();
     expect(body.activeAgents).toEqual(["codex", "hermes"]);
+    expect(body.agents.find((agent: { agent: string }) => agent.agent === "codex"))
+      .toMatchObject({ status: "available", verifiedAt: null, localCheckedAt: "2026-05-23T00:00:00.000Z" });
   });
 
   it("derives probed agent availability live instead of caching verified state", async () => {

@@ -227,7 +227,7 @@ export function createWorkspaceCodingAgentProvider(
         kind: providerKind(agent),
         availability: executable ? "available" : "unavailable",
         installStatus: "installed",
-        authStatus: "authenticated",
+        authStatus: agent === "codex" ? "unknown" : "authenticated",
         supportedModes: ["default", "review"],
         defaultMode: "default",
         setupActions: [],

@@ -1,4 +1,4 @@
-import type { AgentProviderSummary, RuntimeSummary, SafeSetupAction } from "@matrix-os/contracts";
+import { providerAttemptable, type AgentProviderSummary, type RuntimeSummary, type SafeSetupAction } from "@matrix-os/contracts";
 
 export type ProviderReadinessAction =
   | { kind: "setup"; action: SafeSetupAction }
@@ -126,11 +126,7 @@ export function deriveProviderReadiness(input: {
   const provider = input.summary.providers.find((candidate) => candidate.id === input.providerId);
   if (!provider) return unverifiedProvider();
 
-  if (
-    provider.availability === "available" &&
-    provider.installStatus === "installed" &&
-    provider.authStatus === "authenticated"
-  ) {
+  if (providerAttemptable(provider)) {
     return {
       state: "ready",
       blocked: false,

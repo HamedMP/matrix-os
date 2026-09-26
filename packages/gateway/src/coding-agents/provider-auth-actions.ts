@@ -13,7 +13,10 @@ export function providerAuthActions(summary: AgentProviderSummary): SafeSetupAct
   if (summary.installStatus !== "installed") return summary.setupActions;
   const actions = summary.setupActions.filter((action) => !action.id.endsWith("_install"));
   const logout = LOGOUT_COMMANDS[summary.kind];
-  if (summary.authStatus !== "authenticated" || !logout || !actions.some((action) => action.kind === "foreground_terminal")) return actions;
+  const locallyConfiguredCodex = summary.kind === "codex" && summary.availability === "available"
+    && summary.authStatus === "unknown";
+  if ((summary.authStatus !== "authenticated" && !locallyConfiguredCodex)
+    || !logout || !actions.some((action) => action.kind === "foreground_terminal")) return actions;
   const command = [
     'export MATRIX_NODE_PREFIX="${MATRIX_NODE_PREFIX:-/opt/matrix/runtime/node}"',
     'export PATH="$MATRIX_NODE_PREFIX/bin:$PATH"',

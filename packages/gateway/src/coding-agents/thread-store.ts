@@ -41,6 +41,7 @@ import {
 import { atomicWriteJson } from "../state-ops.js";
 import type { RequestPrincipal } from "../request-principal.js";
 import { logCodingAgentWarning } from "./diagnostics.js";
+import type { CodingAgentProviderAdmission } from "./codex-harness-admission.js";
 import { CodingAgentSteerRequestSchema, matchesSteeringTurn } from "./thread-steering.js";
 import { applyThreadAbort, type CodingAbortScope } from "./thread-abort.js";
 import {
@@ -178,6 +179,7 @@ export interface CodingAgentThreadStoreOptions {
   homePath: string;
   now?: () => Date;
   providers: CodingAgentProviderAdapter[];
+  providerAdmission?: CodingAgentProviderAdmission;
   relationValidator?: CodingAgentThreadRelationValidator;
   projectionPublisher?: CodingAgentThreadProjectionPublisher;
   maxTurnDispatches?: number;
@@ -1138,6 +1140,9 @@ export function createCodingAgentThreadStore(
 
       if (relationValidator) await relationValidator.validateCreate(principal, request);
       const provider = providerFor(request.providerId);
+      if (options.providerAdmission && !await options.providerAdmission.isProviderEnabled(request.providerId)) {
+        throw new CodingAgentThreadError("provider_unavailable", "Provider unavailable");
+      }
 
       const createdAt = now().toISOString();
       let thread: StoredThread = {
@@ -1338,6 +1343,9 @@ export function createCodingAgentThreadStore(
             await relationValidator(principal, { projectId: thread.projectId, taskId: thread.taskId });
           }
           const provider = providerFor(thread.providerId);
+          if (options.providerAdmission && !await options.providerAdmission.isProviderEnabled(thread.providerId)) {
+            throw new CodingAgentTurnError("turn_unavailable");
+          }
           if (!provider.resumeTurn || !thread.providerResumeState) {
             throw new CodingAgentTurnError("thread_not_resumable");
           }

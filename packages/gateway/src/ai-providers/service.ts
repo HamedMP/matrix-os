@@ -5,6 +5,7 @@ import {
   type AiAccessSourceView,
   type AiProviderAccountView,
   type AiProviderReadiness,
+  type AiProviderLocalObservation,
   type AiProviderSnapshotV3,
 } from "@matrix-os/contracts";
 import type { KernelCredentialObservationState } from "../kernel-credentials.js";
@@ -19,8 +20,13 @@ import {
 } from "./model-catalog.js";
 import type { MatrixFundedCredentialProvider } from "../funded-ai-credential-manager.js";
 import type { FundedAiReadinessReader } from "../funded-ai-readiness.js";
+import type { CodexLocalCredentialObservation } from "../agent-launcher.js";
 
 const HEALTH_TIMEOUT_MS = 2_000;
+const CODEX_OBSERVATION_TIMEOUT_MS = 5_000;
+const UNKNOWN_LOCAL_OBSERVATION: AiProviderLocalObservation = {
+  state: "unknown", checkedAt: null, staleAfter: null,
+};
 const KERNEL_CAPABILITIES = [
   "tools",
   "resume",
@@ -48,6 +54,23 @@ interface AiProviderServiceOptions {
   driverInventory?: (signal: AbortSignal) => Promise<AiProviderSnapshotV3["drivers"]>;
   fundedCredentialProvider?: MatrixFundedCredentialProvider;
   fundedReadinessReader?: FundedAiReadinessReader;
+  codexLocalObservation?: (signal: AbortSignal) => Promise<CodexLocalCredentialObservation>;
+}
+
+function matchedCodexLocalObservation(
+  observation: CodexLocalCredentialObservation | undefined,
+  now: Date,
+): AiProviderLocalObservation {
+  if (!observation || observation.accessSourceId !== "owner_openai_profile") return UNKNOWN_LOCAL_OBSERVATION;
+  const checkedAt = Date.parse(observation.checkedAt ?? "");
+  const staleAfter = Date.parse(observation.staleAfter ?? "");
+  if (!Number.isFinite(checkedAt) || checkedAt > now.getTime()
+    || !Number.isFinite(staleAfter) || staleAfter <= now.getTime()) return UNKNOWN_LOCAL_OBSERVATION;
+  return {
+    state: observation.state,
+    checkedAt: observation.checkedAt,
+    staleAfter: observation.staleAfter,
+  };
 }
 
 function readinessForObservation(
@@ -163,6 +186,7 @@ export class AiProviderService implements AiProviderSnapshotReader {
   readonly #healthTimeoutMs: number;
   readonly #driverInventory?: AiProviderServiceOptions["driverInventory"];
   readonly #fundedReadiness?: FundedAiReadinessReader;
+  readonly #codexLocalObservation?: AiProviderServiceOptions["codexLocalObservation"];
 
   constructor(options: AiProviderServiceOptions) {
     if (!options.homePath) throw new Error("AI provider home path is required");
@@ -181,6 +205,25 @@ export class AiProviderService implements AiProviderSnapshotReader {
     );
     this.#driverInventory = options.driverInventory;
     this.#fundedReadiness = options.fundedReadinessReader;
+    this.#codexLocalObservation = options.codexLocalObservation;
+  }
+
+  async #readCodexLocalObservation(): Promise<AiProviderLocalObservation | undefined> {
+    if (!this.#codexLocalObservation) return undefined;
+    const signal = AbortSignal.timeout(CODEX_OBSERVATION_TIMEOUT_MS);
+    try {
+      const observed = await Promise.race([
+        this.#codexLocalObservation(signal),
+        new Promise<never>((_resolve, reject) => {
+          signal.addEventListener("abort", () => reject(new Error("Codex observation timed out")), { once: true });
+        }),
+      ]);
+      return matchedCodexLocalObservation(observed, this.#now());
+    } catch (error: unknown) {
+      // An unavailable local CLI probe is not an authentication verdict.
+      console.warn("[ai-providers] Codex local observation unavailable:", error instanceof Error ? error.name : "UnknownError");
+      return UNKNOWN_LOCAL_OBSERVATION;
+    }
   }
 
   async #drivers(): Promise<AiProviderSnapshotV3["drivers"]> {
@@ -273,11 +316,12 @@ export class AiProviderService implements AiProviderSnapshotReader {
   }
 
   async getSnapshot(options: { refresh?: boolean } = {}): Promise<AiProviderSnapshotV3> {
-    const now = this.#now().toISOString();
+    const snapshotTime = this.#now();
+    const now = snapshotTime.toISOString();
     const { credentials, savedModel } = await this.#credentials.read();
     // These observations are independent. A slow CLI must not serialize the
     // funding and credential checks behind its bounded inventory deadline.
-    const [drivers, funded, apiKeyReadiness, profileReadiness] = await Promise.all([
+    const [drivers, funded, apiKeyReadiness, profileReadiness, codexLocalObservation] = await Promise.all([
       this.#drivers(),
       credentials.matrixIncluded.state === "ready" && this.#fundedReadiness
         ? this.#fundedReadiness.read()
@@ -288,9 +332,14 @@ export class AiProviderService implements AiProviderSnapshotReader {
       this.#resolveOwnerReadiness(
         "owner_anthropic_profile", credentials.ownerProfile.state, "profile", now, options.refresh === true,
       ),
+      this.#readCodexLocalObservation(),
     ]);
     const codexDriver = drivers.find((driver) => driver.id === "codex");
-    const codexReadiness = readinessForDriver(codexDriver, now);
+    // Driver health and CLI login are local observations. Neither proves the
+    // selected OpenAI account or model can complete a remote request.
+    const codexReadiness: AiProviderReadiness = codexDriver?.installState === "installed"
+      ? { state: "unknown", checkedAt: now, staleAfter: null, action: "retry", safeReason: "unknown" }
+      : readinessForDriver(codexDriver, now);
     const matrixReadiness = funded?.readiness ?? readinessForObservation(
       credentials.matrixIncluded.state === "ready" ? "unverified" : credentials.matrixIncluded.state,
       "matrix",
@@ -360,6 +409,11 @@ export class AiProviderService implements AiProviderSnapshotReader {
         policyVersion: AI_PROVIDER_CATALOG_VERSION,
       }, codexReadiness),
     ];
+    if (codexLocalObservation) {
+      accessSources[accessSources.length - 1] = {
+        ...accessSources[accessSources.length - 1]!, localObservation: codexLocalObservation,
+      };
+    }
 
     const selectedOwnerReadiness = credentials.selectedMode === "api_key"
       ? apiKeyReadiness

@@ -127,6 +127,9 @@ export const AgentCredentialSummarySchema = z.object({
   workflows: z.array(WorkflowIdSchema).max(8),
   degradedWorkflows: z.array(WorkflowIdSchema).max(8).default([]),
   verifiedAt: ActivationDateSchema.nullable(),
+  /** Codex local CLI check time, not remote account verification. */
+  localCheckedAt: ActivationDateSchema.nullable().optional(),
+  localObservation: z.enum(["present_unverified", "absent", "unknown"]).optional(),
   nextAction: OptionalSafeDisplayTextSchema,
 });
 export type AgentCredentialSummary = z.infer<typeof AgentCredentialSummarySchema>;
@@ -148,6 +151,7 @@ export const VerifyAgentCredentialResponseSchema = z.object({
   agent: AgentIdSchema,
   status: AgentCredentialStatusSchema,
   verifiedAt: ActivationDateSchema,
+  verificationScope: z.literal("local_cli").optional(),
 });
 export type VerifyAgentCredentialResponse = z.infer<typeof VerifyAgentCredentialResponseSchema>;
 

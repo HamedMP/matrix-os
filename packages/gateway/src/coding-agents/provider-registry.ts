@@ -101,7 +101,7 @@ function summaryFromCredential(credential: AgentCredentialSummary): AgentProvide
     supportedModes: ["default", "review"],
     defaultMode: "default",
     setupActions: [],
-    lastCheckedAt: credential.verifiedAt ?? undefined,
+    lastCheckedAt: credential.localCheckedAt ?? credential.verifiedAt ?? undefined,
   }, credential));
 }
 
@@ -130,7 +130,9 @@ export function applyCredentialState(
       return {
         ...summary,
         installStatus: "installed",
-        authStatus: "authenticated",
+        // Codex CLI status only observes local configuration. Keep the
+        // operational route attemptable without claiming remote identity.
+        authStatus: credential.agent === "codex" ? "unknown" : "authenticated",
       };
     case "missing":
       return {
@@ -180,7 +182,7 @@ export function applyCredentialState(
 function shouldCheckHealth(summary: AgentProviderSummary): boolean {
   return summary.availability === "available" &&
     summary.installStatus === "installed" &&
-    summary.authStatus === "authenticated";
+    (summary.authStatus === "authenticated" || summary.kind === "codex");
 }
 
 export function createCodingAgentProviderRegistry(
