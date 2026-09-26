@@ -248,13 +248,27 @@ export function createClaudeChatProviderAdapter(options: {
     const cwd = input.executionRoot ?? options.homePath;
     const selectedPermission = permissionMode(input.permissionMode, input.interactionMode);
     const fullAccess = selectedPermission === "bypassPermissions";
+    // Presentation is projected from the exact scope requested at issuance.
+    // A presentation selector never authorizes a Gateway request.
+    const mcpScope = approvalReady && input.interactionMode === "default" && selectedPermission !== "plan"
+      ? "call" : "discovery";
     const capability = options.matrixMcpCapabilityIssuer?.issue({
       owner: input.owner,
       runId: input.runId,
       // Review is read-only even if its saved permission choice says full access.
       // Unknown future interaction modes receive discovery only.
-      scope: approvalReady && input.interactionMode === "default" && selectedPermission !== "plan" ? "call" : "discovery",
+      scope: mcpScope,
     }) ?? null;
+    const recipeGuidance = input.context?.agent?.recipe
+      ? "Selected integration dependencies are unavailable through this route. "
+        + (capability
+          ? "Discover Custom MCP servers with list_custom_mcp_servers, then inspect enabled tools with describe_custom_mcp_server. "
+            + (mcpScope === "call"
+              ? "Use call_custom_mcp_tool only when the user needs an enabled tool; the broker owns tool policy and approval."
+              : "This run supports discovery only; remote tool calls are unavailable.")
+          : "No Matrix tools are available for this run.")
+      : undefined;
+    const nativePrompt = recipeGuidance ? `${input.prompt}\n\n${recipeGuidance}` : input.prompt;
     let approvalClient = approvalReady && capability && selectedPermission === "default" && input.interactionMode === "default"
       ? options.customMcpApprovalClient : undefined;
     let registeredGeneration: number | undefined;
@@ -277,6 +291,7 @@ export function createClaudeChatProviderAdapter(options: {
         claudeOutputFormat: "stream-json",
         claudeIncludePartialMessages: true,
         matrixCustomMcp: capability !== null,
+        matrixCustomMcpScope: mcpScope,
       });
       if (resumeState) {
         const separator = launch.args.indexOf("--");
@@ -725,7 +740,7 @@ export function createClaudeChatProviderAdapter(options: {
       onStart(write, end) {
         writeControl = write;
         finishInput = end;
-        void write(`${JSON.stringify({ type: "user", session_id: resumeState?.sessionId ?? "", message: { role: "user", content: input.prompt }, parent_tool_use_id: null })}\n`).catch(error => {
+        void write(`${JSON.stringify({ type: "user", session_id: resumeState?.sessionId ?? "", message: { role: "user", content: nativePrompt }, parent_tool_use_id: null })}\n`).catch(error => {
           console.warn("[chat-claude] Initial input write failed", error instanceof Error ? error.name : "UnknownError");
           processController.abort();
         });

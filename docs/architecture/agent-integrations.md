@@ -45,6 +45,13 @@ platform stores AES-256-GCM encrypted OAuth/static credentials; the VPS stores
 only the non-secret revisioned enforcement projection in
 `~/system/mcp-servers.json`. Calls require the intersection of both copies.
 
+Canonical Claude Chat advertises only its issued Custom MCP surface: list and
+describe for discovery-only runs, plus the broker call wrapper when calls are
+authorized. Ordinary integration inventory is not advertised on this route.
+Existing full integration clients retain their complete tool inventory. The
+advertisement selector never expands the actor-bound Gateway grant or bypasses
+tool approval.
+
 The MCP and OAuth HTTPS transports pin the validated DNS address for both
 single-address and all-address lookup callbacks used by Node automatic
 address-family selection. Neither callback performs a second DNS lookup.

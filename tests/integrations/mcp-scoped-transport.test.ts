@@ -12,10 +12,14 @@ import { requireRequestPrincipal } from "../../packages/gateway/src/request-prin
 const serverId = "123e4567-e89b-42d3-a456-426614174000";
 
 describe("scoped Claude-to-Matrix MCP transport", () => {
-  it("initializes stdio, forwards list/describe/call through actor-bound Gateway auth, and denies reuse after revoke", async () => {
+  it.each([
+    { surface: "custom-mcp-call", scope: "call" as const },
+    { surface: "full", scope: "call" as const },
+    { surface: "full", scope: "discovery" as const },
+  ])("keeps $surface presentation within the $scope grant and denies reuse after revoke", async ({ surface, scope }) => {
     const ownerId = "owner_claude";
     const registry = createMatrixMcpCapabilityRegistry({ configuredOwnerId: ownerId });
-    const capability = registry.issue({ owner: { type: "personal", ownerId }, runId: "run_fixture", scope: "call" })!;
+    const capability = registry.issue({ owner: { type: "personal", ownerId }, runId: "run_fixture", scope })!;
     const fakeBrokerCall = vi.fn(async (actor: string, tool: string, approved: boolean) => {
       expect(actor).toBe(ownerId);
       expect(tool).toBe("search");
@@ -24,6 +28,8 @@ describe("scoped Claude-to-Matrix MCP transport", () => {
     });
     const app = new Hono();
     app.use("*", authMiddleware("machine-secret", { resolveMatrixMcpCapability: registry.resolve }));
+    const forbiddenInventory = vi.fn(() => []);
+    app.get("/api/integrations", c => c.json(forbiddenInventory()));
     app.get("/api/mcp-servers", (c) => c.json([{
       id: serverId, name: "Public docs fixture", status: "ready", enabled: true, revision: 10,
     }]));
@@ -59,7 +65,7 @@ describe("scoped Claude-to-Matrix MCP transport", () => {
     const client = new Client({ name: "canonical-claude-scoped-fixture", version: "1.0.0" });
     const transport = new StdioClientTransport({
       command: process.execPath,
-      args: ["packages/integrations-mcp/dist/cli.js"],
+      args: ["packages/integrations-mcp/dist/cli.js", `--tool-surface=${surface}`],
       env: {
         PATH: process.env.PATH ?? "",
         GATEWAY_URL: `http://127.0.0.1:${port}`,
@@ -81,13 +87,19 @@ describe("scoped Claude-to-Matrix MCP transport", () => {
       const result = await client.callTool({
         name: "call_custom_mcp_tool", arguments: { server_id: serverId, tool: "search", arguments: { query: "public docs" } },
       });
-      expect(JSON.stringify(result.content)).toContain("Synthetic public documentation result");
-      expect(fakeBrokerCall).toHaveBeenCalledOnce();
+      if (scope === "call") expect(JSON.stringify(result.content)).toContain("Synthetic public documentation result");
+      else expect(JSON.stringify(result.content)).toContain("tool call was rejected");
+      expect(fakeBrokerCall).toHaveBeenCalledTimes(scope === "call" ? 1 : 0);
+      if (surface === "full") {
+        const deniedInventory = await client.callTool({ name: "list_integration_inventory" });
+        expect(JSON.stringify(deniedInventory.content)).toContain("unavailable");
+        expect(forbiddenInventory).not.toHaveBeenCalled();
+      }
 
       capability.revoke();
       const denied = await client.callTool({ name: "list_custom_mcp_servers" });
       expect(JSON.stringify(denied.content)).toContain("currently unavailable");
-      expect(fakeBrokerCall).toHaveBeenCalledOnce();
+      expect(fakeBrokerCall).toHaveBeenCalledTimes(scope === "call" ? 1 : 0);
     } finally {
       await client.close();
       httpServer.closeAllConnections();

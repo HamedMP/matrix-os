@@ -66,6 +66,7 @@ export interface AgentLaunchInput {
   claudeOutputFormat?: "stream-json";
   claudeIncludePartialMessages?: boolean;
   matrixCustomMcp?: boolean;
+  matrixCustomMcpScope?: "call" | "discovery";
 }
 
 export interface AgentLaunchSpec {
@@ -323,7 +324,7 @@ function claudeLaunchArgs(input: AgentLaunchInput): string[] {
     "--permission-mode",
     permissionMode,
     "--strict-mcp-config",
-    ...(input.matrixCustomMcp ? ["--mcp-config", matrixMcpConfig()] : []),
+    ...(input.matrixCustomMcp ? ["--mcp-config", matrixMcpConfig(input.matrixCustomMcpScope)] : []),
     "--no-chrome",
     ...(input.model ? ["--model", input.model] : []),
     ...(modelOption(input, "effort") ? ["--effort", modelOption(input, "effort")!] : []),

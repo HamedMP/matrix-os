@@ -188,7 +188,9 @@ export class ChatAgentContext {
   }
 }
 
-export function contextPrompt(prompt: string, context?: ChatRunContext): string {
+export function contextPrompt(prompt: string, context?: ChatRunContext, options?: {
+  deferIntegrationGuidance?: boolean;
+}): string {
   if (!context || (!context.agent && !context.history && !context.chats.length)) return prompt;
   const segments: string[] = [];
   if (context.agent) segments.push(
@@ -202,7 +204,9 @@ export function contextPrompt(prompt: string, context?: ChatRunContext): string 
       recipe.skills.map((skill) => `Recipe skill ${JSON.stringify(skill.name)} (${skill.id}):\n${skill.instructions}`).join("\n\n"),
       `Selected integration dependencies:\n${recipe.integrations.map(({ service, accountLabel }) =>
         `- ${service} (${accountLabel ? `account ${JSON.stringify(accountLabel)}` : "account not specified"})`).join("\n") || "- none"}`,
-      "Before making integration calls, call list_integration_inventory, then describe_service for each selected service before call_service. If an account label is not specified and multiple accounts are available, ask the user which account to use instead of choosing silently.",
+      ...(options?.deferIntegrationGuidance ? [] : [
+        "Before making integration calls, call list_integration_inventory, then describe_service for each selected service before call_service. If an account label is not specified and multiple accounts are available, ask the user which account to use instead of choosing silently.",
+      ]),
       `Required output:\n${recipe.output}`,
     );
   }

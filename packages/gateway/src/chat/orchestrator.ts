@@ -687,7 +687,9 @@ export class CanonicalChatOrchestrator {
         turnId: run.turnId,
         runId: run.id,
         ...(run.context ? { context: run.context } : {}),
-        prompt: contextPrompt(promptOverride ?? promptFor(message.parts), run.context),
+        prompt: contextPrompt(promptOverride ?? promptFor(message.parts), run.context, {
+          deferIntegrationGuidance: run.driverKind === "claude_code",
+        }),
         parts: message.parts,
         selection: run.selection,
         interactionMode: run.interactionMode,

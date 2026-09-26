@@ -145,6 +145,11 @@ describe("server-resolved Chat mention context", () => {
     expect(prompt).toContain("describe_service for each selected service before call_service");
     expect(prompt).toContain("ask the user which account to use");
     expect(prompt).toContain("do not grant write permission");
+    const deferred = contextPrompt("Prepare the next steps", prepared.context, { deferIntegrationGuidance: true });
+    expect(deferred).not.toContain("call list_integration_inventory");
+    expect(deferred).not.toContain("describe_service for each selected service");
+    expect(deferred).toContain("gmail (account not specified)");
+    expect(deferred).toContain("Read inbox and calendar without writing.");
 
     await writeFile(join(home, "skills/matrix/personal-daily-brief/SKILL.md"),
       "---\nname: matrix-personal-daily-brief\ndescription: Edited\nauthor: Matrix OS\n---\nEdited future instructions.\n");
