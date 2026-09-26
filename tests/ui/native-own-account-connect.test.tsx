@@ -12,7 +12,7 @@ function fixture(kind: "pi" | "opencode") {
     id: kind, harness: kind, displayName: kind, accentColor: null, enabled: false,
     version: "1", installState: "installed", authState: "unknown", connectivity: "unknown",
     loginMethods: [], recommendedLoginMethod: null, accountIds: [], selectedAccountId: null,
-    accessSourceId: null, route: { kind: "configurable", providerId: "anthropic", modelId: "claude-fable-5" },
+    accessSourceId: null, configuredAccessSourceId: `native_${kind}`, route: { kind: "configurable", providerId: "anthropic", modelId: "claude-fable-5" },
     activeChatCount: 0,
   };
   const source: ProviderAccessSource = {
@@ -71,7 +71,8 @@ describe("native own-account connection", () => {
   ] as const)("does not activate %s native evidence", async (_name, alter) => {
     const { onMutate, onSetupHarness } = mount("pi", alter);
     fireEvent.click(screen.getByRole("button", { name: /Own account/ }));
-    await waitFor(() => expect(onSetupHarness).toHaveBeenCalledOnce());
+    await waitFor(() => expect(screen.getByRole("alert")).toBeVisible());
+    expect(onSetupHarness).not.toHaveBeenCalled();
     expect(onMutate).not.toHaveBeenCalled();
   });
 
@@ -82,7 +83,8 @@ describe("native own-account connection", () => {
     });
     await act(async () => { await vi.advanceTimersByTimeAsync(51); });
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: /Own account/ })); });
-    expect(onSetupHarness).toHaveBeenCalledOnce();
+    expect(onSetupHarness).not.toHaveBeenCalled();
+    expect(screen.getByRole("alert")).toBeVisible();
     expect(onMutate).not.toHaveBeenCalled();
   });
 
