@@ -5,6 +5,31 @@ import type { RemoteMcpClient } from "../../packages/gateway/src/integrations/cu
 import type { CustomMcpServerProjection } from "../../packages/gateway/src/integrations/custom-mcp/types.js";
 
 describe("Custom MCP broker Run policy", () => {
+  it("does not treat a caller Boolean as approval for an always_ask tool", async () => {
+    const serverId = "123e4567-e89b-42d3-a456-426614174000";
+    const tool = { name: "publish", enabled: true, approval: "always_ask" as const };
+    const projection: CustomMcpServerProjection = {
+      id: serverId, name: "Fixture", url: "https://mcp.example.test/mcp",
+      authMode: "none", enabled: true, revision: 10, tools: [tool],
+    };
+    const db = { getCustomMcpServerForBroker: vi.fn(async () => ({
+      id: serverId, url: projection.url, auth_mode: "none", encrypted_credentials: null,
+      enabled: true, status: "ready", revision: 10, enforcement_projection: [tool],
+    })) } as unknown as PlatformDb;
+    const remoteCall = vi.fn(async () => ({ ok: true }));
+    const broker = new CustomMcpBroker({
+      db, encryptionKey: Buffer.alloc(32),
+      projection: { upsert: vi.fn(), remove: vi.fn(), read: vi.fn(async () => projection) },
+      client: { callTool: remoteCall } as unknown as RemoteMcpClient,
+    });
+
+    await expect(broker.callSelectedTool({
+      userId: "owner_claude", serverId, toolName: "publish", arguments: { document: "fixture" },
+      approvalGranted: true,
+    })).rejects.toMatchObject({ code: "forbidden" });
+    expect(remoteCall).not.toHaveBeenCalled();
+  });
+
   it("allows the selected public-doc fixture but denies disabled, stale, unapproved, and foreign-owner calls", async () => {
     const serverId = "123e4567-e89b-42d3-a456-426614174000";
     const projection: CustomMcpServerProjection = {

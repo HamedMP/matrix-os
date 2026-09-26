@@ -537,6 +537,23 @@ function applyHarnessSettings(input: {
   aiSnapshot?: AiProviderSnapshotV3;
 }): InstanceDraft[] {
   return input.instances.map((instance) => {
+    if (instance.driverKind === "codex") {
+      if (input.executableDriverKinds !== undefined && !input.executableDriverKinds.includes("codex")) {
+        return unavailableInstance(instance, "runtime_not_runnable");
+      }
+      const saved = input.settings?.harnesses.filter((harness) => harness.harness === "codex") ?? [];
+      const enabled = saved.filter((harness) => harness.configuredEnabled ?? harness.enabled);
+      if (input.settingsAvailable && saved.length > 0 && enabled.length === 0) {
+        return unavailableInstance(instance, "disabled_in_settings");
+      }
+      const selectedSourceMatches = input.settingsAvailable
+        && enabled.length === 1
+        && enabled[0]!.accessSourceId === "owner_openai_profile";
+      const localObservation = selectedSourceMatches
+        ? input.aiSnapshot?.accessSources.find((source) => source.id === "owner_openai_profile")?.localObservation
+        : undefined;
+      return { ...instance, ...(localObservation ? { localObservation } : {}) };
+    }
     const generic = genericHarnessKind(instance.driverKind);
     const settingsHarness = settingsHarnessKind(instance.driverKind);
     const systemHarness = systemHarnessKind(instance.driverKind);

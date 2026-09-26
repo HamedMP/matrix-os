@@ -12,6 +12,7 @@ This directory owns the secret-free provider snapshot consumed by Chat and Setti
 - `ProviderHealthCache` has a fixed cap, TTL/LRU eviction, a recurring sweep, and an explicit shutdown drain owned by the gateway.
 - `model-catalog.ts` is a bounded bundled policy. Remote catalogs, executable driver definitions, arbitrary URLs, and owner mutations are not accepted here.
 - `GET /api/ai/providers` is read-only and runs behind the gateway's authenticated API boundary. Route failures expose only a generic message.
+- Codex's owner-profile source may carry a five-second `localObservation` from the exact configured executable and owner HOME/CODEX_HOME. `present_unverified` means the CLI reported a local ChatGPT login; it is not remote authentication, account identity, model entitlement, or paid readiness. Mismatched source, API-key mode, stale data, and failed checks project `unknown`. The source/account/instance readiness stays `unknown` until a separate exact-route proof exists; the source never exposes CLI output, executable paths, or credential material.
 
 Provider Settings now derives Hermes, OpenClaw, Claude, Codex, OpenCode, and Pi driver installation state from the existing runtime and executable probes. A driver without a canonical provider/model/access-source instance remains inventory-only; Settings does not invent a routable harness from a binary alone.
 

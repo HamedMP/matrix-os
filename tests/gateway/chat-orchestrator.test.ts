@@ -1377,7 +1377,7 @@ describe("CanonicalChatOrchestrator", () => {
     await expect(orchestrator.submitApproval(owner, "chat_approval", admitted.run.id, "appr_command", {
       clientRequestId: "req_approval_decision",
       decision: "approve",
-    })).resolves.toEqual({
+    }, { platformApprovalProof: "platform-signed-fixture-proof" })).resolves.toEqual({
       approvalId: "appr_command",
       decision: "approve",
       submission: "accepted",
@@ -1387,6 +1387,7 @@ describe("CanonicalChatOrchestrator", () => {
       approvalId: "appr_command",
       decision: "approve",
       clientRequestId: "req_approval_decision",
+      platformApprovalProof: "platform-signed-fixture-proof",
     }));
     await expect(orchestrator.submitApproval(owner, "chat_approval", admitted.run.id, "appr_command", {
       clientRequestId: "req_disallowed_decision",

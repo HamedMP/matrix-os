@@ -67,6 +67,13 @@ function visibleCopy(readiness: ProviderReadinessPresentation): string {
 }
 
 describe("deriveProviderReadiness", () => {
+  it("keeps a locally configured Codex run attemptable without claiming remote authentication", () => {
+    expect(deriveProviderReadiness({
+      summary: summary([provider({ authStatus: "unknown" })]),
+      providerId: "codex",
+      loading: false,
+    })).toMatchObject({ state: "ready", blocked: false });
+  });
   it("keeps summary hydration distinct from an unconfigured provider", () => {
     expect(deriveProviderReadiness({ summary: null, loading: true })).toEqual({
       state: "loading",

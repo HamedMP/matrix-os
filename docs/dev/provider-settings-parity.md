@@ -70,6 +70,17 @@ truth. Owner harness configuration is the bounded Provider Settings projection.
 is the sole executable Chat catalog. Legacy Settings and Chat shapes are
 compatibility projections; they are not independent stores.
 
+For Codex, V3 distinguishes a bounded local CLI observation from remote
+readiness. A source-matched, fresh ChatGPT `login status` result can say
+"Local login found; access not verified" in shared Settings and Chat copy;
+it cannot set the account/source/instance to ready. An API-key result does not
+authenticate the selected profile, and stale, mismatched, or failed checks
+say only "Access not verified". Chat may still offer the existing native
+route for a user-initiated attempt, while an explicit saved-off harness stays
+off. `authStatus: unknown` in the compatibility catalog must not be rendered
+as a remote authentication verdict; successful execution on the exact
+selected source remains a separate release validation step.
+
 Canvas, Web Desktop, and Electron must expose the same:
 
 - harnesses, accounts, access sources, models, and readiness states;

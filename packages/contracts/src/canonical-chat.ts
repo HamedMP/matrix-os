@@ -541,6 +541,7 @@ export const CanonicalChatRunActivitySchema = z.discriminatedUnion("type", [
     approvalId: canonicalReferenceId(128),
     title: canonicalSafeLabel(160, 640),
     risk: z.enum(["low", "medium", "high"]),
+    safeDescription: z.string().min(1).max(4_000).optional(),
     allowedDecisions: z.array(CanonicalChatApprovalDecisionSchema).min(1).max(4),
   }).strict(),
   CanonicalChatRunActivityBaseSchema.extend({

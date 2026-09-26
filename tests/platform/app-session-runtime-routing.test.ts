@@ -6,6 +6,7 @@ import { createApp } from "../../packages/platform/src/main.js";
 import { APP_SESSION_COOKIE } from "../../packages/platform/src/session-cookies.js";
 import { resolveAppDomainIdentity } from "../../packages/platform/src/session-routing-identity.js";
 import { issueSyncJwt } from "../../packages/platform/src/sync-jwt.js";
+import { CUSTOM_MCP_APPROVAL_PROOF_HEADER, verifyCustomMcpApprovalProof } from "../../packages/platform/src/custom-mcp-approval-proof.js";
 import {
   JWT_SECRET,
   cleanupProxyRoutingTest,
@@ -191,5 +192,51 @@ describe("browser app-session runtime routing", () => {
       runtimeSlot: "primary",
       source: "auth",
     });
+  });
+
+  it("attests the exact canonical approval through verified sync-JWT routing and overwrites caller proof", async () => {
+    await insertMachine(db, { handle: "alice-primary", runtimeSlot: "primary", publicIPv4: "203.0.113.20" });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("accepted", { status: 200 }));
+    const app = createApp({ db, orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({ verifyToken: vi.fn().mockResolvedValue(null) }), platformSecret: "platform-secret-123" });
+    const path = "/api/chats/chat_1/runs/run_1/approvals/approval_1";
+    const response = await app.request(path, { method: "POST", headers: {
+      host: "app.matrix-os.com", cookie: await primarySessionCookie(), "content-type": "application/json",
+      [CUSTOM_MCP_APPROVAL_PROOF_HEADER]: "forged",
+    }, body: JSON.stringify({ clientRequestId: "req_1", decision: "approve" }) });
+    expect(response.status).toBe(200);
+    const forwarded = new Headers((fetchMock.mock.calls[0]?.[1] as RequestInit).headers);
+    const proof = forwarded.get(CUSTOM_MCP_APPROVAL_PROOF_HEADER);
+    expect(proof).not.toBe("forged");
+    expect(verifyCustomMcpApprovalProof(proof ?? undefined, {
+      handle: "alice-primary", actorId: "user_alice", chatId: "chat_1", runId: "run_1",
+      approvalId: "approval_1", decision: "approve", clientRequestId: "req_1",
+      secret: "platform-secret-123",
+    })).toBe(true);
+  });
+
+  it("attests a verified Clerk request, and gives a generic machine bearer no proof", async () => {
+    await insertMachine(db, { handle: "alice-primary", runtimeSlot: "primary", publicIPv4: "203.0.113.20" });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("accepted", { status: 200 }));
+    const app = createApp({ db, orchestrator: stubOrchestrator(), platformSecret: "platform-secret-123",
+      clerkAuth: createClerkAuth({ verifyToken: async token => {
+        if (token !== "clerk-fixture") throw new Error("Invalid fixture token");
+        return { sub: "user_alice" };
+      } }) });
+    const path = "/api/chats/chat_1/runs/run_1/approvals/approval_1";
+    const body = JSON.stringify({ clientRequestId: "req_1", decision: "approve" });
+    expect((await app.request(path, { method: "POST", headers: { host: "app.matrix-os.com",
+      authorization: "Bearer clerk-fixture", "content-type": "application/json" }, body })).status).toBe(200);
+    const forwarded = new Headers((fetchMock.mock.calls[0]?.[1] as RequestInit).headers);
+    expect(verifyCustomMcpApprovalProof(forwarded.get(CUSTOM_MCP_APPROVAL_PROOF_HEADER) ?? undefined, {
+      handle: "alice-primary", actorId: "user_alice", chatId: "chat_1", runId: "run_1",
+      approvalId: "approval_1", decision: "approve", clientRequestId: "req_1", secret: "platform-secret-123",
+    })).toBe(true);
+    fetchMock.mockClear();
+    const unauthenticated = await app.request(path, { method: "POST", headers: { host: "app.matrix-os.com",
+      authorization: "Bearer platform-machine-bearer", "content-type": "application/json",
+      [CUSTOM_MCP_APPROVAL_PROOF_HEADER]: "forged" }, body });
+    expect(unauthenticated.status).toBe(401);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

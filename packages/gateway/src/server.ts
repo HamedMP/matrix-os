@@ -40,6 +40,7 @@ import { createBackgroundAgentRuntime } from "./background-agent-runtime.js";
 import { formatForChannel } from "./channels/format.js";
 import { withAsyncChatInput } from "./chat/async-input-adapter.js";
 import { createClaudeChatProviderAdapter } from "./chat/claude-provider-adapter.js";
+import { createCustomMcpApprovalClient } from "./chat/custom-mcp-approval-client.js";
 import { createCanonicalCodingChatProviderAdapter } from "./chat/coding-provider-adapter.js";
 import type { ChatExecutionRootResolver } from "./chat/execution-root.js";
 import type { createGatewayChatEventStream } from "./chat/gateway-event-stream.js";
@@ -78,6 +79,7 @@ import { createCodingAgentProviderRegistry } from "./coding-agents/provider-regi
 import { createCodingAgentReviewSummaryStore } from "./coding-agents/review-summary.js";
 import { createCodingAgentRoutes } from "./coding-agents/routes.js";
 import { createCodingAgentRuntimeSummaryService } from "./coding-agents/runtime-summary.js";
+import { createCodexHarnessAdmission } from "./coding-agents/codex-harness-admission.js";
 import { createCodingAgentSessionStopReconciler } from "./coding-agents/session-stop-reconciler.js";
 import { createCodingAgentSourceControlStore } from "./coding-agents/source-control.js";
 import { createCodingAgentThreadRelationValidator } from "./coding-agents/thread-relations.js";
@@ -591,10 +593,12 @@ export async function createGateway(config: GatewayConfig) {
     codingAgentProviders.push(fakeProvider);
     codingAgentRegistryProviders.push(fakeProvider);
   }
+  const codingAgentProviderAdmission = createCodexHarnessAdmission({ homePath });
   codingAgentThreadStore = codingAgentProviders.length > 0
     ? createCodingAgentThreadStore({
       homePath,
       providers: codingAgentProviders,
+      providerAdmission: codingAgentProviderAdmission,
       restoreProviderThread: async (thread) => {
         const restored = !!codingAgentWorkspaceRuntime && !!codexEventBridge
           && await restoreBackgroundChatThread({ thread, sessions: codingAgentWorkspaceRuntime, events: codexEventBridge });
@@ -652,6 +656,7 @@ export async function createGateway(config: GatewayConfig) {
   });
   const codingAgentRuntimeSummaryService = createCodingAgentRuntimeSummaryService({
     homePath,
+    providerAdmission: codingAgentProviderAdmission,
     terminalRegistry: { list: () => terminalWorkspaceRuntime.listWorkspaces() },
     providerRegistry: codingAgentProviderRegistry,
     threads: codingAgentThreadStore,
@@ -1383,6 +1388,12 @@ export async function createGateway(config: GatewayConfig) {
       detectAgentInstallations: agentCredentialLauncher.detectAgentInstallations,
       runtimeSource: agentRuntimeServices.source,
     }),
+    ...(codexExecutable ? { codexLocalObservation: () => agentCredentialLauncher.observeCodexLocalCredential({
+      executable: codexExecutable,
+      runtimeHome: homePath,
+      codexHome: process.env.CODEX_HOME,
+      accessSourceId: "owner_openai_profile",
+    }) } : {}),
   });
   collaborationProviderSnapshots.attach(aiProviderService);
   const providerLoginCoordinator = createProviderTerminalLoginCoordinator({
@@ -1465,6 +1476,9 @@ export async function createGateway(config: GatewayConfig) {
         homePath,
         resolveCredentialLaunch: resolveClaudeCredentialLaunch,
         matrixMcpCapabilityIssuer: matrixMcpCapabilities,
+        customMcpApprovalClient: internalPlatformUrl && internalPlatformToken && internalHandle
+          ? createCustomMcpApprovalClient({ platformUrl: internalPlatformUrl, token: internalPlatformToken, handle: internalHandle })
+          : undefined,
       }));
     }
     if (codingAgentThreadStore) {
