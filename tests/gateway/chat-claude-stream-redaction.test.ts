@@ -61,6 +61,17 @@ function streamLines(chunks: string[], options: { stop?: boolean; result?: boole
   ];
 }
 
+function separateTextBlocks(parts: string[]): string[] {
+  return [
+    ...parts.flatMap((text, index) => [
+      JSON.stringify({ type: "stream_event", event: { type: "content_block_start", index, content_block: { type: "text" } } }),
+      JSON.stringify({ type: "stream_event", event: { type: "content_block_delta", index, delta: { type: "text_delta", text } } }),
+      JSON.stringify({ type: "stream_event", event: { type: "content_block_stop", index } }),
+    ]),
+    JSON.stringify({ type: "result", subtype: "success", result: parts.join(""), session_id: "claude_block_redaction" }),
+  ];
+}
+
 async function runLines(
   lines: string[],
   options: { exitCode?: number; afterLines?: () => void; signal?: AbortSignal } = {},
@@ -205,6 +216,48 @@ describe("Claude streamed assistant text redaction", () => {
     const credentialDeltas = [credential.push("ACCESS_TOKEN="), credential.push("机密值"), credential.flush()];
     expect(credentialDeltas[1]).toBe("");
     expect(credentialDeltas.join("")).toBe("[redacted credential]");
+  });
+
+  it("keeps a spaced execution-root path intact until the complete root can be projected", () => {
+    const projector = createAssistantTextStreamProjector({
+      homePath: "/home/matrix/home",
+      executionRoot: "/safe/Team Project",
+    });
+    const deltas = [projector.push("Inspect /safe/Team "), projector.push("Project/file now."), projector.flush()];
+    for (const delta of deltas) expect(delta).not.toContain("Project/file");
+    expect(deltas.join("")).toBe("Inspect file now.");
+  });
+
+  it.each([
+    {
+      name: "Bearer credential",
+      parts: ["Bearer ", "fixture-secret-token"],
+      expected: "Bearer [redacted]",
+      forbidden: "fixture-secret-token",
+    },
+    {
+      name: "assigned credential",
+      parts: ["ACCESS_TOKEN=", "fixture-secret-value"],
+      expected: "[redacted credential]",
+      forbidden: "fixture-secret-value",
+    },
+    {
+      name: "private path",
+      parts: ["Inspect /private/", "secret/file"],
+      expected: "Inspect [redacted path]",
+      forbidden: "secret/file",
+    },
+    {
+      name: "public URL",
+      parts: ["URL: https://learn.microsoft.com/azure", "/azure-functions"],
+      expected: "URL: https://learn.microsoft.com/azure/azure-functions",
+      forbidden: "[redacted path]",
+    },
+  ])("keeps a split $name safe across text-block boundaries", async ({ parts, expected, forbidden }) => {
+    const events = await runLines(separateTextBlocks(parts));
+    const deltas = events.filter((event) => event.type === "assistant.delta").map((event) => event.delta);
+    for (const delta of deltas) expect(delta).not.toContain(forbidden);
+    expect(deltas.join("")).toBe(expected);
   });
 
   it("replaces an overlong token once and drops its remainder until whitespace", () => {

@@ -387,12 +387,17 @@ export function createClaudeChatProviderAdapter(options: {
       if (projected) enqueueDelta(projected, projectedMessageId);
       projectedMessageId = undefined;
     };
+    const flushSafeProjectedText = () => {
+      const projected = textProjector.flushBoundary();
+      if (projected) enqueueDelta(projected, projectedMessageId);
+      if (!textProjector.hasPending()) projectedMessageId = undefined;
+    };
     const discardProjectedText = () => {
       textProjector.discard();
       projectedMessageId = undefined;
     };
     const projectDelta = (delta: string, messageId?: string) => {
-      if (projectedMessageId !== messageId) flushProjectedText();
+      if (projectedMessageId !== messageId) flushSafeProjectedText();
       projectedMessageId = messageId;
       const projected = textProjector.push(delta);
       if (projected) enqueueDelta(projected, messageId);
@@ -440,7 +445,7 @@ export function createClaudeChatProviderAdapter(options: {
       }
       if (line.type === "stream_event" && line.event?.type === "content_block_start"
         && line.event.index !== undefined && line.event.content_block) {
-        flushProjectedText();
+        flushSafeProjectedText();
         flushPendingDelta();
         const block = line.event.content_block;
         if (block.type === "text") {
@@ -470,7 +475,7 @@ export function createClaudeChatProviderAdapter(options: {
       }
       if (line.type === "stream_event" && line.event?.type === "content_block_stop"
         && line.event.index !== undefined) {
-        flushProjectedText();
+        flushSafeProjectedText();
         flushPendingDelta();
         const activity = activityByIndex.get(line.event.index);
         if (activity) {

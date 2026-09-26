@@ -535,7 +535,12 @@ describe("Claude canonical Chat Provider adapter", () => {
       {
         type: "assistant.delta",
         messageId: "claude_text_1",
-        delta: "The build is ready in ~/apps/flappy-bird.",
+        delta: "The build is ready in ",
+      },
+      {
+        type: "assistant.delta",
+        messageId: "claude_text_1",
+        delta: "~/apps/flappy-bird.",
       },
       { type: "run.completed", outcome: "completed" },
     ]);

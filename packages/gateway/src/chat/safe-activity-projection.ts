@@ -73,6 +73,18 @@ export function sanitizeAssistantText(
 export function createAssistantTextStreamProjector(options: { homePath: string; executionRoot?: string }) {
   let pending = "";
   let droppingOversizedToken = false;
+  const spacedRoots = [options.homePath, options.executionRoot]
+    .filter((root): root is string => root !== undefined && /\s/u.test(root))
+    .map((root) => `${normalizedRoot(root)}/`);
+  const incompleteKnownRoot = () => {
+    for (let index = pending.indexOf("/"); index >= 0; index = pending.indexOf("/", index + 1)) {
+      const prefix = index === 0 ? "" : pending[index - 1]!;
+      if (prefix && !/[\s"'`(=:<>|;&]/u.test(prefix)) continue;
+      const suffix = pending.slice(index);
+      if (spacedRoots.some((root) => root.startsWith(suffix))) return true;
+    }
+    return false;
+  };
 
   return {
     push(value: string): string {
@@ -89,7 +101,8 @@ export function createAssistantTextStreamProjector(options: { homePath: string; 
         pending += character;
         if (/\s/u.test(character)
           && !DANGLING_BEARER.test(pending)
-          && !DANGLING_SECRET_ASSIGNMENT.test(pending)) {
+          && !DANGLING_SECRET_ASSIGNMENT.test(pending)
+          && !incompleteKnownRoot()) {
           projected += sanitizeAssistantText(pending, options);
           pending = "";
         } else if (character.codePointAt(0)! > 0x7f
@@ -108,6 +121,17 @@ export function createAssistantTextStreamProjector(options: { homePath: string; 
         }
       }
       return projected;
+    },
+    flushBoundary(): string {
+      if (droppingOversizedToken || pending.includes("/") || ACTIVE_BEARER.test(pending)
+        || DANGLING_SECRET_ASSIGNMENT.test(pending)
+        || sanitizeAssistantText(pending, options) !== pending) return "";
+      const projected = pending;
+      pending = "";
+      return projected;
+    },
+    hasPending(): boolean {
+      return pending.length > 0 || droppingOversizedToken;
     },
     flush(): string {
       if (droppingOversizedToken) {
