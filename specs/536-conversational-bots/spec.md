@@ -1,6 +1,6 @@
 # Feature Specification: Conversational Recipe Bots
 
-**Feature Branch**: `codex/535-conversational-bots`
+**Feature Branch**: `codex/535-conversational-bots` (created before the spec was renumbered to 536; 535 belongs to collaboration)
 **Created**: 2026-09-26
 **Status**: Proposed for review; specification only; spike not executed
 **Input**: Recipes become persistent rabbit-avatar bots that users build through conversation, progressively connect to services, and invite into group chats to collaborate. Evaluate a Matrix-owned agent powered by Pi, including computer use, after this specification is published on GitHub.
@@ -44,7 +44,7 @@ A bot checks what the person has connected in Matrix and asks for additional acc
 
 A person creates a normal group chat with named bots and optionally other people. Bots are visible participants with their own rabbit avatars. They can be addressed, exchange authorized findings, delegate parts of a task, and produce a shared result.
 
-**Why this priority**: Collaboration is a core requirement, including in the first spike; it is not a future substitute for independent bot chats.
+**Why this priority**: Collaboration is a core requirement with its own feasibility stage (Spike B) before implementation planning; it is not a future substitute for independent bot chats. Release order follows the Delivery Milestones below.
 
 **Independent Test**: Invite Research Rabbit and Brief Rabbit into a group. Ask Research Rabbit to investigate a competitor and Brief Rabbit to use its findings in a concise brief. Observe attributed contributions, an explicit handoff, and one verified final artifact.
 
@@ -57,6 +57,7 @@ A person creates a normal group chat with named bots and optionally other people
 5. **Given** a group member without account-grant authority, **when** they request connected data, **then** the bot asks the authorized owner privately or reports the dependency; it does not expose account identifiers or grant access itself.
 6. **Given** the owner stops the group task or removes a bot, **when** queued or running work is reconciled, **then** unauthorized future work and handoffs stop and already-posted group history remains attributed and readable to remaining authorized members.
 7. **Given** bots could repeatedly delegate to each other, **when** the configured task budget is reached, **then** they stop and report the remaining work to the person.
+8. **Given** a collaborator whose access to the group does not include AI permission, **when** they mention a bot, **then** the bot does not run and the collaborator sees that AI is not enabled for them; with AI permission, the bot works only within that collaborator's resource permission.
 
 ### User Story 4 - Finish Work on a Persistent Computer (Priority: P1)
 
@@ -97,6 +98,10 @@ A person teaches a workflow, corrects a bot, or asks it to repeat successful wor
 - No suitable model, funds, computer capacity, or required application; disconnected service differs from an empty result.
 - Unsupported telephony, home-device, media-generation, or proprietary application dependency.
 - Old recipe versions, manually edited bot files, missing skills, and inaccessible artifacts.
+- Two bots, or a bot and the owner's own Chat, need a model turn at once on a funded Matrix AI route that admits one in-flight request per owner.
+- A bot's own description of its access disagrees with the server's grant state.
+- A source email or page asks the bot to remember a new standing instruction.
+- The owner's computer lacks the memory or plan capacity to host a graphical session.
 
 ## Requirements *(mandatory)*
 
@@ -108,16 +113,19 @@ A person teaches a workflow, corrects a bot, or asks it to repeat successful wor
 - **FR-004**: Bots MUST discover connected services, distinguish connection from authorization, request missing access progressively, and ask about ambiguous accounts.
 - **FR-005**: Connection and authorization outcomes MUST resume the original workflow safely, including after reconnect, cancellation, or duplicate completion.
 - **FR-006**: Bots MUST be first-class participants in direct and group chats with distinct attribution, mentions, task ownership, and bounded delegation.
-- **FR-007**: Group membership MUST NOT imply access to a bot's private memory, direct chats, credentials, or connected accounts. Sharing requires owner-authorized scope and audience.
+- **FR-007**: Group membership MUST NOT imply access to a bot's private memory, direct chats, credentials, or connected accounts. Sharing requires owner-authorized scope and audience. A collaborator's ability to address a bot follows that resource's AI permission; addressing a bot never extends the bot's grants to the collaborator.
 - **FR-008**: Bots MUST support service operations, browser interaction, visual desktop interaction, files, and artifact verification according to declared capabilities; unavailable capabilities MUST remain explicit.
 - **FR-009**: Long-running work MUST expose truthful state, interruption recovery, cancellation, and human takeover without repeating uncertain external effects.
 - **FR-010**: Approval MUST apply to the exact proposed effect and audience, honor valid prior authorization, and be invalidated by material changes or revocation.
-- **FR-011**: Bot definitions, preferences, reusable skills, and routines MUST remain owner-controlled and exportable; private and shared memories MUST retain separate scopes and provenance.
+- **FR-011**: Bot definitions, preferences, reusable skills, and routines MUST remain owner-controlled and exportable; private and shared memories MUST retain separate scopes and provenance. Each remembered item MUST record its kind, scope, and source; forgetting an item MUST remove it from future context and from derived summaries. Content from external sources MUST NOT create standing memory without owner confirmation.
 - **FR-012**: Learned workflows MUST be inspectable and replay-tested; routines MUST require an explicit user request and preserve timezone, access, and notification intent.
-- **FR-013**: The complete existing recipe inventory MUST map to capability requirements and acceptance evidence. A catalogue entry or successful prompt alone MUST NOT be labeled functional parity.
+- **FR-013**: A prioritized launch set of recipes MUST reach validated status before launch. Every other catalogue entry MUST keep a capability mapping, a concrete proposed scenario with an observable result, and an honest status, and MUST be labeled unavailable or experimental until validated. A catalogue entry or successful prompt alone MUST NOT be labeled functional parity.
 - **FR-014**: Web Canvas, Web Desktop, and Electron Desktop MUST expose equivalent bot, integration, group, approval, and recovery behavior. Web Mobile and Native Mobile MUST share these semantics where Chat exists; viewport adaptations may differ.
 - **FR-015**: Existing bots, rabbit identities, chats, artifacts, and explicit model/account choices MUST survive rollout. Migration MUST NOT silently reinterpret native execution checkpoints.
 - **FR-016**: Missing service/model dependencies or policy failures MUST produce actionable generic states, never fabricated completion, raw secrets, or internal infrastructure details.
+- **FR-017**: Each bot MUST have a read-only view, rendered from authoritative server state, of its connected accounts and grants, active routines, pending interactions, and remembered items. The bot's own description of its access is not authoritative. This view is not a configuration form; it may offer revocation, which only reduces authority.
+- **FR-018**: Execution MUST respect the funding policy of the resolved access source. Where that policy admits one in-flight request per owner, model turns across the owner's bots MUST queue for it with a truthful waiting state, interactive owner turns MUST take precedence over background bot work, and a policy rejection MUST NOT surface as task failure.
+- **FR-019**: Bot identity, conversations, grants, memory scopes, and approvals MUST NOT assume the Matrix Chat surface is the only channel, so a later milestone can host a bot conversation in a messaging channel without a second identity or authority model. A channel reply MUST NOT approve an effect the channel did not display exactly.
 
 ### Key Entities
 
@@ -127,7 +135,9 @@ A person teaches a workflow, corrects a bot, or asks it to repeat successful wor
 - **Task / Handoff**: outcome, owning bot, parent task, recipient, authorized shared context, budget, status, and result.
 - **Connection / Grant**: service account availability versus permission for a bot, action, and output audience to use it.
 - **Pending Interaction**: question, account choice, connection request, approval, or takeover waiting on a specific authorized person.
-- **Memory / Skill / Routine**: scoped remembered facts with provenance; reusable procedure; explicitly activated trigger and delivery policy.
+- **Memory / Skill / Routine**: scoped remembered preferences, facts, and task episodes with provenance; reusable procedure; explicitly activated trigger and delivery policy.
+- **Authority View**: read-only projection of a bot's grants, routines, pending interactions, and memory, derived from server state.
+- **Access Source Slot**: the funding policy's admission unit for model turns; bot work queues for it rather than failing.
 - **Artifact / Evidence**: owner-scoped result and observations supporting its completion.
 
 ## Success Criteria *(mandatory)*
@@ -139,13 +149,37 @@ A person teaches a workflow, corrects a bot, or asks it to repeat successful wor
 - **SC-003**: A group with one person and two bots completes the research-to-brief scenario with correct attribution, one final artifact, and no repeated handoff cycle in three consecutive trials.
 - **SC-004**: Browser and visual-desktop scenarios each complete three consecutive trials with an inspectable result; failed trials remain reported, not discarded.
 - **SC-005**: Every injected interruption, cancellation, revocation, and unauthorized-group-read case produces a safe observable outcome with zero unauthorized effects in the acceptance suite.
-- **SC-006**: Each catalogue recipe has a capability mapping, a named acceptance scenario, and an honest validated/blocked/not-tested status before any full-parity claim.
+- **SC-006**: Each launch-set recipe is validated with recorded evidence. Each other catalogue recipe has a capability mapping, a concrete scenario with an observable result, and an honest validated/blocked/not-tested status before any parity claim.
 - **SC-007**: All applicable surfaces pass the same conversational setup and group scenarios; actual evidence identifies the exact surface and revision.
+- **SC-008**: In every grant, revocation, routine, and memory scenario, the authority view matches server state, including immediately after revocation or forgetting.
+- **SC-009**: On a funded route with a one-request owner limit, the two-bot group scenario completes with queued model turns, an interactive owner turn is served before queued bot turns, and zero policy rejections surface as task failures.
+
+## Positioning
+
+Grok Bot and Muse set the expectation: named, persistent agents that do work on a computer. Matrix bots differ by design, and these differences drive priorities. They are objectives to prove, not established advantages.
+
+- **The owner's own computer**: bots run on the owner's Matrix computer; definitions, skills, and memory export as owner files.
+- **Model and harness choice**: access sources resolve through Provider V3, including the owner's own accounts, rather than one vendor's model.
+- **Scoped authority**: grants are per bot, account, action, and audience, rather than one shared set of logins for every bot.
+- **Inspectable effects**: approvals bind exact effects, and the authority view reflects server state rather than model narration.
+- **Where people already talk**: the same bot can later answer in a messaging channel (M5) without a second identity.
+
+## Delivery Milestones
+
+Feasibility precedes release: the staged spike program in [spike-plan.md](spike-plan.md) gates implementation planning for each milestone. Each milestone ships with FR-014 surface parity and its own `FinnaAI/matrix-os-site` documentation PR.
+
+| Milestone | User-visible outcome | Gate |
+|---|---|---|
+| M1: Direct-chat bot | Recipe selection creates a named bot with conversational setup, scoped memory with inspect/forget, progressive integrations and grants, exact approvals, restart-safe runs, and the authority view. Launch-set recipes that need connectors, web research, and artifacts only. | S0 and Spike A pass; data model not finalized until Spike B participant and grant findings are recorded |
+| M2: Routines | Explicitly requested scheduled runs on the existing cron service, with durable bot/task binding, deduplication, grants, and pause through conversation. | Spike A durable wakeup evidence |
+| M3: Group collaboration | Bots as group participants with mentions, one coordinator, bounded handoffs, and audience grants; single owner first, then multi-human and cross-owner. | Spike B passes |
+| M4: Computer use | Browser and then visual desktop work with takeover, fencing leases, filtered egress, and capacity gating. | Spike C passes, including capacity measurement |
+| M5: Channels and catalogue | Bot conversations in a messaging channel; further recipes qualified one at a time. | Per-recipe evidence in [recipe-coverage.md](recipe-coverage.md) |
 
 ## Assumptions, Scope, and Delivery Boundary
 
-- The product scope includes the complete catalogue, computer use, group collaboration, memory, routines, and learning. A bounded spike proves representative foundations, not catalogue-wide parity.
-- The first spike uses one owner and two bots in a group. Multi-human and cross-owner positive collaboration are required production work; unauthorized cross-owner access must already be tested negatively in the spike.
+- The long-term product scope includes the complete catalogue, computer use, group collaboration, memory, routines, and learning. Release follows the milestones above; the launch set, not the complete catalogue, gates M1. The spike program proves representative foundations, not catalogue-wide parity.
+- The feasibility program uses one owner and at most two bots. Multi-human and cross-owner positive collaboration are required production work; unauthorized cross-owner access must already be tested negatively in Spike B.
 - Conversational setup may reveal capabilities over time; there is no requirement to connect every recipe integration before starting.
 - Provider-hosted credential consent is distinct from a Matrix configuration form. Credentials never belong in chat.
 - Linux cloud computer use does not imply access to Mac-only applications or home hardware. Paired local executors and specialist integrations need separate qualification.
@@ -156,6 +190,6 @@ A person teaches a workflow, corrects a bot, or asks it to repeat successful wor
 ## Companion Documents
 
 - [Technical design and security boundaries](technical-design.md)
-- [Bounded spike protocol and decision gates](spike-plan.md)
-- [Complete recipe capability map](recipe-coverage.md)
+- [Staged spike program and decision gates](spike-plan.md)
+- [Complete recipe capability map and proposed launch set](recipe-coverage.md)
 - [Specification quality checklist](checklists/requirements.md)
