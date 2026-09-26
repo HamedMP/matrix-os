@@ -2,10 +2,12 @@ import { Hono, type Context } from "hono";
 import { KyselyPGlite } from "kysely-pglite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { authMiddleware } from "../../packages/gateway/src/auth.js";
+import { createCanonicalChatService } from "../../packages/gateway/src/chat/service.js";
+import type { CanonicalChatOrchestrator } from "../../packages/gateway/src/chat/orchestrator.js";
 import { createClaudeCustomMcpApprovalControl } from "../../packages/gateway/src/chat/claude-custom-mcp-approval.js";
 import { createCustomMcpApprovalClient } from "../../packages/gateway/src/chat/custom-mcp-approval-client.js";
 import { createMatrixMcpCapabilityRegistry } from "../../packages/gateway/src/chat/matrix-mcp-launch.js";
-import { createCanonicalChatRoutes, type CanonicalChatRouteService } from "../../packages/gateway/src/chat/routes.js";
+import { createCanonicalChatRoutes } from "../../packages/gateway/src/chat/routes.js";
 import { registerCustomMcpGatewayRoutes } from "../../packages/gateway/src/integrations/custom-mcp/gateway-routes.js";
 import { createCustomMcpApprovalRoutes } from "../../packages/gateway/src/integrations/custom-mcp/approval-routes.js";
 import { integrationProxyHeaders } from "../../packages/gateway/src/integrations/custom-mcp/proxy-headers.js";
@@ -39,7 +41,7 @@ describe("authenticated canonical Custom MCP approval chain", () => {
     if (routingDb) await cleanupProxyRoutingTest(routingDb);
   });
 
-  it("requires a Platform-authenticated user decision before one remote call", async () => {
+  it.each(["approve", "decline", "cancel"] as const)("requires authenticated %s through the real service and one-use broker", async (decision) => {
     process.env.PLATFORM_JWT_SECRET = JWT_SECRET;
     routingDb = await setupProxyRoutingTest();
     await insertUserMachine(routingDb, {
@@ -89,13 +91,15 @@ describe("authenticated canonical Custom MCP approval chain", () => {
     const gateway = new Hono();
     gateway.use("*", authMiddleware(machineToken, { resolveMatrixMcpRunContext: registry.resolveRunContext }));
     gateway.route("/", createCanonicalChatRoutes({
-      service: { submitApproval: async (owner, requestedChatId, requestedRunId, approvalId, input, provenance) => {
-        expect(owner).toEqual({ type: "personal", ownerId: actorId });
-        expect([requestedChatId, requestedRunId]).toEqual([chatId, runId]);
-        await control.submit(approvalId, input.decision, { chatId, clientRequestId: input.clientRequestId,
-          platformApprovalProof: provenance?.platformApprovalProof });
-        return { approvalId, decision: input.decision, submission: "accepted" };
-      } } as CanonicalChatRouteService,
+      service: createCanonicalChatService({} as Parameters<typeof createCanonicalChatService>[0], {
+        orchestrator: { submitApproval: async (owner, requestedChatId, requestedRunId, approvalId, input, provenance) => {
+          expect(owner).toEqual({ type: "personal", ownerId: actorId });
+          expect([requestedChatId, requestedRunId]).toEqual([chatId, runId]);
+          await control.submit(approvalId, input.decision, { chatId, clientRequestId: input.clientRequestId,
+            platformApprovalProof: provenance?.platformApprovalProof });
+          return { approvalId, decision: input.decision, submission: "accepted" };
+        } } as Pick<CanonicalChatOrchestrator, "admitTurn" | "enqueueQueuedTurn" | "steerRun" | "steerQueuedTurn" | "cancelRun" | "submitInput" | "submitApproval" | "retryTurn" | "reconcileActiveRuns">,
+      }),
       getPrincipal: context => requireRequestPrincipal(context),
     }));
     registerCustomMcpGatewayRoutes(gateway, { homePath: "/tmp/custom-mcp-approval-fixture",
@@ -141,10 +145,17 @@ describe("authenticated canonical Custom MCP approval chain", () => {
     const userDecision = await platform.request(canonicalPath, { method: "POST", headers: {
       host: "app.matrix-os.com", cookie: `matrix_app_session=${encodeURIComponent(session)}`,
       "content-type": "application/json", "x-matrix-chat-metadata": "1",
-    }, body: JSON.stringify({ decision: "approve", clientRequestId: "req_1" }) });
+    }, body: JSON.stringify({ decision, clientRequestId: "req_1" }) });
     expect(userDecision.status).toBe(200);
     await flush();
-    expect(events.at(-1)).toMatchObject({ type: "approval.resolved", approvalId });
+    expect(events.at(-1)).toMatchObject({ type: "approval.resolved", approvalId, decision });
+    if (decision !== "approve") {
+      expect(nativeResponses).toEqual([expect.objectContaining({ behavior: "deny" })]);
+      expect(remoteCall).not.toHaveBeenCalled();
+      control.close();
+      registry.close();
+      return;
+    }
     const receipt = nativeResponses[0]?.updatedInput?.approval_receipt as string;
     expect(receipt).toMatch(/^[a-f0-9]{64}$/);
     expect((await call(receipt)).status).toBe(200);

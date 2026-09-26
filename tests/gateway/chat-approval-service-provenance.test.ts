@@ -94,7 +94,7 @@ describe("canonical approval service provenance", () => {
     await repository.kysely.destroy();
   });
 
-  it("preserves authenticated approval provenance through the Hono route, service, and orchestrator", async () => {
+  it.each([true, false])("preserves the proof boundary through route/service/orchestrator (proof=%s)", async (withProof) => {
     await repository.create(owner, {
       id: "chat_approval",
       clientRequestId: "req_create_approval",
@@ -104,9 +104,11 @@ describe("canonical approval service provenance", () => {
     const released = new Promise<void>((resolve) => {
       release = resolve;
     });
+    const remoteExecution = vi.fn();
     const submitApproval = vi.fn(async (input: { platformApprovalProof?: string }) => {
       release();
       if (input.platformApprovalProof !== "platform-signed-fixture-proof") throw new Error("Authenticated approval proof unavailable");
+      remoteExecution();
     });
     const provider = {
       ...adapter(async function* () {
@@ -154,11 +156,16 @@ describe("canonical approval service provenance", () => {
     app.route("/", createCanonicalChatRoutes({ service, getPrincipal: () => principal }));
     const response = await app.request(`/api/chats/chat_approval/runs/${admitted.run.id}/approvals/appr_command`, {
       method: "POST", headers: { "content-type": "application/json",
-        "x-matrix-custom-mcp-approval-proof": "platform-signed-fixture-proof" },
+        ...(withProof ? { "x-matrix-custom-mcp-approval-proof": "platform-signed-fixture-proof" } : {}) },
       body: JSON.stringify({ clientRequestId: "req_approval_decision", decision: "approve" }),
     });
     await orchestrator.drain();
-    expect(response.status).toBe(200);
+    expect(remoteExecution).toHaveBeenCalledTimes(withProof ? 1 : 0);
+    expect(response.status).toBe(withProof ? 200 : 503);
+    if (!withProof) {
+      expect(submitApproval.mock.calls[0]?.[0]).not.toHaveProperty("platformApprovalProof");
+      return;
+    }
     expect(await response.json()).toEqual({ approvalId: "appr_command", decision: "approve", submission: "accepted" });
     expect(submitApproval).toHaveBeenCalledWith(expect.objectContaining({
       state: { sessionId: "native_approval" },
