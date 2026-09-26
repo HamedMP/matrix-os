@@ -29,7 +29,7 @@
 - [x] Bot execution extends the existing scope runtime (no-network workload, broker-only model and tool access) instead of adding a parallel service.
 - [x] Private bot admission is specified separately from shared-Chat admission: per-bot workspace created with the bot, `bot_workspace` execution root, private scope handle, owner-only authorization, and workspace recovery. Group runs never mount a private workspace.
 - [x] Group bots follow the one-run-per-Chat queue and guest collaboration AI permissions (PR #1941).
-- [x] Funded-route concurrency uses one owner admission gate shared by interactive and background requests, with priority at the next free slot, no preemption of in-flight requests, and explicit handling of paths that bypass the gate. Vision-model cost and graphical-session capacity are explicit.
+- [x] Funded priority is enforced at the owner-wide platform reservation point with class-bound credentials and priority claims, so requests from other runtimes or outside the local queue cannot take a freed slot from a waiting interactive request; in-flight requests are not preempted. Vision-model cost and graphical-session capacity are explicit.
 - [x] A runtime decision record compares Pi, Hermes, and the Claude Agent SDK on stated criteria.
 - [x] Source of truth, multi-write transactions, file/database partial failure, and uncertain external effects are explicit.
 - [x] No new production runtime, dependency, endpoint, or deployment is claimed by this spec PR.
@@ -42,7 +42,7 @@
 
 | Requirements | Acceptance evidence |
 |---|---|
-| FR-001-003 | Story 1; Spike A (S1) private admission, creation/reopen/correction trials, and failure cases 1 and 16 |
+| FR-001-003 | Story 1; Spike A (S1) private admission, creation/reopen/correction trials, and failure cases 1 and 17 |
 | FR-004-005 | Story 2; Spike A (S2) plus cancel/duplicate/forged/revoked connection cases |
 | FR-006-007 | Story 3; Spike B (S4) plus private-context, guest AI permission, and cross-owner negative tests |
 | FR-008-010 | Story 4; Spike C (S3) and Spike A (S5) plus takeover, approvals, and uncertain-effect recovery |
@@ -52,7 +52,7 @@
 | FR-015 | Migration preservation scenarios in production follow-up; spike leaves existing harnesses untouched |
 | FR-016 | Stories 2/4 edge cases; failure-injection matrix |
 | FR-017 | Authority view checks in Spike A and failure cases 6-7; SC-008 |
-| FR-018 | Spike B funded-path inventory, funded-route run, and failure case 14; SC-009 |
+| FR-018 | Spike B funded-path inventory, funded-route run on a platform preview, and failure cases 14-15; SC-009 |
 | FR-019 | Channel-independent data model review during M1 planning; channel hosting in M5 |
 
 ## Review Result
@@ -76,4 +76,5 @@ Review revision (renumbered from 535 to 536; 535 belongs to guest collaboration)
 - Passed: `git diff --check`; `bun run check:patterns` on Node 24 reported zero violations and five existing warning categories. No production source files changed.
 - Code references added in this revision were checked against Matrix `5f9fc5362`: scope-runtime profile and broker protocol, shared-AI adapter eligibility, funded usage-mode reservation rejection, the single `activeRun` Chat projection, `ChatContextReceipt.tsx`, and gateway channel adapters. The Pi 0.87.1 release was confirmed with `pnpm view` on 2026-09-26.
 - Second review pass (private admission, shared funded gate, independent Spike A) checked against the same baseline: shared-run preparation fails without an execution root, execution-root kinds are only `project` and `worktree`, the relay authorizes each model request by request ID, and kernel-credential leases give child processes the relay base URL directly.
+- Third review pass (funded priority) checked against the same baseline: the reservation conflict in `ai-funded-metering-repository.ts` keys on owner only, not machine, runtime slot, or access source, and usage-mode requests conflict with any active reservation.
 - Not run: the docs-contract Vitest suite, because this worktree has no installed dependencies; it covers `www/`, `AGENTS.md`, and `README.md`, which this PR does not change. GitHub CI runs it.
