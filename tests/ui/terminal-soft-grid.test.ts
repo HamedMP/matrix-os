@@ -343,6 +343,36 @@ describe("shared terminal grid presentation", () => {
     expect(host.scrollTop).toBe(bottom);
   });
 
+  it("preserves a wheel pan above the old bottom when the viewport shrinks", () => {
+    const { host, root, layout } = setup();
+    layout(1_600, 500);
+    Object.defineProperty(host, "scrollHeight", { get: () => Number.parseFloat(root.parentElement!.style.height) });
+    const oldBottom = host.scrollHeight - host.clientHeight;
+    root.addEventListener("wheel", (event) => event.preventDefault());
+    root.dispatchEvent(new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaY: -20 }));
+    expect(host.scrollTop).toBeCloseTo(oldBottom - 20);
+    layout(1_600, 300);
+    expect(host.scrollTop).toBeCloseTo(oldBottom - 20);
+  });
+
+  it.each(["font", "grid", "content", "scrollback"])("does not resume from the old bottom after a %s change", (change) => {
+    const { host, root, terminal, layout } = setup();
+    layout(1_600, 500);
+    Object.defineProperty(host, "scrollHeight", { get: () => Number.parseFloat(root.parentElement!.style.height) });
+    const oldBottom = host.scrollHeight - host.clientHeight;
+    root.addEventListener("wheel", (event) => event.preventDefault());
+    root.dispatchEvent(new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaY: -2_000 }));
+    host.scrollTop = oldBottom;
+    if (change === "font") terminal.options.fontSize = 12;
+    if (change === "grid") terminal.resize(120, 40);
+    if (change === "content") Object.defineProperty(terminal, "buffer", { configurable: true,
+      value: { active: { baseY: 0, viewportY: 0, cursorY: 35, cursorX: 2, getLine: () => undefined } } });
+    if (change === "scrollback") Object.defineProperty(terminal, "buffer", { configurable: true,
+      value: { active: { baseY: 0, viewportY: -1, cursorY: 35, cursorX: 2 } } });
+    layout(1_600, 300);
+    expect(host.scrollTop).toBe(oldBottom);
+  });
+
   it.each(["ctrlKey", "metaKey", "altKey", "shiftKey"])("preserves modified wheel gestures with %s", (modifier) => {
     const { host, root, layout } = setup();
     layout(1_600, 300);

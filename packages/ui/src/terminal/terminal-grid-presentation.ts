@@ -82,6 +82,7 @@ export function createTerminalGridPresentation(options: GridPresentationOptions)
   let element: HTMLElement | null = null;
   let restoreStyle: Partial<CSSStyleDeclaration> | null = null;
   let previousPan: { top: number; left: number } | null = null;
+  let previousViewportHeight: number | null = null;
   let wheelPannedAway = false;
   let presentationScale = 1;
   let settledLayout: { metrics: number[]; layout: ReturnType<typeof computeSoftGridLayout> } | null = null;
@@ -174,10 +175,19 @@ export function createTerminalGridPresentation(options: GridPresentationOptions)
       });
     const buffer = terminal.buffer?.active;
     const live = buffer && buffer.viewportY >= buffer.baseY;
+    const content = terminalContentExtent(terminal);
     // Resume following at the bottom only when the cursor is already visible.
     // A native redraw with a prompt above the viewport must not undo a pan.
     const cursorTop = buffer && stage ? buffer.cursorY * visualCellHeight : -1;
-    if (wheelPannedAway && host.scrollTop >= host.scrollHeight - host.clientHeight - 0.01 && cursorTop >= host.scrollTop) {
+    // Scroll events are queued. A resize can precede the frame acknowledging
+    // a return to the bottom, so also check the last presented viewport's
+    // bottom against the still-existing stage before replacing its layout.
+    const unchangedGrid = settledLayout?.metrics.every((value, index) =>
+      index === 1 || value === metrics[index]) &&
+      contentGrid?.rows === content.rows && contentGrid.cols === content.cols;
+    const bottomViewportHeight = unchangedGrid && previousViewportHeight !== null
+      ? Math.max(host.clientHeight, previousViewportHeight) : host.clientHeight;
+    if (wheelPannedAway && host.scrollTop >= host.scrollHeight - bottomViewportHeight - 0.01 && cursorTop >= host.scrollTop) {
       wheelPannedAway = false;
       if (previousPan) previousPan.top = host.scrollTop;
     }
@@ -220,7 +230,6 @@ export function createTerminalGridPresentation(options: GridPresentationOptions)
       Math.min(configured, 10) / layout.fontSize,
     ));
     visualCellHeight = gridHeight * scale / terminal.rows;
-    const content = terminalContentExtent(terminal);
     contentGrid = content;
     liveContentHeight = visualCellHeight * (buffer && buffer.viewportY !== buffer.baseY
       ? terminalContentExtent(terminal, buffer.baseY).rows : content.rows);
@@ -254,6 +263,7 @@ export function createTerminalGridPresentation(options: GridPresentationOptions)
       // which made narrow observers appear to drift sideways as output arrived.
       left: host.scrollLeft,
     };
+    previousViewportHeight = host.clientHeight;
     if (!scrollbar && terminal.buffer && terminal.scrollToLine && terminal.onScroll && host.parentElement) {
       scrollbar = createTerminalScrollbar({ host, root, nativeHistory: options.nativeHistory, terminal: {
         buffer: terminal.buffer, scrollToLine: terminal.scrollToLine.bind(terminal), onScroll: terminal.onScroll.bind(terminal),
@@ -284,6 +294,7 @@ export function createTerminalGridPresentation(options: GridPresentationOptions)
     element = null;
     restoreStyle = null;
     previousPan = null;
+    previousViewportHeight = null;
     wheelPannedAway = false;
     settledLayout = null;
     host.style.overflowX = "hidden";
