@@ -934,6 +934,29 @@ describe("ProviderSettingsStore", () => {
     await expect(store.getSnapshot()).resolves.toMatchObject({ revision: 0 });
   });
 
+  it("explicit refresh retries blocked runtime recovery before admitting a Settings read", async () => {
+    let ready = false;
+    runtime.isRecoveryReady = () => ready;
+    runtime.reconcilePending = vi.fn(async () => { ready = true; });
+    const store = createStore();
+    await expect(store.getSnapshot()).rejects.toMatchObject({ code: "runtime_unavailable" });
+    expect(runtime.reconcilePending).not.toHaveBeenCalled();
+    await expect(store.getSnapshot({ refresh: true })).resolves.toMatchObject({ revision: 0 });
+    expect(runtime.reconcilePending).toHaveBeenCalledTimes(1);
+    await store.getSnapshot({ refresh: true });
+    expect(runtime.reconcilePending).toHaveBeenCalledTimes(1);
+  });
+
+  it("failed explicit recovery remains fail closed and exposes no ordinary enabled Settings snapshot", async () => {
+    runtime.isRecoveryReady = () => false;
+    runtime.reconcilePending = vi.fn(async () => { throw new Error("private recovery failure"); });
+    const store = createStore();
+    await expect(store.getSnapshot({ refresh: true })).rejects.toMatchObject({ code: "runtime_unavailable", status: 503 });
+    expect(runtime.reconcilePending).toHaveBeenCalledTimes(1);
+    await expect(store.getSnapshot()).rejects.toMatchObject({ code: "runtime_unavailable", status: 503 });
+    expect(runtime.reconcilePending).toHaveBeenCalledTimes(1);
+  });
+
   it("rejects missing, malformed, and stale canonical projections", async () => {
     expect(() => new ProviderSettingsStore({
       homePath,

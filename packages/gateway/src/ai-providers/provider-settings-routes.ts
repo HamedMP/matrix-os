@@ -16,11 +16,12 @@ const PROVIDER_SETTINGS_BODY_LIMIT = 64 * 1024;
 const RefreshQuerySchema = z.enum(["true", "false"]).optional();
 
 function withCapabilities(snapshot: ProviderSettingsSnapshot, include: boolean): ProviderSettingsSnapshot {
-  if (include) return { ...snapshot, atomicConnectSupported: snapshot.supportedActions.includes("set_route")
+  const publicSnapshot = { ...snapshot, harnesses: snapshot.harnesses.map(({ enablementOrigin: _enablementOrigin, ...harness }) => harness) };
+  if (include) return { ...publicSnapshot, atomicConnectSupported: snapshot.supportedActions.includes("set_route")
     && snapshot.supportedActions.includes("set_harness_enabled") };
   return {
-    ...snapshot,
-    harnesses: snapshot.harnesses.map(({ configuredEnabled: _configuredEnabled, ...harness }) => harness),
+    ...publicSnapshot,
+    harnesses: publicSnapshot.harnesses.map(({ configuredEnabled: _configuredEnabled, ...harness }) => harness),
     accessSources: snapshot.accessSources.map(({ localObservation: _localObservation, ...source }) => source),
   };
 }

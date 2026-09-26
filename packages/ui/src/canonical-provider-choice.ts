@@ -83,7 +83,7 @@ const UNAVAILABLE_LABELS: Record<
 export function canonicalProviderAvailabilityLabel(
   instance: CanonicalProviderInstanceDescriptor,
 ): string {
-  if (instance.availability === "available") return instance.driverKind === "codex"
+  if (instance.availability === "available") return (instance.driverKind === "codex" || instance.localObservation !== undefined)
     ? codexLocalObservationLabel(instance.localObservation)
     : "Available";
   if (instance.unavailabilityReason) return UNAVAILABLE_LABELS[instance.unavailabilityReason];
