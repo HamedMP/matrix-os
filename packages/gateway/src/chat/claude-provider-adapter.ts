@@ -21,6 +21,7 @@ import {
   type CanonicalCliSpawn,
 } from "./cli-process.js";
 import {
+  createAssistantTextStreamProjector,
   safeToolPreview,
   sanitizeAssistantText,
 } from "./safe-activity-projection.js";
@@ -343,6 +344,11 @@ export function createClaudeChatProviderAdapter(options: {
     let pendingDelta = "";
     let pendingDeltaMessageId: string | undefined;
     let deltaFlushScheduled = false;
+    const textProjector = createAssistantTextStreamProjector({
+      homePath: options.homePath,
+      executionRoot: input.executionRoot,
+    });
+    let projectedMessageId: string | undefined;
     const textMessageByIndex = new Map<number, string>();
     const toolInputByIndex = new Map<number, string>();
     const toolNameByIndex = new Map<number, string>();
@@ -376,10 +382,30 @@ export function createClaudeChatProviderAdapter(options: {
       }
     };
 
+    const flushProjectedText = () => {
+      const projected = textProjector.flush();
+      if (projected) enqueueDelta(projected, projectedMessageId);
+      projectedMessageId = undefined;
+    };
+    const discardProjectedText = () => {
+      textProjector.discard();
+      projectedMessageId = undefined;
+    };
+    const projectDelta = (delta: string, messageId?: string) => {
+      if (projectedMessageId !== messageId) flushProjectedText();
+      projectedMessageId = messageId;
+      const projected = textProjector.push(delta);
+      if (projected) enqueueDelta(projected, messageId);
+    };
+
     const parseLine = (raw: string) => {
       if (!raw.trim()) return;
       const line = ClaudeStreamLineSchema.parse(JSON.parse(raw));
       if (inputControl.handle(line)) return;
+      if (line.type === "result") {
+        if (line.is_error === true || line.subtype === "error") discardProjectedText();
+        else flushProjectedText();
+      }
       if (usageFailure?.category !== "quota_exhausted") {
         usageFailure = classifyClaudeUsageFailure(line) ?? usageFailure;
       }
@@ -402,10 +428,7 @@ export function createClaudeChatProviderAdapter(options: {
         : undefined;
       if (delta) {
         streamedText = true;
-        enqueueDelta(sanitizeAssistantText(delta, {
-          homePath: options.homePath,
-          executionRoot: input.executionRoot,
-        }), line.event?.index === undefined ? undefined : textMessageByIndex.get(line.event.index));
+        projectDelta(delta, line.event?.index === undefined ? undefined : textMessageByIndex.get(line.event.index));
       }
       if (line.type === "stream_event" && line.event?.type === "content_block_delta"
         && line.event.index !== undefined && line.event.delta?.type === "input_json_delta"
@@ -417,6 +440,7 @@ export function createClaudeChatProviderAdapter(options: {
       }
       if (line.type === "stream_event" && line.event?.type === "content_block_start"
         && line.event.index !== undefined && line.event.content_block) {
+        flushProjectedText();
         flushPendingDelta();
         const block = line.event.content_block;
         if (block.type === "text") {
@@ -446,6 +470,7 @@ export function createClaudeChatProviderAdapter(options: {
       }
       if (line.type === "stream_event" && line.event?.type === "content_block_stop"
         && line.event.index !== undefined) {
+        flushProjectedText();
         flushPendingDelta();
         const activity = activityByIndex.get(line.event.index);
         if (activity) {
@@ -529,6 +554,8 @@ export function createClaudeChatProviderAdapter(options: {
     }).then(() => {
       releaseActiveRun();
       if (buffered.trim()) parseLine(buffered);
+      if (sawResult && !resultFailed) flushProjectedText();
+      else discardProjectedText();
       flushPendingDelta();
       emitBufferedResult();
       const classifiedFailure = usageFailure ?? (resultFailed
@@ -564,6 +591,8 @@ export function createClaudeChatProviderAdapter(options: {
       queue.finish();
     }).catch(async (error: unknown) => {
       releaseActiveRun();
+      if (sawResult && !resultFailed) flushProjectedText();
+      else discardProjectedText();
       flushPendingDelta();
       if (steerPrompt && emittedState && !input.signal.aborted) {
         capability?.revoke();
@@ -622,6 +651,7 @@ export function createClaudeChatProviderAdapter(options: {
       yield* queue.values();
     } finally {
       processController.abort();
+      discardProjectedText();
       capability?.revoke();
     }
   }

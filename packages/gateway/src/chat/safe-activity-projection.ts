@@ -3,6 +3,9 @@ import { isAbsolute, relative, sep } from "node:path";
 const SECRET_TEXT = /(?:authorization\s*[:=]|bearer\s+|(?:api[_-]?(?:key|token)|access[_-]?token|secret|password|credential)\s*[:=]|\bprivate\s+raw\b|ghp_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9_-]+)/i;
 const SECRET_ASSIGNMENT = /\b(?:API[_-]?KEY|API[_-]?TOKEN|ACCESS[_-]?TOKEN|SECRET|PASSWORD|CREDENTIAL)\s*=\s*[^\s,;]+/gi;
 const ABSOLUTE_PATH = /(^|[\s"'`(=:<>|;&])\/(?=[A-Za-z0-9._~-])(?!\/)[^\s"'`<>)]*/g;
+const DANGLING_BEARER = /(?:^|[^A-Za-z0-9_])Bearer\s+$/i;
+const DANGLING_SECRET_ASSIGNMENT = /(?:^|[^A-Za-z0-9_])(?:API[_-]?(?:KEY|TOKEN)|ACCESS[_-]?TOKEN|SECRET|PASSWORD|CREDENTIAL)\s*(?:=\s*)?$/i;
+const ASSISTANT_TEXT_TAIL_LIMIT = 2_048;
 
 function normalizedRoot(value: string): string {
   return value.replace(/[\\/]+$/, "");
@@ -63,6 +66,54 @@ export function sanitizeAssistantText(
     .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]+/gi, "Bearer [redacted]")
     .replace(SECRET_ASSIGNMENT, "[redacted credential]")
     .replace(ABSOLUTE_PATH, (match, prefix: string) => `${prefix}[redacted path]`);
+}
+
+/** Project streamed text only after its path or credential token is complete. */
+export function createAssistantTextStreamProjector(options: { homePath: string; executionRoot?: string }) {
+  let pending = "";
+  let droppingOversizedToken = false;
+
+  return {
+    push(value: string): string {
+      let projected = "";
+      for (const character of value) {
+        if (droppingOversizedToken) {
+          if (/\s/u.test(character)) {
+            droppingOversizedToken = false;
+            projected += character;
+          }
+          continue;
+        }
+
+        pending += character;
+        if (/\s/u.test(character)
+          && !DANGLING_BEARER.test(pending)
+          && !DANGLING_SECRET_ASSIGNMENT.test(pending)) {
+          projected += sanitizeAssistantText(pending, options);
+          pending = "";
+        } else if (pending.length > ASSISTANT_TEXT_TAIL_LIMIT) {
+          pending = "";
+          droppingOversizedToken = true;
+          projected += "[redacted]";
+        }
+      }
+      return projected;
+    },
+    flush(): string {
+      if (droppingOversizedToken) {
+        droppingOversizedToken = false;
+        pending = "";
+        return "";
+      }
+      const projected = sanitizeAssistantText(pending, options);
+      pending = "";
+      return projected;
+    },
+    discard(): void {
+      pending = "";
+      droppingOversizedToken = false;
+    },
+  };
 }
 
 export function safeToolPreview(
