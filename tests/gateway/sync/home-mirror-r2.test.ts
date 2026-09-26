@@ -47,3 +47,20 @@ it("enforces default deadlines even when a caller supplies its own non-aborted s
     expect(timeout.mock.calls.map(([ms]) => ms)).toEqual([10_000, 30_000]);
   } finally { timeout.mockRestore(); lifecycle.abort(); caller.abort(); }
 });
+
+it("cancels a web reader when the getObject deadline expires after headers", async () => {
+  const lifecycle = new AbortController(); const deadline = new AbortController();
+  const timeout = vi.spyOn(AbortSignal, "timeout").mockReturnValue(deadline.signal);
+  let cancelled = false; let release!: () => void;
+  const pending = new Promise<ReadableStreamReadResult<Uint8Array>>(resolve => { release = () => resolve({ done: true, value: undefined }); });
+  const r2 = createFakeR2();
+  r2.getObject = async () => ({ body: { getReader: () => ({ read: () => pending, cancel: async () => { cancelled = true; }, releaseLock: () => {} }) } as unknown as ReadableStream });
+  try {
+    const result = await createMirrorR2(r2, () => lifecycle.signal).getObject("synthetic");
+    const reader = result.body!.getReader(); const reading = reader.read().catch(error => error);
+    deadline.abort(new Error("synthetic deadline"));
+    expect(await Promise.race([reading, new Promise(resolve => setTimeout(() => resolve("stalled"), 100))])).toBe(deadline.signal.reason);
+    expect(cancelled).toBe(true);
+    reader.releaseLock(); release(); await reading;
+  } finally { release(); timeout.mockRestore(); lifecycle.abort(); }
+});

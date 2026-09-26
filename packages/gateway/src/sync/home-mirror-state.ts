@@ -18,7 +18,7 @@ const State = z.object({
   version: z.literal(1),
   hashes: z.record(Path, Hash).refine((value) => Object.keys(value).length <= MAX_ENTRIES),
   conflicts: z.record(Path, z.object({
-    localHash: Hash, remoteHash: Hash,
+    localHash: Hash, remoteHash: Hash, localDeleted: z.boolean().optional(),
     artifact: z.string().regex(/^conflict-[a-f0-9]{64}\.bin$/),
   })).refine((value) => Object.keys(value).length <= MAX_CONFLICTS),
 });
@@ -81,67 +81,83 @@ export class HomeMirrorState {
   paths(): string[] { return Object.keys(this.state.hashes); }
   hash(path: string): string | undefined { return Object.hasOwn(this.state.hashes, path) ? this.state.hashes[path] : undefined; }
   blocked(path: string): boolean { return Object.hasOwn(this.state.conflicts, path); }
-  async remember(path: string, hash: string): Promise<void> {
+  private candidate(): StateData {
+    return { version: 1, hashes: Object.assign(Object.create(null), this.state.hashes), conflicts: Object.assign(Object.create(null), this.state.conflicts) };
+  }
+  private validateCandidate(candidate: StateData): string {
+    if (Object.keys(candidate.hashes).length > MAX_ENTRIES || Object.keys(candidate.conflicts).length > MAX_CONFLICTS) throw new Error("mirror baseline capacity exhausted");
+    const contents = JSON.stringify(candidate);
+    if (Buffer.byteLength(contents) > MAX_STATE_BYTES) throw new Error("mirror state capacity exhausted");
+    return contents;
+  }
+  private applyRemember(candidate: StateData, path: string, hash: string): void {
     Path.parse(path); Hash.parse(hash);
-    if (!Object.hasOwn(this.state.hashes, path) && Object.keys(this.state.hashes).length >= MAX_ENTRIES) {
-      throw new Error("mirror baseline capacity exhausted");
-    }
-    this.state.hashes[path] = hash;
-    delete this.state.conflicts[path];
-    await this.save();
+    candidate.hashes[path] = hash; delete candidate.conflicts[path];
   }
-  async forget(path: string): Promise<void> {
-    Path.parse(path);
-    delete this.state.hashes[path]; delete this.state.conflicts[path]; await this.save();
+  /** Capacity admission only: DB metadata and the host-local file are not one transaction. */
+  async preflightRemember(changes: ReadonlyArray<{ path: string; hash: string }>): Promise<void> {
+    await this.writes;
+    const candidate = this.candidate();
+    for (const { path, hash } of changes) this.applyRemember(candidate, path, hash);
+    this.validateCandidate(candidate);
   }
-  async preserve(path: string, localHash: string, remoteHash: string, bytes: Buffer): Promise<void> {
-    Path.parse(path); Hash.parse(localHash); Hash.parse(remoteHash);
-    if (`sha256:${createHash("sha256").update(bytes).digest("hex")}` !== remoteHash) {
-      throw new Error("invalid conflict content");
-    }
-    await this.checkDirectory();
-    const artifact = `conflict-${createHash("sha256").update(path).update(remoteHash).digest("hex")}.bin`;
-    let count = 0; let size = 0;
-    const names = await readdir(this.dir);
-    if (names.length > 1_000) throw new Error("mirror state directory capacity exhausted");
-    for (const name of names) {
-      if (!/^conflict-[a-f0-9]{64}\.bin$/.test(name)) continue;
-      const info = await lstat(join(this.dir, name));
-      if (!info.isFile() || info.isSymbolicLink()) throw new Error("unsafe conflict artifact");
-      count++; size += info.size;
-    }
-    try {
-      const existing = await open(join(this.dir, artifact), constants.O_RDONLY | constants.O_NOFOLLOW);
-      try {
-        const info = await existing.stat();
-        if (!info.isFile() || info.size > MAX_CONFLICT_BYTES) throw new Error("invalid conflict artifact");
-        const hash = createHash("sha256").update(await existing.readFile()).digest("hex");
-        if (`sha256:${hash}` !== remoteHash) throw new Error("conflict artifact mismatch");
-      } finally { await existing.close(); }
-    } catch (error: unknown) {
-      if (!missing(error)) throw error;
-      if (count >= MAX_CONFLICTS || size + bytes.length > MAX_CONFLICT_BYTES) throw new Error("conflict capacity exhausted");
-      await writeFile(join(this.dir, artifact), bytes, { flag: "wx", mode: 0o600 });
-    }
-    if (!Object.hasOwn(this.state.conflicts, path) && Object.keys(this.state.conflicts).length >= MAX_CONFLICTS) {
-      throw new Error("conflict capacity exhausted");
-    }
-    this.state.conflicts[path] = { localHash, remoteHash, artifact };
-    await this.save();
-    this.warn("conflict_preserved");
-  }
-  private save(): Promise<void> {
-    const next = this.writes.then(() => this.saveNow());
+  private mutate(change: (candidate: StateData) => void | Promise<void>): Promise<void> {
+    const next = this.writes.then(async () => {
+      const candidate = this.candidate();
+      await change(candidate);
+      await this.saveNow(candidate);
+      // A failed disk write leaves both the accepted live view and baseline unchanged.
+      this.state = candidate;
+    });
     this.writes = next.catch((error: unknown) => { this.warn(error instanceof Error ? "state_write_failed" : "state_write_non_error"); });
     return next;
   }
-  private async saveNow(): Promise<void> {
+  async remember(path: string, hash: string): Promise<void> {
+    await this.mutate(candidate => this.applyRemember(candidate, path, hash));
+  }
+  async forget(path: string): Promise<void> {
+    Path.parse(path);
+    await this.mutate(candidate => { delete candidate.hashes[path]; delete candidate.conflicts[path]; });
+  }
+  async preserve(path: string, localHash: string, remoteHash: string, bytes: Buffer, localDeleted = false): Promise<void> {
+    Path.parse(path); Hash.parse(localHash); Hash.parse(remoteHash);
+    if (`sha256:${createHash("sha256").update(bytes).digest("hex")}` !== remoteHash) throw new Error("invalid conflict content");
+    await this.mutate(async candidate => {
+      await this.checkDirectory();
+      const artifact = `conflict-${createHash("sha256").update(path).update(remoteHash).digest("hex")}.bin`;
+      candidate.conflicts[path] = { localHash, remoteHash, artifact, ...(localDeleted ? { localDeleted: true } : {}) };
+      this.validateCandidate(candidate);
+      let count = 0; let size = 0;
+      const names = await readdir(this.dir);
+      if (names.length > 1_000) throw new Error("mirror state directory capacity exhausted");
+      for (const name of names) {
+        if (!/^conflict-[a-f0-9]{64}\.bin$/.test(name)) continue;
+        const info = await lstat(join(this.dir, name));
+        if (!info.isFile() || info.isSymbolicLink()) throw new Error("unsafe conflict artifact");
+        count++; size += info.size;
+      }
+      try {
+        const existing = await open(join(this.dir, artifact), constants.O_RDONLY | constants.O_NOFOLLOW);
+        try {
+          const info = await existing.stat();
+          if (!info.isFile() || info.size > MAX_CONFLICT_BYTES) throw new Error("invalid conflict artifact");
+          const hash = createHash("sha256").update(await existing.readFile()).digest("hex");
+          if (`sha256:${hash}` !== remoteHash) throw new Error("conflict artifact mismatch");
+        } finally { await existing.close(); }
+      } catch (error: unknown) {
+        if (!missing(error)) throw error;
+        if (count >= MAX_CONFLICTS || size + bytes.length > MAX_CONFLICT_BYTES) throw new Error("conflict capacity exhausted");
+        await writeFile(join(this.dir, artifact), bytes, { flag: "wx", mode: 0o600 });
+      }
+    });
+    this.warn("conflict_preserved");
+  }
+  private async saveNow(candidate: StateData): Promise<void> {
+    const contents = this.validateCandidate(candidate);
     await this.checkDirectory();
     const target = join(this.dir, "state.json");
     try { if ((await lstat(target)).isSymbolicLink()) throw new Error("unsafe mirror state file"); }
     catch (error: unknown) { if (!missing(error)) throw error; }
-    const contents = JSON.stringify(this.state);
-    if (Buffer.byteLength(contents) > MAX_STATE_BYTES) throw new Error("mirror state capacity exhausted");
     const temp = join(this.dir, `state-${randomUUID()}.tmp`);
     try {
       await writeFile(temp, contents, { flag: "wx", mode: 0o600 });

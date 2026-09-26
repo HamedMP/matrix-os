@@ -1224,7 +1224,7 @@ describe("createHomeMirror", () => {
       await mirror.stop();
     });
 
-    it("records the hash for the exact bytes uploaded", async () => {
+    it("keeps captured blob identity without accepting bytes superseded during staging", async () => {
       const filePath = join(tmpRoot, "race.txt");
       const originalPutObject = r2.putObject.bind(r2);
       vi.spyOn(r2, "putObject").mockImplementation(async (key, body) => {
@@ -1249,10 +1249,21 @@ describe("createHomeMirror", () => {
       await writeFile(filePath, "old bytes");
       await mirror.pushLocalFile("race.txt");
 
+      expect(storedManifest(r2)?.files["race.txt"]).toBeUndefined();
+      const baseline = await readFile(join(tmpRoot, ".matrix-home-mirror/state.json"), "utf8").then(text => JSON.parse(text), (error: unknown) => {
+        if (!(error instanceof Error) || !("code" in error) || error.code !== "ENOENT") throw error;
+        return { hashes: {} };
+      });
+      expect(baseline.hashes["race.txt"]).toBeUndefined();
+      expect(await readFile(filePath, "utf8")).toBe("new bytes that should not affect the uploaded hash");
+      const captured = r2.store.get(`matrixos-sync/alice/objects/sha256/${sha256(Buffer.from("old bytes")).slice(7)}`);
+      expect(captured).toEqual(Buffer.from("old bytes"));
+      vi.restoreAllMocks();
+      await mirror.pushLocalFile("race.txt");
       const manifest = storedManifest(r2);
       expect(manifest).toBeDefined();
       const uploaded = r2.store.get(manifest!.files["race.txt"]!.objectKey!);
-      expect(uploaded).toBeDefined();
+      expect(uploaded).toEqual(Buffer.from("new bytes that should not affect the uploaded hash"));
       expect(manifest!.files["race.txt"]?.hash).toBe(sha256(uploaded!));
       expect(manifest!.files["race.txt"]?.size).toBe(uploaded!.length);
 

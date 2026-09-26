@@ -232,6 +232,7 @@ export async function writeManifest(
   scope: ManifestScope,
   manifest: Manifest,
   newVersion: number,
+  beforePublish?: () => Promise<void>,
 ): Promise<void> {
   const { fileCount, totalSize } = liveManifestStats(manifest);
   const body = JSON.stringify({
@@ -256,6 +257,8 @@ export async function writeManifest(
     accepted_manifest_key: generationKey,
   };
   const expectedVersion = newVersion - 1;
+  await beforePublish?.();
+  store.signal?.throwIfAborted();
   const advanced = await store.db.advanceManifestMeta(
     scope,
     expectedVersion,

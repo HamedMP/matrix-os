@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { createHash } from "node:crypto";
@@ -70,6 +70,24 @@ describe("reviewed mirror startup and publication boundaries", () => {
     const state = JSON.parse(await readFile(join(root, ".matrix-home-mirror/state.json"), "utf8"));
     expect(state.hashes["note.md"]).toBe(hash("accepted original"));
     expect(await readFile(join(root, "note.md"), "utf8")).toBe("newer owner edit");
+  });
+  it("keeps failed baseline persistence conservative when remote publication has already succeeded", async () => {
+    const { root, make, remote } = await fixture(); const active = make(); await active.start();
+    const target = join(root, ".matrix-home-mirror/state.json"); const original = join(root, ".matrix-home-mirror/protected-original.json");
+    const stored = await readFile(target, "utf8"); await rename(target, original); await symlink(original, target);
+    await writeFile(join(root, "note.md"), "published edit");
+    await expect(active.pushLocalFile("note.md")).rejects.toThrow("unsafe");
+    expect((await remote()).manifest.files["note.md"].hash).toBe(hash("published edit"));
+    expect(await readFile(original, "utf8")).toBe(stored);
+    await writeFile(join(root, "note.md"), "newer owner edit");
+    await expect(active.pushLocalFile("note.md")).rejects.toThrow("unsafe");
+    expect((await remote()).manifest.files["note.md"].hash).toBe(hash("published edit"));
+    expect(await readFile(join(root, "note.md"), "utf8")).toBe("newer owner edit");
+    await rm(target); await rename(original, target);
+    await active.stop(); await make().start();
+    expect(await readFile(join(root, "note.md"), "utf8")).toBe("newer owner edit");
+    const state = JSON.parse(await readFile(target, "utf8"));
+    expect(await readFile(join(root, ".matrix-home-mirror", state.conflicts["note.md"].artifact), "utf8")).toBe("published edit");
   });
   it("preflights projected baseline capacity before accepting a startup publication", async () => {
     const { root, make, remote } = await fixture();

@@ -27,6 +27,7 @@ import { HomeMirrorState, MIRROR_STATE_DIR } from "./home-mirror-state.js";
 import { HomeMirrorReconciliation } from "./home-mirror-reconciliation.js";
 import { awaitMirrorOperation } from "./home-mirror-abort.js";
 import { streamToBuffer } from "./home-mirror-body.js";
+import { MirrorPublicationChanged, publishMirrorManifest } from "./home-mirror-publication.js";
 import { createMirrorR2 } from "./home-mirror-r2.js";
 
 const RECENT_WRITE_CAP = 50_000;
@@ -380,6 +381,20 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
     });
   }
 
+  async function matchesLocal(path: string, hash: string): Promise<boolean> {
+    const absPath = join(config.homeRoot, path);
+    assertWithinResolvedHomeRoot(await realpath(dirname(absPath)));
+    const current = await readLocalFileForPush(absPath, maxPushBytes);
+    return current.kind === "file" && current.hash === hash;
+  }
+  async function publishCurrent(
+    lockedStore: Parameters<typeof writeManifest>[0], next: Manifest, version: number,
+    changes: ReadonlyArray<{ path: string; hash: string }>,
+  ): Promise<boolean> {
+    return publishMirrorManifest({ lockedStore, scope, next, version, changes, state: localState,
+      matchesLocal, changed: () => log.info("local_changed_before_publication") });
+  }
+
   async function pushFile(relPath: string): Promise<void> {
     const safeRelPath = normalizeRelativePath(config.userId, relPath);
     if (isIgnored(safeRelPath, extraIgnore)) return;
@@ -409,6 +424,7 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
       await withManifestLock(async (lockedStore) => {
         const existing = await readManifest(lockedStore, scope);
         const currentEntry = existing.manifest.files[safeRelPath];
+        if (!await matchesLocal(safeRelPath, localFile.hash)) return;
         if (!await reconciliation.canPublish(safeRelPath, localFile.hash, currentEntry)) return;
         if (currentEntry?.hash === localFile.hash && !currentEntry.deleted) {
           // Already in manifest with same hash -- skip the upload.
@@ -424,7 +440,7 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
 
         const newVersion = existing.manifestVersion + 1;
         lifecycle.signal.throwIfAborted();
-        await writeManifest(lockedStore, scope, next, newVersion);
+        if (!await publishCurrent(lockedStore, next, newVersion, [{ path: safeRelPath, hash: localFile.hash }])) return;
         await localState.remember(safeRelPath, localFile.hash);
         broadcastChange({ path: safeRelPath, hash: localFile.hash, size: localFile.size, action }, newVersion);
         log.info(`pushed ${safeRelPath} (${localFile.size}B)`);
@@ -458,7 +474,12 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
         const existing = await readManifest(lockedStore, scope);
         const entry = existing.manifest.files[safeRelPath];
         if (!entry || entry.deleted) return;
-        if (entry.hash !== localState.hash(safeRelPath) || !await isLocalMissing(safeRelPath)) return;
+        const baseline = localState.hash(safeRelPath);
+        if (!baseline || !await isLocalMissing(safeRelPath)) return;
+        if (entry.hash !== baseline) {
+          await reconciliation.preserveDeletion(safeRelPath, entry);
+          return;
+        }
 
         const next: Manifest = applyCommitToManifest(
           existing.manifest,
@@ -468,7 +489,11 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
 
         const newVersion = existing.manifestVersion + 1;
         lifecycle.signal.throwIfAborted();
-        await writeManifest(lockedStore, scope, next, newVersion);
+        try {
+          await writeManifest(lockedStore, scope, next, newVersion, async () => {
+            if (!await isLocalMissing(safeRelPath)) throw new MirrorPublicationChanged();
+          });
+        } catch (error: unknown) { if (error instanceof MirrorPublicationChanged) return; throw error; }
 
         await localState.forget(safeRelPath);
         broadcastChange(
@@ -499,6 +524,10 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
       }
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+      if (localState.hash(safeRelPath) !== undefined) {
+        await pushDelete(safeRelPath);
+        return;
+      }
     }
 
     let key = entry.objectKey;
@@ -738,6 +767,7 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
           }> = [];
           for (const { path: safeRelPath, file: localFile, objectKey } of finalizedFiles) {
               const currentEntry = nextManifest.files[safeRelPath];
+              if (!await matchesLocal(safeRelPath, localFile.hash)) continue;
               if (!await reconciliation.canPublish(safeRelPath, localFile.hash, currentEntry)) continue;
               if (currentEntry?.hash === localFile.hash && !currentEntry.deleted) {
                 continue;
@@ -770,7 +800,7 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
 
           const newVersion = existing.manifestVersion + 1;
           lifecycle.signal.throwIfAborted();
-          await writeManifest(lockedStore, scope, nextManifest, newVersion);
+          if (!await publishCurrent(lockedStore, nextManifest, newVersion, changedFiles)) return 0;
           for (const file of changedFiles) await localState.remember(file.path, file.hash);
           broadcastChanges(changedFiles, newVersion);
           return changedFiles.length;

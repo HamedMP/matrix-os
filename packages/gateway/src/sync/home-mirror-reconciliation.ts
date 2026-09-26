@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { ManifestEntry } from "./types.js";
 import type { HomeMirrorState } from "./home-mirror-state.js";
 
@@ -19,6 +20,11 @@ export class HomeMirrorReconciliation {
       await this.state.preserve(path, localHash, remote.hash, await this.readRemote(path, remote));
     }
     return false;
+  }
+
+  async preserveDeletion(path: string, remote: ManifestEntry): Promise<void> {
+    const absentHash = `sha256:${createHash("sha256").update(Buffer.alloc(0)).digest("hex")}`;
+    await this.state.preserve(path, absentHash, remote.hash, await this.readRemote(path, remote), true);
   }
 
   /** Called inside the manifest advisory lock, against its current accepted revision. */
