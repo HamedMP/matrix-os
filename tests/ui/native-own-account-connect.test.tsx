@@ -100,7 +100,7 @@ describe("native own-account connection", () => {
     expect(onSetupHarness).not.toHaveBeenCalled();
   });
 
-  it.each(["absent", "wrong harness", "wrong account", "wrong model", "changed source", "unavailable"])("denies %s after the refresh without setup or mutation", async (negative) => {
+  it.each(["absent", "wrong harness", "wrong account", "wrong model", "changed source", "expired", "future", "denied", "read only", "no atomic connect", "unavailable"])("denies %s after the refresh without setup or mutation", async (negative) => {
     const fresh = fixture("pi").snapshot;
     const source = fresh.accessSources[0]!;
     if (negative === "absent") source.localObservation!.state = "absent";
@@ -108,6 +108,11 @@ describe("native own-account connection", () => {
     if (negative === "wrong account") source.accountId = "other";
     if (negative === "wrong model") source.eligibleModelIds = [];
     if (negative === "changed source") source.id = "other_source";
+    if (negative === "expired") source.localObservation!.staleAfter = new Date(Date.now() - 1).toISOString();
+    if (negative === "future") source.localObservation!.checkedAt = new Date(Date.now() + 30_000).toISOString();
+    if (negative === "denied") source.readiness.state = "auth_required";
+    if (negative === "read only") fresh.access.mode = "read_only";
+    if (negative === "no atomic connect") fresh.atomicConnectSupported = false;
     const refresh = vi.fn().mockResolvedValue(negative === "unavailable" ? null : fresh);
     const { onMutate, onSetupHarness } = mount("pi", (s) => {
       s.localObservation!.staleAfter = new Date(Date.now() - 1).toISOString();

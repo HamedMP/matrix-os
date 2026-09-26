@@ -74,6 +74,19 @@ describe("desktop shared agents and providers adapter", () => {
     }));
   });
 
+  it("rejects a connection refresh result after trusted runtime generation changes", async () => {
+    let release!: (snapshot: unknown) => void;
+    const refreshForConnection = vi.fn(() => new Promise((done) => { release = done; }));
+    mocks.controller.mockReturnValue({ ...mocks.controller.mock.results[0]?.value,
+      snapshot: { revision: 1 }, refreshForConnection, onSelectHarness: vi.fn(), refresh: vi.fn(), mutate: vi.fn() });
+    render(<AgentsProvidersAdapter />);
+    const props = mocks.view.mock.calls.at(-1)![0] as unknown as { onRefreshForConnection: () => Promise<unknown> };
+    const pending = props.onRefreshForConnection();
+    act(() => useConnection.setState({ authGeneration: 8 }));
+    release({ revision: 2 });
+    expect(await pending).toBeNull();
+  });
+
   it("offers a safe retry when the initial provider snapshot cannot load", () => {
     const refresh = vi.fn();
     mocks.controller.mockReturnValue({

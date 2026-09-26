@@ -15,6 +15,26 @@ import {
 
 const checkedAt = "2026-08-30T10:00:00.000Z";
 
+describe("connection refresh snapshot handoff", () => {
+  it("returns the validated refreshed snapshot from the same controller", async () => {
+    const latest = snapshot(2);
+    const getSnapshot = vi.fn().mockResolvedValue(latest);
+    const controller = new ProviderSettingsController({ identityKey: "runtime_a", transport: { getSnapshot, mutate: vi.fn() } });
+    expect(await controller.refreshForConnection()).toEqual(latest);
+    expect(getSnapshot).toHaveBeenCalledWith(expect.any(AbortSignal), { refresh: true });
+  });
+
+  it("returns no candidate after runtime controller disposal", async () => {
+    let release!: (value: ProviderSettingsSnapshot) => void;
+    const getSnapshot = vi.fn(() => new Promise<ProviderSettingsSnapshot>((done) => { release = done; }));
+    const controller = new ProviderSettingsController({ identityKey: "old_runtime", transport: { getSnapshot, mutate: vi.fn() } });
+    const pending = controller.refreshForConnection();
+    controller.dispose();
+    release(snapshot(2));
+    expect(await pending).toBeNull();
+  });
+});
+
 function snapshot(revision: number, harnessIds = ["harness_one"]): ProviderSettingsSnapshot {
   return {
     contractVersion: 1,
