@@ -81,6 +81,7 @@ export function createTerminalGridPresentation(options: GridPresentationOptions)
   let stage: HTMLElement | null = null;
   let element: HTMLElement | null = null;
   let restoreStyle: Partial<CSSStyleDeclaration> | null = null;
+  let restoreOverflowAnchor: string | null = null;
   let previousPan: { top: number; left: number } | null = null;
   let previousViewportHeight: number | null = null;
   let wheelPannedAway = false;
@@ -202,6 +203,10 @@ export function createTerminalGridPresentation(options: GridPresentationOptions)
     const followY = live && !wheelPannedAway && (!previousPan || Math.abs(host.scrollTop - previousPan.top) <= 1);
 
     if (!stage) {
+      // Presentation owns outer panning; browser anchoring during xterm font
+      // measurement must not move its explicitly restored reading position.
+      restoreOverflowAnchor = host.style.overflowAnchor;
+      host.style.overflowAnchor = "none";
       // xterm emits once per parsed write batch; RAF coalesces output bursts.
       outputSubscription = terminal.onWriteParsed?.(schedule);
       scrollSubscription = terminal.onScroll?.(schedule);
@@ -302,6 +307,8 @@ export function createTerminalGridPresentation(options: GridPresentationOptions)
     stage = null;
     element = null;
     restoreStyle = null;
+    if (restoreOverflowAnchor !== null) host.style.overflowAnchor = restoreOverflowAnchor;
+    restoreOverflowAnchor = null;
     previousPan = null;
     previousViewportHeight = null;
     wheelPannedAway = false;
