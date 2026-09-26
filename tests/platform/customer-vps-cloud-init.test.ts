@@ -849,6 +849,17 @@ exit 99
     expect(gateway).toContain('ConditionPathExists=/opt/matrix/restore-complete');
   });
 
+  it('scales gateway memory guardrails with VPS RAM in both service templates', () => {
+    const root = process.cwd();
+    const gateway = readFileSync(join(root, 'distro/customer-vps/systemd/matrix-gateway.service'), 'utf8');
+    const cloudInit = readFileSync(join(root, 'distro/customer-vps/cloud-init.yaml'), 'utf8');
+
+    for (const template of [gateway, cloudInit]) {
+      expect(template).toContain('MemoryHigh=40%');
+      expect(template).toContain('MemoryMax=50%');
+    }
+  });
+
   it('only skips restore on confirmed missing R2 backup markers', () => {
     const root = process.cwd();
     const restore = readFileSync(join(root, 'distro/customer-vps/matrix-restore.sh'), 'utf8');

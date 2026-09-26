@@ -150,6 +150,34 @@ describe("trusted runtime selection route", () => {
     expect(claims.runtime_slot).toBe("pr-1037");
   });
 
+  it("issues a runtime token on the configured app host for a native bearer", async () => {
+    const sourceToken = await issueSourceToken(db);
+    process.env.EDGE_ROUTER_SECRET = "edge-secret";
+    for (const headers of [
+      { host: "app.matrix-os.com" },
+      {
+        host: "matrix-platform.internal",
+        "x-forwarded-host": "app.matrix-os.com",
+        "x-matrix-edge-secret": "edge-secret",
+      },
+    ]) {
+      const response = await createTestApp(db).request("/api/auth/runtime-selection", {
+        method: "POST",
+        headers: {
+          ...headers,
+          authorization: `Bearer ${sourceToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ slot: "primary" }),
+      });
+
+      expect(response.status).toBe(200);
+      const body = RuntimeSelectionResponseSchema.parse(await response.json());
+      expect(body.slot).toBe("primary");
+      expect((await verifySyncJwt(body.accessToken, { secret: JWT_SECRET })).sub).toBe("user_alice");
+    }
+  });
+
   it("rejects Clerk bearer and cookie-carried sync credentials", async () => {
     const sourceToken = await issueSourceToken(db);
     const clerkApp = createTestApp(db, vi.fn().mockResolvedValue({ sub: "user_alice" }));
@@ -162,23 +190,24 @@ describe("trusted runtime selection route", () => {
       },
       body: JSON.stringify({ slot: "primary" }),
     });
-    const cookieResponse = await createTestApp(db).request("/api/auth/runtime-selection", {
-      method: "POST",
-      headers: {
-        host: "api.matrix-os.com",
-        cookie: `${APP_SESSION_COOKIE}=${encodeURIComponent(sourceToken)}`,
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({ slot: "primary" }),
-    });
-
     expect(clerkResponse.status).toBe(401);
-    expect(cookieResponse.status).toBe(401);
     expect(JSON.stringify(await clerkResponse.json())).not.toMatch(/token|eyJ/i);
-    expect(JSON.stringify(await cookieResponse.json())).not.toMatch(/token|eyJ/i);
+    for (const host of ["api.matrix-os.com", "app.matrix-os.com"]) {
+      const cookieResponse = await createTestApp(db).request("/api/auth/runtime-selection", {
+        method: "POST",
+        headers: {
+          host,
+          cookie: `${APP_SESSION_COOKIE}=${encodeURIComponent(sourceToken)}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ slot: "primary" }),
+      });
+      expect(cookieResponse.status).toBe(401);
+      expect(JSON.stringify(await cookieResponse.json())).not.toMatch(/token|eyJ/i);
+    }
   });
 
-  it("denies the app and code hosts without proxying or returning a bearer", async () => {
+  it("denies the code host and spoofed app host without proxying or returning a bearer", async () => {
     const sourceToken = await issueSourceToken(db);
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response("wrong target", { status: 200 }),
@@ -187,21 +216,15 @@ describe("trusted runtime selection route", () => {
 
     process.env.EDGE_ROUTER_SECRET = "edge-secret";
     for (const headers of [
-      { host: "app.matrix-os.com" },
       { host: "code.matrix-os.com" },
-      {
-        host: "matrix-platform.internal",
-        "x-forwarded-host": "app.matrix-os.com",
-        "x-matrix-edge-secret": "edge-secret",
-      },
       {
         host: "matrix-platform.internal",
         "x-forwarded-host": "code.matrix-os.com",
         "x-matrix-edge-secret": "edge-secret",
       },
       {
-        host: "app.matrix-os.com",
-        "x-forwarded-host": "api.matrix-os.com",
+        host: "matrix-platform.internal",
+        "x-forwarded-host": "app.matrix-os.com",
       },
     ]) {
       const response = await app.request("/api/auth/runtime-selection", {

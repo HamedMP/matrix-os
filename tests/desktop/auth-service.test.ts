@@ -329,6 +329,7 @@ describe("AuthService runtime selection", () => {
 
     await expect(auth.selectRuntime("review")).rejects.toThrow("Computer switch failed. Try again.");
 
+    expect(fetchFn).toHaveBeenCalledOnce();
     expect(peekCredential()).toEqual(VALID);
     expect(getProfile()).toEqual(PROFILE);
     expect(auth.getStatus().runtimeSlot).toBe("primary");
@@ -849,12 +850,36 @@ describe("AuthService expireSession", () => {
 
     await expect(auth.listRuntimeComputers()).resolves.toEqual(inventory);
     expect(fetchFn).toHaveBeenCalledWith(
-      "https://api.matrix-os.com/api/auth/computers",
+      "https://app.matrix-os.com/api/auth/computers",
       expect.objectContaining({
         method: "GET",
         headers: { authorization: "Bearer opaque-runtime-token" },
       }),
     );
+  });
+
+  it("retries runtime selection on the app origin after an API transport failure", async () => {
+    const fetchFn = vi.fn(async (url: string) => {
+      if (url === "https://api.matrix-os.com/api/auth/runtime-selection") {
+        throw new TypeError("network unavailable");
+      }
+      return jsonResponse({
+        accessToken: "r".repeat(64),
+        expiresAt: 1_800_000_000_000,
+        handle: "review",
+        slot: "review",
+      });
+    });
+    const { auth } = makeService({ now: 10_000, credential: VALID, profile: PROFILE, fetchFn });
+    await auth.init();
+
+    await auth.selectRuntime("review");
+
+    expect(fetchFn.mock.calls.map(([url]) => url)).toEqual([
+      "https://api.matrix-os.com/api/auth/runtime-selection",
+      "https://app.matrix-os.com/api/auth/runtime-selection",
+    ]);
+    expect(auth.getStatus()).toMatchObject({ signedIn: true, handle: "review", runtimeSlot: "review" });
   });
 
   it("contains malformed computer inventory responses behind a generic error", async () => {
