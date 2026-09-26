@@ -341,12 +341,12 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
   }
 
   async function withManifestLock<T>(
-    fn: (lockedStore: typeof store & { dbExecutor: ManifestDbExecutor }) => Promise<T>,
+    fn: (lockedStore: typeof store & { dbExecutor: ManifestDbExecutor; signal: AbortSignal }) => Promise<T>,
   ): Promise<T> {
     const signal = lifecycle.signal;
     return config.manifestDb.withAdvisoryLock(scope, async (dbExecutor) => {
       signal.throwIfAborted();
-      return fn({ ...store, dbExecutor });
+      return fn({ ...store, dbExecutor, signal });
     });
   }
 
