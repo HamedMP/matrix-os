@@ -10,7 +10,13 @@ import { ProviderSettingsStore } from "../../packages/gateway/src/ai-providers/p
 import { createProviderSettingsRoutes } from "../../packages/gateway/src/ai-providers/provider-settings-routes.js";
 
 const now = new Date("2026-09-26T00:00:00Z");
-afterEach(() => vi.useRealTimers());
+afterEach(() => { vi.useRealTimers(); vi.unstubAllEnvs(); });
+async function isolatedHome(prefix: string) {
+  const homePath = await mkdtemp(join(tmpdir(), prefix));
+  vi.stubEnv("XDG_CONFIG_HOME", join(homePath, ".config"));
+  vi.stubEnv("XDG_DATA_HOME", join(homePath, ".local/share"));
+  return homePath;
+}
 describe("canonical native model scope", () => {
   it("isolates an invalid OpenCode profile instead of poisoning valid Pi", async () => {
     const source = (harness: "pi" | "opencode", model: string) => ({ id: `harness_${harness}_native`, kind: "harness_profile" as const,
@@ -25,7 +31,7 @@ describe("canonical native model scope", () => {
     expect(await read(false)).toMatchObject({ profiles: [{ harness: "pi", models: [{ id: "native:pi" }] }], failures: ["opencode"] });
   });
   it("preserves exact OpenCode provider case without rejecting valid Pi through producer and Settings", async () => {
-    const homePath = await mkdtemp(join(tmpdir(), "native-case-provider-"));
+    const homePath = await isolatedHome("native-case-provider-");
     for (const dir of [".pi/agent", ".config/opencode", ".local/share/opencode"]) await mkdir(join(homePath, dir), { recursive: true });
     await writeFile(join(homePath, ".pi/agent/settings.json"), '{"defaultProvider":"native","defaultModel":"pi-model"}');
     await writeFile(join(homePath, ".pi/agent/auth.json"), '{"native":{"type":"api_key","key":"fixture"}}');
@@ -47,7 +53,7 @@ describe("canonical native model scope", () => {
     } finally { producer.close(); await rm(homePath, { recursive: true, force: true }); }
   });
   it("keeps disjoint Pi/OpenCode inventories under the same provider separate through Settings and Hono", async () => {
-    const homePath = await mkdtemp(join(tmpdir(), "native-shared-provider-"));
+    const homePath = await isolatedHome("native-shared-provider-");
     for (const dir of [".pi/agent", ".config/opencode", ".local/share/opencode"]) await mkdir(join(homePath, dir), { recursive: true });
     await writeFile(join(homePath, ".pi/agent/settings.json"), '{"defaultProvider":"shared","defaultModel":"pi-only"}');
     await writeFile(join(homePath, ".pi/agent/auth.json"), '{"shared":{"type":"api_key","key":"fixture"}}');

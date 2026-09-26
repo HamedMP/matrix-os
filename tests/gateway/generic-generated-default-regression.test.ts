@@ -30,6 +30,9 @@ function post(body: unknown): Request {
 
 async function fixture(kind: typeof kinds[number], reconcile: boolean, multipleProviders = false, hasDefault = true) {
   const homePath = await mkdtemp(join(tmpdir(), "generated-harness-default-"));
+  // Fixture metadata and simulated child execution must share one owner scope.
+  vi.stubEnv("XDG_CONFIG_HOME", join(homePath, ".config"));
+  vi.stubEnv("XDG_DATA_HOME", join(homePath, ".local/share"));
   const canonical = providerSettingsCanonicalFixture();
   {
     const directory = kind === "pi" ? join(homePath, ".pi/agent") : join(homePath, ".config/opencode");
