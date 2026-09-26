@@ -24,10 +24,12 @@ class ReaderEvents(unittest.TestCase):
                 " if 'id' not in message: continue\n" +
                 " response={'id':message['id'],'result':{}}\n" +
                 f" frames=events+[response] if {before!r} else [response]+events\n" +
-                " os.write(1,(''.join(json.dumps(frame)+'\n' for frame in frames)).encode())\n")
+                " os.write(1,(''.join(json.dumps(frame)+'\\n' for frame in frames)).encode())\n")
             binary.chmod(0o700)
             server = Server(binary, base, base / "home", base / "mcp-log")
             try:
+                if before:
+                    self.assertEqual(len(server.notifications), 3, "RPC response discarded preceding notifications")
                 completed = server.wait_completed("thread", "started", timeout=1)
                 self.assertEqual(completed, {"id": "started", "status": "completed"})
                 self.assertEqual(len(server.notifications), 2)
