@@ -95,6 +95,21 @@ describe("Pi native terminal outcomes", () => {
     expect(result.events.at(-1)).toMatchObject({ type: "thread.completed", outcome: "failed" });
   });
 
+  it("uses the last assistant outcome from agent_end when detailed frames are omitted", async () => {
+    const result = await run([{ type: "agent_end", messages: [assistant("error"), { role: "toolResult", content: [] }], willRetry: false }]);
+    expect(result.events.at(-1)).toMatchObject({ type: "thread.completed", outcome: "failed" });
+  });
+
+  it("does not erase a terminal error with malformed or legacy outcome frames", async () => {
+    const result = await run([
+      ...messageEvents(assistant("error")),
+      { type: "message_end", message: null },
+      { type: "turn_end", message: { role: "assistant", content: [] } },
+      { type: "auto_retry_end", success: "true" },
+    ]);
+    expect(result.events.at(-1)).toMatchObject({ type: "thread.completed", outcome: "failed" });
+  });
+
   it("reports native assistant abort as aborted", async () => {
     const result = await run(messageEvents(assistant("aborted")));
     expect(result.events.at(-1)).toMatchObject({ type: "thread.completed", outcome: "aborted" });
