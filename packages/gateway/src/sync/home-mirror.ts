@@ -466,43 +466,46 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
     }
   }
 
+  /** Already queued remote changes must not enqueue behind themselves. */
+  async function reconcileLocalDeletion(safeRelPath: string): Promise<void> {
+    if (isIgnored(safeRelPath, extraIgnore) || localState.blocked(safeRelPath)) return;
+    await withManifestLock(async (lockedStore) => {
+      const existing = await readManifest(lockedStore, scope);
+      const entry = existing.manifest.files[safeRelPath];
+      if (!entry || entry.deleted) return;
+      const baseline = localState.hash(safeRelPath);
+      if (!baseline || !await isLocalMissing(safeRelPath)) return;
+      if (entry.hash !== baseline) {
+        await reconciliation.preserveDeletion(safeRelPath, entry);
+        return;
+      }
+
+      const next: Manifest = applyCommitToManifest(
+        existing.manifest,
+        [{ path: safeRelPath, hash: entry.hash, size: 0, action: "delete" }],
+        config.peerId,
+      );
+
+      const newVersion = existing.manifestVersion + 1;
+      lifecycle.signal.throwIfAborted();
+      try {
+        await writeManifest(lockedStore, scope, next, newVersion, async () => {
+          if (!await isLocalMissing(safeRelPath)) throw new MirrorPublicationChanged();
+        });
+      } catch (error: unknown) { if (error instanceof MirrorPublicationChanged) return; throw error; }
+
+      await localState.forget(safeRelPath);
+      broadcastChange(
+        { path: safeRelPath, hash: entry.hash, size: 0, action: "delete" },
+        newVersion,
+      );
+      log.info(`deleted ${safeRelPath}`);
+    });
+  }
+
   async function pushDelete(relPath: string): Promise<void> {
     const safeRelPath = normalizeRelativePath(config.userId, relPath);
-    if (isIgnored(safeRelPath, extraIgnore) || localState.blocked(safeRelPath)) return;
-    await enqueue(async () => {
-      await withManifestLock(async (lockedStore) => {
-        const existing = await readManifest(lockedStore, scope);
-        const entry = existing.manifest.files[safeRelPath];
-        if (!entry || entry.deleted) return;
-        const baseline = localState.hash(safeRelPath);
-        if (!baseline || !await isLocalMissing(safeRelPath)) return;
-        if (entry.hash !== baseline) {
-          await reconciliation.preserveDeletion(safeRelPath, entry);
-          return;
-        }
-
-        const next: Manifest = applyCommitToManifest(
-          existing.manifest,
-          [{ path: safeRelPath, hash: entry.hash, size: 0, action: "delete" }],
-          config.peerId,
-        );
-
-        const newVersion = existing.manifestVersion + 1;
-        lifecycle.signal.throwIfAborted();
-        try {
-          await writeManifest(lockedStore, scope, next, newVersion, async () => {
-            if (!await isLocalMissing(safeRelPath)) throw new MirrorPublicationChanged();
-          });
-        } catch (error: unknown) { if (error instanceof MirrorPublicationChanged) return; throw error; }
-
-        await localState.forget(safeRelPath);
-        broadcastChange(
-          { path: safeRelPath, hash: entry.hash, size: 0, action: "delete" },
-          newVersion,
-        );
-        log.info(`deleted ${safeRelPath}`);
-      });
-    });
+    await enqueue(() => reconcileLocalDeletion(safeRelPath));
   }
 
   async function pullFile(relPath: string, entry: ManifestEntry): Promise<void> {
@@ -525,7 +528,7 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
       if (localState.hash(safeRelPath) !== undefined) {
-        await pushDelete(safeRelPath);
+        await reconcileLocalDeletion(safeRelPath);
         return;
       }
     }
