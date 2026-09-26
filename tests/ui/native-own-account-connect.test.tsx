@@ -32,14 +32,17 @@ function fixture(kind: "pi" | "opencode") {
   return { harness, source, snapshot };
 }
 
-function mount(kind: "pi" | "opencode", alter?: (source: ProviderAccessSource) => void) {
+function mount(kind: "pi" | "opencode", alter?: (source: ProviderAccessSource) => void,
+  refresh?: () => Promise<ProviderSettingsSnapshot | null>, selected = false) {
   const value = fixture(kind);
   alter?.(value.source);
+  if (selected) { value.harness.accessSourceId = value.source.id; value.harness.enabled = true; }
   const onMutate = vi.fn().mockResolvedValue(true);
   // The actual disabled Chat catalog deliberately has no setup actions.
   const onSetupHarness = vi.fn().mockResolvedValue(false);
   render(<ConnectionChoices {...value} gatewaySource={null} gatewaySelected={false}
-    canSetRoute disabled={false} onMutate={onMutate} onSetupHarness={onSetupHarness} />);
+    canSetRoute disabled={false} onMutate={onMutate} onSetupHarness={onSetupHarness}
+    {...{ onRefreshForConnection: refresh }} />);
   return { ...value, onMutate, onSetupHarness };
 }
 
@@ -80,6 +83,56 @@ describe("native own-account connection", () => {
     await act(async () => { await vi.advanceTimersByTimeAsync(51); });
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: /Own account/ })); });
     expect(onSetupHarness).toHaveBeenCalledOnce();
+    expect(onMutate).not.toHaveBeenCalled();
+  });
+
+  it.each(["pi", "opencode"] as const)("refreshes stale %s evidence once before the exact atomic connection", async (kind) => {
+    const fresh = fixture(kind).snapshot;
+    const refresh = vi.fn().mockResolvedValue(fresh);
+    const { onMutate, onSetupHarness } = mount(kind, (s) => {
+      s.localObservation!.staleAfter = new Date(Date.now() - 1).toISOString();
+    }, refresh);
+    fireEvent.click(screen.getByRole("button", { name: /Own account/ }));
+    await waitFor(() => expect(onMutate).toHaveBeenCalledWith(expect.objectContaining({
+      type: "set_route", harnessInstanceId: kind, accessSourceId: `native_${kind}`, enableHarness: true,
+    })));
+    expect(refresh).toHaveBeenCalledOnce();
+    expect(onSetupHarness).not.toHaveBeenCalled();
+  });
+
+  it.each(["absent", "wrong harness", "wrong account", "wrong model", "changed source", "unavailable"])("denies %s after the refresh without setup or mutation", async (negative) => {
+    const fresh = fixture("pi").snapshot;
+    const source = fresh.accessSources[0]!;
+    if (negative === "absent") source.localObservation!.state = "absent";
+    if (negative === "wrong harness") source.harness = "opencode";
+    if (negative === "wrong account") source.accountId = "other";
+    if (negative === "wrong model") source.eligibleModelIds = [];
+    if (negative === "changed source") source.id = "other_source";
+    const refresh = vi.fn().mockResolvedValue(negative === "unavailable" ? null : fresh);
+    const { onMutate, onSetupHarness } = mount("pi", (s) => {
+      s.localObservation!.staleAfter = new Date(Date.now() - 1).toISOString();
+    }, refresh);
+    fireEvent.click(screen.getByRole("button", { name: /Own account/ }));
+    await waitFor(() => expect(refresh).toHaveBeenCalledOnce());
+    await waitFor(() => expect(screen.getByRole("alert")).toBeVisible());
+    expect(onMutate).not.toHaveBeenCalled();
+    expect(onSetupHarness).not.toHaveBeenCalled();
+  });
+
+  it("keeps the saved own-account selection visible after observation expiry", () => {
+    mount("opencode", (s) => { s.localObservation!.staleAfter = new Date(Date.now() - 1).toISOString(); }, undefined, true);
+    expect(screen.getByRole("button", { name: /Own account/ })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByText("Selected")).toBeVisible();
+  });
+
+  it("does not apply a refreshed connection after its component unmounts", async () => {
+    let resolve!: (value: ProviderSettingsSnapshot) => void;
+    const refresh = vi.fn(() => new Promise<ProviderSettingsSnapshot>((done) => { resolve = done; }));
+    const { onMutate } = mount("pi", (s) => { s.localObservation!.staleAfter = new Date(Date.now() - 1).toISOString(); }, refresh);
+    fireEvent.click(screen.getByRole("button", { name: /Own account/ }));
+    await waitFor(() => expect(refresh).toHaveBeenCalledOnce());
+    cleanup();
+    await act(async () => { resolve(fixture("pi").snapshot); });
     expect(onMutate).not.toHaveBeenCalled();
   });
 });
