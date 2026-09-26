@@ -135,7 +135,8 @@ export function createPlatformR2Client(config: {
     async putObject(
       key: string,
       body: string | Uint8Array | ReadableStream<Uint8Array> | Readable,
-      options?: { signal?: AbortSignal },
+      // Streams are sent chunked; the platform broker buffers them within its body limit.
+      options?: { signal?: AbortSignal; contentLength?: number },
     ): Promise<{ etag?: string }> {
       const res = await request(`/object?key=${encodeURIComponent(key)}`, {
         method: "PUT",

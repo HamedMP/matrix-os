@@ -179,7 +179,7 @@ interface GatewayR2Client {
   putObject(
     key: string,
     body: string | Uint8Array | ReadableStream<Uint8Array>,
-    options?: { signal?: AbortSignal },
+    options?: { signal?: AbortSignal; contentLength?: number },
   ): Promise<{ etag?: string }>;
   headObject(
     key: string,

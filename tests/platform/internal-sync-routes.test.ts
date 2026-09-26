@@ -655,7 +655,7 @@ describe("platform/internal-sync-routes", () => {
     expect(r2.putObject).not.toHaveBeenCalled();
   });
 
-  it("streams direct object uploads through to storage", async () => {
+  it("streams object uploads to storage with the declared content length", async () => {
     r2.putObject.mockResolvedValue({ etag: '"etag-1"' });
     const app = createTestApp();
 
@@ -666,6 +666,7 @@ describe("platform/internal-sync-routes", () => {
         headers: {
           authorization: `Bearer ${bearerFor("alice", "platform-secret-123")}`,
           "content-type": "application/octet-stream",
+          "content-length": "11",
         },
         body: "hello world",
       },
@@ -675,7 +676,30 @@ describe("platform/internal-sync-routes", () => {
     expect(r2.putObject).toHaveBeenCalledWith(
       "matrixos-sync/user_alice/manifest.json",
       expect.objectContaining({ getReader: expect.any(Function) }),
+      { contentLength: 11 },
     );
+  });
+
+  it("buffers chunked object uploads so storage receives a known length", async () => {
+    r2.putObject.mockResolvedValue({ etag: '"etag-2"' });
+    const app = createTestApp();
+
+    const res = await app.request(
+      "/internal/containers/alice/sync/object?key=matrixos-sync%2Fuser_alice%2Fmanifest.json",
+      {
+        method: "PUT",
+        headers: {
+          authorization: `Bearer ${bearerFor("alice", "platform-secret-123")}`,
+          "content-type": "application/octet-stream",
+        },
+        body: new Response("chunked body").body,
+        duplex: "half",
+      } as RequestInit & { duplex: "half" },
+    );
+
+    expect(res.status).toBe(200);
+    const [, body] = r2.putObject.mock.calls[0]!;
+    expect(new TextDecoder().decode(body as Uint8Array)).toBe("chunked body");
   });
 
   it("logs malformed JSON parse failures before returning 400", async () => {

@@ -18,7 +18,10 @@ export function createMirrorR2(client: R2Client, getSignal: () => AbortSignal): 
     putObject: (key, body, options) => {
       const signal = operationSignal(R2_WRITE_TIMEOUT_MS, options?.signal);
       signal.throwIfAborted();
-      return awaitMirrorOperation(client.putObject(key, body, { signal }), signal);
+      return awaitMirrorOperation(client.putObject(key, body, {
+        signal,
+        ...(options?.contentLength !== undefined ? { contentLength: options.contentLength } : {}),
+      }), signal);
     },
   };
 }
