@@ -91,6 +91,19 @@ describe("bot session codec and compaction", () => {
     for (const message of kept) expect(originals.has(message.content)).toBe(true);
   });
 
+  it("cuts assistant prose before dropping turns, and never drops turns when told not to", () => {
+    const turns = [1, 2, 3].flatMap((index) => [user(`ask ${index}`, index), fauxAssistantMessage(fauxText("z".repeat(100 * 1024)))]);
+    const fitted = fitForStorage(turns, 128 * 1024);
+    expect(encodedSessionBytes(fitted)).toBeLessThanOrEqual(128 * 1024);
+    expect(JSON.stringify(fitted)).not.toContain("removed to fit saved history");
+    expect(fitted.filter((message) => message.role === "user")).toHaveLength(3);
+
+    const people = Array.from({ length: 10 }, (_, index) => user(`${index}:${"p".repeat(60 * 1024)}`, index));
+    const kept = fitForStorage(people, 256 * 1024, () => 1, { allowDroppingTurns: false });
+    expect(kept).toHaveLength(10);
+    expect(() => encodeSession(kept)).toThrow(expect.objectContaining({ code: "too_large" }));
+  });
+
   it("cuts oversized tool payloads only when the transcript would not fit", () => {
     const small = [user("hi"), toolResult("c1")];
     expect(fitForStorage(small)).toEqual(small);

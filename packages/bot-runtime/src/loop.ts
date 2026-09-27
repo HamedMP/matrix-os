@@ -209,10 +209,11 @@ export async function runBotTurn(input: RunBotTurnInput): Promise<BotRunOutcome>
       messages = await compactSession({ messages, now, summarize });
     }
     // Summarize down to the latest turn before storage would have to drop earlier turns.
+    // A cancelled run never drops turns: if it cannot save whole, the previous session stays.
     if (!fitsWithToolPayloadCaps(messages)) {
       messages = await compactSession({ messages, now, summarize, keepRecentUserTurns: 1 });
     }
-    const saved = await broker.saveSession({ baseRevision: snapshot.revision, messages: encodeSession(fitForStorage(messages, undefined, now)) });
+    const saved = await broker.saveSession({ baseRevision: snapshot.revision, messages: encodeSession(fitForStorage(messages, undefined, now, { allowDroppingTurns: input.signal?.aborted !== true })) });
     return outcome(command, { ...status, sessionRevision: saved.revision, toolActions });
   } catch (error: unknown) {
     const failureCode = failureCodeOf(error, "session save");

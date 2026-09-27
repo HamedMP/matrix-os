@@ -133,14 +133,17 @@ export function fitsWithToolPayloadCaps(messages: readonly AgentMessage[], maxBy
 
 /**
  * Fits a transcript for storage. Images always become placeholders. While
- * it is still too large: tool payloads are cut with a visible note, then the
- * oldest turns are dropped, then assistant prose is cut. The person's words
- * are never shortened; `encodeSession` still enforces the hard cap.
+ * it is still too large: tool payloads are cut with a visible note, then
+ * assistant prose is cut, and only then, if allowed, the oldest turns are
+ * dropped behind a note. The person's words are never shortened; a caller
+ * that may not drop turns (a cancelled run) gets a transcript that
+ * `encodeSession` refuses instead, so the previous session is kept.
  */
 export function fitForStorage(
   messages: readonly AgentMessage[],
   maxBytes = STORAGE_TARGET_BYTES,
   now: () => number = Date.now,
+  options: { allowDroppingTurns?: boolean } = {},
 ): AgentMessage[] {
   let stored = withoutImages(messages);
   const fits = () => encodedSessionBytes(stored) <= maxBytes;
@@ -148,13 +151,12 @@ export function fitForStorage(
     if (fits()) return stored;
     stored = stored.map((message) => capToolPayloads(message, cap));
   }
-  if (fits()) return stored;
-  stored = dropOldestTurns(stored, maxBytes, now());
   for (const cap of ASSISTANT_TEXT_CAPS) {
     if (fits()) return stored;
     stored = stored.map((message) => capAssistantText(message, cap));
   }
-  return stored;
+  if (fits() || options.allowDroppingTurns === false) return stored;
+  return dropOldestTurns(stored, maxBytes, now());
 }
 
 export function needsCompaction(messages: readonly AgentMessage[], contextWindow: number): boolean {
