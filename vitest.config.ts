@@ -53,6 +53,7 @@ export default defineConfig({
       "@matrix-os/contracts/codex-chat-import-client": path.resolve(__dirname, "packages/contracts/src/codex-chat-import-client.ts"),
       "@matrix-os/contracts/collaboration": path.resolve(__dirname, "packages/contracts/src/collaboration.ts"),
       "@matrix-os/contracts/local-chat-import": path.resolve(__dirname, "packages/contracts/src/local-chat-import/index.ts"),
+      "@matrix-os/contracts/bots": path.resolve(__dirname, "packages/contracts/src/bots/index.ts"),
       "@matrix-os/contracts": path.resolve(__dirname, "packages/contracts/src/index.ts"),
       "@matrix-os/observability/client": path.resolve(
         __dirname,

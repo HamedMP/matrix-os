@@ -7,6 +7,7 @@ import {
   type CanonicalChatQueueAdmissionResponse,
   type CanonicalChatSafeError,
   type CanonicalQueueChatTurnRequest,
+  canonicalExecutionRootProjectId,
 } from "@matrix-os/contracts";
 import type { RequestPrincipal } from "../request-principal.js";
 import type { ChatExecutionRootResolver } from "./execution-root.js";
@@ -111,7 +112,8 @@ export async function enqueueCanonicalQueuedTurn(options: {
   }
   const rootRef = input.executionRoot
     ?? (record.projectId ? { kind: "project" as const, projectId: record.projectId } : undefined);
-  if (input.executionRoot && record.projectId && input.executionRoot.projectId !== record.projectId) {
+  if (input.executionRoot && record.projectId
+      && canonicalExecutionRootProjectId(input.executionRoot) !== record.projectId) {
     throw new CanonicalQueueAdmissionError(
       safeError("project_unavailable", "The selected workspace does not belong to this Chat's Project."),
       400,

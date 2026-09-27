@@ -118,6 +118,13 @@ export const FundedAiEffectivePolicySchema = z.object({
   }
 });
 
+export const FundedAiRequestClassSchema = z.enum(["interactive", "background"]);
+
+/** Legacy gateways send `{}`; that remains interactive during rollout. */
+export const FundedAiRuntimeCredentialIssueRequestSchema = z.object({
+  requestClass: FundedAiRequestClassSchema.default("interactive"),
+}).strict();
+
 export const FundedAiRuntimeCredentialIssueResponseSchema = z.object({
   contractVersion: z.literal(1),
   credential: z.object({
@@ -130,6 +137,8 @@ export const FundedAiRuntimeCredentialIssueResponseSchema = z.object({
   }).strict(),
   identity: FundedAiIdentitySchema,
   policy: FundedAiEffectivePolicySchema,
+  /** Returned only when the request named a class, so strict legacy parsers keep working. */
+  requestClass: FundedAiRequestClassSchema.optional(),
 }).strict().superRefine((value, ctx) => {
   if (Date.parse(value.credential.expiresAt) <= Date.parse(value.credential.issuedAt)) {
     ctx.addIssue({ code: "custom", path: ["credential", "expiresAt"], message: "Credential must expire after issuance" });
@@ -412,11 +421,18 @@ export const FundedAiReleaseResponseSchema = z.object({
   funding: FundedAiFundingSummarySchema,
 }).strict();
 
+/** Why an owner's funded slot refused a request; the gateway uses it only for waiting state. */
+export const FundedAiPriorityReasonSchema = z.enum(["slot_busy", "priority_hold", "priority_queue", "priority_full"]);
+
 const SafeErrorSchema = z.discriminatedUnion("code", [
   z.object({ code: z.literal("unauthorized"), message: z.literal("Unauthorized") }).strict(),
   z.object({ code: z.literal("access_disabled"), message: z.literal("Matrix-funded AI is unavailable") }).strict(),
   z.object({ code: z.literal("model_not_allowed"), message: z.literal("This model is not available") }).strict(),
-  z.object({ code: z.literal("rate_limited"), message: z.literal("Try again later") }).strict(),
+  z.object({
+    code: z.literal("rate_limited"),
+    message: z.literal("Try again later"),
+    reason: FundedAiPriorityReasonSchema.optional(),
+  }).strict(),
   z.object({ code: z.literal("revision_conflict"), message: z.literal("Policy changed; refresh and try again") }).strict(),
   z.object({ code: z.literal("insufficient_credit"), message: z.literal("Not enough Matrix AI credit") }).strict(),
   z.object({ code: z.literal("budget_exceeded"), message: z.literal("Monthly AI budget reached") }).strict(),
@@ -440,6 +456,9 @@ export type FundedAiOperatorRuntimePolicyResponse = z.infer<typeof FundedAiOpera
 export type FundedAiPromotionalGrantResponse = z.infer<typeof FundedAiPromotionalGrantResponseSchema>;
 export type FundedAiEffectivePolicy = z.infer<typeof FundedAiEffectivePolicySchema>;
 export type FundedAiRuntimeCredentialIssueResponse = z.infer<typeof FundedAiRuntimeCredentialIssueResponseSchema>;
+export type FundedAiRequestClass = z.infer<typeof FundedAiRequestClassSchema>;
+export type FundedAiRuntimeCredentialIssueRequest = z.infer<typeof FundedAiRuntimeCredentialIssueRequestSchema>;
+export type FundedAiPriorityReason = z.infer<typeof FundedAiPriorityReasonSchema>;
 export type FundedAiAuthorizationRequest = z.infer<typeof FundedAiAuthorizationRequestSchema>;
 export type FundedAiAuthorizationResponse = z.infer<typeof FundedAiAuthorizationResponseSchema>;
 export type FundedAiPolicyCheckRequest = z.infer<typeof FundedAiPolicyCheckRequestSchema>;
