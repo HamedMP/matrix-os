@@ -210,9 +210,12 @@ export async function createScopeRuntimeController(options: {
    */
   async function pruneExited(): Promise<void> {
     if (!options.launcher.active) return;
+    // Only handles tracked before the snapshot can be judged by it: a create
+    // that finishes while `active()` runs adds a unit the snapshot never saw.
+    const tracked = [...runtimes.keys()];
     try {
       const running = await options.launcher.active();
-      for (const runtimeHandle of runtimes.keys()) {
+      for (const runtimeHandle of tracked) {
         if (!running.has(runtimeHandle)) runtimes.delete(runtimeHandle);
       }
     } catch (error: unknown) {
