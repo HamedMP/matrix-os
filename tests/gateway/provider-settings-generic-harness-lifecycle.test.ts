@@ -217,6 +217,8 @@ describe("generic provider harness lifecycle coordinator", () => {
       "set_route",
     ]);
     expect(coordinator.supportedHarnessKinds).toEqual([
+      "claude",
+      "codex",
       "hermes",
       "openclaw",
       "pi",

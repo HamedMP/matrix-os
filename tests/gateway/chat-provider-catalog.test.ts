@@ -701,7 +701,7 @@ describe("canonical Chat Provider catalog", () => {
     expect(JSON.stringify(catalog)).not.toContain("private path");
   });
 
-  it("keeps a saved-off Codex route disabled while Claude remains independent", async () => {
+  it("keeps independently saved-off Codex and Claude routes disabled", async () => {
     const service = createChatProviderCatalogService({
       codingProviders: codingRegistry([
         codingProvider(),
@@ -723,7 +723,7 @@ describe("canonical Chat Provider catalog", () => {
     expect(catalog.instances.find((instance) => instance.id === "codex_default"))
       .toMatchObject({ availability: "unavailable", unavailabilityReason: "disabled_in_settings", displayName: "Codex" });
     expect(catalog.instances.find((instance) => instance.id === "claude_code_default"))
-      .toMatchObject({ availability: "available", displayName: "Claude" });
+      .toMatchObject({ availability: "unavailable", unavailabilityReason: "disabled_in_settings", displayName: "Claude" });
   });
 
   it("keeps a Codex route admitted for a user attempt while qualifying its local-only status", async () => {

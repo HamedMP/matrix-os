@@ -51,6 +51,7 @@ export function AgentsProvidersView({
   const configurationHarnessKinds = snapshot.configurationHarnessKinds ?? [];
   const genericConfiguration = harness !== null
     && harness !== undefined
+    && harness.harness !== "claude" && harness.harness !== "codex"
     && configurationHarnessKinds.includes(harness.harness);
   // One Matrix balance, with separate exact serving routes behind it. Preserve
   // the selected managed route; prefer GLM only when choosing Matrix anew.

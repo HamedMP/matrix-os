@@ -539,16 +539,20 @@ function applyHarnessSettings(input: {
   aiSnapshot?: AiProviderSnapshotV3;
 }): InstanceDraft[] {
   return input.instances.map((instance) => {
-    if (instance.driverKind === "codex") {
-      if (input.executableDriverKinds !== undefined && !input.executableDriverKinds.includes("codex")) {
+    if (instance.driverKind === "codex" || instance.driverKind === "claude_code") {
+      const harnessKind = instance.driverKind === "codex" ? "codex" : "claude";
+      if (input.executableDriverKinds !== undefined && !input.executableDriverKinds.includes(instance.driverKind)) {
         return unavailableInstance(instance, "runtime_not_runnable");
       }
-      const saved = input.settings?.harnesses.filter((harness) => harness.harness === "codex") ?? [];
+      if (input.settingsRequired && !input.settingsAvailable && instance.availability !== "setup_required") {
+        return unavailableInstance(instance, "settings_unavailable");
+      }
+      const saved = input.settings?.harnesses.filter((harness) => harness.harness === harnessKind) ?? [];
       const enabled = saved.filter((harness) => harness.configuredEnabled ?? harness.enabled);
       if (input.settingsAvailable && saved.length > 0 && enabled.length === 0) {
         return unavailableInstance(instance, "disabled_in_settings");
       }
-      const selectedSourceMatches = input.settingsAvailable
+      const selectedSourceMatches = instance.driverKind === "codex" && input.settingsAvailable
         && enabled.length === 1
         && enabled[0]!.accessSourceId === "owner_openai_profile";
       const localObservation = selectedSourceMatches

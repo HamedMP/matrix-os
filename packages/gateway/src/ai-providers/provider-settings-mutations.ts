@@ -13,6 +13,7 @@ import {
   type ProviderSettingsConfiguration,
 } from "./provider-settings-persistence.js";
 import { resolveProviderSettingsDriverId } from "./provider-settings-driver-id.js";
+import { isSpecializedHarness } from "./provider-specialized-harness-enablement.js";
 
 export type ProviderConfigurationMutation = Exclude<ProviderSettingsMutation,
   | { type: "start_login" }
@@ -115,7 +116,7 @@ export function applyProviderConfigurationMutation(input: {
         throw new ProviderSettingsStoreError("invalid_request", 400);
       }
       const source = input.snapshot.accessSources.find((candidate) => candidate.id === harness.accessSourceId);
-      if (mutation.enabled && (!genericHarnessRouteIsSupported(harness, source)
+      if (mutation.enabled && !isSpecializedHarness(harness) && (!genericHarnessRouteIsSupported(harness, source)
         || !mayEnableObservedNativeRoute(harness, source, input.now ?? new Date()))) {
         throw new ProviderSettingsStoreError("invalid_route", 400);
       }
