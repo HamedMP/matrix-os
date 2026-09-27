@@ -63,6 +63,34 @@ describe("bot session codec and compaction", () => {
     expect(stored[0]).toMatchObject({ content: [{ type: "text", text: "look" }, { type: "text", text: expect.stringContaining("image/png") }] });
   });
 
+  it("never shortens the person's words, even when tool payloads must be cut", () => {
+    const prompt = "p".repeat(60 * 1024);
+    const big = Array.from({ length: 12 }, (_, index) => ({
+      role: "toolResult", toolCallId: `c${index}`, toolName: "read_artifact",
+      content: [{ type: "text", text: "y".repeat(40 * 1024) }], isError: false, timestamp: index,
+    } as AgentMessage));
+    const stored = fitForStorage([user(prompt), ...big], 256 * 1024);
+    expect(encodedSessionBytes(stored)).toBeLessThanOrEqual(256 * 1024);
+    expect(stored[0]).toEqual(user(prompt));
+  });
+
+  it("drops the oldest turns when cut tool payloads still do not fit, keeping the latest turn", () => {
+    const turns = Array.from({ length: 40 }, (_, index) => [
+      user(`${index}:${"q".repeat(30 * 1024)}`, index),
+      fauxAssistantMessage(fauxText(`answer ${index}`)),
+    ]).flat();
+    const stored = fitForStorage([{ role: "system", content: "prompt", timestamp: 0 }, ...turns], 256 * 1024, () => 77);
+    expect(encodedSessionBytes(stored)).toBeLessThanOrEqual(256 * 1024);
+    expect(stored[0]).toMatchObject({ role: "system" });
+    expect(stored[1]).toMatchObject({ role: "user", timestamp: 77, content: expect.stringContaining("removed to fit saved history") });
+    expect(stored.at(-2)).toEqual(turns.at(-2));
+    // Surviving person messages are whole and unchanged.
+    const originals = new Set(turns.filter((message) => message.role === "user").map((message) => message.content));
+    const kept = stored.slice(2).filter((message) => message.role === "user");
+    expect(kept.length).toBeGreaterThan(0);
+    for (const message of kept) expect(originals.has(message.content)).toBe(true);
+  });
+
   it("cuts oversized tool payloads only when the transcript would not fit", () => {
     const small = [user("hi"), toolResult("c1")];
     expect(fitForStorage(small)).toEqual(small);
@@ -135,6 +163,42 @@ describe("bot event batching", () => {
     await project(delta("e"));
     await project({ type: "message_end", message: partial });
     expect(sent.map((event) => event.event)).toEqual([{ type: "assistant_delta", text: "abcd" }, { type: "assistant_delta", text: "e" }]);
+  });
+
+  it("sends paused text on a timer instead of waiting for the next event", async () => {
+    vi.useFakeTimers();
+    try {
+      const sent: BotEvent[] = [];
+      const project = createEventProjector({ send: async (event) => { sent.push(event); }, capabilityForTool: () => undefined, now: () => Date.now() });
+      await project(delta("Thinking about"));
+      expect(sent).toEqual([]);
+      await vi.advanceTimersByTimeAsync(260);
+      expect(sent.map((event) => event.event)).toEqual([{ type: "assistant_delta", text: "Thinking about" }]);
+      await project(delta(" it"));
+      await project.drain();
+      expect(sent.map((event) => event.seq)).toEqual([0, 1]);
+      project.close();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("surfaces a failed timed send on drain and on the next event", async () => {
+    vi.useFakeTimers();
+    try {
+      const project = createEventProjector({
+        send: async () => { throw new Error("broker down"); },
+        capabilityForTool: () => undefined,
+        now: () => Date.now(),
+      });
+      await project(delta("hello"));
+      await vi.advanceTimersByTimeAsync(260);
+      await expect(project.drain()).rejects.toThrow("broker down");
+      await expect(project({ type: "message_end", message: partial })).rejects.toThrow("broker down");
+      project.close();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("stops forwarding after the per-turn budget with one notice", async () => {

@@ -7,10 +7,13 @@ export const SESSION_COMPACT_AT_BYTES = 384 * 1024;
 const COMPACT_AT_CONTEXT_RATIO = 0.8;
 const KEEP_RECENT_USER_TURNS = 4;
 const ROLES = new Set(["system", "user", "assistant", "toolResult"]);
-/** Progressively tighter caps on large strings in the saved transcript only. */
-const STORAGE_TEXT_CAPS = [32 * 1024, 8 * 1024, 2 * 1024, 512] as const;
+/** Progressively tighter caps on tool payloads in the saved transcript only. */
+const TOOL_PAYLOAD_CAPS = [32 * 1024, 8 * 1024, 2 * 1024, 512] as const;
+/** Assistant prose is cut only after old turns are dropped and it still does not fit. */
+const ASSISTANT_TEXT_CAPS = [8 * 1024, 2 * 1024, 512] as const;
 /** Headroom so the encoded save always fits the session cap. */
 const STORAGE_TARGET_BYTES = SESSION_MAX_BYTES - 16 * 1024;
+const DROPPED_HISTORY_NOTE = "[Earlier conversation was removed to fit saved history.]";
 const encoder = new TextEncoder();
 
 export class BotSessionError extends Error {
@@ -77,38 +80,69 @@ function capStrings(value: unknown, cap: number): unknown {
   return value;
 }
 
-function capMessage(message: AgentMessage, cap: number): AgentMessage {
-  if (message.role === "system") return message;
-  if (message.role === "user") {
-    return typeof message.content === "string"
-      ? { ...message, content: capText(message.content, cap) }
-      : { ...message, content: message.content.map((part) => (part.type === "text" ? { ...part, text: capText(part.text, cap) } : part)) };
-  }
+/** Tool results and tool-call arguments only; the person's words are never cut here. */
+function capToolPayloads(message: AgentMessage, cap: number): AgentMessage {
   if (message.role === "toolResult") {
     return { ...message, content: message.content.map((part) => (part.type === "text" ? { ...part, text: capText(part.text, cap) } : part)) };
   }
   if (message.role === "assistant") {
     return {
       ...message,
-      content: message.content.map((part) => {
-        if (part.type === "text") return { ...part, text: capText(part.text, cap) };
-        if (part.type === "toolCall") return { ...part, arguments: capStrings(part.arguments, cap) as typeof part.arguments };
-        return part;
-      }),
+      content: message.content.map((part) => (part.type === "toolCall"
+        ? { ...part, arguments: capStrings(part.arguments, cap) as typeof part.arguments }
+        : part)),
     };
   }
   return message;
 }
 
+function capAssistantText(message: AgentMessage, cap: number): AgentMessage {
+  if (message.role !== "assistant") return message;
+  return { ...message, content: message.content.map((part) => (part.type === "text" ? { ...part, text: capText(part.text, cap) } : part)) };
+}
+
 /**
- * Fits a transcript for storage: images become placeholders and, only when
- * still too large, long tool payloads and texts are cut with a visible note.
+ * Drops whole turns from the oldest end, cutting at person messages so tool
+ * calls stay with their results. The latest turn is always kept.
  */
-export function fitForStorage(messages: readonly AgentMessage[], maxBytes = STORAGE_TARGET_BYTES): AgentMessage[] {
+function dropOldestTurns(messages: readonly AgentMessage[], maxBytes: number, now: number): AgentMessage[] {
+  let headEnd = 0;
+  while (headEnd < messages.length && messages[headEnd]!.role === "system") headEnd += 1;
+  const head = messages.slice(0, headEnd);
+  let rest = messages.slice(headEnd);
+  const note: AgentMessage = { role: "user", content: DROPPED_HISTORY_NOTE, timestamp: now };
+  let dropped = false;
+  while (encodedSessionBytes([...head, ...(dropped ? [note] : []), ...rest]) > maxBytes) {
+    const nextTurn = rest.findIndex((message, index) => index > 0 && message.role === "user");
+    if (nextTurn < 0) break;
+    rest = rest.slice(nextTurn);
+    dropped = true;
+  }
+  return dropped ? [...head, note, ...rest] : [...head, ...rest];
+}
+
+/**
+ * Fits a transcript for storage. Images always become placeholders. While
+ * it is still too large: tool payloads are cut with a visible note, then the
+ * oldest turns are dropped, then assistant prose is cut. The person's words
+ * are never shortened; `encodeSession` still enforces the hard cap.
+ */
+export function fitForStorage(
+  messages: readonly AgentMessage[],
+  maxBytes = STORAGE_TARGET_BYTES,
+  now: () => number = Date.now,
+): AgentMessage[] {
   let stored = withoutImages(messages);
-  for (const cap of STORAGE_TEXT_CAPS) {
-    if (encodedSessionBytes(stored) <= maxBytes) return stored;
-    stored = stored.map((message) => capMessage(message, cap));
+  const fits = () => encodedSessionBytes(stored) <= maxBytes;
+  for (const cap of TOOL_PAYLOAD_CAPS) {
+    if (fits()) return stored;
+    stored = stored.map((message) => capToolPayloads(message, cap));
+  }
+  if (fits()) return stored;
+  stored = dropOldestTurns(stored, maxBytes, now());
+  for (const cap of ASSISTANT_TEXT_CAPS) {
+    if (fits()) return stored;
+    stored = stored.map((message) => capAssistantText(message, cap));
   }
   return stored;
 }
