@@ -16,7 +16,7 @@ beforeEach(() => {
 });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
-async function pendingAdmission(mode: "send" | "queue" | "edit") {
+async function pendingAdmission(mode: "send" | "queue" | "edit", withReference = false) {
   const fixture = createCanonicalChatFixture(mode === "send" ? "completed" : "running").snapshot;
   const record = { chat: fixture.chat, projectId: "matrix-os", providerBinding: fixture.chat.providerBinding, activeRun: fixture.chat.activeRun };
   const queued = { id: "queued_test", chatId: fixture.chat.id, clientRequestId: "request_test", position: 1,
@@ -31,7 +31,7 @@ async function pendingAdmission(mode: "send" | "queue" | "edit") {
   const pending = new Promise<never>((yes, no) => { resolve = yes; reject = no; });
   const request = mode === "send" ? client.admitTurn : mode === "queue" ? client.queueTurn : client.updateQueuedTurn;
   vi.mocked(request).mockReturnValue(pending);
-  const api = { baseUrl: "https://matrix.test", putBytes: vi.fn(async (url: string) => ({ ok: true, path: decodeURIComponent(url.split("path=")[1]!), size: 9 })) } as never;
+  const api = { baseUrl: "https://matrix.test", get: vi.fn(async () => ({ results: ["notes.md"] })), putBytes: vi.fn(async (url: string) => ({ ok: true, path: decodeURIComponent(url.split("path=")[1]!), size: 9 })) } as never;
   const props = { api, client, projectId: "matrix-os", active: true, initialChatId: fixture.chat.id, catalog: providerCatalog };
   const view = render(<CanonicalChatWorkspace {...props} />);
   const editor = await screen.findByRole("textbox", { name: "Reply to chat" });
@@ -40,8 +40,12 @@ async function pendingAdmission(mode: "send" | "queue" | "edit") {
     fireEvent.click(await screen.findByRole("menuitem", { name: "Edit Existing queued draft" }));
   }
   if (mode === "edit") await waitFor(() => expect(editor.textContent).toBe("Existing queued draft"));
-  await setSharedComposerText(editor, "Original admission draft");
-  fireEvent.change(screen.getByLabelText("Choose files"), { target: { files: [new File(["synthetic"], "original.txt", { type: "text/plain" })] } });
+  await setSharedComposerText(editor, withReference ? "Original admission draft @notes" : "Original admission draft");
+  if (withReference) {
+    fireEvent.click(await screen.findByRole("option", { name: /notes.md/ }));
+    await waitFor(() => expect(screen.getByTestId("composer-reference-token-file-notes.md")).toBeTruthy());
+  }
+  if (!withReference) fireEvent.change(screen.getByLabelText("Choose files"), { target: { files: [new File(["synthetic"], "original.txt", { type: "text/plain" })] } });
   fireEvent.click(screen.getByRole("button", { name: "Send" }));
   await waitFor(() => expect(request).toHaveBeenCalledOnce());
   const success = mode === "send" ? { record, message: fixture.messages[0]!, turn: fixture.turns[0]!, run: fixture.runs[0]!, admission: "accepted" }
@@ -52,10 +56,10 @@ async function pendingAdmission(mode: "send" | "queue" | "edit") {
   };
 }
 
-it.each(["queue", "edit"] as const)("restores failed %s admission draft and attachment after Settings invalidation", async (mode) => {
+it.each(["queue", "edit"] as const)("retains failed %s admission draft and attachment after Settings invalidation", async (mode) => {
   vi.spyOn(console, "warn").mockImplementation(() => undefined);
   const pending = await pendingAdmission(mode);
-  expect(pending.editor.textContent).toBe("");
+  expect(pending.editor.textContent).toBe("Original admission draft");
   act(() => useConnection.setState({ providerCatalogGeneration: 1 }));
   await pending.fail();
   await waitFor(() => expect(pending.editor.textContent).toBe("Original admission draft"));
@@ -104,7 +108,7 @@ it.each(["send", "queue", "edit"] as const)("preserves a retyped same-text draft
   expect(screen.getByText("newer.txt")).toBeTruthy();
 });
 
-it.each(["queue", "edit"] as const)("does not restore failed %s admission into a newer empty revision", async (mode) => {
+it.each(["queue", "edit"] as const)("does not replace a newer empty revision after failed %s admission", async (mode) => {
   vi.spyOn(console, "warn").mockImplementation(() => undefined);
   const pending = await pendingAdmission(mode);
   await setSharedComposerText(pending.editor, "Newer draft");
@@ -180,4 +184,94 @@ it("acknowledges a newly created Chat's first successful admission after Setting
   expect((await screen.findByRole("textbox", { name: "Reply to chat" })).textContent).toBe("");
   expect(client.create).toHaveBeenCalledOnce();
   expect(client.admitTurn).toHaveBeenCalledOnce();
+});
+
+async function visitChat(pending: Awaited<ReturnType<typeof pendingAdmission>>, chatId: string) {
+  vi.mocked(pending.client.getDetail).mockImplementation(async (id) => ({ ...pending.detail,
+    record: { ...pending.detail.record, chat: { ...pending.detail.record.chat, id } } }));
+  vi.mocked(pending.client.list).mockResolvedValue({ items: [pending.detail.record,
+    { ...pending.detail.record, chat: { ...pending.detail.record.chat, id: "chat_other" } }] });
+  pending.view.rerender(<CanonicalChatWorkspace {...pending.props} initialChatId={chatId} />);
+  return screen.findByRole("textbox", { name: "Reply to chat" });
+}
+
+it.each(["queue", "edit"] as const)("retains original %s draft when a deferred request fails while another Chat is visible", async (mode) => {
+  vi.spyOn(console, "warn").mockImplementation(() => undefined);
+  const pending = await pendingAdmission(mode);
+  const other = await visitChat(pending, "chat_other");
+  await setSharedComposerText(other, "Other Chat draft");
+  await pending.fail();
+  expect(other.textContent).toBe("Other Chat draft");
+  expect(screen.queryByRole("alert")).toBeNull();
+  const original = await visitChat(pending, pending.props.initialChatId);
+  await waitFor(() => expect(original.textContent).toBe("Original admission draft"));
+  expect(pending.request).toHaveBeenCalledOnce();
+});
+
+it.each(["send", "queue", "edit"] as const)("clears only the original %s draft after actual success while another Chat is visible", async (mode) => {
+  const pending = await pendingAdmission(mode);
+  const other = await visitChat(pending, "chat_other");
+  await setSharedComposerText(other, "Other Chat draft");
+  await pending.succeed();
+  expect(other.textContent).toBe("Other Chat draft");
+  const original = await visitChat(pending, pending.props.initialChatId);
+  await waitFor(() => expect(original.textContent).toBe(""));
+  expect(pending.request).toHaveBeenCalledOnce();
+});
+
+it.each(["send", "queue", "edit"].flatMap((mode) => [false, true].map((retyped) => ({ mode: mode as "send" | "queue" | "edit", retyped }))))("preserves a newer original $mode draft after navigation and acceptance (retyped=$retyped)", async ({ mode, retyped }) => {
+  const pending = await pendingAdmission(mode);
+  await setSharedComposerText(pending.editor, "Newer original draft");
+  if (retyped) await setSharedComposerText(pending.editor, "Original admission draft");
+  const other = await visitChat(pending, "chat_other");
+  await setSharedComposerText(other, "Other Chat draft");
+  fireEvent.change(screen.getByLabelText("Choose files"), { target: { files: [new File(["other"], "other.txt", { type: "text/plain" })] } });
+  await pending.succeed();
+  expect(other.textContent).toBe("Other Chat draft");
+  expect(screen.getByText("other.txt")).toBeTruthy();
+  const original = await visitChat(pending, pending.props.initialChatId);
+  await waitFor(() => expect(original.textContent).toBe(retyped ? "Original admission draft" : "Newer original draft"));
+});
+
+it.each(["queue", "edit"].flatMap((mode) => [false, true].map((retyped) => ({ mode: mode as "queue" | "edit", retyped }))))("preserves a newer original $mode draft after navigation and rejection (retyped=$retyped)", async ({ mode, retyped }) => {
+  vi.spyOn(console, "warn").mockImplementation(() => undefined);
+  const pending = await pendingAdmission(mode);
+  await setSharedComposerText(pending.editor, "Newer original draft");
+  if (retyped) await setSharedComposerText(pending.editor, "Original admission draft");
+  const other = await visitChat(pending, "chat_other");
+  await setSharedComposerText(other, "Other Chat draft");
+  await pending.fail();
+  expect(other.textContent).toBe("Other Chat draft");
+  const original = await visitChat(pending, pending.props.initialChatId);
+  await waitFor(() => expect(original.textContent).toBe(retyped ? "Original admission draft" : "Newer original draft"));
+});
+
+it.each(["queue", "edit"] as const)("retains original %s reference tokens after a deferred rejection in another Chat", async (mode) => {
+  vi.spyOn(console, "warn").mockImplementation(() => undefined);
+  const pending = await pendingAdmission(mode, true);
+  expect(pending.editor.textContent).toContain("notes.md");
+  const other = await visitChat(pending, "chat_other");
+  await setSharedComposerText(other, "Other Chat draft");
+  expect(screen.queryByTestId("composer-reference-token-file-notes.md")).toBeNull();
+  await pending.fail();
+  expect(other.textContent).toBe("Other Chat draft");
+  await visitChat(pending, pending.props.initialChatId);
+  expect(await screen.findByTestId("composer-reference-token-file-notes.md")).toBeTruthy();
+});
+
+it.each(["send", "queue"] as const)("allocates a new resource-mention request ID after actual %s acceptance while another Chat is visible", async (mode) => {
+  const pending = await pendingAdmission(mode, true);
+  const first = vi.mocked(pending.request).mock.calls[0]![1];
+  expect(first.clientRequestId).toBeTruthy();
+  await visitChat(pending, "chat_other");
+  await pending.succeed();
+  const original = await visitChat(pending, pending.props.initialChatId);
+  await setSharedComposerText(original, "Original admission draft @notes");
+  fireEvent.click(await screen.findByRole("option", { name: /notes.md/ }));
+  await waitFor(() => expect(screen.getByTestId("composer-reference-token-file-notes.md")).toBeTruthy());
+  fireEvent.click(screen.getByRole("button", { name: "Send" }));
+  await waitFor(() => expect(pending.request).toHaveBeenCalledTimes(2));
+  const second = vi.mocked(pending.request).mock.calls[1]![1];
+  expect(second.parts).toEqual(first.parts);
+  expect(second.clientRequestId).not.toBe(first.clientRequestId);
 });

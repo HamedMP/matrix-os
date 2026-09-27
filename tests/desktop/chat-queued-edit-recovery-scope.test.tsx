@@ -24,8 +24,9 @@ it.each(["edit", "queue"].flatMap((mode) => ["before_rejection", "during_refresh
   vi.mocked(client.queueTurn).mockReturnValue(pending);
   const hook = renderHook(() => useCanonicalChatRouteController({ client, projectId: null, active: true, initialChatId: canonicalChatRecord.chat.id, autoSelectFirst: false }));
   await waitFor(() => expect(hook.result.current.detail?.record.chat.id).toBe(canonicalChatRecord.chat.id));
+  const onAccepted = vi.fn();
   let request!: Promise<unknown>;
-  act(() => { request = mode === "edit" ? hook.result.current.updateQueuedTurn("queued_test", [{ type: "text", text: "edited" }]) : hook.result.current.queueTurn({ parts: [{ type: "text", text: "edited" }], selection: { instanceId: "codex_fixture", model: "gpt-5.6-sol" }, interactionMode: "default", permissionMode: "supervised" }); });
+  act(() => { request = mode === "edit" ? hook.result.current.updateQueuedTurn("queued_test", [{ type: "text", text: "edited" }], onAccepted) : hook.result.current.queueTurn({ parts: [{ type: "text", text: "edited" }], selection: { instanceId: "codex_fixture", model: "gpt-5.6-sol" }, interactionMode: "default", permissionMode: "supervised" }, onAccepted); });
   const calls = vi.mocked(client.getDetail).mock.calls.length;
   if (timing === "during_refresh") {
     deferRefresh = true;
@@ -39,6 +40,7 @@ it.each(["edit", "queue"].flatMap((mode) => ["before_rejection", "during_refresh
   expect(hook.result.current.activeChatId).toBe("chat_second");
   expect(hook.result.current.detail?.record.chat.id).toBe("chat_second");
   expect(hook.result.current.error).toBeNull();
+  expect(onAccepted).not.toHaveBeenCalled();
   if (timing === "before_rejection") expect(vi.mocked(client.getDetail).mock.calls.filter(([id]) => id === canonicalChatRecord.chat.id)).toHaveLength(calls);
 });
 
@@ -55,8 +57,9 @@ it.each(["send", "queue", "edit"] as const)("does not publish late successful %s
   const hook = renderHook(() => useCanonicalChatRouteController({ client, projectId: null, active: true, initialChatId: canonicalChatRecord.chat.id, autoSelectFirst: false }));
   await waitFor(() => expect(hook.result.current.detail?.record.chat.id).toBe(canonicalChatRecord.chat.id));
   const input = { parts: [{ type: "text" as const, text: "submitted" }], selection: { instanceId: "codex_fixture", model: "gpt-5.6-sol" }, interactionMode: "default", permissionMode: "supervised" };
+  const onAccepted = vi.fn();
   let request!: Promise<unknown>;
-  act(() => { request = mode === "send" ? hook.result.current.submitTurn(input, "Title") : mode === "queue" ? hook.result.current.queueTurn(input) : hook.result.current.updateQueuedTurn("queued_test", input.parts); });
+  act(() => { request = mode === "send" ? hook.result.current.submitTurn(input, "Title", null, onAccepted) : mode === "queue" ? hook.result.current.queueTurn(input, onAccepted) : hook.result.current.updateQueuedTurn("queued_test", input.parts, onAccepted); });
   act(() => hook.result.current.selectChat("chat_second"));
   await waitFor(() => expect(hook.result.current.detail?.record.chat.id).toBe("chat_second"));
   const response = mode === "send" ? { record: first.record, message: snapshot.messages[0], turn: snapshot.turns[0], run: snapshot.runs[0], admission: "accepted" }
@@ -65,6 +68,7 @@ it.each(["send", "queue", "edit"] as const)("does not publish late successful %s
   expect(hook.result.current.activeChatId).toBe("chat_second");
   expect(hook.result.current.detail?.record.chat.id).toBe("chat_second");
   expect(await request).toBeNull();
+  expect(onAccepted).toHaveBeenCalledOnce();
 });
 
 it("does not acknowledge an already-claimed queue after its success refresh crosses Chat scope", async () => {
@@ -82,12 +86,14 @@ it("does not acknowledge an already-claimed queue after its success refresh cros
   const hook = renderHook(() => useCanonicalChatRouteController({ client, projectId: null, active: true, initialChatId: canonicalChatRecord.chat.id, autoSelectFirst: false }));
   await waitFor(() => expect(hook.result.current.detail?.record.chat.id).toBe(canonicalChatRecord.chat.id));
   refreshing = true;
+  const onAccepted = vi.fn();
   let request!: Promise<unknown>;
-  act(() => { request = hook.result.current.queueTurn({ parts: [{ type: "text", text: "submitted" }], selection: { instanceId: "codex_fixture", model: "gpt-5.6-sol" }, interactionMode: "default", permissionMode: "supervised" }); });
+  act(() => { request = hook.result.current.queueTurn({ parts: [{ type: "text", text: "submitted" }], selection: { instanceId: "codex_fixture", model: "gpt-5.6-sol" }, interactionMode: "default", permissionMode: "supervised" }, onAccepted); });
   await waitFor(() => expect(finishRefresh).toBeTypeOf("function"));
   act(() => hook.result.current.selectChat("chat_second"));
   await waitFor(() => expect(hook.result.current.detail?.record.chat.id).toBe("chat_second"));
   await act(async () => { finishRefresh(first); await request; });
   expect(await request).toBeNull();
+  expect(onAccepted).toHaveBeenCalledOnce();
   expect(hook.result.current.detail?.record.chat.id).toBe("chat_second");
 });

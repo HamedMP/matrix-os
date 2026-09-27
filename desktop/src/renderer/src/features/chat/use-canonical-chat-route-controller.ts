@@ -410,6 +410,7 @@ export function useCanonicalChatRouteController({
     input: Omit<CanonicalCreateChatTurnRequest, "clientRequestId" | "baseRevision"> & { clientRequestId?: string },
     title: string,
     initialProjectId: string | null = projectId,
+    onAccepted?: () => void,
   ) => {
     const routeScope = routeScopeRef.current;
     const selectedChatId = activeChatIdRef.current;
@@ -441,6 +442,8 @@ export function useCanonicalChatRouteController({
       }, {
         chatScope: current.record.projectId ? "project" : "global",
       });
+      // Actual admission settles the original draft even when current-view publication is stale.
+      onAccepted?.();
       if (!isCurrentScope()) return null;
       const streamed = detailRef.current;
       const next: CanonicalChatDetailResponse = {
@@ -539,6 +542,7 @@ export function useCanonicalChatRouteController({
 
   const queueTurn = useCallback(async (
     input: Omit<CanonicalQueueChatTurnRequest, "clientRequestId" | "baseRevision"> & { clientRequestId?: string },
+    onAccepted?: () => void,
   ) => {
     const current = detailRef.current;
     if (!current || (!current.record.activeRun && !input.clientRequestId)) return null;
@@ -551,6 +555,8 @@ export function useCanonicalChatRouteController({
         clientRequestId: input.clientRequestId ?? canonicalChatRequestId(),
         baseRevision: current.record.chat.revision,
       });
+      // Actual admission settles the original draft even when current-view publication is stale.
+      onAccepted?.();
       if (!isCurrentScope()) return null;
       if (response.alreadyClaimed) {
         await loadDetail(current.record.chat.id);
@@ -595,6 +601,7 @@ export function useCanonicalChatRouteController({
   const updateQueuedTurn = useCallback(async (
     queuedTurnId: string,
     parts: CanonicalUpdateQueuedChatTurnRequest["parts"],
+    onAccepted?: () => void,
   ) => {
     const current = detailRef.current;
     if (!current) return null;
@@ -607,6 +614,8 @@ export function useCanonicalChatRouteController({
         baseRevision: current.record.chat.revision,
         parts,
       });
+      // Actual admission settles the original draft even when current-view publication is stale.
+      onAccepted?.();
       if (!isCurrentScope()) return null;
       detailRequestSequence.current += 1;
       updateDetail((currentDetail) => {

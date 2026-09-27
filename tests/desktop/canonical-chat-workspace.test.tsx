@@ -1284,10 +1284,11 @@ describe("CanonicalChatWorkspace", () => {
       running.chat.id,
       expect.objectContaining({ parts: [{ type: "text", text: "Third queued turn" }] }),
     ));
-    expect(editor.textContent).toBe("");
+    expect(editor.textContent).toBe("Third queued turn");
     expect(within(queuePanel).queryByText("Third queued turn")).toBeNull();
     finishQueue({ queuedTurn: third, queueDepth: 3 });
     await waitFor(() => expect(within(queuePanel).getByText("Third queued turn")).toBeTruthy());
+    expect(editor.textContent).toBe("");
     expect(screen.getByRole("button", { name: "Stop" })).toBeTruthy();
 
     fireEvent.pointerDown(screen.getByRole("button", { name: "More actions for Second queued turn" }), { button: 0, ctrlKey: false });

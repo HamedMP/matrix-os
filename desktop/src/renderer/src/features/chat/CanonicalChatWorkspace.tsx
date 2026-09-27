@@ -472,13 +472,18 @@ export function CanonicalChatWorkspace({
       const requestScope = routedComposerChatId ?? `new:${projectId ?? "global"}`;
       const attempt = mentionResources.length ? mentionRequests.resolve(client, requestScope, input, "send") : undefined;
       const clientRequestId = attempt?.clientRequestId;
+      const acknowledgeAccepted = () => {
+        if (!isCurrentRuntimeGeneration(runtimeGeneration)
+          || composerOwner.current.client !== owner.client
+          || desktopProviderIdentityKey(useConnection.getState()) !== owner.identity) return;
+        if (clientRequestId) mentionRequests.accepted(requestScope, clientRequestId);
+        updateDraftIfUnchanged(draftRevision, { text: "", referenceTokens: [] });
+        for (const id of submittedAttachmentIds) attachments.remove(id);
+      };
       const admitted = attempt?.operation === "queue"
-        ? await controller.queueTurn({ ...input, clientRequestId })
-        : await controller.submitTurn({ ...input, clientRequestId }, canonicalChatTitle(submission), draftProjectId ?? projectId);
-      if (admitted && clientRequestId) mentionRequests.accepted(requestScope, clientRequestId);
+        ? await controller.queueTurn({ ...input, clientRequestId }, acknowledgeAccepted)
+        : await controller.submitTurn({ ...input, clientRequestId }, canonicalChatTitle(submission), draftProjectId ?? projectId, acknowledgeAccepted);
       if (!admitted || !isCurrentOwner()) return;
-      updateDraftIfUnchanged(draftRevision, { text: "", referenceTokens: [] });
-      for (const id of submittedAttachmentIds) attachments.remove(id);
       if ("record" in admitted) {
         reportedChatId.current = admitted.record.chat.id;
         const admittedProjectId = admitted.record.projectId ?? null;
@@ -527,15 +532,12 @@ export function CanonicalChatWorkspace({
     try {
       const parts = await resolveSubmissionParts(submission, isCurrentSubmission);
       if (!parts) return;
-      const submittedDraft = draft;
-      const submittedReferenceTokens = referenceTokens;
       const updatedParts = editingQueuedTurn
         ? [
             ...editingQueuedTurn.parts.filter((part) => part.type !== "text"),
             ...parts,
           ]
         : parts;
-      updateDraftIfUnchanged(draftRevision, { text: "", referenceTokens: [] });
       const input = {
         parts: updatedParts,
         selection: { instanceId: selection.instanceId, model: selection.model, ...(selection.options.length ? { options: selection.options } : {}) },
@@ -544,18 +546,21 @@ export function CanonicalChatWorkspace({
       const requestScope = routedComposerChatId ?? `new:${projectId ?? "global"}`;
       const attempt = mentionResources.length ? mentionRequests.resolve(client, requestScope, input, "queue") : undefined;
       const clientRequestId = attempt?.clientRequestId;
+      const acknowledgeAccepted = () => {
+        if (!isCurrentRuntimeGeneration(runtimeGeneration)
+          || composerOwner.current.client !== owner.client
+          || desktopProviderIdentityKey(useConnection.getState()) !== owner.identity) return;
+        if (clientRequestId) mentionRequests.accepted(requestScope, clientRequestId);
+        updateDraftIfUnchanged(draftRevision, { text: "", referenceTokens: [] });
+        for (const id of submittedAttachmentIds) attachments.remove(id);
+      };
       const response = editingQueuedTurn
-        ? await controller.updateQueuedTurn(editingQueuedTurn.id, updatedParts)
+        ? await controller.updateQueuedTurn(editingQueuedTurn.id, updatedParts, acknowledgeAccepted)
         : attempt?.operation === "send"
-          ? await controller.submitTurn({ ...input, clientRequestId }, canonicalChatTitle(submission), draftProjectId ?? projectId)
-          : await controller.queueTurn({ ...input, clientRequestId });
-      if (response && clientRequestId) mentionRequests.accepted(requestScope, clientRequestId);
+          ? await controller.submitTurn({ ...input, clientRequestId }, canonicalChatTitle(submission), draftProjectId ?? projectId, acknowledgeAccepted)
+          : await controller.queueTurn({ ...input, clientRequestId }, acknowledgeAccepted);
       if (!isCurrentOwner()) return;
-      if (!response) {
-        updateDraftIfUnchanged(draftRevision + 1, { text: submittedDraft, referenceTokens: submittedReferenceTokens });
-        return;
-      }
-      for (const id of submittedAttachmentIds) attachments.remove(id);
+      if (!response) return;
       setEditingQueuedTurn(null);
     } finally {
       if (sequence === submissionSequence.current) {
