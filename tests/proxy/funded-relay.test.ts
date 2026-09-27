@@ -616,6 +616,30 @@ describe("Cloudflare funded relay control-plane ordering", () => {
     }
   });
 
+  it("passes only a valid claim key through to authorization", async () => {
+    for (const [header, expected] of [["run_a:turn.1", "run_a:turn.1"], ["bad key", undefined]] as const) {
+      const bodies: Array<Record<string, unknown>> = [];
+      const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        const url = String(input);
+        if (url.endsWith("/check")) return json(checkResponse());
+        if (url.endsWith("/v1/messages/count_tokens")) return json({ input_tokens: 1_000 });
+        if (url.endsWith("/authorize")) {
+          bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+          return json({ error: { code: "rate_limited", message: "Try again later" } }, 429);
+        }
+        return json({});
+      });
+      const relay = configuredRelay(fetchMock as typeof fetch);
+      const app = new Hono();
+      relay.register(app);
+
+      expect((await app.request("/v1/messages", fundedRequest(requestBody(), { "x-matrix-funded-claim-key": header }))).status).toBe(429);
+
+      expect(bodies[0]?.claimKey).toBe(expected);
+      await relay.close();
+    }
+  });
+
   it("never releases an in-flight reservation after generation fetch fails", async () => {
     const events: string[] = [];
     const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {

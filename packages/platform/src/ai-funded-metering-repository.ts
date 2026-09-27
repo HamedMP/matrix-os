@@ -505,6 +505,7 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
         ownerId: credential.owner_id,
         machineId: credential.machine_id,
         runtimeSlot: credential.runtime_slot,
+        claimKey: request.claimKey ?? "",
         requestClass: credential.request_class,
         billingMode,
         checked,

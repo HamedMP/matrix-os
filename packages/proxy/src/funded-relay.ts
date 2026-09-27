@@ -1,5 +1,6 @@
 import { createHmac, randomUUID } from "node:crypto";
 import {
+  FundedAiClaimKeySchema,
   FundedAiPolicyCheckRequestSchema,
   JEV_MODEL_ID,
   type FundedAiIdentity,
@@ -132,6 +133,12 @@ function errorResponse(
   message: string,
 ): Response {
   return c.json({ type: "error", error: { type, message } }, status);
+}
+
+/** Gateway turn identity for interactive priority ordering; invalid values are ignored, never forwarded upstream. */
+function fundedClaimKey(c: Context): string | undefined {
+  const parsed = FundedAiClaimKeySchema.safeParse(c.req.header("x-matrix-funded-claim-key"));
+  return parsed.success ? parsed.data : undefined;
 }
 
 function jevNotStarted(response: Response): Response {
@@ -403,12 +410,14 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
 
     let authorization: Awaited<ReturnType<FundedPlatformClient["authorize"]>>;
     try {
+      const claimKey = fundedClaimKey(c);
       authorization = await platform.authorize({
         credential,
         requestId,
         modelId: model.canonicalModelId,
         maxCostMicrousd,
         ...(config.reservationMode === "usage" ? { billingMode: "usage" as const } : {}),
+        ...(claimKey ? { claimKey } : {}),
       }, state.lifetimeSignal);
     } catch (error) {
       return controlPlaneError(c, error);

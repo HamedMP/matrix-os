@@ -14,8 +14,9 @@ describe("funded AI interactive priority claims", () => {
   let clock: Date;
   let repo: ReturnType<typeof createAiFundedPolicyRepository>;
 
-  const usage = (credential: Credential, requestId: string) => ({
+  const usage = (credential: Credential, requestId: string, claimKey?: string) => ({
     credential: credential.token, requestId, modelId, maxCostMicrousd: 5_380_000, billingMode: "usage" as const,
+    ...(claimKey ? { claimKey } : {}),
   });
   const hold = (credential: Credential, requestId: string) => ({
     credential: credential.token, requestId, modelId, maxCostMicrousd: 100,
@@ -153,6 +154,20 @@ describe("funded AI interactive priority claims", () => {
     await expect(repo.authorize(usage(primaryInteractive, "primary_retry"))).rejects.toMatchObject({ reason: "priority_queue" });
     await expect(repo.authorize(usage(previewInteractive, "preview_retry"))).resolves.toMatchObject({ authorized: true });
     expect((await claims()).map((claim) => claim.runtime_slot)).toEqual(["primary"]);
+  });
+
+  it("keeps distinct turns on one runtime in their own order", async () => {
+    const background = await issue(primary, "background");
+    const interactive = await issue(primary, "interactive");
+    const running = await repo.authorize(usage(background, "bg_1"));
+    await expect(repo.authorize(usage(interactive, "turn_a_1", "run_a"))).rejects.toMatchObject({ reason: "slot_busy" });
+    advance(1_000);
+    await expect(repo.authorize(usage(interactive, "turn_b_1", "run_b"))).rejects.toMatchObject({ reason: "slot_busy" });
+    await finish(running, background);
+
+    await expect(repo.authorize(usage(interactive, "turn_b_2", "run_b"))).rejects.toMatchObject({ reason: "priority_queue" });
+    await expect(repo.authorize(usage(interactive, "turn_a_2", "run_a"))).resolves.toMatchObject({ authorized: true });
+    expect((await claims()).map((claim) => claim.claim_key)).toEqual(["run_b"]);
   });
 
   it("puts a runtime in line when an older claim is waiting and the slot is free", async () => {

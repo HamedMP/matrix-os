@@ -16,6 +16,8 @@ interface PriorityInput {
   ownerId: string;
   machineId: string;
   runtimeSlot: string;
+  /** Gateway turn identity; `""` groups keyless requests at the runtime level. */
+  claimKey: string;
   requestClass: FundedAiRequestClass;
   billingMode: FundedBillingMode;
   checked: Date;
@@ -43,18 +45,19 @@ export async function findConflictingActiveReservation(
 /**
  * Owner-wide interactive priority. Must run inside the authorization
  * transaction after the owner advisory lock. Claims are keyed to the
- * requesting runtime's slot so relay retries (new request ids) and credential
- * rotation keep their place. A rejected decision may have written a claim, so
+ * requesting runtime slot and the gateway's turn claim key, so relay retries
+ * (new request ids) and credential rotation keep their place and distinct
+ * turns on one runtime keep their order. A rejected decision may have written a claim, so
  * callers must commit the transaction before reporting the rejection.
  */
 export async function evaluateFundedPriority(executor: Executor, input: PriorityInput): Promise<FundedPriorityDecision> {
   const checkedAt = input.checked.toISOString();
   const liveClaims = await executor.selectFrom("ai_funded_priority_claims")
     .selectAll().where("owner_id", "=", input.ownerId).where("expires_at", ">", checkedAt)
-    .orderBy("created_at").orderBy("machine_id").orderBy("runtime_slot")
+    .orderBy("created_at").orderBy("machine_id").orderBy("runtime_slot").orderBy("claim_key")
     .limit(MAX_PRIORITY_CLAIMS_PER_OWNER + 1).execute();
-  const isOwnSlot = (claim: { machine_id: string; runtime_slot: string }) =>
-    claim.machine_id === input.machineId && claim.runtime_slot === input.runtimeSlot;
+  const isOwnSlot = (claim: { machine_id: string; runtime_slot: string; claim_key: string }) =>
+    claim.machine_id === input.machineId && claim.runtime_slot === input.runtimeSlot && claim.claim_key === input.claimKey;
   const otherConflicting = liveClaims.filter((claim) => !isOwnSlot(claim) && conflicts(input.billingMode, claim.billing_mode));
 
   if (input.requestClass === "background") {
@@ -73,7 +76,7 @@ export async function evaluateFundedPriority(executor: Executor, input: Priority
       // Consumed atomically with the reservation this transaction is about to write.
       await executor.deleteFrom("ai_funded_priority_claims")
         .where("owner_id", "=", input.ownerId).where("machine_id", "=", input.machineId)
-        .where("runtime_slot", "=", input.runtimeSlot).execute();
+        .where("runtime_slot", "=", input.runtimeSlot).where("claim_key", "=", input.claimKey).execute();
     }
     return { kind: "proceed" };
   }
@@ -86,10 +89,11 @@ export async function evaluateFundedPriority(executor: Executor, input: Priority
       owner_id: input.ownerId,
       machine_id: input.machineId,
       runtime_slot: input.runtimeSlot,
+      claim_key: input.claimKey,
       billing_mode: input.billingMode,
       created_at: checkedAt,
       expires_at: expiresAt,
-    }).onConflict((conflict) => conflict.columns(["owner_id", "machine_id", "runtime_slot"]).doUpdateSet({
+    }).onConflict((conflict) => conflict.columns(["owner_id", "machine_id", "runtime_slot", "claim_key"]).doUpdateSet({
       billing_mode: input.billingMode,
       created_at: checkedAt,
       expires_at: expiresAt,
@@ -101,8 +105,8 @@ export async function evaluateFundedPriority(executor: Executor, input: Priority
 export async function deleteExpiredPriorityClaims(executor: Executor, checkedAt: string, limit: number): Promise<number> {
   const deleted = await sql<{ owner_id: string }>`
     DELETE FROM ai_funded_priority_claims
-    WHERE (owner_id, machine_id, runtime_slot) IN (
-      SELECT owner_id, machine_id, runtime_slot FROM ai_funded_priority_claims
+    WHERE (owner_id, machine_id, runtime_slot, claim_key) IN (
+      SELECT owner_id, machine_id, runtime_slot, claim_key FROM ai_funded_priority_claims
       WHERE expires_at <= ${checkedAt}
       ORDER BY expires_at
       LIMIT ${limit}
