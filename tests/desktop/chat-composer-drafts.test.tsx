@@ -144,4 +144,39 @@ describe("Chat-bound composer drafts", () => {
     expect(view.result.current.referenceTokens).toEqual([reference]);
   });
 
+  it("settles the captured draft after identical text and fresh arrays of unchanged token objects", () => {
+    const view = renderHook(() => useChatComposerDrafts({ clientIdentity: "client", chatId: "chat_a", projectId: null, conversation: true }));
+    const reference = { type: "resource" as const, resource: { kind: "file" as const, id: "notes", label: "notes.md" } };
+    act(() => { view.result.current.setText("original"); view.result.current.setReferenceTokens([reference]); });
+    const submitted = view.result.current;
+    act(() => { view.result.current.setText("original"); view.result.current.setReferenceTokens([reference]); });
+    expect(view.result.current.revision).toBe(submitted.revision);
+    act(() => submitted.updateIfUnchanged(submitted.revision, { text: "", referenceTokens: [] }));
+    expect(view.result.current.text).toBe("");
+    expect(view.result.current.referenceTokens).toEqual([]);
+  });
+
+  it.each(["text edit", "text retype", "token identity", "token order"] as const)(
+    "preserves a newer draft after %s when an older admission clears its captured revision",
+    (change) => {
+      const view = renderHook(() => useChatComposerDrafts({ clientIdentity: "client", chatId: "chat_a", projectId: null, conversation: true }));
+      const first = { type: "resource" as const, resource: { kind: "file" as const, id: "first", label: "first.md" } };
+      const second = { type: "resource" as const, resource: { kind: "file" as const, id: "second", label: "second.md" } };
+      const replacement = { type: "resource" as const, resource: { kind: "file" as const, id: "replacement", label: "first.md" } };
+      act(() => { view.result.current.setText("original"); view.result.current.setReferenceTokens([first, second]); });
+      const submitted = view.result.current;
+      act(() => {
+        if (change === "text edit" || change === "text retype") view.result.current.setText("newer");
+        if (change === "text retype") view.result.current.setText("original");
+        if (change === "token identity") view.result.current.setReferenceTokens([replacement, second]);
+        if (change === "token order") view.result.current.setReferenceTokens([second, first]);
+      });
+      expect(view.result.current.revision).toBeGreaterThan(submitted.revision);
+      act(() => submitted.updateIfUnchanged(submitted.revision, { text: "", referenceTokens: [] }));
+      expect(view.result.current.text).toBe(change === "text edit" ? "newer" : "original");
+      expect(view.result.current.referenceTokens).toEqual(change === "token identity"
+        ? [replacement, second] : change === "token order" ? [second, first] : [first, second]);
+    },
+  );
+
 });

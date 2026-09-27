@@ -82,12 +82,20 @@ export function useChatComposerDrafts({
       setDrafts((current) => {
         const currentText = current[scope]?.text ?? "";
         const text = typeof nextText === "function" ? nextText(currentText) : nextText;
+        if (text === currentText) return current;
         return rememberDraft(current, scope, { text }, projectId);
       });
     }, [projectId, scope]),
-    setReferenceTokens: useCallback((referenceTokens: ComposerReferenceToken[]) => (
-      updateCurrent({ referenceTokens })
-    ), [updateCurrent]),
+    setReferenceTokens: useCallback((referenceTokens: ComposerReferenceToken[]) => {
+      setDrafts((current) => {
+        const currentTokens = current[scope]?.referenceTokens ?? EMPTY_REFERENCE_TOKENS;
+        // Cursor-only Lexical updates report unchanged text and token objects.
+        // They must not invalidate an admission whose payload has not changed.
+        if (currentTokens.length === referenceTokens.length
+          && currentTokens.every((token, index) => token === referenceTokens[index])) return current;
+        return rememberDraft(current, scope, { referenceTokens }, projectId);
+      });
+    }, [projectId, scope]),
     setDraftProjectId: useCallback((nextProjectId: string | null) => (
       updateCurrent({ projectId: nextProjectId })
     ), [updateCurrent]),
