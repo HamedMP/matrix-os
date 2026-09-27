@@ -697,7 +697,7 @@ export class CanonicalChatOrchestrator {
         permissionMode: run.permissionMode,
         ...(sharedScopeId ? { sharedScopeId } : {}),
         ...(resolvedRoot ? { executionRoot: resolvedRoot.primaryWorkspaceRoot } : {}),
-        ...(resolvedRoot ? { projectSlug: resolvedRoot.projectSlug } : {}),
+        ...(resolvedRoot?.projectSlug ? { projectSlug: resolvedRoot.projectSlug } : {}),
         ...(resolvedRoot?.ref.kind === "worktree" ? { worktreeId: resolvedRoot.ref.worktreeId } : {}),
         ...(resumeState === undefined ? {} : { resumeState }),
         signal: controller.signal,

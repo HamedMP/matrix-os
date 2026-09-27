@@ -3,6 +3,7 @@ import { createConnection, type Socket } from "node:net";
 import {
   ScopeRuntimeRequestSchema,
   ScopeRuntimeResponseSchema,
+  type ScopeRuntimeBotCommand,
   type ScopeRuntimeCapabilityProfile,
   type ScopeRuntimeRequest,
   type ScopeRuntimeResponse,
@@ -14,6 +15,9 @@ const MAX_FRAME_BYTES = 128 * 1024;
 const MAX_TIMEOUT_MS = 90_000;
 const MAX_IN_FLIGHT_REQUESTS = 64;
 const DEFAULT_OPERATION_TIMEOUT_MS = 60_000;
+/** A relayed bot turn may run until the workload's 900 second lifetime ends. */
+const BOT_RUN_TIMEOUT_MS = 935_000;
+const BOT_CONTROL_TIMEOUT_MS = 20_000;
 
 export interface ScopeRuntimeSandboxCapability {
   policyVersion: number;
@@ -84,7 +88,7 @@ export function createScopeRuntimeClient(options: {
   /** Per-profile capabilities for every catalog profile; each fails closed on its own. */
   let profileCapabilities = new Map<string, ScopeRuntimeCapability>();
 
-  function request(input: ScopeRuntimeRequest): Promise<ScopeRuntimeResponse> {
+  function request(input: ScopeRuntimeRequest, requestTimeoutMs = timeoutMs): Promise<ScopeRuntimeResponse> {
     if (closed) return Promise.reject(new ScopeRuntimeClientError("client_closed"));
     if (operations.size >= MAX_IN_FLIGHT_REQUESTS) {
       return Promise.reject(new ScopeRuntimeClientError("client_capacity"));
@@ -95,7 +99,7 @@ export function createScopeRuntimeClient(options: {
     }
     const operation = new Promise<ScopeRuntimeResponse>((resolve, reject) => {
       const socket = createConnection({ path: options.socketPath });
-      const signal = AbortSignal.timeout(timeoutMs);
+      const signal = AbortSignal.timeout(requestTimeoutMs);
       let response = "";
       let settled = false;
       sockets.add(socket);
@@ -112,7 +116,7 @@ export function createScopeRuntimeClient(options: {
       };
       signal.addEventListener("abort", fail, { once: true });
       socket.setEncoding("utf8");
-      socket.setTimeout(timeoutMs, fail);
+      socket.setTimeout(requestTimeoutMs, fail);
       socket.once("error", fail);
       socket.once("connect", () => socket.end(frame));
       socket.on("data", (chunk) => {
@@ -193,16 +197,18 @@ export function createScopeRuntimeClient(options: {
     };
   }
 
+  function capabilityOfProfile(profileId: string): ScopeRuntimeCapability {
+    return profileCapabilities.get(profileId) ?? (currentCapability.available
+      ? { available: false, reason: "unsupported_profile" }
+      : currentCapability);
+  }
+
   return {
     capability(): ScopeRuntimeCapability {
       return currentCapability;
     },
     /** A catalog profile's capability; profiles the supervisor does not advertise are unsupported. */
-    profileCapability(profileId: string): ScopeRuntimeCapability {
-      return profileCapabilities.get(profileId) ?? (currentCapability.available
-        ? { available: false, reason: "unsupported_profile" }
-        : currentCapability);
-    },
+    profileCapability: capabilityOfProfile,
     async refreshCapability(): Promise<ScopeRuntimeCapability> {
       if (closed) throw new ScopeRuntimeClientError("client_closed");
       try {
@@ -236,21 +242,23 @@ export function createScopeRuntimeClient(options: {
     },
     async createRuntime(input: {
       scopeHandle: string;
-      workload: "chat_ai" | "terminal";
+      /** A catalog profile other than the shared-chat one, e.g. the bot profile. */
+      profileId?: string;
+      workload: ScopeRuntimeWorkload;
       adapterId: string;
       harnessVersion: string;
-      /** S07: required for any run or terminal that acts for a collaborator. */
+      /** S07: required for any run or terminal that acts for a collaborator, and for every bot. */
       sandbox?: ScopeRuntimeSandboxManifest;
     }) {
       if (closed) throw new ScopeRuntimeClientError("client_closed");
-      const capability = currentCapability;
+      const capability = input.profileId === undefined ? currentCapability : capabilityOfProfile(input.profileId);
       if (!capability.available) throw new ScopeRuntimeClientError("runtime_unavailable");
       if (input.sandbox && (!capability.sandbox || !capability.sandbox.workloads.includes(input.workload)
         || input.sandbox.scopeHandle !== input.scopeHandle)) {
         throw new ScopeRuntimeClientError("runtime_unavailable");
       }
-      // Every call through this collaboration client is a shared run. The
-      // caller cannot opt into the owner's wider fixed profile by omitting a manifest.
+      // Every call through this client is sandboxed: a shared run or a private bot.
+      // A caller cannot opt into the owner's wider fixed profile by omitting a manifest.
       if (!input.sandbox) throw new ScopeRuntimeClientError("runtime_unavailable");
       const adapter = capability.supportedAdapters.find((entry) => entry.adapterId === input.adapterId);
       if (!adapter || adapter.harnessVersion !== input.harnessVersion
@@ -276,6 +284,30 @@ export function createScopeRuntimeClient(options: {
         executionGeneration: response.executionGeneration,
         state: response.state,
       };
+    },
+    /**
+     * Relays a bot command to a `bot_agent` worker. `bot.run` holds the call
+     * until the turn ends; steer and cancel answer quickly. The reply is
+     * opaque here and validated by the caller against the bot contracts.
+     */
+    async runBot(input: { runtimeHandle: string; executionGeneration: string; command: ScopeRuntimeBotCommand }) {
+      if (closed) throw new ScopeRuntimeClientError("client_closed");
+      const response = await request({
+        version: 1,
+        type: "runtime.bot",
+        requestId: createRequestId(),
+        runtimeHandle: input.runtimeHandle,
+        executionGeneration: input.executionGeneration,
+        command: input.command,
+      }, input.command.kind === "bot.run" ? BOT_RUN_TIMEOUT_MS : BOT_CONTROL_TIMEOUT_MS);
+      if (response.type !== "runtime.bot.result") throw new ScopeRuntimeClientError("runtime_unavailable");
+      if (!response.ok) {
+        return { ok: false as const, error: response.error };
+      }
+      if (response.runtimeHandle !== input.runtimeHandle || response.executionGeneration !== input.executionGeneration) {
+        throw new ScopeRuntimeClientError("runtime_unavailable");
+      }
+      return { ok: true as const, reply: response.reply };
     },
     async stopRuntime(input: { runtimeHandle: string }) {
       if (closed) throw new ScopeRuntimeClientError("client_closed");

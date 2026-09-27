@@ -163,6 +163,8 @@ import {
 import { createGatewaySpeechRuntime } from "./speech/gateway-runtime.js";
 import { initializeOwnerDatabaseServices } from "./startup/owner-database.js";
 import { enableOwnerSharedAi } from "./startup/collaboration.js";
+import type { ScopeRuntimeHost } from "./scope-runtime-host/index.js";
+import { startScopeRuntimeHost } from "./startup/scope-runtime-host.js";
 import { initializePlatformIntegrations } from "./startup/platform-integrations.js";
 import { getVersion } from "./system-info.js";
 import { createTaskManager } from "./task-manager.js";
@@ -787,6 +789,7 @@ export async function createGateway(config: GatewayConfig) {
   let canonicalChatExecutionRoots: ChatExecutionRootResolver | null = null;
   let canonicalChatCollaborationGuard: ReturnType<typeof createDiscussionOnlyChatExecutionGuard> | null = null;
   let gatewayCollaboration: GatewayCollaborationRuntime | null = null;
+  let scopeRuntimeHost: ScopeRuntimeHost | undefined;
   let messagingRepository: MessagingKyselyRepository | null = null;
   // Collaboration wiring always constructs (S20): there is no release flag.
   // Incomplete configuration or a missing owner database registers the
@@ -1555,9 +1558,16 @@ export async function createGateway(config: GatewayConfig) {
     // S07: this layer has no execution-root resolver, so no `sandboxManifests` source is passed
     // and shared AI reports no eligibility instead of offering runs that would fail at launch.
     // S09 supplies the resolver; a shared run never falls back to an unsandboxed profile.
+    scopeRuntimeHost = await startScopeRuntimeHost({
+      homePath,
+      ...(fundedCredentialProvider ? { fundedCredentialProvider } : {}),
+      ...(fundedAdmission ? { fundedAdmission } : {}),
+      onFailure: logBestEffortFailure,
+    });
     await enableOwnerSharedAi({
       gatewayCollaboration,
       input: {
+        ...(scopeRuntimeHost ? { host: scopeRuntimeHost } : {}),
         orchestrator: canonicalChatOrchestrator,
         homePath,
         providerCatalog: canonicalChatProviderCatalog,
@@ -1819,6 +1829,8 @@ export async function createGateway(config: GatewayConfig) {
       await canonicalChatRuntime?.agents.close();
       canonicalChatRuntime = null;
       await gatewayCollaboration?.shutdown();
+      // After collaboration unregisters, so no shared run loses its broker mid-shutdown.
+      await scopeRuntimeHost?.close();
       gatewayCollaboration = null;
       await backgroundAgentRuntime.close();
       await codingAgentWorkspaceRuntime?.close();
