@@ -302,16 +302,30 @@ function FrameCollaboration({ view, api, actorId, session }: {
   );
 }
 
-function CollaborationFrameSurface({ view, account, signingOut, signOutFailed, onManageAccount, onSignOut }: {
+function CollaborationFrameSurface({
+  view,
+  account,
+  sessionGeneration = 0,
+  signingOut,
+  signOutFailed,
+  onManageAccount,
+  onSignOut,
+}: {
   view: ChatCollaborationView;
   account: CollaborationFrameAccount;
+  /** Bumped after sign-out closed every direct session but Clerk kept the account signed in. */
+  sessionGeneration?: number;
   signingOut?: boolean;
   signOutFailed?: boolean;
   onManageAccount?: () => void;
   onSignOut: () => void;
 }) {
   const browserOrigin = useBrowserOrigin();
-  const api = useMemo(() => browserOrigin ? createShellCollaborationApi(browserOrigin) : null, [browserOrigin]);
+  // sessionGeneration is intentionally a dependency: sign-out disposes the previous API permanently.
+  const api = useMemo(
+    () => browserOrigin ? createShellCollaborationApi(browserOrigin) : null,
+    [browserOrigin, sessionGeneration],
+  );
   return (
     <CollaborationFrameChrome
       account={account}
@@ -322,10 +336,10 @@ function CollaborationFrameSurface({ view, account, signingOut, signOutFailed, o
       onSignOut={onSignOut}
     >
       {!api ? <FrameStatus /> : view.kind === "chat" ? (
-        <SharedChatSession>
+        <SharedChatSession key={sessionGeneration}>
           {(session) => <FrameCollaboration view={view} api={api} actorId={account.userId} session={session} />}
         </SharedChatSession>
-      ) : <FrameCollaboration view={view} api={api} actorId={account.userId} />}
+      ) : <FrameCollaboration key={sessionGeneration} view={view} api={api} actorId={account.userId} />}
     </CollaborationFrameChrome>
   );
 }
@@ -336,6 +350,7 @@ function ClerkCollaborationFrame({ view }: { view: ChatCollaborationView }) {
   const clerk = useClerk();
   const [signingOut, setSigningOut] = useState(false);
   const [signOutFailed, setSignOutFailed] = useState(false);
+  const [sessionGeneration, setSessionGeneration] = useState(0);
 
   async function handleSignOut() {
     if (signingOut) return;
@@ -352,8 +367,10 @@ function ClerkCollaborationFrame({ view }: { view: ChatCollaborationView }) {
       if (isTimeoutError(error)) console.warn("[collaboration-frame] Clerk sign-out timed out");
       else console.error("[collaboration-frame] Clerk sign-out failed", error instanceof Error ? error.name : typeof error);
       // The Clerk session may still be active: never present the account as signed out.
+      // Sign-out already disposed every direct session, so continue on a fresh API.
       setSigningOut(false);
       setSignOutFailed(true);
+      setSessionGeneration((generation) => generation + 1);
       return;
     }
     window.location.replace(redirectUrl);
@@ -373,6 +390,7 @@ function ClerkCollaborationFrame({ view }: { view: ChatCollaborationView }) {
     <CollaborationFrameSurface
       view={view}
       account={account}
+      sessionGeneration={sessionGeneration}
       signingOut={signingOut}
       signOutFailed={signOutFailed}
       onManageAccount={() => clerk.openUserProfile()}
