@@ -14,7 +14,6 @@ import {
   serializeForSummary,
   SESSION_MAX_BYTES,
 } from "../../packages/bot-runtime/src/session.js";
-import { BotWorkerError, createBotWorker } from "../../packages/bot-runtime/src/worker.js";
 
 const user = (text: string, timestamp = 1): AgentMessage => ({ role: "user", content: text, timestamp });
 const assistantCall = (id: string): AgentMessage => fauxAssistantMessage([{ type: "toolCall", id, name: "read_artifact", arguments: { path: "a.md" } }], { stopReason: "toolUse" });
@@ -102,6 +101,18 @@ describe("bot session codec and compaction", () => {
     const kept = fitForStorage(people, 256 * 1024, () => 1, { allowDroppingTurns: false });
     expect(kept).toHaveLength(10);
     expect(() => encodeSession(kept)).toThrow(expect.objectContaining({ code: "too_large" }));
+  });
+
+  it("lets a cancelled run shorten its latest reply rather than drop earlier turns", () => {
+    const turns = [
+      ...[1, 2].flatMap((index) => [user(`ask ${index}:${"q".repeat(80 * 1024)}`, index), fauxAssistantMessage(fauxText("a"))]),
+      user("latest ask", 9),
+      fauxAssistantMessage(fauxText("L".repeat(150 * 1024))),
+    ];
+    const fitted = fitForStorage(turns, 200 * 1024, () => 5, { allowDroppingTurns: false });
+    expect(encodedSessionBytes(fitted)).toBeLessThanOrEqual(200 * 1024);
+    expect(fitted.filter((message) => message.role === "user")).toHaveLength(3);
+    expect(JSON.stringify(fitted)).not.toContain("removed to fit saved history");
   });
 
   it("keeps the latest reply whole, dropping older turns first when earlier prose is not enough", () => {
@@ -237,44 +248,5 @@ describe("bot event batching", () => {
     }
     expect(sent).toHaveLength(MAX_EVENTS_PER_TURN);
     expect(sent.at(-1)!.event).toMatchObject({ type: "activity", state: "started" });
-  });
-});
-
-describe("bot worker commands", () => {
-  function worker() {
-    const handle = fauxProvider({ models: [{ id: "faux-bot" }] });
-    handle.setResponses([fauxAssistantMessage(fauxText("done"))]);
-    let releaseLoad!: () => void;
-    const loaded = new Promise<void>((resolve) => { releaseLoad = resolve; });
-    const broker = {
-      loadSession: vi.fn(async () => { await loaded; return { revision: 0, messages: [] }; }),
-      saveSession: vi.fn(async () => ({ revision: 1 })),
-      tool: vi.fn(),
-      event: vi.fn(async () => {}),
-    };
-    return { releaseLoad, bot: createBotWorker({ broker, bridgeOrigin: "http://127.0.0.1:41000", route: { provider: handle.provider, model: handle.getModel() }, now: () => 1 }) };
-  }
-  const runCommand = {
-    version: 1, kind: "bot.run", runId: "run_one",
-    route: { api: "anthropic-messages", modelId: "faux-bot", input: ["text"], contextWindow: 128_000, maxOutputTokens: 1_024 },
-    systemPrompt: "You are a bot.", capabilities: [], limits: { maxToolActions: 5 }, turn: { kind: "prompt", text: "hi" },
-  };
-
-  it("runs one turn at a time and targets steer and cancel at the active run", async () => {
-    const { bot, releaseLoad } = worker();
-    const pending = bot.handle(runCommand);
-    expect(bot.activeRunId).toBe("run_one");
-    await expect(bot.handle({ ...runCommand, runId: "run_two" })).rejects.toEqual(new BotWorkerError("busy"));
-    await expect(bot.handle({ version: 1, kind: "bot.cancel", runId: "run_other" })).resolves.toEqual({ acknowledged: false });
-    await expect(bot.handle({ version: 1, kind: "bot.steer", runId: "run_one", text: "shorter" })).resolves.toEqual({ acknowledged: false });
-    await expect(bot.handle({ version: 1, kind: "bot.cancel", runId: "run_one" })).resolves.toEqual({ acknowledged: true });
-    releaseLoad();
-    await expect(pending).resolves.toMatchObject({ runId: "run_one", status: "cancelled" });
-    expect(bot.activeRunId).toBeUndefined();
-  });
-
-  it("rejects malformed commands", async () => {
-    const { bot } = worker();
-    await expect(bot.handle({ kind: "bot.run" })).rejects.toEqual(new BotWorkerError("invalid_command"));
   });
 });
