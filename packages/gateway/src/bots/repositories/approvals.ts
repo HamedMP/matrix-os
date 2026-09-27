@@ -54,12 +54,6 @@ function fromRow(row: Selectable<BotApprovalsTable>): BotApprovalRecord {
   };
 }
 
-function matches(record: BotApprovalRecord, binding: BotApprovalBinding): boolean {
-  return record.runId === binding.runId && record.tool === binding.tool && record.argsHash === binding.argsHash
-    && record.account === binding.account && record.audience === binding.audience
-    && record.policyRevision === binding.policyRevision;
-}
-
 export function createBotApprovalsRepository(db: BotExecutor) {
   async function get(input: { ownerId: string; approvalId: string }, executor: BotExecutor = db): Promise<BotApprovalRecord | undefined> {
     const row = await executor.selectFrom("bot_approvals").selectAll()
@@ -129,17 +123,25 @@ export function createBotApprovalsRepository(db: BotExecutor) {
         .returningAll()
         .executeTakeFirst();
       if (row) return { status: "claimed", approval: fromRow(row) };
+      // One conditional update: an approved, unclaimed row whose binding no longer
+      // matches is invalidated, with no separate read between the check and the write.
+      const invalidated = await executor.updateTable("bot_approvals")
+        .set({ status: "invalidated", revision: sql<number>`revision + 1`, updated_at: input.now })
+        .where("owner_id", "=", input.ownerId).where("approval_id", "=", input.approvalId)
+        .where("status", "=", "approved").where("claimed_at", "is", null)
+        .where((eb) => eb.not(eb.and([
+          eb("run_id", "=", input.runId),
+          eb("tool", "=", input.tool),
+          eb("args_hash", "=", input.argsHash),
+          eb("account", "=", input.account),
+          eb("audience", "=", input.audience),
+          eb("policy_revision", "=", input.policyRevision),
+        ])))
+        .returning("approval_id")
+        .executeTakeFirst();
+      if (invalidated) return { status: "refused", reason: "invalidated" };
       const current = await get(input, executor);
       if (!current) throw new BotStateError("not_found");
-      if (current.status === "approved" && current.claimedAt === null && !matches(current, input)) {
-        const invalidated = await executor.updateTable("bot_approvals")
-          .set({ status: "invalidated", revision: sql<number>`revision + 1`, updated_at: input.now })
-          .where("owner_id", "=", input.ownerId).where("approval_id", "=", input.approvalId)
-          .where("status", "=", "approved").where("claimed_at", "is", null)
-          .returning("approval_id")
-          .executeTakeFirst();
-        if (invalidated) return { status: "refused", reason: "invalidated" };
-      }
       return { status: "refused", reason: current.status === "invalidated" ? "invalidated" : "not_claimable" };
     },
     /** Expires undecided approvals in a bounded batch. */
