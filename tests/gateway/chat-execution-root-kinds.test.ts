@@ -11,8 +11,8 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map((path) => rm(path, { recursive: true, force: true })));
 });
 
-describe("execution roots before bot runtime support", () => {
-  it("fails closed for bot workspace roots without consulting Project authority", async () => {
+describe("bot workspace execution roots", () => {
+  it("never consult Project authority and fail closed while the workspace is missing", async () => {
     const homePath = await mkdtemp(join(tmpdir(), "matrix-bot-root-home-"));
     roots.push(homePath);
     const getProjectById = vi.fn();

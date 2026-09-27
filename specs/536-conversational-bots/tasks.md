@@ -207,7 +207,7 @@
 - [ ] T120 Dispatch broker authorization by registry, and add the bot actions in `packages/gateway/src/bots/broker-actions.ts`, wired from `packages/gateway/src/collaboration/scope-runtime-broker.ts`
 - [ ] T121 Replace the L1 fail-closed `bot_workspace` handling with real handling where bot runs need it (`turn-admission.ts`, `queue-admission.ts`, `orchestrator.ts`)
 - [ ] T122 Start the host in `packages/gateway/src/server.ts` before collaboration wiring and pass it into `packages/gateway/src/startup/collaboration.ts`
-- [ ] T123 L7 checkpoint: per-layer PR procedure; branch `536-l7-scope-runtime-host`
+- [ ] T123 L7 checkpoint: per-layer PR procedure, split to stay under the PR size limit: `536-l7a-scope-runtime-host` (T110-T113, T115-T119, T122) and `536-l7b-bot-broker-actions` (T114, T120). T121's orchestrator dispatch for bot runs lands with the adapter in L8; turn and queue admission already refuse a bot root on a Project chat
 
 ---
 
