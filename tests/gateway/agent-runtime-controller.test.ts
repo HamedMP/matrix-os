@@ -63,6 +63,21 @@ function fakeAdapter(
   };
 }
 
+// Fake adapters must observe cancellation even when prepare begins after the
+// controller's deadline, rather than waiting for an abort event that already ran.
+function waitForFixtureAbort(
+  signal: AbortSignal,
+  onListening: () => void,
+  captureReject?: (reject: (reason: unknown) => void) => void,
+): Promise<void> {
+  return new Promise<void>((_resolve, reject) => {
+    captureReject?.(reject);
+    if (signal.aborted) reject(signal.reason);
+    else signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+    onListening();
+  });
+}
+
 afterEach(async () => {
   await Promise.all(homes.splice(0).map((path) => rm(path, {
     recursive: true,
@@ -742,13 +757,10 @@ describe("agent runtime controller", () => {
       resolvePrepareListening = resolve;
     });
     const openclaw = fakeAdapter("openclaw", {
-      prepare: vi.fn(async (signal) => new Promise<void>((_resolve, reject) => {
+      prepare: vi.fn(async (signal) => {
         prepareSignal = signal;
-        signal.addEventListener("abort", () => reject(signal.reason), {
-          once: true,
-        });
-        resolvePrepareListening();
-      })),
+        return waitForFixtureAbort(signal, resolvePrepareListening);
+      }),
     });
     const hermes = fakeAdapter("hermes");
     const controller = createAgentRuntimeController({
@@ -757,16 +769,80 @@ describe("agent runtime controller", () => {
       timeoutMs: 100,
     });
     const transition = controller.update({ runtime: "openclaw", revision: 0 });
-    await vi.waitFor(() => expect(openclaw.prepare).toHaveBeenCalledOnce());
-    await prepareListening;
-
-    await controller.close();
-
-    expect(prepareSignal?.aborted).toBe(true);
-    await expect(transition).rejects.toMatchObject({
-      kind: "runtime_switch_failed",
-    });
-    expect(hermes.close).toHaveBeenCalledOnce();
-    expect(openclaw.close).toHaveBeenCalledOnce();
+    // The controller may reach prepare after its deadline under slow filesystem
+    // load. Handle rejection immediately, before waiting for fixture admission.
+    const transitionOutcome = transition.catch((error: unknown) => error);
+    try {
+      await prepareListening;
+      expect(openclaw.prepare).toHaveBeenCalledOnce();
+      await controller.close();
+      expect(prepareSignal?.aborted).toBe(true);
+      await expect(transitionOutcome).resolves.toMatchObject({
+        kind: "runtime_switch_failed",
+      });
+      expect(hermes.close).toHaveBeenCalledOnce();
+      expect(openclaw.close).toHaveBeenCalledOnce();
+    } finally {
+      await controller.close();
+      await transitionOutcome;
+    }
   });
+  it("settles the shutdown fixture when prepare observes an already-expired deadline", async () => {
+    const homePath = await createHome();
+    let signalAtEntry: AbortSignal | undefined;
+    let releasePrepare: (reason: unknown) => void = () => {};
+    let prepareSettled = false;
+    let rejectedForDeadline = false;
+    let notifyListening: () => void = () => {};
+    const listening = new Promise<void>((resolve) => { notifyListening = resolve; });
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const openclaw = fakeAdapter("openclaw", {
+      prepare: vi.fn(async (signal) => {
+        // Deterministically expire the unchanged 100 ms controller budget before
+        // the same fake adapter installs its abort subscription. No I/O delay or
+        // wall-clock load is needed to reproduce the missed-event condition.
+        vi.advanceTimersByTime(100);
+        signalAtEntry = signal;
+        const pending = waitForFixtureAbort(signal, notifyListening, (reject) => {
+          releasePrepare = reject;
+        });
+        void pending.then(
+          () => { prepareSettled = true; },
+          (reason: unknown) => {
+            prepareSettled = true;
+            rejectedForDeadline = reason === signal.reason;
+          },
+        );
+        return pending;
+      }),
+    });
+    const hermes = fakeAdapter("hermes");
+    const controller = createAgentRuntimeController({
+      homePath, adapters: { hermes, openclaw }, timeoutMs: 100,
+    });
+    const transition = controller.update({ runtime: "openclaw", revision: 0 });
+    const transitionOutcome = transition.catch((error: unknown) => error);
+    let close: Promise<void> | undefined;
+    try {
+      await listening;
+      expect(signalAtEntry?.aborted).toBe(true);
+      // Assert the fake adapter observes the already-aborted signal directly;
+      // shutdown then uses the ordinary suite budget, without a new I/O limit.
+      await Promise.resolve();
+      expect(prepareSettled).toBe(true);
+      expect(rejectedForDeadline).toBe(true);
+      close = controller.close();
+      await close;
+      expect(hermes.close).toHaveBeenCalledOnce();
+      expect(openclaw.close).toHaveBeenCalledOnce();
+    } finally {
+      // Explicitly release only this fake adapter if a regression leaves its
+      // transition pending; always drain before removing the temporary home.
+      releasePrepare(new DOMException("Fixture cleanup", "AbortError"));
+      await transitionOutcome;
+      await (close ?? controller.close());
+      vi.useRealTimers();
+    }
+  });
+
 });
