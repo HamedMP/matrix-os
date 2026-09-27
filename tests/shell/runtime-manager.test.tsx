@@ -3,6 +3,7 @@
 import React from "react";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { mockBrowserTimeZone } from "../helpers/browser-timezone.js";
 
 const clerkState = vi.hoisted(() => ({
   isLoaded: true,
@@ -173,6 +174,7 @@ describe("RuntimeManager", () => {
   beforeEach(() => {
     vi.resetModules();
     vi.restoreAllMocks();
+    mockBrowserTimeZone("Europe/Berlin");
     vi.useRealTimers();
     window.history.replaceState({}, "", "/runtime");
     window.sessionStorage.clear();
@@ -185,6 +187,7 @@ describe("RuntimeManager", () => {
 
   afterEach(() => {
     vi.useRealTimers();
+    vi.restoreAllMocks();
   });
 
   it("normalizes safe readable slots and rejects reserved, duplicate, empty, and long names", async () => {

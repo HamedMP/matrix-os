@@ -3,6 +3,7 @@
 import React from "react";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { mockBrowserTimeZone } from "../helpers/browser-timezone.js";
 
 const clerkState = vi.hoisted(() => ({
   isLoaded: true,
@@ -89,6 +90,7 @@ describe("BillingGate", () => {
   beforeEach(async () => {
     vi.resetModules();
     vi.restoreAllMocks();
+    mockBrowserTimeZone("Europe/Berlin");
     installClerkMock();
     const { resetMatrixBillingAccessCacheForTests } = await import(
       "../../shell/src/hooks/useMatrixBillingAccess.js"

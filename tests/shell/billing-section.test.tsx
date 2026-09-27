@@ -52,6 +52,7 @@ describe("BillingSection", () => {
   beforeEach(async () => {
     vi.resetModules();
     vi.restoreAllMocks();
+    mockBrowserTimeZone("Europe/Berlin");
     window.localStorage.clear();
     window.history.replaceState({}, "", "/");
     installClerkMock();
@@ -79,6 +80,7 @@ describe("BillingSection", () => {
 
   afterEach(() => {
     vi.useRealTimers();
+    vi.restoreAllMocks();
   });
 
   it("uses the three-day offer in deterministic screenshot mode", async () => {
@@ -857,12 +859,7 @@ describe("BillingSection", () => {
   });
 
   it("prefills the closest server for an American browser timezone", async () => {
-    vi.spyOn(Intl.DateTimeFormat.prototype, "resolvedOptions").mockReturnValue({
-      locale: "en-US",
-      calendar: "gregory",
-      numberingSystem: "latn",
-      timeZone: "America/New_York",
-    });
+    mockBrowserTimeZone("America/New_York");
     const { BillingSection } = await loadBillingSection();
 
     render(<BillingSection mode="provisioning" />);

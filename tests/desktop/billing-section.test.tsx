@@ -49,6 +49,7 @@ function makeApi(statusResponse: unknown) {
 
 describe("desktop billing settings", () => {
   beforeEach(() => {
+    mockBrowserTimeZone("Europe/Berlin");
     Object.defineProperty(window, "matchMedia", {
       configurable: true,
       value: vi.fn().mockReturnValue({ matches: false }),
