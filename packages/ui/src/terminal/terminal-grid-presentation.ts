@@ -85,6 +85,8 @@ export function createTerminalGridPresentation(options: GridPresentationOptions)
   let previousPan: { top: number; left: number } | null = null;
   let previousViewportHeight: number | null = null;
   let wheelPannedAway = false;
+  let railPannedAway = false;
+  let historyWasObserved = false;
   let pannedAfterViewportChange = false;
   let presentationScale = 1;
   let settledLayout: { metrics: number[]; layout: ReturnType<typeof computeSoftGridLayout> } | null = null;
@@ -116,6 +118,8 @@ export function createTerminalGridPresentation(options: GridPresentationOptions)
     if (!Number.isFinite(scale) || scale <= 0) return;
     const pan = panTerminalGrid(event, host, stage, contentGrid ?? options.getTerminal());
     if (pan.verticalPanned) {
+      scrollbar?.cancelPending();
+      railPannedAway = false;
       markPannedAway();
     }
     if (pan.panned) {
@@ -183,7 +187,18 @@ export function createTerminalGridPresentation(options: GridPresentationOptions)
         devicePixelRatio: window.devicePixelRatio,
       });
     const buffer = terminal.buffer?.active;
-    const live = buffer && buffer.viewportY >= buffer.baseY;
+    const nativeHistory = options.nativeHistory?.getState();
+    const live = buffer && buffer.viewportY >= buffer.baseY && (!nativeHistory || nativeHistory.below === 0);
+    if (!live) historyWasObserved = true;
+    else if (historyWasObserved) {
+      // An acknowledged return from history is authoritative, including
+      // keyboard/wheel navigation and native history replies.
+      historyWasObserved = false;
+      scrollbar?.cancelPending();
+      railPannedAway = false;
+      wheelPannedAway = false;
+      if (previousPan) previousPan.top = host.scrollTop;
+    }
     const content = terminalContentExtent(terminal);
     // Resume following at the bottom only when the cursor is already visible.
     // A native redraw with a prompt above the viewport must not undo a pan.
@@ -196,7 +211,7 @@ export function createTerminalGridPresentation(options: GridPresentationOptions)
       contentGrid?.rows === content.rows && contentGrid.cols === content.cols;
     const bottomViewportHeight = unchangedGrid && !pannedAfterViewportChange && previousViewportHeight !== null
       ? Math.max(host.clientHeight, previousViewportHeight) : host.clientHeight;
-    if (wheelPannedAway && host.scrollTop >= host.scrollHeight - bottomViewportHeight - 0.01 && cursorTop >= host.scrollTop) {
+    if (live && !railPannedAway && wheelPannedAway && host.scrollTop >= host.scrollHeight - bottomViewportHeight - 0.01 && cursorTop >= host.scrollTop) {
       wheelPannedAway = false;
       if (previousPan) previousPan.top = host.scrollTop;
     }
@@ -281,7 +296,16 @@ export function createTerminalGridPresentation(options: GridPresentationOptions)
     if (!scrollbar && terminal.buffer && terminal.scrollToLine && terminal.onScroll && host.parentElement) {
       scrollbar = createTerminalScrollbar({ host, root, nativeHistory: options.nativeHistory, terminal: {
         buffer: terminal.buffer, scrollToLine: terminal.scrollToLine.bind(terminal), onScroll: terminal.onScroll.bind(terminal),
-      }, getCellHeight: () => visualCellHeight, getTailHeight: () => liveContentHeight, onPan: markPannedAway });
+      }, getCellHeight: () => visualCellHeight, getTailHeight: () => liveContentHeight, onPan: (atBottom) => {
+        // xterm animates history scrolls: its buffer can still report live
+        // while a new rail gesture already owns the reading position.
+        railPannedAway = !atBottom;
+        markPannedAway();
+        if (atBottom) {
+          wheelPannedAway = false;
+          if (previousPan) previousPan.top = host.scrollTop;
+        }
+      } });
     }
     scrollbar?.sync();
     if (visibleWidth !== viewportWidth || visibleHeight !== viewportHeight) schedule();
@@ -294,6 +318,8 @@ export function createTerminalGridPresentation(options: GridPresentationOptions)
   const reset = () => {
     scrollbar?.dispose();
     scrollbar = undefined;
+    railPannedAway = false;
+    historyWasObserved = false;
     scrollSubscription?.dispose();
     scrollSubscription = undefined;
     outputSubscription?.dispose();

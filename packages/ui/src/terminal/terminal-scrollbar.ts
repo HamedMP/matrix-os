@@ -12,7 +12,7 @@ export function createTerminalScrollbar(options: {
   terminal: ScrollTerminal;
   getCellHeight: () => number;
   getTailHeight?: () => number;
-  onPan: () => void;
+  onPan: (atBottom: boolean) => void;
   nativeHistory?: { getState(): TerminalScrollState | null; scrollTo(line: number): void };
 }) {
   const { host, root, terminal } = options;
@@ -51,6 +51,8 @@ export function createTerminalScrollbar(options: {
   parent.append(rail);
   let syncing = false;
   let synchronizedTop = 0;
+  let historyFrame: number | null = null;
+  let pendingTarget: { line: number; pan: number } | null = null;
   const metrics = () => {
     const native = options.nativeHistory?.getState();
     return ({
@@ -73,7 +75,10 @@ export function createTerminalScrollbar(options: {
       height: `${host.clientHeight}px`, display: history * cell + pan > 0 ? "block" : "none",
     });
     spacer.style.height = `${host.clientHeight + history * cell + pan}px`;
-    rail.scrollTop = (options.nativeHistory?.getState()?.above ?? terminal.buffer.active.viewportY) * cell + host.scrollTop;
+    const above = options.nativeHistory?.getState()?.above ?? terminal.buffer.active.viewportY;
+    if (pendingTarget && (above !== pendingTarget.line || Math.abs(host.scrollTop - pendingTarget.pan) >= 0.01)) return;
+    pendingTarget = null;
+    rail.scrollTop = above * cell + host.scrollTop;
     synchronizedTop = rail.scrollTop;
   };
   const onScroll = () => {
@@ -83,20 +88,36 @@ export function createTerminalScrollbar(options: {
     const top = Math.max(0, Math.min(history * cell + pan, rail.scrollTop));
     const line = Math.min(history, Math.floor(top / cell));
     syncing = true;
+    pendingTarget = { line, pan: Math.min(Math.max(0, host.scrollHeight - host.clientHeight), top - line * cell) };
     try {
       if (options.nativeHistory?.getState()) options.nativeHistory.scrollTo(line);
-      else terminal.scrollToLine(line);
+      else {
+        terminal.scrollToLine(line);
+        // xterm can publish history before its queued viewport dimensions are
+        // current. Reapply the latest absolute target once that frame settles.
+        if (historyFrame !== null) cancelAnimationFrame(historyFrame);
+        historyFrame = requestAnimationFrame(() => {
+          historyFrame = null;
+          terminal.scrollToLine(line);
+        });
+      }
       host.scrollTop = Math.min(Math.max(0, host.scrollHeight - host.clientHeight), top - line * cell);
-      options.onPan();
+      options.onPan(top >= history * cell + pan - 0.01);
       synchronizedTop = rail.scrollTop;
     } finally { syncing = false; }
   };
   rail.addEventListener("scroll", onScroll);
   host.addEventListener("scroll", sync);
   const subscription = terminal.onScroll(sync);
+  const cancelPending = () => {
+    if (historyFrame !== null) cancelAnimationFrame(historyFrame);
+    historyFrame = null;
+    pendingTarget = null;
+  };
   return {
-    sync,
+    sync, cancelPending,
     dispose() {
+      cancelPending();
       subscription.dispose();
       rail.removeEventListener("scroll", onScroll);
       host.removeEventListener("scroll", sync);
