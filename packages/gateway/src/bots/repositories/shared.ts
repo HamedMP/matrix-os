@@ -42,6 +42,12 @@ export function toSafeInteger(value: number | string): number {
   return parsed;
 }
 
+/** The bot row's owner does not own the chat it names (trigger `bot_assert_chat_owner`). */
+export function isChatOwnerViolation(error: unknown): boolean {
+  return error instanceof Error && "code" in error && error.code === "23503"
+    && "constraint" in error && error.constraint === "bot_chat_owner";
+}
+
 /** Postgres unique-violation on a named index or constraint. */
 export function isUniqueViolation(error: unknown, constraint?: string): boolean {
   if (!(error instanceof Error) || !("code" in error) || error.code !== "23505") return false;

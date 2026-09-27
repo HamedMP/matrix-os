@@ -3,7 +3,7 @@ import type { Kysely } from "kysely";
 import type { OwnerBotDatabase } from "../../../packages/gateway/src/bots/database.js";
 import { BOT_TASK_MAX_DEPTH, createBotTasksRepository } from "../../../packages/gateway/src/bots/repositories/tasks.js";
 import { BotStateError } from "../../../packages/gateway/src/bots/repositories/shared.js";
-import { BOT, NOW, OTHER_OWNER, OWNER, at, createBotStateDatabase, insertChat } from "./bot-state-support.js";
+import { BOT, NOW, OTHER_OWNER, OWNER, at, createBotStateDatabase, createRealBotStateDatabase, insertChat } from "./bot-state-support.js";
 
 let db: Kysely<OwnerBotDatabase>;
 let destroy: () => Promise<void>;
@@ -71,4 +71,42 @@ describe("bot tasks repository", () => {
     await expect(repo.cancelTree({ ownerId: OTHER_OWNER, taskId: root.taskId, now: NOW })).resolves.toEqual([]);
     await expect(repo.listOpen(base)).resolves.toEqual([]);
   });
+
+  it("refuses a task in a chat the owner does not own", async () => {
+    await insertChat(db, "chat_foreign3", OTHER_OWNER);
+    await expect(createBotTasksRepository(db).create({ ...base, chatId: "chat_foreign3", now: NOW }))
+      .rejects.toEqual(new BotStateError("not_found"));
+  });
+});
+
+describe.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)("bot tasks repository on pooled Postgres", () => {
+  it("cancels a child that a concurrent create inserted while holding the parent lock", async () => {
+    const real = await createRealBotStateDatabase();
+    try {
+      await insertChat(real.db, "chat_tasks1");
+      const repo = createBotTasksRepository(real.db);
+      const root = await repo.create({ ...base, now: NOW });
+      let childInserted!: () => void;
+      const inserted = new Promise<void>((resolve) => { childInserted = resolve; });
+      let releaseCreate!: () => void;
+      const release = new Promise<void>((resolve) => { releaseCreate = resolve; });
+      // Holds the parent row lock with the child inserted but not yet committed.
+      const create = real.db.transaction().execute(async (trx) => {
+        const child = await repo.create({ ...base, parentTaskId: root.taskId, now: at(1) }, trx);
+        childInserted();
+        await release;
+        return child;
+      });
+      await inserted;
+      const cancelling = repo.cancelTree({ ownerId: OWNER, taskId: root.taskId, now: at(2) });
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      releaseCreate();
+      const child = await create;
+      const cancelled = await cancelling;
+      expect(cancelled.sort()).toEqual([root.taskId, child.taskId].sort());
+      await expect(repo.get({ ownerId: OWNER, taskId: child.taskId })).resolves.toMatchObject({ status: "cancelled" });
+    } finally {
+      await real.destroy();
+    }
+  }, 60_000);
 });

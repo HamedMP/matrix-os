@@ -44,14 +44,25 @@ describe("bot sessions repository", () => {
       .rejects.toEqual(new BotStateError("invalid_input"));
   });
 
-  it("flags transcripts for recompaction until a compacted save clears the flag", async () => {
+  it("flags transcripts for recompaction so a stale copy cannot save over the flag", async () => {
     const repo = createBotSessionsRepository(db);
     await repo.save({ ...key, baseRevision: 0, messages: [], tokenEstimate: 0, runtimeVersions: versions, now: NOW });
     await expect(repo.markNeedsRecompaction({ ownerId: OWNER, botId: BOT, now: at(1) })).resolves.toBe(1);
     await expect(repo.markNeedsRecompaction({ ownerId: OWNER, botId: BOT, now: at(2) })).resolves.toBe(0);
-    await repo.save({ ...key, baseRevision: 1, messages: [], tokenEstimate: 0, runtimeVersions: versions, now: at(3) });
+    // A worker that loaded revision 1 before the flag cannot save or clear it.
+    await expect(repo.save({ ...key, baseRevision: 1, messages: [], tokenEstimate: 0, compactedThroughSeq: 9, runtimeVersions: versions, now: at(3) }))
+      .rejects.toEqual(new BotStateError("revision_conflict"));
+    await expect(repo.load(key)).resolves.toMatchObject({ revision: 2, needsRecompaction: true });
+    await repo.save({ ...key, baseRevision: 2, messages: [], tokenEstimate: 0, runtimeVersions: versions, now: at(4) });
     await expect(repo.load(key)).resolves.toMatchObject({ needsRecompaction: true });
-    await repo.save({ ...key, baseRevision: 2, messages: [], tokenEstimate: 0, compactedThroughSeq: 40, runtimeVersions: versions, now: at(4) });
-    await expect(repo.load(key)).resolves.toMatchObject({ needsRecompaction: false, compactedThroughSeq: 40, revision: 3 });
+    await repo.save({ ...key, baseRevision: 3, messages: [], tokenEstimate: 0, compactedThroughSeq: 40, runtimeVersions: versions, now: at(5) });
+    await expect(repo.load(key)).resolves.toMatchObject({ needsRecompaction: false, compactedThroughSeq: 40, revision: 4 });
+  });
+
+  it("refuses a transcript for a chat the owner does not own", async () => {
+    await insertChat(db, "chat_foreign2", OTHER_OWNER);
+    await expect(createBotSessionsRepository(db).save({
+      ...key, chatId: "chat_foreign2", baseRevision: 0, messages: [], tokenEstimate: 0, runtimeVersions: versions, now: NOW,
+    })).rejects.toEqual(new BotStateError("not_found"));
   });
 });

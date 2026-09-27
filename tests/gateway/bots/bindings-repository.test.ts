@@ -3,7 +3,7 @@ import type { Kysely } from "kysely";
 import type { OwnerBotDatabase } from "../../../packages/gateway/src/bots/database.js";
 import { createBotBindingsRepository } from "../../../packages/gateway/src/bots/repositories/bindings.js";
 import { BotStateError } from "../../../packages/gateway/src/bots/repositories/shared.js";
-import { BOT, NOW, OWNER, at, createBotStateDatabase, insertChat } from "./bot-state-support.js";
+import { BOT, NOW, OTHER_OWNER, OWNER, at, createBotStateDatabase, insertChat } from "./bot-state-support.js";
 
 let db: Kysely<OwnerBotDatabase>;
 let destroy: () => Promise<void>;
@@ -41,5 +41,16 @@ describe("bot chat bindings repository", () => {
     await repo.bindDirect({ ownerId: OWNER, botId: BOT, chatId: "chat_direct1", now: NOW });
     await db.deleteFrom("chats").where("id", "=", "chat_direct1").execute();
     await expect(repo.directChatId({ ownerId: OWNER, botId: BOT })).resolves.toBeUndefined();
+  });
+
+  it("restores a removed binding to the same chat and refuses a chat the owner does not own", async () => {
+    const repo = createBotBindingsRepository(db);
+    await repo.bindDirect({ ownerId: OWNER, botId: BOT, chatId: "chat_direct1", now: NOW });
+    await repo.remove({ ownerId: OWNER, botId: BOT, chatId: "chat_direct1", now: at(1) });
+    await expect(repo.bindDirect({ ownerId: OWNER, botId: BOT, chatId: "chat_direct1", now: at(2) }))
+      .resolves.toMatchObject({ chatId: "chat_direct1", removedAt: null, createdAt: at(2) });
+    await insertChat(db, "chat_foreign1", OTHER_OWNER);
+    await expect(repo.bindDirect({ ownerId: OWNER, botId: "bot_fedcba9876543210", chatId: "chat_foreign1", now: NOW }))
+      .rejects.toEqual(new BotStateError("not_found"));
   });
 });

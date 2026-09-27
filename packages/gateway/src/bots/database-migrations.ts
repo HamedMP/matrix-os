@@ -23,6 +23,19 @@ const jsonObject = (column: string, maxBytes: number) =>
   `jsonb_typeof(${column}) = 'object' AND octet_length(${column}::text) <= ${maxBytes}`;
 
 async function migrateBotStateV1(trx: Transaction<OwnerBotDatabase>): Promise<void> {
+  // A chat foreign key proves only that the chat exists; this also proves the bot
+  // row's owner owns it, for every caller. Group chats (M3) relax it in a later version.
+  await sql`
+    CREATE FUNCTION bot_assert_chat_owner() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+      IF NOT EXISTS (SELECT 1 FROM chats WHERE id = NEW.chat_id AND owner_id = NEW.owner_id) THEN
+        RAISE EXCEPTION 'bot row owner does not own the chat'
+          USING ERRCODE = 'foreign_key_violation', CONSTRAINT = 'bot_chat_owner';
+      END IF;
+      RETURN NEW;
+    END;
+    $$
+  `.execute(trx);
   await sql.raw(`
     CREATE TABLE bot_operations (
       ${OWNER},
@@ -65,6 +78,10 @@ async function migrateBotStateV1(trx: Transaction<OwnerBotDatabase>): Promise<vo
     WHERE kind = 'direct' AND removed_at IS NULL
   `.execute(trx);
   await sql`
+    CREATE TRIGGER bot_chat_bindings_chat_owner BEFORE INSERT OR UPDATE OF chat_id, owner_id ON bot_chat_bindings
+    FOR EACH ROW EXECUTE FUNCTION bot_assert_chat_owner()
+  `.execute(trx);
+  await sql`
     CREATE INDEX idx_bot_chat_bindings_chat ON bot_chat_bindings(owner_id, chat_id) WHERE removed_at IS NULL
   `.execute(trx);
 
@@ -77,7 +94,7 @@ async function migrateBotStateV1(trx: Transaction<OwnerBotDatabase>): Promise<vo
       messages JSONB NOT NULL CHECK (jsonb_typeof(messages) = 'array' AND octet_length(messages::text) <= 786432),
       compacted_through_seq BIGINT CHECK (compacted_through_seq IS NULL OR compacted_through_seq >= 0),
       token_estimate INTEGER NOT NULL DEFAULT 0 CHECK (token_estimate >= 0),
-      runtime_versions JSONB NOT NULL CHECK (${jsonObject("runtime_versions", 4096)}),
+      runtime_versions JSONB NOT NULL CHECK (${jsonObject("runtime_versions", 8192)}),
       needs_recompaction BOOLEAN NOT NULL DEFAULT false,
       revision BIGINT NOT NULL CHECK (revision > 0),
       updated_at TIMESTAMPTZ NOT NULL,
@@ -85,6 +102,10 @@ async function migrateBotStateV1(trx: Transaction<OwnerBotDatabase>): Promise<vo
     )
   `).execute(trx);
 
+  await sql`
+    CREATE TRIGGER bot_agent_sessions_chat_owner BEFORE INSERT OR UPDATE OF chat_id, owner_id ON bot_agent_sessions
+    FOR EACH ROW EXECUTE FUNCTION bot_assert_chat_owner()
+  `.execute(trx);
   await sql.raw(`
     CREATE TABLE bot_tasks (
       task_id TEXT PRIMARY KEY CHECK (task_id ~ '^task_[a-z0-9]{8,64}$'),
@@ -112,6 +133,10 @@ async function migrateBotStateV1(trx: Transaction<OwnerBotDatabase>): Promise<vo
     )
   `).execute(trx);
   await sql`
+    CREATE TRIGGER bot_tasks_chat_owner BEFORE INSERT OR UPDATE OF chat_id, owner_id ON bot_tasks
+    FOR EACH ROW EXECUTE FUNCTION bot_assert_chat_owner()
+  `.execute(trx);
+  await sql`
     CREATE INDEX idx_bot_tasks_open ON bot_tasks(owner_id, bot_id, chat_id)
     WHERE status NOT IN ('completed', 'failed', 'cancelled')
   `.execute(trx);
@@ -124,7 +149,7 @@ async function migrateBotStateV1(trx: Transaction<OwnerBotDatabase>): Promise<vo
       task_id TEXT NOT NULL REFERENCES bot_tasks(task_id) ON DELETE CASCADE,
       run_id TEXT NOT NULL CHECK (run_id ~ ${RUN_ID_PATTERN}),
       tool_call_id TEXT NOT NULL CHECK (tool_call_id ~ '^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$'),
-      action JSONB NOT NULL CHECK (${jsonObject("action", 4096)}),
+      action JSONB NOT NULL CHECK (${jsonObject("action", 6144)}),
       action_hash TEXT NOT NULL CHECK (action_hash ~ '^[a-f0-9]{64}$'),
       effect_class TEXT NOT NULL CHECK (effect_class IN ('read', 'write', 'send', 'computer')),
       phase TEXT NOT NULL CHECK (phase IN ('prepared', 'dispatched', 'observed_complete', 'effect_unknown')),
@@ -162,6 +187,10 @@ async function migrateBotStateV1(trx: Transaction<OwnerBotDatabase>): Promise<vo
       CHECK (kind <> 'connect_request' OR expires_at <= created_at + interval '15 minutes')
     )
   `).execute(trx);
+  await sql`
+    CREATE TRIGGER bot_interactions_chat_owner BEFORE INSERT OR UPDATE OF chat_id, owner_id ON bot_interactions
+    FOR EACH ROW EXECUTE FUNCTION bot_assert_chat_owner()
+  `.execute(trx);
   await sql`
     CREATE UNIQUE INDEX idx_bot_interactions_one_blocking ON bot_interactions(owner_id, task_id)
     WHERE blocking AND status = 'pending'
