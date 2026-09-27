@@ -356,10 +356,11 @@ export async function migrateAiFunded(db: PlatformMigrationExecutor): Promise<vo
       owner_id TEXT NOT NULL,
       machine_id TEXT NOT NULL,
       runtime_slot TEXT NOT NULL,
+      claim_key TEXT NOT NULL DEFAULT '' CHECK (claim_key = '' OR claim_key ~ '^[A-Za-z0-9_.:-]{1,128}$'),
       billing_mode TEXT NOT NULL CHECK (billing_mode IN ('usage', 'hold')),
       created_at TEXT NOT NULL,
       expires_at TEXT NOT NULL CHECK (expires_at > created_at),
-      PRIMARY KEY (owner_id, machine_id, runtime_slot)
+      PRIMARY KEY (owner_id, machine_id, runtime_slot, claim_key)
     )
   `.execute(db);
   await sql`CREATE INDEX IF NOT EXISTS idx_ai_funded_priority_claims_owner_created ON ai_funded_priority_claims(owner_id, created_at)`.execute(db);

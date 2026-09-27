@@ -143,6 +143,7 @@ export interface AiFundedPriorityClaimsTable {
   owner_id: string;
   machine_id: string;
   runtime_slot: string;
+  claim_key: Generated<string>;
   billing_mode: "usage" | "hold";
   created_at: string;
   expires_at: string;
