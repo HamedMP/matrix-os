@@ -224,10 +224,11 @@ describe("real terminal renderer soft-grid resizing", () => {
     } finally { if (!electron) await page.close(); }
   });
 
-  it("preserves a history rail gesture before queued presentation expands the grid", async () => {
-    const page = electron ? await electron.firstWindow() : await browser.newPage({ viewport: { width: 430, height: 1050 }, isMobile: true, hasTouch: true });
+  it.each(nativeElectron ? ["electron"] : ["web-mobile", "web"])("preserves a history rail gesture before queued presentation expands the grid in %s", async surface => {
+    const mobile = surface === "web-mobile";
+    const page = electron ? await electron.firstWindow() : await browser.newPage({ viewport: { width: mobile ? 430 : 1450, height: 1050 }, isMobile: mobile, hasTouch: mobile });
     try {
-      await page.goto(`${origin}/?surface=${electron ? "electron" : "web-mobile"}`);
+      await page.goto(`${origin}/?surface=${surface}`);
       await page.locator("[data-terminal-grid-stage]").waitFor();
       await page.locator("#terminal-window").evaluate(element => { (element as HTMLElement).style.height = "300px"; });
       await page.evaluate(() => (window as unknown as { fixtureOutput(data: string): void }).fixtureOutput("\x1bcshort\r\nresult\r\n$ "));
@@ -257,6 +258,27 @@ describe("real terminal renderer soft-grid resizing", () => {
       await page.evaluate(() => (window as unknown as { releaseHistoryFrames(): void }).releaseHistoryFrames());
       await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
       await expect.poll(async () => (await geometry(page)).panTop, { timeout: 5_000 }).toBe(0);
+      await expect.poll(() => rail.evaluate(element => element.scrollTop)).toBe(0);
+      await page.evaluate(() => (window as unknown as { fixtureOutput(data: string): void }).fixtureOutput("\r\nOUTPUT_WHILE_READING"));
+      await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+      expect((await geometry(page)).panTop).toBe(0);
+      for (const method of mobile ? ["rail", "wheel"] : ["rail", "wheel", "keyboard"]) {
+        await rail.evaluate(element => { element.scrollTop = 0; });
+        await expect.poll(() => rail.evaluate(element => element.scrollTop)).toBe(0);
+        if (method === "rail") await rail.evaluate(element => { element.scrollTop = element.scrollHeight; });
+        else if (method === "wheel") {
+          await page.locator("[data-terminal-viewport]").evaluate(host => {
+            host.dispatchEvent(new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaY: 2_000 }));
+          });
+        } else {
+          await page.locator(".xterm-helper-textarea").focus();
+          await page.keyboard.press("Shift+PageDown");
+          await page.keyboard.press("Shift+PageDown");
+        }
+        await expect.poll(() => rail.evaluate(element => element.scrollHeight - element.clientHeight - element.scrollTop), { timeout: 5_000 }).toBeLessThanOrEqual(1);
+        await page.locator("#terminal-window").evaluate(element => { (element as HTMLElement).style.height = "250px"; });
+        await expect.poll(async () => { const g = await geometry(page); return g.bottom - g.visibleBottom; }, { timeout: 5_000 }).toBeLessThanOrEqual(1);
+      }
     } finally { if (!electron) await page.close(); }
   });
 
