@@ -18,7 +18,7 @@ export function fakeGateway(options: { emitReady?: boolean; ignoreMethods?: read
   const requests: RpcRequest[] = [];
   const send = (frame: unknown) => stdout.emit("data", Buffer.from(`${JSON.stringify(frame)}\n`));
   const respond = (request: RpcRequest, result: unknown) => send({ jsonrpc: "2.0", id: request.id, result });
-  const stdin = {
+  const stdin = Object.assign(new EventEmitter(), {
     write: vi.fn((chunk: string) => {
       for (const line of chunk.trim().split("\n")) {
         const request = JSON.parse(line) as RpcRequest;
@@ -51,7 +51,7 @@ export function fakeGateway(options: { emitReady?: boolean; ignoreMethods?: read
       return true;
     }),
     end: vi.fn(() => queueMicrotask(() => emitter.emit("exit", 0, null))),
-  };
+  });
   const kill = vi.fn((signal: NodeJS.Signals) => queueMicrotask(() => emitter.emit("exit", null, signal)));
   const process = Object.assign(emitter, { stdin, stdout, stderr, kill }) as unknown as HermesGatewayProcess;
   const spawnFn = vi.fn<HermesGatewaySpawn>(() => {

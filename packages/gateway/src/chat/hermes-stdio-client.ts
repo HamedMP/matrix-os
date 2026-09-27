@@ -32,6 +32,7 @@ const HermesGatewayClarifyRequestSchema = z.object({
 export type HermesGatewayEvent = z.infer<typeof HermesGatewayEventSchema>["params"];
 
 interface HermesGatewayWritable {
+  on(event: "error", listener: (error: Error) => void): void;
   write(chunk: string): boolean;
   end(): void;
 }
@@ -262,6 +263,11 @@ export function createHermesStdioClient(options: {
   let stderrBytes = 0;
   child.stderr.on("data", (chunk) => {
     stderrBytes = Math.min(8_192, stderrBytes + chunk.byteLength);
+  });
+  // Writable failures arrive asynchronously and are separate from process errors.
+  // Keep the listener through close so a late pipe failure cannot escape cleanup.
+  child.stdin.on("error", (error) => {
+    fail(safeError("Hermes gateway request could not be sent", error));
   });
   child.once("error", (error) => {
     // Node reports an undefined PID when spawn itself failed. An absent PID
