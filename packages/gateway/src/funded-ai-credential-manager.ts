@@ -356,7 +356,9 @@ export function createFundedAiCredentialManager(
       );
       const refreshJitter = Math.floor(random() * MAX_REFRESH_JITTER_MS);
       const current = cached.get(requestClass);
-      if (!options.forceRefresh && current
+      // A legacy lease stands in for another class; once the fallback window ends, re-probe for a real class.
+      const legacyExpired = current !== undefined && current.requestClass !== requestClass && now() >= legacyIssuanceUntil;
+      if (!options.forceRefresh && current && !legacyExpired
         && Date.parse(current.expiresAt) - now() >= minValidityMs + refreshJitter) {
         return current;
       }

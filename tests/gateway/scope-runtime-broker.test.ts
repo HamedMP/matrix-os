@@ -127,40 +127,61 @@ describe("scope runtime broker", () => {
     await broker.close();
   });
 
-  it("retries a funded relay 429 through the admission queue, but not an owner-key 429", async () => {
+  it("retries only relay capacity 429s, re-authorizes each retry, and sends the run's claim key", async () => {
     const stream = "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n";
-    const authorizeFor = (accessSourceId: "matrix_included" | "owner_anthropic_key") => vi.fn(async () => ({
+    const allowed = (accessSourceId: "matrix_included" | "owner_anthropic_key") => ({
       allowed: true as const, accessSourceId, allowedModelIds: [MODEL], allowedEgressOrigins: [],
-    }));
-    const statuses = [429, 429, 200];
-    const fundedFetch = vi.fn(async () => {
-      const status = statuses.shift() ?? 200;
-      return new Response(status === 200 ? stream : "busy", { status, headers: { "content-type": "text/event-stream" } });
     });
+    const busy = () => new Response("busy", { status: 429, headers: { "x-matrix-funded-reason": "slot_busy" } });
+    const statuses = [busy(), busy(), new Response(stream, { status: 200, headers: { "content-type": "text/event-stream" } })];
+    const claimKeys: Array<string | null> = [];
+    const fundedFetch = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      claimKeys.push(new Headers(init?.headers).get("x-matrix-funded-claim-key"));
+      return statuses.shift()!;
+    });
+    const authorize = vi.fn(async () => allowed("matrix_included"));
     const queue = createFundedAdmissionQueue({ sleep: async () => {} });
     const funded = createScopeRuntimeBroker({
-      homePath: "/home/matrix/home",
-      authorize: authorizeFor("matrix_included"),
+      homePath: "/home/matrix/home", authorize,
       resolveCredentials: async () => ({ env: { ANTHROPIC_API_KEY: "funded-lease", ANTHROPIC_BASE_URL: "https://relay.example" } }),
-      fetchImpl: fundedFetch,
-      fundedAdmission: queue,
+      fetchImpl: fundedFetch, fundedAdmission: queue,
     });
     await expect(funded.handle(inferenceRequest)).resolves.toMatchObject({ ok: true, status: 200, body: stream });
     expect(fundedFetch).toHaveBeenCalledTimes(3);
+    expect(authorize).toHaveBeenCalledTimes(3);
+    expect(claimKeys).toEqual([RUNTIME_HANDLE, RUNTIME_HANDLE, RUNTIME_HANDLE]);
 
-    const ownerFetch = vi.fn(async () => new Response("busy", { status: 429 }));
+    const upstreamFetch = vi.fn(async () => new Response("provider busy", { status: 429 }));
+    const upstream = createScopeRuntimeBroker({
+      homePath: "/home/matrix/home", authorize: vi.fn(async () => allowed("matrix_included")),
+      resolveCredentials: async () => ({ env: { ANTHROPIC_API_KEY: "funded-lease", ANTHROPIC_BASE_URL: "https://relay.example" } }),
+      fetchImpl: upstreamFetch, fundedAdmission: queue,
+    });
+    await expect(upstream.handle(inferenceRequest)).resolves.toMatchObject({ ok: false });
+    expect(upstreamFetch).toHaveBeenCalledTimes(1);
+
+    const revokedAuthorize = vi.fn()
+      .mockResolvedValueOnce(allowed("matrix_included"))
+      .mockResolvedValue({ allowed: false as const });
+    const revokedFetch = vi.fn(async () => busy());
+    const revoked = createScopeRuntimeBroker({
+      homePath: "/home/matrix/home", authorize: revokedAuthorize,
+      resolveCredentials: async () => ({ env: { ANTHROPIC_API_KEY: "funded-lease", ANTHROPIC_BASE_URL: "https://relay.example" } }),
+      fetchImpl: revokedFetch, fundedAdmission: queue,
+    });
+    await expect(revoked.handle(inferenceRequest)).resolves.toMatchObject({ ok: false, error: "action_denied" });
+    expect(revokedFetch).toHaveBeenCalledTimes(1);
+
+    const ownerFetch = vi.fn(async () => busy());
     const owner = createScopeRuntimeBroker({
-      homePath: "/home/matrix/home",
-      authorize: authorizeFor("owner_anthropic_key"),
+      homePath: "/home/matrix/home", authorize: vi.fn(async () => allowed("owner_anthropic_key")),
       resolveCredentials: async () => ({ env: { ANTHROPIC_API_KEY: "owner-secret" } }),
-      fetchImpl: ownerFetch,
-      fundedAdmission: queue,
+      fetchImpl: ownerFetch, fundedAdmission: queue,
     });
     await expect(owner.handle(inferenceRequest)).resolves.toMatchObject({ ok: false });
     expect(ownerFetch).toHaveBeenCalledTimes(1);
     queue.close();
-    await funded.close();
-    await owner.close();
+    await Promise.all([funded.close(), upstream.close(), revoked.close(), owner.close()]);
   });
 
   it("injects the owner Codex identity only after exact runtime and model authorization", async () => {
