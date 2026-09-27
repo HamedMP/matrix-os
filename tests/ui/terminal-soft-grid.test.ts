@@ -2,6 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createTerminalGridPresentation, measureTerminalViewport } from "../../packages/ui/src/terminal/terminal-grid-presentation";
 import { installSoftResizeGeometry, type SoftResizeTerminal } from "../helpers/terminal-soft-resize-regression";
+import { createTerminalNativeHistory } from "../../packages/ui/src/terminal/terminal-native-history";
 
 describe("shared terminal grid presentation", () => {
   let frames: FrameRequestCallback[];
@@ -22,7 +23,7 @@ describe("shared terminal grid presentation", () => {
     while (frames.length && passes++ < 10) frames.splice(0).forEach((frame) => frame(0));
     expect(frames, "presentation settles without scheduling an endless layout loop").toHaveLength(0);
   };
-  function setup(parentScale = 1) {
+  function setup(parentScale = 1, nativeHistory?: Parameters<typeof createTerminalGridPresentation>[0]["nativeHistory"]) {
     const host = document.createElement("div");
     const root = document.createElement("div");
     host.append(root);
@@ -34,7 +35,7 @@ describe("shared terminal grid presentation", () => {
     geometry.setHostSize(1_600, 900);
     const onScale = vi.fn();
     const presentation = createTerminalGridPresentation({ host, getTerminal: () => terminal,
-      getConfiguredFontSize: () => 13, onScale, getParentScale: () => parentScale });
+      getConfiguredFontSize: () => 13, onScale, getParentScale: () => parentScale, nativeHistory });
     const layout = (width: number, height: number) => {
       geometry.setHostSize(width, height);
       presentation.schedule();
@@ -42,6 +43,42 @@ describe("shared terminal grid presentation", () => {
     };
     return { host, root, terminal, geometry, onScale, presentation, layout };
   }
+
+  it("retains the latest native history gesture when an older bottom reply arrives", () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date"] });
+    let schedule = () => {};
+    const send = vi.fn();
+    const history = createTerminalNativeHistory({ send, canWrite: () => true, onState: () => schedule() });
+    const { host, terminal, presentation, layout, root } = setup(1, history);
+    schedule = presentation.schedule;
+    Object.assign(terminal, { scrollToLine: vi.fn(), onScroll: () => ({ dispose() {} }) });
+    Object.defineProperty(host, "scrollHeight", { get: () => Number.parseFloat(root.parentElement!.style.height) || 0 });
+    try {
+      history.attach(true);
+      history.update({ above: 20, below: 80, rows: 36 });
+      layout(1_600, 300);
+      const rail = document.querySelector<HTMLElement>('[data-terminal-scrollbar="content"]')!;
+      const drag = (top: number) => { rail.scrollTop = top; rail.dispatchEvent(new Event("scroll")); };
+      drag(Number.parseFloat((rail.firstElementChild as HTMLElement).style.height) - host.clientHeight);
+      expect(send).toHaveBeenLastCalledWith({ type: "scroll-to", line: 100 });
+      drag(0); // Latest target is queued behind the in-flight bottom request.
+      expect(send).toHaveBeenLastCalledWith({ type: "scroll-to", line: 100 });
+      history.update({ above: 100, below: 0, rows: 36 });
+      flush();
+      vi.advanceTimersByTime(500);
+      expect(send, "an older bottom reply must not cancel the latest queued gesture")
+        .toHaveBeenLastCalledWith({ type: "scroll-to", line: 0 });
+      expect(rail.scrollTop).toBe(0);
+      expect(host.scrollTop).toBe(0);
+      history.update({ above: 0, below: 100, rows: 36 });
+      flush();
+      expect(rail.scrollTop).toBe(0);
+      history.update({ above: 100, below: 0, rows: 36 }); // Actual keyboard/wheel return.
+      flush();
+      layout(1_600, 250);
+      expect(host.scrollTop).toBeCloseTo(host.scrollHeight - host.clientHeight);
+    } finally { presentation.dispose(); history.dispose(); vi.useRealTimers(); }
+  });
 
   it("focuses on blank viewport clicks without intercepting text selection or context clicks", () => {
     const { host, root, terminal, presentation, layout } = setup();
