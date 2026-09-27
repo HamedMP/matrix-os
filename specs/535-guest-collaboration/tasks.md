@@ -48,16 +48,16 @@ Owners of X1-X3 keep their own plans. If X3 does not publish `organizationId` on
 
 - [ ] T004 M0 Write `tests/repository/collaboration-postgres-ci.test.ts` asserting that every test file referencing `MATRIX_TEST_POSTGRES_URL` is selected by `scripts/test-collaboration-postgres.sh` and that the CI job is in `CI Results` `needs` (fails first).
 - [ ] T005 M0 Add `scripts/test-collaboration-postgres.sh`: enumerate the files, refuse an empty list, run `pnpm exec vitest run` on them, and fail if any selected test is skipped.
-- [ ] T006 M0 Add the `collaboration-postgres` job to `.github/workflows/ci.yml` (`postgres:16` service, `MATRIX_TEST_POSTGRES_URL` naming a `*_test` database, 20 min timeout) and add it to `ci-results.needs` (`.github/workflows/ci.yml:707-709`).
+- [ ] T006 M0 Add the `collaboration-postgres` job to `.github/workflows/ci.yml` (`postgres:16` service, `MATRIX_TEST_POSTGRES_URL` naming a `*_test` database, 20 min timeout) and register it in `ci-results` in all four places: `needs`, a `*_RESULT` variable, the summary row and the result loop (`.github/workflows/ci.yml:707-769`); update the exact `needs` assertion in `tests/platform/ci-workflows.test.ts:276`.
 - [ ] T007 M0 Fix suites that fail on first real run when the fix is small; otherwise list each in the script's quarantine block with a linked issue, counted in the job summary.
 
 ### A2: four-identity fixture (FR-029)
 
-- [ ] T008 [P] M0 Write `tests/e2e/fixtures/collaboration-identities.test.ts` (Vitest): rejects user IDs outside the allowlist, rejects addresses outside the test domain, never logs tokens, deletes the per-run guest, reaps marked guests older than 24 h, and refuses to start if member, guest or outsider appears in `PREVIEW_CLERK_ACCESS_USER_IDS`.
+- [ ] T008 [P] M0 Write `tests/e2e/fixtures/collaboration-identities.e2e.test.ts` (Vitest, picked up by `vitest.e2e.config.ts` like the existing `tests/e2e/fixtures/collaboration-fixture.e2e.test.ts`, which is updated for the new environment): rejects user IDs outside the allowlist, rejects addresses outside the test domain, never logs tokens, deletes the per-run guest, reaps marked guests older than 24 h, and refuses to start if member, guest or outsider appears in `PREVIEW_CLERK_ACCESS_USER_IDS`.
 - [ ] T009 M0 Implement `tests/e2e/fixtures/collaboration-identities.ts` (Backend API with 10 s timeouts and bounded responses; per-run guest create and delete) and `tests/e2e/fixtures/clerk-sign-in.ts` (path from T001).
 - [ ] T010 M0 Rewrite `tests/e2e/fixtures/collaboration.ts` for owner, member, guest, outsider and optional multi-computer member contexts, with precondition checks through `/api/auth/computers` and `/api/journey`.
 - [ ] T011 [P] M0 Implement `tests/e2e/helpers/collaboration-direct-harness.ts` using `createCollaborationDirectApi` with `getHeaders` returning the page's Clerk session token.
-- [ ] T012 M0 Update `tests/e2e/collaboration.playwright.config.ts` (global setup, phone project 390x844, desktop project 1440x900, traces without storage state) and add root script `test:e2e:collaboration`; add `@clerk/testing` to root devDependencies at the shell's locked version and run root `pnpm install`.
+- [ ] T012 M0 Update `tests/e2e/collaboration.playwright.config.ts` (global setup, phone project 390x844, desktop project 1440x900, traces without storage state) and add root script `test:e2e:collaboration` running `pnpm --dir shell exec playwright test --config ../tests/e2e/collaboration.playwright.config.ts`, so `@playwright/test` and `@clerk/testing` resolve from `shell/` (locked 1.58.2 and 1.14.3); add root devDependencies only if resolution fails, then run root `pnpm install`.
 
 ### A3: foundation journeys on the direct transport
 
@@ -236,8 +236,8 @@ Sizes are estimates including tests; every PR must stay under 1000 additions and
 
 | ID | Branch slug | Base | Conventional title | Packages / key files | Est. additions / files | Depends on |
 | --- | --- | --- | --- | --- | --- | --- |
-| A1 | `codex/535-m0-postgres-ci` | `main` | `ci(collaboration): run real-Postgres collaboration suites` | `.github/workflows/ci.yml`, `scripts/test-collaboration-postgres.sh`, `tests/repository/` | 250 / 4 (plus small suite fixes) | T002 |
-| A2 | `codex/535-m0-identity-fixture` | `main` | `test(collaboration): add unattended four-identity sign-in fixture` | `tests/e2e/fixtures/`, `tests/e2e/helpers/`, `tests/e2e/collaboration.playwright.config.ts`, root `package.json`, `pnpm-lock.yaml` | 750 / 9 | T001 |
+| A1 | `codex/535-m0-postgres-ci` | `main` | `ci(collaboration): run real-Postgres collaboration suites` | `.github/workflows/ci.yml`, `scripts/test-collaboration-postgres.sh`, `tests/repository/`, `tests/platform/ci-workflows.test.ts` | 270 / 5 (plus small suite fixes) | T002 |
+| A2 | `codex/535-m0-identity-fixture` | `main` | `test(collaboration): add unattended four-identity sign-in fixture` | `tests/e2e/fixtures/`, `tests/e2e/helpers/`, `tests/e2e/collaboration.playwright.config.ts`, root `package.json` | 750 / 8 | T001 |
 | A3 | `codex/535-m0-foundation-journeys` | A2 (stack parent) | `test(collaboration): rewrite foundation journeys on the direct transport` | `tests/e2e/collaboration/`, delete `tests/e2e/collaboration-project.spec.ts` | 850 / 4 | A2 |
 | A4 | `codex/535-m0-evidence` | `main` | `docs(collaboration): record M0 foundation evidence` | `specs/535-guest-collaboration/evidence/` | 200 / 2 | A1, A3, X1 merged and run |
 | S1 | `codex/535-m1-shared-entry-routing` | `main` (stack bottom) | `feat(platform): serve shared destinations without a routed computer` | `packages/platform/src/shared-entry-routing.ts`, `session-routing-middleware.ts` (call sites), `request-routing.ts`, `scripts/start-platform-cloud-run.sh`, `distro/docker-compose.platform.yml`, `tests/platform/` | 550 / 7 | none |
