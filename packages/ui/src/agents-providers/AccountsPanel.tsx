@@ -84,7 +84,9 @@ export function AccountsPanel({
     account.authState !== "authenticated" && !harness.loginMethods.includes(account.authMethod));
   const attemptMethodSupported = attempt !== null && harness.loginMethods.includes(attempt.method);
   const retryMethod = attemptMethodSupported ? attempt.method : harness.loginMethods.find((method) => method === "terminal");
-  const selectedSource = sources.find((source) => source.id === harness.accessSourceId);
+  const selectedSource = sources.find((source) => source.id === harness.accessSourceId)
+    ?? sources.find((source) => source.id === harness.configuredAccessSourceId
+      && source.kind === "harness_profile" && source.harness === harness.harness);
   const matrixSelected = selectedSource?.kind === "matrix_gateway";
   const matrixSupported = matrixSelected && isSupportedGenericHarnessCredentialRoute(harness, selectedSource);
   const run = async (action: () => Promise<boolean | void> | void) => {
@@ -153,6 +155,8 @@ export function AccountsPanel({
           <p className="matrix-ap-empty">{matrixSupported
             ? "Connected through Matrix AI."
             : matrixSelected ? "Choose a supported connection."
+              : selectedSource?.kind === "harness_profile"
+                ? `${harness.displayName} manages authentication for this route in Terminal.`
               : harness.harness === "hermes" || harness.harness === "openclaw"
                 ? "Use your own provider account in Terminal."
                 : "No account connected."}</p>

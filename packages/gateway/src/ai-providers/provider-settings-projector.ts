@@ -366,7 +366,10 @@ function projectHarness(input: {
     action: "retry" as const,
     safeReason: routeCatalogUnavailable ? "provider_unavailable" as const : "unknown" as const,
   };
-  const accounts = input.accounts.filter((account) => account.providerId === input.stored.route.providerId);
+  // A harness-owned native profile has no Matrix account identity. Sharing a
+  // model provider does not bind another harness's account to this route.
+  const accounts = source?.kind === "harness_profile" ? []
+    : input.accounts.filter((account) => account.providerId === input.stored.route.providerId);
   const visibleMethods = input.loginMethods === undefined
     ? defaultLoginMethods(input.stored.harness)
     : input.loginMethods(input.stored);
