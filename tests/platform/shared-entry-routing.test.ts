@@ -2,9 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { type PlatformDB, insertUserMachine } from "../../packages/platform/src/db.js";
 import { createApp } from "../../packages/platform/src/main.js";
 import { createClerkAuth } from "../../packages/platform/src/clerk-auth.js";
+import { isSharedEntryPath } from "../../packages/contracts/src/collaboration-entry.js";
 import {
   isSharedEntryDocumentRequest,
-  isSharedEntryPath,
   resolveSharedEntryTarget,
 } from "../../packages/platform/src/shared-entry-routing.js";
 import { createTestPlatformDb, destroyTestPlatformDb } from "./platform-db-test-helper.js";

@@ -1,4 +1,5 @@
 import type { Context } from 'hono';
+import { SHARED_ENTRY_ROOT, isSharedEntryPath } from '@matrix-os/contracts';
 import { fonts, lightFg, palette, radii } from '@matrix-os/brand/tokens';
 import { escapeHtmlAttr } from './auth-pages.js';
 import { canRouteMachineOnPreviewHost } from './customer-vps-preview.js';
@@ -12,20 +13,9 @@ import type { AppDomainIdentity } from './session-routing-identity.js';
 // Shared destinations are the account-only collaboration entry (spec 535 M1).
 // An account without a routable, entitled computer is served the platform
 // shell for this path family instead of billing, provisioning or a boot page.
-const SHARED_ENTRY_ROOT = '/shared';
-const SHARED_ENTRY_MAX_SEGMENTS = 4;
-const SHARED_ENTRY_SEGMENT = /^[A-Za-z0-9_-]{1,128}$/;
 const SHARED_ENTRY_MAX_RETRY_TARGET_LENGTH = 2048;
 
 export type SharedEntryTarget = 'vps' | 'platform';
-
-export function isSharedEntryPath(path: string): boolean {
-  if (path === SHARED_ENTRY_ROOT || path === `${SHARED_ENTRY_ROOT}/`) return true;
-  if (!path.startsWith(`${SHARED_ENTRY_ROOT}/`)) return false;
-  const segments = path.slice(SHARED_ENTRY_ROOT.length + 1).split('/');
-  return segments.length <= SHARED_ENTRY_MAX_SEGMENTS
-    && segments.every((segment) => SHARED_ENTRY_SEGMENT.test(segment));
-}
 
 export function isSharedEntryDocumentRequest(input: {
   isAppDomain: boolean;
