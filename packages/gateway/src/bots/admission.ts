@@ -47,6 +47,7 @@ export interface PrivateBotRunRequest {
   route: BotModelRoute;
   accessSourceId: KernelCredentialAccessSourceId;
   capabilities: readonly BotToolCapability[];
+  requestClass: "interactive" | "background";
   /** The fingerprint stored with the task; a drift blocks the run as `root_changed`. */
   expectedRootFingerprint?: string;
 }
@@ -142,6 +143,7 @@ export function createPrivateBotAdmission(deps: {
           route: input.route,
           accessSourceId: input.accessSourceId,
           capabilities: input.capabilities,
+          requestClass: input.requestClass,
         });
       } catch (error: unknown) {
         await release(runtime.runtimeHandle);

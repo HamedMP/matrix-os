@@ -8,6 +8,7 @@
  * denied.
  */
 import type { ScopeRuntimeBrokerRequest } from "@matrix-os/scope-runtime/broker-protocol";
+import { z } from "zod/v4";
 import type { FundedAdmissionQueue } from "../funded-ai/admission-queue.js";
 import type { MatrixFundedCredentialProvider } from "../funded-ai-credential-manager.js";
 import {
@@ -42,7 +43,18 @@ export interface ScopeRuntimeAuthorizer {
   /** True when this registry bound the runtime handle at this generation. */
   owns(input: { runtimeHandle: string; executionGeneration: string }): boolean;
   authorize(request: ScopeRuntimeAuthorizationRequest): Promise<ScopeRuntimeBrokerAuthorization>;
+  /**
+   * Optional: take whole frames from runtimes this registry owns (bot
+   * workloads use their own frame shapes). Resolve undefined to drop an
+   * invalid frame.
+   */
+  handleFrame?(raw: unknown): Promise<Record<string, unknown> | undefined>;
 }
+
+const FrameOwnerSchema = z.object({
+  runtimeHandle: z.string().max(64),
+  executionGeneration: z.string().max(24),
+}).passthrough();
 
 export type ScopeRuntimeHostClient = ReturnType<typeof createScopeRuntimeClient>;
 
@@ -107,6 +119,14 @@ export async function createScopeRuntimeHost(options: {
   const server = createScopeRuntimeBrokerServer({
     socketPath: options.brokerSocket ?? BROKER_SOCKET,
     broker,
+    routeFrame(raw) {
+      if (closed) return undefined;
+      const frame = FrameOwnerSchema.safeParse(raw);
+      if (!frame.success) return undefined;
+      const owners = [...authorizers].filter((authorizer) => authorizer.owns(frame.data));
+      const owner = owners.length === 1 ? owners[0] : undefined;
+      return owner?.handleFrame ? owner.handleFrame(raw) : undefined;
+    },
   });
   try {
     await server.start();

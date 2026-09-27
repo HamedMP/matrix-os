@@ -25,7 +25,8 @@ const MAX_RESPONSE_BYTES = 512 * 1024;
 const MAX_IN_FLIGHT = 8;
 const INFERENCE_TIMEOUT_MS = 30_000;
 const EGRESS_TIMEOUT_MS = 10_000;
-const MAX_REQUEST_FRAME_BYTES = 512 * 1024;
+/** Bot session frames carry a whole transcript: the 512 KiB session plus envelope headroom. */
+const MAX_REQUEST_FRAME_BYTES = 640 * 1024;
 const MAX_RESPONSE_FRAME_BYTES = 1024 * 1024;
 const MAX_BROKER_CONNECTIONS = 64;
 
@@ -107,7 +108,7 @@ function failure(
   return ScopeRuntimeBrokerResponseSchema.parse({ version: 1, requestId, ok: false, error });
 }
 
-async function readBoundedBody(response: Response): Promise<string> {
+export async function readBoundedBody(response: Response): Promise<string> {
   const declared = Number(response.headers.get("content-length"));
   if (Number.isFinite(declared) && declared > MAX_RESPONSE_BYTES) throw new RangeError("response_too_large");
   if (!response.body) return "";
@@ -134,14 +135,14 @@ async function readBoundedBody(response: Response): Promise<string> {
   return Buffer.concat(chunks, size).toString("utf8");
 }
 
-async function discard(response: Response): Promise<void> {
+export async function discard(response: Response): Promise<void> {
   await response.body?.cancel().catch((error: unknown) => {
     console.warn("[collaboration] scope broker response discard failed:",
       error instanceof Error ? error.name : "UnknownError");
   });
 }
 
-function safeResponseHeaders(response: Response, expected: "inference" | "egress") {
+export function safeResponseHeaders(response: Response, expected: "inference" | "egress") {
   const contentType = response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase();
   const allowed = expected === "inference"
     ? contentType === "text/event-stream"
@@ -468,6 +469,12 @@ export function createScopeRuntimeBrokerServer(options: {
     handle(request: ScopeRuntimeBrokerRequest): Promise<ScopeRuntimeBrokerResponse>;
     close(): Promise<void> | void;
   };
+  /**
+   * Lets the registry that owns a frame's runtime handle take the whole frame
+   * (bot workloads). Returns undefined to use the shared broker path; a
+   * routed handler resolving undefined drops the connection.
+   */
+  routeFrame?(raw: unknown): Promise<Record<string, unknown> | undefined> | undefined;
   maxConnections?: number;
   requestTimeoutMs?: number;
 }) {
@@ -520,9 +527,21 @@ export function createScopeRuntimeBrokerServer(options: {
             socket.destroy();
             return;
           }
-          const request = ScopeRuntimeBrokerRequestSchema.parse(JSON.parse(frames[0]!));
-          const response = await options.broker.handle(request);
-          const frame = `${JSON.stringify(ScopeRuntimeBrokerResponseSchema.parse(response))}\n`;
+          const raw: unknown = JSON.parse(frames[0]!);
+          const routed = options.routeFrame?.(raw);
+          let frame: string;
+          if (routed) {
+            const response = await routed;
+            if (!response) {
+              socket.destroy();
+              return;
+            }
+            frame = `${JSON.stringify(response)}\n`;
+          } else {
+            const request = ScopeRuntimeBrokerRequestSchema.parse(raw);
+            const response = await options.broker.handle(request);
+            frame = `${JSON.stringify(ScopeRuntimeBrokerResponseSchema.parse(response))}\n`;
+          }
           if (Buffer.byteLength(frame, "utf8") > MAX_RESPONSE_FRAME_BYTES) {
             socket.destroy();
             return;

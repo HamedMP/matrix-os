@@ -60,6 +60,7 @@ const request: PrivateBotRunRequest = {
   route: { api: "anthropic-messages", modelId: "claude-sonnet-5", input: ["text"], contextWindow: 200_000, maxOutputTokens: 4_096 },
   accessSourceId: "matrix_included",
   capabilities: ["artifact.write", "artifact.read"],
+  requestClass: "interactive",
 };
 
 describe("private bot admission", () => {
