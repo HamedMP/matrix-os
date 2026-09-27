@@ -10,12 +10,15 @@ export async function fetchRuntimeProxy(
   const operationTimeoutMs = init.method === "POST" && new URL(targetUrl).pathname === "/api/sync/commit"
     ? 300_000 : timeoutMs;
   if (!releaseTimeoutAfterHeaders) {
-    return fetch(targetUrl, { ...init, signal: AbortSignal.timeout(operationTimeoutMs) });
+    const deadline = AbortSignal.timeout(operationTimeoutMs);
+    const signal = init.signal ? AbortSignal.any([init.signal, deadline]) : deadline;
+    return fetch(targetUrl, { ...init, signal });
   }
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    return await fetch(targetUrl, { ...init, signal: controller.signal });
+    const signal = init.signal ? AbortSignal.any([init.signal, controller.signal]) : controller.signal;
+    return await fetch(targetUrl, { ...init, signal });
   } finally {
     clearTimeout(timeout);
   }

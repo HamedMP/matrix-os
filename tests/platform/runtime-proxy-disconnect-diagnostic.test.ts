@@ -1,4 +1,4 @@
-import { request, type ClientRequest, type IncomingMessage } from "node:http";
+import { createServer, request, type ClientRequest, type IncomingMessage } from "node:http";
 import type { Server } from "node:http";
 import { serve } from "@hono/node-server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -99,6 +99,45 @@ describe("runtime proxy downstream disconnect ownership diagnostic", () => {
       await vi.waitFor(() => expect(requestSignal?.aborted).toBe(true), { timeout: 1_000 });
     } finally {
       release!(streamResponse());
+    }
+  });
+
+  it("keeps native fetch body cancellation after streaming headers release the deadline", async () => {
+    const upstream = createServer((_request, response) => {
+      response.writeHead(200, { "content-type": "text/event-stream" });
+      response.write("data: diagnostic\n\n");
+    });
+    upstream.listen(0, "127.0.0.1");
+    await new Promise<void>(resolve => upstream.once("listening", resolve));
+    const address = upstream.address();
+    if (!address || typeof address === "string") throw new Error("Missing upstream listener");
+    try {
+      const caller = new AbortController();
+      const response = await fetchRuntimeProxy(`http://127.0.0.1:${address.port}/api/chats/events`,
+        { method: "GET", signal: caller.signal }, 1_000, true);
+      const body = response.text().then(() => "resolved", () => "aborted");
+      caller.abort();
+      expect(await body).toBe("aborted");
+    } finally {
+      upstream.closeAllConnections();
+      await new Promise<void>((resolve, reject) => upstream.close(error => error ? reject(error) : resolve()));
+    }
+  });
+
+  it("retains the bounded header deadline while a supplied caller signal remains live", async () => {
+    vi.useFakeTimers();
+    try {
+      const caller = new AbortController();
+      vi.spyOn(globalThis, "fetch").mockImplementation((_url, init) => new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(init.signal?.reason), { once: true });
+      }));
+      const outcome = fetchRuntimeProxy("https://runtime.invalid/api/chats/events",
+        { method: "GET", signal: caller.signal }, 10, true).then(() => "resolved", () => "aborted");
+      await vi.advanceTimersByTimeAsync(11);
+      expect(await outcome).toBe("aborted");
+      expect(caller.signal.aborted).toBe(false);
+    } finally {
+      vi.useRealTimers();
     }
   });
 

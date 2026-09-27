@@ -820,6 +820,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
 
       try {
         const upstream = await fetchRuntimeProxy(targetUrl, {
+          signal: c.req.raw.signal,
           method: c.req.method,
           headers,
           redirect: 'manual',
@@ -989,6 +990,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
 
       try {
         const upstream = await fetchRuntimeProxy(targetUrl, {
+          signal: c.req.raw.signal,
           method: c.req.method,
           headers,
           redirect: 'manual',
@@ -1202,6 +1204,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
       const targetUrl = `http://${endpoint.host}:${targetPort}${path}${qs}`;
       try {
         const upstream = await fetchRuntimeProxy(targetUrl, {
+          signal: c.req.raw.signal,
           method: c.req.method,
           headers,
           redirect: 'manual',
