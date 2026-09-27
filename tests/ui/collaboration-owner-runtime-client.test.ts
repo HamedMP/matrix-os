@@ -94,7 +94,9 @@ describe("owner runtime direct client", () => {
         return Response.json({ signedTicket: { ticket, keyId: "platform", signature: "a".repeat(86) }, endpoint: { origin: platform, protocolVersion: 2 } }, { status: 201 });
       }
       if (url.pathname === "/api/collaboration/owner-runtime/sessions") {
-        expect(new Headers(init?.headers).get("authorization")).toBeNull();
+        // The endpoint is the platform relay, which names the actor from the ticket request's credentials.
+        expect(new Headers(init?.headers).get("authorization")).toBe("Bearer owner");
+        expect(init?.credentials).toBe("same-origin");
         expect(new Headers(init?.headers).get("x-matrix-collaboration-runtime")).toBe(logicalRuntimeId);
         const request = JSON.parse(String(init?.body)) as { proofPublicKey: string; possession: string };
         expect(request.proofPublicKey).toBe(proofPublicKey);
@@ -109,7 +111,7 @@ describe("owner runtime direct client", () => {
       }
       expect(url.pathname).toBe(`/api/collaboration/runtimes/${encodeURIComponent(runtimeId)}/catalog/resolve`);
       const headers = new Headers(init?.headers);
-      expect(headers.get("authorization")).toBeNull();
+      expect(headers.get("authorization")).toBe("Bearer owner");
       expect(headers.get("x-matrix-collaboration-session")).toBe("20000000-0000-4000-8000-000000000001");
       expect(headers.get("x-matrix-collaboration-runtime")).toBe(logicalRuntimeId);
       const envelope = JSON.parse(Buffer.from(headers.get("x-matrix-collaboration-request")!, "base64url").toString("utf8")) as {

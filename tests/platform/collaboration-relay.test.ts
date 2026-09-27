@@ -296,6 +296,7 @@ describe("CollaborationRelay", () => {
     const app = new Hono();
     app.route("/", createPlatformCollaborationRoutes({
       repository: {} as never, signer: {} as never, sockets: {} as never, relay: instance,
+      allowedOrigins: ["https://app.matrix-os.com"],
       resolveActor: async (c) => c.req.header("x-test-actor") ?? null,
       authenticateRuntime: async () => null,
       resolveParticipant: async () => null,
@@ -304,14 +305,49 @@ describe("CollaborationRelay", () => {
     }));
     const request = new Request("http://local/api/collaboration/direct-sessions", {
       method: "POST",
-      headers: { "x-test-actor": "user_member", "content-type": "application/json", [RELAY_RUNTIME_HEADER]: home.runtimeId },
+      headers: {
+        "x-test-actor": "user_member", origin: "https://app.matrix-os.com", "content-type": "application/json", [RELAY_RUNTIME_HEADER]: home.runtimeId,
+      },
       body: chunkedBody(4 * 1024 * 1024),
       duplex: "half",
     } as RequestInit & { duplex: "half" });
     const response = await app.request(request);
     expect(response.ok).toBe(false);
+    expect(state.calls).toBe(1);
     expect(state.completed).toBe(false);
     expect(state.received).toBeLessThanOrEqual(96 * 1024);
+  });
+
+  it("answers an unauthenticated relay request with its own sign-in challenge and never contacts a home", async () => {
+    const fetchImpl = vi.fn(async () => new Response("home", { status: 200 }));
+    const { instance } = relay({}, fetchImpl as never);
+    const app = new Hono();
+    app.route("/", createPlatformCollaborationRoutes({
+      repository: {} as never, relay: instance, allowedOrigins: ["https://app.matrix-os.com"],
+      resolveActor: async () => null,
+      authenticateRuntime: async () => null,
+      resolveParticipant: async () => null,
+      resolveInvitationIdentifier: async () => null,
+    }));
+    const response = await app.request(`/api/collaboration/scopes/${scopeId}/chat`, { headers: { "x-matrix-collaboration-session": "20000000-0000-4000-8000-000000000001" } });
+    expect(response.status).toBe(401);
+    expect(response.headers.get("www-authenticate")).toMatch(/^Bearer /);
+    expect(response.headers.get("access-control-expose-headers")).toBe("WWW-Authenticate");
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("never relays a home's own challenge, so only the platform can ask a client to sign in again", async () => {
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ error: "Collaboration request denied" }), {
+      status: 401,
+      headers: { "content-type": "application/json", "www-authenticate": "Bearer realm=\"home\"", "access-control-expose-headers": "WWW-Authenticate" },
+    }));
+    const { instance } = relay({}, fetchImpl as never);
+    const response = await instance.forward({
+      actorId: "user_a", method: "GET", path: `/api/collaboration/scopes/${scopeId}`, query: "", headers: new Headers(), body: null,
+    });
+    expect(response.status).toBe(401);
+    expect(response.headers.has("www-authenticate")).toBe(false);
+    expect(response.headers.has("access-control-expose-headers")).toBe(false);
   });
 
   it("routes session lifecycle routes by the runtime header and never by a query parameter", async () => {
@@ -450,11 +486,17 @@ describe("CollaborationRelay", () => {
 
   it("prepares socket upgrades with no proof header and bounded connections", async () => {
     const { instance } = relay({ limits: { connectionsPerActor: 1 } });
-    const prepared = await instance.prepareSocket({ actorId: "user_a", rawPath: `/ws/collaboration/direct/scopes/${scopeId}/terminal?ticket=abc`, incomingHeaders: { upgrade: "websocket", connection: "Upgrade", cookie: "x", "sec-websocket-key": "k" }, externalHost: "app.matrix-os.com" });
+    const prepared = await instance.prepareSocket({
+      actorId: "user_a", rawPath: `/ws/collaboration/direct/scopes/${scopeId}/terminal?ticket=abc`,
+      incomingHeaders: { upgrade: "websocket", connection: "Upgrade", cookie: "__session=actor", authorization: "Bearer device", origin: "null", "sec-websocket-key": "k" },
+      externalHost: "app.matrix-os.com",
+    });
     expect(prepared).not.toBeNull();
     expect(prepared!.upstreamPath).toBe(`/ws/collaboration/direct/scopes/${scopeId}/terminal?ticket=abc`);
     expect(prepared!.headers).not.toContain("proof");
     expect(prepared!.headers).not.toContain("cookie");
+    expect(prepared!.headers.toLowerCase()).not.toContain("authorization");
+    expect(prepared!.headers).not.toContain("Bearer");
     expect(await instance.prepareSocket({ actorId: "user_a", rawPath: `/ws/collaboration/direct/scopes/${scopeId}/events?ticket=abc`, incomingHeaders: {}, externalHost: "app.matrix-os.com" })).toBeNull();
     prepared!.release();
     expect(instance.connectionCounts()).toEqual({ homes: 0, actors: 0 });

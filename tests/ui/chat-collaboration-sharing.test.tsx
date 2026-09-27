@@ -108,6 +108,23 @@ describe("Chat collaboration sharing", () => {
     expect(api.post).not.toHaveBeenCalled();
   });
 
+  it("tells a lapsed sign-in apart from ended access and an offline home", async () => {
+    const shared = (id: string, home: "offline" | "denied" | "unauthenticated") => ({
+      scopeId: id, runtimeId: "runtime_owner", ownerId: "user_owner", kind: "chat", authorityGeneration: 1, status: "accepted", home,
+    });
+    const api = { baseUrl: "https://gateway.test", get: vi.fn(async (path: string) => path.endsWith("/shared")
+      ? { items: [
+        shared("10000000-0000-4000-8000-000000000011", "unauthenticated"),
+        shared("10000000-0000-4000-8000-000000000012", "denied"),
+        shared("10000000-0000-4000-8000-000000000013", "offline"),
+      ] }
+      : { items: [] }), post: vi.fn(), delete: vi.fn() };
+    render(<ChatCollaboration view={{ kind: "home" }} api={api} actorId="user_editor" />);
+    expect(await screen.findByText("Sign in again to open this share.")).toBeVisible();
+    expect(screen.getByText("Access is no longer available.")).toBeVisible();
+    expect(screen.getByText("The owner's computer is offline. Try again later.")).toBeVisible();
+  });
+
   it("shows an authenticated invitation inbox and accepts into the shared Chat", async () => {
     const invitationId = "30000000-0000-4000-8000-000000000001";
     const invitation = {
