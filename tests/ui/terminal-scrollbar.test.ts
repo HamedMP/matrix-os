@@ -74,4 +74,27 @@ describe("unified terminal scrollbar", () => {
     expect(host.scrollTop).toBe(0);
   });
 
+  it("coalesces a delayed xterm viewport target and cancels it on disposal", () => {
+    const frames: FrameRequestCallback[] = [];
+    const cancel = vi.fn();
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => { frames.push(callback); return frames.length; });
+    vi.stubGlobal("cancelAnimationFrame", cancel);
+    const { rail, terminal, scrollbar } = setup();
+    try {
+      rail.scrollTop = 0; rail.dispatchEvent(new Event("scroll"));
+      rail.scrollTop = 160; rail.dispatchEvent(new Event("scroll"));
+      expect(cancel).toHaveBeenCalledWith(1);
+      expect(terminal.scrollToLine).toHaveBeenLastCalledWith(10);
+      frames[1](0);
+      expect(terminal.scrollToLine).toHaveBeenCalledTimes(3);
+      expect(terminal.scrollToLine).toHaveBeenLastCalledWith(10);
+      rail.scrollTop = 320; rail.dispatchEvent(new Event("scroll"));
+      scrollbar.cancelPending();
+      expect(cancel).toHaveBeenLastCalledWith(3);
+      rail.scrollTop = 480; rail.dispatchEvent(new Event("scroll"));
+      scrollbar.dispose();
+      expect(cancel).toHaveBeenLastCalledWith(4);
+    } finally { scrollbar.dispose(); vi.unstubAllGlobals(); }
+  });
+
 });

@@ -257,8 +257,7 @@ describe("real terminal renderer soft-grid resizing", () => {
       await page.waitForFunction(() => document.documentElement.dataset.historyRailGesture === "true");
       await page.evaluate(() => (window as unknown as { releaseHistoryFrames(): void }).releaseHistoryFrames());
       await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
-      await expect.poll(async () => (await geometry(page)).panTop, { timeout: 5_000 }).toBe(0);
-      await expect.poll(() => rail.evaluate(element => element.scrollTop)).toBe(0);
+      await expect.poll(async () => ({ pan: (await geometry(page)).panTop, history: await rail.evaluate(element => element.scrollTop) }), { timeout: 5_000 }).toEqual({ pan: 0, history: 0 });
       await page.evaluate(() => (window as unknown as { fixtureOutput(data: string): void }).fixtureOutput("\r\nOUTPUT_WHILE_READING"));
       await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
       expect((await geometry(page)).panTop).toBe(0);
@@ -267,13 +266,13 @@ describe("real terminal renderer soft-grid resizing", () => {
         await expect.poll(() => rail.evaluate(element => element.scrollTop)).toBe(0);
         if (method === "rail") await rail.evaluate(element => { element.scrollTop = element.scrollHeight; });
         else if (method === "wheel") {
-          await page.locator("[data-terminal-viewport]").evaluate(host => {
-            host.dispatchEvent(new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaY: 2_000 }));
-          });
+          const box = await rail.boundingBox();
+          if (!box) throw new Error("History rail is not measurable");
+          await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+          await page.mouse.wheel(0, 2_000);
         } else {
-          await page.locator(".xterm-helper-textarea").focus();
-          await page.keyboard.press("Shift+PageDown");
-          await page.keyboard.press("Shift+PageDown");
+          await rail.focus();
+          await page.keyboard.press("End");
         }
         await expect.poll(() => rail.evaluate(element => element.scrollHeight - element.clientHeight - element.scrollTop), { timeout: 5_000 }).toBeLessThanOrEqual(1);
         await page.locator("#terminal-window").evaluate(element => { (element as HTMLElement).style.height = "250px"; });
