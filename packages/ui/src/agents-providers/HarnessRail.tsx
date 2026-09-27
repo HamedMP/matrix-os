@@ -29,6 +29,8 @@ function rowStatus(harness: ProviderHarnessInstance, source: ProviderAccessSourc
   if (harness.authState === "unauthenticated" || harness.authState === "expired"
     || source?.readiness.state === "auth_required" || source?.readiness.state === "expired") return "Sign in";
   if (harness.connectivity === "offline" || harness.connectivity === "degraded") return "Check connection";
+  if (harness.connectivity === "online" && harness.authState === "authenticated"
+    && source?.readiness.state === "ready" && isSupportedGenericHarnessCredentialRoute(harness, source)) return "Ready";
   if (harness.localObservation) return codexLocalObservationLabel(harness.localObservation);
   if ((harness.harness === "codex" || source?.localObservation !== undefined)) return codexLocalObservationLabel(source?.localObservation);
   if (harness.connectivity !== "online") return "Check connection";

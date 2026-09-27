@@ -57,3 +57,29 @@ it.each([false, true])("keeps explicit authentication failure authoritative when
   show({ ...harness, enabled, connectivity: "offline", authState: "failed" });
   expect(screen.getByRole("button", { name: /Check failed/ })).toBeVisible();
 });
+
+function observedReadyRoute(ageMs = 0) {
+  const value: ProviderHarnessInstance = { ...harness, authState: "authenticated", connectivity: "online",
+    accessSourceId: "owner_anthropic_profile", route: { kind: "configurable", providerId: "anthropic", modelId: "claude-sonnet-5" },
+    localObservation: { state: "present_unverified", checkedAt: new Date(Date.now()-ageMs).toISOString(), staleAfter: new Date(Date.now()-ageMs+5000).toISOString() } };
+  const source = { id: value.accessSourceId, kind: "provider_account", readiness: { state: "ready" } } as ProviderAccessSource;
+  return { value, source };
+}
+it.each([0, 10_000])("preserves authoritative Ready over local evidence aged %sms", (ageMs) => {
+  const { value, source } = observedReadyRoute(ageMs);
+  show(value, [source]);
+  expect(screen.getByRole("button", { name: /Hermes.*Ready/ })).toBeVisible();
+  expect(screen.queryByText(/Local login/)).not.toBeInTheDocument();
+});
+it.each(["auth_unknown", "offline", "degraded", "unsupported_source", "source_unknown", "source_invalid", "source_expired", "source_stale", "source_unavailable", "disabled", "install_unknown", "missing_source"] as const)("never promotes local evidence to Ready when %s", (state) => {
+  const { value, source } = observedReadyRoute();
+  if (state === "auth_unknown") value.authState = "unknown";
+  if (state === "offline" || state === "degraded") value.connectivity = state;
+  if (state === "unsupported_source") source.kind = "matrix_gateway";
+  if (state.startsWith("source_")) source.readiness.state = state.slice(7) as ProviderAccessSource["readiness"]["state"];
+  if (state === "disabled") value.enabled = false;
+  if (state === "install_unknown") value.installState = "unknown";
+  if (state === "missing_source") value.accessSourceId = null;
+  show(value, state === "missing_source" ? [] : [source]);
+  expect(screen.queryByRole("button", { name: /Hermes.*Ready/ })).not.toBeInTheDocument();
+});
