@@ -4,7 +4,7 @@ These additions extend the closed event enum in `packages/contracts/src/canonica
 
 Stream events carry only `{ cursor, chatId, revision, eventType, createdAt }`, and clients refetch details through authorized reads. The payload column below describes what a bot-aware client refetches, not stream fields.
 
-**Compatibility.** Released desktop and mobile clients validate `eventType` strictly. New types reach a client only when it sends event wire version `1` (`ChatEventWireVersionSchema`, `packages/contracts/src/chat-event-wire.ts`). Clients on version `0` (the default) receive `chat.updated` for every bot event type via `projectChatEventTypeForWire`.
+**Compatibility.** Released desktop and mobile clients validate `eventType` strictly. New types reach a client only when it sends event wire version `1` (`ChatEventWireVersionSchema`, `packages/contracts/src/chat-event-wire.ts`). Clients on version `0` (the default) receive `chat.updated` for every bot event type via `projectChatEventTypeForWire`. Both delivery routes apply the projection to live and replayed frames: HTTP `/api/chats/events` and WebSocket `/ws/chats/events` read the `eventVersion` query parameter.
 
 **Chat binding.** Events without a natural chat use the bot's direct chat ID.
 

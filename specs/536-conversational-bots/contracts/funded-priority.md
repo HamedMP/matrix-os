@@ -19,7 +19,14 @@ Platform and gateway contract (research R10; technical design "Owner Funded-Admi
 
 The request is unchanged. The class is read from the stored credential; a caller-supplied class is never trusted.
 
-**Claim identity.** The relay mints a new request ID for every HTTP attempt, and interactive leases rotate. A claim is therefore keyed to the requesting runtime's interactive slot, `(owner_id, machine_id, runtime_slot)`, taken from the stored credential, not to a request ID or token. Any later interactive attempt from that runtime consumes the claim, including a retry with a new request ID or after lease rotation.
+**Claim identity.** The relay mints a new request ID for every HTTP attempt, and interactive leases rotate, so neither can identify a waiting turn. A claim is keyed by `(owner_id, machine_id, runtime_slot, claim_key)`:
+
+- The owner, machine, and runtime slot come from the stored credential.
+- `claim_key` is an optional turn identity supplied by the gateway. It reaches the relay as the header `x-matrix-funded-claim-key` (`^[A-Za-z0-9_.:-]{1,128}$`), and the relay forwards it as `claimKey` on `authorize`.
+- The gateway's local queue sets it to the turn or run ID for every request it sends. Interactive processes that call the relay directly receive it through `ANTHROPIC_CUSTOM_HEADERS` for their run.
+- A request without a key uses the runtime-level key `""`.
+
+So distinct turns on one runtime keep their own places in line, a retry of the same turn (new request ID, same key) consumes that turn's claim, and lease rotation does not matter. The key is a caller-supplied ordering hint, not authority: it is bounded, validated, and only ever compared within the owner's own claims.
 
 Inside the existing transaction and owner advisory lock:
 
@@ -28,9 +35,9 @@ Inside the existing transaction and owner advisory lock:
 3. Conflict test, unchanged: usage-mode conflicts with any active reservation, and other modes conflict with an active usage-mode reservation.
 4. Class rules:
    - `background` and any live claim that would conflict with this request exists: reject with `rate_limited` and reason `priority_hold`.
-   - `interactive` and a conflicting active reservation exists: upsert the claim for this runtime slot. On conflict, keep the existing `created_at` and `expires_at`, so a claim is never extended or moved back in line. Reject with `rate_limited` and reason `slot_busy`.
-   - `interactive`, no conflicting reservation, but an older live claim exists from a different runtime slot: reject with `rate_limited` and reason `priority_queue`.
-   - Otherwise reserve as today, and delete this runtime slot's claim in the same transaction.
+   - `interactive` and a conflicting active reservation exists: upsert the claim for this runtime slot and claim key. On conflict, keep the existing `created_at` and `expires_at`, so a claim is never extended or moved back in line. Reject with `rate_limited` and reason `slot_busy`.
+   - `interactive`, no conflicting reservation, but an older live conflicting claim exists under any other key (another runtime, or another turn on this runtime): record this request's claim if it has none, and reject with `rate_limited` and reason `priority_queue`.
+   - Otherwise reserve as today, and delete this request's claim (same runtime slot and claim key) in the same transaction.
 5. At 16 live claims, an owner's new interactive claim is rejected with `rate_limited` and reason `priority_full`, and no claim is written.
 
 **Commit-safe rejection.** `authorize` rejects by throwing inside its transaction, which would roll back a claim written on the same path. Rejections that carry a claim write (`slot_busy`) or depend on claims (`priority_hold`, `priority_queue`) therefore return a typed outcome from the transaction callback, `{ outcome: "rejected", code: "rate_limited", reason }`. The transaction commits, and the route maps the outcome to the existing 429 `SafeError` after commit. Every other rejection path keeps throwing.

@@ -26,7 +26,7 @@ Reserves idempotent bot creation.
 | Column | Type | Rules |
 |---|---|---|
 | owner_id | text | PK part |
-| client_request_id | uuid | PK part |
+| client_request_id | text | PK part; `CanonicalChatRequestIdSchema` (`req_...`), matching the API |
 | bot_id | text | unique; `^bot_[A-Za-z0-9_-]{8,64}$` |
 | chat_id | text | unique; fixed at reservation |
 | workspace_rel_path | text | `bots/<botId>`; derived server-side |
@@ -242,9 +242,11 @@ Add `request_class text NOT NULL DEFAULT 'interactive' CHECK (request_class IN (
 | owner_id | text | PK part |
 | machine_id | text | PK part; from the stored credential |
 | runtime_slot | text | PK part; from the stored credential |
+| claim_key | text | PK part; default `''`; gateway-supplied turn identity (`^[A-Za-z0-9_.:-]{1,128}$`) forwarded by the relay |
+| billing_mode | text | `usage` or `hold`; decides which requests the claim holds |
 | created_at, expires_at | timestamptz | expiry ≤2 min; never extended by a conflicting upsert |
 
-Written and consumed only inside `authorize`, under the owner advisory lock. The key is the runtime's interactive slot, so claims survive relay retries (new request IDs) and lease rotation. Claim-bearing rejections commit through a typed outcome rather than a throw. There are at most 16 live claims per owner. Expired claims are deleted by the existing reservation cleanup worker.
+Written and consumed only inside `authorize`, under the owner advisory lock. The key is the runtime slot plus the gateway's turn claim key, so claims survive relay retries (new request IDs) and lease rotation, and distinct turns on one runtime keep their own order. Claim-bearing rejections commit through a typed outcome rather than a throw. There are at most 16 live claims per owner. Expired claims are deleted by the existing reservation cleanup worker.
 
 ## Relationships
 
