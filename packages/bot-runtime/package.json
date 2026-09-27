@@ -7,17 +7,19 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "build": "tsc",
+    "build": "tsc --noEmit && node ../scope-runtime/scripts/bundle-worker.mjs src/worker-entry.ts dist/bot-worker.mjs --require-shim",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@earendil-works/pi-agent-core": "0.86.1",
     "@earendil-works/pi-ai": "0.86.1",
     "@matrix-os/contracts": "workspace:*",
+    "@matrix-os/scope-runtime": "workspace:*",
     "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/node": "^25.2.3",
+    "esbuild": "0.25.12",
     "typescript": "^5.9.3"
   }
 }

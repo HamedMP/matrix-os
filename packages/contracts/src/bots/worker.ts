@@ -1,6 +1,6 @@
 import { z } from "zod/v4";
 import { canonicalEncodedByteLength } from "#canonical-chat-primitives";
-import { BotToolCapabilitySchema, BotToolErrorCodeSchema } from "#bots/broker";
+import { BOT_IMAGE_MAX_BASE64_CHARS, BotToolCapabilitySchema, BotToolErrorCodeSchema } from "#bots/broker";
 import { BotBlockedReasonSchema } from "#bots/tasks";
 
 /** Model route resolved by the gateway from Provider V3; the worker never chooses one. */
@@ -16,7 +16,7 @@ export const BotModelRouteSchema = z.object({
 
 export const BotImageInputSchema = z.object({
   mimeType: z.enum(["image/png", "image/jpeg", "image/webp"]),
-  data: z.string().regex(/^[A-Za-z0-9+/]+={0,2}$/).max(Math.ceil((2 * 1024 * 1024) / 3) * 4),
+  data: z.string().regex(/^[A-Za-z0-9+/]+={0,2}$/).max(BOT_IMAGE_MAX_BASE64_CHARS),
 }).strict();
 
 export const BotRunLimitsSchema = z.object({
@@ -24,6 +24,26 @@ export const BotRunLimitsSchema = z.object({
 }).strict();
 
 const RunIdSchema = z.string().regex(/^run_[A-Za-z0-9_-]{1,128}$/);
+const SystemPromptSchema = z.string().min(1).max(32 * 1024);
+const CapabilitiesSchema = z.array(BotToolCapabilitySchema).max(16)
+  .refine((capabilities) => new Set(capabilities).size === capabilities.length, { message: "Capabilities must be unique" });
+const PromptTextSchema = z.string().min(1).max(64 * 1024);
+
+/**
+ * What a `bot_agent` worker loads from the broker when the supervisor relays
+ * `bot.run { runId }`. Images stay on the gateway and are read in chunks with
+ * `bot.input.image`, so neither the supervisor nor any single frame carries them.
+ */
+export const BotRunSpecSchema = z.object({
+  route: BotModelRouteSchema,
+  systemPrompt: SystemPromptSchema,
+  capabilities: CapabilitiesSchema,
+  limits: BotRunLimitsSchema,
+  turn: z.discriminatedUnion("kind", [
+    z.object({ kind: z.literal("prompt"), text: PromptTextSchema, imageCount: z.number().int().min(0).max(4).optional() }).strict(),
+    z.object({ kind: z.literal("continue") }).strict(),
+  ]),
+}).strict().refine((spec) => canonicalEncodedByteLength(spec) <= 160 * 1024, { message: "Run is too large" });
 
 export const BotWorkerCommandSchema = z.discriminatedUnion("kind", [
   z.object({
@@ -31,14 +51,13 @@ export const BotWorkerCommandSchema = z.discriminatedUnion("kind", [
     kind: z.literal("bot.run"),
     runId: RunIdSchema,
     route: BotModelRouteSchema,
-    systemPrompt: z.string().min(1).max(32 * 1024),
-    capabilities: z.array(BotToolCapabilitySchema).max(16)
-      .refine((capabilities) => new Set(capabilities).size === capabilities.length, { message: "Capabilities must be unique" }),
+    systemPrompt: SystemPromptSchema,
+    capabilities: CapabilitiesSchema,
     limits: BotRunLimitsSchema,
     turn: z.discriminatedUnion("kind", [
       z.object({
         kind: z.literal("prompt"),
-        text: z.string().min(1).max(64 * 1024),
+        text: PromptTextSchema,
         images: z.array(BotImageInputSchema).max(4).optional(),
       }).strict(),
       z.object({ kind: z.literal("continue") }).strict(),
@@ -73,5 +92,6 @@ export type BotModelRoute = z.infer<typeof BotModelRouteSchema>;
 export type BotImageInput = z.infer<typeof BotImageInputSchema>;
 export type BotWorkerCommand = z.infer<typeof BotWorkerCommandSchema>;
 export type BotRunCommand = Extract<BotWorkerCommand, { kind: "bot.run" }>;
+export type BotRunSpec = z.infer<typeof BotRunSpecSchema>;
 export type BotRunStatus = z.infer<typeof BotRunStatusSchema>;
 export type BotRunOutcome = z.infer<typeof BotRunOutcomeSchema>;

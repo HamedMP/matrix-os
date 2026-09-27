@@ -3,11 +3,21 @@ import {
   RuntimeHandleSchema,
   ScopeRuntimeRequestSchema,
   ScopeRuntimeResponseSchema,
+  type ScopeRuntimeBotCommand,
+  type ScopeRuntimeBotWorkerReply,
   type ScopeRuntimeCapabilityProfile,
   type ScopeRuntimeRequest,
   type ScopeRuntimeResponse,
   type ScopeRuntimeSandboxManifest,
+  type ScopeRuntimeWorkload,
 } from "./protocol.js";
+import {
+  SCOPE_RUNTIME_BOT_ADAPTER_ID,
+  SCOPE_RUNTIME_BOT_HARNESS_VERSION,
+  SCOPE_RUNTIME_BOT_PROFILE_DIGEST,
+  SCOPE_RUNTIME_BOT_PROFILE_ID,
+  SCOPE_RUNTIME_BOT_PROFILE_VERSION,
+} from "./bot-profile.js";
 import { SCOPE_RUNTIME_SANDBOX_CAPABILITY } from "./sandbox.js";
 import {
   SCOPE_RUNTIME_HARNESS_VERSION,
@@ -43,14 +53,39 @@ export const SCOPE_RUNTIME_PROFILE: Omit<ScopeRuntimeCapabilityProfile, "executi
   sandbox: {
     policyVersion: SCOPE_RUNTIME_SANDBOX_CAPABILITY.policyVersion,
     policyDigest: SCOPE_RUNTIME_SANDBOX_CAPABILITY.policyDigest,
-    workloads: [...SCOPE_RUNTIME_SANDBOX_CAPABILITY.workloads],
+    workloads: ["chat_ai"],
   },
 };
+
+/**
+ * The bot profile: the same identity, caps, and sandbox policy as the chat
+ * profile, with the `matrix-bot` adapter as its only adapter.
+ */
+export const SCOPE_RUNTIME_BOT_PROFILE: Omit<ScopeRuntimeCapabilityProfile, "executionGeneration"> = {
+  ...SCOPE_RUNTIME_PROFILE,
+  profileId: SCOPE_RUNTIME_BOT_PROFILE_ID,
+  profileVersion: SCOPE_RUNTIME_BOT_PROFILE_VERSION,
+  profileDigest: SCOPE_RUNTIME_BOT_PROFILE_DIGEST,
+  adapters: [{
+    adapterId: SCOPE_RUNTIME_BOT_ADAPTER_ID,
+    harnessVersion: SCOPE_RUNTIME_BOT_HARNESS_VERSION,
+    workloads: ["bot_agent"],
+  }],
+  sandbox: {
+    policyVersion: SCOPE_RUNTIME_SANDBOX_CAPABILITY.policyVersion,
+    policyDigest: SCOPE_RUNTIME_SANDBOX_CAPABILITY.policyDigest,
+    workloads: ["bot_agent"],
+  },
+};
+
+export const SCOPE_RUNTIME_PROFILES = [SCOPE_RUNTIME_PROFILE, SCOPE_RUNTIME_BOT_PROFILE] as const;
 
 export interface ScopeRuntimeLaunchRequest {
   runtimeHandle: string;
   scopeHandle: string;
-  workload: "chat_ai" | "terminal";
+  /** Absent means the shared-chat profile, for launchers that predate the catalog. */
+  profileId?: string;
+  workload: ScopeRuntimeWorkload;
   adapterId: string;
   harnessVersion: string;
   executionGeneration: string;
@@ -61,11 +96,16 @@ export interface ScopeRuntimeLaunchRequest {
 export interface ScopeRuntimeReconciledRuntime {
   runtimeHandle: string;
   executionGeneration: string;
+  /** Absent means the shared-chat profile. */
+  profileId?: string;
 }
 
 export interface ScopeRuntimeLauncher {
-  supportedAdapters?(): Promise<ScopeRuntimeCapabilityProfile["adapters"]>;
+  /** Adapters the host can launch for a profile (the shared-chat profile when omitted); empty disables it. */
+  supportedAdapters?(profileId?: string): Promise<ScopeRuntimeCapabilityProfile["adapters"]>;
   list(): Promise<ScopeRuntimeReconciledRuntime[]>;
+  /** Handles whose units are still running; read-only, unlike `list`, which also cleans up. */
+  active?(): Promise<ReadonlySet<string>>;
   start(input: ScopeRuntimeLaunchRequest): Promise<void>;
   runChat(input: {
     runtimeHandle: string;
@@ -73,6 +113,11 @@ export interface ScopeRuntimeLauncher {
     model: string;
     prompt: string;
   }): Promise<{ text: string }>;
+  runBot?(input: {
+    runtimeHandle: string;
+    executionGeneration: string;
+    command: ScopeRuntimeBotCommand;
+  }): Promise<ScopeRuntimeBotWorkerReply>;
   stop(runtimeHandle: string): Promise<void>;
 }
 
@@ -88,6 +133,19 @@ function runtimeFailure(
   return ScopeRuntimeResponseSchema.parse({
     version: 1,
     type: "runtime.result",
+    requestId,
+    ok: false,
+    error,
+  });
+}
+
+function botFailure(
+  requestId: string,
+  error: "invalid_request" | "runtime_not_found" | "runtime_unavailable" | "generation_mismatch" | "busy",
+): ScopeRuntimeResponse {
+  return ScopeRuntimeResponseSchema.parse({
+    version: 1,
+    type: "runtime.bot.result",
     requestId,
     ok: false,
     error,
@@ -118,32 +176,57 @@ export async function createScopeRuntimeController(options: {
     throw new Error("Invalid scope runtime execution generation");
   }
   const createRuntimeHandle = options.createRuntimeHandle ?? newRuntimeHandle;
-  const supportedAdapters = options.launcher.supportedAdapters
-    ? await options.launcher.supportedAdapters()
-    : SCOPE_RUNTIME_PROFILE.adapters;
-  const availableProfile = { ...SCOPE_RUNTIME_PROFILE, adapters: supportedAdapters };
+  const availableProfiles: Omit<ScopeRuntimeCapabilityProfile, "executionGeneration">[] = [];
+  for (const profile of SCOPE_RUNTIME_PROFILES) {
+    const adapters = options.launcher.supportedAdapters
+      ? await options.launcher.supportedAdapters(profile.profileId)
+      : profile === SCOPE_RUNTIME_PROFILE ? profile.adapters : [];
+    // The shared-chat profile is always advertised; others only when the host can launch them.
+    if (profile === SCOPE_RUNTIME_PROFILE || adapters.length > 0) availableProfiles.push({ ...profile, adapters });
+  }
+  const availableProfile = availableProfiles[0]!;
   const existing = await options.launcher.list();
   if (existing.length > maxRuntimes) throw new Error("Scope runtime reconciliation exceeds capacity");
-  const runtimes = new Map<string, string>();
+  const runtimes = new Map<string, { executionGeneration: string; profileId: string }>();
   for (const value of existing) {
     const runtimeHandle = RuntimeHandleSchema.parse(value.runtimeHandle);
     if (!EXECUTION_GENERATION.test(value.executionGeneration)) {
       throw new Error("Invalid reconciled scope runtime generation");
     }
     if (runtimes.has(runtimeHandle)) throw new Error("Duplicate reconciled scope runtime");
-    runtimes.set(runtimeHandle, value.executionGeneration);
+    runtimes.set(runtimeHandle, {
+      executionGeneration: value.executionGeneration,
+      profileId: value.profileId ?? SCOPE_RUNTIME_PROFILE.profileId,
+    });
   }
   const operations = new Set<Promise<void>>();
   let reservedCreates = 0;
   let closed = false;
 
+  /**
+   * Units end on their own (RuntimeMaxSec, crash, or worker exit). Drops map
+   * entries whose unit is no longer running, so exited runtimes stop holding
+   * capacity. Read-only on the host side.
+   */
+  async function pruneExited(): Promise<void> {
+    if (!options.launcher.active) return;
+    try {
+      const running = await options.launcher.active();
+      for (const runtimeHandle of runtimes.keys()) {
+        if (!running.has(runtimeHandle)) runtimes.delete(runtimeHandle);
+      }
+    } catch (error: unknown) {
+      console.warn("[scope-runtime] runtime liveness check failed:",
+        error instanceof Error ? error.name : "UnknownError");
+    }
+  }
+
   async function createRuntime(
     request: Extract<ScopeRuntimeRequest, { type: "runtime.create" }>,
   ): Promise<ScopeRuntimeResponse> {
-    if (request.profileId !== SCOPE_RUNTIME_PROFILE.profileId) {
-      return runtimeFailure(request.requestId, "profile_unavailable");
-    }
-    const adapter = availableProfile.adapters.find((candidate) =>
+    const profile = availableProfiles.find((candidate) => candidate.profileId === request.profileId);
+    if (!profile) return runtimeFailure(request.requestId, "profile_unavailable");
+    const adapter = profile.adapters.find((candidate) =>
       candidate.adapterId === request.adapterId
       && candidate.harnessVersion === request.harnessVersion
       && candidate.workloads.includes(request.workload));
@@ -152,12 +235,17 @@ export async function createScopeRuntimeController(options: {
     if (request.workload === "terminal" && !request.sandbox) {
       return runtimeFailure(request.requestId, "invalid_request");
     }
-    if (request.sandbox && !SCOPE_RUNTIME_SANDBOX_CAPABILITY.workloads.includes(request.workload)) {
+    if (request.sandbox && !profile.sandbox?.workloads.includes(request.workload)) {
       return runtimeFailure(request.requestId, "adapter_unavailable");
+    }
+    // A bot always runs inside its own workspace root; there is no unsandboxed bot launch.
+    if (request.workload === "bot_agent" && !request.sandbox) {
+      return runtimeFailure(request.requestId, "invalid_request");
     }
     if (request.sandbox && request.sandbox.scopeHandle !== request.scopeHandle) {
       return runtimeFailure(request.requestId, "invalid_request");
     }
+    if (runtimes.size + reservedCreates >= maxRuntimes) await pruneExited();
     if (runtimes.size + reservedCreates >= maxRuntimes) {
       return runtimeFailure(request.requestId, "capacity_exceeded");
     }
@@ -176,6 +264,7 @@ export async function createScopeRuntimeController(options: {
     const operation = options.launcher.start({
       runtimeHandle,
       scopeHandle: request.scopeHandle,
+      profileId: profile.profileId,
       workload: request.workload,
       adapterId: request.adapterId,
       harnessVersion: request.harnessVersion,
@@ -194,7 +283,7 @@ export async function createScopeRuntimeController(options: {
         }
         return runtimeFailure(request.requestId, "runtime_unavailable");
       }
-      runtimes.set(runtimeHandle, options.executionGeneration);
+      runtimes.set(runtimeHandle, { executionGeneration: options.executionGeneration, profileId: profile.profileId });
       return ScopeRuntimeResponseSchema.parse({
         version: 1,
         type: "runtime.result",
@@ -217,7 +306,7 @@ export async function createScopeRuntimeController(options: {
   async function stopRuntime(
     request: Extract<ScopeRuntimeRequest, { type: "runtime.stop" }>,
   ): Promise<ScopeRuntimeResponse> {
-    const executionGeneration = runtimes.get(request.runtimeHandle);
+    const executionGeneration = runtimes.get(request.runtimeHandle)?.executionGeneration;
     if (executionGeneration === undefined) {
       return runtimeFailure(request.requestId, "runtime_not_found");
     }
@@ -243,8 +332,11 @@ export async function createScopeRuntimeController(options: {
   async function runChat(
     request: Extract<ScopeRuntimeRequest, { type: "runtime.chat" }>,
   ): Promise<ScopeRuntimeResponse> {
-    const executionGeneration = runtimes.get(request.runtimeHandle);
-    if (executionGeneration === undefined) return chatFailure(request.requestId, "runtime_not_found");
+    const runtime = runtimes.get(request.runtimeHandle);
+    if (runtime === undefined || runtime.profileId !== SCOPE_RUNTIME_PROFILE.profileId) {
+      return chatFailure(request.requestId, "runtime_not_found");
+    }
+    const { executionGeneration } = runtime;
     if (executionGeneration !== request.executionGeneration) {
       return chatFailure(request.requestId, "generation_mismatch");
     }
@@ -271,6 +363,43 @@ export async function createScopeRuntimeController(options: {
     }
   }
 
+  async function runBot(
+    request: Extract<ScopeRuntimeRequest, { type: "runtime.bot" }>,
+  ): Promise<ScopeRuntimeResponse> {
+    const runtime = runtimes.get(request.runtimeHandle);
+    if (runtime === undefined || runtime.profileId !== SCOPE_RUNTIME_BOT_PROFILE_ID || !options.launcher.runBot) {
+      return botFailure(request.requestId, "runtime_not_found");
+    }
+    if (runtime.executionGeneration !== request.executionGeneration) {
+      return botFailure(request.requestId, "generation_mismatch");
+    }
+    try {
+      const result = await options.launcher.runBot({
+        runtimeHandle: request.runtimeHandle,
+        executionGeneration: runtime.executionGeneration,
+        command: request.command,
+      });
+      if (!result.ok) {
+        return botFailure(request.requestId, result.error === "busy" ? "busy"
+          : result.error === "invalid_command" ? "invalid_request" : "runtime_unavailable");
+      }
+      return ScopeRuntimeResponseSchema.parse({
+        version: 1,
+        type: "runtime.bot.result",
+        requestId: request.requestId,
+        ok: true,
+        runtimeHandle: request.runtimeHandle,
+        executionGeneration: runtime.executionGeneration,
+        reply: result.reply,
+      });
+    } catch (error: unknown) {
+      console.warn("[scope-runtime] bot command failed:",
+        error instanceof Error ? error.name : "UnknownError");
+      await pruneExited();
+      return botFailure(request.requestId, "runtime_unavailable");
+    }
+  }
+
   return {
     async handle(input: ScopeRuntimeRequest): Promise<ScopeRuntimeResponse> {
       const request = ScopeRuntimeRequestSchema.parse(input);
@@ -283,7 +412,9 @@ export async function createScopeRuntimeController(options: {
               ok: false,
               error: "runtime_unavailable",
             })
-          : runtimeFailure(request.requestId, "runtime_unavailable");
+          : request.type === "runtime.bot"
+            ? botFailure(request.requestId, "runtime_unavailable")
+            : runtimeFailure(request.requestId, "runtime_unavailable");
       }
       if (request.type === "capability.get") {
         return ScopeRuntimeResponseSchema.parse({
@@ -293,10 +424,12 @@ export async function createScopeRuntimeController(options: {
           ok: true,
           supervisorVersion: SCOPE_RUNTIME_SUPERVISOR_VERSION,
           profile: { ...availableProfile, executionGeneration: options.executionGeneration },
+          profiles: availableProfiles.map((profile) => ({ ...profile, executionGeneration: options.executionGeneration })),
         });
       }
       if (request.type === "runtime.create") return createRuntime(request);
       if (request.type === "runtime.chat") return runChat(request);
+      if (request.type === "runtime.bot") return runBot(request);
       return stopRuntime(request);
     },
     size(): number {

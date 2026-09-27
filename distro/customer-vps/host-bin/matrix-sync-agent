@@ -1277,6 +1277,10 @@ apply_update() {
       fi
     fi
     if [ -f "$extract_dir/systemd/matrix-scope-runtime.service" ]; then
+      # The supervisor binds the bot workspace root read-only at start, so it must exist first.
+      if [ ! -d /home/matrix/home/bots ]; then
+        sudo install -d -o matrix -g matrix -m 0750 /home/matrix/home/bots
+      fi
       sudo systemctl enable matrix-scope-runtime.service
       sudo systemctl start matrix-scope-runtime.service
       log "Collaboration scope runtime service enabled"

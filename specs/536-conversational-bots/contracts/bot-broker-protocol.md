@@ -11,8 +11,9 @@ Contract between the scope-runtime supervisor, the `bot_agent` worker, and the g
 | Adapter | `matrix-bot`, harness version = bot-runtime bundle version |
 | Isolation | Same fixed properties as `scope-runtime-chat-v1` (`DynamicUser`, `PrivateNetwork=yes`, private root, `ProtectSystem=strict`, `ProtectHome=yes`, no capabilities, `RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6` with no network namespace route) |
 | Lifetime | `RuntimeMaxSec=900`, `MemoryMax=1073741824`, `CPUQuota=200%`, `TasksMax=256` |
-| Mounts | Pinned bot-runtime bundle read-only at `/opt/matrix/scope-sdk/bot-runtime`; node prefix read-only; workspace root read-write at `/workspace`; broker socket; readiness file; command directory |
-| Allowed workspace roots | `~/projects`, `~/worktrees`, and `~/bots` |
+| Mounts | Pinned bot-runtime bundle (`packages/bot-runtime/dist`, one self-contained `bot-worker.mjs` built with esbuild) read-only at `/opt/matrix/scope-sdk/bot-runtime`, in place of the Claude SDK, native binary, and Chat worker file; node prefix read-only; bot workspace from the sandbox manifest at `/workspace/project`; broker socket; readiness file; command directory |
+| Allowed workspace roots | `~/bots` only. Shared-chat roots (`~/projects`, `~/worktrees`) never apply to `bot_agent`, and bot roots never apply to `chat_ai` |
+| Supervisor visibility | The supervisor unit uses `ProtectHome=tmpfs` with one read-only bind of `/home/matrix/home/bots`, so it can validate a bot mount before systemd binds it. Provisioning and updates create that directory before the supervisor starts |
 
 The supervisor advertises both profiles:
 
@@ -24,21 +25,24 @@ The gateway rejects a supervisor whose advertised digest for a profile differs f
 
 ## Launch
 
-`runtime.create` adds `profileId` and, for `bot_agent`, a manifest:
+`runtime.create` adds `profileId` and, for `bot_agent`, a mandatory manifest (the existing sandbox manifest schema; a bot is never launched without one):
 
 ```json
-{ "scopeHandle": "scope_<32 hex>", "actorId": "bot_...", "worktree": { "hostPath": "<resolved bot/group root>", "mode": "rw", "fingerprint": "sha256" }, "network": "broker_only", "limits": { "maxRunMs": 600000 } }
+{ "version": 1, "scopeHandle": "scope_<32 hex>", "actorId": "bot_...", "worktree": { "hostPath": "<resolved bot/group root>", "mode": "rw", "fingerprint": "sha256" }, "network": "broker_only" }
 ```
 
 - Private handles are derived as described in research R4. Group runs use the shared scope's handle.
-- The supervisor checks the handle, the allowed root, and that the path exists without symlinks.
-- The worker receives `runtimeHandle`, `executionGeneration`, `taskId`, and `runId` as arguments. It holds no credential.
+- The supervisor checks the handle, the allowed root, and that the path exists without symlinks. The lifetime comes from the profile (`RuntimeMaxSec=900`), not the manifest.
+- The worker receives only `runtimeHandle`, `scopeHandle`, `bot_agent`, `matrix-bot`, the pinned harness version, and `executionGeneration` as arguments. It holds no credential. Run identity arrives with each relayed `bot.run`.
+- The supervisor's capability reply keeps `profile` (the Chat profile, for older gateways) and adds `profiles`. The bot profile is listed only when the bundled worker and the bot root are present. Units that exit on their own (for example at `RuntimeMaxSec`) are dropped from the runtime map before a create is refused for capacity.
 
 ## Worker commands (supervisor → worker, per-runtime command socket)
 
+The gateway sends `runtime.bot { runtimeHandle, executionGeneration, command }` to the supervisor, which relays the command to the worker's command socket and returns `runtime.bot.result { reply }`. Relayed commands carry identifiers and steering text only; they never carry prompt content, so supervisor frames stay under their 128 KiB cap. Unlike the single-use Chat socket, a bot command socket keeps one long `bot.run` connection open while steer and cancel use their own connections (at most four). Refusals are allowlisted: `busy`, `invalid_command`, `unavailable`.
+
 | Command | Payload | Result |
 |---|---|---|
-| `bot.run` | `{ sessionRevision, turn: { kind: "prompt", text≤64KiB, images≤4 (≤2MiB each) } \| { kind: "continue" } \| { kind: "resume_after_interaction", interactionId }, tools: ToolDescriptor[] ≤64, systemPromptRef }` | streams events over the broker, then `{ status: "completed" \| "waiting_person" \| "waiting_capacity" \| "blocked" \| "failed", checkpointSeq }` |
+| `bot.run` | `{ runId }`. The worker then loads the run with `bot.run.load` (route, system prompt, capabilities, limits, and `turn: { kind: "prompt", text≤64KiB, imageCount≤4 } \| { kind: "continue" }`) and reads each image with `bot.input.image` | streams events over the broker, then `{ runId, status: "completed" \| "waiting_person" \| "blocked" \| "failed" \| "cancelled" \| "uncertain", sessionRevision?, toolActions, failureCode?, blockedReason? }` |
 | `bot.steer` | `{ text≤8KiB }` | `{ acknowledged }`. Refused once the turn stops taking input. An accepted steer the turn could not answer (blocking question, budget, cancel) is saved as a person message |
 | `bot.cancel` | `{}` | `{ status: "cancelled" \| "uncertain" }` |
 
@@ -53,6 +57,8 @@ Frames are newline-delimited JSON on the broker Unix socket, not HTTP. Model SDK
 | `inference.chat_completions` | OpenAI chat-completions body; tools allowed | New; managed Cloudflare Workers AI route |
 | `bot.tool` | `{ toolCallId, capability, args }`. M1 capabilities: `integration.inventory`, `integration.call`, `memory.propose`, `memory.search`, `interaction.create`, `artifact.write`, `artifact.read`. M3 adds `handoff.create` and M4 adds `computer.act` |  Zod-validated per capability; checkpoint written `prepared` before and `observed_complete`/`effect_unknown` after; grant, audience, and approval checks before dispatch |
 | `bot.event` | `{ seq, event: assistant_delta (≤16 KiB) \| tool_progress \| activity }` | Projected into canonical `assistant.delta`, `agent.activity`, `tool.progress`, `tool.output`, and `interaction.requested` events; ≤64 KiB per event; ordered by `seq`. The runtime combines text deltas (at most one send per 250 ms, or at a message or tool boundary) and sends at most 2,000 events per turn; the last one is an `activity` notice that live updates paused, and the gateway renders the final reply from the saved session |
+| `bot.run.load` | `{}` | Returns the run spec bound to this runtime and `runId`; ≤160 KiB |
+| `bot.input.image` | `{ index 0-3, offset }` | Returns `{ mimeType, totalChars, data }` with `data` ≤384 KiB of base64, so every reply stays under the frame cap; the worker stops after a bounded number of chunks and fails a run whose chunks disagree |
 | `bot.session.load` | `{}` | Returns `{ revision, messages }`; the reply may reach 576 KiB |
 | `bot.session.save` | `{ baseRevision, messages, compactedThroughSeq? }` | Revision-checked write to `bot_agent_sessions`; the transcript is ≤512 KiB and the frame ≤576 KiB. Saved history keeps a text placeholder instead of image bytes, and the runtime cuts oversized tool payloads with a visible note when a transcript would not fit |
 

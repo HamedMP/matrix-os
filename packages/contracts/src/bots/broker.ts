@@ -113,6 +113,22 @@ export const BotSessionSaveRequestSchema = z.object({
   compactedThroughSeq: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).optional(),
 }).strict().refine((request) => canonicalEncodedByteLength(request.messages) <= BOT_SESSION_MAX_BYTES, { message: "Session is too large" });
 
+/** Largest accepted image, as base64 characters (2 MiB decoded). */
+export const BOT_IMAGE_MAX_BASE64_CHARS = Math.ceil((2 * 1024 * 1024) / 3) * 4;
+/** Images are read in chunks so every broker reply stays under the frame cap. */
+export const BOT_IMAGE_CHUNK_CHARS = 384 * 1024;
+
+export const BotImageChunkRequestSchema = z.object({
+  index: z.number().int().min(0).max(3),
+  offset: z.number().int().min(0).max(BOT_IMAGE_MAX_BASE64_CHARS),
+}).strict();
+
+export const BotImageChunkSchema = z.object({
+  mimeType: z.enum(["image/png", "image/jpeg", "image/webp"]),
+  totalChars: z.number().int().min(4).max(BOT_IMAGE_MAX_BASE64_CHARS),
+  data: z.string().min(1).max(BOT_IMAGE_CHUNK_CHARS).regex(/^[A-Za-z0-9+/]+={0,2}$/),
+}).strict();
+
 export type BotToolRequest = z.infer<typeof BotToolRequestSchema>;
 export type BotToolCapability = z.infer<typeof BotToolCapabilitySchema>;
 export type BotToolErrorCode = z.infer<typeof BotToolErrorCodeSchema>;
@@ -140,6 +156,8 @@ export const BOT_BROKER_MAX_FRAME_BYTES = BOT_SESSION_MAX_BYTES + 64 * 1024;
  * workload; the gateway binds everything else at admission.
  */
 export const BotBrokerRequestSchema = z.discriminatedUnion("action", [
+  z.object({ ...BrokerEnvelope, action: z.literal("bot.run.load") }).strict(),
+  z.object({ ...BrokerEnvelope, action: z.literal("bot.input.image"), image: BotImageChunkRequestSchema }).strict(),
   z.object({ ...BrokerEnvelope, action: z.literal("bot.session.load") }).strict(),
   z.object({ ...BrokerEnvelope, action: z.literal("bot.session.save"), session: BotSessionSaveRequestSchema }).strict(),
   z.object({ ...BrokerEnvelope, action: z.literal("bot.tool"), tool: BotToolRequestSchema }).strict(),
@@ -162,3 +180,5 @@ export const BotBrokerResponseSchema = z.discriminatedUnion("ok", [
 export type BotBrokerRequest = z.infer<typeof BotBrokerRequestSchema>;
 export type BotBrokerResponse = z.infer<typeof BotBrokerResponseSchema>;
 export type BotSessionSnapshot = z.infer<typeof BotSessionSnapshotSchema>;
+export type BotImageChunkRequest = z.infer<typeof BotImageChunkRequestSchema>;
+export type BotImageChunk = z.infer<typeof BotImageChunkSchema>;

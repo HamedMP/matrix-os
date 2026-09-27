@@ -14,6 +14,7 @@ import {
   serializeForSummary,
   SESSION_MAX_BYTES,
 } from "../../packages/bot-runtime/src/session.js";
+import { BotWorkerError, createBotWorker } from "../../packages/bot-runtime/src/worker.js";
 
 const user = (text: string, timestamp = 1): AgentMessage => ({ role: "user", content: text, timestamp });
 const assistantCall = (id: string): AgentMessage => fauxAssistantMessage([{ type: "toolCall", id, name: "read_artifact", arguments: { path: "a.md" } }], { stopReason: "toolUse" });
@@ -295,5 +296,67 @@ describe("bot event batching", () => {
     }
     expect(sent).toHaveLength(MAX_EVENTS_PER_TURN);
     expect(sent.at(-1)!.event).toMatchObject({ type: "activity", state: "started" });
+  });
+});
+
+describe("bot worker commands", () => {
+  const spec = {
+    route: { api: "anthropic-messages", modelId: "faux-bot", input: ["text"], contextWindow: 128_000, maxOutputTokens: 1_024 },
+    systemPrompt: "You are a bot.", capabilities: [], limits: { maxToolActions: 5 }, turn: { kind: "prompt", text: "hi" },
+  } as const;
+
+  function worker() {
+    const handle = fauxProvider({ models: [{ id: "faux-bot" }] });
+    handle.setResponses([fauxAssistantMessage(fauxText("done"))]);
+    let releaseLoad!: () => void;
+    const loaded = new Promise<void>((resolve) => { releaseLoad = resolve; });
+    const brokerFor = vi.fn(() => ({
+      loadRun: vi.fn(async () => { await loaded; return spec; }),
+      readImageChunk: vi.fn(),
+      loadSession: vi.fn(async () => ({ revision: 0, messages: [] })),
+      saveSession: vi.fn(async () => ({ revision: 1 })),
+      tool: vi.fn(),
+      event: vi.fn(async () => {}),
+    }));
+    return {
+      releaseLoad,
+      brokerFor,
+      bot: createBotWorker({ brokerFor, bridgeOrigin: "http://127.0.0.1:41000", route: { provider: handle.provider, model: handle.getModel() }, now: () => 1 }),
+    };
+  }
+  const runCommand = { version: 1, kind: "bot.run", runId: "run_one" };
+
+  it("runs one turn at a time and targets steer and cancel at the active run", async () => {
+    const { bot, releaseLoad, brokerFor } = worker();
+    const pending = bot.handle(runCommand);
+    expect(bot.activeRunId).toBe("run_one");
+    expect(brokerFor).toHaveBeenCalledWith("run_one");
+    await expect(bot.handle({ ...runCommand, runId: "run_two" })).rejects.toEqual(new BotWorkerError("busy"));
+    await expect(bot.handle({ version: 1, kind: "bot.cancel", runId: "run_other" })).resolves.toEqual({ acknowledged: false });
+    await expect(bot.handle({ version: 1, kind: "bot.steer", runId: "run_one", text: "shorter" })).resolves.toEqual({ acknowledged: false });
+    await expect(bot.handle({ version: 1, kind: "bot.cancel", runId: "run_one" })).resolves.toEqual({ acknowledged: true });
+    releaseLoad();
+    await expect(pending).resolves.toMatchObject({ runId: "run_one", status: "cancelled" });
+    expect(bot.activeRunId).toBeUndefined();
+  });
+
+  it("completes a loaded run and waits for it on shutdown", async () => {
+    const { bot, releaseLoad } = worker();
+    releaseLoad();
+    await expect(bot.handle(runCommand)).resolves.toMatchObject({ runId: "run_one", status: "completed", sessionRevision: 1 });
+    await expect(bot.shutdown()).resolves.toBeUndefined();
+
+    const second = worker();
+    const pending = second.bot.handle(runCommand);
+    const stopping = second.bot.shutdown();
+    second.releaseLoad();
+    await stopping;
+    await expect(pending).resolves.toMatchObject({ status: "cancelled" });
+  });
+
+  it("rejects commands that carry prompt content or are malformed", async () => {
+    const { bot } = worker();
+    await expect(bot.handle({ kind: "bot.run" })).rejects.toEqual(new BotWorkerError("invalid_command"));
+    await expect(bot.handle({ ...runCommand, systemPrompt: "inline" })).rejects.toEqual(new BotWorkerError("invalid_command"));
   });
 });
