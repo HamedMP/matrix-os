@@ -27,10 +27,26 @@ export function shouldAttemptAccountOnlyLanding(input: {
   return NON_LANDING_PARAMS.every((name) => !searchParams.has(name));
 }
 
+async function beforeDeadline<T>(work: Promise<T>, deadline: AbortSignal): Promise<T> {
+  if (deadline.aborted) throw deadline.reason;
+  let onAbort: (() => void) | undefined;
+  const aborted = new Promise<never>((_resolve, reject) => {
+    onAbort = () => reject(deadline.reason);
+    deadline.addEventListener("abort", onAbort, { once: true });
+  });
+  try {
+    return await Promise.race([work, aborted]);
+  } finally {
+    // Detaching the listener leaves `aborted` pending forever, so it never rejects unobserved.
+    if (onAbort) deadline.removeEventListener("abort", onAbort);
+  }
+}
+
 /**
- * One bounded probe of invitations, shares and organization membership. Any
- * failure, malformed body or timeout counts as "nothing shared" so the plan
- * screen stays usable.
+ * One bounded probe of invitations, shares and organization membership. The
+ * token lookup and all three requests share one deadline. Any failure,
+ * malformed body or timeout counts as "nothing shared" so the plan screen
+ * stays usable.
  */
 export async function hasAccountOnlySharedWork(options: {
   getToken: () => Promise<string | null>;
@@ -38,12 +54,14 @@ export async function hasAccountOnlySharedWork(options: {
   timeoutMs?: number;
 }): Promise<boolean> {
   const fetchImpl = options.fetchImpl ?? fetch;
-  const timeoutMs = options.timeoutMs ?? ACCOUNT_ONLY_LANDING_TIMEOUT_MS;
+  const deadline = AbortSignal.timeout(options.timeoutMs ?? ACCOUNT_ONLY_LANDING_TIMEOUT_MS);
   let token: string | null = null;
   try {
-    token = await options.getToken();
+    token = await beforeDeadline(options.getToken(), deadline);
   } catch (error: unknown) {
     console.warn("[account-only-landing] session token unavailable", error instanceof Error ? error.name : typeof error);
+    // Without time left there is nothing to probe; a failed lookup still falls back to the session cookie.
+    if (deadline.aborted) return false;
   }
   const headers = new Headers({ accept: "application/json" });
   if (token) headers.set("authorization", `Bearer ${token}`);
@@ -54,7 +72,7 @@ export async function hasAccountOnlySharedWork(options: {
         credentials: "same-origin",
         redirect: "error",
         headers,
-        signal: AbortSignal.timeout(timeoutMs),
+        signal: deadline,
       });
       if (!response.ok) {
         await response.body?.cancel();
@@ -81,15 +99,15 @@ export function useAccountOnlyLanding(input: {
   getToken: () => Promise<string | null>;
 }): void {
   const { platformSurface, phase, getToken } = input;
-  const settled = useRef(false);
+  // The probe is shared across effect replays (StrictMode, dependency changes), so it runs once.
+  const probe = useRef<Promise<boolean> | null>(null);
   // react-doctor-disable-next-line react-doctor/no-fetch-in-effect -- one bounded, timeout-guarded probe after the journey resolves to plan_required; it navigates away on success and is disposed on unmount.
   useEffect(() => {
-    if (settled.current || !shouldAttemptAccountOnlyLanding({ platformSurface, phase, location: window.location })) return;
+    if (!shouldAttemptAccountOnlyLanding({ platformSurface, phase, location: window.location })) return;
     let disposed = false;
-    void hasAccountOnlySharedWork({ getToken }).then((found) => {
-      if (disposed) return;
-      settled.current = true;
-      if (found) window.location.replace(SHARED_WITH_ME_PATH);
+    if (!probe.current) probe.current = hasAccountOnlySharedWork({ getToken });
+    void probe.current.then((found) => {
+      if (found && !disposed) window.location.replace(SHARED_WITH_ME_PATH);
     });
     return () => {
       disposed = true;

@@ -1,7 +1,12 @@
+// @vitest-environment jsdom
+
+import { renderHook, waitFor } from "@testing-library/react";
+import { StrictMode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   hasAccountOnlySharedWork,
   shouldAttemptAccountOnlyLanding,
+  useAccountOnlyLanding,
 } from "../../shell/src/lib/account-only-landing.js";
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -103,9 +108,47 @@ describe("hasAccountOnlySharedWork", () => {
     expect(Date.now() - started).toBeLessThan(2_000);
   });
 
+  it("bounds session token retrieval by the same deadline", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const fetchImpl = probeFetch({ shared: { items: [{ scopeId: "x" }] } });
+    const started = Date.now();
+    await expect(hasAccountOnlySharedWork({
+      fetchImpl,
+      getToken: () => new Promise<string | null>(() => undefined),
+      timeoutMs: 50,
+    })).resolves.toBe(false);
+    expect(Date.now() - started).toBeLessThan(2_000);
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
   it("still probes with the session cookie when no bearer is available", async () => {
     const fetchImpl = probeFetch({ shared: { items: [{ scopeId: "x" }] } });
     await expect(hasAccountOnlySharedWork({ fetchImpl, getToken: async () => null })).resolves.toBe(true);
     expect(new Headers(fetchImpl.mock.calls[0]?.[1]?.headers).get("authorization")).toBeNull();
+  });
+});
+
+describe("useAccountOnlyLanding", () => {
+  const originalLocation = window.location;
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    Object.defineProperty(window, "location", { configurable: true, value: originalLocation });
+  });
+
+  it("probes once per page load even when StrictMode replays the effect", async () => {
+    const replace = vi.fn();
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: { ...originalLocation, pathname: "/", search: "", replace },
+    });
+    const fetchImpl = probeFetch({ shared: { items: [{ scopeId: "x" }] } });
+    vi.stubGlobal("fetch", fetchImpl);
+
+    renderHook(() => useAccountOnlyLanding({ platformSurface: true, phase: "plan_required", getToken }), { wrapper: StrictMode });
+
+    await waitFor(() => expect(replace).toHaveBeenCalledWith("/shared"));
+    expect(replace).toHaveBeenCalledOnce();
+    expect(fetchImpl.mock.calls.filter((call) => String(call[0]).startsWith("/api/collaboration/shared"))).toHaveLength(1);
   });
 });
