@@ -8,6 +8,7 @@ import { BotMemoryContentSchema, BotMemoryKindSchema, BotMemoryScopeSchema, BotM
 export const BOT_ARTIFACT_MAX_BYTES = 192 * 1024;
 const MAX_INTEGRATION_PARAMS_BYTES = 32 * 1024;
 const MAX_SESSION_BYTES = 512 * 1024;
+const MAX_TOOL_REQUEST_BYTES = 240 * 1024;
 
 const ToolCallIdSchema = canonicalReferenceId(128);
 const ArtifactPathSchema = canonicalOwnerRelativePath(256, 1_024);
@@ -31,7 +32,7 @@ const capability = <Name extends z.infer<typeof BotToolCapabilitySchema>, Args e
   args,
 }).strict();
 
-export const BotToolRequestSchema = z.discriminatedUnion("capability", [
+const BotToolRequestUnionSchema = z.discriminatedUnion("capability", [
   capability("integration.inventory", z.object({ service: BotIntegrationServiceSchema.optional() }).strict()),
   capability("integration.call", z.object({
     service: BotIntegrationServiceSchema,
@@ -63,6 +64,12 @@ export const BotToolRequestSchema = z.discriminatedUnion("capability", [
   }).strict()),
   capability("artifact.read", z.object({ relPath: ArtifactPathSchema }).strict()),
 ]);
+
+/** Serialized size includes JSON escaping, so it cannot exceed the broker's 256 KiB request cap. */
+export const BotToolRequestSchema = BotToolRequestUnionSchema.refine(
+  (request) => canonicalEncodedByteLength(request) <= MAX_TOOL_REQUEST_BYTES,
+  { message: "Tool request is too large" },
+);
 
 export const BotToolErrorCodeSchema = z.enum([
   "denied",

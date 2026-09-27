@@ -57,6 +57,12 @@ describe("bot broker tool contracts", () => {
       args: { service: "gmail", action: "gmail.list_messages", connectionId: "conn_1", params: { blob: "x".repeat(33 * 1024) } },
     }).success).toBe(false);
     expect(BotToolRequestSchema.safeParse({ toolCallId: "call_1", capability: "shell.exec", args: {} }).success).toBe(false);
+    // 192 KiB of backslashes doubles when JSON-escaped and must not pass the serialized cap.
+    expect(BotToolRequestSchema.safeParse({
+      toolCallId: "call_1",
+      capability: "artifact.write",
+      args: { relPath: "escaped.md", content: "\\".repeat(192 * 1024), mimeType: "text/markdown" },
+    }).success).toBe(false);
   });
 
   it("returns text content or an allowlisted error code only", () => {

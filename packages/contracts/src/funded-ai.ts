@@ -119,6 +119,7 @@ export const FundedAiEffectivePolicySchema = z.object({
 });
 
 export const FundedAiRequestClassSchema = z.enum(["interactive", "background"]);
+export const FundedAiClaimKeySchema = z.string().regex(/^[A-Za-z0-9_.:-]{1,128}$/);
 
 /** Legacy gateways send `{}`; that remains interactive during rollout. */
 export const FundedAiRuntimeCredentialIssueRequestSchema = z.object({
@@ -160,6 +161,8 @@ export const FundedAiAuthorizationRequestSchema = z.object({
   maxCostMicrousd: MicrousdSchema.min(1),
   billingMode: z.literal("usage").optional(),
   jevPricingVersion: z.literal(JEV_PRICING_VERSION).optional(),
+  /** Gateway-supplied turn identity for interactive priority ordering; never authority. */
+  claimKey: FundedAiClaimKeySchema.optional(),
 }).strict().superRefine((value, ctx) => {
   if (value.jevPricingVersion !== undefined
     && (value.modelId !== JEV_MODEL_ID || value.billingMode !== "usage")) {
