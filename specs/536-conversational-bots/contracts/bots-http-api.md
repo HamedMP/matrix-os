@@ -6,7 +6,8 @@ Gateway routes for conversational bots. Additive to the canonical Chat API (`pac
 
 - Every route authenticates the Matrix principal with the existing request-principal middleware. Bot identity never substitutes for a human principal.
 - Mutations, including DELETE, use Hono `bodyLimit` (64 KiB unless stated) and strict schemas that reject unknown keys.
-- Path and query parameters are validated at the route with Zod before any service call: `agentId` `^bot_[A-Za-z0-9_-]{8,64}$`, `chatId` `^chat_[A-Za-z0-9_-]{1,120}$`, `interactionId`/`grantId`/`itemId` `^[a-z]{2,8}_[A-Za-z0-9_-]{8,64}$`, cursors ≤512 bytes, and `limit` 1-100.
+- Path and query parameters are validated at the route with Zod before any service call: `agentId` uses the existing `ChatAgentIdSchema` (`^bot_[a-z0-9]{8,64}$`), `chatId` uses `CanonicalChatIdSchema`, and server IDs are `<prefix>_[A-Za-z0-9_-]{8,64}` (`in_`, `gr_`, `mem_`, `task_`, `rt_`, `cr_`). Cursors are ≤512 bytes and `limit` is 1-100.
+- Request IDs are `CanonicalChatRequestIdSchema` (`req_...`), and revisions are positive integers, matching the existing chat-agent routes.
 - Errors come from one typed mapper:
   - `400 invalid_request`
   - `401 unauthorized`
@@ -38,7 +39,7 @@ Gateway routes for conversational bots. Additive to the canonical Chat API (`pac
 Request:
 
 ```json
-{ "clientRequestId": "uuid", "recipe": { "recipeId": "competitor-watching", "version": "string<=64" }, "name": "optional string<=80" }
+{ "clientRequestId": "req_...", "recipe": { "recipeId": "competitor-watching", "version": "string<=64" }, "name": "optional string<=80" }
 ```
 
 - The server resolves the recipe version from the catalog and rejects unknown or retired versions.
@@ -48,7 +49,7 @@ Request:
 Response `201` (or `200` on idempotent replay):
 
 ```json
-{ "agent": { "id": "bot_...", "name": "Research Rabbit", "avatarSeed": "hex", "revision": "1", "status": "active|recovering" }, "chatId": "chat_...", "operation": "created|replayed" }
+{ "agent": { "id": "bot_...", "name": "Research Rabbit", "avatarSeed": "hex", "revision": 1, "status": "active|recovering" }, "chatId": "chat_...", "operation": "created|replayed" }
 ```
 
 Errors:
@@ -63,7 +64,7 @@ This view is authoritative: it is derived from server state, never from model ou
 
 ```json
 {
-  "agentId": "bot_...", "revision": "7",
+  "agentId": "bot_...", "revision": 7,
   "grants": [{ "grantId": "gr_...", "service": "gmail", "accountLabel": "test@...", "effects": ["read"], "audience": "direct", "expiresAt": null }],
   "connections": [{ "service": "google_calendar", "state": "not_connected|connected_not_granted|granted" }],
   "routines": [{ "routineId": "rt_...", "summary": "string<=200", "status": "active|paused", "nextFireAt": "iso" }],
@@ -80,10 +81,10 @@ This view is authoritative: it is derived from server state, never from model ou
 Request, a discriminated union on `kind` that must match the stored interaction kind:
 
 ```json
-{ "kind": "question", "baseRevision": "3", "answers": [{ "questionId": "q1", "optionIds": ["o2"], "text": "optional<=2000" }] }
-{ "kind": "account_choice", "baseRevision": "3", "connectionId": "server-listed id" }
-{ "kind": "connect_request", "baseRevision": "3", "action": "start|cancel|decline" }
-{ "kind": "approval", "baseRevision": "3", "decision": "approve|deny" }
+{ "kind": "question", "baseRevision": 3, "answer": "optional free text", "structuredAnswers": { "q1": ["Option label"] } }
+{ "kind": "account_choice", "baseRevision": 3, "connectionId": "server-listed id" }
+{ "kind": "connect_request", "baseRevision": 3, "action": "start|cancel|decline" }
+{ "kind": "approval", "baseRevision": 3, "decision": "approve|deny" }
 ```
 
 Rules:
@@ -96,7 +97,7 @@ Rules:
 Response `200`:
 
 ```json
-{ "interaction": { "interactionId": "in_...", "status": "resolved", "revision": "4" }, "connectUrl": "optional https URL" }
+{ "interaction": { "interactionId": "in_...", "status": "resolved", "revision": 4 }, "connectUrl": "optional https URL" }
 ```
 
 Errors:
@@ -112,19 +113,19 @@ Errors:
 
 ## Memory (M1)
 
-- `POST .../memory/:itemId/forget` with `{ "baseRevision": "2" }`: sets `forgotten_at` and marks derived summaries for regeneration.
-- `POST .../memory/:itemId/confirm` with `{ "baseRevision": "1" }`: confirms an externally sourced item so that it can be admitted into context.
+- `POST .../memory/:itemId/forget` with `{ "baseRevision": 2 }`: sets `forgotten_at` and marks derived summaries for regeneration.
+- `POST .../memory/:itemId/confirm` with `{ "baseRevision": 1 }`: confirms an externally sourced item so that it can be admitted into context.
 
-Both return `200 { "itemId": "...", "revision": "3" }`.
+Both return `200 { "itemId": "...", "revision": 3 }`.
 
 ## Bot participants (M3)
 
-- `POST /api/chats/:chatId/bot-participants` with `{ "agentId": "bot_...", "clientRequestId": "uuid" }`. This requires the shared-chat manage permission plus bot-owner consent; the owner is the same person in the single-owner case.
+- `POST /api/chats/:chatId/bot-participants` with `{ "agentId": "bot_...", "clientRequestId": "req_..." }`. This requires the shared-chat manage permission plus bot-owner consent; the owner is the same person in the single-owner case.
 - `DELETE /api/chats/:chatId/bot-participants/:agentId` stops future work. Existing messages keep their attribution.
 
 ## Routines (M2)
 
-`PATCH /api/chat-agents/:agentId/routines/:routineId` with `{ "baseRevision": "2", "status": "active|paused|archived" }`. Creating a routine happens only through conversation: an approval-kind interaction whose payload carries schedule, timezone, delivery chat, and required effects.
+`PATCH /api/chat-agents/:agentId/routines/:routineId` with `{ "baseRevision": 2, "status": "active|paused|archived" }`. Creating a routine happens only through conversation: an approval-kind interaction whose payload carries schedule, timezone, delivery chat, and required effects.
 
 ## Computer stream (M4)
 

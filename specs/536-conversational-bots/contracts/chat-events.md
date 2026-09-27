@@ -2,6 +2,12 @@
 
 These additions extend the closed event enum in `packages/contracts/src/canonical-chat-api.ts` and the outbox types. Every event is published through the existing transactional outbox after commit, with the existing WebSocket (`/ws/chats/events`) and HTTP (`/api/chats/events`) delivery.
 
+Stream events carry only `{ cursor, chatId, revision, eventType, createdAt }`, and clients refetch details through authorized reads. The payload column below describes what a bot-aware client refetches, not stream fields.
+
+**Compatibility.** Released desktop and mobile clients validate `eventType` strictly. New types reach a client only when it sends event wire version `1` (`ChatEventWireVersionSchema`, `packages/contracts/src/chat-event-wire.ts`). Clients on version `0` (the default) receive `chat.updated` for every bot event type via `projectChatEventTypeForWire`.
+
+**Chat binding.** Events without a natural chat use the bot's direct chat ID.
+
 | Event | Payload | Emitted when |
 |---|---|---|
 | `bot.created` | `{ agentId, chatId, revision }` | Instantiation reaches `active` |

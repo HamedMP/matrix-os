@@ -16,7 +16,7 @@ Selecting a recipe creates a durable, named rabbit bot with a direct chat and a 
   - `typebox` 1.3.27 (transitive)
   - Playwright Chromium in the M4 computer service only
 - Existing:
-  - Hono, Zod 4 (`zod/v4`), Kysely/Postgres, undici (gateway)
+  - Hono, Zod 4 (`zod/v4`), Kysely/Postgres
   - scope-runtime supervisor and broker
   - the integrations platform proxy
   - canonical Chat and Provider V3
@@ -164,6 +164,16 @@ The site documentation is a separate PR in `FinnaAI/matrix-os-site` per mileston
 | Electron Desktop | L11 | L12 | L13-14 | L16 | N/A |
 | Web Mobile | L11 | L12 | L13-14 | View and takeover only (L16) | N/A |
 | Native Mobile | L11 | L12 | L13-14 | View only; takeover recorded as a platform limitation | N/A |
+
+## Owner Decisions and Recorded Exceptions
+
+These are decisions the owner made explicitly. They depart from repository defaults for this feature only; they are recorded here, not assumed.
+
+| Decision | Source | Scope and safeguards |
+|---|---|---|
+| Use GitHub native stacked PRs (`gh stack`) instead of Graphite | Owner instruction, 2026-09-27: use GitHub stacked PRs for the implementation phases | This feature's stack only; Graphite remains the repository default. The bottom-up merge safety rules in AGENTS.md apply unchanged. |
+| Evaluate Pi for recipe-bot execution | Feature input by the owner (PR #1940, 2026-09-26): evaluate a Matrix-owned agent powered by Pi | Recipe-bot execution only; the kernel stays on Claude Agent SDK V1 `query()`/`resume`. The runtime choice is bound by the runtime decision record after S0. If S0 fails, bots use the comparison runtime instead. |
+| Publish the spec before the Pi probe | Owner-requested sequence recorded in spec.md (Assumptions) | No layer that depends on undocumented Pi behavior (L4 onward) merges before S0 evidence is recorded. Spike-before-spec intent is preserved by the S0 merge gate. |
 
 ## Complexity Tracking
 

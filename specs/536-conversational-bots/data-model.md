@@ -240,11 +240,11 @@ Add `request_class text NOT NULL DEFAULT 'interactive' CHECK (request_class IN (
 | Column | Type | Rules |
 |---|---|---|
 | owner_id | text | PK part |
-| token_id | text | PK part |
-| request_id | text | PK part |
-| created_at, expires_at | timestamptz | expiry ≤2 min |
+| machine_id | text | PK part; from the stored credential |
+| runtime_slot | text | PK part; from the stored credential |
+| created_at, expires_at | timestamptz | expiry ≤2 min; never extended by a conflicting upsert |
 
-Written and consumed only inside `authorize`, under the owner advisory lock. There are at most 16 live claims per owner. Expired claims are deleted by the existing reservation cleanup worker.
+Written and consumed only inside `authorize`, under the owner advisory lock. The key is the runtime's interactive slot, so claims survive relay retries (new request IDs) and lease rotation. Claim-bearing rejections commit through a typed outcome rather than a throw. There are at most 16 live claims per owner. Expired claims are deleted by the existing reservation cleanup worker.
 
 ## Relationships
 
