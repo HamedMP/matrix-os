@@ -73,6 +73,12 @@ describe("funded AI interactive priority claims", () => {
     await expect(issue(primary, "background")).rejects.toMatchObject({ code: "rate_limited" });
   });
 
+  it("marks a plain busy-slot refusal as a safe capacity retry", async () => {
+    const background = await issue(primary, "background");
+    await repo.authorize(usage(background, "bg_1"));
+    await expect(repo.authorize(usage(background, "bg_2"))).rejects.toMatchObject({ code: "rate_limited", reason: "slot_busy" });
+  });
+
   it("treats a credential issued without a class as interactive", async () => {
     const legacy = (await repo.issueRuntimeCredential(primary)).credential;
     expect(await db.executor.selectFrom("ai_runtime_credentials").select("request_class")
