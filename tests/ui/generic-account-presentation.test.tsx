@@ -32,4 +32,17 @@ describe("harness-owned account presentation", () => {
     expect(selected.accessSourceId).toBeNull();
     expect(selected.enabled).toBe(false);
   });
+  it.each(["missing", "other_harness"] as const)("does not infer a native account from a %s configured binding", async (binding) => {
+    const snapshot = await nativeAccountPresentationFixture("pi");
+    const selected = { ...snapshot.harnesses[0]!, accessSourceId: null, enabled: false, accountIds: [],
+      configuredAccessSourceId: binding === "missing" ? "missing_source" : snapshot.harnesses[0]!.configuredAccessSourceId };
+    const sources = snapshot.accessSources.map((source) => source.kind === "harness_profile" ? { ...source, harness: "opencode" as const } : source);
+    render(<AccountsPanel harness={selected} accounts={[]} sources={sources} allHarnesses={snapshot.harnesses}
+      gatewayPolicy={null} attempt={null} disabled={false} canLogin={false} canLogout={false} canRemove={false} canReassign={false}
+      onMutate={vi.fn()} onOpenTerminal={vi.fn()} onOpenBrowser={vi.fn()} />);
+    expect(screen.queryByText(/manages authentication for this route/)).not.toBeInTheDocument();
+    expect(screen.queryByTestId("account-owner_codex")).not.toBeInTheDocument();
+    expect(selected.accessSourceId).toBeNull();
+    expect(selected.enabled).toBe(false);
+  });
 });
