@@ -58,8 +58,13 @@ describe("terminal navigation supersedes pending history intent", () => {
       geometry.setHostSize(1_600, 300); presentation.schedule(); flush();
       expect(host.scrollTop, "actual bottom resumes following immediately, without the 4 s expiry")
         .toBeCloseTo(host.scrollHeight - host.clientHeight);
+      const cancel = vi.spyOn(history, "cancelScroll");
       presentation.reset();
-      if (navigation === "accepted-key") expect(keyDispose).toHaveBeenCalledOnce();
+      expect(keyDispose).toHaveBeenCalledOnce();
+      const cancellations = cancel.mock.calls.length;
+      keyListener?.({ key: "\r", domEvent: new KeyboardEvent("keydown", { key: "Enter" }) });
+      host.dispatchEvent(new KeyboardEvent("keydown", { key: "PageDown", shiftKey: true, bubbles: true }));
+      expect(cancel).toHaveBeenCalledTimes(cancellations);
     } finally {
       presentation.dispose(); history.dispose(); host.remove();
       document.body.replaceChildren(); vi.unstubAllGlobals(); vi.useRealTimers();

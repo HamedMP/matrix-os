@@ -12,6 +12,7 @@ interface GridTerminal {
   options: { fontSize?: number; scrollback?: number; overviewRuler?: { width?: number } };
   onWriteParsed?: (listener: () => void) => { dispose(): void };
   onScroll?: (listener: () => void) => { dispose(): void };
+  onKey?: (listener: (event: { key: string; domEvent: KeyboardEvent }) => void) => { dispose(): void };
   scrollToLine?: (line: number) => void;
   buffer?: { active: { type?: string; baseY: number; viewportY: number; cursorX: number; cursorY: number;
     getLine?: (row: number) => { getCell(column: number): { getChars(): string; getWidth(): number; isBgDefault(): boolean; isInverse?: () => number } | undefined } | undefined;
@@ -92,6 +93,7 @@ export function createTerminalGridPresentation(options: GridPresentationOptions)
   let settledLayout: { metrics: number[]; layout: ReturnType<typeof computeSoftGridLayout> } | null = null;
   let scrollbar: ReturnType<typeof createTerminalScrollbar> | undefined;
   let scrollSubscription: { dispose(): void } | undefined;
+  let keySubscription: { dispose(): void } | undefined;
   let visualCellHeight = 0;
   let liveContentHeight = 0;
   let contentGrid: { cols: number; rows: number } | undefined;
@@ -112,10 +114,24 @@ export function createTerminalGridPresentation(options: GridPresentationOptions)
     pannedAfterViewportChange ||= previousViewportHeight !== null && host.clientHeight !== previousViewportHeight;
   };
 
+  const onNavigation = () => {
+    if (disposed || !stage) return;
+    // New user navigation supersedes rail intent; an untagged state reply does
+    // not. Following still waits for actual history to report the live bottom.
+    if (scrollbar?.hasPendingIntent()) historyWasObserved = true;
+    scrollbar?.cancelPending();
+    railPannedAway = false;
+  };
+  const onNavigationKeyDown = (event: KeyboardEvent) => {
+    // xterm handles Shift+PageUp/Down as local scrolling before its onKey event.
+    if (event.shiftKey && (event.key === "PageUp" || event.key === "PageDown")) onNavigation();
+  };
+
   const onWheel = (event: WheelEvent & { matrixGridCorrected?: boolean }) => {
     if (event.matrixGridCorrected || event.defaultPrevented || !element || !stage || !(event.target instanceof Element) || !host.contains(event.target)) return;
     const scale = presentationScale * (options.getParentScale?.() ?? 1);
     if (!Number.isFinite(scale) || scale <= 0) return;
+    if (event.cancelable && event.deltaY && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey) onNavigation();
     const pan = panTerminalGrid(event, host, stage, contentGrid ?? options.getTerminal());
     if (pan.verticalPanned) {
       scrollbar?.cancelPending();
@@ -226,7 +242,9 @@ export function createTerminalGridPresentation(options: GridPresentationOptions)
       // xterm emits once per parsed write batch; RAF coalesces output bursts.
       outputSubscription = terminal.onWriteParsed?.(schedule);
       scrollSubscription = terminal.onScroll?.(schedule);
+      keySubscription = terminal.onKey?.(onNavigation);
       host.addEventListener("mousedown", onBlankMouseDown);
+      host.addEventListener("keydown", onNavigationKeyDown, true);
       host.addEventListener("scroll", schedule);
       host.addEventListener("wheel", onWheel, { capture: true, passive: false });
       element = root;
@@ -322,10 +340,13 @@ export function createTerminalGridPresentation(options: GridPresentationOptions)
     railPannedAway = false;
     historyWasObserved = false;
     scrollSubscription?.dispose();
+    keySubscription?.dispose();
+    keySubscription = undefined;
     scrollSubscription = undefined;
     outputSubscription?.dispose();
     outputSubscription = undefined;
     host.removeEventListener("mousedown", onBlankMouseDown);
+    host.removeEventListener("keydown", onNavigationKeyDown, true);
     host.removeEventListener("scroll", schedule);
     host.removeEventListener("wheel", onWheel, true);
     if (element && restoreStyle) Object.assign(element.style, restoreStyle);
