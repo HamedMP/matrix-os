@@ -15,6 +15,7 @@ import {
   AgentThreadSnapshotSchema,
   CodingAgentNotificationPreferencesSchema,
   CodingAgentNotificationPreferencesUpdateSchema,
+  CollaborationOrganizationIdSchema,
   CreateAgentThreadRequestSchema,
   CreateAgentTurnErrorSchema,
   CreateAgentTurnRequestSchema,
@@ -166,6 +167,8 @@ export const INVOKE_CHANNELS = {
         displayName: z.string().max(256).optional(),
         imageUrl: z.string().url().max(2048).optional(),
         email: z.email().max(320).optional(),
+        // Active organization for Share controls, resolved by the trusted core.
+        organizationId: CollaborationOrganizationIdSchema.optional(),
         runtimeSlot: z.string().max(64),
         platformHost: z.string().max(256),
         authGeneration: z.number().int().nonnegative(),
@@ -177,6 +180,7 @@ export const INVOKE_CHANNELS = {
         displayName: z.never().optional(),
         imageUrl: z.never().optional(),
         email: z.never().optional(),
+        organizationId: z.never().optional(),
         runtimeSlot: z.string().max(64),
         platformHost: z.string().max(256),
         authGeneration: z.number().int().nonnegative(),
@@ -482,6 +486,9 @@ export const EVENT_CHANNELS = {
       imageUrl: z.string().url().max(2048).optional(),
     })
     .strict(),
+  // The active organization changed without a credential change; the renderer
+  // re-reads it from auth:status rather than trusting an event payload.
+  "auth:organization-changed": Empty,
   "runtime:changed": z.object({ slot: z.string().min(1).max(64) }).strict(),
   "embed:state": z
     .object({

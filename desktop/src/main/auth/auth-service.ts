@@ -6,6 +6,8 @@ import {
 } from "@matrix-os/contracts";
 // Trusted-core auth orchestration: owns the device flow, the credential, and
 // the connection profile. The renderer only ever sees status snapshots.
+import { ActiveOrganizationTracker } from "./active-organization";
+import { readBoundedResponseText } from "./bounded-response";
 import type { CredentialStore, StoredCredential } from "./credential-store";
 import {
   DeviceFlowError,
@@ -41,6 +43,9 @@ export type AuthStatus =
       displayName?: string;
       imageUrl?: string;
       email?: string;
+      // Active organization for Share controls, resolved from the platform
+      // membership listing; absent when none (or no unambiguous one) exists.
+      organizationId?: string;
     })
   | (AuthStatusBase & {
       signedIn: false;
@@ -62,29 +67,6 @@ const RUNTIME_SELECTION_TIMEOUT_MS = 10_000;
 const RUNTIME_SELECTION_RESPONSE_LIMIT = 16 * 1024;
 const RUNTIME_SELECTION_ERROR = "Computer switch failed. Try again.";
 
-async function readBoundedResponseText(response: Response): Promise<string> {
-  if (!response.body) return "";
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let totalBytes = 0;
-  let text = "";
-  try {
-    while (true) {
-      const chunk = await reader.read();
-      if (chunk.done) break;
-      totalBytes += chunk.value.byteLength;
-      if (totalBytes > RUNTIME_SELECTION_RESPONSE_LIMIT) {
-        await reader.cancel();
-        throw new Error("runtime selection response too large");
-      }
-      text += decoder.decode(chunk.value, { stream: true });
-    }
-    return text + decoder.decode();
-  } finally {
-    reader.releaseLock();
-  }
-}
-
 interface AuthServiceDeps {
   credentialStore: CredentialStore;
   platformHost: string;
@@ -95,6 +77,9 @@ interface AuthServiceDeps {
   saveProfile: (profile: ConnectionProfile) => Promise<void>;
   clearProfile: () => Promise<void>;
   onAuthChanged: (status: AuthStatus) => void;
+  // Organization changes are not credential changes: they must not tear down
+  // downloads or sessions, so they get their own notification.
+  onOrganizationChanged?: (status: AuthStatus) => void;
 }
 
 export class AuthService {
@@ -106,9 +91,16 @@ export class AuthService {
   private persistenceTail: Promise<void> = Promise.resolve();
   private pendingDeviceCode: Pick<DeviceCodeResponse, "userCode" | "verificationUri" | "expiresIn"> | null = null;
   private readonly deps: AuthServiceDeps;
+  private readonly organizations: ActiveOrganizationTracker;
 
   constructor(deps: AuthServiceDeps) {
     this.deps = deps;
+    this.organizations = new ActiveOrganizationTracker({
+      origin: deps.runtimeSelectionOrigin,
+      fetchFn: (input, init) => (deps.fetchFn ?? fetch)(input, init),
+      now: () => this.now(),
+      onChanged: () => this.deps.onOrganizationChanged?.(this.getStatus()),
+    });
   }
 
   async init(): Promise<void> {
@@ -175,10 +167,12 @@ export class AuthService {
         authGeneration: this.authGeneration,
       };
     }
+    const organizationId = this.organizations.organizationFor(credential.userId);
     return {
       signedIn: true,
       handle: credential.handle,
       userId: credential.userId,
+      ...(organizationId ? { organizationId } : {}),
       ...(authenticatedProfile?.displayName ? { displayName: authenticatedProfile.displayName } : {}),
       ...(authenticatedProfile?.imageUrl ? { imageUrl: authenticatedProfile.imageUrl } : {}),
       ...(authenticatedProfile?.email ? { email: authenticatedProfile.email } : {}),
@@ -186,6 +180,23 @@ export class AuthService {
       platformHost: this.getGatewayOrigin(),
       authGeneration: this.authGeneration,
     };
+  }
+
+  /**
+   * Resolves the account's active organization for Share controls. Membership
+   * belongs to the account, not to a runtime, so a runtime switch keeps it.
+   * Never rejects: a failed lookup keeps the last known value.
+   */
+  async refreshOrganization(options: { maxAgeMs?: number } = {}): Promise<void> {
+    this.expireCredentialIfNeeded();
+    const credential = this.credential;
+    if (!credential) return;
+    await this.organizations.refresh({
+      userId: credential.userId,
+      accessToken: credential.accessToken,
+      isCurrent: () => this.credential?.userId === credential.userId && !this.isExpired(),
+      ...(options.maxAgeMs ? { maxAgeMs: options.maxAgeMs } : {}),
+    });
   }
 
   private replaceCredential(credential: StoredCredential | null): void {
@@ -350,7 +361,7 @@ export class AuthService {
     if (Number.isFinite(contentLength) && contentLength > RUNTIME_SELECTION_RESPONSE_LIMIT) {
       throw new Error("runtime selection response too large");
     }
-    const text = await readBoundedResponseText(response);
+    const text = await readBoundedResponseText(response, RUNTIME_SELECTION_RESPONSE_LIMIT, "runtime selection");
     const replacement = RuntimeSelectionResponseSchema.parse(JSON.parse(text));
     if (replacement.slot !== request.slot) throw new Error("runtime selection mismatch");
     return {
@@ -443,7 +454,7 @@ export class AuthService {
       if (Number.isFinite(contentLength) && contentLength > RUNTIME_SELECTION_RESPONSE_LIMIT) {
         throw new Error("computer inventory response too large");
       }
-      const text = await readBoundedResponseText(response);
+      const text = await readBoundedResponseText(response, RUNTIME_SELECTION_RESPONSE_LIMIT, "computer inventory");
       return MatrixComputerListSchema.parse(JSON.parse(text));
     } catch (err: unknown) {
       console.warn(
@@ -478,6 +489,7 @@ export class AuthService {
     this.flowNonce += 1;
     this.pendingDeviceCode = null;
     this.replaceCredential(null);
+    this.organizations.clear();
     this.profile = null;
     this.flowState = "idle";
     this.deps.onAuthChanged(this.getStatus());

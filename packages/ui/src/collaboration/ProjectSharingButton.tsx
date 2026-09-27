@@ -10,6 +10,7 @@ import { useEffect, useRef, useState } from "react";
 import { z } from "zod/v4";
 import { ChatCollaboratorsDialog, type CollaborationApi } from "./ChatCollaboratorsDialog.js";
 import { ProjectSharingDialog } from "./ProjectSharingDialog.js";
+import { ORGANIZATION_REQUIRED_SHARE_LABEL } from "./share-labels.js";
 
 // react-doctor-disable-next-line react-doctor/zod-v4-no-deprecated-schema-apis -- imported from zod/v4; array max is the current bounded-array API and is verified by the package typecheck.
 const MembersSchema = z.object({ members: z.array(CollaborationMemberSchema).max(8) }).strict();
@@ -122,7 +123,7 @@ export function ProjectSharingButton({ api, runtimeId, organizationId, projectId
   return <div className="relative inline-flex shrink-0 items-center">
     <button type="button" className={buttonClass} aria-label="Share project" disabled={pending || !runtimeId || !organizationId}
       aria-expanded={surface !== null} onClick={() => surface ? close() : void begin()}>
-      {pending || !runtimeId ? "Loading share…" : !organizationId ? "Join an organization to share" : "Share"}
+      {pending || !runtimeId ? "Loading share…" : !organizationId ? ORGANIZATION_REQUIRED_SHARE_LABEL : "Share"}
     </button>
     {error ? <span role="alert" className="absolute right-0 top-full z-50 mt-2 w-72 rounded-lg border bg-[var(--bg-surface,var(--background))] p-3 shadow-lg">
       Project sharing is unavailable. The project remains private and unchanged.

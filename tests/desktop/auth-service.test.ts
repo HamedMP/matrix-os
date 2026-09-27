@@ -29,6 +29,7 @@ function makeService(opts: {
   fetchFn?: (input: string, init?: RequestInit) => Promise<Response>;
   saveProfile?: (profile: ConnectionProfile) => Promise<void>;
   beforeSaveCredential?: (credential: StoredCredential) => Promise<void>;
+  onOrganizationChanged?: (status: AuthStatus) => void;
 }) {
   const { store, peek } = makeCredentialStore(opts.credential ?? null, opts.beforeSaveCredential);
   let profile = opts.profile ?? null;
@@ -48,6 +49,7 @@ function makeService(opts: {
       profile = null;
     },
     onAuthChanged: (status) => changes.push(status),
+    ...(opts.onOrganizationChanged ? { onOrganizationChanged: opts.onOrganizationChanged } : {}),
   });
   return { auth, store, changes, getProfile: () => profile, peekCredential: peek };
 }
@@ -985,5 +987,72 @@ describe("AuthService auth generation", () => {
 
     await auth.signOut();
     expect(auth.getStatus().authGeneration).not.toBe(afterSwitch);
+  });
+});
+
+describe("AuthService active organization", () => {
+  const membership = {
+    organizations: [{ organizationId: "org_matrix_team", name: "Matrix", slug: "matrix", role: "member", aiSubmission: "members", membershipEpoch: 1 }],
+  };
+
+  it("adds the resolved organization to the signed-in status and announces the change", async () => {
+    const fetchFn = vi.fn(async () => jsonResponse(membership));
+    const organizationChanges: AuthStatus[] = [];
+    const { auth, changes } = makeService({
+      credential: VALID,
+      profile: PROFILE,
+      now: 10_000,
+      fetchFn,
+      onOrganizationChanged: (status) => organizationChanges.push(status),
+    });
+    await auth.init();
+    expect(auth.getStatus()).not.toHaveProperty("organizationId");
+
+    await auth.refreshOrganization();
+
+    expect(fetchFn).toHaveBeenCalledWith(
+      "https://api.matrix-os.com/api/organizations",
+      expect.objectContaining({ headers: expect.objectContaining({ authorization: "Bearer tok" }) }),
+    );
+    expect(auth.getStatus()).toMatchObject({ signedIn: true, organizationId: "org_matrix_team" });
+    expect(organizationChanges).toHaveLength(1);
+    expect(organizationChanges[0]).toMatchObject({ organizationId: "org_matrix_team" });
+    // An organization change is not a credential change: downloads and sessions keep running.
+    expect(changes).toHaveLength(0);
+  });
+
+  it("does not request or expose an organization without a live credential", async () => {
+    const fetchFn = vi.fn(async () => jsonResponse(membership));
+    const { auth } = makeService({ profile: PROFILE, now: 10_000, fetchFn });
+    await auth.init();
+
+    await auth.refreshOrganization();
+
+    expect(fetchFn).not.toHaveBeenCalled();
+    expect(auth.getStatus()).not.toHaveProperty("organizationId");
+  });
+
+  it("keeps the session when the organization listing is unauthorized", async () => {
+    const fetchFn = vi.fn(async () => new Response("unauthorized", { status: 401 }));
+    const { auth, changes, peekCredential } = makeService({ credential: VALID, profile: PROFILE, now: 10_000, fetchFn });
+    await auth.init();
+
+    await auth.refreshOrganization();
+
+    expect(auth.getStatus()).toMatchObject({ signedIn: true });
+    expect(auth.getStatus()).not.toHaveProperty("organizationId");
+    expect(peekCredential()).not.toBeNull();
+    expect(changes).toHaveLength(0);
+  });
+
+  it("forgets the organization on sign-out", async () => {
+    const fetchFn = vi.fn(async () => jsonResponse(membership));
+    const { auth } = makeService({ credential: VALID, profile: PROFILE, now: 10_000, fetchFn });
+    await auth.init();
+    await auth.refreshOrganization();
+
+    await auth.signOut();
+
+    expect(auth.getStatus()).not.toHaveProperty("organizationId");
   });
 });

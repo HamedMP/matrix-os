@@ -10,8 +10,10 @@ export function DesktopTerminalSharing({ terminalId }: { terminalId: string }) {
   const platformHost = useConnection((state) => state.platformHost);
   const collaborationApi = useMemo(() => createDesktopCollaborationApi(platformHost), [platformHost]);
   const runtimeId = useCollaborationRuntimeId(api);
+  // Keyed by terminal, matching the shell: a switch must not carry one terminal's
+  // pending preflight or open dialog over to another.
   return collaborationApi && runtimeId
-    ? <DesktopCollaborationOrganization>{(organizationId) => <TerminalSharingButton api={collaborationApi}
+    ? <DesktopCollaborationOrganization>{(organizationId) => <TerminalSharingButton key={terminalId} api={collaborationApi}
       runtimeId={runtimeId} organizationId={organizationId} terminalId={terminalId} />}</DesktopCollaborationOrganization>
     : null;
 }

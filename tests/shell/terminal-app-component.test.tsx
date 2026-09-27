@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import React from "react";
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const paneGridSpy = vi.fn();
@@ -16,6 +16,10 @@ vi.mock("../../shell/src/components/terminal/PaneGrid.js", () => ({
     paneGridSpy(props);
     return <div data-testid="terminal-pane-grid" />;
   },
+}));
+
+vi.mock("../../shell/src/components/terminal/TerminalSharing.js", () => ({
+  TerminalSharing: ({ terminalId }: { terminalId: string }) => <button type="button">Share terminal {terminalId}</button>,
 }));
 
 vi.mock("@/components/projects/ProjectSharing", () => ({
@@ -289,6 +293,31 @@ describe("TerminalApp workspace contract", () => {
     await settle();
 
     expect(screen.getAllByTestId(/terminal-session-card-/)).toHaveLength(23);
+  });
+
+  it("mounts the active terminal Share control in the Web Desktop session header", async () => {
+    render(<TerminalApp initialSessionId={REF_KEY} embeddedChrome desktopParity />);
+    await settle();
+
+    const header = screen.getByTestId("terminal-desktop-session-header");
+    expect(within(header).getByRole("button", { name: `Share terminal ${REF_KEY}` })).toBeTruthy();
+  });
+
+  it("mounts the same active terminal Share control in the Web Canvas session header", async () => {
+    render(<TerminalApp initialSessionId={REF_KEY} embeddedChrome />);
+    await settle();
+
+    const header = screen.getByTestId("terminal-desktop-session-header");
+    expect(within(header).getByRole("button", { name: `Share terminal ${REF_KEY}` })).toBeTruthy();
+    expect(screen.getAllByRole("button", { name: /^Share terminal/ })).toHaveLength(1);
+  });
+
+  it("keeps Web Mobile terminal sharing in the mobile chrome without the desktop header", async () => {
+    render(<TerminalApp initialSessionId={REF_KEY} embeddedChrome mobile />);
+    await settle();
+
+    expect(screen.queryByTestId("terminal-desktop-session-header")).toBeNull();
+    expect(screen.getAllByRole("button", { name: `Share terminal ${REF_KEY}` })).toHaveLength(1);
   });
 
   it("uses soft terminal sizing on mobile", async () => {

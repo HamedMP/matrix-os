@@ -1,5 +1,6 @@
 "use client";
 
+import type { ReactNode } from "react";
 import { LoaderCircleIcon, PlusIcon, SearchIcon, SquareTerminalIcon } from "@/lib/hugeicons";
 
 export function DesktopTerminalEmptyState({
@@ -82,7 +83,13 @@ export function DesktopTerminalEmptyState({
   );
 }
 
-export function DesktopTerminalSessionHeader({ title }: { title: string }) {
+/**
+ * Session header above the active terminal in the Web Desktop and Web Canvas
+ * layouts. `actions` follows the Active status the way Electron Desktop's
+ * session details do, so the owner Share control sits in the same place on
+ * every desktop OS view.
+ */
+export function DesktopTerminalSessionHeader({ title, actions }: { title: string; actions?: ReactNode }) {
   return (
     <header
       data-testid="terminal-desktop-session-header"
@@ -97,16 +104,19 @@ export function DesktopTerminalSessionHeader({ title }: { title: string }) {
         <h2 className="truncate text-sm font-medium">{title}</h2>
         <p className="mt-1 text-xs" style={{ color: "var(--terminal-chrome-muted)" }}>Connected to this Matrix OS runtime</p>
       </div>
-      <span
-        className="rounded-full border px-2.5 py-1 text-xs font-medium"
-        style={{
-          background: "var(--terminal-chrome-badge-bg)",
-          borderColor: "var(--terminal-chrome-badge-border)",
-          color: "var(--terminal-chrome-accent)",
-        }}
-      >
-        Active
-      </span>
+      <div className="flex shrink-0 items-center gap-2">
+        <span
+          className="rounded-full border px-2.5 py-1 text-xs font-medium"
+          style={{
+            background: "var(--terminal-chrome-badge-bg)",
+            borderColor: "var(--terminal-chrome-badge-border)",
+            color: "var(--terminal-chrome-accent)",
+          }}
+        >
+          Active
+        </span>
+        {actions}
+      </div>
     </header>
   );
 }
