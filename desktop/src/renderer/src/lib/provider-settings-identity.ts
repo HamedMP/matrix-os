@@ -13,4 +13,3 @@ export function desktopProviderIdentityKey(identity: {
     identity.authGeneration,
   ].join("|");
 }
-
