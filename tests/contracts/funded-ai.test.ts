@@ -12,6 +12,7 @@ import {
   FundedAiRuntimeFundingSummaryResponseSchema,
   FundedAiPolicyCheckRequestSchema,
   FundedAiPolicyCheckResponseSchema,
+  FundedAiRuntimeCredentialIssueRequestSchema,
   FundedAiRuntimeCredentialIssueResponseSchema,
   FundedAiSafeErrorSchema,
   FundedAiSettlementResponseSchema,
@@ -354,5 +355,49 @@ describe("funded AI control-plane contracts", () => {
       ...grantResponse,
       grant: { ...grantResponse.grant, entryId: "machine_123" },
     }).success).toBe(false);
+  });
+});
+
+describe("funded AI request classes and priority", () => {
+  const issued = {
+    contractVersion: 1,
+    credential: {
+      token: credential,
+      tokenId,
+      audience: "matrix-funded-relay",
+      scope: "ai:invoke",
+      issuedAt: now,
+      expiresAt,
+    },
+    identity: { ownerId: "user_alice", machineId: "machine_123", runtimeSlot: "primary" },
+    policy,
+  } as const;
+
+  it("issues credentials for an explicit class and keeps the legacy empty body interactive", () => {
+    expect(FundedAiRuntimeCredentialIssueRequestSchema.parse({ requestClass: "background" })).toEqual({ requestClass: "background" });
+    expect(FundedAiRuntimeCredentialIssueRequestSchema.parse({})).toEqual({ requestClass: "interactive" });
+    expect(FundedAiRuntimeCredentialIssueRequestSchema.safeParse({ requestClass: "urgent" }).success).toBe(false);
+    expect(FundedAiRuntimeCredentialIssueRequestSchema.safeParse({ requestClass: "background", ownerId: "user_bob" }).success).toBe(false);
+  });
+
+  it("echoes the class only as an optional top-level field so older gateways keep parsing", () => {
+    expect(FundedAiRuntimeCredentialIssueResponseSchema.parse(issued)).toEqual(issued);
+    expect(FundedAiRuntimeCredentialIssueResponseSchema.parse({ ...issued, requestClass: "background" }).requestClass).toBe("background");
+    expect(FundedAiRuntimeCredentialIssueResponseSchema.safeParse({
+      ...issued,
+      credential: { ...issued.credential, requestClass: "background" },
+    }).success).toBe(false);
+  });
+
+  it("allows only allowlisted priority reasons on rate-limited errors", () => {
+    for (const reason of ["slot_busy", "priority_hold", "priority_queue", "priority_full"]) {
+      expect(FundedAiSafeErrorSchema.parse({ error: { code: "rate_limited", message: "Try again later", reason } }).error)
+        .toEqual({ code: "rate_limited", message: "Try again later", reason });
+    }
+    expect(FundedAiSafeErrorSchema.parse({ error: { code: "rate_limited", message: "Try again later" } }).error.code).toBe("rate_limited");
+    expect(FundedAiSafeErrorSchema.safeParse({ error: { code: "rate_limited", message: "Try again later", reason: "owner_alice_busy" } }).success)
+      .toBe(false);
+    expect(FundedAiSafeErrorSchema.safeParse({ error: { code: "unavailable", message: "Service unavailable", reason: "slot_busy" } }).success)
+      .toBe(false);
   });
 });
