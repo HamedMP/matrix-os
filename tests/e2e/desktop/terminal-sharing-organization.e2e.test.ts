@@ -10,6 +10,9 @@ const ROOT = resolve(__dirname, "../../..");
 const MAIN = join(ROOT, "desktop/out/main/index.js");
 const EVIDENCE = join(ROOT, "output/playwright/terminal-sharing-organization");
 const electronPath = createRequire(join(ROOT, "desktop/package.json"))("electron") as string;
+if (process.env.MATRIX_DESKTOP_E2E_REQUIRED === "1" && !existsSync(MAIN)) {
+  throw new Error("Required Share organization E2E needs desktop/out/main/index.js; run the desktop build first");
+}
 const suite = existsSync(MAIN) ? describe : describe.skip;
 
 // Spec 535 FR-024 / issue #1798: Electron Desktop has no Clerk session, so the
