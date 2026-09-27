@@ -329,42 +329,71 @@ describe("CollaborationFrame", () => {
     expect(screen.getByText("mina@example.com")).toBeVisible();
   });
 
-  it("closes collaboration sessions before signing out", async () => {
+  it("closes collaboration sessions once Clerk confirms sign-out", async () => {
     const requests = recordFetches();
     render(<CollaborationFrame view={{ kind: "home" }} />);
 
     fireEvent.pointerDown(screen.getByRole("button", { name: "Account menu for Mina Member" }), { button: 0, ctrlKey: false });
     fireEvent.click(await screen.findByRole("menuitem", { name: "Sign out" }));
 
-    await waitFor(() => expect(clerkState.signOut).toHaveBeenCalledOnce());
+    await waitFor(() => expect(replaceMock).toHaveBeenCalledWith(`${origin}/sign-in?redirect_url=%2Fshared`));
+    expect(clerkState.signOut).toHaveBeenCalledWith({ redirectUrl: `${origin}/sign-in?redirect_url=%2Fshared` });
     const closeOrder = vi.mocked(closeShellCollaborationSessions).mock.invocationCallOrder[0];
     expect(closeOrder).toBeDefined();
-    expect(closeOrder!).toBeLessThan(clerkState.signOut.mock.invocationCallOrder[0]!);
-    expect(clerkState.signOut).toHaveBeenCalledWith({ redirectUrl: `${origin}/sign-in?redirect_url=%2Fshared` });
-    await waitFor(() => expect(replaceMock).toHaveBeenCalledWith(`${origin}/sign-in?redirect_url=%2Fshared`));
+    expect(closeOrder!).toBeGreaterThan(clerkState.signOut.mock.invocationCallOrder[0]!);
+    expect(closeOrder!).toBeLessThan(replaceMock.mock.invocationCallOrder[0]!);
+    expect(requests).toContainEqual({ path: "/api/auth/app-session", method: "DELETE" });
+    const appSessionCleared = vi.mocked(globalThis.fetch).mock.invocationCallOrder[
+      requests.findIndex((request) => request.path === "/api/auth/app-session")
+    ];
+    expect(appSessionCleared!).toBeLessThan(clerkState.signOut.mock.invocationCallOrder[0]!);
     expectOnlyCollaborationRequests(requests);
   });
 
-  it("stays signed in and reports the failure when Clerk sign-out fails", async () => {
+  it("keeps working sessions and reports the failure when Clerk sign-out fails", async () => {
     const requests = recordFetches();
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     clerkState.signOut.mockRejectedValueOnce(new Error("network"));
     render(<CollaborationFrame view={{ kind: "home" }} />);
+    expect(await screen.findByText("Nothing shared yet")).toBeVisible();
 
     fireEvent.pointerDown(screen.getByRole("button", { name: "Account menu for Mina Member" }), { button: 0, ctrlKey: false });
     fireEvent.click(await screen.findByRole("menuitem", { name: "Sign out" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent("Sign-out did not finish. Try again.");
     expect(replaceMock).not.toHaveBeenCalled();
-    expect(vi.mocked(closeShellCollaborationSessions)).toHaveBeenCalled();
-    // Sign-out closed every direct session, so the frame must continue on a fresh API.
-    await waitFor(() => expect(vi.mocked(createShellCollaborationApi)).toHaveBeenCalledTimes(2));
-    const [firstApi, secondApi] = vi.mocked(createShellCollaborationApi).mock.results.map((result) => result.value);
-    expect(secondApi).not.toBe(firstApi);
-    await waitFor(() => expect(requests.filter((request) => request.path === "/api/collaboration/inbox")).toHaveLength(2));
-    expect(await screen.findByText("Nothing shared yet")).toBeVisible();
+    // Nothing was torn down, so the open view and any unsent input stay as they were.
+    expect(vi.mocked(closeShellCollaborationSessions)).not.toHaveBeenCalled();
+    expect(vi.mocked(createShellCollaborationApi)).toHaveBeenCalledTimes(1);
+    expect(requests.filter((request) => request.path === "/api/collaboration/inbox")).toHaveLength(1);
+    expect(screen.getByText("Nothing shared yet")).toBeVisible();
     fireEvent.pointerDown(screen.getByRole("button", { name: "Account menu for Mina Member" }), { button: 0, ctrlKey: false });
     expect(await screen.findByRole("menuitem", { name: "Sign out" })).not.toHaveAttribute("data-disabled");
+  });
+
+  it("closes collaboration sessions when the account signs out after a timed-out attempt", async () => {
+    recordFetches();
+    const { rerender } = render(<CollaborationFrame view={{ kind: "home" }} />);
+    expect(await screen.findByText("Nothing shared yet")).toBeVisible();
+    expect(vi.mocked(closeShellCollaborationSessions)).not.toHaveBeenCalled();
+
+    clerkState.isSignedIn = false;
+    clerkState.userId = null;
+    rerender(<CollaborationFrame view={{ kind: "home" }} />);
+
+    await waitFor(() => expect(vi.mocked(closeShellCollaborationSessions)).toHaveBeenCalledOnce());
+    expect(screen.getByRole("link", { name: "Sign in" })).toBeVisible();
+  });
+
+  it("closes collaboration sessions when a different account becomes active", async () => {
+    recordFetches();
+    const { rerender } = render(<CollaborationFrame view={{ kind: "home" }} />);
+    expect(await screen.findByText("Nothing shared yet")).toBeVisible();
+
+    clerkState.userId = "user_other";
+    rerender(<CollaborationFrame view={{ kind: "home" }} />);
+
+    await waitFor(() => expect(vi.mocked(closeShellCollaborationSessions)).toHaveBeenCalledOnce());
   });
 
   it("uses brand tokens instead of hard-coded colors", async () => {

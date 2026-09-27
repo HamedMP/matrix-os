@@ -7,15 +7,15 @@ import Image from "next/image";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { DropdownMenu as DropdownMenuPrimitive } from "radix-ui";
-import { useMemo, useState, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { useBrowserOrigin } from "@/hooks/useBrowserOrigin";
-import { createShellCollaborationApi } from "@/lib/collaboration";
+import { closeShellCollaborationSessions, createShellCollaborationApi } from "@/lib/collaboration";
 import { LogOutIcon, ServerIcon, UserIcon, UsersIcon } from "@/lib/hugeicons";
 import { platformShellAssetPath } from "@/lib/platform-shell-assets";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 import {
-  clearMatrixAppSession,
   clerkSignOutWithTimeout,
+  endMatrixAppSession,
   getSignInRedirectUrl,
   isTimeoutError,
 } from "@/lib/sign-out";
@@ -302,30 +302,16 @@ function FrameCollaboration({ view, api, actorId, session }: {
   );
 }
 
-function CollaborationFrameSurface({
-  view,
-  account,
-  sessionGeneration = 0,
-  signingOut,
-  signOutFailed,
-  onManageAccount,
-  onSignOut,
-}: {
+function CollaborationFrameSurface({ view, account, signingOut, signOutFailed, onManageAccount, onSignOut }: {
   view: ChatCollaborationView;
   account: CollaborationFrameAccount;
-  /** Bumped after sign-out closed every direct session but Clerk kept the account signed in. */
-  sessionGeneration?: number;
   signingOut?: boolean;
   signOutFailed?: boolean;
   onManageAccount?: () => void;
   onSignOut: () => void;
 }) {
   const browserOrigin = useBrowserOrigin();
-  // sessionGeneration is intentionally a dependency: sign-out disposes the previous API permanently.
-  const api = useMemo(
-    () => browserOrigin ? createShellCollaborationApi(browserOrigin) : null,
-    [browserOrigin, sessionGeneration],
-  );
+  const api = useMemo(() => browserOrigin ? createShellCollaborationApi(browserOrigin) : null, [browserOrigin]);
   return (
     <CollaborationFrameChrome
       account={account}
@@ -336,10 +322,10 @@ function CollaborationFrameSurface({
       onSignOut={onSignOut}
     >
       {!api ? <FrameStatus /> : view.kind === "chat" ? (
-        <SharedChatSession key={sessionGeneration}>
+        <SharedChatSession>
           {(session) => <FrameCollaboration view={view} api={api} actorId={account.userId} session={session} />}
         </SharedChatSession>
-      ) : <FrameCollaboration key={sessionGeneration} view={view} api={api} actorId={account.userId} />}
+      ) : <FrameCollaboration view={view} api={api} actorId={account.userId} />}
     </CollaborationFrameChrome>
   );
 }
@@ -350,7 +336,16 @@ function ClerkCollaborationFrame({ view }: { view: ChatCollaborationView }) {
   const clerk = useClerk();
   const [signingOut, setSigningOut] = useState(false);
   const [signOutFailed, setSignOutFailed] = useState(false);
-  const [sessionGeneration, setSessionGeneration] = useState(0);
+  const signedInUser = useRef<string | null>(null);
+
+  // Direct sessions belong to the signed-in actor. End them whenever Clerk reports that actor gone:
+  // a sign-out that completes after a timeout, or another account signing in from a different tab.
+  useEffect(() => {
+    if (!isLoaded) return;
+    const current = isSignedIn && userId ? userId : null;
+    if (signedInUser.current && signedInUser.current !== current) closeShellCollaborationSessions();
+    signedInUser.current = current;
+  }, [isLoaded, isSignedIn, userId]);
 
   async function handleSignOut() {
     if (signingOut) return;
@@ -359,20 +354,21 @@ function ClerkCollaborationFrame({ view }: { view: ChatCollaborationView }) {
     const signIn = new URL(getSignInRedirectUrl());
     signIn.searchParams.set("redirect_url", SHARED_HOME);
     const redirectUrl = signIn.toString();
-    // Ends every direct collaboration session before the Clerk identity changes.
-    await clearMatrixAppSession();
+    // Clear the app-session cookie first: Clerk may navigate away as soon as sign-out succeeds.
+    await endMatrixAppSession();
     try {
       await clerkSignOutWithTimeout(clerk.signOut, redirectUrl);
     } catch (error: unknown) {
       if (isTimeoutError(error)) console.warn("[collaboration-frame] Clerk sign-out timed out");
       else console.error("[collaboration-frame] Clerk sign-out failed", error instanceof Error ? error.name : typeof error);
-      // The Clerk session may still be active: never present the account as signed out.
-      // Sign-out already disposed every direct session, so continue on a fresh API.
+      // The Clerk session may still be active: never present the account as signed out, and keep the
+      // open views (and any unsent input) working. A late sign-out is handled by the identity effect.
       setSigningOut(false);
       setSignOutFailed(true);
-      setSessionGeneration((generation) => generation + 1);
       return;
     }
+    // Clerk confirmed sign-out: end every direct session before leaving.
+    closeShellCollaborationSessions();
     window.location.replace(redirectUrl);
   }
 
@@ -390,7 +386,6 @@ function ClerkCollaborationFrame({ view }: { view: ChatCollaborationView }) {
     <CollaborationFrameSurface
       view={view}
       account={account}
-      sessionGeneration={sessionGeneration}
       signingOut={signingOut}
       signOutFailed={signOutFailed}
       onManageAccount={() => clerk.openUserProfile()}
