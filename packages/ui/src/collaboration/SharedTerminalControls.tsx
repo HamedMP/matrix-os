@@ -26,6 +26,8 @@ type State = {
   loading: boolean;
   pending: boolean;
   unavailable: boolean;
+  /** The home cannot serve the terminal right now; the stream keeps retrying (spec 535 FR-027). */
+  temporarilyUnavailable: boolean;
   error: boolean;
 };
 
@@ -39,6 +41,7 @@ type Action =
   | { type: "accepted"; terminal: CollaborationTerminal; connectionId: string | null; leaseEpoch: string | null }
   | { type: "disconnected" }
   | { type: "error" }
+  | { type: "temporarily_unavailable" }
   | { type: "unavailable" };
 
 const initialState: State = {
@@ -50,6 +53,7 @@ const initialState: State = {
   loading: true,
   pending: false,
   unavailable: false,
+  temporarilyUnavailable: false,
   error: false,
 };
 
@@ -116,6 +120,7 @@ export function SharedTerminalControls({ api, scope, actorId, layers }: {
       },
       onRefreshRequired: resync,
       onUnavailable: () => { if (active) dispatch({ type: "unavailable" }); },
+      onTemporarilyUnavailable: () => { if (active) dispatch({ type: "temporarily_unavailable" }); },
       onDisconnected: () => { if (active) dispatch({ type: "disconnected" }); },
     });
     return () => { active = false; unsubscribe(); };
@@ -213,7 +218,10 @@ export function SharedTerminalControls({ api, scope, actorId, layers }: {
     {state.unavailable ? <p role="alert" className="border-b border-red-400/30 bg-red-950/30 px-4 py-3 text-sm text-red-100">
       This shared terminal is no longer available. Return to Shared with me to check your access.
     </p> : null}
-    {state.error && !state.unavailable ? <p role="alert" className="border-b border-amber-400/30 bg-amber-950/30 px-4 py-3 text-sm text-amber-100">
+    {state.temporarilyUnavailable && !state.unavailable ? <p role="status" className="border-b border-amber-400/30 bg-amber-950/30 px-4 py-3 text-sm text-amber-100">
+      The shared terminal is temporarily unavailable. Reconnecting automatically.
+    </p> : null}
+    {state.error && !state.unavailable && !state.temporarilyUnavailable ? <p role="alert" className="border-b border-amber-400/30 bg-amber-950/30 px-4 py-3 text-sm text-amber-100">
       The terminal action could not be completed. Refresh the terminal state and try again.
     </p> : null}
     <pre aria-label="Shared terminal output" className="min-h-[16rem] flex-1 overflow-auto whitespace-pre-wrap break-all p-4 font-mono text-sm"
@@ -236,7 +244,7 @@ export function SharedTerminalControls({ api, scope, actorId, layers }: {
 
 function reduce(state: State, action: Action): State {
   if (action.type === "ready") return { ...state, terminal: action.terminal, connectionId: action.connectionId,
-    controlConnectionId: null, controlLeaseEpoch: null, loading: false, unavailable: false, error: false };
+    controlConnectionId: null, controlLeaseEpoch: null, loading: false, unavailable: false, temporarilyUnavailable: false, error: false };
   if (action.type === "state") return { ...state, terminal: action.terminal, pending: false, error: false };
   if (action.type === "accepted") return { ...state, terminal: action.terminal,
     controlConnectionId: action.connectionId, controlLeaseEpoch: action.leaseEpoch, pending: false, error: false };
@@ -247,6 +255,8 @@ function reduce(state: State, action: Action): State {
   if (action.type === "output") return { ...state, output: appendBounded(state.output, action.data) };
   if (action.type === "pending") return { ...state, pending: action.value, error: false };
   if (action.type === "error") return { ...state, loading: false, pending: false, error: true };
+  if (action.type === "temporarily_unavailable") return { ...state, loading: false, pending: false, temporarilyUnavailable: true,
+    connectionId: null, controlConnectionId: null, controlLeaseEpoch: null };
   return { ...state, loading: false, pending: false, unavailable: true, connectionId: null,
     controlConnectionId: null, controlLeaseEpoch: null };
 }

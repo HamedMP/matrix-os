@@ -46,6 +46,7 @@ type TerminalHandlers = {
   onState(frame: unknown): void;
   onRefreshRequired(): void | Promise<void>;
   onUnavailable(): void;
+  onTemporarilyUnavailable(): void;
   onDisconnected(): void;
 };
 
@@ -244,6 +245,28 @@ describe("shared terminal controls", () => {
     act(() => handlers().onUnavailable());
     expect(await screen.findByRole("alert")).toHaveTextContent("terminal is no longer available");
     expect(screen.getByLabelText("Terminal input")).toBeDisabled();
+  });
+
+  it("shows a retryable unavailable, not ended access, when the home cannot serve the terminal", async () => {
+    // Spec 535 FR-027: a missing server dependency must never read as "access removed".
+    const { api, handlers } = apiFixture();
+    render(<SharedTerminalControls api={api} scope={scope("editor")} actorId="user_editor" />);
+    await waitFor(() => expect(api.subscribeTerminal).toHaveBeenCalled());
+    act(() => handlers().onReady(readyFrame("connection_editor")));
+    expect(await screen.findByRole("button", { name: "Request control" })).toBeEnabled();
+
+    act(() => handlers().onTemporarilyUnavailable());
+    expect(await screen.findByRole("status")).toHaveTextContent("temporarily unavailable");
+    expect(screen.queryByText(/no longer available/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/check your access/)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Request control" })).toBeDisabled();
+    act(() => handlers().onDisconnected());
+    expect(screen.getByRole("status")).toHaveTextContent("temporarily unavailable");
+
+    // The stream keeps retrying; once the home admits it again the surface recovers.
+    act(() => handlers().onReady(readyFrame("connection_editor_2")));
+    await waitFor(() => expect(screen.queryByText(/temporarily unavailable/)).not.toBeInTheDocument());
+    expect(screen.getByRole("button", { name: "Request control" })).toBeEnabled();
   });
 
   it("stops without a socket and clears local control when the socket disconnects", async () => {
