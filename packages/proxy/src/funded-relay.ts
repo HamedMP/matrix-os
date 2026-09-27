@@ -141,10 +141,16 @@ function fundedClaimKey(c: Context): string | undefined {
   return parsed.success ? parsed.data : undefined;
 }
 
+/** A 429 that should not be retried soon: per-minute windows and provider throttling. */
+function rateLimited(c: Context): Response {
+  return errorResponse(c, 429, "rate_limit_error", "AI capacity is temporarily limited");
+}
+
 /**
- * A capacity refusal before any upstream call or after releasing the reservation
- * untouched. The reason header tells the gateway a retry cannot duplicate work;
- * upstream provider 429s never carry it.
+ * A concurrency refusal before any upstream call or after releasing the
+ * reservation untouched. The slot frees when another request finishes, so the
+ * reason header tells the gateway a short retry is safe and cannot duplicate
+ * work. Per-minute rate limits and upstream provider 429s never carry it.
  */
 function capacityLimited(c: Context): Response {
   const response = errorResponse(c, 429, "rate_limit_error", "AI capacity is temporarily limited");
@@ -357,7 +363,7 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
     }
     const runtimeRef = runtimeAdmissionRef(checked.identity, config.metadataSecret);
     if (!admission.admitRuntime(runtimeRef)) {
-      return capacityLimited(c);
+      return rateLimited(c);
     }
     const requestId = requestIdFactory();
     const upstreamHeaders = cloudflareHeaders({
@@ -396,8 +402,9 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
       if (state.lifetimeSignal.aborted || (error instanceof DOMException && error.name === "TimeoutError")) {
         return errorResponse(c, 504, "timeout_error", "AI access timed out");
       }
+      // Provider throttling on token counting is not an owner slot wait.
       if (error instanceof FundedControlPlaneError && error.status === 429) {
-        return capacityLimited(c);
+        return rateLimited(c);
       }
       const errorName = error instanceof Error ? error.name : "UnknownError";
       console.warn("[proxy] Funded AI token counting failed", { errorName });
@@ -782,9 +789,10 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
         }
         const globalLease = admission.acquireGlobal();
         if (!globalLease) {
-          return c.req.path === EVALUATE_PATH
-            ? jevNotStarted(errorResponse(c, 429, "rate_limit_error", "AI capacity is temporarily limited"))
-            : capacityLimited(c);
+          if (c.req.path === EVALUATE_PATH) {
+            return jevNotStarted(errorResponse(c, 429, "rate_limit_error", "AI capacity is temporarily limited"));
+          }
+          return admission.globalRefusalReason() === "busy" ? capacityLimited(c) : rateLimited(c);
         }
         const controller = new AbortController();
         activeRequests.add(controller);

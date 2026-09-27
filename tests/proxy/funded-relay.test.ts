@@ -665,6 +665,33 @@ describe("Cloudflare funded relay control-plane ordering", () => {
     await relay.close();
   });
 
+  it("does not mark per-minute limits or token-count throttling as a safe capacity retry", async () => {
+    const counted = vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.endsWith("/check")) return json(checkResponse());
+      if (url.endsWith("/v1/messages/count_tokens")) return new Response("slow down", { status: 429 });
+      return json({});
+    });
+    const throttled = configuredRelay(counted as typeof fetch);
+    const throttledApp = new Hono();
+    throttled.register(throttledApp);
+    const tokenCount = await throttledApp.request("/v1/messages", fundedRequest());
+    expect(tokenCount.status).toBe(429);
+    expect(tokenCount.headers.get("x-matrix-funded-reason")).toBeNull();
+    await throttled.close();
+
+    const perRuntime = configuredRelay(counted as typeof fetch, { rateLimitPerMinute: 1 });
+    const perRuntimeApp = new Hono();
+    perRuntime.register(perRuntimeApp);
+    await perRuntimeApp.request("/v1/messages", fundedRequest());
+    const windowSpent = await perRuntimeApp.request("/v1/messages", fundedRequest());
+    expect(windowSpent.status).toBe(429);
+    expect(windowSpent.headers.get("x-matrix-funded-reason")).toBeNull();
+    // The second request stopped at the runtime window, before token counting.
+    expect(counted.mock.calls.filter(([input]) => String(input).endsWith("/v1/messages/count_tokens"))).toHaveLength(2);
+    await perRuntime.close();
+  });
+
   it("never releases an in-flight reservation after generation fetch fails", async () => {
     const events: string[] = [];
     const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
@@ -742,7 +769,10 @@ describe("Cloudflare funded relay control-plane ordering", () => {
     const app = new Hono();
     relay.register(app);
     expect((await app.request("/v1/messages", fundedRequest("{not-json"))).status).toBe(400);
-    expect((await app.request("/v1/messages", fundedRequest())).status).toBe(429);
+    const windowSpent = await app.request("/v1/messages", fundedRequest());
+    expect(windowSpent.status).toBe(429);
+    // A spent per-minute window does not free soon, so it is not a safe retry signal.
+    expect(windowSpent.headers.get("x-matrix-funded-reason")).toBeNull();
     expect(fetchMock).not.toHaveBeenCalled();
     await relay.close();
   });
