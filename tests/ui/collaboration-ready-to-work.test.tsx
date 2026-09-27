@@ -247,8 +247,9 @@ describe("organization ready-to-work presentation", () => {
     const api = { baseUrl: "http://localhost", get: vi.fn(), post: vi.fn(), delete: vi.fn() };
     render(<ResourceSharingButton api={api} runtimeId="vps:owner" organizationId={null} kind="file" path="notes/plan.md" />);
     const button = screen.getByRole("button", { name: "Share file" });
-    expect(button).toBeDisabled();
-    expect(button).toHaveTextContent("Join an organization to share");
+    expect(button).toBeEnabled();
+    fireEvent.click(button);
+    expect(screen.getByRole("alert")).toHaveTextContent("Join an organization to share this file.");
     expect(api.post).not.toHaveBeenCalled();
   });
 

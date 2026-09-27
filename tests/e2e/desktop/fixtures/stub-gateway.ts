@@ -27,6 +27,10 @@ export interface StubGateway {
   setKernelResponseDelay(delayMs: number): void;
   setBuildCommit(commit: string): void;
   setSystemInfo(info: Record<string, unknown>): void;
+  /** Platform organization listing the trusted core reads for Share controls. */
+  setOrganizations(organizations: Array<{ organizationId: string; name: string }>): void;
+  /** Advertises owner collaboration for this runtime, keeping the rest of system info. */
+  enableCollaboration(machineId: string): void;
   disconnectKernel(): void;
   close(): Promise<void>;
   state: {
@@ -43,6 +47,7 @@ export interface StubGateway {
     runtimeSelections: string[];
     deletedConversationIds: string[];
     kernelConnections: number;
+    organizationRequests: number;
   };
 }
 
@@ -647,8 +652,10 @@ export async function startStubGateway(options: StubGatewayOptions = {}): Promis
     runtimeSelections: [],
     deletedConversationIds: [],
     kernelConnections: 0,
+    organizationRequests: 0,
   };
   let currentToken = TOKEN;
+  let organizations: Array<{ organizationId: string; name: string }> = [];
   const activeTerminalOutputs: Partial<Record<string, (data: string) => void>> = {};
   const terminalOutputSequences: Record<string, number> = {};
   let createdHermesConversation = false;
@@ -730,6 +737,20 @@ export async function startStubGateway(options: StubGatewayOptions = {}): Promis
     // Everything below requires the bearer header (verifies header injection).
     if (req.headers.authorization !== `Bearer ${currentToken}`) {
       json(res, 401, { error: "unauthorized" });
+      return;
+    }
+
+    if (req.method === "GET" && path === "/api/organizations") {
+      state.organizationRequests += 1;
+      json(res, 200, {
+        organizations: organizations.map((organization) => ({
+          ...organization,
+          slug: organization.organizationId.replace(/^org_/, ""),
+          role: "owner",
+          aiSubmission: "members",
+          membershipEpoch: 1,
+        })),
+      });
       return;
     }
 
@@ -1470,6 +1491,17 @@ export async function startStubGateway(options: StubGatewayOptions = {}): Promis
     state,
     setBuildCommit: systemInfo.setBuildCommit,
     setSystemInfo: systemInfo.setSystemInfo,
+    setOrganizations: (next) => {
+      organizations = next.map((organization) => ({ ...organization }));
+    },
+    enableCollaboration: (machineId) => {
+      const current = systemInfo.read();
+      systemInfo.setSystemInfo({
+        ...current,
+        runtime: { ...(current.runtime as Record<string, unknown>), machineId },
+        capabilities: { ...(current.capabilities as Record<string, unknown> | undefined), collaboration: true },
+      });
+    },
     sendTerminalOutput: (data, session = "matrix-task-1") => activeTerminalOutputs[session]?.(data),
     setConversationBusy: (id, busy) => {
       if (busy) busyHermesConversations.add(id);

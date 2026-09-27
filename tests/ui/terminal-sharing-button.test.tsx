@@ -64,14 +64,16 @@ describe("terminal sharing button", () => {
     expect(api.post).toHaveBeenCalledTimes(1);
   });
 
-  it("shows the organization-required state instead of an error when no organization is active", () => {
+  it("explains that an organization is required instead of reporting a generic failure", () => {
     const api = { baseUrl: "https://app.matrix-os.com", get: vi.fn(), post: vi.fn(), delete: vi.fn() };
     render(<TerminalSharingButton api={api} runtimeId="vps:runtime_owner" organizationId={null} terminalId="terminal_release" />);
     const button = screen.getByRole("button", { name: "Share terminal" });
-    expect(button).toBeDisabled();
-    expect(button).toHaveTextContent("Join an organization to share");
+    // Stays a compact, reachable control: the mobile chrome has no room for a long label.
+    expect(button).toBeEnabled();
+    expect(button).toHaveTextContent("Share");
     fireEvent.click(button);
+    expect(screen.getByRole("alert")).toHaveTextContent("Join an organization to share this terminal.");
+    expect(screen.getByRole("alert")).not.toHaveTextContent(/try again/i);
     expect(api.post).not.toHaveBeenCalled();
-    expect(screen.queryByRole("alert")).toBeNull();
   });
 });

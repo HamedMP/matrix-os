@@ -125,7 +125,7 @@ export function ProjectSharingButton({ api, runtimeId, organizationId, projectId
       aria-expanded={surface !== null} onClick={() => surface ? close() : void begin()}>
       {pending || !runtimeId ? "Loading share…" : !organizationId ? ORGANIZATION_REQUIRED_SHARE_LABEL : "Share"}
     </button>
-    {error ? <span role="alert" className="absolute right-0 top-full z-50 mt-2 w-72 rounded-lg border bg-[var(--bg-surface,var(--background))] p-3 shadow-lg">
+    {error ? <span role="alert" className="absolute right-0 top-full z-50 mt-2 w-72 rounded-lg border bg-[var(--bg-surface,var(--background))] p-3 text-sm text-[var(--text-primary,var(--foreground))] shadow-lg">
       Project sharing is unavailable. The project remains private and unchanged.
     </span> : null}
     {surface === "inventory" && scope && inventory ? <ProjectSharingDialog

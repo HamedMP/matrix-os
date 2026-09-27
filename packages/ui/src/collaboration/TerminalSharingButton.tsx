@@ -26,7 +26,7 @@ export function TerminalSharingButton({ api, runtimeId, organizationId, terminal
   const [scope, setScope] = useState<Scope | null>(null);
   const [members, setMembers] = useState<Member[]>([]);
   const [pending, setPending] = useState(false);
-  const [error, setError] = useState<"unsupported" | "unavailable" | null>(null);
+  const [error, setError] = useState<"unsupported" | "unavailable" | "organization" | null>(null);
   const alive = useRef(true);
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
 
@@ -45,7 +45,10 @@ export function TerminalSharingButton({ api, runtimeId, organizationId, terminal
   };
 
   const begin = async () => {
-    if (!runtimeId || !organizationId) { setError("unavailable"); return; }
+    // Explain the missing organization on demand: a long visible label does not
+    // fit the mobile terminal chrome, and "try again" would be misleading.
+    if (!organizationId) { setError("organization"); return; }
+    if (!runtimeId) { setError("unavailable"); return; }
     setPending(true);
     setError(null);
     try {
@@ -100,14 +103,16 @@ export function TerminalSharingButton({ api, runtimeId, organizationId, terminal
     }
   };
   return <div className="relative inline-flex shrink-0 items-center">
-    <button type="button" className={buttonClass} aria-label="Share terminal" disabled={pending || !organizationId}
+    <button type="button" className={buttonClass} aria-label="Share terminal" disabled={pending}
       aria-expanded={surface !== null} onClick={() => surface ? close() : void begin()}>
-      {pending ? "Loading share…" : !organizationId ? ORGANIZATION_REQUIRED_SHARE_LABEL : "Share"}
+      {pending ? "Loading share…" : "Share"}
     </button>
-    {error ? <span role="alert" className="absolute right-0 top-full z-50 mt-2 w-72 rounded-lg border bg-[var(--bg-surface,var(--background))] p-3 shadow-lg">
+    {error ? <span role="alert" className="absolute right-0 top-full z-50 mt-2 w-72 rounded-lg border bg-[var(--bg-surface,var(--background))] p-3 text-sm text-[var(--text-primary,var(--foreground))] shadow-lg">
       {error === "unsupported"
         ? "This terminal cannot be shared safely. It remains private and continues running unchanged."
-        : "Terminal sharing is unavailable. Try again later."}
+        : error === "organization"
+          ? `${ORGANIZATION_REQUIRED_SHARE_LABEL} this terminal. It remains private and continues running unchanged.`
+          : "Terminal sharing is unavailable. Try again later."}
     </span> : null}
     {surface === "confirm" ? <Dialog open aria-label="Confirm terminal sharing" onClose={close}
       className="ph-no-capture w-[min(92vw,560px)] rounded-2xl border p-6"
