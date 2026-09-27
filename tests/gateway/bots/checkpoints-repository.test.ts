@@ -32,6 +32,9 @@ describe("bot tool checkpoints repository", () => {
     expect(reordered).toEqual({ checkpoint: first.checkpoint, created: false });
     await expect(prepare(repo, { action: { ...action, target: "gmail:conn_2" } })).rejects.toEqual(new BotStateError("conflict"));
     await expect(prepare(repo, { action: { blob: "x".repeat(5_000) }, toolCallId: "call_big" })).rejects.toEqual(new BotStateError("too_large"));
+    // Near the compact limit, JSONB spacing still fits the column bound.
+    const near = Object.fromEntries(Array.from({ length: 150 }, (_, index) => [`k${index}`, "v".repeat(18)]));
+    await expect(prepare(repo, { action: near, toolCallId: "call_near" })).resolves.toMatchObject({ created: true });
   });
 
   it("records outcomes in phase order and never replays a send", async () => {

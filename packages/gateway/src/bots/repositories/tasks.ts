@@ -8,6 +8,7 @@ import { sql, type Selectable } from "kysely";
 import type { BotTaskBudget, BotTasksTable, BotTaskStatus } from "../database.js";
 import {
   BotStateError,
+  isChatOwnerViolation,
   isoTimestamp,
   newBotStateId,
   optionalIsoTimestamp,
@@ -123,7 +124,10 @@ export function createBotTasksRepository(db: BotExecutor) {
           blocked_reason: null,
           created_at: input.now,
           updated_at: input.now,
-        }).returningAll().executeTakeFirstOrThrow();
+        }).returningAll().executeTakeFirstOrThrow().catch((error: unknown) => {
+          if (isChatOwnerViolation(error)) throw new BotStateError("not_found");
+          throw error;
+        });
         return fromRow(row);
       });
     },
@@ -158,29 +162,40 @@ export function createBotTasksRepository(db: BotExecutor) {
       if (!current) throw new BotStateError("not_found");
       throw new BotStateError(current.revision !== input.baseRevision ? "revision_conflict" : "invalid_transition");
     },
-    /** Cancels a task and every unfinished descendant in one statement. Returns the cancelled IDs. */
+    /**
+     * Cancels a task and every unfinished descendant in one transaction, one
+     * tree level at a time. Each level is updated (taking its row locks) before
+     * its children are read in a new statement, so a child that a concurrent
+     * create inserts under a locked parent is seen and cancelled too; a create
+     * that runs after the parent is cancelled is refused. Returns the IDs.
+     */
     async cancelTree(input: { ownerId: string; taskId: string; now: string }, executor: BotExecutor = db): Promise<string[]> {
-      const result = await sql<{ task_id: string }>`
-        WITH RECURSIVE tree AS (
-          SELECT task_id FROM bot_tasks WHERE owner_id = ${input.ownerId} AND task_id = ${input.taskId}
-          UNION
-          SELECT child.task_id FROM bot_tasks child
-          JOIN tree ON child.parent_task_id = tree.task_id
-          WHERE child.owner_id = ${input.ownerId}
-        )
-        UPDATE bot_tasks SET
-          status = 'cancelled',
-          blocked_reason = NULL,
-          active_ms = ${accruedActiveMs(input.now)},
-          running_since = NULL,
-          revision = revision + 1,
-          updated_at = ${input.now}::timestamptz
-        WHERE owner_id = ${input.ownerId}
-          AND task_id IN (SELECT task_id FROM tree)
-          AND status NOT IN ('completed', 'failed', 'cancelled')
-        RETURNING task_id
-      `.execute(executor);
-      return result.rows.map((row) => row.task_id);
+      return withTransaction(executor, async (trx) => {
+        const cancelled: string[] = [];
+        let frontier = [input.taskId];
+        for (let level = 0; frontier.length > 0; level += 1) {
+          if (level > BOT_TASK_MAX_DEPTH) throw new BotStateError("capacity_exceeded");
+          const updated = await trx.updateTable("bot_tasks")
+            .set({
+              status: "cancelled",
+              blocked_reason: null,
+              active_ms: accruedActiveMs(input.now),
+              running_since: null,
+              revision: sql<number>`revision + 1`,
+              updated_at: input.now,
+            })
+            .where("owner_id", "=", input.ownerId).where("task_id", "in", frontier)
+            .where("status", "not in", [...TERMINAL])
+            .returning("task_id")
+            .execute();
+          cancelled.push(...updated.map((row) => row.task_id));
+          const children = await trx.selectFrom("bot_tasks").select("task_id")
+            .where("owner_id", "=", input.ownerId).where("parent_task_id", "in", frontier)
+            .execute();
+          frontier = children.map((row) => row.task_id);
+        }
+        return cancelled;
+      });
     },
     /** Unfinished tasks of a bot in one chat, newest first. */
     async listOpen(input: { ownerId: string; botId: string; chatId: string }, executor: BotExecutor = db): Promise<BotTask[]> {

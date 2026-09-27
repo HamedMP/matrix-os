@@ -5,7 +5,7 @@
  * overwrite a newer transcript.
  */
 import { sql } from "kysely";
-import { BotStateError, isoTimestamp, newBotStateId, toSafeInteger, type BotExecutor } from "./shared.js";
+import { BotStateError, isChatOwnerViolation, isoTimestamp, newBotStateId, toSafeInteger, type BotExecutor } from "./shared.js";
 
 /** Matches the broker's session cap on compact JSON. */
 export const BOT_SESSION_MAX_BYTES = 512 * 1024;
@@ -84,7 +84,11 @@ export function createBotSessionsRepository(db: BotExecutor) {
           updated_at: input.now,
         }).onConflict((conflict) => conflict.columns(["owner_id", "bot_id", "chat_id"]).doNothing())
           .returning("revision")
-          .executeTakeFirst();
+          .executeTakeFirst()
+          .catch((error: unknown) => {
+            if (isChatOwnerViolation(error)) throw new BotStateError("not_found");
+            throw error;
+          });
         if (!inserted) throw new BotStateError("revision_conflict");
         return { revision: toSafeInteger(inserted.revision) };
       }
@@ -107,10 +111,14 @@ export function createBotSessionsRepository(db: BotExecutor) {
       if (!updated) throw new BotStateError("revision_conflict");
       return { revision: toSafeInteger(updated.revision) };
     },
-    /** Flags every transcript of a bot for regeneration, e.g. after a memory item is forgotten. */
+    /**
+     * Flags every transcript of a bot for regeneration, e.g. after a memory
+     * item is forgotten. The revision advances, so a worker holding an older
+     * copy cannot save over the flag; it must reload and see it.
+     */
     async markNeedsRecompaction(input: { ownerId: string; botId: string; now: string }, executor: BotExecutor = db): Promise<number> {
       const rows = await executor.updateTable("bot_agent_sessions")
-        .set({ needs_recompaction: true, updated_at: input.now })
+        .set({ needs_recompaction: true, revision: sql<number>`revision + 1`, updated_at: input.now })
         .where("owner_id", "=", input.ownerId).where("bot_id", "=", input.botId)
         .where("needs_recompaction", "=", false)
         .returning("session_id")

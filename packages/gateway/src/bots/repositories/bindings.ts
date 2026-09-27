@@ -4,7 +4,7 @@
  */
 import type { Selectable } from "kysely";
 import type { BotChatBindingsTable } from "../database.js";
-import { BotStateError, isUniqueViolation, isoTimestamp, optionalIsoTimestamp, type BotExecutor } from "./shared.js";
+import { BotStateError, isChatOwnerViolation, isUniqueViolation, isoTimestamp, optionalIsoTimestamp, type BotExecutor } from "./shared.js";
 
 const MAX_BINDINGS_PER_CHAT = 16;
 
@@ -31,24 +31,29 @@ function fromRow(row: Selectable<BotChatBindingsTable>): BotChatBinding {
 export function createBotBindingsRepository(db: BotExecutor) {
   return {
     /**
-     * Binds a bot to its direct chat. Idempotent for the same chat; a second
-     * live direct chat for the bot is a conflict.
+     * Binds a bot to its direct chat, which the owner must own. Idempotent for
+     * the same chat, and restores a removed binding to it; a second live
+     * direct chat for the bot is a conflict.
      */
     async bindDirect(input: { ownerId: string; botId: string; chatId: string; now: string }, executor: BotExecutor = db): Promise<BotChatBinding> {
       try {
-        const inserted = await executor.insertInto("bot_chat_bindings").values({
+        const written = await executor.insertInto("bot_chat_bindings").values({
           owner_id: input.ownerId,
           bot_id: input.botId,
           chat_id: input.chatId,
           kind: "direct",
           created_at: input.now,
           removed_at: null,
-        }).onConflict((conflict) => conflict.columns(["owner_id", "bot_id", "chat_id"]).doNothing())
+        }).onConflict((conflict) => conflict.columns(["owner_id", "bot_id", "chat_id"])
+          .doUpdateSet({ removed_at: null, created_at: input.now })
+          .where("bot_chat_bindings.kind", "=", "direct")
+          .where("bot_chat_bindings.removed_at", "is not", null))
           .returningAll()
           .executeTakeFirst();
-        if (inserted) return fromRow(inserted);
+        if (written) return fromRow(written);
       } catch (error: unknown) {
         if (isUniqueViolation(error, "idx_bot_chat_bindings_one_direct")) throw new BotStateError("conflict");
+        if (isChatOwnerViolation(error)) throw new BotStateError("not_found");
         throw error;
       }
       const existing = await executor.selectFrom("bot_chat_bindings").selectAll()
