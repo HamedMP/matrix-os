@@ -187,6 +187,16 @@ export function normalizeHermesRuntimeSnapshot(input: {
     && selectedProvider?.models.some((model) => model.id === currentModel) === true;
   const configured = currentProvider !== null && currentModel !== null && hasSelection;
   const version = VersionSchema.safeParse(status.version);
+  // Legacy authKind defaults to OAuth for display compatibility. Exact source
+  // evidence requires a unique raw provider with an explicit credential origin.
+  const selectedNativeProviders = options.providers.flatMap((raw) => {
+    const parsed = HermesProviderSchema.safeParse(raw);
+    return parsed.success && parsed.data.slug === currentProvider ? [parsed.data] : [];
+  });
+  const nativeProvider = selectedNativeProviders.length === 1 ? selectedNativeProviders[0] : undefined;
+  const nativeCredentialKind = nativeProvider?.auth_type === "oauth" ? "provider_profile" as const
+    : nativeProvider?.auth_type === "api_key" ? "api_key" as const
+      : nativeProvider?.auth_type === "base_url" || nativeProvider?.auth_type === "custom" ? "custom" as const : undefined;
 
   return {
     runtime: {
@@ -199,13 +209,13 @@ export function normalizeHermesRuntimeSnapshot(input: {
           health: status.gateway_running === true ? "healthy" : "degraded",
           selectionState: "active",
           configured,
-          ...(configured && selectedProvider && input.observedAt !== undefined ? {
+          ...(configured && selectedProvider && nativeCredentialKind && input.observedAt !== undefined ? {
             nativeRouteObservation: {
               providerId: currentProvider!, modelId: currentModel!,
-              credentialKind: selectedProvider.authKind === "oauth_login" ? "provider_profile" as const
-                : selectedProvider.authKind === "api_key" ? "api_key" as const : "custom" as const,
+              credentialKind: nativeCredentialKind,
               localObservation: {
-                state: selectedProvider.authStatus.authenticated ? "present_unverified" as const : "absent" as const,
+                state: nativeProvider?.authenticated === true ? "present_unverified" as const
+                  : nativeProvider?.authenticated === false ? "absent" as const : "unknown" as const,
                 checkedAt: new Date(input.observedAt).toISOString(),
                 staleAfter: new Date(input.observedAt + 5_000).toISOString(),
               },

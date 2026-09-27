@@ -30,7 +30,7 @@ describe("owner native Hermes route observations", () => {
   it("carries the original probe timestamps through cached reads and V3 driver inventory without requiring a messaging gateway", async () => {
     let time = +now;
     const readJson = vi.fn(async (path: string) => path === "/api/status" ? { gateway_running: false, version: "0.21.4" } : {
-      provider: "anthropic", model: "claude-sonnet-5", providers: [{ slug: "anthropic", name: "Anthropic", authenticated: true, auth_type: null, models: ["claude-sonnet-5"] }],
+      provider: "anthropic", model: "claude-sonnet-5", providers: [{ slug: "anthropic", name: "Anthropic", authenticated: true, auth_type: "oauth", models: ["claude-sonnet-5"] }],
     });
     const runtimeSource = createHermesRuntimeSource(readJson, { now: () => time });
     const read = createProviderDriverInventoryReader({ runtimeSource, detectAgentInstallations: async () => ({ agents: [] }) });
@@ -75,9 +75,27 @@ describe("owner native Hermes route observations", () => {
 
 it("keeps internal native evidence out of the legacy Agent Settings V2 compatibility view", () => {
   const runtimeSnapshot = normalizeHermesRuntimeSnapshot({ status: { gateway_running: false }, observedAt: +now,
-    options: { provider: "anthropic", model: "claude-sonnet-5", providers: [{ slug: "anthropic", authenticated: true, auth_type: null, models: ["claude-sonnet-5"] }] } });
+    options: { provider: "anthropic", model: "claude-sonnet-5", providers: [{ slug: "anthropic", authenticated: true, auth_type: "oauth", models: ["claude-sonnet-5"] }] } });
   expect(runtimeSnapshot.runtime.options[0]?.nativeRouteObservation).toBeDefined();
   const view = buildAgentSettingsView({ identity: {}, config: {}, claudeLoginAvailable: false, platformCredentialAvailable: false, runtimeSnapshot });
   expect(view.runtime.options[0]).not.toHaveProperty("nativeRouteObservation");
   expect(runtimeSnapshot.runtime.options[0]?.nativeRouteObservation).toBeDefined();
+});
+
+it.each([null, undefined, "unrecognized"])("retains authenticated provider with auth_type %s without attributing a native profile", async auth_type => {
+  const source = createHermesRuntimeSource(async path => path === "/api/status" ? { gateway_running: false } : {
+    provider: "anthropic", model: "claude-sonnet-5", providers: [{ slug: "anthropic", authenticated: true, auth_type, models: ["claude-sonnet-5"] }] }, { now: () => +now });
+  const snapshot = await source(AbortSignal.timeout(1000));
+  expect(snapshot.providers[0]).toMatchObject({ id: "anthropic", authStatus: { authenticated: true } });
+  expect(snapshot.messaging.configured).toBe(true);
+  expect(snapshot.runtime.options[0]).not.toHaveProperty("nativeRouteObservation");
+});
+
+it("does not attribute an origin from duplicated selected provider rows", async () => {
+  const provider = { slug: "anthropic", authenticated: true, auth_type: "oauth", models: ["claude-sonnet-5"] };
+  const source = createHermesRuntimeSource(async path => path === "/api/status" ? { gateway_running: false } : {
+    provider: "anthropic", model: "claude-sonnet-5", providers: [provider, { ...provider, auth_type: "api_key" }] }, { now: () => +now });
+  const snapshot = await source(AbortSignal.timeout(1000));
+  expect(snapshot.providers).toHaveLength(1);
+  expect(snapshot.runtime.options[0]).not.toHaveProperty("nativeRouteObservation");
 });
