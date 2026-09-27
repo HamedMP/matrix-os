@@ -294,4 +294,30 @@ describe("bot agent loop", () => {
     expect(saved).not.toContain("removed to fit saved history");
     expect(saved.length).toBeLessThan(512 * 1024);
   });
+
+  it("still saves the turn when the optional summary call fails or the run was cancelled", async () => {
+    const history = [1, 2, 3].flatMap((turn) => [
+      { role: "user", content: `Report ${turn}, please.`, timestamp: turn * 10 },
+      { ...fauxAssistantMessage(fauxText("r".repeat(166 * 1024))), timestamp: turn * 10 + 1 },
+    ]) as unknown as Record<string, unknown>[];
+
+    const failing = scripted([
+      fauxAssistantMessage(fauxText("Here is the fourth answer.")),
+      fauxAssistantMessage(fauxText(""), { stopReason: "error", errorMessage: "provider overloaded" }),
+    ]);
+    const saved = memoryBroker({ messages: history });
+    const outcome = await run({ broker: saved.broker, route: failing.route, command: command({ capabilities: [], turn: { kind: "prompt", text: "And a fourth?" } }) });
+    expect(outcome).toMatchObject({ status: "completed", sessionRevision: 4 });
+    expect(JSON.stringify(saved.saves[0]!.messages)).toContain("And a fourth?");
+
+    const cancelled = scripted([fauxAssistantMessage(fauxText("summary that must not be requested"))]);
+    const early = new AbortController();
+    early.abort();
+    const cancelledBroker = memoryBroker({ messages: history });
+    await expect(run({ broker: cancelledBroker.broker, route: cancelled.route, signal: early.signal }))
+      .resolves.toEqual({ runId: "run_turn1", status: "cancelled", sessionRevision: 3, toolActions: 0 });
+    // A run cancelled before it starts makes no model call and saves nothing.
+    expect(cancelled.handle.getPendingResponseCount()).toBe(1);
+    expect(cancelledBroker.saves).toEqual([]);
+  });
 });

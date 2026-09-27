@@ -75,6 +75,11 @@ export async function runBotTurn(input: RunBotTurnInput): Promise<BotRunOutcome>
   } catch (error: unknown) {
     return outcome(command, { status: "failed", failureCode: failureCodeOf(error, "session load"), toolActions: 0 });
   }
+  // An abort listener never fires for a signal that is already aborted, so check first:
+  // a run cancelled before it starts makes no model call and leaves the session as it was.
+  if (input.signal?.aborted) {
+    return outcome(command, { status: "cancelled", sessionRevision: snapshot.revision, toolActions: 0 });
+  }
   const { provider, model } = input.route ?? createBridgeModel(command.route, input.bridgeOrigin);
   const tools: BotToolsState = { waitingForPerson: false, effectUnknown: false };
   let toolActions = 0;
@@ -185,12 +190,20 @@ export async function runBotTurn(input: RunBotTurnInput): Promise<BotRunOutcome>
   const unanswered = steered.filter((message) => !agent.state.messages.includes(message));
   let messages: AgentMessage[] = withoutImages([...agent.state.messages, ...unanswered]);
   try {
+    // Summaries are best effort: a cancelled run skips them, and a failed call
+    // falls back to storage fitting so the turn is still saved.
     const summarize = async (transcript: string) => {
-      const reply = await provider.streamSimple(model, normalizeContext({
-        systemPrompt: SUMMARY_PROMPT,
-        messages: [{ role: "user", content: transcript, timestamp: now() }],
-      }), { maxTokens: SUMMARY_MAX_TOKENS }).result();
-      return textOf(reply);
+      if (input.signal?.aborted) return "";
+      try {
+        const reply = await provider.streamSimple(model, normalizeContext({
+          systemPrompt: SUMMARY_PROMPT,
+          messages: [{ role: "user", content: transcript, timestamp: now() }],
+        }), { maxTokens: SUMMARY_MAX_TOKENS, ...(input.signal ? { signal: input.signal } : {}) }).result();
+        return reply.stopReason === "error" || reply.stopReason === "aborted" ? "" : textOf(reply);
+      } catch (error: unknown) {
+        console.warn("[bot-runtime] session summary failed:", error instanceof Error ? error.name : "UnknownError");
+        return "";
+      }
     };
     if (needsCompaction(messages, command.route.contextWindow)) {
       messages = await compactSession({ messages, now, summarize });
