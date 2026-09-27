@@ -537,3 +537,92 @@ describe("BootSequence", () => {
     expect(screen.queryByTestId("shell")).toBeNull();
   });
 });
+
+describe("BootSequence account-only landing (spec 535 D3)", () => {
+  const replace = vi.fn();
+  const originalLocation = window.location;
+
+  function mockLanding(shared: { items: unknown[] }) {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input.toString();
+      const body = url.includes("/api/journey")
+        ? baseState
+        : url.startsWith("/api/collaboration/shared")
+          ? shared
+          : url.startsWith("/api/collaboration/inbox")
+            ? { items: [] }
+            : url === "/api/organizations"
+              ? { organizations: [] }
+              : { error: "unexpected" };
+      return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  }
+
+  beforeEach(() => {
+    clerkState.isLoaded = true;
+    clerkState.isSignedIn = true;
+    replace.mockReset();
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: { ...originalLocation, origin: "http://localhost:3000", pathname: "/", search: "", replace },
+    });
+  });
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+    Object.defineProperty(window, "location", { configurable: true, value: originalLocation });
+  });
+
+  it("opens Shared with me for a machine-free account that already has shared work", async () => {
+    const fetchMock = mockLanding({ items: [{ scopeId: "10000000-0000-4000-8000-000000000001" }] });
+    render(<BootSequence accountOnlyLanding><div data-testid="shell">SHELL</div></BootSequence>);
+
+    expect(await screen.findByText("Choose your plan")).toBeTruthy();
+    await waitFor(() => expect(replace).toHaveBeenCalledWith("/shared"));
+    expect(replace).toHaveBeenCalledOnce();
+    const probed = fetchMock.mock.calls.map((call) => String(call[0]));
+    expect(probed).toEqual(expect.arrayContaining([
+      "/api/collaboration/inbox?limit=1",
+      "/api/collaboration/shared?limit=1",
+      "/api/organizations",
+    ]));
+    expect(probed.some((url) => /billing|checkout|provision/.test(url))).toBe(false);
+  });
+
+  it("keeps the plan screen with an explicit Shared with me action when nothing is shared", async () => {
+    const fetchMock = mockLanding({ items: [] });
+    render(<BootSequence accountOnlyLanding><div data-testid="shell">SHELL</div></BootSequence>);
+
+    expect(await screen.findByText("Choose your plan")).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Open Shared with me" }).getAttribute("href")).toBe("/shared");
+    expect(screen.getByText("View plans")).toBeTruthy();
+    await waitFor(() => expect(fetchMock.mock.calls.some((call) => String(call[0]) === "/api/organizations")).toBe(true));
+    expect(replace).not.toHaveBeenCalled();
+  });
+
+  it("never probes or offers Shared with me outside the platform surface", async () => {
+    const fetchMock = mockLanding({ items: [{ scopeId: "10000000-0000-4000-8000-000000000001" }] });
+    render(<BootSequence><div data-testid="shell">SHELL</div></BootSequence>);
+
+    expect(await screen.findByText("Choose your plan")).toBeTruthy();
+    expect(screen.queryByRole("link", { name: "Open Shared with me" })).toBeNull();
+    expect(fetchMock.mock.calls.some((call) => String(call[0]).startsWith("/api/collaboration/"))).toBe(false);
+    expect(replace).not.toHaveBeenCalled();
+  });
+
+  it("never redirects away from a billing entry point", async () => {
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: { ...originalLocation, origin: "http://localhost:3000", pathname: "/", search: "?billing=setup", replace },
+    });
+    const fetchMock = mockLanding({ items: [{ scopeId: "10000000-0000-4000-8000-000000000001" }] });
+    render(<BootSequence accountOnlyLanding><div data-testid="shell">SHELL</div></BootSequence>);
+
+    expect(await screen.findByText("Choose your plan")).toBeTruthy();
+    expect(fetchMock.mock.calls.some((call) => String(call[0]).startsWith("/api/collaboration/"))).toBe(false);
+    expect(replace).not.toHaveBeenCalled();
+  });
+});
