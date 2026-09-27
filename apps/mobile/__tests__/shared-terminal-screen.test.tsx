@@ -1,14 +1,13 @@
 const mockFetchScope = jest.fn();
 const mockFetchTerminal = jest.fn();
 const mockControlTerminal = jest.fn();
-const mockFetchTicket = jest.fn();
+const mockOpenStream = jest.fn();
 
 jest.mock("@/lib/requests/collaboration", () => ({
-  collaborationTerminalUrl: jest.fn(() => "wss://app.matrix-os.com/ws/collaboration/terminal?ticket=test"),
   controlSharedTerminal: (...args: unknown[]) => mockControlTerminal(...args),
-  fetchCollaborationEventTicket: (...args: unknown[]) => mockFetchTicket(...args),
   fetchCollaborationScope: (...args: unknown[]) => mockFetchScope(...args),
   fetchSharedTerminal: (...args: unknown[]) => mockFetchTerminal(...args),
+  openCollaborationStream: (...args: unknown[]) => mockOpenStream(...args),
 }));
 
 import React from "react";
@@ -53,6 +52,14 @@ function scope(role: "owner" | "editor" | "viewer") {
 type TestSocket = WebSocket & {
   onmessage: ((event: { data: string }) => void) | null;
   onopen: (() => void) | null;
+  target: string;
+  options: unknown;
+  send: jest.Mock;
+};
+const directStream = {
+  url: `wss://app.matrix-os.com/ws/collaboration/direct/scopes/10000000-0000-4000-8000-000000000001/terminal?ticket=signed&after=0`,
+  headers: { Authorization: "Bearer clerk-token" },
+  handshake: JSON.stringify({ protocolVersion: 2, type: "handshake" }),
 };
 
 const sockets: TestSocket[] = [];
@@ -71,7 +78,7 @@ class TestWebSocket {
   send = jest.fn();
   close = jest.fn(() => { this.readyState = TestWebSocket.CLOSED; });
 
-  constructor() {
+  constructor(public target: string, _protocols?: unknown, public options?: unknown) {
     sockets.push(this as unknown as TestSocket);
   }
 }
@@ -94,7 +101,7 @@ describe("native shared terminal screen", () => {
     jest.clearAllMocks();
     sockets.length = 0;
     global.WebSocket = TestWebSocket as unknown as typeof WebSocket;
-    mockFetchTicket.mockResolvedValue({ ticket: "t".repeat(43), expiresAt: "2026-09-11T12:00:30.000Z" });
+    mockOpenStream.mockResolvedValue(directStream);
     mockFetchTerminal.mockResolvedValue(terminal);
     mockControlTerminal.mockImplementation(async (_token: string, _scope: string, action: { type: string }) => ({
       terminal: action.type === "acquire" ? {
@@ -112,6 +119,12 @@ describe("native shared terminal screen", () => {
     const view = render(<SharedTerminalScreen scopeId={scopeId} actorId="user_viewer"
       getToken={async () => "clerk-token"} onBack={jest.fn()} />);
     await waitFor(() => expect(sockets).toHaveLength(1));
+    expect(mockOpenStream).toHaveBeenCalledWith("clerk-token", scopeId, "terminal", "0");
+    expect(sockets[0]!.target).toBe(directStream.url);
+    expect(sockets[0]!.options).toEqual({ headers: directStream.headers });
+    act(() => sockets[0]!.onopen?.());
+    // The possession handshake must be the first frame, ahead of any heartbeat.
+    expect(sockets[0]!.send.mock.calls[0]).toEqual([directStream.handshake]);
     act(() => {
       sockets[0]!.onmessage?.({ data: frame("terminal.ready", { connectionId: "connection_viewer", terminal }) });
       sockets[0]!.onmessage?.({ data: frame("terminal.output", { data: "release ready\n" }, "2") });

@@ -12,11 +12,10 @@ import { StyleSheet } from "react-native-unistyles";
 import { SessionDiscussionSheet } from "./SessionDiscussionSheet";
 import { SessionAccessControl } from "./SessionAccessControl";
 import {
-  collaborationTerminalUrl,
   controlSharedTerminal,
-  fetchCollaborationEventTicket,
   fetchCollaborationScope,
   fetchSharedTerminal,
+  openCollaborationStream,
 } from "@/lib/requests/collaboration";
 
 const MAX_OUTPUT_BYTES = 2 * 1024 * 1024;
@@ -114,20 +113,19 @@ export function SharedTerminalScreen({ scopeId, actorId, getToken, onBack }: {
     };
     const connect = async () => {
       try {
-        const actorToken = await getToken();
-        const ticket = await fetchCollaborationEventTicket(actorToken, scopeId, randomUuid(), "terminal");
+        const stream = await openCollaborationStream(await getToken(), scopeId, "terminal", sequence.toString());
         if (closed) return;
         const NativeWebSocket = WebSocket as unknown as new (
           target: string,
           protocols?: string | string[],
           options?: { headers: Record<string, string> },
         ) => WebSocket;
-        const next = new NativeWebSocket(collaborationTerminalUrl(scopeId, ticket.ticket), undefined, {
-          headers: { Authorization: `Bearer ${actorToken}` },
-        });
+        const next = new NativeWebSocket(stream.url, undefined, { headers: stream.headers });
         socket = next;
         next.onopen = () => {
           attempt = 0;
+          // The home admits a direct stream only after this first-frame possession proof.
+          next.send(stream.handshake);
           clearHeartbeat();
           heartbeatTimer = setInterval(() => {
             if (!closed && socket === next && next.readyState === WebSocket.OPEN) {

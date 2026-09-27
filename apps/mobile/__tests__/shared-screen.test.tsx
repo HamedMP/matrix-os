@@ -16,7 +16,8 @@ const mockFetchAiRequests = jest.fn();
 const mockPostAiRequest = jest.fn();
 const mockControlAiRequest = jest.fn();
 const mockDecideAiApproval = jest.fn();
-const mockFetchEventTicket = jest.fn();
+const mockOpenStream = jest.fn();
+const mockHydrate = jest.fn();
 
 jest.mock("@clerk/clerk-expo", () => ({ useAuth: () => ({ getToken: mockGetToken, userId: "user_editor" }) }));
 jest.mock("@/lib/requests/collaboration", () => ({
@@ -37,8 +38,8 @@ jest.mock("@/lib/requests/collaboration", () => ({
   postSharedAiRequest: (...args: unknown[]) => mockPostAiRequest(...args),
   controlSharedAiRequest: (...args: unknown[]) => mockControlAiRequest(...args),
   decideSharedAiApproval: (...args: unknown[]) => mockDecideAiApproval(...args),
-  fetchCollaborationEventTicket: (...args: unknown[]) => mockFetchEventTicket(...args),
-  collaborationEventsUrl: jest.fn(() => "wss://app.matrix-os.com/ws/collaboration/events?ticket=test"),
+  hydrateCollaborationDiscovery: (...args: unknown[]) => mockHydrate(...args),
+  openCollaborationStream: (...args: unknown[]) => mockOpenStream(...args),
   updateSharedChatReadState: jest.fn(async () => undefined),
 }));
 jest.mock("@/components/collaboration/SharedTerminalScreen", () => ({
@@ -62,6 +63,15 @@ const invitation = {
 
 type TestSocket = WebSocket & {
   onmessage: ((event: { data: string }) => void) | null;
+  onopen: (() => void) | null;
+  target: string;
+  options: unknown;
+  send: jest.Mock;
+};
+const directStream = {
+  url: "wss://app.matrix-os.com/ws/collaboration/direct/scopes/10000000-0000-4000-8000-000000000001/events?ticket=signed&after=0",
+  headers: { Authorization: "Bearer clerk-token" },
+  handshake: JSON.stringify({ protocolVersion: 2, type: "handshake" }),
 };
 
 const sockets: TestSocket[] = [];
@@ -80,7 +90,7 @@ class TestWebSocket {
   send = jest.fn();
   close = jest.fn(() => { this.readyState = TestWebSocket.CLOSED; });
 
-  constructor() {
+  constructor(public target: string, _protocols?: unknown, public options?: unknown) {
     sockets.push(this as unknown as TestSocket);
   }
 }
@@ -140,7 +150,8 @@ describe("native shared Chat screen", () => {
     });
     mockControlAiRequest.mockResolvedValue({ state: "accepted" });
     mockDecideAiApproval.mockResolvedValue({ state: "accepted" });
-    mockFetchEventTicket.mockResolvedValue({ ticket: "t".repeat(43), expiresAt: "2026-09-07T12:00:30.000Z" });
+    mockOpenStream.mockResolvedValue(directStream);
+    mockHydrate.mockImplementation(async (_token: string, items: unknown[]) => items);
   });
 
   afterAll(() => {
@@ -161,6 +172,56 @@ describe("native shared Chat screen", () => {
     await waitFor(() => expect(mockPostAiRequest).toHaveBeenCalledWith(
       "clerk-token", scopeId, "1", "Ready", expect.any(String),
     ));
+  });
+
+  it("hydrates metadata-only discovery and routes invitation actions through the invitation's scope", async () => {
+    const metadata = {
+      scopeId, runtimeId: "runtime_owner", ownerId: "user_owner", kind: "chat", authorityGeneration: 1,
+      status: "invited", invitationId,
+    };
+    mockFetchInbox.mockResolvedValue({ items: [metadata] });
+    mockHydrate.mockResolvedValue([{ ...metadata, resource: invitation }]);
+
+    render(<SharedScreen />);
+    fireEvent.press(await screen.findByLabelText("View invitation details from Nima"));
+    expect(mockHydrate).toHaveBeenCalledWith("clerk-token", [metadata]);
+    await waitFor(() => expect(mockFetchInvitation).toHaveBeenCalledWith("clerk-token", scopeId, invitationId));
+    fireEvent.press(await screen.findByLabelText("Accept invitation"));
+    await waitFor(() => expect(mockAcceptInvitation).toHaveBeenCalledWith(
+      "clerk-token", scopeId, invitationId, "1", expect.any(String),
+    ));
+  });
+
+  it("keeps unreachable and organization-pending shares visible without offering to open them", async () => {
+    const base = { runtimeId: "runtime_owner", ownerId: "user_owner", kind: "chat", authorityGeneration: 1 };
+    mockFetchInbox.mockResolvedValue({ items: [{ ...base, scopeId, status: "invited", invitationId, home: "offline" }] });
+    mockFetchShared.mockResolvedValue({ items: [
+      { ...base, scopeId: "10000000-0000-4000-8000-000000000002", status: "accepted", home: "denied" },
+      { ...base, scopeId: "10000000-0000-4000-8000-000000000003", kind: "file", status: "accepted" },
+      { ...base, scopeId: "10000000-0000-4000-8000-000000000004", status: "organization_pending",
+        organizationId: "org_direct_1", grantId: "50000000-0000-4000-8000-000000000001" },
+    ] });
+
+    render(<SharedScreen />);
+    expect(await screen.findByText("Invitation")).toBeTruthy();
+    expect(screen.getByText("The owner's computer is offline. Try again later.")).toBeTruthy();
+    expect(screen.getByText("Access is no longer available.")).toBeTruthy();
+    expect(screen.getByText("Open this shared file from Matrix on the web.")).toBeTruthy();
+    expect(screen.getByText("Shared with your organization")).toBeTruthy();
+    expect(screen.queryByLabelText(/^Open /)).toBeNull();
+    expect(screen.queryByLabelText(/^Accept invitation/)).toBeNull();
+  });
+
+  it("opens the shared Chat event stream on the direct route and proves possession first", async () => {
+    render(<SharedScreen />);
+    fireEvent.press(await screen.findByLabelText("Accept invitation from Nima"));
+    expect(await screen.findByText("Launch plan")).toBeTruthy();
+    await waitFor(() => expect(sockets).toHaveLength(1));
+    expect(mockOpenStream).toHaveBeenCalledWith("clerk-token", scopeId, "events", "0");
+    expect(sockets[0]!.target).toBe(directStream.url);
+    expect(sockets[0]!.options).toEqual({ headers: directStream.headers });
+    act(() => sockets[0]!.onopen?.());
+    expect(sockets[0]!.send.mock.calls[0]).toEqual([directStream.handshake]);
   });
 
   it("accepts a terminal invitation and opens the scoped terminal surface", async () => {
@@ -249,6 +310,9 @@ describe("native shared Chat screen", () => {
     fireEvent.press(await screen.findByLabelText("Open shared project project_launch"));
     expect(await screen.findByText("Viewer · read only")).toBeTruthy();
     await waitFor(() => expect(sockets).toHaveLength(1));
+    expect(mockOpenStream).toHaveBeenCalledWith("clerk-token", scopeId, "events", "0");
+    act(() => sockets[0]!.onopen?.());
+    expect(sockets[0]!.send.mock.calls[0]).toEqual([directStream.handshake]);
     mockFetchScope.mockResolvedValue({
       ...viewerScope,
       revision: "2",
