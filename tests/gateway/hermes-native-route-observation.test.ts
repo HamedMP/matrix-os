@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { AiProviderSnapshotV3Schema } from "@matrix-os/contracts";
-import { createHermesRuntimeSource } from "../../packages/gateway/src/agent-config/hermes-source.js";
+import { buildAgentSettingsView } from "../../packages/gateway/src/agent-config/service.js";
+import { createHermesRuntimeSource, normalizeHermesRuntimeSnapshot } from "../../packages/gateway/src/agent-config/hermes-source.js";
 import { createProviderDriverInventoryReader } from "../../packages/gateway/src/ai-providers/provider-driver-inventory.js";
 import { projectProviderSettings } from "../../packages/gateway/src/ai-providers/provider-settings-projector.js";
 import { providerSettingsCanonicalFixture, PROVIDER_SETTINGS_NOW as now } from "./provider-settings-test-support.js";
@@ -70,4 +71,13 @@ describe("owner native Hermes route observations", () => {
     const snapshot = await projectProviderSettings(value);
     expect(snapshot.harnesses.find(h => h.harness === "hermes")?.localObservation).toBeUndefined();
   });
+});
+
+it("keeps internal native evidence out of the legacy Agent Settings V2 compatibility view", () => {
+  const runtimeSnapshot = normalizeHermesRuntimeSnapshot({ status: { gateway_running: false }, observedAt: +now,
+    options: { provider: "anthropic", model: "claude-sonnet-5", providers: [{ slug: "anthropic", authenticated: true, auth_type: null, models: ["claude-sonnet-5"] }] } });
+  expect(runtimeSnapshot.runtime.options[0]?.nativeRouteObservation).toBeDefined();
+  const view = buildAgentSettingsView({ identity: {}, config: {}, claudeLoginAvailable: false, platformCredentialAvailable: false, runtimeSnapshot });
+  expect(view.runtime.options[0]).not.toHaveProperty("nativeRouteObservation");
+  expect(runtimeSnapshot.runtime.options[0]?.nativeRouteObservation).toBeDefined();
 });

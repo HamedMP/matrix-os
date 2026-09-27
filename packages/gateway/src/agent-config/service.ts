@@ -176,7 +176,10 @@ export function buildAgentSettingsView(
     contractVersion: 2,
     revision,
     chat,
-    runtime: input.runtimeSnapshot?.runtime ?? {
+    runtime: input.runtimeSnapshot ? {
+      ...input.runtimeSnapshot.runtime,
+      options: input.runtimeSnapshot.runtime.options.map(({ nativeRouteObservation: _nativeRouteObservation, ...runtime }) => runtime),
+    } : {
       selected: "hermes",
       options: [
         {
