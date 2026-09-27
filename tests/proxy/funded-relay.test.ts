@@ -544,6 +544,7 @@ describe("Cloudflare funded relay control-plane ordering", () => {
     await vi.waitFor(() => expect(events).toContain("generate"));
     const denied = await app.request("/v1/messages", fundedRequest());
     expect(denied.status).toBe(429);
+    expect(denied.headers.get("x-matrix-funded-reason")).toBe("slot_busy");
     expect(events).toContain("release:reservation_2:pre_upstream_failure");
     expect(events).not.toContain("start:reservation_2");
     releaseFirst?.();
@@ -640,6 +641,30 @@ describe("Cloudflare funded relay control-plane ordering", () => {
     }
   });
 
+  it("never marks an upstream provider 429 as a safe capacity retry", async () => {
+    const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/check")) return json(checkResponse());
+      if (url.endsWith("/v1/messages/count_tokens")) return json({ input_tokens: 1_000 });
+      if (url.endsWith("/authorize")) return json(authorizationResponse("request_123"));
+      if (url.endsWith("/start")) return json(startResponse("request_123"));
+      if (url.endsWith("/finalize")) {
+        return json(finalizationResponse({ requestId: "request_123", actualCostMicrousd: RESERVED_MICROUSD, finalizationMode: "conservative" }));
+      }
+      void init;
+      return new Response("rate limited", { status: 429 });
+    });
+    const relay = configuredRelay(fetchMock as typeof fetch);
+    const app = new Hono();
+    relay.register(app);
+
+    const response = await app.request("/v1/messages", fundedRequest());
+
+    expect(response.status).toBe(429);
+    expect(response.headers.get("x-matrix-funded-reason")).toBeNull();
+    await relay.close();
+  });
+
   it("never releases an in-flight reservation after generation fetch fails", async () => {
     const events: string[] = [];
     const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
@@ -732,7 +757,9 @@ describe("Cloudflare funded relay control-plane ordering", () => {
     relay.register(app);
     const first = app.request("/v1/messages", fundedRequest());
     await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
-    expect((await app.request("/v1/messages", fundedRequest())).status).toBe(429);
+    const denied = await app.request("/v1/messages", fundedRequest());
+    expect(denied.status).toBe(429);
+    expect(denied.headers.get("x-matrix-funded-reason")).toBe("slot_busy");
     expect(fetchMock).toHaveBeenCalledOnce();
     finishCheck?.(json({ error: { code: "unauthorized", message: "Unauthorized" } }, 401));
     expect((await first).status).toBe(401);

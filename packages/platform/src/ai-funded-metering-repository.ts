@@ -524,7 +524,8 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
       // A priority rejection may have written a claim; return it so the claim commits.
       if (priority.kind === "rejected") return { kind: "rejected", reason: priority.reason };
       if (await findConflictingActiveReservation(trx.executor, credential.owner_id, billingMode)) {
-        throw new AiFundedPolicyError("rate_limited");
+        // A capacity refusal before any reservation: the reason tells callers it is safe to retry.
+        throw new AiFundedPolicyError("rate_limited", "slot_busy");
       }
       let holdMicrousd = request.maxCostMicrousd;
       if (billingMode === "usage") {
@@ -655,7 +656,7 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
     }).catch((error: unknown) => {
       if (error instanceof Error && "code" in error && error.code === "23505"
         && "constraint" in error && error.constraint === "idx_ai_funded_usage_active_owner") {
-        throw new AiFundedPolicyError("rate_limited");
+        throw new AiFundedPolicyError("rate_limited", "slot_busy");
       }
       throw error;
     });

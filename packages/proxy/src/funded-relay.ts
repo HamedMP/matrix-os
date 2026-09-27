@@ -141,6 +141,17 @@ function fundedClaimKey(c: Context): string | undefined {
   return parsed.success ? parsed.data : undefined;
 }
 
+/**
+ * A capacity refusal before any upstream call or after releasing the reservation
+ * untouched. The reason header tells the gateway a retry cannot duplicate work;
+ * upstream provider 429s never carry it.
+ */
+function capacityLimited(c: Context): Response {
+  const response = errorResponse(c, 429, "rate_limit_error", "AI capacity is temporarily limited");
+  response.headers.set("x-matrix-funded-reason", "slot_busy");
+  return response;
+}
+
 function jevNotStarted(response: Response): Response {
   response.headers.set("x-matrix-jev-dispatch", "not-started");
   return response;
@@ -346,7 +357,7 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
     }
     const runtimeRef = runtimeAdmissionRef(checked.identity, config.metadataSecret);
     if (!admission.admitRuntime(runtimeRef)) {
-      return errorResponse(c, 429, "rate_limit_error", "AI capacity is temporarily limited");
+      return capacityLimited(c);
     }
     const requestId = requestIdFactory();
     const upstreamHeaders = cloudflareHeaders({
@@ -386,7 +397,7 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
         return errorResponse(c, 504, "timeout_error", "AI access timed out");
       }
       if (error instanceof FundedControlPlaneError && error.status === 429) {
-        return errorResponse(c, 429, "rate_limit_error", "AI capacity is temporarily limited");
+        return capacityLimited(c);
       }
       const errorName = error instanceof Error ? error.name : "UnknownError";
       console.warn("[proxy] Funded AI token counting failed", { errorName });
@@ -434,7 +445,7 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
     const acquiredLease = admission.acquireResources(runtimeRef);
     if (!acquiredLease) {
       await releaseBeforeStart(reservation.reservationId, authorization.identity.tokenId);
-      return errorResponse(c, 429, "rate_limit_error", "AI capacity is temporarily limited");
+      return capacityLimited(c);
     }
     let resourceReleased = false;
     const resourceLease: AdmissionLease = {
@@ -771,8 +782,9 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
         }
         const globalLease = admission.acquireGlobal();
         if (!globalLease) {
-          const response = errorResponse(c, 429, "rate_limit_error", "AI capacity is temporarily limited");
-          return c.req.path === EVALUATE_PATH ? jevNotStarted(response) : response;
+          return c.req.path === EVALUATE_PATH
+            ? jevNotStarted(errorResponse(c, 429, "rate_limit_error", "AI capacity is temporarily limited"))
+            : capacityLimited(c);
         }
         const controller = new AbortController();
         activeRequests.add(controller);
