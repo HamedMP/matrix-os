@@ -20,4 +20,16 @@ describe("harness-owned account presentation", () => {
     expect(screen.queryByTestId("account-owner_codex")).not.toBeInTheDocument();
     expect(snapshot.accessSources.find((source) => source.id === selected.accessSourceId)?.readiness.state).toBe("unknown");
   });
+  it.each(["pi", "opencode"] as const)("preserves %s configured native identity when the effective binding is unavailable", async (harness) => {
+    vi.useFakeTimers(); vi.setSystemTime(ACCOUNT_PRESENTATION_NOW);
+    const snapshot = await nativeAccountPresentationFixture(harness);
+    const selected = { ...snapshot.harnesses[0]!, accessSourceId: null, enabled: false, accountIds: [] };
+    render(<AccountsPanel harness={selected} accounts={[]} sources={snapshot.accessSources} allHarnesses={snapshot.harnesses}
+      gatewayPolicy={null} attempt={null} disabled={false} canLogin={false} canLogout={false} canRemove={false} canReassign={false}
+      onMutate={vi.fn()} onOpenTerminal={vi.fn()} onOpenBrowser={vi.fn()} />);
+    expect(screen.queryByText("No account connected.")).not.toBeInTheDocument();
+    expect(screen.getByText(`${selected.displayName} manages authentication for this route in Terminal.`)).toBeVisible();
+    expect(selected.accessSourceId).toBeNull();
+    expect(selected.enabled).toBe(false);
+  });
 });
