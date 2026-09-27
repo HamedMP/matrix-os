@@ -272,4 +272,26 @@ describe("bot agent loop", () => {
     // Rules the tool schema cannot express are checked locally with a field-only hint.
     expect(results[1]).toContain("Fix: action.");
   });
+
+  it("summarizes earlier turns instead of dropping them when a short session is too large to save", async () => {
+    const { route } = scripted([
+      fauxAssistantMessage(fauxText("Here is the fourth answer.")),
+      fauxAssistantMessage(fauxText("Earlier: the person asked for three long Acme reports and prefers tables.")),
+    ]);
+    const history = [1, 2, 3].flatMap((turn) => [
+      { role: "user", content: `Report ${turn}, please.`, timestamp: turn * 10 },
+      // Just under the load cap, so the new turn pushes it past the storage target.
+      { ...fauxAssistantMessage(fauxText("r".repeat(166 * 1024))), timestamp: turn * 10 + 1 },
+    ]);
+    const { broker, saves } = memoryBroker({ messages: history as unknown as Record<string, unknown>[] });
+
+    const outcome = await run({ broker, route, command: command({ capabilities: [], turn: { kind: "prompt", text: "And a fourth?" } }) });
+
+    expect(outcome).toMatchObject({ status: "completed", sessionRevision: 4 });
+    const saved = JSON.stringify(saves[0]!.messages);
+    expect(saved).toContain("prefers tables");
+    expect(saved).toContain("And a fourth?");
+    expect(saved).not.toContain("removed to fit saved history");
+    expect(saved.length).toBeLessThan(512 * 1024);
+  });
 });

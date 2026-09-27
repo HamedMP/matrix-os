@@ -4,7 +4,16 @@ import type { BotRunCommand, BotRunOutcome, BotToolErrorCode } from "@matrix-os/
 import { BotBrokerError, type BotBrokerClient } from "./broker-client.js";
 import { createEventProjector } from "./events.js";
 import { createBridgeModel } from "./providers.js";
-import { BotSessionError, compactSession, decodeSession, encodeSession, fitForStorage, needsCompaction, withoutImages } from "./session.js";
+import {
+  BotSessionError,
+  compactSession,
+  decodeSession,
+  encodeSession,
+  fitForStorage,
+  fitsWithToolPayloadCaps,
+  needsCompaction,
+  withoutImages,
+} from "./session.js";
 import { capabilityForToolName, createBotTools, type BotToolsState } from "./tools.js";
 
 const SUMMARY_PROMPT = "Summarize the conversation between a person and their assistant bot. "
@@ -176,18 +185,19 @@ export async function runBotTurn(input: RunBotTurnInput): Promise<BotRunOutcome>
   const unanswered = steered.filter((message) => !agent.state.messages.includes(message));
   let messages: AgentMessage[] = withoutImages([...agent.state.messages, ...unanswered]);
   try {
+    const summarize = async (transcript: string) => {
+      const reply = await provider.streamSimple(model, normalizeContext({
+        systemPrompt: SUMMARY_PROMPT,
+        messages: [{ role: "user", content: transcript, timestamp: now() }],
+      }), { maxTokens: SUMMARY_MAX_TOKENS }).result();
+      return textOf(reply);
+    };
     if (needsCompaction(messages, command.route.contextWindow)) {
-      messages = await compactSession({
-        messages,
-        now,
-        summarize: async (transcript) => {
-          const reply = await provider.streamSimple(model, normalizeContext({
-            systemPrompt: SUMMARY_PROMPT,
-            messages: [{ role: "user", content: transcript, timestamp: now() }],
-          }), { maxTokens: SUMMARY_MAX_TOKENS }).result();
-          return textOf(reply);
-        },
-      });
+      messages = await compactSession({ messages, now, summarize });
+    }
+    // Summarize down to the latest turn before storage would have to drop earlier turns.
+    if (!fitsWithToolPayloadCaps(messages)) {
+      messages = await compactSession({ messages, now, summarize, keepRecentUserTurns: 1 });
     }
     const saved = await broker.saveSession({ baseRevision: snapshot.revision, messages: encodeSession(fitForStorage(messages, undefined, now)) });
     return outcome(command, { ...status, sessionRevision: saved.revision, toolActions });
