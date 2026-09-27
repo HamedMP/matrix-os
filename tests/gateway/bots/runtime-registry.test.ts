@@ -14,6 +14,7 @@ const binding = (overrides: Partial<BotRuntimeBinding> = {}): BotRuntimeBinding 
   route: { api: "anthropic-messages", modelId: "claude-sonnet-5", input: ["text"], contextWindow: 200_000, maxOutputTokens: 4_096 },
   accessSourceId: "matrix_included",
   capabilities: ["artifact.write"],
+  requestClass: "interactive",
   ...overrides,
 });
 
