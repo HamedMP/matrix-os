@@ -1,19 +1,20 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { createTerminalNativeHistory } from "../../packages/ui/src/terminal/terminal-native-history";
 import { createTerminalScrollbar } from "../../packages/ui/src/terminal/terminal-scrollbar";
 
 afterEach(() => document.body.replaceChildren());
-function setup(tailHeight?: number) {
+function setup(tailHeight?: number, nativeHistory?: Parameters<typeof createTerminalScrollbar>[0]["nativeHistory"]) {
   const parent = document.createElement("div"), host = document.createElement("div"), root = document.createElement("div");
   root.innerHTML = '<div class="xterm-scrollable-element"><div class="scrollbar vertical"></div></div>';
   parent.append(host); host.append(root); document.body.append(parent);
-  Object.defineProperties(host, { clientHeight: { value: 300 }, clientWidth: { value: 800 }, scrollHeight: { value: 576 } });
+  Object.defineProperties(host, { clientHeight: { value: 300, configurable: true }, clientWidth: { value: 800 }, scrollHeight: { value: 576, configurable: true } });
   const active = { baseY: 80, viewportY: 80 };
   let onScroll: (() => void) | undefined;
   const dispose = vi.fn();
   const terminal = { buffer: { active }, scrollToLine: vi.fn((line: number) => { active.viewportY = line; onScroll?.(); }),
     onScroll: (listener: () => void) => { onScroll = listener; return { dispose }; } };
-  const scrollbar = createTerminalScrollbar({ host, root, terminal, getCellHeight: () => 16, getTailHeight: tailHeight === undefined ? undefined : () => tailHeight, onPan: vi.fn() });
+  const scrollbar = createTerminalScrollbar({ host, root, terminal, nativeHistory, getCellHeight: () => 16, getTailHeight: tailHeight === undefined ? undefined : () => tailHeight, onPan: vi.fn() });
   scrollbar.sync();
   const rail = parent.querySelector<HTMLElement>("[data-terminal-scrollbar=content]")!;
   return { parent, host, root, active, terminal, scrollbar, rail, dispose };
@@ -94,6 +95,73 @@ describe("unified terminal scrollbar", () => {
       rail.scrollTop = 480; rail.dispatchEvent(new Event("scroll"));
       scrollbar.dispose();
       expect(cancel).toHaveBeenLastCalledWith(4);
+    } finally { scrollbar.dispose(); vi.unstubAllGlobals(); }
+  });
+
+  it.each(["history trim", "viewport resize"])("yields actual state when a pending target becomes unreachable after %s", change => {
+    const { rail, host, active, terminal, scrollbar } = setup();
+    terminal.scrollToLine.mockImplementation(() => undefined);
+    try {
+      rail.scrollTop = 1556; rail.dispatchEvent(new Event("scroll"));
+      if (change === "history trim") { active.baseY = 20; active.viewportY = 20; }
+      else Object.defineProperty(host, "clientHeight", { value: 500 });
+      host.scrollTop = change === "history trim" ? 0 : 76;
+      scrollbar.sync();
+      expect(rail.scrollTop).toBe(active.viewportY * 16 + host.scrollTop);
+    } finally { scrollbar.dispose(); }
+  });
+
+  it.each(["read-only", "missing acknowledgment"])("expires a real native target after %s without continuing scroll retries", failure => {
+    vi.useFakeTimers();
+    const send = vi.fn();
+    const native = createTerminalNativeHistory({ send, canWrite: () => failure !== "read-only", onState() {} });
+    native.attach(true); native.update({ above: 80, below: 0, rows: 36 }); send.mockClear();
+    const { rail, scrollbar } = setup(undefined, native);
+    try {
+      rail.scrollTop = 0; rail.dispatchEvent(new Event("scroll"));
+      if (failure === "read-only") expect(rail.scrollTop).toBe(1280);
+      else expect(rail.scrollTop).toBe(0);
+      vi.advanceTimersByTime(4_000);
+      expect(rail.scrollTop).toBe(1280);
+      const scrollCount = send.mock.calls.filter(([frame]) => frame.type === "scroll-to").length;
+      if (failure === "read-only") expect(scrollCount).toBe(0);
+      else expect(scrollCount).toBeGreaterThan(0);
+      vi.advanceTimersByTime(8_000);
+      expect(send.mock.calls.filter(([frame]) => frame.type === "scroll-to")).toHaveLength(scrollCount);
+    } finally { scrollbar.dispose(); native.dispose(); vi.useRealTimers(); }
+  });
+
+  it("rejects an old local frame when native history appears before dispatch", () => {
+    const frames: FrameRequestCallback[] = [];
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => { frames.push(callback); return frames.length; });
+    vi.stubGlobal("cancelAnimationFrame", vi.fn());
+    let state: { above: number; below: number; rows: number } | null = null;
+    const scrollTo = vi.fn();
+    const { rail, terminal, scrollbar } = setup(undefined, { getState: () => state, scrollTo });
+    try {
+      rail.scrollTop = 0; rail.dispatchEvent(new Event("scroll"));
+      expect(terminal.scrollToLine).toHaveBeenCalledOnce();
+      state = { above: 80, below: 0, rows: 36 };
+      frames[0](0);
+      expect(terminal.scrollToLine).toHaveBeenCalledOnce();
+      expect(scrollTo).not.toHaveBeenCalled();
+      scrollbar.sync();
+      expect(rail.scrollTop).toBe(1280);
+    } finally { scrollbar.dispose(); vi.unstubAllGlobals(); }
+  });
+
+  it.each(["newer gesture", "disposal"])("does not dispatch a captured old frame after %s", superseded => {
+    const frames: FrameRequestCallback[] = [];
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => { frames.push(callback); return frames.length; });
+    vi.stubGlobal("cancelAnimationFrame", vi.fn());
+    const { rail, terminal, scrollbar } = setup();
+    try {
+      rail.scrollTop = 0; rail.dispatchEvent(new Event("scroll"));
+      if (superseded === "disposal") scrollbar.dispose();
+      else { rail.scrollTop = 160; rail.dispatchEvent(new Event("scroll")); }
+      const before = terminal.scrollToLine.mock.calls.length;
+      frames[0](0);
+      expect(terminal.scrollToLine).toHaveBeenCalledTimes(before);
     } finally { scrollbar.dispose(); vi.unstubAllGlobals(); }
   });
 
