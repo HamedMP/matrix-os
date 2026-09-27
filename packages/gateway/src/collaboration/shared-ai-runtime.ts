@@ -48,6 +48,7 @@ import type { CollaborationChatScopeService } from "./chat-scope.js";
 import type { OwnerCollaborationDatabase } from "./database.js";
 import type { CollaborationEventRegistry } from "./events.js";
 import { createScopeRuntimeBroker, createScopeRuntimeBrokerServer } from "./scope-runtime-broker.js";
+import type { FundedAdmissionQueue } from "../funded-ai/admission-queue.js";
 import { createSandboxReadinessProbe, type SandboxReadinessProbe } from "./sandbox-readiness.js";
 import type { ReadinessSubject } from "./readiness-evaluator.js";
 import { createScopeRuntimeChatProviderAdapter } from "./scope-runtime-chat-adapter.js";
@@ -183,6 +184,7 @@ export async function createSharedAiRuntime(options: {
   serviceToken: string;
   homePath: string;
   fundedCredentialProvider?: MatrixFundedCredentialProvider;
+  fundedAdmission?: FundedAdmissionQueue;
   resolveParticipant(actorId: string): Promise<{ actorId: string; displayName: string }>;
   supervisorSocket?: string;
   brokerSocket?: string;
@@ -463,6 +465,7 @@ export async function createSharedAiRuntime(options: {
   const broker = createScopeRuntimeBroker({
     homePath: options.homePath,
     fundedCredentialProvider: options.fundedCredentialProvider,
+    ...(options.fundedAdmission ? { fundedAdmission: options.fundedAdmission } : {}),
     authorize: async (request) => {
       const binding = registry.lookup(request);
       if (!binding) return { allowed: false };

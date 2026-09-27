@@ -14,6 +14,7 @@ import {
   KernelCredentialAccessSourceIdSchema,
   type KernelCredentialAccessSourceId,
 } from "../kernel-credentials.js";
+import type { FundedAdmissionQueue } from "../funded-ai/admission-queue.js";
 import { validateCustomMcpUrl } from "../integrations/custom-mcp/security.js";
 import {
   createCodexOwnerIdentityResolver,
@@ -208,6 +209,8 @@ export function createScopeRuntimeBroker(options: {
     url?: string;
   }): Promise<ScopeRuntimeBrokerAuthorization>;
   fundedCredentialProvider?: MatrixFundedCredentialProvider;
+  /** Orders funded retries after a relay 429; absent means the first answer is final. */
+  fundedAdmission?: FundedAdmissionQueue;
   resolveCredentials?: ResolveCredentials;
   resolveCodexIdentity?: ResolveCodexOwnerIdentity;
   resolveEgress?: ResolveEgress;
@@ -267,6 +270,8 @@ export function createScopeRuntimeBroker(options: {
         process.env,
         authorization.accessSourceId,
         options.fundedCredentialProvider,
+        // Shared Chat runs answer a person who is waiting.
+        { requestClass: "interactive" },
       );
       const env = credentialLaunch.env;
       const apiKey = env?.ANTHROPIC_API_KEY;
@@ -284,13 +289,22 @@ export function createScopeRuntimeBroker(options: {
       for (const [name, value] of Object.entries(request.headers)) {
         if (value) headers.set(name, value);
       }
-      const response = await fetchImpl(`${baseUrl}${request.path}`, {
+      const send = () => fetchImpl(`${baseUrl}${request.path}`, {
         method: "POST",
         headers,
         body: request.body,
         redirect: "error",
         signal: AbortSignal.any([lifetime.signal, AbortSignal.timeout(INFERENCE_TIMEOUT_MS)]),
       });
+      const funded = authorization.accessSourceId === "matrix_included" && options.fundedAdmission;
+      const response = funded
+        ? await funded.run<Response>({ requestClass: "interactive", signal: lifetime.signal }, async () => {
+          const attempt = await send();
+          if (attempt.status !== 429) return { kind: "done", value: attempt };
+          await discard(attempt);
+          return { kind: "busy" };
+        })
+        : await send();
       if (!response.ok) {
         await discard(response);
         return failure(request.requestId, "provider_unavailable");

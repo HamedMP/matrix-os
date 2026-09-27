@@ -4,6 +4,7 @@ import {
   type ScopeRuntimeBrokerRequest,
 } from "../../packages/scope-runtime/src/broker-protocol.js";
 import { createScopeRuntimeBroker } from "../../packages/gateway/src/collaboration/scope-runtime-broker.js";
+import { createFundedAdmissionQueue } from "../../packages/gateway/src/funded-ai/admission-queue.js";
 
 const REQUEST_ID = "018f0ce5-7b4a-7f95-a7c8-acae0dc5c5d1";
 const RUNTIME_HANDLE = "runtime_22222222222222222222222222222222";
@@ -112,6 +113,7 @@ describe("scope runtime broker", () => {
       expect.anything(),
       "owner_anthropic_key",
       undefined,
+      { requestClass: "interactive" },
     );
     expect(result).toEqual({
       version: 1,
@@ -123,6 +125,42 @@ describe("scope runtime broker", () => {
     });
     expect(JSON.stringify(result)).not.toContain("owner-secret");
     await broker.close();
+  });
+
+  it("retries a funded relay 429 through the admission queue, but not an owner-key 429", async () => {
+    const stream = "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n";
+    const authorizeFor = (accessSourceId: "matrix_included" | "owner_anthropic_key") => vi.fn(async () => ({
+      allowed: true as const, accessSourceId, allowedModelIds: [MODEL], allowedEgressOrigins: [],
+    }));
+    const statuses = [429, 429, 200];
+    const fundedFetch = vi.fn(async () => {
+      const status = statuses.shift() ?? 200;
+      return new Response(status === 200 ? stream : "busy", { status, headers: { "content-type": "text/event-stream" } });
+    });
+    const queue = createFundedAdmissionQueue({ sleep: async () => {} });
+    const funded = createScopeRuntimeBroker({
+      homePath: "/home/matrix/home",
+      authorize: authorizeFor("matrix_included"),
+      resolveCredentials: async () => ({ env: { ANTHROPIC_API_KEY: "funded-lease", ANTHROPIC_BASE_URL: "https://relay.example" } }),
+      fetchImpl: fundedFetch,
+      fundedAdmission: queue,
+    });
+    await expect(funded.handle(inferenceRequest)).resolves.toMatchObject({ ok: true, status: 200, body: stream });
+    expect(fundedFetch).toHaveBeenCalledTimes(3);
+
+    const ownerFetch = vi.fn(async () => new Response("busy", { status: 429 }));
+    const owner = createScopeRuntimeBroker({
+      homePath: "/home/matrix/home",
+      authorize: authorizeFor("owner_anthropic_key"),
+      resolveCredentials: async () => ({ env: { ANTHROPIC_API_KEY: "owner-secret" } }),
+      fetchImpl: ownerFetch,
+      fundedAdmission: queue,
+    });
+    await expect(owner.handle(inferenceRequest)).resolves.toMatchObject({ ok: false });
+    expect(ownerFetch).toHaveBeenCalledTimes(1);
+    queue.close();
+    await funded.close();
+    await owner.close();
   });
 
   it("injects the owner Codex identity only after exact runtime and model authorization", async () => {
