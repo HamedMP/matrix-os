@@ -320,4 +320,33 @@ describe("bot agent loop", () => {
     expect(cancelled.handle.getPendingResponseCount()).toBe(1);
     expect(cancelledBroker.saves).toEqual([]);
   });
+
+  it("keeps every person turn when a run is cancelled while its summary is pending", async () => {
+    const controller = new AbortController();
+    const faux = scripted([
+      fauxAssistantMessage(fauxText("Here is the fourth answer.")),
+      fauxAssistantMessage(fauxText(""), { stopReason: "aborted" }),
+    ]);
+    let calls = 0;
+    const provider = Object.assign(Object.create(faux.route.provider) as typeof faux.route.provider, {
+      streamSimple: ((...args: Parameters<typeof faux.route.provider.streamSimple>) => {
+        calls += 1;
+        // The second call is the summary: the person cancels while it runs.
+        if (calls === 2) controller.abort();
+        return faux.route.provider.streamSimple(...args);
+      }) as typeof faux.route.provider.streamSimple,
+    });
+    const history = [1, 2, 3].flatMap((turn) => [
+      { role: "user", content: `Report ${turn}, please.`, timestamp: turn * 10 },
+      { ...fauxAssistantMessage(fauxText("r".repeat(166 * 1024))), timestamp: turn * 10 + 1 },
+    ]) as unknown as Record<string, unknown>[];
+    const { broker, saves } = memoryBroker({ messages: history });
+
+    await run({ broker, route: { provider, model: faux.route.model }, signal: controller.signal, command: command({ capabilities: [], turn: { kind: "prompt", text: "And a fourth?" } }) });
+
+    const saved = JSON.stringify(saves[0]!.messages);
+    for (const turn of [1, 2, 3]) expect(saved).toContain(`Report ${turn}, please.`);
+    expect(saved).toContain("And a fourth?");
+    expect(saved).not.toContain("removed to fit saved history");
+  });
 });
