@@ -50,6 +50,15 @@ const TerminalGridSizeSchema = z.object({
   cols: z.number().int().min(20).max(500),
   rows: z.number().int().min(5).max(200),
 }).strict();
+const SafeClientRecoveryActionSchema = z.enum([
+  "retry",
+  "sign_in",
+  "select_runtime",
+  "open_setup_terminal",
+  "resume",
+  "start_new_session",
+  "return_home",
+]);
 const TerminalServerEventBaseSchema = z.object({
   terminalRef: TerminalRefSchema,
   revision: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
@@ -71,7 +80,7 @@ export const ShellServerFrameSchema = z.discriminatedUnion("type", [
     canonicalSize: TerminalGridSizeSchema,
     presentationRevision: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).optional(),
     seq: z.number().int().min(0),
-    ansi: z.string().max(4 * 1024 * 1024),
+    ansi: z.string().max(5 * 1024 * 1024),
     viewport: z.object({
       top: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
       rows: z.number().int().min(1).max(200),
@@ -117,7 +126,9 @@ export const ShellServerFrameSchema = z.discriminatedUnion("type", [
     terminalRef: TerminalRefSchema.optional(),
     error: z.object({
       code: z.string().min(1).max(80).regex(/^[a-z0-9][a-z0-9_-]{0,79}$/),
-      message: z.string().min(1).max(720),
+      safeMessage: z.string().min(1).max(180),
+      retryable: z.boolean(),
+      recoveryActions: z.array(SafeClientRecoveryActionSchema).max(6).optional(),
     }).strict(),
   }).strict(),
 ]);
