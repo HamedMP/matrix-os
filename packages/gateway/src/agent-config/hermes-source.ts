@@ -189,12 +189,14 @@ export function normalizeHermesRuntimeSnapshot(input: {
   const version = VersionSchema.safeParse(status.version);
   // Legacy authKind defaults to OAuth for display compatibility. Exact source
   // evidence requires a unique raw provider with an explicit credential origin.
-  const selectedNativeProviders = options.providers.flatMap((raw) => {
-    const parsed = HermesProviderSchema.safeParse(raw);
-    return parsed.success && parsed.data.slug === currentProvider ? [parsed.data] : [];
-  });
-  const nativeProvider = selectedNativeProviders.length === 1 ? selectedNativeProviders[0] : undefined;
-  const nativeCredentialKind = nativeProvider?.auth_type === "oauth" ? "provider_profile" as const
+  const selectedNativeRecords = options.providers.filter((raw) =>
+    typeof raw === "object" && raw !== null && "slug" in raw
+      && typeof raw.slug === "string" && raw.slug.trim() === currentProvider);
+  const nativeParsed = selectedNativeRecords.length === 1
+    ? HermesProviderSchema.safeParse(selectedNativeRecords[0]) : undefined;
+  const nativeProvider = nativeParsed?.success ? nativeParsed.data : undefined;
+  const nativeCredentialKind = nativeProvider?.is_user_defined === true ? "custom" as const
+    : nativeProvider?.auth_type === "oauth" ? "provider_profile" as const
     : nativeProvider?.auth_type === "api_key" ? "api_key" as const
       : nativeProvider?.auth_type === "base_url" || nativeProvider?.auth_type === "custom" ? "custom" as const : undefined;
 

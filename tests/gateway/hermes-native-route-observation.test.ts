@@ -99,3 +99,15 @@ it("does not attribute an origin from duplicated selected provider rows", async 
   expect(snapshot.providers).toHaveLength(1);
   expect(snapshot.runtime.options[0]).not.toHaveProperty("nativeRouteObservation");
 });
+
+it.each(["user_defined", "malformed_duplicate"] as const)("does not attribute native profile origin for %s", async (failure) => {
+  const provider = { slug: "anthropic", authenticated: true, auth_type: "oauth", models: ["claude-sonnet-5"] };
+  const providers = failure === "user_defined" ? [{ ...provider, is_user_defined: true }]
+    : [provider, { slug: "anthropic", auth_type: 42 }];
+  const source = createHermesRuntimeSource(async path => path === "/api/status" ? { gateway_running: false } : {
+    provider: "anthropic", model: "claude-sonnet-5", providers }, { now: () => +now });
+  const snapshot = await source(AbortSignal.timeout(1000));
+  expect(snapshot.providers[0]).toMatchObject({ id: "anthropic", authStatus: { authenticated: true } });
+  expect(snapshot.runtime.options[0]?.nativeRouteObservation?.credentialKind).not.toBe("provider_profile");
+  if (failure === "malformed_duplicate") expect(snapshot.runtime.options[0]).not.toHaveProperty("nativeRouteObservation");
+});
