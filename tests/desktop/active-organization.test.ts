@@ -54,14 +54,20 @@ describe("fetchActiveOrganizationId", () => {
     expect(init?.signal).toBeInstanceOf(AbortSignal);
   });
 
-  it("returns no organization when the account has none or several (no switch yet)", async () => {
-    for (const body of [organizations(), organizations("org_alpha", "org_beta")]) {
-      await expect(fetchActiveOrganizationId({
-        fetchFn: async () => jsonResponse(body),
-        origin: "https://api.matrix-os.com",
-        accessToken: "tok",
-      })).resolves.toBeNull();
-    }
+  it("returns no organization when the account has no membership", async () => {
+    await expect(fetchActiveOrganizationId({
+      fetchFn: async () => jsonResponse(organizations()),
+      origin: "https://api.matrix-os.com",
+      accessToken: "tok",
+    })).resolves.toBeNull();
+  });
+
+  it("returns no organization when several memberships make the choice ambiguous (no switch yet)", async () => {
+    await expect(fetchActiveOrganizationId({
+      fetchFn: async () => jsonResponse(organizations("org_alpha", "org_beta")),
+      origin: "https://api.matrix-os.com",
+      accessToken: "tok",
+    })).resolves.toBeNull();
   });
 
   it("treats a repeated membership row for one organization as that organization", async () => {
@@ -201,16 +207,35 @@ describe("ActiveOrganizationTracker", () => {
     expect(warn).toHaveBeenCalledWith("[auth] active organization unavailable:", "TypeError");
   });
 
-  it("notifies when a later listing removes the organization", async () => {
+  it("replaces a stale active organization that is no longer a membership", async () => {
     const fetchFn = vi.fn()
       .mockResolvedValueOnce(jsonResponse(organizations("org_matrix_team")))
+      .mockResolvedValueOnce(jsonResponse(organizations("org_new_team")))
       .mockResolvedValueOnce(jsonResponse(organizations()));
     const { tracker, onChanged } = makeTracker(fetchFn);
+    const refresh = () => tracker.refresh({ userId: "user-1", accessToken: "tok", generation: 1, isCurrent: () => true });
 
-    await tracker.refresh({ userId: "user-1", accessToken: "tok", generation: 1, isCurrent: () => true });
-    await tracker.refresh({ userId: "user-1", accessToken: "tok", generation: 1, isCurrent: () => true });
-
+    await refresh();
+    expect(tracker.organizationFor("user-1")).toBe("org_matrix_team");
+    await refresh();
+    expect(tracker.organizationFor("user-1")).toBe("org_new_team");
+    await refresh();
     expect(tracker.organizationFor("user-1")).toBeNull();
-    expect(onChanged).toHaveBeenCalledTimes(2);
+    expect(onChanged).toHaveBeenCalledTimes(3);
+  });
+
+  it("schedules no timers or retries of its own while refreshing and throttling", async () => {
+    vi.useFakeTimers();
+    try {
+      const fetchFn = vi.fn(async () => jsonResponse(organizations("org_matrix_team")));
+      const { tracker } = makeTracker(fetchFn, () => 1_000);
+      for (let focus = 0; focus < 20; focus += 1) {
+        await tracker.refresh({ userId: "user-1", accessToken: "tok", generation: 1, isCurrent: () => true, maxAgeMs: 60_000 });
+      }
+      expect(fetchFn).toHaveBeenCalledTimes(1);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

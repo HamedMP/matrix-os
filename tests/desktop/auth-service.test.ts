@@ -1070,6 +1070,25 @@ describe("AuthService active organization", () => {
     expect(auth.getStatus()).toMatchObject({ organizationId: "org_current" });
   });
 
+  it("removes a stale organization from auth:status once it is no longer a membership", async () => {
+    const fetchFn = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(membership))
+      .mockResolvedValueOnce(jsonResponse({ organizations: [] }));
+    const organizationChanges: AuthStatus[] = [];
+    const { auth } = makeService({
+      credential: VALID, profile: PROFILE, now: 10_000, fetchFn,
+      onOrganizationChanged: (status) => organizationChanges.push(status),
+    });
+    await auth.init();
+
+    await auth.refreshOrganization();
+    expect(auth.getStatus()).toMatchObject({ organizationId: "org_matrix_team" });
+    await auth.refreshOrganization();
+
+    expect(auth.getStatus()).not.toHaveProperty("organizationId");
+    expect(organizationChanges).toHaveLength(2);
+  });
+
   it("forgets the organization on sign-out", async () => {
     const fetchFn = vi.fn(async () => jsonResponse(membership));
     const { auth } = makeService({ credential: VALID, profile: PROFILE, now: 10_000, fetchFn });
