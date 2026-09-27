@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 describe('start-platform-cloud-run.sh', () => {
@@ -76,6 +76,37 @@ describe('start-platform-cloud-run.sh', () => {
     expect(dockerfile).toContain('COPY packages/contracts/package.json packages/contracts/package.json');
     expect(dockerfile).toContain('/app/packages/contracts/package.json ./packages/contracts/package.json');
     expect(dockerfile).toContain('/app/packages/contracts/src ./packages/contracts/src');
+  });
+
+  it('marks only the auth shell process as the platform shell surface', () => {
+    const root = process.cwd();
+    const script = readFileSync(join(root, 'scripts/start-platform-cloud-run.sh'), 'utf8');
+    const compose = readFileSync(join(root, 'distro/docker-compose.platform.yml'), 'utf8');
+
+    const authShellStart = script.split('\n').findIndex((line) => line.includes('node node_modules/next/dist/bin/next start shell'));
+    expect(authShellStart).toBeGreaterThan(0);
+    expect(script.split('\n').slice(authShellStart - 2, authShellStart).join('\n')).toContain('MATRIX_SHELL_SURFACE=platform');
+    expect(script.match(/MATRIX_SHELL_SURFACE/g)).toHaveLength(1);
+    expect(script).not.toMatch(/export\s+MATRIX_SHELL_SURFACE/);
+
+    const authShellService = compose.slice(compose.indexOf('\n  auth-shell:'), compose.indexOf('\n  proxy:'));
+    expect(authShellService).toContain('- MATRIX_SHELL_SURFACE=platform');
+    expect(compose.match(/MATRIX_SHELL_SURFACE/g)).toHaveLength(1);
+  });
+
+  it('never marks customer computers as the platform shell surface', () => {
+    const root = process.cwd();
+    const customerFiles = readdirSync(join(root, 'distro/customer-vps'), { recursive: true, withFileTypes: true })
+      .filter((entry) => entry.isFile())
+      .map((entry) => join(entry.parentPath, entry.name));
+    expect(customerFiles.length).toBeGreaterThan(10);
+    for (const file of [
+      join(root, 'Dockerfile'),
+      join(root, 'scripts/build-host-bundle.sh'),
+      ...customerFiles,
+    ]) {
+      expect(readFileSync(file, 'utf8'), file).not.toContain('MATRIX_SHELL_SURFACE');
+    }
   });
 
   it('exits nonzero when the auth shell never becomes ready', () => {
