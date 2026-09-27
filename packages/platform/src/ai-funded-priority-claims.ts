@@ -81,6 +81,13 @@ export async function evaluateFundedPriority(executor: Executor, input: Priority
     return { kind: "proceed" };
   }
 
+  const ownClaim = ownIndex >= 0 ? liveClaims[ownIndex] : undefined;
+  if (ownClaim && ownClaim.billing_mode === "hold" && input.billingMode === "usage") {
+    // A usage attempt conflicts with more work; widen what the claim holds without moving it.
+    await executor.updateTable("ai_funded_priority_claims").set({ billing_mode: "usage" })
+      .where("owner_id", "=", input.ownerId).where("machine_id", "=", input.machineId)
+      .where("runtime_slot", "=", input.runtimeSlot).where("claim_key", "=", input.claimKey).execute();
+  }
   if (ownIndex < 0) {
     if (liveClaims.length >= MAX_PRIORITY_CLAIMS_PER_OWNER) return { kind: "rejected", reason: "priority_full" };
     const expiresAt = new Date(input.checked.getTime() + PRIORITY_CLAIM_TTL_MS).toISOString();

@@ -225,6 +225,32 @@ describe("funded AI interactive priority claims", () => {
     expect((await claims()).map((claim) => claim.machine_id)).toEqual(["live_machine"]);
   });
 
+  it("upgrades a waiting claim to usage mode without moving it", async () => {
+    const background = await issue(primary, "background");
+    const interactive = await issue(primary, "interactive");
+    const running = await repo.authorize(usage(background, "bg_usage"));
+    const claimedAt = clock.toISOString();
+    await expect(repo.authorize({ ...hold(interactive, "turn_hold"), claimKey: "run_a" })).rejects.toMatchObject({ reason: "slot_busy" });
+    advance(1_000);
+    await expect(repo.authorize(usage(interactive, "turn_usage", "run_a"))).rejects.toMatchObject({ reason: "slot_busy" });
+    expect(await claims()).toEqual([expect.objectContaining({ claim_key: "run_a", billing_mode: "usage", created_at: claimedAt })]);
+    await finish(running, background);
+
+    await expect(repo.authorize(hold(background, "bg_hold"))).rejects.toMatchObject({ reason: "priority_hold" });
+  });
+
+  it("does not claim a place for a request it cannot afford", async () => {
+    const background = await issue(primary, "background");
+    const interactive = await issue(primary, "interactive");
+    await repo.authorize(usage(background, "bg_usage"));
+
+    // Beyond the monthly budget even if the active hold were released.
+    await expect(repo.authorize({ ...hold(interactive, "turn_too_big"), maxCostMicrousd: 11_000_000 }))
+      .rejects.toMatchObject({ code: "budget_exceeded" });
+
+    expect(await claims()).toEqual([]);
+  });
+
   it("replays an authorized request unchanged even while a claim waits", async () => {
     const background = await issue(primary, "background");
     const interactive = await issue(primary, "interactive");
