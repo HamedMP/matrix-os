@@ -93,6 +93,8 @@ export function createCodingHarnessCredentialResolver(options: {
       baseEnv,
       parsedSource.data,
       options.fundedProvider,
+      // Harness credentials launch foreground coding Chat turns.
+      { requestClass: "interactive" },
     );
     signal?.throwIfAborted();
     const env = portableEnvironment(launch.env);

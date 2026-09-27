@@ -117,6 +117,7 @@ import {
   createFundedAiCredentialManager,
   loadFundedAiRuntimeConfig,
 } from "./funded-ai-credential-manager.js";
+import { createFundedAdmissionQueue } from "./funded-ai/admission-queue.js";
 import { createFundedAiFundingSummaryClient } from "./funded-ai-funding-summary-client.js";
 import { createFundedAiRouteReadinessClient } from "./funded-ai-route-readiness-client.js";
 import { createFundedAiReadinessReader } from "./funded-ai-readiness.js";
@@ -285,6 +286,8 @@ export async function createGateway(config: GatewayConfig) {
   const fundedCredentialProvider = fundedAiRuntimeConfig
     ? createFundedAiCredentialManager(fundedAiRuntimeConfig)
     : undefined;
+  // Orders this gateway's own funded retries; the platform enforces owner-wide priority.
+  const fundedAdmission = fundedCredentialProvider ? createFundedAdmissionQueue() : undefined;
   const fundedAiFundingSummaryReader = fundedAiRuntimeConfig
     ? createFundedAiFundingSummaryClient(fundedAiRuntimeConfig)
     : undefined;
@@ -1029,7 +1032,7 @@ export async function createGateway(config: GatewayConfig) {
         `Diagnose and fix the issue.`;
 
       try {
-        await dispatcher.dispatch(healPrompt, undefined, () => {});
+        await dispatcher.dispatch(healPrompt, undefined, () => {}, undefined, undefined, { fundedRequestClass: "background" });
 
         const result = await checkModuleHealth(target.port, target.healthPath, 5000);
         if (result.ok) {
@@ -1563,6 +1566,7 @@ export async function createGateway(config: GatewayConfig) {
         // shared AI reports no eligibility instead of launching unmounted runs.
         ...(canonicalChatExecutionRoots ? { executionRoots: canonicalChatExecutionRoots } : {}),
         ...(fundedCredentialProvider ? { fundedCredentialProvider } : {}),
+        ...(fundedAdmission ? { fundedAdmission } : {}),
       },
     });
     for (const ownerId of new Set(codingAgentOwnerIds)) {
@@ -1823,6 +1827,7 @@ export async function createGateway(config: GatewayConfig) {
       terminalLiveOwnership.close();
       await agentRuntimeServices.controller.close();
       aiProviderService.close();
+      fundedAdmission?.close();
       fundedCredentialProvider?.close();
       await jevRuntime?.cleanup.close();
       await codingAgentTurnLifecycle.shutdown();
