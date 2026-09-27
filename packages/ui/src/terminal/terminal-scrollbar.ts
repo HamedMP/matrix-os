@@ -92,6 +92,9 @@ export function createTerminalScrollbar(options: {
     && receipt.line <= metrics().history
     && receipt.pan <= Math.max(0, host.scrollHeight - host.clientHeight)
     && Date.now() < receipt.deadline;
+  const receiptIsAcknowledged = (receipt: NonNullable<typeof pendingTarget>) =>
+    (options.nativeHistory?.getState()?.above ?? terminal.buffer.active.viewportY) === receipt.line
+    && Math.abs(host.scrollTop - receipt.pan) < 0.01;
   const sync = () => {
     if (disposed || syncing) return;
     if (pendingTarget && !receiptIsCurrent(pendingTarget)) abandonPending();
@@ -108,7 +111,7 @@ export function createTerminalScrollbar(options: {
     });
     spacer.style.height = `${host.clientHeight + history * cell + pan}px`;
     const above = options.nativeHistory?.getState()?.above ?? terminal.buffer.active.viewportY;
-    if (pendingTarget && (above !== pendingTarget.line || Math.abs(host.scrollTop - pendingTarget.pan) >= 0.01)) return;
+    if (pendingTarget && !receiptIsAcknowledged(pendingTarget)) return;
     cancelPending();
     rail.scrollTop = above * cell + host.scrollTop;
     synchronizedTop = rail.scrollTop;
@@ -161,6 +164,7 @@ export function createTerminalScrollbar(options: {
   const subscription = terminal.onScroll(sync);
   return {
     sync, cancelPending,
+    hasPendingIntent: () => pendingTarget !== null && receiptIsCurrent(pendingTarget) && !receiptIsAcknowledged(pendingTarget),
     dispose() {
       disposed = true;
       cancelPending();

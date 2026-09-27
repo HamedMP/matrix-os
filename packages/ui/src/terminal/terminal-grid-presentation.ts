@@ -190,9 +190,10 @@ export function createTerminalGridPresentation(options: GridPresentationOptions)
     const nativeHistory = options.nativeHistory?.getState();
     const live = buffer && buffer.viewportY >= buffer.baseY && (!nativeHistory || nativeHistory.below === 0);
     if (!live) historyWasObserved = true;
-    else if (historyWasObserved) {
+    else if (historyWasObserved && !scrollbar?.hasPendingIntent()) {
       // An acknowledged return from history is authoritative, including
-      // keyboard/wheel navigation and native history replies.
+      // keyboard/wheel navigation and native history replies. An older bottom
+      // reply cannot acknowledge a newer rail target queued behind it.
       historyWasObserved = false;
       scrollbar?.cancelPending();
       railPannedAway = false;
