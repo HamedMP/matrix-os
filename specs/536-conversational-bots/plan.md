@@ -139,7 +139,8 @@ The stack is managed with `gh stack` (research R15).
 | L3 | Gateway: per-class funded leases, caller classification, local funded queue | M1 (funded) / Spike B | 1,300 |
 | L4 | `packages/bot-runtime`: Pi wrapper, broker fetch transport, tool proxy, event projection, session codec, compaction; S0 probe script | M1 / S0 | 2,000 |
 | L5 | Scope runtime: bot profile, multi-profile supervisor, `bot_agent` worker, `~/bots` root, bundle packaging, digest pins | M1 / S0 | 2,200 |
-| L6 | Gateway bot state: versioned migrations and repositories for all M1 tables | M1 / Spike A | 2,600 |
+| L6a | Gateway bot state: versioned migrations for all M1 tables; operations, bindings, sessions, tasks, and checkpoints repositories | M1 / Spike A | 1,900 |
+| L6b | Gateway bot state: interactions, connect requests, grants, approvals, and memory repositories | M1 / Spike A | 1,600 |
 | L7 | Gateway `ScopeRuntimeHost` extraction, `BotRuntimeRegistry`, bot broker actions, `bot_workspace` resolver, private admission | M1 / Spike A | 2,600 |
 | L8 | Gateway instantiation route, `matrix_bot` canonical adapter, task orchestration, checkpoints, recover/detach, reconciliation | M1 / Spike A | 2,800 |
 | L9 | Gateway interactions, integration grants, connect correlation, approvals, memory, authority route | M1 / Spike A | 2,800 |
