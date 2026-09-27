@@ -3,7 +3,7 @@ import { projectProviderSettings } from "../../packages/gateway/src/ai-providers
 import { providerSettingsCanonicalFixture } from "./provider-settings-test-support.js";
 
 export const ACCOUNT_PRESENTATION_NOW = new Date("2026-09-27T00:00:00Z");
-export async function nativeAccountPresentationFixture(harness: Extract<ProviderGenericHarnessKind, "pi" | "opencode">) {
+export async function nativeAccountPresentationFixture(harness: Extract<ProviderGenericHarnessKind, "pi" | "opencode">, catalogFailed = false) {
   const canonical = providerSettingsCanonicalFixture();
   canonical.refreshedAt = ACCOUNT_PRESENTATION_NOW.toISOString();
   const unknown = { state: "unknown" as const, checkedAt: null, staleAfter: null, action: "retry" as const, safeReason: "unknown" as const };
@@ -24,6 +24,7 @@ export async function nativeAccountPresentationFixture(harness: Extract<Provider
       enabled: true, selectedAccountId: null, accessSourceId: source.id,
       route: { kind: "configurable", providerId: "openai", modelId: "openai:fixture-sol" },
     }] },
-    genericModelCatalog: { providers: [{ id: "openai", displayName: "OpenAI", models: [{ id: "openai:fixture-sol", displayName: "Fixture Sol", enabled: true }] }], accessSources: [source], failures: [] },
+    genericModelCatalog: catalogFailed ? { providers: [], accessSources: [], failures: [harness] }
+      : { providers: [{ id: "openai", displayName: "OpenAI", models: [{ id: "openai:fixture-sol", displayName: "Fixture Sol", enabled: true }] }], accessSources: [source], failures: [] },
   });
 }
