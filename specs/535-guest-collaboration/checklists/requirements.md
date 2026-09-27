@@ -40,7 +40,17 @@ The second review added organization membership independent of machine count in 
 ## Validation executed for this spec PR
 
 - Requirement numbering: 29 unique sequential FR IDs and nine unique sequential SC IDs; passed.
-- Relative Markdown links, balanced fenced blocks, absent clarification placeholders and feature-pointer JSON; passed.
+- Relative Markdown links, balanced fenced blocks and absent clarification placeholders; passed. The repository-global feature pointer is unchanged by this PR; use the explicit feature directory for downstream planning.
 - Static public-site-boundary assertions from `tests/repository/site-extraction.test.ts`, evaluated directly without Vitest; passed.
 - The canonical Vitest docs-contract invocation could not run because this isolated checkout has no installed `vitest` executable. This is not a passing test-suite claim; CI must run it with the frozen dependencies.
 - Product/authority review completed against the baseline identified in `architecture.md`; no runtime code was changed.
+
+## Inline review decisions (2026-09-27)
+
+- [x] Recruiting is removed from M1/M2 release gates; timed SC-002/SC-009 journeys gate them, SC-001 runs post-M2 and at final M5 acceptance.
+- [x] Keep 300-second identity sessions with separate home-enforced authorization leases of at most 60 seconds, including outbound delivery and idle-subscription expiry.
+- [x] Name Settings → Organization → External sharing as the M2 owner/admin policy surface, built on M1 organization controls with an account-only route.
+- [x] Qualify a CRDT candidate through the actual relay, socket-cap and compaction workloads, lockfile/bundle effects and Native Mobile dev-client evidence.
+- [x] Preserve all additions in `be39b4466`; explicitly qualify shared-drive guest transfers and remove the competing active-spec pointer change.
+
+These are specification decisions and proof requirements, not claims that the editor, guest transfer path or policy-lease implementation already exists. Existing CI passed on `be39b4466`; updated-head checks must run separately.
