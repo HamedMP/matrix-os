@@ -389,6 +389,14 @@ describe("funded AI request classes and priority", () => {
     }).success).toBe(false);
   });
 
+  it("accepts only a bounded claim key on authorization", () => {
+    const base = { credential, requestId: "request_1", modelId: "anthropic/claude-sonnet-5", maxCostMicrousd: 100 };
+    expect(FundedAiAuthorizationRequestSchema.parse({ ...base, claimKey: "run_abc:turn.1" }).claimKey).toBe("run_abc:turn.1");
+    expect(FundedAiAuthorizationRequestSchema.safeParse({ ...base, claimKey: "" }).success).toBe(false);
+    expect(FundedAiAuthorizationRequestSchema.safeParse({ ...base, claimKey: "x".repeat(129) }).success).toBe(false);
+    expect(FundedAiAuthorizationRequestSchema.safeParse({ ...base, claimKey: "turn one" }).success).toBe(false);
+  });
+
   it("allows only allowlisted priority reasons on rate-limited errors", () => {
     for (const reason of ["slot_busy", "priority_hold", "priority_queue", "priority_full"]) {
       expect(FundedAiSafeErrorSchema.parse({ error: { code: "rate_limited", message: "Try again later", reason } }).error)

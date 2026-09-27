@@ -1,5 +1,6 @@
 import { z } from "zod/v4";
 import type { CanonicalChatOutboxEventType } from "#canonical-chat-api";
+import type { CanonicalChatTransportFrame } from "#canonical-chat-content";
 
 /**
  * Stream clients validate event types strictly, and released desktop and
@@ -24,4 +25,19 @@ export function projectChatEventTypeForWire(
 ): CanonicalChatOutboxEventType {
   if (version === "1" || !EVENT_WIRE_V1_TYPES.has(eventType)) return eventType;
   return "chat.updated";
+}
+
+/** Applied to every live and replayed frame by both event delivery routes. */
+export function projectChatEventFrame(
+  frame: CanonicalChatTransportFrame,
+  version: ChatEventWireVersion,
+): CanonicalChatTransportFrame {
+  if (frame.type !== "chat.event" && frame.type !== "chat.content") return frame;
+  const eventType = projectChatEventTypeForWire(frame.event.eventType, version);
+  if (eventType === frame.event.eventType) return frame;
+  return { ...frame, event: { ...frame.event, eventType } };
+}
+
+export function chatEventVersionUrl(path: string): string {
+  return `${path}${path.includes("?") ? "&" : "?"}eventVersion=1`;
 }
