@@ -560,6 +560,9 @@ importers:
       '@matrix-os/contracts':
         specifier: workspace:*
         version: link:../contracts
+      '@matrix-os/scope-runtime':
+        specifier: workspace:*
+        version: link:../scope-runtime
       zod:
         specifier: ^4.4.3
         version: 4.4.3
@@ -567,6 +570,9 @@ importers:
       '@types/node':
         specifier: ^25.2.3
         version: 25.5.0
+      esbuild:
+        specifier: 0.25.12
+        version: 0.25.12
       typescript:
         specifier: ^5.9.3
         version: 5.9.3
@@ -1016,6 +1022,9 @@ importers:
       '@types/node':
         specifier: ^25.2.3
         version: 25.5.0
+      esbuild:
+        specifier: 0.25.12
+        version: 0.25.12
       typescript:
         specifier: ^5.9.3
         version: 5.9.3

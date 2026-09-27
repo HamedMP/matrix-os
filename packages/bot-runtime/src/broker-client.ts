@@ -6,10 +6,15 @@ import {
   BotBrokerRequestSchema,
   BotBrokerResponseSchema,
   BotEventAcceptedSchema,
+  BotImageChunkSchema,
+  BotRunSpecSchema,
   BotSessionSaveResultSchema,
   BotSessionSnapshotSchema,
   BotToolResultSchema,
   type BotEvent,
+  type BotImageChunk,
+  type BotImageChunkRequest,
+  type BotRunSpec,
   type BotSessionSaveRequest,
   type BotSessionSnapshot,
   type BotToolErrorCode,
@@ -33,6 +38,12 @@ export interface BotBrokerClient {
   saveSession(session: BotSessionSaveRequest): Promise<{ revision: number }>;
   tool(request: BotToolRequest): Promise<BotToolResult>;
   event(event: BotEvent): Promise<void>;
+}
+
+/** The worker loads its run and images before the agent loop starts; the loop never needs them. */
+export interface BotWorkerBrokerClient extends BotBrokerClient {
+  loadRun(): Promise<BotRunSpec>;
+  readImageChunk(request: BotImageChunkRequest): Promise<BotImageChunk>;
 }
 
 export interface BotBrokerClientOptions {
@@ -81,7 +92,7 @@ function exchange(options: BotBrokerClientOptions, frame: unknown): Promise<unkn
   });
 }
 
-export function createBotBrokerClient(options: BotBrokerClientOptions): BotBrokerClient {
+export function createBotBrokerClient(options: BotBrokerClientOptions): BotWorkerBrokerClient {
   const requestIdFactory = options.requestIdFactory ?? randomUUID;
 
   async function call<T>(action: Record<string, unknown>, resultSchema: z.ZodType<T>): Promise<T> {
@@ -105,6 +116,8 @@ export function createBotBrokerClient(options: BotBrokerClientOptions): BotBroke
   }
 
   return {
+    loadRun: () => call({ action: "bot.run.load" }, BotRunSpecSchema),
+    readImageChunk: (image) => call({ action: "bot.input.image", image }, BotImageChunkSchema),
     loadSession: () => call({ action: "bot.session.load" }, BotSessionSnapshotSchema),
     saveSession: (session) => call({ action: "bot.session.save", session }, BotSessionSaveResultSchema),
     tool: (tool) => call({ action: "bot.tool", tool }, BotToolResultSchema),

@@ -11,7 +11,9 @@ describe("dormant scope runtime host bundle", () => {
     expect(unit).toContain("RuntimeDirectoryMode=0770");
     expect(unit).toContain("StateDirectory=matrix-scope-runtime");
     expect(unit).toContain("PrivateNetwork=yes");
-    expect(unit).toContain("ProtectHome=yes");
+    expect(unit).toContain("ProtectHome=tmpfs");
+    // Only the bot workspace root is visible, read-only, for mount validation.
+    expect(unit.match(/^(?:Bind|BindReadOnly|ReadWrite)Paths=.*$/gm)).toEqual(["BindReadOnlyPaths=-/home/matrix/home/bots"]);
     expect(unit).toContain("ProtectSystem=strict");
     expect(unit).toContain("NoNewPrivileges=yes");
     expect(unit).toContain("CapabilityBoundingSet=");
@@ -39,5 +41,23 @@ describe("dormant scope runtime host bundle", () => {
     expect(updater).toContain("systemctl cat matrix-scope-runtime.service");
     expect(updater).toContain('runtime_services+=(matrix-scope-runtime)');
     expect(updater).toContain('systemctl stop "${runtime_services[@]}"');
+  });
+
+  it("builds the bundled bot worker, mounts it read-only, and prepares the bot root before the supervisor", async () => {
+    const build = await readFile("scripts/build-host-bundle.sh", "utf8");
+    const main = await readFile("packages/scope-runtime/src/main.ts", "utf8");
+    const botPackage = JSON.parse(await readFile("packages/bot-runtime/package.json", "utf8")) as { scripts: Record<string, string> };
+    const botProfile = await readFile("packages/scope-runtime/src/bot-profile.ts", "utf8");
+    const cloudInit = await readFile("distro/customer-vps/cloud-init.yaml", "utf8");
+    const updater = await readFile("distro/customer-vps/host-bin/matrix-sync-agent", "utf8");
+
+    expect(build.indexOf("pnpm --filter '@matrix-os/bot-runtime' build"))
+      .toBeGreaterThan(build.indexOf("pnpm --filter '@matrix-os/scope-runtime' build"));
+    expect(botPackage.scripts.build).toContain("dist/bot-worker.mjs");
+    expect(main).toContain('botRuntimeDirectory: "/opt/matrix/app/packages/bot-runtime/dist"');
+    expect(botProfile).toContain("BindReadOnlyPaths=${BOT_RUNTIME_DIRECTORY_TOKEN}:${BOT_RUNTIME_MOUNT}");
+    expect(cloudInit).toMatch(/install -d -o matrix -g matrix -m 0750 [^\n]*\/home\/matrix\/home\/bots/);
+    expect(updater.indexOf("sudo install -d -o matrix -g matrix -m 0750 /home/matrix/home/bots"))
+      .toBeLessThan(updater.indexOf("sudo systemctl start matrix-scope-runtime.service"));
   });
 });

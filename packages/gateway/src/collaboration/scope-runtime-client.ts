@@ -3,9 +3,11 @@ import { createConnection, type Socket } from "node:net";
 import {
   ScopeRuntimeRequestSchema,
   ScopeRuntimeResponseSchema,
+  type ScopeRuntimeCapabilityProfile,
   type ScopeRuntimeRequest,
   type ScopeRuntimeResponse,
   type ScopeRuntimeSandboxManifest,
+  type ScopeRuntimeWorkload,
 } from "@matrix-os/scope-runtime";
 
 const MAX_FRAME_BYTES = 128 * 1024;
@@ -16,7 +18,7 @@ const DEFAULT_OPERATION_TIMEOUT_MS = 60_000;
 export interface ScopeRuntimeSandboxCapability {
   policyVersion: number;
   policyDigest: string;
-  workloads: Array<"chat_ai" | "terminal">;
+  workloads: ScopeRuntimeWorkload[];
 }
 
 export interface ScopeRuntimeProfileCatalogEntry {
@@ -27,7 +29,7 @@ export interface ScopeRuntimeProfileCatalogEntry {
   sandbox?: { policyVersion: number; policyDigest: string };
   supportedAdapters: Readonly<Record<string, Readonly<{
     harnessVersions: readonly string[];
-    workloads: readonly ("chat_ai" | "terminal")[];
+    workloads: readonly ScopeRuntimeWorkload[];
   }>>>;
 }
 
@@ -41,7 +43,7 @@ export type ScopeRuntimeCapability =
     supportedAdapters: Array<{
       adapterId: string;
       harnessVersion: string;
-      workloads: Array<"chat_ai" | "terminal">;
+      workloads: ScopeRuntimeWorkload[];
     }>;
     /** Present only when the supervisor advertises a sandbox policy that matches the catalog. */
     sandbox?: ScopeRuntimeSandboxCapability;
@@ -79,6 +81,8 @@ export function createScopeRuntimeClient(options: {
     available: false,
     reason: "supervisor_unavailable",
   };
+  /** Per-profile capabilities for every catalog profile; each fails closed on its own. */
+  let profileCapabilities = new Map<string, ScopeRuntimeCapability>();
 
   function request(input: ScopeRuntimeRequest): Promise<ScopeRuntimeResponse> {
     if (closed) return Promise.reject(new ScopeRuntimeClientError("client_closed"));
@@ -150,26 +154,54 @@ export function createScopeRuntimeClient(options: {
     return options.profileCatalog[profileId];
   }
 
-  function supports(response: Extract<ScopeRuntimeResponse, { type: "capability.result"; ok: true }>): boolean {
-    const expected = options.profileCatalog[response.profile.profileId];
-    if (!expected || response.profile.identity.mode !== "dynamic"
-      || response.profile.identity.uidMin !== expected.identity.uidMin
-      || response.profile.identity.uidMax !== expected.identity.uidMax
-      || expected.profileVersion !== response.profile.profileVersion
-      || expected.profileDigest !== response.profile.profileDigest) return false;
-    if (expected.sandbox && (!response.profile.sandbox
-      || response.profile.sandbox.policyVersion !== expected.sandbox.policyVersion
-      || response.profile.sandbox.policyDigest !== expected.sandbox.policyDigest)) return false;
-    return response.profile.adapters.every((adapter) => {
+  /** Exact match against the catalog: identity, version, digest, sandbox policy, and every adapter. */
+  function supportsProfile(profile: ScopeRuntimeCapabilityProfile): boolean {
+    const expected = options.profileCatalog[profile.profileId];
+    if (!expected || profile.identity.mode !== "dynamic"
+      || profile.identity.uidMin !== expected.identity.uidMin
+      || profile.identity.uidMax !== expected.identity.uidMax
+      || expected.profileVersion !== profile.profileVersion
+      || expected.profileDigest !== profile.profileDigest) return false;
+    if (expected.sandbox && (!profile.sandbox
+      || profile.sandbox.policyVersion !== expected.sandbox.policyVersion
+      || profile.sandbox.policyDigest !== expected.sandbox.policyDigest)) return false;
+    return profile.adapters.every((adapter) => {
       const supported = expected.supportedAdapters[adapter.adapterId];
       return supported?.harnessVersions.includes(adapter.harnessVersion) === true
         && adapter.workloads.every((workload) => supported.workloads.includes(workload));
     });
   }
 
+  function capabilityFor(profile: ScopeRuntimeCapabilityProfile): ScopeRuntimeCapability {
+    if (!supportsProfile(profile)) return { available: false, reason: "unsupported_profile" };
+    return {
+      available: true,
+      profileId: profile.profileId,
+      executionGeneration: profile.executionGeneration,
+      supportedAdapters: profile.adapters.map((entry) => ({
+        adapterId: entry.adapterId,
+        harnessVersion: entry.harnessVersion,
+        workloads: [...entry.workloads],
+      })),
+      ...(profile.sandbox && expected(profile.profileId)?.sandbox
+        ? { sandbox: {
+            policyVersion: profile.sandbox.policyVersion,
+            policyDigest: profile.sandbox.policyDigest,
+            workloads: [...profile.sandbox.workloads],
+          } }
+        : {}),
+    };
+  }
+
   return {
     capability(): ScopeRuntimeCapability {
       return currentCapability;
+    },
+    /** A catalog profile's capability; profiles the supervisor does not advertise are unsupported. */
+    profileCapability(profileId: string): ScopeRuntimeCapability {
+      return profileCapabilities.get(profileId) ?? (currentCapability.available
+        ? { available: false, reason: "unsupported_profile" }
+        : currentCapability);
     },
     async refreshCapability(): Promise<ScopeRuntimeCapability> {
       if (closed) throw new ScopeRuntimeClientError("client_closed");
@@ -179,33 +211,26 @@ export function createScopeRuntimeClient(options: {
           type: "capability.get",
           requestId: createRequestId(),
         });
-        if (response.type !== "capability.result" || !response.ok || !supports(response)) {
+        if (response.type !== "capability.result" || !response.ok) {
           currentCapability = { available: false, reason: "unsupported_profile" };
+          profileCapabilities = new Map();
           return currentCapability;
         }
-        currentCapability = {
-          available: true,
-          profileId: response.profile.profileId,
-          executionGeneration: response.profile.executionGeneration,
-          supportedAdapters: response.profile.adapters.map((entry) => ({
-            adapterId: entry.adapterId,
-            harnessVersion: entry.harnessVersion,
-            workloads: [...entry.workloads],
-          })),
-          ...(response.profile.sandbox && expected(response.profile.profileId)?.sandbox
-            ? { sandbox: {
-                policyVersion: response.profile.sandbox.policyVersion,
-                policyDigest: response.profile.sandbox.policyDigest,
-                workloads: [...response.profile.sandbox.workloads],
-              } }
-            : {}),
-        };
+        currentCapability = capabilityFor(response.profile);
+        const advertised = response.profiles ?? [response.profile];
+        const next = new Map<string, ScopeRuntimeCapability>();
+        for (const profileId of Object.keys(options.profileCatalog)) {
+          const profile = advertised.find((entry) => entry.profileId === profileId);
+          next.set(profileId, profile ? capabilityFor(profile) : { available: false, reason: "unsupported_profile" });
+        }
+        profileCapabilities = next;
         return currentCapability;
       } catch (error: unknown) {
         if (!(error instanceof ScopeRuntimeClientError)) {
           console.warn("[collaboration] scope runtime capability failed");
         }
         currentCapability = { available: false, reason: "supervisor_unavailable" };
+        profileCapabilities = new Map();
         return currentCapability;
       }
     },
@@ -306,6 +331,7 @@ export function createScopeRuntimeClient(options: {
       for (const socket of sockets) socket.destroy();
       await Promise.allSettled([...operations]);
       currentCapability = { available: false, reason: "supervisor_unavailable" };
+      profileCapabilities = new Map();
     },
   };
 }
