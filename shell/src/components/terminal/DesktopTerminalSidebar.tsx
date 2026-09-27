@@ -2,9 +2,10 @@
 
 import type { ReactNode } from "react";
 import { PlusIcon, SquareTerminalIcon, Trash2Icon } from "@/lib/hugeicons";
-import { ProjectSharing } from "@/components/projects/ProjectSharing";
+import { ProjectSharingControl, useShellCollaborationRuntimeId } from "@/components/projects/ProjectSharing";
 import type { ShellSessionSummary } from "./terminal-session-state";
 import { groupShellSessionsByProject, MAIN_TERMINAL_PROJECT } from "./terminal-project-groups";
+import { useWorkspaceProjectNames } from "./useWorkspaceProjectNames";
 import { ThemePickerButton } from "./TerminalThemePicker";
 
 export function DesktopTerminalSidebar({
@@ -26,6 +27,9 @@ export function DesktopTerminalSidebar({
   // control, as in the Web Canvas drawer; a Main-only list stays flat.
   const projectGroups = groupShellSessionsByProject(sessions);
   const grouped = projectGroups.some(([project]) => project !== MAIN_TERMINAL_PROJECT);
+  // Resolved once for every project heading, and only when there is one.
+  const runtimeId = useShellCollaborationRuntimeId(grouped);
+  const projectName = useWorkspaceProjectNames(grouped);
   const rows = (items: ShellSessionSummary[]) => items.map((shell) => (
     <DesktopTerminalSessionRow key={shell.name} shell={shell} selected={selectedName === shell.name}
       onOpen={onOpen} onDelete={onDelete} />
@@ -69,7 +73,9 @@ export function DesktopTerminalSidebar({
       {grouped ? (
         <div className="min-h-0 flex-1 overflow-y-auto">
           {projectGroups.map(([project, projectSessions]) => (
-            <DesktopTerminalProjectGroup key={project} project={project}>{rows(projectSessions)}</DesktopTerminalProjectGroup>
+            <DesktopTerminalProjectGroup key={project} project={project} name={projectName(project)} runtimeId={runtimeId}>
+              {rows(projectSessions)}
+            </DesktopTerminalProjectGroup>
           ))}
         </div>
       ) : (
@@ -86,8 +92,13 @@ export function DesktopTerminalSidebar({
   );
 }
 
-function DesktopTerminalProjectGroup({ project, children }: { project: string; children: ReactNode }) {
-  const label = project === MAIN_TERMINAL_PROJECT ? "Main" : project;
+function DesktopTerminalProjectGroup({ project, name, runtimeId, children }: {
+  project: string;
+  name: string;
+  runtimeId: string | null;
+  children: ReactNode;
+}) {
+  const label = project === MAIN_TERMINAL_PROJECT ? "Main" : name;
   return (
     <section role="group" aria-label={label} data-terminal-project-group={project}>
       <header
@@ -95,7 +106,8 @@ function DesktopTerminalProjectGroup({ project, children }: { project: string; c
         style={{ borderColor: "var(--terminal-drawer-border)", color: "var(--terminal-drawer-muted)" }}
       >
         <span className="min-w-0 truncate">{label}</span>
-        {project !== MAIN_TERMINAL_PROJECT ? <ProjectSharing projectId={project} projectName={project} /> : null}
+        {project !== MAIN_TERMINAL_PROJECT
+          ? <ProjectSharingControl projectId={project} projectName={name} runtimeId={runtimeId} /> : null}
       </header>
       <ul aria-label={`${label} sessions`}>{children}</ul>
     </section>

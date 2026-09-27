@@ -11,12 +11,6 @@ export const MAIN_TERMINAL_PROJECT = "main";
 export function groupShellSessionsByProject(
   shells: ShellSessionSummary[],
 ): Array<[project: string, sessions: ShellSessionSummary[]]> {
-  const groups = new Map<string, ShellSessionSummary[]>();
-  for (const shell of shells) {
-    const project = shell.project || MAIN_TERMINAL_PROJECT;
-    const sessions = groups.get(project);
-    if (sessions) sessions.push(shell);
-    else groups.set(project, [shell]);
-  }
-  return [...groups.entries()];
+  return Object.entries(Object.groupBy(shells, (shell) => shell.project || MAIN_TERMINAL_PROJECT))
+    .flatMap(([project, sessions]) => (sessions ? [[project, sessions] as [string, ShellSessionSummary[]]] : []));
 }

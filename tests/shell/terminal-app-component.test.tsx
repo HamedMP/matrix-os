@@ -20,6 +20,8 @@ vi.mock("../../shell/src/components/terminal/PaneGrid.js", () => ({
 
 vi.mock("@/components/projects/ProjectSharing", () => ({
   ProjectSharing: ({ projectId }: { projectId: string }) => <button type="button">Share project {projectId}</button>,
+  ProjectSharingControl: ({ projectId }: { projectId: string }) => <button type="button">Share project {projectId}</button>,
+  useShellCollaborationRuntimeId: () => null,
 }));
 
 vi.mock("@/hooks/useTheme", () => ({
