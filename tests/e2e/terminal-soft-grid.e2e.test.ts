@@ -224,6 +224,42 @@ describe("real terminal renderer soft-grid resizing", () => {
     } finally { if (!electron) await page.close(); }
   });
 
+  it("preserves a history rail gesture before queued presentation expands the grid", async () => {
+    const page = electron ? await electron.firstWindow() : await browser.newPage({ viewport: { width: 430, height: 1050 }, isMobile: true, hasTouch: true });
+    try {
+      await page.goto(`${origin}/?surface=${electron ? "electron" : "web-mobile"}`);
+      await page.locator("[data-terminal-grid-stage]").waitFor();
+      await page.locator("#terminal-window").evaluate(element => { (element as HTMLElement).style.height = "300px"; });
+      await page.evaluate(() => (window as unknown as { fixtureOutput(data: string): void }).fixtureOutput("\x1bcshort\r\nresult\r\n$ "));
+      await expect.poll(async () => page.locator("[data-terminal-viewport]").evaluate(host => host.scrollHeight - host.clientHeight)).toBe(0);
+      await page.evaluate(() => {
+        const original = window.requestAnimationFrame.bind(window);
+        const queued: FrameRequestCallback[] = [];
+        window.requestAnimationFrame = callback => {
+          if (queued.length >= 128) throw new Error("Diagnostic frame limit exceeded");
+          queued.push(callback); return -queued.length;
+        };
+        (window as unknown as { releaseHistoryFrames(): void }).releaseHistoryFrames = () => {
+          window.requestAnimationFrame = original;
+          queued.splice(0).forEach(callback => original(callback));
+        };
+        (window as unknown as { fixtureOutput(data: string): void }).fixtureOutput("\x1bc" + Array.from({ length: 80 }, (_, i) => `HISTORY_${i}\r\n`).join(""));
+      });
+      const rail = page.locator('[data-terminal-scrollbar="content"]');
+      await expect.poll(() => rail.evaluate(element => element.scrollTop)).toBeGreaterThan(0);
+      await rail.evaluate(element => {
+        element.addEventListener("scroll", () => { document.documentElement.dataset.historyRailGesture = "true"; }, { once: true });
+        element.scrollTop = 0;
+      });
+      // Deliver the original native rail event before releasing the queued
+      // presentation and xterm smooth-scroll frames, as a loaded host can do.
+      await page.waitForFunction(() => document.documentElement.dataset.historyRailGesture === "true");
+      await page.evaluate(() => (window as unknown as { releaseHistoryFrames(): void }).releaseHistoryFrames());
+      await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+      await expect.poll(async () => (await geometry(page)).panTop, { timeout: 5_000 }).toBe(0);
+    } finally { if (!electron) await page.close(); }
+  });
+
   it.each([
     { surface: "web", name: "Web Desktop", zoom: 1 }, { surface: "web", name: "Web Canvas", zoom: 0.75 },
     { surface: "electron", name: "Electron Desktop", zoom: 1 },
