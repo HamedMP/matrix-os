@@ -2,6 +2,7 @@
 
 import { useEffect, useState, type ReactNode } from "react";
 import { useAuth, RedirectToSignIn } from "@clerk/nextjs";
+import Link from "next/link";
 import { palette as c, fonts, lightFg } from "@matrix-os/brand";
 import {
   AlertCircleIcon,
@@ -21,6 +22,7 @@ import {
 } from "@/lib/provisioning-handoff";
 import type { DeveloperToolId } from "@/components/onboarding/developer-tools";
 import { Settings } from "@/components/Settings";
+import { SHARED_WITH_ME_PATH, useAccountOnlyLanding } from "@/lib/account-only-landing";
 import { navigateForOnboarding } from "@/lib/onboarding-navigation";
 
 // Phases where the shell (Desktop) takes over — first-run UI is owned by Desktop,
@@ -256,6 +258,7 @@ export function BootSequence({
   completionRedirect,
   runtimeSlot = null,
   passivePostCheckout = false,
+  accountOnlyLanding = false,
 }: {
   children: ReactNode;
   platformSessionActive?: boolean;
@@ -263,6 +266,8 @@ export function BootSequence({
   completionRedirect?: string;
   runtimeSlot?: string | null;
   passivePostCheckout?: boolean;
+  /** Platform surface only: accounts without a computer may land on Shared with me (spec 535 D3). */
+  accountOnlyLanding?: boolean;
 }) {
   // Server-verified session or e2e bypass: the journey is already past billing.
   if (platformSessionActive || e2eBypass) {
@@ -273,6 +278,7 @@ export function BootSequence({
       completionRedirect={completionRedirect}
       runtimeSlot={runtimeSlot}
       passivePostCheckout={passivePostCheckout}
+      accountOnlyLanding={accountOnlyLanding}
     >
       {children}
     </BootSequenceInner>
@@ -284,11 +290,13 @@ function BootSequenceInner({
   completionRedirect,
   runtimeSlot,
   passivePostCheckout,
+  accountOnlyLanding,
 }: {
   children: ReactNode;
   completionRedirect?: string;
   runtimeSlot: string | null;
   passivePostCheckout: boolean;
+  accountOnlyLanding: boolean;
 }) {
   const { isLoaded, isSignedIn, getToken } = useAuth();
   const [provisioningOutcomeAmbiguous, setProvisioningOutcomeAmbiguous] = useState(false);
@@ -300,6 +308,7 @@ function BootSequenceInner({
   });
   const [working, setWorking] = useState(false);
   const [installError, setInstallError] = useState<string | null>(null);
+  useAccountOnlyLanding({ platformSurface: accountOnlyLanding, phase: state?.phase, getToken });
 
   useEffect(() => {
     if (!provisioningOutcomeAmbiguous) return;
@@ -444,6 +453,14 @@ function BootSequenceInner({
             >
               View plans
             </a>
+          ) : null}
+          {accountOnlyLanding ? (
+            <Link
+              href={SHARED_WITH_ME_PATH}
+              className="rounded-md border border-forest/20 px-4 py-2 text-sm font-medium hover:bg-forest/5"
+            >
+              Open Shared with me
+            </Link>
           ) : null}
         </BootShell>
       );

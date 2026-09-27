@@ -42,10 +42,12 @@ function OnboardingGateInner({
   children,
   platformSessionActive,
   handoffStartedAt,
+  accountOnlyLanding,
 }: {
   children: ReactNode;
   platformSessionActive: boolean;
   handoffStartedAt: number;
+  accountOnlyLanding: boolean;
 }) {
   const searchParams = useSearchParams();
   const pathname = usePathname();
@@ -88,7 +90,11 @@ function OnboardingGateInner({
     );
   }
   return (
-    <BootSequence platformSessionActive={platformSessionActive} e2eBypass={e2eBypass}>
+    <BootSequence
+      platformSessionActive={platformSessionActive}
+      e2eBypass={e2eBypass}
+      accountOnlyLanding={accountOnlyLanding}
+    >
       {children}
     </BootSequence>
   );
@@ -112,10 +118,13 @@ export function OnboardingGate({
   children,
   platformSessionActive = false,
   initialLoadingSurface = "default",
+  accountOnlyLanding = false,
 }: {
   children: ReactNode;
   platformSessionActive?: boolean;
   initialLoadingSurface?: SignupBillingHandoffLoadingSurface;
+  /** Set only by the app root on the platform surface; billing and device entries never land on Shared with me. */
+  accountOnlyLanding?: boolean;
 }) {
   const [handoffStartedAt] = useState(() => Date.now());
 
@@ -133,6 +142,7 @@ export function OnboardingGate({
       <OnboardingGateInner
         platformSessionActive={platformSessionActive}
         handoffStartedAt={handoffStartedAt}
+        accountOnlyLanding={accountOnlyLanding}
       >
         {children}
       </OnboardingGateInner>
