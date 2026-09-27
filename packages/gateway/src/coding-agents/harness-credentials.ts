@@ -10,6 +10,7 @@ import {
   KernelCredentialAccessSourceIdSchema,
   type KernelCredentialAccessSourceId,
   type KernelCredentialLaunch,
+  type KernelFundingContext,
 } from "../kernel-credentials.js";
 import type { MatrixFundedCredentialProvider } from "../funded-ai-credential-manager.js";
 import { hasNativeHarnessAuth } from "./native-harness-auth.js";
@@ -29,8 +30,9 @@ export type CodingHarnessCredentialResolver = (
 type CredentialLaunchFn = (
   homePath: string,
   baseEnv: NodeJS.ProcessEnv,
-  requestedAccessSourceId?: KernelCredentialAccessSourceId,
-  fundedProvider?: MatrixFundedCredentialProvider,
+  requestedAccessSourceId: KernelCredentialAccessSourceId | undefined,
+  fundedProvider: MatrixFundedCredentialProvider | undefined,
+  funding: KernelFundingContext,
 ) => Promise<KernelCredentialLaunch>;
 
 interface HarnessSettingsReader {

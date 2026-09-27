@@ -287,7 +287,8 @@ describe("funded AI credential classes", () => {
 
     now += 10 * 60_000 + 1;
     classesSupported = true;
-    const classed = await manager.getCredential({ requestClass: "background", forceRefresh: true });
+    // The cached legacy lease is still valid, but its fallback window is over: it must be re-probed.
+    const classed = await manager.getCredential({ requestClass: "background" });
     expect(classed.requestClass).toBe("background");
     expect(fetchFn.mock.calls.at(-1)?.[1]?.body).toBe(JSON.stringify({ requestClass: "background" }));
   });
