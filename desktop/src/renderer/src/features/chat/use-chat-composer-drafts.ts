@@ -6,6 +6,7 @@ const MAX_COMPOSER_DRAFTS = 100;
 
 type ComposerDraft = {
   requestIdentity: number;
+  revision: number;
   text: string;
   referenceTokens: ComposerReferenceToken[];
   projectId: string | null;
@@ -30,6 +31,7 @@ function rememberDraft(
     projectId: fallbackProjectId,
     ...drafts[scope],
     ...patch,
+    revision: (drafts[scope]?.revision ?? 0) + 1,
   };
   const scopes = Object.keys(next);
   if (scopes.length > MAX_COMPOSER_DRAFTS) delete next[scopes[0]!];
@@ -68,6 +70,11 @@ export function useChatComposerDrafts({
 
   return {
     requestIdentity: draft?.requestIdentity ?? 0,
+    revision: draft?.revision ?? 0,
+    updateIfUnchanged: useCallback((revision: number, patch: Pick<ComposerDraft, "text" | "referenceTokens">) => {
+      setDrafts((current) => (current[scope]?.revision ?? 0) === revision
+        ? rememberDraft(current, scope, patch, projectId) : current);
+    }, [projectId, scope]),
     text: draft?.text ?? "",
     referenceTokens: draft?.referenceTokens ?? EMPTY_REFERENCE_TOKENS,
     draftProjectId: draft?.projectId ?? projectId,

@@ -129,4 +129,19 @@ describe("Chat-bound composer drafts", () => {
     view.rerender({ clientIdentity: secondClient, chatId: "chat_b", conversation: true });
     expect(view.result.current.text).toBe("");
   });
+  it("settles text and references atomically only at the captured draft revision", () => {
+    const view = renderHook(() => useChatComposerDrafts({ clientIdentity: "client", chatId: "chat_a", projectId: null, conversation: true }));
+    const reference = { type: "resource" as const, resource: { kind: "file" as const, id: "notes", label: "notes.md" } };
+    act(() => { view.result.current.setText("original"); view.result.current.setReferenceTokens([reference]); });
+    const revision = view.result.current.revision;
+    act(() => view.result.current.updateIfUnchanged(revision, { text: "", referenceTokens: [] }));
+    expect(view.result.current.text).toBe("");
+    expect(view.result.current.referenceTokens).toEqual([]);
+    const cleared = view.result.current.revision;
+    act(() => { view.result.current.setText("newer"); view.result.current.setText(""); view.result.current.setReferenceTokens([reference]); });
+    act(() => view.result.current.updateIfUnchanged(cleared, { text: "original", referenceTokens: [] }));
+    expect(view.result.current.text).toBe("");
+    expect(view.result.current.referenceTokens).toEqual([reference]);
+  });
+
 });

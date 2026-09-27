@@ -77,7 +77,7 @@ export function useCanonicalComposerSelection({
           ? selectedChatInstance ?? currentInstance
           : rememberedInstance ?? currentInstance;
       const currentIsSupported = current && currentInstance?.availability === "available"
-        && (!chatId || current.instanceId === (boundInstanceId ?? currentSelection?.instanceId))
+        && (!boundInstanceId || current.instanceId === boundInstanceId)
         && currentInstance.models.some((model) => (
           model.id === current.model && model.availability === "available"
         ))

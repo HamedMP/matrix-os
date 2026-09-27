@@ -96,3 +96,27 @@ it.each(["auth", "runtime", "chat", "instance", "permission", "options", "unavai
   expect(hook.result.current.selection?.instanceId).toBe("codex_fixture");
   expect(hook.result.current.selection?.model).toBe("gpt-5.6-sol");
 });
+
+it.each([false, true])("retains an explicit cross-instance choice in an unbound draft after refresh (saved route disabled: %s)", (disabled) => {
+  const catalog = routes(disabled);
+  const base = { catalog, catalogReady: true, initializeImmediately: true, chatId: "draft_chat",
+    currentSelection: { instanceId: "codex_fixture", model: "gpt-5.6-sol" }, boundInstanceId: undefined };
+  const hook = renderHook((props) => useCanonicalComposerSelection(props), { initialProps: base });
+  act(() => hook.result.current.onSelectionChange({ instanceId: "hermes_other", model: "fable", options: [], permissionMode: "supervised", interactionMode: "default" }));
+  hook.rerender({ ...base, catalog: { ...catalog, revision: "refresh" } });
+  expect(hook.result.current.selection?.instanceId).toBe("hermes_other");
+  expect(hook.result.current.selection?.model).toBe("fable");
+});
+
+
+it.each(["chat", "auth", "runtime"] as const)("resets explicit unbound draft instance intent across %s changes", (boundary) => {
+  const catalog = routes(false);
+  const base = { catalog, catalogReady: true, initializeImmediately: true, chatId: "draft_one",
+    currentSelection: { instanceId: "codex_fixture", model: "gpt-5.6-sol" }, boundInstanceId: undefined };
+  const hook = renderHook((props) => useCanonicalComposerSelection(props), { initialProps: base });
+  act(() => hook.result.current.onSelectionChange({ instanceId: "hermes_other", model: "fable", options: [], permissionMode: "supervised", interactionMode: "default" }));
+  if (boundary === "auth") act(() => useConnection.setState({ authGeneration: 1 }));
+  if (boundary === "runtime") act(() => useConnection.setState({ runtimeSlot: "other" }));
+  hook.rerender({ ...base, chatId: boundary === "chat" ? "draft_two" : base.chatId, catalog: { ...catalog, revision: "refresh" } });
+  expect(hook.result.current.selection?.instanceId).toBe("codex_fixture");
+});
