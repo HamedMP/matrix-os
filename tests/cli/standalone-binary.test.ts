@@ -1,8 +1,8 @@
+import { createUnixSocketTempDir } from "../helpers/unix-socket-temp.js";
 import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
-import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
@@ -71,7 +71,7 @@ async function waitForLog(
 
 describe("standalone CLI binary", () => {
   it("dispatches the hidden sync daemon without the build-only runtime variable", async () => {
-    const tempRoot = await mkdtemp(join(tmpdir(), "matrix-standalone-daemon-"));
+    const tempRoot = await createUnixSocketTempDir();
     const homeDir = join(tempRoot, "home");
     try {
       await mkdir(homeDir, { recursive: true });
@@ -96,7 +96,7 @@ describe("standalone CLI binary", () => {
   }, 45_000);
 
   it("starts the compiled standalone sync daemon exactly once", async () => {
-    const tempRoot = await mkdtemp(join(tmpdir(), "matrix-standalone-daemon-happy-"));
+    const tempRoot = await createUnixSocketTempDir();
     const homeDir = join(tempRoot, "home");
     const configDir = join(homeDir, ".matrixos");
     const profileDir = join(configDir, "profiles", "local");

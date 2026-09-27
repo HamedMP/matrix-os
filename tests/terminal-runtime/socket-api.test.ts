@@ -1,5 +1,5 @@
-import { chmod, mkdtemp, rm, stat } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { createUnixSocketTempDir } from "../helpers/unix-socket-temp.js";
+import { chmod, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { Terminal } from "@xterm/xterm";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -61,7 +61,7 @@ describe("terminal runtime Unix socket API", () => {
   });
 
   it("serves bounded workspace control over an owner-only socket", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "matrix-terminal-socket-"));
+    const directory = await createUnixSocketTempDir();
     directories.push(directory);
     await chmod(directory, 0o777);
     const socketPath = join(directory, "terminal-runtime.sock");
@@ -187,7 +187,7 @@ describe("terminal runtime Unix socket API", () => {
   });
 
   it("translates the live-tail sentinel before assigning output sequences", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "matrix-terminal-socket-live-tail-"));
+    const directory = await createUnixSocketTempDir();
     directories.push(directory);
     const socketPath = join(directory, "terminal-runtime.sock");
     const terminalRef = {
@@ -294,7 +294,7 @@ describe("terminal runtime Unix socket API", () => {
   });
 
   it("completes replay framing when a new tab has no snapshot", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "matrix-terminal-socket-empty-replay-"));
+    const directory = await createUnixSocketTempDir();
     directories.push(directory);
     const socketPath = join(directory, "terminal-runtime.sock");
     const terminalRef = {
@@ -369,7 +369,7 @@ describe("terminal runtime Unix socket API", () => {
   });
 
   it("preserves binary terminal input bytes across the gateway-runtime socket", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "matrix-terminal-socket-binary-"));
+    const directory = await createUnixSocketTempDir();
     directories.push(directory);
     const socketPath = join(directory, "terminal-runtime.sock");
     const terminalRef = {
@@ -443,7 +443,7 @@ describe("terminal runtime Unix socket API", () => {
   });
 
   it("preserves typed domain failures across the socket boundary", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "matrix-terminal-socket-errors-"));
+    const directory = await createUnixSocketTempDir();
     directories.push(directory);
     const socketPath = join(directory, "terminal-runtime.sock");
     const deleteWorkspace = vi.fn(async (_workspaceId: string, input: { confirmTerminate: boolean }) => {

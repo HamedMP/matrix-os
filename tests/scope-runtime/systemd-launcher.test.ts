@@ -1,6 +1,6 @@
-import { chmod, lstat, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { createUnixSocketTempDir } from "../helpers/unix-socket-temp.js";
+import { chmod, lstat, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { createServer, type Server } from "node:net";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
@@ -25,7 +25,7 @@ afterEach(async () => {
 });
 
 async function fixture() {
-  const root = await mkdtemp(join(tmpdir(), "matrix-scope-launcher-"));
+  const root = await createUnixSocketTempDir();
   cleanup.push(() => rm(root, { recursive: true, force: true }));
   const sdkDirectory = join(root, "sdk");
   const nativeDirectory = join(root, "native");
@@ -389,7 +389,7 @@ describe("scope runtime systemd launcher", () => {
   });
 
   it("increments a durable generation and refuses corrupt state", async () => {
-    const root = await mkdtemp(join(tmpdir(), "matrix-scope-generation-"));
+    const root = await createUnixSocketTempDir();
     cleanup.push(() => rm(root, { recursive: true, force: true }));
     const path = join(root, "generation");
 
