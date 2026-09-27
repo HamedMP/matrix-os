@@ -1,7 +1,7 @@
 "use client";
 
 import { useAuth, useClerk, useUser } from "@clerk/nextjs";
-import { palette } from "@matrix-os/brand";
+import { cardShadow, lightFg, palette } from "@matrix-os/brand";
 import { ChatCollaboration, type ChatCollaborationView, type CollaborationApi } from "@matrix-os/ui";
 import Image from "next/image";
 import Link from "next/link";
@@ -31,6 +31,8 @@ const E2E_ACCOUNT: CollaborationFrameAccount = { userId: "user_e2e", displayName
 const COLLABORATION_LAYERS = { dialog: SHELL_Z_INDEX.appDialog, popover: SHELL_Z_INDEX.popover };
 const SHARED_HOME = "/shared";
 
+const tint = (color: string, percent: number) => `color-mix(in srgb, ${color} ${percent}%, transparent)`;
+
 // packages/ui collaboration views read these OS theme variables. The frame
 // mounts no OS theme provider, so it supplies brand values directly.
 const FRAME_THEME = {
@@ -38,7 +40,7 @@ const FRAME_THEME = {
   "--text-secondary": palette.mutedFg,
   "--text-tertiary": palette.subtle,
   "--bg-surface": palette.card,
-  "--bg-hover": "rgba(67, 78, 63, 0.07)",
+  "--bg-hover": tint(palette.forest, 7),
   "--border-default": palette.border,
   "--background": palette.pageBg,
   "--matrix-card": palette.card,
@@ -108,8 +110,8 @@ function AccountMenu({ account, signingOut, onManageAccount, onSignOut }: {
           align="end"
           sideOffset={8}
           collisionPadding={16}
-          style={{ zIndex: SHELL_Z_INDEX.popover }}
-          className="w-[min(18rem,calc(100vw-2rem))] rounded-2xl border border-forest/12 bg-[#FCFCF8] p-2 text-deep shadow-[0_24px_70px_rgba(50,53,46,0.22)]"
+          className="w-[min(18rem,calc(100vw-2rem))] rounded-2xl border border-forest/12 p-2 text-deep"
+          style={{ zIndex: SHELL_Z_INDEX.popover, backgroundColor: palette.card, boxShadow: cardShadow }}
         >
           <div className="rounded-xl bg-forest/[0.04] px-3 py-2.5">
             <p className="truncate text-sm font-semibold">{account.displayName}</p>
@@ -149,6 +151,7 @@ function CollaborationFrameChrome({
   account,
   sharedActive,
   signingOut = false,
+  signOutFailed = false,
   onManageAccount,
   onSignOut,
   children,
@@ -156,13 +159,17 @@ function CollaborationFrameChrome({
   account: CollaborationFrameAccount | null;
   sharedActive: boolean;
   signingOut?: boolean;
+  signOutFailed?: boolean;
   onManageAccount?: () => void;
   onSignOut?: () => void;
   children: ReactNode;
 }) {
   return (
     <div data-matrix-collaboration-frame="true" className="flex h-dvh flex-col bg-page-bg text-deep" style={FRAME_THEME}>
-      <header className="flex h-14 shrink-0 items-center gap-5 border-b border-forest/10 bg-[#FCFCF8]/80 px-4 backdrop-blur md:px-6">
+      <header
+        className="flex h-14 shrink-0 items-center gap-5 border-b border-forest/10 px-4 backdrop-blur md:px-6"
+        style={{ backgroundColor: tint(palette.card, 80) }}
+      >
         <BrandLockup />
         {account ? (
           <nav aria-label="Collaboration" className="hidden md:flex">
@@ -175,13 +182,19 @@ function CollaborationFrameChrome({
           ) : null}
         </div>
       </header>
+      {signOutFailed ? (
+        <p role="alert" className="shrink-0 border-b border-ember/30 bg-ember/10 px-4 py-2 text-sm md:px-6">
+          Sign-out did not finish. Try again.
+        </p>
+      ) : null}
       <main className={account ? "min-h-0 flex-1 overflow-y-auto pb-[calc(3.5rem+env(safe-area-inset-bottom))] md:pb-0" : "min-h-0 flex-1 overflow-y-auto"}>
         {children}
       </main>
       {account ? (
         <nav
           aria-label="Collaboration"
-          className="fixed inset-x-0 bottom-0 flex border-t border-forest/10 bg-[#FCFCF8]/95 pb-[env(safe-area-inset-bottom)] backdrop-blur md:hidden"
+          className="fixed inset-x-0 bottom-0 flex border-t border-forest/10 pb-[env(safe-area-inset-bottom)] backdrop-blur md:hidden"
+          style={{ backgroundColor: tint(palette.card, 95) }}
         >
           <SharedNavLink active={sharedActive} compact />
         </nav>
@@ -189,7 +202,6 @@ function CollaborationFrameChrome({
     </div>
   );
 }
-
 
 function sharedPath(kind: "chat" | "terminal" | "project" | "invitations", id: string): string {
   return `${SHARED_HOME}/${kind}/${encodeURIComponent(id)}`;
@@ -250,7 +262,11 @@ function SignedOutFrame() {
           Shared Chats, terminals and projects open with your Matrix account. You do not need a Matrix computer.
         </p>
         <div className="mt-3 flex flex-wrap justify-center gap-2">
-          <Link href={`/sign-in?redirect_url=${returnTo}`} className="rounded-xl bg-deep px-4 py-2 text-sm font-medium text-[#FAFAF5]">
+          <Link
+            href={`/sign-in?redirect_url=${returnTo}`}
+            className="rounded-xl bg-deep px-4 py-2 text-sm font-medium"
+            style={{ color: lightFg }}
+          >
             Sign in
           </Link>
           <Link href={`/sign-up?redirect_url=${returnTo}`} className="rounded-xl border border-forest/20 px-4 py-2 text-sm font-medium">
@@ -286,10 +302,11 @@ function FrameCollaboration({ view, api, actorId, session }: {
   );
 }
 
-function CollaborationFrameSurface({ view, account, signingOut, onManageAccount, onSignOut }: {
+function CollaborationFrameSurface({ view, account, signingOut, signOutFailed, onManageAccount, onSignOut }: {
   view: ChatCollaborationView;
   account: CollaborationFrameAccount;
   signingOut?: boolean;
+  signOutFailed?: boolean;
   onManageAccount?: () => void;
   onSignOut: () => void;
 }) {
@@ -300,6 +317,7 @@ function CollaborationFrameSurface({ view, account, signingOut, onManageAccount,
       account={account}
       sharedActive={view.kind === "home"}
       signingOut={signingOut}
+      signOutFailed={signOutFailed}
       onManageAccount={onManageAccount}
       onSignOut={onSignOut}
     >
@@ -317,10 +335,12 @@ function ClerkCollaborationFrame({ view }: { view: ChatCollaborationView }) {
   const { user } = useUser();
   const clerk = useClerk();
   const [signingOut, setSigningOut] = useState(false);
+  const [signOutFailed, setSignOutFailed] = useState(false);
 
   async function handleSignOut() {
     if (signingOut) return;
     setSigningOut(true);
+    setSignOutFailed(false);
     const signIn = new URL(getSignInRedirectUrl());
     signIn.searchParams.set("redirect_url", SHARED_HOME);
     const redirectUrl = signIn.toString();
@@ -331,6 +351,10 @@ function ClerkCollaborationFrame({ view }: { view: ChatCollaborationView }) {
     } catch (error: unknown) {
       if (isTimeoutError(error)) console.warn("[collaboration-frame] Clerk sign-out timed out");
       else console.error("[collaboration-frame] Clerk sign-out failed", error instanceof Error ? error.name : typeof error);
+      // The Clerk session may still be active: never present the account as signed out.
+      setSigningOut(false);
+      setSignOutFailed(true);
+      return;
     }
     window.location.replace(redirectUrl);
   }
@@ -350,6 +374,7 @@ function ClerkCollaborationFrame({ view }: { view: ChatCollaborationView }) {
       view={view}
       account={account}
       signingOut={signingOut}
+      signOutFailed={signOutFailed}
       onManageAccount={() => clerk.openUserProfile()}
       onSignOut={() => void handleSignOut()}
     />

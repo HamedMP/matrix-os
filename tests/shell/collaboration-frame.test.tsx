@@ -344,6 +344,29 @@ describe("CollaborationFrame", () => {
     expectOnlyCollaborationRequests(requests);
   });
 
+  it("stays signed in and reports the failure when Clerk sign-out fails", async () => {
+    recordFetches();
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    clerkState.signOut.mockRejectedValueOnce(new Error("network"));
+    render(<CollaborationFrame view={{ kind: "home" }} />);
+
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Account menu for Mina Member" }), { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Sign out" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Sign-out did not finish. Try again.");
+    expect(replaceMock).not.toHaveBeenCalled();
+    expect(vi.mocked(closeShellCollaborationSessions)).toHaveBeenCalled();
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Account menu for Mina Member" }), { button: 0, ctrlKey: false });
+    expect(await screen.findByRole("menuitem", { name: "Sign out" })).not.toHaveAttribute("data-disabled");
+  });
+
+  it("uses brand tokens instead of hard-coded colors", async () => {
+    const { readFileSync } = await vi.importActual<typeof import("node:fs")>("node:fs");
+    const source = readFileSync(`${process.cwd()}/shell/src/components/collaboration/CollaborationFrame.tsx`, "utf8");
+    expect(source).not.toMatch(/#[0-9A-Fa-f]{3,8}\b/);
+    expect(source).not.toMatch(/rgba?\(/);
+  });
+
   it("offers sign-in and sign-up that return to the exact destination when signed out", async () => {
     clerkState.isSignedIn = false;
     clerkState.userId = null;
