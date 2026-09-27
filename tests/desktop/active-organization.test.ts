@@ -119,13 +119,13 @@ describe("ActiveOrganizationTracker", () => {
   it("publishes the resolved organization only for the account it was resolved for", async () => {
     const { tracker, onChanged } = makeTracker(async () => jsonResponse(organizations("org_matrix_team")));
 
-    await tracker.refresh({ userId: "user-1", accessToken: "tok", isCurrent: () => true });
+    await tracker.refresh({ userId: "user-1", accessToken: "tok", generation: 1, isCurrent: () => true });
 
     expect(tracker.organizationFor("user-1")).toBe("org_matrix_team");
     expect(tracker.organizationFor("user-2")).toBeNull();
     expect(onChanged).toHaveBeenCalledTimes(1);
 
-    await tracker.refresh({ userId: "user-1", accessToken: "tok", isCurrent: () => true });
+    await tracker.refresh({ userId: "user-1", accessToken: "tok", generation: 1, isCurrent: () => true });
     expect(onChanged).toHaveBeenCalledTimes(1);
 
     tracker.clear();
@@ -137,7 +137,7 @@ describe("ActiveOrganizationTracker", () => {
     const { tracker, onChanged } = makeTracker(() => pending.promise);
     let current = true;
 
-    const refresh = tracker.refresh({ userId: "user-1", accessToken: "tok", isCurrent: () => current });
+    const refresh = tracker.refresh({ userId: "user-1", accessToken: "tok", generation: 1, isCurrent: () => current });
     current = false;
     pending.resolve(jsonResponse(organizations("org_matrix_team")));
     await refresh;
@@ -146,23 +146,43 @@ describe("ActiveOrganizationTracker", () => {
     expect(onChanged).not.toHaveBeenCalled();
   });
 
+  it("starts a new lookup for a replaced credential and drops the older result", async () => {
+    const first = deferred<Response>();
+    const fetchFn = vi.fn()
+      .mockImplementationOnce(() => first.promise)
+      .mockResolvedValueOnce(jsonResponse(organizations("org_current")));
+    const { tracker, onChanged } = makeTracker(fetchFn);
+    let generation = 1;
+
+    const older = tracker.refresh({ userId: "user-1", accessToken: "old", generation: 1, isCurrent: () => generation === 1 });
+    generation = 2;
+    const newer = tracker.refresh({ userId: "user-1", accessToken: "new", generation: 2, isCurrent: () => generation === 2 });
+    await newer;
+    first.resolve(jsonResponse(organizations("org_previous")));
+    await older;
+
+    expect(fetchFn).toHaveBeenCalledTimes(2);
+    expect(tracker.organizationFor("user-1")).toBe("org_current");
+    expect(onChanged).toHaveBeenCalledTimes(1);
+  });
+
   it("shares one request between concurrent refreshes and throttles fresh results", async () => {
     let clock = 1_000;
     const fetchFn = vi.fn(async () => jsonResponse(organizations("org_matrix_team")));
     const { tracker } = makeTracker(fetchFn, () => clock);
 
     await Promise.all([
-      tracker.refresh({ userId: "user-1", accessToken: "tok", isCurrent: () => true }),
-      tracker.refresh({ userId: "user-1", accessToken: "tok", isCurrent: () => true }),
+      tracker.refresh({ userId: "user-1", accessToken: "tok", generation: 1, isCurrent: () => true }),
+      tracker.refresh({ userId: "user-1", accessToken: "tok", generation: 1, isCurrent: () => true }),
     ]);
     expect(fetchFn).toHaveBeenCalledTimes(1);
 
     clock += 30_000;
-    await tracker.refresh({ userId: "user-1", accessToken: "tok", isCurrent: () => true, maxAgeMs: 60_000 });
+    await tracker.refresh({ userId: "user-1", accessToken: "tok", generation: 1, isCurrent: () => true, maxAgeMs: 60_000 });
     expect(fetchFn).toHaveBeenCalledTimes(1);
 
     clock += 31_000;
-    await tracker.refresh({ userId: "user-1", accessToken: "tok", isCurrent: () => true, maxAgeMs: 60_000 });
+    await tracker.refresh({ userId: "user-1", accessToken: "tok", generation: 1, isCurrent: () => true, maxAgeMs: 60_000 });
     expect(fetchFn).toHaveBeenCalledTimes(2);
   });
 
@@ -173,8 +193,8 @@ describe("ActiveOrganizationTracker", () => {
       .mockRejectedValueOnce(new TypeError("fetch failed: getaddrinfo ENOTFOUND api.matrix-os.com"));
     const { tracker, onChanged } = makeTracker(fetchFn);
 
-    await tracker.refresh({ userId: "user-1", accessToken: "tok", isCurrent: () => true });
-    await expect(tracker.refresh({ userId: "user-1", accessToken: "tok", isCurrent: () => true })).resolves.toBeUndefined();
+    await tracker.refresh({ userId: "user-1", accessToken: "tok", generation: 1, isCurrent: () => true });
+    await expect(tracker.refresh({ userId: "user-1", accessToken: "tok", generation: 1, isCurrent: () => true })).resolves.toBeUndefined();
 
     expect(tracker.organizationFor("user-1")).toBe("org_matrix_team");
     expect(onChanged).toHaveBeenCalledTimes(1);
@@ -187,8 +207,8 @@ describe("ActiveOrganizationTracker", () => {
       .mockResolvedValueOnce(jsonResponse(organizations()));
     const { tracker, onChanged } = makeTracker(fetchFn);
 
-    await tracker.refresh({ userId: "user-1", accessToken: "tok", isCurrent: () => true });
-    await tracker.refresh({ userId: "user-1", accessToken: "tok", isCurrent: () => true });
+    await tracker.refresh({ userId: "user-1", accessToken: "tok", generation: 1, isCurrent: () => true });
+    await tracker.refresh({ userId: "user-1", accessToken: "tok", generation: 1, isCurrent: () => true });
 
     expect(tracker.organizationFor("user-1")).toBeNull();
     expect(onChanged).toHaveBeenCalledTimes(2);

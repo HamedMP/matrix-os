@@ -72,15 +72,25 @@ interface ResolvedOrganization {
   resolvedAt: number;
 }
 
+interface OrganizationRefreshInput {
+  userId: string;
+  accessToken: string;
+  /** Credential generation that started the lookup; lookups are never shared across generations. */
+  generation: number;
+  /** True while the credential that started the lookup is still the live one. */
+  isCurrent: () => boolean;
+}
+
 /**
  * Holds the last resolved organization for one account. Membership belongs to
  * the account, so the value survives runtime switches but is never exposed for
- * a different user. Concurrent refreshes share one request; results that land
- * after the credential changed are dropped.
+ * a different user. Concurrent refreshes for the same credential generation
+ * share one request; a lookup started with a replaced credential is dropped
+ * when it lands, so it cannot overwrite a newer answer.
  */
 export class ActiveOrganizationTracker {
   private resolved: ResolvedOrganization | null = null;
-  private inflight: { userId: string; promise: Promise<void> } | null = null;
+  private inflight: { userId: string; generation: number; promise: Promise<void> } | null = null;
   private readonly deps: ActiveOrganizationTrackerDeps;
 
   constructor(deps: ActiveOrganizationTrackerDeps) {
@@ -91,21 +101,17 @@ export class ActiveOrganizationTracker {
     return this.resolved?.userId === userId ? this.resolved.organizationId : null;
   }
 
-  refresh(input: {
-    userId: string;
-    accessToken: string;
-    isCurrent: () => boolean;
-    maxAgeMs?: number;
-  }): Promise<void> {
+  refresh(input: OrganizationRefreshInput & { maxAgeMs?: number }): Promise<void> {
     const resolved = this.resolved;
     if (resolved?.userId === input.userId && this.deps.now() - resolved.resolvedAt < (input.maxAgeMs ?? 0)) {
       return Promise.resolve();
     }
-    if (this.inflight?.userId === input.userId) return this.inflight.promise;
+    const inflight = this.inflight;
+    if (inflight?.userId === input.userId && inflight.generation === input.generation) return inflight.promise;
     const promise: Promise<void> = this.resolve(input).finally(() => {
       if (this.inflight?.promise === promise) this.inflight = null;
     });
-    this.inflight = { userId: input.userId, promise };
+    this.inflight = { userId: input.userId, generation: input.generation, promise };
     return promise;
   }
 
@@ -114,7 +120,7 @@ export class ActiveOrganizationTracker {
     this.inflight = null;
   }
 
-  private async resolve(input: { userId: string; accessToken: string; isCurrent: () => boolean }): Promise<void> {
+  private async resolve(input: OrganizationRefreshInput): Promise<void> {
     let organizationId: string | null;
     try {
       organizationId = await fetchActiveOrganizationId({

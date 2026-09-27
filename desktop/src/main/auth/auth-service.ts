@@ -191,10 +191,14 @@ export class AuthService {
     this.expireCredentialIfNeeded();
     const credential = this.credential;
     if (!credential) return;
+    const generation = this.authGeneration;
     await this.organizations.refresh({
       userId: credential.userId,
       accessToken: credential.accessToken,
-      isCurrent: () => this.credential?.userId === credential.userId && !this.isExpired(),
+      generation,
+      // Bound to the credential that started the lookup: a sign-in again or a
+      // runtime switch replaces it, and the older answer must not win.
+      isCurrent: () => this.authGeneration === generation && this.credential === credential && !this.isExpired(),
       ...(options.maxAgeMs ? { maxAgeMs: options.maxAgeMs } : {}),
     });
   }

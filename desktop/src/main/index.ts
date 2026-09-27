@@ -394,6 +394,10 @@ if (!gotLock) {
           embeds.closeAll();
           codingAgentThreadEvents.closeAll();
           sendEvent("runtime:changed", { slot });
+          // The replaced credential drops any lookup still in flight; re-resolve
+          // with the new one. The shown organization belongs to the account and
+          // stays until then.
+          void auth.refreshOrganization();
         },
         checkUpdate: async () => {
           await updater.check();

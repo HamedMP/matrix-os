@@ -1045,6 +1045,31 @@ describe("AuthService active organization", () => {
     expect(changes).toHaveLength(0);
   });
 
+  it("drops a lookup that started before the credential was replaced", async () => {
+    let resolveFirst!: (response: Response) => void;
+    let organizationCalls = 0;
+    const fetchFn = vi.fn(async (url: string) => {
+      if (url === "https://api.matrix-os.com/api/auth/runtime-selection") {
+        return jsonResponse({ accessToken: "s".repeat(64), expiresAt: 1_800_000_000_000, handle: "neo-review", slot: "review" });
+      }
+      organizationCalls += 1;
+      if (organizationCalls === 1) return new Promise<Response>((resolve) => { resolveFirst = resolve; });
+      return jsonResponse({ organizations: [{ organizationId: "org_current" }] });
+    });
+    const { auth } = makeService({ credential: VALID, profile: PROFILE, now: 10_000, fetchFn });
+    await auth.init();
+
+    const stale = auth.refreshOrganization();
+    await auth.selectRuntime("review");
+    const current = auth.refreshOrganization();
+    await current;
+    resolveFirst(jsonResponse({ organizations: [{ organizationId: "org_previous" }] }));
+    await stale;
+
+    expect(organizationCalls).toBe(2);
+    expect(auth.getStatus()).toMatchObject({ organizationId: "org_current" });
+  });
+
   it("forgets the organization on sign-out", async () => {
     const fetchFn = vi.fn(async () => jsonResponse(membership));
     const { auth } = makeService({ credential: VALID, profile: PROFILE, now: 10_000, fetchFn });
