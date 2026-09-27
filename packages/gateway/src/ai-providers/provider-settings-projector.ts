@@ -366,9 +366,10 @@ function projectHarness(input: {
     action: "retry" as const,
     safeReason: routeCatalogUnavailable ? "provider_unavailable" as const : "unknown" as const,
   };
-  // A harness-owned native profile has no Matrix account identity. Sharing a
-  // model provider does not bind another harness's account to this route.
-  const accounts = source?.kind === "harness_profile" ? []
+  // Pi/OpenCode do not bind Matrix provider accounts, including when their
+  // native catalog fails and the selected source is absent. Provider membership
+  // cannot supply another harness's account identity.
+  const accounts = nativeCredentialRoute || source?.kind === "harness_profile" ? []
     : input.accounts.filter((account) => account.providerId === input.stored.route.providerId);
   const visibleMethods = input.loginMethods === undefined
     ? defaultLoginMethods(input.stored.harness)

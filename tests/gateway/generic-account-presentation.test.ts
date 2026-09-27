@@ -19,4 +19,9 @@ describe("native harness account identity projection", () => {
       route: { providerId: "openai", modelId: "openai:fixture-sol" } });
     expect(snapshot.accessSources.find((source) => source.id === `harness_${harness}_openai`)).toBeUndefined();
   });
+  it.each([false, true])("retains the supported Codex provider-account binding when native catalog failure is %s", async (failed) => {
+    const snapshot = await nativeAccountPresentationFixture("opencode", failed);
+    expect(snapshot.harnesses.find((harness) => harness.harness === "codex"))
+      .toMatchObject({ accountIds: ["owner_codex"], selectedAccountId: "owner_codex", accessSourceId: "owner_openai_profile", authState: "unknown" });
+  });
 });
