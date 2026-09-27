@@ -11,6 +11,7 @@ import { sql, type Selectable } from "kysely";
 import type { BotInteractionsTable } from "../database.js";
 import {
   BotStateError,
+  isChatOwnerViolation,
   isUniqueViolation,
   isoTimestamp,
   newBotStateId,
@@ -139,6 +140,7 @@ export function createBotInteractionsRepository(db: BotExecutor) {
           return fromRow(row);
         } catch (error: unknown) {
           if (isUniqueViolation(error, "idx_bot_interactions_one_blocking")) throw new BotStateError("conflict");
+          if (isChatOwnerViolation(error)) throw new BotStateError("not_found");
           throw error;
         }
       });
