@@ -501,6 +501,17 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
       }
 
       const billingMode: FundedBillingMode = request.billingMode === "usage" ? "usage" : "hold";
+      const monthlyBudget = exactInteger(runtime.monthly_budget_microusd);
+      const balance = await trx.executor.selectFrom("ai_funded_runtime_balances")
+        .selectAll().where("machine_id", "=", identity.machineId).forUpdate().executeTakeFirstOrThrow();
+      // Upper bounds ignore active holds, which may still be released. A request that
+      // cannot fit even then fails now and never takes a priority place.
+      const creditCeiling = exactInteger(balance.credit_balance_microusd) - exactInteger(balance.funding_shortfall_microusd);
+      const budgetCeiling = monthlyBudget - exactInteger(balance.month_spent_microusd);
+      const ceilingHold = billingMode === "usage" ? 1 : request.maxCostMicrousd;
+      if (ceilingHold > budgetCeiling) throw new AiFundedPolicyError("budget_exceeded");
+      if (ceilingHold > creditCeiling) throw new AiFundedPolicyError("insufficient_credit");
+
       const priority = await evaluateFundedPriority(trx.executor, {
         ownerId: credential.owner_id,
         machineId: credential.machine_id,
@@ -512,15 +523,11 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
       });
       // A priority rejection may have written a claim; return it so the claim commits.
       if (priority.kind === "rejected") return { kind: "rejected", reason: priority.reason };
-
-      const monthlyBudget = exactInteger(runtime.monthly_budget_microusd);
       if (await findConflictingActiveReservation(trx.executor, credential.owner_id, billingMode)) {
         throw new AiFundedPolicyError("rate_limited");
       }
       let holdMicrousd = request.maxCostMicrousd;
-      if (request.billingMode === "usage") {
-        const balance = await trx.executor.selectFrom("ai_funded_runtime_balances")
-          .selectAll().where("machine_id", "=", identity.machineId).forUpdate().executeTakeFirstOrThrow();
+      if (billingMode === "usage") {
         const credit = exactInteger(balance.credit_balance_microusd) - exactInteger(balance.reserved_microusd)
           - exactInteger(balance.funding_shortfall_microusd);
         const budget = monthlyBudget - exactInteger(balance.month_spent_microusd)
