@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { isPortableGenericHarnessCredentialRoute } from "@matrix-os/contracts";
 import { projectProviderSettings } from "../../packages/gateway/src/ai-providers/provider-settings-projector.js";
 import type { ProviderSettingsConfiguration } from "../../packages/gateway/src/ai-providers/provider-settings-persistence.js";
 import { PROVIDER_SETTINGS_NOW as now, providerSettingsCanonicalFixture } from "./provider-settings-test-support.js";
@@ -34,17 +35,23 @@ describe("Matrix routes during native model catalog failure", () => {
     const input = projectionInput(harness);
     input.genericModelCatalog.failures = [];
     const account = input.canonical.accounts[0]!;
-    account.id = "owner_anthropic_key";
     account.authMethod = "api_key";
     const source = input.canonical.accessSources.find((candidate) => candidate.id === "owner_anthropic_profile")!;
+    source.id = "owner_anthropic_key";
     source.fundingKind = "owner_api_key";
-    input.canonical.instances.find((instance) => instance.id === "kernel_owner")!.accountId = account.id;
+    input.canonical.instances.find((instance) => instance.id === "kernel_owner")!.accessSourceId = source.id;
+    for (const model of input.canonical.models) {
+      model.eligibleAccessSourceIds = model.eligibleAccessSourceIds.map((id) => id === "owner_anthropic_profile" ? source.id : id);
+      for (const policy of model.dataPolicies) {
+        if (policy.accessSourceId === "owner_anthropic_profile") policy.accessSourceId = source.id;
+      }
+    }
     input.config.harnesses[0]!.accessSourceId = source.id;
     input.config.harnesses[0]!.selectedAccountId = account.id;
 
     const snapshot = await projectProviderSettings({ ...input, dependencies: {
       getAccountDependencies: async ({ accountId, harnessInstanceIds }) => {
-        expect(accountId).toBe("owner_anthropic_key");
+        expect(accountId).toBe("owner_anthropic");
         expect(harnessInstanceIds).toEqual([`managed_${harness}`]);
         return { activeChatCount: 3, resumableChatCount: 2, harnessInstanceCount: 1 };
       },
@@ -56,6 +63,8 @@ describe("Matrix routes during native model catalog failure", () => {
     });
     expect(snapshot.accessSources.find((candidate) => candidate.id === source.id))
       .toMatchObject({ kind: "provider_account", accountId: account.id, fundingKind: "owner_api_key" });
+    expect(isPortableGenericHarnessCredentialRoute(snapshot.harnesses[0]!,
+      snapshot.accessSources.find((candidate) => candidate.id === source.id))).toBe(true);
   });
 
   it.each(["pi", "opencode"] as const)("keeps the healthy %s Matrix route governed by funded policy and relay readiness", async (harness) => {
@@ -63,6 +72,7 @@ describe("Matrix routes during native model catalog failure", () => {
     const snapshot = await projectProviderSettings(input);
     expect(snapshot.harnesses.find((agent) => agent.harness === harness)).toMatchObject({
       enabled: true, accessSourceId: "matrix_included", selectedAccountId: null,
+      accountIds: [], activeChatCount: 0,
       route: input.config.harnesses[0]!.route,
       routeAvailability: "available", authState: "authenticated", connectivity: "online",
     });
