@@ -1,7 +1,7 @@
 import { TerminalTabServerFrameSchema } from "@matrix-os/contracts";
 import { describe, expect, it } from "vitest";
 import type { z } from "zod/v4";
-import { ShellServerFrameSchema } from "../../packages/sync-client/src/cli/shell-client.js";
+import { ShellServerFrameSchema } from "../../packages/sync-client/src/cli/shell-server-frame-schema.js";
 
 type FrameOption = z.ZodObject<z.ZodRawShape>;
 
@@ -61,9 +61,9 @@ function fieldsByFrameType(options: readonly unknown[]): Map<string, string[]> {
 }
 
 describe("CLI terminal frame schema", () => {
-  // The CLI strictly parses gateway frames and drops any that fail, so a field the
-  // gateway starts sending must be accepted here or the frame silently disappears.
-  it("accepts every field the gateway contract defines for each frame the CLI handles", () => {
+  // This catches newly added strict-object fields; the boundary fixtures below
+  // separately prove that the CLI accepts representative contract-valid values.
+  it("keeps strict top-level fields synchronized for each frame the CLI handles", () => {
     const cli = fieldsByFrameType(ShellServerFrameSchema.options);
     const contract = fieldsByFrameType(TerminalTabServerFrameSchema.options);
 
