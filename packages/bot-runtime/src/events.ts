@@ -27,23 +27,37 @@ export function splitUtf8(text: string, maxBytes = MAX_DELTA_BYTES): string[] {
   return chunks;
 }
 
+export interface EventProjector {
+  (event: AgentEvent): Promise<void>;
+  /** Sends any buffered text and waits for every queued send; rethrows a failed send. */
+  drain(): Promise<void>;
+  /** Stops the flush timer. */
+  close(): void;
+}
+
 /**
  * Projects Pi agent events into ordered, bounded bot events. Model reasoning
  * (thinking deltas) and raw tool arguments are never forwarded. Text deltas
- * are buffered and sent at most every 250 ms, when the buffer fills, or at a
- * message or tool boundary. After MAX_EVENTS_PER_TURN events the projector
- * sends one activity notice and stops forwarding for the rest of the turn.
+ * are buffered and sent within 250 ms (a timer covers pauses in the stream),
+ * when the buffer fills, or at a message or tool boundary. Every send goes
+ * through one serial chain, so events leave in `seq` order. After
+ * MAX_EVENTS_PER_TURN events the projector sends one activity notice and
+ * stops forwarding for the rest of the turn.
  */
 export function createEventProjector(options: {
   send(event: BotEvent): Promise<void>;
   capabilityForTool(toolName: string): BotToolCapability | undefined;
   now?(): number;
-}): (event: AgentEvent) => Promise<void> {
+}): EventProjector {
   const now = options.now ?? Date.now;
   let seq = 0;
   let buffered = "";
   let bufferedBytes = 0;
   let lastFlushAt = now();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let chain: Promise<void> = Promise.resolve();
+  let failure: unknown;
+
   const emit = async (event: BotEvent["event"]) => {
     if (seq >= MAX_EVENTS_PER_TURN) return;
     if (seq === MAX_EVENTS_PER_TURN - 1) {
@@ -53,6 +67,10 @@ export function createEventProjector(options: {
     await options.send({ seq: seq++, event });
   };
   const flush = async () => {
+    if (timer) {
+      clearTimeout(timer);
+      timer = undefined;
+    }
     lastFlushAt = now();
     if (buffered.length === 0) return;
     const text = buffered;
@@ -60,27 +78,64 @@ export function createEventProjector(options: {
     bufferedBytes = 0;
     for (const chunk of splitUtf8(text)) await emit({ type: "assistant_delta", text: chunk });
   };
-  return async (event) => {
+  /** Runs sends one at a time; the first failure is kept and rethrown to the next caller. */
+  const serial = (task: () => Promise<void>): Promise<void> => {
+    const next = chain.then(() => {
+      if (failure !== undefined) throw failure;
+      return task();
+    });
+    chain = next.catch((error: unknown) => {
+      failure ??= error;
+    });
+    return next;
+  };
+  const schedule = () => {
+    if (timer || buffered.length === 0) return;
+    timer = setTimeout(() => {
+      timer = undefined;
+      // The failure is also kept by `serial` and surfaces on the next event or on drain.
+      void serial(flush).catch((error: unknown) => {
+        console.warn("[bot-runtime] timed event flush failed:", error instanceof Error ? error.name : "UnknownError");
+      });
+    }, Math.max(0, DELTA_FLUSH_INTERVAL_MS - (now() - lastFlushAt)));
+    timer.unref?.();
+  };
+
+  const project = async (event: AgentEvent) => {
     if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta") {
       buffered += event.assistantMessageEvent.delta;
       bufferedBytes += encoder.encode(event.assistantMessageEvent.delta).byteLength;
-      if (bufferedBytes >= MAX_DELTA_BYTES || now() - lastFlushAt >= DELTA_FLUSH_INTERVAL_MS) await flush();
+      if (bufferedBytes >= MAX_DELTA_BYTES || now() - lastFlushAt >= DELTA_FLUSH_INTERVAL_MS) {
+        await serial(flush);
+      } else {
+        schedule();
+      }
       return;
     }
     if (event.type === "message_end" || event.type === "agent_end") {
-      await flush();
+      await serial(flush);
       return;
     }
     if (event.type === "tool_execution_start" || event.type === "tool_execution_end") {
-      await flush();
       const capability = options.capabilityForTool(event.toolName);
-      if (!capability || !/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(event.toolCallId)) return;
-      await emit({
-        type: "tool_progress",
-        toolCallId: event.toolCallId,
-        capability,
-        phase: event.type === "tool_execution_start" ? "started" : event.isError ? "failed" : "completed",
+      const validCallId = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(event.toolCallId);
+      await serial(async () => {
+        await flush();
+        if (!capability || !validCallId) return;
+        await emit({
+          type: "tool_progress",
+          toolCallId: event.toolCallId,
+          capability,
+          phase: event.type === "tool_execution_start" ? "started" : event.isError ? "failed" : "completed",
+        });
       });
     }
   };
+  return Object.assign(project, {
+    drain: () => serial(flush),
+    close() {
+      if (timer) clearTimeout(timer);
+      timer = undefined;
+    },
+  });
 }

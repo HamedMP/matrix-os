@@ -153,6 +153,14 @@ export async function runBotTurn(input: RunBotTurnInput): Promise<BotRunOutcome>
     agent.clearAllQueues();
     input.signal?.removeEventListener("abort", onAbort);
     unsubscribe();
+    project.close();
+  }
+  // Text still buffered or a timed flush that failed is settled before the outcome is decided.
+  try {
+    await project.drain();
+  } catch (error: unknown) {
+    eventFailure ??= error instanceof BotBrokerError ? error.code : "unavailable";
+    if (!(error instanceof BotBrokerError)) console.warn("[bot-runtime] event forward failed:", error instanceof Error ? error.name : "UnknownError");
   }
 
   const status = (() => {
@@ -181,7 +189,7 @@ export async function runBotTurn(input: RunBotTurnInput): Promise<BotRunOutcome>
         },
       });
     }
-    const saved = await broker.saveSession({ baseRevision: snapshot.revision, messages: encodeSession(fitForStorage(messages)) });
+    const saved = await broker.saveSession({ baseRevision: snapshot.revision, messages: encodeSession(fitForStorage(messages, undefined, now)) });
     return outcome(command, { ...status, sessionRevision: saved.revision, toolActions });
   } catch (error: unknown) {
     const failureCode = failureCodeOf(error, "session save");
