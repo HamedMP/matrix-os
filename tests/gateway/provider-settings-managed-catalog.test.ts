@@ -30,6 +30,34 @@ function projectionInput(harness: "pi" | "opencode") {
 }
 
 describe("Matrix routes during native model catalog failure", () => {
+  it.each(["pi", "opencode"] as const)("preserves the selected portable API-key account and Chat dependencies for %s", async (harness) => {
+    const input = projectionInput(harness);
+    input.genericModelCatalog.failures = [];
+    const account = input.canonical.accounts[0]!;
+    account.id = "owner_anthropic_key";
+    account.authMethod = "api_key";
+    const source = input.canonical.accessSources.find((candidate) => candidate.id === "owner_anthropic_profile")!;
+    source.fundingKind = "owner_api_key";
+    input.canonical.instances.find((instance) => instance.id === "kernel_owner")!.accountId = account.id;
+    input.config.harnesses[0]!.accessSourceId = source.id;
+    input.config.harnesses[0]!.selectedAccountId = account.id;
+
+    const snapshot = await projectProviderSettings({ ...input, dependencies: {
+      getAccountDependencies: async ({ accountId, harnessInstanceIds }) => {
+        expect(accountId).toBe("owner_anthropic_key");
+        expect(harnessInstanceIds).toEqual([`managed_${harness}`]);
+        return { activeChatCount: 3, resumableChatCount: 2, harnessInstanceCount: 1 };
+      },
+    } });
+    expect(snapshot.harnesses[0]).toMatchObject({
+      accountIds: [account.id], selectedAccountId: account.id, activeChatCount: 3,
+      accessSourceId: source.id, configuredAccessSourceId: source.id,
+      enabled: true, configuredEnabled: true, authState: "authenticated", connectivity: "online",
+    });
+    expect(snapshot.accessSources.find((candidate) => candidate.id === source.id))
+      .toMatchObject({ kind: "provider_account", accountId: account.id, fundingKind: "owner_api_key" });
+  });
+
   it.each(["pi", "opencode"] as const)("keeps the healthy %s Matrix route governed by funded policy and relay readiness", async (harness) => {
     const input = projectionInput(harness);
     const snapshot = await projectProviderSettings(input);
