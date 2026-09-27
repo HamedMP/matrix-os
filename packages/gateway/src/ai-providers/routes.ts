@@ -25,7 +25,9 @@ export function createAiProviderRoutes(options: {
       });
       if (query.data.includeNativeProfiles === "true") return context.json(snapshot);
       const { nativeHarnessCatalog: _nativeHarnessCatalog, ...legacySnapshot } = snapshot;
-      return context.json(legacySnapshot);
+      return context.json({ ...legacySnapshot,
+        drivers: snapshot.drivers.map(({ nativeRouteObservation: _nativeRouteObservation, ...driver }) => driver),
+      });
     } catch (err) {
       console.warn(
         "[ai-providers] Failed to build provider status:",

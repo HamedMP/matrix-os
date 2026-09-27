@@ -265,6 +265,8 @@ export const ProviderHarnessInstanceSchema = z.object({
   loginMethods: z.array(ProviderLoginMethodSchema).max(3),
   recommendedLoginMethod: ProviderLoginMethodSchema.nullable(),
   connectivity: ProviderConnectivityStateSchema,
+  /** Compatibility projection of exact native route evidence from V3. */
+  localObservation: AiProviderLocalObservationSchema.optional(),
   accountIds: z.array(ReferenceIdSchema).max(32),
   selectedAccountId: ReferenceIdSchema.nullable(),
   accessSourceId: ReferenceIdSchema.nullable(),

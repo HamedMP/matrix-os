@@ -74,6 +74,14 @@ export const AiProviderLocalObservationSchema = z.object({
   staleAfter: NullableTimestampSchema,
 }).strict();
 
+/** A selected native CLI route observed locally; never remote or funded readiness. */
+export const AiProviderNativeRouteObservationSchema = z.object({
+  providerId: AiProviderIdSchema,
+  modelId: ProviderModelReferenceSchema,
+  credentialKind: z.enum(["provider_profile", "api_key", "custom"]),
+  localObservation: AiProviderLocalObservationSchema,
+}).strict();
+
 export const AiAccessSourceViewSchema = AiProviderReadinessSchema.extend({
   id: AiProviderIdSchema,
   displayName: canonicalSafeLabel(120, 480),
@@ -123,6 +131,7 @@ export const AiProviderDriverViewSchema = z.object({
   kind: z.enum(["agent_sdk", "cli", "acp", "openai_compatible"]),
   installState: z.enum(["installed", "missing", "installing", "failed", "unknown"]),
   health: z.enum(["ready", "degraded", "stopped", "unavailable", "unknown"]),
+  nativeRouteObservation: AiProviderNativeRouteObservationSchema.optional(),
   capabilities: z.array(AiProviderDriverCapabilitySchema).max(16),
   setupActions: z.array(z.enum([
     "install",

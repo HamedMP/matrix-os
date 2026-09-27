@@ -1,4 +1,5 @@
 import { z } from "zod/v4";
+import { AiProviderNativeRouteObservationSchema } from "#ai-provider";
 import { IsoTimestampSchema, ProviderModelReferenceSchema, SAFE_SLUG } from "#contract-primitives";
 
 const SafeSlugSchema = z.string().min(1).max(80).regex(SAFE_SLUG);
@@ -161,6 +162,7 @@ export const AgentRuntimeDescriptorSchema = z.object({
   health: AgentRuntimeHealthSchema,
   selectionState: AgentRuntimeSelectionStateSchema,
   configured: z.boolean(),
+  nativeRouteObservation: AiProviderNativeRouteObservationSchema.optional(),
   version: z.string().trim().min(1).max(64).optional(),
   capabilities: z.array(AgentRuntimeCapabilitySchema).max(16),
   setupAction: AgentRuntimeSetupActionSchema.optional(),

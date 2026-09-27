@@ -1,3 +1,4 @@
+import { projectHermesNativeRouteObservation } from "./hermes-native-route-observation.js";
 import { qualifyGeneratedNativeSource } from "./provider-generated-native-route.js";
 import {
   ProviderSettingsSnapshotSchema,
@@ -387,6 +388,7 @@ function projectHarness(input: {
     ...(input.stored.enablementOrigin ? { enablementOrigin: input.stored.enablementOrigin } : {}),
     version: null,
     installState: driver?.installState ?? "missing",
+    ...projectHermesNativeRouteObservation({ driver, stored: input.stored, source, accounts: input.accounts, now: input.now }),
     authState: authState(readiness),
     loginMethods: [...visibleMethods],
     recommendedLoginMethod: visibleMethods[0] ?? null,

@@ -66,7 +66,7 @@ describe("provider setup presentation", () => {
 
   it("uses expandable agent rows and keeps customization collapsed", () => {
     const { container, onSelectHarness } = setup();
-    const row = screen.getByRole("button", { name: /Pi.*Check failed/ });
+    const row = screen.getByRole("button", { name: /Pi.*Check connection/ });
     expect(row).toHaveAttribute("aria-expanded", "true");
     expect(row.querySelector("img")).toHaveAttribute("src", "/agent-logos/pi-coding-agent.png");
     const gateway = screen.getByRole("region", { name: "Matrix AI" });

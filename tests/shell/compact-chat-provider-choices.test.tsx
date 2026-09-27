@@ -75,7 +75,7 @@ describe("compact shared Chat choices", () => {
     const option = screen.getByRole("option", { name: "GPT-5.4 via Codex" });
     expect(within(option).getByText(/Local login found; access not verified/)).toBeVisible();
     act(() => vi.advanceTimersByTime(5_001));
-    expect(screen.getByRole("button", { name: "Codex agent, Access not verified" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Codex agent, Local login last found; access not verified" })).toBeVisible();
     fireEvent.click(option);
     expect(select).toHaveBeenCalledWith(codex);
   });

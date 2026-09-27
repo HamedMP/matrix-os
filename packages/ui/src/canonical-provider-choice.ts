@@ -97,7 +97,9 @@ export function codexLocalObservationLabel(observation?: AiProviderLocalObservat
   const staleAfter = observation?.staleAfter ? Date.parse(observation.staleAfter) : NaN;
   const now = Date.now();
   if (!Number.isFinite(checkedAt) || !Number.isFinite(staleAfter)
-    || checkedAt > now || staleAfter <= now) return "Access not verified";
+    || checkedAt > now || staleAfter <= checkedAt) return "Access not verified";
+  if (staleAfter <= now) return observation?.state === "present_unverified"
+    ? "Local login last found; access not verified" : "Access not verified";
   if (observation?.state === "present_unverified") return "Local login found; access not verified";
   if (observation?.state === "absent") return "Local login missing";
   return "Access not verified";

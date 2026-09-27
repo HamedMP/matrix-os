@@ -14,23 +14,28 @@ export function HarnessIcon({ harness }: { harness: ProviderHarnessKind }) {
 function rowStatus(harness: ProviderHarnessInstance, source: ProviderAccessSource | undefined): string {
   if (harness.installState === "missing") return "Install";
   if (harness.installState === "installing") return "Installing…";
-  if (harness.installState !== "installed") return "Check failed";
+  if (harness.installState === "failed") return "Check failed";
+  if (harness.installState !== "installed") return "Check connection";
   if (!harness.enabled && harness.configuredEnabled === true) {
+    if (harness.authState === "failed" || source?.readiness.state === "invalid"
+      || harness.connectivity === "offline" || harness.connectivity === "degraded") return "Check failed";
     if (harness.authState === "authenticating") return "Signing in…";
     if (harness.authState === "unauthenticated" || harness.authState === "expired") return "Sign in";
     if (source?.readiness.state === "auth_required" || source?.readiness.state === "expired") return "Sign in";
     return "Check connection";
   }
   if (!harness.enabled) return harness.authState === "authenticated" ? "Off in Settings · Signed in" : "Off in Settings";
-  if ((harness.harness === "codex" || source?.localObservation !== undefined)) return codexLocalObservationLabel(source?.localObservation);
   if (harness.connectivity === "offline" || harness.connectivity === "degraded") return "Check failed";
+  if (harness.authState === "failed" || source?.readiness.state === "invalid") return "Check failed";
   if (harness.authState === "authenticating") return "Signing in…";
-  if (harness.authState === "unauthenticated" || harness.authState === "expired") return "Sign in";
-  if (harness.connectivity !== "online") return "Check failed";
-  if (harness.authState !== "authenticated") return "Check failed";
+  if (harness.authState === "unauthenticated" || harness.authState === "expired"
+    || source?.readiness.state === "auth_required" || source?.readiness.state === "expired") return "Sign in";
+  if (harness.localObservation) return codexLocalObservationLabel(harness.localObservation);
+  if ((harness.harness === "codex" || source?.localObservation !== undefined)) return codexLocalObservationLabel(source?.localObservation);
+  if (harness.connectivity !== "online") return "Check connection";
+  if (harness.authState !== "authenticated") return "Check connection";
   if (!source) return "Connect access";
   if (!isSupportedGenericHarnessCredentialRoute(harness, source)) return "Check access";
-  if (source.readiness.state === "auth_required" || source.readiness.state === "expired") return "Sign in";
   if (source.readiness.state !== "ready") return "Check access";
   return "Ready";
 }
@@ -45,7 +50,8 @@ export function HarnessRail({ harnesses, sources, selectedId, disabled, canEnabl
   onEnable: (harness: ProviderHarnessInstance) => void;
   renderDetails: (harness: ProviderHarnessInstance) => ReactNode;
 }) {
-  useLocalObservationExpiry(sources.map((source) => source.localObservation?.staleAfter));
+  useLocalObservationExpiry([...sources.map((source) => source.localObservation?.staleAfter),
+    ...harnesses.map((harness) => harness.localObservation?.staleAfter)]);
   return (
     <section className="matrix-ap-agent-list" aria-label="Installed agents">
       <div className="matrix-ap-list-heading"><h2>Agents</h2><p>Installed on this computer</p></div>
