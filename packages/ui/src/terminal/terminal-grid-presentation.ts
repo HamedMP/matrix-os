@@ -305,7 +305,7 @@ export function createTerminalGridPresentation(options: GridPresentationOptions)
           wheelPannedAway = false;
           if (previousPan) previousPan.top = host.scrollTop;
         }
-      } });
+      }, onReceiptFailed: () => { railPannedAway = false; } });
     }
     scrollbar?.sync();
     if (visibleWidth !== viewportWidth || visibleHeight !== viewportHeight) schedule();

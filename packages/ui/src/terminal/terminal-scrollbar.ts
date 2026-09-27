@@ -1,4 +1,5 @@
 import type { TerminalScrollState } from "@matrix-os/contracts";
+import { NATIVE_HISTORY_RESPONSE_BUDGET_MS } from "./terminal-native-history";
 interface ScrollTerminal {
   buffer: { active: { baseY: number; viewportY: number } };
   scrollToLine: (line: number) => void;
@@ -13,7 +14,13 @@ export function createTerminalScrollbar(options: {
   getCellHeight: () => number;
   getTailHeight?: () => number;
   onPan: (atBottom: boolean) => void;
-  nativeHistory?: { getState(): TerminalScrollState | null; scrollTo(line: number): void };
+  onReceiptFailed?: () => void;
+  nativeHistory?: {
+    getState(): TerminalScrollState | null;
+    scrollTo(line: number): boolean | void;
+    cancelScroll?(): void;
+    getSourceIdentity?(): object;
+  };
 }) {
   const { host, root, terminal } = options;
   const parent = host.parentElement!;
@@ -52,7 +59,23 @@ export function createTerminalScrollbar(options: {
   let syncing = false;
   let synchronizedTop = 0;
   let historyFrame: number | null = null;
-  let pendingTarget: { line: number; pan: number } | null = null;
+  let receiptTimer: ReturnType<typeof setTimeout> | null = null;
+  let pendingTarget: { line: number; pan: number; native: boolean; source: object | undefined; deadline: number } | null = null;
+  let disposed = false;
+  let ignoreNextGesture = false;
+  const cancelPending = () => {
+    if (historyFrame !== null) cancelAnimationFrame(historyFrame);
+    if (receiptTimer !== null) clearTimeout(receiptTimer);
+    if (pendingTarget?.native) options.nativeHistory?.cancelScroll?.();
+    historyFrame = null;
+    receiptTimer = null;
+    pendingTarget = null;
+  };
+  const abandonPending = () => {
+    cancelPending();
+    ignoreNextGesture = true;
+    options.onReceiptFailed?.();
+  };
   const metrics = () => {
     const native = options.nativeHistory?.getState();
     return ({
@@ -63,11 +86,20 @@ export function createTerminalScrollbar(options: {
       : terminal.buffer.active.baseY,
     });
   };
+  const receiptIsCurrent = (receipt: NonNullable<typeof pendingTarget>) => !disposed
+    && receipt.native === Boolean(options.nativeHistory?.getState())
+    && receipt.source === options.nativeHistory?.getSourceIdentity?.()
+    && receipt.line <= metrics().history
+    && receipt.pan <= Math.max(0, host.scrollHeight - host.clientHeight)
+    && Date.now() < receipt.deadline;
   const sync = () => {
-    if (syncing) return;
+    if (disposed || syncing) return;
+    if (pendingTarget && !receiptIsCurrent(pendingTarget)) abandonPending();
     // The rail event may still be queued behind an earlier host scroll.
     // Apply that gesture before reflecting terminal state back into the rail.
-    if (Math.abs(rail.scrollTop - synchronizedTop) >= 0.01) onScroll();
+    const ignoreGesture = ignoreNextGesture;
+    ignoreNextGesture = false;
+    if (!ignoreGesture && Math.abs(rail.scrollTop - synchronizedTop) >= 0.01) onScroll();
     const { cell, pan, history } = metrics();
     if (!Number.isFinite(cell) || cell <= 0) return;
     Object.assign(rail.style, {
@@ -77,46 +109,60 @@ export function createTerminalScrollbar(options: {
     spacer.style.height = `${host.clientHeight + history * cell + pan}px`;
     const above = options.nativeHistory?.getState()?.above ?? terminal.buffer.active.viewportY;
     if (pendingTarget && (above !== pendingTarget.line || Math.abs(host.scrollTop - pendingTarget.pan) >= 0.01)) return;
-    pendingTarget = null;
+    cancelPending();
     rail.scrollTop = above * cell + host.scrollTop;
     synchronizedTop = rail.scrollTop;
   };
   const onScroll = () => {
-    if (syncing || Math.abs(rail.scrollTop - synchronizedTop) < 0.01) return;
+    if (disposed || syncing || Math.abs(rail.scrollTop - synchronizedTop) < 0.01) return;
     const { cell, pan, history } = metrics();
     if (!Number.isFinite(cell) || cell <= 0) return;
     const top = Math.max(0, Math.min(history * cell + pan, rail.scrollTop));
     const line = Math.min(history, Math.floor(top / cell));
+    cancelPending();
     syncing = true;
-    pendingTarget = { line, pan: Math.min(Math.max(0, host.scrollHeight - host.clientHeight), top - line * cell) };
+    const receipt = pendingTarget = {
+      line, pan: Math.min(Math.max(0, host.scrollHeight - host.clientHeight), top - line * cell),
+      native: Boolean(options.nativeHistory?.getState()), source: options.nativeHistory?.getSourceIdentity?.(),
+      deadline: Date.now() + NATIVE_HISTORY_RESPONSE_BUDGET_MS,
+    };
+    receiptTimer = setTimeout(() => {
+      if (disposed || pendingTarget !== receipt) return;
+      abandonPending();
+      sync();
+    }, NATIVE_HISTORY_RESPONSE_BUDGET_MS);
+    let rejected = false;
     try {
-      if (options.nativeHistory?.getState()) options.nativeHistory.scrollTo(line);
+      if (receipt.native) rejected = options.nativeHistory!.scrollTo(line) === false;
       else {
         terminal.scrollToLine(line);
         // xterm can publish history before its queued viewport dimensions are
         // current. Reapply the latest absolute target once that frame settles.
         if (historyFrame !== null) cancelAnimationFrame(historyFrame);
         historyFrame = requestAnimationFrame(() => {
+          if (disposed || pendingTarget !== receipt) return;
           historyFrame = null;
-          terminal.scrollToLine(line);
+          if (!receiptIsCurrent(receipt)) {
+            abandonPending();
+            sync();
+            return;
+          }
+          terminal.scrollToLine(receipt.line);
         });
       }
       host.scrollTop = Math.min(Math.max(0, host.scrollHeight - host.clientHeight), top - line * cell);
       options.onPan(top >= history * cell + pan - 0.01);
       synchronizedTop = rail.scrollTop;
     } finally { syncing = false; }
+    if (rejected) { abandonPending(); sync(); }
   };
   rail.addEventListener("scroll", onScroll);
   host.addEventListener("scroll", sync);
   const subscription = terminal.onScroll(sync);
-  const cancelPending = () => {
-    if (historyFrame !== null) cancelAnimationFrame(historyFrame);
-    historyFrame = null;
-    pendingTarget = null;
-  };
   return {
     sync, cancelPending,
     dispose() {
+      disposed = true;
       cancelPending();
       subscription.dispose();
       rail.removeEventListener("scroll", onScroll);
