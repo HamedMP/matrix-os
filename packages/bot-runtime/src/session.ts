@@ -121,6 +121,16 @@ function dropOldestTurns(messages: readonly AgentMessage[], maxBytes: number, no
   return dropped ? [...head, note, ...rest] : [...head, ...rest];
 }
 
+/** True when cutting tool payloads alone brings the transcript under the storage target. */
+export function fitsWithToolPayloadCaps(messages: readonly AgentMessage[], maxBytes = STORAGE_TARGET_BYTES): boolean {
+  let capped = withoutImages(messages);
+  for (const cap of TOOL_PAYLOAD_CAPS) {
+    if (encodedSessionBytes(capped) <= maxBytes) return true;
+    capped = capped.map((message) => capToolPayloads(message, cap));
+  }
+  return encodedSessionBytes(capped) <= maxBytes;
+}
+
 /**
  * Fits a transcript for storage. Images always become placeholders. While
  * it is still too large: tool payloads are cut with a visible note, then the
@@ -210,8 +220,9 @@ export async function compactSession(input: {
   messages: readonly AgentMessage[];
   summarize(transcript: string): Promise<string>;
   now(): number;
+  keepRecentUserTurns?: number;
 }): Promise<AgentMessage[]> {
-  const plan = planCompaction(input.messages);
+  const plan = planCompaction(input.messages, input.keepRecentUserTurns);
   if (!plan) return [...input.messages];
   const summary = (await input.summarize(serializeForSummary(plan.older))).trim();
   if (summary.length === 0) return [...input.messages];
