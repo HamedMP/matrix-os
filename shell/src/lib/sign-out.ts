@@ -10,6 +10,15 @@ export function getSignInRedirectUrl(): string {
 export async function clearMatrixAppSession(): Promise<void> {
   // S06 / T034: direct collaboration sessions end with the actor's app session.
   closeShellCollaborationSessions();
+  await endMatrixAppSession();
+}
+
+/**
+ * Clears only the Matrix app-session cookie, so no later visitor in this
+ * browser inherits routing to a computer. Callers that must keep direct
+ * collaboration sessions until Clerk confirms sign-out use this directly.
+ */
+export async function endMatrixAppSession(): Promise<void> {
   const controller = new AbortController();
   const timeoutId = window.setTimeout(() => controller.abort(), SIGN_OUT_TIMEOUT_MS);
   try {
