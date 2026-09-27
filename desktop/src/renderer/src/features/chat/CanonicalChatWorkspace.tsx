@@ -1,3 +1,4 @@
+import { canonicalComposerSelectionIsAvailable } from "./canonical-composer-state";
 import {
   isChatUnread,
   chatReadAction,
@@ -418,6 +419,7 @@ export function CanonicalChatWorkspace({
     const selectedInstance = providerCatalog.instances.find((instance) => instance.id === selection?.instanceId);
     if (
       !selection
+      || !canonicalComposerSelectionIsAvailable(providerCatalog, selection)
       || !mentionPermission.allowed
       || (activeRun && !mentionResources.length)
       || uploadingAttachments
@@ -430,10 +432,12 @@ export function CanonicalChatWorkspace({
     }
     setSubmissionError(null);
     const runtimeGeneration = captureRuntimeGeneration();
+    const providerCatalogGeneration = useConnection.getState().providerCatalogGeneration;
     const sequence = ++submissionSequence.current;
     const isCurrentSubmission = () => (
       sequence === submissionSequence.current
       && isCurrentRuntimeGeneration(runtimeGeneration)
+      && useConnection.getState().providerCatalogGeneration === providerCatalogGeneration
     );
     setUploadingAttachments(true);
     try {
@@ -482,16 +486,19 @@ export function CanonicalChatWorkspace({
       (!activeRun && !editingQueuedTurn && !mentionResources.length)
       || !controller.detail
       || !selection
+      || !canonicalComposerSelectionIsAvailable(providerCatalog, selection)
       || !mentionPermission.allowed
       || composerAction
       || uploadingAttachments
       || (attachments.items.length > 0 && !supportsNativeFileAttachments(selectedInstance))
     ) return;
     const runtimeGeneration = captureRuntimeGeneration();
+    const providerCatalogGeneration = useConnection.getState().providerCatalogGeneration;
     const sequence = ++submissionSequence.current;
     const isCurrentSubmission = () => (
       sequence === submissionSequence.current
       && isCurrentRuntimeGeneration(runtimeGeneration)
+      && useConnection.getState().providerCatalogGeneration === providerCatalogGeneration
     );
     setComposerAction(editingQueuedTurn ? "edit" : "queue");
     setUploadingAttachments(true);
@@ -652,7 +659,7 @@ export function CanonicalChatWorkspace({
         busy={Boolean(activeRun) || uploadingAttachments}
         submitWhileBusy={Boolean(activeRun)}
         disabled={controller.status === "loading" || uploadingAttachments || (!catalog && liveCatalog.status === "loading")}
-        canSubmit={Boolean(selection && mentionPermission.allowed && !uploadingAttachments && (
+        canSubmit={Boolean(canonicalComposerSelectionIsAvailable(providerCatalog, selection) && mentionPermission.allowed && !uploadingAttachments && (
           draft.trim() || referenceTokens.length > 0 || attachments.items.length > 0
         ))}
         catalog={providerCatalog}

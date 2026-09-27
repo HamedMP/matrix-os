@@ -5,6 +5,8 @@ import {
   createCanonicalComposerSelection,
   type CanonicalComposerSelection,
 } from "./canonical-composer-state";
+import { useConnection } from "../../stores/connection";
+import { desktopProviderIdentityKey } from "../../lib/provider-settings-identity";
 import { useProviderPreferences } from "../settings/provider-preferences";
 
 function rememberedOptions(
@@ -38,8 +40,10 @@ export function useCanonicalComposerSelection({
   boundInstanceId?: string;
 }) {
   const [selection, setSelection] = useState<CanonicalComposerSelection | null>(() => (
-    initializeImmediately ? createCanonicalComposerSelection(catalog) : null
+    initializeImmediately && !chatId ? createCanonicalComposerSelection(catalog) : null
   ));
+  const identityKey = useConnection(desktopProviderIdentityKey);
+  const selectionIdentityKey = useRef(identityKey);
   const providerPreferencesHydrated = useProviderPreferences((state) => state.hydrated);
   const lastComposerInstanceId = useProviderPreferences((state) => state.lastComposerInstanceId);
   const setComposerSelection = useProviderPreferences((state) => state.setComposerSelection);
@@ -51,8 +55,10 @@ export function useCanonicalComposerSelection({
   }, []);
 
   useEffect(() => {
+    const scopeChanged = selectionIdentityKey.current !== identityKey;
+    selectionIdentityKey.current = identityKey;
     const chatChanged = selectionChatId.current !== chatId;
-    if (chatChanged) {
+    if (chatChanged || scopeChanged) {
       selectionChatId.current = chatId;
       composerSelectionTouched.current = false;
     }
@@ -70,17 +76,31 @@ export function useCanonicalComposerSelection({
         : chatId
           ? selectedChatInstance ?? currentInstance
           : rememberedInstance ?? currentInstance;
-      const next = requiredInstance
-        ? createCanonicalComposerSelection(catalog, requiredInstance.id)
-        : createCanonicalComposerSelection(catalog);
-      if (!next) return null;
-      const currentIsSupported = current && currentInstance
+      const currentIsSupported = current && currentInstance?.availability === "available"
+        && (!chatId || current.instanceId === (boundInstanceId ?? currentSelection?.instanceId))
         && currentInstance.models.some((model) => (
           model.id === current.model && model.availability === "available"
         ))
         && currentInstance.supports.permissionModes.includes(current.permissionMode)
         && rememberedOptions(catalog, current).length === current.options.length;
-      if (!chatChanged && composerSelectionTouched.current && currentIsSupported) return current;
+      if (!chatChanged && !scopeChanged && composerSelectionTouched.current && currentIsSupported) return current;
+      // Existing Chats retain their saved route even when it cannot run. Choosing
+      // a global default here would silently change the harness/account.
+      if (chatId && currentSelection && (!requiredInstance
+        || requiredInstance.availability !== "available"
+        || !requiredInstance.models.some((model) => model.id === currentSelection.model && model.availability === "available"))) {
+        return {
+          instanceId: boundInstanceId ?? currentSelection.instanceId,
+          model: currentSelection.model,
+          options: currentSelection.options ?? [],
+          interactionMode: current?.interactionMode ?? "default",
+          permissionMode: current?.permissionMode ?? "supervised",
+        };
+      }
+      const next = requiredInstance
+        ? createCanonicalComposerSelection(catalog, requiredInstance.id)
+        : createCanonicalComposerSelection(catalog);
+      if (!next || (chatId && boundInstanceId && next.instanceId !== boundInstanceId)) return null;
       const preferred = applyCanonicalComposerPreference(
         catalog,
         next,
@@ -104,6 +124,7 @@ export function useCanonicalComposerSelection({
     });
   }, [
     boundInstanceId,
+    identityKey,
     catalog,
     catalogReady,
     chatId,

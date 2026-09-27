@@ -79,7 +79,10 @@ function ConnectedAgentsProvidersAdapter({
     () => createDesktopProviderSettingsTransport(runtimeApi),
     [runtimeApi],
   );
-  const controller = useProviderSettingsController({ identityKey, transport });
+  const onCatalogChanged = useCallback(() => {
+    useConnection.getState().invalidateProviderCatalog(identityKey);
+  }, [identityKey]);
+  const controller = useProviderSettingsController({ identityKey, transport, onCatalogChanged });
   const [actionError, setActionError] = useState<string | null>(null);
 
   const isIdentityCurrent = useCallback(

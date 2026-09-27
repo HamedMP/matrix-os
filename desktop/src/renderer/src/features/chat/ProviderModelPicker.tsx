@@ -33,12 +33,12 @@ export function ProviderModelPicker({ catalog, selection, instanceLocked, disabl
   }}>
     <Popover.Trigger asChild>
       <button type="button" disabled={disabled} aria-label="Choose model and provider"
-        data-provider-instance={selectedInstance?.id ?? ""} data-model={selectedModel?.id ?? ""}
+        data-provider-instance={selectedInstance?.id ?? ""} data-model={selectedModel?.id ?? selection?.model ?? ""}
         title={selectedInstance && selectedModel ? `${selectedModel.displayName} · ${selectedInstance.displayName}` : unavailableProviderLabel}
         className="flex h-8 max-w-[18rem] items-center gap-1.5 rounded-lg px-2 text-sm font-medium outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:opacity-50"
         style={{ color: "var(--text-secondary)" }}>
         {selectedInstance ? <ProviderDriverGlyph kind={selectedInstance.driverKind} /> : <Cpu size={15} />}
-        <span className="truncate">{selectedModel?.displayName ?? unavailableProviderLabel ?? "Choose model"}{selectedInstance ? ` · ${selectedInstance.displayName}` : ""}{selectedInstance?.connectionLabel && selectedInstance.connectionLabel !== selectedInstance.displayName ? ` · ${selectedInstance.connectionLabel}` : ""}</span>
+        <span className="truncate">{selectedModel?.displayName ?? selection?.model ?? unavailableProviderLabel ?? "Choose model"}{selectedInstance ? ` · ${selectedInstance.displayName}` : ""}{selectedInstance?.connectionLabel && selectedInstance.connectionLabel !== selectedInstance.displayName ? ` · ${selectedInstance.connectionLabel}` : ""}</span>
         <ChevronDown size={13} aria-hidden />
       </button>
     </Popover.Trigger>

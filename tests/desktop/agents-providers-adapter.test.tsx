@@ -65,6 +65,23 @@ describe("desktop shared agents and providers adapter", () => {
     expect(useConnection.getState().api?.forRuntime).toHaveBeenCalledWith("vm-2");
   });
 
+  it("invalidates Chat only from accepted Settings callbacks for the current scope", () => {
+    render(<AgentsProvidersAdapter />);
+    const accepted = mocks.controller.mock.calls.at(-1)![0].onCatalogChanged;
+    expect(useConnection.getState().providerCatalogGeneration).toBe(0);
+    act(() => accepted());
+    expect(useConnection.getState().providerCatalogGeneration).toBe(1);
+    act(() => useConnection.setState({ authGeneration: 8 }));
+    act(() => accepted());
+    expect(useConnection.getState().providerCatalogGeneration).toBe(1);
+    const current = mocks.controller.mock.calls.at(-1)![0].onCatalogChanged;
+    act(() => current());
+    expect(useConnection.getState().providerCatalogGeneration).toBe(2);
+    act(() => useConnection.setState({ runtimeSlot: "other" }));
+    act(() => current());
+    expect(useConnection.getState().providerCatalogGeneration).toBe(2);
+  });
+
   it("changes controller identity when the trusted credential generation changes", () => {
     render(<AgentsProvidersAdapter />);
     act(() => useConnection.setState({ authGeneration: 8 }));

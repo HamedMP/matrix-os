@@ -26,21 +26,7 @@ const MAX_RESPONSE_BYTES = 1024 * 1024;
 const MAX_MUTATION_BYTES = 64 * 1024;
 const MAX_CHECKOUT_RESPONSE_BYTES = 8 * 1024;
 
-export function desktopProviderIdentityKey(identity: {
-  status: "loading" | "signed-out" | "signed-in";
-  handle: string | null;
-  platformHost: string;
-  runtimeSlot: string;
-  authGeneration: number;
-}): string {
-  return [
-    identity.status,
-    identity.handle ?? "none",
-    identity.platformHost,
-    identity.runtimeSlot,
-    identity.authGeneration,
-  ].join("|");
-}
+export { desktopProviderIdentityKey } from "../../lib/provider-settings-identity";
 
 class DesktopProviderSettingsTransportError extends Error {
   constructor(readonly code: ProviderSettingsTransportErrorCode) {

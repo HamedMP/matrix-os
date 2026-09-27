@@ -127,6 +127,31 @@ function transport(options: {
 afterEach(() => vi.restoreAllMocks());
 
 describe("ProviderSettingsController", () => {
+  it("notifies catalog consumers only after accepting explicit Settings changes", async () => {
+    const onCatalogChanged = vi.fn();
+    const gateway = transport();
+    const controller = new ProviderSettingsController({ identityKey: "owner-a:primary", transport: gateway, onCatalogChanged });
+    await controller.refresh({ refresh: false });
+    expect(onCatalogChanged).not.toHaveBeenCalled();
+    await controller.mutate({ type: "set_harness_enabled", harnessInstanceId: "harness_one", enabled: false });
+    expect(onCatalogChanged).toHaveBeenCalledTimes(1);
+    await controller.mutate({ type: "set_harness_enabled", harnessInstanceId: "harness_one", enabled: true });
+    expect(onCatalogChanged).toHaveBeenCalledTimes(2);
+    await controller.refresh();
+    expect(onCatalogChanged).toHaveBeenCalledTimes(3);
+  });
+
+  it("does not invalidate catalogs after a failed mutation or failed explicit refresh", async () => {
+    const onCatalogChanged = vi.fn();
+    const gateway = transport({ mutate: async () => { throw new Error("unavailable"); } });
+    const controller = new ProviderSettingsController({ identityKey: "owner-a:primary", transport: gateway, onCatalogChanged });
+    await controller.refresh({ refresh: false });
+    expect(await controller.mutate({ type: "set_harness_enabled", harnessInstanceId: "harness_one", enabled: false })).toBe(false);
+    gateway.getSnapshot.mockRejectedValue(new Error("unavailable"));
+    await controller.refresh();
+    expect(onCatalogChanged).not.toHaveBeenCalled();
+  });
+
   it("parses the initial snapshot and selects its first harness", async () => {
     const gateway = transport();
     const controller = new ProviderSettingsController({ identityKey: "owner-a:primary", transport: gateway });
@@ -285,6 +310,7 @@ describe("ProviderSettingsController", () => {
   });
 
   it("does not let an older refresh overwrite a later mutation response", async () => {
+    const onCatalogChanged = vi.fn();
     const staleRefresh = deferred<unknown>();
     let loads = 0;
     const gateway = transport({
@@ -294,8 +320,8 @@ describe("ProviderSettingsController", () => {
       },
       mutate: async () => ({ kind: "snapshot", snapshot: snapshot(2) }),
     });
-    const controller = new ProviderSettingsController({ identityKey: "owner-a:primary", transport: gateway });
-    await controller.refresh();
+    const controller = new ProviderSettingsController({ identityKey: "owner-a:primary", transport: gateway, onCatalogChanged });
+    await controller.refresh({ refresh: false });
 
     const refresh = controller.refresh();
     await controller.mutate({ type: "update_harness", harnessInstanceId: "harness_one", displayName: "Latest" });
@@ -303,9 +329,11 @@ describe("ProviderSettingsController", () => {
     await refresh;
 
     expect(controller.getState().snapshot?.revision).toBe(2);
+    expect(onCatalogChanged).toHaveBeenCalledTimes(1);
   });
 
   it("reloads authoritative state after a revision conflict and never exposes raw errors", async () => {
+    const onCatalogChanged = vi.fn();
     let loads = 0;
     const gateway = transport({
       getSnapshot: async () => snapshot(++loads),
@@ -313,10 +341,11 @@ describe("ProviderSettingsController", () => {
         throw new ProviderSettingsTransportError("revision_conflict", "Anthropic sk-secret /private/path");
       },
     });
-    const controller = new ProviderSettingsController({ identityKey: "owner-a:primary", transport: gateway });
-    await controller.refresh();
+    const controller = new ProviderSettingsController({ identityKey: "owner-a:primary", transport: gateway, onCatalogChanged });
+    await controller.refresh({ refresh: false });
 
-    await controller.mutate({ type: "update_harness", harnessInstanceId: "harness_one", displayName: "Conflict" });
+    expect(await controller.mutate({ type: "update_harness", harnessInstanceId: "harness_one", displayName: "Conflict" })).toBe(false);
+    expect(onCatalogChanged).toHaveBeenCalledTimes(1);
 
     expect(gateway.getSnapshot).toHaveBeenCalledTimes(2);
     expect(controller.getState().snapshot?.revision).toBe(2);
