@@ -5,6 +5,7 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { desktopPalette } from "@matrix-os/brand";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { nextDeveloperToolsSelection } from "../../shell/src/components/onboarding/developer-tools.js";
+import { mockBrowserTimeZone } from "../helpers/browser-timezone.js";
 
 const clerkState = vi.hoisted(() => ({
   isLoaded: true,
@@ -810,6 +811,49 @@ describe("BillingSection", () => {
     expect(screen.queryByRole("radio", { name: "None" })).toBeNull();
     expect(screen.getByRole("checkbox", { name: "Codex" })).toBeTruthy();
     expect(screen.getByText("Choose command-line agents to preinstall on this VPS.")).toBeTruthy();
+  });
+
+  it("keeps Asia Starter on the US machine's multi-agent policy", async () => {
+    mockBrowserTimeZone("Asia/Shanghai");
+    const { BillingSection } = await loadBillingSection();
+
+    render(<BillingSection mode="provisioning" />);
+    await waitForBillingConfigurator();
+    fireEvent.click(screen.getByRole("button", { name: /^Starter\b/i }));
+    expect(screen.queryByRole("radio", { name: "None" })).toBeNull();
+    for (const agent of ["Codex", "Claude Code", "OpenCode", "Pi"]) {
+      expect(screen.getByRole("checkbox", { name: agent })).toBeTruthy();
+    }
+    fireEvent.click(screen.getByRole("button", { name: "Advanced settings" }));
+    expect(screen.getByRole("button", { name: "Change server location" }).textContent).toContain(
+      "Hillsboro, Oregon",
+    );
+  });
+
+  it("keeps an explicit EU location over the Asia suggestion and uses CPX22 controls", async () => {
+    mockBrowserTimeZone("Asia/Shanghai");
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(
+      JSON.stringify({ url: "https://checkout.stripe.test/session" }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    ));
+    const { BillingSection } = await loadBillingSection();
+
+    render(<BillingSection mode="provisioning" />);
+    await waitForBillingConfigurator();
+    fireEvent.click(screen.getByRole("button", { name: "Advanced settings" }));
+    fireEvent.click(screen.getByRole("button", { name: "Change server location" }));
+    fireEvent.click(screen.getByRole("button", { name: /Falkenstein, Germany/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^Starter\b/i }));
+    fireEvent.click(screen.getByRole("radio", { name: "None" }));
+    expect(screen.queryByRole("checkbox", { name: "Codex" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Continue to pay" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/billing/checkout",
+      expect.objectContaining({ body: JSON.stringify({
+        planSlug: "matrix_starter", interval: "monthly", regionSlug: "region_fsn1", developerTools: [],
+      }) }),
+    ));
   });
 
   it("prefills the closest server for an American browser timezone", async () => {

@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import BillingSection from "../../desktop/src/renderer/src/features/settings/sections/BillingSection";
 import SettingsView from "../../desktop/src/renderer/src/features/settings/SettingsView";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
+import { mockBrowserTimeZone } from "../helpers/browser-timezone.js";
 
 const activeBilling = {
   access: { runtimeProxyAllowed: true, reason: "active" },
@@ -220,6 +221,38 @@ describe("desktop billing settings", () => {
     expect(screen.queryByRole("option", { name: "Annual" })).toBeNull();
     fireEvent.click(screen.getByText(/Server location/));
     expect(screen.getByRole("option", { name: "🇺🇸 Ashburn, Virginia" })).not.toBeNull();
+  });
+
+  it.each([
+    { selection: "suggested Asia location", explicitRegion: null, expectedRegion: "region_hil" },
+    { selection: "explicit EU location over the Asia suggestion", explicitRegion: "region_fsn1", expectedRegion: "region_fsn1" },
+  ])("checks out with the $selection", async ({ explicitRegion, expectedRegion }) => {
+    mockBrowserTimeZone("Asia/Shanghai");
+    const api = makeApi({
+      access: { runtimeProxyAllowed: false, reason: "no_entitlement" },
+      entitlement: null,
+      trialOffer: { eligible: true, durationDays: 3 },
+    });
+    useConnection.setState({ api: api as never });
+
+    render(<BillingSection />);
+    await screen.findByText("Billing required");
+    expect(screen.getByText(/Server location/).textContent).toContain("Hillsboro, Oregon");
+    if (explicitRegion) {
+      fireEvent.click(screen.getByText(/Server location/));
+      fireEvent.change(screen.getByRole("combobox", { name: "Change server location" }), {
+        target: { value: explicitRegion },
+      });
+    }
+    fireEvent.click(screen.getByRole("button", { name: /Continue to checkout/i }));
+
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith(
+      "/billing/checkout",
+      { planSlug: "matrix_builder", interval: "monthly", regionSlug: expectedRegion },
+    ));
+    expect(window.operator.invoke).toHaveBeenCalledWith("shell:open-external", {
+      url: "https://checkout.stripe.test/session",
+    });
   });
 
   it("keeps the billing portal available for locked Stripe subscriptions", async () => {
