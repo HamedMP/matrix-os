@@ -144,9 +144,10 @@ function latestTurnStart(messages: readonly AgentMessage[]): number {
  * it is still too large: tool payloads are cut with a visible note, then
  * assistant prose in earlier turns, then (if allowed) the oldest turns are
  * dropped behind a note, and only as a last resort the latest turn's prose.
- * The person's words and, whenever possible, the latest reply stay whole;
- * a caller that may not drop turns (a cancelled run) gets a transcript that
- * `encodeSession` refuses instead, so the previous session is kept.
+ * The person's words and, whenever possible, the latest reply stay whole. A
+ * caller that may not drop turns (a cancelled run) shortens the latest
+ * reply instead; if even that cannot fit, `encodeSession` refuses it and the
+ * previous session is kept.
  */
 export function fitForStorage(
   messages: readonly AgentMessage[],
@@ -165,8 +166,9 @@ export function fitForStorage(
     if (fits()) return stored;
     stored = stored.map((message, index) => (index < latest ? capAssistantText(message, cap) : message));
   }
-  if (fits() || options.allowDroppingTurns === false) return stored;
-  stored = dropOldestTurns(stored, maxBytes, now());
+  if (fits()) return stored;
+  // A cancelled run keeps every turn and shortens its latest reply instead.
+  if (options.allowDroppingTurns !== false) stored = dropOldestTurns(stored, maxBytes, now());
   for (const cap of ASSISTANT_TEXT_CAPS) {
     if (fits()) return stored;
     stored = stored.map((message) => capAssistantText(message, cap));

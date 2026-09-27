@@ -13,4 +13,3 @@ export {
   SESSION_MAX_BYTES,
 } from "./session.js";
 export { capabilityForToolName, createBotTools, type BotToolsState } from "./tools.js";
-export { BotWorkerError, createBotWorker, type BotWorkerReply } from "./worker.js";
