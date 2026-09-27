@@ -17,19 +17,18 @@ function rowStatus(harness: ProviderHarnessInstance, source: ProviderAccessSourc
   if (harness.installState === "failed") return "Check failed";
   if (harness.installState !== "installed") return "Check connection";
   if (!harness.enabled && harness.configuredEnabled === true) {
-    if (harness.authState === "failed" || source?.readiness.state === "invalid"
-      || harness.connectivity === "offline" || harness.connectivity === "degraded") return "Check failed";
+    if (harness.authState === "failed" || source?.readiness.state === "invalid") return "Check failed";
     if (harness.authState === "authenticating") return "Signing in…";
     if (harness.authState === "unauthenticated" || harness.authState === "expired") return "Sign in";
     if (source?.readiness.state === "auth_required" || source?.readiness.state === "expired") return "Sign in";
     return "Check connection";
   }
   if (!harness.enabled) return harness.authState === "authenticated" ? "Off in Settings · Signed in" : "Off in Settings";
-  if (harness.connectivity === "offline" || harness.connectivity === "degraded") return "Check failed";
   if (harness.authState === "failed" || source?.readiness.state === "invalid") return "Check failed";
   if (harness.authState === "authenticating") return "Signing in…";
   if (harness.authState === "unauthenticated" || harness.authState === "expired"
     || source?.readiness.state === "auth_required" || source?.readiness.state === "expired") return "Sign in";
+  if (harness.connectivity === "offline" || harness.connectivity === "degraded") return "Check connection";
   if (harness.localObservation) return codexLocalObservationLabel(harness.localObservation);
   if ((harness.harness === "codex" || source?.localObservation !== undefined)) return codexLocalObservationLabel(source?.localObservation);
   if (harness.connectivity !== "online") return "Check connection";

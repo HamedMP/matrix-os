@@ -326,7 +326,7 @@ describe("AgentsProvidersView", () => {
     expect(screen.queryByText("Local login found; access not verified")).not.toBeInTheDocument();
     expect(screen.getAllByText("Local login last found; access not verified")).toHaveLength(2);
   });
-  it("shows saved enabled intent separately from a failed connection and permits disabling it", () => {
+  it("shows saved enabled intent separately from unavailable access and permits disabling it", () => {
     const next = snapshot();
     const harness = next.harnesses[0]!;
     Object.assign(harness, {
@@ -335,7 +335,7 @@ describe("AgentsProvidersView", () => {
       accessSourceId: null,
     });
     const { onMutate } = setup({ snapshot: next });
-    expect(screen.getByRole("button", { name: /Hermes.*Check failed/ })).toBeVisible();
+    expect(screen.getByRole("button", { name: /Hermes.*Check connection/ })).toBeVisible();
     expect(screen.queryByRole("button", { name: /Hermes.*Disabled/ })).not.toBeInTheDocument();
     const toggle = screen.getByRole("switch", { name: "Enable Hermes" });
     expect(toggle).toBeChecked();

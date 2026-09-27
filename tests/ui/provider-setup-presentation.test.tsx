@@ -250,10 +250,10 @@ describe("provider setup presentation", () => {
     expect(screen.getByRole("button", { name: /Pi.*Sign in/ })).toBeVisible();
   });
 
-  it("preserves explicit offline status even when authentication is expired", () => {
+  it("preserves the explicit expired-authentication action when connectivity is offline", () => {
     const value = snapshot();
     Object.assign(value.harnesses[0]!, { authState: "expired", connectivity: "offline" });
     setup(value);
-    expect(screen.getByRole("button", { name: /Pi.*Check failed/ })).toBeVisible();
+    expect(screen.getByRole("button", { name: /Pi.*Sign in/ })).toBeVisible();
   });
 });

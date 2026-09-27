@@ -36,10 +36,24 @@ it("does not obscure an explicit sign-in requirement with historical local evide
   expect(screen.getByRole("button", { name: /Hermes.*Sign in/ })).toBeVisible();
 });
 
-it.each(["failed_auth", "invalid_source", "offline", "degraded"] as const)("preserves %s for a saved enabled route that is currently blocked", (failure) => {
+it.each(["failed_auth", "invalid_source"] as const)("preserves %s for a saved enabled route that is currently blocked", (failure) => {
   const value = { ...harness, enabled: false, configuredEnabled: true, accessSourceId: "native" };
   if (failure === "failed_auth") value.authState = "failed";
-  if (failure === "offline" || failure === "degraded") value.connectivity = failure;
+  value.connectivity = "offline";
   show(value, failure === "invalid_source" ? [{ id: "native", readiness: { state: "invalid" } } as ProviderAccessSource] : []);
   expect(screen.getByRole("button", { name: /Hermes.*Check failed/ })).toBeVisible();
+});
+it.each([false, true])("requests a connection check for unavailable or stale access when enabled=%s without inventing an authentication failure", (enabled) => {
+  show({ ...harness, harness: "claude", displayName: "Claude", enabled,
+    configuredEnabled: true, connectivity: enabled ? "degraded" : "offline",
+    routeAvailability: "available", configuredAccessSourceId: "matrix_included", accessSourceId: null,
+    localObservation: { state: "present_unverified", checkedAt: new Date(Date.now()-10000).toISOString(), staleAfter: new Date(Date.now()-5000).toISOString() },
+  }, [{ id: "matrix_included", readiness: { state: "unavailable", safeReason: "provider_unavailable", action: "retry" } } as ProviderAccessSource]);
+  expect(screen.getByRole("button", { name: /Claude.*Check connection/ })).toBeVisible();
+  expect(screen.queryByText(/Local login/)).not.toBeInTheDocument();
+  expect(screen.queryByText("Ready")).not.toBeInTheDocument();
+});
+it.each([false, true])("keeps explicit authentication failure authoritative when offline and enabled=%s", (enabled) => {
+  show({ ...harness, enabled, connectivity: "offline", authState: "failed" });
+  expect(screen.getByRole("button", { name: /Check failed/ })).toBeVisible();
 });
