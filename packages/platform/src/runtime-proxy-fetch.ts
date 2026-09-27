@@ -11,14 +11,14 @@ export async function fetchRuntimeProxy(
     ? 300_000 : timeoutMs;
   if (!releaseTimeoutAfterHeaders) {
     const deadline = AbortSignal.timeout(operationTimeoutMs);
-    const signal = init.signal ? AbortSignal.any([init.signal, deadline]) : deadline;
-    return fetch(targetUrl, { ...init, signal });
+    const upstreamSignal = init.signal ? AbortSignal.any([init.signal, deadline]) : deadline;
+    return fetch(targetUrl, { ...init, signal: upstreamSignal });
   }
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const signal = init.signal ? AbortSignal.any([init.signal, controller.signal]) : controller.signal;
-    return await fetch(targetUrl, { ...init, signal });
+    const upstreamSignal = init.signal ? AbortSignal.any([init.signal, controller.signal]) : controller.signal;
+    return await fetch(targetUrl, { ...init, signal: upstreamSignal });
   } finally {
     clearTimeout(timeout);
   }
