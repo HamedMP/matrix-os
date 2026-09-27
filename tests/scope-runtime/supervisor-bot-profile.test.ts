@@ -174,4 +174,33 @@ describe("scope runtime supervisor bot profile", () => {
     await expect(controller.handle(createBot)).resolves.toMatchObject({ ok: true, runtimeHandle: `runtime_${"4".repeat(32)}` });
     expect(controller.size()).toBe(1);
   });
+
+  it("keeps a runtime whose create finished while the liveness snapshot was taken", async () => {
+    const stale = `runtime_${"5".repeat(32)}`;
+    const fresh = `runtime_${"6".repeat(32)}`;
+    let releaseSnapshot!: (running: ReadonlySet<string>) => void;
+    const native = launcher({
+      list: vi.fn(async () => [{ runtimeHandle: stale, executionGeneration: "4", profileId: "scope-runtime-bot-v1" }]),
+      active: vi.fn(() => new Promise<ReadonlySet<string>>((resolve) => { releaseSnapshot = resolve; })),
+    });
+    const controller = await createScopeRuntimeController({
+      launcher: native,
+      executionGeneration: "4",
+      maxRuntimes: 2,
+      createRuntimeHandle: () => fresh,
+    });
+    // The slot is free, so this create does not prune; it starts while a relay failure prunes below.
+    const failing = launcher({ runBot: vi.fn(async () => { throw new Error("worker gone"); }) }).runBot!;
+    native.runBot = failing;
+    const relay = controller.handle({ ...botCommand({ kind: "bot.cancel" }), runtimeHandle: stale });
+    await vi.waitFor(() => expect(native.active).toHaveBeenCalled());
+    await expect(controller.handle(createBot)).resolves.toMatchObject({ ok: true, runtimeHandle: fresh });
+    // The snapshot predates the new unit, so it lists neither handle.
+    releaseSnapshot(new Set());
+    await expect(relay).resolves.toMatchObject({ ok: false, error: "runtime_unavailable" });
+    expect(controller.size()).toBe(1);
+    native.runBot = vi.fn(async () => ({ version: 1 as const, ok: true as const, reply: { acknowledged: true } }));
+    await expect(controller.handle({ ...botCommand({ kind: "bot.cancel" }), runtimeHandle: fresh }))
+      .resolves.toMatchObject({ ok: true, runtimeHandle: fresh });
+  });
 });
