@@ -70,6 +70,11 @@ describe("bot interactions repository", () => {
     await create(repo, { expiresAt: at(9_000), now: at(3_000) });
     await expect(create(repo, { now: at(9_500), expiresAt: at(20_000) })).resolves.toMatchObject({ status: "pending" });
   });
+
+  it("refuses an interaction in a chat the owner does not own", async () => {
+    await insertChat(db, "chat_foreign4", "user_owner_2");
+    await expect(create(createBotInteractionsRepository(db), { chatId: "chat_foreign4" })).rejects.toEqual(new BotStateError("not_found"));
+  });
 });
 
 describe.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)("bot interactions repository on pooled Postgres", () => {
