@@ -2,12 +2,14 @@ import type { AgentEvent, AgentMessage } from "@earendil-works/pi-agent-core";
 import { fauxAssistantMessage, fauxProvider, fauxText } from "@earendil-works/pi-ai";
 import { describe, expect, it, vi } from "vitest";
 import type { BotEvent } from "@matrix-os/contracts";
-import { createEventProjector, splitUtf8 } from "../../packages/bot-runtime/src/events.js";
+import { createEventProjector, MAX_EVENTS_PER_TURN, splitUtf8 } from "../../packages/bot-runtime/src/events.js";
 import {
   BotSessionError,
   compactSession,
   decodeSession,
   encodeSession,
+  encodedSessionBytes,
+  fitForStorage,
   planCompaction,
   serializeForSummary,
   SESSION_MAX_BYTES,
@@ -53,6 +55,29 @@ describe("bot session codec and compaction", () => {
     await expect(compactSession({ messages, summarize: async () => "   ", now: () => 99 })).resolves.toEqual(messages);
   });
 
+  it("keeps a text placeholder instead of image data in saved history", () => {
+    const stored = fitForStorage([
+      { role: "user", content: [{ type: "text", text: "look" }, { type: "image", data: "A".repeat(2_000_000), mimeType: "image/png" }], timestamp: 1 },
+    ]);
+    expect(JSON.stringify(stored)).not.toContain("AAAA");
+    expect(stored[0]).toMatchObject({ content: [{ type: "text", text: "look" }, { type: "text", text: expect.stringContaining("image/png") }] });
+  });
+
+  it("cuts oversized tool payloads only when the transcript would not fit", () => {
+    const small = [user("hi"), toolResult("c1")];
+    expect(fitForStorage(small)).toEqual(small);
+    const big = Array.from({ length: 30 }, (_, index) => ({
+      role: "toolResult", toolCallId: `c${index}`, toolName: "read_artifact",
+      content: [{ type: "text", text: "y".repeat(40 * 1024) }], isError: false, timestamp: index,
+    } as AgentMessage));
+    const call = fauxAssistantMessage([{ type: "toolCall", id: "w", name: "write_artifact", arguments: { path: "a.md", content: "z".repeat(190 * 1024) } }], { stopReason: "toolUse" });
+    const stored = fitForStorage([user("go"), call, ...big], 256 * 1024);
+    expect(encodedSessionBytes(stored)).toBeLessThanOrEqual(256 * 1024);
+    expect(stored).toHaveLength(32);
+    expect(JSON.stringify(stored)).toContain("left out of saved history");
+    expect(() => encodeSession(stored)).not.toThrow();
+  });
+
   it("summarizes without images or raw tool arguments", () => {
     const text = serializeForSummary([
       { role: "user", content: [{ type: "text", text: "look" }, { type: "image", data: "AAAA", mimeType: "image/png" }], timestamp: 1 },
@@ -91,6 +116,37 @@ describe("bot event projection", () => {
       { seq: 1, event: { type: "tool_progress", toolCallId: "call_1", capability: "artifact.read", phase: "started" } },
       { seq: 2, event: { type: "tool_progress", toolCallId: "call_1", capability: "artifact.read", phase: "failed" } },
     ]);
+  });
+});
+
+describe("bot event batching", () => {
+  const partial = fauxAssistantMessage(fauxText(""));
+  const delta = (text: string): AgentEvent => ({ type: "message_update", message: partial, assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: text, partial } });
+
+  it("combines small deltas until the interval passes or the message ends", async () => {
+    let clock = 0;
+    const sent: BotEvent[] = [];
+    const project = createEventProjector({ send: async (event) => { sent.push(event); }, capabilityForTool: () => undefined, now: () => clock });
+    for (const part of ["a", "b", "c"]) await project(delta(part));
+    expect(sent).toEqual([]);
+    clock = 300;
+    await project(delta("d"));
+    expect(sent.map((event) => event.event)).toEqual([{ type: "assistant_delta", text: "abcd" }]);
+    await project(delta("e"));
+    await project({ type: "message_end", message: partial });
+    expect(sent.map((event) => event.event)).toEqual([{ type: "assistant_delta", text: "abcd" }, { type: "assistant_delta", text: "e" }]);
+  });
+
+  it("stops forwarding after the per-turn budget with one notice", async () => {
+    let clock = 0;
+    const sent: BotEvent[] = [];
+    const project = createEventProjector({ send: async (event) => { sent.push(event); }, capabilityForTool: () => undefined, now: () => clock });
+    for (let index = 0; index < MAX_EVENTS_PER_TURN + 50; index += 1) {
+      clock += 1_000;
+      await project(delta("x"));
+    }
+    expect(sent).toHaveLength(MAX_EVENTS_PER_TURN);
+    expect(sent.at(-1)!.event).toMatchObject({ type: "activity", state: "started" });
   });
 });
 
