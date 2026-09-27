@@ -120,7 +120,7 @@ A person teaches a workflow, corrects a bot, or asks it to repeat successful wor
 - **FR-010**: Approval MUST apply to the exact proposed effect and audience, honor valid prior authorization, and be invalidated by material changes or revocation.
 - **FR-011**: Bot definitions, preferences, reusable skills, and routines MUST remain owner-controlled and exportable; private and shared memories MUST retain separate scopes and provenance. Each remembered item MUST record its kind, scope, and source; forgetting an item MUST remove it from future context and from derived summaries. Content from external sources MUST NOT create standing memory without owner confirmation.
 - **FR-012**: Learned workflows MUST be inspectable and replay-tested; routines MUST require an explicit user request and preserve timezone, access, and notification intent.
-- **FR-013**: A prioritized launch set of recipes MUST reach validated status before launch. Every other catalogue entry MUST keep a capability mapping, a concrete proposed scenario with an observable result, and an honest status, and MUST be labeled unavailable or experimental until validated. A catalogue entry or successful prompt alone MUST NOT be labeled functional parity.
+- **FR-013**: The confirmed launch set of recipes (listed in recipe-coverage.md) MUST reach validated status before launch. Every other catalogue entry MUST keep a capability mapping, a concrete proposed scenario with an observable result, and an honest status, and MUST be labeled unavailable or experimental until validated. A catalogue entry or successful prompt alone MUST NOT be labeled functional parity.
 - **FR-014**: Web Canvas, Web Desktop, and Electron Desktop MUST expose equivalent bot, integration, group, approval, and recovery behavior. Web Mobile and Native Mobile MUST share these semantics where Chat exists; viewport adaptations may differ.
 - **FR-015**: Existing bots, rabbit identities, chats, artifacts, and explicit model/account choices MUST survive rollout. Migration MUST NOT silently reinterpret native execution checkpoints.
 - **FR-016**: Missing service/model dependencies or policy failures MUST produce actionable generic states, never fabricated completion, raw secrets, or internal infrastructure details.
@@ -192,5 +192,5 @@ Feasibility precedes release: the staged spike program in [spike-plan.md](spike-
 
 - [Technical design and security boundaries](technical-design.md)
 - [Staged spike program and decision gates](spike-plan.md)
-- [Complete recipe capability map and proposed launch set](recipe-coverage.md)
+- [Complete recipe capability map and confirmed launch set](recipe-coverage.md)
 - [Specification quality checklist](checklists/requirements.md)
