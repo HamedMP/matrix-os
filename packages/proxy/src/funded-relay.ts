@@ -145,7 +145,10 @@ function controlPlaneError(c: Context, error: unknown): Response {
       return errorResponse(c, 403, "permission_error", "Matrix-funded AI is unavailable");
     }
     if (error.status === 429) {
-      return errorResponse(c, 429, "rate_limit_error", "AI capacity is temporarily limited");
+      const response = errorResponse(c, 429, "rate_limit_error", "AI capacity is temporarily limited");
+      // Waiting-state hint for the gateway; correctness never depends on it.
+      if (error.priorityReason) response.headers.set("x-matrix-funded-reason", error.priorityReason);
+      return response;
     }
   }
   const errorName = error instanceof Error ? error.name : "UnknownError";

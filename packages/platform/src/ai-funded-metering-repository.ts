@@ -20,6 +20,7 @@ import {
   IsoTimestampSchema,
   JEV_MODEL_ID,
   type FundedAiAuthorizationResponse,
+  type FundedAiPriorityReason,
   type FundedAiFundingSummary,
   type FundedAiFinalizationResponse,
   type FundedAiPolicyCheckResponse,
@@ -32,6 +33,7 @@ import { sql } from "kysely";
 import { z } from "zod/v4";
 import type { PlatformDB } from "./db.js";
 import { AiFundedPolicyError } from "./ai-funded-policy-errors.js";
+import { evaluateFundedPriority, findConflictingActiveReservation, type FundedBillingMode } from "./ai-funded-priority-claims.js";
 import { readCheckoutFundingSnapshot } from "./ai-funded-checkout-snapshot.js";
 import {
   debitAttributedPromotionalGrants,
@@ -73,6 +75,11 @@ const GrantSchema = z.object({
   }
 });
 const MAX_PROMOTIONAL_GRANTS_PER_RUNTIME = 64;
+
+type AuthorizeOutcome =
+  | { kind: "authorized"; response: FundedAiAuthorizationResponse }
+  | { kind: "rejected"; reason: FundedAiPriorityReason };
+
 export const JEV_MANUAL_REVIEW_GRACE_MS = 10 * 60_000;
 
 export interface AiFundedMeteringRepositoryOptions {
@@ -438,7 +445,7 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
       ...(request.jevPricingVersion ? { jevPricingVersion: request.jevPricingVersion } : {}),
     })).digest("hex");
     await options.db.ready;
-    return options.db.transaction(async (trx) => {
+    const outcome = await options.db.transaction(async (trx): Promise<AuthorizeOutcome> => {
       const credential = await trx.executor.selectFrom("ai_runtime_credentials")
         .selectAll().where("token_id", "=", tokenMatch[1]).executeTakeFirst();
       if (!credential || !hashesEqual(credential.token_hash, hashCredential(request.credential))
@@ -494,17 +501,25 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
         .executeTakeFirst();
       if (existing) {
         if (existing.payload_hash !== payloadHash) throw new AiFundedPolicyError("idempotency_conflict");
-        return FundedAiAuthorizationResponseSchema.parse(JSON.parse(existing.authorization_response));
+        return { kind: "authorized", response: FundedAiAuthorizationResponseSchema.parse(JSON.parse(existing.authorization_response)) };
       }
 
+      const billingMode: FundedBillingMode = request.billingMode === "usage" ? "usage" : "hold";
+      const priority = await evaluateFundedPriority(trx.executor, {
+        ownerId: credential.owner_id,
+        machineId: credential.machine_id,
+        runtimeSlot: credential.runtime_slot,
+        requestClass: credential.request_class,
+        billingMode,
+        checked,
+      });
+      // A priority rejection may have written a claim; return it so the claim commits.
+      if (priority.kind === "rejected") return { kind: "rejected", reason: priority.reason };
+
       const monthlyBudget = exactInteger(runtime.monthly_budget_microusd);
-      const active = await trx.executor.selectFrom("ai_funded_usage_reservations")
-        .select("reservation_id").where("owner_id", "=", credential.owner_id)
-        .where("status", "in", ["reserved", "starting", "in_flight", "settling"])
-        .$if(request.billingMode !== "usage", (query) => query.where(
-          sql<boolean>`authorization_response::jsonb #>> '{reservation,billingMode}' = 'usage'`,
-        )).limit(1).executeTakeFirst();
-      if (active) throw new AiFundedPolicyError("rate_limited");
+      if (await findConflictingActiveReservation(trx.executor, credential.owner_id, billingMode)) {
+        throw new AiFundedPolicyError("rate_limited");
+      }
       let holdMicrousd = request.maxCostMicrousd;
       if (request.billingMode === "usage") {
         const balance = await trx.executor.selectFrom("ai_funded_runtime_balances")
@@ -632,7 +647,7 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
           })),
         ).execute();
       }
-      return response;
+      return { kind: "authorized", response };
     }).catch((error: unknown) => {
       if (error instanceof Error && "code" in error && error.code === "23505"
         && "constraint" in error && error.constraint === "idx_ai_funded_usage_active_owner") {
@@ -640,6 +655,8 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
       }
       throw error;
     });
+    if (outcome.kind === "rejected") throw new AiFundedPolicyError("rate_limited", outcome.reason);
+    return outcome.response;
   }
 
   async function startReservation(

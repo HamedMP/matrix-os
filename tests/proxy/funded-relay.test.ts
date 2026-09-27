@@ -589,6 +589,33 @@ describe("Cloudflare funded relay control-plane ordering", () => {
     await relay.close();
   });
 
+  it("forwards only an allowlisted priority reason on an authorization 429", async () => {
+    const responses = [
+      { error: { code: "rate_limited", message: "Try again later", reason: "slot_busy" } },
+      { error: { code: "rate_limited", message: "Try again later" } },
+      { error: { code: "rate_limited", message: "Try again later", reason: "owner_alice_busy" } },
+    ];
+    for (const body of responses) {
+      const fetchMock = vi.fn(async (input: string | URL | Request) => {
+        const url = String(input);
+        if (url.endsWith("/check")) return json(checkResponse());
+        if (url.endsWith("/v1/messages/count_tokens")) return json({ input_tokens: 1_000 });
+        if (url.endsWith("/authorize")) return json(body, 429);
+        return json({});
+      });
+      const relay = configuredRelay(fetchMock as typeof fetch);
+      const app = new Hono();
+      relay.register(app);
+
+      const response = await app.request("/v1/messages", fundedRequest());
+
+      expect(response.status).toBe(429);
+      expect(response.headers.get("x-matrix-funded-reason")).toBe(body.error.reason === "slot_busy" ? "slot_busy" : null);
+      expect(await response.json()).toEqual({ type: "error", error: { type: "rate_limit_error", message: "AI capacity is temporarily limited" } });
+      await relay.close();
+    }
+  });
+
   it("never releases an in-flight reservation after generation fetch fails", async () => {
     const events: string[] = [];
     const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
