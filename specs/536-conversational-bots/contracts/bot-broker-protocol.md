@@ -67,5 +67,6 @@ Error results use allowlisted codes only: `denied`, `not_granted`, `approval_req
 
 - `integration.call`: `{ service, action, connectionId, params ≤32KiB }`. The broker resolves the action risk from the integration catalog and requires a grant whose effects include that risk and whose audience matches the run.
 - `memory.propose`: `{ kind, scope, content ≤4KiB, source }`. Items sourced from tool results are stored `confirmed: false`.
+- Every `bot.tool` request is bounded to 240 KiB once serialized, so JSON escaping cannot push it past the 256 KiB broker limit.
 - `artifact.write`: `{ relPath ≤256, content ≤192 KiB (UTF-8), mimeType (text/markdown, text/plain, text/csv, application/json, text/html), replace?: { baseRevision } }`. The cap leaves room for the envelope inside the 256 KiB broker request limit. The path must resolve within the run's workspace root; exclusive create unless `replace` is given.
 - `interaction.create`: `{ kind, payload, blocking }`. The server validates the payload per kind and designates the responder.

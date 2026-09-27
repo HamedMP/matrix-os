@@ -37,7 +37,7 @@ Selecting a recipe creates a durable, named rabbit bot with a direct chat and a 
 **Project Type**: Monorepo: contracts, platform, gateway, scope-runtime, a new `packages/bot-runtime`, a new `packages/computer-service` (M4), shared UI, shell, desktop, and mobile
 **Performance Goals**:
 - Instantiation p95 under 1.5 s from request to `bot.created`, excluding the model.
-- First bot question streamed within 5 s of chat open on the managed route.
+- First bot question delivered within 8 s of chat open on the managed route. M1 delivers per model call, not per token (research R2); token streaming is a follow-up.
 - Broker overhead p95 under 50 ms per tool dispatch, excluding the provider.
 
 **Constraints**:
