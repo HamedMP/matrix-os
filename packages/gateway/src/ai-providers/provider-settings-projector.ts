@@ -366,10 +366,11 @@ function projectHarness(input: {
     action: "retry" as const,
     safeReason: routeCatalogUnavailable ? "provider_unavailable" as const : "unknown" as const,
   };
-  // Native profiles cannot inherit accounts through provider membership. A
-  // present portable provider-account source keeps its binding and dependencies;
-  // missing Pi/OpenCode sources cannot establish an account identity.
-  const accounts = source?.kind === "harness_profile" || (!source && nativeCredentialRoute) ? []
+  // Native profiles and Matrix sources cannot inherit provider accounts. A
+  // present provider-account source keeps its binding and dependencies; absent
+  // Pi/OpenCode sources cannot establish an account identity.
+  const accounts = source?.kind === "harness_profile"
+    || (nativeCredentialRoute && source?.kind !== "provider_account") ? []
     : input.accounts.filter((account) => account.providerId === input.stored.route.providerId);
   const visibleMethods = input.loginMethods === undefined
     ? defaultLoginMethods(input.stored.harness)
