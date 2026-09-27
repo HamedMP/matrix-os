@@ -41,7 +41,7 @@
 **Purpose**: Shared schemas that every later layer depends on. **Gate**: S0 (contracts only; safe to merge after review).
 
 - [ ] T010 [P] Write failing tests in `tests/contracts/bots/bot-schemas.test.ts` for the bot ID regex, instantiate request/response, authority view, interaction payload and resolve unions (question, account_choice, connect_request, approval), grant, memory item, and task status. Cover byte bounds and unknown-key rejection, per `contracts/bots-http-api.md` and `data-model.md`
-- [ ] T011 [P] Write failing tests in `tests/contracts/bots/broker-bot-protocol.test.ts` for the `bot.tool` capability union, `bot.event`, `bot.session.save`, the bot-runtime `inference.chat_completions` body, and the allowlisted error codes, per `contracts/bot-broker-protocol.md`
+- [ ] T011 [P] Write failing tests in `tests/contracts/bots/broker-bot-protocol.test.ts` for the `bot.tool` capability union, `bot.event`, `bot.session.save`, and the allowlisted error codes. The `inference.chat_completions` body belongs to the scope-runtime broker protocol in L7, per `contracts/bot-broker-protocol.md`
 - [ ] T012 [P] Write failing tests in `tests/contracts/canonical-chat-bot-additions.test.ts` for `CanonicalChatExecutionRootRefSchema` accepting `{kind:"bot_workspace", botId}`, `CanonicalProviderDriverKindSchema` accepting `matrix_bot`, `isChatAgentDriver("matrix_bot")`, and every new event type in `contracts/chat-events.md`
 - [ ] T013 [P] Extend `tests/contracts/funded-ai.test.ts`: the issue request `{requestClass}`, empty `{}` mapping to `interactive`, `requestClass` echoed in the issue response, and the allowlisted `SafeError.reason` values (`slot_busy`, `priority_hold`, `priority_queue`, `priority_full`)
 - [ ] T014 [P] Implement ID and bot schemas in `packages/contracts/src/bots/ids.ts` and `packages/contracts/src/bots/bot.ts`
@@ -49,7 +49,7 @@
 - [ ] T016 [P] Implement grant, memory, task, and authority schemas in `packages/contracts/src/bots/grants.ts`, `memory.ts`, `tasks.ts`, and `authority.ts`
 - [ ] T017 [P] Implement broker bot protocol schemas in `packages/contracts/src/bots/broker.ts`
 - [ ] T018 Add `bot_workspace` to `CanonicalChatExecutionRootRefSchema` and `matrix_bot` to `CanonicalProviderDriverKindSchema` in `packages/contracts/src/canonical-chat-primitives.ts`; update `isChatAgentDriver` in `packages/contracts/src/chat-agent-context.ts`
-- [ ] T019 Add the new event types to the closed enum in `packages/contracts/src/canonical-chat-api.ts`
+- [ ] T019 Add the new event types to the closed enum in `packages/contracts/src/canonical-chat-api.ts`, and add event wire versioning (`ChatEventWireVersionSchema`, `projectChatEventTypeForWire`) in `packages/contracts/src/chat-event-wire.ts` so clients on version 0 receive `chat.updated`
 - [ ] T020 Add the issue request schema, `requestClass`, and `SafeError.reason` to `packages/contracts/src/funded-ai.ts`
 - [ ] T021 Export the bots module from `packages/contracts/src/index.ts`, add a `"./bots"` export in `packages/contracts/package.json`, and add the vitest alias `@matrix-os/contracts/bots` in `vitest.config.ts`
 - [ ] T022 Make every existing consumer handle the new union members explicitly. `bot_workspace` fails closed with `unsupported_root`, and `matrix_bot` is not executable yet. Files: `packages/contracts/src/canonical-chat-surface.ts`, `packages/gateway/src/chat/turn-admission.ts`, `packages/gateway/src/chat/queue-admission.ts`, `packages/gateway/src/chat/orchestrator.ts`, `packages/gateway/src/chat/orchestration-input.ts`, `packages/gateway/src/collaboration/run-account-binding.ts`, `packages/gateway/src/collaboration/project-chat-root-inventory.ts`, `packages/gateway/src/startup/collaboration.ts`, `packages/ui/src/collaboration/ProjectSourceSummary.tsx`, `packages/gateway/src/chat/provider-catalog.ts`. Add regression tests in `tests/gateway/chat-execution-root-kinds.test.ts`
@@ -72,15 +72,16 @@
   - rejected with `priority_hold` while a conflicting claim lives
   - reserves after the claim expires
 
-  Also: non-conflicting billing modes are unaffected, and the failure-case 15 race (a bypassing background request and a second runtime of the same owner both try at slot release while a claim waits; both rejected, the interactive request reserves)
+  Also: a claim survives a rolled-back sibling path (the claim row exists after the 429 is returned); a retry with a new request ID from the same runtime consumes the claim; lease rotation keeps the claim; non-conflicting billing modes are unaffected; and the failure-case 15 race (a bypassing background request and a second runtime of the same owner both try at slot release while a claim waits; both rejected, the interactive request reserves)
 - [ ] T031 [P] Extend `tests/platform/ai-funded-policy-routes.test.ts`: the issue body `{requestClass}`, `{}` → interactive, an invalid class → 400 `invalid_request`, per-class cooldown, and `requestClass` in the response
 - [ ] T032 [P] Extend `tests/platform/ai-funded-reservation-cleanup-worker.test.ts`: expired claims are deleted in batches of at most 500; live claims are kept
 - [ ] T033 Add the `request_class` column and CHECK to `ai_runtime_credentials`, and create `ai_funded_priority_claims` with a PK and an `(owner_id, expires_at)` index, in `packages/platform/src/database/migrations/ai-funded.ts`; bump `PLATFORM_SCHEMA_REVISION` in `packages/platform/src/database/migration-revision.ts` and update `tests/platform/platform-migration-revision.test.ts`
 - [ ] T034 Add the Kysely types for the new column and table in `packages/platform/src/db.ts`
 - [ ] T035 Accept `{requestClass}` in the issue route (`packages/platform/src/ai-funded-policy-routes.ts`) and thread it into `issueCredential`, with the cooldown keyed per class, in `packages/platform/src/ai-funded-policy-repository.ts`
-- [ ] T036 Implement claim evaluation in a new `packages/platform/src/ai-funded-priority-claims.ts` (insert with `ON CONFLICT`, keeping the earliest expiry; conflict-aware hold; oldest-claimant check; cap) and call it from `authorize` in `packages/platform/src/ai-funded-metering-repository.ts`, inside the existing owner advisory lock and transaction, before the active-reservation check
+- [ ] T036 Implement claim evaluation in a new `packages/platform/src/ai-funded-priority-claims.ts`: claims keyed by `(owner_id, machine_id, runtime_slot)` from the stored credential, upsert with `ON CONFLICT` keeping the existing `created_at` and `expires_at`, a conflict-aware hold, an oldest-claimant check, and the cap. Call it from `authorize` in `packages/platform/src/ai-funded-metering-repository.ts`, inside the existing owner advisory lock and transaction, before the active-reservation check. Claim-bearing rejections return a typed outcome so the transaction commits; the route maps it to 429 after commit
 - [ ] T037 Delete expired claims in `packages/platform/src/ai-funded-reservation-cleanup.ts`
-- [ ] T038 L2 checkpoint: per-layer PR procedure; branch `536-l2-platform-funded-priority`; the PR body notes that the platform deploy must precede class-aware gateways
+- [ ] T038 Forward the allowlisted reason as the `x-matrix-funded-reason` header on relay 429 responses in `packages/proxy/src/funded-relay.ts`, with tests in `tests/proxy/funded-relay.test.ts` covering the allowlist and a missing reason
+- [ ] T039 L2 checkpoint: per-layer PR procedure; branch `536-l2-platform-funded-priority`; the PR body notes that the platform and relay deploy must precede class-aware gateways
 
 ---
 
@@ -115,12 +116,12 @@
 - [ ] T050 Create `packages/bot-runtime/package.json` (private, ESM, exact deps `@earendil-works/pi-agent-core@0.86.1` and `@earendil-works/pi-ai@0.86.1`) and `packages/bot-runtime/tsconfig.json`. Add `pnpm.overrides` for `@earendil-works/chord` and `@earendil-works/pi-telemetry` at `0.86.1` in the root `package.json`. Run `pnpm install` to update `pnpm-lock.yaml`. Add the vitest alias `@matrix-os/bot-runtime` in `vitest.config.ts`
 - [ ] T051 [P] Write failing tests in `tests/bot-runtime/agent-loop.test.ts` with a fake `streamFn` provider: prompt → tool call → tool result → completion; sequential execution; images passed as image content
 - [ ] T052 [P] Write failing tests in `tests/bot-runtime/before-tool-call.test.ts`: a denied call never reaches `execute`; a hook error becomes a generic denial with no internal text; unknown tools and invalid arguments are denied
-- [ ] T053 [P] Write failing tests in `tests/bot-runtime/broker-transport.test.ts` against a fake broker on a temp Unix socket: the placeholder key is replaced upstream, `AbortSignal.timeout` applies, the 256 KiB request cap holds, and non-2xx responses map to allowlisted codes
+- [ ] T053 [P] Write failing tests in `tests/bot-runtime/providers.test.ts`: each pi-ai provider (Anthropic Messages, OpenAI Responses, chat-completions) targets the loopback inference bridge `baseUrl` with a placeholder key, and image-capable models declare `input: ["text", "image"]`
 - [ ] T054 [P] Write failing tests in `tests/bot-runtime/session-codec.test.ts`: round-trip of system messages and tool-call/result pairs; the 512 KiB cap triggers compaction through `generateSummaryWithRequest` with a fake request
 - [ ] T055 [P] Write failing tests in `tests/bot-runtime/event-projection.test.ts`: `AgentEvent` → `bot.event` with monotonic `seq`, a 64 KiB cap, and dropped `thinking_*` deltas
 - [ ] T056 [P] Write failing tests in `tests/bot-runtime/worker-entry.test.ts`: `bot.run`, `bot.steer`, and `bot.cancel` handling; exit statuses `completed`, `waiting_person`, `waiting_capacity`, `blocked`, `failed`, `cancelled`, and `uncertain`
-- [ ] T057 [P] Implement the broker fetch transport (undici `Agent({connect:{socketPath}})`) in `packages/bot-runtime/src/transport.ts`
-- [ ] T058 [P] Implement the pi-ai providers for Anthropic Messages, OpenAI Responses, and OpenAI chat-completions (`createProvider`, placeholder key, image-capable models) in `packages/bot-runtime/src/providers.ts`
+- [ ] T057 [P] Implement the `bot.*` NDJSON frame client for the broker socket (tool, event, and session frames; `AbortSignal.timeout`; allowlisted error mapping) in `packages/bot-runtime/src/broker-client.ts`, with tests in `tests/bot-runtime/broker-client.test.ts` against a fake broker on a temp Unix socket
+- [ ] T058 [P] Implement the pi-ai providers for Anthropic Messages, OpenAI Responses, and OpenAI chat-completions (`createProvider` with the loopback bridge `baseUrl`, placeholder key, image-capable models) in `packages/bot-runtime/src/providers.ts`
 - [ ] T059 [P] Implement TypeBox tool definitions that forward to `bot.tool` in `packages/bot-runtime/src/tool-proxy.ts`
 - [ ] T060 Implement the `Agent` wrapper (sequential tools, fail-closed `beforeToolCall`, steer/abort bridging) in `packages/bot-runtime/src/loop.ts`
 - [ ] T061 [P] Implement `packages/bot-runtime/src/session-codec.ts` and `packages/bot-runtime/src/compaction.ts`
@@ -149,7 +150,7 @@
 - [ ] T076 Add `profileId`, the `bot_agent` workload, and the profiles list to `packages/scope-runtime/src/protocol.ts`
 - [ ] T077 Generalize adapter checks in `packages/scope-runtime/src/supervisor.ts` and `packages/scope-runtime/src/systemd-launcher.ts` (`isFixedChatAdapter`, `validateRuntimeSources`, `supportedAdapters`), and fix the stale-entry cleanup in `supervisor.ts`
 - [ ] T078 Add the `~/bots` allowed root in `packages/scope-runtime/src/sandbox.ts` and the bot-runtime path in `packages/scope-runtime/src/main.ts`
-- [ ] T079 Implement the sandbox-side entry `packages/scope-runtime/src/worker-bot.ts`
+- [ ] T079 Extract the loopback inference bridge from `packages/scope-runtime/src/worker.ts` into `packages/scope-runtime/src/inference-bridge.ts` and add the chat-completions path (shared-chat behavior unchanged, covered by `tests/scope-runtime/worker.test.ts`). Implement the sandbox-side entry `packages/scope-runtime/src/worker-bot.ts`, which starts the bridge and hands its port to the bot runtime
 - [ ] T080 Package the bot-runtime bundle at `/opt/matrix/scope-sdk/bot-runtime` in `scripts/build-host-bundle.sh`, and install it in `distro/customer-vps/host-bin/matrix-sync-agent` and `distro/customer-vps/cloud-init.yaml`
 - [ ] T081 Accept multi-profile capability with exact per-profile digests in `packages/gateway/src/collaboration/scope-runtime-client.ts`; add a regression in `tests/gateway/scope-runtime-client.test.ts`
 - [ ] T082 Update pinned digests and adapter order in `scripts/spikes/collaboration/production-supervisor-acceptance.mjs`

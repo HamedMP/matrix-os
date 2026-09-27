@@ -20,7 +20,7 @@ Phase 0 output for [plan.md](plan.md). Baseline: Matrix `5f9fc5362` plus this br
 
 ## R2. Model routes and broker transport
 
-- **Decision**: Bot inference uses pi-ai custom providers (`createProvider` with a custom `baseUrl`). A `streamFn` wrapper injects a `fetch` that dials the scope-runtime broker socket (undici `Agent({ connect: { socketPath } })`) and supplies a placeholder API key, which the broker replaces with the real credential. Three wire APIs are needed:
+- **Decision**: Bot inference uses pi-ai custom providers (`createProvider`) whose `baseUrl` points at the scope runtime's existing loopback inference bridge, `http://127.0.0.1:<port>` inside the workload's private network namespace. The broker socket speaks newline-delimited JSON frames, not HTTP. The existing worker (`packages/scope-runtime/src/worker.ts`, `startInferenceBridge`) already translates SDK HTTP requests into broker `inference.*` frames. Extract it into `packages/scope-runtime/src/inference-bridge.ts`, reuse it for bot workloads, and add the chat-completions path. The provider carries a placeholder API key, which the broker replaces with the real credential. Three wire APIs are needed:
   - Anthropic Messages (owner Anthropic key or profile; Matrix AI Claude routes)
   - OpenAI Responses (owner OpenAI account)
   - OpenAI chat-completions (managed Cloudflare Workers AI route, default `@cf/zai-org/glm-5.3-flash`, which accepts text and image input)
@@ -143,8 +143,8 @@ Phase 0 output for [plan.md](plan.md). Baseline: Matrix `5f9fc5362` plus this br
 
 - **Decision**, following the platform-enforced design in the technical design:
   - **Platform credential class**: `ai_runtime_credentials.request_class` (`interactive` | `background`, default `interactive`, with a CHECK constraint). The issue route replaces `EmptyBodySchema` with `{ requestClass }`, and the issuance cooldown becomes per runtime and per class.
-  - **Priority claims**: new `ai_funded_priority_claims (owner_id, token_id, request_id, created_at, expires_at)`. Claim logic lives in `authorize` under the existing owner advisory lock:
-    - An interactive authorization that meets a conflicting active reservation upserts a claim and returns retryable `rate_limited`.
+  - **Priority claims**: new `ai_funded_priority_claims (owner_id, machine_id, runtime_slot, created_at, expires_at)`, keyed to the requesting runtime's interactive slot so claims survive relay retries and lease rotation. Claim logic lives in `authorize` under the existing owner advisory lock:
+    - An interactive authorization that meets a conflicting active reservation upserts a claim and returns retryable `rate_limited` through a typed outcome, so the transaction commits the claim instead of rolling it back.
     - A background authorization conflicting with a live claim is rejected.
     - The oldest live claimant reserves first, and its reservation deletes its claim.
     - Claims expire after 2 minutes and are capped at 16 per owner.

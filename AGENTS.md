@@ -496,7 +496,7 @@ Read these on demand, not every session:
 - owner configuration/secret files for provider credentials; owner Postgres only if provider account orchestration needs durable multi-instance state; platform PostgreSQL/Kysely for later entitlements, reservations, and content-free usage records (118-ai-gateway-provider-auth)
 - TypeScript 5.9 strict, ES modules; Node.js 24 production target (published CLI remains compatible with Node.js 20+) + `@modelcontextprotocol/sdk` 1.29, Zod 4, citty, native Fetch/AbortSignal, existing Matrix CLI shell/file/profile clients (120-remote-computer-mcp)
 - No new storage; reads existing owner-scoped Matrix CLI profile/auth files and Matrix computer data (120-remote-computer-mcp)
-- TypeScript 5.9 strict ES modules on Node.js 24 + `@earendil-works/pi-agent-core`/`pi-ai` 0.86.1 pinned exactly (bot runtime inside a no-network scope-runtime bot profile), Hono, Zod 4, Kysely/Postgres, undici broker transport (536-conversational-bots)
+- TypeScript 5.9 strict ES modules on Node.js 24 + `@earendil-works/pi-agent-core`/`pi-ai` 0.86.1 pinned exactly (bot runtime inside a no-network scope-runtime bot profile), Hono, Zod 4, Kysely/Postgres, scope-runtime loopback inference bridge (536-conversational-bots)
 - Owner Postgres bot tables via versioned `bot_schema_migrations`; bot definition files via `agent-store.ts`; bot workspaces under `~/bots/<botId>/`; platform `ai_funded_priority_claims` and credential `request_class` (536-conversational-bots)
 
 - TypeScript 5.5+ strict, ES modules + node-pty (backend), @xterm/xterm + addon-webgl + addon-search + addon-serialize + addon-fit (frontend), Hono WebSocket (gateway), Zod 4 (validation) (056-terminal-upgrade)

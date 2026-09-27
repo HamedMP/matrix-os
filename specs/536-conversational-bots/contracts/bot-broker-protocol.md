@@ -44,15 +44,15 @@ The gateway rejects a supervisor whose advertised digest for a profile differs f
 
 ## Broker actions (worker → gateway broker)
 
-Authentication is the existing pair of unguessable `runtimeHandle` and current `executionGeneration`. The broker resolves the owning registry: `BotRuntimeRegistry` or `SharedAiRuntimeRegistry`.
+Frames are newline-delimited JSON on the broker Unix socket, not HTTP. Model SDKs inside the workload call the shared loopback inference bridge (`packages/scope-runtime/src/inference-bridge.ts`, extracted from `worker.ts`), which translates HTTP to `inference.*` frames; the bot runtime sends `bot.*` frames directly. Authentication is the existing pair of unguessable `runtimeHandle` and current `executionGeneration`. The broker resolves the owning registry: `BotRuntimeRegistry` or `SharedAiRuntimeRegistry`.
 
 | Action | Request | Rules |
 |---|---|---|
 | `inference.messages` | Anthropic Messages body; `tools` ≤64 allowed for bot runtimes only | Access source from the run binding; credential injected by the broker; funded requests pass through the local funded queue (class from the task) |
 | `inference.responses` | OpenAI Responses body; tools allowed for bot runtimes | Same |
 | `inference.chat_completions` | OpenAI chat-completions body; tools allowed | New; managed Cloudflare Workers AI route |
-| `bot.tool` | `{ toolCallId, capability: "integration.call" \| "integration.inventory" \| "memory.propose" \| "memory.search" \| "interaction.create" \| "artifact.write" \| "artifact.read" \| "handoff.create" (M3) \| "computer.act" (M4), args }` | Zod-validated per capability; checkpoint written `prepared` before and `observed_complete`/`effect_unknown` after; grant, audience, and approval checks before dispatch |
-| `bot.event` | `{ seq, event: AgentEvent projection }` | Projected into canonical `assistant.delta`, `agent.activity`, `tool.progress`, `tool.output`, and `interaction.requested` events; ≤64 KiB per event; ordered by `seq` |
+| `bot.tool` | `{ toolCallId, capability, args }`. M1 capabilities: `integration.inventory`, `integration.call`, `memory.propose`, `memory.search`, `interaction.create`, `artifact.write`, `artifact.read`. M3 adds `handoff.create` and M4 adds `computer.act` |  Zod-validated per capability; checkpoint written `prepared` before and `observed_complete`/`effect_unknown` after; grant, audience, and approval checks before dispatch |
+| `bot.event` | `{ seq, event: assistant_delta (≤16 KiB) \| tool_progress \| activity }` | Projected into canonical `assistant.delta`, `agent.activity`, `tool.progress`, `tool.output`, and `interaction.requested` events; ≤64 KiB per event; ordered by `seq` |
 | `bot.session.save` | `{ baseRevision, messages delta, compactedThroughSeq? }` | Revision-checked write to `bot_agent_sessions`; ≤512 KiB total |
 
 Limits:
@@ -67,5 +67,5 @@ Error results use allowlisted codes only: `denied`, `not_granted`, `approval_req
 
 - `integration.call`: `{ service, action, connectionId, params ≤32KiB }`. The broker resolves the action risk from the integration catalog and requires a grant whose effects include that risk and whose audience matches the run.
 - `memory.propose`: `{ kind, scope, content ≤4KiB, source }`. Items sourced from tool results are stored `confirmed: false`.
-- `artifact.write`: `{ relPath ≤256, content ≤10MiB, mimeType }`. The path must resolve within the run's workspace root; exclusive create unless `replace: true` with a revision.
+- `artifact.write`: `{ relPath ≤256, content ≤192 KiB (UTF-8), mimeType (text/markdown, text/plain, text/csv, application/json, text/html), replace?: { baseRevision } }`. The cap leaves room for the envelope inside the 256 KiB broker request limit. The path must resolve within the run's workspace root; exclusive create unless `replace` is given.
 - `interaction.create`: `{ kind, payload, blocking }`. The server validates the payload per kind and designates the responder.
