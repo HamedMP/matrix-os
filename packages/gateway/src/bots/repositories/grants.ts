@@ -6,7 +6,7 @@
  */
 import { sql, type Selectable } from "kysely";
 import type { BotGrantsTable } from "../database.js";
-import { BotStateError, isoTimestamp, newBotStateId, optionalIsoTimestamp, toSafeInteger, type BotExecutor } from "./shared.js";
+import { BotStateError, isoTimestamp, newBotStateId, optionalIsoTimestamp, toSafeInteger, withTransaction, type BotExecutor } from "./shared.js";
 
 export type BotEffect = "read" | "write" | "send";
 const EFFECTS: readonly BotEffect[] = ["read", "write", "send"];
@@ -74,37 +74,47 @@ export function createBotGrantsRepository(db: BotExecutor) {
     }, executor: BotExecutor = db): Promise<{ grant: BotGrantRecord; created: boolean }> {
       const effects = normalizedEffects(input.effects);
       if (input.expiresAt !== undefined && !(Date.parse(input.expiresAt) > Date.parse(input.now))) throw new BotStateError("invalid_input");
-      // ON CONFLICT against the partial index keeps a caller's transaction usable on a duplicate.
-      const inserted = await executor.insertInto("bot_grants").values({
-        grant_id: newBotStateId("gr"),
-        owner_id: input.ownerId,
-        bot_id: input.botId,
-        service: input.service,
-        connection_id: input.connectionId,
-        account_label: input.accountLabel,
-        effects,
-        audience: input.audience,
-        granted_by_actor_id: input.grantedByActorId,
-        expires_at: input.expiresAt ?? null,
-        revoked_at: null,
-        created_at: input.now,
-        updated_at: input.now,
-      }).onConflict((conflict) => conflict
-        .columns(["owner_id", "bot_id", "service", "connection_id", "audience"])
-        .where("revoked_at", "is", null)
-        .doNothing())
-        .returningAll()
-        .executeTakeFirst();
-      if (inserted) return { grant: fromRow(inserted), created: true };
-      const live = await executor.selectFrom("bot_grants").selectAll()
-        .where("owner_id", "=", input.ownerId).where("bot_id", "=", input.botId)
-        .where("service", "=", input.service).where("connection_id", "=", input.connectionId)
-        .where("audience", "=", input.audience).where("revoked_at", "is", null)
-        .executeTakeFirst();
-      if (!live) throw new BotStateError("conflict");
-      const existing = fromRow(live);
-      if (existing.effects.join(",") !== effects.join(",")) throw new BotStateError("conflict");
-      return { grant: existing, created: false };
+      return withTransaction(executor, async (trx) => {
+        // An expired grant still holds the live key; retire it so the account can be granted again.
+        await trx.updateTable("bot_grants")
+          .set({ revoked_at: input.now, revision: sql<number>`revision + 1`, updated_at: input.now })
+          .where("owner_id", "=", input.ownerId).where("bot_id", "=", input.botId)
+          .where("service", "=", input.service).where("connection_id", "=", input.connectionId)
+          .where("audience", "=", input.audience).where("revoked_at", "is", null)
+          .where("expires_at", "<=", input.now)
+          .execute();
+        // ON CONFLICT against the partial index keeps a caller's transaction usable on a duplicate.
+        const inserted = await trx.insertInto("bot_grants").values({
+          grant_id: newBotStateId("gr"),
+          owner_id: input.ownerId,
+          bot_id: input.botId,
+          service: input.service,
+          connection_id: input.connectionId,
+          account_label: input.accountLabel,
+          effects,
+          audience: input.audience,
+          granted_by_actor_id: input.grantedByActorId,
+          expires_at: input.expiresAt ?? null,
+          revoked_at: null,
+          created_at: input.now,
+          updated_at: input.now,
+        }).onConflict((conflict) => conflict
+          .columns(["owner_id", "bot_id", "service", "connection_id", "audience"])
+          .where("revoked_at", "is", null)
+          .doNothing())
+          .returningAll()
+          .executeTakeFirst();
+        if (inserted) return { grant: fromRow(inserted), created: true };
+        const live = await trx.selectFrom("bot_grants").selectAll()
+          .where("owner_id", "=", input.ownerId).where("bot_id", "=", input.botId)
+          .where("service", "=", input.service).where("connection_id", "=", input.connectionId)
+          .where("audience", "=", input.audience).where("revoked_at", "is", null)
+          .executeTakeFirst();
+        if (!live) throw new BotStateError("conflict");
+        const existing = fromRow(live);
+        if (existing.effects.join(",") !== effects.join(",")) throw new BotStateError("conflict");
+        return { grant: existing, created: false };
+      });
     },
     /** Replaces the effects of a live grant at its revision. */
     async updateEffects(input: { ownerId: string; grantId: string; baseRevision: number; effects: readonly BotEffect[]; now: string }, executor: BotExecutor = db): Promise<BotGrantRecord> {

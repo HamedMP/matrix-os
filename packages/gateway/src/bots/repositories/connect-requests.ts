@@ -62,11 +62,12 @@ function connectionIds(values: readonly string[]): string[] {
 
 /** Pure outcome of comparing the live inventory with the baseline. */
 export function connectOutcome(request: Pick<BotConnectRequest, "baselineConnectionIds" | "expiresAt">, current: readonly string[], now: string): BotConnectOutcome {
-  const baseline = new Set(request.baselineConnectionIds);
-  const added = connectionIds(current).filter((id) => !baseline.has(id));
+  const added = connectionIds(current).filter((id) => !request.baselineConnectionIds.includes(id));
+  // Expiry wins: a connection that appears after the deadline does not complete the request.
+  if (Date.parse(now) >= Date.parse(request.expiresAt)) return { status: "expired" };
   if (added.length === 1) return { status: "completed", connectionId: added[0]! };
   if (added.length > 1) return { status: "ambiguous", connectionIds: added };
-  return Date.parse(now) >= Date.parse(request.expiresAt) ? { status: "expired" } : { status: "pending" };
+  return { status: "pending" };
 }
 
 export function createBotConnectRequestsRepository(db: BotExecutor) {
@@ -129,6 +130,7 @@ export function createBotConnectRequestsRepository(db: BotExecutor) {
         })
         .where("owner_id", "=", input.ownerId).where("request_id", "=", input.requestId)
         .where("status", "=", "pending").where("revision", "=", input.baseRevision)
+        .where((eb) => (outcome.status === "expired" ? eb("expires_at", "<=", input.now) : eb("expires_at", ">", input.now)))
         .returningAll()
         .executeTakeFirst();
       if (!row) throw new BotStateError("revision_conflict");

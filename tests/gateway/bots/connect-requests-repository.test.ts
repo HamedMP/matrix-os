@@ -18,7 +18,7 @@ beforeEach(async () => {
   interactionId = (await createBotInteractionsRepository(db).create({
     ownerId: OWNER, botId: BOT, chatId: "chat_connect1", taskId: task.taskId, kind: "connect_request",
     payload: { kind: "connect_request", service: "gmail" }, responderActorId: OWNER, blocking: true, expiresAt: at(10 * 60_000), now: NOW,
-  })).interactionId;
+  })).interaction.interactionId;
 });
 afterEach(async () => destroy());
 
@@ -33,6 +33,8 @@ describe("bot connect requests repository", () => {
     expect(connectOutcome(request, ["conn_old", "conn_new"], at(1))).toEqual({ status: "completed", connectionId: "conn_new" });
     expect(connectOutcome(request, ["conn_b", "conn_a", "conn_old"], at(1))).toEqual({ status: "ambiguous", connectionIds: ["conn_a", "conn_b"] });
     expect(connectOutcome(request, ["conn_old"], at(60_000))).toEqual({ status: "expired" });
+    // A connection that appears after the deadline does not complete the request.
+    expect(connectOutcome(request, ["conn_old", "conn_late"], at(60_000))).toEqual({ status: "expired" });
     expect(() => connectOutcome(request, ["bad id!"], at(1))).toThrow(BotStateError);
   });
 

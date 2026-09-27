@@ -19,10 +19,12 @@ beforeEach(async () => {
 });
 afterEach(async () => destroy());
 
-const create = (repo: ReturnType<typeof createBotInteractionsRepository>, overrides: Record<string, unknown> = {}) => repo.create({
+const createFull = (repo: ReturnType<typeof createBotInteractionsRepository>, overrides: Record<string, unknown> = {}) => repo.create({
   ownerId: OWNER, botId: BOT, chatId: CHAT, taskId, kind: "question", payload: question,
   responderActorId: OWNER, blocking: true, expiresAt: at(60 * 60_000), now: NOW, ...overrides,
 });
+const create = async (repo: ReturnType<typeof createBotInteractionsRepository>, overrides: Record<string, unknown> = {}) =>
+  (await createFull(repo, overrides)).interaction;
 
 describe("bot interactions repository", () => {
   it("allows one pending blocking question per task and frees the slot on resolution", async () => {
@@ -66,9 +68,13 @@ describe("bot interactions repository", () => {
     await create(repo, { blocking: false, expiresAt: at(5_000) });
     await expect(repo.expireDue({ now: at(2_000) })).resolves.toEqual([expect.objectContaining({ interactionId: soon.interactionId, status: "expired" })]);
     await expect(repo.listPending({ ownerId: OWNER, chatId: CHAT, now: at(2_000) })).resolves.toHaveLength(1);
-    // An overdue blocking question no longer holds the task's slot.
-    await create(repo, { expiresAt: at(9_000), now: at(3_000) });
-    await expect(create(repo, { now: at(9_500), expiresAt: at(20_000) })).resolves.toMatchObject({ status: "pending" });
+    // An overdue blocking question no longer holds the task's slot, and it is handed back for follow-up.
+    const overdue = await create(repo, { expiresAt: at(9_000), now: at(3_000) });
+    const replacement = await createFull(repo, { now: at(9_500), expiresAt: at(20_000) });
+    expect(replacement.interaction).toMatchObject({ status: "pending" });
+    // Every overdue pending interaction of the task comes back, including the earlier non-blocking one.
+    expect(replacement.expired).toHaveLength(2);
+    expect(replacement.expired).toEqual(expect.arrayContaining([expect.objectContaining({ interactionId: overdue.interactionId, status: "expired" })]));
   });
 
   it("refuses an interaction in a chat the owner does not own", async () => {

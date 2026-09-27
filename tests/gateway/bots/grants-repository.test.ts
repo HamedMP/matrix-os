@@ -50,4 +50,13 @@ describe("bot grants repository", () => {
     await expect(repo.findUsable({ ...account, connectionId: "conn_2", audience: "group:chat_team1", effect: "send", now: at(20_000) }))
       .resolves.toBeUndefined();
   });
+
+  it("renews an account whose grant expired without revoking it first", async () => {
+    const repo = createBotGrantsRepository(db);
+    const expiring = await repo.grant({ ...account, effects: ["read"], audience: "direct", expiresAt: at(1_000), now: NOW });
+    const renewed = await repo.grant({ ...account, effects: ["read", "send"], audience: "direct", now: at(2_000) });
+    expect(renewed.created).toBe(true);
+    expect(renewed.grant.grantId).not.toBe(expiring.grant.grantId);
+    await expect(repo.findUsable({ ...account, audience: "direct", effect: "send", now: at(3_000) })).resolves.toMatchObject({ grantId: renewed.grant.grantId });
+  });
 });

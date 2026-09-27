@@ -100,7 +100,7 @@ export function createBotInteractionsRepository(db: BotExecutor) {
       blocking: boolean;
       expiresAt: string;
       now: string;
-    }, executor: BotExecutor = db): Promise<BotInteractionRecord> {
+    }, executor: BotExecutor = db): Promise<{ interaction: BotInteractionRecord; expired: BotInteractionRecord[] }> {
       const lifetime = Date.parse(input.expiresAt) - Date.parse(input.now);
       if (!(lifetime > 0) || lifetime > (input.kind === "connect_request" ? MAX_CONNECT_LIFETIME_MS : MAX_LIFETIME_MS)) {
         throw new BotStateError("invalid_input");
@@ -109,11 +109,13 @@ export function createBotInteractionsRepository(db: BotExecutor) {
       return withTransaction(executor, async (trx) => {
         // Serializes concurrent creates per owner so the cap cannot be overrun.
         await sql`SELECT pg_advisory_xact_lock(hashtextextended(${`bot-interactions:${input.ownerId}`}, 0))`.execute(trx);
-        // An overdue pending interaction of this task still holds the blocking slot until swept.
-        await trx.updateTable("bot_interactions")
+        // An overdue pending interaction of this task still holds the blocking slot until
+        // swept. Expire it here and hand it back, so its follow-up is not lost.
+        const expired = await trx.updateTable("bot_interactions")
           .set({ status: "expired", resolved_at: input.now, revision: sql<number>`revision + 1` })
           .where("owner_id", "=", input.ownerId).where("task_id", "=", input.taskId)
           .where("status", "=", "pending").where("expires_at", "<=", input.now)
+          .returningAll()
           .execute();
         const pending = await trx.selectFrom("bot_interactions")
           .select((eb) => eb.fn.countAll<number>().as("count"))
@@ -137,7 +139,7 @@ export function createBotInteractionsRepository(db: BotExecutor) {
             created_at: input.now,
             resolved_at: null,
           }).returningAll().executeTakeFirstOrThrow();
-          return fromRow(row);
+          return { interaction: fromRow(row), expired: expired.map(fromRow) };
         } catch (error: unknown) {
           if (isUniqueViolation(error, "idx_bot_interactions_one_blocking")) throw new BotStateError("conflict");
           if (isChatOwnerViolation(error)) throw new BotStateError("not_found");
