@@ -104,6 +104,19 @@ describe("bot session codec and compaction", () => {
     expect(() => encodeSession(kept)).toThrow(expect.objectContaining({ code: "too_large" }));
   });
 
+  it("keeps the latest reply whole, dropping older turns first when earlier prose is not enough", () => {
+    const latestReply = fauxAssistantMessage(fauxText("L".repeat(150 * 1024)));
+    const turns = [
+      ...[1, 2, 3].flatMap((index) => [user(`ask ${index}:${"q".repeat(50 * 1024)}`, index), fauxAssistantMessage(fauxText("a".repeat(1024)))]),
+      user("latest ask", 9),
+      latestReply,
+    ];
+    const fitted = fitForStorage(turns, 200 * 1024, () => 5);
+    expect(encodedSessionBytes(fitted)).toBeLessThanOrEqual(200 * 1024);
+    expect(fitted.at(-1)).toEqual(latestReply);
+    expect(JSON.stringify(fitted)).toContain("removed to fit saved history");
+  });
+
   it("cuts oversized tool payloads only when the transcript would not fit", () => {
     const small = [user("hi"), toolResult("c1")];
     expect(fitForStorage(small)).toEqual(small);
