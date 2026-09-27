@@ -301,6 +301,17 @@ describe("shared entry routing", () => {
     expect(html).not.toContain("<script");
   });
 
+  it("keeps long invitation queries in the retry link", async () => {
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(new TypeError("fetch failed"));
+    const app = buildApp(db);
+    const ticket = "t".repeat(3000);
+
+    const res = await app.request(`/shared/organization-invitation?__clerk_ticket=${ticket}`, signedIn());
+
+    expect(res.status).toBe(503);
+    expect(await res.text()).toContain(`href="/shared/organization-invitation?__clerk_ticket=${ticket}"`);
+  });
+
   it("keeps the signup billing handoff on the checkout path for accounts without a computer", async () => {
     const fetchMock = mockUpstreams();
     const app = buildApp(db);

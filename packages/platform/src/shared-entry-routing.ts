@@ -13,7 +13,6 @@ import type { AppDomainIdentity } from './session-routing-identity.js';
 // Shared destinations are the account-only collaboration entry (spec 535 M1).
 // An account without a routable, entitled computer is served the platform
 // shell for this path family instead of billing, provisioning or a boot page.
-const SHARED_ENTRY_MAX_RETRY_TARGET_LENGTH = 2048;
 
 export type SharedEntryTarget = 'vps' | 'platform';
 
@@ -51,13 +50,13 @@ export function resolveSharedEntryTarget(input: {
   return 'platform';
 }
 
+// The retry link keeps the exact destination, query included, so an invitation
+// ticket survives the outage. Its size is bounded by the server's request-line
+// limit, and the value is attribute-escaped.
 function sharedEntryRetryTarget(rawUrl: string): string {
   try {
     const url = new URL(rawUrl, 'https://app.matrix-os.com');
-    const target = `${url.pathname}${url.search}`;
-    if (isSharedEntryPath(url.pathname) && target.length <= SHARED_ENTRY_MAX_RETRY_TARGET_LENGTH) {
-      return target;
-    }
+    if (isSharedEntryPath(url.pathname)) return `${url.pathname}${url.search}`;
   } catch (err: unknown) {
     console.warn('[platform] Failed to parse shared entry retry URL:', err instanceof Error ? err.name : typeof err);
   }
