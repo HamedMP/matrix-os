@@ -1,7 +1,6 @@
-import type { Agent } from "@earendil-works/pi-agent-core";
 import { BotWorkerCommandSchema, type BotRunOutcome } from "@matrix-os/contracts";
 import type { BotBrokerClient } from "./broker-client.js";
-import { runBotTurn, type RunBotTurnInput } from "./loop.js";
+import { runBotTurn, type BotTurnControl, type RunBotTurnInput } from "./loop.js";
 
 export class BotWorkerError extends Error {
   constructor(readonly code: "busy" | "invalid_command") {
@@ -20,7 +19,7 @@ export function createBotWorker(deps: {
   now?: () => number;
 }) {
   const now = deps.now ?? Date.now;
-  let active: { runId: string; controller: AbortController; agent?: Agent } | undefined;
+  let active: { runId: string; controller: AbortController; control?: BotTurnControl } | undefined;
 
   return {
     async handle(raw: unknown): Promise<BotWorkerReply> {
@@ -29,7 +28,7 @@ export function createBotWorker(deps: {
       const command = parsed.data;
       if (command.kind === "bot.run") {
         if (active) throw new BotWorkerError("busy");
-        const run: { runId: string; controller: AbortController; agent?: Agent } = { runId: command.runId, controller: new AbortController() };
+        const run: { runId: string; controller: AbortController; control?: BotTurnControl } = { runId: command.runId, controller: new AbortController() };
         active = run;
         try {
           return await runBotTurn({
@@ -39,7 +38,7 @@ export function createBotWorker(deps: {
             ...(deps.route ? { route: deps.route } : {}),
             signal: run.controller.signal,
             now,
-            onAgent: (agent) => { run.agent = agent; },
+            onControl: (control) => { run.control = control; },
           });
         } finally {
           active = undefined;
@@ -47,9 +46,8 @@ export function createBotWorker(deps: {
       }
       if (!active || active.runId !== command.runId) return { acknowledged: false };
       if (command.kind === "bot.steer") {
-        if (!active.agent) return { acknowledged: false };
-        active.agent.steer({ role: "user", content: command.text, timestamp: now() });
-        return { acknowledged: true };
+        // Refused once the turn has stopped taking input, so an acknowledged steer is never dropped.
+        return { acknowledged: active.control?.steer(command.text) ?? false };
       }
       active.controller.abort();
       return { acknowledged: true };

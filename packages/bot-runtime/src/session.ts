@@ -1,11 +1,16 @@
 import { estimateContextTokens, type AgentMessage } from "@earendil-works/pi-agent-core";
+import { BOT_SESSION_MAX_BYTES } from "@matrix-os/contracts";
 
-export const SESSION_MAX_BYTES = 512 * 1024;
+export const SESSION_MAX_BYTES = BOT_SESSION_MAX_BYTES;
 /** Compact before the hard cap so one more turn always fits. */
 export const SESSION_COMPACT_AT_BYTES = 384 * 1024;
 const COMPACT_AT_CONTEXT_RATIO = 0.8;
 const KEEP_RECENT_USER_TURNS = 4;
 const ROLES = new Set(["system", "user", "assistant", "toolResult"]);
+/** Progressively tighter caps on large strings in the saved transcript only. */
+const STORAGE_TEXT_CAPS = [32 * 1024, 8 * 1024, 2 * 1024, 512] as const;
+/** Headroom so the encoded save always fits the session cap. */
+const STORAGE_TARGET_BYTES = SESSION_MAX_BYTES - 16 * 1024;
 const encoder = new TextEncoder();
 
 export class BotSessionError extends Error {
@@ -33,6 +38,79 @@ export function encodeSession(messages: readonly AgentMessage[]): Record<string,
   const records = JSON.parse(JSON.stringify(messages)) as Record<string, unknown>[];
   if (encodedSessionBytes(records) > SESSION_MAX_BYTES) throw new BotSessionError("too_large");
   return records;
+}
+
+function imagePlaceholder(mimeType: unknown): { type: "text"; text: string } {
+  const kind = typeof mimeType === "string" && /^image\/[a-z0-9.+-]{1,32}$/.test(mimeType) ? mimeType : "image";
+  return { type: "text", text: `[An ${kind} was shown to the assistant here. It is not kept in saved history.]` };
+}
+
+function withoutImageParts<T>(content: T): T {
+  if (!Array.isArray(content)) return content;
+  return content.map((part: { type?: unknown; mimeType?: unknown }) => (part?.type === "image" ? imagePlaceholder(part.mimeType) : part)) as T;
+}
+
+/**
+ * Images reach the model in the turn they arrive. The saved transcript keeps
+ * a text placeholder instead, so one image cannot push a session over its cap.
+ */
+export function withoutImages(messages: readonly AgentMessage[]): AgentMessage[] {
+  return messages.map((message) => {
+    if (message.role === "user" || message.role === "toolResult") {
+      return { ...message, content: withoutImageParts(message.content) } as AgentMessage;
+    }
+    return message;
+  });
+}
+
+function capText(text: string, cap: number): string {
+  if (text.length <= cap) return text;
+  return `${text.slice(0, cap)}\n[${text.length - cap} characters were left out of saved history.]`;
+}
+
+function capStrings(value: unknown, cap: number): unknown {
+  if (typeof value === "string") return capText(value, cap);
+  if (Array.isArray(value)) return value.map((item) => capStrings(item, cap));
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, capStrings(item, cap)]));
+  }
+  return value;
+}
+
+function capMessage(message: AgentMessage, cap: number): AgentMessage {
+  if (message.role === "system") return message;
+  if (message.role === "user") {
+    return typeof message.content === "string"
+      ? { ...message, content: capText(message.content, cap) }
+      : { ...message, content: message.content.map((part) => (part.type === "text" ? { ...part, text: capText(part.text, cap) } : part)) };
+  }
+  if (message.role === "toolResult") {
+    return { ...message, content: message.content.map((part) => (part.type === "text" ? { ...part, text: capText(part.text, cap) } : part)) };
+  }
+  if (message.role === "assistant") {
+    return {
+      ...message,
+      content: message.content.map((part) => {
+        if (part.type === "text") return { ...part, text: capText(part.text, cap) };
+        if (part.type === "toolCall") return { ...part, arguments: capStrings(part.arguments, cap) as typeof part.arguments };
+        return part;
+      }),
+    };
+  }
+  return message;
+}
+
+/**
+ * Fits a transcript for storage: images become placeholders and, only when
+ * still too large, long tool payloads and texts are cut with a visible note.
+ */
+export function fitForStorage(messages: readonly AgentMessage[], maxBytes = STORAGE_TARGET_BYTES): AgentMessage[] {
+  let stored = withoutImages(messages);
+  for (const cap of STORAGE_TEXT_CAPS) {
+    if (encodedSessionBytes(stored) <= maxBytes) return stored;
+    stored = stored.map((message) => capMessage(message, cap));
+  }
+  return stored;
 }
 
 export function needsCompaction(messages: readonly AgentMessage[], contextWindow: number): boolean {

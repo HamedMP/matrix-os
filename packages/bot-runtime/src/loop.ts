@@ -4,13 +4,18 @@ import type { BotRunCommand, BotRunOutcome, BotToolErrorCode } from "@matrix-os/
 import { BotBrokerError, type BotBrokerClient } from "./broker-client.js";
 import { createEventProjector } from "./events.js";
 import { createBridgeModel } from "./providers.js";
-import { BotSessionError, compactSession, decodeSession, encodeSession, needsCompaction } from "./session.js";
+import { BotSessionError, compactSession, decodeSession, encodeSession, fitForStorage, needsCompaction, withoutImages } from "./session.js";
 import { capabilityForToolName, createBotTools, type BotToolsState } from "./tools.js";
 
 const SUMMARY_PROMPT = "Summarize the conversation between a person and their assistant bot. "
   + "Keep decisions, stated preferences, open tasks, and sources. Do not continue the conversation.";
 const BUDGET_REASON = "This task reached its action budget. Summarize progress and stop.";
 const SUMMARY_MAX_TOKENS = 2_048;
+
+/** Steering handle for the active turn; it refuses once the turn stops taking input. */
+export interface BotTurnControl {
+  steer(text: string): boolean;
+}
 
 export interface RunBotTurnInput {
   command: BotRunCommand;
@@ -20,6 +25,7 @@ export interface RunBotTurnInput {
   route?: { provider: Provider<Api>; model: Model<Api> };
   signal?: AbortSignal;
   now?: () => number;
+  onControl?(control: BotTurnControl): void;
   onAgent?(agent: Agent): void;
 }
 
@@ -35,6 +41,14 @@ function outcome(
   return { runId: command.runId, ...fields };
 }
 
+function failureCodeOf(error: unknown, context: string): BotToolErrorCode {
+  if (error instanceof BotBrokerError) return error.code;
+  if (!(error instanceof BotSessionError)) {
+    console.warn(`[bot-runtime] ${context} failed:`, error instanceof Error ? error.name : "UnknownError");
+  }
+  return "unavailable";
+}
+
 /**
  * Runs one bot turn in the sandboxed workload. The agent holds no credential
  * and no network: model calls go through the loopback bridge and every tool
@@ -43,15 +57,22 @@ function outcome(
 export async function runBotTurn(input: RunBotTurnInput): Promise<BotRunOutcome> {
   const { command, broker } = input;
   const now = input.now ?? Date.now;
-  const snapshot = await broker.loadSession();
-  // Leading prompt/tool system messages are rebuilt from this run's revision.
-  const history = decodeSession(snapshot.messages).filter((message) => message.role !== "system");
+  let snapshot: { revision: number; messages: readonly Record<string, unknown>[] };
+  let history: AgentMessage[];
+  try {
+    snapshot = await broker.loadSession();
+    // Leading prompt/tool system messages are rebuilt from this run's revision.
+    history = decodeSession(snapshot.messages).filter((message) => message.role !== "system");
+  } catch (error: unknown) {
+    return outcome(command, { status: "failed", failureCode: failureCodeOf(error, "session load"), toolActions: 0 });
+  }
   const { provider, model } = input.route ?? createBridgeModel(command.route, input.bridgeOrigin);
   const tools: BotToolsState = { waitingForPerson: false, effectUnknown: false };
   let toolActions = 0;
   let budgetExhausted = false;
   let toolInFlight = false;
   let eventFailure: BotToolErrorCode | undefined;
+  let runFailed = false;
 
   const agent = new Agent({
     initialState: {
@@ -66,6 +87,8 @@ export async function runBotTurn(input: RunBotTurnInput): Promise<BotRunOutcome>
       maxTokens: command.route.maxOutputTokens,
     }),
     toolExecution: "sequential",
+    // A blocking question or a spent budget ends the turn even if a steer is queued; the steer is saved instead.
+    shouldStopAfterTurn: () => tools.waitingForPerson || budgetExhausted,
     // Fail closed: the hook cannot throw, and anything past the budget is blocked.
     beforeToolCall: async () => {
       if (toolActions >= command.limits.maxToolActions) {
@@ -93,6 +116,21 @@ export async function runBotTurn(input: RunBotTurnInput): Promise<BotRunOutcome>
   const onAbort = () => agent.abort();
   input.signal?.addEventListener("abort", onAbort, { once: true });
 
+  // Steering is accepted until the turn stops; anything Pi did not inject is saved as a person message.
+  const steered: AgentMessage[] = [];
+  let steeringOpen = true;
+  input.onControl?.({
+    steer(text) {
+      if (!steeringOpen) return false;
+      const message: AgentMessage = { role: "user", content: text, timestamp: now() };
+      steered.push(message);
+      agent.steer(message);
+      return true;
+    },
+  });
+  const stopped = () => Boolean(eventFailure) || input.signal?.aborted === true || budgetExhausted
+    || tools.waitingForPerson || Boolean(agent.state.errorMessage);
+
   try {
     if (command.turn.kind === "prompt") {
       const images: ImageContent[] = (command.turn.images ?? []).map((image) => ({ type: "image", data: image.data, mimeType: image.mimeType }));
@@ -101,13 +139,25 @@ export async function runBotTurn(input: RunBotTurnInput): Promise<BotRunOutcome>
       await agent.continue();
     }
     await agent.waitForIdle();
+    // A steer can land after Pi's last poll; answer it before closing the turn.
+    while (!stopped() && agent.hasQueuedMessages()) {
+      await agent.continue();
+      await agent.waitForIdle();
+    }
+  } catch (error: unknown) {
+    runFailed = true;
+    console.warn("[bot-runtime] agent run failed:", error instanceof Error ? error.name : "UnknownError");
   } finally {
+    // No await between the last queue check and closing, so no steer slips in unseen.
+    steeringOpen = false;
+    agent.clearAllQueues();
     input.signal?.removeEventListener("abort", onAbort);
     unsubscribe();
   }
 
   const status = (() => {
     if (eventFailure) return { status: "failed" as const, failureCode: eventFailure };
+    if (runFailed) return { status: "failed" as const, failureCode: "unavailable" as const };
     if (input.signal?.aborted) return { status: tools.effectUnknown || toolInFlight ? "uncertain" as const : "cancelled" as const };
     if (budgetExhausted) return { status: "blocked" as const, blockedReason: "budget_exhausted" as const };
     if (tools.waitingForPerson) return { status: "waiting_person" as const };
@@ -115,7 +165,8 @@ export async function runBotTurn(input: RunBotTurnInput): Promise<BotRunOutcome>
     return { status: "completed" as const };
   })();
 
-  let messages: AgentMessage[] = [...agent.state.messages];
+  const unanswered = steered.filter((message) => !agent.state.messages.includes(message));
+  let messages: AgentMessage[] = withoutImages([...agent.state.messages, ...unanswered]);
   try {
     if (needsCompaction(messages, command.route.contextWindow)) {
       messages = await compactSession({
@@ -130,13 +181,12 @@ export async function runBotTurn(input: RunBotTurnInput): Promise<BotRunOutcome>
         },
       });
     }
-    const saved = await broker.saveSession({ baseRevision: snapshot.revision, messages: encodeSession(messages) });
+    const saved = await broker.saveSession({ baseRevision: snapshot.revision, messages: encodeSession(fitForStorage(messages)) });
     return outcome(command, { ...status, sessionRevision: saved.revision, toolActions });
   } catch (error: unknown) {
-    const failureCode: BotToolErrorCode = error instanceof BotBrokerError ? error.code : "unavailable";
-    if (!(error instanceof BotBrokerError) && !(error instanceof BotSessionError)) {
-      console.warn("[bot-runtime] session save failed:", error instanceof Error ? error.name : "UnknownError");
-    }
-    return outcome(command, { status: "failed", failureCode, sessionRevision: snapshot.revision, toolActions });
+    const failureCode = failureCodeOf(error, "session save");
+    // An unknown external effect still needs reconciliation even when the transcript is lost.
+    const failedStatus = status.status === "uncertain" ? "uncertain" as const : "failed" as const;
+    return outcome(command, { status: failedStatus, failureCode, sessionRevision: snapshot.revision, toolActions });
   }
 }

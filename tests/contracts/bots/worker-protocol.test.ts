@@ -27,6 +27,9 @@ describe("bot worker and broker envelopes", () => {
     expect(BotBrokerRequestSchema.parse({ ...envelope, action: "bot.session.load" }).action).toBe("bot.session.load");
     expect(BotBrokerRequestSchema.parse({ ...envelope, action: "bot.event", event: { seq: 0, event: { type: "assistant_delta", text: "hi" } } }).action).toBe("bot.event");
     expect(BotBrokerRequestSchema.safeParse({ ...envelope, action: "egress.fetch" }).success).toBe(false);
+    const session = (bytes: number) => ({ ...envelope, action: "bot.session.save", session: { baseRevision: 1, messages: [{ role: "user", content: "x".repeat(bytes), timestamp: 1 }] } });
+    expect(BotBrokerRequestSchema.safeParse(session(400 * 1024)).success).toBe(true);
+    expect(BotBrokerRequestSchema.safeParse(session(520 * 1024)).success).toBe(false);
     expect(BotBrokerRequestSchema.safeParse({ ...envelope, action: "bot.session.load", runtimeHandle: "runtime_x" }).success).toBe(false);
     expect(BotBrokerResponseSchema.safeParse({ version: 1, requestId: envelope.requestId, ok: false, code: "postgres_down" }).success).toBe(false);
   });
@@ -34,5 +37,7 @@ describe("bot worker and broker envelopes", () => {
   it("reports outcomes with allowlisted statuses only", () => {
     expect(BotRunOutcomeSchema.parse({ runId: "run_abc", status: "waiting_person", sessionRevision: 2, toolActions: 1 }).status).toBe("waiting_person");
     expect(BotRunOutcomeSchema.safeParse({ runId: "run_abc", status: "paused", sessionRevision: 2, toolActions: 1 }).success).toBe(false);
+    // A run whose session never loaded reports no revision.
+    expect(BotRunOutcomeSchema.parse({ runId: "run_abc", status: "failed", failureCode: "unavailable", toolActions: 0 }).sessionRevision).toBeUndefined();
   });
 });

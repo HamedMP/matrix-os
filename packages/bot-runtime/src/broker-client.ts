@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { connect, type Socket } from "node:net";
 import type { z } from "zod/v4";
 import {
+  BOT_BROKER_MAX_FRAME_BYTES,
   BotBrokerRequestSchema,
   BotBrokerResponseSchema,
   BotEventAcceptedSchema,
@@ -16,7 +17,8 @@ import {
   type BotToolResult,
 } from "@matrix-os/contracts";
 
-const MAX_REPLY_BYTES = 512 * 1024;
+/** A session load reply carries a whole transcript. */
+const MAX_REPLY_BYTES = BOT_BROKER_MAX_FRAME_BYTES;
 const DEFAULT_TIMEOUT_MS = 30_000;
 
 export class BotBrokerError extends Error {

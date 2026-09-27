@@ -62,8 +62,10 @@ export const BotRunOutcomeSchema = z.object({
   runId: RunIdSchema,
   status: BotRunStatusSchema,
   blockedReason: BotBlockedReasonSchema.optional(),
+  /** Set on `failed`, and on `uncertain` when the transcript could not be saved afterwards. */
   failureCode: BotToolErrorCodeSchema.optional(),
-  sessionRevision: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+  /** Absent when the session could not be loaded, so nothing was read or written. */
+  sessionRevision: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).optional(),
   toolActions: z.number().int().min(0).max(60),
 }).strict();
 

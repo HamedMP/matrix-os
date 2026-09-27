@@ -6,11 +6,14 @@
  *
  * Talks to the provider directly because the loopback bridge only exists
  * inside a scope-runtime workload (L5). Evidence records statuses, timings,
- * and token counts only; no prompts, replies, keys, or artifacts.
+ * token counts, and estimated cost only; no prompts, replies, keys, or
+ * artifacts. Prices default to Claude Haiku 4.5 list prices in USD per
+ * million tokens; override them with S0_PROBE_PRICE_{INPUT,OUTPUT,CACHE_READ,CACHE_WRITE}.
+ * Cases stop once the recorded spend reaches the cap.
  */
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { createProvider, type Api, type Model } from "@earendil-works/pi-ai";
+import { createProvider, type Api, type Model, type Provider, type Usage } from "@earendil-works/pi-ai";
 import { anthropicMessagesApi } from "@earendil-works/pi-ai/api/anthropic-messages.lazy";
 import type { BotRunCommand, BotSessionSnapshot, BotToolRequest, BotToolResult } from "@matrix-os/contracts";
 import { BotBrokerError, type BotBrokerClient } from "../../../packages/bot-runtime/src/broker-client.js";
@@ -30,14 +33,51 @@ if (!apiKey) {
   process.exit(2);
 }
 
+function price(name: string, fallback: number): number {
+  const value = Number(process.env[`S0_PROBE_PRICE_${name}`] ?? fallback);
+  if (!Number.isFinite(value) || value < 0) {
+    console.error(`Refusing to run: S0_PROBE_PRICE_${name} must be a non-negative number.`);
+    process.exit(2);
+  }
+  return value;
+}
+
 const model: Model<Api> = {
   id: modelId, name: modelId, api: "anthropic-messages", provider: "s0-probe", baseUrl: "https://api.anthropic.com",
-  reasoning: false, input: ["text", "image"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+  reasoning: false, input: ["text", "image"],
+  cost: { input: price("INPUT", 1), output: price("OUTPUT", 5), cacheRead: price("CACHE_READ", 0.1), cacheWrite: price("CACHE_WRITE", 1.25) },
   contextWindow: 200_000, maxTokens: 2_048,
 };
-const provider = createProvider<Api>({
+const baseProvider = createProvider<Api>({
   id: "s0-probe", auth: { apiKey: { name: "S0 probe", resolve: async () => ({ auth: { apiKey } }) } },
   models: [model], api: { "anthropic-messages": anthropicMessagesApi() },
+});
+
+interface CaseUsage { calls: number; inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number; costUsd: number }
+const emptyUsage = (): CaseUsage => ({ calls: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, costUsd: 0 });
+let caseUsage = emptyUsage();
+let spentUsd = 0;
+const pendingUsage: Promise<void>[] = [];
+
+function record(usage: Usage) {
+  caseUsage.calls += 1;
+  caseUsage.inputTokens += usage.input;
+  caseUsage.outputTokens += usage.output;
+  caseUsage.cacheReadTokens += usage.cacheRead;
+  caseUsage.cacheWriteTokens += usage.cacheWrite;
+  caseUsage.costUsd += usage.cost.total;
+  spentUsd += usage.cost.total;
+}
+
+/** Every model call made by the probe, including compaction summaries, is metered here. */
+const provider: Provider<Api> = Object.assign(Object.create(baseProvider) as Provider<Api>, {
+  streamSimple: ((streamModel, context, options) => {
+    const stream = baseProvider.streamSimple(streamModel, context, options);
+    pendingUsage.push(stream.result().then((reply) => record(reply.usage), (error: unknown) => {
+      console.warn("s0 probe call ended without usage:", error instanceof Error ? error.name : "UnknownError");
+    }));
+    return stream;
+  }) as Provider<Api>["streamSimple"],
 });
 
 function memoryBroker(options: { refuse?: boolean } = {}) {
@@ -76,12 +116,18 @@ const command = (runId: string, text: string, overrides: Partial<BotRunCommand> 
 });
 
 async function timed<T>(name: string, fn: () => Promise<T>, check: (value: T) => boolean) {
+  if (spentUsd >= spendCap) return { name, passed: false, durationMs: 0, skipped: "spend_cap_reached", usage: emptyUsage() };
+  caseUsage = emptyUsage();
   const started = Date.now();
+  const settle = async () => {
+    await Promise.all(pendingUsage.splice(0));
+    return { durationMs: Date.now() - started, usage: caseUsage };
+  };
   try {
     const value = await fn();
-    return { name, passed: check(value), durationMs: Date.now() - started, value };
+    return { name, passed: check(value), ...(await settle()), value };
   } catch (error: unknown) {
-    return { name, passed: false, durationMs: Date.now() - started, error: error instanceof Error ? error.name : "UnknownError" };
+    return { name, passed: false, ...(await settle()), error: error instanceof Error ? error.name : "UnknownError" };
   }
 }
 
@@ -138,9 +184,15 @@ const evidence = {
   model: modelId,
   packages: { "pi-agent-core": "0.86.1", "pi-ai": "0.86.1" },
   spendCapUsd: spendCap,
-  cases: cases.map(({ name, passed, durationMs, error, value }) => ({
-    name, passed, durationMs, ...(error ? { error } : {}),
-    ...(value && typeof value === "object" && "status" in value ? { status: value.status, toolActions: value.toolActions } : {}),
+  prices: { currency: "USD", perMillionTokens: model.cost },
+  spentUsd: Number(spentUsd.toFixed(6)),
+  cases: cases.map((result) => ({
+    name: result.name, passed: result.passed, durationMs: result.durationMs,
+    usage: { ...result.usage, costUsd: Number(result.usage.costUsd.toFixed(6)) },
+    ...("skipped" in result ? { skipped: result.skipped } : {}),
+    ...("error" in result && result.error ? { error: result.error } : {}),
+    ...("value" in result && result.value && typeof result.value === "object" && "status" in result.value
+      ? { status: result.value.status, toolActions: result.value.toolActions } : {}),
   })),
 };
 const dir = join("specs", "536-conversational-bots", "evidence", "s0");

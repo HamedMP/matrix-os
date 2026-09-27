@@ -7,7 +7,8 @@ import { BotMemoryContentSchema, BotMemoryKindSchema, BotMemoryScopeSchema, BotM
 /** Leaves room for the broker envelope inside the 256 KiB broker request cap. */
 export const BOT_ARTIFACT_MAX_BYTES = 192 * 1024;
 const MAX_INTEGRATION_PARAMS_BYTES = 32 * 1024;
-const MAX_SESSION_BYTES = 512 * 1024;
+/** Saved bot transcripts; the runtime compacts well before this cap. */
+export const BOT_SESSION_MAX_BYTES = 512 * 1024;
 const MAX_TOOL_REQUEST_BYTES = 240 * 1024;
 
 const ToolCallIdSchema = canonicalReferenceId(128);
@@ -110,7 +111,7 @@ export const BotSessionSaveRequestSchema = z.object({
   baseRevision: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
   messages: z.array(z.record(z.string(), z.unknown())).max(4_000),
   compactedThroughSeq: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).optional(),
-}).strict().refine((request) => canonicalEncodedByteLength(request.messages) <= MAX_SESSION_BYTES, { message: "Session is too large" });
+}).strict().refine((request) => canonicalEncodedByteLength(request.messages) <= BOT_SESSION_MAX_BYTES, { message: "Session is too large" });
 
 export type BotToolRequest = z.infer<typeof BotToolRequestSchema>;
 export type BotToolCapability = z.infer<typeof BotToolCapabilitySchema>;
@@ -126,7 +127,12 @@ const BrokerEnvelope = {
   executionGeneration: z.string().regex(/^(0|[1-9][0-9]{0,19})$/),
   runId: z.string().regex(/^run_[A-Za-z0-9_-]{1,128}$/),
 };
-const MAX_BROKER_REQUEST_BYTES = 256 * 1024;
+/**
+ * Tool and event frames stay under the shared 256 KiB request cap on their own.
+ * Session frames carry a whole transcript, so bot frames (and the session load
+ * reply) may reach the session cap plus envelope headroom.
+ */
+export const BOT_BROKER_MAX_FRAME_BYTES = BOT_SESSION_MAX_BYTES + 64 * 1024;
 
 /**
  * Bot frames on the scope-runtime broker socket: one newline-delimited JSON
@@ -138,7 +144,7 @@ export const BotBrokerRequestSchema = z.discriminatedUnion("action", [
   z.object({ ...BrokerEnvelope, action: z.literal("bot.session.save"), session: BotSessionSaveRequestSchema }).strict(),
   z.object({ ...BrokerEnvelope, action: z.literal("bot.tool"), tool: BotToolRequestSchema }).strict(),
   z.object({ ...BrokerEnvelope, action: z.literal("bot.event"), event: BotEventSchema }).strict(),
-]).refine((request) => canonicalEncodedByteLength(request) <= MAX_BROKER_REQUEST_BYTES, { message: "Broker request is too large" });
+]).refine((request) => canonicalEncodedByteLength(request) <= BOT_BROKER_MAX_FRAME_BYTES, { message: "Broker request is too large" });
 
 export const BotSessionSnapshotSchema = z.object({
   revision: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
