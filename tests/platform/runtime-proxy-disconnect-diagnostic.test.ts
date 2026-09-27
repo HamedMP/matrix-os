@@ -141,6 +141,47 @@ describe("runtime proxy downstream disconnect ownership diagnostic", () => {
     }
   });
 
+  it("ordinary requests honor caller abort before actual upstream response headers", async () => {
+    let markRequested: (() => void) | undefined;
+    const requested = new Promise<void>(resolve => { markRequested = resolve; });
+    const upstream = createServer(() => { markRequested!(); });
+    upstream.listen(0, "127.0.0.1");
+    await new Promise<void>(resolve => upstream.once("listening", resolve));
+    const address = upstream.address();
+    if (!address || typeof address === "string") throw new Error("Missing upstream listener");
+    try {
+      const caller = new AbortController();
+      const outcome = fetchRuntimeProxy(`http://127.0.0.1:${address.port}/api/chats`,
+        { method: "GET", signal: caller.signal }, 1_000, false)
+        .then(() => "resolved", (error: unknown) => error instanceof Error ? error.name : "unknown");
+      await requested;
+      caller.abort(new DOMException("Synthetic caller cancellation", "AbortError"));
+      expect(await outcome).toBe("AbortError");
+    } finally {
+      upstream.closeAllConnections();
+      await new Promise<void>((resolve, reject) => upstream.close(error => error ? reject(error) : resolve()));
+    }
+  });
+
+  it("ordinary requests retain their actual upstream deadline while the caller remains live", async () => {
+    const upstream = createServer(() => { /* Synthetic upstream intentionally sends no headers. */ });
+    upstream.listen(0, "127.0.0.1");
+    await new Promise<void>(resolve => upstream.once("listening", resolve));
+    const address = upstream.address();
+    if (!address || typeof address === "string") throw new Error("Missing upstream listener");
+    try {
+      const caller = new AbortController();
+      const outcome = fetchRuntimeProxy(`http://127.0.0.1:${address.port}/api/chats`,
+        { method: "GET", signal: caller.signal }, 100, false)
+        .then(() => "resolved", (error: unknown) => error instanceof Error ? error.name : "unknown");
+      expect(await outcome).toBe("TimeoutError");
+      expect(caller.signal.aborted).toBe(false);
+    } finally {
+      upstream.closeAllConnections();
+      await new Promise<void>((resolve, reject) => upstream.close(error => error ? reject(error) : resolve()));
+    }
+  });
+
   it("honors a supplied caller abort instead of replacing it with the header deadline signal", async () => {
     const caller = new AbortController();
     vi.spyOn(globalThis, "fetch").mockImplementation((_url, init) => {
