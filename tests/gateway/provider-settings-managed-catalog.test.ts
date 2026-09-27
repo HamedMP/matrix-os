@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isPortableGenericHarnessCredentialRoute } from "@matrix-os/contracts";
+import { isPortableGenericHarnessCredentialRoute, isRunnableGenericHarnessCredentialRoute } from "@matrix-os/contracts";
 import { projectProviderSettings } from "../../packages/gateway/src/ai-providers/provider-settings-projector.js";
 import type { ProviderSettingsConfiguration } from "../../packages/gateway/src/ai-providers/provider-settings-persistence.js";
 import { PROVIDER_SETTINGS_NOW as now, providerSettingsCanonicalFixture } from "./provider-settings-test-support.js";
@@ -64,6 +64,8 @@ describe("Matrix routes during native model catalog failure", () => {
     expect(snapshot.accessSources.find((candidate) => candidate.id === source.id))
       .toMatchObject({ kind: "provider_account", accountId: account.id, fundingKind: "owner_api_key" });
     expect(isPortableGenericHarnessCredentialRoute(snapshot.harnesses[0]!,
+      snapshot.accessSources.find((candidate) => candidate.id === source.id))).toBe(true);
+    expect(isRunnableGenericHarnessCredentialRoute(snapshot.harnesses[0]!,
       snapshot.accessSources.find((candidate) => candidate.id === source.id))).toBe(true);
   });
 
