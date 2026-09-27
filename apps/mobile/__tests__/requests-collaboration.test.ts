@@ -1,6 +1,12 @@
 jest.mock("@/lib/storage", () => ({ HOSTED_GATEWAY_URL: "https://app.matrix-os.com" }));
+const mockSecureRandom = jest.fn((bytes: Uint8Array) => {
+  (jest.requireActual("node:crypto") as typeof import("node:crypto")).randomFillSync(bytes);
+  return bytes;
+});
 jest.mock("expo-crypto", () => ({
-  getRandomBytes: (length: number) => new Uint8Array((jest.requireActual("node:crypto") as typeof import("node:crypto")).randomBytes(length)),
+  getRandomValues: (bytes: Uint8Array) => mockSecureRandom(bytes),
+  // Falls back to Math.random under remote debugging, so the transport must never use it.
+  getRandomBytes: () => { throw new Error("getRandomBytes must not be used for collaboration keys"); },
 }));
 
 import {
@@ -311,6 +317,16 @@ describe("mobile collaboration requests", () => {
       }), handshake.possession)).toBe(true);
     }
     expectOnlyRelayedDirectTraffic(world);
+  });
+
+  it("draws proof keys and nonces only from the native CSPRNG", async () => {
+    respond(world, "GET", `/api/collaboration/scopes/${scopeId}/chat`, chat);
+    mockSecureRandom.mockClear();
+
+    await fetchSharedChat(token, scopeId);
+
+    // Proof key seed, ticket and session request ids, and the request-signature nonce.
+    expect(mockSecureRandom.mock.calls.map(([bytes]) => bytes.byteLength).sort((a, b) => a - b)).toEqual([16, 16, 32, 32]);
   });
 
   it("returns only a generic error when the home refuses a scoped request", async () => {

@@ -52,6 +52,7 @@ function scope(role: "owner" | "editor" | "viewer") {
 type TestSocket = WebSocket & {
   onmessage: ((event: { data: string }) => void) | null;
   onopen: (() => void) | null;
+  onclose: (() => void) | null;
   target: string;
   options: unknown;
   send: jest.Mock;
@@ -119,7 +120,7 @@ describe("native shared terminal screen", () => {
     const view = render(<SharedTerminalScreen scopeId={scopeId} actorId="user_viewer"
       getToken={async () => "clerk-token"} onBack={jest.fn()} />);
     await waitFor(() => expect(sockets).toHaveLength(1));
-    expect(mockOpenStream).toHaveBeenCalledWith("clerk-token", scopeId, "terminal", "0");
+    expect(mockOpenStream).toHaveBeenCalledWith("clerk-token", scopeId, "terminal", "0", false);
     expect(sockets[0]!.target).toBe(directStream.url);
     expect(sockets[0]!.options).toEqual({ headers: directStream.headers });
     act(() => sockets[0]!.onopen?.());
@@ -136,6 +137,17 @@ describe("native shared terminal screen", () => {
     expect(screen.getByLabelText("Collaboration access")).toBeTruthy();
     expect(screen.queryByLabelText("Request control")).toBeNull();
     expect(screen.getByLabelText("Terminal input").props.editable).toBe(false);
+    view.unmount();
+  });
+
+  it("reconnects with a replacement session after the terminal socket closes", async () => {
+    mockFetchScope.mockResolvedValue(scope("viewer"));
+    const view = render(<SharedTerminalScreen scopeId={scopeId} actorId="user_viewer"
+      getToken={async () => "clerk-token"} onBack={jest.fn()} />);
+    await waitFor(() => expect(sockets).toHaveLength(1));
+    act(() => sockets[0]!.onclose?.());
+    await waitFor(() => expect(sockets).toHaveLength(2), { timeout: 3_000 });
+    expect(mockOpenStream).toHaveBeenLastCalledWith("clerk-token", scopeId, "terminal", "0", true);
     view.unmount();
   });
 

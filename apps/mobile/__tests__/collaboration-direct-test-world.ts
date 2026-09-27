@@ -40,6 +40,17 @@ export const relay = jest.requireActual("../../../packages/platform/src/collabor
   parseRelayRoute(method: string, path: string): { kind: "session" | "scope" | "invitation" | "runtime"; identifier?: string } | null;
   parseRelaySocketPath(rawPath: string): { scopeId: string; purpose: "events" | "terminal"; path: string; query: string } | null;
   isCollaborationWebSocketCandidate(rawPath: string): boolean;
+  CollaborationRelay: new (options: {
+    resolveScopeHome(scopeId: string): Promise<{ runtimeId: string; origin: string } | null>;
+    resolveInvitationHome(actorId: string, invitationId: string): Promise<{ runtimeId: string; origin: string } | null>;
+    resolveRuntimeHome(actorId: string, runtimeId: string): Promise<{ runtimeId: string; origin: string } | null>;
+    resolveSessionHome(logicalRuntimeId: string): Promise<{ runtimeId: string; origin: string } | null>;
+    fetchImpl?: typeof fetch;
+  }) => {
+    forward(input: { actorId: string; method: string; path: string; query: string; headers: Headers; body: Uint8Array | null }): Promise<Response>;
+    prepareSocket(input: { actorId: string; rawPath: string; incomingHeaders: Record<string, string>; externalHost: string }): Promise<{ headers: string; release(): void } | null>;
+    close(): void;
+  };
 };
 
 export const PLATFORM = "https://app.matrix-os.com";

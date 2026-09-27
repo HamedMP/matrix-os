@@ -61,7 +61,8 @@ export function SharedProjectScreen({
     };
     const connect = async () => {
       try {
-        const stream = await openCollaborationStream(await getToken(), scopeId, "events", eventSequenceRef.current);
+        // A reconnect replaces the session in case the home ended it (denial or authority change).
+        const stream = await openCollaborationStream(await getToken(), scopeId, "events", eventSequenceRef.current, attempt > 0);
         if (closed) return;
         const NativeWebSocket = WebSocket as unknown as new (
           target: string,

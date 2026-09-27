@@ -169,6 +169,22 @@ describe("Native Mobile direct collaboration transport", () => {
     expect(world.home.sessions.size).toBe(1);
   });
 
+  it("replaces a session the home ended when a reconnecting stream asks for a fresh one", async () => {
+    const world = createDirectTestWorld();
+    const direct = transport(world);
+    const first = JSON.parse((await direct.stream(actorToken(), scopeId, "events", "0")).handshake) as { sessionId: string };
+
+    // An authority change ends the session on the home; locally it still looks live.
+    world.home.generation = 4;
+    world.home.sessions.delete(first.sessionId);
+    const reused = JSON.parse((await direct.stream(actorToken(), scopeId, "events", "0")).handshake) as { sessionId: string };
+    expect(reused.sessionId).toBe(first.sessionId);
+
+    const replaced = JSON.parse((await direct.stream(actorToken(), scopeId, "events", "0", true)).handshake) as { sessionId: string };
+    expect(replaced.sessionId).not.toBe(first.sessionId);
+    expect(world.home.sessions.get(replaced.sessionId)?.generation).toBe(4);
+  });
+
   it("sends the actor bearer only to the platform origin, never to a separate home origin", async () => {
     const world = createDirectTestWorld({ relayOrigin: SEPARATE_RELAY });
     world.home.responses.set(`GET /api/collaboration/scopes/${scopeId}/chat`, { status: 200, body: chat });
@@ -188,6 +204,72 @@ describe("Native Mobile direct collaboration transport", () => {
     }
     expect(new URL(stream.url).host).toBe("relay.matrix-os.com");
     expect(stream.headers).toEqual({});
+  });
+
+  it("reaches the home through the platform relay without the platform bearer or cookies", async () => {
+    const world = createDirectTestWorld();
+    const path = `/api/collaboration/scopes/${scopeId}/chat`;
+    world.home.responses.set(`GET ${path}`, { status: 200, body: chat });
+    const direct = transport(world);
+    await direct.request(actorToken(), scopeId, "GET", path);
+    const stream = await direct.stream(actorToken(), scopeId, "events", "0");
+
+    const homeRequests: Array<{ url: string; headers: Headers }> = [];
+    const home = { runtimeId: "vps-11111111-1111-4111-8111-111111111111", origin: "https://home.invalid" };
+    const platformRelay = new relay.CollaborationRelay({
+      resolveScopeHome: async () => home,
+      resolveInvitationHome: async () => home,
+      resolveRuntimeHome: async () => home,
+      resolveSessionHome: async () => home,
+      fetchImpl: (async (url: string, init: RequestInit) => {
+        homeRequests.push({ url, headers: new Headers(init.headers) });
+        return new Response("{}", { headers: { "content-type": "application/json" } });
+      }) as unknown as typeof fetch,
+    });
+    try {
+      // Replay exactly what Native Mobile sent to the relay origin, plus an ambient cookie.
+      for (const sent of world.requests.filter((request) => request.path !== "/api/collaboration/connections")) {
+        expect(sent.headers.get("authorization")).toBe(`Bearer ${actorToken()}`);
+        const headers = new Headers(sent.headers);
+        headers.set("cookie", "__session=platform-session");
+        await platformRelay.forward({
+          actorId, method: sent.method, path: sent.path, query: sent.query, headers,
+          body: sent.body ? new TextEncoder().encode(sent.body) : null,
+        });
+      }
+      expect(homeRequests.map((request) => new URL(request.url).pathname)).toEqual([
+        "/api/collaboration/direct-sessions",
+        path,
+      ]);
+      for (const forwarded of homeRequests) {
+        expect(forwarded.headers.get("authorization")).toBeNull();
+        expect(forwarded.headers.get("cookie")).toBeNull();
+      }
+      expect(homeRequests[1]!.headers.get("x-matrix-collaboration-session")).not.toBeNull();
+      expect(homeRequests[1]!.headers.get("x-matrix-collaboration-request")).not.toBeNull();
+
+      const url = new URL(stream.url);
+      const prepared = await platformRelay.prepareSocket({
+        actorId,
+        rawPath: `${url.pathname}${url.search}`,
+        incomingHeaders: {
+          ...Object.fromEntries(Object.entries(stream.headers).map(([name, value]) => [name.toLowerCase(), value])),
+          cookie: "__session=platform-session",
+          connection: "Upgrade",
+          upgrade: "websocket",
+          "sec-websocket-key": "dGhlIHNhbXBsZSBub25jZQ==",
+          "sec-websocket-version": "13",
+        },
+        externalHost: "app.matrix-os.com",
+      });
+      expect(prepared).not.toBeNull();
+      expect(prepared!.headers).toContain("sec-websocket-key: dGhlIHNhbXBsZSBub25jZQ==");
+      expect(prepared!.headers.toLowerCase()).not.toContain("authorization");
+      expect(prepared!.headers.toLowerCase()).not.toContain("cookie");
+      prepared!.release();
+    } finally {
+      platformRelay.close();
+    }
   });
 
   it("reuses a live session, renews it before expiry, and retries once with a fresh session after a 401", async () => {

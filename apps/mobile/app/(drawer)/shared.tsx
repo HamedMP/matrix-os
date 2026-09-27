@@ -36,6 +36,7 @@ import {
   fetchSharedChatMessages,
   fetchSharedAiRequests,
   fetchSharedCollaborations,
+  collaborationDiscoveryNeedsHydration,
   hydrateCollaborationDiscovery,
   openCollaborationStream,
   postSharedAiRequest,
@@ -55,6 +56,8 @@ type ViewState = { kind: "home" } | { kind: "invitation"; invitation: Invitation
 type ScreenState = {
   view: ViewState;
   items: DiscoveryItem[];
+  /** Discovery keys whose content is still being fetched from the owner's home. */
+  hydratingKeys: string[];
   inboxCursor: string | null;
   sharedCursor: string | null;
   loadingMoreItems: boolean;
@@ -77,6 +80,7 @@ type ScreenState = {
 const initialState: ScreenState = {
   view: { kind: "home" },
   items: [],
+  hydratingKeys: [],
   inboxCursor: null,
   sharedCursor: null,
   loadingMoreItems: false,
@@ -107,10 +111,19 @@ type ScreenAction =
   | { type: "patch"; patch: Partial<ScreenState> }
   | { type: "ai_request_accepted"; scopeId: string; chatId: string; request: CollaborationAiRequest; resourceRevision: string }
   | { type: "ai_refresh_failed"; retainQueue: boolean }
-  | { type: "append_items"; additions: DiscoveryItem[]; inboxCursor?: string | null; sharedCursor?: string | null };
+  | { type: "append_items"; additions: DiscoveryItem[]; inboxCursor?: string | null; sharedCursor?: string | null }
+  | { type: "item_hydrated"; item: DiscoveryItem };
 
 function screenReducer(state: ScreenState, action: ScreenAction): ScreenState {
   if (action.type === "patch") return { ...state, ...action.patch };
+  if (action.type === "item_hydrated") {
+    const key = discoveryKey(action.item);
+    return {
+      ...state,
+      items: state.items.map((existing) => discoveryKey(existing) === key ? action.item : existing),
+      hydratingKeys: state.hydratingKeys.filter((candidate) => candidate !== key),
+    };
+  }
   if (action.type === "ai_refresh_failed") {
     // Keep the last confirmed readiness: retain an available queue with a notice,
     // and never promote or degrade an owner reconnect requirement.
@@ -134,9 +147,12 @@ function screenReducer(state: ScreenState, action: ScreenAction): ScreenState {
   const items = action.additions.reduce<DiscoveryItem[]>((combined, item) => (
     combined.some((existing) => discoveryKey(existing) === discoveryKey(item)) ? combined : [...combined, item]
   ), state.items);
+  const hydratingKeys = new Set(state.hydratingKeys);
+  for (const item of action.additions) if (collaborationDiscoveryNeedsHydration(item)) hydratingKeys.add(discoveryKey(item));
   return {
     ...state,
     items,
+    hydratingKeys: [...hydratingKeys],
     ...(action.inboxCursor === undefined ? {} : { inboxCursor: action.inboxCursor }),
     ...(action.sharedCursor === undefined ? {} : { sharedCursor: action.sharedCursor }),
   };
@@ -151,6 +167,8 @@ export default function SharedScreen() {
   const { view, inboxCursor, sharedCursor, loadingMoreItems, scope, chat, messages,
     loadingMoreMessages } = state;
   const chatLoadGeneration = useRef(0);
+  /** Fences discovery loads: an older load or its hydration never overwrites a newer list. */
+  const homeLoadGeneration = useRef(0);
   const latestSequenceRef = useRef("0");
   const eventSequenceRef = useRef("0");
   const eventScopeRef = useRef<string | null>(null);
@@ -162,29 +180,45 @@ export default function SharedScreen() {
     if (!value) throw new Error("CollaborationUnavailable");
     return value;
   }, []);
+  /** Discovery is a metadata projection; each item's content arrives from its home as that home answers. */
+  const hydrateDiscovery = useCallback((actorToken: string, items: DiscoveryItem[], generation: number) => {
+    void hydrateCollaborationDiscovery(actorToken, items, (item) => {
+      if (generation === homeLoadGeneration.current) dispatch({ type: "item_hydrated", item });
+    }).catch((failure: unknown) => {
+      console.warn("[mobile-collaboration] discovery hydration failed", failure instanceof Error ? failure.name : "UnknownError");
+    });
+  }, []);
   const loadHome = useCallback(async () => {
+    const generation = ++homeLoadGeneration.current;
     dispatch({ type: "patch", patch: { loading: true, error: "" } });
     try {
       const actorToken = await token();
       const [inbox, shared] = await Promise.all([
         fetchCollaborationInbox(actorToken), fetchSharedCollaborations(actorToken),
       ]);
-      // Discovery is a metadata projection; each item's content comes from its home.
-      const items = await hydrateCollaborationDiscovery(actorToken, [...inbox.items, ...shared.items]);
+      if (generation !== homeLoadGeneration.current) return;
+      const items = [...inbox.items, ...shared.items];
       dispatch({ type: "patch", patch: {
         items,
+        hydratingKeys: items.filter(collaborationDiscoveryNeedsHydration).map(discoveryKey),
         inboxCursor: inbox.nextCursor ?? null,
         sharedCursor: shared.nextCursor ?? null,
         paginationError: "",
       } });
+      hydrateDiscovery(actorToken, items, generation);
     } catch (failure: unknown) {
       console.warn("[mobile-collaboration] discovery failed", failure instanceof Error ? failure.name : "UnknownError");
-      dispatch({ type: "patch", patch: { error: "Shared Chats are unavailable. Pull down or return later to try again." } });
-    } finally { dispatch({ type: "patch", patch: { loading: false } }); }
-  }, [token]);
+      if (generation === homeLoadGeneration.current) {
+        dispatch({ type: "patch", patch: { error: "Shared Chats are unavailable. Pull down or return later to try again." } });
+      }
+    } finally {
+      if (generation === homeLoadGeneration.current) dispatch({ type: "patch", patch: { loading: false } });
+    }
+  }, [hydrateDiscovery, token]);
   useEffect(() => { void loadHome(); }, [loadHome]);
   const loadMoreItems = async () => {
     if (loadingMoreItems || (!inboxCursor && !sharedCursor)) return;
+    const generation = homeLoadGeneration.current;
     dispatch({ type: "patch", patch: { loadingMoreItems: true, paginationError: "" } });
     try {
       const actorToken = await token();
@@ -192,14 +226,19 @@ export default function SharedScreen() {
         inboxCursor ? fetchCollaborationInbox(actorToken, inboxCursor) : null,
         sharedCursor ? fetchSharedCollaborations(actorToken, sharedCursor) : null,
       ]);
-      const additions = await hydrateCollaborationDiscovery(actorToken, [...(inbox?.items ?? []), ...(shared?.items ?? [])]);
+      // A page of a list that has since been reloaded belongs to the old list.
+      if (generation !== homeLoadGeneration.current) return;
+      const additions = [...(inbox?.items ?? []), ...(shared?.items ?? [])];
       dispatch({ type: "append_items", additions,
         ...(inbox ? { inboxCursor: inbox.nextCursor ?? null } : {}),
         ...(shared ? { sharedCursor: shared.nextCursor ?? null } : {}),
       });
+      hydrateDiscovery(actorToken, additions, generation);
     } catch (failure: unknown) {
       console.warn("[mobile-collaboration] discovery page failed", failure instanceof Error ? failure.name : "UnknownError");
-      dispatch({ type: "patch", patch: { paginationError: "More shared items could not be loaded. Try again." } });
+      if (generation === homeLoadGeneration.current) {
+        dispatch({ type: "patch", patch: { paginationError: "More shared items could not be loaded. Try again." } });
+      }
     } finally { dispatch({ type: "patch", patch: { loadingMoreItems: false } }); }
   };
   const loadChat = useCallback(async (scopeId: string) => {
@@ -380,7 +419,8 @@ export default function SharedScreen() {
     };
     const connect = async () => {
       try {
-        const stream = await openCollaborationStream(await token(), activeScopeId, "events", eventSequenceRef.current);
+        // A reconnect replaces the session in case the home ended it (denial or authority change).
+        const stream = await openCollaborationStream(await token(), activeScopeId, "events", eventSequenceRef.current, attempt > 0);
         if (closed) return;
         const NativeWebSocket = WebSocket as unknown as new (
           target: string,
@@ -748,9 +788,11 @@ function CollaborationHomeScreen({ state, onReview, onAccept, onDecline, onOpen,
   onOpen: (item: Extract<DiscoveryItem, { status: "accepted" }>) => Promise<void>;
   onLoadMore: () => Promise<void>;
 }) {
+  const hydrating = useMemo(() => new Set(state.hydratingKeys), [state.hydratingKeys]);
   const renderDiscovery = useCallback(({ item }: ListRenderItemInfo<DiscoveryItem>) => (
-    <DiscoveryCard item={item} onReview={onReview} onAccept={onAccept} onDecline={onDecline} onOpen={onOpen} />
-  ), [onAccept, onDecline, onOpen, onReview]);
+    <DiscoveryCard item={item} hydrating={hydrating.has(discoveryKey(item))}
+      onReview={onReview} onAccept={onAccept} onDecline={onDecline} onOpen={onOpen} />
+  ), [hydrating, onAccept, onDecline, onOpen, onReview]);
   return <FlatList data={state.items} keyExtractor={discoveryKey} contentContainerStyle={styles.page}
     ListHeaderComponent={<>
       <Text style={styles.title}>Shared with me</Text>
@@ -769,8 +811,9 @@ function CollaborationHomeScreen({ state, onReview, onAccept, onDecline, onOpen,
     </>} />;
 }
 
-function DiscoveryCard({ item, onReview, onAccept, onDecline, onOpen }: {
+function DiscoveryCard({ item, hydrating, onReview, onAccept, onDecline, onOpen }: {
   item: DiscoveryItem;
+  hydrating: boolean;
   onReview: (scopeId: string, invitationId: string) => Promise<void>;
   onAccept: (invitation: Invitation) => Promise<void>;
   onDecline: (invitation: Invitation) => Promise<void>;
@@ -782,9 +825,7 @@ function DiscoveryCard({ item, onReview, onAccept, onDecline, onOpen }: {
   </View>;
   if (!item.resource) return <View style={styles.card}>
     <Text style={styles.cardTitle}>{item.status === "invited" ? "Invitation" : `Shared ${kindLabel(item.kind)}`}</Text>
-    <Text style={styles.muted}>{item.home === "denied" ? "Access is no longer available."
-      : item.home === "offline" ? "The owner's computer is offline. Try again later."
-        : `Open this shared ${kindLabel(item.kind)} from Matrix on the web.`}</Text>
+    <Text style={styles.muted}>{unhydratedDiscoveryStatus(item, hydrating)}</Text>
   </View>;
   if (item.status === "invited") {
     const invitation = item.resource;
@@ -814,6 +855,14 @@ function DiscoveryCard({ item, onReview, onAccept, onDecline, onOpen }: {
     <Text style={styles.muted}>Shared Chat · {roleLabel(resource.scope.role)}</Text>
     <Action label={`Open ${resource.chat.title}`} onPress={() => void onOpen(item)} />
   </View>;
+}
+
+/** Why a discovery item has no content yet: still loading, refused, offline, or not openable on mobile. */
+function unhydratedDiscoveryStatus(item: Exclude<DiscoveryItem, { status: "organization_pending" }>, hydrating: boolean): string {
+  if (hydrating) return "Loading from the owner's computer…";
+  if (item.home === "denied") return "Access is no longer available.";
+  if (item.home === "offline") return "The owner's computer is offline. Try again later.";
+  return `Open this shared ${kindLabel(item.kind)} from Matrix on the web.`;
 }
 
 function kindLabel(kind: DiscoveryItem["kind"]): string {

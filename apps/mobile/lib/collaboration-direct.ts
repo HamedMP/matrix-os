@@ -49,7 +49,8 @@ const POSSESSION_DOMAIN = "matrix-collaboration-possession-v2";
 const REQUEST_DOMAIN = "matrix-collaboration-request-v2";
 const INVITATION_PATH = /^\/api\/collaboration\/invitations\/[0-9a-f-]{36}(?:\/(?:accept|decline))?$/;
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1", "localhost"]);
-const MALFORMED_BEARER_ERRORS = new Set(["SyntaxError", "TypeError", "InvalidCharacterError"]);
+const MALFORMED_BEARER_ERRORS = new Set(["SyntaxError", "TypeError"]);
+const BASE64URL_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 
 const IssuedTicketSchema = z.strictObject({
   signedTicket: CollaborationSignedConnectionTicketSchema,
@@ -88,7 +89,12 @@ export interface MobileCollaborationDirectOptions {
 
 export interface MobileCollaborationDirect {
   request(token: string, scopeId: string, method: CollaborationDirectMethod, path: string, body?: unknown, conditions?: CollaborationDeleteConditions): Promise<unknown>;
-  stream(token: string, scopeId: string, purpose: CollaborationStreamPurpose, after: string): Promise<CollaborationDirectStream>;
+  /**
+   * `fresh` discards the cached session first. Pass it when reconnecting after a socket
+   * closed: the home ends a session on denial or an authority change, and a session that
+   * still looks live locally would otherwise keep failing admission until it expires.
+   */
+  stream(token: string, scopeId: string, purpose: CollaborationStreamPurpose, after: string, fresh?: boolean): Promise<CollaborationDirectStream>;
   /** Drops every cached session and proof key; the homes expire them within the session TTL. */
   close(): void;
 }
@@ -107,7 +113,7 @@ export function createMobileCollaborationDirect(options: MobileCollaborationDire
   const send = async (url: string, init: RequestInit): Promise<Response> => {
     try {
       return await (options.fetchImpl ?? globalThis.fetch)(url, {
-        ...init, redirect: "error", signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+        ...init, redirect: "error", signal: timeoutSignal(REQUEST_TIMEOUT_MS),
       });
     } catch (error: unknown) {
       console.warn("[mobile-collaboration-direct] request failed", error instanceof Error ? error.name : "UnknownError");
@@ -313,12 +319,12 @@ export function createMobileCollaborationDirect(options: MobileCollaborationDire
     return readJson(response);
   };
 
-  const stream: MobileCollaborationDirect["stream"] = async (token, scopeId, purpose, after) => {
+  const stream: MobileCollaborationDirect["stream"] = async (token, scopeId, purpose, after, fresh = false) => {
     const actorId = tokenActor(token);
     const scope = requireScopeId(scopeId);
     const cursor = CollaborationRevisionSchema.safeParse(after);
     if (!cursor.success) throw new CollaborationDirectError("invalid_request");
-    const connected = await ensure(token, actorId, scope);
+    const connected = await ensure(token, actorId, scope, fresh);
     const { signedTicket, origin } = await issueTicket(token, actorId, scope, purpose, connected.key);
     if (origin !== connected.origin) throw new CollaborationDirectError("invalid_response");
     const url = new URL(`/ws/collaboration/direct/scopes/${scope}/${purpose}`, origin);
@@ -482,16 +488,43 @@ function toHex(bytes: Uint8Array): string {
   return hex;
 }
 
+/** Unpadded base64url without `btoa`, which not every React Native runtime provides. */
 function toBase64Url(bytes: Uint8Array): string {
-  let binary = "";
-  for (const byte of bytes) binary += String.fromCharCode(byte);
-  return btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "");
+  let output = "";
+  for (let index = 0; index < bytes.length; index += 3) {
+    const second = bytes[index + 1];
+    const third = bytes[index + 2];
+    const triple = (bytes[index]! << 16) | ((second ?? 0) << 8) | (third ?? 0);
+    output += BASE64URL_ALPHABET[(triple >> 18) & 63]! + BASE64URL_ALPHABET[(triple >> 12) & 63]!;
+    if (second !== undefined) output += BASE64URL_ALPHABET[(triple >> 6) & 63]!;
+    if (third !== undefined) output += BASE64URL_ALPHABET[triple & 63]!;
+  }
+  return output;
 }
 
+/** Strict unpadded base64url decode without `atob`; malformed input throws a TypeError. */
 function fromBase64Url(value: string): Uint8Array {
-  const padded = value.replaceAll("-", "+").replaceAll("_", "/") + "=".repeat((4 - (value.length % 4)) % 4);
-  const binary = atob(padded);
-  const bytes = new Uint8Array(binary.length);
-  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+  if (!/^[A-Za-z0-9_-]*$/.test(value) || value.length % 4 === 1) throw new TypeError("Invalid base64url");
+  const bytes = new Uint8Array(Math.floor((value.length * 3) / 4));
+  let buffer = 0;
+  let bits = 0;
+  let offset = 0;
+  for (const character of value) {
+    buffer = ((buffer << 6) | BASE64URL_ALPHABET.indexOf(character)) & 0x3fff;
+    bits += 6;
+    if (bits >= 8) {
+      bits -= 8;
+      bytes[offset++] = (buffer >> bits) & 0xff;
+    }
+  }
   return bytes;
+}
+
+/** `AbortSignal.timeout` where the runtime has it, otherwise the self-expiring controller other mobile requests use. */
+function timeoutSignal(milliseconds: number): AbortSignal {
+  const timeout = (AbortSignal as { timeout?: (ms: number) => AbortSignal }).timeout;
+  if (typeof timeout === "function") return timeout(milliseconds);
+  const controller = new AbortController();
+  setTimeout(() => controller.abort(), milliseconds);
+  return controller.signal;
 }

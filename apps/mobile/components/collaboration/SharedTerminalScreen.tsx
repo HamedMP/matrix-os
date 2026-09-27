@@ -113,7 +113,8 @@ export function SharedTerminalScreen({ scopeId, actorId, getToken, onBack }: {
     };
     const connect = async () => {
       try {
-        const stream = await openCollaborationStream(await getToken(), scopeId, "terminal", sequence.toString());
+        // A reconnect replaces the session in case the home ended it (denial or authority change).
+        const stream = await openCollaborationStream(await getToken(), scopeId, "terminal", sequence.toString(), attempt > 0);
         if (closed) return;
         const NativeWebSocket = WebSocket as unknown as new (
           target: string,

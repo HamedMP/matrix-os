@@ -32,7 +32,7 @@ import {
   CollaborationUserStateSchema,
   type CollaborationTerminalAction,
 } from "@matrix-os/contracts/collaboration";
-import { getRandomBytes } from "expo-crypto";
+import { getRandomValues } from "expo-crypto";
 import { z } from "zod/v4";
 import {
   CollaborationDirectError,
@@ -78,10 +78,18 @@ type DiscoveryItem = z.infer<typeof CollaborationDiscoveryItemSchema>;
 interface ResponseSchema<T> { parse(value: unknown): T }
 
 /**
+ * Native CSPRNG only. expo-crypto's `getRandomBytes` falls back to `Math.random`
+ * under remote JS debugging, which must never produce proof keys or nonces.
+ */
+function secureRandomBytes(length: number): Uint8Array {
+  return getRandomValues(new Uint8Array(length));
+}
+
+/**
  * Scope content lives on the resource's home and is reached only over the direct
  * transport; the platform serves discovery metadata and connection tickets.
  */
-const direct = createMobileCollaborationDirect({ platformUrl: HOSTED_GATEWAY_URL, randomBytes: getRandomBytes });
+const direct = createMobileCollaborationDirect({ platformUrl: HOSTED_GATEWAY_URL, randomBytes: secureRandomBytes });
 
 function url(path: string): string {
   return `${HOSTED_GATEWAY_URL}${path}`;
@@ -126,20 +134,36 @@ export function fetchSharedCollaborations(token: string, cursor?: string) {
   return fetchAuthenticatedJson({ url: discoveryUrl("shared", cursor), token, schema: CollaborationDiscoveryResponseSchema, errorMessage: ERROR });
 }
 
+/** Kinds Native Mobile can open; other kinds stay metadata-only. */
+const HYDRATED_KINDS = new Set(["chat", "terminal", "project"]);
+
+/** Whether an item still has content to fetch from its home (and should show as loading until then). */
+export function collaborationDiscoveryNeedsHydration(item: DiscoveryItem): boolean {
+  if (item.status === "organization_pending" || item.resource !== undefined || item.home !== undefined) return false;
+  return item.status === "invited" || HYDRATED_KINDS.has(item.kind);
+}
+
 /**
  * Fills each metadata-only discovery item from the resource's home, the way the
  * web direct client does. An unreachable home leaves the item as `offline`, a
  * refusal or an unexpected shape as `denied`; kinds Native Mobile cannot open
- * yet stay metadata-only.
+ * yet stay metadata-only. `onHydrated` receives each item as soon as its home
+ * answers, so one slow home never holds back the rest of the list.
  */
-export async function hydrateCollaborationDiscovery(token: string, items: readonly DiscoveryItem[]): Promise<DiscoveryItem[]> {
+export async function hydrateCollaborationDiscovery(
+  token: string,
+  items: readonly DiscoveryItem[],
+  onHydrated?: (item: DiscoveryItem) => void,
+): Promise<DiscoveryItem[]> {
   const results: DiscoveryItem[] = new Array(items.length);
   let next = 0;
   const workers = Array.from({ length: Math.min(MAX_HYDRATION_CONCURRENCY, items.length) }, async () => {
     while (next < items.length) {
       const index = next++;
       // react-doctor-disable-next-line react-doctor/async-await-in-loop -- intentional: each worker drains the shared queue one item at a time so at most MAX_HYDRATION_CONCURRENCY home requests are in flight.
-      results[index] = await hydrateDiscoveryItem(token, items[index]!);
+      const item = await hydrateDiscoveryItem(token, items[index]!);
+      results[index] = item;
+      onHydrated?.(item);
     }
   });
   await Promise.all(workers);
@@ -147,14 +171,13 @@ export async function hydrateCollaborationDiscovery(token: string, items: readon
 }
 
 async function hydrateDiscoveryItem(token: string, item: DiscoveryItem): Promise<DiscoveryItem> {
-  if (item.status === "organization_pending" || item.resource !== undefined) return item;
+  if (item.status === "organization_pending" || !collaborationDiscoveryNeedsHydration(item)) return item;
   try {
     if (item.status === "invited") {
       const resource = await direct.request(token, item.scopeId, "GET", `/api/collaboration/invitations/${item.invitationId}`);
       return parseHydrated({ ...item, resource });
     }
-    const content = item.kind === "chat" || item.kind === "terminal" || item.kind === "project" ? item.kind : null;
-    if (!content) return item;
+    const content = item.kind;
     const base = `/api/collaboration/scopes/${item.scopeId}`;
     const [scope, value] = await Promise.all([
       direct.request(token, item.scopeId, "GET", base),
@@ -406,15 +429,17 @@ export function updateSharedChatReadState(token: string, scopeId: string, readTh
 /**
  * A one-use direct event or terminal socket for this scope: open `url` with
  * `headers`, then send `handshake` as the first frame before anything else.
+ * Pass `reconnect` after a socket closed so a session the home ended is replaced.
  */
 export async function openCollaborationStream(
   token: string,
   scopeId: string,
   purpose: CollaborationStreamPurpose,
   after = "0",
+  reconnect = false,
 ): Promise<CollaborationDirectStream> {
   try {
-    return await direct.stream(token, CollaborationIdSchema.parse(scopeId), purpose, after);
+    return await direct.stream(token, CollaborationIdSchema.parse(scopeId), purpose, after, reconnect);
   } catch (error: unknown) {
     if (!(error instanceof CollaborationDirectError) && !(error instanceof z.ZodError)) {
       console.warn("[mobile-collaboration] stream preparation failed", error instanceof Error ? error.name : "UnknownError");
