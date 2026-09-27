@@ -63,7 +63,7 @@ import SharedInvitationPage from "../../shell/src/app/shared/invitations/[invita
 import SharedProjectPage from "../../shell/src/app/shared/project/[scopeId]/page";
 import { CollaborationFrame } from "../../shell/src/components/collaboration/CollaborationFrame";
 import { ShellClerkAuth } from "../../shell/src/components/auth/ShellClerkAuth";
-import { closeShellCollaborationSessions } from "../../shell/src/lib/collaboration";
+import { closeShellCollaborationSessions, createShellCollaborationApi } from "../../shell/src/lib/collaboration";
 
 const FORBIDDEN_PATHS = [
   /^\/api\/system\/info/,
@@ -180,6 +180,7 @@ beforeEach(() => {
   apiState.fake = null;
   replaceMock.mockReset();
   vi.mocked(closeShellCollaborationSessions).mockClear();
+  vi.mocked(createShellCollaborationApi).mockClear();
   Object.defineProperty(window, "location", {
     configurable: true,
     value: { origin, href: `${origin}/shared`, pathname: "/shared", search: "", replace: replaceMock },
@@ -345,7 +346,7 @@ describe("CollaborationFrame", () => {
   });
 
   it("stays signed in and reports the failure when Clerk sign-out fails", async () => {
-    recordFetches();
+    const requests = recordFetches();
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     clerkState.signOut.mockRejectedValueOnce(new Error("network"));
     render(<CollaborationFrame view={{ kind: "home" }} />);
@@ -356,6 +357,12 @@ describe("CollaborationFrame", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("Sign-out did not finish. Try again.");
     expect(replaceMock).not.toHaveBeenCalled();
     expect(vi.mocked(closeShellCollaborationSessions)).toHaveBeenCalled();
+    // Sign-out closed every direct session, so the frame must continue on a fresh API.
+    await waitFor(() => expect(vi.mocked(createShellCollaborationApi)).toHaveBeenCalledTimes(2));
+    const [firstApi, secondApi] = vi.mocked(createShellCollaborationApi).mock.results.map((result) => result.value);
+    expect(secondApi).not.toBe(firstApi);
+    await waitFor(() => expect(requests.filter((request) => request.path === "/api/collaboration/inbox")).toHaveLength(2));
+    expect(await screen.findByText("Nothing shared yet")).toBeVisible();
     fireEvent.pointerDown(screen.getByRole("button", { name: "Account menu for Mina Member" }), { button: 0, ctrlKey: false });
     expect(await screen.findByRole("menuitem", { name: "Sign out" })).not.toHaveAttribute("data-disabled");
   });
