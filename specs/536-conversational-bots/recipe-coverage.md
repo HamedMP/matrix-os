@@ -22,9 +22,9 @@ Source skill names that reference another vendor's product, such as "Design a Gr
 | Agent coordination | Participant/task management, bounded delegation, explicit creation/grant authority |
 | Specialist external execution | Explicit telephony or supported device adapter; recipient/device scope and observed external outcome |
 
-## Proposed Launch Set (M1)
+## Launch Set (M1)
 
-FR-013 requires a validated launch set before launch. The proposal below needs owner confirmation. It covers six capability families using connectors, web research, and artifacts only, so no entry depends on computer use (M4), groups (M3), or scheduling (M2).
+FR-013 requires a validated launch set before launch. The owner confirmed these eight entries on 2026-09-27. Each still starts not tested and must reach validated status with recorded evidence before M1 launches. The set covers six capability families using connectors, web research, and artifacts only, so no entry depends on computer use (M4), groups (M3), or scheduling (M2).
 
 | Entry | Family | Why it is in the launch set |
 |---|---|---|

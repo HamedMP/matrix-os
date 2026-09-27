@@ -17,7 +17,7 @@
 - [x] Requirements are testable; success criteria describe observable outcomes.
 - [x] Acceptance scenarios include ordinary, interrupted, declined, duplicate, revoked, and unauthorized paths.
 - [x] Scope distinguishes complete-product ambition from the staged feasibility program, and delivery milestones order the release.
-- [x] All existing catalogue entries have a capability mapping and a concrete proposed task with an observable result; a proposed launch set awaits owner confirmation.
+- [x] All existing catalogue entries have a capability mapping and a concrete proposed task with an observable result; the owner confirmed the eight-entry launch set on 2026-09-27.
 - [x] Surface parity names Web Canvas, Web Desktop, Electron Desktop, Web Mobile, and Native Mobile.
 - [x] Bot history, private memory, group membership, account connection, and authority are distinct.
 - [x] Memory kinds, scopes, provenance, retrieval bounds, and forgetting are specified; external content cannot create standing memory without owner confirmation.
@@ -47,7 +47,7 @@
 | FR-006-007 | Story 3; Spike B (S4) plus private-context, guest AI permission, and cross-owner negative tests |
 | FR-008-010 | Story 4; Spike C (S3) and Spike A (S5) plus takeover, approvals, and uncertain-effect recovery |
 | FR-011-012 | Story 5; scoped-memory and memory-injection tests in Spike A; export/forget/learning/routine qualification in production follow-up |
-| FR-013 | Recipe map with concrete tasks and proposed launch set; launch-set validation before M1; later per-entry live acceptance |
+| FR-013 | Recipe map with concrete tasks and confirmed launch set; launch-set validation before M1; later per-entry live acceptance |
 | FR-014 | Implementation surface qualification per milestone; pending surface evidence blocks production release |
 | FR-015 | Migration preservation scenarios in production follow-up; spike leaves existing harnesses untouched |
 | FR-016 | Stories 2/4 edge cases; failure-injection matrix |
