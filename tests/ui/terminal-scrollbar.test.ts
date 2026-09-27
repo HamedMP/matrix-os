@@ -3,7 +3,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createTerminalNativeHistory } from "../../packages/ui/src/terminal/terminal-native-history";
 import { createTerminalScrollbar } from "../../packages/ui/src/terminal/terminal-scrollbar";
 
-afterEach(() => document.body.replaceChildren());
+let cleanup: (() => void) | undefined;
+afterEach(() => { cleanup?.(); cleanup = undefined; document.body.replaceChildren(); });
 function setup(tailHeight?: number, nativeHistory?: Parameters<typeof createTerminalScrollbar>[0]["nativeHistory"]) {
   const parent = document.createElement("div"), host = document.createElement("div"), root = document.createElement("div");
   root.innerHTML = '<div class="xterm-scrollable-element"><div class="scrollbar vertical"></div></div>';
@@ -15,6 +16,7 @@ function setup(tailHeight?: number, nativeHistory?: Parameters<typeof createTerm
   const terminal = { buffer: { active }, scrollToLine: vi.fn((line: number) => { active.viewportY = line; onScroll?.(); }),
     onScroll: (listener: () => void) => { onScroll = listener; return { dispose }; } };
   const scrollbar = createTerminalScrollbar({ host, root, terminal, nativeHistory, getCellHeight: () => 16, getTailHeight: tailHeight === undefined ? undefined : () => tailHeight, onPan: vi.fn() });
+  cleanup = () => scrollbar.dispose();
   scrollbar.sync();
   const rail = parent.querySelector<HTMLElement>("[data-terminal-scrollbar=content]")!;
   return { parent, host, root, active, terminal, scrollbar, rail, dispose };

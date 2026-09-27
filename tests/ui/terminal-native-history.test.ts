@@ -92,3 +92,17 @@ it("recovers after an unavailable native query and clears state across reattachm
     expect(history.getState()?.above).toBe(50);
   } finally { history.dispose(); vi.useRealTimers(); }
 });
+
+it.each(["unsupported", "disposed"])("rejects a scroll target when native history is %s", async lifecycle => {
+  const { createTerminalNativeHistory } = await import("../../packages/ui/src/terminal/terminal-native-history");
+  const send = vi.fn();
+  const history = createTerminalNativeHistory({ send, canWrite: () => true, onState() {} });
+  try {
+    if (lifecycle === "disposed") history.attach(true);
+    history.update({ above: 50, below: 0, rows: 36 });
+    if (lifecycle === "disposed") history.dispose();
+    send.mockClear();
+    expect(history.scrollTo(20)).toBe(false);
+    expect(send).not.toHaveBeenCalled();
+  } finally { history.dispose(); }
+});
