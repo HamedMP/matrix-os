@@ -1,12 +1,13 @@
 // @vitest-environment jsdom
 import React from "react";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, renderHook, screen, waitFor } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import type { CollaborationProjectInventory, CollaborationScope } from "@matrix-os/contracts";
 import { ProjectSharingDialog } from "../../packages/ui/src/collaboration/ProjectSharingDialog";
 import { ProjectSharingButton } from "../../packages/ui/src/collaboration/ProjectSharingButton";
 import { ChatCollaboratorsDialog } from "../../packages/ui/src/collaboration/ChatCollaboratorsDialog";
+import { useProjectSharing } from "../../packages/ui/src/collaboration/useProjectSharing";
 
 beforeAll(() => {
   HTMLDialogElement.prototype.showModal = vi.fn(function (this: HTMLDialogElement) { this.open = true; });
@@ -34,6 +35,34 @@ const scope: CollaborationScope = {
     stopTerminal: false,
   },
 };
+
+describe("project sharing flow for menu triggers", () => {
+  it("ignores a second start while the first is still preparing instead of reporting a failure", async () => {
+    const api = apiFixture();
+    let resolvePreflight!: (value: unknown) => void;
+    api.post.mockImplementationOnce(() => new Promise((resolve) => { resolvePreflight = resolve; }));
+    api.post.mockResolvedValueOnce(scope);
+    api.get
+      .mockResolvedValueOnce(scope)
+      .mockResolvedValueOnce({ members: [] })
+      .mockResolvedValueOnce(completeInventory());
+    const { result } = renderHook(() => useProjectSharing({
+      api, runtimeId: "vps:runtime", organizationId: "org_matrix_team", projectId: "proj_launch", projectName: "Launch",
+    }));
+
+    act(() => result.current.start());
+    act(() => result.current.start());
+    expect(result.current.pending).toBe(true);
+    expect(result.current.error).toBe(false);
+    await act(async () => {
+      resolvePreflight({ eligible: true, resourceRevision: "7", confirmationToken: "p".repeat(64) });
+    });
+
+    await waitFor(() => expect(result.current.open).toBe(true));
+    expect(result.current.error).toBe(false);
+    expect(api.post.mock.calls.filter(([path]) => String(path).endsWith("/scopes/preflight"))).toHaveLength(1);
+  });
+});
 
 describe("whole-project sharing confirmation", () => {
   it("keeps the share action disabled until runtime identity is ready", () => {

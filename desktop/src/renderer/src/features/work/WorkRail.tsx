@@ -30,6 +30,7 @@ import { WorkRailSection } from "./work-rail/WorkRailSection";
 import { WorkRailSearchDialog } from "./WorkRailSearchDialog";
 import type { CanonicalChatTitleProjection } from "./WorkSurfaceRuntime";
 import { createDesktopCollaborationApi } from "../../lib/collaboration";
+import { useDesktopProjectSharingContext } from "../project/DesktopProjectSharing";
 import { useConnection } from "../../stores/connection";
 
 type SectionKey = "pinned" | "projects" | "recents";
@@ -164,6 +165,8 @@ export function WorkRail({
   const [renameError, setRenameError] = useState<string | null>(null);
   const [deleteProjectTarget, setDeleteProjectTarget] = useState<Project | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
+  // Resolved once for every project row, not once per project.
+  const projectSharing = useDesktopProjectSharingContext();
   const routeScope = `${active ? "active" : "inactive"}\0${activeChatId ?? ""}\0${activeProjectSlug ?? ""}`;
   const routeScopeRef = useRef({ client, key: routeScope, generation: 0 });
   const projectedChatTitlesRef = useRef(projectedChatTitles);
@@ -376,6 +379,7 @@ export function WorkRail({
       <WorkRailProjectGroup
         key={group.id}
         group={group}
+        sharing={projectSharing}
         expanded={expanded}
         activeProjectSlug={activeProjectSlug}
         activeChatId={activeChatId}

@@ -17,6 +17,7 @@ import {
 } from "@/lib/hugeicons";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 import { ProjectSharing } from "@/components/projects/ProjectSharing";
+import { groupShellSessionsByProject, MAIN_TERMINAL_PROJECT } from "./terminal-project-groups";
 import { sessionAccent } from "./terminal-session-names";
 import { NewSessionMenu } from "./NewSessionMenu";
 import { TerminalAgentLogo } from "./TerminalAgentLogo";
@@ -688,7 +689,7 @@ export function ShellSessionGroup({
 }) {
   const collapsible = label === "Background";
   const contentId = `terminal-session-group-${label.toLowerCase()}-content`;
-  const projectGroups = Object.entries(Object.groupBy(shells, (shell) => shell.project || "main"));
+  const projectGroups = groupShellSessionsByProject(shells);
   return (
     <section data-testid={`terminal-session-group-${label.toLowerCase()}`} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
       <div className="flex items-center justify-between" style={{ color: "var(--terminal-drawer-muted)", minHeight: 22 }}>
@@ -744,10 +745,10 @@ export function ShellSessionGroup({
               <div key={`${label}-${project}`} data-terminal-project-group={project} style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 <div className="flex items-center justify-between gap-2"
                   style={{ color: "var(--terminal-drawer-subtle)", fontSize: 11, fontWeight: 700, letterSpacing: "0.04em" }}>
-                  <span>{project === "main" ? "Main" : project}</span>
-                  {project !== "main" ? <ProjectSharing projectId={project} projectName={project} /> : null}
+                  <span>{project === MAIN_TERMINAL_PROJECT ? "Main" : project}</span>
+                  {project !== MAIN_TERMINAL_PROJECT ? <ProjectSharing projectId={project} projectName={project} /> : null}
                 </div>
-                {(projectShells ?? []).map((shell) => (
+                {projectShells.map((shell) => (
                   <ShellCard
                     key={`${label}-${shell.name}`}
                     shell={shell}
