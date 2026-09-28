@@ -4,7 +4,7 @@ Recorded 2026-09-28 before provisioning or model calls. The owner authorized the
 
 ## Machine plan
 
-- Candidate: one preview VPS, `pr-2015`, using the supported Germany CPX22 x86 plan (2 vCPU, 4 GiB RAM, 80 GiB disk). The preview workflow reaps `pr-*` machines after 72 hours and on PR close. Verify the actual provisioned type and creation time before live use.
+- Candidate: one preview VPS, `pr-2022`, requested by the `preview-vps` label on draft L11 PR #2022. The platform defaults to the supported Germany CPX22 x86 plan (2 vCPU, 4 GiB RAM, 80 GiB disk); verify the actual provisioned type and creation time before live use. The preview workflow reaps `pr-*` machines after 72 hours and on PR close.
 - Current published Hetzner rates: CPX22 USD 0.0368/hour plus primary IPv4 USD 0.0010/hour, excluding VAT. At 72 hours this is USD 2.7216 excluding VAT. Apply a conservative USD 10 machine/IP cap including tax and unforeseen charges; stop or delete early if needed. Sources: https://docs.hetzner.com/general/infrastructure-and-availability/price-adjustment/ and https://docs.hetzner.com/cloud/servers/primary-ips/overview/.
 - Machine lifetime: 72 hours maximum per preview. Do not leave an unneeded preview running. Preserve it after validation only until the owner decides deletion, within the authorized cap.
 
@@ -23,4 +23,4 @@ Recorded 2026-09-28 before provisioning or model calls. The owner authorized the
 | Spike B | 0.00 | 0.00 | Not started |
 | Spike C | 0.00 | 0.00 | Not started |
 
-The S0 observation is below its USD 2 subcap. The USD 0.10 reservation conservatively covers the earlier calls that returned no usage; budget decisions use the reservation until provider reconciliation. No preview VPS had been provisioned when this entry was updated.
+The S0 observation is below its USD 2 subcap. The USD 0.10 reservation conservatively covers the earlier calls that returned no usage; budget decisions use the reservation until provider reconciliation. At 20:41 UTC on 2026-09-28, the `pr-2022` preview workflow had completed its bundle build and queued publication/provisioning; actual VPS creation remains to be verified before the machine ledger is updated.
