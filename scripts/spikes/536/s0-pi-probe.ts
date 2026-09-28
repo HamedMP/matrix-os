@@ -72,7 +72,7 @@ function record(usage: Usage) {
 /** Every model call made by the probe, including compaction summaries, is metered here. */
 const provider: Provider<Api> = Object.assign(Object.create(baseProvider) as Provider<Api>, {
   streamSimple: ((streamModel, context, options) => {
-    const stream = baseProvider.streamSimple(streamModel, context, options);
+    const stream = baseProvider.streamSimple(streamModel, context, { ...options, apiKey });
     pendingUsage.push(stream.result().then((reply) => record(reply.usage), (error: unknown) => {
       console.warn("s0 probe call ended without usage:", error instanceof Error ? error.name : "UnknownError");
     }));

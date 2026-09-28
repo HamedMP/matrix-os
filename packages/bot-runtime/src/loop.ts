@@ -3,7 +3,7 @@ import { normalizeContext, type Api, type ImageContent, type Model, type Provide
 import type { BotRunCommand, BotRunOutcome, BotToolErrorCode } from "@matrix-os/contracts";
 import { BotBrokerError, type BotBrokerClient } from "./broker-client.js";
 import { createEventProjector } from "./events.js";
-import { createBridgeModel } from "./providers.js";
+import { BROKER_PLACEHOLDER_KEY, createBridgeModel } from "./providers.js";
 import {
   BotSessionError,
   compactSession,
@@ -98,6 +98,9 @@ export async function runBotTurn(input: RunBotTurnInput): Promise<BotRunOutcome>
     },
     streamFn: (streamModel, context, options) => provider.streamSimple(streamModel, context, {
       ...options,
+      // A Provider does not resolve auth itself. The worker only carries this
+      // inert value; the loopback broker owns the funded credential.
+      apiKey: BROKER_PLACEHOLDER_KEY,
       maxTokens: command.route.maxOutputTokens,
     }),
     toolExecution: "sequential",
@@ -198,7 +201,8 @@ export async function runBotTurn(input: RunBotTurnInput): Promise<BotRunOutcome>
         const reply = await provider.streamSimple(model, normalizeContext({
           systemPrompt: SUMMARY_PROMPT,
           messages: [{ role: "user", content: transcript, timestamp: now() }],
-        }), { maxTokens: SUMMARY_MAX_TOKENS, ...(input.signal ? { signal: input.signal } : {}) }).result();
+        }), { apiKey: BROKER_PLACEHOLDER_KEY, maxTokens: SUMMARY_MAX_TOKENS,
+          ...(input.signal ? { signal: input.signal } : {}) }).result();
         return reply.stopReason === "error" || reply.stopReason === "aborted" ? "" : textOf(reply);
       } catch (error: unknown) {
         console.warn("[bot-runtime] session summary failed:", error instanceof Error ? error.name : "UnknownError");
