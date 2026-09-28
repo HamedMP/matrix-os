@@ -30,6 +30,14 @@ owner home, PostgreSQL data, Terminal jobs, agent jobs, and process state that
 is promised durable survive the cutover; any unpreserved process class must
 be identified and repaired before cohort rollout.
 
+In particular, gateway shutdown currently invokes the coding-agent turn
+lifecycle's `shutdown()`, which aborts active turns. The migration must drain
+or defer an upgrade while a non-detachable turn is active, and verify actual
+turn completion after reconnect. A healthy new gateway alone is not evidence
+that the old run survived. Terminal Zellij keepers use separate user units,
+but their process IDs and tab contents still need an end-to-end preservation
+check during the service stop and restart.
+
 Removing `matrix` from `/etc/group` does not revoke Docker from already running
 processes. The cutover must verify the live socket ACL and fresh process group
 sets, then deny `sudo -n true`, raw Docker socket access, edits to operator SSH
