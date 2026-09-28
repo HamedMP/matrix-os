@@ -73,7 +73,6 @@ function BotQuestion({ interaction, onResolve, busy }: {
         placeholder={question.options ? "Other answer" : "Your answer"} placeholderTextColor={styles.muted.color}
         style={[styles.button, styles.text]} onChangeText={(value) => {
           setTyped((current) => ({ ...current, [question.questionId]: value }));
-          if (!question.multiSelect && value.trim()) setSelected((current) => ({ ...current, [question.questionId]: [] }));
         }} /> : null}
     </View>)}
     <Pressable accessibilityRole="button" accessibilityState={{ disabled: busy || !complete }}

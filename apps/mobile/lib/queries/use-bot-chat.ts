@@ -2,6 +2,7 @@ import { useAuth } from "@clerk/clerk-expo";
 import { useQuery } from "@tanstack/react-query";
 import { fetchNativeBotChat, mutateNativeBotMemory, resolveNativeBotInteraction, revokeNativeBotGrant } from "@/lib/requests/bots";
 import type { BotMemoryMutationRequest, ResolveBotInteractionRequest } from "@matrix-os/contracts";
+import { mobileQueryKeys } from "@/lib/requests";
 
 const REFRESH_INTERVAL_MS = 15_000;
 
@@ -9,7 +10,7 @@ export function useBotChat(chatId: string | null, gatewayUrl: string | null) {
   const { getToken, isLoaded, isSignedIn, userId } = useAuth();
   const enabled = Boolean(isLoaded && isSignedIn && userId && chatId && gatewayUrl);
   const query = useQuery({
-    queryKey: ["native-bot-chat", userId ?? "signed-out", gatewayUrl ?? "none", chatId ?? "none"],
+    queryKey: mobileQueryKeys.botChat(userId ?? "signed-out", gatewayUrl ?? "none", chatId ?? "none"),
     enabled,
     queryFn: async () => {
       const token = await getToken();

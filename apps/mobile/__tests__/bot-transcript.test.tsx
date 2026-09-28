@@ -79,6 +79,52 @@ it("reuses a creation request after the chooser closes and reopens", async () =>
   expect(onCreate.mock.calls[0]![1]).toBe(onCreate.mock.calls[1]![1]);
 }, 20_000);
 
+it("keeps the selected option when an Other answer is typed then cleared", async () => {
+  const onResolve = jest.fn(async () => ({ interaction: { interactionId: "in_abcdefgh", status: "resolved", revision: 2 } }));
+  const question = { ...snapshot.interactions[0], payload: { kind: "question", questions: [
+    { questionId: "format", header: "Format", question: "Which format?", allowOther: true, secret: false,
+      options: [{ label: "Brief", description: "One page" }] },
+  ] } };
+  render(<BotChatControls snapshot={{ ...snapshot, interactions: [question] } as never}
+    onResolve={onResolve as never} onRevoke={jest.fn()} onMemory={jest.fn()} onRefresh={jest.fn()} />);
+  fireEvent.press(screen.getByText("Brief"));
+  fireEvent.changeText(screen.getByLabelText("Answer Format"), "Detailed");
+  fireEvent.changeText(screen.getByLabelText("Answer Format"), "");
+  expect(screen.getByRole("button", { name: "Answer" }).props.accessibilityState.disabled).toBe(false);
+  fireEvent.press(screen.getByText("Answer"));
+  await waitFor(() => expect(onResolve).toHaveBeenCalledWith("in_abcdefgh", {
+    kind: "question", baseRevision: 1, structuredAnswers: { format: ["Brief"] },
+  }));
+}, 20_000);
+
+it("does not let an older create completion erase a newer retry ID", async () => {
+  let finishOlder!: (chatId: string) => void;
+  const older = new Promise<string>((resolve) => { finishOlder = resolve; });
+  const onCreate = jest.fn().mockReturnValueOnce(older)
+    .mockRejectedValueOnce(new Error("response lost"))
+    .mockResolvedValueOnce("chat_newer");
+  const onOpenChat = jest.fn();
+  const attemptRef = { current: null };
+  const recipes = [
+    { recipeId: "inbox-triage", version: "v1", name: "Inbox helper", description: "Inbox", output: "Brief" },
+    { recipeId: "competitor-watching", version: "v1", name: "Market helper", description: "Market", output: "Report" },
+  ];
+  const chooser = () => <BotRecipeChooser recipes={recipes} onCreate={onCreate} onOpenChat={onOpenChat}
+    attemptRef={attemptRef} attemptScope="owner:gateway" />;
+  const first = render(chooser());
+  fireEvent.press(first.getByRole("button", { name: "Use Inbox helper" }));
+  first.unmount();
+  const second = render(chooser());
+  fireEvent.press(second.getByRole("button", { name: "Use Market helper" }));
+  await waitFor(() => expect(second.getByText("Bot could not be created. Try again.")).toBeTruthy());
+  const newerRequestId = onCreate.mock.calls[1]![1];
+  finishOlder("chat_older");
+  await waitFor(() => expect(onOpenChat).toHaveBeenCalledWith("chat_older"));
+  fireEvent.press(second.getByRole("button", { name: "Use Market helper" }));
+  await waitFor(() => expect(onOpenChat).toHaveBeenCalledWith("chat_newer"));
+  expect(onCreate.mock.calls[2]![1]).toBe(newerRequestId);
+}, 20_000);
+
 it("keeps a resolved connect request settled when opening consent fails", async () => {
   const connect = { ...snapshot.interactions[0], kind: "connect_request",
     payload: { kind: "connect_request", service: "gmail", access: ["read"], benefit: "Read your inbox",
