@@ -45,6 +45,7 @@ const MAX_QUEUED_EVENTS = 1_000;
 /** Tools the broker serves today; the rest of a recipe's set arrives with later layers. */
 const SERVED_CAPABILITIES: readonly BotToolCapability[] = [
   "artifact.read", "artifact.write", "interaction.create", "memory.propose", "memory.search",
+  "integration.inventory", "integration.call",
 ];
 
 export type BotTurnEvent =
@@ -146,8 +147,13 @@ export function createBotTaskOrchestrator(deps: {
     const reason = status === "waiting_capacity" ? "capacity_unavailable" : blockedReason;
     try {
       await deps.transact(task.ownerId, async (tx) => {
+        // A run that ended with a request to the owner still open leaves its task waiting for them.
+        const waiting = to === "completed" && await tx.db.selectFrom("bot_interactions").select("interaction_id")
+          .where("owner_id", "=", task.ownerId).where("task_id", "=", task.taskId)
+          .where("blocking", "=", true).where("status", "=", "pending")
+          .executeTakeFirst() !== undefined;
         const settled = await createBotTasksRepository(tx.db).transition({
-          ownerId: task.ownerId, taskId: task.taskId, baseRevision: task.revision, to,
+          ownerId: task.ownerId, taskId: task.taskId, baseRevision: task.revision, to: waiting ? "waiting_person" : to,
           ...(to === "blocked" ? { blockedReason: reason ?? "tool_unavailable" } : {}),
           now: now(),
         }, tx.db);

@@ -288,6 +288,24 @@ async function migrateBotStateV1(trx: Transaction<OwnerBotDatabase>): Promise<vo
   await sql`CREATE INDEX idx_bot_memory_search ON bot_memory_items USING GIN (content_tsv)`.execute(trx);
 }
 
+/**
+ * v2: approvals bind the task instead of the run. A blocking approval ends
+ * the run that asked; the person's decision arrives in a continuation run of
+ * the same task, which must be able to claim it.
+ */
+async function migrateApprovalsByTaskV2(trx: Transaction<OwnerBotDatabase>): Promise<void> {
+  await sql`ALTER TABLE bot_approvals ADD COLUMN task_id TEXT REFERENCES bot_tasks(task_id) ON DELETE CASCADE`.execute(trx);
+  await sql`
+    UPDATE bot_approvals AS approval SET task_id = interaction.task_id
+    FROM bot_interactions AS interaction WHERE interaction.interaction_id = approval.approval_id
+  `.execute(trx);
+  await sql`ALTER TABLE bot_approvals ALTER COLUMN task_id SET NOT NULL`.execute(trx);
+  await sql`
+    CREATE INDEX idx_bot_approvals_open ON bot_approvals(owner_id, task_id, tool, args_hash)
+    WHERE status IN ('pending', 'approved') AND claimed_at IS NULL
+  `.execute(trx);
+}
+
 export interface BotMigration {
   readonly version: number;
   readonly name: string;
@@ -297,4 +315,5 @@ export interface BotMigration {
 /** Applied in this order; never edit a released version, add a new one. */
 export const BOT_MIGRATIONS: readonly BotMigration[] = [
   { version: 1, name: "bot_state_m1", up: migrateBotStateV1 },
+  { version: 2, name: "bot_approvals_by_task", up: migrateApprovalsByTaskV2 },
 ];

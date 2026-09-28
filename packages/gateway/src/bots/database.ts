@@ -151,7 +151,9 @@ export interface BotApprovalsTable {
   approval_id: string;
   owner_id: string;
   bot_id: string;
+  /** The run that asked; the approval binds the task, so a continuation run can claim it. */
   run_id: string;
+  task_id: string;
   tool: string;
   args_hash: string;
   account: string;

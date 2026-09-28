@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createBotContinuationAdmitter } from "../../../packages/gateway/src/bots/continuations.js";
 import { BotInteractionError } from "../../../packages/gateway/src/bots/interactions.js";
 import { BotMemoryError } from "../../../packages/gateway/src/bots/memory-service.js";
+import { BotGrantError } from "../../../packages/gateway/src/bots/grants-service.js";
 import { createBotRoutes } from "../../../packages/gateway/src/bots/routes.js";
 import { CanonicalChatOrchestrationError, canonicalChatSafeError } from "../../../packages/gateway/src/chat/orchestration-errors.js";
 
@@ -88,6 +89,24 @@ describe("bot interaction and memory routes", () => {
     expect(forget).toHaveBeenCalledWith("user_owner_1", "bot_0123456789abcdef", "mem_0123456789ab", { baseRevision: 2 });
     expect((await post(server, "/api/chat-agents/bot_0123456789abcdef/memory/mem_0123456789ab/confirm", JSON.stringify({ baseRevision: 1 }))).status).toBe(409);
     expect((await post(app({}), "/api/chat-agents/bot_0123456789abcdef/memory/mem_0123456789ab/forget", "{}")).status).toBe(503);
+  });
+});
+
+describe("bot grant route", () => {
+  it("revokes through the service, bounded, with its refusals", async () => {
+    const revoke = vi.fn(async () => ({ grantId: "gr_0123456789ab", revokedAt: "2026-09-28T10:00:00.000Z" }));
+    const server = app({ grants: { revoke } });
+    const path = "/api/chat-agents/bot_0123456789abcdef/grants/gr_0123456789ab";
+    const response = await server.request(path, { method: "DELETE" });
+    expect(response.status).toBe(200);
+    expect(revoke).toHaveBeenCalledWith("user_owner_1", "bot_0123456789abcdef", "gr_0123456789ab");
+    const refused = app({ grants: { revoke: vi.fn(async () => { throw new BotGrantError("not_found"); }) } });
+    expect((await refused.request(path, { method: "DELETE" })).status).toBe(404);
+    const oversized = "x".repeat(70 * 1024);
+    expect((await server.request(path, {
+      method: "DELETE", headers: { "content-type": "application/json", "content-length": String(oversized.length) }, body: oversized,
+    })).status).toBe(413);
+    expect((await app({}).request(path, { method: "DELETE" })).status).toBe(503);
   });
 });
 
