@@ -13,6 +13,28 @@ import { parseArgs } from "node:util";
 const ISSUE_URL = /^https:\/\/github\.com\/hamedmp\/matrix-os\/issues\/[1-9]\d*$/i;
 const SKIPPED_STATES = new Set(["skipped", "pending"]);
 
+// Hard caps on every input that feeds a Map or Set. The judge runs once per CI
+// shard and exits, so nothing is evicted: an input beyond a cap fails the run
+// instead, since dropping files or tests would pass a run that was not judged.
+export const COLLABORATION_POSTGRES_LIMITS = Object.freeze({
+  selectedFiles: 500,
+  quarantineEntries: 200,
+  reportedTests: 20_000,
+});
+
+function exceededLimit({ report, selection, allSelected, quarantine }) {
+  const { selectedFiles, quarantineEntries, reportedTests } = COLLABORATION_POSTGRES_LIMITS;
+  if (selection.length > selectedFiles || allSelected.length > selectedFiles) {
+    return `selection exceeds ${selectedFiles} files`;
+  }
+  if (quarantine.entries.length > quarantineEntries) return `quarantine exceeds ${quarantineEntries} entries`;
+  const modules = Array.isArray(report?.modules) ? report.modules : [];
+  if (modules.length > selectedFiles) return `report exceeds ${selectedFiles} files`;
+  const tests = modules.reduce((total, testModule) => total + (Array.isArray(testModule.tests) ? testModule.tests.length : 0), 0);
+  if (tests > reportedTests) return `report exceeds ${reportedTests} tests`;
+  return undefined;
+}
+
 /** Parses "<test file>|<full test name>|<issue URL>" lines from the script's quarantine block. */
 export function parseQuarantine(lines) {
   const entries = [];
@@ -40,9 +62,11 @@ function testKey(file, name) {
  * here but entries naming an unselected file still fail.
  */
 export function summarizeCollaborationPostgresRun({ report, selection, allSelected = selection, quarantine, vitestStatus }) {
+  const counts = { files: selection.length, tests: 0, passed: 0, failed: 0, skipped: 0 };
+  const limitError = exceededLimit({ report, selection, allSelected, quarantine });
+  if (limitError) return { ok: false, counts, quarantined: [], errors: [limitError], notices: [] };
   const errors = [...quarantine.errors];
   const notices = [];
-  const counts = { files: selection.length, tests: 0, passed: 0, failed: 0, skipped: 0 };
   const inRun = new Set(selection);
   const selectedAnywhere = new Set(allSelected);
   const quarantined = new Map();

@@ -13,6 +13,10 @@ import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { parse } from "yaml";
+import {
+  COLLABORATION_POSTGRES_LIMITS,
+  summarizeCollaborationPostgresRun,
+} from "../../scripts/ci/collaboration-postgres-report.mjs";
 
 const root = process.cwd();
 const SCRIPT = "scripts/test-collaboration-postgres.sh";
@@ -88,7 +92,8 @@ interface FixtureReport {
 
 /** The shape scripts/ci/collaboration-postgres-vitest-reporter.mjs writes. */
 function collaborationReport({ tests = [], suiteErrors = {}, unhandledErrors = [] }: FixtureReport) {
-  const files = [...new Set([...tests.map((test) => test.file), ...Object.keys(suiteErrors)])];
+  const files = [...tests.map((test) => test.file), ...Object.keys(suiteErrors)]
+    .filter((file, index, all) => all.indexOf(file) === index);
   return {
     unhandledErrors,
     modules: files.map((file) => ({
@@ -360,6 +365,28 @@ describe("real-PostgreSQL collaboration suites in CI", () => {
       expect(result.status, entry).not.toBe(0);
       expect(result.output).toContain(message);
     }
+  });
+
+  it("fails closed instead of judging inputs beyond its caps", () => {
+    const { selectedFiles, quarantineEntries, reportedTests } = COLLABORATION_POSTGRES_LIMITS;
+    const selection = [GATEWAY_FILE];
+    const passing = { unhandledErrors: [], modules: [{ file: GATEWAY_FILE, errors: [], tests: [{ name: "passes", state: "passed" }] }] };
+    const judge = (overrides: Record<string, unknown>) => summarizeCollaborationPostgresRun({
+      report: passing,
+      selection,
+      quarantine: { entries: [], errors: [] },
+      vitestStatus: 0,
+      ...overrides,
+    });
+
+    expect(judge({}).ok).toBe(true);
+    const files = Array.from({ length: selectedFiles + 1 }, (_, index) => `tests/gateway/suite-${index}.test.ts`);
+    expect(judge({ allSelected: files }).errors).toEqual([`selection exceeds ${selectedFiles} files`]);
+    const entries = Array.from({ length: quarantineEntries + 1 }, (_, index) => ({ file: GATEWAY_FILE, name: `test ${index}`, issue: ISSUE }));
+    expect(judge({ quarantine: { entries, errors: [] } }).errors).toEqual([`quarantine exceeds ${quarantineEntries} entries`]);
+    const tests = Array.from({ length: reportedTests + 1 }, (_, index) => ({ name: `test ${index}`, state: "passed" }));
+    const oversized = { unhandledErrors: [], modules: [{ file: GATEWAY_FILE, errors: [], tests }] };
+    expect(judge({ report: oversized }).errors).toEqual([`report exceeds ${reportedTests} tests`]);
   });
 
   it("reports module, suite-hook and unhandled errors from a real vitest run", () => {
