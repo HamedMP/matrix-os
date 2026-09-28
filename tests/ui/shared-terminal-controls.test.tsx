@@ -269,7 +269,7 @@ describe("shared terminal controls", () => {
     expect(screen.getByRole("button", { name: "Request control" })).toBeEnabled();
   });
 
-  it("fences terminal actions while the home cannot serve the terminal, so none fails silently", async () => {
+  it("keeps Stop available during stream failure and reports a failed HTTP stop action", async () => {
     const { api, handlers } = apiFixture();
     render(<SharedTerminalControls api={api} scope={scope("owner")} actorId="user_owner" />);
     await waitFor(() => expect(api.subscribeTerminal).toHaveBeenCalled());
@@ -278,9 +278,14 @@ describe("shared terminal controls", () => {
 
     act(() => handlers().onTemporarilyUnavailable());
     expect(await screen.findByRole("status")).toHaveTextContent("temporarily unavailable");
-    expect(screen.queryByRole("button", { name: "Stop terminal" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Stop terminal" })).toBeEnabled();
     expect(screen.queryByRole("button", { name: "Request control" })).not.toBeInTheDocument();
-    expect(api.post).not.toHaveBeenCalled();
+    api.post.mockRejectedValueOnce(new Error("offline"));
+    fireEvent.click(screen.getByRole("button", { name: "Stop terminal" }));
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith(
+      `/api/collaboration/scopes/${scopeId}/terminal/actions`, expect.objectContaining({ type: "stop" }),
+    ));
+    expect(await screen.findByRole("alert")).toHaveTextContent("The terminal action could not be completed");
 
     act(() => handlers().onReady(readyFrame("connection_owner_2")));
     expect(await screen.findByRole("button", { name: "Stop terminal" })).toBeEnabled();

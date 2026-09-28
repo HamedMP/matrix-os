@@ -130,11 +130,11 @@ export function SharedTerminalControls({ api, scope, actorId, layers }: {
   const holdsControl = controller?.actor.actorId === actorId
     && state.controlConnectionId === state.connectionId
     && state.controlLeaseEpoch === controller.leaseEpoch;
-  // Fenced while ended or temporarily unavailable: an action sent then could only fail, and its
-  // error banner is replaced by the reconnecting status.
+  // Socket-bound controls need a live stream. Stop is a separate HTTP action;
+  // the output socket can fail while the home can still stop an active terminal.
   const serviceable = state.terminal?.status === "active" && !state.unavailable && !state.temporarilyUnavailable;
   const canControl = scope.capabilities.controlTerminal && scope.role !== "viewer" && serviceable;
-  const canStop = serviceable
+  const canStop = state.terminal?.status === "active" && !state.unavailable
     && (scope.capabilities.stopTerminal
       || (scope.role === "editor" && state.terminal?.createdBy.actorId === actorId));
   const sendAction = useCallback(async (action: Record<string, unknown>) => {
@@ -223,7 +223,7 @@ export function SharedTerminalControls({ api, scope, actorId, layers }: {
     {state.temporarilyUnavailable && !state.unavailable ? <p role="status" className="border-b border-amber-400/30 bg-amber-950/30 px-4 py-3 text-sm text-amber-100">
       The shared terminal is temporarily unavailable. Reconnecting automatically.
     </p> : null}
-    {state.error && !state.unavailable && !state.temporarilyUnavailable ? <p role="alert" className="border-b border-amber-400/30 bg-amber-950/30 px-4 py-3 text-sm text-amber-100">
+    {state.error && !state.unavailable ? <p role="alert" className="border-b border-amber-400/30 bg-amber-950/30 px-4 py-3 text-sm text-amber-100">
       The terminal action could not be completed. Refresh the terminal state and try again.
     </p> : null}
     <pre aria-label="Shared terminal output" className="min-h-[16rem] flex-1 overflow-auto whitespace-pre-wrap break-all p-4 font-mono text-sm"
