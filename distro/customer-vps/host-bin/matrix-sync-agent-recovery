@@ -106,7 +106,7 @@ recover_interrupted_update() {
         if transaction_candidate_is_committed "$version"; then
           log "Interrupted update had already committed; finalizing transaction"
           clear_consumed_update_markers
-          preserve_symphony_rollback_transaction
+          preserve_host_rollback_transaction
           rm -f -- "$UPDATE_PHASE_MARKER"
           return 0
         fi

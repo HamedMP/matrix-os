@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -89,5 +89,22 @@ describe('support SSH key bootstrap validation', () => {
     expect(updater).toContain('record_update_file /usr/local/libexec/matrix-support-access support-helper');
     expect(updater).toContain('restore_update_file /usr/local/libexec/matrix-support-access support-helper');
     expect(updater).toContain('sudo chmod 0644 "$BIN_DIR/matrix-support-access"');
+  });
+
+  it.each(['present', 'missing'])('retains a %s helper snapshot for a later manual rollback', (state) => {
+    const directory = mkdtempSync(join(tmpdir(), 'matrix-support-rollback-'));
+    const transaction = join(directory, 'transaction');
+    mkdirSync(transaction);
+    writeFileSync(join(transaction, `support-helper.${state}`), '');
+    const updater = readFileSync(resolve(import.meta.dirname, '../../distro/customer-vps/host-bin/matrix-sync-agent'), 'utf8');
+    const start = updater.indexOf('preserve_host_rollback_transaction() {');
+    const end = updater.indexOf('prepare_legacy_r2_migration() {', start);
+    try {
+      const result = spawnSync('bash', ['-c', `${updater.slice(start, end)}\nUPDATE_TRANSACTION_DIR="$1"\nlog() { :; }\nsudo() { "$@"; }\npreserve_host_rollback_transaction`, 'test', transaction], { encoding: 'utf8' });
+      expect(result.status, result.stderr).toBe(0);
+      expect(existsSync(join(transaction, `support-helper.${state}`))).toBe(true);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
   });
 });

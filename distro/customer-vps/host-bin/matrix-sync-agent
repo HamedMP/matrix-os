@@ -634,11 +634,13 @@ cleanup_update_transaction() {
 
 # Keep the one-level rollback snapshot while the previous app bundle can still
 # be restored. The next update replaces both its rollback app and transaction.
-preserve_symphony_rollback_transaction() {
+preserve_host_rollback_transaction() {
   if { [ -f "$UPDATE_TRANSACTION_DIR/systemd.present" ] &&
       grep -Fxq 'matrix-symphony.service' "$UPDATE_TRANSACTION_DIR/systemd.present"; } ||
-    [ -f "$UPDATE_TRANSACTION_DIR/symphony.masked" ]; then
-    log "Preserved legacy Symphony unit and service state for rollback"
+    [ -f "$UPDATE_TRANSACTION_DIR/symphony.masked" ] ||
+    [ -f "$UPDATE_TRANSACTION_DIR/support-helper.present" ] ||
+    [ -f "$UPDATE_TRANSACTION_DIR/support-helper.missing" ]; then
+    log "Preserved host artifacts for manual rollback"
   else
     cleanup_update_transaction
   fi
@@ -1489,7 +1491,7 @@ apply_update() {
       fi
       log "Health check passed — update to $version complete"
       clear_consumed_update_markers
-      preserve_symphony_rollback_transaction
+      preserve_host_rollback_transaction
     else
       log "ERROR: release metadata commit failed — rolling back"
       if do_rollback false; then
