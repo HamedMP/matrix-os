@@ -81,6 +81,14 @@ export async function admitCanonicalTurn(
         503,
       );
     }
+    // Bot workspaces are assigned by bot admission on the server; a client never supplies one,
+    // so no ordinary Chat can mount a bot's private files.
+    if (input.executionRoot?.kind === "bot_workspace") {
+      throw new CanonicalChatOrchestrationError(
+        safeError("project_unavailable", "The selected workspace does not belong to this Chat's Project."),
+        400,
+      );
+    }
     const rootRef = input.executionRoot
       ?? (record.projectId ? { kind: "project" as const, projectId: record.projectId } : undefined);
     if (input.executionRoot && record.projectId

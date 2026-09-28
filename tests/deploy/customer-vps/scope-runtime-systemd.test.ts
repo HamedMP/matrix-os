@@ -8,6 +8,7 @@ describe("dormant scope runtime host bundle", () => {
     expect(unit).toContain("Group=matrix");
     expect(unit).toContain("ConditionPathExists=!/opt/matrix/app/SCOPE_RUNTIME_DISABLED");
     expect(unit).toContain("RuntimeDirectory=matrix-scope-runtime");
+    expect(unit).toContain("RuntimeDirectoryPreserve=yes");
     expect(unit).toContain("RuntimeDirectoryMode=0770");
     expect(unit).toContain("StateDirectory=matrix-scope-runtime");
     expect(unit).toContain("PrivateNetwork=yes");

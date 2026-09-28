@@ -421,8 +421,6 @@ async function validateRuntimeSources(
   nativeDirectory: string;
   workerFile: string;
 }> {
-  const broker = await lstat(paths.brokerSocket);
-  if (!broker.isSocket() || broker.isSymbolicLink()) throw new Error("Scope runtime broker unavailable");
   const worker = await lstat(paths.workerFile);
   if (!worker.isFile() || worker.isSymbolicLink()) throw new Error("Scope runtime worker unavailable");
   const sdkDirectory = await realpath(paths.sdkDirectory);
@@ -439,8 +437,6 @@ async function validateRuntimeSources(
 /** The bundled bot worker: a real directory holding a regular entry file, never a symbolic link. */
 async function validateBotRuntimeSources(paths: ResolvedLauncherPaths): Promise<{ botRuntimeDirectory: string }> {
   if (!paths.botRuntimeDirectory) throw new Error("Bot runtime is not installed");
-  const broker = await lstat(paths.brokerSocket);
-  if (!broker.isSocket() || broker.isSymbolicLink()) throw new Error("Scope runtime broker unavailable");
   const botRuntimeDirectory = await realpath(paths.botRuntimeDirectory);
   const directory = await lstat(botRuntimeDirectory);
   if (!directory.isDirectory()) throw new Error("Bot runtime is unavailable");
@@ -450,6 +446,11 @@ async function validateBotRuntimeSources(paths: ResolvedLauncherPaths): Promise<
   await access("/usr/bin/env", constants.X_OK);
   await access(paths.nodeBinary, constants.X_OK);
   return { botRuntimeDirectory };
+}
+
+async function validateBrokerSocket(path: string): Promise<void> {
+  const broker = await lstat(path);
+  if (!broker.isSocket() || broker.isSymbolicLink()) throw new Error("Scope runtime broker unavailable");
 }
 
 async function runWorkerBotCommand(
@@ -736,6 +737,9 @@ export function createSystemdScopeRuntimeLauncher(
       return handles;
     },
     async start(request: ScopeRuntimeLaunchRequest): Promise<void> {
+      // Capability discovery runs before the gateway opens this socket. Only
+      // an actual workload launch requires the broker to be listening.
+      await validateBrokerSocket(paths.brokerSocket);
       const { root, readinessFile, commandDirectory } = await prepareRuntimeRoot(paths.stateRoot, request);
       let submitted = false;
       try {
