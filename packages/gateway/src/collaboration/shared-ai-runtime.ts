@@ -14,7 +14,7 @@ import {
   SCOPE_RUNTIME_SANDBOX_POLICY_DIGEST,
   SCOPE_RUNTIME_SANDBOX_POLICY_VERSION,
 } from "@matrix-os/scope-runtime/sandbox";
-import type { ScopeRuntimeSandboxManifest } from "@matrix-os/scope-runtime";
+import type { ScopeRuntimeSandboxManifest, ScopeRuntimeWorkload } from "@matrix-os/scope-runtime";
 import type { Kysely } from "kysely";
 import type { CanonicalChatOrchestrator } from "../chat/orchestrator.js";
 import {
@@ -947,7 +947,7 @@ export async function createSharedChatSandboxManifest(input: {
   run: SharedDispatchRun;
   scopeId: string;
   actorId: string;
-  capability: { available: boolean; sandbox?: { workloads: readonly ("chat_ai" | "terminal")[] } };
+  capability: { available: boolean; sandbox?: { workloads: readonly ScopeRuntimeWorkload[] } };
   executionRoots: Pick<ChatExecutionRootResolver, "resolve"> | undefined;
   owner: { type: "personal"; ownerId: string };
   homePath: string;

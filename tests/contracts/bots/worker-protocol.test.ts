@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { BotBrokerRequestSchema, BotBrokerResponseSchema, BotRunOutcomeSchema, BotWorkerCommandSchema } from "@matrix-os/contracts";
+import {
+  BOT_IMAGE_CHUNK_CHARS,
+  BotBrokerRequestSchema,
+  BotBrokerResponseSchema,
+  BotImageChunkSchema,
+  BotRunOutcomeSchema,
+  BotRunSpecSchema,
+  BotWorkerCommandSchema,
+} from "@matrix-os/contracts";
 
 const envelope = {
   version: 1, requestId: "018f0ce5-7b4a-7f95-a7c8-acae0dc5c5d1", runtimeHandle: `runtime_${"b".repeat(32)}`,
@@ -39,5 +47,20 @@ describe("bot worker and broker envelopes", () => {
     expect(BotRunOutcomeSchema.safeParse({ runId: "run_abc", status: "paused", sessionRevision: 2, toolActions: 1 }).success).toBe(false);
     // A run whose session never loaded reports no revision.
     expect(BotRunOutcomeSchema.parse({ runId: "run_abc", status: "failed", failureCode: "unavailable", toolActions: 0 }).sessionRevision).toBeUndefined();
+  });
+
+  it("loads a run as a spec with an image count and reads images in bounded chunks", () => {
+    const { version: _version, kind: _kind, runId: _runId, ...fields } = run;
+    const spec = { ...fields, turn: { kind: "prompt", text: "look", imageCount: 2 } };
+    expect(BotRunSpecSchema.parse(spec).turn).toEqual({ kind: "prompt", text: "look", imageCount: 2 });
+    expect(BotRunSpecSchema.safeParse({ ...spec, turn: { ...spec.turn, imageCount: 5 } }).success).toBe(false);
+    // Image bytes never travel inline in a loaded run.
+    expect(BotRunSpecSchema.safeParse({ ...spec, turn: { kind: "prompt", text: "look", images: [] } }).success).toBe(false);
+    expect(BotBrokerRequestSchema.parse({ ...envelope, action: "bot.run.load" }).action).toBe("bot.run.load");
+    expect(BotBrokerRequestSchema.parse({ ...envelope, action: "bot.input.image", image: { index: 3, offset: 0 } }).action).toBe("bot.input.image");
+    expect(BotBrokerRequestSchema.safeParse({ ...envelope, action: "bot.input.image", image: { index: 4, offset: 0 } }).success).toBe(false);
+    expect(BotImageChunkSchema.parse({ mimeType: "image/png", totalChars: 8, data: "AAAA" }).data).toBe("AAAA");
+    expect(BotImageChunkSchema.safeParse({ mimeType: "image/png", totalChars: 8, data: "A".repeat(BOT_IMAGE_CHUNK_CHARS + 4) }).success).toBe(false);
+    expect(BotImageChunkSchema.safeParse({ mimeType: "image/gif", totalChars: 8, data: "AAAA" }).success).toBe(false);
   });
 });
