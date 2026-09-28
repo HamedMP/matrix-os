@@ -214,7 +214,8 @@ function SharedFileEditor({ api, scopeId, scope, initial }: {
   const [draft, setDraft] = useState<string | null>(null);
   const [conflict, setConflict] = useState<Conflict | null>(null);
   const [saving, setSaving] = useState(false);
-  const [notice, setNotice] = useState<Notice>(null);
+  const [saveNotice, setSaveNotice] = useState<Notice>(null);
+  const [downloadNotice, setDownloadNotice] = useState<Notice>(null);
   const saveRequest = useRef<{ key: string; id: string } | null>(null);
   const { entry, preview } = file;
   const name = sharedFileName(entry.path);
@@ -222,8 +223,8 @@ function SharedFileEditor({ api, scopeId, scope, initial }: {
   const draftTooLarge = draft !== null && byteLength(draft) > SHARED_FILE_EDIT_MAX_BYTES;
 
   const download = async () => {
-    setNotice(null);
-    setNotice(await downloadSharedFile(api, scopeId, file));
+    setDownloadNotice(null);
+    setDownloadNotice(await downloadSharedFile(api, scopeId, file));
   };
 
   const save = async () => {
@@ -231,17 +232,17 @@ function SharedFileEditor({ api, scopeId, scope, initial }: {
     const key = `${entry.revision}:${draft}`;
     if (saveRequest.current?.key !== key) saveRequest.current = { key, id: crypto.randomUUID() };
     setSaving(true);
-    setNotice(null);
+    setSaveNotice(null);
     try {
       const outcome = await saveSharedFileDraft(api, scopeId, file, draft, saveRequest.current.id);
       if (outcome.kind === "saved") {
         setFile(outcome.file);
         setDraft(null);
-        setNotice({ kind: "saved" });
+        setSaveNotice({ kind: "saved" });
       } else if (outcome.kind === "conflict") {
         setConflict(outcome.conflict);
       } else {
-        setNotice({ kind: "error", message: outcome.message });
+        setSaveNotice({ kind: "error", message: outcome.message });
       }
     } finally {
       setSaving(false);
@@ -255,7 +256,8 @@ function SharedFileEditor({ api, scopeId, scope, initial }: {
     if (!keepDraft) setDraft(null);
   };
   const toggleEditing = (open: boolean) => {
-    setNotice(null);
+    setSaveNotice(null);
+    setDownloadNotice(null);
     setDraft(open && preview.kind === "text" ? preview.text : null);
   };
 
@@ -265,7 +267,8 @@ function SharedFileEditor({ api, scopeId, scope, initial }: {
         saveBlocked={draftTooLarge} onEdit={() => toggleEditing(true)} onSave={() => void save()} onCancel={() => toggleEditing(false)}
         onDownload={() => void download()} />
     </FileHeader>
-    <FileNotice notice={notice} />
+    <FileNotice notice={saveNotice} />
+    <FileNotice notice={downloadNotice} />
     {conflict ? <ConflictPanel conflict={conflict} onKeep={() => resolveConflict(conflict, true)} onTakeOwner={() => resolveConflict(conflict, false)}
       onDownloadMine={() => saveBytes(draft ?? "", sharedFileCopyName(name), "text/plain")} /> : null}
     {draft !== null

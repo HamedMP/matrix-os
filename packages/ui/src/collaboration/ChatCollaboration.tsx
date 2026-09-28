@@ -426,6 +426,7 @@ function InvitationView({ api, invitationId, openers }: {
       ));
       notifyCollaborationDiscoveryChanged();
       if (action === "accept") {
+        setInvitation((current) => current ? { ...current, status: "accepted" } : current);
         if (!openSharedResource(invitation.scopeKind, result.scopeId, openers)) setOpenNotice(unopenableNotice(invitation.scopeKind));
       } else {
         setInvitation((current) => current ? { ...current, status: "revoked" } : current);
