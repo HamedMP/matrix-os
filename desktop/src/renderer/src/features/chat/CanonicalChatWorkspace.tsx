@@ -163,6 +163,17 @@ export function CanonicalChatWorkspace({
     autoSelectFirst: false,
     eventSource,
   });
+  const [botEventRevision, setBotEventRevision] = useState(0);
+  useEffect(() => {
+    if (!live || !eventSource) return;
+    const subscription = eventSource.subscribe((event) => {
+      if (event.type === "chat.changed" && event.chatId === controller.activeChatId
+        && /^(?:interaction\.|bot\.)/.test(event.eventType)) {
+        setBotEventRevision((revision) => revision + 1);
+      }
+    });
+    return () => subscription.dispose();
+  }, [live, eventSource, controller.activeChatId]);
   const [globalView, setGlobalView] = useState<"index" | "draft" | "conversation">(
     initialView ?? (initialChatId ? "conversation" : "index"),
   );
@@ -846,7 +857,7 @@ export function CanonicalChatWorkspace({
           <>
             {api && !chromeHost ? <ChatSharingButton key={controller.detail.record.chat.id} api={api} chatId={controller.detail.record.chat.id} copyText={copyText} /> : null}
             <BotChatPanel key={controller.detail.record.chat.id} chatId={controller.detail.record.chat.id}
-              client={client.agents} refreshKey={controller.detail.record.chat.revision} />
+              client={client.agents} refreshKey={controller.detail.record.chat.revision + botEventRevision} />
             <ChatContextMenu chatId={controller.detail.record.chat.id}>
             <div className="contents">
             <ConversationTranscript turns={transcript} callbacks={{
