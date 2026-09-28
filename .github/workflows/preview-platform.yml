@@ -1120,6 +1120,19 @@ jobs:
           terminal_url="${PREVIEW_VPS_CONTROL_URL}/vm/${handle}/api/terminal/run"
           response="$(mktemp)"
           trap 'rm -f "$response"' EXIT
+          # The terminal run API caps each argument at 4096 characters, so a host script travels as
+          # 4000-character chunks that this one-line loader joins and runs as __main__. The guard's
+          # claim installs exactly the source the loader ran.
+          loader='import sys; n = int(sys.argv[1]); source = "".join(sys.argv[2:2 + n]); sys.argv = ["-c", *sys.argv[2 + n:]]; exec(compile(source, "preview-collaboration", "exec"), {"__name__": "__main__", "LOADED_SOURCE": source})'
+          script_command() {
+            local elevate="$1" script="$2" timeout="$3"
+            shift 3
+            jq -cn --rawfile source "$script" --arg loader "$loader" --arg elevate "$elevate" --argjson timeout "$timeout" '
+              ($source | [range(0; length; 4000) as $at | .[$at:$at + 4000]]) as $chunks
+              | {command: ((if $elevate == "root" then ["/usr/bin/sudo"] else [] end)
+                  + ["/usr/bin/python3", "-I", "-c", $loader, ($chunks | length | tostring)] + $chunks + $ARGS.positional),
+                 timeoutMs: $timeout}' --args "$@"
+          }
           if ! address="$(jq -er --arg handle "$handle" '
             select(type == "object" and keys == ["address", "handle"] and .handle == $handle)
             | .address | select(test("^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+$"))
@@ -1169,7 +1182,7 @@ jobs:
               "$response" >/dev/null
           }
           guard_armed=false
-          # host.env changes only after this run's guard is armed, so every failure after that
+          # host.env changes only after this run owns an armed guard, so every failure after that
           # fires the guard: it restores the rollback copy and restarts the gateway, detached, so
           # the restart cannot drop this request. A runner that goes away leaves the timer to do it.
           fail_connection() {
@@ -1183,9 +1196,7 @@ jobs:
           }
 
           # 1. The host proves it is this collaboration preview (handle, slot, owner) before anything changes.
-          body="$(jq -cn --rawfile script scripts/preview-collaboration-probe.py \
-            --arg handle "$handle" --arg owner "$PREVIEW_COLLABORATION_OWNER_USER_ID" \
-            '{command:["/usr/bin/python3","-I","-c",$script,"identity",$handle,$owner],timeoutMs:10000}')"
+          body="$(script_command user scripts/preview-collaboration-probe.py 10000 identity "$handle" "$PREVIEW_COLLABORATION_OWNER_USER_ID")"
           if ! send_runtime_command "$body"; then
             echo "The preview home did not prove it is this PR's collaboration preview; nothing was changed." >&2
             exit 1
@@ -1212,37 +1223,35 @@ jobs:
           binding="$(jq -cn --arg url "$PREVIEW_TAG_URL" --arg token "$upgrade_token" --arg origins "$COLLABORATION_CLIENT_ORIGINS" \
             '{PLATFORM_INTERNAL_URL:$url,UPGRADE_TOKEN:$token,MATRIX_COLLABORATION_CLIENT_ORIGINS:$origins}')"
 
-          # 4. This run claims the connection and installs the guard. The latest claim owns the home,
-          #    so an earlier run's still-armed timer can never undo this run's connection.
-          body="$(jq -cn --rawfile guard scripts/preview-collaboration-guard.py --arg nonce "$nonce" \
-            '{command:["/usr/bin/sudo","/usr/bin/python3","-I","-c",$guard,"claim",$nonce,$guard],timeoutMs:10000}')"
-          if ! send_runtime_command "$body"; then
-            echo "The preview home could not record this connection; nothing was changed." >&2
-            exit 1
-          fi
-
-          # 5. Dead-man guard, armed before host.env changes: unless this run commits within 300 s,
-          #    it restores the host environment and restarts the gateway.
+          # 4. Dead-man guard, armed before this run takes ownership: unless this run commits within
+          #    300 s, it restores the host environment and restarts the gateway.
           body="$(jq -cn --arg unit "--unit=${guard_unit}" --arg guard "$guard_path" --arg nonce "$nonce" \
             '{command:["/usr/bin/sudo","/usr/bin/systemd-run",$unit,"--on-active=300s","--collect","/usr/bin/python3","-I",$guard,"restore",$nonce,"--restart"],timeoutMs:10000}')"
           if ! send_runtime_command "$body" once; then
             echo "The rollback guard could not be armed; nothing was changed." >&2
             exit 1
           fi
-          guard_armed=true
           armed_at=$SECONDS
 
-          # 6. Keep one rollback copy and re-point the binding with the file's owner, group and mode.
-          body="$(jq -cn --rawfile script scripts/preview-collaboration-home.py \
-            --arg handle "$handle" --arg owner "$PREVIEW_COLLABORATION_OWNER_USER_ID" \
-            --arg machine "$machine_id" --arg binding "$binding" \
-            '{command:["/usr/bin/sudo","/usr/bin/python3","-I","-c",$script,$handle,$owner,$machine,$binding],timeoutMs:15000}')"
+          # 5. Claim the connection and install the guard. Ownership moves only now, to a run whose
+          #    timer already covers the home; an earlier run's timer can no longer undo anything,
+          #    and if this claim fails the earlier owner keeps its own timer.
+          body="$(script_command root scripts/preview-collaboration-guard.py 10000 claim "$nonce")"
+          if ! send_runtime_command "$body"; then
+            echo "The preview home could not record this connection; nothing was changed." >&2
+            exit 1
+          fi
+          guard_armed=true
+
+          # 6. Keep one rollback copy and re-point the binding with the file's owner, group and mode,
+          #    under the guard's lock and only while this run still owns the connection.
+          body="$(script_command root scripts/preview-collaboration-home.py 15000 \
+            "$nonce" "$handle" "$PREVIEW_COLLABORATION_OWNER_USER_ID" "$machine_id" "$binding")"
           send_runtime_command "$body" || fail_connection "The preview home refused the collaboration binding; restoring the host environment."
 
           # 7. Record the serving gateway process, then restart it. A synchronous restart drops the
           #    gateway connection that carries this request.
-          health_body="$(jq -cn --rawfile script scripts/preview-collaboration-probe.py \
-            '{command:["/usr/bin/python3","-I","-c",$script,"health"],timeoutMs:30000}')"
+          health_body="$(script_command user scripts/preview-collaboration-probe.py 30000 health)"
           send_runtime_command "$health_body" || fail_connection "The preview gateway could not be probed; restoring the host environment."
           previous_pid="$(jq -er '.stdout | fromjson | .pid | select(type == "number")' "$response")" \
             || fail_connection "The preview gateway process is unknown; restoring the host environment."

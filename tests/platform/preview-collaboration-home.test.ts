@@ -28,7 +28,7 @@ const ORIGINAL = [
   "",
 ].join("\n");
 const GUARD_SOURCE = readFileSync("scripts/preview-collaboration-guard.py", "utf8");
-const TERMINAL_ARGUMENT_CAP = 4096;
+const NONCE = "100-1";
 
 let root: string;
 beforeEach(() => {
@@ -42,10 +42,10 @@ function python(script: string, call: string, ...args: string[]) {
   return spawnSync("python3", ["-I", "-c", `import json,runpy,sys,pathlib\nm=runpy.run_path(sys.argv[1],run_name="fixture")\nr=${call}\nprint(json.dumps(r))`, resolve(script), root, ...args], { encoding: "utf8", timeout: 10_000 });
 }
 
-function apply(binding: unknown = BINDING, handle = HANDLE, owner = OWNER, machine = MACHINE) {
+function applyAs(nonce: string, binding: unknown = BINDING, handle = HANDLE, owner = OWNER, machine = MACHINE) {
   return python("scripts/preview-collaboration-home.py",
-    `m["apply"](pathlib.Path(sys.argv[2]),sys.argv[3],sys.argv[4],sys.argv[5],json.loads(sys.argv[6]),root_owned=False)`,
-    handle, owner, machine, JSON.stringify(binding));
+    `m["apply"](pathlib.Path(sys.argv[2]),sys.argv[3],sys.argv[4],sys.argv[5],sys.argv[6],json.loads(sys.argv[7]),root_owned=False)`,
+    nonce, handle, owner, machine, JSON.stringify(binding));
 }
 
 function guard(command: "restore" | "commit", nonce: string) {
@@ -56,20 +56,35 @@ function claim(nonce: string) {
   return python("scripts/preview-collaboration-guard.py", `m["claim"](pathlib.Path(sys.argv[2]),sys.argv[3],sys.argv[4])`, nonce, GUARD_SOURCE);
 }
 
-// The workflow's order on the host: claim, arm the guard, then apply.
+// The workflow's order on the host: arm the guard, claim, then apply as the claiming run.
 function connect(nonce: string, binding: unknown = BINDING) {
   expect(JSON.parse(claim(nonce).stdout)).toBe("claimed");
-  return apply(binding);
+  return applyAs(nonce, binding);
+}
+
+function apply(binding: unknown = BINDING, handle = HANDLE, owner = OWNER, machine = MACHINE) {
+  expect(JSON.parse(claim(NONCE).stdout)).toBe("claimed");
+  return applyAs(NONCE, binding, handle, owner, machine);
 }
 
 const hostEnv = () => readFileSync(join(root, "host.env"), "utf8");
 const envValue = (key: string) => hostEnv().split("\n").filter((line) => line.startsWith(`${key}=`));
 
 describe("preview collaboration host scripts", () => {
-  it("fit the terminal run argument cap they are sent through", () => {
-    for (const script of ["scripts/preview-collaboration-home.py", "scripts/preview-collaboration-probe.py", "scripts/preview-collaboration-guard.py"]) {
-      expect(readFileSync(script, "utf8").length, script).toBeLessThanOrEqual(TERMINAL_ARGUMENT_CAP);
-    }
+  it("applies only as the run that currently owns the connection", () => {
+    // No claim at all.
+    expect(applyAs("101-1").status).not.toBe(0);
+    expect(hostEnv()).toBe(ORIGINAL);
+    // A newer run claimed after this one.
+    expect(JSON.parse(claim("102-1").stdout)).toBe("claimed");
+    expect(JSON.parse(claim("103-1").stdout)).toBe("claimed");
+    expect(applyAs("102-1").status).not.toBe(0);
+    expect(hostEnv()).toBe(ORIGINAL);
+    // The guard fired (restored) before the apply ran: the apply must not re-point afterwards.
+    expect(applyAs("103-1").status).toBe(0);
+    expect(JSON.parse(guard("restore", "103-1").stdout)).toBe("restored");
+    expect(applyAs("103-1").status).not.toBe(0);
+    expect(hostEnv()).toBe(ORIGINAL);
   });
 
   it("proves the host is this collaboration preview before reporting its machine", () => {

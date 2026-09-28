@@ -3,7 +3,7 @@
 `identity <handle> <owner>` prints the machine ID once the host proves it is that
 collaboration preview; `health` prints whether the local gateway is healthy,
 reports collaboration configured, and which process serves it. Never prints the
-file or a secret. Kept under the 4096-character terminal argument cap."""
+file or a secret."""
 import json
 import os
 import re

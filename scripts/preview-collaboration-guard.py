@@ -1,12 +1,14 @@
-"""Dead-man guard for spec 535 A0b on a pr-<N> home; installs itself through `claim`.
+"""Dead-man guard for spec 535 A0b on a pr-<N> home.
 
-The run that claimed a connection last owns it. `claim <nonce> <source>` installs
-this guard and records the claim before host.env changes. `restore <nonce>
-[--restart]` puts the pre-connection host environment back only while that run's
-claim is uncommitted, so an earlier run's timer never undoes a newer connection;
-the rollback copy carries the original owner, group and mode. `commit <nonce>`
-records a verified connection and refuses once a restore has run. All three hold
-one lock. Prints a fixed status only."""
+The run that claimed a connection last owns it. A run arms its guard timer first,
+then `claim <nonce>` installs this guard (the exact source the loader ran) and
+records the claim, so ownership only moves to a run whose timer already covers
+the home, and host.env changes only after that. `restore <nonce> [--restart]`
+puts the pre-connection host environment back only while that run's claim is
+uncommitted, so an earlier run's timer never undoes a newer connection; the
+rollback copy carries the original owner, group and mode. `commit <nonce>`
+records a verified connection and refuses once a restore has run. Claim, commit,
+restore and the apply step share one lock. Prints a fixed status only."""
 import fcntl
 import json
 import os
@@ -57,6 +59,8 @@ def record(root, nonce, state):
 
 
 def claim(root, nonce, source):
+    if not source:
+        raise ValueError("The guard source is required to claim")
     lock = locked(root)
     try:
         write_atomic(root / ".preview-collaboration-guard.py", source, 0o700)
@@ -112,8 +116,8 @@ if __name__ == "__main__":
     command, arguments = sys.argv[1:2], sys.argv[2:]
     if not arguments or not re.fullmatch(r"[0-9]{1,20}-[0-9]{1,5}", arguments[0]):
         raise ValueError("Invalid arguments")
-    if command == ["claim"] and len(arguments) == 2:
-        status = claim(home, *arguments)
+    if command == ["claim"] and len(arguments) == 1:
+        status = claim(home, arguments[0], globals().get("LOADED_SOURCE", ""))
     elif command == ["commit"] and len(arguments) == 1:
         status = commit(home, arguments[0])
     elif command == ["restore"] and arguments[1:] in ([], ["--restart"]):

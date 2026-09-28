@@ -284,11 +284,11 @@ case "$url" in
   *"/vm/${HANDLE}/api/terminal/run") ;;
   *) exit 22 ;;
 esac
-command="$(jq -r '.command | map(select(length < 200)) | join(" ")' <<< "$data")"
+command="$(jq -r '.command | map(select(length < 150)) | join(" ")' <<< "$data")"
 ok=true; stdout=""
 case "$command" in
   *" identity ${HANDLE} "*) op=identity; ok="$IDENTITY"; stdout='{"machineId":"${MACHINE}"}' ;;
-  *" -c claim "*) op=claim; ok="$CLAIM" ;;
+  *" claim "*) op=claim; ok="$CLAIM" ;;
   *"/usr/bin/sudo /usr/bin/python3 -I -c"*) op=apply; ok="$APPLY" ;;
   *"--on-active=300s"*"restore"*) op=arm; ok="$ARM" ;;
   *"restart matrix-gateway.service"*) op=restart; : > "$RESTARTED" ;;
@@ -317,15 +317,40 @@ jq -cn --arg stdout "$stdout" --argjson code "$code" '{exitCode:$code,timedOut:f
     } finally { rmSync(directory, { recursive: true, force: true }); }
   }
 
-  it("verifies identity, registers, claims, arms the guard before re-pointing, then commits after health and enrollment", () => {
+  it("verifies identity, registers, arms the guard, claims, re-points, then commits after health and enrollment", () => {
     const result = runConnect({});
     expect(result.status, result.stderr).toBe(0);
-    expect(result.operations).toEqual(["identity", "register", "claim", "arm", "apply", "baseline", "restart", "health", "enrollment", "commit", "disarm"]);
+    expect(result.operations).toEqual(["identity", "register", "arm", "claim", "apply", "baseline", "restart", "health", "enrollment", "commit", "disarm"]);
     // Values appear only inside the masking commands that register them.
     const printed = `${result.stdout}${result.stderr}`.split("\n").filter((line) => !line.startsWith("::add-mask::"));
     expect(printed.join("\n")).not.toContain("synthetic-secret-value");
     expect(printed.join("\n")).not.toContain("synthetic.session.jwt");
     expect(`${result.stdout}${result.stderr}`).toContain("::add-mask::synthetic-secret-value");
+  });
+
+  it("sends host scripts in capped chunks that the loader runs unchanged", () => {
+    const start = connectStep.indexOf("\nloader=");
+    const end = connectStep.indexOf("\nif ! address=");
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+    const directory = mkdtempSync(join(tmpdir(), "preview-collaboration-loader-"));
+    try {
+      const script = join(directory, "echo.py");
+      // Longer than one chunk, so the loader must join several arguments.
+      writeFileSync(script, `${"# padding\n".repeat(900)}import json, sys\nprint(json.dumps({"argv": sys.argv[1:], "name": __name__, "source": len(LOADED_SOURCE)}))\n`);
+      const built = spawnSync("bash", ["-euc", `${connectStep.slice(start, end)}\nscript_command root "$SCRIPT" 5000 first "second arg"`], {
+        encoding: "utf8", env: { PATH: process.env.PATH, SCRIPT: script },
+      });
+      expect(built.status, built.stderr).toBe(0);
+      const command = JSON.parse(built.stdout) as { command: string[]; timeoutMs: number };
+      expect(command.timeoutMs).toBe(5000);
+      expect(command.command.slice(0, 4)).toEqual(["/usr/bin/sudo", "/usr/bin/python3", "-I", "-c"]);
+      expect(command.command.length).toBeLessThanOrEqual(64);
+      for (const argument of command.command) expect(argument.length).toBeLessThanOrEqual(4096);
+      const executed = spawnSync(command.command[1]!.replace("/usr/bin/", ""), command.command.slice(2), { encoding: "utf8" });
+      expect(executed.status, executed.stderr).toBe(0);
+      expect(JSON.parse(executed.stdout)).toEqual({ argv: ["first", "second arg"], name: "__main__", source: readFileSync(script, "utf8").length });
+    } finally { rmSync(directory, { recursive: true, force: true }); }
   });
 
   it("never replays a transient systemd unit after a lost response", () => {
@@ -358,27 +383,28 @@ jq -cn --arg stdout "$stdout" --argjson code "$code" '{exitCode:$code,timedOut:f
     expect(result.operations).toEqual(["identity", "register"]);
   });
 
-  it("changes nothing on the host until the claim and the guard are in place", () => {
-    expect(runConnect({ claim: false }).operations).toEqual(["identity", "register", "claim"]);
-    expect(runConnect({ arm: false }).operations).toEqual(["identity", "register", "claim", "arm"]);
+  it("changes nothing on the host until the guard is armed and the claim recorded", () => {
+    // A failed claim leaves ownership, and the earlier owner's timer, untouched.
+    expect(runConnect({ arm: false }).operations).toEqual(["identity", "register", "arm"]);
+    expect(runConnect({ claim: false }).operations).toEqual(["identity", "register", "arm", "claim"]);
   });
 
   it("fires the armed guard when the binding is refused", () => {
     const refused = runConnect({ apply: false });
     expect(refused.status).not.toBe(0);
-    expect(refused.operations).toEqual(["identity", "register", "claim", "arm", "apply", "fire-guard"]);
+    expect(refused.operations).toEqual(["identity", "register", "arm", "claim", "apply", "fire-guard"]);
   });
 
   it("fires the guard to restore and restart when health or enrollment fails", () => {
     const unhealthy = runConnect({ healthy: false });
     expect(unhealthy.status).not.toBe(0);
-    expect(unhealthy.operations.slice(0, 7)).toEqual(["identity", "register", "claim", "arm", "apply", "baseline", "restart"]);
+    expect(unhealthy.operations.slice(0, 7)).toEqual(["identity", "register", "arm", "claim", "apply", "baseline", "restart"]);
     expect(unhealthy.operations.filter((operation) => operation === "health")).toHaveLength(12);
     expect(unhealthy.operations.at(-1)).toBe("fire-guard");
     expect(unhealthy.operations).not.toContain("commit");
     const unenrolled = runConnect({ enrolled: false });
     expect(unenrolled.status).not.toBe(0);
-    expect(unenrolled.operations).toEqual(["identity", "register", "claim", "arm", "apply", "baseline", "restart", "health", "enrollment", "fire-guard"]);
+    expect(unenrolled.operations).toEqual(["identity", "register", "arm", "claim", "apply", "baseline", "restart", "health", "enrollment", "fire-guard"]);
   });
 
   it("never accepts the pre-restart gateway process as the healthy, enrolled one", () => {

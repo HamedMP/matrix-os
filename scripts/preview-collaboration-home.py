@@ -1,5 +1,12 @@
-"""Spec 535 A0b, as root: bind a pr-<N> home to its preview collaboration authority.
-Runs only after its run claimed the connection and armed the guard."""
+"""Root step of spec 535 A0b: bind a pr-<N> home to its preview collaboration authority.
+
+`<nonce> <handle> <owner> <machine ID> <binding JSON>` re-points only the
+collaboration binding in host.env, keeping the file's owner, group and mode and a
+single rollback copy of the file as it was before the first connection. It runs
+only while this run owns the connection (its guard is armed and its claim is
+recorded), under the guard's lock, so a guard restore never interleaves with it.
+Prints a fixed status only, never the file or a value."""
+import fcntl
 import json
 import os
 import re
@@ -10,8 +17,9 @@ import tempfile
 from pathlib import Path
 
 ORIGIN = r"https://[A-Za-z0-9.-]{1,253}"
-KEYS = {"PLATFORM_INTERNAL_URL", "UPGRADE_TOKEN", "MATRIX_COLLABORATION_CLIENT_ORIGINS"}
 PIN = "MATRIX_UPDATE_MANIFEST_BASE_URL"
+KEYS = {"PLATFORM_INTERNAL_URL", "UPGRADE_TOKEN", "MATRIX_COLLABORATION_CLIENT_ORIGINS"}
+ROLLBACK = ".host.env.preview-collaboration-rollback"
 
 
 def read_env(path, root_owned):
@@ -41,7 +49,15 @@ def check_identity(lines, handle, owner, machine):
     if (not re.fullmatch(r"pr-[1-9][0-9]{0,8}", handle) or one(lines, "MATRIX_HANDLE") != handle
             or one(lines, "MATRIX_RUNTIME_SLOT") != handle or one(lines, "MATRIX_MACHINE_ID") != machine
             or one(lines, "MATRIX_CLERK_USER_ID") != owner or values(lines, "MATRIX_USER_ID") not in ([], [[owner]])):
-        raise ValueError("Not this preview")
+        raise ValueError("Host is not this collaboration preview")
+
+
+def check_binding(config):
+    if (not isinstance(config, dict) or set(config) != KEYS
+            or not re.fullmatch(ORIGIN, config["PLATFORM_INTERNAL_URL"])
+            or not re.fullmatch(r"[a-f0-9]{64}", config["UPGRADE_TOKEN"])
+            or not re.fullmatch(f"{ORIGIN}(,{ORIGIN}){{0,15}}", config["MATRIX_COLLABORATION_CLIENT_ORIGINS"])):
+        raise ValueError("Invalid preview collaboration binding")
 
 
 def write_like(path, text, meta, mode):
@@ -59,39 +75,54 @@ def write_like(path, text, meta, mode):
             os.unlink(temporary)
 
 
-def apply(root, handle, owner, machine, config, root_owned=True):
+def owns(root, nonce):
+    try:
+        fd = os.open(root / ".preview-collaboration-state", os.O_RDONLY | os.O_NOFOLLOW)
+    except FileNotFoundError:
+        return False
+    with os.fdopen(fd, encoding="utf-8") as state:
+        return json.load(state) == {"nonce": nonce, "state": "claimed"}
+
+
+def bind(root, handle, owner, machine, config, root_owned):
     path = root / "host.env"
     meta, text = read_env(path, root_owned)
     mode = stat.S_IMODE(meta.st_mode)
     lines = text.splitlines()
     check_identity(lines, handle, owner, machine)
-    if (not isinstance(config, dict) or set(config) != KEYS
-            or not re.fullmatch(ORIGIN, config["PLATFORM_INTERNAL_URL"])
-            or not re.fullmatch(r"[a-f0-9]{64}", config["UPGRADE_TOKEN"])
-            or not re.fullmatch(f"{ORIGIN}(,{ORIGIN}){{0,15}}", config["MATRIX_COLLABORATION_CLIENT_ORIGINS"])):
-        raise ValueError("Invalid binding")
-    # Single rollback copy: host.env before the first connection.
-    rollback = root / ".host.env.preview-collaboration-rollback"
+    check_binding(config)
+    rollback = root / ROLLBACK
     try:
         original = read_env(rollback, root_owned)[1].splitlines()
     except FileNotFoundError:
         write_like(rollback, text, meta, mode)
         original = lines
     check_identity(original, handle, owner, machine)
-    # Releases stay on the platform that published the bundle.
+    # Release metadata stays on the platform that published the preview bundle.
     pin = values(original, PIN) or values(original, "PLATFORM_INTERNAL_URL")
     if len(pin) != 1 or len(pin[0]) != 1 or not re.fullmatch(ORIGIN + "/?", pin[0][0]):
-        raise ValueError("Invalid original binding")
+        raise ValueError("Invalid original platform binding")
     config = {**config, PIN: pin[0][0]}
     kept = [line for line in lines if line.split("=", 1)[0] not in config]
     write_like(path, "\n".join(kept + [f"{key}={config[key]}" for key in sorted(config)]) + "\n", meta, mode)
     after = os.lstat(path)
     if (after.st_uid, after.st_gid, stat.S_IMODE(after.st_mode)) != (meta.st_uid, meta.st_gid, mode):
-        raise ValueError("Metadata changed")
+        raise ValueError("Host environment metadata changed")
+
+
+def apply(root, nonce, handle, owner, machine, config, root_owned=True):
+    lock = os.open(root / ".preview-collaboration.lock", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        if not owns(root, nonce):
+            raise ValueError("This run does not own the preview collaboration connection")
+        bind(root, handle, owner, machine, config, root_owned)
+    finally:
+        os.close(lock)
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 5:
-        raise ValueError("Invalid arguments")
-    apply(Path("/opt/matrix/env"), *sys.argv[1:4], json.loads(sys.argv[4]))
+    if len(sys.argv) != 6 or not re.fullmatch(r"[0-9]{1,20}-[0-9]{1,5}", sys.argv[1]):
+        raise ValueError("Expected nonce, handle, owner, machine ID and binding")
+    apply(Path("/opt/matrix/env"), *sys.argv[1:5], json.loads(sys.argv[5]))
     print(json.dumps({"status": "applied"}))

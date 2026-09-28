@@ -328,13 +328,14 @@ The `Connect collaboration preview home` job, also gated by
   owner with an empty access list. It retires this handle's synthetic share
   fixture row and earlier incarnations owned by the same account, and refuses
   anything owned by someone else.
-- The run claims the connection on the home and installs the guard. The latest
-  claim owns the home, so a cancelled earlier run's timer can never undo it.
-  It then arms a dead-man guard, before anything else changes: a 300 s systemd
-  timer that restores the rollback copy and restarts the gateway unless this
-  run commits. A claim that is already committed, or superseded by a newer
-  run, is left alone.
-- It re-points only the home's collaboration binding in
+- It arms a dead-man guard: a 300 s systemd timer that restores the rollback
+  copy and restarts the gateway unless this run commits. Only then does the
+  run claim the connection, which also installs the guard. The latest claim
+  owns the home, so ownership only moves to a run whose timer already covers
+  it, and a cancelled earlier run's timer can never undo a newer connection.
+  A failed claim leaves the earlier owner and its timer in charge.
+- Under the guard's lock, and only while it still owns the connection, it
+  re-points only the home's collaboration binding in
   `/opt/matrix/env/host.env`:
   - `PLATFORM_INTERNAL_URL` becomes the PR tag URL;
   - `UPGRADE_TOKEN` becomes HMAC-SHA256 of the handle under the preview
@@ -352,10 +353,14 @@ The `Connect collaboration preview home` job, also gated by
   configured from a new gateway process (a different `MainPID`). Next it
   requires that process to register its runtime endpoint (`vps-<machine ID>`)
   and keep its control stream live on the preview platform, with enrollment
-  evidence dated after the new process was healthy. Only then does it commit and disarm the guard. Any failure
-  after the guard is armed fires it immediately, and a lost runner leaves the
-  timer to fire. A failed reconnection therefore returns the home to its
-  original binding.
+  evidence dated after the new process was healthy. Only then does it commit
+  and disarm the guard. Any failure after the claim fires the guard
+  immediately, and a lost runner leaves the timer to fire. A failed
+  reconnection therefore returns the home to its original binding.
+
+The host scripts live in `scripts/preview-collaboration-{probe,home,guard}.py`.
+The terminal run API caps each argument at 4096 characters, so each script
+travels as 4000-character chunks that a one-line loader joins and runs.
 
 After connecting, the home is reachable for collaboration only through
 `https://preview.matrix-os.com` with that PR's tag holding traffic. Other
