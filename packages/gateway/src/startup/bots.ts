@@ -57,7 +57,7 @@ const CONNECTION_RECONCILE_MS = 30_000;
 
 /** One bounded pass; each owner and each admission fails independently. */
 export async function runConnectionReconciliationPass(
-  connections: Pick<BotConnections, "ownersWithPending" | "reconcile" | "pendingContinuations" | "ackContinuation" | "deferContinuation">,
+  connections: Pick<BotConnections, "ownersWithPending" | "reconcile" | "pendingContinuations" | "ackContinuation" | "deferContinuation" | "deferOwner">,
   admit: BotContinuationAdmitter,
 ): Promise<void> {
   for (const ownerId of await connections.ownersWithPending()) {
@@ -65,6 +65,11 @@ export async function runConnectionReconciliationPass(
       await connections.reconcile(ownerId);
     } catch (error: unknown) {
       console.warn("[bots] connection reconciliation failed:", error instanceof Error ? error.name : "UnknownError");
+      try {
+        await connections.deferOwner(ownerId);
+      } catch (deferError: unknown) {
+        console.warn("[bots] connection owner retry unavailable:", deferError instanceof Error ? deferError.name : "UnknownError");
+      }
     }
     try {
       for (const continuation of await connections.pendingContinuations(ownerId)) {

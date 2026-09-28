@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createBotConnections } from "../../../packages/gateway/src/bots/connections.js";
 import type { OwnerBotDatabase } from "../../../packages/gateway/src/bots/database.js";
 import { createBotStateTransactions } from "../../../packages/gateway/src/bots/events.js";
-import type { BotIntegrationConnection } from "../../../packages/gateway/src/bots/integration-client.js";
+import { BotIntegrationError, type BotIntegrationConnection } from "../../../packages/gateway/src/bots/integration-client.js";
 import { BotInteractionError } from "../../../packages/gateway/src/bots/interactions.js";
 import { createBotBindingsRepository } from "../../../packages/gateway/src/bots/repositories/bindings.js";
 import { createBotConnectRequestsRepository } from "../../../packages/gateway/src/bots/repositories/connect-requests.js";
@@ -64,33 +64,49 @@ async function grants() {
   return createBotGrantsRepository(db).listLive({ ownerId: OWNER, botId: BOT, audience: "direct", now: AT });
 }
 
+async function otherPending(older = "2026-09-28T09:59:00.000Z") {
+  const otherChat = "chat_connect2";
+  await insertChat(db, otherChat, OTHER_OWNER);
+  const task = await createBotTasksRepository(db).create({ ownerId: OTHER_OWNER, botId: BOT, chatId: otherChat, now: older });
+  const { interaction } = await createBotInteractionsRepository(db).create({
+    ownerId: OTHER_OWNER, botId: BOT, chatId: otherChat, taskId: task.taskId, kind: "connect_request",
+    payload: { kind: "connect_request", service: "gmail", access: ["read"], benefit: "Read mail.", connectRequestId: "cr_0123456789abcdef01234568" },
+    responderActorId: OTHER_OWNER, blocking: true, expiresAt: "2026-09-28T10:14:00.000Z", now: older,
+  });
+  await createBotConnectRequestsRepository(db).create({
+    ownerId: OTHER_OWNER, interactionId: interaction.interactionId, service: "gmail",
+    baselineConnectionIds: [], expiresAt: "2026-09-28T10:14:00.000Z", now: older,
+  });
+}
+
 describe("bot connection requests", () => {
   it("reconciles owners with the oldest pending request first", async () => {
     const { connections } = setup();
     await connections.startConnect(OWNER, CHAT, interactionId, 1);
-    const older = "2026-09-28T09:59:00.000Z";
-    const otherChat = "chat_connect2";
-    await insertChat(db, otherChat, OTHER_OWNER);
-    const task = await createBotTasksRepository(db).create({ ownerId: OTHER_OWNER, botId: BOT, chatId: otherChat, now: older });
-    const { interaction } = await createBotInteractionsRepository(db).create({
-      ownerId: OTHER_OWNER, botId: BOT, chatId: otherChat, taskId: task.taskId, kind: "connect_request",
-      payload: { kind: "connect_request", service: "gmail", access: ["read"], benefit: "Read mail.", connectRequestId: "cr_0123456789abcdef01234568" },
-      responderActorId: OTHER_OWNER, blocking: true, expiresAt: "2026-09-28T10:14:00.000Z", now: older,
-    });
-    await createBotConnectRequestsRepository(db).create({
-      ownerId: OTHER_OWNER, interactionId: interaction.interactionId, requestId: "cr_0123456789abcdef01234568",
-      service: "gmail", baselineConnectionIds: [], expiresAt: "2026-09-28T10:14:00.000Z", now: older,
-    });
+    await otherPending();
     await expect(connections.ownersWithPending()).resolves.toEqual([OTHER_OWNER, OWNER]);
+  });
+  it("defers a failing owner and selects due continuations ahead of older requests", async () => {
+    const { connections } = setup();
+    await connections.startConnect(OWNER, CHAT, interactionId, 1);
+    await otherPending();
+    connected = [WORK];
+    await connections.reconcile(OWNER);
+    await expect(connections.ownersWithPending()).resolves.toEqual([OWNER, OTHER_OWNER]);
+    await connections.deferOwner(OTHER_OWNER);
+    await expect(connections.ownersWithPending()).resolves.toEqual([OWNER]);
+    clock += 61_000;
+    await expect(connections.ownersWithPending()).resolves.toEqual([OWNER, OTHER_OWNER]);
   });
   it("grants an account that is already connected when the owner starts", async () => {
     connected = [WORK];
     const result = await setup().connections.startConnect(OWNER, CHAT, interactionId, 1);
     expect(result.continuation).toEqual({
       chatId: CHAT, clientRequestId: `req_answer_${interactionId}`,
-      text: 'Connected gmail account "Work" (connection conn_work). Continue the task.',
+      text: 'Connected account "Work". Continue the task.',
     });
     expect(result.response.interaction).toMatchObject({ status: "resolved", revision: 2 });
+    expect(result.continuation?.text).not.toContain("conn_work");
     expect(await grants()).toEqual([expect.objectContaining({ connectionId: "conn_work", accountLabel: "Work", effects: ["read"] })]);
   });
 
@@ -173,6 +189,15 @@ describe("bot connection requests", () => {
     await expect(connections.reconcile(OWNER)).resolves.toEqual([]);
     expect((await db.selectFrom("bot_connect_requests").select("status").executeTakeFirstOrThrow()).status).toBe("expired");
     expect(await grants()).toEqual([]);
+  });
+
+  it("expires overdue requests even when integration inventory is unavailable", async () => {
+    const { connections, client } = setup();
+    await connections.startConnect(OWNER, CHAT, interactionId, 1);
+    clock = Date.parse("2026-09-28T10:16:00.000Z");
+    client.inventory.mockRejectedValue(new BotIntegrationError("unavailable"));
+    await expect(connections.reconcile(OWNER)).resolves.toEqual([]);
+    expect((await db.selectFrom("bot_connect_requests").select("status").executeTakeFirstOrThrow()).status).toBe("expired");
   });
 
   it("refuses another responder, a stale revision, and an expired request", async () => {

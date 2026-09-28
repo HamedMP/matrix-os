@@ -126,6 +126,7 @@ export interface BotConnectRequestsTable {
   baseline_connection_ids: Json<string[]>;
   status: "pending" | "completed" | "ambiguous" | "cancelled" | "expired";
   completed_connection_id: string | null;
+  retry_after: NullableTimestamp;
   revision: Revision;
   updated_at: Timestamp;
 }
