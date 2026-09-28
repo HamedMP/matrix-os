@@ -212,8 +212,11 @@ export function createBotConnections(deps: {
 
     /** Owners with started requests, a bounded number per pass. */
     async ownersWithPending(): Promise<string[]> {
-      const rows = await deps.transact(PASS_OWNER, (tx) => tx.db.selectFrom("bot_connect_requests").select("owner_id").distinct()
-        .where("status", "=", "pending").limit(MAX_OWNERS_PER_PASS).execute());
+      const rows = await deps.transact(PASS_OWNER, (tx) => tx.db.selectFrom("bot_connect_requests")
+        .select("owner_id").select((eb) => eb.fn.min("requested_at").as("oldest"))
+        .where("status", "=", "pending").groupBy("owner_id")
+        .orderBy("oldest", "asc").orderBy("owner_id", "asc")
+        .limit(MAX_OWNERS_PER_PASS).execute());
       return rows.map((row) => row.owner_id);
     },
   };

@@ -97,4 +97,12 @@ describe("bot authority view", () => {
     bare.route("/", createBotRoutes({ getPrincipal: () => ({ userId: OWNER, source: "jwt" }) as never }));
     expect((await bare.request(`/api/chat-agents/${BOT}/authority`)).status).toBe(503);
   });
+
+  it("rejects a malformed authority path before calling the service", async () => {
+    const view = vi.fn();
+    const app = new Hono();
+    app.route("/", createBotRoutes({ authority: { view }, getPrincipal: () => ({ userId: OWNER, source: "jwt" }) as never }));
+    expect((await app.request("/api/chat-agents/wrong/authority")).status).toBe(400);
+    expect(view).not.toHaveBeenCalled();
+  });
 });

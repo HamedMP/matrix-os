@@ -125,7 +125,9 @@ export function createBotRoutes(options: {
   routes.get("/api/chat-agents/:agentId/authority", async (context) => {
     const principal = options.getPrincipal(context);
     if (!options.authority) return errorResponse(context, "unavailable");
-    const view = await options.authority.view(principal.userId, context.req.param("agentId"));
+    const agentId = ChatAgentIdSchema.safeParse(context.req.param("agentId"));
+    if (!agentId.success) return errorResponse(context, "invalid_request");
+    const view = await options.authority.view(principal.userId, agentId.data);
     context.header("Cache-Control", "private, no-store");
     return context.json(view);
   });
