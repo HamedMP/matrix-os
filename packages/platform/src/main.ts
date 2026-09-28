@@ -74,7 +74,11 @@ import { createLaunchReadinessRoutes } from './launch-readiness-routes.js';
 import { createHostBundleRoutes } from './host-bundle-routes.js';
 import { createPrivatePreviewUpdateRoutes } from './private-preview-update-routes.js';
 import { createPrivatePreviewRoutes } from './private-preview-routes.js';
-import { parseInternalOrganizationId } from './private-preview-access.js';
+import {
+  membershipCheckFromProjection,
+  parseInternalOrganizationId,
+  type PrivatePreviewMembershipCheck,
+} from './private-preview-access.js';
 import { createGoldenSnapshotRoutes } from './golden-snapshot-routes.js';
 import type { GoldenSnapshotService } from './golden-snapshot-service.js';
 import type { GoldenSnapshotRuntimeConfig } from './golden-snapshot-schema.js';
@@ -263,6 +267,8 @@ export function createApp(deps: {
   fundedModelProbes?: import('./ai-funded-model-probes.js').FundedModelProbeService;
   collaboration?: PlatformCollaborationComposition;
   customerVpsService?: CustomerVpsService;
+  /** Overrides the collaboration organization projection for Private Preview membership. */
+  privatePreviewMembership?: PrivatePreviewMembershipCheck;
   goldenSnapshotService?: GoldenSnapshotService;
   goldenSnapshotConfig?: GoldenSnapshotRuntimeConfig;
   customerVpsObjectStore?: CustomerVpsObjectStore;
@@ -611,6 +617,10 @@ export function createApp(deps: {
     service: deps.customerVpsService,
     resolveActor: resolveJourneyUser,
     internalOrganizationId: parseInternalOrganizationId(appEnv.MATRIX_INTERNAL_CLERK_ORG_ID),
+    isMember: deps.privatePreviewMembership
+      ?? membershipCheckFromProjection(deps.collaboration && 'organizations' in deps.collaboration
+        ? deps.collaboration.organizations?.projection
+        : undefined),
     platformSecret,
     logRouteError: logPlatformRouteError,
   }));

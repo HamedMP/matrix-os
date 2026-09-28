@@ -13,6 +13,9 @@ import {
   bootstrapPlatformOrganizationDatabase,
   type OrganizationPlatformDatabase,
 } from '../../packages/platform/src/organizations/database.js';
+import { createOrganizationMembershipProjection } from '../../packages/platform/src/organizations/projection.js';
+import { PlatformOrganizationRepository } from '../../packages/platform/src/organizations/repository.js';
+import { membershipCheckFromProjection } from '../../packages/platform/src/private-preview-access.js';
 import { issueSyncJwt } from '../../packages/platform/src/sync-jwt.js';
 import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
 import { JWT_SECRET, stubOrchestrator } from './proxy-routing-test-utils.js';
@@ -61,26 +64,41 @@ describe('Private Preview routes', () => {
     await destroyTestPlatformDb(db);
   });
 
-  async function seedMembership(actorId: string, state: 'active' | 'removed' = 'active', lifecycle: 'active' | 'deleted' = 'active') {
+  async function seedMembership(
+    actorId: string,
+    state: 'active' | 'removed' = 'active',
+    lifecycle: 'active' | 'deleted' = 'active',
+    verifiedSecondsAgo = 0,
+  ) {
     const kysely = db.kysely as unknown as Kysely<OrganizationPlatformDatabase>;
     await bootstrapPlatformOrganizationDatabase(kysely);
-    await sql`
-      INSERT INTO organizations (organization_id, name, slug, ai_submission, lifecycle, source_updated_at, verified_at)
-      VALUES (${org}, 'Internal', 'internal', 'owner_only', ${lifecycle}, now(), now())
-      ON CONFLICT (organization_id) DO UPDATE SET lifecycle = EXCLUDED.lifecycle
-    `.execute(kysely);
-    await sql`
-      INSERT INTO organization_memberships (organization_id, actor_id, membership_id, role, state, membership_epoch, source_updated_at)
-      VALUES (${org}, ${actorId}, ${`mem_${actorId}`}, 'org:member', ${state}, 1, now())
-    `.execute(kysely);
+    // The organization and its membership are related writes: seed them together.
+    await kysely.transaction().execute(async (trx) => {
+      await sql`
+        INSERT INTO organizations (organization_id, name, slug, ai_submission, lifecycle, source_updated_at, verified_at)
+        VALUES (${org}, 'Internal', 'internal', 'owner_only', ${lifecycle}, now(), now() - make_interval(secs => ${verifiedSecondsAgo}))
+        ON CONFLICT (organization_id) DO UPDATE SET lifecycle = EXCLUDED.lifecycle, verified_at = EXCLUDED.verified_at
+      `.execute(trx);
+      await sql`
+        INSERT INTO organization_memberships (organization_id, actor_id, membership_id, role, state, membership_epoch, source_updated_at)
+        VALUES (${org}, ${actorId}, ${`mem_${actorId}`}, 'org:member', ${state}, 1, now())
+      `.execute(trx);
+    });
   }
 
-  function app(orgId: string | null = org) {
+  // The real projection: it requires recent Clerk verification of the organization.
+  function membership() {
+    const repository = new PlatformOrganizationRepository(db.kysely as unknown as Kysely<OrganizationPlatformDatabase>);
+    return membershipCheckFromProjection(createOrganizationMembershipProjection({ repository, startTimers: false }));
+  }
+
+  function app(orgId: string | null = org, withProjection = true) {
     return createApp({
       db,
       orchestrator: stubOrchestrator(),
       platformSecret: secret,
       customerVpsService: service as unknown as CustomerVpsService,
+      ...(withProjection ? { privatePreviewMembership: membership() } : {}),
       env: { ...process.env, MATRIX_INTERNAL_CLERK_ORG_ID: orgId ?? undefined },
     });
   }
@@ -107,16 +125,23 @@ describe('Private Preview routes', () => {
     expect(res.status).toBe(401);
   });
 
-  it('fails closed when the organization projection is unavailable', async () => {
-    const res = await app().request('/api/private-previews', { headers: await auth(member) });
+  it('fails closed when no organization projection is configured', async () => {
+    await seedMembership(member);
+    const res = await app(org, false).request('/api/private-previews', { headers: await auth(member) });
     expect(res.status).toBe(503);
     await expect(res.json()).resolves.toEqual({ error: 'Private Preview unavailable' });
+  });
+
+  it('fails closed when the organization projection cannot be read', async () => {
+    const res = await app().request('/api/private-previews', { headers: await auth(member) });
+    expect(res.status).toBe(503);
   });
 
   it.each([
     ['a non-member', async () => seedMembership(outsider)],
     ['a removed member', async () => seedMembership(member, 'removed')],
     ['a member of a deleted organization', async () => seedMembership(member, 'active', 'deleted')],
+    ['a member whose organization Clerk has not verified recently', async () => seedMembership(member, 'active', 'active', 300)],
   ])('gives %s the same generic 403 on every member route', async (_label, setup) => {
     await setup();
     const headers = await auth(member);
@@ -238,5 +263,28 @@ describe('Private Preview routes', () => {
     expect(res.status).toBe(200);
     await expect(res.json()).resolves.toEqual({ destroyed: 2, failed: 0 });
     expect(service.delete).toHaveBeenCalledTimes(2);
+  });
+
+  it('pages through more than one batch and still ends when a destroy fails', async () => {
+    for (let n = 0; n < 55; n += 1) {
+      const suffix = n.toString(16).padStart(8, '0');
+      await insertUserMachine(db, privatePreview({
+        machineId: `00000000-0000-4000-8000-${n.toString().padStart(12, '0')}`,
+        clerkUserId: `user_engineer${n}`,
+        handle: `pv-1907-${suffix}`,
+        runtimeSlot: `pv-1907-${suffix}`,
+      }));
+    }
+    // Deletes are recorded but the rows stay active, as when provider deletion lags.
+    service.delete.mockImplementation(async (id: string) => {
+      if (id.endsWith('000000000007')) throw new Error('provider unavailable');
+      return { machineId: id, status: 'deleted' };
+    });
+    const res = await app().request('/vps/private-previews?pr=1907', {
+      method: 'DELETE', headers: { authorization: `Bearer ${secret}` },
+    });
+    expect(res.status).toBe(502);
+    await expect(res.json()).resolves.toEqual({ destroyed: 54, failed: 1 });
+    expect(service.delete).toHaveBeenCalledTimes(55);
   });
 });

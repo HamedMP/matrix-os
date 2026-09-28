@@ -1,6 +1,8 @@
-import type { Kysely } from 'kysely';
-import type { PlatformDB } from './db.js';
-import type { OrganizationPlatformDatabase } from './organizations/database.js';
+import {
+  ORGANIZATION_POSITIVE_EVIDENCE_MAX_AGE_MS,
+  type OrganizationMembershipProjection,
+} from './organizations/projection.js';
+import type { PlatformOrganizationRepository } from './organizations/repository.js';
 
 /** Spec 537 P4: a Private Preview expires this long after it was provisioned. */
 export const PRIVATE_PREVIEW_TTL_MS = 72 * 60 * 60 * 1000;
@@ -13,30 +15,55 @@ export function parseInternalOrganizationId(value: string | undefined): string |
   return trimmed && ORGANIZATION_ID_PATTERN.test(trimmed) ? trimmed : null;
 }
 
-export function privatePreviewExpiresAt(provisionedAt: string): string {
-  return new Date(Date.parse(provisionedAt) + PRIVATE_PREVIEW_TTL_MS).toISOString();
+/** Null when the stored provisioning time cannot be parsed; the sweep treats that machine as expired. */
+export function privatePreviewExpiresAt(provisionedAt: string): string | null {
+  const parsed = Date.parse(provisionedAt);
+  return Number.isFinite(parsed) ? new Date(parsed + PRIVATE_PREVIEW_TTL_MS).toISOString() : null;
 }
 
+/** Answers whether an actor is a current member of an organization. */
+export type PrivatePreviewMembershipCheck = (organizationId: string, actorId: string) => Promise<boolean>;
+
 /**
- * Reads the platform's Clerk organization projection: the actor holds an
- * active membership in an active organization. Throws when the projection is
- * unavailable, so callers fail closed rather than treating it as non-membership.
+ * Uses the collaboration organization projection, which requires recent Clerk
+ * verification and keeps the organization re-verified while it is being asked
+ * about. Without a projection there is no check, and callers fail closed.
  */
-export async function isActiveOrganizationMember(
-  db: PlatformDB,
-  organizationId: string,
-  actorId: string,
-): Promise<boolean> {
-  await db.ready;
-  const organizations = db.kysely as unknown as Kysely<OrganizationPlatformDatabase>;
-  const row = await organizations
-    .selectFrom('organization_memberships as m')
-    .innerJoin('organizations as o', 'o.organization_id', 'm.organization_id')
-    .select('m.actor_id')
-    .where('m.organization_id', '=', organizationId)
-    .where('m.actor_id', '=', actorId)
-    .where('m.state', '=', 'active')
-    .where('o.lifecycle', '=', 'active')
-    .executeTakeFirst();
-  return row !== undefined;
+export function membershipCheckFromProjection(
+  projection: Pick<OrganizationMembershipProjection, 'isCurrentMember'> | undefined,
+): PrivatePreviewMembershipCheck | undefined {
+  return projection
+    ? (organizationId, actorId) => projection.isCurrentMember({ organizationId, actorId })
+    : undefined;
+}
+
+export type PrivatePreviewMembershipState = 'member' | 'not_member' | 'unknown';
+export type PrivatePreviewMembershipLookup = (organizationId: string, actorId: string) => Promise<PrivatePreviewMembershipState>;
+
+/**
+ * For destructive decisions such as the sweep. Authorization treats anything
+ * short of a fresh positive answer as "not a member", but destroying a machine
+ * needs positive evidence: a stale or missing Clerk verification is "unknown",
+ * never a lost membership. The projection call also keeps the organization
+ * under re-verification.
+ */
+export function membershipLookupFromOrganizations(
+  organizations: {
+    projection: Pick<OrganizationMembershipProjection, 'isCurrentMember'>;
+    repository: Pick<PlatformOrganizationRepository, 'getMembershipSnapshot'>;
+  } | undefined,
+  options: { now?: () => Date; maxAgeMs?: number } = {},
+): PrivatePreviewMembershipLookup | undefined {
+  if (!organizations) return undefined;
+  const now = options.now ?? (() => new Date());
+  const maxAgeMs = options.maxAgeMs ?? ORGANIZATION_POSITIVE_EVIDENCE_MAX_AGE_MS;
+  return async (organizationId, actorId) => {
+    if (await organizations.projection.isCurrentMember({ organizationId, actorId })) return 'member';
+    // One statement, so a reconciliation committing between reads cannot pair a
+    // fresh verification with an outdated membership row.
+    const snapshot = await organizations.repository.getMembershipSnapshot({ organizationId, actorId });
+    if (!snapshot?.verifiedAt || now().getTime() - snapshot.verifiedAt.getTime() > maxAgeMs) return 'unknown';
+    if (snapshot.lifecycle === 'active' && snapshot.membershipState === 'active') return 'member';
+    return 'not_member';
+  };
 }

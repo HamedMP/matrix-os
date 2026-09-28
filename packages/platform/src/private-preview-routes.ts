@@ -10,8 +10,12 @@ import {
   type PlatformDB,
   type UserMachineRecord,
 } from './db.js';
-import { listActivePrivatePreviewsForOwner, listActivePrivatePreviewsForPr } from './database/private-previews.js';
-import { isActiveOrganizationMember, privatePreviewExpiresAt } from './private-preview-access.js';
+import {
+  listActivePrivatePreviewsForOwner,
+  listActivePrivatePreviewsForPr,
+  type PrivatePreviewCursor,
+} from './database/private-previews.js';
+import { privatePreviewExpiresAt, type PrivatePreviewMembershipCheck } from './private-preview-access.js';
 import { timingSafeTokenEquals } from './platform-token.js';
 
 const BODY_LIMIT = 1024;
@@ -62,6 +66,8 @@ export function createPrivatePreviewRoutes(opts: {
   service?: PrivatePreviewService;
   resolveActor: (c: Context) => Promise<string | null>;
   internalOrganizationId: string | null;
+  /** Absent when no organization projection is configured; member routes then fail closed. */
+  isMember?: PrivatePreviewMembershipCheck;
   platformSecret: string;
   logRouteError: (route: string, err: unknown) => void;
 }): Hono {
@@ -80,8 +86,9 @@ export function createPrivatePreviewRoutes(opts: {
   async function requireMember(c: Context): Promise<Gate> {
     const gate = await authenticate(c);
     if (gate instanceof Response) return gate;
+    if (!opts.isMember) return c.json({ error: 'Private Preview unavailable' }, 503);
     try {
-      if (!await isActiveOrganizationMember(opts.db, opts.internalOrganizationId as string, gate.actorId)) {
+      if (!await opts.isMember(opts.internalOrganizationId as string, gate.actorId)) {
         return c.json({ error: 'Forbidden' }, 403);
       }
     } catch (err: unknown) {
@@ -192,25 +199,34 @@ export function createPrivatePreviewRoutes(opts: {
     if (!opts.platformSecret || !timingSafeTokenEquals(token, opts.platformSecret)) {
       return c.json({ error: 'Unauthorized' }, 401);
     }
-    if (!opts.service) return c.json({ error: 'Private Preview unavailable' }, 503);
+    const service = opts.service;
+    if (!service) return c.json({ error: 'Private Preview unavailable' }, 503);
     const pr = PrQuerySchema.safeParse(c.req.query('pr') ?? '');
     if (!pr.success) return c.json({ error: 'Invalid request' }, 400);
-    let machines: UserMachineRecord[];
-    try {
-      machines = await listActivePrivatePreviewsForPr(opts.db, pr.data);
-    } catch (err: unknown) {
-      return failure(c, 'DELETE /vps/private-previews', err);
-    }
+    // Page by (provisioned_at, machine_id) so machines that fail to delete are
+    // not fetched again and every remaining machine is still reached.
+    let after: PrivatePreviewCursor | undefined;
     let destroyed = 0;
     let failed = 0;
-    for (const machine of machines) {
+    for (;;) {
+      let machines: UserMachineRecord[];
       try {
-        await opts.service.delete(machine.machineId);
-        destroyed += 1;
+        machines = await listActivePrivatePreviewsForPr(opts.db, pr.data, after);
       } catch (err: unknown) {
-        failed += 1;
-        opts.logRouteError(`DELETE /vps/private-previews machineId=${machine.machineId}`, err);
+        return failure(c, 'DELETE /vps/private-previews', err);
       }
+      if (machines.length === 0) break;
+      for (const machine of machines) {
+        try {
+          await service.delete(machine.machineId);
+          destroyed += 1;
+        } catch (err: unknown) {
+          failed += 1;
+          opts.logRouteError(`DELETE /vps/private-previews machineId=${machine.machineId}`, err);
+        }
+      }
+      const last = machines[machines.length - 1];
+      after = { provisionedAt: last.provisionedAt, machineId: last.machineId };
     }
     return c.json({ destroyed, failed }, failed > 0 ? 502 : 200);
   });
