@@ -208,7 +208,7 @@ function CollaborationFrameChrome({
   );
 }
 
-function sharedPath(kind: "chat" | "terminal" | "project" | "invitations", id: string): string {
+function sharedPath(kind: "chat" | "terminal" | "project" | "file" | "invitations", id: string): string {
   return `${SHARED_HOME}/${kind}/${encodeURIComponent(id)}`;
 }
 
@@ -303,6 +303,7 @@ function FrameCollaboration({ view, api, actorId, session }: {
       openChat={(scopeId) => router.push(sharedPath("chat", scopeId))}
       openTerminal={(scopeId) => router.push(sharedPath("terminal", scopeId))}
       openProject={(scopeId) => router.push(sharedPath("project", scopeId))}
+      openFile={(scopeId) => router.push(sharedPath("file", scopeId))}
     />
   );
 }

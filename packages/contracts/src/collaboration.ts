@@ -635,6 +635,11 @@ export const CollaborationDiscoveryItemSchema = z.discriminatedUnion("status", [
         scope: CollaborationScopeSchema.refine((scope) => scope.kind === "project"),
         project: CollaborationProjectSchema,
       }).strict(),
+      // Spec 535 D6: files, folders and app instances hydrate their scope; `name` is the entry's display name.
+      z.object({
+        scope: CollaborationScopeSchema.refine((scope) => scope.kind === "file" || scope.kind === "folder" || scope.kind === "app"),
+        name: z.string().min(1).max(255).optional(),
+      }).strict(),
     ]).optional(),
     home: CollaborationDiscoveryHomeStateSchema.optional(),
   }).strict(),

@@ -10,6 +10,7 @@ import type { z } from "zod/v4";
 import { Dialog } from "../Dialog.js";
 import { AudienceGrantPicker } from "./AudienceGrantPicker.js";
 import { ReadinessSummary } from "./ReadinessSummary.js";
+import type { CollaborationContent } from "./direct-client.js";
 
 type Scope = z.infer<typeof CollaborationScopeSchema>;
 type Member = z.infer<typeof CollaborationMemberSchema>;
@@ -20,6 +21,8 @@ export interface CollaborationApi {
   post(path: string, body: unknown): Promise<unknown>;
   patch?(path: string, body: unknown): Promise<unknown>;
   delete(path: string, body?: unknown): Promise<unknown>;
+  /** Bounded file bytes from the resource's home; absent on surfaces that cannot read resource content. */
+  getContent?(path: string, options: { maxBytes: number }): Promise<CollaborationContent>;
   subscribe?(
     scopeId: string,
     onEvent: () => void | Promise<void>,
