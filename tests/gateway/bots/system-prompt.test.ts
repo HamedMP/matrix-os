@@ -13,12 +13,13 @@ describe("bot recipe catalog", () => {
   it("resolves only exact launch-set versions", () => {
     const catalog = createBotRecipeCatalog();
     expect(catalog.list().map((recipe) => recipe.recipeId)).toEqual([
-      "personal-daily-brief", "competitor-watching", "account-book", "event-request-desk", "writing-bot", "echo", "spend-review",
+      "jev-inbox-triage", "personal-daily-brief", "competitor-watching", "account-book", "event-request-desk", "writing-bot", "echo", "spend-review",
     ]);
     expect(catalog.resolve({ recipeId: "writing-bot", version: "2026-09-27.1" }).name).toBe("Writing Bot");
     for (const ref of [
       { recipeId: "writing-bot", version: "2026-01-01.1" },
       { recipeId: "jev-inbox-triage", version: "2026-09-27.1" },
+      { recipeId: "jev-inbox-triage", version: "2026-09-28.2" },
       { recipeId: "../writing-bot", version: "2026-09-27.1" },
     ]) {
       expect(() => catalog.resolve(ref)).toThrow(BotRecipeCatalogError);

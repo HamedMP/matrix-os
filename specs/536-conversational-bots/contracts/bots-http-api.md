@@ -92,7 +92,11 @@ Rules:
 
 - The claim is transactional: the interaction must be `pending`, unexpired, and at `baseRevision`, and the principal must be the designated responder.
 - A resolution enqueues at most one continuation.
-- `connect_request` + `start` creates a `bot_connect_requests` row and returns `{ connectUrl }` from the existing broker `/connect`. The provider-hosted consent may open externally.
+- `connect_request` + `start` depends on what the owner already has connected for the service:
+  - one account: it is granted, and the interaction resolves with a continuation;
+  - several accounts: the request resolves and an `account_choice` interaction follows;
+  - none: a `bot_connect_requests` row is created (with an empty baseline) and the route returns `{ connectUrl }` from the existing broker `/connect`. The provider-hosted consent may open externally, and starting again reuses the same request.
+- Connection requests are reconciled every 30 seconds by syncing and reading the account inventory. Exactly one new connection completes the request and continues the task; several ask which account to use.
 - Completion is never inferred from a browser return. The next authorized chat read or reconcile tick checks the inventory.
 
 Response `200`:

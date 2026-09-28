@@ -86,6 +86,7 @@ export function registerCollaborationChatRoutes(options: CollaborationChatRouteO
       interactions: botServices.interactions,
       memory: botServices.memory,
       grants: botServices.grants,
+      authority: botServices.authority,
     } : {}),
     ...(botServices && chatRepository && canonicalChatOrchestrator ? {
       admitContinuation: createBotContinuationAdmitter({ repository: chatRepository, orchestrator: canonicalChatOrchestrator }),
