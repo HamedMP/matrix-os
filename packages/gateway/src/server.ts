@@ -164,6 +164,8 @@ import { enableOwnerSharedAi } from "./startup/collaboration.js";
 import type { ScopeRuntimeHost } from "./scope-runtime-host/index.js";
 import { startScopeRuntimeHost } from "./startup/scope-runtime-host.js";
 import { startBots, type BotServices } from "./startup/bots.js";
+import { withBotProviderInstance } from "./bots/provider-instance.js";
+import { ChatAgentStore } from "./chat/agent-store.js";
 import { initializePlatformIntegrations } from "./startup/platform-integrations.js";
 import { createSymphonyRunner } from "./symphony-runner.js";
 import { createElixirSymphonyProxyRoutes } from "./symphony/proxy.js";
@@ -1498,6 +1500,23 @@ export async function createGateway(config: GatewayConfig) {
     credentialedDriverKinds: ["pi", "opencode"],
   });
   if (chatRepository && canonicalChatExecutionRoots) {
+    // The host starts before the adapters so the bot adapter can bind to it; shared AI
+    // registers on it after the orchestrator exists (below).
+    scopeRuntimeHost = await startScopeRuntimeHost({
+      homePath,
+      ...(fundedCredentialProvider ? { fundedCredentialProvider } : {}),
+      ...(fundedAdmission ? { fundedAdmission } : {}),
+      onFailure: logBestEffortFailure,
+    });
+    const chatAgents = new ChatAgentStore({ homePath, db: chatRepository.kysely });
+    await chatAgents.bootstrap();
+    botServices = await startBots({
+      homePath, repository: chatRepository, agents: chatAgents, executionRoots: canonicalChatExecutionRoots,
+      providers: aiProviderService,
+      ...(scopeRuntimeHost ? { host: scopeRuntimeHost } : {}),
+      ...(fundedCredentialProvider ? { fundedCredentialProvider } : {}),
+      ...(fundedAdmission ? { fundedAdmission } : {}),
+    });
     const canonicalAdapters: CanonicalChatProviderAdapter[] = [
       createKernelChatProviderAdapter({ dispatcher }),
       createHermesChatProviderAdapter({ homePath, toolOutputKey, ...(jevInboxRuntime ? { jev: jevInboxRuntime.launch } : {}) }),
@@ -1539,10 +1558,13 @@ export async function createGateway(config: GatewayConfig) {
         }));
       }
     }
+    if (botServices?.adapter) canonicalAdapters.push(botServices.adapter);
     canonicalChatRuntime = await createCanonicalChatRuntime({
       homePath,
       repository: chatRepository,
-      catalog: canonicalChatProviderCatalog,
+      catalog: botServices?.adapter ? withBotProviderInstance(canonicalChatProviderCatalog) : canonicalChatProviderCatalog,
+      agents: chatAgents,
+      ...(botServices ? { botChats: botServices.botChats } : {}),
       adapters: new CanonicalChatProviderRegistry(canonicalAdapters.map(adapter => withAsyncChatInput(adapter))),
       executionRoots: canonicalChatExecutionRoots,
       ...(canonicalChatCollaborationGuard ? { collaborationGuard: canonicalChatCollaborationGuard } : {}),
@@ -1553,19 +1575,12 @@ export async function createGateway(config: GatewayConfig) {
       ...(jevInboxRuntime ? { admitJevWorkflow: (owner, agent) => jevInboxRuntime.admit(owner.ownerId, agent) } : {}),
     });
     canonicalChatOrchestrator = canonicalChatRuntime.orchestrator;
-    botServices = await startBots({ homePath, repository: chatRepository, agents: canonicalChatRuntime.agents });
     backgroundChatProjection.setReconciler(ownerId => canonicalChatOrchestrator?.reconcileActiveRuns({ type: "personal", ownerId }) ?? Promise.resolve());
     // Shared AI marks runs the previous process lost (gateway_restart) before the
     // owner reconcile loop below finishes them; the reverse order loses attribution.
     // S07: this layer has no execution-root resolver, so no `sandboxManifests` source is passed
     // and shared AI reports no eligibility instead of offering runs that would fail at launch.
     // S09 supplies the resolver; a shared run never falls back to an unsandboxed profile.
-    scopeRuntimeHost = await startScopeRuntimeHost({
-      homePath,
-      ...(fundedCredentialProvider ? { fundedCredentialProvider } : {}),
-      ...(fundedAdmission ? { fundedAdmission } : {}),
-      onFailure: logBestEffortFailure,
-    });
     await enableOwnerSharedAi({
       gatewayCollaboration,
       input: {
