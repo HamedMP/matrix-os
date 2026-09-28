@@ -328,6 +328,12 @@ The `Connect collaboration preview home` job, also gated by
   owner with an empty access list. It retires this handle's synthetic share
   fixture row and earlier incarnations owned by the same account, and refuses
   anything owned by someone else.
+- The run claims the connection on the home and installs the guard. The latest
+  claim owns the home, so a cancelled earlier run's timer can never undo it.
+  It then arms a dead-man guard, before anything else changes: a 300 s systemd
+  timer that restores the rollback copy and restarts the gateway unless this
+  run commits. A claim that is already committed, or superseded by a newer
+  run, is left alone.
 - It re-points only the home's collaboration binding in
   `/opt/matrix/env/host.env`:
   - `PLATFORM_INTERNAL_URL` becomes the PR tag URL;
@@ -342,13 +348,13 @@ The `Connect collaboration preview home` job, also gated by
   working for rollback. The file keeps its owner, group and mode. One rollback
   copy (`.host.env.preview-collaboration-rollback`, the file before the first
   connection) sits next to it. Nothing prints the file or a value.
-- It arms a dead-man guard: a 300 s systemd timer that restores the rollback
-  copy and restarts the gateway unless this run commits. It then restarts the
-  gateway and requires local health with collaboration configured. Next it
-  requires the home to register its runtime endpoint (`vps-<machine ID>`) and
-  attach its control stream to the preview platform after the restart. Only
-  then does it commit and disarm the guard. Any failure restores the copy
-  immediately, or fires the guard once it is armed.
+- It restarts the gateway and requires local health with collaboration
+  configured. Next it requires the home to register its runtime endpoint
+  (`vps-<machine ID>`) and attach its control stream to the preview platform
+  after the restart. Only then does it commit and disarm the guard. Any failure
+  after the guard is armed fires it immediately, and a lost runner leaves the
+  timer to fire. A failed reconnection therefore returns the home to its
+  original binding.
 
 After connecting, the home is reachable for collaboration only through
 `https://preview.matrix-os.com` with that PR's tag holding traffic. Other

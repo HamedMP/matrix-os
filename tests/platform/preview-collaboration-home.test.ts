@@ -44,12 +44,22 @@ function python(script: string, call: string, ...args: string[]) {
 
 function apply(binding: unknown = BINDING, handle = HANDLE, owner = OWNER, machine = MACHINE) {
   return python("scripts/preview-collaboration-home.py",
-    `m["apply"](pathlib.Path(sys.argv[2]),sys.argv[3],sys.argv[4],sys.argv[5],json.loads(sys.argv[6]),sys.argv[7],root_owned=False)`,
-    handle, owner, machine, JSON.stringify(binding), GUARD_SOURCE);
+    `m["apply"](pathlib.Path(sys.argv[2]),sys.argv[3],sys.argv[4],sys.argv[5],json.loads(sys.argv[6]),root_owned=False)`,
+    handle, owner, machine, JSON.stringify(binding));
 }
 
 function guard(command: "restore" | "commit", nonce: string) {
   return python("scripts/preview-collaboration-guard.py", `m["${command}"](pathlib.Path(sys.argv[2]),sys.argv[3])`, nonce);
+}
+
+function claim(nonce: string) {
+  return python("scripts/preview-collaboration-guard.py", `m["claim"](pathlib.Path(sys.argv[2]),sys.argv[3],sys.argv[4])`, nonce, GUARD_SOURCE);
+}
+
+// The workflow's order on the host: claim, arm the guard, then apply.
+function connect(nonce: string, binding: unknown = BINDING) {
+  expect(JSON.parse(claim(nonce).stdout)).toBe("claimed");
+  return apply(binding);
 }
 
 const hostEnv = () => readFileSync(join(root, "host.env"), "utf8");
@@ -91,9 +101,17 @@ describe("preview collaboration host scripts", () => {
     expect(envValue("MATRIX_AUTH_TOKEN")).toEqual([`MATRIX_AUTH_TOKEN=${TOKEN}`]);
     expect(hostEnv()).toContain("MATRIX_DEVELOPER_TOOLS='[\"codex\"]'");
     expect(result.stdout).not.toContain(BINDING.UPGRADE_TOKEN);
-    const installed = statSync(join(root, ".preview-collaboration-guard.py"));
-    expect(installed.mode & 0o777).toBe(0o700);
+  });
+
+  it("installs the guard and records the claim before anything else changes", () => {
+    expect(JSON.parse(claim("101-1").stdout)).toBe("claimed");
+    expect(statSync(join(root, ".preview-collaboration-guard.py")).mode & 0o777).toBe(0o700);
     expect(readFileSync(join(root, ".preview-collaboration-guard.py"), "utf8")).toBe(GUARD_SOURCE);
+    expect(JSON.parse(readFileSync(join(root, ".preview-collaboration-state"), "utf8"))).toEqual({ nonce: "101-1", state: "claimed" });
+    expect(hostEnv()).toBe(ORIGINAL);
+    // A runner lost after arming but before applying leaves nothing to restore on a first connection.
+    expect(JSON.parse(guard("restore", "101-1").stdout)).toBe("none");
+    expect(hostEnv()).toBe(ORIGINAL);
   });
 
   it("keeps exactly one rollback copy: the host environment before the first connection", () => {
@@ -142,37 +160,60 @@ describe("preview collaboration host scripts", () => {
     expect(lstatSync(join(root, "host.env")).isSymbolicLink()).toBe(true);
   });
 
-  it("restores the pre-connection host environment unless that connection was committed", () => {
-    expect(apply().status).toBe(0);
-    const restored = guard("restore", "run-1");
+  it("restores the pre-connection host environment while its own claim is uncommitted", () => {
+    expect(connect("101-1").status).toBe(0);
+    const restored = guard("restore", "101-1");
     expect(restored.status, restored.stderr).toBe(0);
     expect(JSON.parse(restored.stdout)).toBe("restored");
     expect(hostEnv()).toBe(ORIGINAL);
     expect(statSync(join(root, "host.env")).mode & 0o7777).toBe(0o640);
     expect(existsSync(join(root, ".host.env.preview-collaboration-rollback"))).toBe(false);
-    expect(JSON.parse(guard("restore", "run-1").stdout)).toBe("none");
+    expect(JSON.parse(guard("restore", "101-1").stdout)).toBe("unchanged");
     // A commit after a restore must fail, so the workflow never reports a connection the guard undid.
-    expect(guard("commit", "run-1").status).not.toBe(0);
+    expect(guard("commit", "101-1").status).not.toBe(0);
   });
 
   it("leaves a committed connection in place when its guard fires", () => {
-    expect(apply().status).toBe(0);
-    expect(JSON.parse(guard("commit", "run-2").stdout)).toBe("committed");
-    expect(JSON.parse(guard("restore", "run-2").stdout)).toBe("committed");
+    expect(connect("102-1").status).toBe(0);
+    expect(JSON.parse(guard("commit", "102-1").stdout)).toBe("committed");
+    expect(JSON.parse(guard("restore", "102-1").stdout)).toBe("unchanged");
     expect(envValue("UPGRADE_TOKEN")).toEqual([`UPGRADE_TOKEN=${BINDING.UPGRADE_TOKEN}`]);
-    // A later, uncommitted connection still restores the original.
-    expect(apply({ ...BINDING, UPGRADE_TOKEN: "d".repeat(64) }).status).toBe(0);
-    expect(JSON.parse(guard("restore", "run-3").stdout)).toBe("restored");
+    // A later connection that fails before committing returns the home to its original binding.
+    expect(connect("103-1", { ...BINDING, UPGRADE_TOKEN: "d".repeat(64) }).status).toBe(0);
+    expect(JSON.parse(guard("restore", "103-1").stdout)).toBe("restored");
     expect(hostEnv()).toBe(ORIGINAL);
   });
 
+  it("never lets an earlier run's timer undo a newer connection", () => {
+    // Run 104 is cancelled after applying; its armed timer outlives it.
+    expect(connect("104-1").status).toBe(0);
+    // Run 105 supersedes it and commits.
+    expect(connect("105-1", { ...BINDING, UPGRADE_TOKEN: "e".repeat(64) }).status).toBe(0);
+    expect(JSON.parse(guard("commit", "105-1").stdout)).toBe("committed");
+    expect(JSON.parse(guard("restore", "104-1").stdout)).toBe("unchanged");
+    expect(envValue("UPGRADE_TOKEN")).toEqual([`UPGRADE_TOKEN=${"e".repeat(64)}`]);
+    // Nor can the superseded run commit.
+    expect(guard("commit", "104-1").status).not.toBe(0);
+    // Before the newer run commits, the earlier timer is also powerless.
+    expect(connect("106-1", { ...BINDING, UPGRADE_TOKEN: "f".repeat(64) }).status).toBe(0);
+    expect(JSON.parse(guard("restore", "105-1").stdout)).toBe("unchanged");
+    expect(envValue("UPGRADE_TOKEN")).toEqual([`UPGRADE_TOKEN=${"f".repeat(64)}`]);
+  });
+
   it("refuses to restore from a symlinked rollback copy", () => {
-    expect(apply().status).toBe(0);
+    expect(connect("107-1").status).toBe(0);
     rmSync(join(root, ".host.env.preview-collaboration-rollback"));
     writeFileSync(join(root, "elsewhere"), "MATRIX_HANDLE=alice\n");
     symlinkSync(join(root, "elsewhere"), join(root, ".host.env.preview-collaboration-rollback"));
-    expect(guard("restore", "run-4").status).not.toBe(0);
+    expect(guard("restore", "107-1").status).not.toBe(0);
     expect(envValue("UPGRADE_TOKEN")).toEqual([`UPGRADE_TOKEN=${BINDING.UPGRADE_TOKEN}`]);
+  });
+
+  it("accepts only run-attempt nonces on the command line", () => {
+    for (const argv of [["restore", "run-1"], ["commit", "1-1;x"], ["claim", "1-1"], ["restore", "1-1", "--now"]]) {
+      const result = spawnSync("python3", ["-I", resolve("scripts/preview-collaboration-guard.py"), ...argv], { encoding: "utf8" });
+      expect(result.status, argv.join(" ")).not.toBe(0);
+    }
   });
 
   it("reports gateway health and collaboration configuration without printing the token", () => {

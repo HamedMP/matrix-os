@@ -69,6 +69,11 @@ describe("preview VPS collaboration owner", () => {
   it("leaves previews without the label, and collaboration labels without preview-vps, unchanged", () => {
     expect(decideAction({ EVENT_NAME: "pull_request", EVENT_ACTION: "synchronize", HAS_LABEL: "true" }))
       .toMatchObject({ action: "deploy", collaboration: "false" });
+    // A manual dispatch still needs both labels before it releases the collaboration owner.
+    expect(decideAction({ EVENT_NAME: "workflow_dispatch", EVENT_ACTION: "", EVENT_HEAD_SHA: "", EVENT_HEAD_REF: "", EVENT_HEAD_REPO: "" }, {
+      head: { sha: "b".repeat(40), ref: "feature", repo: { full_name: "HamedMP/matrix-os" } },
+      labels: [{ name: "preview-collaboration" }],
+    })).toMatchObject({ action: "deploy", collaboration: "false" });
     expect(decideAction({ EVENT_NAME: "pull_request", EVENT_ACTION: "labeled", LABELED_NAME: "preview-collaboration", HAS_COLLABORATION_LABEL: "true" }))
       .toMatchObject({ action: "skip" });
     expect(decideAction({ EVENT_NAME: "pull_request", EVENT_ACTION: "labeled", LABELED_NAME: "preview-collaboration", HAS_LABEL: "true", HAS_COLLABORATION_LABEL: "true", EVENT_HEAD_REPO: "someone/fork" }))
@@ -238,6 +243,7 @@ describe("preview platform collaboration home connection", () => {
     session?: boolean;
     identity?: boolean;
     register?: boolean;
+    claim?: boolean;
     apply?: boolean;
     arm?: boolean;
     healthy?: boolean;
@@ -281,12 +287,12 @@ command="$(jq -r '.command | map(select(length < 200)) | join(" ")' <<< "$data")
 ok=true; stdout=""
 case "$command" in
   *" identity ${HANDLE} "*) op=identity; ok="$IDENTITY"; stdout='{"machineId":"${MACHINE}"}' ;;
+  *" -c claim "*) op=claim; ok="$CLAIM" ;;
   *"/usr/bin/sudo /usr/bin/python3 -I -c"*) op=apply; ok="$APPLY" ;;
   *"--on-active=300s"*"restore"*) op=arm; ok="$ARM" ;;
   *"restart matrix-gateway.service"*) op=restart ;;
   *" health") op=health; stdout="{\\"healthy\\":$HEALTHY,\\"collaboration\\":$HEALTHY}" ;;
   *"guard.py commit"*) op=commit ;;
-  *"guard.py restore"*) op=restore-now ;;
   *"start --no-block"*) op=fire-guard ;;
   *"stop "*".timer"*) op=disarm ;;
   *) op="unknown:$command" ;;
@@ -301,6 +307,7 @@ jq -cn --arg stdout "$stdout" --argjson code "$code" '{exitCode:$code,timedOut:f
         PREVIEW_COLLABORATION_OWNER_USER_ID: OWNER, CLERK_SECRET_KEY: "sk_synthetic",
         PREVIEW_TAG_URL: "https://pr-1990---preview.example.test", COLLABORATION_CLIENT_ORIGINS: "https://preview.example.test",
         SESSION: String(scenario.session ?? true), IDENTITY: String(scenario.identity ?? true), REGISTER: String(scenario.register ?? true),
+        CLAIM: String(scenario.claim ?? true),
         APPLY: String(scenario.apply ?? true), ARM: String(scenario.arm ?? true), HEALTHY: String(scenario.healthy ?? true),
         ENROLLED: String(scenario.enrolled ?? true),
       } });
@@ -308,15 +315,26 @@ jq -cn --arg stdout "$stdout" --argjson code "$code" '{exitCode:$code,timedOut:f
     } finally { rmSync(directory, { recursive: true, force: true }); }
   }
 
-  it("verifies identity, registers, applies, arms the guard, restarts, checks health and enrollment, then commits", () => {
+  it("verifies identity, registers, claims, arms the guard before re-pointing, then commits after health and enrollment", () => {
     const result = runConnect({});
     expect(result.status, result.stderr).toBe(0);
-    expect(result.operations).toEqual(["identity", "register", "apply", "arm", "restart", "health", "enrollment", "commit", "disarm"]);
+    expect(result.operations).toEqual(["identity", "register", "claim", "arm", "apply", "restart", "health", "enrollment", "commit", "disarm"]);
     // Values appear only inside the masking commands that register them.
     const printed = `${result.stdout}${result.stderr}`.split("\n").filter((line) => !line.startsWith("::add-mask::"));
     expect(printed.join("\n")).not.toContain("synthetic-secret-value");
     expect(printed.join("\n")).not.toContain("synthetic.session.jwt");
     expect(`${result.stdout}${result.stderr}`).toContain("::add-mask::synthetic-secret-value");
+  });
+
+  it("never replays a transient systemd unit after a lost response", () => {
+    const scheduling = connectStep.split("\n").filter((line) => line.includes("send_runtime_command \"$body\""));
+    const once = scheduling.filter((line) => line.includes("send_runtime_command \"$body\" once"));
+    expect(once.map((line) => line.trim())).toEqual([
+      'if ! send_runtime_command "$body" once; then',
+      'send_runtime_command "$body" once || fail_connection "The gateway restart could not be scheduled; restoring the host environment."',
+    ]);
+    const systemdRun = connectStep.match(/\/usr\/bin\/systemd-run/g) ?? [];
+    expect(systemdRun).toHaveLength(once.length);
   });
 
   it("changes nothing when the host cannot prove it is this collaboration preview", () => {
@@ -338,20 +356,26 @@ jq -cn --arg stdout "$stdout" --argjson code "$code" '{exitCode:$code,timedOut:f
     expect(result.operations).toEqual(["identity", "register"]);
   });
 
-  it("restores the rollback copy at once when the binding or the guard cannot be put in place", () => {
-    expect(runConnect({ apply: false }).operations).toEqual(["identity", "register", "apply", "restore-now"]);
-    expect(runConnect({ arm: false }).operations).toEqual(["identity", "register", "apply", "arm", "restore-now"]);
+  it("changes nothing on the host until the claim and the guard are in place", () => {
+    expect(runConnect({ claim: false }).operations).toEqual(["identity", "register", "claim"]);
+    expect(runConnect({ arm: false }).operations).toEqual(["identity", "register", "claim", "arm"]);
+  });
+
+  it("fires the armed guard when the binding is refused", () => {
+    const refused = runConnect({ apply: false });
+    expect(refused.status).not.toBe(0);
+    expect(refused.operations).toEqual(["identity", "register", "claim", "arm", "apply", "fire-guard"]);
   });
 
   it("fires the guard to restore and restart when health or enrollment fails", () => {
     const unhealthy = runConnect({ healthy: false });
     expect(unhealthy.status).not.toBe(0);
-    expect(unhealthy.operations.slice(0, 5)).toEqual(["identity", "register", "apply", "arm", "restart"]);
+    expect(unhealthy.operations.slice(0, 6)).toEqual(["identity", "register", "claim", "arm", "apply", "restart"]);
     expect(unhealthy.operations.filter((operation) => operation === "health")).toHaveLength(12);
     expect(unhealthy.operations.at(-1)).toBe("fire-guard");
     expect(unhealthy.operations).not.toContain("commit");
     const unenrolled = runConnect({ enrolled: false });
     expect(unenrolled.status).not.toBe(0);
-    expect(unenrolled.operations).toEqual(["identity", "register", "apply", "arm", "restart", "health", "enrollment", "fire-guard"]);
+    expect(unenrolled.operations).toEqual(["identity", "register", "claim", "arm", "apply", "restart", "health", "enrollment", "fire-guard"]);
   });
 });

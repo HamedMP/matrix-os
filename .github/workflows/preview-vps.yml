@@ -98,16 +98,20 @@ jobs:
           head_sha="$EVENT_HEAD_SHA"
           head_ref="$EVENT_HEAD_REF"
           head_repo="$EVENT_HEAD_REPO"
-          collaboration="$HAS_COLLABORATION_LABEL"
+          has_preview_label="$HAS_LABEL"
+          has_collaboration_label="$HAS_COLLABORATION_LABEL"
           if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
             pr_json="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
             head_sha="$(jq -r .head.sha <<< "$pr_json")"
             head_ref="$(jq -r .head.ref <<< "$pr_json")"
             head_repo="$(jq -r .head.repo.full_name <<< "$pr_json")"
-            collaboration="$(jq -r 'any(.labels[]?; .name == "preview-collaboration")' <<< "$pr_json")"
+            has_preview_label="$(jq -r 'any(.labels[]?; .name == "preview-vps")' <<< "$pr_json")"
+            has_collaboration_label="$(jq -r 'any(.labels[]?; .name == "preview-collaboration")' <<< "$pr_json")"
           fi
-          if [ "$collaboration" != "true" ]; then
-            collaboration=false
+          # Collaboration ownership needs both labels, whatever started the run.
+          collaboration=false
+          if [ "$has_preview_label" = "true" ] && [ "$has_collaboration_label" = "true" ]; then
+            collaboration=true
           fi
           if [ "$head_repo" != "$GITHUB_REPOSITORY" ]; then
             echo "Fork PRs never get preview VPSes (secrets are not exposed to them anyway)."

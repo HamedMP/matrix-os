@@ -1153,32 +1153,31 @@ jobs:
             session_minted_at=$SECONDS
           }
           send_runtime_command() {
+            local retry=(--retry 5 --retry-all-errors --retry-delay 2 --retry-max-time 30)
+            # A transient systemd unit is not idempotent: never replay it after a lost response.
+            if [ "${2:-}" = once ]; then
+              retry=()
+            fi
             if [ $((SECONDS - session_minted_at)) -gt 200 ]; then
               mint_session_token || return 1
             fi
-            curl --fail --silent --show-error --max-time 45 \
-              --retry 5 --retry-all-errors --retry-delay 2 --retry-max-time 30 \
+            curl --fail --silent --show-error --max-time 45 "${retry[@]}" \
               -o "$response" -X POST "$terminal_url" \
               -H "authorization: Bearer ${preview_session_token}" \
               -H 'content-type: application/json' --data-binary "$1" || return 1
             jq -e 'select(.exitCode==0 and .timedOut==false and .truncated==false and .signal==null)' \
               "$response" >/dev/null
           }
-          applied=false
           guard_armed=false
-          # Never leave a half-connected home. The guard restores the rollback copy, then restarts
-          # the gateway only if it restored something; it runs detached, so that restart cannot
-          # drop this request. Once armed, firing its unit also covers a runner that goes away.
+          # host.env changes only after this run's guard is armed, so every failure after that
+          # fires the guard: it restores the rollback copy and restarts the gateway, detached, so
+          # the restart cannot drop this request. A runner that goes away leaves the timer to do it.
           fail_connection() {
             echo "$1" >&2
             if [ "$guard_armed" = true ]; then
               body="$(jq -cn --arg unit "${guard_unit}.service" \
                 '{command:["/usr/bin/sudo","/usr/bin/systemctl","start","--no-block",$unit],timeoutMs:10000}')"
               send_runtime_command "$body" || echo "The armed guard restores the home when its timer fires." >&2
-            elif [ "$applied" = true ]; then
-              body="$(jq -cn --arg unit "--unit=${guard_unit}-now" --arg guard "$guard_path" --arg nonce "$nonce" \
-                '{command:["/usr/bin/sudo","/usr/bin/systemd-run",$unit,"--on-active=1s","--collect","/usr/bin/python3","-I",$guard,"restore",$nonce,"--restart"],timeoutMs:10000}')"
-              send_runtime_command "$body" || echo "Restoring the host environment failed; use an authorized operator connection." >&2
             fi
             exit 1
           }
@@ -1213,30 +1212,41 @@ jobs:
           binding="$(jq -cn --arg url "$PREVIEW_TAG_URL" --arg token "$upgrade_token" --arg origins "$COLLABORATION_CLIENT_ORIGINS" \
             '{PLATFORM_INTERNAL_URL:$url,UPGRADE_TOKEN:$token,MATRIX_COLLABORATION_CLIENT_ORIGINS:$origins}')"
 
-          # 4. Keep one rollback copy, re-point the binding with the file's owner, group and mode, install the guard.
-          body="$(jq -cn --rawfile script scripts/preview-collaboration-home.py \
-            --rawfile guard scripts/preview-collaboration-guard.py \
-            --arg handle "$handle" --arg owner "$PREVIEW_COLLABORATION_OWNER_USER_ID" \
-            --arg machine "$machine_id" --arg binding "$binding" \
-            '{command:["/usr/bin/sudo","/usr/bin/python3","-I","-c",$script,$handle,$owner,$machine,$binding,$guard],timeoutMs:15000}')"
-          applied=true
-          send_runtime_command "$body" || fail_connection "The preview home refused the collaboration binding; restoring the host environment."
+          # 4. This run claims the connection and installs the guard. The latest claim owns the home,
+          #    so an earlier run's still-armed timer can never undo this run's connection.
+          body="$(jq -cn --rawfile guard scripts/preview-collaboration-guard.py --arg nonce "$nonce" \
+            '{command:["/usr/bin/sudo","/usr/bin/python3","-I","-c",$guard,"claim",$nonce,$guard],timeoutMs:10000}')"
+          if ! send_runtime_command "$body"; then
+            echo "The preview home could not record this connection; nothing was changed." >&2
+            exit 1
+          fi
 
-          # 5. Dead-man guard: unless this connection is committed within 300 s, restore and restart.
+          # 5. Dead-man guard, armed before host.env changes: unless this run commits within 300 s,
+          #    it restores the host environment and restarts the gateway.
           body="$(jq -cn --arg unit "--unit=${guard_unit}" --arg guard "$guard_path" --arg nonce "$nonce" \
             '{command:["/usr/bin/sudo","/usr/bin/systemd-run",$unit,"--on-active=300s","--collect","/usr/bin/python3","-I",$guard,"restore",$nonce,"--restart"],timeoutMs:10000}')"
-          send_runtime_command "$body" || fail_connection "The rollback guard could not be armed; restoring the host environment."
+          if ! send_runtime_command "$body" once; then
+            echo "The rollback guard could not be armed; nothing was changed." >&2
+            exit 1
+          fi
           guard_armed=true
           armed_at=$SECONDS
 
-          # 6. A synchronous restart drops the gateway connection that carries this request.
+          # 6. Keep one rollback copy and re-point the binding with the file's owner, group and mode.
+          body="$(jq -cn --rawfile script scripts/preview-collaboration-home.py \
+            --arg handle "$handle" --arg owner "$PREVIEW_COLLABORATION_OWNER_USER_ID" \
+            --arg machine "$machine_id" --arg binding "$binding" \
+            '{command:["/usr/bin/sudo","/usr/bin/python3","-I","-c",$script,$handle,$owner,$machine,$binding],timeoutMs:15000}')"
+          send_runtime_command "$body" || fail_connection "The preview home refused the collaboration binding; restoring the host environment."
+
+          # 7. A synchronous restart drops the gateway connection that carries this request.
           enrollment_since="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           body="$(jq -cn --arg unit "--unit=matrix-preview-collaboration-restart-${nonce}" \
             '{command:["/usr/bin/sudo","/usr/bin/systemd-run",$unit,"--on-active=2s","--collect","/usr/bin/systemctl","restart","matrix-gateway.service"],timeoutMs:10000}')"
-          send_runtime_command "$body" || fail_connection "The gateway restart could not be scheduled; restoring the host environment."
+          send_runtime_command "$body" once || fail_connection "The gateway restart could not be scheduled; restoring the host environment."
           sleep 5
 
-          # 7. Health: the gateway answers locally and reports collaboration configured.
+          # 8. Health: the gateway answers locally and reports collaboration configured.
           healthy=false
           body="$(jq -cn --rawfile script scripts/preview-collaboration-probe.py \
             '{command:["/usr/bin/python3","-I","-c",$script,"health"],timeoutMs:30000}')"
@@ -1252,7 +1262,7 @@ jobs:
             fail_connection "The preview gateway did not become healthy with collaboration configured; restoring the host environment."
           fi
 
-          # 8. Enrollment: the home registered its runtime endpoint and attached its control stream
+          # 9. Enrollment: the home registered its runtime endpoint and attached its control stream
           #    to the preview platform after the restart, with time left to commit before the guard fires.
           remaining=$((270 - (SECONDS - armed_at)))
           if [ "$remaining" -le 0 ]; then
@@ -1263,7 +1273,7 @@ jobs:
             node scripts/preview-collaboration-staging.mjs enrollment \
             || fail_connection "The preview home did not enroll with the preview platform; restoring the host environment."
 
-          # 9. Commit (refused if the guard already restored), then disarm the timer.
+          # 10. Commit (refused unless this run still owns an applied connection), then disarm.
           body="$(jq -cn --arg guard "$guard_path" --arg nonce "$nonce" \
             '{command:["/usr/bin/sudo","/usr/bin/python3","-I",$guard,"commit",$nonce],timeoutMs:10000}')"
           send_runtime_command "$body" || fail_connection "The connection could not be committed; restoring the host environment."

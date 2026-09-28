@@ -1,11 +1,12 @@
-"""Dead-man guard for spec 535 A0b, installed on a pr-<N> home by preview-collaboration-home.py.
+"""Dead-man guard for spec 535 A0b on a pr-<N> home; installs itself through `claim`.
 
-`restore <nonce> [--restart]` puts the pre-connection host environment back unless
-the connection with that nonce was committed; the rollback copy carries the
-original owner, group and mode, so one rename restores all three. `commit <nonce>`
-records a verified connection and refuses once a restore has run. Both hold one
-lock, so a guard timer firing during a commit cannot interleave with it.
-Idempotent; prints a fixed status only."""
+The run that claimed a connection last owns it. `claim <nonce> <source>` installs
+this guard and records the claim before host.env changes. `restore <nonce>
+[--restart]` puts the pre-connection host environment back only while that run's
+claim is uncommitted, so an earlier run's timer never undoes a newer connection;
+the rollback copy carries the original owner, group and mode. `commit <nonce>`
+records a verified connection and refuses once a restore has run. All three hold
+one lock. Prints a fixed status only."""
 import fcntl
 import json
 import os
@@ -17,7 +18,7 @@ import tempfile
 from pathlib import Path
 
 ROLLBACK = ".host.env.preview-collaboration-rollback"
-COMMIT = ".preview-collaboration-commit"
+STATE = ".preview-collaboration-state"
 
 
 def locked(root):
@@ -26,32 +27,51 @@ def locked(root):
     return fd
 
 
-def committed(root):
+def write_atomic(path, text, mode):
+    fd, temporary = tempfile.mkstemp(prefix=".pc-tmp.", dir=path.parent)
     try:
-        fd = os.open(root / COMMIT, os.O_RDONLY | os.O_NOFOLLOW)
+        os.fchmod(fd, mode)
+        with os.fdopen(fd, "w", encoding="utf-8") as target:
+            target.write(text)
+            target.flush()
+            os.fsync(target.fileno())
+        os.replace(temporary, path)
+    finally:
+        if os.path.lexists(temporary):
+            os.unlink(temporary)
+
+
+def owner(root):
+    try:
+        fd = os.open(root / STATE, os.O_RDONLY | os.O_NOFOLLOW)
     except FileNotFoundError:
-        return ""
+        return {}
     try:
-        return os.read(fd, 128).decode("ascii").strip()
+        return json.loads(os.read(fd, 4096))
     finally:
         os.close(fd)
+
+
+def record(root, nonce, state):
+    write_atomic(root / STATE, json.dumps({"nonce": nonce, "state": state}), 0o600)
+
+
+def claim(root, nonce, source):
+    lock = locked(root)
+    try:
+        write_atomic(root / ".preview-collaboration-guard.py", source, 0o700)
+        record(root, nonce, "claimed")
+    finally:
+        os.close(lock)
+    return "claimed"
 
 
 def commit(root, nonce):
     lock = locked(root)
     try:
-        if not os.path.isfile(root / ROLLBACK):
-            raise ValueError("The connection was already restored")
-        fd, temporary = tempfile.mkstemp(prefix=".pc-tmp.", dir=root)
-        try:
-            with os.fdopen(fd, "w", encoding="ascii") as target:
-                target.write(nonce + "\n")
-                target.flush()
-                os.fsync(target.fileno())
-            os.replace(temporary, root / COMMIT)
-        finally:
-            if os.path.lexists(temporary):
-                os.unlink(temporary)
+        if owner(root) != {"nonce": nonce, "state": "claimed"} or not os.path.isfile(root / ROLLBACK):
+            raise ValueError("This run no longer owns an applied connection")
+        record(root, nonce, "committed")
     finally:
         os.close(lock)
     return "committed"
@@ -60,8 +80,8 @@ def commit(root, nonce):
 def restore(root, nonce, restart=None):
     lock = locked(root)
     try:
-        if committed(root) == nonce:
-            return "committed"
+        if owner(root) != {"nonce": nonce, "state": "claimed"}:
+            return "unchanged"
         rollback = root / ROLLBACK
         try:
             metadata = os.lstat(rollback)
@@ -75,6 +95,7 @@ def restore(root, nonce, restart=None):
             os.fsync(directory)
         finally:
             os.close(directory)
+        record(root, nonce, "restored")
     finally:
         os.close(lock)
     if restart:
@@ -88,13 +109,15 @@ def restart_gateway():
 
 if __name__ == "__main__":
     home = Path("/opt/matrix/env")
-    arguments = sys.argv[1:]
-    if len(arguments) < 2 or not re.fullmatch(r"[A-Za-z0-9-]{1,64}", arguments[1]):
+    command, arguments = sys.argv[1:2], sys.argv[2:]
+    if not arguments or not re.fullmatch(r"[0-9]{1,20}-[0-9]{1,5}", arguments[0]):
         raise ValueError("Invalid arguments")
-    if arguments[0] == "commit" and len(arguments) == 2:
-        status = commit(home, arguments[1])
-    elif arguments[0] == "restore" and arguments[2:] in ([], ["--restart"]):
-        status = restore(home, arguments[1], restart_gateway if arguments[2:] else None)
+    if command == ["claim"] and len(arguments) == 2:
+        status = claim(home, *arguments)
+    elif command == ["commit"] and len(arguments) == 1:
+        status = commit(home, arguments[0])
+    elif command == ["restore"] and arguments[1:] in ([], ["--restart"]):
+        status = restore(home, arguments[0], restart_gateway if arguments[1:] else None)
     else:
         raise ValueError("Invalid arguments")
     print(json.dumps({"status": status}))

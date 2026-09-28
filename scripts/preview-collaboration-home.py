@@ -1,4 +1,5 @@
-"""Spec 535 A0b, as root: bind a pr-<N> home to its preview collaboration authority."""
+"""Spec 535 A0b, as root: bind a pr-<N> home to its preview collaboration authority.
+Runs only after its run claimed the connection and armed the guard."""
 import json
 import os
 import re
@@ -58,7 +59,7 @@ def write_like(path, text, meta, mode):
             os.unlink(temporary)
 
 
-def apply(root, handle, owner, machine, config, guard, root_owned=True):
+def apply(root, handle, owner, machine, config, root_owned=True):
     path = root / "host.env"
     meta, text = read_env(path, root_owned)
     mode = stat.S_IMODE(meta.st_mode)
@@ -82,8 +83,6 @@ def apply(root, handle, owner, machine, config, guard, root_owned=True):
     if len(pin) != 1 or len(pin[0]) != 1 or not re.fullmatch(ORIGIN + "/?", pin[0][0]):
         raise ValueError("Invalid original binding")
     config = {**config, PIN: pin[0][0]}
-    # Guard first, so any later failure can be restored.
-    write_like(root / ".preview-collaboration-guard.py", guard, meta, 0o700)
     kept = [line for line in lines if line.split("=", 1)[0] not in config]
     write_like(path, "\n".join(kept + [f"{key}={config[key]}" for key in sorted(config)]) + "\n", meta, mode)
     after = os.lstat(path)
@@ -92,7 +91,7 @@ def apply(root, handle, owner, machine, config, guard, root_owned=True):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 6:
+    if len(sys.argv) != 5:
         raise ValueError("Invalid arguments")
-    apply(Path("/opt/matrix/env"), *sys.argv[1:4], json.loads(sys.argv[4]), sys.argv[5])
+    apply(Path("/opt/matrix/env"), *sys.argv[1:4], json.loads(sys.argv[4]))
     print(json.dumps({"status": "applied"}))
