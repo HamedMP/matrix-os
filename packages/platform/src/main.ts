@@ -74,6 +74,7 @@ import { createLaunchReadinessRoutes } from './launch-readiness-routes.js';
 import { createHostBundleRoutes } from './host-bundle-routes.js';
 import { createPrivatePreviewUpdateRoutes } from './private-preview-update-routes.js';
 import { createPrivatePreviewRoutes } from './private-preview-routes.js';
+import { createPrivatePreviewEligibility } from './private-preview-eligibility.js';
 import {
   membershipCheckFromProjection,
   parseInternalOrganizationId,
@@ -572,6 +573,16 @@ export function createApp(deps: {
     }
   }
 
+  const privatePreviewOrganizationId = parseInternalOrganizationId(appEnv.MATRIX_INTERNAL_CLERK_ORG_ID);
+  const privatePreviewMembership = deps.privatePreviewMembership
+    ?? membershipCheckFromProjection(deps.collaboration && 'organizations' in deps.collaboration
+      ? deps.collaboration.organizations?.projection
+      : undefined);
+  const privatePreviewEligibility = createPrivatePreviewEligibility({
+    internalOrganizationId: privatePreviewOrganizationId,
+    isMember: privatePreviewMembership,
+    logError: logPlatformRouteError,
+  });
   const journeyAppOrigin = appOrigin(appEnv);
   const resolveJourneyUser = createJourneyUserResolver({
     clerkAuth: clerkAuth ?? undefined,
@@ -616,11 +627,8 @@ export function createApp(deps: {
     db,
     service: deps.customerVpsService,
     resolveActor: resolveJourneyUser,
-    internalOrganizationId: parseInternalOrganizationId(appEnv.MATRIX_INTERNAL_CLERK_ORG_ID),
-    isMember: deps.privatePreviewMembership
-      ?? membershipCheckFromProjection(deps.collaboration && 'organizations' in deps.collaboration
-        ? deps.collaboration.organizations?.projection
-        : undefined),
+    internalOrganizationId: privatePreviewOrganizationId,
+    isMember: privatePreviewMembership,
     platformSecret,
     logRouteError: logPlatformRouteError,
   }));
@@ -680,11 +688,13 @@ export function createApp(deps: {
     customMcpRoutes: deps.customMcpRoutes,
     internalCustomMcpRoutes: deps.internalCustomMcpRoutes,
     internalCustomMcpApprovalRoutes: deps.internalCustomMcpApprovalRoutes,
+    privatePreviewEligibility,
   });
   registerInternalIntegrationRoutes(app, {
     db,
     platformSecret,
     internalIntegrationRoutes: deps.internalIntegrationRoutes,
+    privatePreviewEligibility,
   });
   if (deps.internalSyncRoutes) {
     app.route('/internal/containers/:handle/sync', deps.internalSyncRoutes);

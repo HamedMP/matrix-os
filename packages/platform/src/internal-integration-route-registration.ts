@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { canClerkUserAccessMachine, getPersonalAccountRestrictedMachineByHandle } from './customer-vps-preview.js';
 import { getContainer, getRunningUserMachineByHandle, type PlatformDB } from './db.js';
 import { createInternalIntegrationGuard } from './internal-integration-guard.js';
+import type { PrivatePreviewEligibility } from './private-preview-eligibility.js';
 import { buildPlatformVerificationToken, timingSafeTokenEquals } from './platform-token.js';
 import { HANDLE_PATTERN } from './platform-route-utils.js';
 import { z } from 'zod/v4';
@@ -18,6 +19,8 @@ export function registerInternalIntegrationRoutes(app: Hono<any>, options: {
   db: PlatformDB;
   platformSecret: string;
   internalIntegrationRoutes?: Hono<any>;
+  /** Spec 537 P5; without it every Private Preview stays denied. */
+  privatePreviewEligibility?: PrivatePreviewEligibility;
 }): void {
   if (!options.internalIntegrationRoutes) return;
   const { db, platformSecret } = options;
@@ -49,7 +52,9 @@ export function registerInternalIntegrationRoutes(app: Hono<any>, options: {
       // Preview and customer slots can share a handle, while their machine
       // bearer is derived from that handle alone. Check restricted machines
       // before an unqualified lookup can select a customer primary row.
-      if (await getPersonalAccountRestrictedMachineByHandle(db, handle)) {
+      // A Private Preview may pass only while spec 537 P5 holds for it.
+      const restricted = await getPersonalAccountRestrictedMachineByHandle(db, handle);
+      if (restricted && !(await options.privatePreviewEligibility?.(restricted))) {
         c.res = c.json({ error: 'Forbidden' }, 403);
         return;
       }
