@@ -65,12 +65,20 @@ describe("bot approvals repository", () => {
 
   it("finds the task's open approval of an exact action, and lets a later run of the task claim it", async () => {
     const repo = createBotApprovalsRepository(db);
-    await expect(repo.findOpen({ ownerId: OWNER, taskId: binding.taskId, tool: binding.tool, argsHash: binding.argsHash })).resolves.toMatchObject({ approvalId, status: "pending", runId: "run_approve1" });
-    await expect(repo.findOpen({ ownerId: OWNER, taskId: binding.taskId, tool: binding.tool, argsHash: "e".repeat(64) })).resolves.toBeUndefined();
+    await expect(repo.findOpen({ ownerId: OWNER, taskId: binding.taskId, tool: binding.tool, argsHash: binding.argsHash, now: at(1) })).resolves.toMatchObject({ approvalId, status: "pending", runId: "run_approve1" });
+    await expect(repo.findOpen({ ownerId: OWNER, taskId: binding.taskId, tool: binding.tool, argsHash: "e".repeat(64), now: at(1) })).resolves.toBeUndefined();
     await repo.decide({ ownerId: OWNER, approvalId, baseRevision: 1, decision: "approved", now: at(1) });
     // The run that asked has ended; the continuation claims it by task.
     await expect(repo.claim({ ownerId: OWNER, approvalId, ...binding, now: at(2) })).resolves.toMatchObject({ status: "claimed" });
-    await expect(repo.findOpen({ ownerId: OWNER, taskId: binding.taskId, tool: binding.tool, argsHash: binding.argsHash })).resolves.toBeUndefined();
+    await expect(repo.findOpen({ ownerId: OWNER, taskId: binding.taskId, tool: binding.tool, argsHash: binding.argsHash, now: at(2) })).resolves.toBeUndefined();
+  });
+
+  it("finds denied decisions but excludes expired pending approvals", async () => {
+    const repo = createBotApprovalsRepository(db);
+    await expect(repo.findOpen({ ownerId: OWNER, taskId: binding.taskId, tool: binding.tool, argsHash: binding.argsHash, now: at(60 * 60_000) })).resolves.toBeUndefined();
+    await repo.decide({ ownerId: OWNER, approvalId, baseRevision: 1, decision: "denied", now: at(1) });
+    await expect(repo.findOpen({ ownerId: OWNER, taskId: binding.taskId, tool: binding.tool, argsHash: binding.argsHash, now: at(2) }))
+      .resolves.toMatchObject({ status: "denied" });
   });
 
   it("expires undecided and unclaimed approvals", async () => {

@@ -121,7 +121,7 @@ export function createBotIntegrationTools(deps: {
     }
     const expiresAt = (lifetime: number) => new Date(at.getTime() + lifetime).toISOString();
     const options = connected.filter((connection) => connection.service === service).slice(0, MAX_ACCOUNT_OPTIONS);
-    const payload = options.length >= 2
+    const payload = options.length >= 1
       ? { kind: "account_choice" as const, service, options: options.map((option) => ({ connectionId: option.connectionId, label: option.label })) }
       : {
         kind: "connect_request" as const, service, access: [...effects],
@@ -160,7 +160,10 @@ export function createBotIntegrationTools(deps: {
     const at = now();
     return deps.transact(binding.ownerId, async (tx) => {
       const approvals = createBotApprovalsRepository(tx.db);
-      const open = await approvals.findOpen({ ownerId: binding.ownerId, taskId: binding.taskId, tool: APPROVAL_TOOL, argsHash }, tx.db);
+      const open = await approvals.findOpen({ ownerId: binding.ownerId, taskId: binding.taskId, tool: APPROVAL_TOOL, argsHash, now: at.toISOString() }, tx.db);
+      if (open?.status === "denied") {
+        return { approved: false as const, message: "The owner declined this action in this task. Continue without it and do not ask again." };
+      }
       if (open?.status === "approved") {
         const claim = await approvals.claim({ ownerId: binding.ownerId, approvalId: open.approvalId, ...policy, now: at.toISOString() }, tx.db);
         if (claim.status === "claimed") return { approved: true as const };
@@ -244,9 +247,19 @@ export function createBotIntegrationTools(deps: {
         return text(await deps.transact(binding.ownerId, (tx) => requestAccess(tx, binding, args.service, declared, connected)));
       }
       if (effect !== "read") {
-        const preview = `${serviceName(args.service)}: ${args.action} on "${grant.accountLabel}" with ${canonicalJson(args.params)}`.slice(0, MAX_PREVIEW_CHARS);
+        const preview = `${serviceName(args.service)}: ${args.action} on "${grant.accountLabel}" with ${canonicalJson(args.params)}`;
+        if (preview.length > MAX_PREVIEW_CHARS) throw new BotBrokerActionError("invalid_arguments");
         const decision = await approved(binding, args, grant, preview);
         if (!decision.approved) return text(decision.message);
+      }
+      // A grant can change while the owner decides or while inventory is read.
+      // Check its identity and revision again at the last gateway checkpoint before dispatch.
+      const live = await deps.transact(binding.ownerId, (tx) => createBotGrantsRepository(tx.db).findUsable({
+        ownerId: binding.ownerId, botId: binding.botId, service: args.service, connectionId: args.connectionId,
+        audience: AUDIENCE, effect, now: now().toISOString(),
+      }, tx.db));
+      if (!live || live.grantId !== grant.grantId || live.revision !== grant.revision || live.accountLabel !== grant.accountLabel) {
+        throw new BotBrokerActionError("not_granted");
       }
       try {
         const result = await deps.client.call(binding.ownerId, {
