@@ -6,6 +6,10 @@ RUN corepack enable && corepack prepare pnpm@10.33.4 --activate
 WORKDIR /app
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.json ./
+# The workspace pins host commands with pnpm's useNodeVersion. This Alpine
+# image already owns its Node runtime, and pnpm's downloadable Node artifacts
+# target glibc, so do not ask pnpm to replace Node inside this musl build.
+RUN sed -i '/^useNodeVersion:/d' pnpm-workspace.yaml
 COPY patches/ patches/
 COPY packages/clerk-sync/package.json packages/clerk-sync/package.json
 COPY packages/contracts/package.json packages/contracts/package.json
@@ -30,6 +34,8 @@ RUN pnpm install --frozen-lockfile --ignore-scripts --config.enableGlobalVirtual
 FROM deps AS builder
 
 COPY . .
+# COPY restores the checked-in workspace config over the base-stage copy.
+RUN sed -i '/^useNodeVersion:/d' pnpm-workspace.yaml
 ARG NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
 # Fixed in-app auth routes; default keeps Clerk off the hosted Account Portal
 # even if the build never passes these explicitly.

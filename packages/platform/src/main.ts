@@ -622,6 +622,13 @@ export function createApp(deps: {
     app.route('/api/operator/ai/funded', deps.internalFundedAiOperatorRoutes);
   }
 
+  // Sync object uploads authenticate with their own machine credential and
+  // allow up to 100 MiB. Mount them before the generic 10 MiB session-proxy
+  // guard so the route-specific limits remain authoritative.
+  if (deps.internalSyncRoutes) {
+    app.route('/internal/containers/:handle/sync', deps.internalSyncRoutes);
+  }
+
   // Session-based routing:
   // - app.matrix-os.com -> Clerk session -> Matrix OS shell/gateway
   // - code.matrix-os.com -> Clerk session -> code-server on the user's VPS
@@ -726,9 +733,6 @@ export function createApp(deps: {
     });
     internalIntegrationApp.route('/', deps.internalIntegrationRoutes);
     app.route('/internal/containers/:handle/integrations', internalIntegrationApp);
-  }
-  if (deps.internalSyncRoutes) {
-    app.route('/internal/containers/:handle/sync', deps.internalSyncRoutes);
   }
   app.get('/vps/releases', async (c) => {
     if (!platformSecret) {
