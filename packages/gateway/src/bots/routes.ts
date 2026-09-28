@@ -4,7 +4,7 @@
  * Bodies are bounded and strictly validated, errors come from one mapper
  * with allowlisted codes and generic messages, and responses are private.
  */
-import { BotInteractionIdSchema, BotMemoryItemIdSchema, CanonicalChatIdSchema, ChatAgentIdSchema } from "@matrix-os/contracts";
+import { BotGrantIdSchema, BotInteractionIdSchema, BotMemoryItemIdSchema, CanonicalChatIdSchema, ChatAgentIdSchema } from "@matrix-os/contracts";
 import type { Context } from "hono";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
@@ -124,7 +124,10 @@ export function createBotRoutes(options: {
   routes.delete("/api/chat-agents/:agentId/grants/:grantId", limit, async (context) => {
     const principal = options.getPrincipal(context);
     if (!options.grants) return errorResponse(context, "unavailable");
-    const result = await options.grants.revoke(principal.userId, context.req.param("agentId"), context.req.param("grantId"));
+    const agentId = ChatAgentIdSchema.safeParse(context.req.param("agentId"));
+    const grantId = BotGrantIdSchema.safeParse(context.req.param("grantId"));
+    if (!agentId.success || !grantId.success) return errorResponse(context, "invalid_request");
+    const result = await options.grants.revoke(principal.userId, agentId.data, grantId.data);
     context.header("Cache-Control", "private, no-store");
     return context.json(result);
   });

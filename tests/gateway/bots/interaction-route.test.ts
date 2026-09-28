@@ -93,6 +93,13 @@ describe("bot interaction and memory routes", () => {
 });
 
 describe("bot grant route", () => {
+  it("rejects malformed grant path IDs before revocation", async () => {
+    const revoke = vi.fn();
+    const server = app({ grants: { revoke } });
+    expect((await server.request("/api/chat-agents/wrong/grants/gr_0123456789ab", { method: "DELETE" })).status).toBe(400);
+    expect((await server.request("/api/chat-agents/bot_0123456789abcdef/grants/wrong", { method: "DELETE" })).status).toBe(400);
+    expect(revoke).not.toHaveBeenCalled();
+  });
   it("revokes through the service, bounded, with its refusals", async () => {
     const revoke = vi.fn(async () => ({ grantId: "gr_0123456789ab", revokedAt: "2026-09-28T10:00:00.000Z" }));
     const server = app({ grants: { revoke } });
