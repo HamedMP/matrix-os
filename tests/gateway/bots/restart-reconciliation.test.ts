@@ -75,6 +75,29 @@ describe("bot services at gateway start", () => {
     expect(unregister).toHaveBeenCalledTimes(1);
   });
 
+  it("finishes closing old checkpoints in the background when there are more than startup takes", async () => {
+    await insertChat(db, "chat_restart2");
+    const task = await createBotTasksRepository(db).create({ ownerId: OWNER, botId: BOT, chatId: "chat_restart2", now: "2026-09-27T12:00:00.000Z" });
+    const checkpoints = createBotCheckpointsRepository(db);
+    for (let index = 0; index < 250; index += 1) {
+      const prepared = await checkpoints.prepare({
+        ownerId: OWNER, taskId: task.taskId, runId: "run_lost2", toolCallId: `call_${index}`, action: { capability: "artifact.write", index },
+        effectClass: "write", now: "2026-09-27T12:00:00.000Z",
+      });
+      await checkpoints.markDispatched({ ownerId: OWNER, checkpointId: prepared.checkpoint.checkpointId, now: "2026-09-27T12:00:01.000Z" });
+    }
+    const { host: runtimeHost } = host();
+    const services = await startBots({
+      ...base(), host: runtimeHost as never, now: () => new Date("2026-09-28T09:00:00.000Z"),
+      checkpointReconcile: { passes: 1, intervalMs: 10 },
+    });
+    const dispatched = async () => Number((await db.selectFrom("bot_tool_checkpoints").select((eb) => eb.fn.countAll<number>().as("count"))
+      .where("phase", "=", "dispatched").executeTakeFirstOrThrow()).count);
+    // One pass (200) at start; the rest in the background.
+    await vi.waitFor(async () => expect(await dispatched()).toBe(0));
+    await services!.close();
+  });
+
   it("offers creation but no bot runtime when the scope runtime is unavailable", async () => {
     const { host: down } = host(false);
     const services = await startBots({ ...base(), host: down as never });

@@ -88,7 +88,7 @@ export function createBotTasksRepository(db: BotExecutor) {
     return row ? fromRow(row) : undefined;
   }
 
-  return {
+  const repository = {
     get,
     /** Creates a queued task. A child task must share the owner and stay within the depth cap. */
     async create(input: {
@@ -206,6 +206,18 @@ export function createBotTasksRepository(db: BotExecutor) {
         .limit(MAX_OPEN_TASKS_LISTED)
         .execute();
       return rows.map(fromRow);
+    },
+  };
+  return {
+    ...repository,
+    /** Creates a task and moves it to `running` for `runId`, in one transaction. */
+    async start(input: { ownerId: string; botId: string; chatId: string; runId: string; now: string }, executor: BotExecutor = db): Promise<BotTask> {
+      return withTransaction(executor, async (trx) => {
+        const task = await repository.create({ ownerId: input.ownerId, botId: input.botId, chatId: input.chatId, now: input.now }, trx);
+        return repository.transition({
+          ownerId: input.ownerId, taskId: task.taskId, baseRevision: task.revision, to: "running", runId: input.runId, now: input.now,
+        }, trx);
+      });
     },
   };
 }

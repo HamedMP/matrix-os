@@ -39,8 +39,9 @@ import { BotRuntimeRegistry } from "../bots/runtime-registry.js";
 import { createBotTaskOrchestrator } from "../bots/task-orchestrator.js";
 import { createBotToolDispatcher } from "../bots/tool-dispatcher.js";
 
-/** Bounded passes; the table only holds this owner's checkpoints. */
+/** Passes before the first run is admitted; any rest is finished in the background. */
 const MAX_CHECKPOINT_RECONCILE_PASSES = 50;
+const CHECKPOINT_RECONCILE_INTERVAL_MS = 5_000;
 
 export interface BotServices {
   instantiation: BotInstantiation;
@@ -60,6 +61,8 @@ export async function startBots(options: {
   fundedCredentialProvider?: MatrixFundedCredentialProvider;
   fundedAdmission?: FundedAdmissionQueue;
   now?: () => Date;
+  /** Test hook for startup checkpoint passes; bounded to the defaults. */
+  checkpointReconcile?: { passes?: number; intervalMs?: number };
 }): Promise<BotServices | undefined> {
   const now = () => options.now?.() ?? new Date();
   const db = ownerBotExecutor(options.repository.kysely);
@@ -94,9 +97,23 @@ export async function startBots(options: {
 
   const checkpoints = createBotCheckpointsRepository(db);
   const startedAt = now().toISOString();
-  for (let pass = 0; pass < MAX_CHECKPOINT_RECONCILE_PASSES; pass += 1) {
-    if (await checkpoints.reconcileDispatched({ olderThan: startedAt, now: startedAt }) === 0) break;
+  const passes = Math.max(1, Math.min(Math.trunc(options.checkpointReconcile?.passes ?? MAX_CHECKPOINT_RECONCILE_PASSES), MAX_CHECKPOINT_RECONCILE_PASSES));
+  const interval = Math.max(10, Math.min(Math.trunc(options.checkpointReconcile?.intervalMs ?? CHECKPOINT_RECONCILE_INTERVAL_MS), CHECKPOINT_RECONCILE_INTERVAL_MS));
+  let leftover = true;
+  for (let pass = 0; pass < passes && leftover; pass += 1) {
+    leftover = await checkpoints.reconcileDispatched({ olderThan: startedAt, now: startedAt }) > 0;
   }
+  // Checkpoints from before this start are all closed eventually: one bounded pass per tick until none remain.
+  let reconciling: Promise<unknown> | undefined;
+  const checkpointTimer = leftover ? setInterval(() => {
+    reconciling ??= checkpoints.reconcileDispatched({ olderThan: startedAt, now: now().toISOString() })
+      .then((changed) => { if (changed === 0 && checkpointTimer) clearInterval(checkpointTimer); })
+      .catch((error: unknown) => {
+        console.warn("[bots] checkpoint reconciliation failed:", error instanceof Error ? error.name : "UnknownError");
+      })
+      .finally(() => { reconciling = undefined; });
+  }, interval) : undefined;
+  checkpointTimer?.unref();
 
   const lifetime = new AbortController();
   const registry = new BotRuntimeRegistry();
@@ -139,6 +156,8 @@ export async function startBots(options: {
     botChats,
     adapter,
     async close() {
+      if (checkpointTimer) clearInterval(checkpointTimer);
+      await reconciling;
       await reconciler.stop();
       unregister();
       lifetime.abort();

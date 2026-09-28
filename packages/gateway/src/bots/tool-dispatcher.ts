@@ -5,9 +5,9 @@
  * segment is checked without following links, and files are opened with
  * O_NOFOLLOW. Capabilities without a tool yet are refused as `not_granted`.
  */
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { constants } from "node:fs";
-import { lstat, mkdir, open } from "node:fs/promises";
+import { lstat, mkdir, open, opendir, rename, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { BOT_ARTIFACT_MAX_BYTES, type BotToolRequest, type BotToolResult } from "@matrix-os/contracts";
 import { ChatExecutionRootError } from "../chat/execution-root.js";
@@ -17,6 +17,11 @@ import { BotBrokerActionError, type BotToolDispatcher } from "./broker-actions.j
 import type { BotRuntimeBinding } from "./runtime-registry.js";
 
 const MAX_TEXT_PART_CHARS = 60 * 1024;
+/** Saves write here first, then rename over the file, so a failed save never damages the old one. */
+const TEMP_PREFIX = ".bot-save-";
+const TEMP_NAME = /^\.bot-save-[a-f0-9-]{36}\.tmp$/;
+const TEMP_TTL_MS = 15 * 60_000;
+const MAX_SWEEP_ENTRIES = 256;
 const SEGMENT = /^(?!\.{1,2}$)[^/\\\u0000]{1,255}$/;
 
 const EFFECTS: Record<BotToolRequest["capability"], BotEffectClass> = {
@@ -58,6 +63,32 @@ async function directoryFor(root: string, parts: readonly string[], create: bool
   return current;
 }
 
+/**
+ * Removes this directory's save files left by a process that stopped
+ * mid-save. Runs before each save, reads a bounded number of entries, and
+ * never follows or removes a link.
+ */
+async function sweepStaleSaves(directory: string, now: number): Promise<void> {
+  const entries = await opendir(directory);
+  let seen = 0;
+  try {
+    for await (const entry of entries) {
+      if (++seen > MAX_SWEEP_ENTRIES) break;
+      if (!TEMP_NAME.test(entry.name)) continue;
+      const path = join(directory, entry.name);
+      try {
+        const info = await lstat(path);
+        if (info.isFile() && !info.isSymbolicLink() && now - info.mtimeMs > TEMP_TTL_MS) await unlink(path);
+      } catch (error: unknown) {
+        if (!isCode(error, "ENOENT")) console.warn("[bots] stale save cleanup failed:", error instanceof Error ? error.name : "UnknownError");
+      }
+    }
+  } catch (error: unknown) {
+    // Breaking out of the loop closes the directory; anything else is logged, not fatal to the save.
+    if (!isCode(error, "ERR_DIR_CLOSED")) console.warn("[bots] stale save scan failed:", error instanceof Error ? error.name : "UnknownError");
+  }
+}
+
 function textResult(text: string): BotToolResult {
   const content: Array<{ type: "text"; text: string }> = [];
   for (let index = 0; index < Math.max(1, text.length); index += MAX_TEXT_PART_CHARS) {
@@ -89,17 +120,29 @@ export function createBotToolDispatcher(deps: { homePath: string }): BotToolDisp
     if (request.args.replace) throw new BotBrokerActionError("invalid_arguments");
     const parts = segments(request.args.relPath);
     const directory = await directoryFor(await workspace(binding), parts, true);
-    let file;
+    const target = join(directory, parts.at(-1)!);
     try {
-      file = await open(join(directory, parts.at(-1)!), constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | constants.O_NOFOLLOW, 0o640);
+      const existing = await lstat(target);
+      if (!existing.isFile() || existing.isSymbolicLink()) throw new BotBrokerActionError("invalid_arguments");
     } catch (error: unknown) {
-      if (isCode(error, "ELOOP", "EISDIR")) throw new BotBrokerActionError("invalid_arguments");
-      throw error;
+      if (error instanceof BotBrokerActionError) throw error;
+      if (!isCode(error, "ENOENT")) throw error;
     }
+    await sweepStaleSaves(directory, Date.now());
+    const temp = join(directory, `${TEMP_PREFIX}${randomUUID()}.tmp`);
+    const file = await open(temp, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o640);
     try {
-      await file.writeFile(request.args.content, "utf8");
-    } finally {
-      await file.close();
+      try {
+        await file.writeFile(request.args.content, "utf8");
+      } finally {
+        await file.close();
+      }
+      await rename(temp, target);
+    } catch (error: unknown) {
+      await unlink(temp).catch((cleanup: unknown) => {
+        if (!isCode(cleanup, "ENOENT")) console.warn("[bots] failed save cleanup failed:", cleanup instanceof Error ? cleanup.name : "UnknownError");
+      });
+      throw error;
     }
     return textResult(`Saved ${request.args.relPath} (${Buffer.byteLength(request.args.content, "utf8")} bytes).`);
   }
