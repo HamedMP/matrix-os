@@ -11,6 +11,7 @@ describe('customer VPS PostgreSQL privilege boundary', () => {
     expect(unit).toContain('User=root');
     expect(unit).toContain('ExecStart=/usr/local/libexec/matrix-postgres-start');
     expect(unit).toContain('Requires=docker.service');
+    expect(unit).not.toContain('RemainAfterExit=yes');
     const helper = read('distro/customer-vps/host-bin/matrix-postgres-start');
     expect(helper).toContain('matrix-postgres');
     expect(helper).toContain('127.0.0.1:5432:5432');
