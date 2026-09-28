@@ -24,6 +24,16 @@ vi.mock("@clerk/nextjs", () => ({
 import { CollaborationOrganization } from "../../shell/src/lib/collaboration-organization.js";
 
 const fetchMock = vi.fn<typeof fetch>();
+// Responses a test holds back. Each is settled after the test so a failed
+// assertion cannot leave a shared in-flight listing for later tests to join.
+const heldResponses: Array<(response: Response) => void> = [];
+
+function heldResponse(): { promise: Promise<Response>; respond: (response: Response) => void } {
+  let respond: (response: Response) => void = () => undefined;
+  const promise = new Promise<Response>((resolve) => { respond = resolve; });
+  heldResponses.push(respond);
+  return { promise, respond };
+}
 
 function listing(organizations: Array<Record<string, unknown>>): Response {
   return new Response(JSON.stringify({ organizations }), { status: 200, headers: { "content-type": "application/json" } });
@@ -51,7 +61,9 @@ describe("CollaborationOrganization gate", () => {
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    for (const respond of heldResponses.splice(0)) respond(listing([]));
+    await settle();
     cleanup();
     clerkState.isLoaded = true;
     clerkState.organization = null;
@@ -115,6 +127,29 @@ describe("CollaborationOrganization gate", () => {
     expect(timeout).toHaveBeenCalledWith(10_000);
   });
 
+  it("never reuses an earlier listing when the fallback becomes active again", async () => {
+    fetchMock.mockResolvedValueOnce(listing([{ organizationId: "org_alpha" }]));
+    const { rerender } = render(gate());
+    await waitFor(() => expect(screen.getByTestId("organization")).toHaveTextContent("org_alpha"));
+
+    clerkState.organization = { id: "org_beta" };
+    act(() => rerender(gate()));
+    expect(screen.getByTestId("organization")).toHaveTextContent("org_beta");
+
+    // The account gained a second membership meanwhile; the new listing is still in flight.
+    const { promise, respond } = heldResponse();
+    fetchMock.mockReturnValueOnce(promise);
+    clerkState.organization = null;
+    act(() => rerender(gate()));
+    await settle();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(screen.getByTestId("organization")).toHaveTextContent("none");
+
+    await act(async () => { respond(listing([{ organizationId: "org_alpha" }, { organizationId: "org_beta" }])); });
+    await settle();
+    expect(screen.getByTestId("organization")).toHaveTextContent("none");
+  });
+
   it("renders no organization when the account has several memberships", async () => {
     fetchMock.mockResolvedValue(listing([{ organizationId: "org_alpha" }, { organizationId: "org_beta" }]));
     render(gate());
@@ -146,8 +181,8 @@ describe("CollaborationOrganization gate", () => {
   });
 
   it("shares one in-flight listing request between Share controls mounted together", async () => {
-    let respond: (response: Response) => void = () => undefined;
-    fetchMock.mockReturnValue(new Promise<Response>((resolve) => { respond = resolve; }));
+    const { promise, respond } = heldResponse();
+    fetchMock.mockReturnValue(promise);
     render(<>{gate()}{gate()}</>);
     await settle();
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -156,8 +191,8 @@ describe("CollaborationOrganization gate", () => {
   });
 
   it("does not hand another account's listing to a different signed-in user", async () => {
-    let respond: (response: Response) => void = () => undefined;
-    fetchMock.mockReturnValueOnce(new Promise<Response>((resolve) => { respond = resolve; }));
+    const { promise, respond } = heldResponse();
+    fetchMock.mockReturnValueOnce(promise);
     fetchMock.mockResolvedValueOnce(listing([{ organizationId: "org_beta" }]));
     const { rerender } = render(gate());
     await settle();

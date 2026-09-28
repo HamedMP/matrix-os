@@ -59,7 +59,13 @@ function useOrganizationMemberships(account: { userId: string; origin: string } 
       console.warn("[collaboration-organization] organization listing unavailable", error instanceof Error ? error.name : "UnknownError");
       if (active) setResult({ userId, memberships: { status: "failed" } });
     });
-    return () => { active = false; };
+    return () => {
+      active = false;
+      // Memberships may change while the fallback is inactive (Clerk has an active
+      // organization, or the account changed), so a later activation starts from
+      // loading instead of reusing this answer.
+      setResult(null);
+    };
   }, [userId, origin]);
   return userId && result?.userId === userId ? result.memberships : { status: "loading" };
 }
