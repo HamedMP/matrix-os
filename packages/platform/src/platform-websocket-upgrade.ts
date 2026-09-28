@@ -47,7 +47,7 @@ import { resolveContainerEndpoint } from './container-endpoint.js';
 import { describeError } from './platform-route-utils.js';
 import { shouldVerifyCustomerVpsTls } from './customer-vps-tls.js';
 import { handleInternalGeminiLiveProxyUpgrade } from './gemini-live-proxy.js';
-import { isCollaborationWebSocketCandidate, parseRelaySocketPath } from './collaboration/relay.js';
+import { isCollaborationWebSocketCandidate, parseRelaySocketPath, RelayAccountLimitError } from './collaboration/relay.js';
 
 interface PlatformWebSocketTelemetry {
   capturePlatformEvent(event: MatrixTelemetryEvent, properties: Record<string, unknown>): void;
@@ -81,7 +81,7 @@ export interface RegisterPlatformWebSocketUpgradeHandlerOpts {
   /** S05: runtime control-stream upgrade (`/internal/collaboration/control`); handled before session routing. */
   collaborationDirect?: {
     handleUpgrade(req: IncomingMessage, socket: Socket, head: Buffer): Promise<boolean>;
-    relay: { prepareSocket(input: { actorId: string; rawPath: string; incomingHeaders: IncomingMessage["headers"]; externalHost: string }): Promise<{ home: { runtimeId: string; origin: string }; upstreamPath: string; headers: string; release(): void; touch(): void; onEvict(hook: () => void): void } | null> };
+    relay: { prepareSocket(input: { actorId: string; rawPath: string; incomingHeaders: IncomingMessage["headers"]; externalHost: string }): Promise<{ home: { runtimeId: string; origin: string }; upstreamPath: string; headers: string; release(): void; touch(): void; record(bytes: number): void; onEvict(hook: () => void): void } | null> };
   };
 }
 
@@ -248,6 +248,15 @@ export function registerPlatformWebSocketUpgradeHandler(
         authorityMachine = machineId ? await getUserMachine(db, machineId) : undefined;
       } catch (err: unknown) {
         // Every failure on this branch settles here: the socket is destroyed, never left open.
+        if (err instanceof RelayAccountLimitError) {
+          directUpgrade?.release();
+          try { socket.end(`HTTP/1.1 429 Too Many Requests\r\nCache-Control: private, no-store\r\nRetry-After: ${err.retryAfterSeconds}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n`); }
+          catch (writeError: unknown) {
+            console.warn('[platform] collaboration socket refusal failed', writeError instanceof Error ? writeError.name : 'UnknownError');
+            socket.destroy();
+          }
+          return;
+        }
         console.warn(`[platform] collaboration direct socket preparation failed error=${describeError(err)}`);
         directUpgrade?.release();
         directUpgrade = undefined;
@@ -259,10 +268,11 @@ export function registerPlatformWebSocketUpgradeHandler(
         socket.destroy();
         return;
       }
-      socket.once('close', directUpgrade.release);
+      const prepared = directUpgrade;
+      socket.once('close', prepared.release);
       // Idle eviction: traffic in either direction keeps the reservation; a swept one destroys the socket.
-      socket.on('data', directUpgrade.touch);
-      directUpgrade.onEvict(() => { socket.destroy(); });
+      socket.on('data', (chunk: Buffer) => { prepared.record(chunk.byteLength); });
+      prepared.onEvict(() => { socket.destroy(); });
       runningMachine = authorityMachine;
       runtimeSlot = authorityMachine.runtimeSlot;
       webSocketProxyPath = directUpgrade.upstreamPath;
@@ -385,9 +395,13 @@ export function registerPlatformWebSocketUpgradeHandler(
       upstream.write(
         `${req.method} ${upstreamPath} HTTP/1.1\r\nHost: ${upstreamHostHeader}\r\n${headers}\r\n\r\n`,
       );
-      if (head.length > 0) upstream.write(head);
+      if (head.length > 0) {
+        directUpgrade?.record(head.byteLength);
+        if (socket.destroyed || upstream.destroyed) return;
+        upstream.write(head);
+      }
 
-      if (directUpgrade) upstream.on('data', directUpgrade.touch);
+      if (directUpgrade) upstream.on('data', (chunk: Buffer) => { directUpgrade.record(chunk.byteLength); });
       // The reverse direction: an upstream that closes or errors takes the client half
       // with it, so a teardown starting on either side releases the reservation exactly
       // once through the client socket's single `close`.

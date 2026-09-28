@@ -23,6 +23,8 @@ import {
 } from "./runtime-endpoints.js";
 import { CollaborationTicketIssuer, loadTicketSigningKeyring, type TicketSigningKeyring } from "./ticket-issuer.js";
 import { CollaborationRelay, type RelayHome } from "./relay.js";
+import { RelayAccountClassifier, RelayUsageMeter, loadRelayAccountLimits } from "./relay-usage.js";
+import type { CollaborationPlatformDatabase } from "./database.js";
 
 export const DEFAULT_COLLABORATION_RELAY_ORIGIN = "https://app.matrix-os.com";
 
@@ -64,8 +66,21 @@ export async function createPlatformCollaborationDirect(options: {
   resolveRuntimeOrigin(runtimeId: string, ownerId: string): Promise<string | null>;
   relayFetch?: typeof fetch;
   now?: () => Date;
+  env?: NodeJS.ProcessEnv;
+  ownsActiveComputer?(actorId: string): Promise<boolean>;
+  startTimers?: boolean;
 }): Promise<PlatformCollaborationDirect> {
+  const accountLimits = loadRelayAccountLimits(options.env ?? process.env);
   await bootstrapPlatformRuntimeEndpointDatabase(options.db);
+  const accountClassifier = new RelayAccountClassifier({
+    ownsActiveComputer: options.ownsActiveComputer ?? (async () => false),
+    now: options.now ? () => options.now!().getTime() : undefined,
+  });
+  const accountUsage = new RelayUsageMeter({
+    db: options.db as unknown as Kysely<CollaborationPlatformDatabase>,
+    now: options.now ? () => options.now!().getTime() : undefined,
+    startTimers: options.startTimers,
+  });
   const endpoints = new CollaborationRuntimeEndpointRegistry(options.db, { now: options.now });
   let issuer: CollaborationTicketIssuer | null = null;
   if (options.keyring) {
@@ -103,6 +118,9 @@ export async function createPlatformCollaborationDirect(options: {
       return origin ? { runtimeId: logicalRuntimeId, origin } : null;
     },
     ...(options.relayFetch ? { fetchImpl: options.relayFetch } : {}),
+    accountClassifier,
+    accountLimits,
+    accountUsage,
   });
   relay.startSweep();
   const controlStream = new CollaborationControlStream({
@@ -121,6 +139,12 @@ export async function createPlatformCollaborationDirect(options: {
     resolveActor: options.resolveActor,
     authenticateRuntime: options.authenticateRuntime,
     resolveRelayHandle: options.resolveRelayHandle,
+    admitAccount: async (actorId) => {
+      const machineFree = await accountClassifier.isMachineFree(actorId);
+      const admitted = await accountUsage.canAdmit(actorId, machineFree, accountLimits.dailyBytes);
+      accountUsage.record(actorId, machineFree, admitted ? { requests: 1 } : { refusals: 1 }, accountLimits.dailyBytes);
+      return admitted;
+    },
   });
   let registered = false;
   let closing = false;
@@ -141,6 +165,8 @@ export async function createPlatformCollaborationDirect(options: {
       closing = true;
       upgrade.close();
       relay.close();
+      accountClassifier.close();
+      await accountUsage.close();
       await controlStream.shutdown();
     },
   };

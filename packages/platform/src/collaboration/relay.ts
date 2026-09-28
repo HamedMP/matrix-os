@@ -17,6 +17,8 @@ import {
   COLLABORATION_EXPECTED_MEMBER_REVISION_HEADER,
   COLLABORATION_EXPECTED_REVISION_HEADER,
 } from "@matrix-os/contracts";
+import type { RelayAccountClassifier, RelayAccountLimits, RelayUsageMeter } from "./relay-usage.js";
+import { relayDailyRetryAfterSeconds } from "./relay-usage.js";
 
 const UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}";
 const RUNTIME = "(?:[A-Za-z0-9:_-]|%3[Aa]){1,128}";
@@ -78,6 +80,8 @@ export interface RelayPreparedSocket {
   release(): void;
   /** Records traffic in either direction so the idle sweep keeps the reservation. */
   touch(): void;
+  /** Count opaque bytes without inspecting frames; closes this socket at the 110% hard stop. */
+  record(bytes: number): void;
   /** Runs when the idle sweep evicts the reservation; the listener destroys the socket. */
   onEvict(hook: () => void): void;
 }
@@ -97,7 +101,7 @@ export interface RelayMetadata {
   runtimeId: string | null;
   resourceId: string | null;
   method: string;
-  path: string;
+  routeClass: "scope" | "discussion" | "terminal" | "files" | "apps" | "exports" | "other_scope" | "session" | "invitation" | "runtime" | "invalid";
   requestBytes: number;
   responseBytes: number;
   status: number;
@@ -106,6 +110,24 @@ export interface RelayMetadata {
 }
 
 export type RelayLimits = typeof DEFAULT_LIMITS;
+
+function routeClass(route: RelayRoute | null, path: string): RelayMetadata["routeClass"] {
+  if (!route) return "invalid";
+  if (route.kind !== "scope") return route.kind;
+  const prefix = `/api/collaboration/scopes/${route.identifier}`;
+  const suffix = path.slice(prefix.length);
+  if (suffix === "" || suffix === "/") return "scope";
+  if (suffix.startsWith("/discussion")) return "discussion";
+  if (suffix.startsWith("/terminal")) return "terminal";
+  if (suffix.startsWith("/files") || suffix.startsWith("/resources/file")) return "files";
+  if (suffix.startsWith("/apps")) return "apps";
+  if (suffix.startsWith("/exports")) return "exports";
+  return "other_scope";
+}
+
+export class RelayAccountLimitError extends Error {
+  constructor(readonly retryAfterSeconds: number) { super("relay_limit"); this.name = "RelayAccountLimitError"; }
+}
 
 /** Classifies a direct-protocol path; anything else is not relayed. */
 export function parseRelayRoute(method: string, path: string): RelayRoute | null {
@@ -174,6 +196,9 @@ export class CollaborationRelay {
     limits?: Partial<RelayLimits>;
     now?: () => number;
     onMetadata?(metadata: RelayMetadata): void;
+    accountClassifier?: RelayAccountClassifier;
+    accountLimits?: RelayAccountLimits;
+    accountUsage?: Pick<RelayUsageMeter, "canAdmit" | "record">;
   }) {
     this.limits = { ...DEFAULT_LIMITS, ...options.limits };
     this.fetchImpl = options.fetchImpl ?? fetch;
@@ -197,10 +222,13 @@ export class CollaborationRelay {
     // a client header.
     let requestBytes = input.body instanceof Uint8Array ? input.body.byteLength : 0;
     const route = parseRelayRoute(input.method, input.path);
+    let machineFree = false;
+    let metered = false;
     const finish = (status: number, outcome: RelayMetadata["outcome"], runtimeId: string | null, responseBytes = 0) => {
+      if (metered) this.options.accountUsage?.record(input.actorId, machineFree, { requests: 1, bytes: requestBytes + responseBytes }, this.options.accountLimits?.dailyBytes);
       try {
         this.options.onMetadata?.({
-          actorId: input.actorId, runtimeId, resourceId: route?.identifier ?? null, method: input.method, path: input.path,
+          actorId: input.actorId, runtimeId, resourceId: route?.identifier ?? null, method: input.method, routeClass: routeClass(route, input.path),
           requestBytes, responseBytes,
           status, durationMs: this.now() - startedAt, outcome,
         });
@@ -212,6 +240,16 @@ export class CollaborationRelay {
     if (!route) {
       finish(404, "rejected", null);
       return plain("Collaboration route not found", 404);
+    }
+    if (this.options.accountClassifier) machineFree = await this.options.accountClassifier.isMachineFree(input.actorId);
+    if (this.options.accountUsage) {
+      const admitted = await this.options.accountUsage.canAdmit(input.actorId, machineFree, this.options.accountLimits?.dailyBytes ?? 1024 ** 3);
+      if (!admitted) {
+        this.options.accountUsage.record(input.actorId, machineFree, { refusals: 1 }, this.options.accountLimits?.dailyBytes);
+        finish(429, "limit", null);
+        return relayLimitResponse(relayDailyRetryAfterSeconds(this.now()));
+      }
+      metered = true;
     }
     // A caller may under-declare its length. The cap is held against the larger of what was
     // declared and what is already in hand, so a false short length cannot buy headroom -- and a
@@ -376,8 +414,18 @@ export class CollaborationRelay {
       return null;
     }
     if (!home) return null;
+    const machineFree = this.options.accountClassifier ? await this.options.accountClassifier.isMachineFree(input.actorId) : false;
+    if (this.options.accountUsage && !await this.options.accountUsage.canAdmit(input.actorId, machineFree, this.options.accountLimits?.dailyBytes ?? 1024 ** 3)) {
+      this.options.accountUsage.record(input.actorId, machineFree, { refusals: 1 }, this.options.accountLimits?.dailyBytes);
+      throw new RelayAccountLimitError(relayDailyRetryAfterSeconds(this.now()));
+    }
+    // Read the counters after the last await. Concurrent upgrades otherwise all see the same old count.
     const homeCount = this.homeConnections.get(home.runtimeId) ?? 0;
     const actorCount = this.actorConnections.get(input.actorId) ?? 0;
+    if (machineFree && actorCount >= (this.options.accountLimits?.sockets ?? 8)) {
+      this.options.accountUsage?.record(input.actorId, machineFree, { refusals: 1 }, this.options.accountLimits?.dailyBytes);
+      throw new RelayAccountLimitError(30);
+    }
     if (homeCount >= this.limits.connectionsPerHome || actorCount >= this.limits.connectionsPerActor) return null;
     // Overall bound on distinct keys: a new home or actor is refused once the registry is full.
     if ((homeCount === 0 && this.homeConnections.size >= this.limits.maxTrackedHomes)
@@ -401,12 +449,22 @@ export class CollaborationRelay {
       },
     };
     this.reservations.set(id, reservation);
+    this.options.accountUsage?.record(input.actorId, machineFree, { socketOpens: 1 }, this.options.accountLimits?.dailyBytes);
     return {
       home,
       upstreamPath: `${socket.path}${socket.query ? `?${socket.query}` : ""}`,
       headers: lines.join("\r\n"),
       release: reservation.release,
       touch: () => { reservation.lastTouched = this.now(); },
+      record: (bytes) => {
+        if (!this.reservations.has(id)) return;
+        reservation.lastTouched = this.now();
+        if (this.options.accountUsage?.record(input.actorId, machineFree, { bytes }, this.options.accountLimits?.dailyBytes)) {
+          reservation.release();
+          try { reservation.onEvict?.(); }
+          catch (error: unknown) { console.warn("[collaboration-relay] hard-stop socket close failed", error instanceof Error ? error.name : "UnknownError"); }
+        }
+      },
       onEvict: (hook) => { reservation.onEvict = hook; },
     };
   }
@@ -549,4 +607,10 @@ function decrement(map: Map<string, number>, key: string): void {
 
 function plain(message: string, status: 404 | 413 | 503): Response {
   return new Response(message, { status, headers: { "cache-control": "private, no-store", "content-type": "text/plain; charset=utf-8" } });
+}
+
+function relayLimitResponse(retryAfterSeconds: number): Response {
+  return new Response(JSON.stringify({ code: "relay_limit", retryAfterSeconds }), {
+    status: 429, headers: { "cache-control": "private, no-store", "content-type": "application/json", "retry-after": String(retryAfterSeconds) },
+  });
 }
