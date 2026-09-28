@@ -138,10 +138,14 @@ function nativeProviderRecord(rawProviders: unknown[], providerId: string | null
 
 function nativeCredentialKind(providerId: string | null, provider: z.infer<typeof HermesProviderSchema> | undefined) {
   if (provider?.is_user_defined === true) return "custom" as const;
-  const builtinCodexProfile = providerId === "openai-codex"
-    && provider?.is_user_defined === false && provider.auth_type === undefined;
+  // The pinned native registry omits auth_type for these built-in routes.
+  // Only explicit non-user-defined records can supply this default; ambiguous
+  // inventories and explicit alternate auth kinds remain closed.
+  const builtin = provider?.is_user_defined === false && provider.auth_type === undefined;
+  const builtinCodexProfile = providerId === "openai-codex" && builtin;
   if (provider?.auth_type === "oauth" || builtinCodexProfile) return "provider_profile" as const;
-  if (provider?.auth_type === "api_key") return "api_key" as const;
+  if (provider?.auth_type === "api_key"
+    || (builtin && (providerId === "openai-api" || providerId === "openrouter"))) return "api_key" as const;
   if (provider?.auth_type === "base_url" || provider?.auth_type === "custom") return "custom" as const;
   return undefined;
 }
