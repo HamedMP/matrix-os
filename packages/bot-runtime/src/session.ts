@@ -68,7 +68,9 @@ export function withoutImages(messages: readonly AgentMessage[]): AgentMessage[]
 
 function capText(text: string, cap: number): string {
   if (text.length <= cap) return text;
-  return `${text.slice(0, cap)}\n[${text.length - cap} characters were left out of saved history.]`;
+  // Never end on half of a surrogate pair.
+  const end = cap > 0 && /[\uD800-\uDBFF]/.test(text[cap - 1]!) ? cap - 1 : cap;
+  return `${text.slice(0, end)}\n[${text.length - end} characters were left out of saved history.]`;
 }
 
 function capStrings(value: unknown, cap: number): unknown {
@@ -134,50 +136,76 @@ function latestTurnStart(messages: readonly AgentMessage[]): number {
   return 0;
 }
 
+/** Bytes a string adds to the encoded transcript. */
+function encodedTextBytes(text: string): number {
+  return encoder.encode(JSON.stringify(text)).byteLength;
+}
+
 /**
- * Fits a transcript for storage. Images always become placeholders. While
- * it is still too large: tool payloads are cut with a visible note, then
- * assistant prose in earlier turns, then (if allowed) the oldest turns are
- * dropped behind a note, and only as a last resort the latest turn's prose.
- * The person's words and, whenever possible, the latest reply stay whole. A
- * caller that may not drop turns (a cancelled run) shortens the latest
- * reply instead; if even that cannot fit, `encodeSession` refuses it and the
- * previous session is kept.
+ * The longest cut (at least MIN_KEPT_CHARS) whose shortened text encodes to
+ * at most `maxBytes`. Measured in encoded bytes, so multibyte and escaped
+ * characters are counted exactly. MIN_KEPT_CHARS when nothing longer fits.
  */
+function longestCutWithin(text: string, maxBytes: number): number {
+  let low = MIN_KEPT_CHARS;
+  let high = text.length - 1;
+  let best = MIN_KEPT_CHARS;
+  while (low <= high) {
+    const middle = (low + high) >>> 1;
+    if (encodedTextBytes(capText(text, middle)) <= maxBytes) {
+      best = middle;
+      low = middle + 1;
+    } else {
+      high = middle - 1;
+    }
+  }
+  return best;
+}
+
 /**
- * Shortens the longest eligible assistant text by just the overflow, one part
- * at a time, so no more of a reply is lost than the save limit requires.
+ * Shortens eligible assistant text by just the overflow, longest part first.
+ * Each part is shortened at most once, so every part is considered and no
+ * more of a reply is lost than the save limit requires.
  */
 function trimAssistantOverflow(
   messages: AgentMessage[],
   maxBytes: number,
   eligible: (index: number) => boolean,
 ): AgentMessage[] {
-  let stored = messages;
-  for (let attempt = 0; attempt < 64; attempt += 1) {
-    const overflow = encodedSessionBytes(stored) - maxBytes;
-    if (overflow <= 0) return stored;
-    let target: { message: number; part: number; length: number } | undefined;
-    stored.forEach((message, messageIndex) => {
-      if (message.role !== "assistant" || !eligible(messageIndex)) return;
-      message.content.forEach((part, partIndex) => {
-        if (part.type === "text" && part.text.length > (target?.length ?? MIN_KEPT_CHARS)) {
-          target = { message: messageIndex, part: partIndex, length: part.text.length };
-        }
-      });
+  let overflow = encodedSessionBytes(messages) - maxBytes;
+  if (overflow <= 0) return messages;
+  const candidates: Array<{ message: number; part: number; text: string }> = [];
+  messages.forEach((message, messageIndex) => {
+    if (message.role !== "assistant" || !eligible(messageIndex)) return;
+    message.content.forEach((part, partIndex) => {
+      if (part.type === "text" && part.text.length > MIN_KEPT_CHARS) candidates.push({ message: messageIndex, part: partIndex, text: part.text });
     });
-    if (!target) return stored;
-    const { message: at, part: partAt, length } = target;
-    // Characters cost at least one byte, so cutting the overflow in characters (plus room for the note) always shrinks enough.
-    const keep = Math.max(MIN_KEPT_CHARS, length - overflow - 128);
-    stored = stored.map((message, messageIndex) => (messageIndex !== at || message.role !== "assistant"
-      ? message
-      : {
-          ...message,
-          content: message.content.map((part, partIndex) => (partIndex === partAt && part.type === "text" ? { ...part, text: capText(part.text, keep) } : part)),
-        }));
+  });
+  candidates.sort((a, b) => b.text.length - a.text.length);
+  const shortened = new Map<number, Map<number, string>>();
+  for (const candidate of candidates) {
+    if (overflow <= 0) break;
+    const before = encodedTextBytes(candidate.text);
+    const text = capText(candidate.text, longestCutWithin(candidate.text, before - overflow));
+    const saved = before - encodedTextBytes(text);
+    // A part barely over the minimum grows once the note is added; leave it whole.
+    if (saved <= 0) continue;
+    const parts = shortened.get(candidate.message) ?? new Map<number, string>();
+    parts.set(candidate.part, text);
+    shortened.set(candidate.message, parts);
+    overflow -= saved;
   }
-  return stored;
+  return messages.map((message, messageIndex) => {
+    const parts = shortened.get(messageIndex);
+    if (!parts || message.role !== "assistant") return message;
+    return {
+      ...message,
+      content: message.content.map((part, partIndex) => {
+        const text = parts.get(partIndex);
+        return text !== undefined && part.type === "text" ? { ...part, text } : part;
+      }),
+    };
+  });
 }
 
 /**
