@@ -87,7 +87,7 @@ atomic_install_key() {
 }
 
 stage_rotation() {
-  local temp fingerprint
+  local temp fingerprint _bits _rest
   [ "$(id -u)" -eq 0 ] || fail 'rotation requires root'
   require_root_owned_source
   require_root_owned_key "$CANDIDATE_SOURCE"
@@ -107,17 +107,17 @@ stage_rotation() {
     rm -f -- "$temp"
     fail 'cannot stage support key'
   fi
-  fingerprint="$(ssh-keygen -lf "$CANDIDATE_SOURCE" | awk '{print $2}')"
+  read -r _bits fingerprint _rest <<< "$(ssh-keygen -lf "$CANDIDATE_SOURCE")"
   printf 'matrix-support-access: candidate staged: %s; verify a new SSH session offering only this key before finalizing\n' "$fingerprint"
 }
 
 finalize_rotation() {
-  local verified="$1" fingerprint="" staged=""
+  local verified="$1" fingerprint="" staged="" _bits _rest
   [ "$(id -u)" -eq 0 ] || fail 'rotation requires root'
   require_root_owned_source
   require_root_owned_key "$CANDIDATE_SOURCE"
   require_installed_auth
-  fingerprint="$(ssh-keygen -lf "$CANDIDATE_SOURCE" | awk '{print $2}')"
+  read -r _bits fingerprint _rest <<< "$(ssh-keygen -lf "$CANDIDATE_SOURCE")"
   [ "$verified" = "$fingerprint" ] \
     || fail 'verified fingerprint does not match the candidate key'
   if ! cmp -s -- "$KEY_SOURCE" "$CANDIDATE_SOURCE"; then

@@ -5,6 +5,8 @@ import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 const helper = resolve(import.meta.dirname, '../../distro/customer-vps/host-bin/matrix-support-access');
+const isolatedInstallFixture = resolve(import.meta.dirname, '../fixtures/support-access-install-isolated.sh');
+const supportsUserMountNamespace = spawnSync('unshare', ['-Ur', '-m', 'true']).status === 0;
 
 function withGeneratedKey(run: (publicKeyPath: string, directory: string) => void): void {
   const directory = mkdtempSync(join(tmpdir(), 'matrix-support-key-'));
@@ -57,6 +59,17 @@ describe('support SSH key bootstrap validation', () => {
     });
   });
 
+  it.skipIf(!supportsUserMountNamespace)('installs, refuses an existing different key, and rotates inside an isolated mount namespace', () => {
+    withGeneratedKey((activeKey, directory) => {
+      const candidatePrivate = join(directory, 'candidate_ed25519');
+      execFileSync('ssh-keygen', ['-q', '-t', 'ed25519', '-N', '', '-f', candidatePrivate]);
+      const result = spawnSync('unshare', [
+        '-Ur', '-m', 'bash', isolatedInstallFixture, helper, activeKey, `${candidatePrivate}.pub`,
+      ], { encoding: 'utf8' });
+      expect(result.status, result.stderr).toBe(0);
+    });
+  });
+
   it('has a fixed, root-owned source and does not copy root authorized_keys', () => {
     const source = readFileSync(helper, 'utf8');
     expect(source).toContain('/etc/matrix/support/public-key');
@@ -69,5 +82,10 @@ describe('support SSH key bootstrap validation', () => {
     const buildScript = readFileSync(resolve(import.meta.dirname, '../../scripts/build-host-bundle.sh'), 'utf8');
     expect(buildScript).toContain('"$STAGE_DIR/bin/matrix-support-access"');
     expect(statSync(helper).mode & 0o111).not.toBe(0);
+    const cloudInit = readFileSync(resolve(import.meta.dirname, '../../distro/customer-vps/cloud-init.yaml'), 'utf8');
+    const updater = readFileSync(resolve(import.meta.dirname, '../../distro/customer-vps/host-bin/matrix-sync-agent'), 'utf8');
+    expect(cloudInit).toContain('/usr/local/libexec/matrix-support-access');
+    expect(updater).toContain('record_update_file /usr/local/libexec/matrix-support-access support-helper');
+    expect(updater).toContain('restore_update_file /usr/local/libexec/matrix-support-access support-helper');
   });
 });
