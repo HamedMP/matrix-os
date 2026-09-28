@@ -6,6 +6,7 @@ import { createBotStateTransactions } from "../../../packages/gateway/src/bots/e
 import type { BotIntegrationConnection } from "../../../packages/gateway/src/bots/integration-client.js";
 import { BotInteractionError } from "../../../packages/gateway/src/bots/interactions.js";
 import { createBotBindingsRepository } from "../../../packages/gateway/src/bots/repositories/bindings.js";
+import { createBotConnectRequestsRepository } from "../../../packages/gateway/src/bots/repositories/connect-requests.js";
 import { createBotGrantsRepository } from "../../../packages/gateway/src/bots/repositories/grants.js";
 import { createBotInteractionsRepository } from "../../../packages/gateway/src/bots/repositories/interactions.js";
 import { createBotTasksRepository } from "../../../packages/gateway/src/bots/repositories/tasks.js";
@@ -64,6 +65,24 @@ async function grants() {
 }
 
 describe("bot connection requests", () => {
+  it("reconciles owners with the oldest pending request first", async () => {
+    const { connections } = setup();
+    await connections.startConnect(OWNER, CHAT, interactionId, 1);
+    const older = "2026-09-28T09:59:00.000Z";
+    const otherChat = "chat_connect2";
+    await insertChat(db, otherChat, OTHER_OWNER);
+    const task = await createBotTasksRepository(db).create({ ownerId: OTHER_OWNER, botId: BOT, chatId: otherChat, now: older });
+    const { interaction } = await createBotInteractionsRepository(db).create({
+      ownerId: OTHER_OWNER, botId: BOT, chatId: otherChat, taskId: task.taskId, kind: "connect_request",
+      payload: { kind: "connect_request", service: "gmail", access: ["read"], benefit: "Read mail.", connectRequestId: "cr_0123456789abcdef01234568" },
+      responderActorId: OTHER_OWNER, blocking: true, expiresAt: "2026-09-28T10:14:00.000Z", now: older,
+    });
+    await createBotConnectRequestsRepository(db).create({
+      ownerId: OTHER_OWNER, interactionId: interaction.interactionId, requestId: "cr_0123456789abcdef01234568",
+      service: "gmail", baselineConnectionIds: [], expiresAt: "2026-09-28T10:14:00.000Z", now: older,
+    });
+    await expect(connections.ownersWithPending()).resolves.toEqual([OTHER_OWNER, OWNER]);
+  });
   it("grants an account that is already connected when the owner starts", async () => {
     connected = [WORK];
     const result = await setup().connections.startConnect(OWNER, CHAT, interactionId, 1);
