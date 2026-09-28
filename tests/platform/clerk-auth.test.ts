@@ -3,6 +3,7 @@ import {
   CLERK_SESSION_REVOKE_TIMEOUT_MS,
   createClerkAuth,
   createClerkSessionRevoker,
+  resolveClerkVerificationConfig,
   type ClerkAuth,
 } from "../../packages/platform/src/clerk-auth.js";
 
@@ -78,6 +79,30 @@ describe("T800: Clerk JWT verification on subdomain proxy", () => {
   it("other paths are not public", () => {
     expect(auth.isPublicPath("/api/message")).toBe(false);
     expect(auth.isPublicPath("/ws")).toBe(false);
+  });
+
+  it("uses a secret key for verification and session revocation when available", () => {
+    expect(resolveClerkVerificationConfig({
+      CLERK_SECRET_KEY: "sk_live_matrix",
+      CLERK_JWT_KEY: "public-key",
+    })).toEqual({
+      verifyTokenOptions: { secretKey: "sk_live_matrix" },
+      sessionRevocationSecret: "sk_live_matrix",
+    });
+  });
+
+  it("uses the public JWT key for verification without enabling session revocation", () => {
+    expect(resolveClerkVerificationConfig({
+      CLERK_SECRET_KEY: "",
+      CLERK_JWT_KEY: "public-key",
+    })).toEqual({
+      verifyTokenOptions: { jwtKey: "public-key" },
+      sessionRevocationSecret: undefined,
+    });
+  });
+
+  it("does not initialize Clerk auth without a verification key", () => {
+    expect(resolveClerkVerificationConfig({})).toBeNull();
   });
 
   it("extracts the Clerk session id from verified JWT claims", async () => {

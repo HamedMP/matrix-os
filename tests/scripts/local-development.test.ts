@@ -5,6 +5,25 @@ import { parse } from "yaml";
 
 import { resolveProxyDatabasePath } from "../../packages/proxy/src/db.js";
 import {
+  createLocalDevelopmentEnv,
+  LOCAL_DEVELOPMENT_SERVICES,
+  localInfrastructureCommands,
+  startLocalDevelopment,
+  startLocalInfrastructure,
+} from "../../scripts/dev-local.mjs";
+import {
+  addLocalParityOperator,
+  assertLocalParityMachinesAvailable,
+  assertOrbStackCapacity,
+  assertTcpPortAvailable,
+  builderSetupScript,
+  createLocalParityPlan,
+  fetchProductionClerkJwtKey,
+  qemuRuntimeArguments,
+  renderLocalParityCloudInit,
+  runtimeProcessIsOwned,
+} from "../../scripts/dev-production-parity.mjs";
+import {
   createSmokeCancellation,
   DOCKER_FULL_STACK_SERVICES,
   dockerFullStackCommands,
@@ -19,6 +38,19 @@ function readJson(path: string): Record<string, unknown> {
 }
 
 describe("local development contracts", () => {
+  it("pins the workspace and native addons to Node 24", () => {
+    const pkg = readJson("package.json") as {
+      engines: { node: string };
+    };
+    const workspace = parse(readFileSync(resolve(root, "pnpm-workspace.yaml"), "utf8")) as {
+      useNodeVersion?: string;
+    };
+
+    expect(pkg.engines.node).toBe(">=24 <25");
+    expect(workspace.useNodeVersion).toBe("24.18.0");
+    expect(readFileSync(resolve(root, ".nvmrc"), "utf8").trim()).toBe("24.18.0");
+  });
+
   it("uses pnpm package filters for source dev under the global virtual store", () => {
     const pkg = readJson("package.json") as {
       scripts: Record<string, string>;
@@ -41,7 +73,293 @@ describe("local development contracts", () => {
     }
     expect(pkg.scripts["dev:shell"]).toContain("@matrix-os/brand");
     expect(pkg.scripts["dev:platform"]).toContain("@matrix-os/brand");
-    expect(shellPkg.scripts.dev).toBe("next dev --webpack");
+    expect(shellPkg.scripts.dev).toBe("next dev -p ${PORT:-3000}");
+  });
+
+  it("makes the production host topology the canonical full-development entry point", () => {
+    const pkg = readJson("package.json") as { scripts: Record<string, string> };
+
+    expect(pkg.scripts["dev:infra"]).toBe("pnpm node scripts/dev-local.mjs infra");
+    expect(pkg.scripts["dev:infra:stop"]).toBe("pnpm node scripts/dev-local.mjs stop");
+    expect(pkg.scripts["dev:source"]).toBe("pnpm node scripts/dev-local.mjs full");
+    expect(pkg.scripts["dev:full"]).toBe("pnpm node scripts/dev-production-parity.mjs up");
+    expect(pkg.scripts["dev:parity"]).toBe("pnpm node scripts/dev-production-parity.mjs up");
+    expect(pkg.scripts["dev:parity:down"]).toBe("pnpm node scripts/dev-production-parity.mjs down");
+    expect(pkg.scripts["dev:parity:status"]).toBe("pnpm node scripts/dev-production-parity.mjs status");
+    expect(localInfrastructureCommands.start).toEqual([
+      "docker",
+      "compose",
+      "-f",
+      "docker-compose.dev.yml",
+      "up",
+      "--detach",
+      "postgres",
+      "minio",
+    ]);
+    expect(localInfrastructureCommands.configureObjectStore.at(-1)).toBe("minio-init");
+    expect(localInfrastructureCommands.stop).toEqual([
+      "docker",
+      "compose",
+      "-f",
+      "docker-compose.dev.yml",
+      "stop",
+      "postgres",
+      "minio",
+    ]);
+    expect(localInfrastructureCommands.stopApplicationContainers.slice(-4)).toEqual([
+      "stop",
+      "dev",
+      "proxy",
+      "platform",
+    ]);
+    expect(LOCAL_DEVELOPMENT_SERVICES).toEqual([
+      "@matrix-os/gateway",
+      "@matrix-os/proxy",
+      "@matrix-os/platform",
+      "./shell",
+    ]);
+  });
+
+  it("builds in Rosetta and boots parity in a real QEMU amd64 Ubuntu 24.04 VM", () => {
+    const plan = createLocalParityPlan({
+      root,
+      machineName: "matrix-os-local",
+      builderName: "matrix-os-local-builder",
+    });
+
+    expect(plan.builderCreate).toContain("4G");
+    expect(plan.builderCreate).toContain("amd64");
+    expect(plan.builderCreate).toContain("ubuntu:noble");
+    expect(plan.buildCommand).toContain("./scripts/build-host-bundle.sh");
+    expect(plan.buildCommand).toContain("NODE_OPTIONS=--max-old-space-size=2048");
+    expect(plan.buildCommand).toContain("ERL_AFLAGS='+JMsingle true'");
+    expect(plan.buildCommand).toContain("MATRIX_LOCAL_PARITY_BUILD=1");
+    expect(plan.buildCommand).toContain("MATRIX_ZELLIJ_SMOKE_TIMEOUT_MULTIPLIER=4");
+    expect(plan.buildCommand).toContain("pnpm install --frozen-lockfile --network-concurrency=4 --child-concurrency=1");
+    expect(plan.buildCommand).not.toContain(`${root}/node_modules`);
+    expect(builderSetupScript()).toContain("fallocate -l 8G /matrix-build.swap");
+    expect(builderSetupScript()).toContain("swapon /matrix-build.swap");
+    const qemuArgs = qemuRuntimeArguments({
+      diskPath: "/runtime/disk.qcow2",
+      seedPath: "/runtime/cidata.iso",
+      logPath: "/runtime/serial.log",
+    });
+    expect(qemuArgs).toContain("q35,accel=tcg");
+    expect(qemuArgs).toContain("user,id=net0,hostfwd=tcp:127.0.0.1:2222-:22,hostfwd=tcp:127.0.0.1:8443-:443");
+    expect(qemuArgs).toContain("if=virtio,format=raw,readonly=on,file=/runtime/cidata.iso");
+  });
+
+  it("uses Clerk's public production JWKS for local token verification", async () => {
+    const fetchImpl = async (input: string | URL | Request, init?: RequestInit) => {
+      expect(String(input)).toBe("https://clerk.matrix-os.com/.well-known/jwks.json");
+      expect(init?.signal).toBeInstanceOf(AbortSignal);
+      return Response.json({
+        keys: [{
+          kty: "RSA",
+          n: "1-YGirB74c53ncGxhz0ui4tbLiQZUw66OAjKujqcHgY0pAAK9pvs7WdSg4O8S2cfmB4eslAUs7YHLuQNaa6wZ9aGlTkz8018eGxtvpkJbKitswhPzC70mqpCoKYG5HgOnN89BbpsUbFP-c_TiniRQQUe_MQ5VxZAemDCEot0-LBci_xBFwJ-pCaZ9qb_h4e8JOOpzkAAkx7HDq842qv7WIbY95xq2P3SQol2G8wau_E9o0PnizzoYn6823UOlkBa7FREyFteqK-EPnOrhJBZjk7dY_8_U8tpFZ_r0IPuYfHU6oxedkkwLaASVgOofGXchVTsszfUd6b8gIczNiFbNw",
+          e: "AQAB",
+        }],
+      });
+    };
+
+    await expect(fetchProductionClerkJwtKey(fetchImpl)).resolves.toMatch(
+      /^-----BEGIN PUBLIC KEY-----/,
+    );
+    const launcher = readFileSync(resolve(root, "scripts/dev-production-parity.mjs"), "utf8");
+    expect(launcher).toContain('CLERK_SECRET_KEY: ""');
+    expect(launcher).toContain("CLERK_JWT_KEY: clerkJwtKey");
+    expect(launcher).toContain('CUSTOMER_VPS_CLOUD_INIT_PATH: resolve(root, "distro/customer-vps/cloud-init.yaml")');
+    expect(launcher).toContain('GOLDEN_SNAPSHOT_BUILDER_CLOUD_INIT_PATH: resolve(root, "distro/customer-vps/golden-snapshot-builder-cloud-init.yaml")');
+    expect(launcher).toContain('GOLDEN_SNAPSHOTS_ENABLED: "false"');
+    expect(launcher).not.toContain('platformSecret: env.PLATFORM_SECRET');
+  });
+
+  it("refuses to replace an existing parity runtime or builder", () => {
+    expect(() => assertLocalParityMachinesAvailable({
+      builderName: "matrix-os-local-builder",
+      machineExists: () => false,
+      runtimeExists: () => true,
+    })).toThrow("matrix-os-local QEMU runtime already exists");
+
+    expect(() => assertLocalParityMachinesAvailable({
+      builderName: "matrix-os-local-builder",
+      machineExists: (name: string) => name === "matrix-os-local-builder",
+      runtimeExists: () => false,
+    })).toThrow("matrix-os-local-builder already exists");
+
+    expect(runtimeProcessIsOwned({
+      pid: 123,
+      diskPath: "/runtime/disk.qcow2",
+      processCommand: () => "qemu-system-x86_64 -drive file=/runtime/disk.qcow2",
+    })).toBe(true);
+    expect(runtimeProcessIsOwned({
+      pid: 123,
+      diskPath: "/runtime/disk.qcow2",
+      processCommand: () => "unrelated-process",
+    })).toBe(false);
+  });
+
+  it("fails before building when OrbStack's shared memory cap is too small", () => {
+    expect(() => assertOrbStackCapacity(() => "2048")).toThrow(
+      "orb config set memory_mib 6144",
+    );
+    expect(() => assertOrbStackCapacity(() => "6144")).not.toThrow();
+  });
+
+  it("rejects an occupied readiness port rather than accepting a stale service", async () => {
+    const { createServer } = await import("node:net");
+    const listener = createServer();
+    await new Promise<void>((resolvePromise) => listener.listen(0, "127.0.0.1", resolvePromise));
+    const address = listener.address();
+    if (!address || typeof address === "string") throw new Error("expected a TCP address");
+
+    try {
+      await expect(assertTcpPortAvailable(address.port, "127.0.0.1"))
+        .rejects.toThrow(`TCP port ${address.port} is already accepting loopback connections`);
+    } finally {
+      await new Promise<void>((resolvePromise, rejectPromise) => listener.close((error) => {
+        if (error) rejectPromise(error);
+        else resolvePromise();
+      }));
+    }
+  });
+
+  it("renders the actual production cloud-init with only provider metadata adapted locally", () => {
+    const template = readFileSync(resolve(root, "distro/customer-vps/cloud-init.yaml"), "utf8");
+    const rendered = renderLocalParityCloudInit(template, {
+      machineId: "9f05824c-8d0a-4d83-9cb4-b312d43ff112",
+      clerkUserId: "user_local",
+      handle: "local",
+      hostBundleUrl: "http://10.0.2.2:9876/matrix-host-bundle.tar.gz",
+      platformUrl: "http://10.0.2.2:9003",
+      platformSecret: "platform-secret",
+      registrationToken: "registration-token",
+      registrationTokenExpiresAt: "2026-09-29T00:00:00.000Z",
+      postgresPassword: "postgres-secret",
+    });
+
+    expect(rendered).toContain("path: /etc/systemd/system/matrix-gateway.service");
+    expect(rendered).toContain("/opt/matrix/user-systemd");
+    expect(readFileSync(resolve(root, "distro/customer-vps/systemd-user/matrix-zellij@.service"), "utf8"))
+      .toContain("/opt/matrix/terminal-runtime/current/matrix-terminal-user-keeper.mjs %i");
+    expect(rendered).toContain("MATRIX_METADATA_INSTANCE_ID_URL=http://10.0.2.2:9876/metadata/instance-id");
+    expect(rendered).toContain("MATRIX_METADATA_PUBLIC_IPV4_URL=http://10.0.2.2:9876/metadata/public-ipv4");
+    expect(rendered).not.toContain("growpart:\n  mode: off\nresize_rootfs: false");
+    expect(rendered).not.toMatch(/\{\{[a-zA-Z0-9_]+\}\}/);
+    expect(rendered).not.toContain("MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED");
+
+    const localSeed = parse(addLocalParityOperator(rendered, "ssh-ed25519 AAAA local")) as {
+      bootcmd: string[];
+      users: Array<{ name: string }>;
+    };
+    expect(localSeed.users.map((user) => user.name)).toEqual(["matrix", "matrix-local-operator"]);
+    expect(localSeed.bootcmd[0]).toContain("ip address replace 192.0.2.2/32");
+  });
+
+  it("gives host services deterministic local infrastructure and auth-bypass settings", () => {
+    const env = createLocalDevelopmentEnv({ HOME: "/Users/dev", CUSTOM_VALUE: "kept", PORT: "9999" });
+
+    expect(env).toMatchObject({
+      CUSTOM_VALUE: "kept",
+      MATRIX_HOME: "/Users/dev/matrixos",
+      DATABASE_URL: "postgresql://matrixos:matrixos@127.0.0.1:5432/matrixos",
+      PLATFORM_DATABASE_URL: "postgresql://matrixos:matrixos@127.0.0.1:5432/matrixos_platform",
+      S3_ENDPOINT: "http://127.0.0.1:9100",
+      S3_PUBLIC_ENDPOINT: "http://127.0.0.1:9100",
+      S3_BUCKET: "matrixos-sync",
+      S3_FORCE_PATH_STYLE: "true",
+      E2E_TEST_BYPASS: "1",
+      NEXT_PUBLIC_E2E_TEST_BYPASS: "1",
+      MATRIX_AUTH_ALLOW_INSECURE_DEV: "1",
+      MATRIX_BIND_HOST: "127.0.0.1",
+      MATRIX_SELF_HOSTED: "1",
+    });
+    expect(env).not.toHaveProperty("PORT");
+  });
+
+  it("falls back to a valid development identity when MATRIX_HANDLE is blank", () => {
+    const env = createLocalDevelopmentEnv({ HOME: "/Users/dev", MATRIX_HANDLE: "  " });
+
+    expect(env.MATRIX_HANDLE).toBe("dev");
+  });
+
+  it("waits for long-running infrastructure before idempotent object-store setup", async () => {
+    const events: string[] = [];
+    const controller = new AbortController();
+
+    await startLocalInfrastructure({
+      cancellationSignal: controller.signal,
+      runCommand: async (_command: string, args: string[]) => {
+        events.push(args.at(-1) ?? "");
+      },
+      postgresReady: async () => {
+        events.push("postgres-ready");
+        return true;
+      },
+      waitForHttp: async () => {
+        events.push("object-storage-ready");
+      },
+      log: () => undefined,
+    });
+
+    expect(events).toEqual([
+      "minio",
+      "object-storage-ready",
+      "postgres-ready",
+      "minio-alias",
+      "minio-init",
+    ]);
+  });
+
+  it("stops every source watcher when readiness fails", async () => {
+    const stoppedWith: NodeJS.Signals[] = [];
+    const events: string[] = [];
+
+    await expect(startLocalDevelopment({
+      startInfrastructure: async () => undefined,
+      runCommand: async () => undefined,
+      startServices: () => ({
+        exited: new Promise<void>(() => undefined),
+        stop: async (signal: NodeJS.Signals) => {
+          stoppedWith.push(signal);
+          await new Promise((resolve) => setTimeout(resolve, 10));
+          events.push("watchers-stopped");
+        },
+      }),
+      waitForHttp: async (_checks: unknown, signal: AbortSignal) => {
+        expect(signal.aborted).toBe(false);
+        throw new Error("port collision");
+      },
+      log: () => undefined,
+    }).catch((error: unknown) => {
+      events.push("rejected");
+      throw error;
+    })).rejects.toThrow("port collision");
+
+    expect(stoppedWith).toEqual(["SIGTERM"]);
+    expect(events).toEqual(["watchers-stopped", "rejected"]);
+  });
+
+  it("identifies a source service that exits cleanly during startup", async () => {
+    await expect(startLocalDevelopment({
+      startInfrastructure: async () => undefined,
+      runCommand: async () => undefined,
+      startServices: () => ({
+        exited: Promise.resolve({ name: "proxy", pid: 123, code: 0, signal: null }),
+        stop: async () => undefined,
+      }),
+      waitForHttp: async () => new Promise<void>(() => undefined),
+      log: () => undefined,
+    })).rejects.toThrow("proxy (pid 123) stopped before local development became ready");
+  });
+
+  it("owns process groups so watcher grandchildren cannot outlive a failed startup", () => {
+    const orchestrator = readFileSync(resolve(root, "scripts/dev-local.mjs"), "utf8");
+
+    expect(orchestrator).toContain('detached: process.platform !== "win32"');
+    expect(orchestrator).toContain("process.kill(-child.pid, signal)");
+    expect(orchestrator).toContain("spawn(process.execPath, service.args");
+    expect(orchestrator).not.toContain('spawn("pnpm", ["--filter", service');
   });
 
   it("keeps the source proxy database usable without Docker-only directories", () => {
@@ -61,8 +379,14 @@ describe("local development contracts", () => {
     const environment = (service: string) => compose.services[service]?.environment ?? [];
 
     expect(environment("dev")).not.toContain("ANTHROPIC_API_KEY=");
+    expect(compose.services.dev.env_file).toEqual([{ path: ".env.docker", required: false }]);
+    expect(compose.services.postgres.ports).toContain("127.0.0.1:5432:5432");
+    expect(compose.services.minio.ports).toEqual([
+      "127.0.0.1:9100:9000",
+      "127.0.0.1:9101:9001",
+    ]);
     expect(compose.services.proxy.env_file).toBeUndefined();
-    expect(environment("proxy")).toContain("ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}");
+    expect(environment("proxy")).toContain("ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}");
     expect(environment("platform")).toContain(
       "PLATFORM_DATABASE_URL=postgresql://matrixos:matrixos@postgres:5432/matrixos_platform",
     );

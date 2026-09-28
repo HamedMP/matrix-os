@@ -16,6 +16,11 @@ const binary = resolve(process.argv[2] ?? "");
 if (!process.argv[2]) throw new Error("usage: smoke-zellij-session-config.ts <zellij-binary>");
 const delay = (ms: number) => new Promise((done) => setTimeout(done, ms));
 const spawnPty = createRequire(import.meta.url)("node-pty").spawn;
+const timeoutMultiplier = Number(process.env.MATRIX_ZELLIJ_SMOKE_TIMEOUT_MULTIPLIER ?? "1");
+if (!Number.isInteger(timeoutMultiplier) || timeoutMultiplier < 1 || timeoutMultiplier > 10) {
+  throw new Error("MATRIX_ZELLIJ_SMOKE_TIMEOUT_MULTIPLIER must be an integer from 1 through 10");
+}
+const scaledTimeout = (milliseconds: number) => milliseconds * timeoutMultiplier;
 
 function fixtureEnv(root: string) {
   return {
@@ -27,7 +32,7 @@ function fixtureEnv(root: string) {
 }
 
 async function waitFor(check: () => Promise<boolean>, label: string) {
-  const deadline = Date.now() + 4_000;
+  const deadline = Date.now() + scaledTimeout(4_000);
   while (Date.now() < deadline) {
     if (await check()) return;
     await delay(50);
@@ -50,7 +55,7 @@ async function supervise() {
       ? [resolve(fixtureWorker), binary, root]
       : ["--conditions=development", "--import", "tsx", fileURLToPath(import.meta.url), binary, root];
     const result = await run(process.execPath, workerArgs, {
-      timeout: 35_000, killSignal: "SIGKILL", signal: controller.signal, maxBuffer: 512 * 1024,
+      timeout: scaledTimeout(35_000), killSignal: "SIGKILL", signal: controller.signal, maxBuffer: 512 * 1024,
     });
     process.stdout.write(result.stdout);
     process.stderr.write(result.stderr);
@@ -117,7 +122,7 @@ process.stdin.on('data', data => {
   writes = writes.then(() => appendFile(${JSON.stringify(inputPath)}, data));
 });
 process.stdout.write('READY');
-setTimeout(() => process.exit(0), 30000);
+setTimeout(() => process.exit(0), ${scaledTimeout(30_000)});
 `);
       await writeFile(layout, `layout {
   pane command=${JSON.stringify(process.execPath)} {
