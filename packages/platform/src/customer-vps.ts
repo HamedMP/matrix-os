@@ -23,6 +23,7 @@ import {
   listPendingProviderDeletions,
   listAllUserMachines,
   listRunningUserMachines,
+  iterateRunningUserMachinePages,
   listStaleResizingUserMachines,
   listStaleUserMachines,
   lockUserMachineProvisioning,
@@ -75,7 +76,7 @@ import {
 } from './customer-vps-host-bundle.js';
 import { selectCustomerVpsDeployMachines } from './customer-vps-deploy-selection.js';
 import {
-  activatePlatformSpeechFleet,
+  activatePlatformSpeechFleetPages,
   type SpeechFleetActivationResult,
 } from './speech/fleet-activation.js';
 import {
@@ -3004,26 +3005,24 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
     },
 
     async activateSpeech(target?: SpeechActivationTarget): Promise<SpeechFleetActivationResult> {
-      const runningMachines = await listRunningUserMachines(
-        deps.db,
-        500,
-        target?.handle
-          ? { handle: target.handle, activationState: 'authorized' }
-          : { provisioningClass: 'customer', activationState: 'authorized' },
-      );
-      const machines = runningMachines.filter((machine) => (
-        machine.provisioningClass === 'customer' && machine.activationState === 'authorized'
-      ));
       const platformOrigin = new URL(deps.config.platformRegisterUrl).origin;
-      return activatePlatformSpeechFleet({
-        machines: machines.map((machine) => ({
-          machineId: machine.machineId,
-          clerkUserId: machine.clerkUserId,
-          handle: machine.handle,
-          runtimeSlot: machine.runtimeSlot,
-          runtimeTokenEpoch: machine.runtimeTokenEpoch,
-          publicIPv4: machine.publicIPv4,
-        })),
+      const pages = iterateRunningUserMachinePages(deps.db, 500, target?.handle
+        ? { handle: target.handle, provisioningClass: 'customer', activationState: 'authorized' }
+        : { provisioningClass: 'customer', activationState: 'authorized' });
+      async function* activationPages() {
+        for await (const machines of pages) {
+          yield machines.map((machine) => ({
+            machineId: machine.machineId,
+            clerkUserId: machine.clerkUserId,
+            handle: machine.handle,
+            runtimeSlot: machine.runtimeSlot,
+            runtimeTokenEpoch: machine.runtimeTokenEpoch,
+            publicIPv4: machine.publicIPv4,
+          }));
+        }
+      }
+      return activatePlatformSpeechFleetPages({
+        pages: activationPages(),
         platformOrigin,
         platformSecret: deps.config.platformSecret,
         fetchDispatcher: deps.fetchDispatcher,

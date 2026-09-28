@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import {
   claimUserMachineDelete,
@@ -2390,9 +2391,19 @@ describe('platform/customer-vps', () => {
       provisionedAt: '2026-04-26T12:01:00.000Z',
       activationState: 'authorized',
     });
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce(new Response('{}', { status: 202 }))
-      .mockResolvedValueOnce(Response.json({ configured: true }));
+    const fetchMock = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      if (init?.method === 'POST') return new Response('{}', { status: 202 });
+      const post = fetchMock.mock.calls[0]![1] as RequestInit;
+      const body = JSON.parse(String(post.body)) as {
+        machineId: string; runtimeSlot: string; origin: string; runtimeToken: string;
+      };
+      return Response.json({
+        configured: true,
+        configurationRevision: createHash('sha256')
+          .update(`${body.machineId}\0${body.runtimeSlot}\0${body.origin}\0${body.runtimeToken}`)
+          .digest('hex'),
+      });
+    });
     vi.stubGlobal('fetch', fetchMock);
     const { service } = createService({
       config: createTestConfig({

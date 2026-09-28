@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod/v4";
@@ -26,11 +27,14 @@ function platformOrigin(env: NodeJS.ProcessEnv): string | null {
   }
 }
 
-function isConfigured(env: NodeJS.ProcessEnv, origin: string | null): boolean {
-  return env.MATRIX_PLATFORM_SPEECH_ENABLED === "true" && origin !== null
+function configurationRevision(env: NodeJS.ProcessEnv, origin: string | null): string | null {
+  if (!(env.MATRIX_PLATFORM_SPEECH_ENABLED === "true" && origin !== null
     && env.MATRIX_PLATFORM_SPEECH_ORIGIN === origin
     && /^[a-f0-9]{64}$/.test(env.MATRIX_PLATFORM_SPEECH_RUNTIME_TOKEN ?? "")
-    && Boolean(env.MATRIX_MACHINE_ID) && Boolean(env.MATRIX_RUNTIME_SLOT);
+    && Boolean(env.MATRIX_MACHINE_ID) && Boolean(env.MATRIX_RUNTIME_SLOT))) return null;
+  return createHash("sha256").update(
+    `${env.MATRIX_MACHINE_ID}\0${env.MATRIX_RUNTIME_SLOT}\0${origin}\0${env.MATRIX_PLATFORM_SPEECH_RUNTIME_TOKEN}`,
+  ).digest("hex");
 }
 
 function runFixedCommand(command: string, args: string[], input?: string): Promise<void> {
@@ -85,7 +89,8 @@ export function createPlatformSpeechHostConfigRoutes(options: {
   app.get("/config", (c) => {
     if (!authorize(c.req.header("authorization"))) return c.json({ error: "Unauthorized" }, 401);
     const origin = platformOrigin(env);
-    return c.json({ configured: isConfigured(env, origin) });
+    const revision = configurationRevision(env, origin);
+    return c.json({ configured: revision !== null, configurationRevision: revision });
   });
 
   app.post("/config", bodyLimit({ maxSize: 4096 }), async (c) => {
@@ -106,7 +111,7 @@ export function createPlatformSpeechHostConfigRoutes(options: {
       || parsed.data.runtimeSlot !== env.MATRIX_RUNTIME_SLOT) {
       return c.json({ error: "Invalid request" }, 400);
     }
-    if (isConfigured(env, origin)
+    if (configurationRevision(env, origin) !== null
       && parsed.data.runtimeToken === env.MATRIX_PLATFORM_SPEECH_RUNTIME_TOKEN) {
       return c.json({ status: "configured" }, 200);
     }

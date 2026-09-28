@@ -5,6 +5,7 @@ import type { PlatformDB } from "./db.js";
 import { AiFundedPolicyError } from "./ai-funded-policy-errors.js";
 import { exactInteger, utcMonthStart, fundingSummary, recordUsageFunding } from "./ai-funded-metering-helpers.js";
 import { reconcileExpiredPromotionalCredit, reservationDebitSplit, debitAttributedPromotionalGrants, debitPromotionalGrants } from "./ai-funded-reservation-sources.js";
+import { isSpeechMonthlyAuthorization } from "./speech/reservation-policy.js";
 export const CleanupSchema = z.object({ limit: z.number().int().min(1).max(1_000) }).strict();
 
 export interface AiFundedReservationCleanupOptions {
@@ -15,20 +16,6 @@ export interface AiFundedReservationCleanupOptions {
 interface CleanupCursor {
   expiresAt: string;
   reservationId: string;
-}
-
-const SpeechMonthlyAuthorizationSchema = z.object({
-  capability: z.literal("speech:transcribe"),
-  fundingPolicy: z.literal("speech_monthly_v1"),
-}).passthrough();
-
-function isSpeechMonthlyAuthorization(value: string): boolean {
-  try {
-    return SpeechMonthlyAuthorizationSchema.safeParse(JSON.parse(value)).success;
-  } catch (error: unknown) {
-    if (!(error instanceof SyntaxError)) throw error;
-    return false;
-  }
 }
 
 // Keep fair-scan state for the lifetime of each owned database without retaining

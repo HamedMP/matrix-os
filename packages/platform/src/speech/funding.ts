@@ -12,6 +12,7 @@ import {
   reserveFundingSources,
 } from "../ai-funded-reservation-sources.js";
 import { ensureSpeechMonthlyAllowance, SpeechAllowanceError } from "./allowance.js";
+import { isSpeechMonthlyAuthorization } from "./reservation-policy.js";
 import type { SpeechFundingPort } from "./service.js";
 
 const ReferenceSchema = z.string().min(1).max(160).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]*$/);
@@ -371,6 +372,7 @@ export function createAiFundedSpeechFundingPort(options: {
     }
     if (row.status !== "in_flight") throw new SpeechFundingError("unavailable");
     const checkedAt = now().toISOString();
+    const speechMonthly = isSpeechMonthlyAuthorization(row.authorization_response);
     const identity = { ownerId: row.owner_id, machineId: row.machine_id, runtimeSlot: row.runtime_slot };
     await reconcileExpiredPromotionalCredit(trx, identity, checkedAt);
     const balance = await trx.selectFrom("ai_funded_runtime_balances").selectAll()
@@ -385,9 +387,9 @@ export function createAiFundedSpeechFundingPort(options: {
       debit.addonDebit,
       checkedAt,
       false,
-      !options.monthlyAllowance,
+      !speechMonthly,
     );
-    if (options.monthlyAllowance) {
+    if (speechMonthly) {
       const allowance = await trx.updateTable("speech_runtime_allowances").set({
         period_reserved_microusd: sql<number>`CASE WHEN period_start = ${row.period_start}
           THEN period_reserved_microusd - ${reserved} ELSE period_reserved_microusd END`,
@@ -418,9 +420,10 @@ export function createAiFundedSpeechFundingPort(options: {
     if (row.status !== "reserved") throw new SpeechFundingError("unavailable");
     const checkedAt = now().toISOString();
     const reserved = exactInteger(row.reserved_microusd);
+    const speechMonthly = isSpeechMonthlyAuthorization(row.authorization_response);
     const balance = await trx.updateTable("ai_funded_runtime_balances").set({
       reserved_microusd: sql<number>`reserved_microusd - ${reserved}`,
-      ...(!options.monthlyAllowance ? {
+      ...(!speechMonthly ? {
         month_reserved_microusd: sql<number>`CASE WHEN month_period_start = ${row.period_start} THEN month_reserved_microusd - ${reserved} ELSE month_reserved_microusd END`,
       } : {}),
       updated_at: checkedAt,
@@ -430,7 +433,7 @@ export function createAiFundedSpeechFundingPort(options: {
       .where(sql<boolean>`reserved_microusd >= ${reserved}`)
       .returning("machine_id").executeTakeFirst();
     if (!balance) throw new SpeechFundingError("unavailable");
-    if (options.monthlyAllowance) {
+    if (speechMonthly) {
       const allowance = await trx.updateTable("speech_runtime_allowances").set({
         period_reserved_microusd: sql<number>`CASE WHEN period_start = ${row.period_start}
           THEN period_reserved_microusd - ${reserved} ELSE period_reserved_microusd END`,

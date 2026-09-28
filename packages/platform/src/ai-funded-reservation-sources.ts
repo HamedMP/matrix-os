@@ -262,6 +262,9 @@ export async function debitPromotionalGrants(
     .where("owner_id", "=", identity.ownerId)
     .where("runtime_slot", "=", identity.runtimeSlot)
     .where("remaining_microusd", ">", 0)
+    // Missing per-grant attribution only exists on historical general-funded
+    // reservations. Speech-only monthly grants must never repair that history.
+    .where("grant_entry_id", "not like", "speech-monthly:%")
     .orderBy(sql<number>`CASE WHEN expires_at IS NOT NULL AND expires_at <= ${checkedAt} THEN 0 ELSE 1 END`)
     .orderBy("expires_at").orderBy("created_at").orderBy("grant_entry_id")
     .limit(MAX_PROMOTIONAL_GRANTS_PER_RUNTIME + 1)

@@ -331,6 +331,39 @@ export async function listRunningUserMachines(
   return rows.map(mapUserMachine);
 }
 
+export async function* iterateRunningUserMachinePages(
+  db: PlatformDB,
+  pageSize: number,
+  filters: {
+    handle?: string;
+    provisioningClass?: UserMachineProvisioningClass;
+    activationState?: UserMachineRecord['activationState'];
+  } = {},
+): AsyncGenerator<UserMachineRecord[]> {
+  if (!Number.isSafeInteger(pageSize) || pageSize < 1 || pageSize > 500) {
+    throw new Error('Invalid running machine page size');
+  }
+  await db.ready;
+  let afterMachineId: string | undefined;
+  while (true) {
+    let query = db.executor.selectFrom('user_machines').selectAll()
+      .where('status', '=', 'running').where('deleted_at', 'is', null);
+    if (filters.handle !== undefined) query = query.where('handle', '=', filters.handle);
+    if (filters.provisioningClass !== undefined) {
+      query = query.where('provisioning_class', '=', filters.provisioningClass);
+    }
+    if (filters.activationState !== undefined) {
+      query = query.where('activation_state', '=', filters.activationState);
+    }
+    if (afterMachineId !== undefined) query = query.where('machine_id', '>', afterMachineId);
+    const rows = await query.orderBy('machine_id').limit(pageSize).execute();
+    if (rows.length === 0) return;
+    yield rows.map(mapUserMachine);
+    if (rows.length < pageSize) return;
+    afterMachineId = rows.at(-1)!.machine_id;
+  }
+}
+
 export async function listAllUserMachines(
   db: PlatformDB,
   limit: number,

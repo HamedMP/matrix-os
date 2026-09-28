@@ -3,7 +3,7 @@ import type { Transaction } from "kysely";
 import { sql } from "kysely";
 import { z } from "zod/v4";
 import type { PlatformDB, PlatformDatabase } from "../db.js";
-import { listRunningUserMachines } from "../db.js";
+import { iterateRunningUserMachinePages } from "../db.js";
 import { reconcileExpiredPromotionalCredit } from "../ai-funded-reservation-sources.js";
 
 const IdentitySchema = z.object({
@@ -83,8 +83,13 @@ export async function ensureSpeechMonthlyAllowance(
     owner_id: identity.ownerId,
     runtime_slot: identity.runtimeSlot,
     enabled: true,
-    monthly_budget_microusd: config.monthlyBudgetMicrousd,
-    monthly_promotional_credit_microusd: config.monthlyPromotionalCreditMicrousd,
+    monthly_budget_microusd: sql<number>`CASE
+      WHEN speech_runtime_allowances.period_start = ${periodStart}
+      THEN speech_runtime_allowances.monthly_budget_microusd ELSE ${config.monthlyBudgetMicrousd} END`,
+    monthly_promotional_credit_microusd: sql<number>`CASE
+      WHEN speech_runtime_allowances.period_start = ${periodStart}
+      THEN speech_runtime_allowances.monthly_promotional_credit_microusd
+      ELSE ${config.monthlyPromotionalCreditMicrousd} END`,
     period_start: sql<string>`CASE
       WHEN speech_runtime_allowances.period_start = ${periodStart}
       THEN speech_runtime_allowances.period_start ELSE ${periodStart} END`,
@@ -100,12 +105,13 @@ export async function ensureSpeechMonthlyAllowance(
   const allowance = await trx.selectFrom("speech_runtime_allowances").selectAll()
     .where("machine_id", "=", identity.machineId).forUpdate().executeTakeFirstOrThrow();
   if (allowance.owner_id !== identity.ownerId || allowance.runtime_slot !== identity.runtimeSlot
-    || allowance.enabled !== true
-    || exactInteger(allowance.monthly_budget_microusd) !== config.monthlyBudgetMicrousd
-    || exactInteger(allowance.monthly_promotional_credit_microusd)
-      !== config.monthlyPromotionalCreditMicrousd) {
+    || allowance.enabled !== true) {
     throw new SpeechAllowanceError();
   }
+  const monthlyBudgetMicrousd = exactInteger(allowance.monthly_budget_microusd);
+  const monthlyPromotionalCreditMicrousd = exactInteger(allowance.monthly_promotional_credit_microusd);
+  if (monthlyBudgetMicrousd < 1 || monthlyPromotionalCreditMicrousd < 0
+    || monthlyPromotionalCreditMicrousd > monthlyBudgetMicrousd) throw new SpeechAllowanceError();
 
   await trx.insertInto("ai_funded_runtime_balances").values({
     machine_id: identity.machineId,
@@ -129,7 +135,7 @@ export async function ensureSpeechMonthlyAllowance(
   }
   await reconcileExpiredPromotionalCredit(trx, identity, checkedAt);
 
-  if (config.monthlyPromotionalCreditMicrousd > 0) {
+  if (monthlyPromotionalCreditMicrousd > 0) {
     const entryId = grantEntryId(identity.machineId, periodKey);
     const sourceReference = `platform-speech-monthly:${periodKey}`;
     const inserted = await trx.insertInto("ai_funded_credit_ledger").values({
@@ -138,7 +144,7 @@ export async function ensureSpeechMonthlyAllowance(
       machine_id: identity.machineId,
       runtime_slot: identity.runtimeSlot,
       kind: "promotional_grant",
-      amount_microusd: config.monthlyPromotionalCreditMicrousd,
+      amount_microusd: monthlyPromotionalCreditMicrousd,
       source_reference: sourceReference,
       reservation_id: null,
       period_start: null,
@@ -150,7 +156,7 @@ export async function ensureSpeechMonthlyAllowance(
       .where("entry_id", "=", entryId).executeTakeFirstOrThrow();
     if (stored.owner_id !== identity.ownerId || stored.machine_id !== identity.machineId
       || stored.runtime_slot !== identity.runtimeSlot || stored.kind !== "promotional_grant"
-      || exactInteger(stored.amount_microusd) !== config.monthlyPromotionalCreditMicrousd
+      || exactInteger(stored.amount_microusd) !== monthlyPromotionalCreditMicrousd
       || stored.source_reference !== sourceReference || stored.reservation_id !== null
       || stored.expires_at !== nextPeriodStart) {
       throw new SpeechAllowanceError();
@@ -161,19 +167,19 @@ export async function ensureSpeechMonthlyAllowance(
         owner_id: identity.ownerId,
         machine_id: identity.machineId,
         runtime_slot: identity.runtimeSlot,
-        remaining_microusd: config.monthlyPromotionalCreditMicrousd,
+        remaining_microusd: monthlyPromotionalCreditMicrousd,
         expires_at: nextPeriodStart,
         created_at: checkedAt,
         updated_at: checkedAt,
         revision: 0,
       }).execute();
       const credited = await trx.updateTable("ai_funded_runtime_balances").set({
-        credit_balance_microusd: sql<number>`credit_balance_microusd + ${config.monthlyPromotionalCreditMicrousd}`,
-        promotional_balance_microusd: sql<number>`promotional_balance_microusd + ${config.monthlyPromotionalCreditMicrousd}`,
+        credit_balance_microusd: sql<number>`credit_balance_microusd + ${monthlyPromotionalCreditMicrousd}`,
+        promotional_balance_microusd: sql<number>`promotional_balance_microusd + ${monthlyPromotionalCreditMicrousd}`,
         updated_at: checkedAt,
       }).where("machine_id", "=", identity.machineId)
-        .where(sql<boolean>`credit_balance_microusd <= ${Number.MAX_SAFE_INTEGER - config.monthlyPromotionalCreditMicrousd}`)
-        .where(sql<boolean>`promotional_balance_microusd <= ${Number.MAX_SAFE_INTEGER - config.monthlyPromotionalCreditMicrousd}`)
+        .where(sql<boolean>`credit_balance_microusd <= ${Number.MAX_SAFE_INTEGER - monthlyPromotionalCreditMicrousd}`)
+        .where(sql<boolean>`promotional_balance_microusd <= ${Number.MAX_SAFE_INTEGER - monthlyPromotionalCreditMicrousd}`)
         .returning("machine_id").executeTakeFirst();
       if (!credited) throw new SpeechAllowanceError();
     }
@@ -190,30 +196,32 @@ export async function reconcileSpeechMonthlyAllowances(options: {
 }): Promise<{ eligible: number; reconciled: number; failed: number }> {
   const limit = options.limit ?? 500;
   if (!Number.isSafeInteger(limit) || limit < 1 || limit > 500) throw new Error("Invalid speech reconcile limit");
-  const machines = await listRunningUserMachines(options.db, limit, {
-    provisioningClass: "customer",
-    activationState: "authorized",
-  });
+  let eligible = 0;
   let reconciled = 0;
   let failed = 0;
-  for (const machine of machines) {
-    try {
-      await options.db.transaction((trx) => ensureSpeechMonthlyAllowance(
-        trx.executor as Transaction<PlatformDatabase>, {
-          ownerId: machine.clerkUserId,
-          machineId: machine.machineId,
-          runtimeSlot: machine.runtimeSlot,
-        }, {
-          monthlyBudgetMicrousd: options.monthlyBudgetMicrousd,
-          monthlyPromotionalCreditMicrousd: options.monthlyPromotionalCreditMicrousd,
-          now: (options.now ?? (() => new Date()))(),
-        },
-      ));
-      reconciled += 1;
-    } catch (error: unknown) {
-      failed += 1;
-      console.warn("[platform-speech] monthly allowance reconciliation failed", error instanceof Error ? error.name : "UnknownError");
+  for await (const machines of iterateRunningUserMachinePages(options.db, limit, {
+    provisioningClass: "customer", activationState: "authorized",
+  })) {
+    eligible += machines.length;
+    for (const machine of machines) {
+      try {
+        await options.db.transaction((trx) => ensureSpeechMonthlyAllowance(
+          trx.executor as Transaction<PlatformDatabase>, {
+            ownerId: machine.clerkUserId,
+            machineId: machine.machineId,
+            runtimeSlot: machine.runtimeSlot,
+          }, {
+            monthlyBudgetMicrousd: options.monthlyBudgetMicrousd,
+            monthlyPromotionalCreditMicrousd: options.monthlyPromotionalCreditMicrousd,
+            now: (options.now ?? (() => new Date()))(),
+          },
+        ));
+        reconciled += 1;
+      } catch (error: unknown) {
+        failed += 1;
+        console.warn("[platform-speech] monthly allowance reconciliation failed", error instanceof Error ? error.name : "UnknownError");
+      }
     }
   }
-  return { eligible: machines.length, reconciled, failed };
+  return { eligible, reconciled, failed };
 }

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import { createPlatformSpeechHostConfigRoutes } from "../../packages/gateway/src/speech/host-activation.js";
 
@@ -18,6 +19,9 @@ const config = {
   origin: "https://app.matrix-os.com",
   runtimeToken: "a".repeat(64),
 };
+const configurationRevision = createHash("sha256")
+  .update(`${config.machineId}\0${config.runtimeSlot}\0${config.origin}\0${config.runtimeToken}`)
+  .digest("hex");
 
 describe("gateway platform speech host activation", () => {
   it("requires the host's independent upgrade bearer", async () => {
@@ -67,12 +71,18 @@ describe("gateway platform speech host activation", () => {
     expect(response.status).toBe(202);
     expect(applyConfig).toHaveBeenCalledWith(config);
     expect(scheduleRestart).toHaveBeenCalledOnce();
-    expect(await (await app.request("/config", { headers })).json()).toEqual({ configured: false });
+    expect(await (await app.request("/config", { headers })).json()).toEqual({
+      configured: false,
+      configurationRevision: null,
+    });
 
     env.MATRIX_PLATFORM_SPEECH_ENABLED = "true";
     env.MATRIX_PLATFORM_SPEECH_ORIGIN = config.origin;
     env.MATRIX_PLATFORM_SPEECH_RUNTIME_TOKEN = config.runtimeToken;
-    expect(await (await app.request("/config", { headers })).json()).toEqual({ configured: true });
+    expect(await (await app.request("/config", { headers })).json()).toEqual({
+      configured: true,
+      configurationRevision,
+    });
     const idempotent = await app.request("/config", {
       method: "POST",
       headers,

@@ -1774,6 +1774,7 @@ export {
   listNonDeletedUserMachinesByClerkId,
   updateUserMachine,
   listRunningUserMachines,
+  iterateRunningUserMachinePages,
   listAllUserMachines,
   listStaleUserMachines,
 } from './database/user-machines.js';

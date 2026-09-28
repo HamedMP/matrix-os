@@ -187,6 +187,50 @@ describe("funded AI speech wallet adapter", () => {
     }))).rejects.toMatchObject({ code: "allowance_exhausted" });
   });
 
+  it("settles and releases pre-rollout reservations against their stored general funding policy", async () => {
+    await funded.grantCredit({
+      entryId: "addon_before_speech_allowance",
+      identity,
+      kind: "addon_grant",
+      amountMicrousd: 500,
+      sourceReference: "invoice_before_speech_allowance",
+    });
+    const legacy = port(["addon"]);
+    const settlement = await db.transaction((trx) => legacy.reserve(trx.executor, {
+      identity,
+      requestId: `sp_${now.getTime()}_legacysettlementa`,
+      policyRevision: "speech-legacy",
+      modelId: "gpt-4o-transcribe",
+      maximumCostMicrousd: 80,
+    }));
+    const release = await db.transaction((trx) => createAiFundedSpeechFundingPort({
+      allowedSources: ["addon"],
+      credentialHashSecret: "s".repeat(32),
+      reservationIdFactory: () => "speech_legacy_release",
+      now: () => now,
+    }).reserve(trx.executor, {
+      identity,
+      requestId: `sp_${now.getTime()}_legacyreleaseaaa`,
+      policyRevision: "speech-legacy",
+      modelId: "gpt-4o-transcribe",
+      maximumCostMicrousd: 60,
+    }));
+    await db.transaction((trx) => legacy.start(trx.executor, settlement.reservationId));
+
+    const current = monthlyPort("unused_current_factory");
+    await db.transaction((trx) => current.settle(trx.executor, settlement.reservationId, {
+      mode: "exact",
+      actualCostMicrousd: 40,
+    }));
+    await db.transaction((trx) => current.release(trx.executor, release.reservationId));
+
+    expect(await db.executor.selectFrom("ai_funded_runtime_balances")
+      .select(["month_spent_microusd", "month_reserved_microusd", "reserved_microusd"])
+      .where("machine_id", "=", identity.machineId).executeTakeFirstOrThrow())
+      .toEqual({ month_spent_microusd: 40, month_reserved_microusd: 0, reserved_microusd: 0 });
+    expect(await db.executor.selectFrom("speech_runtime_allowances").selectAll().execute()).toEqual([]);
+  });
+
   it("reserves, starts and settles against an eligible add-on balance in the existing ledger", async () => {
     await funded.grantCredit({
       entryId: "addon_1",
