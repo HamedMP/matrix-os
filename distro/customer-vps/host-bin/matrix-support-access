@@ -6,6 +6,7 @@ set -euo pipefail
 readonly SUPPORT_USER=matrix-support
 readonly SUPPORT_HOME=/var/lib/matrix-support
 readonly KEY_SOURCE=/etc/matrix/support/public-key
+readonly CANDIDATE_SOURCE=/etc/matrix/support/candidate-public-key
 readonly SSH_DIR="$SUPPORT_HOME/.ssh"
 readonly AUTHORIZED_KEYS="$SSH_DIR/authorized_keys"
 readonly SUDOERS_FILE=/etc/sudoers.d/matrix-support
@@ -28,6 +29,22 @@ validate_key() {
   printf 'valid %s\n' "$fingerprint"
 }
 
+render_rotation() {
+  local old_key="$1" candidate_key="$2"
+  validate_key "$old_key" >/dev/null
+  validate_key "$candidate_key" >/dev/null
+  cmp -s -- "$old_key" "$candidate_key" && fail 'candidate key must differ from active key'
+  cat -- "$old_key" "$candidate_key"
+}
+
+require_root_owned_key() {
+  local file="$1"
+  [ -f "$file" ] && [ ! -L "$file" ] || fail 'support key must be a regular file'
+  [ "$(stat -c '%u:%g:%a' "$file")" = '0:0:644' ] \
+    || fail 'support key must be root:root 0644'
+  validate_key "$file" >/dev/null
+}
+
 require_root_owned_source() {
   local ancestor metadata
   for ancestor in /etc /etc/matrix /etc/matrix/support /etc/sudoers.d /var /var/lib; do
@@ -43,11 +60,85 @@ require_root_owned_source() {
     || fail 'support key directory is missing or invalid'
   [ "$(stat -c '%u:%g:%a' /etc/matrix/support)" = '0:0:700' ] \
     || fail 'support key directory must be root:root 0700'
-  [ "$(stat -c '%u:%g' "$KEY_SOURCE")" = '0:0' ] \
-    || fail 'support public key must be root-owned'
-  [ "$(stat -c '%a' "$KEY_SOURCE")" = '644' ] \
-    || fail 'support public key must be mode 0644'
-  validate_key "$KEY_SOURCE" >/dev/null
+  require_root_owned_key "$KEY_SOURCE"
+}
+
+require_installed_auth() {
+  local path
+  getent passwd "$SUPPORT_USER" >/dev/null || fail 'support account is missing'
+  for path in "$SUPPORT_HOME" "$SSH_DIR"; do
+    [ -d "$path" ] && [ ! -L "$path" ] \
+      && [ "$(stat -c '%u:%g:%a' "$path")" = '0:0:755' ] \
+      || fail 'support home is not protected'
+  done
+  [ -f "$AUTHORIZED_KEYS" ] && [ ! -L "$AUTHORIZED_KEYS" ] \
+    && [ "$(stat -c '%u:%g:%a' "$AUTHORIZED_KEYS")" = '0:0:644' ] \
+    || fail 'support authorized_keys is not protected'
+}
+
+atomic_install_key() {
+  local source="$1" destination="$2" temp
+  temp="$(mktemp "$(dirname "$destination")/.matrix-support-key.XXXXXX")" || return 1
+  if ! install -o root -g root -m 0644 "$source" "$temp" \
+    || ! mv -Tf -- "$temp" "$destination"; then
+    rm -f -- "$temp"
+    return 1
+  fi
+}
+
+stage_rotation() {
+  local temp fingerprint
+  [ "$(id -u)" -eq 0 ] || fail 'rotation requires root'
+  require_root_owned_source
+  require_root_owned_key "$CANDIDATE_SOURCE"
+  require_installed_auth
+  render_rotation "$KEY_SOURCE" "$CANDIDATE_SOURCE" >/dev/null
+  if ! cmp -s -- "$KEY_SOURCE" "$AUTHORIZED_KEYS" \
+    && ! cmp -s -- <(render_rotation "$KEY_SOURCE" "$CANDIDATE_SOURCE") "$AUTHORIZED_KEYS"; then
+    fail 'authorized_keys differs from the expected active or staged keys'
+  fi
+  temp="$(mktemp "$SSH_DIR/.matrix-support-key.XXXXXX")" || fail 'cannot stage support key'
+  if ! render_rotation "$KEY_SOURCE" "$CANDIDATE_SOURCE" > "$temp"; then
+    rm -f -- "$temp"
+    fail 'candidate key is invalid'
+  fi
+  if ! chown root:root "$temp" || ! chmod 0644 "$temp" \
+    || ! mv -Tf -- "$temp" "$AUTHORIZED_KEYS"; then
+    rm -f -- "$temp"
+    fail 'cannot stage support key'
+  fi
+  fingerprint="$(ssh-keygen -lf "$CANDIDATE_SOURCE" | awk '{print $2}')"
+  printf 'matrix-support-access: candidate staged: %s; verify a new SSH session offering only this key before finalizing\n' "$fingerprint"
+}
+
+finalize_rotation() {
+  local verified="$1" fingerprint="" staged=""
+  [ "$(id -u)" -eq 0 ] || fail 'rotation requires root'
+  require_root_owned_source
+  require_root_owned_key "$CANDIDATE_SOURCE"
+  require_installed_auth
+  fingerprint="$(ssh-keygen -lf "$CANDIDATE_SOURCE" | awk '{print $2}')"
+  [ "$verified" = "$fingerprint" ] \
+    || fail 'verified fingerprint does not match the candidate key'
+  if ! cmp -s -- "$KEY_SOURCE" "$CANDIDATE_SOURCE"; then
+    staged="$(mktemp "$SSH_DIR/.matrix-support-staged.XXXXXX")"
+    if ! render_rotation "$KEY_SOURCE" "$CANDIDATE_SOURCE" > "$staged"; then
+      rm -f -- "$staged"
+      fail 'candidate key is invalid'
+    fi
+    cmp -s -- "$staged" "$AUTHORIZED_KEYS" \
+      || { rm -f -- "$staged"; fail 'candidate is not staged'; }
+    rm -f -- "$staged"
+  elif ! cmp -s -- "$CANDIDATE_SOURCE" "$AUTHORIZED_KEYS"; then
+    # Resume a finalize interrupted after replacing the active source.
+    [ "$(wc -l < "$AUTHORIZED_KEYS")" -eq 2 ] \
+      && tail -n 1 "$AUTHORIZED_KEYS" | cmp -s -- "$CANDIDATE_SOURCE" - \
+      || fail 'authorized_keys changed during rotation'
+  fi
+  atomic_install_key "$CANDIDATE_SOURCE" "$KEY_SOURCE"
+  atomic_install_key "$CANDIDATE_SOURCE" "$AUTHORIZED_KEYS"
+  rm -f -- "$CANDIDATE_SOURCE"
+  printf 'matrix-support-access: rotation finalized for %s\n' "$fingerprint"
 }
 
 install_support_account() {
@@ -92,7 +183,7 @@ install_support_account() {
       || fail 'support key differs; rotate with a verified new login first'
   fi
   temp_key="$(mktemp "$SSH_DIR/.authorized_keys.XXXXXX")"
-  trap 'rm -f -- "$temp_key" "$temp_sudoers"' EXIT
+  trap '[ -z "$temp_key" ] || rm -f -- "$temp_key"; [ -z "$temp_sudoers" ] || rm -f -- "$temp_sudoers"' EXIT
   install -o root -g root -m 0644 "$KEY_SOURCE" "$temp_key"
   mv -Tf -- "$temp_key" "$AUTHORIZED_KEYS"
   temp_key=""
@@ -120,5 +211,17 @@ case "${1:-}" in
     [ "$#" -eq 1 ] || fail 'usage: matrix-support-access install'
     install_support_account
     ;;
-  *) fail 'usage: matrix-support-access [--validate-key <file>|install]' ;;
+  --validate-rotation)
+    [ "$#" -eq 3 ] || fail 'usage: matrix-support-access --validate-rotation <active> <candidate>'
+    render_rotation "$2" "$3"
+    ;;
+  stage-rotation)
+    [ "$#" -eq 1 ] || fail 'usage: matrix-support-access stage-rotation'
+    stage_rotation
+    ;;
+  finalize-rotation)
+    [ "$#" -eq 2 ] || fail 'usage: matrix-support-access finalize-rotation <verified-sha256-fingerprint>'
+    finalize_rotation "$2"
+    ;;
+  *) fail 'usage: matrix-support-access [--validate-key <file>|--validate-rotation <active> <candidate>|install|stage-rotation|finalize-rotation <verified-sha256-fingerprint>]' ;;
 esac

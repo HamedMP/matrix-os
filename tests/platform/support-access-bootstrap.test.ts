@@ -43,6 +43,20 @@ describe('support SSH key bootstrap validation', () => {
     });
   });
 
+  it('renders a two-key rotation and rejects reusing the old key', () => {
+    withGeneratedKey((oldKey, directory) => {
+      const candidatePrivate = join(directory, 'candidate_ed25519');
+      execFileSync('ssh-keygen', ['-q', '-t', 'ed25519', '-N', '', '-f', candidatePrivate]);
+      const candidateKey = `${candidatePrivate}.pub`;
+      const result = spawnSync('bash', [helper, '--validate-rotation', oldKey, candidateKey], { encoding: 'utf8' });
+      expect(result.status).toBe(0);
+      expect(result.stdout).toBe(`${readFileSync(oldKey, 'utf8')}${readFileSync(candidateKey, 'utf8')}`);
+
+      const reused = spawnSync('bash', [helper, '--validate-rotation', oldKey, oldKey], { encoding: 'utf8' });
+      expect(reused.status).not.toBe(0);
+    });
+  });
+
   it('has a fixed, root-owned source and does not copy root authorized_keys', () => {
     const source = readFileSync(helper, 'utf8');
     expect(source).toContain('/etc/matrix/support/public-key');
