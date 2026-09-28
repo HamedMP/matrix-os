@@ -1,12 +1,18 @@
 /**
  * Bot memory (spec 536, technical-design "Memory Model"). Provenance is
- * decided on the server, never by the bot: an item is confirmed only when
- * the run was started by the owner's own committed message in this chat, the
- * item names no outside source, and the run has not yet read outside
- * content (an integration call or a file read). Anything else stays
- * unconfirmed, is never searched or put in context, and waits for the owner
- * to confirm it. Admitted memory is capped at a 2K-token budget, preferences
- * first. The owner can forget or confirm an item at its revision.
+ * decided on the server, never by the bot. An item is confirmed only when:
+ *
+ * - the run was started by a message the owner typed in this chat (not an
+ *   answer continuation, whose text the gateway assembled);
+ * - the item is grounded in that message: it appears in it verbatim, or at
+ *   least half of its significant words do;
+ * - it names no outside source, and the run has not yet read outside
+ *   content (an integration call or a file read).
+ *
+ * Anything else stays unconfirmed, is never searched or put in context, and
+ * waits for the owner to confirm it. Admitted memory is capped at a 2K-token
+ * budget, preferences first. The owner can forget or confirm an item at its
+ * revision.
  */
 import {
   BotMemoryItemIdSchema,
@@ -31,6 +37,26 @@ type BotMemoryMutationResponse = z.infer<typeof BotMemoryMutationResponseSchema>
 const KIND_ORDER = ["preference", "fact", "episode"] as const;
 /** Tools whose results can carry someone else's words into the run. */
 const OUTSIDE_CONTENT: readonly string[] = ["integration.call", "artifact.read"];
+/** Answer continuations are admitted under this request prefix with gateway-built text. */
+const CONTINUATION_REQUEST_PREFIX = "req_answer_";
+const WORD = /[\p{L}\p{N}]{4,}/gu;
+
+function normalized(text: string): string {
+  return text.toLocaleLowerCase().normalize("NFKC").replace(/\s+/g, " ").trim();
+}
+
+/** True when the owner's own words carry the item: verbatim, or half its significant words. */
+export function groundedIn(content: string, message: string): boolean {
+  const item = normalized(content).replace(/[.!?]+$/, "");
+  const said = normalized(message);
+  if (item.length > 0 && said.includes(item)) return true;
+  const words = [...new Set(item.match(WORD) ?? [])];
+  if (words.length === 0) return false;
+  const saidWords = [...new Set(said.match(WORD) ?? [])];
+  // Words match on a shared stem of up to five characters, so "prefers" matches "prefer".
+  const matched = words.filter((word) => saidWords.some((candidate) => candidate.slice(0, 5) === word.slice(0, 5)));
+  return matched.length * 2 >= words.length;
+}
 
 export type BotMemoryErrorCode = "invalid_request" | "not_found" | "conflict";
 
@@ -67,17 +93,22 @@ export function admitMemory(items: readonly Pick<BotMemoryRecord, "kind" | "cont
 export function createBotMemoryService(deps: { transact: BotStateTransactions; now?: () => Date }) {
   const now = () => (deps.now?.() ?? new Date()).toISOString();
 
-  /** The message that started this run, when it is the owner's own committed message in this chat. */
-  async function ownerMessage(tx: BotStateTransaction, binding: BotRuntimeBinding): Promise<string | undefined> {
+  /**
+   * The message that started this run, when the owner typed it in this chat.
+   * An answer continuation is excluded: the gateway assembled its text,
+   * including the bot's own question.
+   */
+  async function ownerMessage(tx: BotStateTransaction, binding: BotRuntimeBinding): Promise<{ id: string; text: string } | undefined> {
     const row = await tx.db.selectFrom("chat_runs as run")
       .innerJoin("chat_turns as turn", "turn.id", "run.turn_id")
       .innerJoin("chat_messages as message", "message.id", "turn.input_message_id")
-      .select("message.id")
+      .select(["message.id", "message.search_text", "turn.client_request_id"])
       .where("run.id", "=", binding.runId).where("run.chat_id", "=", binding.chatId)
       .where("message.chat_id", "=", binding.chatId).where("message.role", "=", "user").where("message.state", "=", "committed")
       .where((eb) => eb.or([eb("message.actor_id", "is", null), eb("message.actor_id", "=", binding.ownerId)]))
       .executeTakeFirst();
-    return row?.id;
+    if (!row || row.client_request_id.startsWith(CONTINUATION_REQUEST_PREFIX)) return undefined;
+    return { id: row.id, text: row.search_text };
   }
 
   /** True once the run has used a tool that can bring outside content into it. */
@@ -115,12 +146,13 @@ export function createBotMemoryService(deps: { transact: BotStateTransactions; n
       try {
         const item = await deps.transact(binding.ownerId, async (tx) => {
           // A message ID from the bot is ignored; the server names the source.
-          const messageId = await ownerMessage(tx, binding);
-          const confirmed = args.source.url === undefined && messageId !== undefined && !await readOutsideContent(tx, binding);
+          const message = await ownerMessage(tx, binding);
+          const confirmed = args.source.url === undefined && message !== undefined
+            && groundedIn(args.content, message.text) && !await readOutsideContent(tx, binding);
           const source = {
             at: args.source.at,
             ...(args.source.url !== undefined ? { url: args.source.url } : {}),
-            ...(messageId !== undefined ? { messageId } : {}),
+            ...(message !== undefined ? { messageId: message.id } : {}),
           };
           const remembered = await createBotMemoryRepository(tx.db).remember({
             ownerId: binding.ownerId, botId: binding.botId, kind: args.kind, scope: args.scope,
@@ -162,9 +194,10 @@ export function createBotMemoryService(deps: { transact: BotStateTransactions; n
 
     /** Confirmed memory for a run's system prompt, within the token budget. */
     async admitted(input: { ownerId: string; botId: string; chatId: string }): Promise<string[]> {
-      const items = await deps.transact(input.ownerId, (tx) =>
-        createBotMemoryRepository(tx.db).list({ ownerId: input.ownerId, botId: input.botId, now: now() }, tx.db));
-      return admitMemory(items.filter((item) => scopesFor(input.chatId).includes(item.scope)));
+      const items = await deps.transact(input.ownerId, (tx) => createBotMemoryRepository(tx.db).listAdmissible({
+        ownerId: input.ownerId, botId: input.botId, scopes: scopesFor(input.chatId), now: now(),
+      }, tx.db));
+      return admitMemory(items);
     },
 
     async forget(ownerId: string, agentIdValue: string, itemIdValue: string, body: unknown): Promise<BotMemoryMutationResponse> {
