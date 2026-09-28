@@ -1,0 +1,124 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# The public key is provisioned separately by an authorized operator. Never
+# infer a support credential from root's or the customer's authorized_keys.
+readonly SUPPORT_USER=matrix-support
+readonly SUPPORT_HOME=/var/lib/matrix-support
+readonly KEY_SOURCE=/etc/matrix/support/public-key
+readonly SSH_DIR="$SUPPORT_HOME/.ssh"
+readonly AUTHORIZED_KEYS="$SSH_DIR/authorized_keys"
+readonly SUDOERS_FILE=/etc/sudoers.d/matrix-support
+
+fail() {
+  echo "matrix-support-access: $*" >&2
+  exit 1
+}
+
+validate_key() {
+  local key_file="$1" key_line="" fingerprint=""
+  [ -f "$key_file" ] && [ ! -L "$key_file" ] || fail 'public key must be a regular file'
+  [ "$(wc -c < "$key_file")" -le 1024 ] || fail 'public key is too large'
+  [ "$(wc -l < "$key_file")" -eq 1 ] || fail 'expected exactly one public key'
+  IFS= read -r key_line < "$key_file" || fail 'public key cannot be read'
+  [[ "$key_line" =~ ^ssh-ed25519[[:space:]]+[A-Za-z0-9+/]+={0,2}([[:space:]][A-Za-z0-9@._+-]{1,128})?$ ]] \
+    || fail 'only one ordinary Ed25519 public key is accepted'
+  fingerprint="$(ssh-keygen -lf "$key_file" 2>/dev/null)" || fail 'public key is invalid'
+  [[ "$fingerprint" == *' (ED25519)' ]] || fail 'public key is not Ed25519'
+  printf 'valid %s\n' "$fingerprint"
+}
+
+require_root_owned_source() {
+  local ancestor metadata
+  for ancestor in /etc /etc/matrix /etc/matrix/support /etc/sudoers.d /var /var/lib; do
+    [ -d "$ancestor" ] && [ ! -L "$ancestor" ] \
+      || fail "protected ancestor is missing or invalid: $ancestor"
+    metadata="$(stat -c '%u:%g:%a' "$ancestor")"
+    [ "${metadata%%:*}" = 0 ] \
+      || fail "protected ancestor must be root-owned: $ancestor"
+    [ $(( 8#${metadata##*:} & 8#022 )) -eq 0 ] \
+      || fail "protected ancestor must not be writable by group or others: $ancestor"
+  done
+  [ -d /etc/matrix/support ] && [ ! -L /etc/matrix/support ] \
+    || fail 'support key directory is missing or invalid'
+  [ "$(stat -c '%u:%g:%a' /etc/matrix/support)" = '0:0:700' ] \
+    || fail 'support key directory must be root:root 0700'
+  [ "$(stat -c '%u:%g' "$KEY_SOURCE")" = '0:0' ] \
+    || fail 'support public key must be root-owned'
+  [ "$(stat -c '%a' "$KEY_SOURCE")" = '644' ] \
+    || fail 'support public key must be mode 0644'
+  validate_key "$KEY_SOURCE" >/dev/null
+}
+
+install_support_account() {
+  local account="" temp_key="" temp_sudoers=""
+  [ "$(id -u)" -eq 0 ] || fail 'installation requires root'
+  require_root_owned_source
+  command -v visudo >/dev/null || fail 'sudo is not installed'
+  command -v sshd >/dev/null || fail 'sshd is not installed'
+  sshd -t || fail 'sshd configuration is invalid'
+
+  account="$(getent passwd "$SUPPORT_USER" || true)"
+  if [ -z "$account" ]; then
+    useradd --system --user-group --no-create-home \
+      --home-dir "$SUPPORT_HOME" --shell /bin/bash "$SUPPORT_USER"
+    account="$(getent passwd "$SUPPORT_USER")"
+  fi
+  IFS=: read -r _ _ _ _ _ account_home account_shell <<< "$account"
+  [ "$account_home" = "$SUPPORT_HOME" ] && [ "$account_shell" = /bin/bash ] \
+    || fail 'existing support account has unexpected configuration'
+  [ "$(id -u "$SUPPORT_USER")" -ne 0 ] \
+    || fail 'support account must not be UID 0'
+  [ "$(id -gn "$SUPPORT_USER")" = "$SUPPORT_USER" ] \
+    || fail 'support account must have its own primary group'
+  [ "$(id -nG "$SUPPORT_USER")" = "$SUPPORT_USER" ] \
+    || fail 'support account has unexpected supplementary groups'
+  usermod -L "$SUPPORT_USER"
+
+  for path in "$SUPPORT_HOME" "$SSH_DIR"; do
+    if [ -e "$path" ] || [ -L "$path" ]; then
+      [ -d "$path" ] && [ ! -L "$path" ] || fail 'support home path is invalid'
+      [ "$(stat -c '%u:%g' "$path")" = '0:0' ] \
+        || fail 'support home path must already be root-owned'
+      [ $(( 8#$(stat -c '%a' "$path") & 8#022 )) -eq 0 ] \
+        || fail 'support home path must not be group or world writable'
+    fi
+    install -d -o root -g root -m 0755 "$path"
+  done
+  if [ -e "$AUTHORIZED_KEYS" ] || [ -L "$AUTHORIZED_KEYS" ]; then
+    [ -f "$AUTHORIZED_KEYS" ] && [ ! -L "$AUTHORIZED_KEYS" ] \
+      || fail 'existing support authorized_keys is invalid'
+    cmp -s "$KEY_SOURCE" "$AUTHORIZED_KEYS" \
+      || fail 'support key differs; rotate with a verified new login first'
+  fi
+  temp_key="$(mktemp "$SSH_DIR/.authorized_keys.XXXXXX")"
+  trap 'rm -f -- "$temp_key" "$temp_sudoers"' EXIT
+  install -o root -g root -m 0644 "$KEY_SOURCE" "$temp_key"
+  mv -Tf -- "$temp_key" "$AUTHORIZED_KEYS"
+  temp_key=""
+
+  if [ -e "$SUDOERS_FILE" ] || [ -L "$SUDOERS_FILE" ]; then
+    [ -f "$SUDOERS_FILE" ] && [ ! -L "$SUDOERS_FILE" ] \
+      || fail 'existing support sudoers file is invalid'
+  fi
+  temp_sudoers="$(mktemp /etc/sudoers.d/.matrix-support.XXXXXX)"
+  printf '%s ALL=(ALL:ALL) NOPASSWD:ALL\n' "$SUPPORT_USER" > "$temp_sudoers"
+  chmod 0440 "$temp_sudoers"
+  visudo -cf "$temp_sudoers" >/dev/null || fail 'support sudoers validation failed'
+  mv -Tf -- "$temp_sudoers" "$SUDOERS_FILE"
+  temp_sudoers=""
+  trap - EXIT
+  echo 'matrix-support-access: support account installed; verify a fresh SSH login before changing owner privileges'
+}
+
+case "${1:-}" in
+  --validate-key)
+    [ "$#" -eq 2 ] || fail 'usage: matrix-support-access --validate-key <file>'
+    validate_key "$2"
+    ;;
+  install)
+    [ "$#" -eq 1 ] || fail 'usage: matrix-support-access install'
+    install_support_account
+    ;;
+  *) fail 'usage: matrix-support-access [--validate-key <file>|install]' ;;
+esac
