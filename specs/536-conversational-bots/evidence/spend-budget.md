@@ -18,9 +18,9 @@ Recorded 2026-09-28 before provisioning or model calls. The owner authorized the
 
 | Stage | Machine/IP USD | Model USD | Notes |
 | --- | ---: | ---: | --- |
-| S0 | 10.00 reserved | 0.007683 observed, 0.10 reserved | Preview `pr-2022` was created at 20:46:04 UTC as `cpx22` and is running; final provider charge is pending. Local package probe and one-token provider check; failed zero-usage attempts remain unbilled-unknown pending reconciliation |
+| S0 | 10.00 reserved | 0.007683 observed, 0.20 reserved | Preview `pr-2022` was created at 20:46:04 UTC as `cpx22` and is running; final provider charge is pending. Local package probe, one-token provider check, and one additional test-key validation call; calls without final usage remain unbilled-unknown pending reconciliation. The preview worker launch made no model call. |
 | Spike A | 0.00 | 0.00 | Not started |
 | Spike B | 0.00 | 0.00 | Not started |
 | Spike C | 0.00 | 0.00 | Not started |
 
-The S0 observation is below its USD 2 subcap. The USD 0.10 reservation conservatively covers the earlier calls that returned no usage; budget decisions use the reservation until provider reconciliation. The platform fleet confirms `pr-2022` was provisioned at 20:46:03 UTC on 2026-09-28 and is running. The matching Hetzner inventory record confirms the `cpx22` type and 20:46:04 UTC creation time. The full USD 10 machine allocation stays reserved until a provider charge or teardown receipt establishes the final amount.
+The S0 observation is below its USD 2 subcap. The USD 0.20 reservation conservatively covers the earlier calls that returned no usage and the preview key-validation call; budget decisions use the reservation until provider reconciliation. The platform fleet confirms `pr-2022` was provisioned at 20:46:03 UTC on 2026-09-28 and is running. The matching Hetzner inventory record confirms the `cpx22` type and 20:46:04 UTC creation time. The full USD 10 machine allocation stays reserved until a provider charge or teardown receipt establishes the final amount.
