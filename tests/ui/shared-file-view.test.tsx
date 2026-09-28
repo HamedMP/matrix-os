@@ -298,6 +298,9 @@ describe("SharedFileView", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("Your changes were not saved. The owner's computer is offline.");
     expect(screen.getByRole("textbox", { name: "File contents" })).toHaveValue("unsaved");
     expect(screen.queryByLabelText("Owner's version")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Download" }));
+    await waitFor(() => expect(clickedDownloads).toHaveLength(1));
+    expect(screen.getByRole("alert")).toHaveTextContent("Your changes were not saved. The owner's computer is offline.");
   });
 
   it("says the owner moved or deleted the file when it is missing", async () => {

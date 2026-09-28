@@ -188,6 +188,9 @@ describe("kind-aware opening in Shared with me", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: /Accept/ }));
     expect(await screen.findByRole("status")).toHaveTextContent("Accepted. This shared app can’t be opened here yet.");
+    expect(screen.getByRole("button", { name: /Accept invitation|Invitation unavailable/ })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Decline invitation" })).toBeDisabled();
+    expect(api.post).toHaveBeenCalledTimes(1);
     expect(openChat).not.toHaveBeenCalled();
   });
 
