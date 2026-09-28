@@ -115,6 +115,41 @@ describe("bot session codec and compaction", () => {
     expect(kept).toContain("left out of saved history");
   });
 
+  it("shortens a multibyte reply by its encoded overflow, not by that many characters", () => {
+    const reply = "\u65e5".repeat(60 * 1024);
+    const turns = [user("ask", 1), fauxAssistantMessage(fauxText(reply))];
+    const limit = encodedSessionBytes(turns) - 3 * 1024;
+    const fitted = fitForStorage(turns, limit, () => 1, { allowDroppingTurns: false });
+    expect(encodedSessionBytes(fitted)).toBeLessThanOrEqual(limit);
+    const kept = (fitted[1] as { content: Array<{ text: string }> }).content[0]!.text;
+    // Three bytes per character: about 1K characters go, not 3K.
+    expect(kept.length).toBeGreaterThan(reply.length - 1_200);
+    expect(kept).toContain("left out of saved history");
+  });
+
+  it("never splits a surrogate pair when shortening a reply", () => {
+    const reply = "\u{1F600}".repeat(40 * 1024);
+    const turns = [user("ask", 1), fauxAssistantMessage(fauxText(reply))];
+    const limit = encodedSessionBytes(turns) - 3 * 1024 - 1;
+    const fitted = fitForStorage(turns, limit, () => 1, { allowDroppingTurns: false });
+    const kept = (fitted[1] as { content: Array<{ text: string }> }).content[0]!.text;
+    expect(kept.isWellFormed()).toBe(true);
+    expect(encodedSessionBytes(fitted)).toBeLessThanOrEqual(limit);
+  });
+
+  it("spreads a cancelled turn's overflow across as many reply parts as it takes", () => {
+    const parts = Array.from({ length: 200 }, (_, index) => ({ type: "text" as const, text: `${index}:${"s".repeat(1_000)}` }));
+    const turns = [user("ask", 1), fauxAssistantMessage(parts)];
+    const limit = encodedSessionBytes(turns) - 80 * 1024;
+    const fitted = fitForStorage(turns, limit, () => 1, { allowDroppingTurns: false });
+    expect(encodedSessionBytes(fitted)).toBeLessThanOrEqual(limit);
+    expect(() => encodeSession(fitted)).not.toThrow();
+    const texts = (fitted[1] as { content: Array<{ text: string }> }).content.map((part) => part.text);
+    expect(texts).toHaveLength(200);
+    // A part is shortened once, so its note is never cut into by a later pass.
+    for (const text of texts) expect(text.split("left out of saved history").length).toBeLessThanOrEqual(2);
+  });
+
   it("lets a cancelled run shorten its latest reply rather than drop earlier turns", () => {
     const turns = [
       ...[1, 2].flatMap((index) => [user(`ask ${index}:${"q".repeat(80 * 1024)}`, index), fauxAssistantMessage(fauxText("a"))]),
