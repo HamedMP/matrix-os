@@ -29,7 +29,10 @@ import { BotAdmissionError, type PrivateBotAdmission } from "./admission.js";
 import { BotBrokerActionError, type BotEventSink, type BotRunSource } from "./broker-actions.js";
 import { BotRecipeCatalogError, type BotRecipeCatalog } from "./recipe-catalog.js";
 import type { BotBindingsRepository } from "./repositories/bindings.js";
-import type { BotBlockedReason, BotTask, BotTasksRepository } from "./repositories/tasks.js";
+import type { BotStateTransactions } from "./events.js";
+import type { BotInteractionService } from "./interactions.js";
+import type { BotMemoryService } from "./memory-service.js";
+import { createBotTasksRepository, type BotBlockedReason, type BotTask } from "./repositories/tasks.js";
 import { BotRouteError, type ResolvedBotRoute } from "./route-resolver.js";
 import { BOT_RUNTIME_REGISTRY_CAPACITY, type BotRuntimeRegistry } from "./runtime-registry.js";
 import { buildBotSystemPrompt, BotSystemPromptError } from "./system-prompt.js";
@@ -40,7 +43,9 @@ const CANCEL_GRACE_MS = 10_000;
 const MAX_TOOL_ACTIONS = 60;
 const MAX_QUEUED_EVENTS = 1_000;
 /** Tools the broker serves today; the rest of a recipe's set arrives with later layers. */
-const SERVED_CAPABILITIES: readonly BotToolCapability[] = ["artifact.read", "artifact.write"];
+const SERVED_CAPABILITIES: readonly BotToolCapability[] = [
+  "artifact.read", "artifact.write", "interaction.create", "memory.propose", "memory.search",
+];
 
 export type BotTurnEvent =
   | { kind: "event"; event: BotEvent["event"] }
@@ -81,7 +86,10 @@ export class BotTurnError extends Error {
 
 export function createBotTaskOrchestrator(deps: {
   bindings: Pick<BotBindingsRepository, "forChat">;
-  tasks: Pick<BotTasksRepository, "start" | "transition" | "get">;
+  /** Task writes and their `bot.task.updated` events commit together. */
+  transact: BotStateTransactions;
+  interactions?: Pick<BotInteractionService, "answerWithMessage">;
+  memory?: Pick<BotMemoryService, "admitted">;
   agents: Pick<ChatAgentStore, "get">;
   recipes: BotRecipeCatalog;
   resolveRoute(ownerId: string): Promise<ResolvedBotRoute>;
@@ -106,16 +114,44 @@ export function createBotTaskOrchestrator(deps: {
     return bindings.find((binding) => binding.kind === "direct")?.botId ?? null;
   }
 
+  function taskEvent(task: BotTask) {
+    return {
+      taskId: task.taskId, chatId: task.chatId, agentId: task.botId, status: task.status,
+      ...(task.blockedReason ? { blockedReason: task.blockedReason } : {}), revision: task.revision,
+    };
+  }
+
+  /**
+   * Starts the run's task: the bot's task waiting for the owner continues
+   * with this message; otherwise a new task begins.
+   */
+  async function begin(input: { ownerId: string; botId: string; chatId: string; runId: string }): Promise<{ task: BotTask; continued: boolean }> {
+    return deps.transact(input.ownerId, async (tx) => {
+      const tasks = createBotTasksRepository(tx.db);
+      const waiting = (await tasks.listOpen({ ownerId: input.ownerId, botId: input.botId, chatId: input.chatId }, tx.db))
+        .find((task) => task.status === "waiting_person");
+      const base = waiting ?? await tasks.create({ ownerId: input.ownerId, botId: input.botId, chatId: input.chatId, now: now() }, tx.db);
+      const task = await tasks.transition({
+        ownerId: input.ownerId, taskId: base.taskId, baseRevision: base.revision, to: "running", runId: input.runId, now: now(),
+      }, tx.db);
+      await tx.publish(task.chatId, "bot.task.updated", taskEvent(task));
+      return { task, continued: waiting !== undefined };
+    });
+  }
+
   async function settle(task: BotTask, status: BotRunStatus, blockedReason?: BotBlockedReason): Promise<BotTurnResult> {
     const to = status === "waiting_capacity" ? "blocked"
       : status === "uncertain" ? "failed"
       : status;
     const reason = status === "waiting_capacity" ? "capacity_unavailable" : blockedReason;
     try {
-      await deps.tasks.transition({
-        ownerId: task.ownerId, taskId: task.taskId, baseRevision: task.revision, to,
-        ...(to === "blocked" ? { blockedReason: reason ?? "tool_unavailable" } : {}),
-        now: now(),
+      await deps.transact(task.ownerId, async (tx) => {
+        const settled = await createBotTasksRepository(tx.db).transition({
+          ownerId: task.ownerId, taskId: task.taskId, baseRevision: task.revision, to,
+          ...(to === "blocked" ? { blockedReason: reason ?? "tool_unavailable" } : {}),
+          now: now(),
+        }, tx.db);
+        await tx.publish(settled.chatId, "bot.task.updated", taskEvent(settled));
       });
     } catch (error: unknown) {
       console.warn("[bots] task state was not recorded:", error instanceof Error ? error.name : "UnknownError");
@@ -161,8 +197,10 @@ export function createBotTaskOrchestrator(deps: {
       if (error instanceof BotRecipeCatalogError) return { status: "failed" };
       throw error;
     }
-    const task = await deps.tasks.start({ ownerId: input.ownerId, botId, chatId: input.chatId, runId: input.runId, now: now() });
+    const { task, continued } = await begin({ ownerId: input.ownerId, botId, chatId: input.chatId, runId: input.runId });
     run.queue.push({ kind: "state", state: { taskId: task.taskId } });
+    // A reply in Chat answers a question the waiting task still has open.
+    if (continued) await deps.interactions?.answerWithMessage({ ownerId: input.ownerId, taskId: task.taskId, chatId: input.chatId, text: input.text });
     if (input.signal.aborted) return settle(task, "cancelled");
 
     let resolved: ResolvedBotRoute;
@@ -173,10 +211,11 @@ export function createBotTaskOrchestrator(deps: {
       return settle(task, "blocked", "model_unavailable");
     }
     const capabilities = recipe.capabilities.filter((capability) => SERVED_CAPABILITIES.includes(capability));
+    const memory = deps.memory ? await deps.memory.admitted({ ownerId: input.ownerId, botId, chatId: input.chatId }) : [];
     try {
       run.spec = BotRunSpecSchema.parse({
         route: resolved.route,
-        systemPrompt: buildBotSystemPrompt({ botName: agent.name, instructions: agent.instructions, recipe, now: new Date(now()) }),
+        systemPrompt: buildBotSystemPrompt({ botName: agent.name, instructions: agent.instructions, recipe, memory, now: new Date(now()) }),
         capabilities,
         limits: { maxToolActions: MAX_TOOL_ACTIONS },
         turn: { kind: "prompt", text: input.text },
@@ -276,7 +315,7 @@ export function createBotTaskOrchestrator(deps: {
     },
     /** A run the previous process lost: its task fails and nothing is replayed. */
     async abandon(input: { ownerId: string; taskId: string }): Promise<void> {
-      const task = await deps.tasks.get({ ownerId: input.ownerId, taskId: input.taskId });
+      const task = await deps.transact(input.ownerId, (tx) => createBotTasksRepository(tx.db).get({ ownerId: input.ownerId, taskId: input.taskId }, tx.db));
       if (!task || ["completed", "failed", "cancelled"].includes(task.status)) return;
       await settle(task, "failed");
     },

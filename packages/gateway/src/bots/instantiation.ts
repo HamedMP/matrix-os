@@ -147,9 +147,14 @@ export function createBotInstantiation(deps: {
       const trx = ownerBotExecutor(repository.kysely);
       const at = now();
       await createBotBindingsRepository(trx).bindDirect({ ownerId: operation.ownerId, botId: operation.botId, chatId: operation.chatId, now: at }, trx);
-      return createBotOperationsRepository(trx).markActive({
+      const active = await createBotOperationsRepository(trx).markActive({
         ownerId: operation.ownerId, clientRequestId: operation.clientRequestId, baseRevision: operation.revision, now: at,
       }, trx);
+      // Delivered only if the chat, binding, and activation commit.
+      await repository.appendOutboxEvent(owner(operation.ownerId), operation.chatId, record.chat.revision, "bot.created", {
+        agentId: operation.botId, chatId: operation.chatId, revision: agent.revision,
+      });
+      return active;
     });
   }
 

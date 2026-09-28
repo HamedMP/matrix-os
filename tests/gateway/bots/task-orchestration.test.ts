@@ -11,6 +11,10 @@ import { BotRouteError } from "../../../packages/gateway/src/bots/route-resolver
 import { BotRuntimeRegistry } from "../../../packages/gateway/src/bots/runtime-registry.js";
 import { MATRIX_BOT_SELECTION } from "../../../packages/gateway/src/bots/selection.js";
 import { createBotTaskOrchestrator } from "../../../packages/gateway/src/bots/task-orchestrator.js";
+import { createBotStateTransactions } from "../../../packages/gateway/src/bots/events.js";
+import { createBotInteractionService } from "../../../packages/gateway/src/bots/interactions.js";
+import type { ChatDatabase } from "../../../packages/gateway/src/chat/database.js";
+import { ChatRepository } from "../../../packages/gateway/src/chat/repository.js";
 import type { CanonicalProviderRunEvent } from "../../../packages/gateway/src/chat/provider-adapter.js";
 import { BOT, OWNER, createBotStateDatabase, insertChat } from "./bot-state-support.js";
 
@@ -43,6 +47,7 @@ function setup(options: {
   activeDeadlineMs?: number;
   cancelGraceMs?: number;
   agent?: Record<string, unknown> | null;
+  memory?: string[];
 } = {}) {
   const registry = new BotRuntimeRegistry();
   const admission = {
@@ -64,9 +69,13 @@ function setup(options: {
       : { runId: input.command.runId, status: "completed", toolActions: 0, sessionRevision: 1 };
     return { ok: true as const, reply };
   });
+  const transact = createBotStateTransactions(new ChatRepository(db as unknown as Kysely<ChatDatabase>));
+  const interactions = createBotInteractionService({ transact });
   orchestrator = createBotTaskOrchestrator({
     bindings: createBotBindingsRepository(db),
-    tasks: createBotTasksRepository(db),
+    transact,
+    interactions,
+    memory: { admitted: async () => options.memory ?? [] },
     agents: { get: vi.fn(async () => (options.agent === undefined ? AGENT : options.agent) as never) },
     recipes: createBotRecipeCatalog(),
     resolveRoute: options.resolveRoute ?? (async () => ({ route: ROUTE, accessSourceId: "matrix_included" as const })),
@@ -78,7 +87,7 @@ function setup(options: {
   });
   const stopRuntime = vi.fn(async () => undefined);
   const adapter = createMatrixBotChatProviderAdapter({ orchestrator, stopRuntime });
-  return { adapter, orchestrator, admission, registry, commands, stopRuntime };
+  return { adapter, orchestrator, admission, registry, commands, stopRuntime, interactions };
 }
 
 function turn(signal = new AbortController().signal, runId = "run_turn1", text = "Tighten my intro.") {
@@ -105,7 +114,7 @@ describe("bot turns through the matrix_bot adapter", () => {
         const spec = await orchestrator.runSource.loadRunSpec({ runId: input.command.runId } as never);
         expect(spec).toMatchObject({ route: ROUTE, turn: { kind: "prompt", text: "Tighten my intro." }, limits: { maxToolActions: 60 } });
         // Only tools the broker serves today reach the worker.
-        expect(spec.capabilities).toEqual(["artifact.read", "artifact.write"]);
+        expect(spec.capabilities).toEqual(["interaction.create", "memory.search", "memory.propose", "artifact.read", "artifact.write"]);
         expect(spec.systemPrompt).toContain("Help the owner revise essays.");
         await publish(0, { type: "activity", label: "Reading your draft", state: "started" });
         await publish(1, { type: "tool_progress", toolCallId: "toolu 01/weird", capability: "artifact.write", phase: "started" });
@@ -137,6 +146,35 @@ describe("bot turns through the matrix_bot adapter", () => {
     const events = await collect(adapter.start(turn()));
     expect(events.at(-1)).toEqual({ type: "run.completed", outcome: "completed" });
     await expect(tasks()).resolves.toEqual([expect.objectContaining({ status: "waiting_person" })]);
+  });
+
+  it("continues the waiting task with the owner's next message, answering its open question", async () => {
+    const worker = vi.fn(async (input: RunBotInput) => ({ runId: input.command.runId, status: "waiting_person", toolActions: 0, sessionRevision: 1 }));
+    const { adapter, interactions, orchestrator } = setup({ worker, memory: ["(preference) Keep it short."] });
+    await collect(adapter.start(turn()));
+    const [task] = await db.selectFrom("bot_tasks").selectAll().execute();
+    // The bot asked something before its turn ended.
+    await interactions.createFromTool({
+      runtimeHandle: RUNTIME, executionGeneration: "3", ownerId: OWNER, botId: BOT, chatId: CHAT, taskId: task!.task_id, runId: "run_turn1",
+      rootFingerprint: "f".repeat(64), route: ROUTE, accessSourceId: "matrix_included", capabilities: ["interaction.create"], requestClass: "interactive",
+    }, { blocking: true, payload: { kind: "question", questions: [{ questionId: "q1", header: "Tone", question: "Formal or casual?", allowOther: true, secret: false }] } });
+    worker.mockImplementationOnce(async (input) => {
+      const spec = await orchestrator.runSource.loadRunSpec({ runId: input.command.runId } as never);
+      expect(spec.systemPrompt).toContain("- (preference) Keep it short.");
+      return { runId: input.command.runId, status: "completed", toolActions: 0, sessionRevision: 2 };
+    });
+    await collect(adapter.start(turn(undefined, "run_turn2", "Casual, please.")));
+    // Same task, now completed; the question was answered by the reply.
+    await expect(tasks()).resolves.toEqual([{ status: "completed", blocked_reason: null, run_id: "run_turn2" }]);
+    const [question] = await db.selectFrom("bot_interactions").select(["status", "resolution"]).execute();
+    expect(question).toMatchObject({ status: "resolved" });
+    expect(JSON.stringify(question!.resolution)).toContain("Casual, please.");
+    const events = await db.selectFrom("chat_outbox").select(["event_type", "payload"]).where("chat_id", "=", CHAT).orderBy("cursor").execute();
+    expect(events.map((row) => row.event_type)).toEqual([
+      "bot.task.updated", "bot.task.updated", "interaction.requested", "bot.task.updated", "interaction.resolved", "bot.task.updated",
+    ]);
+    // Events carry IDs and allowlisted state only.
+    expect(JSON.stringify(events)).not.toContain("Casual");
   });
 
   it("blocks without starting a runtime when no model or workspace is available", async () => {

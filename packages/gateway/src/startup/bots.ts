@@ -33,7 +33,9 @@ import { createBotBindingsRepository } from "../bots/repositories/bindings.js";
 import { createBotCheckpointsRepository } from "../bots/repositories/checkpoints.js";
 import { createBotOperationsRepository } from "../bots/repositories/operations.js";
 import { createBotSessionsRepository } from "../bots/repositories/sessions.js";
-import { createBotTasksRepository } from "../bots/repositories/tasks.js";
+import { createBotStateTransactions } from "../bots/events.js";
+import { createBotInteractionService, type BotInteractionService } from "../bots/interactions.js";
+import { createBotMemoryService, type BotMemoryService } from "../bots/memory-service.js";
 import { resolveBotRoute } from "../bots/route-resolver.js";
 import { BotRuntimeRegistry } from "../bots/runtime-registry.js";
 import { createBotTaskOrchestrator } from "../bots/task-orchestrator.js";
@@ -43,9 +45,12 @@ import { createBotToolDispatcher, sweepBotWorkspaceSaves } from "../bots/tool-di
 const MAX_CHECKPOINT_RECONCILE_PASSES = 50;
 const CHECKPOINT_RECONCILE_INTERVAL_MS = 5_000;
 const SAVE_SWEEP_INTERVAL_MS = 10 * 60_000;
+const INTERACTION_SWEEP_MS = 60_000;
 
 export interface BotServices {
   instantiation: BotInstantiation;
+  interactions: BotInteractionService;
+  memory: BotMemoryService;
   botChats: BotChatLookup;
   /** Present only when the scope runtime can run bot workloads. */
   adapter?: CanonicalChatProviderAdapter<BotChatState>;
@@ -84,6 +89,21 @@ export async function startBots(options: {
   });
   const reconciler = createBotOperationReconciler({ operations: createBotOperationsRepository(db), instantiation });
   await reconciler.start();
+  const transact = createBotStateTransactions(options.repository);
+  const interactions = createBotInteractionService({ transact });
+  const memory = createBotMemoryService({ transact });
+  // Overdue questions are expired and announced; passes never overlap and stop on close.
+  let sweeping: Promise<unknown> | undefined;
+  const sweep = setInterval(() => {
+    sweeping ??= interactions.expireAllDue().catch((error: unknown) => {
+      console.warn("[bots] question expiry failed:", error instanceof Error ? error.name : "UnknownError");
+    }).finally(() => { sweeping = undefined; });
+  }, INTERACTION_SWEEP_MS);
+  sweep.unref();
+  const stopSweep = async () => {
+    clearInterval(sweep);
+    await sweeping;
+  };
   const botChats: BotChatLookup = {
     async directBot(owner, chatId) {
       if (owner.type !== "personal") return null;
@@ -93,7 +113,13 @@ export async function startBots(options: {
   };
   const host = options.host;
   if (!host?.available) {
-    return { instantiation, botChats, close: () => reconciler.stop() };
+    return {
+      instantiation, interactions, memory, botChats,
+      async close() {
+        await stopSweep();
+        await reconciler.stop();
+      },
+    };
   }
 
   const checkpoints = createBotCheckpointsRepository(db);
@@ -132,7 +158,9 @@ export async function startBots(options: {
   let forgetRun: (runId: string) => void = () => undefined;
   const orchestrator = createBotTaskOrchestrator({
     bindings,
-    tasks: createBotTasksRepository(db),
+    transact,
+    interactions,
+    memory,
     agents: options.agents,
     recipes,
     resolveRoute: async () => resolveBotRoute(await options.providers.getSnapshot()),
@@ -148,7 +176,7 @@ export async function startBots(options: {
     checkpoints,
     runs: orchestrator.runSource,
     events: orchestrator.eventSink,
-    tools: createBotToolDispatcher({ homePath: options.homePath }),
+    tools: createBotToolDispatcher({ homePath: options.homePath, interactions, memory }),
     inference: {
       homePath: options.homePath,
       lifetime: lifetime.signal,
@@ -164,6 +192,8 @@ export async function startBots(options: {
   });
   return {
     instantiation,
+    interactions,
+    memory,
     botChats,
     adapter,
     async close() {
@@ -171,6 +201,7 @@ export async function startBots(options: {
       clearInterval(saveSweepTimer);
       await reconciling;
       await sweepingSaves;
+      await stopSweep();
       await reconciler.stop();
       unregister();
       lifetime.abort();

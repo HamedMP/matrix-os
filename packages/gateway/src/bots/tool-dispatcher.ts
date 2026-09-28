@@ -3,7 +3,8 @@
  * in the bot's own workspace. Before any effect the workspace is resolved
  * again and must match the fingerprint bound at admission; every path
  * segment is checked without following links, and files are opened with
- * O_NOFOLLOW. Capabilities without a tool yet are refused as `not_granted`.
+ * O_NOFOLLOW. Questions and memory go to their services. Capabilities
+ * without a tool yet are refused as `not_granted`.
  */
 import { createHash, randomUUID } from "node:crypto";
 import { constants } from "node:fs";
@@ -14,6 +15,8 @@ import { ChatExecutionRootError } from "../chat/execution-root.js";
 import { resolveBotWorkspaceRoot } from "../chat/bot-workspace-root.js";
 import type { BotEffectClass } from "./database.js";
 import { BotBrokerActionError, type BotToolDispatcher } from "./broker-actions.js";
+import type { BotInteractionService } from "./interactions.js";
+import type { BotMemoryService } from "./memory-service.js";
 import type { BotRuntimeBinding } from "./runtime-registry.js";
 
 const MAX_TEXT_PART_CHARS = 60 * 1024;
@@ -155,7 +158,11 @@ function textResult(text: string): BotToolResult {
   return { ok: true, content };
 }
 
-export function createBotToolDispatcher(deps: { homePath: string }): BotToolDispatcher {
+export function createBotToolDispatcher(deps: {
+  homePath: string;
+  interactions?: Pick<BotInteractionService, "createFromTool">;
+  memory?: Pick<BotMemoryService, "propose" | "search">;
+}): BotToolDispatcher {
   async function workspace(binding: BotRuntimeBinding): Promise<string> {
     try {
       const root = await resolveBotWorkspaceRoot({
@@ -245,6 +252,11 @@ export function createBotToolDispatcher(deps: { homePath: string }): BotToolDisp
         return { result: await write(binding, request), outcomeRef };
       }
       if (request.capability === "artifact.read") return { result: await read(binding, request) };
+      if (request.capability === "interaction.create" && deps.interactions) {
+        return { result: await deps.interactions.createFromTool(binding, request.args) };
+      }
+      if (request.capability === "memory.propose" && deps.memory) return { result: await deps.memory.propose(binding, request.args) };
+      if (request.capability === "memory.search" && deps.memory) return { result: await deps.memory.search(binding, request.args) };
       throw new BotBrokerActionError("not_granted");
     },
   };
