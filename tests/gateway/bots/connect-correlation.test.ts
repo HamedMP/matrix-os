@@ -200,6 +200,15 @@ describe("bot connection requests", () => {
     expect((await db.selectFrom("bot_connect_requests").select("status").executeTakeFirstOrThrow()).status).toBe("expired");
   });
 
+  it("yields an owner with still-pending requests when inventory fails", async () => {
+    const { connections, client } = setup();
+    await connections.startConnect(OWNER, CHAT, interactionId, 1);
+    client.inventory.mockRejectedValue(new BotIntegrationError("unavailable"));
+    await expect(connections.reconcile(OWNER)).rejects.toEqual(new BotIntegrationError("unavailable"));
+    await connections.deferOwner(OWNER);
+    await expect(connections.ownersWithPending()).resolves.toEqual([]);
+  });
+
   it("refuses another responder, a stale revision, and an expired request", async () => {
     const { connections } = setup();
     await expect(connections.startConnect(OTHER_OWNER, CHAT, interactionId, 1)).rejects.toEqual(new BotInteractionError("not_found"));

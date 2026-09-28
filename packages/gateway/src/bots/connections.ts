@@ -225,6 +225,11 @@ export function createBotConnections(deps: {
           console.warn("[bots] connection reconciliation failed:", error instanceof Error ? error.name : "UnknownError");
         }
       }
+      if (!connected && pending.some((request) => Date.parse(request.expiresAt) > now().getTime())) {
+        // The caller defers this owner; otherwise failed inventory reads keep
+        // occupying the oldest 16 owner slots on every pass.
+        throw new BotIntegrationError("unavailable");
+      }
       return continuations;
     },
 
