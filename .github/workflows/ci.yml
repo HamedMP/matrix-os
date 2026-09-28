@@ -454,13 +454,19 @@ jobs:
 
   # The unit shards run these suites without MATRIX_TEST_POSTGRES_URL, so their
   # lock, race and transaction tests skip or fall back to PGlite. Run every
-  # suite that references the variable against a real server here.
+  # suite that references the variable against a real server here. The
+  # selection is dealt round-robin across the shards; add a shard (and update
+  # the --shard count) before raising the timeout.
   collaboration-postgres:
-    name: Collaboration PostgreSQL
+    name: Collaboration PostgreSQL (${{ matrix.shard }}/2)
     needs: changes
     if: needs.changes.outputs.should_run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
     services:
       postgres:
         image: postgres:16
@@ -501,7 +507,7 @@ jobs:
           pnpm --filter @matrix-os/integrations-mcp build
 
       - name: Run real-PostgreSQL suites
-        run: bash scripts/test-collaboration-postgres.sh
+        run: bash scripts/test-collaboration-postgres.sh --shard ${{ matrix.shard }}/2
 
   docs-contract:
     name: Docs Contract Tests

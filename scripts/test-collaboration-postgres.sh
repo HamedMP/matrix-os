@@ -7,8 +7,11 @@
 #
 # Usage:
 #   MATRIX_TEST_POSTGRES_URL=postgres://.../matrix_collaboration_test \
-#     scripts/test-collaboration-postgres.sh
-#   scripts/test-collaboration-postgres.sh --list   # print the selection only
+#     scripts/test-collaboration-postgres.sh [--shard <index>/<count>]
+#   scripts/test-collaboration-postgres.sh --list [--shard <index>/<count>]
+#
+# --shard deals the sorted selection round-robin, so every file lands in
+# exactly one shard. --list prints the selection without running it.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -16,10 +19,38 @@ VARIABLE=MATRIX_TEST_POSTGRES_URL
 
 # Product bugs that real PostgreSQL exposes, one entry per test:
 #   "<test file>|<full test name>|<issue URL>"
-# A quarantined test still runs. Its failure is reported and counted in the job
-# summary but does not fail the job. Remove the entry when the issue is fixed.
+# The full test name is Vitest's, with suites joined by " > " as in its FAIL
+# lines. A quarantined test still runs. Its failure is reported and counted in
+# the job summary but does not fail the job. Remove the entry when the issue is
+# fixed.
 QUARANTINE=(
 )
+
+list_only=false
+shard_index=1
+shard_count=1
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --list)
+      list_only=true
+      shift
+      ;;
+    --shard)
+      if [[ "${2:-}" =~ ^([1-9][0-9]*)/([1-9][0-9]*)$ ]] && [ "${BASH_REMATCH[1]}" -le "${BASH_REMATCH[2]}" ]; then
+        shard_index="${BASH_REMATCH[1]}"
+        shard_count="${BASH_REMATCH[2]}"
+        shift 2
+      else
+        echo "--shard expects <index>/<count>, for example 1/2" >&2
+        exit 2
+      fi
+      ;;
+    *)
+      echo "Unknown option: $1" >&2
+      exit 2
+      ;;
+  esac
+done
 
 cd "$ROOT"
 
@@ -32,12 +63,15 @@ select_files() {
 }
 
 listing="$(select_files)"
+all_files=()
 files=()
 while IFS= read -r file; do
-  if [ -n "$file" ]; then files+=("$file"); fi
+  if [ -z "$file" ]; then continue; fi
+  if [ $(( ${#all_files[@]} % shard_count )) -eq $(( shard_index - 1 )) ]; then files+=("$file"); fi
+  all_files+=("$file")
 done < <(printf '%s' "$listing" | LC_ALL=C sort)
 
-if [ "${1:-}" = "--list" ]; then
+if [ "$list_only" = "true" ]; then
   if [ "${#files[@]}" -gt 0 ]; then printf '%s\n' "${files[@]}"; fi
   exit 0
 fi
@@ -52,24 +86,31 @@ if ! node -e 'process.exit(new URL(process.env.MATRIX_TEST_POSTGRES_URL).pathnam
   exit 1
 fi
 
-if [ "${#files[@]}" -eq 0 ]; then
+if [ "${#all_files[@]}" -eq 0 ]; then
   echo "No test files reference $VARIABLE; refusing to report an empty run as green" >&2
+  exit 1
+fi
+if [ "${#files[@]}" -eq 0 ]; then
+  echo "Shard $shard_index/$shard_count selects no test files; lower the shard count" >&2
   exit 1
 fi
 
 work_dir="$(mktemp -d "${TMPDIR:-/tmp}/collaboration-postgres.XXXXXX")"
 trap 'rm -rf "$work_dir"' EXIT
 printf '%s\n' "${files[@]}" > "$work_dir/selection.txt"
+printf '%s\n' "${all_files[@]}" > "$work_dir/all-selected.txt"
 printf '%s\n' ${QUARANTINE[@]+"${QUARANTINE[@]}"} > "$work_dir/quarantine.txt"
 
-echo "Running ${#files[@]} real-PostgreSQL test files (${#QUARANTINE[@]} quarantined tests)"
+echo "Running ${#files[@]} of ${#all_files[@]} real-PostgreSQL test files (shard $shard_index/$shard_count)"
 vitest_status=0
-pnpm exec vitest run --reporter=default --reporter=json --outputFile.json="$work_dir/report.json" "${files[@]}" \
-  2>&1 | tee "$work_dir/vitest.log" || vitest_status=$?
+COLLABORATION_POSTGRES_REPORT="$work_dir/report.json" pnpm exec vitest run \
+  --reporter=default --reporter=./scripts/ci/collaboration-postgres-vitest-reporter.mjs \
+  "${files[@]}" || vitest_status=$?
 
 node scripts/ci/collaboration-postgres-report.mjs \
   --report "$work_dir/report.json" \
   --selection "$work_dir/selection.txt" \
+  --all-selected "$work_dir/all-selected.txt" \
   --quarantine "$work_dir/quarantine.txt" \
   --vitest-status "$vitest_status" \
-  --vitest-log "$work_dir/vitest.log"
+  --shard "$shard_index/$shard_count"

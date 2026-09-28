@@ -1,17 +1,17 @@
 #!/usr/bin/env node
 // Judges one Vitest run of the real-PostgreSQL suites selected by
-// scripts/test-collaboration-postgres.sh. The run passes only when every
-// selected file reported tests, no test was skipped, and every failure is a
+// scripts/test-collaboration-postgres.sh from the report written by
+// scripts/ci/collaboration-postgres-vitest-reporter.mjs. The run passes only
+// when every selected file reported tests, no test was skipped, no module,
+// suite hook or unhandled error occurred, and every test failure is a
 // quarantined product bug with a linked issue.
 
 import { appendFile, readFile } from "node:fs/promises";
-import { relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 
 const ISSUE_URL = /^https:\/\/github\.com\/hamedmp\/matrix-os\/issues\/[1-9]\d*$/i;
-const UNHANDLED_ERROR = /Vitest caught \d+ unhandled errors? during the test run|There were unhandled errors during test collection/;
-const SKIPPED_STATUSES = new Set(["skipped", "pending", "todo", "disabled"]);
+const SKIPPED_STATES = new Set(["skipped", "pending"]);
 
 /** Parses "<test file>|<full test name>|<issue URL>" lines from the script's quarantine block. */
 export function parseQuarantine(lines) {
@@ -34,58 +34,69 @@ function testKey(file, name) {
   return `${file} > ${name}`;
 }
 
-export function summarizeCollaborationPostgresRun({ report, selection, quarantine, vitestStatus, vitestLog, root }) {
+/**
+ * `selection` is the file list this run was given (one shard); `allSelected`
+ * is the whole selection, so quarantine entries for another shard are ignored
+ * here but entries naming an unselected file still fail.
+ */
+export function summarizeCollaborationPostgresRun({ report, selection, allSelected = selection, quarantine, vitestStatus }) {
   const errors = [...quarantine.errors];
   const notices = [];
   const counts = { files: selection.length, tests: 0, passed: 0, failed: 0, skipped: 0 };
-  const quarantined = new Map(quarantine.entries.map((entry) => [testKey(entry.file, entry.name), { ...entry, outcome: undefined }]));
-  const reportedFiles = new Set();
+  const inRun = new Set(selection);
+  const selectedAnywhere = new Set(allSelected);
+  const quarantined = new Map();
+  for (const entry of quarantine.entries) {
+    if (!selectedAnywhere.has(entry.file)) {
+      errors.push(`quarantine entry names an unselected file: ${testKey(entry.file, entry.name)}`);
+    } else if (inRun.has(entry.file)) {
+      quarantined.set(testKey(entry.file, entry.name), { ...entry, outcome: undefined });
+    }
+  }
 
-  if (!report || !Array.isArray(report.testResults)) {
-    errors.push("vitest did not write a JSON report");
+  if (!report || !Array.isArray(report.modules) || !Array.isArray(report.unhandledErrors)) {
+    errors.push("vitest did not write the collaboration report");
   } else {
-    for (const result of report.testResults) {
-      const file = relative(root, resolve(root, String(result.name)));
-      const assertions = Array.isArray(result.assertionResults) ? result.assertionResults : [];
-      if (assertions.length > 0) reportedFiles.add(file);
-      if (result.status === "failed" && !assertions.some((assertion) => assertion.status === "failed")) {
-        errors.push(`failed to run: ${file}${result.message ? ` (${result.message})` : ""}`);
-      }
-      for (const assertion of assertions) {
-        const key = testKey(file, assertion.fullName);
+    const reportedFiles = new Set();
+    for (const testModule of report.modules) {
+      const file = String(testModule.file);
+      const tests = Array.isArray(testModule.tests) ? testModule.tests : [];
+      if (tests.length > 0) reportedFiles.add(file);
+      for (const error of testModule.errors ?? []) errors.push(`suite error: ${file}: ${error}`);
+      for (const test of tests) {
+        const key = testKey(file, test.name);
         const entry = quarantined.get(key);
         counts.tests += 1;
-        if (entry) entry.outcome = assertion.status;
-        if (assertion.status === "passed") {
+        if (entry) entry.outcome = test.state;
+        if (test.state === "passed") {
           counts.passed += 1;
           if (entry) notices.push(`quarantined test passed: ${key} (${entry.issue}); remove the entry once the issue is fixed`);
-        } else if (assertion.status === "failed") {
+        } else if (test.state === "failed") {
+          counts.failed += 1;
           if (entry) {
             notices.push(`quarantined failure: ${key} (${entry.issue})`);
           } else {
-            counts.failed += 1;
             errors.push(`failed: ${key}`);
           }
-        } else if (SKIPPED_STATUSES.has(assertion.status)) {
+        } else if (SKIPPED_STATES.has(test.state)) {
           counts.skipped += 1;
           errors.push(`skipped: ${key}`);
         } else {
-          errors.push(`unknown status ${JSON.stringify(assertion.status)}: ${key}`);
+          errors.push(`unknown state ${JSON.stringify(test.state)}: ${key}`);
         }
       }
     }
     for (const file of selection) {
       if (!reportedFiles.has(file)) errors.push(`not reported: ${file}`);
     }
+    for (const error of report.unhandledErrors) errors.push(`unhandled error: ${error}`);
   }
 
   for (const [key, entry] of quarantined) {
     if (entry.outcome === undefined) errors.push(`quarantine entry matches no test: ${key}`);
   }
-  if (UNHANDLED_ERROR.test(vitestLog)) {
-    errors.push("vitest reported an unhandled error outside any test");
-  }
   const quarantinedFailures = [...quarantined.values()].filter((entry) => entry.outcome === "failed").length;
+  // Backstop for a non-zero exit the report cannot explain.
   if (vitestStatus !== 0 && errors.length === 0 && quarantinedFailures === 0) {
     errors.push(`vitest exited with status ${vitestStatus} without a failing test`);
   }
@@ -93,16 +104,16 @@ export function summarizeCollaborationPostgresRun({ report, selection, quarantin
   return { ok: errors.length === 0, counts, quarantined: [...quarantined.values()], errors, notices };
 }
 
-export function renderSummaryMarkdown(summary) {
+export function renderSummaryMarkdown(summary, shard = "") {
   const lines = [
-    "### Collaboration PostgreSQL",
+    `### Collaboration PostgreSQL${shard ? ` ${shard}` : ""}`,
     "",
     "| Metric | Count |",
     "| --- | --- |",
     `| Selected files | ${summary.counts.files} |`,
     `| Tests | ${summary.counts.tests} |`,
     `| Passed | ${summary.counts.passed} |`,
-    `| Failed | ${summary.counts.failed} |`,
+    `| Failed (including quarantined) | ${summary.counts.failed} |`,
     `| Skipped | ${summary.counts.skipped} |`,
     `| Quarantined | ${summary.quarantined.length} |`,
   ];
@@ -119,18 +130,14 @@ export function renderSummaryMarkdown(summary) {
   return `${lines.join("\n")}\n`;
 }
 
-async function readOptionalText(path) {
+async function readReport(path) {
+  let text;
   try {
-    return await readFile(path, "utf8");
+    text = await readFile(path, "utf8");
   } catch (error) {
-    if (error?.code === "ENOENT") return "";
+    if (error?.code === "ENOENT") return null;
     throw error;
   }
-}
-
-async function readReport(path) {
-  const text = await readOptionalText(path);
-  if (!text) return null;
   try {
     return JSON.parse(text);
   } catch (error) {
@@ -139,8 +146,8 @@ async function readReport(path) {
   }
 }
 
-function lines(text) {
-  return text.split(/\r?\n/u).map((line) => line.trim()).filter(Boolean);
+async function readLines(path) {
+  return (await readFile(path, "utf8")).split(/\r?\n/u).map((line) => line.trim()).filter(Boolean);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
@@ -148,23 +155,23 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     options: {
       report: { type: "string" },
       selection: { type: "string" },
+      "all-selected": { type: "string" },
       quarantine: { type: "string" },
       "vitest-status": { type: "string" },
-      "vitest-log": { type: "string" },
+      shard: { type: "string", default: "" },
     },
   });
-  for (const option of ["report", "selection", "quarantine", "vitest-status", "vitest-log"]) {
+  for (const option of ["report", "selection", "all-selected", "quarantine", "vitest-status"]) {
     if (!values[option]) throw new Error(`--${option} is required`);
   }
   const summary = summarizeCollaborationPostgresRun({
     report: await readReport(values.report),
-    selection: lines(await readFile(values.selection, "utf8")),
-    quarantine: parseQuarantine(lines(await readFile(values.quarantine, "utf8"))),
+    selection: await readLines(values.selection),
+    allSelected: await readLines(values["all-selected"]),
+    quarantine: parseQuarantine(await readLines(values.quarantine)),
     vitestStatus: Number(values["vitest-status"]),
-    vitestLog: await readOptionalText(values["vitest-log"]),
-    root: process.cwd(),
   });
-  const markdown = renderSummaryMarkdown(summary);
+  const markdown = renderSummaryMarkdown(summary, values.shard);
   for (const notice of summary.notices) console.log(notice);
   for (const error of summary.errors) console.error(error);
   console.log(markdown);
