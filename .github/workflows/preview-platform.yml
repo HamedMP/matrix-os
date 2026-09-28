@@ -53,6 +53,11 @@ on:
         type: boolean
         default: false
 
+      connect_collaboration_preview:
+        description: "With connect_share_preview: bind a preview-collaboration PR's VPS home to its preview collaboration authority (collaboration-e2e approval)"
+        type: boolean
+        default: false
+
 permissions:
   actions: read
   contents: read
@@ -93,12 +98,17 @@ jobs:
       MATRIX_FUNDED_AI_MODEL_PROBE_MINUTE_LIMIT: ${{ vars.MATRIX_FUNDED_AI_MODEL_PROBE_MINUTE_LIMIT || '0' }}
       # Preview-only name, so a production key id can never be inherited from a repository variable.
       MATRIX_COLLABORATION_TICKET_ACTIVE_KEY_ID: ${{ vars.PREVIEW_COLLABORATION_TICKET_ACTIVE_KEY_ID || 'collaboration-preview-v1' }}
+      CONNECT_COLLABORATION_PREVIEW: ${{ github.event_name == 'workflow_dispatch' && inputs.connect_collaboration_preview && 'true' || 'false' }}
       PR_NUMBER: ${{ github.event.pull_request.number || inputs.pr }}
     steps:
       - name: Check preview configuration
         id: config
         run: |
           set -euo pipefail
+          if [ "${CONNECT_COLLABORATION_PREVIEW:-false}" = "true" ]; then
+            echo "connect_collaboration_preview runs only together with connect_share_preview for the same PR." >&2
+            exit 1
+          fi
           if [ -z "${CLOUD_RUN_PREVIEW_SERVICE:-}" ]; then
             echo "configured=false" >> "$GITHUB_OUTPUT"
             echo "::notice::CLOUD_RUN_PREVIEW_SERVICE is not configured; platform previews are disabled. See specs/093-preview-environments/."
@@ -607,7 +617,7 @@ jobs:
 
   connect-share-preview:
     needs: select-share-preview
-    if: github.event_name == 'workflow_dispatch' && inputs.connect_share_preview
+    if: github.event_name == 'workflow_dispatch' && inputs.connect_share_preview && !inputs.connect_collaboration_preview
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: Preview
@@ -978,3 +988,289 @@ jobs:
             and ($customMcp != "true" or ($result.mcp | type == "array"))
           ' "$gateway_capabilities_response" >/dev/null
           echo "Share preview origin: $url" >> "$GITHUB_STEP_SUMMARY"
+
+  # Spec 535 A0b: bind a preview-collaboration PR's disposable VPS home to this PR's preview
+  # collaboration authority. Re-points only the home's collaboration binding (platform URL,
+  # runtime credential and browser origins); the production proxy credential stays, so the
+  # /vm/pr-<N> control channel used for rollback keeps working. The protected environment
+  # releases the collaboration owner and the Clerk key used for its session.
+  connect-collaboration-preview:
+    name: Connect collaboration preview home
+    needs: select-share-preview
+    if: github.event_name == 'workflow_dispatch' && inputs.connect_share_preview && inputs.connect_collaboration_preview
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: collaboration-e2e
+    env:
+      GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      GCP_REGION: ${{ vars.GCP_REGION }}
+      CLOUD_RUN_PREVIEW_SERVICE: ${{ vars.CLOUD_RUN_PREVIEW_SERVICE }}
+      ARTIFACT_REPOSITORY: ${{ vars.ARTIFACT_REPOSITORY }}
+      PR_NUMBER: ${{ inputs.pr }}
+      PREVIEW_CLERK_USER_ID: ${{ secrets.PREVIEW_CLERK_USER_ID }}
+      PREVIEW_COLLABORATION_OWNER_USER_ID: ${{ secrets.PREVIEW_COLLABORATION_OWNER_USER_ID }}
+      CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY }}
+      PREVIEW_VPS_CONTROL_URL: https://app.matrix-os.com
+      EXPECTED_HEAD_SHA: ${{ needs.select-share-preview.outputs.head_sha }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Check collaboration preview request
+        run: |
+          set -euo pipefail
+          if ! [[ "$PR_NUMBER" =~ ^[1-9][0-9]{0,8}$ ]]; then
+            echo "The PR number is invalid." >&2
+            exit 1
+          fi
+          missing=()
+          for name in GCP_PROJECT_ID GCP_REGION CLOUD_RUN_PREVIEW_SERVICE ARTIFACT_REPOSITORY \
+            PREVIEW_CLERK_USER_ID PREVIEW_COLLABORATION_OWNER_USER_ID CLERK_SECRET_KEY; do
+            if [ -z "${!name:-}" ]; then
+              missing+=("$name")
+            fi
+          done
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "The collaboration-e2e environment is missing: ${missing[*]}" >&2
+            exit 1
+          fi
+          if [ "$CLOUD_RUN_PREVIEW_SERVICE" != matrix-platform-preview ]; then
+            echo "Only the dedicated preview platform service may be connected." >&2
+            exit 1
+          fi
+          if ! [[ "$PREVIEW_COLLABORATION_OWNER_USER_ID" =~ ^user_[A-Za-z0-9]+$ ]]; then
+            echo "PREVIEW_COLLABORATION_OWNER_USER_ID is invalid." >&2
+            exit 1
+          fi
+          if [ "$PREVIEW_COLLABORATION_OWNER_USER_ID" = "$PREVIEW_CLERK_USER_ID" ]; then
+            echo "The collaboration owner must differ from PREVIEW_CLERK_USER_ID." >&2
+            exit 1
+          fi
+          pull_request="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
+          if ! jq -e --arg repository "$GITHUB_REPOSITORY" --arg head "$EXPECTED_HEAD_SHA" '
+            .state == "open"
+            and .head.repo.full_name == $repository
+            and .head.sha == $head
+            and any(.labels[]?; .name == "preview-vps")
+            and any(.labels[]?; .name == "preview-collaboration")
+          ' <<< "$pull_request" >/dev/null; then
+            echo "Only an open same-repository PR at the selected head, labeled preview-vps and preview-collaboration, can be connected." >&2
+            exit 1
+          fi
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v4
+        with:
+          name: preview-share-route
+      - uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v3
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - run: pnpm install --frozen-lockfile --filter . --ignore-scripts
+      - name: Verify the exact-head tagged revision serves preview collaboration
+        run: |
+          set -euo pipefail
+          service="$(gcloud run services describe "$CLOUD_RUN_PREVIEW_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json --quiet)"
+          revision="$(jq -er --arg tag "pr-$PR_NUMBER" '.status.traffic[] | select(.tag == $tag) | .revisionName' <<< "$service")"
+          url="$(jq -er --arg tag "pr-$PR_NUMBER" '.status.traffic[] | select(.tag == $tag) | .url' <<< "$service")"
+          revision_json="$(gcloud run revisions describe "$revision" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json --quiet)"
+          image="$(jq -r '.spec.containers[0].image' <<< "$revision_json")"
+          expected_image="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${ARTIFACT_REPOSITORY}/matrix-platform:pr-${PR_NUMBER}-${EXPECTED_HEAD_SHA::12}"
+          expected_digest="$(gcloud artifacts docker images describe "$expected_image" \
+            --project "$GCP_PROJECT_ID" --format='value(image_summary.digest)' --quiet)"
+          expected_digest_image="${expected_image%:*}@${expected_digest}"
+          if [ -z "$expected_digest" ] || { [ "$image" != "$expected_image" ] && [ "$image" != "$expected_digest_image" ]; }; then
+            echo "The tagged platform preview does not match the exact PR head." >&2
+            exit 1
+          fi
+          # The home trusts the browser origins the tagged revision allows, and only that
+          # revision's preview-only keyring, never the production one.
+          if ! client_origins="$(jq -er '
+            [.spec.containers[0].env[]?] as $env
+            | [$env[] | select(.name == "MATRIX_COLLABORATION_ALLOWED_ORIGINS") | .value] as $allowed
+            | [$env[] | select(.name == "MATRIX_COLLABORATION_RELAY_ORIGIN") | .value] as $relay
+            | [$env[] | select(.name == "MATRIX_COLLABORATION_TICKET_KEYS")
+                | "\(.valueFrom.secretKeyRef.name):\(.valueFrom.secretKeyRef.key)"] as $keys
+            | select(($allowed | length) == 1 and ($relay | length) == 1
+                and $keys == ["collaboration-ticket-keys-preview:latest"]
+                and ($allowed[0] | test("^https://[A-Za-z0-9.-]+(,https://[A-Za-z0-9.-]+){0,15}$"))
+                and ($allowed[0] | split(",") | any(.[]; . == $relay[0])))
+            | $allowed[0]
+          ' <<< "$revision_json")"; then
+            echo "The tagged preview revision has no preview collaboration authority; redeploy it with preview-platform first." >&2
+            exit 1
+          fi
+          if ! [[ "$url" =~ ^https://[A-Za-z0-9.-]+$ ]]; then
+            echo "The tagged preview URL is not an HTTPS origin." >&2
+            exit 1
+          fi
+          {
+            echo "PREVIEW_TAG_URL=$url"
+            echo "COLLABORATION_CLIENT_ORIGINS=$client_origins"
+          } >> "$GITHUB_ENV"
+      - name: Connect the disposable home to the preview authority
+        run: |
+          set -euo pipefail
+          handle="pr-$PR_NUMBER"
+          nonce="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          guard_unit="matrix-preview-collaboration-guard-${nonce}"
+          guard_path=/opt/matrix/env/.preview-collaboration-guard.py
+          terminal_url="${PREVIEW_VPS_CONTROL_URL}/vm/${handle}/api/terminal/run"
+          response="$(mktemp)"
+          trap 'rm -f "$response"' EXIT
+          if ! address="$(jq -er --arg handle "$handle" '
+            select(type == "object" and keys == ["address", "handle"] and .handle == $handle)
+            | .address | select(test("^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+$"))
+          ' preview-share-route.json)"; then
+            echo "The exact-head preview route is invalid." >&2
+            exit 1
+          fi
+          preview_session_token=""
+          session_minted_at=-1000
+          # A 300 s owner session token, refreshed before it can expire mid-connection.
+          mint_session_token() {
+            local sessions session_id payload
+            sessions="$(curl --fail --silent --show-error --max-time 30 \
+              "https://api.clerk.com/v1/sessions?user_id=${PREVIEW_COLLABORATION_OWNER_USER_ID}&status=active&limit=10" \
+              -H "authorization: Bearer ${CLERK_SECRET_KEY}" \
+              -H "Clerk-API-Version: 2025-11-10")" || return 1
+            if ! session_id="$(jq -er \
+              'sort_by(.last_active_at // 0) | reverse | .[0].id | select(type == "string" and test("^sess_[A-Za-z0-9]+$"))' \
+              <<< "$sessions")"; then
+              echo "The collaboration owner has no active session. Sign in as that account at ${PREVIEW_VPS_CONTROL_URL}, then re-run." >&2
+              return 1
+            fi
+            payload="$(curl --fail --silent --show-error --max-time 30 \
+              -X POST "https://api.clerk.com/v1/sessions/${session_id}/tokens" \
+              -H "authorization: Bearer ${CLERK_SECRET_KEY}" \
+              -H "Clerk-API-Version: 2025-11-10" \
+              -H "content-type: application/json" \
+              --data-binary '{"expires_in_seconds":300}')" || return 1
+            preview_session_token="$(jq -er '.jwt | select(type == "string" and length <= 8192)' <<< "$payload")" || return 1
+            echo "::add-mask::$preview_session_token"
+            session_minted_at=$SECONDS
+          }
+          send_runtime_command() {
+            if [ $((SECONDS - session_minted_at)) -gt 200 ]; then
+              mint_session_token || return 1
+            fi
+            curl --fail --silent --show-error --max-time 45 \
+              --retry 5 --retry-all-errors --retry-delay 2 --retry-max-time 30 \
+              -o "$response" -X POST "$terminal_url" \
+              -H "authorization: Bearer ${preview_session_token}" \
+              -H 'content-type: application/json' --data-binary "$1" || return 1
+            jq -e 'select(.exitCode==0 and .timedOut==false and .truncated==false and .signal==null)' \
+              "$response" >/dev/null
+          }
+          applied=false
+          guard_armed=false
+          # Never leave a half-connected home: before the guard is armed, restore the rollback
+          # copy at once (the running gateway still has the old binding); once it is armed, fire
+          # it, which restores the copy and restarts the gateway even if this runner goes away.
+          fail_connection() {
+            echo "$1" >&2
+            if [ "$guard_armed" = true ]; then
+              body="$(jq -cn --arg unit "${guard_unit}.service" \
+                '{command:["/usr/bin/sudo","/usr/bin/systemctl","start","--no-block",$unit],timeoutMs:10000}')"
+              send_runtime_command "$body" || echo "The armed guard restores the home when its timer fires." >&2
+            elif [ "$applied" = true ]; then
+              body="$(jq -cn --arg guard "$guard_path" --arg nonce "$nonce" \
+                '{command:["/usr/bin/sudo","/usr/bin/python3","-I",$guard,"restore",$nonce],timeoutMs:10000}')"
+              send_runtime_command "$body" || echo "Restoring the host environment failed; use an authorized operator connection." >&2
+            fi
+            exit 1
+          }
+
+          # 1. The host proves it is this collaboration preview (handle, slot, owner) before anything changes.
+          body="$(jq -cn --rawfile script scripts/preview-collaboration-probe.py \
+            --arg handle "$handle" --arg owner "$PREVIEW_COLLABORATION_OWNER_USER_ID" \
+            '{command:["/usr/bin/python3","-I","-c",$script,"identity",$handle,$owner],timeoutMs:10000}')"
+          if ! send_runtime_command "$body"; then
+            echo "The preview home did not prove it is this PR's collaboration preview; nothing was changed." >&2
+            exit 1
+          fi
+          machine_id="$(jq -er '.stdout | fromjson | .machineId
+            | select(test("^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"))' "$response")"
+
+          # 2. The preview platform authenticates the home as vps:<machine ID> owned by the collaboration owner.
+          gcloud help secrets versions access >/dev/null
+          preview_db="$(gcloud secrets versions access latest --secret platform-database-url-staging --project "$GCP_PROJECT_ID" --quiet)"
+          echo "::add-mask::$preview_db"
+          export PREVIEW_DATABASE_URL="$preview_db" PREVIEW_HANDLE="$handle" PREVIEW_MACHINE_ID="$machine_id" PREVIEW_ADDRESS="$address"
+          node scripts/preview-collaboration-staging.mjs register
+
+          # 3. The runtime credential the preview platform expects: HMAC-SHA256(handle) under its PLATFORM_SECRET.
+          preview_platform_secret="$(gcloud secrets versions access latest --secret platform-preview-secret --project "$GCP_PROJECT_ID" --quiet)"
+          echo "::add-mask::$preview_platform_secret"
+          upgrade_token="$(PREVIEW_SIGNING_SECRET="$preview_platform_secret" node --input-type=module -e '
+            import { createHmac } from "node:crypto";
+            process.stdout.write(createHmac("sha256", process.env.PREVIEW_SIGNING_SECRET).update(process.argv[1]).digest("hex"));
+          ' "$handle")"
+          echo "::add-mask::$upgrade_token"
+          unset preview_platform_secret
+          binding="$(jq -cn --arg url "$PREVIEW_TAG_URL" --arg token "$upgrade_token" --arg origins "$COLLABORATION_CLIENT_ORIGINS" \
+            '{PLATFORM_INTERNAL_URL:$url,UPGRADE_TOKEN:$token,MATRIX_COLLABORATION_CLIENT_ORIGINS:$origins}')"
+
+          # 4. Keep one rollback copy, re-point the binding with the file's owner, group and mode, install the guard.
+          body="$(jq -cn --rawfile script scripts/preview-collaboration-home.py \
+            --rawfile guard scripts/preview-collaboration-guard.py \
+            --arg handle "$handle" --arg owner "$PREVIEW_COLLABORATION_OWNER_USER_ID" \
+            --arg machine "$machine_id" --arg binding "$binding" \
+            '{command:["/usr/bin/sudo","/usr/bin/python3","-I","-c",$script,$handle,$owner,$machine,$binding,$guard],timeoutMs:15000}')"
+          applied=true
+          send_runtime_command "$body" || fail_connection "The preview home refused the collaboration binding; restoring the host environment."
+
+          # 5. Dead-man guard: unless this connection is committed within 300 s, restore and restart.
+          body="$(jq -cn --arg unit "--unit=${guard_unit}" --arg guard "$guard_path" --arg nonce "$nonce" \
+            '{command:["/usr/bin/sudo","/usr/bin/systemd-run",$unit,"--on-active=300s","--collect","/usr/bin/python3","-I",$guard,"restore",$nonce,"--restart"],timeoutMs:10000}')"
+          send_runtime_command "$body" || fail_connection "The rollback guard could not be armed; restoring the host environment."
+          guard_armed=true
+          armed_at=$SECONDS
+
+          # 6. A synchronous restart drops the gateway connection that carries this request.
+          enrollment_since="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          body="$(jq -cn --arg unit "--unit=matrix-preview-collaboration-restart-${nonce}" \
+            '{command:["/usr/bin/sudo","/usr/bin/systemd-run",$unit,"--on-active=2s","--collect","/usr/bin/systemctl","restart","matrix-gateway.service"],timeoutMs:10000}')"
+          send_runtime_command "$body" || fail_connection "The gateway restart could not be scheduled; restoring the host environment."
+          sleep 5
+
+          # 7. Health: the gateway answers locally and reports collaboration configured.
+          healthy=false
+          body="$(jq -cn --rawfile script scripts/preview-collaboration-probe.py \
+            '{command:["/usr/bin/python3","-I","-c",$script,"health"],timeoutMs:30000}')"
+          for _attempt in {1..12}; do
+            if send_runtime_command "$body" \
+              && jq -e '.stdout | fromjson | .healthy == true and .collaboration == true' "$response" >/dev/null 2>&1; then
+              healthy=true
+              break
+            fi
+            sleep 5
+          done
+          if [ "$healthy" != true ]; then
+            fail_connection "The preview gateway did not become healthy with collaboration configured; restoring the host environment."
+          fi
+
+          # 8. Enrollment: the home registered its runtime endpoint and attached its control stream
+          #    to the preview platform after the restart, with time left to commit before the guard fires.
+          remaining=$((270 - (SECONDS - armed_at)))
+          if [ "$remaining" -le 0 ]; then
+            fail_connection "The connection ran out of time before its guard deadline; restoring the host environment."
+          fi
+          deadline="$(date -u -d "+${remaining} seconds" +%Y-%m-%dT%H:%M:%SZ)"
+          PREVIEW_ENROLLMENT_SINCE="$enrollment_since" PREVIEW_ENROLLMENT_DEADLINE="$deadline" \
+            node scripts/preview-collaboration-staging.mjs enrollment \
+            || fail_connection "The preview home did not enroll with the preview platform; restoring the host environment."
+
+          # 9. Commit (refused if the guard already restored), then disarm the timer.
+          body="$(jq -cn --arg guard "$guard_path" --arg nonce "$nonce" \
+            '{command:["/usr/bin/sudo","/usr/bin/python3","-I",$guard,"commit",$nonce],timeoutMs:10000}')"
+          send_runtime_command "$body" || fail_connection "The connection could not be committed; restoring the host environment."
+          guard_armed=false
+          body="$(jq -cn --arg unit "${guard_unit}.timer" \
+            '{command:["/usr/bin/sudo","/usr/bin/systemctl","stop",$unit],timeoutMs:10000}')"
+          if ! send_runtime_command "$body"; then
+            echo "::warning::The guard timer could not be stopped; it finds the connection committed and leaves it in place."
+          fi
+          echo "Collaboration preview home ${handle} is enrolled with ${PREVIEW_TAG_URL}." >> "$GITHUB_STEP_SUMMARY"
