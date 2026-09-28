@@ -330,8 +330,13 @@ async function validateRuntimeSources(
   nativeDirectory: string;
   workerFile: string;
 }> {
-  const broker = await lstat(paths.brokerSocket);
-  if (!broker.isSocket() || broker.isSymbolicLink()) throw new Error("Scope runtime broker unavailable");
+  // The gateway owns the broker socket and starts after this supervisor. Only
+  // require the socket when launching a workload, not while advertising the
+  // fixed adapters during supervisor startup.
+  if (adapterId) {
+    const broker = await lstat(paths.brokerSocket);
+    if (!broker.isSocket() || broker.isSymbolicLink()) throw new Error("Scope runtime broker unavailable");
+  }
   const worker = await lstat(paths.workerFile);
   if (!worker.isFile() || worker.isSymbolicLink()) throw new Error("Scope runtime worker unavailable");
   const sdkDirectory = await realpath(paths.sdkDirectory);

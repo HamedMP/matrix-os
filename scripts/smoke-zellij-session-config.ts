@@ -40,6 +40,21 @@ async function waitFor(check: () => Promise<boolean>, label: string) {
   throw new Error(label);
 }
 
+async function stopClient(client: ShellAttachProcess, label: string) {
+  let exitDisposable: { dispose(): void } | undefined;
+  try {
+    await Promise.race([
+      new Promise<void>((resolve) => {
+        exitDisposable = client.onExit(() => resolve());
+        client.kill();
+      }),
+      delay(scaledTimeout(4_000)).then(() => { throw new Error(`${label} client did not exit`); }),
+    ]);
+  } finally {
+    exitDisposable?.dispose();
+  }
+}
+
 // The supervisor owns all fixture roots and daemons. Killing a timed-out worker
 // cannot bypass cleanup, unlike an outer `timeout --signal=KILL` on this script.
 async function supervise() {
@@ -159,11 +174,13 @@ setTimeout(() => process.exit(0), ${scaledTimeout(30_000)});
           await waitFor(async () => (await readFile(inputPath, "utf8")) === expected,
             `${savedMode}/${path} lost input: ${JSON.stringify(input)}`);
         }
-        client!.kill();
+        await stopClient(client!, `${savedMode}/${path}`);
         client = undefined;
         data.dispose();
-        await delay(150);
-        if (await readFile(pidPath, "utf8") !== originalPid) throw new Error("pane process was replaced");
+        const currentPid = await readFile(pidPath, "utf8");
+        if (currentPid !== originalPid) {
+          throw new Error(`${savedMode}/${path} replaced pane process ${originalPid} with ${currentPid}`);
+        }
       }
       console.log(`PASS: ${savedMode} server, direct/reconnect/indexed, typing/paste/Ctrl keys, same process`);
     } finally {

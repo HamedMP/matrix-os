@@ -1,5 +1,5 @@
 import { createUnixSocketTempDir } from "../helpers/unix-socket-temp.js";
-import { chmod, lstat, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, readFile, rm, stat, unlink, writeFile } from "node:fs/promises";
 import { createServer, type Server } from "node:net";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -105,6 +105,19 @@ describe("scope runtime systemd launcher", () => {
       })),
     });
     await expect(changed.supportedAdapters?.()).resolves.toEqual([
+      { adapterId: "claude-code", harnessVersion: "2.1.240", workloads: ["chat_ai"] },
+    ]);
+  });
+
+  it("starts before the gateway-owned broker socket exists", async () => {
+    const paths = await fixture();
+    await unlink(paths.brokerSocket);
+    const launcher = createSystemdScopeRuntimeLauncher({
+      ...paths,
+      runCommand: vi.fn(async () => ({ stdout: "" })),
+    });
+
+    await expect(launcher.supportedAdapters?.()).resolves.toEqual([
       { adapterId: "claude-code", harnessVersion: "2.1.240", workloads: ["chat_ai"] },
     ]);
   });

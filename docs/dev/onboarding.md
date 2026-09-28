@@ -107,21 +107,27 @@ Prerequisites on macOS:
 - QEMU (`brew install qemu`). The runtime deliberately uses slower TCG system
   emulation rather than Rosetta userspace emulation so the kernel architecture
   and security facilities match production.
+- OpenSSL (`brew install openssl`) for the local TLS-wrapped object-store
+  endpoint used by the unchanged production backup broker.
 - A 6 GiB OrbStack shared memory limit (`orb config set memory_mib 6144`, then
   `orb stop` to apply it). The bundle builder uses 4 GiB; the remainder is for
   platform PostgreSQL and object storage. The QEMU runtime separately uses 4 GiB.
 - Rosetta 2 (`softwareupdate --install-rosetta --agree-to-license`). Production
   bundles contain x86_64 Node/Zellij assets; an arm64 guest is not parity.
-- The production `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` in `.env` for real browser
-  auth. The launcher fetches Clerk's public JWKS for local token verification;
-  it does not require or copy the production secret key.
+- The production `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` in `.env` so the bundled
+  shell matches the production build. The launcher fetches Clerk's public JWKS
+  for local token verification. A valid `CLERK_SECRET_KEY` is optional: without
+  it browser auth returns a bounded unavailable response while the VM, Files
+  synchronization, Terminal runtime, and other credential-free services start.
 - `MATRIX_LOCAL_CLERK_USER_ID` in `.env`, set to the Clerk user that will sign
   in. The local platform database maps that identity to the disposable machine.
-- macOS administrator access. The launcher adds the RFC 5737 address
-  `192.0.2.2` to loopback while the VM runs, bridges it to the guest with an
-  owned Docker process, and removes both on `dev:parity:down`. Production
-  registration still validates a public-style address and all
-  HTTPS/WebSocket traffic still uses port 443.
+- One explicitly approved host-network setup step. Add the RFC 5737 fixture
+  address once with
+  `sudo ifconfig lo0 alias 192.0.2.2 netmask 255.255.255.255`. The launcher
+  verifies but never takes ownership of that host setting. It does own and
+  remove the Docker bridge process on `dev:parity:down`. Production registration
+  still validates a public-style address and all HTTPS/WebSocket traffic still
+  uses port 443.
 
 ```bash
 bun run dev:full                 # build bundle, provision machine, run platform
@@ -131,8 +137,10 @@ bun run dev:parity:down         # delete the disposable machine; preserve infra 
 ```
 
 The command starts platform Postgres and object storage as external local
-dependencies. The platform uses the normal customer-VPS routing and
-registration path; it does **not** enable legacy container routing. Keep the
+dependencies. Presigned backup traffic reaches that object store through a
+launcher-owned TLS endpoint trusted only by the disposable guest; the production
+broker's HTTPS requirement is unchanged. The platform uses normal customer-VPS
+routing and registration path; it does **not** enable legacy container routing. Keep the
 foreground command running because it serves the working-tree bundle and local
 provider-metadata adapter during provisioning and updates. Provider-backed AI,
 billing, speech, and integrations still require their normal credentials and

@@ -23,17 +23,24 @@ const runtimeSeedPath = resolve(runtimeDirectory, "cidata.iso");
 const runtimePidPath = resolve(runtimeDirectory, "qemu.pid");
 const runtimeLogPath = resolve(runtimeDirectory, "serial.log");
 const runtimeSshKeyPath = resolve(runtimeDirectory, "operator_ed25519");
+const storageTlsDirectory = resolve(stateDirectory, "storage-tls");
+const storageTlsCertificatePath = resolve(storageTlsDirectory, "certificate.pem");
+const storageTlsKeyPath = resolve(storageTlsDirectory, "key.pem");
 const baseImagePath = resolve(stateDirectory, "ubuntu-24.04-amd64.qcow2");
 const baseImageChecksumPath = `${baseImagePath}.sha256`;
 const artifactPort = Number(process.env.MATRIX_PARITY_ARTIFACT_PORT ?? 9876);
 // Keep parity isolated from the source/HMR platform's conventional port 9000.
 const platformPort = Number(process.env.MATRIX_PARITY_PLATFORM_PORT ?? 9003);
+const storageTlsPort = Number(process.env.MATRIX_PARITY_STORAGE_TLS_PORT ?? 9444);
 const guestHostAddress = "10.0.2.2";
 const fixturePublicAddress = "192.0.2.2";
 const localPlatformUrl = `http://${guestHostAddress}:${platformPort}`;
 const localArtifactUrl = `http://${guestHostAddress}:${artifactPort}`;
 const ubuntuImageUrl = "https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img";
 const fixtureRouterName = "matrix-os-parity-router";
+const storageTlsProxyName = "matrix-os-parity-storage-tls";
+const platformContainerName = "matrix-os-parity-platform";
+const platformImageName = "matrix-os-parity-platform:working-tree";
 
 function shellQuote(value) {
   return `'${String(value).replaceAll("'", "'\\''")}'`;
@@ -63,7 +70,7 @@ export function createLocalParityPlan(options = {}) {
     "export npm_config_jobs=1",
     "export MAKEFLAGS=-j1",
     "export MATRIX_LOCAL_PARITY_BUILD=1",
-    "export MATRIX_ZELLIJ_SMOKE_TIMEOUT_MULTIPLIER=4",
+    "export MATRIX_ZELLIJ_SMOKE_TIMEOUT_MULTIPLIER=10",
     "pnpm install --frozen-lockfile --network-concurrency=4 --child-concurrency=1",
     "./scripts/build-host-bundle.sh",
     `install -D -m 0644 dist/host-bundle/matrix-host-bundle.tar.gz ${shellQuote(`/mnt/mac${bundlePath}`)}`,
@@ -122,6 +129,7 @@ export function renderLocalParityCloudInit(template, input) {
     [
       `      MATRIX_METADATA_INSTANCE_ID_URL=${artifactOrigin}/metadata/instance-id`,
       `      MATRIX_METADATA_PUBLIC_IPV4_URL=${artifactOrigin}/metadata/public-ipv4`,
+      "      NODE_EXTRA_CA_CERTS=/opt/matrix/local-parity-storage-ca.pem",
       "      DATABASE_URL=postgresql://matrix:{{postgresPassword}}@127.0.0.1:5432/matrix",
     ].join("\n"),
   );
@@ -129,7 +137,7 @@ export function renderLocalParityCloudInit(template, input) {
   return rendered;
 }
 
-export function addLocalParityOperator(template, publicKey) {
+export function addLocalParityOperator(template, publicKey, storageCertificate) {
   const operator = [
     "  - name: matrix-local-operator",
     "    groups:",
@@ -139,7 +147,14 @@ export function addLocalParityOperator(template, publicKey) {
     "    ssh_authorized_keys:",
     `      - ${publicKey.trim()}`,
   ].join("\n");
-  const withOperator = template.replace("\nwrite_files:\n", `\n${operator}\n\nwrite_files:\n`);
+  const localTrust = [
+    "  - path: /opt/matrix/local-parity-storage-ca.pem",
+    "    owner: root:root",
+    '    permissions: "0644"',
+    "    encoding: b64",
+    `    content: ${Buffer.from(storageCertificate).toString("base64")}`,
+  ].join("\n");
+  const withOperator = template.replace("\nwrite_files:\n", `\n${operator}\n\nwrite_files:\n${localTrust}\n`);
   return withOperator.replace(
     "#cloud-config\n",
     [
@@ -187,11 +202,19 @@ export function assertLocalParityMachinesAvailable(options = {}) {
   const buildName = options.builderName ?? builderName;
   const exists = options.machineExists ?? machineExists;
   const runtimeExists = options.runtimeExists ?? runtimeProcessIsOwned;
+  const containerExists = options.containerExists ?? ((name) => (
+    spawnSync("docker", ["container", "inspect", name], { stdio: "ignore" }).status === 0
+  ));
   if (runtimeExists()) {
     throw new Error(`${machineName} QEMU runtime already exists; run dev:parity:down only if you own that environment`);
   }
   if (exists(buildName)) {
     throw new Error(`${buildName} already exists; run dev:parity:down only if you own that environment`);
+  }
+  for (const name of [platformContainerName, fixtureRouterName, storageTlsProxyName]) {
+    if (containerExists(name)) {
+      throw new Error(`${name} already exists; run dev:parity:down only if you own that environment`);
+    }
   }
 }
 
@@ -249,7 +272,7 @@ export function assertOrbStackCapacity(
 }
 
 function assertPrerequisites() {
-  for (const command of ["docker", "hdiutil", "orb", "pnpm", "qemu-img", "qemu-system-x86_64", "ssh", "ssh-keygen"]) {
+  for (const command of ["docker", "hdiutil", "openssl", "orb", "pnpm", "qemu-img", "qemu-system-x86_64", "ssh", "ssh-keygen"]) {
     if (spawnSync("which", [command], { stdio: "ignore" }).status !== 0) {
       throw new Error(`${command} is required for production-parity development`);
     }
@@ -258,6 +281,18 @@ function assertPrerequisites() {
     throw new Error("Rosetta 2 is required for the production x86_64 host bundle and OrbStack machine. Install it with: softwareupdate --install-rosetta --agree-to-license");
   }
   assertOrbStackCapacity();
+}
+
+function prepareStorageTlsCertificate() {
+  rmSync(storageTlsDirectory, { recursive: true, force: true });
+  mkdirSync(storageTlsDirectory, { recursive: true });
+  run("openssl", [
+    "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-sha256", "-days", "30",
+    "-subj", "/CN=matrix-local-parity-storage",
+    "-addext", `subjectAltName=IP:${guestHostAddress}`,
+    "-keyout", storageTlsKeyPath,
+    "-out", storageTlsCertificatePath,
+  ]);
 }
 
 function prepareBaseImage() {
@@ -286,7 +321,8 @@ function prepareRuntimeFiles(renderedCloudInit, instanceId) {
   const publicKey = readFileSync(`${runtimeSshKeyPath}.pub`, "utf8").trim();
   const seedDirectory = resolve(runtimeDirectory, "seed");
   mkdirSync(seedDirectory, { recursive: true });
-  writeFileSync(resolve(seedDirectory, "user-data"), addLocalParityOperator(renderedCloudInit, publicKey), { mode: 0o600 });
+  const storageCertificate = readFileSync(storageTlsCertificatePath, "utf8");
+  writeFileSync(resolve(seedDirectory, "user-data"), addLocalParityOperator(renderedCloudInit, publicKey, storageCertificate), { mode: 0o600 });
   writeFileSync(resolve(seedDirectory, "meta-data"), `instance-id: ${instanceId}\nlocal-hostname: ${machineName}\n`, { mode: 0o600 });
   run("hdiutil", ["makehybrid", "-quiet", "-iso", "-joliet", "-default-volume-name", "cidata", "-o", runtimeSeedPath, seedDirectory]);
   run("qemu-img", ["create", "-q", "-f", "qcow2", "-F", "qcow2", "-b", baseImagePath, runtimeDiskPath, "64G"]);
@@ -308,7 +344,6 @@ export function qemuRuntimeArguments(options = {}) {
     "-drive", `if=virtio,format=raw,readonly=on,file=${seedPath}`,
     "-netdev", "user,id=net0,hostfwd=tcp:127.0.0.1:2222-:22,hostfwd=tcp:127.0.0.1:8443-:443",
     "-device", "virtio-net-pci,netdev=net0,mac=52:54:00:4d:58:01",
-    "-no-reboot",
   ];
 }
 
@@ -330,14 +365,12 @@ function fixtureAddressIsInstalled() {
   return run("ifconfig", ["lo0"], { capture: true }).includes(`inet ${fixturePublicAddress} `);
 }
 
-function installFixtureAddress() {
-  if (!fixtureAddressIsInstalled()) run("sudo", ["ifconfig", "lo0", "alias", fixturePublicAddress, "netmask", "255.255.255.255"]);
-}
-
-function removeFixtureAddress() {
-  if (!fixtureAddressIsInstalled()) return;
-  const result = spawnSync("sudo", ["ifconfig", "lo0", "-alias", fixturePublicAddress], { cwd: root, stdio: "inherit" });
-  if (result.error) throw result.error;
+export function assertFixtureAddressInstalled(isInstalled = fixtureAddressIsInstalled) {
+  if (!isInstalled()) {
+    throw new Error(
+      `The production routing fixture needs an approved one-time host setup. Run: sudo ifconfig lo0 alias ${fixturePublicAddress} netmask 255.255.255.255`,
+    );
+  }
 }
 
 function startFixtureRouter() {
@@ -358,10 +391,33 @@ function stopFixtureRouter() {
   }
 }
 
+function startStorageTlsProxy() {
+  run("docker", [
+    "run", "--detach", "--name", storageTlsProxyName,
+    "--publish", `0.0.0.0:${storageTlsPort}:${storageTlsPort}`,
+    "--volume", `${storageTlsDirectory}:/tls:ro`,
+    "alpine:latest", "sh", "-c",
+    `apk add --no-cache socat >/dev/null && exec socat OPENSSL-LISTEN:${storageTlsPort},fork,reuseaddr,cert=/tls/certificate.pem,key=/tls/key.pem,verify=0 TCP:host.docker.internal:9100`,
+  ]);
+}
+
+function stopStorageTlsProxy() {
+  if (spawnSync("docker", ["container", "inspect", storageTlsProxyName], { stdio: "ignore" }).status === 0) {
+    run("docker", ["rm", "--force", storageTlsProxyName]);
+  }
+}
+
+function stopPlatformContainer() {
+  if (spawnSync("docker", ["container", "inspect", platformContainerName], { stdio: "ignore" }).status === 0) {
+    run("docker", ["rm", "--force", platformContainerName]);
+  }
+}
+
 function sshArguments(command) {
   return [
     "-i", runtimeSshKeyPath,
     "-o", "BatchMode=yes",
+    "-o", "IdentitiesOnly=yes",
     "-o", "ConnectTimeout=5",
     "-p", "2222",
     "-o", "StrictHostKeyChecking=no",
@@ -380,6 +436,22 @@ async function waitForRuntimeSsh(timeoutMs = 15 * 60_000) {
     await new Promise((resolvePromise) => setTimeout(resolvePromise, 5_000));
   }
   throw new Error(`Timed out waiting for the production VM; inspect ${runtimeLogPath}`);
+}
+
+async function waitForRuntimeReadiness(timeoutMs = 30 * 60_000) {
+  const deadline = Date.now() + timeoutMs;
+  const probe = [
+    "sudo", "test", "-f", "/opt/matrix/register-complete", "&&",
+    "sudo", "systemctl", "is-active", "--quiet",
+    "nginx", "matrix-gateway", "matrix-shell", "matrix-scope-runtime", "matrix-terminal-runtime",
+  ];
+  while (Date.now() < deadline) {
+    const result = spawnSync("ssh", sshArguments(probe), { cwd: root, stdio: "ignore" });
+    if (result.status === 0) return;
+    if (!runtimeProcessIsOwned()) throw new Error(`QEMU exited during readiness checks; inspect ${runtimeLogPath}`);
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 5_000));
+  }
+  throw new Error("Timed out waiting for production registration and runtime services");
 }
 
 function runInRuntime(command, options = {}) {
@@ -424,6 +496,7 @@ function loadState() {
     handle: env.MATRIX_PARITY_HANDLE?.trim() || "local",
     hetznerServerId: 424242,
     platformSecret: randomBytes(32).toString("hex"),
+    platformJwtSecret: randomBytes(32).toString("hex"),
     registrationToken: randomBytes(32).toString("base64url"),
     registrationTokenExpiresAt: new Date(Date.now() + 4 * 60 * 60 * 1000).toISOString(),
     postgresPassword: randomBytes(24).toString("base64url"),
@@ -520,39 +593,98 @@ function startArtifactServer(state) {
   }).listen(artifactPort, "0.0.0.0");
 }
 
-function platformEnvironment(state, clerkJwtKey) {
+function publicBuildEnvironment() {
+  const env = { ...parseEnvFile(resolve(root, ".env")), ...process.env };
   return {
-    ...process.env,
-    CLERK_SECRET_KEY: "",
+    NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY ?? "",
+    NEXT_PUBLIC_CLERK_SIGN_IN_URL: env.NEXT_PUBLIC_CLERK_SIGN_IN_URL ?? "/sign-in",
+    NEXT_PUBLIC_CLERK_SIGN_UP_URL: env.NEXT_PUBLIC_CLERK_SIGN_UP_URL ?? "/sign-up",
+    NEXT_PUBLIC_POSTHOG_KEY: env.NEXT_PUBLIC_POSTHOG_KEY ?? "",
+    NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN: env.NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN ?? "",
+    NEXT_PUBLIC_POSTHOG_HOST: env.NEXT_PUBLIC_POSTHOG_HOST ?? "",
+    NEXT_PUBLIC_POSTHOG_API_HOST: env.NEXT_PUBLIC_POSTHOG_API_HOST ?? "",
+    NEXT_PUBLIC_MATRIX_APP_URL: `http://app.localhost:${platformPort}`,
+  };
+}
+
+export function clerkSecretIsConfigured(value) {
+  return /^sk_(?:test|live)_[A-Za-z0-9_-]{16,}$/.test(value?.trim() ?? "");
+}
+
+function configuredClerkSecret(value) {
+  if (!clerkSecretIsConfigured(value)) return "";
+  return value.trim();
+}
+
+export function platformImageBuildArguments(publicEnv, options = {}) {
+  const imageName = options.imageName ?? platformImageName;
+  const args = ["build", "--file", "Dockerfile.platform", "--tag", imageName];
+  for (const [key, value] of Object.entries(publicEnv)) {
+    args.push("--build-arg", `${key}=${value}`);
+  }
+  args.push(".");
+  return args;
+}
+
+export function platformEnvironment(state, clerkJwtKey) {
+  const localEnv = { ...parseEnvFile(resolve(root, ".env.docker")), ...parseEnvFile(resolve(root, ".env")), ...process.env };
+  const clerkSecret = configuredClerkSecret(localEnv.CLERK_SECRET_KEY);
+  const hasClerkCredential = clerkSecret.length > 0;
+  return {
+    PATH: process.env.PATH,
+    HOME: process.env.HOME,
+    ...publicBuildEnvironment(),
+    AUTH_SHELL_ENABLED: String(hasClerkCredential),
+    AUTH_SHELL_CLERK_SECRET_KEY: clerkSecret,
+    ...(!hasClerkCredential && { NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: "" }),
     CLERK_JWT_KEY: clerkJwtKey,
     PLATFORM_RUNTIME_MODE: "local",
+    PLATFORM_PREVIEW: "true",
     PLATFORM_BACKGROUND_WORKERS_ENABLED: "false",
     CUSTOMER_VPS_ENABLED: "true",
-    CUSTOMER_VPS_CLOUD_INIT_PATH: resolve(root, "distro/customer-vps/cloud-init.yaml"),
-    GOLDEN_SNAPSHOT_BUILDER_CLOUD_INIT_PATH: resolve(root, "distro/customer-vps/golden-snapshot-builder-cloud-init.yaml"),
+    CUSTOMER_VPS_CLOUD_INIT_PATH: "distro/customer-vps/cloud-init.yaml",
+    GOLDEN_SNAPSHOT_BUILDER_CLOUD_INIT_PATH: "distro/customer-vps/golden-snapshot-builder-cloud-init.yaml",
     GOLDEN_SNAPSHOT_OPERATOR_SECRET: createHmac("sha256", state.platformSecret).update("local-golden-snapshot-operator").digest("hex"),
     GOLDEN_SNAPSHOTS_ENABLED: "false",
     GOLDEN_SNAPSHOT_BUILDS_ENABLED: "false",
     MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED: "false",
     MATRIX_BIND_HOST: "0.0.0.0",
-    PLATFORM_PORT: String(platformPort),
+    PLATFORM_PORT: "8080",
     PLATFORM_PUBLIC_URL: localPlatformUrl,
-    PLATFORM_DATABASE_URL: "postgresql://matrixos:matrixos@127.0.0.1:5432/matrixos_platform",
+    PLATFORM_DATABASE_URL: "postgresql://matrixos:matrixos@host.docker.internal:5432/matrixos_platform",
     PLATFORM_SECRET: state.platformSecret,
+    PLATFORM_JWT_SECRET: state.platformJwtSecret,
     CUSTOMER_VPS_TLS_VERIFY: "false",
-    S3_ENDPOINT: "http://127.0.0.1:9100",
-    S3_PUBLIC_ENDPOINT: "http://127.0.0.1:9100",
+    S3_ENDPOINT: "http://host.docker.internal:9100",
+    S3_PUBLIC_ENDPOINT: `https://${guestHostAddress}:${storageTlsPort}`,
     S3_ACCESS_KEY_ID: "matrixos",
     S3_SECRET_ACCESS_KEY: "matrixos123",
     S3_BUCKET: "matrixos-sync",
     S3_FORCE_PATH_STYLE: "true",
-    S3_BUNDLES_ENDPOINT: "http://127.0.0.1:9100",
-    S3_BUNDLES_PUBLIC_ENDPOINT: `http://${guestHostAddress}:9100`,
+    S3_BUNDLES_ENDPOINT: "http://host.docker.internal:9100",
+    S3_BUNDLES_PUBLIC_ENDPOINT: `https://${guestHostAddress}:${storageTlsPort}`,
     S3_BUNDLES_ACCESS_KEY_ID: "matrixos",
     S3_BUNDLES_SECRET_ACCESS_KEY: "matrixos123",
     S3_BUNDLES_BUCKET: "matrixos-host-bundles",
     S3_BUNDLES_FORCE_PATH_STYLE: "true",
   };
+}
+
+export function platformContainerArguments(env, options = {}) {
+  const containerName = options.containerName ?? platformContainerName;
+  const imageName = options.imageName ?? platformImageName;
+  const hostPort = options.hostPort ?? platformPort;
+  const args = [
+    "run", "--detach", "--name", containerName,
+    "--publish", `0.0.0.0:${hostPort}:8080`,
+  ];
+  for (const key of Object.keys(env)) args.push("--env", key);
+  args.push(imageName);
+  return args;
+}
+
+function startPlatformContainer(env) {
+  run("docker", platformContainerArguments(env), { env });
 }
 
 async function up() {
@@ -561,12 +693,24 @@ async function up() {
   await Promise.all([
     assertTcpPortAvailable(platformPort),
     assertTcpPortAvailable(artifactPort),
+    assertTcpPortAvailable(storageTlsPort),
   ]);
+  assertFixtureAddressInstalled();
   const clerkJwtKey = await fetchProductionClerkJwtKey();
   const state = loadState();
   const plan = createLocalParityPlan({ root, machineName, builderName });
   buildBundle(plan);
+  const publicEnv = publicBuildEnvironment();
+  if (!publicEnv.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY) {
+    throw new Error("NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY is required to build the production platform image");
+  }
+  const configuredEnv = { ...parseEnvFile(resolve(root, ".env.docker")), ...parseEnvFile(resolve(root, ".env")), ...process.env };
+  if (!clerkSecretIsConfigured(configuredEnv.CLERK_SECRET_KEY)) {
+    console.warn("CLERK_SECRET_KEY is unavailable; browser auth will return a bounded unavailable response, while the production VM still starts");
+  }
+  run("docker", platformImageBuildArguments(publicEnv));
   prepareBaseImage();
+  prepareStorageTlsCertificate();
   state.bundleSha256 = readFileSync(bundleChecksumPath, "utf8").trim().split(/\s+/)[0];
   writeFileSync(statePath, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600 });
   const template = readFileSync(resolve(root, "distro/customer-vps/cloud-init.yaml"), "utf8");
@@ -578,48 +722,38 @@ async function up() {
   mkdirSync(stateDirectory, { recursive: true });
   writeFileSync(cloudInitPath, rendered, { mode: 0o600 });
   prepareRuntimeFiles(rendered, state.machineId);
-  installFixtureAddress();
-  state.fixtureAddressInstalled = true;
-  writeFileSync(statePath, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600 });
 
   run("docker", ["compose", "-f", "docker-compose.dev.yml", "up", "--detach", "postgres", "minio", "minio-alias", "minio-init"]);
   startFixtureRouter();
   await waitFor("http://127.0.0.1:9100/minio/health/live");
+  startStorageTlsProxy();
   const env = platformEnvironment(state, clerkJwtKey);
-  run("pnpm", ["exec", "tsx", "scripts/dev-production-parity-seed.ts"], { env });
-  const artifactServer = startArtifactServer(state);
-  const platform = spawn("pnpm", ["--filter", "@matrix-os/platform", "dev"], {
-    cwd: root,
-    detached: process.platform !== "win32",
-    env,
-    stdio: "inherit",
+  run("pnpm", ["exec", "tsx", "scripts/dev-production-parity-seed.ts"], {
+    env: {
+      ...env,
+      PLATFORM_DATABASE_URL: "postgresql://matrixos:matrixos@127.0.0.1:5432/matrixos_platform",
+    },
   });
+  const artifactServer = startArtifactServer(state);
+  startPlatformContainer(env);
   try {
-    await Promise.race([
-      waitFor(`http://127.0.0.1:${platformPort}/health`),
-      new Promise((_, rejectPromise) => {
-        platform.once("exit", (code, signal) => rejectPromise(new Error(`platform stopped before readiness (code ${code}, signal ${signal})`)));
-      }),
-    ]);
+    await waitFor(`http://127.0.0.1:${platformPort}/health`);
     startQemuRuntime();
     await waitForRuntimeSsh();
     // Keep the event loop available to serve the host bundle while cloud-init
     // downloads and installs it in the guest.
     await runInRuntimeAsync(["sudo", "cloud-init", "status", "--wait", "--long"]);
+    await waitForRuntimeReadiness();
     console.log(`\nProduction-parity VM is ready. Platform: http://127.0.0.1:${platformPort}`);
     console.log(`Machine: https://${fixturePublicAddress} (production auth still applies)`);
     console.log("Keep this process running; Ctrl+C stops only the local platform and artifact server.\n");
-    await new Promise((resolvePromise, rejectPromise) => {
-      platform.once("exit", (code, signal) => code === 0 || signal ? resolvePromise() : rejectPromise(new Error(`platform exited with code ${code}`)));
+    await new Promise((resolvePromise) => {
       process.once("SIGINT", resolvePromise);
       process.once("SIGTERM", resolvePromise);
     });
   } finally {
     artifactServer.close();
-    if (platform.exitCode === null && platform.pid !== undefined) {
-      if (process.platform === "win32") platform.kill("SIGTERM");
-      else process.kill(-platform.pid, "SIGTERM");
-    }
+    stopPlatformContainer();
   }
 }
 
@@ -636,10 +770,8 @@ async function down() {
     }
   }
   stopFixtureRouter();
-  if (existsSync(statePath)) {
-    const state = JSON.parse(readFileSync(statePath, "utf8"));
-    if (state.fixtureAddressInstalled) removeFixtureAddress();
-  }
+  stopStorageTlsProxy();
+  stopPlatformContainer();
   rmSync(runtimeDirectory, { recursive: true, force: true });
   if (machineExists(builderName)) run("orb", ["delete", "--force", builderName]);
   run("docker", ["compose", "-f", "docker-compose.dev.yml", "stop", "postgres", "minio"]);
@@ -651,6 +783,7 @@ function status() {
     return;
   }
   console.log(`${machineName}: QEMU pid ${readRuntimePid()} (Ubuntu 24.04 amd64, TCG)`);
+  run("docker", ["ps", "--filter", `name=^/${platformContainerName}$`, "--format", "{{.Names}}: {{.Status}}"]);
   runInRuntime(["sudo", "cloud-init", "status", "--long"]);
   const checks = [
     ["systemctl", "--no-pager", "--failed"],
@@ -664,6 +797,9 @@ function status() {
 
 function logs() {
   if (!runtimeProcessIsOwned()) throw new Error(`${machineName} does not exist`);
+  if (spawnSync("docker", ["container", "inspect", platformContainerName], { stdio: "ignore" }).status === 0) {
+    run("docker", ["logs", "--tail", "300", platformContainerName]);
+  }
   if (existsSync(runtimeLogPath)) process.stdout.write(readFileSync(runtimeLogPath, "utf8"));
   runInRuntime(["sudo", "journalctl", "--no-pager", "-n", "300", "-u", "cloud-final.service", "-u", "matrix-gateway.service", "-u", "matrix-shell.service", "-u", "matrix-terminal-runtime.service", "-u", "matrix-vps-registration.service"]);
 }

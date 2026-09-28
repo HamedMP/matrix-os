@@ -13,12 +13,16 @@ import {
 } from "../../scripts/dev-local.mjs";
 import {
   addLocalParityOperator,
+  assertFixtureAddressInstalled,
   assertLocalParityMachinesAvailable,
   assertOrbStackCapacity,
   assertTcpPortAvailable,
   builderSetupScript,
+  clerkSecretIsConfigured,
   createLocalParityPlan,
   fetchProductionClerkJwtKey,
+  platformContainerArguments,
+  platformImageBuildArguments,
   qemuRuntimeArguments,
   renderLocalParityCloudInit,
   runtimeProcessIsOwned,
@@ -49,6 +53,11 @@ describe("local development contracts", () => {
     expect(pkg.engines.node).toBe(">=24 <25");
     expect(workspace.useNodeVersion).toBe("24.18.0");
     expect(readFileSync(resolve(root, ".nvmrc"), "utf8").trim()).toBe("24.18.0");
+    expect(readFileSync(resolve(root, "Dockerfile.platform"), "utf8"))
+      .toContain("RUN sed -i '/^useNodeVersion:/d' pnpm-workspace.yaml");
+    const dockerIgnore = readFileSync(resolve(root, ".dockerignore"), "utf8");
+    expect(dockerIgnore).toContain("**/.env*");
+    expect(dockerIgnore).toMatch(/^\.amp$/m);
   });
 
   it("uses pnpm package filters for source dev under the global virtual store", () => {
@@ -134,7 +143,7 @@ describe("local development contracts", () => {
     expect(plan.buildCommand).toContain("NODE_OPTIONS=--max-old-space-size=2048");
     expect(plan.buildCommand).toContain("ERL_AFLAGS='+JMsingle true'");
     expect(plan.buildCommand).toContain("MATRIX_LOCAL_PARITY_BUILD=1");
-    expect(plan.buildCommand).toContain("MATRIX_ZELLIJ_SMOKE_TIMEOUT_MULTIPLIER=4");
+    expect(plan.buildCommand).toContain("MATRIX_ZELLIJ_SMOKE_TIMEOUT_MULTIPLIER=10");
     expect(plan.buildCommand).toContain("pnpm install --frozen-lockfile --network-concurrency=4 --child-concurrency=1");
     expect(plan.buildCommand).not.toContain(`${root}/node_modules`);
     expect(builderSetupScript()).toContain("fallocate -l 8G /matrix-build.swap");
@@ -147,6 +156,7 @@ describe("local development contracts", () => {
     expect(qemuArgs).toContain("q35,accel=tcg");
     expect(qemuArgs).toContain("user,id=net0,hostfwd=tcp:127.0.0.1:2222-:22,hostfwd=tcp:127.0.0.1:8443-:443");
     expect(qemuArgs).toContain("if=virtio,format=raw,readonly=on,file=/runtime/cidata.iso");
+    expect(qemuArgs).not.toContain("-no-reboot");
   });
 
   it("uses Clerk's public production JWKS for local token verification", async () => {
@@ -166,12 +176,62 @@ describe("local development contracts", () => {
       /^-----BEGIN PUBLIC KEY-----/,
     );
     const launcher = readFileSync(resolve(root, "scripts/dev-production-parity.mjs"), "utf8");
-    expect(launcher).toContain('CLERK_SECRET_KEY: ""');
+    expect(launcher).toContain("AUTH_SHELL_CLERK_SECRET_KEY: clerkSecret");
     expect(launcher).toContain("CLERK_JWT_KEY: clerkJwtKey");
-    expect(launcher).toContain('CUSTOMER_VPS_CLOUD_INIT_PATH: resolve(root, "distro/customer-vps/cloud-init.yaml")');
-    expect(launcher).toContain('GOLDEN_SNAPSHOT_BUILDER_CLOUD_INIT_PATH: resolve(root, "distro/customer-vps/golden-snapshot-builder-cloud-init.yaml")');
+    expect(launcher).toContain('CUSTOMER_VPS_CLOUD_INIT_PATH: "distro/customer-vps/cloud-init.yaml"');
+    expect(launcher).toContain('GOLDEN_SNAPSHOT_BUILDER_CLOUD_INIT_PATH: "distro/customer-vps/golden-snapshot-builder-cloud-init.yaml"');
     expect(launcher).toContain('GOLDEN_SNAPSHOTS_ENABLED: "false"');
+    expect(launcher).toContain('PLATFORM_PREVIEW: "true"');
+    expect(launcher).toContain("PLATFORM_JWT_SECRET: state.platformJwtSecret");
+    expect(launcher).toContain('S3_PUBLIC_ENDPOINT: `https://${guestHostAddress}:${storageTlsPort}`');
+    expect(launcher).toContain('"sudo", "test", "-f", "/opt/matrix/register-complete"');
+    expect(launcher).toContain("Timed out waiting for production registration and runtime services");
+    expect(launcher).toContain('"-o", "IdentitiesOnly=yes"');
     expect(launcher).not.toContain('platformSecret: env.PLATFORM_SECRET');
+    expect(launcher).toContain("browser auth will return a bounded unavailable response");
+    expect(clerkSecretIsConfigured(`sk_${"test"}_${"a".repeat(24)}`)).toBe(true);
+    expect(clerkSecretIsConfigured("placeholder")).toBe(false);
+  });
+
+  it("runs the production platform image with its bundled auth shell", () => {
+    const publicEnv = {
+      NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: "pk_test_local",
+      NEXT_PUBLIC_CLERK_SIGN_IN_URL: "/sign-in",
+    };
+    expect(platformImageBuildArguments(publicEnv, { imageName: "platform:test" })).toEqual([
+      "build",
+      "--file",
+      "Dockerfile.platform",
+      "--tag",
+      "platform:test",
+      "--build-arg",
+      "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_local",
+      "--build-arg",
+      "NEXT_PUBLIC_CLERK_SIGN_IN_URL=/sign-in",
+      ".",
+    ]);
+
+    const runtimeEnv = {
+      CLERK_JWT_KEY: "public-key",
+      PLATFORM_DATABASE_URL: "postgresql://host.docker.internal/platform",
+    };
+    expect(platformContainerArguments(runtimeEnv, {
+      containerName: "platform-local",
+      imageName: "platform:test",
+      hostPort: 9443,
+    })).toEqual([
+      "run",
+      "--detach",
+      "--name",
+      "platform-local",
+      "--publish",
+      "0.0.0.0:9443:8080",
+      "--env",
+      "CLERK_JWT_KEY",
+      "--env",
+      "PLATFORM_DATABASE_URL",
+      "platform:test",
+    ]);
   });
 
   it("refuses to replace an existing parity runtime or builder", () => {
@@ -185,7 +245,15 @@ describe("local development contracts", () => {
       builderName: "matrix-os-local-builder",
       machineExists: (name: string) => name === "matrix-os-local-builder",
       runtimeExists: () => false,
+      containerExists: () => false,
     })).toThrow("matrix-os-local-builder already exists");
+
+    expect(() => assertLocalParityMachinesAvailable({
+      builderName: "matrix-os-local-builder",
+      machineExists: () => false,
+      runtimeExists: () => false,
+      containerExists: (name: string) => name === "matrix-os-parity-platform",
+    })).toThrow("matrix-os-parity-platform already exists");
 
     expect(runtimeProcessIsOwned({
       pid: 123,
@@ -204,6 +272,15 @@ describe("local development contracts", () => {
       "orb config set memory_mib 6144",
     );
     expect(() => assertOrbStackCapacity(() => "6144")).not.toThrow();
+  });
+
+  it("requires explicitly approved host routing without taking ownership of it", () => {
+    expect(() => assertFixtureAddressInstalled(() => false)).toThrow(
+      "sudo ifconfig lo0 alias 192.0.2.2 netmask 255.255.255.255",
+    );
+    expect(() => assertFixtureAddressInstalled(() => true)).not.toThrow();
+    const launcher = readFileSync(resolve(root, "scripts/dev-production-parity.mjs"), "utf8");
+    expect(launcher).not.toContain('ifconfig", "lo0", "-alias"');
   });
 
   it("rejects an occupied readiness port rather than accepting a stale service", async () => {
@@ -244,16 +321,26 @@ describe("local development contracts", () => {
       .toContain("/opt/matrix/terminal-runtime/current/matrix-terminal-user-keeper.mjs %i");
     expect(rendered).toContain("MATRIX_METADATA_INSTANCE_ID_URL=http://10.0.2.2:9876/metadata/instance-id");
     expect(rendered).toContain("MATRIX_METADATA_PUBLIC_IPV4_URL=http://10.0.2.2:9876/metadata/public-ipv4");
+    expect(rendered).toContain("NODE_EXTRA_CA_CERTS=/opt/matrix/local-parity-storage-ca.pem");
     expect(rendered).not.toContain("growpart:\n  mode: off\nresize_rootfs: false");
     expect(rendered).not.toMatch(/\{\{[a-zA-Z0-9_]+\}\}/);
     expect(rendered).not.toContain("MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED");
 
-    const localSeed = parse(addLocalParityOperator(rendered, "ssh-ed25519 AAAA local")) as {
+    const localSeed = parse(addLocalParityOperator(
+      rendered,
+      "ssh-ed25519 AAAA local",
+      "-----BEGIN CERTIFICATE-----\nlocal\n-----END CERTIFICATE-----\n",
+    )) as {
       bootcmd: string[];
       users: Array<{ name: string }>;
+      write_files: Array<{ path: string; content: string }>;
     };
     expect(localSeed.users.map((user) => user.name)).toEqual(["matrix", "matrix-local-operator"]);
     expect(localSeed.bootcmd[0]).toContain("ip address replace 192.0.2.2/32");
+    const encodedCertificate = localSeed.write_files.find(
+      (file) => file.path === "/opt/matrix/local-parity-storage-ca.pem",
+    )?.content;
+    expect(Buffer.from(encodedCertificate ?? "", "base64").toString("utf8")).toContain("BEGIN CERTIFICATE");
   });
 
   it("gives host services deterministic local infrastructure and auth-bypass settings", () => {
