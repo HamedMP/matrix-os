@@ -8,6 +8,20 @@ const MAX_MEMBERSHIPS = 1_000;
 const MARKER_LOOKUP_CONCURRENCY = 16;
 const MAX_BYTES = 64 * 1024;
 const TIMEOUT_MS = 10_000;
+const INVITATION_PAGE_SIZE = 50;
+const InvitationIdSchema = z.string().regex(/^orginv_[A-Za-z0-9_]{1,120}$/);
+const InvitationSchema = z.object({
+  id: InvitationIdSchema,
+  organization_id: ClerkOrganizationIdSchema,
+  email_address: z.email().max(320),
+  role: z.enum(["org:admin", "org:member"]),
+  status: z.string().max(32).optional(),
+  expires_at: z.number().int().nonnegative(),
+}).passthrough();
+const InvitationPageSchema = z.object({
+  data: z.array(InvitationSchema).max(INVITATION_PAGE_SIZE),
+  total_count: z.number().int().nonnegative(),
+}).passthrough();
 const RequestIdSchema = z.uuid();
 const OrganizationSchema = z.object({
   id: ClerkOrganizationIdSchema,
@@ -29,6 +43,9 @@ export type OrganizationMarkerLookup =
 export interface ClerkOrganizationAdmin {
   createOrganization(input: { actorId: string; name: string; requestId: string }): Promise<{ organizationId: string }>;
   findCreatedOrganization(input: { actorId: string; requestId: string; createdAt: Date }): Promise<OrganizationMarkerLookup>;
+  createInvitation(input: { organizationId: string; actorId: string; emailAddress: string; role: "org:admin" | "org:member"; redirectUrl: string; requestId: string }): Promise<{ invitationId: string; expiresAt: Date }>;
+  listInvitations(input: { organizationId: string; limit: number; offset: number }): Promise<{ invitations: Array<{ invitationId: string; emailAddress: string; role: string; status: string; expiresAt: Date }>; totalCount: number }>;
+  revokeInvitation(input: { organizationId: string; invitationId: string; actorId: string }): Promise<void>;
 }
 
 export class ClerkOrganizationAdminClient implements ClerkOrganizationAdmin {
@@ -51,6 +68,47 @@ export class ClerkOrganizationAdminClient implements ClerkOrganizationAdmin {
       }),
     }));
     return { organizationId: organization.id };
+  }
+
+  async createInvitation(input: { organizationId: string; actorId: string; emailAddress: string; role: "org:admin" | "org:member"; redirectUrl: string; requestId: string }): Promise<{ invitationId: string; expiresAt: Date }> {
+    const organizationId = ClerkOrganizationIdSchema.parse(input.organizationId);
+    const actorId = ClerkActorIdSchema.parse(input.actorId);
+    const requestId = RequestIdSchema.parse(input.requestId);
+    const invite = InvitationSchema.parse(await this.request(`${BASE}/organizations/${encodeURIComponent(organizationId)}/invitations`, {
+      method: "POST",
+      body: JSON.stringify({ email_address: input.emailAddress, inviter_user_id: actorId, role: input.role, redirect_url: input.redirectUrl,
+        private_metadata: { matrixInviteRequestId: requestId } }),
+    }));
+    if (invite.organization_id !== organizationId || invite.email_address.toLowerCase() !== input.emailAddress.toLowerCase()) {
+      throw new Error("Clerk invitation identity mismatch");
+    }
+    return { invitationId: invite.id, expiresAt: new Date(invite.expires_at) };
+  }
+
+  async listInvitations(input: { organizationId: string; limit: number; offset: number }): Promise<{ invitations: Array<{ invitationId: string; emailAddress: string; role: string; status: string; expiresAt: Date }>; totalCount: number }> {
+    const organizationId = ClerkOrganizationIdSchema.parse(input.organizationId);
+    if (!Number.isInteger(input.limit) || input.limit < 1 || input.limit > INVITATION_PAGE_SIZE || !Number.isInteger(input.offset) || input.offset < 0 || input.offset > 500) throw new Error("Invalid invitation page");
+    const url = new URL(`${BASE}/organizations/${encodeURIComponent(organizationId)}/invitations`);
+    url.searchParams.set("limit", String(input.limit));
+    url.searchParams.set("offset", String(input.offset));
+    url.searchParams.set("status", "pending");
+    const page = InvitationPageSchema.parse(await this.request(url.toString()));
+    if (page.data.some((item) => item.organization_id !== organizationId)) throw new Error("Clerk invitation organization mismatch");
+    return {
+      invitations: page.data.filter((item) => item.status === "pending")
+        .map((item) => ({ invitationId: item.id, emailAddress: item.email_address, role: item.role, status: "pending", expiresAt: new Date(item.expires_at) })),
+      totalCount: page.total_count,
+    };
+  }
+
+  async revokeInvitation(input: { organizationId: string; invitationId: string; actorId: string }): Promise<void> {
+    const organizationId = ClerkOrganizationIdSchema.parse(input.organizationId);
+    const invitationId = InvitationIdSchema.parse(input.invitationId);
+    const actorId = ClerkActorIdSchema.parse(input.actorId);
+    const response = InvitationSchema.parse(await this.request(`${BASE}/organizations/${encodeURIComponent(organizationId)}/invitations/${encodeURIComponent(invitationId)}/revoke`, {
+      method: "POST", body: JSON.stringify({ requesting_user_id: actorId }),
+    }));
+    if (response.id !== invitationId || response.organization_id !== organizationId) throw new Error("Clerk invitation revoke mismatch");
   }
 
   async findCreatedOrganization(input: { actorId: string; requestId: string; createdAt: Date }): Promise<OrganizationMarkerLookup> {

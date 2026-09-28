@@ -97,6 +97,7 @@ export interface OrganizationPlatformDatabase {
   collaboration_denial_runtimes: CollaborationDenialRuntimesTable;
   organization_admin_requests: OrganizationAdminRequestsTable;
   organization_admin_counters: OrganizationAdminCountersTable;
+  organization_invitation_records: OrganizationInvitationRecordsTable;
 }
 
 export type OrganizationAdminRequestState = "pending" | "created" | "listed" | "needs_review" | "failed";
@@ -119,6 +120,18 @@ export interface OrganizationAdminCountersTable {
   count: number;
 }
 
+export interface OrganizationInvitationRecordsTable {
+  organization_id: string;
+  address_digest: string;
+  client_request_id: string;
+  role: "org:admin" | "org:member";
+  invitation_id: string | null;
+  inviter_id: string;
+  expires_at: Timestamp;
+  lease_until: Timestamp;
+  created_at: Timestamp;
+}
+
 /**
  * Runs the DDL under the platform schema-migration advisory lock inside one
  * transaction with deadlock retry, so concurrent platform revisions cannot
@@ -131,6 +144,22 @@ export async function bootstrapPlatformOrganizationDatabase(
 }
 
 async function createOrganizationTables(db: Transaction<OrganizationPlatformDatabase>): Promise<void> {
+  await sql`
+    CREATE TABLE IF NOT EXISTS organization_invitation_records (
+      organization_id TEXT NOT NULL CHECK (organization_id ~ '^org_[A-Za-z0-9]{1,124}$'),
+      address_digest CHAR(64) NOT NULL,
+      client_request_id UUID NOT NULL,
+      role TEXT NOT NULL CHECK (role IN ('org:admin', 'org:member')),
+      invitation_id TEXT CHECK (invitation_id IS NULL OR char_length(invitation_id) BETWEEN 1 AND 128),
+      inviter_id TEXT NOT NULL CHECK (char_length(inviter_id) BETWEEN 1 AND 128),
+      expires_at TIMESTAMPTZ NOT NULL,
+      lease_until TIMESTAMPTZ NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL,
+      PRIMARY KEY (organization_id, address_digest),
+      UNIQUE (organization_id, client_request_id)
+    )
+  `.execute(db);
+  await sql`CREATE INDEX IF NOT EXISTS idx_organization_invitation_records_expiry ON organization_invitation_records(expires_at)`.execute(db);
   await sql`
     CREATE TABLE IF NOT EXISTS organization_admin_requests (
       actor_id TEXT NOT NULL CHECK (char_length(actor_id) BETWEEN 1 AND 128),

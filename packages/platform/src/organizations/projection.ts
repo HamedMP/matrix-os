@@ -30,6 +30,8 @@ export interface OrganizationMembershipProjection {
   isCurrentMember(input: { organizationId: string; actorId: string }): Promise<boolean>;
   touch(organizationId: string): void;
   reconcile(organizationId: string): Promise<{ verified: boolean; endedMemberships: EndedMembership[] }>;
+  /** Waits for any older pass, then starts a pass after this call began. */
+  reconcileFresh(organizationId: string): Promise<{ verified: boolean; endedMemberships: EndedMembership[] }>;
   describe(): { tracked: number; inflight: number; upstream: boolean };
   shutdown(): Promise<void>;
 }
@@ -160,6 +162,15 @@ export function createOrganizationMembershipProjection(options: {
     },
     touch,
     reconcile,
+    async reconcileFresh(organizationId) {
+      const earlier = inflight.get(organizationId);
+      if (earlier) {
+        try { await earlier; } catch (error: unknown) {
+          console.warn("[organizations] earlier reconciliation failed", error instanceof Error ? error.name : "UnknownError");
+        }
+      }
+      return reconcile(organizationId);
+    },
     describe() {
       return { tracked: tracked.size, inflight: inflight.size, upstream: Boolean(options.upstream) };
     },

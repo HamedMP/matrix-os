@@ -151,6 +151,16 @@ export function createPlatformOrganizationRoutes(options: {
     if (parsed.kind === "invalid") return safeJson(c, "Invalid request", 400);
     c.header("Cache-Control", "no-store");
     if (parsed.kind === "ignored") return c.json({ received: true, outcome: "ignored" });
+    if (parsed.kind === "invitation_terminal") {
+      if (!options.adminRepository) return safeJson(c, "Webhook unavailable", 503);
+      try {
+        await options.adminRepository.deleteInvitationTerminal(parsed.organizationId, parsed.invitationId, parsed.requestId);
+        return c.json({ received: true, outcome: "applied" });
+      } catch (error: unknown) {
+        console.warn("[organizations] invitation webhook failed", error instanceof Error ? error.name : "UnknownError");
+        return safeJson(c, "Webhook unavailable", 503);
+      }
+    }
     try {
       const result = await applyClerkOrganizationEvent(options.repository, parsed.event, {
         payloadHash: createHash("sha256").update(body).digest("hex"),

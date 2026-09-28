@@ -1,10 +1,29 @@
-import { sql, type Kysely, type Selectable } from "kysely";
-import type { OrganizationAdminRequestsTable, OrganizationAdminRequestState, OrganizationPlatformDatabase } from "./database.js";
+import { sql, type Kysely, type Selectable, type Transaction } from "kysely";
+import { createHmac, hkdfSync } from "node:crypto";
+import type { OrganizationAdminRequestsTable, OrganizationAdminRequestState, OrganizationInvitationRecordsTable, OrganizationPlatformDatabase } from "./database.js";
 
 const CREATE_LIMIT = 3;
 const DAY_MS = 24 * 60 * 60_000;
 const INITIAL_SETTLE_MS = 2 * 60_000;
 const CLAIM_LEASE_MS = 5 * 60_000;
+const INVITE_SETTLE_MS = 2 * 60_000;
+const INVITE_TTL_MS = 30 * DAY_MS;
+const HOUR_MS = 60 * 60_000;
+
+export class OrganizationInvitationLimitError extends Error {
+  constructor(readonly retryAfterSeconds: number) { super("Organization invitation limit reached"); }
+}
+
+export interface OrganizationInvitationRecord {
+  organizationId: string;
+  addressDigest: string;
+  clientRequestId: string;
+  role: "org:admin" | "org:member";
+  invitationId: string | null;
+  inviterId: string;
+  expiresAt: Date;
+  leaseUntil: Date;
+}
 
 export class OrganizationCreateLimitError extends Error {
   constructor(readonly retryAfterSeconds: number) { super("Organization creation limit reached"); }
@@ -24,6 +43,96 @@ export class OrganizationAdminRepository {
   private readonly now: () => Date;
   constructor(private readonly db: Kysely<OrganizationPlatformDatabase>, options?: { now?: () => Date }) {
     this.now = options?.now ?? (() => new Date());
+  }
+
+  /** The digest key is distinct from other uses of PLATFORM_SECRET. No address reaches Postgres. */
+  invitationDigest(address: string, platformSecret: string): string {
+    if (!platformSecret) throw new Error("Invitation digest secret missing");
+    const key = hkdfSync("sha256", Buffer.from(platformSecret), Buffer.from("matrix-os-platform-organizations"),
+      Buffer.from("invitation-address-digest-v1"), 32);
+    return createHmac("sha256", Buffer.from(key)).update(address.trim().toLowerCase()).digest("hex");
+  }
+
+  async beginInvitation(input: { organizationId: string; actorId: string; addressDigest: string; clientRequestId: string; role: "org:admin" | "org:member" }): Promise<{ record: OrganizationInvitationRecord; claimed: boolean; reclaim: boolean }> {
+    const now = this.now();
+    const leaseUntil = new Date(now.getTime() + INVITE_SETTLE_MS);
+    const expiresAt = new Date(now.getTime() + INVITE_TTL_MS);
+    return this.db.transaction().execute(async (trx) => {
+      await trx.deleteFrom("organization_invitation_records")
+        .where("organization_id", "=", input.organizationId).where("address_digest", "=", input.addressDigest)
+        .where("expires_at", "<=", now).execute();
+      // A reused request ID for another address is a conflict, never an invitation to the new address.
+      const reused = await trx.selectFrom("organization_invitation_records").selectAll()
+        .where("organization_id", "=", input.organizationId).where("client_request_id", "=", input.clientRequestId).executeTakeFirst();
+      if (reused && reused.address_digest !== input.addressDigest) throw new Error("Conflicting invitation request");
+      const inserted = await trx.insertInto("organization_invitation_records").values({
+        organization_id: input.organizationId, address_digest: input.addressDigest,
+        client_request_id: input.clientRequestId, role: input.role, invitation_id: null,
+        inviter_id: input.actorId, expires_at: expiresAt, lease_until: leaseUntil, created_at: now,
+      }).onConflict((conflict) => conflict.columns(["organization_id", "address_digest"]).doNothing())
+        .returningAll().executeTakeFirst();
+      if (inserted) {
+        await this.chargeInvitation(trx, input.actorId, "invite_actor", HOUR_MS, 20, now);
+        await this.chargeInvitation(trx, input.organizationId, "invite_org", DAY_MS, 100, now);
+        return { record: mapInvitation(inserted), claimed: true, reclaim: false };
+      }
+      const existing = await trx.selectFrom("organization_invitation_records").selectAll()
+        .where("organization_id", "=", input.organizationId).where("address_digest", "=", input.addressDigest)
+        .forUpdate().executeTakeFirstOrThrow();
+      if (existing.invitation_id || new Date(existing.lease_until).getTime() > now.getTime()) {
+        return { record: mapInvitation(existing), claimed: false, reclaim: false };
+      }
+      const claimed = await trx.updateTable("organization_invitation_records")
+        .set({ lease_until: leaseUntil, inviter_id: input.actorId }).where("organization_id", "=", input.organizationId)
+        .where("address_digest", "=", input.addressDigest).where("invitation_id", "is", null)
+        .where("lease_until", "<=", now).returningAll().executeTakeFirst();
+      return { record: mapInvitation(claimed ?? existing), claimed: Boolean(claimed), reclaim: Boolean(claimed) };
+    });
+  }
+
+  private async chargeInvitation(trx: Transaction<OrganizationPlatformDatabase>, scopeId: string, action: string, windowMs: number, limit: number, now: Date): Promise<void> {
+    const windowStart = new Date(Math.floor(now.getTime() / windowMs) * windowMs);
+    const result = await sql`INSERT INTO organization_admin_counters (scope_id, action, window_start, count)
+      VALUES (${scopeId}, ${action}, ${windowStart}, 1)
+      ON CONFLICT (scope_id, action, window_start)
+      DO UPDATE SET count = organization_admin_counters.count + 1 WHERE organization_admin_counters.count < ${limit}
+      RETURNING count`.execute(trx);
+    if (!result.rows.length) throw new OrganizationInvitationLimitError(Math.max(1, Math.ceil((windowStart.getTime() + windowMs - now.getTime()) / 1000)));
+  }
+
+  async getInvitation(organizationId: string, addressDigest: string): Promise<OrganizationInvitationRecord | null> {
+    const row = await this.db.selectFrom("organization_invitation_records").selectAll()
+      .where("organization_id", "=", organizationId).where("address_digest", "=", addressDigest).executeTakeFirst();
+    return row ? mapInvitation(row) : null;
+  }
+
+  async completeInvitation(record: OrganizationInvitationRecord, invitationId: string, expiresAt: Date): Promise<OrganizationInvitationRecord> {
+    const updated = await this.db.updateTable("organization_invitation_records")
+      .set({ invitation_id: invitationId, expires_at: expiresAt })
+      .where("organization_id", "=", record.organizationId).where("address_digest", "=", record.addressDigest)
+      .where("client_request_id", "=", record.clientRequestId).where("invitation_id", "is", null)
+      .where("lease_until", "=", record.leaseUntil)
+      .returningAll().executeTakeFirst();
+    if (!updated) throw new Error("Invitation claim lost");
+    return mapInvitation(updated);
+  }
+
+  async deleteInvitation(organizationId: string, invitationId: string): Promise<void> {
+    await this.db.deleteFrom("organization_invitation_records")
+      .where("organization_id", "=", organizationId).where("invitation_id", "=", invitationId).execute();
+  }
+
+  async deleteInvitationTerminal(organizationId: string, invitationId: string, requestId?: string): Promise<void> {
+    await this.db.deleteFrom("organization_invitation_records")
+      .where("organization_id", "=", organizationId)
+      .where((eb) => requestId
+        ? eb.or([eb("invitation_id", "=", invitationId), eb.and([eb("invitation_id", "is", null), eb("client_request_id", "=", requestId)])])
+        : eb("invitation_id", "=", invitationId))
+      .execute();
+  }
+
+  async pruneInvitations(): Promise<void> {
+    await this.db.deleteFrom("organization_invitation_records").where("expires_at", "<", this.now()).execute();
   }
 
   /** The request row and its rate charge commit atomically. Replays are free. */
@@ -130,6 +239,7 @@ export class OrganizationAdminRepository {
       .where("state", "in", ["listed", "failed", "needs_review"]).execute();
     await this.db.deleteFrom("organization_admin_counters")
       .where("window_start", "<", new Date(now.getTime() - 2 * DAY_MS)).execute();
+    await this.pruneInvitations();
   }
 
   async readinessCounts(): Promise<{ needsReviewCount: number; failedCount: number }> {
@@ -140,6 +250,14 @@ export class OrganizationAdminRepository {
     const count = (state: OrganizationAdminRequestState) => Number(rows.find((row) => row.state === state)?.count ?? 0);
     return { needsReviewCount: count("needs_review"), failedCount: count("failed") };
   }
+}
+
+function mapInvitation(row: Selectable<OrganizationInvitationRecordsTable>): OrganizationInvitationRecord {
+  return {
+    organizationId: row.organization_id, addressDigest: row.address_digest,
+    clientRequestId: row.client_request_id, role: row.role, invitationId: row.invitation_id,
+    inviterId: row.inviter_id, expiresAt: new Date(row.expires_at), leaseUntil: new Date(row.lease_until),
+  };
 }
 
 function mapRow(row: Selectable<OrganizationAdminRequestsTable>): OrganizationAdminRequest {
