@@ -80,8 +80,11 @@ customer content needs an incident reason and applicable support authorization.
 3. Grant the operator only the host privilege needed for diagnosis; full-root
    elevation requires an explicit audited incident action. Restrict source
    network where feasible, without making it the sole recovery route.
-4. Rotate by adding and validating a new key with a **new SSH session** before
-   revoking the old one. On failure, retain the old working key and alert.
+4. Rotate by adding and validating a new key with a **new SSH session that
+   offers only the new credential**, or by verifying the server-recorded
+   authenticated fingerprint matches the new key, before revoking the old one.
+   A successful connection that may have used the old key is not validation.
+   On failure, retain the old working key and alert.
 5. Protect sshd/sudo files, keys, service units, helper binaries, release
    configuration, and ancestor directories. Root-run code must reject
    owner-controlled executable paths, symlinks, arbitrary arguments, shell
@@ -115,8 +118,12 @@ customer content needs an incident reason and applicable support authorization.
    owner home, PostgreSQL data, and installed release. Keep a rollback record.
    After reboot, verify operator SSH plus gateway, shell, and database paths.
 3. Periodically test guest operator login with a bounded non-content command.
-   Separately verify that provider rescue credentials and machine mapping are
-   available without actually triggering rescue. Alert on failure and classify
+   Separately preflight provider rescue credentials and machine mapping without
+   activating rescue on customer machines. This preflight is not proof that
+   rescue boot or key injection works: run a recurring end-to-end drill on a
+   disposable VPS using the production recovery procedure, including rescue
+   boot, key injection, repair, reboot, and guest-login verification. Alert on
+   failure and classify
    key rejection, sshd/network failure, guest runtime failure, and provider
    unavailability.
 
