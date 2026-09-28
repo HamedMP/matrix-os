@@ -29,6 +29,8 @@ const EGRESS_TIMEOUT_MS = 10_000;
 const MAX_REQUEST_FRAME_BYTES = 640 * 1024;
 const MAX_RESPONSE_FRAME_BYTES = 1024 * 1024;
 const MAX_BROKER_CONNECTIONS = 64;
+/** Matches the bot worker's bridge: the longest funded queue wait plus one model call. */
+const MAX_ROUTED_REQUEST_TIMEOUT_MS = 11 * 60_000;
 
 const InferenceBodySchema = z.object({
   model: z.string().min(1).max(256),
@@ -477,6 +479,11 @@ export function createScopeRuntimeBrokerServer(options: {
   routeFrame?(raw: unknown): Promise<Record<string, unknown> | undefined> | undefined;
   maxConnections?: number;
   requestTimeoutMs?: number;
+  /**
+   * Idle timeout once a frame is routed. A routed handler bounds its own work
+   * (a background model call may wait up to ten minutes for funded capacity).
+   */
+  routedRequestTimeoutMs?: number;
 }) {
   const maxConnections = Math.max(1, Math.min(
     Math.trunc(options.maxConnections ?? MAX_BROKER_CONNECTIONS),
@@ -485,6 +492,10 @@ export function createScopeRuntimeBrokerServer(options: {
   const requestTimeoutMs = Math.max(1, Math.min(
     Math.trunc(options.requestTimeoutMs ?? 35_000),
     60_000,
+  ));
+  const routedRequestTimeoutMs = Math.max(1, Math.min(
+    Math.trunc(options.routedRequestTimeoutMs ?? MAX_ROUTED_REQUEST_TIMEOUT_MS),
+    MAX_ROUTED_REQUEST_TIMEOUT_MS,
   ));
   const sockets = new Set<Socket>();
   const operations = new Set<Promise<void>>();
@@ -531,6 +542,7 @@ export function createScopeRuntimeBrokerServer(options: {
           const routed = options.routeFrame?.(raw);
           let frame: string;
           if (routed) {
+            socket.setTimeout(routedRequestTimeoutMs);
             const response = await routed;
             if (!response) {
               socket.destroy();
