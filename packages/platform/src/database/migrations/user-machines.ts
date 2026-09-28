@@ -91,4 +91,56 @@ export async function migrateUserMachines(db: PlatformMigrationExecutor): Promis
     WHERE deleted_at IS NULL AND provisioning_class = 'preview'
   `.execute(db);
   await sql`CREATE INDEX IF NOT EXISTS idx_user_machines_hetzner ON user_machines(hetzner_server_id)`.execute(db);
+  await migratePrivatePreviewMachines(db);
+}
+
+/**
+ * Spec 537: a Private Preview is owner-only and runs one PR's bundle. The
+ * checks keep a later reconcile path from adding collaborators to one. Both
+ * are NOT VALID so an unexpected legacy value cannot block startup; Postgres
+ * still enforces them for every new or updated row. Handles on other classes
+ * are not constrained here: a legacy row that already has a reserved-shaped
+ * handle must stay updatable. Handle assignment schemas reject the reserved
+ * grammar, and Private Preview creation checks for an existing holder.
+ */
+async function migratePrivatePreviewMachines(db: PlatformMigrationExecutor): Promise<void> {
+  await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS source_pr INTEGER`.execute(db);
+  await sql`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'user_machines'::regclass
+          AND conname = 'user_machines_provisioning_class_check'
+      ) THEN
+        ALTER TABLE user_machines
+          ADD CONSTRAINT user_machines_provisioning_class_check
+          CHECK (provisioning_class IN ('customer', 'preview', 'private-preview')) NOT VALID;
+      END IF;
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'user_machines'::regclass
+          AND conname = 'user_machines_private_preview_check'
+      ) THEN
+        ALTER TABLE user_machines
+          ADD CONSTRAINT user_machines_private_preview_check
+          CHECK (
+            (
+              provisioning_class = 'private-preview'
+              AND source_pr IS NOT NULL
+              AND source_pr BETWEEN 1 AND 999999999
+              AND cardinality(access_clerk_user_ids) = 0
+              AND runtime_slot = handle
+              AND handle ~ '^pv-[1-9][0-9]{0,8}-[0-9a-f]{8}$'
+            )
+            OR (provisioning_class <> 'private-preview' AND source_pr IS NULL)
+          ) NOT VALID;
+      END IF;
+    END $$
+  `.execute(db);
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_user_machines_private_preview_owner_pr
+    ON user_machines(clerk_user_id, source_pr)
+    WHERE provisioning_class = 'private-preview' AND deleted_at IS NULL
+  `.execute(db);
 }
