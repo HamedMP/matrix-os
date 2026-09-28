@@ -33,7 +33,7 @@ export const BotPendingInteractionSummarySchema = z.object({
 export const BotAuthorityViewSchema = z.object({
   agentId: BotIdSchema,
   revision: BotRevisionSchema,
-  grants: z.array(BotGrantSchema).max(64),
+  grants: z.array(BotGrantSchema).max(100),
   connections: z.array(BotConnectionStateSchema).max(64),
   routines: z.array(BotRoutineSummarySchema).max(32),
   pendingInteractions: z.array(BotPendingInteractionSummarySchema).max(32),

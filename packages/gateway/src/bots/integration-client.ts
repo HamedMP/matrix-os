@@ -51,6 +51,7 @@ const InventorySchema = z.array(z.object({
 }).passthrough()).max(MAX_CONNECTIONS);
 
 const CallResultSchema = z.object({ data: z.unknown(), summary: z.string().max(2_000).optional() }).passthrough();
+const ConnectResultSchema = z.object({ url: z.url({ protocol: /^https$/ }).max(4_096) }).passthrough();
 
 async function boundedText(response: Response, maxBytes: number): Promise<string> {
   const declared = Number(response.headers.get("content-length"));
@@ -116,6 +117,20 @@ export function createBotIntegrationClient(transport: BotIntegrationTransport) {
         if (!rows.success) throw new BotIntegrationError("unavailable");
         return rows.data.filter((row) => row.status === "active")
           .map((row) => ({ connectionId: row.id, service: row.service, label: row.account_label }));
+      }, signal);
+    },
+    /** A provider-hosted consent URL for connecting a new account of `service`. */
+    async connect(ownerId: string, service: string, signal?: AbortSignal): Promise<string> {
+      return send(ownerId, { method: "POST", path: "/connect", body: { service } }, LIST_TIMEOUT_MS, async (response) => {
+        const result = ConnectResultSchema.safeParse(await readJson(response, MAX_LIST_BYTES));
+        if (!result.success) throw new BotIntegrationError("unavailable");
+        return result.data.url;
+      }, signal);
+    },
+    /** Asks integrations to pick up accounts connected since the last sync. */
+    async sync(ownerId: string, signal?: AbortSignal): Promise<void> {
+      await send(ownerId, { method: "POST", path: "/sync" }, CALL_TIMEOUT_MS, async (response) => {
+        await readJson(response, MAX_CALL_BYTES);
       }, signal);
     },
     /** Runs one action on the account with `label`. Reads use the read-only route, which never syncs. */

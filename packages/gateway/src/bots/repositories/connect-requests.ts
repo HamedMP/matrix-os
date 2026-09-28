@@ -84,6 +84,8 @@ export function createBotConnectRequestsRepository(db: BotExecutor) {
     async create(input: {
       ownerId: string;
       interactionId: string;
+      /** The ID the interaction already announced; generated when absent. */
+      requestId?: string;
       service: string;
       baselineConnectionIds: readonly string[];
       expiresAt: string;
@@ -92,7 +94,7 @@ export function createBotConnectRequestsRepository(db: BotExecutor) {
       const lifetime = Date.parse(input.expiresAt) - Date.parse(input.now);
       if (!(lifetime > 0) || lifetime > MAX_LIFETIME_MS) throw new BotStateError("invalid_input");
       const row = await executor.insertInto("bot_connect_requests").values({
-        request_id: newBotStateId("cr"),
+        request_id: input.requestId ?? newBotStateId("cr"),
         owner_id: input.ownerId,
         interaction_id: input.interactionId,
         service: input.service,
@@ -151,6 +153,13 @@ export function createBotConnectRequestsRepository(db: BotExecutor) {
         .returning("request_id")
         .executeTakeFirst();
       return row !== undefined;
+    },
+    /** The request started for an interaction, if any. */
+    async forInteraction(input: { ownerId: string; interactionId: string }, executor: BotExecutor = db): Promise<BotConnectRequest | undefined> {
+      const row = await executor.selectFrom("bot_connect_requests").selectAll()
+        .where("owner_id", "=", input.ownerId).where("interaction_id", "=", input.interactionId)
+        .executeTakeFirst();
+      return row ? fromRow(row) : undefined;
     },
     async listPending(input: { ownerId: string; limit?: number }, executor: BotExecutor = db): Promise<BotConnectRequest[]> {
       const limit = Math.max(1, Math.min(Math.trunc(input.limit ?? MAX_PENDING_LISTED), MAX_PENDING_LISTED));

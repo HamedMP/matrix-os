@@ -34,6 +34,9 @@ import { createBotCheckpointsRepository } from "../bots/repositories/checkpoints
 import { createBotOperationsRepository } from "../bots/repositories/operations.js";
 import { createBotSessionsRepository } from "../bots/repositories/sessions.js";
 import { createBotAccessHandlers } from "../bots/access-handlers.js";
+import { createBotAuthority, type BotAuthority } from "../bots/authority.js";
+import { createBotConnections, type BotConnections } from "../bots/connections.js";
+import type { BotContinuationAdmitter } from "../bots/continuations.js";
 import { createBotStateTransactions } from "../bots/events.js";
 import { createBotGrantService, type BotGrantService } from "../bots/grants-service.js";
 import { createBotIntegrationClient, type BotIntegrationTransport } from "../bots/integration-client.js";
@@ -50,9 +53,52 @@ const MAX_CHECKPOINT_RECONCILE_PASSES = 50;
 const CHECKPOINT_RECONCILE_INTERVAL_MS = 5_000;
 const SAVE_SWEEP_INTERVAL_MS = 10 * 60_000;
 const INTERACTION_SWEEP_MS = 60_000;
+const CONNECTION_RECONCILE_MS = 30_000;
+
+/** One bounded pass; each owner and each admission fails independently. */
+export async function runConnectionReconciliationPass(
+  connections: Pick<BotConnections, "ownersWithPending" | "reconcile" | "pendingContinuations" | "ackContinuation" | "deferContinuation" | "deferOwner">,
+  admit: BotContinuationAdmitter,
+): Promise<void> {
+  for (const ownerId of await connections.ownersWithPending()) {
+    try {
+      await connections.reconcile(ownerId);
+    } catch (error: unknown) {
+      console.warn("[bots] connection reconciliation failed:", error instanceof Error ? error.name : "UnknownError");
+      try {
+        await connections.deferOwner(ownerId);
+      } catch (deferError: unknown) {
+        console.warn("[bots] connection owner retry unavailable:", deferError instanceof Error ? deferError.name : "UnknownError");
+      }
+    }
+    try {
+      for (const continuation of await connections.pendingContinuations(ownerId)) {
+        try {
+          await admit({ userId: ownerId, source: "configured-container" }, continuation);
+          await connections.ackContinuation(ownerId, continuation.clientRequestId);
+        } catch (error: unknown) {
+          console.warn("[bots] connection continuation failed:", error instanceof Error ? error.name : "UnknownError");
+          try {
+            await connections.deferContinuation(ownerId, continuation.clientRequestId);
+          } catch (deferError: unknown) {
+            console.warn("[bots] connection continuation retry unavailable:", deferError instanceof Error ? deferError.name : "UnknownError");
+          }
+        }
+      }
+    } catch (error: unknown) {
+      console.warn("[bots] connection continuation lookup failed:", error instanceof Error ? error.name : "UnknownError");
+    }
+  }
+}
 
 export interface BotServices {
   instantiation: BotInstantiation;
+  authority: BotAuthority;
+  /**
+   * Starts completing started connection requests. Called once the chat
+   * orchestrator exists, with the admitter that continues each task.
+   */
+  startConnectionReconciler(admit: BotContinuationAdmitter): void;
   interactions: BotInteractionService;
   memory: BotMemoryService;
   grants: BotGrantService;
@@ -97,13 +143,40 @@ export async function startBots(options: {
   const reconciler = createBotOperationReconciler({ operations: createBotOperationsRepository(db), instantiation });
   await reconciler.start();
   const transact = createBotStateTransactions(options.repository);
-  const integrationTools = options.integrations
-    ? createBotIntegrationTools({ client: createBotIntegrationClient(options.integrations), transact, recipes, agents: options.agents })
+  const integrationClient = options.integrations ? createBotIntegrationClient(options.integrations) : undefined;
+  const integrationTools = integrationClient
+    ? createBotIntegrationTools({ client: integrationClient, transact, recipes, agents: options.agents })
+    : undefined;
+  const connections = integrationClient && integrationTools
+    ? createBotConnections({ client: integrationClient, transact, tools: integrationTools })
     : undefined;
   const interactions = createBotInteractionService({
     transact,
-    ...(integrationTools ? { handlers: createBotAccessHandlers({ tools: integrationTools }) } : {}),
+    ...(integrationTools ? {
+      handlers: {
+        ...createBotAccessHandlers({ tools: integrationTools }),
+        ...(connections ? { startConnect: connections.startConnect } : {}),
+      },
+    } : {}),
   });
+  const authority = createBotAuthority({ transact, agents: options.agents, recipes, ...(integrationClient ? { client: integrationClient } : {}) });
+  // Started connection requests are completed from the inventory; passes never overlap and stop on close.
+  let connectionTimer: ReturnType<typeof setInterval> | undefined;
+  let connecting: Promise<unknown> | undefined;
+  const startConnectionReconciler = (admit: BotContinuationAdmitter) => {
+    if (!connections || connectionTimer) return;
+    connectionTimer = setInterval(() => {
+      connecting ??= runConnectionReconciliationPass(connections, admit).catch((error: unknown) => {
+        console.warn("[bots] connection reconciliation unavailable:", error instanceof Error ? error.name : "UnknownError");
+      }).finally(() => { connecting = undefined; });
+    }, CONNECTION_RECONCILE_MS);
+    connectionTimer.unref();
+  };
+  const stopConnections = async () => {
+    if (connectionTimer) clearInterval(connectionTimer);
+    connectionTimer = undefined;
+    await connecting;
+  };
   const memory = createBotMemoryService({ transact });
   const grants = createBotGrantService({ transact });
   // Overdue questions are expired and announced; passes never overlap and stop on close.
@@ -128,8 +201,9 @@ export async function startBots(options: {
   const host = options.host;
   if (!host?.available) {
     return {
-      instantiation, interactions, memory, grants, botChats,
+      instantiation, interactions, memory, grants, authority, botChats, startConnectionReconciler,
       async close() {
+        await stopConnections();
         await stopSweep();
         await reconciler.stop();
       },
@@ -211,6 +285,8 @@ export async function startBots(options: {
     interactions,
     memory,
     grants,
+    authority,
+    startConnectionReconciler,
     botChats,
     adapter,
     async close() {
@@ -218,6 +294,7 @@ export async function startBots(options: {
       clearInterval(saveSweepTimer);
       await reconciling;
       await sweepingSaves;
+      await stopConnections();
       await stopSweep();
       await reconciler.stop();
       unregister();

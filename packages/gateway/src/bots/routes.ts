@@ -14,6 +14,7 @@ import { BotInstantiationError, type BotInstantiation } from "./instantiation.js
 import { BotInteractionError, type BotInteractionService } from "./interactions.js";
 import { BotMemoryError, type BotMemoryService } from "./memory-service.js";
 import { BotGrantError, type BotGrantService } from "./grants-service.js";
+import { BotAuthorityError, type BotAuthority } from "./authority.js";
 
 const MAX_BODY_BYTES = 64 * 1024;
 
@@ -37,6 +38,7 @@ export function createBotRoutes(options: {
   interactions?: Pick<BotInteractionService, "listPending" | "resolve">;
   memory?: Pick<BotMemoryService, "forget" | "confirm">;
   grants?: Pick<BotGrantService, "revoke">;
+  authority?: Pick<BotAuthority, "view">;
   /** Admits the owner's answer as the next message; resolved at route registration. */
   admitContinuation?: BotContinuationAdmitter;
   getPrincipal(context: Context): RequestPrincipal;
@@ -58,7 +60,7 @@ export function createBotRoutes(options: {
     }
     if (error instanceof SyntaxError) return errorResponse(context, "invalid_request");
     if (error instanceof BotInstantiationError || error instanceof BotInteractionError || error instanceof BotMemoryError
-      || error instanceof BotGrantError) {
+      || error instanceof BotGrantError || error instanceof BotAuthorityError) {
       return errorResponse(context, error.code);
     }
     console.warn("[bots] request failed:", error instanceof Error ? error.name : "UnknownError");
@@ -119,6 +121,16 @@ export function createBotRoutes(options: {
       return context.json(result);
     });
   }
+
+  routes.get("/api/chat-agents/:agentId/authority", async (context) => {
+    const principal = options.getPrincipal(context);
+    if (!options.authority) return errorResponse(context, "unavailable");
+    const agentId = ChatAgentIdSchema.safeParse(context.req.param("agentId"));
+    if (!agentId.success) return errorResponse(context, "invalid_request");
+    const view = await options.authority.view(principal.userId, agentId.data);
+    context.header("Cache-Control", "private, no-store");
+    return context.json(view);
+  });
 
   // DELETE is a mutation: bounded like the others, although it ignores any body.
   routes.delete("/api/chat-agents/:agentId/grants/:grantId", limit, async (context) => {
