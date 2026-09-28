@@ -7,7 +7,7 @@ import { BotBrokerActionError } from "../../../packages/gateway/src/bots/broker-
 import { ensureBotWorkspace } from "../../../packages/gateway/src/bots/instantiation.js";
 import { withBotProviderInstance } from "../../../packages/gateway/src/bots/provider-instance.js";
 import type { BotRuntimeBinding } from "../../../packages/gateway/src/bots/runtime-registry.js";
-import { createBotToolDispatcher } from "../../../packages/gateway/src/bots/tool-dispatcher.js";
+import { createBotToolDispatcher, sweepBotWorkspaceSaves } from "../../../packages/gateway/src/bots/tool-dispatcher.js";
 import { resolveBotWorkspaceRoot } from "../../../packages/gateway/src/chat/bot-workspace-root.js";
 
 const BOT_ID = "bot_0123456789abcdef01234567";
@@ -73,17 +73,24 @@ describe("bot tool dispatcher", () => {
       await chmod(workspace, 0o755);
     }
     await expect(readFile(join(workspace, "notes.md"), "utf8")).resolves.toBe("v1");
-    const stale = join(workspace, ".bot-save-00000000-0000-0000-0000-000000000000.tmp");
+    const staging = join(workspace, ".bot-save");
+    const stale = join(staging, "00000000-0000-0000-0000-000000000000.tmp");
     await writeFile(stale, "partial");
     await utimes(stale, new Date(Date.now() - 60 * 60_000), new Date(Date.now() - 60 * 60_000));
     await writeFile(join(home, "outside-target"), "keep");
-    const linked = join(workspace, ".bot-save-11111111-1111-1111-1111-111111111111.tmp");
+    const linked = join(staging, "11111111-1111-1111-1111-111111111111.tmp");
     await symlink(join(home, "outside-target"), linked);
-    await tools.dispatch(binding, write("notes.md", "v3"), signal);
-    await expect(readFile(join(workspace, "notes.md"), "utf8")).resolves.toBe("v3");
+    const fresh = join(staging, "22222222-2222-2222-2222-222222222222.tmp");
+    await writeFile(fresh, "in progress");
+    // The recurring sweep removes only old staged files, never following a link.
+    await sweepBotWorkspaceSaves(home);
     await expect(readFile(stale, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
     await expect(readFile(join(home, "outside-target"), "utf8")).resolves.toBe("keep");
-    expect((await readdir(workspace)).filter((name) => name.endsWith(".tmp"))).toEqual([".bot-save-11111111-1111-1111-1111-111111111111.tmp"]);
+    expect((await readdir(staging)).sort()).toEqual(["11111111-1111-1111-1111-111111111111.tmp", "22222222-2222-2222-2222-222222222222.tmp"]);
+    await tools.dispatch(binding, write("notes.md", "v3"), signal);
+    await expect(readFile(join(workspace, "notes.md"), "utf8")).resolves.toBe("v3");
+    // The staging directory is reserved.
+    await expect(tools.dispatch(binding, write(".bot-save/x.md"), signal)).rejects.toEqual(new BotBrokerActionError("invalid_arguments"));
   });
 
   it("refuses capabilities that have no tool yet", async () => {

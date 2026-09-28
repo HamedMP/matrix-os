@@ -17,11 +17,16 @@ import { BotBrokerActionError, type BotToolDispatcher } from "./broker-actions.j
 import type { BotRuntimeBinding } from "./runtime-registry.js";
 
 const MAX_TEXT_PART_CHARS = 60 * 1024;
-/** Saves write here first, then rename over the file, so a failed save never damages the old one. */
-const TEMP_PREFIX = ".bot-save-";
-const TEMP_NAME = /^\.bot-save-[a-f0-9-]{36}\.tmp$/;
+/**
+ * Saves are staged in this workspace directory and renamed over their file,
+ * so a failed save never damages the old one. The directory is reserved:
+ * artifact paths cannot name it.
+ */
+export const BOT_SAVE_STAGING = ".bot-save";
+const TEMP_NAME = /^[a-f0-9-]{36}\.tmp$/;
 const TEMP_TTL_MS = 15 * 60_000;
 const MAX_SWEEP_ENTRIES = 256;
+const MAX_SWEPT_WORKSPACES = 128;
 const SEGMENT = /^(?!\.{1,2}$)[^/\\\u0000]{1,255}$/;
 
 const EFFECTS: Record<BotToolRequest["capability"], BotEffectClass> = {
@@ -40,7 +45,7 @@ function isCode(error: unknown, ...codes: string[]): boolean {
 
 function segments(relPath: string): string[] {
   const parts = relPath.split("/");
-  if (parts.length === 0 || parts.length > 16 || !parts.every((part) => SEGMENT.test(part))) {
+  if (parts.length === 0 || parts.length > 16 || !parts.every((part) => SEGMENT.test(part)) || parts[0] === BOT_SAVE_STAGING) {
     throw new BotBrokerActionError("invalid_arguments");
   }
   return parts;
@@ -64,28 +69,53 @@ async function directoryFor(root: string, parts: readonly string[], create: bool
 }
 
 /**
- * Removes this directory's save files left by a process that stopped
- * mid-save. Runs before each save, reads a bounded number of entries, and
- * never follows or removes a link.
+ * Removes staged saves a process left when it stopped mid-save. Reads a
+ * bounded number of entries and never follows or removes a link.
  */
-async function sweepStaleSaves(directory: string, now: number): Promise<void> {
-  const entries = await opendir(directory);
-  let seen = 0;
+async function sweepStaging(directory: string, now: number): Promise<void> {
+  let entries;
   try {
-    for await (const entry of entries) {
-      if (++seen > MAX_SWEEP_ENTRIES) break;
-      if (!TEMP_NAME.test(entry.name)) continue;
-      const path = join(directory, entry.name);
-      try {
-        const info = await lstat(path);
-        if (info.isFile() && !info.isSymbolicLink() && now - info.mtimeMs > TEMP_TTL_MS) await unlink(path);
-      } catch (error: unknown) {
-        if (!isCode(error, "ENOENT")) console.warn("[bots] stale save cleanup failed:", error instanceof Error ? error.name : "UnknownError");
-      }
-    }
+    const info = await lstat(directory);
+    if (!info.isDirectory() || info.isSymbolicLink()) return;
+    entries = await opendir(directory);
   } catch (error: unknown) {
-    // Breaking out of the loop closes the directory; anything else is logged, not fatal to the save.
-    if (!isCode(error, "ERR_DIR_CLOSED")) console.warn("[bots] stale save scan failed:", error instanceof Error ? error.name : "UnknownError");
+    if (isCode(error, "ENOENT", "ENOTDIR")) return;
+    throw error;
+  }
+  let seen = 0;
+  for await (const entry of entries) {
+    if (++seen > MAX_SWEEP_ENTRIES) break;
+    if (!TEMP_NAME.test(entry.name)) continue;
+    const path = join(directory, entry.name);
+    try {
+      const info = await lstat(path);
+      if (info.isFile() && !info.isSymbolicLink() && now - info.mtimeMs > TEMP_TTL_MS) await unlink(path);
+    } catch (error: unknown) {
+      if (!isCode(error, "ENOENT")) console.warn("[bots] stale save cleanup failed:", error instanceof Error ? error.name : "UnknownError");
+    }
+  }
+}
+
+/**
+ * The recurring cleanup: every bot workspace's staging directory, a bounded
+ * number of workspaces per pass. Links are never followed.
+ */
+export async function sweepBotWorkspaceSaves(homePath: string, now = Date.now()): Promise<void> {
+  const root = join(homePath, "bots");
+  let workspaces;
+  try {
+    const info = await lstat(root);
+    if (!info.isDirectory() || info.isSymbolicLink()) return;
+    workspaces = await opendir(root);
+  } catch (error: unknown) {
+    if (isCode(error, "ENOENT")) return;
+    throw error;
+  }
+  let seen = 0;
+  for await (const entry of workspaces) {
+    if (++seen > MAX_SWEPT_WORKSPACES) break;
+    if (!entry.isDirectory() || !/^bot_[a-z0-9]{8,64}$/.test(entry.name)) continue;
+    await sweepStaging(join(root, entry.name, BOT_SAVE_STAGING), now);
   }
 }
 
@@ -119,7 +149,8 @@ export function createBotToolDispatcher(deps: { homePath: string }): BotToolDisp
     // Revision-checked replacement needs artifact revisions; a plain save overwrites.
     if (request.args.replace) throw new BotBrokerActionError("invalid_arguments");
     const parts = segments(request.args.relPath);
-    const directory = await directoryFor(await workspace(binding), parts, true);
+    const root = await workspace(binding);
+    const directory = await directoryFor(root, parts, true);
     const target = join(directory, parts.at(-1)!);
     try {
       const existing = await lstat(target);
@@ -128,8 +159,16 @@ export function createBotToolDispatcher(deps: { homePath: string }): BotToolDisp
       if (error instanceof BotBrokerActionError) throw error;
       if (!isCode(error, "ENOENT")) throw error;
     }
-    await sweepStaleSaves(directory, Date.now());
-    const temp = join(directory, `${TEMP_PREFIX}${randomUUID()}.tmp`);
+    const staging = join(root, BOT_SAVE_STAGING);
+    try {
+      await mkdir(staging, { mode: 0o750 });
+    } catch (error: unknown) {
+      if (!isCode(error, "EEXIST")) throw error;
+    }
+    const stagingInfo = await lstat(staging);
+    if (!stagingInfo.isDirectory() || stagingInfo.isSymbolicLink()) throw new BotBrokerActionError("unavailable");
+    await sweepStaging(staging, Date.now());
+    const temp = join(staging, `${randomUUID()}.tmp`);
     const file = await open(temp, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o640);
     try {
       try {
