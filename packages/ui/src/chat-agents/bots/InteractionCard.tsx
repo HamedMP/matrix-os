@@ -2,6 +2,9 @@ import { botInteractionCard, type BotInteraction, type ResolveBotInteractionRequ
 import { useEffect, useState } from "react";
 import { chatAgentButtonClass, chatAgentMutedStyle } from "../theme.js";
 
+const MAX_STRUCTURED_ANSWER_BYTES = 700;
+const encoder = new TextEncoder();
+
 export function InteractionCard({ interaction, onResolve, onResolved }: {
   interaction: BotInteraction;
   onResolve: (request: ResolveBotInteractionRequest) => Promise<ResolveBotInteractionResponse | void>;
@@ -41,6 +44,10 @@ export function InteractionCard({ interaction, onResolve, onResolved }: {
       setPending(false);
     }
   };
+  const typeAnswer = (questionId: string, multiSelect: boolean | undefined, value: string) => {
+    setTypedAnswers((current) => ({ ...current, [questionId]: value }));
+    if (!multiSelect && value.trim()) setSelectedAnswers((current) => ({ ...current, [questionId]: [] }));
+  };
   const payload = interaction.payload;
   const questionAnswers = payload?.kind === "question"
     ? Object.fromEntries(payload.questions.map((question) => {
@@ -50,7 +57,10 @@ export function InteractionCard({ interaction, onResolve, onResolved }: {
           ? [...selected, ...(typed ? [typed] : [])] : typed ? [typed] : selected.slice(0, 1)];
       })) as Record<string, string[]>
     : {};
-  const allQuestionsAnswered = payload?.kind === "question"
+  const answerTooLong = Object.values(questionAnswers).some((values) => values.some((value) => (
+    encoder.encode(value).byteLength > MAX_STRUCTURED_ANSWER_BYTES
+  )));
+  const allQuestionsAnswered = payload?.kind === "question" && !answerTooLong
     && payload.questions.every((question) => questionAnswers[question.questionId]?.length);
   return <section aria-label={card.title} className="matrix-chat-agent-card grid gap-3 rounded-2xl border p-4">
     <div><h3 className="text-sm font-semibold">{card.title}</h3>
@@ -78,13 +88,14 @@ export function InteractionCard({ interaction, onResolve, onResolved }: {
           {question.options ? "Other answer" : "Answer"}
           {question.secret ? <input type="password" aria-label={`Answer ${question.header}`}
             value={typedAnswers[question.questionId] ?? ""} maxLength={400} disabled={pending}
-            onChange={(event) => setTypedAnswers((current) => ({ ...current, [question.questionId]: event.currentTarget.value }))}
+            onChange={(event) => typeAnswer(question.questionId, question.multiSelect, event.currentTarget.value)}
             className="w-full rounded-lg border bg-transparent p-2 text-sm" />
             : <textarea aria-label={`Answer ${question.header}`} value={typedAnswers[question.questionId] ?? ""}
-              maxLength={400} disabled={pending} onChange={(event) => setTypedAnswers((current) => ({ ...current, [question.questionId]: event.currentTarget.value }))}
+              maxLength={400} disabled={pending} onChange={(event) => typeAnswer(question.questionId, question.multiSelect, event.currentTarget.value)}
               className="min-h-20 w-full rounded-lg border bg-transparent p-2 text-sm" />}
         </label> : null}
       </fieldset>)}
+      {answerTooLong ? <p role="status" className="text-xs">Shorten an answer to fit the request.</p> : null}
       <button type="button" className={`${chatAgentButtonClass} justify-self-start`} disabled={pending || !allQuestionsAnswered}
         onClick={() => { void decide({ kind: "question", baseRevision: interaction.revision, structuredAnswers: questionAnswers }); }}>Answer</button>
     </> : null}

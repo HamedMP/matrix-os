@@ -37,6 +37,31 @@ describe("bot interaction cards", () => {
       structuredAnswers: { target: ["Acme"], format: ["Brief"] } }));
   });
 
+  it("disables answers beyond the structured UTF-8 byte limit", () => {
+    render(<InteractionCard interaction={base} onResolve={vi.fn()} />);
+    fireEvent.change(screen.getByRole("textbox", { name: "Answer Target" }), { target: { value: "💬".repeat(200) } });
+    expect((screen.getByRole("button", { name: "Answer" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(screen.getByRole("textbox", { name: "Answer Target" }), { target: { value: "💬".repeat(170) } });
+    expect((screen.getByRole("button", { name: "Answer" }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("clears a selected single choice when Other text becomes the answer", async () => {
+    const resolve = vi.fn(async () => undefined);
+    const card: BotInteraction = { ...base, payload: { kind: "question", questions: [
+      { questionId: "target", header: "Target", question: "Which company?", allowOther: true, secret: false,
+        options: [{ label: "Acme", description: "Existing choice" }] },
+    ] } };
+    render(<InteractionCard interaction={card} onResolve={resolve} />);
+    const choice = screen.getByRole("radio", { name: "Acme" }) as HTMLInputElement;
+    fireEvent.click(choice);
+    expect(choice.checked).toBe(true);
+    fireEvent.change(screen.getByRole("textbox", { name: "Answer Target" }), { target: { value: "Globex" } });
+    expect(choice.checked).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: "Answer" }));
+    await waitFor(() => expect(resolve).toHaveBeenCalledWith({ kind: "question", baseRevision: 1,
+      structuredAnswers: { target: ["Globex"] } }));
+  });
+
   it("shows account choices and never exposes the connection id", async () => {
     const resolve = vi.fn(async () => undefined);
     const card: BotInteraction = { ...base, kind: "account_choice", payload: { kind: "account_choice", service: "gmail",
