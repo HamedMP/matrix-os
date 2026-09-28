@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { FundedAdmissionQueue } from "../funded-ai/admission-queue.js";
 import { sql, type Kysely } from "kysely";
 import type { GatewayCollaborationConfig } from "./config.js";
 import type { Hono } from "hono";
@@ -437,6 +438,7 @@ export async function createGatewayCollaboration(options: {
       orchestrator: CanonicalChatOrchestrator;
       homePath: string;
       fundedCredentialProvider?: MatrixFundedCredentialProvider;
+      fundedAdmission?: FundedAdmissionQueue;
       supervisorSocket?: string;
       brokerSocket?: string;
       fetchImpl?: typeof fetch;
@@ -476,6 +478,7 @@ export async function createGatewayCollaboration(options: {
         executionPolicies,
         runLoss,
         ...(input.fundedCredentialProvider ? { fundedCredentialProvider: input.fundedCredentialProvider } : {}),
+        ...(input.fundedAdmission ? { fundedAdmission: input.fundedAdmission } : {}),
         ...(input.supervisorSocket ? { supervisorSocket: input.supervisorSocket } : {}),
         ...(input.brokerSocket ? { brokerSocket: input.brokerSocket } : {}),
         ...(input.fetchImpl ? { fetchImpl: input.fetchImpl } : {}),

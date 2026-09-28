@@ -223,7 +223,8 @@ export function createClaudeChatProviderAdapter(options: {
   spawnFn?: CanonicalCliSpawn;
   timeoutMs?: number;
   resolveCredentialEnv?: () => Promise<Record<string, string | undefined> | undefined>;
-  resolveCredentialLaunch?: () => Promise<KernelCredentialLaunch>;
+  /** The run id doubles as the funded priority claim key for this turn. */
+  resolveCredentialLaunch?: (context: { runId: string }) => Promise<KernelCredentialLaunch>;
   matrixMcpCapabilityIssuer?: MatrixMcpCapabilityIssuer;
   customMcpApprovalClient?: CustomMcpApprovalClient;
 }): CanonicalChatProviderAdapter<ClaudeChatState> {
@@ -301,11 +302,13 @@ export function createClaudeChatProviderAdapter(options: {
       if (promptSeparator >= 0) launch.args.splice(promptSeparator);
       launch.args.push("--input-format", "stream-json", "--permission-prompt-tool", "stdio");
       credentialLaunch = options.resolveCredentialLaunch
-        ? await options.resolveCredentialLaunch()
+        ? await options.resolveCredentialLaunch({ runId: input.runId })
         : {
             env: await (
               options.resolveCredentialEnv
-              ?? (() => buildKernelCredentialLaunch(options.homePath).then((value) => value.env))
+              ?? (() => buildKernelCredentialLaunch(options.homePath, process.env, undefined, undefined, {
+                requestClass: "interactive",
+              }).then((value) => value.env))
             )(),
           };
       if (approvalClient) {

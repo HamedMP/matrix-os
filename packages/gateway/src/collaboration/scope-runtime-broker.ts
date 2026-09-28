@@ -14,6 +14,7 @@ import {
   KernelCredentialAccessSourceIdSchema,
   type KernelCredentialAccessSourceId,
 } from "../kernel-credentials.js";
+import type { FundedAdmissionQueue } from "../funded-ai/admission-queue.js";
 import { validateCustomMcpUrl } from "../integrations/custom-mcp/security.js";
 import {
   createCodexOwnerIdentityResolver,
@@ -208,6 +209,8 @@ export function createScopeRuntimeBroker(options: {
     url?: string;
   }): Promise<ScopeRuntimeBrokerAuthorization>;
   fundedCredentialProvider?: MatrixFundedCredentialProvider;
+  /** Orders funded retries after a relay 429; absent means the first answer is final. */
+  fundedAdmission?: FundedAdmissionQueue;
   resolveCredentials?: ResolveCredentials;
   resolveCodexIdentity?: ResolveCodexOwnerIdentity;
   resolveEgress?: ResolveEgress;
@@ -267,6 +270,8 @@ export function createScopeRuntimeBroker(options: {
         process.env,
         authorization.accessSourceId,
         options.fundedCredentialProvider,
+        // Shared Chat runs answer a person who is waiting.
+        { requestClass: "interactive" },
       );
       const env = credentialLaunch.env;
       const apiKey = env?.ANTHROPIC_API_KEY;
@@ -284,13 +289,44 @@ export function createScopeRuntimeBroker(options: {
       for (const [name, value] of Object.entries(request.headers)) {
         if (value) headers.set(name, value);
       }
-      const response = await fetchImpl(`${baseUrl}${request.path}`, {
+      const funded = authorization.accessSourceId === "matrix_included" ? options.fundedAdmission : undefined;
+      // The runtime handle is authenticated and unique per shared run, so it keeps each turn's place in line.
+      if (authorization.accessSourceId === "matrix_included") headers.set("x-matrix-funded-claim-key", request.runtimeHandle);
+      // Every attempt and every wait ends with this request, before the workload's socket gives up.
+      const deadline = AbortSignal.any([lifetime.signal, AbortSignal.timeout(INFERENCE_TIMEOUT_MS)]);
+      const send = () => fetchImpl(`${baseUrl}${request.path}`, {
         method: "POST",
         headers,
         body: request.body,
         redirect: "error",
-        signal: AbortSignal.any([lifetime.signal, AbortSignal.timeout(INFERENCE_TIMEOUT_MS)]),
+        signal: deadline,
       });
+      let attempts = 0;
+      const response = funded
+        ? await funded.run<Response | "denied">({ requestClass: "interactive", signal: deadline }, async () => {
+          attempts += 1;
+          if (attempts > 1) {
+            // Authority can change while waiting; never start a funded request on a stale approval.
+            const current = BrokerAuthorizationSchema.parse(await options.authorize({
+              runtimeHandle: request.runtimeHandle,
+              executionGeneration: request.executionGeneration,
+              requestId: request.requestId,
+              action: request.action,
+              modelId,
+            }));
+            if (!current.allowed || current.accessSourceId !== authorization.accessSourceId
+              || !current.allowedModelIds.includes(modelId)) return { kind: "done", value: "denied" };
+          }
+          const attempt = await send();
+          // Only a relay capacity refusal is safe to repeat; upstream provider 429s are final.
+          if (attempt.status !== 429 || attempt.headers.get("x-matrix-funded-reason") === null) {
+            return { kind: "done", value: attempt };
+          }
+          await discard(attempt);
+          return { kind: "busy" };
+        })
+        : await send();
+      if (response === "denied") return failure(request.requestId, "action_denied");
       if (!response.ok) {
         await discard(response);
         return failure(request.requestId, "provider_unavailable");
