@@ -12,6 +12,7 @@ export function DesktopTerminalSidebar({
   sessions,
   selectedName,
   creating,
+  suspended = false,
   onCreate,
   onOpen,
   onDelete,
@@ -19,6 +20,7 @@ export function DesktopTerminalSidebar({
   sessions: ShellSessionSummary[];
   selectedName: string | null;
   creating: boolean;
+  suspended?: boolean;
   onCreate: () => void;
   onOpen: (shell: ShellSessionSummary) => void;
   onDelete: (shell: ShellSessionSummary, anchor: HTMLButtonElement) => void;
@@ -31,6 +33,7 @@ export function DesktopTerminalSidebar({
   const runtimeId = useShellCollaborationRuntimeId(grouped);
   const projectName = useWorkspaceProjectNames(
     projectGroups.flatMap(([project]) => (project === MAIN_TERMINAL_PROJECT ? [] : [project])),
+    suspended,
   );
   const rows = (items: ShellSessionSummary[]) => items.map((shell) => (
     <DesktopTerminalSessionRow key={shell.name} shell={shell} selected={selectedName === shell.name}

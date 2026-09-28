@@ -1246,6 +1246,7 @@ function LocalTerminalApp({ initialCommand, initialLabel, initialClaudeMode = fa
             <LocalTerminalSidebar
               canvasZoom={canvasZoom}
               desktopParity={desktopParity}
+              suspended={suspended || desktopParity && desktopSessionState.count === 0}
               onDesktopSessionStateChange={desktopParity ? handleDesktopSessionStateChange : undefined}
             />
           </div>

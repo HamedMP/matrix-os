@@ -190,6 +190,7 @@ export function DesktopWindow({
             persistence={win.terminalPersistence ?? "durable"}
             embeddedChrome
             desktopParity={desktopParity}
+            suspended={isHidden || isMinimizing}
             windowControls={{
               close: () => onCloseWindow(win.id),
               minimize: () => onAnimateMinimize(win.id),

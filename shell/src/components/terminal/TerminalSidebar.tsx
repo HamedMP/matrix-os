@@ -222,10 +222,12 @@ type CloseConfirmationRequest = {
 export function LocalTerminalSidebar({
   canvasZoom = 1,
   desktopParity = false,
+  suspended = false,
   onDesktopSessionStateChange,
 }: {
   canvasZoom?: number;
   desktopParity?: boolean;
+  suspended?: boolean;
   onDesktopSessionStateChange?: (state: { count: number; ready: boolean }) => void;
 } = {}) {
   const ctx = useTerminalAppContext();
@@ -827,6 +829,7 @@ export function LocalTerminalSidebar({
           sessions={unfilteredRenderedShells}
           selectedName={activeShellName}
           creating={creatingShell}
+          suspended={suspended}
           onCreate={() => void createManagedShell()}
           onOpen={openActiveShell}
           onDelete={(shell, anchor) => setCloseConfirmationRequest({

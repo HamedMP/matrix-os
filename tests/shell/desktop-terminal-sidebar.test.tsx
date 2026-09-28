@@ -148,6 +148,33 @@ describe("DesktopTerminalSidebar project sharing (#1798)", () => {
     expect(within(group).getByRole("button", { name: "Share project Launch Docs" })).toBeTruthy();
   });
 
+  it("keeps the last project name when a refresh fails", async () => {
+    const sessions = [shell("tws_launch:tt_2", "api-server", "proj_launch")];
+    await renderSidebar(sessions);
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => String(input).endsWith("/api/workspace/projects")
+      ? { ok: false, status: 503 } as Response : json({}));
+    await act(async () => {
+      window.dispatchEvent(new Event("focus"));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(screen.getByRole("group", { name: "Launch Site" })).toBeTruthy();
+  });
+
+  it("pauses project name refreshes while the terminal is suspended", async () => {
+    const sessions = [shell("tws_launch:tt_2", "api-server", "proj_launch")];
+    const view = await renderSidebar(sessions);
+    view.rerender(<DesktopTerminalSidebar sessions={sessions} selectedName={null} creating={false} suspended
+      onCreate={vi.fn()} onOpen={vi.fn()} onDelete={vi.fn()} />);
+    const before = vi.mocked(fetch).mock.calls.filter(([input]) => String(input).endsWith("/api/workspace/projects")).length;
+    await act(async () => {
+      window.dispatchEvent(new Event("focus"));
+      await Promise.resolve();
+    });
+    expect(vi.mocked(fetch).mock.calls.filter(([input]) => String(input).endsWith("/api/workspace/projects"))).toHaveLength(before);
+    expect(screen.getByRole("group", { name: "Launch Site" })).toBeTruthy();
+  });
+
   it("falls back to the project id when its name is unavailable", async () => {
     await renderSidebar([shell("tws_other:tt_5", "shell", "proj_unknown")]);
 

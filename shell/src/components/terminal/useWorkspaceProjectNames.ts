@@ -15,12 +15,12 @@ const WorkspaceProjectsSchema = z.looseObject({
 
 /** Display names for canonical ids. Refresh on focus and at a bounded interval:
  * a rename does not change the ids or the terminal session list. */
-export function useWorkspaceProjectNames(projectIds: readonly string[]): (projectId: string) => string {
+export function useWorkspaceProjectNames(projectIds: readonly string[], suspended = false): (projectId: string) => string {
   const [names, setNames] = useState<Record<string, string>>({});
   const projectSetKey = [...new Set(projectIds)].sort().join("\n");
   // react-doctor-disable-next-line react-doctor/no-fetch-in-effect -- project names are client-local gateway state for display only; each bounded request is aborted on unmount and does not belong to a user event.
   useEffect(() => {
-    if (!projectSetKey) return undefined;
+    if (!projectSetKey || suspended) return undefined;
     let pending: AbortController | null = null;
     const refresh = () => {
       if (pending) return;
@@ -39,7 +39,6 @@ export function useWorkspaceProjectNames(projectIds: readonly string[]): (projec
         setNames(Object.fromEntries(projects.flatMap((project) => project.id ? [[project.id, project.name]] : [])));
       }).catch((error: unknown) => {
         if (controller.signal.aborted) return;
-        setNames({});
         console.warn("[terminal-projects] project names unavailable", error instanceof Error ? error.name : "UnknownError");
       }).finally(() => {
         if (pending === controller) pending = null;
@@ -53,6 +52,6 @@ export function useWorkspaceProjectNames(projectIds: readonly string[]): (projec
       clearInterval(interval);
       pending?.abort();
     };
-  }, [projectSetKey]);
+  }, [projectSetKey, suspended]);
   return (projectId) => (Object.hasOwn(names, projectId) ? names[projectId]! : projectId);
 }
