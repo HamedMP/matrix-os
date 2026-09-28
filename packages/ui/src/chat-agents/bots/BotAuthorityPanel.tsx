@@ -40,7 +40,14 @@ export function BotAuthorityPanel({ view, onRevoke, onMemory, onChanged }: {
           <span className="text-sm">{grant.accountLabel} · {grant.effects.join(", ")}</span>
           <button type="button" aria-label={`Revoke ${grant.accountLabel}`} className={chatAgentButtonClass} disabled={!!pending}
             onClick={() => { void change(grant.grantId, () => onRevoke(grant.grantId),
-              (value) => ({ ...value, grants: value.grants.filter((entry) => entry.grantId !== grant.grantId) })); }}>Revoke</button>
+              (value) => {
+                const grants = value.grants.filter((entry) => entry.grantId !== grant.grantId);
+                return { ...value, grants, connections: value.connections.map((connection) => (
+                  connection.service === grant.service && connection.state === "granted"
+                    && !grants.some((entry) => entry.service === grant.service)
+                    ? { ...connection, state: "connected_not_granted" as const } : connection
+                )) };
+              }); }}>Revoke</button>
         </div>)}
       </div>) : <p className="text-sm" style={chatAgentMutedStyle}>No integration access recorded.</p>}
     </div>
