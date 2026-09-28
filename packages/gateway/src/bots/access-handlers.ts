@@ -44,7 +44,7 @@ export function createBotAccessHandlers(deps: {
         throw error;
       }
       await tx.publish(interaction.chatId, "bot.authority.changed", { agentId: interaction.botId, revision: grant.revision });
-      return `Use the ${payload.service} account "${option.label}". Its access is now available to you.`;
+      return `Use account "${option.label}". Its access is now available to you.`;
     },
 
     async decideApproval(tx: BotStateTransaction, interaction: BotInteractionRecord, decision: "approve" | "deny") {
