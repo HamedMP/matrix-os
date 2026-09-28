@@ -2,6 +2,7 @@ import {
   isChatUnread,
   chatReadAction,
   CanonicalSharedChatPanel,
+  BotChatPanel,
   SharedChatPanel,
   sharedChatMembershipFromProjection,
 } from "@matrix-os/ui";
@@ -844,6 +845,8 @@ export function CanonicalChatWorkspace({
         {controller.detail && globalView === "conversation" ? (
           <>
             {api && !chromeHost ? <ChatSharingButton key={controller.detail.record.chat.id} api={api} chatId={controller.detail.record.chat.id} copyText={copyText} /> : null}
+            <BotChatPanel key={controller.detail.record.chat.id} chatId={controller.detail.record.chat.id}
+              client={client.agents} refreshKey={controller.detail.record.chat.revision} />
             <ChatContextMenu chatId={controller.detail.record.chat.id}>
             <div className="contents">
             <ConversationTranscript turns={transcript} callbacks={{
