@@ -63,6 +63,10 @@ export async function runConnectionReconciliationPass(
   for (const ownerId of await connections.ownersWithPending()) {
     try {
       await connections.reconcile(ownerId);
+    } catch (error: unknown) {
+      console.warn("[bots] connection reconciliation failed:", error instanceof Error ? error.name : "UnknownError");
+    }
+    try {
       for (const continuation of await connections.pendingContinuations(ownerId)) {
         try {
           await admit({ userId: ownerId, source: "configured-container" }, continuation);
@@ -77,7 +81,7 @@ export async function runConnectionReconciliationPass(
         }
       }
     } catch (error: unknown) {
-      console.warn("[bots] connection reconciliation failed:", error instanceof Error ? error.name : "UnknownError");
+      console.warn("[bots] connection continuation lookup failed:", error instanceof Error ? error.name : "UnknownError");
     }
   }
 }
