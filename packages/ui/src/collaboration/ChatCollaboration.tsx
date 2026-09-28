@@ -27,6 +27,7 @@ import { useSessionDiscussion } from "./useSessionDiscussion.js";
 import { notifyCollaborationDiscoveryChanged } from "./discovery-events.js";
 import { canOpenSharedResource, openSharedResource, sharedResourceInvitationCopy, type SharedResourceOpeners } from "./recipient-views.js";
 import { SharedFileView } from "./SharedFileView.js";
+import { SharedFolderView } from "./SharedFolderView.js";
 
 type DiscoveryItem = z.infer<typeof CollaborationDiscoveryItemSchema>;
 type SharedMessage = z.infer<typeof CollaborationSharedChatMessageSchema>;
@@ -38,7 +39,8 @@ export type ChatCollaborationView =
   | { kind: "canonical-chat"; chatId: string }
   | { kind: "terminal"; scopeId: string }
   | { kind: "project"; scopeId: string }
-  | { kind: "file"; scopeId: string };
+  | { kind: "file"; scopeId: string }
+  | { kind: "folder"; scopeId: string };
 
 export function ChatCollaboration({
   view,
@@ -83,6 +85,7 @@ export function ChatCollaboration({
   }
   if (view.kind === "invitation") return <InvitationView api={api} invitationId={view.invitationId} openers={openers} />;
   if (view.kind === "file") return <SharedFileView api={api} scopeId={view.scopeId} />;
+  if (view.kind === "folder") return <SharedFolderView api={api} scopeId={view.scopeId} />;
   if (view.kind === "terminal") return <SharedTerminalView api={api} actorId={actorId} scopeId={view.scopeId} layers={layers} />;
   if (view.kind === "project") return <SharedProjectView api={api} scopeId={view.scopeId} />;
   if (view.kind === "canonical-chat") return <CanonicalSharedChatPanel api={api} actorId={actorId}
