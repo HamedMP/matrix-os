@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { BotRecipeCatalogError, createBotRecipeCatalog } from "../../../packages/gateway/src/bots/recipe-catalog.js";
+import { BotRecipeCatalogError, MAX_BOT_RECIPE_VERSIONS, createBotRecipeCatalog } from "../../../packages/gateway/src/bots/recipe-catalog.js";
 import {
   BOT_SYSTEM_PROMPT_TOKEN_BUDGET,
   BotSystemPromptError,
@@ -23,6 +23,13 @@ describe("bot recipe catalog", () => {
     ]) {
       expect(() => catalog.resolve(ref)).toThrow(BotRecipeCatalogError);
     }
+  });
+
+  it("is bounded: an oversized catalog is refused at startup", () => {
+    const recipe = createBotRecipeCatalog().list()[0]!;
+    const many = Array.from({ length: MAX_BOT_RECIPE_VERSIONS + 1 }, (_, index) => ({ ...recipe, version: `v${index}` }));
+    expect(() => createBotRecipeCatalog(many)).toThrow(RangeError);
+    expect(createBotRecipeCatalog(many.slice(0, MAX_BOT_RECIPE_VERSIONS)).list()).toHaveLength(MAX_BOT_RECIPE_VERSIONS);
   });
 
   it("never gives a recipe without integrations the integration tools", () => {
