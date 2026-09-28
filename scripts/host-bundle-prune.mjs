@@ -131,12 +131,32 @@ export function validatePlanForApply(plan, { bucket, confirm, now }) {
   }
 }
 
-/** Keys whose version directory is referenced now, so apply must skip them. */
-export function referencedKeysToSkip(keys, referencedVersions) {
-  return keys.filter((key) => {
-    const [segment] = key.slice(PREFIX.length).split("/");
-    return segment !== OBJECTS_SEGMENT && referencedVersions.has(segment);
-  });
+const isSharedObjectKey = (key) => key.startsWith(`${PREFIX}${OBJECTS_SEGMENT}/`);
+const versionOfKey = (key) => (isSharedObjectKey(key) ? null : key.slice(PREFIX.length).split("/")[0]);
+
+/** Keys both the saved plan and a fresh decision mark for deletion, version directories first. */
+export function keysToApply(planKeys, freshKeys) {
+  const fresh = new Set(freshKeys);
+  const agreed = planKeys.filter((key) => fresh.has(key));
+  return [...agreed.filter((key) => !isSharedObjectKey(key)), ...agreed.filter(isSharedObjectKey)];
+}
+
+/**
+ * Re-check one batch against references read just before deleting it. Versions kept since the
+ * fresh decision are skipped; if any of them has an incremental manifest, shared objects stop.
+ */
+export function batchKeysToDelete(batch, { baselineKept, currentKept, releases }) {
+  const newlyKept = [...currentKept].filter((version) => !baselineKept.has(version));
+  const stopSharedObjects = newlyKept.some((version) => releases.get(version)?.incremental_manifest_key);
+  const newlyKeptSet = new Set(newlyKept);
+  const keys = [];
+  const skipped = [];
+  for (const key of batch) {
+    const version = versionOfKey(key);
+    if (version === null ? stopSharedObjects : newlyKeptSet.has(version)) skipped.push(key);
+    else keys.push(key);
+  }
+  return { keys, skipped, stopSharedObjects };
 }
 
 // ---------------------------------------------------------------- I/O (CLI only)
@@ -179,7 +199,8 @@ async function loadFleetVersions(env) {
   });
   if (!response.ok) throw new Error(`GET /vps/fleet failed: ${response.status}`);
   const body = await response.json();
-  if (body.truncated) console.warn("WARNING: /vps/fleet was truncated; machine database references still apply");
+  // A truncated list could hide a machine running a version its database row does not record.
+  if (body.truncated) throw new Error("refusing: GET /vps/fleet was truncated, so running versions cannot all be protected");
   const rows = Array.isArray(body.machines) ? body.machines : [];
   return rows.flatMap((row) => [row.runtimeVersion, row.imageVersion].filter((v) => typeof v === "string" && v));
 }
@@ -219,6 +240,30 @@ async function createStorage(env) {
 const gib = (bytes) => `${(bytes / 1024 ** 3).toFixed(2)} GiB`;
 const STORAGE_ENV = ["PLATFORM_DATABASE_URL", "R2_BUNDLES_ENDPOINT", "R2_BUNDLES_BUCKET", "R2_BUNDLES_ACCESS_KEY_ID", "R2_BUNDLES_SECRET_ACCESS_KEY"];
 
+/** Current references (and live fleet versions when configured) as prune input, without objects. */
+async function loadInput(env, rules) {
+  const refs = await loadReferences(env, rules.keepPerChannel);
+  const fleetVersions = await loadFleetVersions(env);
+  return { ...refs, pinned: rules.pinned, fleetVersions: fleetVersions ?? [], fleetChecked: fleetVersions !== null,
+    keepPerChannel: rules.keepPerChannel, keepRecentDays: rules.keepRecentDays, now: Date.now() };
+}
+
+/** A full decision from live references, the bucket listing and kept versions' manifests. */
+async function decideFromLiveState(env, storage, rules) {
+  const input = { ...(await loadInput(env, rules)), objects: await storage.list() };
+  const manifestShas = new Map();
+  const releases = new Map(input.releases.map((row) => [row.version, row]));
+  if (input.objects.some((item) => isSharedObjectKey(item.key))) {
+    for (const version of keepReasons(input).keys()) {
+      const key = releases.get(version)?.incremental_manifest_key;
+      if (!key) continue;
+      try { manifestShas.set(version, await storage.manifestShas(key)); }
+      catch (error) { manifestShas.set(version, null); console.warn(`manifest unreadable for kept version ${version}: ${error.name}`); }
+    }
+  }
+  return { input, plan: decidePrune(input, { manifestShas }) };
+}
+
 async function runPlan(env) {
   requireEnv(env, STORAGE_ENV);
   const keepPerChannel = Number(env.KEEP_PER_CHANNEL ?? 3);
@@ -228,21 +273,10 @@ async function runPlan(env) {
   const pinned = (env.KEEP_VERSIONS ?? "").split(",").map((v) => v.trim()).filter(Boolean);
   const storage = await createStorage(env);
   try {
-    const refs = await loadReferences(env, keepPerChannel);
-    const fleetVersions = await loadFleetVersions(env);
-    const objects = await storage.list();
-    const input = { ...refs, objects, pinned, fleetVersions: fleetVersions ?? [], keepPerChannel, keepRecentDays, now: Date.now() };
-    const manifestShas = new Map();
-    const releases = new Map(refs.releases.map((row) => [row.version, row]));
-    if (objects.some((item) => item.key.startsWith(`${PREFIX}${OBJECTS_SEGMENT}/`))) {
-      for (const version of keepReasons(input).keys()) {
-        const key = releases.get(version)?.incremental_manifest_key;
-        if (!key) continue;
-        try { manifestShas.set(version, await storage.manifestShas(key)); }
-        catch (error) { manifestShas.set(version, null); console.warn(`manifest unreadable for kept version ${version}: ${error.name}`); }
-      }
-    }
-    const plan = decidePrune(input, { manifestShas });
+    const { input, plan } = await decideFromLiveState(env, storage, { keepPerChannel, keepRecentDays, pinned });
+    const refs = input;
+    const objects = input.objects;
+    const fleetVersions = input.fleetChecked ? input.fleetVersions : null;
 
     const kept = plan.report.filter((row) => row.decision === "KEEP");
     const doomed = plan.report.filter((row) => row.decision === "DELETE");
@@ -266,7 +300,8 @@ async function runPlan(env) {
 
     const planFile = env.PLAN_FILE ?? `host-bundle-prune-plan-${new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z")}.json`;
     await writeFile(planFile, `${JSON.stringify({ generatedAt: new Date().toISOString(), bucket: env.R2_BUNDLES_BUCKET,
-      keepPerChannel, keepRecentDays, deleteKeys: plan.deleteKeys }, null, 2)}\n`, { flag: "wx" });
+      keepPerChannel, keepRecentDays, keepVersions: pinned, fleetChecked: input.fleetChecked,
+      deleteKeys: plan.deleteKeys }, null, 2)}\n`, { flag: "wx" });
     console.log(`plan written to ${planFile} (${plan.deleteKeys.length} keys). Nothing was deleted.`);
   } finally {
     storage.destroy();
@@ -278,29 +313,39 @@ async function runApply(env, planPath) {
   requireEnv(env, STORAGE_ENV);
   const plan = JSON.parse(await readFile(planPath, "utf8"));
   validatePlanForApply(plan, { bucket: env.R2_BUNDLES_BUCKET, confirm: env.CONFIRM_DELETE_KEYS, now: Date.now() });
-
-  const refs = await loadReferences(env, Number(plan.keepPerChannel) || 3);
-  const referenced = new Set();
-  const add = (value) => { if (value) referenced.add(value); };
-  for (const row of refs.channels) add(row.version);
-  for (const row of refs.history) add(row.version);
-  for (const row of refs.machines) { add(row.image_version); add(row.target_bundle_version); }
-  for (const row of [...refs.jobs, ...refs.leases]) add(row.target_bundle_version);
-  for (const row of refs.snapshots) add(row.bundle_version);
-  for (const version of (await loadFleetVersions(env)) ?? []) add(version);
-
-  const skipped = referencedKeysToSkip(plan.deleteKeys, referenced);
-  const skippedSet = new Set(skipped);
-  const keys = plan.deleteKeys.filter((key) => !skippedSet.has(key));
-  if (skipped.length) console.log(`skipping ${skipped.length} keys whose version is now referenced`);
+  if (plan.fleetChecked && !(env.PLATFORM_URL && env.PLATFORM_SECRET)) {
+    throw new Error("the plan checked live fleet versions; set PLATFORM_URL and PLATFORM_SECRET for apply too");
+  }
+  const rules = { keepPerChannel: Number(plan.keepPerChannel) || 3, keepRecentDays: Number(plan.keepRecentDays) || 14,
+    pinned: Array.isArray(plan.keepVersions) ? plan.keepVersions : [] };
 
   const storage = await createStorage(env);
   const log = env.DELETE_LOG ?? planPath.replace(/\.json$/, ".deleted.log");
   let deleted = 0;
   let failed = 0;
+  let skipped = 0;
   try {
+    // Re-decide from live state with the plan's rules; delete only what both decisions agree on.
+    const { plan: fresh } = await decideFromLiveState(env, storage, rules);
+    const keys = keysToApply(plan.deleteKeys, fresh.deleteKeys);
+    skipped += plan.deleteKeys.length - keys.length;
+    if (skipped) console.log(`skipping ${skipped} planned keys the live decision now keeps`);
+    const baselineKept = new Set(fresh.keptVersions);
+    let stopSharedObjects = false;
+
     for (let i = 0; i < keys.length; i += 500) {
-      const { deleted: done, errors } = await storage.deleteBatch(keys.slice(i, i + 500));
+      // References can change while batches run; re-read them before every batch.
+      const current = await loadInput(env, rules);
+      const check = batchKeysToDelete(keys.slice(i, i + 500), { baselineKept, currentKept: new Set(keepReasons(current).keys()),
+        releases: new Map(current.releases.map((row) => [row.version, row])) });
+      const batch = stopSharedObjects ? check.keys.filter((key) => !isSharedObjectKey(key)) : check.keys;
+      skipped += check.skipped.length + (check.keys.length - batch.length);
+      if (check.stopSharedObjects && !stopSharedObjects) {
+        stopSharedObjects = true;
+        console.warn("a version gained a reference during apply; shared objects will not be deleted");
+      }
+      if (batch.length === 0) continue;
+      const { deleted: done, errors } = await storage.deleteBatch(batch);
       deleted += done.length;
       failed += errors.length;
       await appendFile(log, done.map((key) => `${key}\n`).join(""));
@@ -311,7 +356,7 @@ async function runApply(env, planPath) {
   } finally {
     storage.destroy();
   }
-  console.log(`done: ${deleted} deleted, ${failed} failed, ${skipped.length} skipped. Log: ${log}`);
+  console.log(`done: ${deleted} deleted, ${failed} failed, ${skipped} skipped. Log: ${log}`);
   if (failed > 0) process.exitCode = 1;
 }
 

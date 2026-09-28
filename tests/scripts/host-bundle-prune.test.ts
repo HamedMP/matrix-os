@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  batchKeysToDelete,
   decidePrune,
-  referencedKeysToSkip,
+  keysToApply,
   validatePlanForApply,
 } from "../../scripts/host-bundle-prune.mjs";
 
@@ -112,9 +113,34 @@ describe("host bundle prune apply checks", () => {
         .toThrow("unsafe key");
     }
   });
+});
 
-  it("skips keys whose version became referenced after planning", () => {
-    expect(referencedKeysToSkip(plan.deleteKeys, new Set(["v-pr"]))).toEqual([tarball("v-pr")]);
-    expect(referencedKeysToSkip(plan.deleteKeys, new Set(["zzz"]))).toEqual([]);
+describe("host bundle prune apply recomputation", () => {
+  it("deletes only keys that both the saved plan and a fresh decision mark", () => {
+    const saved = decidePrune(baseInput());
+    const later = decidePrune(baseInput({
+      releases: baseInput().releases.map((row) => row.version === "v-pr" ? release("v-pr", null, "2026-09-27T00:00:00Z") : row),
+    }));
+    expect(saved.deleteKeys).toContain(tarball("v-pr"));
+    expect(keysToApply(saved.deleteKeys, later.deleteKeys)).toEqual([tarball("v1")]);
+  });
+
+  it("orders version directories before shared objects", () => {
+    expect(keysToApply(["system-bundles/objects/sha256/zzz", tarball("v-pr")],
+      ["system-bundles/objects/sha256/zzz", tarball("v-pr")])).toEqual([tarball("v-pr"), "system-bundles/objects/sha256/zzz"]);
+  });
+
+  it("skips a batch's keys for versions kept since the fresh decision", () => {
+    const releases = new Map([["v-pr", release("v-pr", null)], ["v-man", release("v-man", null, old, true)]]);
+    const result = batchKeysToDelete([tarball("v-pr"), tarball("v-other")],
+      { baselineKept: new Set(["v3"]), currentKept: new Set(["v3", "v-pr"]), releases });
+    expect(result).toEqual({ keys: [tarball("v-other")], skipped: [tarball("v-pr")], stopSharedObjects: false });
+  });
+
+  it("stops deleting shared objects when a newly kept version has a manifest", () => {
+    const releases = new Map([["v-man", release("v-man", null, old, true)]]);
+    const result = batchKeysToDelete(["system-bundles/objects/sha256/zzz"],
+      { baselineKept: new Set(), currentKept: new Set(["v-man"]), releases });
+    expect(result).toEqual({ keys: [], skipped: ["system-bundles/objects/sha256/zzz"], stopSharedObjects: true });
   });
 });

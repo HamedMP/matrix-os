@@ -209,8 +209,8 @@ A version's objects are kept when any of these references it:
 
 - a current channel pointer (`host_bundle_channels`)
 - the last `KEEP_PER_CHANNEL` promotions per channel (`host_bundle_release_channels`, default 3), which are the channel rollback targets
-- a non-deleted machine's installed or target version (`user_machines`), or a live runtime version from `GET /vps/fleet`
-- an unfinished provisioning job, an active golden snapshot lease, or a golden snapshot that is not failed, retiring or deleted
+- a non-deleted machine's installed or target version (`user_machines`), or a live runtime version from `GET /vps/fleet` (the script refuses to run when that list is truncated)
+- an unfinished provisioning job, an active golden snapshot lease, or a golden snapshot in candidate, building, sanitizing, validating or ready state
 - a release newer than `KEEP_RECENT_DAYS` (default 14), or a version listed in `KEEP_VERSIONS`
 
 Shared `system-bundles/objects/sha256/*` objects are kept while any kept version's incremental manifest lists them. If a kept manifest cannot be read, all shared objects are kept. Paths outside `system-bundles/<version>/` and `system-bundles/objects/sha256/` are left alone.
@@ -227,7 +227,7 @@ CONFIRM_DELETE_KEYS=<key count from the plan> <same env> \
 node scripts/host-bundle-prune.mjs apply host-bundle-prune-plan-<timestamp>.json
 ```
 
-`apply` refuses a plan for another bucket, a plan older than 24 hours, keys outside `system-bundles/`, or a confirmation that does not match the key count. It re-reads the same references immediately before deleting and skips any version that became referenced after planning. It deletes in batches of 500, stops at the first failed batch, and logs every deleted key next to the plan.
+`apply` refuses a plan for another bucket, a plan older than 24 hours, keys outside `system-bundles/`, or a confirmation that does not match the key count. It then re-decides from live state with the plan's rules (including `KEEP_VERSIONS`, the recent-release window and shared-object protection) and deletes only keys both decisions mark, version directories before shared objects. Before each batch of 500 it re-reads references, skips versions that gained one, and stops deleting shared objects if such a version has an incremental manifest. It stops at the first failed batch and logs every deleted key next to the plan. A reference created in the seconds between a batch's check and its delete is not caught, so avoid pruning during promotions or fleet deploys.
 
 Pruned versions still appear in `GET /system-bundles/releases`, so downgrading to one fails with a download error. Before pruning, keep any version an operator may roll back or downgrade to with `KEEP_VERSIONS`.
 
