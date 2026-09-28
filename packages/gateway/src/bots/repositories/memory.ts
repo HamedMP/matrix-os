@@ -25,6 +25,8 @@ const MAX_SOURCE_BYTES = 4 * 1024;
 const MAX_SEARCH_RESULTS = 20;
 const MAX_QUERY_CHARS = 500;
 const MAX_LISTED = 100;
+/** Enough to fill the 2K-token admission budget with room to spare. */
+const MAX_ADMISSIBLE_LISTED = 200;
 const encoder = new TextEncoder();
 
 export type BotMemoryKind = BotMemoryItemsTable["kind"];
@@ -146,20 +148,42 @@ export function createBotMemoryRepository(db: BotExecutor) {
       return fromRow(row);
     },
     /**
-     * Forgets an item and flags the bot's transcripts for recompaction in one
-     * transaction, so a summary that cited it is regenerated before reuse.
+     * Forgets an item at its revision and flags the bot's transcripts for
+     * recompaction in one transaction, so a summary that cited it is
+     * regenerated before reuse. False when it changed or is already gone.
      */
-    async forget(input: { ownerId: string; itemId: string; now: string }, executor: BotExecutor = db): Promise<boolean> {
+    async forget(input: { ownerId: string; itemId: string; baseRevision: number; now: string }, executor: BotExecutor = db): Promise<boolean> {
       return withTransaction(executor, async (trx) => {
         const row = await trx.updateTable("bot_memory_items")
           .set({ forgotten_at: input.now, revision: sql<number>`revision + 1`, updated_at: input.now })
           .where("owner_id", "=", input.ownerId).where("item_id", "=", input.itemId).where("forgotten_at", "is", null)
+          .where("revision", "=", input.baseRevision)
           .returning("bot_id")
           .executeTakeFirst();
         if (!row) return false;
         await createBotSessionsRepository(trx).markNeedsRecompaction({ ownerId: input.ownerId, botId: row.bot_id, now: input.now }, trx);
         return true;
       });
+    },
+    /**
+     * Confirmed, live items in `scopes`, highest priority first (preferences,
+     * then facts, then episodes; newest first within a kind), for a run's
+     * context. Ordered in the query so older preferences are never crowded
+     * out by newer items.
+     */
+    async listAdmissible(input: { ownerId: string; botId: string; scopes: readonly string[]; limit?: number; now: string }, executor: BotExecutor = db): Promise<BotMemoryRecord[]> {
+      if (input.scopes.length === 0) return [];
+      const limit = Math.max(1, Math.min(Math.trunc(input.limit ?? MAX_ADMISSIBLE_LISTED), MAX_ADMISSIBLE_LISTED));
+      const rows = await executor.selectFrom("bot_memory_items").select([...COLUMNS])
+        .where("owner_id", "=", input.ownerId).where("bot_id", "=", input.botId)
+        .where("confirmed", "=", true).where("forgotten_at", "is", null)
+        .where((eb) => eb.or([eb("expires_at", "is", null), eb("expires_at", ">", input.now)]))
+        .where("scope", "in", [...input.scopes])
+        .orderBy(sql`CASE kind WHEN 'preference' THEN 0 WHEN 'fact' THEN 1 ELSE 2 END`)
+        .orderBy("updated_at", "desc")
+        .limit(limit)
+        .execute();
+      return rows.map(fromRow);
     },
     /** Live items for the owner's memory view, newest first; unconfirmed items included and marked. */
     async list(input: { ownerId: string; botId: string; limit?: number; now: string }, executor: BotExecutor = db): Promise<BotMemoryRecord[]> {

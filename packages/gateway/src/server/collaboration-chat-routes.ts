@@ -7,6 +7,7 @@ import { ProviderSettingsStore } from "../ai-providers/provider-settings-store.j
 import type { GmailAccountRow } from "../chat/jev-recipe-authority.js";
 import { createProviderSettingsRoutes } from "../ai-providers/provider-settings-routes.js";
 import { createChatAgentRoutes } from "../chat/agent-routes.js";
+import { createBotContinuationAdmitter } from "../bots/continuations.js";
 import { createBotRoutes } from "../bots/routes.js";
 import type { BotServices } from "../startup/bots.js";
 import { registerCanonicalChatEventHttpRoute } from "../chat/event-http-route.js";
@@ -80,7 +81,14 @@ export function registerCollaborationChatRoutes(options: CollaborationChatRouteO
     getPrincipal: (c) => requireRequestPrincipal(c),
   }));
   app.route("/", createBotRoutes({
-    ...(botServices ? { instantiation: botServices.instantiation } : {}),
+    ...(botServices ? {
+      instantiation: botServices.instantiation,
+      interactions: botServices.interactions,
+      memory: botServices.memory,
+    } : {}),
+    ...(botServices && chatRepository && canonicalChatOrchestrator ? {
+      admitContinuation: createBotContinuationAdmitter({ repository: chatRepository, orchestrator: canonicalChatOrchestrator }),
+    } : {}),
     getPrincipal: (c) => requireRequestPrincipal(c),
   }));
   app.route("/", createChatAgentRoutes({

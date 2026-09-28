@@ -26,6 +26,7 @@ Gateway routes for conversational bots. Additive to the canonical Chat API (`pac
 |---|---|---|---|---|---|
 | `POST /api/chat-agents/instantiate` | Yes | No | No | No | No |
 | `GET /api/chat-agents/:agentId/authority` | Full | Group-visible subset (M3) | Group-visible subset (M3) | Group-visible subset (M3) | No |
+| `GET /api/chats/:chatId/interactions` | Pending; payloads only where designated responder | Same | No | Same | No |
 | `POST /api/chats/:chatId/interactions/:interactionId/resolve` | If designated responder | If designated responder | No | If designated responder | No |
 | `DELETE /api/chat-agents/:agentId/grants/:grantId` | Yes | No | No | No | No |
 | `POST /api/chat-agents/:agentId/memory/:itemId/forget` | Yes | No | No | No | No |
@@ -106,6 +107,12 @@ Errors:
 - `404 not_found`
 - `403 forbidden`: not the responder
 - `410 expired` (allowlisted code `expired`)
+
+## `GET /api/chats/:chatId/interactions` (M1)
+
+Response `200 { "interactions": BotInteraction[] }`: pending, unexpired interactions in the chat, oldest first. The kind payload is included only for the designated responder.
+
+A blocking question's answer continues the bot's waiting task. The answer is admitted as the responder's next message under `req_answer_<interactionId>`, so it runs at most once, and it is queued if the chat is busy. If that admission fails, the resolve route answers `503` after the answer is recorded. Repeating the identical request returns the same result and retries the continuation. A reply typed in the chat instead of the form also answers the task's open question.
 
 ## `DELETE /api/chat-agents/:agentId/grants/:grantId` (M1)
 

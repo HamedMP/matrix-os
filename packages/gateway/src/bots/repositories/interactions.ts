@@ -184,14 +184,20 @@ export function createBotInteractionsRepository(db: BotExecutor) {
         .executeTakeFirst();
       return row !== undefined;
     },
-    /** Expires overdue pending interactions in a bounded batch and returns them for follow-up. */
-    async expireDue(input: { now: string; limit?: number }, executor: BotExecutor = db): Promise<BotInteractionRecord[]> {
+    /**
+     * Expires overdue pending interactions in a bounded batch, optionally for
+     * one owner, and returns them for follow-up.
+     */
+    async expireDue(input: { now: string; limit?: number; ownerId?: string }, executor: BotExecutor = db): Promise<BotInteractionRecord[]> {
       const limit = Math.max(1, Math.min(Math.trunc(input.limit ?? MAX_EXPIRE_BATCH), MAX_EXPIRE_BATCH));
       const rows = await executor.updateTable("bot_interactions")
         .set({ status: "expired", resolved_at: input.now, revision: sql<number>`revision + 1` })
-        .where("interaction_id", "in", (eb) => eb.selectFrom("bot_interactions").select("interaction_id")
-          .where("status", "=", "pending").where("expires_at", "<=", input.now)
-          .orderBy("expires_at", "asc").limit(limit))
+        .where("interaction_id", "in", (eb) => {
+          let due = eb.selectFrom("bot_interactions").select("interaction_id")
+            .where("status", "=", "pending").where("expires_at", "<=", input.now);
+          if (input.ownerId !== undefined) due = due.where("owner_id", "=", input.ownerId);
+          return due.orderBy("expires_at", "asc").limit(limit);
+        })
         .where("status", "=", "pending")
         .returningAll()
         .execute();
