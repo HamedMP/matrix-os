@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import React from "react";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ChatCollaboration } from "../../packages/ui/src/collaboration/ChatCollaboration";
@@ -156,5 +156,30 @@ describe("SharedFolderView", () => {
     await waitFor(() => expect(api.getContent).toHaveBeenCalledWith(`${base}/files/${fileId}/content`, { maxBytes: 2 * 1024 * 1024 }));
     expect(screen.getByRole("alert")).toHaveTextContent("could not");
     expect(screen.queryByText(/private\/owner/)).toBeNull();
+  });
+
+  it("finishes an authorized download when the folder listing is refreshed", async () => {
+    const api = fakeApi("viewer", [{ entries: [root, { ...file, parentId: rootId }] }]);
+    let release!: (value: Awaited<ReturnType<typeof api.getContent>>) => void;
+    api.getContent.mockImplementationOnce(() => new Promise((resolve) => { release = resolve; }));
+    render(<ChatCollaboration view={{ kind: "folder", scopeId }} api={api} actorId="user_member" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Download readme.txt" }));
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    expect(await screen.findByRole("button", { name: "Download readme.txt" })).toBeVisible();
+    release({ status: "ok", bytes: new TextEncoder().encode("hello"), contentType: "text/plain", size: 5 });
+    await waitFor(() => expect(HTMLAnchorElement.prototype.click).toHaveBeenCalledTimes(1));
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("does not save a pending download after the shared scope changes", async () => {
+    const api = fakeApi("viewer", [{ entries: [root, { ...file, parentId: rootId }] }]);
+    let release!: (value: Awaited<ReturnType<typeof api.getContent>>) => void;
+    api.getContent.mockImplementationOnce(() => new Promise((resolve) => { release = resolve; }));
+    const { rerender } = render(<ChatCollaboration view={{ kind: "folder", scopeId }} api={api} actorId="user_member" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Download readme.txt" }));
+    rerender(<ChatCollaboration view={{ kind: "folder", scopeId: otherScopeId }} api={api} actorId="user_member" />);
+    await waitFor(() => expect(api.get).toHaveBeenCalledWith(`/api/collaboration/scopes/${otherScopeId}`));
+    await act(async () => { release({ status: "ok", bytes: new TextEncoder().encode("hello"), contentType: "text/plain", size: 5 }); });
+    expect(HTMLAnchorElement.prototype.click).not.toHaveBeenCalled();
   });
 });
