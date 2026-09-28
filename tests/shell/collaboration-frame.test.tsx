@@ -165,6 +165,7 @@ function fakeApi(discovery: { inbox?: unknown; shared?: unknown; fail?: boolean 
     patch: vi.fn(async () => ({ readThroughSeq: "0", pinned: false, muted: false })),
     delete: vi.fn(),
     subscribe: vi.fn(() => () => undefined),
+    direct: { close: vi.fn() },
   } as unknown as CollaborationApi;
 }
 
@@ -329,28 +330,41 @@ describe("CollaborationFrame", () => {
     expect(screen.getByText("mina@example.com")).toBeVisible();
   });
 
-  it("closes collaboration sessions once Clerk confirms sign-out", async () => {
+  it("ends collaboration and the app session before Clerk sign-out, then leaves", async () => {
     const requests = recordFetches();
     render(<CollaborationFrame view={{ kind: "home" }} />);
+    expect(await screen.findByText("Nothing shared yet")).toBeVisible();
 
     fireEvent.pointerDown(screen.getByRole("button", { name: "Account menu for Mina Member" }), { button: 0, ctrlKey: false });
     fireEvent.click(await screen.findByRole("menuitem", { name: "Sign out" }));
 
     await waitFor(() => expect(replaceMock).toHaveBeenCalledWith(`${origin}/sign-in?redirect_url=%2Fshared`));
     expect(clerkState.signOut).toHaveBeenCalledWith({ redirectUrl: `${origin}/sign-in?redirect_url=%2Fshared` });
-    const closeOrder = vi.mocked(closeShellCollaborationSessions).mock.invocationCallOrder[0];
-    expect(closeOrder).toBeDefined();
-    expect(closeOrder!).toBeGreaterThan(clerkState.signOut.mock.invocationCallOrder[0]!);
-    expect(closeOrder!).toBeLessThan(replaceMock.mock.invocationCallOrder[0]!);
-    expect(requests).toContainEqual({ path: "/api/auth/app-session", method: "DELETE" });
+    const signOutOrder = clerkState.signOut.mock.invocationCallOrder[0]!;
+    expect(vi.mocked(closeShellCollaborationSessions).mock.invocationCallOrder[0]!).toBeLessThan(signOutOrder);
     const appSessionCleared = vi.mocked(globalThis.fetch).mock.invocationCallOrder[
-      requests.findIndex((request) => request.path === "/api/auth/app-session")
+      requests.findIndex((request) => request.path === "/api/auth/app-session" && request.method === "DELETE")
     ];
-    expect(appSessionCleared!).toBeLessThan(clerkState.signOut.mock.invocationCallOrder[0]!);
+    expect(appSessionCleared!).toBeLessThan(signOutOrder);
     expectOnlyCollaborationRequests(requests);
   });
 
-  it("keeps working sessions and reports the failure when Clerk sign-out fails", async () => {
+  it("leaves when the platform revoked the session even if Clerk's client sign-out fails", async () => {
+    recordFetches((url, init) => url.pathname === "/api/auth/app-session" && init?.method === "DELETE"
+      ? jsonResponse({ cleared: true, clerkSessionRevoked: true })
+      : jsonResponse({ items: [] }));
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    clerkState.signOut.mockRejectedValueOnce(new Error("network"));
+    render(<CollaborationFrame view={{ kind: "home" }} />);
+
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Account menu for Mina Member" }), { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Sign out" }));
+
+    await waitFor(() => expect(replaceMock).toHaveBeenCalledWith(`${origin}/sign-in?redirect_url=%2Fshared`));
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("reports an unconfirmed sign-out and restarts shared work on fresh sessions", async () => {
     const requests = recordFetches();
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     clerkState.signOut.mockRejectedValueOnce(new Error("network"));
@@ -362,38 +376,59 @@ describe("CollaborationFrame", () => {
 
     expect(await screen.findByRole("alert")).toHaveTextContent("Sign-out did not finish. Try again.");
     expect(replaceMock).not.toHaveBeenCalled();
-    // Nothing was torn down, so the open view and any unsent input stay as they were.
-    expect(vi.mocked(closeShellCollaborationSessions)).not.toHaveBeenCalled();
-    expect(vi.mocked(createShellCollaborationApi)).toHaveBeenCalledTimes(1);
-    expect(requests.filter((request) => request.path === "/api/collaboration/inbox")).toHaveLength(1);
-    expect(screen.getByText("Nothing shared yet")).toBeVisible();
+    // Neither the platform nor Clerk confirmed sign-out, and the old sessions were already ended.
+    await waitFor(() => expect(vi.mocked(createShellCollaborationApi)).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(requests.filter((request) => request.path === "/api/collaboration/inbox")).toHaveLength(2));
+    expect(await screen.findByText("Nothing shared yet")).toBeVisible();
     fireEvent.pointerDown(screen.getByRole("button", { name: "Account menu for Mina Member" }), { button: 0, ctrlKey: false });
     expect(await screen.findByRole("menuitem", { name: "Sign out" })).not.toHaveAttribute("data-disabled");
   });
 
-  it("closes collaboration sessions when the account signs out after a timed-out attempt", async () => {
+  it("closes the frame's sessions when the account signs out elsewhere", async () => {
     recordFetches();
     const { rerender } = render(<CollaborationFrame view={{ kind: "home" }} />);
     expect(await screen.findByText("Nothing shared yet")).toBeVisible();
-    expect(vi.mocked(closeShellCollaborationSessions)).not.toHaveBeenCalled();
+    const api = vi.mocked(createShellCollaborationApi).mock.results[0]!.value as ReturnType<typeof createShellCollaborationApi>;
+    const close = vi.spyOn(api.direct, "close");
 
     clerkState.isSignedIn = false;
     clerkState.userId = null;
     rerender(<CollaborationFrame view={{ kind: "home" }} />);
 
-    await waitFor(() => expect(vi.mocked(closeShellCollaborationSessions)).toHaveBeenCalledOnce());
+    await waitFor(() => expect(close).toHaveBeenCalledOnce());
     expect(screen.getByRole("link", { name: "Sign in" })).toBeVisible();
   });
 
-  it("closes collaboration sessions when a different account becomes active", async () => {
+  it("keeps a live API when StrictMode replays the frame's effects", async () => {
     recordFetches();
+    render(<React.StrictMode><CollaborationFrame view={{ kind: "home" }} /></React.StrictMode>);
+
+    expect(await screen.findByText("Nothing shared yet")).toBeVisible();
+    const created = vi.mocked(createShellCollaborationApi).mock.results.map((result) => result.value as ReturnType<typeof createShellCollaborationApi>);
+    expect(created.length).toBeGreaterThan(1);
+    // A disposed client refuses immediately with "Collaboration session closed"; the live one tries to connect.
+    await expect(created[0]!.direct.request(scopeId, "GET", `/api/collaboration/scopes/${scopeId}`)).rejects.toThrow("Collaboration session closed");
+    const live = created.at(-1)!;
+    const attempt = live.direct.request(scopeId, "GET", `/api/collaboration/scopes/${scopeId}`);
+    await expect(attempt).rejects.toThrow();
+    await expect(attempt).rejects.not.toThrow("Collaboration session closed");
+  });
+
+  it("gives a newly active account its own working sessions", async () => {
+    const requests = recordFetches();
     const { rerender } = render(<CollaborationFrame view={{ kind: "home" }} />);
     expect(await screen.findByText("Nothing shared yet")).toBeVisible();
+    const first = vi.mocked(createShellCollaborationApi).mock.results[0]!.value as ReturnType<typeof createShellCollaborationApi>;
+    const closeFirst = vi.spyOn(first.direct, "close");
 
     clerkState.userId = "user_other";
     rerender(<CollaborationFrame view={{ kind: "home" }} />);
 
-    await waitFor(() => expect(vi.mocked(closeShellCollaborationSessions)).toHaveBeenCalledOnce());
+    await waitFor(() => expect(vi.mocked(createShellCollaborationApi)).toHaveBeenCalledTimes(2));
+    const second = vi.mocked(createShellCollaborationApi).mock.results[1]!.value as ReturnType<typeof createShellCollaborationApi>;
+    expect(second).not.toBe(first);
+    expect(closeFirst).toHaveBeenCalledOnce();
+    await waitFor(() => expect(requests.filter((request) => request.path === "/api/collaboration/inbox")).toHaveLength(2));
   });
 
   it("uses brand tokens instead of hard-coded colors", async () => {
