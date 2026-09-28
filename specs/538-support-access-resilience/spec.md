@@ -109,6 +109,40 @@ customer content needs an incident reason and applicable support authorization.
    that as an explicit advanced host-control mode. Guest keys cannot be
    protected from that user; provider rescue remains the recovery path.
 
+### Root service wiring and staging limits
+
+- Cloud-init installs root-owned helper binaries and systemd units before
+  enabling owner services. The root-owned PostgreSQL startup unit runs before
+  the owner-owned restore unit; the gateway and shell start only after restore
+  readiness. Upgrades install a candidate helper and unit atomically, validate
+  ownership and mode, then reload systemd. A failed validation keeps the
+  previous helper and unit active.
+- The gateway and `matrix-update` write a bounded, schema-validated update
+  request to the owner-visible request location. The root-owned updater reads
+  that request through a fixed entry point, revalidates the action and version
+  against platform release metadata, and fetches the bundle itself into a
+  root-owned staging directory. It never executes the owner-writable request,
+  trusts a supplied URL or checksum, or reads executable code from an
+  owner-writable ancestor. A local systemd trigger connects the request to the
+  updater even when the gateway is unavailable; startup reconciliation picks
+  up a pending request after reboot.
+- Root staging has a per-release byte ceiling, a maximum number of retained
+  candidates, and a finite download and extraction timeout. Archive entry
+  count, expanded bytes, path traversal, links, and device entries are checked
+  before installation. Failed and expired candidates are removed by a
+  recurring symlink-safe sweep using `lstat`; successful candidates are removed
+  after the transaction is committed. Rollback artifacts have a documented
+  retention window and are never deleted while referenced by an active
+  transaction. The sweep timer is stopped on service shutdown.
+- A root-owned restore unit starts the fixed PostgreSQL container specification
+  and then the owner-owned restore unit loads the database. The owner cannot
+  choose a Docker image, mount, socket operation, unit name, or host command.
+  Integration tests must boot a disposable VPS from cloud-init, submit a typed
+  owner request, observe the root service processing it, and verify startup,
+  interrupted-update recovery, restore, and rollback through the real systemd
+  ordering. Denied arbitrary requests and staging exhaustion are part of that
+  end-to-end test.
+
 ## Independent recovery and monitoring
 
 1. Keep a private provider-rescue runbook with separate provider credentials.
