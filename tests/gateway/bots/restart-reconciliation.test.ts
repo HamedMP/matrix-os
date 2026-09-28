@@ -9,7 +9,7 @@ import { createBotTasksRepository } from "../../../packages/gateway/src/bots/rep
 import { ChatAgentStore } from "../../../packages/gateway/src/chat/agent-store.js";
 import type { ChatDatabase } from "../../../packages/gateway/src/chat/database.js";
 import { ChatRepository } from "../../../packages/gateway/src/chat/repository.js";
-import { startBots } from "../../../packages/gateway/src/startup/bots.js";
+import { runConnectionReconciliationPass, startBots } from "../../../packages/gateway/src/startup/bots.js";
 import { BOT, OWNER, createBotStateDatabase, insertChat } from "./bot-state-support.js";
 
 let db: Kysely<OwnerBotDatabase>;
@@ -53,6 +53,25 @@ const base = () => ({
 });
 
 describe("bot services at gateway start", () => {
+  it("continues later owners when one inventory fails, and retries failed admission", async () => {
+    const continuation = { chatId: "chat_restart1", clientRequestId: "req_answer_in_0123456789abcdef01234567", text: "Connected." };
+    const reconcile = vi.fn(async (ownerId: string) => {
+      if (ownerId === "bad") throw new Error("inventory unavailable");
+      return [];
+    });
+    const pendingContinuations = vi.fn(async () => [continuation]);
+    const ackContinuation = vi.fn(async () => undefined);
+    const deferContinuation = vi.fn(async () => undefined);
+    let fail = true;
+    const admit = vi.fn(async () => { if (fail) throw new Error("temporarily busy"); });
+    const connections = { ownersWithPending: async () => ["bad", "good"], reconcile, pendingContinuations, ackContinuation, deferContinuation };
+    await runConnectionReconciliationPass(connections, admit);
+    expect(reconcile).toHaveBeenCalledWith("good");
+    expect(deferContinuation).toHaveBeenCalledWith("good", continuation.clientRequestId);
+    fail = false;
+    await runConnectionReconciliationPass(connections, admit);
+    expect(ackContinuation).toHaveBeenCalledWith("good", continuation.clientRequestId);
+  });
   it("marks tool calls the previous process left dispatched as effect unknown, before any run", async () => {
     await insertChat(db, "chat_restart1");
     const task = await createBotTasksRepository(db).create({ ownerId: OWNER, botId: BOT, chatId: "chat_restart1", now: "2026-09-27T12:00:00.000Z" });

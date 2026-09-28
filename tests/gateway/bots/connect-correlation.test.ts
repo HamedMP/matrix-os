@@ -122,7 +122,38 @@ describe("bot connection requests", () => {
     expect(await grants()).toHaveLength(1);
     // A repeated pass does nothing more.
     await expect(connections.reconcile(OWNER)).resolves.toEqual([]);
+    await expect(connections.ownersWithPending()).resolves.toEqual([OWNER]);
+    await connections.ackContinuation(OWNER, `req_answer_${interactionId}`);
     await expect(connections.ownersWithPending()).resolves.toEqual([]);
+  });
+
+  it("keeps a completed connection continuation durable until admission is acknowledged", async () => {
+    const { connections } = setup();
+    await connections.startConnect(OWNER, CHAT, interactionId, 1);
+    connected = [WORK];
+    await connections.reconcile(OWNER);
+    const [continuation] = await connections.pendingContinuations(OWNER);
+    expect(continuation).toMatchObject({ chatId: CHAT, clientRequestId: `req_answer_${interactionId}` });
+    await connections.deferContinuation(OWNER, continuation!.clientRequestId);
+    expect(await connections.pendingContinuations(OWNER)).toEqual([]);
+    clock += 61_000;
+    expect(await connections.pendingContinuations(OWNER)).toHaveLength(1);
+    await connections.ackContinuation(OWNER, continuation!.clientRequestId);
+    expect(await connections.pendingContinuations(OWNER)).toEqual([]);
+    expect(await connections.ownersWithPending()).toEqual([]);
+  });
+
+  it("does not register consent after the owner closed the request during the external call", async () => {
+    const { connections, client } = setup();
+    client.connect.mockImplementation(async () => {
+      await createBotInteractionsRepository(db).resolve({
+        ownerId: OWNER, interactionId, baseRevision: 1, responderActorId: OWNER,
+        resolution: { action: "decline" }, now: "2026-09-28T10:01:00.000Z",
+      });
+      return "https://connect.example/oauth?state=abc";
+    });
+    await expect(connections.startConnect(OWNER, CHAT, interactionId, 1)).rejects.toEqual(new BotInteractionError("conflict"));
+    expect(await db.selectFrom("bot_connect_requests").select("request_id").execute()).toEqual([]);
   });
 
   it("asks which new account when several appeared, and expires a request nobody finished", async () => {

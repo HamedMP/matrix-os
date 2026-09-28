@@ -83,6 +83,17 @@ describe("bot authority view", () => {
     expect(view.connections).toEqual([{ service: "gmail", state: "granted" }]);
   });
 
+  it("shows all 65 live grants within the repository's 100 grant bound", async () => {
+    for (let index = 0; index < 64; index += 1) {
+      await createBotGrantsRepository(db).grant({
+        ownerId: OWNER, botId: BOT, service: "gmail", connectionId: `conn_extra_${index}`, accountLabel: `Extra ${index}`,
+        effects: ["read"], audience: "direct", grantedByActorId: OWNER, now: AT,
+      });
+    }
+    const view = await authority(async () => []).view(OWNER, BOT);
+    expect(view.grants).toHaveLength(65);
+  });
+
   it("refuses unknown bots and malformed IDs, and serves the route privately", async () => {
     const service = authority(async () => []);
     await expect(service.view(OWNER, "bot_ffffffffffffffffffffffff")).rejects.toEqual(new BotAuthorityError("not_found"));
