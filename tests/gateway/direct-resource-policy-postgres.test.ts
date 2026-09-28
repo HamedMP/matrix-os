@@ -449,6 +449,10 @@ describe("S12 direct resource policy", () => {
       expect(list.status).toBe(200);
       const entries = (await list.json() as { entries: Array<{ id: string; path: string }> }).entries;
       expect(entries.map((entry) => entry.path).sort()).toEqual(["README.md", "docs", "docs/guide.md"]);
+      const exact = await signed({ actorId: collaborationActors.viewer, scopeId: PROJECT_SCOPE, method: "GET",
+        path: `/api/collaboration/scopes/${PROJECT_SCOPE}/files/${ids.readme}` });
+      expect(exact.status).toBe(200);
+      expect(await exact.json()).toMatchObject({ id: ids.readme, kind: "file", path: "README.md" });
       const search = await signed({ actorId: collaborationActors.viewer, scopeId: PROJECT_SCOPE, method: "GET", path: `/api/collaboration/scopes/${PROJECT_SCOPE}/files`, query: "query=guide" });
       expect(search.status).toBe(200);
       expect((await search.json() as { entries: Array<{ id: string }> }).entries.map((entry) => entry.id)).toEqual([ids.docsGuide]);
@@ -511,6 +515,8 @@ describe("S12 direct resource policy", () => {
       expect(await content.text()).toBe("today");
       const other = await signed({ actorId: collaborationActors.viewer, scopeId: FILE_SCOPE, method: "GET", path: `/api/collaboration/scopes/${FILE_SCOPE}/files/${ids.readme}/content` });
       expect(other.status).toBe(404);
+      const otherDescriptor = await signed({ actorId: collaborationActors.viewer, scopeId: FILE_SCOPE, method: "GET", path: `/api/collaboration/scopes/${FILE_SCOPE}/files/${ids.readme}` });
+      expect(otherDescriptor.status).toBe(404);
       const viewerWrite = await signed({ actorId: collaborationActors.viewer, scopeId: FILE_SCOPE, method: "POST", path: `/api/collaboration/scopes/${FILE_SCOPE}/files/actions`, body: { type: "write", fileId: ids.notes, content: "x", expectedRevision: "0", clientRequestId: requestId() } });
       expect(viewerWrite.status).toBe(403);
       const editorWrite = await signed({ actorId: collaborationActors.editor, scopeId: FILE_SCOPE, method: "POST", path: `/api/collaboration/scopes/${FILE_SCOPE}/files/actions`, body: { type: "write", fileId: ids.notes, content: "tomorrow", expectedRevision: "0", clientRequestId: requestId() } });

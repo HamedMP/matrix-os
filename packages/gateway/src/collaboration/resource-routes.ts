@@ -171,6 +171,15 @@ export function registerResourceRoutes(routes: Hono, options: CollaborationRoute
     }));
   }));
 
+  routes.get("/api/collaboration/scopes/:scopeId/files/:fileId", async (c) => handle(c, async () => {
+    const scopeId = CollaborationIdSchema.parse(c.req.param("scopeId"));
+    const fileId = CollaborationCatalogIdSchema.parse(c.req.param("fileId"));
+    const context = await authorize(options, c, new Uint8Array(), "read", scopeId);
+    const entry = await requireResources(options).catalog.resolveForScope(context, fileId);
+    if (entry.kind !== "file") throw new ResourceCatalogError("not_found");
+    return c.json(entryProjection(entry));
+  }));
+
   routes.get("/api/collaboration/scopes/:scopeId/files/:fileId/content", async (c) => handle(c, async () => {
     const scopeId = CollaborationIdSchema.parse(c.req.param("scopeId"));
     const fileId = CollaborationCatalogIdSchema.parse(c.req.param("fileId"));

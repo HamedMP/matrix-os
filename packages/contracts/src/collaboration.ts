@@ -326,10 +326,13 @@ export const CollaborationProjectTransitionSchema = z.object({
 export const CollaborationProjectSchema = z.object({
   id: CollaborationResourceIdSchema,
   scopeId: CollaborationIdSchema,
+  title: z.string().trim().min(1).max(200),
   status: z.enum(["active", "archived"]),
   resources: z.array(z.object({
     kind: z.enum(["file", "chat", "app", "layout", "terminal"]),
     id: z.string().min(1).max(4_096),
+    title: z.string().trim().min(1).max(200),
+    scopeId: CollaborationIdSchema.optional(),
     revision: CollaborationRevisionSchema,
     readiness: z.enum(["ready", "blocked"]),
     incarnation: z.string().min(1).max(256).regex(/^[A-Za-z0-9_-]+$/).optional(),

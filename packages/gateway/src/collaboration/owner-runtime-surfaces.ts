@@ -105,5 +105,10 @@ export async function enableOwnerCollaborationSurfaces(
     },
   });
   runtime.enableProjectGit({ driver: projectGitDriver, source: inventorySource });
-  return runtime.enableSharedProject({ homePath, inventorySource });
+  return runtime.enableSharedProject({ homePath, inventorySource,
+    resolveProjectTitle: async (ownerId, projectId) => {
+      const result = await projectManager.getProjectById({ type: "user", id: ownerId }, projectId);
+      return result.ok ? result.project.name : null;
+    },
+  });
 }
