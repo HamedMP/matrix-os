@@ -3,8 +3,8 @@ import { canonicalBoundedText, canonicalSafeLabel, canonicalEncodedByteLength } 
 import { ResolvedChatAgentRecipeSchema } from "#chat-agent-recipe";
 
 export const ChatAgentIdSchema = z.string().regex(/^bot_[a-z0-9]{8,64}$/);
-export function isChatAgentDriver(kind: string): kind is "hermes" | "codex" {
-  return kind === "hermes" || kind === "codex";
+export function isChatAgentDriver(kind: string): kind is "hermes" | "codex" | "matrix_bot" {
+  return kind === "hermes" || kind === "codex" || kind === "matrix_bot";
 }
 export const ChatContextSnapshotSchema = z.object({
   chatId: z.string().regex(/^chat_[A-Za-z0-9_-]{1,120}$/),

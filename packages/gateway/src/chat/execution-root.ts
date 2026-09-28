@@ -273,6 +273,8 @@ export function createChatExecutionRootResolver<
     }
     const owner = parsedOwner.data;
     const ref = parsedRef.data;
+    // Bot workspaces are resolved by the bot runtime host, never through Project authority.
+    if (ref.kind === "bot_workspace") throw new ChatExecutionRootError("invalid_root");
     const ownerScope = projectOwnerScope(owner);
     const project = await loadProject(ownerScope, ref.projectId);
 
