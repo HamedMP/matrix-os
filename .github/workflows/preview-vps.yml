@@ -148,6 +148,17 @@ jobs:
             if [ "$HAS_LABEL" = "true" ] || [ "$HAS_BUNDLE_LABEL" = "true" ]; then
               action="teardown"
               teardown_private="true"
+            else
+              # Labels can be removed before close; a bundle comment from this
+              # workflow shows the PR may still have previews to destroy.
+              bundle_comments="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" \
+                --jq '.[] | select(.user.login == "github-actions[bot]"
+                  and ((.body | startswith("**Private Preview bundle ready**"))
+                    or (.body | startswith("**Preview VPS deployed**")))) | .id')"
+              if [ -n "$bundle_comments" ]; then
+                action="teardown"
+                teardown_private="true"
+              fi
             fi
           elif [ "$EVENT_ACTION" = "labeled" ]; then
             if [ "$LABELED_NAME" = "preview-vps" ]; then
@@ -914,14 +925,16 @@ jobs:
         if: ${{ !cancelled() && needs.gate.outputs.teardown_private == 'true' }}
         run: |
           set -euo pipefail
-          code="$(curl -sS --max-time 300 -o /tmp/private-previews.json -w '%{http_code}' \
+          response="$(mktemp)"
+          trap 'rm -f "$response"' EXIT
+          code="$(curl -sS --max-time 300 -o "$response" -w '%{http_code}' \
             -X DELETE "${PLATFORM_PUBLIC_URL}/vps/private-previews?pr=${PR}" \
             -H "authorization: Bearer ${PLATFORM_SECRET}")"
           if [ "$code" != "200" ]; then
             echo "Private Preview teardown failed with HTTP ${code}" >&2
             exit 1
           fi
-          echo "Private Previews for PR #${PR}: $(jq -c . /tmp/private-previews.json)"
+          echo "Private Previews for PR #${PR}: $(jq -c . "$response")"
 
   reaper:
     name: Reap stale preview VPSes
@@ -999,35 +1012,23 @@ jobs:
             exit 1
           fi
 
-      # The platform's own sweep enforces the Private Preview TTL; this backstop
-      # covers PR closes whose teardown run failed or never happened.
+      # The platform's own sweep enforces the Private Preview lifetime; this
+      # backstop covers PR closes whose teardown run failed or never happened.
+      # It walks PRs closed within that lifetime plus a day, not the fleet
+      # listing, which is capped, so every Private Preview of a closed PR that
+      # can still be alive is reached. Deleting none is a no-op on the platform.
       - name: Delete Private Previews for closed PRs
         if: ${{ !cancelled() }}
         run: |
           set -euo pipefail
+          since="$(date -u -d "-$((PREVIEW_TTL_HOURS + 24)) hours" +%Y-%m-%d)"
+          prs="$(gh pr list --repo "$GITHUB_REPOSITORY" --state closed --search "closed:>=${since}" \
+            --limit 1000 --json number --jq '.[].number')"
           failed=0
-          prs="$(curl -fsS --max-time 30 \
-            -H "authorization: Bearer ${PLATFORM_SECRET}" \
-            "${PLATFORM_PUBLIC_URL}/vps/fleet" |
-            jq -r '.machines[]
-              | select((.handle | test("^pv-[1-9][0-9]{0,8}-[0-9a-f]{8}$")) and .status != "deleted" and .deletedAt == null)
-              | .handle | split("-")[1]' |
-            sort -un)"
           for pr in $prs; do
-            pr_state="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${pr}" --jq .state 2>/dev/null || echo unknown)"
-            if [ "$pr_state" = "unknown" ]; then
-              # Fail-safe: never delete on unconfirmed PR state.
-              echo "Skipping Private Previews for PR #${pr}: could not confirm its state" >&2
-              failed=1
-              continue
-            fi
-            if [ "$pr_state" != "closed" ]; then
-              continue
-            fi
-            echo "Reaping Private Previews for closed PR #${pr}"
             code="$(curl -sS --max-time 300 -o /dev/null -w '%{http_code}' \
               -X DELETE "${PLATFORM_PUBLIC_URL}/vps/private-previews?pr=${pr}" \
-              -H "authorization: Bearer ${PLATFORM_SECRET}")"
+              -H "authorization: Bearer ${PLATFORM_SECRET}" || true)"
             if [ "$code" != "200" ]; then
               echo "Failed to reap Private Previews for PR #${pr} (HTTP ${code})" >&2
               failed=1

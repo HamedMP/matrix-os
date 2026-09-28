@@ -39,7 +39,10 @@ async function decide(overrides: Record<string, string>): Promise<{ status: numb
   const output = join(directory, 'output');
   await writeFile(output, '');
   await writeFile(join(directory, 'gh'), `#!/usr/bin/env bash
-printf '%s' '{"head":{"sha":"${headSha}","ref":"feature","repo":{"full_name":"HamedMP/matrix-os"}},"user":{"login":"octo-dev"}}'
+case "$*" in
+  */comments*) printf '%s' "\${FAKE_BUNDLE_COMMENT_IDS:-}" ;;
+  *) printf '%s' '{"head":{"sha":"${headSha}","ref":"feature","repo":{"full_name":"HamedMP/matrix-os"}},"user":{"login":"octo-dev"}}' ;;
+esac
 `);
   await chmod(join(directory, 'gh'), 0o755);
   const result = spawnSync('bash', ['-c', step('gate', 'Decide action').run!], {
@@ -118,6 +121,7 @@ describe('Private Preview teardown in the Preview workflow', () => {
     ['a bundle-labelled PR closes', { EVENT_ACTION: 'closed', HAS_BUNDLE_LABEL: 'true' }, 'teardown', 'true'],
     ['a preview-labelled PR closes', { EVENT_ACTION: 'closed', HAS_LABEL: 'true' }, 'teardown', 'true'],
     ['an unlabelled PR closes', { EVENT_ACTION: 'closed' }, 'skip', 'false'],
+    ['a PR whose labels were removed after a bundle closes', { EVENT_ACTION: 'closed', FAKE_BUNDLE_COMMENT_IDS: '4126949577' }, 'teardown', 'true'],
     ['a maintainer tears down the shared preview', { EVENT_NAME: 'workflow_dispatch', TEARDOWN_PREVIEW: 'true' }, 'teardown', 'false'],
   ])('decides %s', async (_case, overrides, action, teardownPrivate) => {
     const { status, outputs } = await decide(overrides);
@@ -131,30 +135,33 @@ describe('Private Preview teardown in the Preview workflow', () => {
     expect(destroy.if).toContain('!cancelled()');
     expect(destroy.if).toContain("needs.gate.outputs.teardown_private == 'true'");
     expect(destroy.run).toContain('-X DELETE "${PLATFORM_PUBLIC_URL}/vps/private-previews?pr=${PR}"');
+    expect(destroy.run).toContain('trap \'rm -f "$response"\' EXIT');
   });
 
-  async function reap(states: string) {
+  async function reap(closedPrs: string, deleteCodes = '', ghFails = false) {
     const directory = await scratch();
     const deletes = join(directory, 'deletes');
+    const ghArgs = join(directory, 'gh-args');
     await writeFile(deletes, '');
     await writeFile(join(directory, 'curl'), `#!/usr/bin/env bash
 url=""
 for arg in "$@"; do case "$arg" in http*) url="$arg" ;; esac; done
 case "$url" in
-  */vps/fleet) printf '%s' "$FAKE_FLEET" ;;
-  */vps/private-previews*) echo "$url" >> "$FAKE_DELETES"; printf '200' ;;
+  */vps/private-previews*)
+    echo "$url" >> "$FAKE_DELETES"
+    pr="\${url##*pr=}"
+    code="$(tr ',' '\\n' <<< "$FAKE_DELETE_CODES" | sed -n "s/^\${pr}=//p")"
+    printf '%s' "\${code:-200}" ;;
   *) exit 22 ;;
 esac
 `);
     await writeFile(join(directory, 'gh'), `#!/usr/bin/env bash
-pr="\${2##*/}"
-state="$(tr ',' '\\n' <<< "$FAKE_PR_STATES" | sed -n "s/^\${pr}=//p")"
-if [ -z "$state" ] || [ "$state" = "unknown" ]; then exit 1; fi
-echo "$state"
+echo "$*" >> "$FAKE_GH_ARGS"
+if [ "$FAKE_GH_FAILS" = "true" ]; then exit 1; fi
+printf '%s\\n' $FAKE_CLOSED_PRS
 `);
     await chmod(join(directory, 'curl'), 0o755);
     await chmod(join(directory, 'gh'), 0o755);
-    const machine = (handle: string, status = 'running') => ({ handle, status, deletedAt: null, machineId: handle });
     const result = spawnSync('bash', ['-c', step('reaper', 'Delete Private Previews for closed PRs').run!], {
       encoding: 'utf8',
       env: {
@@ -162,33 +169,38 @@ echo "$state"
         GITHUB_REPOSITORY: 'HamedMP/matrix-os',
         PLATFORM_PUBLIC_URL: 'https://platform.test',
         PLATFORM_SECRET: 'platform-secret',
+        PREVIEW_TTL_HOURS: '72',
         FAKE_DELETES: deletes,
-        FAKE_PR_STATES: states,
-        FAKE_FLEET: JSON.stringify({
-          machines: [
-            machine('pv-1907-3fa91c2e'),
-            machine('pv-1907-0badf00d'),
-            machine('pv-1908-3fa91c2e'),
-            machine('pv-1909-3fa91c2e'),
-            machine('pv-1911-3fa91c2e', 'deleted'),
-            machine('pr-1910'),
-            machine('alice'),
-          ],
-        }),
+        FAKE_GH_ARGS: ghArgs,
+        FAKE_CLOSED_PRS: closedPrs,
+        FAKE_DELETE_CODES: deleteCodes,
+        FAKE_GH_FAILS: String(ghFails),
       },
     });
-    return { status: result.status, deletes: (await readFile(deletes, 'utf8')).split('\n').filter(Boolean) };
+    const read = async (path: string) => (await readFile(path, 'utf8').catch(() => '')).split('\n').filter(Boolean);
+    return { status: result.status, deletes: await read(deletes), ghArgs: await read(ghArgs) };
   }
 
-  it('reaps Private Previews of closed PRs once per PR as a daily backstop', async () => {
-    const { status, deletes } = await reap('1907=closed,1908=open,1909=open,1910=closed,1911=closed');
+  it('walks PRs closed within the preview lifetime, not the capped fleet listing', async () => {
+    const { status, deletes, ghArgs } = await reap('1907 1908');
     expect(status).toBe(0);
-    expect(deletes).toEqual(['https://platform.test/vps/private-previews?pr=1907']);
+    expect(deletes).toEqual([
+      'https://platform.test/vps/private-previews?pr=1907',
+      'https://platform.test/vps/private-previews?pr=1908',
+    ]);
+    expect(ghArgs[0]).toContain('pr list --repo HamedMP/matrix-os --state closed');
+    expect(ghArgs[0]).toMatch(/closed:>=\d{4}-\d{2}-\d{2}/);
   });
 
-  it('keeps Private Previews whose PR state is unknown, and fails so the skip is visible', async () => {
-    const { status, deletes } = await reap('1907=closed,1908=open,1909=unknown');
+  it('keeps going after a failed delete and fails so it is visible', async () => {
+    const { status, deletes } = await reap('1907 1908', '1907=502');
     expect(status).toBe(1);
-    expect(deletes).toEqual(['https://platform.test/vps/private-previews?pr=1907']);
+    expect(deletes).toHaveLength(2);
+  });
+
+  it('deletes nothing and fails when closed PRs cannot be listed', async () => {
+    const { status, deletes } = await reap('1907', '', true);
+    expect(status).not.toBe(0);
+    expect(deletes).toEqual([]);
   });
 });
