@@ -53,6 +53,26 @@ it("keeps bot interactions visible when only the agent library request fails", a
   expect(await screen.findByText("Which company?")).toBeTruthy();
 });
 
+it("keeps the last valid bot controls visible when one status refresh fails", async () => {
+  const interaction = { interactionId: "in_abcdefgh", chatId: "chat_research", agentId: "bot_research1",
+    taskId: "task_abcdefgh", kind: "question", blocking: true, status: "pending", revision: 1,
+    expiresAt: "2099-01-01T00:00:00.000Z",
+    payload: { kind: "question", questions: [{ questionId: "target", header: "Target", question: "Which company?" }] } };
+  const interactions = vi.fn().mockResolvedValueOnce([interaction]).mockRejectedValueOnce(new Error("temporary"));
+  const client = { bots: {
+    directBot: vi.fn(async () => "bot_research1"), interactions,
+    tasks: vi.fn(async () => []),
+    authority: vi.fn(async () => ({ agentId: "bot_research1", revision: 1, grants: [], connections: [], routines: [],
+      pendingInteractions: [], memory: { items: [] } })),
+  }, list: vi.fn(async () => ({ enabled: true, agents: [] })) };
+  const { rerender } = render(<BotChatPanel chatId="chat_research" client={client as never} refreshKey={0} />);
+  expect(await screen.findByText("Which company?")).toBeTruthy();
+  rerender(<BotChatPanel chatId="chat_research" client={client as never} refreshKey={1} />);
+  await waitFor(() => expect(interactions).toHaveBeenCalledTimes(2));
+  expect(screen.getByText("Which company?")).toBeTruthy();
+  expect(await screen.findByRole("alert")).toBeTruthy();
+});
+
 it("removes a consent link when its connection request is no longer pending", async () => {
   const interaction = { interactionId: "in_abcdefgh", chatId: "chat_research", agentId: "bot_research1",
     taskId: "task_abcdefgh", kind: "connect_request", blocking: true, status: "pending",

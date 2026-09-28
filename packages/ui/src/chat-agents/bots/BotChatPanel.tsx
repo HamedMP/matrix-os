@@ -44,9 +44,9 @@ export function BotChatPanel({ chatId, client, refreshKey }: { chatId?: string; 
           bots.interactions(chatId), bots.tasks(chatId), bots.authority(agentId), client.list(),
         ]);
         if (!current) return;
-        setInteractions(pending.status === "fulfilled" ? pending.value : []);
-        setTasks(activeTasks.status === "fulfilled" ? activeTasks.value : []);
-        setAuthority(view.status === "fulfilled" ? view.value : null);
+        if (pending.status === "fulfilled") setInteractions(pending.value);
+        if (activeTasks.status === "fulfilled") setTasks(activeTasks.value);
+        if (view.status === "fulfilled") setAuthority(view.value);
         if (library.status === "fulfilled") setName(library.value.agents.find((agent) => agent.id === agentId)?.name ?? null);
         if (library.status === "rejected") console.warn("[chat-agents] Bot name unavailable:", library.reason instanceof Error ? library.reason.name : "UnknownError");
         setError(pending.status === "rejected" || activeTasks.status === "rejected" || view.status === "rejected"
