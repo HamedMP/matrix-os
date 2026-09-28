@@ -1,0 +1,26 @@
+# Spec 536 live spike spend authorization
+
+Recorded 2026-09-28 before provisioning or model calls. The owner authorized the lowest powered supported disposable VPS and a **USD 50 total cap** for S0 and Spikes A-C. This execution allocates at most USD 10 to VPS/IP charges and USD 40 to model calls; both allocations are subsets of the one USD 50 cap, not additional budgets. Stop before a category or total cap can be exceeded.
+
+## Machine plan
+
+- Candidate: one preview VPS, `pr-2015`, using the supported Germany CPX22 x86 plan (2 vCPU, 4 GiB RAM, 80 GiB disk). The preview workflow reaps `pr-*` machines after 72 hours and on PR close. Verify the actual provisioned type and creation time before live use.
+- Current published Hetzner rates: CPX22 USD 0.0368/hour plus primary IPv4 USD 0.0010/hour, excluding VAT. At 72 hours this is USD 2.7216 excluding VAT. Apply a conservative USD 10 machine/IP cap including tax and unforeseen charges; stop or delete early if needed. Sources: https://docs.hetzner.com/general/infrastructure-and-availability/price-adjustment/ and https://docs.hetzner.com/cloud/servers/primary-ips/overview/.
+- Machine lifetime: 72 hours maximum per preview. Do not leave an unneeded preview running. Preserve it after validation only until the owner decides deletion, within the authorized cap.
+
+## Model plan
+
+- S0 live probe call cap: USD 2 within the USD 40 model allocation. The script estimates every recorded call, including compaction, using Claude Haiku 4.5 prices of USD 1 per million input tokens, USD 5 per million output tokens, USD 1.25 per million 5-minute cache writes, and USD 0.10 per million cache reads. Source: https://platform.claude.com/docs/en/about-claude/pricing.
+- No real customer account, inbox, calendar, message recipient, or uncontrolled website is permitted. Use dedicated synthetic data and controlled accounts.
+- After each stage, record actual provider usage and estimated costs. Do not treat a case without final usage as free. Track one cumulative total for S0 plus A-C before starting each subsequent call.
+
+## Ledger
+
+| Stage | Machine/IP USD | Model USD | Notes |
+| --- | ---: | ---: | --- |
+| S0 | 0.00 | 0.00 | Not started |
+| Spike A | 0.00 | 0.00 | Not started |
+| Spike B | 0.00 | 0.00 | Not started |
+| Spike C | 0.00 | 0.00 | Not started |
+
+No spend had been incurred when this authorization was recorded.
