@@ -2,7 +2,7 @@ import type { Context, Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { MATRIX_MCP_RUN_CONTEXT_KEY } from "../../chat/matrix-mcp-launch.js";
 import { isPrivatePreviewHandle } from "@matrix-os/contracts";
-import { bootstrapCustomMcpProjection } from "./projection-bootstrap.js";
+import { startCustomMcpProjectionSync } from "./projection-bootstrap.js";
 import { createCustomMcpProjectionRoutes } from "./projection-routes.js";
 import { CustomMcpProjectionStore } from "./projection-store.js";
 
@@ -54,10 +54,15 @@ export interface CustomMcpGatewayRouteOptions {
   platformProxy?: CustomMcpPlatformProxyOptions;
 }
 
+export interface CustomMcpGatewayRegistration {
+  /** Stops the Private Preview projection sync; a no-op on other machines. */
+  stop(): void;
+}
+
 export function registerCustomMcpGatewayRoutes(
   app: Hono,
   options: CustomMcpGatewayRouteOptions,
-): void {
+): CustomMcpGatewayRegistration {
   const store = new CustomMcpProjectionStore(options.homePath);
   if (options.clerkUserId && options.projectionToken) {
     app.route(
@@ -72,14 +77,12 @@ export function registerCustomMcpGatewayRoutes(
   }
 
   const proxy = options.platformProxy;
-  if (!proxy) return;
+  if (!proxy) return { stop() {} };
   const targetBase = `${proxy.internalPlatformUrl}/internal/containers/${encodeURIComponent(proxy.handle)}/mcp-servers`;
-  if (isPrivatePreviewHandle(proxy.handle)) {
-    // Spec 537: fetch the servers the owner configured before this machine existed.
-    void bootstrapCustomMcpProjection({ store, listUrl: targetBase, token: proxy.token }).catch((error: unknown) => {
-      console.warn("[custom-mcp] projection pull crashed", error instanceof Error ? error.name : "UnknownError");
-    });
-  }
+  // Spec 537: keep a Private Preview's projection in step with the owner's servers.
+  const sync = isPrivatePreviewHandle(proxy.handle)
+    ? startCustomMcpProjectionSync({ store, listUrl: targetBase, token: proxy.token })
+    : { stop() {} };
   app.all(
     "/api/mcp-servers",
     bodyLimit({ maxSize: CUSTOM_MCP_PROXY_BODY_LIMIT }),
@@ -90,4 +93,5 @@ export function registerCustomMcpGatewayRoutes(
     bodyLimit({ maxSize: CUSTOM_MCP_PROXY_BODY_LIMIT }),
     (context) => proxyCustomMcpRequest(context, proxy, targetBase),
   );
+  return sync;
 }

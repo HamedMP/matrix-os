@@ -619,6 +619,7 @@ async function startPlatformServerWithCleanup(
       customMcpClosed = true;
       try {
         await broker.shutdown();
+        await projection.drain();
       } finally {
         await closeCustomMcpDb();
       }

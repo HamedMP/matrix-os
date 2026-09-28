@@ -6,6 +6,7 @@ const REQUEST_TIMEOUT_MS = 10_000;
 const DEFAULT_ATTEMPTS = 6;
 const BASE_DELAY_MS = 5_000;
 const MAX_DELAY_MS = 120_000;
+const RESYNC_INTERVAL_MS = 5 * 60_000;
 const MAX_SERVERS = 100;
 
 const ListedServerSchema = z.object({
@@ -37,58 +38,119 @@ function toProjection(server: ListedServer): CustomMcpServerProjection {
   };
 }
 
-/**
- * Spec 537: a Private Preview starts after its owner configured Custom MCP on
- * another computer, and the platform only pushes later changes. At startup it
- * pulls the owner's current servers once, retrying while the platform does
- * not yet consider the machine eligible. The store's revision guard keeps a
- * concurrent push from being overwritten by older pulled data.
- */
-export async function bootstrapCustomMcpProjection(options: {
-  store: Pick<CustomMcpProjectionStore, "upsert">;
+export type CustomMcpProjectionPullOutcome = "applied" | "stale" | "retry" | "rejected";
+
+interface PullOptions {
+  store: Pick<CustomMcpProjectionStore, "writeGeneration" | "replaceFromPull">;
   listUrl: string;
   token: string;
   fetchImpl?: typeof fetch;
+  signal?: AbortSignal;
+}
+
+/**
+ * Spec 537: one pull of the owner's current servers into a Private Preview's
+ * projection. The list replaces the projection, so servers deleted while the
+ * preview missed a push disappear too. A push that lands while the list is in
+ * flight may be newer than it, so that list is discarded ("stale").
+ */
+export async function pullCustomMcpProjection(options: PullOptions): Promise<CustomMcpProjectionPullOutcome> {
+  const generation = options.store.writeGeneration();
+  const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
+  let response: Response;
+  try {
+    response = await (options.fetchImpl ?? fetch)(options.listUrl, {
+      headers: { authorization: `Bearer ${options.token}` },
+      redirect: "error",
+      signal: options.signal ? AbortSignal.any([timeout, options.signal]) : timeout,
+    });
+  } catch (error: unknown) {
+    console.warn("[custom-mcp] projection pull failed", error instanceof Error ? error.name : "UnknownError");
+    return "retry";
+  }
+  // 403 and 5xx can clear once the platform sees the machine running and eligible.
+  if (response.status === 403 || response.status >= 500) return "retry";
+  if (!response.ok) {
+    console.warn(`[custom-mcp] projection pull rejected status=${response.status}`);
+    return "rejected";
+  }
+  let servers: ListedServer[];
+  try {
+    servers = ListedServersSchema.parse(await response.json());
+  } catch (error: unknown) {
+    console.warn("[custom-mcp] projection pull returned an invalid list", error instanceof Error ? error.name : "UnknownError");
+    return "rejected";
+  }
+  try {
+    return await options.store.replaceFromPull(servers.map(toProjection), generation) ? "applied" : "stale";
+  } catch (error: unknown) {
+    console.warn("[custom-mcp] projection pull could not be stored", error instanceof Error ? error.name : "UnknownError");
+    return "rejected";
+  }
+}
+
+/**
+ * A Private Preview starts after its owner configured Custom MCP on another
+ * computer. At startup it pulls until a list applies, retrying while the
+ * platform does not yet consider the machine eligible or a push overtook the
+ * list.
+ */
+export async function bootstrapCustomMcpProjection(options: PullOptions & {
   sleep?: (ms: number) => Promise<void>;
   attempts?: number;
 }): Promise<boolean> {
-  const fetchImpl = options.fetchImpl ?? fetch;
   const sleep = options.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
   const attempts = options.attempts ?? DEFAULT_ATTEMPTS;
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     if (attempt > 0) await sleep(Math.min(BASE_DELAY_MS * 2 ** (attempt - 1), MAX_DELAY_MS));
-    let response: Response;
-    try {
-      response = await fetchImpl(options.listUrl, {
-        headers: { authorization: `Bearer ${options.token}` },
-        redirect: "error",
-        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-      });
-    } catch (error: unknown) {
-      console.warn("[custom-mcp] projection pull failed", error instanceof Error ? error.name : "UnknownError");
-      continue;
-    }
-    // 403 and 5xx can clear once the platform sees the machine running and eligible.
-    if (response.status === 403 || response.status >= 500) continue;
-    if (!response.ok) {
-      console.warn(`[custom-mcp] projection pull rejected status=${response.status}`);
-      return false;
-    }
-    let servers: ListedServer[];
-    try {
-      servers = ListedServersSchema.parse(await response.json());
-    } catch (error: unknown) {
-      console.warn("[custom-mcp] projection pull returned an invalid list", error instanceof Error ? error.name : "UnknownError");
-      return false;
-    }
-    for (const server of servers) {
-      try {
-        await options.store.upsert(toProjection(server));
-      } catch (error: unknown) {
-        console.warn("[custom-mcp] projection pull could not store a server", error instanceof Error ? error.name : "UnknownError");
-      }
-    }
-    return true;
+    if (options.signal?.aborted) return false;
+    const outcome = await pullCustomMcpProjection(options);
+    if (outcome === "applied") return true;
+    if (outcome === "rejected") return false;
   }
   return false;
+}
+
+/**
+ * Starts the startup pull, then pulls again on an interval so a push the
+ * preview missed (it was restarting, or the platform's bounded delivery queue
+ * dropped it) converges without a restart. `stop` ends both.
+ */
+export function startCustomMcpProjectionSync(options: PullOptions & {
+  sleep?: (ms: number) => Promise<void>;
+  attempts?: number;
+  intervalMs?: number;
+}): { stop(): void } {
+  const controller = new AbortController();
+  const pullOptions = { ...options, signal: controller.signal };
+  let timer: ReturnType<typeof setInterval> | undefined;
+  let pulling = false;
+  const resync = async () => {
+    if (pulling || controller.signal.aborted) return;
+    pulling = true;
+    try {
+      await pullCustomMcpProjection(pullOptions);
+    } finally {
+      pulling = false;
+    }
+  };
+  void bootstrapCustomMcpProjection(pullOptions)
+    .catch((error: unknown) => {
+      console.warn("[custom-mcp] projection pull crashed", error instanceof Error ? error.name : "UnknownError");
+    })
+    .finally(() => {
+      if (controller.signal.aborted) return;
+      timer = setInterval(() => {
+        void resync().catch((error: unknown) => {
+          console.warn("[custom-mcp] projection resync crashed", error instanceof Error ? error.name : "UnknownError");
+        });
+      }, options.intervalMs ?? RESYNC_INTERVAL_MS);
+      timer.unref?.();
+    });
+  return {
+    stop() {
+      controller.abort();
+      if (timer) clearInterval(timer);
+    },
+  };
 }

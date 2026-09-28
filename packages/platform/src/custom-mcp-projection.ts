@@ -19,6 +19,7 @@ export function buildCustomMcpProjectionUrl(
 
 const PRIMARY_TIMEOUT_MS = 10_000;
 const PRIVATE_PREVIEW_TIMEOUT_MS = 5_000;
+const DEFAULT_MAX_PENDING_FAN_OUTS = 64;
 
 export interface CustomMcpProjectionUser {
   handle: string;
@@ -86,9 +87,12 @@ export function createCustomMcpProjectionRequest(options: {
 
 /**
  * The broker's projection target. Writes go to the owner's primary computer
- * exactly as before, and then, best effort, to each of the owner's eligible
+ * exactly as before; the primary's result alone decides what the broker
+ * reports. Each write is then queued, best effort, for the owner's eligible
  * Private Previews (spec 537 P5), so their Chat tool gate sees the same
- * servers. A preview that is down catches up through its startup pull. Reads
+ * servers. The queue runs in the background and in order, so a slow preview
+ * never delays the owner's answer. A preview that misses a push, or a push the
+ * bounded queue drops, converges through the preview's periodic pull. Reads
  * stay on the primary, whose projection the broker compares against.
  */
 export function createCustomMcpProjection<PreviewMachine extends ProjectionMachine & { machineId: string }>(options: {
@@ -100,8 +104,12 @@ export function createCustomMcpProjection<PreviewMachine extends ProjectionMachi
   dispatcher?: Agent;
   fetchFn?: typeof fetch;
   logError(context: string, err: unknown): void;
+  maxPendingFanOuts?: number;
 }) {
   const primary = createCustomMcpProjectionRequest(options);
+  const maxPendingFanOuts = options.maxPendingFanOuts ?? DEFAULT_MAX_PENDING_FAN_OUTS;
+  let fanOutQueue: Promise<void> = Promise.resolve();
+  let pendingFanOuts = 0;
 
   async function fanOut(userId: string, method: ProjectionMethod, serverId?: string, body?: unknown): Promise<void> {
     const user = await options.getUser(userId);
@@ -125,15 +133,29 @@ export function createCustomMcpProjection<PreviewMachine extends ProjectionMachi
     });
   }
 
+  function queueFanOut(userId: string, method: ProjectionMethod, serverId?: string, body?: unknown): void {
+    if (pendingFanOuts >= maxPendingFanOuts) {
+      options.logError('custom MCP projection fan-out skipped; Private Previews reconcile on their next pull',
+        new Error('Custom MCP projection fan-out backlog is full'));
+      return;
+    }
+    pendingFanOuts += 1;
+    fanOutQueue = fanOutQueue
+      .then(() => fanOut(userId, method, serverId, body))
+      .catch((err: unknown) => {
+        options.logError('custom MCP projection fan-out failed', err);
+      })
+      .finally(() => {
+        pendingFanOuts -= 1;
+      });
+  }
+
   async function write(userId: string, method: ProjectionMethod, serverId?: string, body?: unknown): Promise<void> {
     try {
       await primary(userId, method, serverId, body);
     } finally {
-      // Private Previews follow the change whether or not the primary accepted
-      // it; the primary's result alone decides what the broker reports.
-      await fanOut(userId, method, serverId, body).catch((err: unknown) => {
-        options.logError('custom MCP projection fan-out failed', err);
-      });
+      // Private Previews follow the change whether or not the primary accepted it.
+      queueFanOut(userId, method, serverId, body);
     }
   }
 
@@ -141,5 +163,7 @@ export function createCustomMcpProjection<PreviewMachine extends ProjectionMachi
     upsert: (userId: string, server: unknown) => write(userId, 'POST', undefined, server),
     remove: (userId: string, serverId: string) => write(userId, 'DELETE', serverId),
     read: (userId: string, serverId: string) => primary(userId, 'GET', serverId),
+    /** Settles queued Private Preview deliveries; call before closing the database. */
+    drain: (): Promise<void> => fanOutQueue,
   };
 }
