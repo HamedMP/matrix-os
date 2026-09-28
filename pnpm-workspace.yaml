@@ -6,8 +6,20 @@ packages:
   - "marketing"
   - "marketing/web"
 
-# Share the dependency-graph-addressed virtual store across Git worktrees.
-enableGlobalVirtualStore: true
+# better-sqlite3 and node-pty are native addons. Always run workspace scripts
+# and install hooks with one exact Node ABI, even when the host's default Node
+# has moved to a newer major.
+useNodeVersion: 24.18.0
+
+# Keep native addon build outputs checkout-local. The global virtual store
+# shares one better-sqlite3/node-pty binary across projects, so a Node 22 or 26
+# install elsewhere can replace the Node 24 ABI expected here.
+enableGlobalVirtualStore: false
+
+# Native build output restored from pnpm's machine-wide side-effects cache can
+# carry another Node ABI even with a checkout-local virtual store. Build the
+# explicitly approved native dependencies for this workspace's pinned runtime.
+sideEffectsCache: false
 
 # Delay newly published package versions by 7 days (10,080 minutes) to reduce
 # exposure to short-lived compromised npm releases.
@@ -28,8 +40,6 @@ minimumReleaseAgeExclude:
 shamefullyHoist: true
 
 # NOTE: packageExtensions live in the root package.json under `pnpm`, not here.
-# With `enableGlobalVirtualStore` this file's `packageExtensions` block was
-# silently ignored, so the entries there had no effect on the installed tree.
 
 # Tests at the workspace root (tests/integrations/*) import packages that
 # are direct dependencies of workspace sub-packages (e.g. hono, @pipedream/sdk,
