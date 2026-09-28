@@ -21,7 +21,7 @@ describe("platform collaboration deployment contract", () => {
   it("keeps long-lived collaboration sockets within a bounded Cloud Run capacity envelope", () => {
     expect(workflow).toContain("--timeout 3600");
     expect(workflow).toContain("--concurrency 80");
-    expect(workflow).toContain("PLATFORM_MAX_INSTANCES: '15'");
+    expect(workflow).toContain("PLATFORM_MAX_INSTANCES: '30'");
     expect(workflow.match(/--max-instances "\$PLATFORM_MAX_INSTANCES"/g)).toHaveLength(2);
     expect(workflow).toContain('if [ "$actual_max_instances" != "$PLATFORM_MAX_INSTANCES" ]; then');
   });

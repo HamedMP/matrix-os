@@ -12,6 +12,8 @@ on:
       - "shell/**"
       - "distro/customer-vps/**"
       - "scripts/start-platform-cloud-run.sh"
+      - "scripts/render-platform-worker-service.mjs"
+      - "scripts/select-legacy-platform-worker-tags.mjs"
       - "Dockerfile.platform"
       - "cloudbuild.platform.yaml"
   workflow_dispatch:
@@ -48,7 +50,7 @@ jobs:
       GCP_REGION: ${{ vars.GCP_REGION }}
       ARTIFACT_REPOSITORY: ${{ vars.ARTIFACT_REPOSITORY }}
       CLOUD_RUN_SERVICE: ${{ vars.CLOUD_RUN_SERVICE }}
-      PLATFORM_MAX_INSTANCES: '15'
+      PLATFORM_MAX_INSTANCES: '30'
       CLOUD_RUN_SERVICE_ACCOUNT: ${{ vars.CLOUD_RUN_SERVICE_ACCOUNT }}
       PLATFORM_PUBLIC_URL: ${{ vars.PLATFORM_PUBLIC_URL }}
       MATRIX_API_ORIGIN: ${{ vars.MATRIX_API_ORIGIN }}
@@ -1043,7 +1045,7 @@ jobs:
             --min-instances "$min_instances" \
             --max-instances "$PLATFORM_MAX_INSTANCES" \
             --no-cpu-throttling \
-            --update-env-vars "PLATFORM_BACKGROUND_WORKERS_ENABLED=true,CUSTOMER_VPS_IMAGE_VERSION=${CUSTOMER_VPS_IMAGE_VERSION},MATRIX_CARD_TRIALS_ENABLED=${MATRIX_CARD_TRIALS_ENABLED},MATRIX_CARD_TRIAL_DAYS=${MATRIX_CARD_TRIAL_DAYS},MATRIX_PREBILLING_PROVISIONING_ENABLED=${MATRIX_PREBILLING_PROVISIONING_ENABLED},MATRIX_PREBILLING_PROVISIONING_ROLLOUT_PERCENT=${MATRIX_PREBILLING_PROVISIONING_ROLLOUT_PERCENT},MATRIX_PREBILLING_PROVISIONING_MAX_ACTIVE=${MATRIX_PREBILLING_PROVISIONING_MAX_ACTIVE},GOLDEN_SNAPSHOT_BUILDS_ENABLED=${GOLDEN_SNAPSHOT_BUILDS_ENABLED},GOLDEN_SNAPSHOTS_ENABLED=${GOLDEN_SNAPSHOTS_ENABLED},GOLDEN_SNAPSHOT_ROLLOUT_PERCENT=${GOLDEN_SNAPSHOT_ROLLOUT_PERCENT}" \
+            --update-env-vars "PLATFORM_BACKGROUND_WORKERS_ENABLED=false,CUSTOMER_VPS_IMAGE_VERSION=${CUSTOMER_VPS_IMAGE_VERSION},MATRIX_CARD_TRIALS_ENABLED=${MATRIX_CARD_TRIALS_ENABLED},MATRIX_CARD_TRIAL_DAYS=${MATRIX_CARD_TRIAL_DAYS},MATRIX_PREBILLING_PROVISIONING_ENABLED=${MATRIX_PREBILLING_PROVISIONING_ENABLED},MATRIX_PREBILLING_PROVISIONING_ROLLOUT_PERCENT=${MATRIX_PREBILLING_PROVISIONING_ROLLOUT_PERCENT},MATRIX_PREBILLING_PROVISIONING_MAX_ACTIVE=${MATRIX_PREBILLING_PROVISIONING_MAX_ACTIVE},GOLDEN_SNAPSHOT_BUILDS_ENABLED=${GOLDEN_SNAPSHOT_BUILDS_ENABLED},GOLDEN_SNAPSHOTS_ENABLED=${GOLDEN_SNAPSHOTS_ENABLED},GOLDEN_SNAPSHOT_ROLLOUT_PERCENT=${GOLDEN_SNAPSHOT_ROLLOUT_PERCENT}" \
             --remove-env-vars "MATRIX_PREBILLING_PROVISIONING_MAX_HOURLY_COST_MICROS,MATRIX_PREBILLING_PROVISIONING_COSTS" \
             --format=json)"
           production_revision="$(printf '%s\n' "$deploy_json" | jq -r '.status.traffic[]? | select(.tag == "production-candidate") | .revisionName // empty' | head -1)"
@@ -1067,7 +1069,7 @@ jobs:
             exit 1
           fi
           required_production_env=(
-            "PLATFORM_BACKGROUND_WORKERS_ENABLED=true"
+            "PLATFORM_BACKGROUND_WORKERS_ENABLED=false"
             "CUSTOMER_VPS_IMAGE_VERSION=stable"
             "MATRIX_CARD_TRIALS_ENABLED=${MATRIX_CARD_TRIALS_ENABLED}"
             "MATRIX_CARD_TRIAL_DAYS=${MATRIX_CARD_TRIAL_DAYS}"
@@ -1100,6 +1102,67 @@ jobs:
             fi
           done
 
+      - name: Deploy dedicated platform worker
+        if: ${{ github.event_name == 'push' || inputs.promote }}
+        run: |
+          set -euo pipefail
+          worker_service="${CLOUD_RUN_SERVICE}-worker"
+          worker_manifest="$(mktemp --suffix=.yaml)"
+          trap 'rm -f "$worker_manifest"' EXIT
+          gcloud run revisions describe "$CANDIDATE_REVISION" \
+            --project "$GCP_PROJECT_ID" \
+            --region "$GCP_REGION" \
+            --format=json \
+            | node scripts/render-platform-worker-service.mjs "$worker_service" > "$worker_manifest"
+          if gcloud run services describe "$worker_service" \
+            --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json >/dev/null 2>&1; then
+            existing_iam="$(gcloud run services get-iam-policy "$worker_service" \
+              --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json)"
+            if printf '%s\n' "$existing_iam" | jq -e \
+              'any(.bindings[]?; any(.members[]?; . == "allUsers" or . == "allAuthenticatedUsers"))' >/dev/null; then
+              echo "Dedicated worker service unexpectedly permits public invocation." >&2
+              exit 1
+            fi
+          fi
+          gcloud run services replace "$worker_manifest" \
+            --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --dry-run --quiet >/dev/null
+          gcloud run services replace "$worker_manifest" \
+            --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet >/dev/null
+          echo "CLOUD_RUN_WORKER_SERVICE=$worker_service" >> "$GITHUB_ENV"
+
+      - name: Verify dedicated platform worker
+        if: ${{ github.event_name == 'push' || inputs.promote }}
+        run: |
+          set -euo pipefail
+          worker_json="$(gcloud run services describe "$CLOUD_RUN_WORKER_SERVICE" \
+            --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json)"
+          worker_revision="$(printf '%s\n' "$worker_json" | jq -r '.status.latestReadyRevisionName // empty')"
+          if [ -z "$worker_revision" ] || \
+             [ "$(printf '%s\n' "$worker_json" | jq -r '.metadata.annotations["run.googleapis.com/ingress"] // empty')" != "internal" ] || \
+             [ "$(printf '%s\n' "$worker_json" | jq -r '.metadata.annotations["run.googleapis.com/minScale"] // empty')" != "1" ] || \
+             [ "$(printf '%s\n' "$worker_json" | jq -r '.metadata.annotations["run.googleapis.com/maxScale"] // empty')" != "1" ] || \
+             [ "$(printf '%s\n' "$worker_json" | jq -r 'any(.status.conditions[]?; .type == "Ready" and .status == "True")')" != "true" ]; then
+            echo "Dedicated platform worker is not ready as a private singleton." >&2
+            exit 1
+          fi
+          revision_json="$(gcloud run revisions describe "$worker_revision" \
+            --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json)"
+          if [ "$(printf '%s\n' "$revision_json" | jq -r '.metadata.annotations["autoscaling.knative.dev/maxScale"] // empty')" != "1" ] || \
+             [ "$(printf '%s\n' "$revision_json" | jq -r '.metadata.annotations["autoscaling.knative.dev/minScale"] // empty')" != "0" ] || \
+             [ "$(printf '%s\n' "$revision_json" | jq -r '.metadata.annotations["run.googleapis.com/cpu-throttling"] // empty')" != "false" ] || \
+             [ "$(printf '%s\n' "$revision_json" | jq -r '.spec.containers[0].image // empty')" != "$IMAGE_DIGEST" ] || \
+             [ "$(printf '%s\n' "$revision_json" | jq -r '.spec.containers[0].env[]? | select(.name == "PLATFORM_BACKGROUND_WORKERS_ENABLED") | .value // empty')" != "true" ]; then
+            echo "Dedicated platform worker revision does not match the verified candidate image and worker contract." >&2
+            exit 1
+          fi
+          worker_iam="$(gcloud run services get-iam-policy "$CLOUD_RUN_WORKER_SERVICE" \
+            --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json)"
+          if printf '%s\n' "$worker_iam" | jq -e \
+            'any(.bindings[]?; any(.members[]?; . == "allUsers" or . == "allAuthenticatedUsers"))' >/dev/null; then
+            echo "Dedicated worker service unexpectedly permits public invocation." >&2
+            exit 1
+          fi
+
       - name: Promote revision
         if: ${{ github.event_name == 'push' || inputs.promote }}
         run: |
@@ -1129,5 +1192,39 @@ jobs:
           stale_revision="$(printf '%s\n' "$service_json" | jq -r '(.status.traffic[]? | select(.revisionName != env.PRODUCTION_REVISION and (.percent // 0) > 0) | "\(.revisionName)=\(.percent)") // empty' | head -1)"
           if [ -n "$stale_revision" ]; then
             echo "Stale Cloud Run revision is still receiving traffic: $stale_revision" >&2
+            exit 1
+          fi
+
+      - name: Remove legacy worker tags
+        if: ${{ github.event_name == 'push' || inputs.promote }}
+        run: |
+          set -euo pipefail
+          service_file="$(mktemp)"
+          revisions_file="$(mktemp)"
+          trap 'rm -f "$service_file" "$revisions_file"' EXIT
+          gcloud run services describe "$CLOUD_RUN_SERVICE" \
+            --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$service_file"
+          gcloud run revisions list --service "$CLOUD_RUN_SERVICE" \
+            --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$revisions_file"
+          legacy_tags="$(jq -n --slurpfile service "$service_file" --slurpfile revisions "$revisions_file" \
+            '{service: $service[0], revisions: $revisions[0]}' \
+            | node scripts/select-legacy-platform-worker-tags.mjs)"
+          if [ -n "$legacy_tags" ]; then
+            gcloud run services update-traffic "$CLOUD_RUN_SERVICE" \
+              --project "$GCP_PROJECT_ID" --region "$GCP_REGION" \
+              --remove-tags "$legacy_tags"
+          fi
+          gcloud run services describe "$CLOUD_RUN_SERVICE" \
+            --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$service_file"
+          remaining_tags="$(jq -n --slurpfile service "$service_file" --slurpfile revisions "$revisions_file" \
+            '{service: $service[0], revisions: $revisions[0]}' \
+            | node scripts/select-legacy-platform-worker-tags.mjs)"
+          if [ -n "$remaining_tags" ]; then
+            echo "Warm legacy worker revisions remain tagged: $remaining_tags" >&2
+            exit 1
+          fi
+          production_percent="$(jq -r '(.status.traffic[]? | select(.revisionName == env.PRODUCTION_REVISION) | .percent) // empty' "$service_file" | head -1)"
+          if [ "$production_percent" != "100" ]; then
+            echo "Legacy tag cleanup changed production traffic." >&2
             exit 1
           fi

@@ -215,6 +215,23 @@ promotes the production Cloud Run revision on `main` when platform/app-shell
 inputs change. For an immediate manual deployment, dispatch `Platform Cloud Run`
 with `environment=production` and `promote=true`.
 
+### Background reconciliation on Cloud Run
+
+Serving platform revisions set `PLATFORM_BACKGROUND_WORKERS_ENABLED=false` and
+may scale to 30 instances. A separate, internal-only `<service>-worker` Cloud
+Run service uses the same verified image and secret bindings, has CPU allocated
+outside requests, and keeps exactly one instance warm. Only that service sets
+`PLATFORM_BACKGROUND_WORKERS_ENABLED=true`. Cloud Run defaults to workers off
+when the setting is absent; local development retains its previous default.
+
+The deployment workflow verifies the worker service's image, readiness,
+one-instance bounds, ingress, and private invocation policy before promoting a
+new serving revision. After promotion, it removes zero-traffic tags from warm
+legacy revisions that still have workers enabled. Those tag URLs stop working;
+the revisions remain available for an explicit rollback. Do not restore workers
+on an autoscaled serving revision. Check both the serving and worker services
+when reconciliation or platform request handling fails.
+
 Legacy platform VPS Docker deployments should only be used if Cloud Run is not
 the active serving path. On the platform VPS, keep the main checkout clean and
 deploy from a manual worktree pointed at `origin/main`:

@@ -893,15 +893,19 @@ describe('CI workflows', () => {
     expect(workflow).toContain('--min-instances "$min_instances"');
   });
 
-  it('allocates CPU outside requests for production background workers', () => {
+  it('keeps production web replicas free of workers and gives the dedicated worker CPU', () => {
     const root = process.cwd();
     const workflow = readFileSync(join(root, '.github/workflows/platform-cloud-run.yml'), 'utf8');
     const productionRoleDeploy = workflow.match(
-      /- name: Deploy production-role revision[\s\S]*?- name: Promote revision/,
+      /- name: Deploy production-role revision[\s\S]*?- name: Deploy dedicated platform worker/,
+    )?.[0] ?? '';
+    const dedicatedWorkerDeploy = workflow.match(
+      /- name: Deploy dedicated platform worker[\s\S]*?- name: Verify dedicated platform worker/,
     )?.[0] ?? '';
 
-    expect(productionRoleDeploy).toContain('PLATFORM_BACKGROUND_WORKERS_ENABLED=true');
+    expect(productionRoleDeploy).toContain('PLATFORM_BACKGROUND_WORKERS_ENABLED=false');
     expect(productionRoleDeploy).toContain('--no-cpu-throttling');
+    expect(dedicatedWorkerDeploy).toContain('render-platform-worker-service.mjs');
   });
 
   it('smokes the pre-VPS auth and onboarding shell surface before promotion', () => {

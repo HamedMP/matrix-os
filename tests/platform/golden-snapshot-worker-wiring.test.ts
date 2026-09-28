@@ -5,7 +5,7 @@ import { parseGoldenSnapshotReconciliationInterval } from '../../packages/platfo
 describe('golden snapshot worker wiring', () => {
   it('starts no recurring platform workers when background workers are disabled', async () => {
     const source = await readFile('packages/platform/src/platform-startup.ts', 'utf8');
-    expect(source).toContain("process.env.PLATFORM_BACKGROUND_WORKERS_ENABLED !== 'false'");
+    expect(source).toContain('shouldEnablePlatformBackgroundWorkers(process.env)');
     expect(source).toMatch(/if \(backgroundWorkersEnabled && intervalMs !== undefined\)/);
     expect(source).toMatch(/if \(backgroundWorkersEnabled && reconciliationIntervalMs > 0\)/);
   });
