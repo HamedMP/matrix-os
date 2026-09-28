@@ -45,7 +45,8 @@ describe("preview VPS collaboration owner", () => {
       const result = spawnSync("bash", ["-euc", decide], { encoding: "utf8", timeout: 5_000, env: {
         PATH: `${directory}:${process.env.PATH}`, GITHUB_OUTPUT: output, GITHUB_REPOSITORY: "HamedMP/matrix-os",
         GITHUB_REF: "refs/heads/main", PR_NUMBER: "1990", EVENT_HEAD_SHA: "a".repeat(40), EVENT_HEAD_REF: "feature",
-        EVENT_HEAD_REPO: "HamedMP/matrix-os", HAS_LABEL: "false", HAS_COLLABORATION_LABEL: "false",
+        EVENT_HEAD_REPO: "HamedMP/matrix-os", EVENT_AUTHOR: "octo-dev", HAS_LABEL: "false", HAS_BUNDLE_LABEL: "false",
+        HAS_COLLABORATION_LABEL: "false",
         LABELED_NAME: "", REQUESTED_VERSION: "", VERIFY_INVENTORY: "false", TEARDOWN_PREVIEW: "false",
         PULL_REQUEST: JSON.stringify(pullRequest ?? {}), ...env,
       } });
