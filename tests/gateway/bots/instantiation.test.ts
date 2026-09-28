@@ -19,7 +19,7 @@ import { createBotOperationReconciler } from "../../../packages/gateway/src/bots
 import { createBotBindingsRepository } from "../../../packages/gateway/src/bots/repositories/bindings.js";
 import { createBotOperationsRepository } from "../../../packages/gateway/src/bots/repositories/operations.js";
 import { MATRIX_BOT_SELECTION } from "../../../packages/gateway/src/bots/selection.js";
-import { OWNER, createBotStateDatabase } from "./bot-state-support.js";
+import { OWNER, createBotStateDatabase, createRealBotStateDatabase } from "./bot-state-support.js";
 
 const WRITING = { recipeId: "writing-bot", version: "2026-09-27.1" };
 const request = (overrides: Record<string, unknown> = {}) => ({ clientRequestId: "req_instantiate_1", recipe: WRITING, ...overrides });
@@ -50,6 +50,7 @@ function setup(overrides: {
   agents?: Partial<Pick<ChatAgentStore, "createRecipeBot" | "get" | "count">>;
   chats?: Pick<ChatRepository, "withTransaction">;
   ensureWorkspace?: (botId: string) => Promise<void>;
+  recipes?: ReturnType<typeof createBotRecipeCatalog>;
 } = {}) {
   return createBotInstantiation({
     db,
@@ -60,7 +61,7 @@ function setup(overrides: {
       count: (owner) => agents.count(owner),
       ...overrides.agents,
     },
-    recipes: createBotRecipeCatalog(),
+    recipes: overrides.recipes ?? createBotRecipeCatalog(),
     ensureWorkspace: overrides.ensureWorkspace ?? ((botId) => ensureBotWorkspace(home, botId)),
     now: () => new Date(clock),
   });
@@ -141,6 +142,76 @@ describe("bot instantiation", () => {
     // One bot, kept with the owner's edit; retries never wrote a second definition.
     expect(await agents.count(scope)).toBe(1);
     expect(createRecipeBot).toHaveBeenCalledTimes(4);
+  });
+
+  it("recreates a workspace that disappeared before activation", async () => {
+    const operations = createBotOperationsRepository(db);
+    const { operation } = await operations.reserve({
+      ownerId: OWNER, clientRequestId: "req_instantiate_1", payloadHash: instantiationPayloadHash(request()), now: new Date(clock).toISOString(),
+    });
+    // A process that stopped right after recording `file_created`, whose workspace was then removed.
+    await agents.createRecipeBot(scope, {
+      id: operation.botId, createHash: instantiationPayloadHash(request()),
+      fields: { name: "Writing Bot", description: "", instructions: "Revise.", selection: MATRIX_BOT_SELECTION }, recipeRef: WRITING,
+    });
+    await ensureBotWorkspace(home, operation.botId);
+    await operations.markFileCreated({ ownerId: OWNER, clientRequestId: "req_instantiate_1", baseRevision: operation.revision, now: new Date(clock).toISOString() });
+    await rm(join(home, "bots", operation.botId), { recursive: true });
+
+    const finished = await setup().instantiate(OWNER, request());
+    expect(finished).toMatchObject({ operation: "replayed", agent: { id: operation.botId } });
+    expect((await stat(join(home, "bots", operation.botId))).isDirectory()).toBe(true);
+  });
+
+  it("answers a duplicate that loses the race with the bot the other request finished", async () => {
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    let calls = 0;
+    const instantiation = setup({
+      ensureWorkspace: async (botId) => {
+        // The first request stops before recording `file_created`; the duplicate finishes meanwhile.
+        if (calls++ === 0) await gate;
+        await ensureBotWorkspace(home, botId);
+      },
+    });
+    const first = instantiation.instantiate(OWNER, request());
+    await vi.waitFor(() => expect(calls).toBe(1));
+    const second = await instantiation.instantiate(OWNER, request());
+    expect(second.operation).toBe("replayed");
+    release();
+    const finished = await first;
+    expect(finished).toEqual({ ...second, operation: "created" });
+    expect(await agents.count(scope)).toBe(1);
+    await expect(operation()).resolves.toMatchObject({ status: "active", attempts: 0 });
+  });
+
+  it.runIf(process.env.MATRIX_TEST_POSTGRES_URL)("answers truly concurrent duplicates with one bot (real Postgres)", async () => {
+    const real = await createRealBotStateDatabase();
+    const realChats = new ChatRepository(real.db as unknown as Kysely<ChatDatabase>);
+    const realAgents = new ChatAgentStore({ homePath: home, db: real.db as unknown as Kysely<ChatDatabase> });
+    await realAgents.bootstrap();
+    try {
+      const instantiation = createBotInstantiation({
+        db: real.db, chats: realChats, agents: realAgents, recipes: createBotRecipeCatalog(),
+        ensureWorkspace: (botId) => ensureBotWorkspace(home, botId),
+      });
+      const results = await Promise.all([1, 2, 3].map(() => instantiation.instantiate(OWNER, request())));
+      expect(new Set(results.map((result) => result.agent.id)).size).toBe(1);
+      expect(new Set(results.map((result) => result.chatId)).size).toBe(1);
+      expect(results.filter((result) => result.operation === "created")).toHaveLength(1);
+      expect(await realAgents.count(scope)).toBe(1);
+    } finally {
+      await realAgents.close();
+      await real.destroy();
+    }
+  });
+
+  it("replays a created bot after its recipe version is retired", async () => {
+    const created = await setup().instantiate(OWNER, request());
+    const retired = createBotRecipeCatalog([]);
+    await expect(setup({ recipes: retired }).instantiate(OWNER, request())).resolves.toEqual({ ...created, operation: "replayed" });
+    await expect(setup({ recipes: retired }).instantiate(OWNER, request({ clientRequestId: "req_new" })))
+      .rejects.toEqual(new BotInstantiationError("invalid_request"));
   });
 
   it("reuses only an empty workspace directory for a retried creation", async () => {
