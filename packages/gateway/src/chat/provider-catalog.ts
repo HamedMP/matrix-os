@@ -35,7 +35,7 @@ import { ProviderSettingsStoreError } from "../ai-providers/provider-settings-er
 import { claudeFallbackCatalog } from "./claude-model-catalog.js";
 import { systemModels } from "./system-model-catalog.js";
 import { managedChatInstances } from "./managed-chat-catalog.js";
-import { applyHarnessSettings } from "./harness-catalog-admission.js";
+import { applyHarnessSettings, configuredSystemModel } from "./harness-catalog-admission.js";
 
 const ADAPTER_VERSION = "1.0.0";
 const SYSTEM_DRIVERS = ["hermes", "openclaw"] as const;
@@ -411,6 +411,7 @@ function systemInstance(input: {
   providers: AgentProviderDescriptor[];
   selectedProvider: string | null;
   selectedModel: string | null;
+  configuredModel: string | null;
   messagingConfigured: boolean;
   skills: CanonicalChatSkillDescriptor[];
 }): InstanceDraft {
@@ -418,16 +419,17 @@ function systemInstance(input: {
   const harnessConfigured = input.messagingConfigured
     && input.selectedProvider !== null
     && input.selectedModel !== null;
-  const discoveredModels = systemModels(input.kind, input.providers).map((model) => (
+  const selectedModel = input.selectedProvider && input.selectedModel
+    ? `${input.selectedProvider}:${input.selectedModel}`
+    : null;
+  const preferredModels = [selectedModel, input.configuredModel].filter((model): model is string => model !== null);
+  const discoveredModels = systemModels(input.kind, input.providers, preferredModels).map((model) => (
     harnessConfigured || model.availability === "unavailable"
       ? model
       : { ...model, availability: "auth_required" as const }
   ));
   const availability = systemAvailability(input.runtime, discoveredModels, harnessConfigured);
   const models = availability === "available" ? discoveredModels : [];
-  const selectedModel = input.selectedProvider && input.selectedModel
-    ? `${input.selectedProvider}:${input.selectedModel}`
-    : null;
   const hasSelectedModel = selectedModel !== null
     && models.some((model) => model.id === selectedModel && model.availability === "available");
   return {
@@ -605,6 +607,7 @@ export function createChatProviderCatalogService(options: {
           selectedModel: instanceSnapshot?.messaging.runtime === kind
             ? instanceSnapshot.messaging.model
             : null,
+          configuredModel: configuredSystemModel(settingsResult.status === "fulfilled" ? settingsResult.value ?? null : null, kind),
           messagingConfigured: instanceSnapshot?.messaging.runtime === kind
             && instanceSnapshot.messaging.configured,
           skills,

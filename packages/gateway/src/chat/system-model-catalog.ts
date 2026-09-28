@@ -10,6 +10,7 @@ const LIVE_PROBED_UNAVAILABLE_SYSTEM_MODELS = new Set([
 export function systemModels(
   runtime: CanonicalProviderDriverKind,
   providers: AgentProviderDescriptor[],
+  preferredModelIds: readonly string[] = [],
 ): CanonicalModelDescriptor[] {
   const groups = providers
     .filter((provider) => provider.runtime === runtime
@@ -28,20 +29,29 @@ export function systemModels(
         supportsVision: model.capabilities.includes("vision"),
         supportsToolUse: model.capabilities.includes("tools"),
       })));
-  // Allocate the existing wire budget across authenticated providers. A large
-  // earlier provider must not erase an independent subscription's inventory.
-  const counts = groups.map(() => 0);
+  // Reserve eligible runtime/default Settings selections before sharing the
+  // remaining wire budget. Preferences never add an unobserved model.
+  const selected = groups.map(() => new Set<number>());
   let total = 0;
+  groups.forEach((group, index) => group.forEach((model, position) => {
+    if (total < 64 && preferredModelIds.includes(model.id)) {
+      selected[index]!.add(position);
+      total++;
+    }
+  }));
+  // A large earlier provider must not erase an independent subscription.
   for (let position = 0; total < 64; position++) {
-    let added = false;
+    let hasPosition = false;
     for (let index = 0; index < groups.length && total < 64; index++) {
       if (groups[index]![position]) {
-        counts[index]!++;
-        total++;
-        added = true;
+        hasPosition = true;
+        if (!selected[index]!.has(position)) {
+          selected[index]!.add(position);
+          total++;
+        }
       }
     }
-    if (!added) break;
+    if (!hasPosition) break;
   }
-  return groups.flatMap((group, index) => group.slice(0, counts[index]));
+  return groups.flatMap((group, index) => group.filter((_, position) => selected[index]!.has(position)));
 }

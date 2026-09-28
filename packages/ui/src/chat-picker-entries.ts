@@ -14,7 +14,7 @@ export function deriveChatPickerEntries(catalog: CanonicalProviderCatalog): Chat
     || (instance.driverKind === "kernel" && instance.id === "kernel_matrix_included"));
   return [{ id: "matrix-ai", label: "Matrix AI", iconKind: "kernel", instances: managed, capabilityClass: "system_agent" },
     ...catalog.drivers.flatMap(driver => catalog.instances.filter(instance => instance.driverKind === driver.kind
-      && !managed.some(candidate => candidate.id === instance.id && instance.driverKind === "kernel"))
+      && !managed.some(candidate => candidate.id === instance.id))
       .map(instance => ({ id: instance.id, label: instance.displayName, iconKind: instance.driverKind,
         instances: [instance], capabilityClass: driver.capabilityClass })))];
 }

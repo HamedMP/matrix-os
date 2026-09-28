@@ -22,6 +22,18 @@ function systemHarnessKind(kind: CanonicalProviderDriverKind): ProviderHarnessKi
   return null;
 }
 
+/** Preserve saved intent within runtime bounds; admission remains independent. */
+export function configuredSystemModel(settings: ProviderSettingsSnapshot | null, kind: "hermes" | "openclaw"): string | null {
+  const enabled = settings?.harnesses.filter(harness => harness.harness === kind && harness.enabled) ?? [];
+  if (enabled.length !== 1) return null;
+  const harness = enabled[0]!;
+  const source = settings?.accessSources.find(candidate => candidate.id === harness.accessSourceId);
+  if (!isSupportedGenericHarnessCredentialRoute(harness, source)) return null;
+  const native = source?.kind === "harness_profile" && kind === "hermes"
+    ? hermesNativeModelId(harness, source) : undefined;
+  return native === null ? null : `${harness.route.providerId}:${native ?? harness.route.modelId}`;
+}
+
 
 function configuredSystemInstance(
   instance: InstanceDraft,
