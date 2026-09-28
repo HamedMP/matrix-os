@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { Readable } from "node:stream";
 import type { Manifest } from "../../../packages/gateway/src/sync/types.js";
+import { boundMirrorBody } from "../../../packages/gateway/src/sync/home-mirror-r2-body.js";
 
 const HASH_A = "sha256:" + "a".repeat(64);
 const HASH_B = "sha256:" + "b".repeat(64);
@@ -130,6 +132,72 @@ describe("readManifest", () => {
       ManifestVersionMismatchError,
     );
     expect(mockDb.upsertManifestMeta).not.toHaveBeenCalled();
+  });
+
+  function webStream(chunks: Uint8Array[], onCancel?: () => void): ReadableStream<Uint8Array> {
+    let index = 0;
+    return new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (index < chunks.length) controller.enqueue(chunks[index++]!);
+        else controller.close();
+      },
+      cancel() {
+        onCancel?.();
+      },
+    });
+  }
+
+  function splitBytes(text: string): Uint8Array[] {
+    // Split mid-character so decoding must happen after concatenation.
+    const bytes = Buffer.from(text, "utf8");
+    const mid = bytes.indexOf(0xc3) + 1;
+    return [bytes.subarray(0, mid), bytes.subarray(mid)];
+  }
+
+  it("reads manifests from web ReadableStream bodies returned by the platform broker", async () => {
+    const manifest = makeManifest({ "notes/café.md": { hash: HASH_A, size: 100 } });
+    const body = webStream(splitBytes(JSON.stringify({ ...manifest, manifestVersion: 5 })));
+    mockR2.getObject.mockResolvedValue({ body, etag: '"etag-web"' });
+    mockDb.getManifestMeta.mockResolvedValue({ version: 5, etag: '"etag-web"' });
+
+    const result = await readManifest(store, "user1");
+
+    expect(result.manifest.files["notes/café.md"]!.hash).toBe(HASH_A);
+    expect(result.manifestVersion).toBe(5);
+  });
+
+  it("reads manifests from web streams wrapped by the home mirror deadline proxy", async () => {
+    const manifest = makeManifest({ "wrapped.md": { hash: HASH_B, size: 1 } });
+    const raw = webStream([Buffer.from(JSON.stringify({ ...manifest, manifestVersion: 2 }))]);
+    const body = boundMirrorBody(raw, new AbortController().signal);
+    mockR2.getObject.mockResolvedValue({ body, etag: '"etag-bound"' });
+    mockDb.getManifestMeta.mockResolvedValue({ version: 2, etag: '"etag-bound"' });
+
+    const result = await readManifest(store, "user1");
+
+    expect(result.manifest.files["wrapped.md"]!.hash).toBe(HASH_B);
+  });
+
+  it("reads manifests from async-iterable Node stream bodies", async () => {
+    const manifest = makeManifest({ "node.md": { hash: HASH_C, size: 1 } });
+    const body = Readable.from(splitBytes(JSON.stringify({ ...manifest, manifestVersion: 6, note: "é" })));
+    mockR2.getObject.mockResolvedValue({ body, etag: '"etag-node"' });
+    mockDb.getManifestMeta.mockResolvedValue({ version: 6, etag: '"etag-node"' });
+
+    const result = await readManifest(store, "user1");
+
+    expect(result.manifest.files["node.md"]!.hash).toBe(HASH_C);
+  });
+
+  it("cancels and rejects oversized streamed manifests without a declared length", async () => {
+    const onCancel = vi.fn();
+    const chunk = new Uint8Array(1024 * 1024);
+    const chunks = Array.from({ length: MANIFEST_JSON_MAX_BYTES / chunk.length + 2 }, () => chunk);
+    mockR2.getObject.mockResolvedValue({ body: webStream(chunks, onCancel), etag: '"etag-huge"' });
+    mockDb.getManifestMeta.mockResolvedValue(null);
+
+    await expect(readManifest(store, "user1")).rejects.toThrow(ManifestTooLargeError);
+    expect(onCancel).toHaveBeenCalled();
   });
 
   it("rejects oversized manifest JSON before buffering the body", async () => {
