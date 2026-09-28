@@ -31,7 +31,7 @@ import type { ScopeRuntimeHost } from "../scope-runtime-host/index.js";
 
 const DEFAULT_TOOL_TIMEOUT_MS = 30_000;
 const MAX_TOOL_TIMEOUT_MS = 60_000;
-/** Per-run event order entries; well above the 64 live bot runtimes, evicted least recently used. */
+/** Per-run event order entries kept after release; runs still bound are never evicted. */
 const MAX_TRACKED_RUNS = 256;
 
 /** A refusal with an allowlisted code, thrown by run sources, event sinks, and tool dispatchers. */
@@ -115,6 +115,8 @@ export function createBotBrokerActions(deps: {
   inference: BotInferenceDependencies;
   now?: () => Date;
   toolTimeoutMs?: number;
+  /** Test hook; capped at 256. */
+  maxTrackedRuns?: number;
 }) {
   const now = deps.now ?? (() => new Date());
   const toolTimeoutMs = Math.max(1, Math.min(Math.trunc(deps.toolTimeoutMs ?? DEFAULT_TOOL_TIMEOUT_MS), MAX_TOOL_TIMEOUT_MS));
@@ -124,20 +126,37 @@ export function createBotBrokerActions(deps: {
    * so the next `seq` is reserved before publishing and nothing else for the
    * run is accepted until that publish settles.
    */
-  const eventOrder = new Map<string, { lastSeq: number; publishing: boolean }>();
+  interface EventOrder {
+    runtimeHandle: string;
+    executionGeneration: string;
+    lastSeq: number;
+    publishing: boolean;
+  }
+  const eventOrder = new Map<string, EventOrder>();
+  const maxTrackedRuns = Math.max(1, Math.min(Math.trunc(deps.maxTrackedRuns ?? MAX_TRACKED_RUNS), MAX_TRACKED_RUNS));
 
-  function trackOrder(runId: string, order: { lastSeq: number; publishing: boolean }): void {
-    eventOrder.delete(runId);
-    eventOrder.set(runId, order);
-    while (eventOrder.size > MAX_TRACKED_RUNS) {
-      const oldest = eventOrder.keys().next().value;
-      if (oldest === undefined) break;
-      eventOrder.delete(oldest);
+  /**
+   * Evicts runs whose binding was released, least recently used first. A
+   * bound run is never evicted: the registry allows at most 64 bindings, so
+   * live entries alone keep the map bounded.
+   */
+  function evictOrders(): void {
+    for (const [runId, order] of eventOrder) {
+      if (eventOrder.size <= maxTrackedRuns) return;
+      if (!deps.registry.lookupRun({ ...order, runId })) eventOrder.delete(runId);
     }
   }
 
+  function trackOrder(runId: string, order: EventOrder): void {
+    eventOrder.delete(runId);
+    eventOrder.set(runId, order);
+    evictOrders();
+  }
+
   async function publishEvent(binding: BotRuntimeBinding, event: BotEvent): Promise<boolean> {
-    const order = eventOrder.get(binding.runId) ?? { lastSeq: -1, publishing: false };
+    const order = eventOrder.get(binding.runId) ?? {
+      runtimeHandle: binding.runtimeHandle, executionGeneration: binding.executionGeneration, lastSeq: -1, publishing: false,
+    };
     // Events must arrive in order with no gaps, starting at 0 for each run.
     if (order.publishing || event.seq !== order.lastSeq + 1) return false;
     order.publishing = true;

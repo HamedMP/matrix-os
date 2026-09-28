@@ -39,6 +39,7 @@ beforeEach(async () => {
 afterEach(async () => destroy());
 
 function setup(overrides: {
+  maxTrackedRuns?: number;
   tools?: Partial<BotToolDispatcher>;
   fetchImpl?: typeof fetch;
   toolTimeoutMs?: number;
@@ -79,6 +80,7 @@ function setup(overrides: {
     },
     now: () => new Date(NOW),
     ...(overrides.toolTimeoutMs ? { toolTimeoutMs: overrides.toolTimeoutMs } : {}),
+    ...(overrides.maxTrackedRuns ? { maxTrackedRuns: overrides.maxTrackedRuns } : {}),
   });
   return { actions, registry, events, tools, lifetime };
 }
@@ -216,6 +218,24 @@ describe("bot broker actions", () => {
     await vi.waitFor(() => expect(events.publish).toHaveBeenCalledTimes(2));
     release();
     await expect(retry).resolves.toMatchObject({ ok: true, result: { accepted: true } });
+  });
+
+  it("keeps a bound run's event order when released runs fill the tracker", async () => {
+    const { actions, registry } = setup({ maxTrackedRuns: 2 });
+    const event = (seq: number, runtime = RUNTIME, runId = "run_broker1") => frame({
+      action: "bot.event", runtimeHandle: runtime, runId, event: { seq, event: { type: "assistant_delta", text: `part ${seq}` } },
+    });
+    await expect(actions.handleFrame(event(0))).resolves.toMatchObject({ ok: true });
+    for (let index = 0; index < 4; index += 1) {
+      const runtime = `runtime_${String(index).repeat(32)}`;
+      const runId = `run_other${index}`;
+      registry.bind({ ...binding, runtimeHandle: runtime, runId });
+      await expect(actions.handleFrame(event(0, runtime, runId))).resolves.toMatchObject({ ok: true });
+      registry.release(runtime);
+    }
+    // The live run's next event still follows its own order.
+    await expect(actions.handleFrame(event(1))).resolves.toMatchObject({ ok: true });
+    await expect(actions.handleFrame(event(1))).resolves.toMatchObject({ ok: false, code: "invalid_arguments" });
   });
 
   it("writes the pre-dispatch checkpoint atomically", async () => {
