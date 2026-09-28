@@ -165,6 +165,7 @@ import { initializeOwnerDatabaseServices } from "./startup/owner-database.js";
 import { enableOwnerSharedAi } from "./startup/collaboration.js";
 import type { ScopeRuntimeHost } from "./scope-runtime-host/index.js";
 import { startScopeRuntimeHost } from "./startup/scope-runtime-host.js";
+import { startBots, type BotServices } from "./startup/bots.js";
 import { initializePlatformIntegrations } from "./startup/platform-integrations.js";
 import { getVersion } from "./system-info.js";
 import { createTaskManager } from "./task-manager.js";
@@ -790,6 +791,7 @@ export async function createGateway(config: GatewayConfig) {
   let canonicalChatCollaborationGuard: ReturnType<typeof createDiscussionOnlyChatExecutionGuard> | null = null;
   let gatewayCollaboration: GatewayCollaborationRuntime | null = null;
   let scopeRuntimeHost: ScopeRuntimeHost | undefined;
+  let botServices: BotServices | undefined;
   let messagingRepository: MessagingKyselyRepository | null = null;
   // Collaboration wiring always constructs (S20): there is no release flag.
   // Incomplete configuration or a missing owner database registers the
@@ -1552,6 +1554,7 @@ export async function createGateway(config: GatewayConfig) {
       ...(jevInboxRuntime ? { admitJevWorkflow: (owner, agent) => jevInboxRuntime.admit(owner.ownerId, agent) } : {}),
     });
     canonicalChatOrchestrator = canonicalChatRuntime.orchestrator;
+    botServices = await startBots({ homePath, repository: chatRepository, agents: canonicalChatRuntime.agents });
     backgroundChatProjection.setReconciler(ownerId => canonicalChatOrchestrator?.reconcileActiveRuns({ type: "personal", ownerId }) ?? Promise.resolve());
     // Shared AI marks runs the previous process lost (gateway_restart) before the
     // owner reconcile loop below finishes them; the reverse order loses attribution.
@@ -1644,6 +1647,7 @@ export async function createGateway(config: GatewayConfig) {
     canonicalChatCollaborationGuard, projectOwnerToolOutput, canonicalChatRuntime,
     canonicalChatProviderCatalog, aiProviderService,
     providerSettingsStore: createProviderTerminalLoginHandoff(providerSettingsStore, providerLoginTerminalRegistry.resolveTerminalRef, providerLoginCoordinator.resolveTerminalIdentity),
+    botServices,
     listGmailAccounts: (ownerId) => withCapabilityLookupTimeout(() => lookupJevGmailAccounts(ownerId)),
   });
 
@@ -1826,6 +1830,8 @@ export async function createGateway(config: GatewayConfig) {
       await backgroundChatProjection.close();
       await canonicalChatOrchestrator?.close();
       canonicalChatOrchestrator = null;
+      await botServices?.close();
+      botServices = undefined;
       await canonicalChatRuntime?.agents.close();
       canonicalChatRuntime = null;
       await gatewayCollaboration?.shutdown();
