@@ -71,6 +71,7 @@ it("keeps the last valid bot controls visible when one status refresh fails", as
   await waitFor(() => expect(interactions).toHaveBeenCalledTimes(2));
   expect(screen.getByText("Which company?")).toBeTruthy();
   expect(await screen.findByRole("alert")).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Answer" })).toBeNull();
 });
 
 it("removes a consent link when its connection request is no longer pending", async () => {
