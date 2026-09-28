@@ -41,6 +41,51 @@ rollback_release_metadata_is_ready() {
   release_metadata_matches_app "$1" "$RELEASE_ROLLBACK_FILE"
 }
 
+restore_retired_symphony_after_rollback() {
+  [ -x "$APP_DIR/packages/symphony-elixir/release/bin/symphony" ] || return 0
+  [ -e "$RETIRED_SYMPHONY_ROLLBACK_DIR" ] || return 0
+  [ -d "$RETIRED_SYMPHONY_ROLLBACK_DIR" ] && [ ! -L "$RETIRED_SYMPHONY_ROLLBACK_DIR" ] || return 1
+  local unit="$RETIRED_SYMPHONY_ROLLBACK_DIR/unit" masked="$RETIRED_SYMPHONY_ROLLBACK_DIR/masked"
+  local enabled_file="$RETIRED_SYMPHONY_ROLLBACK_DIR/enablement"
+  local activity_file="$RETIRED_SYMPHONY_ROLLBACK_DIR/activity" enabled_state activity_state file
+  if [ -f "$masked" ] && [ ! -L "$masked" ]; then
+    [ ! -e "$unit" ] && [ ! -L "$unit" ] || return 1
+  else
+    [ -f "$unit" ] && [ ! -L "$unit" ] || return 1
+  fi
+  for file in "$enabled_file" "$activity_file"; do
+    [ -f "$file" ] && [ ! -L "$file" ] || return 1
+  done
+  enabled_state="$(sed -n 's/^matrix-symphony.service://p' "$enabled_file")"
+  activity_state="$(sed -n 's/^matrix-symphony.service://p' "$activity_file")"
+  case "$enabled_state" in
+    enabled|enabled-runtime|disabled|masked|masked-runtime|static|indirect|generated|transient) ;;
+    *) return 1 ;;
+  esac
+  case "$activity_state" in active|inactive) ;; *) return 1 ;; esac
+  if [ -f "$masked" ]; then
+    [ "$enabled_state" = masked ] && [ "$activity_state" = inactive ] || return 1
+    sudo rm -f -- /etc/systemd/system/matrix-symphony.service || return 1
+    sudo systemctl mask matrix-symphony.service >/dev/null || return 1
+  else
+    restore_regular_file_atomic "$unit" /etc/systemd/system/matrix-symphony.service || return 1
+  fi
+  sudo systemctl daemon-reload || return 1
+  case "$enabled_state" in
+    enabled) sudo systemctl unmask matrix-symphony.service >/dev/null 2>&1 || true; sudo systemctl enable matrix-symphony.service >/dev/null || return 1 ;;
+    enabled-runtime) sudo systemctl unmask matrix-symphony.service >/dev/null 2>&1 || true; sudo systemctl enable --runtime matrix-symphony.service >/dev/null || return 1 ;;
+    disabled) sudo systemctl unmask matrix-symphony.service >/dev/null 2>&1 || true; sudo systemctl disable matrix-symphony.service >/dev/null || return 1 ;;
+    masked) [ -f "$masked" ] || sudo systemctl mask matrix-symphony.service >/dev/null || return 1 ;;
+    masked-runtime) sudo systemctl mask --runtime matrix-symphony.service >/dev/null || return 1 ;;
+    static|indirect|generated|transient) ;;
+  esac
+  if [ "$activity_state" = active ]; then
+    sudo systemctl start matrix-symphony.service || return 1
+  else
+    sudo systemctl stop matrix-symphony.service || return 1
+  fi
+}
+
 recover_interrupted_update() {
   local phase version="" transaction_state=""
   [ -f "$UPDATE_PHASE_MARKER" ] && [ ! -L "$UPDATE_PHASE_MARKER" ] || return 0
@@ -61,7 +106,7 @@ recover_interrupted_update() {
         if transaction_candidate_is_committed "$version"; then
           log "Interrupted update had already committed; finalizing transaction"
           clear_consumed_update_markers
-          cleanup_update_transaction
+          preserve_symphony_rollback_transaction
           rm -f -- "$UPDATE_PHASE_MARKER"
           return 0
         fi
@@ -171,6 +216,10 @@ do_rollback() {
   sudo systemctl start matrix-terminal-runtime || true
   sudo systemctl start matrix-gateway matrix-shell
   resume_symphony_after_update
+  restore_retired_symphony_after_rollback || {
+    log "ERROR: retired Symphony service state could not be restored"
+    return 1
+  }
   local healthy=false
   for _ in $(seq 1 18); do
     if curl --fail --silent --max-time 5 "$HEALTH_URL" >/dev/null 2>&1; then

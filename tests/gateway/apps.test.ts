@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { listApps } from "../../packages/gateway/src/apps.js";
+import { resolveAppBySlug } from "../../packages/gateway/src/app-runtime/app-index.js";
 
 describe("T711: GET /api/apps", () => {
   let homePath: string;
@@ -160,6 +161,19 @@ describe("T711: GET /api/apps", () => {
     const apps = await listApps(homePath);
 
     expect(apps.map((app) => app.name)).not.toContain("Symphony");
+  });
+
+  it("does not expose a retired Symphony app left in an existing owner home", async () => {
+    mkdirSync(join(homePath, "apps/symphony/dist"), { recursive: true });
+    writeFileSync(join(homePath, "apps/symphony/dist/index.html"), "<html></html>");
+    writeFileSync(join(homePath, "apps/symphony/matrix.json"), JSON.stringify({
+      name: "Symphony", slug: "symphony", version: "1.0.0", runtimeVersion: "^1.0.0", runtime: "vite",
+      build: { command: "vite build", output: "dist" },
+    }));
+    const apps = await listApps(homePath);
+    expect(apps.map((app) => app.slug)).not.toContain("symphony");
+    const direct = await resolveAppBySlug(join(homePath, "apps"), "symphony");
+    expect(direct.ok).toBe(false);
   });
 
   it("does not warn for ordinary nested directories without manifests", async () => {

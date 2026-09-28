@@ -202,7 +202,6 @@ describe('customer VPS host bundle', () => {
     const gateway = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-gateway'), 'utf8');
     const shell = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-shell'), 'utf8');
     const code = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-code'), 'utf8');
-    const symphony = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-symphony'), 'utf8');
 
     expect(script).toContain('matrix-install-tool-pack');
     expect(script).toContain('matrix-owner-env');
@@ -273,7 +272,7 @@ describe('customer VPS host bundle', () => {
     expect(hermesInstaller).toContain('HOME="$MATRIX_RUNTIME_HOME"');
     expect(hermesInstaller).toContain('HERMES_HOME="$HERMES_HOME"');
     expect(hermesInstaller).toContain('XDG_CONFIG_HOME="$MATRIX_RUNTIME_HOME/.config"');
-    for (const launcher of [gateway, shell, code, symphony]) {
+    for (const launcher of [gateway, shell, code]) {
       expect(launcher).toContain('if declare -F matrix_reconcile_owner_home >/dev/null 2>&1; then');
       expect(launcher).toContain('matrix_reconcile_owner_home "${MATRIX_RUNTIME_USER:-matrix}" "${MATRIX_RUNTIME_GROUP:-${MATRIX_RUNTIME_USER:-matrix}}"');
     }
@@ -1265,10 +1264,9 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     const root = process.cwd();
     const syncAgent = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-sync-agent'), 'utf8');
 
-    expect(syncAgent).toContain('write_symphony_env()');
-    expect(syncAgent).toContain('/opt/matrix/env/symphony.env');
-    expect(syncAgent).toContain('sudo install -o root -g matrix -m 0640 "$temp_file" "$SYMPHONY_ENV_FILE" || status=$?');
-    expect(syncAgent).toContain('rm -f "$temp_file"');
+    expect(syncAgent).toContain('retire_legacy_symphony()');
+    expect(syncAgent).toContain('sudo systemctl disable --now matrix-symphony.service');
+    expect(syncAgent).not.toContain('write_symphony_env()');
     expect(syncAgent).toContain("sudo find \"$extract_dir/systemd\" -maxdepth 1 -name 'matrix-*.service'");
     expect(syncAgent).toContain('sudo systemctl daemon-reload');
     expect(syncAgent).toContain([

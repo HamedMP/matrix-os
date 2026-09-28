@@ -88,7 +88,6 @@ write_files:
       User=matrix
       Group=matrix
       EnvironmentFile=/opt/matrix/env/host.env
-      Environment=SYMPHONY_PORT=4766
       Environment=MATRIX_NODE_PREFIX=/opt/matrix/runtime/node
       Environment=MATRIX_CODING_AGENTS_WORKSPACE_PROVIDERS=claude,codex,pi,opencode
       WorkingDirectory=/opt/matrix
@@ -417,13 +416,6 @@ write_files:
       NEXT_PUBLIC_POSTHOG_HOST={{posthogPublicHost}}
       NEXT_PUBLIC_POSTHOG_API_HOST={{posthogApiHost}}
       DATABASE_URL=postgresql://matrix:{{postgresPassword}}@127.0.0.1:5432/matrix
-  - path: /opt/matrix/env/symphony.env
-    owner: root:root
-    permissions: "0640"
-    content: |
-      MATRIX_HANDLE={{handle}}
-      PLATFORM_INTERNAL_URL={{platformInternalUrl}}
-      UPGRADE_TOKEN={{platformVerificationToken}}
   - path: /opt/matrix/env/postgres.env
     owner: root:root
     permissions: "0640"
@@ -543,7 +535,7 @@ runcmd:
       timeout --kill-after=30 600 env DEBIAN_FRONTEND=noninteractive apt-get install -y software-properties-common
       timeout --kill-after=30 120 add-apt-repository -y universe
       apt_get_update
-      timeout --kill-after=30 600 env DEBIAN_FRONTEND=noninteractive apt-get install -y bubblewrap build-essential ca-certificates cmatrix curl docker.io elixir erlang-base erlang-crypto erlang-inets erlang-public-key erlang-ssl erlang-tools file git postgresql-client procps python3-cryptography nginx openssl socat sudo unzip zsh
+      timeout --kill-after=30 600 env DEBIAN_FRONTEND=noninteractive apt-get install -y bubblewrap build-essential ca-certificates cmatrix curl docker.io file git postgresql-client procps python3-cryptography nginx openssl socat sudo unzip zsh
       install -d -o root -g root -m 0755 /etc/apparmor.d
       cat >/etc/apparmor.d/bwrap <<'EOF'
     abi <abi/4.0>,
@@ -628,7 +620,7 @@ runcmd:
     fi
     install -d -o root -g root -m 0755 /home/matrixos
     ln -sfn /home/matrix/home /home/matrixos/home
-    chown root:matrix /opt/matrix/postgres-compose.yml /opt/matrix/env/host.env /opt/matrix/env/symphony.env /opt/matrix/env/postgres.env /opt/matrix/env/registration.env
+    chown root:matrix /opt/matrix/postgres-compose.yml /opt/matrix/env/host.env /opt/matrix/env/postgres.env /opt/matrix/env/registration.env
 
     # The builder performs this recursive normalization before writing the
     # exact-bundle readiness proof. A certified immutable clone preserves that
@@ -672,7 +664,7 @@ runcmd:
       chown root:matrix /opt/matrix/release.json
       chmod 0644 /opt/matrix/release.json
     fi
-    for required_bin in matrixctl matrix-r2-broker.mjs matrix-db-backup.sh matrix-restore.sh matrix-owner-env matrix-gateway matrix-shell matrix-code matrix-sync-agent matrix-symphony matrix-symphony-control matrix-install-hermes; do
+    for required_bin in matrixctl matrix-r2-broker.mjs matrix-db-backup.sh matrix-restore.sh matrix-owner-env matrix-gateway matrix-shell matrix-code matrix-sync-agent matrix-install-hermes; do
       chmod 0750 "/opt/matrix/bin/${required_bin}"
     done
     for optional_bin in matrix-register-vps matrix-integrations matrix-integrations-mcp matrix-register-integrations-mcp matrix-hermes-dashboard matrix-install-openclaw matrix-openclaw-gateway matrix-agent-runtime-control matrix-install-linux-tools matrix-install-developer-tools matrix-messaging-health matrix-messaging-backup matrix-messaging-restore; do
