@@ -225,9 +225,9 @@ function SharedFileEditor({ api, scopeId, scope, initial }: {
 
   return <main data-slot="shared-file-view" className="mx-auto flex min-h-full w-full max-w-4xl flex-col gap-4 p-5 sm:p-8">
     <header className="flex flex-wrap items-start gap-3">
-      <div className="min-w-0 flex-1">
+      <div className="min-w-0" style={{ flex: "1 1 15rem" }}>
         <p className="text-xs font-medium uppercase tracking-[0.16em]" style={{ color: "var(--text-tertiary)" }}>Shared file</p>
-        <h1 className="mt-1 truncate text-2xl font-semibold">{name}</h1>
+        <h1 className="mt-1 break-words text-2xl font-semibold">{name}</h1>
         <p className="mt-1 text-sm" style={{ color: "var(--text-secondary)" }}>{ROLE_LABEL[scope.role]}</p>
       </div>
       <div className="flex flex-wrap gap-2">
@@ -244,9 +244,11 @@ function SharedFileEditor({ api, scopeId, scope, initial }: {
     {notice?.kind === "error" ? <p role="alert" className="text-sm">{notice.message}</p> : null}
     {conflict ? <ConflictPanel conflict={conflict} onKeep={() => keepMyEdits(conflict)} onTakeOwner={() => takeOwnerVersion(conflict)}
       onDownloadMine={() => saveBytes(draft ?? "", sharedFileCopyName(name), "text/plain")} /> : null}
-    {draft !== null
-      ? <textarea aria-label="File contents" value={draft} onChange={(event) => setDraft(event.target.value)} spellCheck={false}
-        className="min-h-[50vh] w-full rounded-2xl border bg-transparent p-4 font-mono text-sm" />
+    {draft !== null ? <>
+      {conflict ? <p className="text-sm font-medium">Your version</p> : null}
+      <textarea aria-label="File contents" value={draft} onChange={(event) => setDraft(event.target.value)} spellCheck={false}
+        className="w-full rounded-2xl border bg-transparent p-4 font-mono text-sm" style={{ minHeight: conflict ? "30vh" : "50vh" }} />
+    </>
       : <FilePreview preview={preview} showEditLimit={scope.role !== "viewer" && !canEdit} />}
   </main>;
 }
@@ -265,7 +267,8 @@ function ConflictPanel({ conflict, onKeep, onTakeOwner, onDownloadMine }: {
       <button type="button" className={buttonClass} onClick={onTakeOwner}>Use the owner's version</button>
       <button type="button" className={buttonClass} onClick={onDownloadMine}>Download my version</button>
     </div>
-    <section aria-label="Owner's version" className="mt-3 max-h-80 overflow-auto rounded-xl border p-3">
+    <p className="mt-3 text-sm font-medium">Owner's version</p>
+    <section aria-label="Owner's version" className="mt-1 overflow-auto rounded-xl border p-3" style={{ maxHeight: "20rem" }}>
       {conflict.text === null
         ? <p className="text-sm">The owner's version can't be shown here. Download it to compare.</p>
         : <pre className="whitespace-pre-wrap break-words text-sm">{conflict.text}</pre>}
@@ -282,7 +285,7 @@ function FilePreview({ preview, showEditLimit }: { preview: Preview; showEditLim
   }
   return <>
     {showEditLimit ? <p className="text-sm" style={{ color: "var(--text-secondary)" }}>This file is too large to edit here. Download it to edit it.</p> : null}
-    <pre aria-label="File preview" className="max-h-[70vh] overflow-auto whitespace-pre-wrap break-words rounded-2xl border p-4 font-mono text-sm">{preview.text}</pre>
+    <pre aria-label="File preview" className="overflow-auto whitespace-pre-wrap break-words rounded-2xl border p-4 font-mono text-sm" style={{ maxHeight: "70vh" }}>{preview.text}</pre>
   </>;
 }
 
