@@ -47,10 +47,12 @@ function fromRow(row: Selectable<BotGrantsTable>): BotGrantRecord {
 }
 
 function normalizedEffects(effects: readonly BotEffect[]): BotEffect[] {
-  const unique = EFFECTS.filter((effect) => effects.includes(effect));
-  if (unique.length === 0 || new Set(effects).size !== effects.length || effects.some((effect) => !EFFECTS.includes(effect))) {
+  // At most one of each known effect; checked by counting, so no collection is built from the input.
+  if (effects.length === 0 || effects.length > EFFECTS.length || effects.some((effect) => !EFFECTS.includes(effect))) {
     throw new BotStateError("invalid_input");
   }
+  const unique = EFFECTS.filter((effect) => effects.includes(effect));
+  if (unique.length !== effects.length) throw new BotStateError("invalid_input");
   return unique;
 }
 

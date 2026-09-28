@@ -21,6 +21,7 @@ describe("bot grants repository", () => {
       .resolves.toEqual({ grant: first.grant, created: false });
     await expect(repo.grant({ ...account, effects: ["read"], audience: "direct", now: NOW })).rejects.toEqual(new BotStateError("conflict"));
     await expect(repo.grant({ ...account, effects: ["read", "read"], audience: "direct", now: NOW })).rejects.toEqual(new BotStateError("invalid_input"));
+    await expect(repo.grant({ ...account, effects: ["read", "write", "send", "read"], audience: "direct", now: NOW })).rejects.toEqual(new BotStateError("invalid_input"));
     // The same account in a group audience is a separate grant.
     await expect(repo.grant({ ...account, effects: ["read"], audience: "group:chat_team1", now: NOW })).resolves.toMatchObject({ created: true });
     const narrowed = await repo.updateEffects({ ownerId: OWNER, grantId: first.grant.grantId, baseRevision: 1, effects: ["read"], now: at(2) });
