@@ -74,9 +74,10 @@ describe("bot interaction contracts", () => {
     }).kind).toBe("approval");
   });
 
-  it("rejects account choices with fewer than two options, duplicates, or free-text accounts", () => {
+  it("rejects empty account choices, duplicates, or free-text accounts", () => {
     const choice = { kind: "account_choice", service: "gmail", options: [{ connectionId: "conn_1", label: "Work" }] };
-    expect(BotInteractionPayloadSchema.safeParse(choice).success).toBe(false);
+    expect(BotInteractionPayloadSchema.safeParse({ ...choice, options: [] }).success).toBe(false);
+    expect(BotInteractionPayloadSchema.safeParse(choice).success).toBe(true);
     expect(BotInteractionPayloadSchema.safeParse({
       ...choice,
       options: [{ connectionId: "conn_1", label: "Work" }, { connectionId: "conn_1", label: "Also work" }],
@@ -187,7 +188,7 @@ describe("bot grant, memory, task, and authority contracts", () => {
       memory: { items: [memory] },
     };
     expect(BotAuthorityViewSchema.parse(view)).toEqual(view);
-    expect(BotAuthorityViewSchema.safeParse({ ...view, grants: Array.from({ length: 65 }, () => grant) }).success).toBe(false);
+    expect(BotAuthorityViewSchema.safeParse({ ...view, grants: Array.from({ length: 101 }, () => grant) }).success).toBe(false);
     expect(BotAuthorityViewSchema.safeParse({ ...view, connections: [{ service: "gmail", state: "unknown" }] }).success).toBe(false);
   });
 });

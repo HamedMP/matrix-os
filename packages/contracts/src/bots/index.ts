@@ -7,3 +7,4 @@ export * from "#bots/interactions";
 export * from "#bots/authority";
 export * from "#bots/broker";
 export * from "#bots/worker";
+export * from "#bots/view-model";

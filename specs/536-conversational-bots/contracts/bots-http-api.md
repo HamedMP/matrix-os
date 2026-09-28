@@ -24,7 +24,10 @@ Gateway routes for conversational bots. Additive to the canonical Chat API (`pac
 
 | Route | Owner | Shared-chat editor | Shared-chat viewer | Guest with AI permission | Unrelated |
 |---|---|---|---|---|---|
+| `GET /api/chat-agents/bot-recipes` | Launch metadata | No | No | No | No |
 | `POST /api/chat-agents/instantiate` | Yes | No | No | No | No |
+| `GET /api/chats/:chatId/bot` | Direct bot ID or null | No | No | No | No |
+| `GET /api/chats/:chatId/bot-tasks` | Up to 20 open tasks | No | No | No | No |
 | `GET /api/chat-agents/:agentId/authority` | Full | Group-visible subset (M3) | Group-visible subset (M3) | Group-visible subset (M3) | No |
 | `GET /api/chats/:chatId/interactions` | Pending; payloads only where designated responder | Same | No | Same | No |
 | `POST /api/chats/:chatId/interactions/:interactionId/resolve` | If designated responder | If designated responder | No | If designated responder | No |
@@ -36,6 +39,18 @@ Gateway routes for conversational bots. Additive to the canonical Chat API (`pac
 | `WS /ws/computer/:computerId` (M4) | Yes | No | No | No | No |
 
 ## `POST /api/chat-agents/instantiate` (M1)
+
+The browser first reads `GET /api/chat-agents/bot-recipes`. It returns at most 128
+`{ recipeId, version, name, description, output }` entries. Instructions,
+capabilities, and integration policy remain on the server. An unavailable catalog
+does not turn a launch recipe into a freeform prompt handoff.
+
+`GET /api/chats/:chatId/bot` returns `{ agentId: string | null }` for the
+owner's direct bot Chat. `GET /api/chats/:chatId/bot-tasks` returns at most 20
+open task summaries with allowlisted status and blocked reason fields. Both
+validate the Chat ID before owner-scoped lookup. The shared Web Chat component
+uses these reads to render bot identity and task state across Web Canvas and
+Web Desktop.
 
 Request:
 

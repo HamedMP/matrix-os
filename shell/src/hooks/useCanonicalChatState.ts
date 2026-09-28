@@ -97,6 +97,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView }
   const [eventConnectionState, setEventConnectionState] = useState<CanonicalChatEventConnectionState>(
     eventSource.connectionState(),
   );
+  const [botEventRevision, setBotEventRevision] = useState(0);
   const [composerDraftRequest, setComposerDraftRequest] = useState<{ id: number; text: string } | null>(null);
   // One active input attempt per hook; bounded and retained for ambiguous retries.
   const inputAttempt = useRef<{ key: string; clientRequestId: string; inFlight: boolean } | null>(null);
@@ -239,6 +240,10 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView }
     ));
     let listTimer: number | undefined;
     const subscription = eventSource.subscribe((event) => {
+      if (event.type === "chat.changed" && event.chatId === activeChatId
+        && /^(?:interaction\.|bot\.)/.test(event.eventType)) {
+        setBotEventRevision((revision) => revision + 1);
+      }
       if (event.type === "chat.changed" && event.content) {
         const record = event.content.content.record;
         setRecords((current) => current.map((item) => item.chat.id === record.chat.id
@@ -662,6 +667,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView }
     connected,
     queue: [],
     agentClient: client.agents,
+    botEventRevision,
     queuedTurns: detail?.queuedTurns ?? [],
     cancelQueuedTurn,
     providerSelection: activeRecord?.chat.currentSelection,

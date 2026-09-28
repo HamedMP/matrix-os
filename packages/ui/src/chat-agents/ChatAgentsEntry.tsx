@@ -1,7 +1,7 @@
 import { isChatAgentDriver } from "@matrix-os/contracts";
 import type { StartAgentChat } from "./client.js";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { ChatAgentRecipeSchema, JevInboxTriageBindingSchema, type ChatAgent, type ChatAgentRecipeCatalog, type CanonicalProviderCatalog, type CanonicalChatModelSelection } from "@matrix-os/contracts";
+import { ChatAgentRecipeSchema, JevInboxTriageBindingSchema, type BotRecipeSummary, type ChatAgent, type ChatAgentRecipeCatalog, type CanonicalProviderCatalog, type CanonicalChatModelSelection } from "@matrix-os/contracts";
 import { useChatAgentsNavigation } from "./ChatAgentsNavigation.js";
 import { deriveCanonicalProviderChoices } from "../canonical-provider-choice.js";
 import { accountForNewIntegration } from "./recipe-integrations.js";
@@ -106,12 +106,24 @@ function AgentLibraryBody({ state, models, edit, change, save, archive, back, re
     </div>;
 }
 
-export function ChatAgentsPanel({ client, view = "library", onClose, onSetup, onStartChat }: { client: ChatAgentClient; view?: "library" | "recipes"; onClose(): void; onSetup?: () => void; onStartChat?: StartAgentChat }) {
+export function ChatAgentsPanel({ client, view = "library", onClose, onSetup, onStartChat, onOpenBotChat }: {
+  client: ChatAgentClient; view?: "library" | "recipes"; onClose(): void; onSetup?: () => void;
+  onStartChat?: StartAgentChat; onOpenBotChat?: (chatId: string) => void;
+}) {
   const heading = useRef<HTMLHeadingElement>(null);
   const jevCreateAttempt = useRef<{ accountLabel: string; selectionKey: string; requestId: string } | null>(null);
   const [state, setState] = useState<Library>({ agents: [], catalog: null, enabled: true,
     loading: true, pending: false, error: "", notice: "", editing: null, draft: null,
     recipeCatalog: null, connections: [], recipeLoading: true, recipeError: "", connectionError: "" });
+  const [botRecipes, setBotRecipes] = useState<BotRecipeSummary[]>([]);
+  useEffect(() => {
+    if (!client.bots) return;
+    let current = true;
+    void client.bots.recipes().then((recipes) => { if (current) setBotRecipes(recipes); }).catch((failure: unknown) => {
+      console.warn("[chat-agents] Bot recipes unavailable:", failure instanceof Error ? failure.name : "UnknownError");
+    });
+    return () => { current = false; };
+  }, [client]);
   useEffect(() => { heading.current?.focus(); }, [state.editing]);
   const patch = (value: Partial<Library>) => setState((current) => ({ ...current, ...value }));
   useEffect(() => {
@@ -285,6 +297,9 @@ export function ChatAgentsPanel({ client, view = "library", onClose, onSetup, on
     </header>
     <div className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-8 sm:px-6">
     {recipes ? <AgentRecipesPanel onStartChat={onStartChat ? (text) => { onClose(); onStartChat(text); } : undefined}
+      botRecipes={botRecipes} onOpenBotChat={onOpenBotChat ? (chatId) => { onClose(); onOpenBotChat(chatId); } : undefined}
+      onInstantiateBot={client.bots && onOpenBotChat ? async (recipe, clientRequestId) =>
+        (await client.bots!.instantiate({ recipe, clientRequestId })).chatId : undefined}
       onCreateJev={onStartChat ? createJev : undefined} connections={state.connections}
       jevUnavailable={jevUnavailable} jevPending={jevPending} jevError={jevError} /> : <div className="mx-auto w-full max-w-3xl">
     <AgentLibraryBody state={state} models={state.draft?.recipe?.skills.includes("matrix-jev-email-triage")

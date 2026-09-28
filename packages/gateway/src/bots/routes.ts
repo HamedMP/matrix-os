@@ -4,7 +4,7 @@
  * Bodies are bounded and strictly validated, errors come from one mapper
  * with allowlisted codes and generic messages, and responses are private.
  */
-import { BotGrantIdSchema, BotInteractionIdSchema, BotMemoryItemIdSchema, CanonicalChatIdSchema, ChatAgentIdSchema } from "@matrix-os/contracts";
+import { BotDirectChatResponseSchema, BotGrantIdSchema, BotInteractionIdSchema, BotMemoryItemIdSchema, BotRecipeListResponseSchema, BotTaskListResponseSchema, CanonicalChatIdSchema, ChatAgentIdSchema, type BotTaskSummary } from "@matrix-os/contracts";
 import type { Context } from "hono";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
@@ -15,6 +15,8 @@ import { BotInteractionError, type BotInteractionService } from "./interactions.
 import { BotMemoryError, type BotMemoryService } from "./memory-service.js";
 import { BotGrantError, type BotGrantService } from "./grants-service.js";
 import { BotAuthorityError, type BotAuthority } from "./authority.js";
+import type { BotRecipeCatalog } from "./recipe-catalog.js";
+import type { BotChatLookup } from "../chat/agent-context.js";
 
 const MAX_BODY_BYTES = 64 * 1024;
 
@@ -34,6 +36,9 @@ function errorResponse(context: Context, code: ErrorCode) {
 }
 
 export function createBotRoutes(options: {
+  recipes?: Pick<BotRecipeCatalog, "list">;
+  botChats?: BotChatLookup;
+  tasks?: (ownerId: string, chatId: string) => Promise<BotTaskSummary[]>;
   instantiation?: Pick<BotInstantiation, "instantiate">;
   interactions?: Pick<BotInteractionService, "listPending" | "resolve">;
   memory?: Pick<BotMemoryService, "forget" | "confirm">;
@@ -73,6 +78,34 @@ export function createBotRoutes(options: {
     const result = await options.instantiation.instantiate(principal.userId, await context.req.json());
     context.header("Cache-Control", "private, no-store");
     return context.json(result, result.operation === "created" ? 201 : 200);
+  });
+
+  routes.get("/api/chat-agents/bot-recipes", (context) => {
+    options.getPrincipal(context);
+    if (!options.recipes) return errorResponse(context, "unavailable");
+    const recipes = options.recipes.list().map(({ recipeId, version, name, description, output }) =>
+      ({ recipeId, version, name, description, output }));
+    context.header("Cache-Control", "private, no-store");
+    return context.json(BotRecipeListResponseSchema.parse({ recipes }));
+  });
+
+  routes.get("/api/chats/:chatId/bot", async (context) => {
+    const principal = options.getPrincipal(context);
+    if (!options.botChats) return errorResponse(context, "unavailable");
+    const chatId = CanonicalChatIdSchema.safeParse(context.req.param("chatId"));
+    if (!chatId.success) return errorResponse(context, "invalid_request");
+    const agentId = await options.botChats.directBot({ type: "personal", ownerId: principal.userId }, chatId.data);
+    context.header("Cache-Control", "private, no-store");
+    return context.json(BotDirectChatResponseSchema.parse({ agentId }));
+  });
+
+  routes.get("/api/chats/:chatId/bot-tasks", async (context) => {
+    const principal = options.getPrincipal(context);
+    if (!options.tasks) return errorResponse(context, "unavailable");
+    const chatId = CanonicalChatIdSchema.safeParse(context.req.param("chatId"));
+    if (!chatId.success) return errorResponse(context, "invalid_request");
+    context.header("Cache-Control", "private, no-store");
+    return context.json(BotTaskListResponseSchema.parse({ tasks: await options.tasks(principal.userId, chatId.data) }));
   });
 
   routes.get("/api/chats/:chatId/interactions", async (context) => {
