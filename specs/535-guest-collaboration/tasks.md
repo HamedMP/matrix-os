@@ -50,10 +50,10 @@ Owners of X1-X3 keep their own plans. B0 and B8 reuse the single-membership rule
 - [ ] T005 M0 Extend the workflow contract tests (`tests/platform/ci-workflows.test.ts` or a new `tests/platform/preview-platform-workflow.test.ts`) to assert that `preview-platform.yml` binds `MATRIX_COLLABORATION_TICKET_KEYS` from `collaboration-ticket-keys-preview` (never the production secret), sets the active key ID from a preview variable, sets allowed and relay origins to `https://preview.matrix-os.com`, and runs a secret-and-keyring verification step before deploy (fails first).
 - [ ] T006 M0 Implement the bindings and verification step in `.github/workflows/preview-platform.yml`; document the one-time secret creation and runner `secretAccessor` grant in `docs/dev/preview-environments.md`.
 
-### A0b: connect a preview VPS home to the preview platform
+### A0b: collaboration preview owner and home connection
 
-- [ ] T007 M0 Write workflow contract tests: `connect_collaboration_preview` runs only with `connect_share_preview` for the same PR number and exact head; it preserves owner, group and mode of the host environment file, keeps a bounded rollback copy, restores it on failed health, never prints the file, and never targets a non-preview machine.
-- [ ] T008 M0 Implement the opt-in input and steps in `.github/workflows/preview-platform.yml` (re-point the variables confirmed by T004, restart the gateway, verify health and runtime-endpoint enrollment on the preview platform); update `docs/dev/preview-environments.md`.
+- [ ] T007 M0 Write workflow contract tests: with the `preview-collaboration` label (and `preview-vps`), `preview-vps.yml` provisions with `PREVIEW_COLLABORATION_OWNER_USER_ID` and an empty access list from the protected `collaboration-e2e` environment, only for same-repository PRs, asserts the override differs from `PREVIEW_CLERK_USER_ID`, refuses to reuse a `pr-<N>` owned by someone else, and is unchanged without the label; `connect_collaboration_preview` registers the collaboration owner in staging and runs only with `connect_share_preview` for the same PR number and exact head; it preserves owner, group and mode of the host environment file, keeps a bounded rollback copy, restores it on failed health, never prints the file, and never targets a non-preview machine.
+- [ ] T008 M0 Implement the label handling in `.github/workflows/preview-vps.yml` and the opt-in input and steps in `.github/workflows/preview-platform.yml` (re-point the variables confirmed by T004, restart the gateway, verify health and runtime-endpoint enrollment on the preview platform); update `docs/dev/preview-environments.md`.
 
 ### A1: real-Postgres suites in CI
 
@@ -64,7 +64,7 @@ Owners of X1-X3 keep their own plans. B0 and B8 reuse the single-membership rule
 
 ### A2: identity fixture (FR-029)
 
-- [ ] T013 [P] M0 Write `tests/e2e/fixtures/collaboration-identities.e2e.test.ts` (Vitest, picked up by `vitest.e2e.config.ts` like the existing `tests/e2e/fixtures/collaboration-fixture.e2e.test.ts`, which is updated for the new environment): refuses any user ID outside `MATRIX_COLLABORATION_E2E_ALLOWED_USER_IDS`; refuses a primary address that is not a `+alias` of `MATRIX_COLLABORATION_E2E_BASE_EMAIL`; refuses an owner that differs from `PREVIEW_CLERK_USER_ID`; never logs tokens; refuses to start if member, guest or outsider appears in `PREVIEW_CLERK_ACCESS_USER_IDS`; accepts `preview.matrix-os.com` and `app.matrix-os.com` base URLs only.
+- [ ] T013 [P] M0 Write `tests/e2e/fixtures/collaboration-identities.e2e.test.ts` (Vitest, picked up by `vitest.e2e.config.ts` like the existing `tests/e2e/fixtures/collaboration-fixture.e2e.test.ts`, which is updated for the new environment): refuses any user ID outside `MATRIX_COLLABORATION_E2E_ALLOWED_USER_IDS`; refuses a primary address that is not a `+alias` of `MATRIX_COLLABORATION_E2E_BASE_EMAIL`; refuses when any allowlisted ID equals `PREVIEW_CLERK_USER_ID` (when provided) and when the collaboration owner does not own `pr-<N>`; never logs tokens; refuses to start if member, guest or outsider has preview access to `pr-<N>`; accepts `preview.matrix-os.com` and `app.matrix-os.com` base URLs only.
 - [ ] T014 M0 Implement `tests/e2e/fixtures/collaboration-identities.ts` (Backend API with 10 s timeouts and bounded responses, allowlist and `+alias` guards) and `tests/e2e/fixtures/clerk-sign-in.ts` (path from T001).
 - [ ] T015 M0 Rewrite `tests/e2e/fixtures/collaboration.ts` for owner, member, guest, outsider and multi-computer member contexts, with precondition checks through `/api/auth/computers`, `/api/journey` and organization membership.
 - [ ] T016 [P] M0 Implement `tests/e2e/helpers/collaboration-direct-harness.ts` using `createCollaborationDirectApi` with `getHeaders` returning the page's Clerk session token.
@@ -78,7 +78,7 @@ Owners of X1-X3 keep their own plans. B0 and B8 reuse the single-membership rule
 
 ### A4: foundation evidence
 
-- [ ] T021 M0 Run A3 plus handoff journeys 2, 4, 7, 13, 14, 15, 16, 17 on a preview VPS connected to the preview platform (A0, A0b) with X1 deployed; write `specs/535-guest-collaboration/evidence/m0-foundation.md` (commit, bundle version, roles, sanitized outcomes, blocked items with reasons). Release preview traffic and ask whether to delete the preview VPS.
+- [ ] T021 M0 Run A3 plus handoff journeys 2, 4, 7, 13, 14, 15, 16, 17 on a `preview-collaboration` preview VPS connected to the preview platform (A0, A0b) with X1 deployed; write `specs/535-guest-collaboration/evidence/m0-foundation.md` (commit, bundle version, roles, sanitized outcomes, blocked items with reasons). Release preview traffic and ask whether to delete the preview VPS.
 
 **Checkpoint**: M0 complete when A0-A4 merge and the evidence shows no unexplained failure.
 
@@ -261,7 +261,7 @@ Sizes are estimates including tests; every PR must stay under 1000 additions and
 | ID | Branch slug | Base | Conventional title | Packages / key files | Est. additions / files | Depends on |
 | --- | --- | --- | --- | --- | --- | --- |
 | A0 | `codex/535-m0-preview-collaboration-keys` | `main` | `ci(preview): give preview platforms collaboration ticket keys and origins` | `.github/workflows/preview-platform.yml`, workflow contract test, `docs/dev/preview-environments.md` | 250 / 3 | owner creates the preview secret; token with `workflow` scope |
-| A0b | `codex/535-m0-preview-collaboration-home` | `main` | `ci(preview): connect a preview VPS home to the preview collaboration authority` | `.github/workflows/preview-platform.yml`, workflow contract test, `docs/dev/preview-environments.md` | 450 / 3 | A0, T004 |
+| A0b | `codex/535-m0-preview-collaboration-home` | `main` | `ci(preview): connect a preview VPS home to the preview collaboration authority` | `.github/workflows/{preview-vps,preview-platform}.yml`, workflow contract tests, `docs/dev/preview-environments.md` | 700 / 5 | A0, T004; owner creates `PREVIEW_COLLABORATION_OWNER_USER_ID` and the `preview-collaboration` label |
 | A1 | `codex/535-m0-postgres-ci` | `main` | `ci(collaboration): run real-Postgres collaboration suites` | `.github/workflows/ci.yml`, `scripts/test-collaboration-postgres.sh`, `tests/repository/`, `tests/platform/ci-workflows.test.ts` | 270 / 5 (plus small suite fixes) | T002; token with `workflow` scope |
 | A2 | `codex/535-m0-identity-fixture` | `main` | `test(collaboration): add unattended identity sign-in fixture` | `tests/e2e/fixtures/`, `tests/e2e/helpers/`, `tests/e2e/collaboration.playwright.config.ts`, root `package.json` | 700 / 8 | T001 |
 | A3 | `codex/535-m0-foundation-journeys` | A2 (stack parent) | `test(collaboration): rewrite foundation journeys on the direct transport` | `tests/e2e/collaboration/`, delete `tests/e2e/collaboration-project.spec.ts` | 850 / 4 | A2 |
