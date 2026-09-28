@@ -1223,8 +1223,14 @@ jobs:
           binding="$(jq -cn --arg url "$PREVIEW_TAG_URL" --arg token "$upgrade_token" --arg origins "$COLLABORATION_CLIENT_ORIGINS" \
             '{PLATFORM_INTERNAL_URL:$url,UPGRADE_TOKEN:$token,MATRIX_COLLABORATION_CLIENT_ORIGINS:$origins}')"
 
-          # 4. Dead-man guard, armed before this run takes ownership: unless this run commits within
-          #    300 s, it restores the host environment and restarts the gateway.
+          # 4. Install the executable before arming the timer. A timer that fires between
+          #    the claim's liveness check and state write must be able to run and take the lock.
+          body="$(script_command root scripts/preview-collaboration-guard.py 10000 prepare "$nonce")"
+          if ! send_runtime_command "$body"; then
+            echo "The rollback guard could not be installed; nothing was changed." >&2
+            exit 1
+          fi
+          # Unless this run commits within 300 s, the armed timer restores the host environment.
           body="$(jq -cn --arg unit "--unit=${guard_unit}" --arg guard "$guard_path" --arg nonce "$nonce" \
             '{command:["/usr/bin/sudo","/usr/bin/systemd-run",$unit,"--on-active=300s","--collect","/usr/bin/python3","-I",$guard,"restore",$nonce,"--restart"],timeoutMs:10000}')"
           if ! send_runtime_command "$body" once; then

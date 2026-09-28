@@ -52,8 +52,14 @@ function guard(command: "restore" | "commit", nonce: string) {
   return python("scripts/preview-collaboration-guard.py", `m["${command}"](pathlib.Path(sys.argv[2]),sys.argv[3])`, nonce);
 }
 
+function prepare() {
+  return python("scripts/preview-collaboration-guard.py",
+    'm["prepare"](pathlib.Path(sys.argv[2]),sys.argv[3])', GUARD_SOURCE);
+}
+
 // Tests stand in for `systemctl is-active` on the run's guard timer.
 function claim(nonce: string, timerArmed = true) {
+  expect(JSON.parse(prepare().stdout)).toBe("prepared");
   return python("scripts/preview-collaboration-guard.py",
     `m["claim"](pathlib.Path(sys.argv[2]),sys.argv[3],sys.argv[4],lambda nonce: sys.argv[5] == "true")`,
     nonce, GUARD_SOURCE, String(timerArmed));
@@ -74,6 +80,29 @@ const hostEnv = () => readFileSync(join(root, "host.env"), "utf8");
 const envValue = (key: string) => hostEnv().split("\n").filter((line) => line.startsWith(`${key}=`));
 
 describe("preview collaboration host scripts", () => {
+  it("requires the executable rollback guard to be installed before a timer may be claimed", () => {
+    const unprepared = python("scripts/preview-collaboration-guard.py",
+      'm["claim"](pathlib.Path(sys.argv[2]),sys.argv[3],sys.argv[4],lambda nonce: True)',
+      "100-1", GUARD_SOURCE);
+    expect(unprepared.status).not.toBe(0);
+    expect(existsSync(join(root, ".preview-collaboration-state"))).toBe(false);
+    expect(JSON.parse(prepare().stdout)).toBe("prepared");
+    expect(statSync(join(root, ".preview-collaboration-guard.py")).mode & 0o777).toBe(0o700);
+    expect(JSON.parse(python("scripts/preview-collaboration-guard.py",
+      'm["claim"](pathlib.Path(sys.argv[2]),sys.argv[3],sys.argv[4],lambda nonce: True)',
+      "100-1", GUARD_SOURCE).stdout)).toBe("claimed");
+  });
+  it("refuses a replaced guard script before moving ownership", () => {
+    expect(JSON.parse(prepare().stdout)).toBe("prepared");
+    rmSync(join(root, ".preview-collaboration-guard.py"));
+    writeFileSync(join(root, "other.py"), GUARD_SOURCE);
+    symlinkSync(join(root, "other.py"), join(root, ".preview-collaboration-guard.py"));
+    const claimWithSymlink = python("scripts/preview-collaboration-guard.py",
+      'm["claim"](pathlib.Path(sys.argv[2]),sys.argv[3],sys.argv[4],lambda nonce: True)',
+      "100-1", GUARD_SOURCE);
+    expect(claimWithSymlink.status).not.toBe(0);
+    expect(existsSync(join(root, ".preview-collaboration-state"))).toBe(false);
+  });
   it("refuses a claim whose guard timer already fired, leaving the earlier owner in charge", () => {
     expect(connect("108-1").status).toBe(0);
     // Run 109 stalled past its timer between arming and claiming.

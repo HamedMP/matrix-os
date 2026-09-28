@@ -1,8 +1,8 @@
 """Dead-man guard for spec 535 A0b on a pr-<N> home.
 
-The run that claimed a connection last owns it. A run arms its guard timer first,
-then `claim <nonce>` checks that timer is still armed, installs this guard (the
-exact source the loader ran) and records the claim, so ownership only moves to a
+The run that claimed a connection last owns it. A run installs the guard before
+arming its timer. `claim <nonce>` verifies that exact source and the live timer,
+then records the claim, so ownership only moves to a
 run whose timer still covers the home, and host.env changes only after that. `restore <nonce> [--restart]`
 puts the pre-connection host environment back only while that run's claim is
 uncommitted, so an earlier run's timer never undoes a newer connection; the
@@ -23,6 +23,7 @@ ROLLBACK = ".host.env.preview-collaboration-rollback"
 STATE = ".preview-collaboration-state"
 # The workflow arms `systemd-run --unit=matrix-preview-collaboration-guard-<nonce>`.
 TIMER = "matrix-preview-collaboration-guard-{}.timer"
+GUARD = ".preview-collaboration-guard.py"
 
 
 def locked(root):
@@ -67,17 +68,37 @@ def timer_armed(nonce):
     return shown.returncode == 0 and shown.stdout.strip() == "waiting"
 
 
+def prepare(root, source):
+    if not source or len(source.encode("utf-8")) > 65536:
+        raise ValueError("Invalid guard source")
+    lock = locked(root)
+    try:
+        write_atomic(root / GUARD, source, 0o700)
+    finally:
+        os.close(lock)
+    return "prepared"
+
+
+def guard_installed(root, source):
+    fd = os.open(root / GUARD, os.O_RDONLY | os.O_NOFOLLOW)
+    try:
+        metadata = os.fstat(fd)
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_mode & 0o077 or metadata.st_size > 65536:
+            return False
+        return os.read(fd, 65537) == source.encode("utf-8")
+    finally:
+        os.close(fd)
+
+
 def claim(root, nonce, source, armed=timer_armed):
     if not source:
         raise ValueError("The guard source is required to claim")
     lock = locked(root)
     try:
-        # A run whose timer already fired (a stall between arming and claiming) must not take
-        # ownership: it would own the home with nothing left to restore it. Checked under the
-        # lock, so a timer firing after this check waits and then restores this claim.
-        if not armed(nonce):
-            raise ValueError("This run's guard timer is no longer armed")
-        write_atomic(root / ".preview-collaboration-guard.py", source, 0o700)
+        # The timer's executable must already exist. If it fires after the timer check,
+        # its service waits on this lock and restores the newly recorded claim.
+        if not guard_installed(root, source) or not armed(nonce):
+            raise ValueError("This run has no installed and armed rollback guard")
         record(root, nonce, "claimed")
     finally:
         os.close(lock)
@@ -132,7 +153,9 @@ if __name__ == "__main__":
     command, arguments = sys.argv[1:2], sys.argv[2:]
     if not arguments or not re.fullmatch(r"[0-9]{1,20}-[0-9]{1,5}", arguments[0]):
         raise ValueError("Invalid arguments")
-    if command == ["claim"] and len(arguments) == 1:
+    if command == ["prepare"] and len(arguments) == 1:
+        status = prepare(home, globals().get("LOADED_SOURCE", ""))
+    elif command == ["claim"] and len(arguments) == 1:
         status = claim(home, arguments[0], globals().get("LOADED_SOURCE", ""))
     elif command == ["commit"] and len(arguments) == 1:
         status = commit(home, arguments[0])
