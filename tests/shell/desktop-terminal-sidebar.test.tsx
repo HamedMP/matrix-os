@@ -127,6 +127,27 @@ describe("DesktopTerminalSidebar project sharing (#1798)", () => {
     expect(calls.filter((url) => url.endsWith("/api/workspace/projects"))).toHaveLength(1);
   });
 
+  it("refreshes a renamed project on focus even when its session IDs are unchanged", async () => {
+    let currentName = "Launch Site";
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/api/workspace/projects")) return json({ projects: [{ id: "proj_launch", name: currentName }] });
+      return json({ runtime: { handle: "demo", runtimeSlot: "primary", machineId: MACHINE_ID }, capabilities: { collaboration: true } });
+    });
+    const sessions = [shell("tws_launch:tt_2", "api-server", "proj_launch")];
+    const view = await renderSidebar(sessions);
+    currentName = "Launch Docs";
+    view.rerender(<DesktopTerminalSidebar sessions={[...sessions]} selectedName={null} creating={false}
+      onCreate={vi.fn()} onOpen={vi.fn()} onDelete={vi.fn()} />);
+    await act(async () => {
+      window.dispatchEvent(new Event("focus"));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const group = screen.getByRole("group", { name: "Launch Docs" });
+    expect(within(group).getByRole("button", { name: "Share project Launch Docs" })).toBeTruthy();
+  });
+
   it("falls back to the project id when its name is unavailable", async () => {
     await renderSidebar([shell("tws_other:tt_5", "shell", "proj_unknown")]);
 
