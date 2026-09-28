@@ -28,12 +28,13 @@ export function BotRecipeChooser({ recipes, onCreate, onOpenChat, attemptRef, at
     if (attempt.current?.key !== key || attempt.current.scope !== attemptScope) {
       attempt.current = { scope: attemptScope, key, requestId: canonicalChatRequestId() };
     }
+    const requestId = attempt.current.requestId;
     setPending(key);
     setError("");
     try {
-      const chatId = await onCreate({ recipeId: recipe.recipeId, version: recipe.version }, attempt.current.requestId);
+      const chatId = await onCreate({ recipeId: recipe.recipeId, version: recipe.version }, requestId);
       onOpenChat(chatId);
-      attempt.current = null;
+      if (attempt.current?.requestId === requestId) attempt.current = null;
     } catch (failure: unknown) {
       console.warn("[mobile-bots] Bot creation failed:", failure instanceof Error ? failure.name : "UnknownError");
       setError("Bot could not be created. Try again.");
