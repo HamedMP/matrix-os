@@ -42,7 +42,7 @@ import { AnalyticsMask } from "@/lib/analytics";
 import { CanonicalInputMessage } from "@/components/CanonicalInputMessage";
 import { CanonicalApprovalMessage } from "@/components/CanonicalApprovalMessage";
 import { BotChatControls } from "@/components/BotChatControls";
-import { BotRecipeChooser } from "@/components/BotRecipeChooser";
+import { BotRecipeChooser, type BotCreationAttempt } from "@/components/BotRecipeChooser";
 import { useBotChat } from "@/lib/queries/use-bot-chat";
 import { useBotRecipes } from "@/lib/queries/use-bot-recipes";
 import { useCanonicalChats } from "@/lib/queries/use-canonical-chats";
@@ -52,7 +52,7 @@ import { HOSTED_GATEWAY_URL } from "@/lib/storage";
 const rabbitArtwork = require("../../assets/app.icon/Assets/rabbit.svg");
 
 export default function ChatScreen() {
-  const { isSignedIn } = useAuth();
+  const { isSignedIn, userId } = useAuth();
   const { user } = useUser();
   const { theme } = useUnistyles();
   const {
@@ -72,6 +72,7 @@ export default function ChatScreen() {
   const gatewayUrl = computer ? `${HOSTED_GATEWAY_URL}${computer.gatewayPath}` : null;
   const botChat = useBotChat(activeChatId, gatewayUrl);
   const [showBotRecipes, setShowBotRecipes] = useState(false);
+  const botCreationAttempt = useRef<BotCreationAttempt | null>(null);
   const botRecipes = useBotRecipes(gatewayUrl, showBotRecipes);
   const chats = useCanonicalChats();
   const { catalog } = useChatProviderCatalog();
@@ -224,7 +225,8 @@ export default function ChatScreen() {
       {showBotRecipes && gatewayUrl ? botRecipes.isError
         ? <Text accessibilityRole="alert" style={styles.systemText}>Bot recipes could not be loaded. Try again.</Text>
         : botRecipes.isPending ? <Text style={styles.systemText}>Loading bot recipes…</Text>
-          : <BotRecipeChooser recipes={botRecipes.recipes} onCreate={botRecipes.create} onOpenChat={(chatId) => {
+          : <BotRecipeChooser recipes={botRecipes.recipes} onCreate={botRecipes.create}
+            attemptRef={botCreationAttempt} attemptScope={`${userId ?? ""}:${gatewayUrl}`} onOpenChat={(chatId) => {
             selectChat(chatId);
             setShowBotRecipes(false);
             void chats.invalidate();

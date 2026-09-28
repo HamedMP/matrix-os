@@ -1,6 +1,6 @@
 import {desktopDriveDraftIdentity} from "../../stores/company-drive-chat-draft";
 import { useCompanyDriveChatHandoff } from "./use-company-drive-chat-handoff";
-import { chatMessageVersionUrl, chatReadStateVersionUrl } from "@matrix-os/contracts";
+import { chatEventVersionUrl, chatMessageVersionUrl, chatReadStateVersionUrl } from "@matrix-os/contracts";
 import { ChatAgentsWorkspace, type ChatAgentDraftRequest, type StartAgentChat } from "@matrix-os/ui";
 import {
   createCanonicalChatClient,
@@ -56,7 +56,7 @@ export function WorkSurfaceRuntimeProvider({ active, tabId, children }: { active
     if (!api || !active) return null;
     return createCanonicalChatEventSource({
       openStream({ cursor, signal }) {
-        return api.openStream(chatReadStateVersionUrl(chatMessageVersionUrl("/api/chats/events")), {
+        return api.openStream(chatEventVersionUrl(chatReadStateVersionUrl(chatMessageVersionUrl("/api/chats/events"))), {
           accept: "text/event-stream",
           signal,
           timeoutMs: 5 * 60 * 1000,

@@ -61,6 +61,24 @@ it("reuses the bot creation request ID on retry and opens the new Chat", async (
   expect(onCreate.mock.calls[0]![1]).toBe(onCreate.mock.calls[1]![1]);
 }, 20_000);
 
+it("reuses a creation request after the chooser closes and reopens", async () => {
+  const onCreate = jest.fn().mockRejectedValueOnce(new Error("response lost"))
+    .mockResolvedValueOnce("chat_research");
+  const onOpenChat = jest.fn();
+  const attemptRef = { current: null };
+  const chooser = () => <BotRecipeChooser recipes={[{ recipeId: "inbox-triage", version: "v1",
+    name: "Inbox helper", description: "Summarize the inbox", output: "A daily brief" }]}
+    onCreate={onCreate} onOpenChat={onOpenChat} attemptRef={attemptRef} attemptScope="owner:gateway" />;
+  const view = render(chooser());
+  fireEvent.press(screen.getByText("Build in Chat"));
+  await waitFor(() => expect(screen.getByText("Bot could not be created. Try again.")).toBeTruthy());
+  view.unmount();
+  const reopened = render(chooser());
+  fireEvent.press(reopened.getByText("Build in Chat"));
+  await waitFor(() => expect(onOpenChat).toHaveBeenCalledWith("chat_research"));
+  expect(onCreate.mock.calls[0]![1]).toBe(onCreate.mock.calls[1]![1]);
+}, 20_000);
+
 it("keeps a resolved connect request settled when opening consent fails", async () => {
   const connect = { ...snapshot.interactions[0], kind: "connect_request",
     payload: { kind: "connect_request", service: "gmail", access: ["read"], benefit: "Read your inbox",

@@ -83,6 +83,13 @@ afterEach(() => {
 });
 
 describe("HostedWorkSidebar", () => {
+  it("requests bot event wire v1 for the hosted Electron Chat stream", async () => {
+    const openStream = vi.fn(() => new Promise<Response>(() => {}));
+    useConnection.setState({ api: { openStream } as never });
+    render(<WorkSurfaceRuntimeProvider active><HostedDraftReceipt /></WorkSurfaceRuntimeProvider>);
+    await waitFor(() => expect(openStream).toHaveBeenCalled());
+    expect(openStream.mock.calls[0]![0]).toContain("eventVersion=1");
+  });
   it("replaces an already-open draft on every outer New chat click", async () => {
     useTabs.getState().openTab({ kind: "work", title: "Chat", workRoute: "chat", chatView: "draft", closable: false });
     const tab = useTabs.getState().tabs[0]!;
