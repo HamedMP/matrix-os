@@ -72,10 +72,15 @@ describe("funded AI policy routes", () => {
     vi.restoreAllMocks();
   });
 
-  async function createTestApp(options: { promotionalGrantEnabled?: boolean; topUpEnabled?: boolean; routeProbes?: FundedModelProbeService } = {}) {
+  async function createTestApp(options: {
+    promotionalGrantEnabled?: boolean;
+    topUpEnabled?: boolean;
+    routeProbes?: FundedModelProbeService;
+    tokenIdFactory?: () => string;
+  } = {}) {
     const repository = createAiFundedPolicyRepository({
       db, credentialHashSecret: hashSecret, now: () => new Date(now),
-      tokenIdFactory: () => "credential_123", tokenSecretFactory: () => "s".repeat(43),
+      tokenIdFactory: options.tokenIdFactory ?? (() => "credential_123"), tokenSecretFactory: () => "s".repeat(43),
       issueCooldownMs: 60_000,
     });
     await repository.updateGlobalPolicy({ expectedRevision: 0, enabled: true, allowedModelIds: [modelId] });
@@ -608,6 +613,50 @@ describe("funded AI policy routes", () => {
       method: "POST",
       headers: { authorization: `Bearer ${bearerFor("alice", "machine_123", "staging")}` },
     })).status).toBe(401);
+  });
+
+  it("issues class-bound credentials with per-class cooldowns and keeps the legacy shape", async () => {
+    let counter = 0;
+    const { app } = await createTestApp({ tokenIdFactory: () => `credential_class_${++counter}` });
+    const issue = (body: string) => app.request(fundedCredentialPath(), {
+      method: "POST",
+      headers: { authorization: `Bearer ${bearerFor("alice")}`, "content-type": "application/json" },
+      body,
+    });
+
+    const background = await issue(JSON.stringify({ requestClass: "background" }));
+    expect(background.status).toBe(200);
+    expect(FundedAiRuntimeCredentialIssueResponseSchema.parse(await background.json()).requestClass).toBe("background");
+    const legacy = await issue("{}");
+    expect(legacy.status).toBe(200);
+    expect(await legacy.json()).not.toHaveProperty("requestClass");
+    expect((await issue(JSON.stringify({ requestClass: "interactive" }))).status).toBe(429);
+    expect((await issue(JSON.stringify({ requestClass: "background" }))).status).toBe(429);
+    const invalid = await issue(JSON.stringify({ requestClass: "urgent" }));
+    expect(invalid.status).toBe(400);
+    expect(await invalid.json()).toEqual({ error: { code: "invalid_request", message: "Invalid request" } });
+  });
+
+  it("returns the allowlisted priority reason on a rate-limited authorization", async () => {
+    const { app } = await createTestApp();
+    const issued = FundedAiRuntimeCredentialIssueResponseSchema.parse(await (await app.request(fundedCredentialPath(), {
+      method: "POST",
+      headers: { authorization: `Bearer ${bearerFor("alice")}`, "content-type": "application/json" },
+      body: JSON.stringify({ requestClass: "background" }),
+    })).json());
+    await db.executor.insertInto("ai_funded_priority_claims").values({
+      owner_id: "user_alice", machine_id: "machine_other", runtime_slot: "primary", billing_mode: "usage",
+      created_at: now, expires_at: new Date(Date.parse(now) + 120_000).toISOString(),
+    }).execute();
+
+    const response = await app.request("/internal/ai/funded/authorize", {
+      method: "POST",
+      headers: { authorization: `Bearer ${relayControlToken}`, "content-type": "application/json" },
+      body: JSON.stringify({ credential: issued.credential.token, requestId: "request_held", modelId, maxCostMicrousd: 100 }),
+    });
+
+    expect(response.status).toBe(429);
+    expect(await response.json()).toEqual({ error: { code: "rate_limited", message: "Try again later", reason: "priority_hold" } });
   });
 
   it("rejects the prior runtime token after this machine's epoch advances", async () => {

@@ -1,10 +1,21 @@
-import { createHash, createHmac, randomUUID } from "node:crypto";
+import { createHmac, randomUUID } from "node:crypto";
 import { CleanupSchema, cleanupExpiredReservations as cleanupReservations } from "./ai-funded-reservation-cleanup.js";
-import { exactInteger, hashesEqual, parseModels, intersectModels, utcMonthStart, fundingSummary, recordUsageFunding, usageReservationLimit } from "./ai-funded-metering-helpers.js";
+import {
+  FUNDED_TOKEN_PATTERN,
+  FundedReferenceSchema,
+  exactInteger,
+  hashesEqual,
+  parseModels,
+  intersectModels,
+  utcMonthStart,
+  fundingSummary,
+  recordUsageFunding,
+  usageReservationLimit,
+} from "./ai-funded-metering-helpers.js";
+import { createFundedAuthorize } from "./ai-funded-authorization.js";
 import {
   FUNDED_AI_AUDIENCE,
   FUNDED_AI_SCOPE,
-  FundedAiAuthorizationRequestSchema,
   FundedAiAuthorizationResponseSchema,
   FundedAiFinalizationRequestSchema,
   FundedAiFinalizationResponseSchema,
@@ -18,7 +29,6 @@ import {
   FundedAiStartResponseSchema,
   IsoTimestampSchema,
   JEV_MODEL_ID,
-  type FundedAiAuthorizationResponse,
   type FundedAiFundingSummary,
   type FundedAiFinalizationResponse,
   type FundedAiPolicyCheckResponse,
@@ -37,11 +47,10 @@ import {
   debitPromotionalGrants,
   reconcileExpiredPromotionalCredit,
   reservationDebitSplit,
-  reserveFundingSources,
 } from "./ai-funded-reservation-sources.js";
 
-const TOKEN_PATTERN = /^sk-matrix-funded-([A-Za-z0-9][A-Za-z0-9_.:-]{0,79})\.([A-Za-z0-9_-]{43})$/;
-const ReferenceSchema = z.string().min(1).max(160).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]*$/);
+const TOKEN_PATTERN = FUNDED_TOKEN_PATTERN;
+const ReferenceSchema = FundedReferenceSchema;
 const IdentitySchema = z.object({
   ownerId: ReferenceSchema,
   machineId: ReferenceSchema,
@@ -69,6 +78,7 @@ const GrantSchema = z.object({
   }
 });
 const MAX_PROMOTIONAL_GRANTS_PER_RUNTIME = 64;
+
 export const JEV_MANUAL_REVIEW_GRACE_MS = 10 * 60_000;
 
 export interface AiFundedMeteringRepositoryOptions {
@@ -420,223 +430,14 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
     });
   }
 
-  async function authorize(input: z.input<typeof FundedAiAuthorizationRequestSchema>): Promise<FundedAiAuthorizationResponse> {
-    const request = FundedAiAuthorizationRequestSchema.parse(input);
-    const tokenMatch = TOKEN_PATTERN.exec(request.credential);
-    if (!tokenMatch) throw new AiFundedPolicyError("unauthorized");
-    const checked = options.now();
-    const checkedAt = checked.toISOString();
-    const periodStart = utcMonthStart(checked);
-    const payloadHash = createHash("sha256").update(JSON.stringify({
-      tokenId: tokenMatch[1], requestId: request.requestId,
-      modelId: request.modelId, maxCostMicrousd: request.maxCostMicrousd,
-      ...(request.billingMode ? { billingMode: request.billingMode } : {}),
-      ...(request.jevPricingVersion ? { jevPricingVersion: request.jevPricingVersion } : {}),
-    })).digest("hex");
-    await options.db.ready;
-    return options.db.transaction(async (trx) => {
-      const credential = await trx.executor.selectFrom("ai_runtime_credentials")
-        .selectAll().where("token_id", "=", tokenMatch[1]).executeTakeFirst();
-      if (!credential || !hashesEqual(credential.token_hash, hashCredential(request.credential))
-        || credential.revoked_at !== null || Date.parse(credential.expires_at) <= checked.getTime()
-        || credential.audience !== FUNDED_AI_AUDIENCE || credential.scope !== FUNDED_AI_SCOPE) {
-        throw new AiFundedPolicyError("unauthorized");
-      }
-      // Serialize admission across every runtime/replica for this owner. The
-      // namespaced transaction lock is acquired before runtime and balance locks.
-      await sql`SELECT pg_advisory_xact_lock(hashtextextended(${`funded-ai-owner:${credential.owner_id}`}, 0))`.execute(trx.executor);
-      const runtime = await trx.executor.selectFrom("ai_funded_runtime_policies")
-        .selectAll().where("machine_id", "=", credential.machine_id).forUpdate().executeTakeFirst();
-      const machine = await trx.executor.selectFrom("user_machines").select([
-        "clerk_user_id", "runtime_slot", "status", "activation_state", "deleted_at",
-      ]).where("machine_id", "=", credential.machine_id).executeTakeFirst();
-      const global = await trx.executor.selectFrom("ai_funded_global_policy")
-        .selectAll().where("policy_id", "=", "default").executeTakeFirstOrThrow();
-      const restriction = await trx.executor.selectFrom("ai_funded_credit_restrictions")
-        .select(["debt_microusd", "frozen"]).where("machine_id", "=", credential.machine_id)
-        .forUpdate().executeTakeFirst();
-      if (!runtime || !machine || machine.clerk_user_id !== credential.owner_id
-        || machine.runtime_slot !== credential.runtime_slot || machine.status !== "running"
-        || machine.activation_state !== "authorized" || machine.deleted_at !== null
-        || runtime.owner_id !== credential.owner_id || runtime.runtime_slot !== credential.runtime_slot) {
-        throw new AiFundedPolicyError("unauthorized");
-      }
-      if (!global.enabled || !runtime.enabled || restriction?.frozen === true
-        || exactInteger(restriction?.debt_microusd ?? 0) > 0
-        || (runtime.expires_at !== null && Date.parse(runtime.expires_at) <= checked.getTime())) {
-        throw new AiFundedPolicyError("access_disabled");
-      }
-      const allowedModelIds = intersectModels(parseModels(global.allowed_model_ids), parseModels(runtime.allowed_model_ids));
-      if (!allowedModelIds.includes(request.modelId)) throw new AiFundedPolicyError("model_not_allowed");
-
-      const identity = {
-        ownerId: credential.owner_id,
-        machineId: credential.machine_id,
-        runtimeSlot: credential.runtime_slot,
-      };
-      await reconcileExpiredPromotionalCredit(trx.executor, identity, checkedAt);
-      const reset = await trx.executor.updateTable("ai_funded_runtime_balances").set({
-        month_period_start: periodStart,
-        month_spent_microusd: sql<number>`CASE WHEN month_period_start = ${periodStart} THEN month_spent_microusd ELSE 0 END`,
-        month_reserved_microusd: sql<number>`CASE WHEN month_period_start = ${periodStart} THEN month_reserved_microusd ELSE 0 END`,
-        updated_at: checkedAt,
-      }).where("machine_id", "=", identity.machineId).where("owner_id", "=", identity.ownerId)
-        .where("runtime_slot", "=", identity.runtimeSlot).returning("machine_id").executeTakeFirst();
-      if (!reset) throw new AiFundedPolicyError("access_disabled");
-
-      const existing = await trx.executor.selectFrom("ai_funded_usage_reservations")
-        .select(["payload_hash", "authorization_response"])
-        .where("token_id", "=", credential.token_id).where("request_id", "=", request.requestId)
-        .executeTakeFirst();
-      if (existing) {
-        if (existing.payload_hash !== payloadHash) throw new AiFundedPolicyError("idempotency_conflict");
-        return FundedAiAuthorizationResponseSchema.parse(JSON.parse(existing.authorization_response));
-      }
-
-      const monthlyBudget = exactInteger(runtime.monthly_budget_microusd);
-      const active = await trx.executor.selectFrom("ai_funded_usage_reservations")
-        .select("reservation_id").where("owner_id", "=", credential.owner_id)
-        .where("status", "in", ["reserved", "starting", "in_flight", "settling"])
-        .$if(request.billingMode !== "usage", (query) => query.where(
-          sql<boolean>`authorization_response::jsonb #>> '{reservation,billingMode}' = 'usage'`,
-        )).limit(1).executeTakeFirst();
-      if (active) throw new AiFundedPolicyError("rate_limited");
-      let holdMicrousd = request.maxCostMicrousd;
-      if (request.billingMode === "usage") {
-        const balance = await trx.executor.selectFrom("ai_funded_runtime_balances")
-          .selectAll().where("machine_id", "=", identity.machineId).forUpdate().executeTakeFirstOrThrow();
-        const credit = exactInteger(balance.credit_balance_microusd) - exactInteger(balance.reserved_microusd)
-          - exactInteger(balance.funding_shortfall_microusd);
-        const budget = monthlyBudget - exactInteger(balance.month_spent_microusd)
-          - exactInteger(balance.month_reserved_microusd);
-        if (credit <= 0) throw new AiFundedPolicyError("insufficient_credit");
-        if (budget <= 0) throw new AiFundedPolicyError("budget_exceeded");
-        holdMicrousd = Math.min(holdMicrousd, credit, budget);
-      }
-      const reserved = await trx.executor.updateTable("ai_funded_runtime_balances").set({
-        reserved_microusd: sql<number>`reserved_microusd + ${holdMicrousd}`,
-        month_reserved_microusd: sql<number>`month_reserved_microusd + ${holdMicrousd}`,
-        updated_at: checkedAt,
-      }).where("machine_id", "=", identity.machineId)
-        .where(sql<boolean>`reserved_microusd <= ${Number.MAX_SAFE_INTEGER - holdMicrousd}`)
-        .where(sql<boolean>`credit_balance_microusd - reserved_microusd - funding_shortfall_microusd >= ${holdMicrousd}`)
-        .where(sql<boolean>`${monthlyBudget} - month_spent_microusd - month_reserved_microusd >= ${holdMicrousd}`)
-        .returning([
-          "credit_balance_microusd", "promotional_balance_microusd", "addon_balance_microusd",
-          "reserved_microusd", "funding_shortfall_microusd", "month_period_start",
-          "month_spent_microusd", "month_reserved_microusd",
-        ])
-        .executeTakeFirst();
-      if (!reserved) {
-        const balance = await trx.executor.selectFrom("ai_funded_runtime_balances")
-          .selectAll().where("machine_id", "=", identity.machineId).executeTakeFirstOrThrow();
-        const availableBudget = monthlyBudget - exactInteger(balance.month_spent_microusd)
-          - exactInteger(balance.month_reserved_microusd);
-        if (request.maxCostMicrousd > availableBudget) throw new AiFundedPolicyError("budget_exceeded");
-        throw new AiFundedPolicyError("insufficient_credit");
-      }
-      const remainingBalance = exactInteger(reserved.credit_balance_microusd)
-        - exactInteger(reserved.reserved_microusd)
-        - exactInteger(reserved.funding_shortfall_microusd);
-      const remainingBudget = monthlyBudget - exactInteger(reserved.month_spent_microusd)
-        - exactInteger(reserved.month_reserved_microusd);
-      const fundingSources = await reserveFundingSources(
-        trx.executor,
-        identity,
-        holdMicrousd,
-        reserved,
-        checkedAt,
-      );
-
-      const reservationId = ReferenceSchema.parse(reservationIdFactory());
-      const expiresAt = new Date(checked.getTime() + options.reservationTtlMs).toISOString();
-      const response = FundedAiAuthorizationResponseSchema.parse({
-        contractVersion: 1,
-        authorized: true,
-        identity: {
-          tokenId: credential.token_id,
-          ...identity,
-          audience: FUNDED_AI_AUDIENCE,
-          scope: FUNDED_AI_SCOPE,
-          expiresAt: credential.expires_at,
-        },
-        policy: {
-          enabled: true,
-          globalRevision: global.revision,
-          runtimeRevision: runtime.revision,
-          allowedModelIds,
-          monthlyBudgetMicrousd: monthlyBudget,
-          checkedAt,
-          staleAfter: new Date(checked.getTime() + options.policyFreshnessMs).toISOString(),
-        },
-        funding: fundingSummary(reserved, monthlyBudget, checkedAt),
-        reservation: {
-          reservationId,
-          requestId: request.requestId,
-          modelId: request.modelId,
-          reservedMicrousd: holdMicrousd,
-          ...(request.billingMode ? { billingMode: request.billingMode, maxCostMicrousd: request.maxCostMicrousd } : {}),
-          ...(request.jevPricingVersion ? { jevPricingVersion: request.jevPricingVersion } : {}),
-          remainingBalanceMicrousd: remainingBalance,
-          remainingBudgetMicrousd: remainingBudget,
-          periodStart,
-          expiresAt,
-          status: "reserved",
-        },
-      });
-      await trx.executor.insertInto("ai_funded_usage_reservations").values({
-        reservation_id: reservationId,
-        request_id: request.requestId,
-        payload_hash: payloadHash,
-        authorization_response: JSON.stringify(response),
-        settlement_response: null,
-        finalization_mode: null,
-        start_response: null,
-        release_response: null,
-        release_reason: null,
-        manual_review_evidence_ref: null,
-        manual_review_actor: null,
-        manual_reviewed_at: null,
-        token_id: credential.token_id,
-        ...{
-          owner_id: identity.ownerId,
-          machine_id: identity.machineId,
-          runtime_slot: identity.runtimeSlot,
-        },
-        model_id: request.modelId,
-        reserved_microusd: holdMicrousd,
-        promotional_reserved_microusd: fundingSources.promotionalReservedMicrousd,
-        addon_reserved_microusd: fundingSources.addonReservedMicrousd,
-        actual_microusd: null,
-        resolved_model: null,
-        pricing_version: null,
-        period_start: periodStart,
-        status: "reserved",
-        created_at: checkedAt,
-        started_at: null,
-        expires_at: expiresAt,
-        settled_at: null,
-        released_at: null,
-      }).execute();
-      if (fundingSources.grantAllocations.length > 0) {
-        await trx.executor.insertInto("ai_funded_reservation_promotional_allocations").values(
-          fundingSources.grantAllocations.map((allocation) => ({
-            reservation_id: reservationId,
-            grant_entry_id: allocation.grantEntryId,
-            amount_microusd: allocation.amountMicrousd,
-            created_at: checkedAt,
-          })),
-        ).execute();
-      }
-      return response;
-    }).catch((error: unknown) => {
-      if (error instanceof Error && "code" in error && error.code === "23505"
-        && "constraint" in error && error.constraint === "idx_ai_funded_usage_active_owner") {
-        throw new AiFundedPolicyError("rate_limited");
-      }
-      throw error;
-    });
-  }
+  const authorize = createFundedAuthorize({
+    db: options.db,
+    now: options.now,
+    hashCredential,
+    reservationIdFactory,
+    reservationTtlMs: options.reservationTtlMs,
+    policyFreshnessMs: options.policyFreshnessMs,
+  });
 
   async function startReservation(
     input: z.input<typeof FundedAiStartRequestSchema>,
