@@ -4,13 +4,15 @@
 const SOURCE_PR_PATTERN = /^[1-9][0-9]{0,8}$/;
 const SOURCE_AUTHOR_PATTERN = /^[A-Za-z0-9-]{1,39}$/;
 
+// `undefined` means the flag was not given; any given value, even an empty one,
+// must be valid, so requested provenance is never silently dropped.
 export function parseReleaseProvenance({ sourcePr, sourceAuthor } = {}) {
   const provenance = {};
-  if (sourcePr !== undefined && sourcePr !== "") {
+  if (sourcePr !== undefined) {
     if (!SOURCE_PR_PATTERN.test(sourcePr)) throw new Error("--source-pr must be a pull request number");
     provenance.sourcePr = Number(sourcePr);
   }
-  if (sourceAuthor !== undefined && sourceAuthor !== "") {
+  if (sourceAuthor !== undefined) {
     if (!SOURCE_AUTHOR_PATTERN.test(sourceAuthor)) throw new Error("--source-author must be a GitHub login");
     provenance.sourceAuthor = sourceAuthor;
   }

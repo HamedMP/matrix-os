@@ -46,10 +46,10 @@ for (let i = 2; i < process.argv.length; i += 1) {
       changelog = process.argv[++i] || changelog;
       break;
     case "--source-pr":
-      sourcePr = process.argv[++i];
+      sourcePr = process.argv[++i] ?? "";
       break;
     case "--source-author":
-      sourceAuthor = process.argv[++i];
+      sourceAuthor = process.argv[++i] ?? "";
       break;
     case "--dry-run":
       dryRun = true;

@@ -42,9 +42,11 @@ while [ $# -gt 0 ]; do
     --changelog)
       CHANGELOG="${2:-}"; shift 2 ;;
     --source-pr)
-      SOURCE_PR="${2:-}"; shift 2 ;;
+      if [ $# -lt 2 ] || [ -z "$2" ]; then echo "--source-pr needs a pull request number" >&2; exit 1; fi
+      SOURCE_PR="$2"; shift 2 ;;
     --source-author)
-      SOURCE_AUTHOR="${2:-}"; shift 2 ;;
+      if [ $# -lt 2 ] || [ -z "$2" ]; then echo "--source-author needs a GitHub login" >&2; exit 1; fi
+      SOURCE_AUTHOR="$2"; shift 2 ;;
     *)
       if [ -z "$VERSION" ]; then
         VERSION="$1"
