@@ -48,6 +48,8 @@ function setup(options: {
   cancelGraceMs?: number;
   agent?: Record<string, unknown> | null;
   memory?: string[];
+  admitted?: () => Promise<string[]>;
+  answerWithMessage?: () => Promise<void>;
 } = {}) {
   const registry = new BotRuntimeRegistry();
   const admission = {
@@ -74,8 +76,8 @@ function setup(options: {
   orchestrator = createBotTaskOrchestrator({
     bindings: createBotBindingsRepository(db),
     transact,
-    interactions,
-    memory: { admitted: async () => options.memory ?? [] },
+    interactions: options.answerWithMessage ? { answerWithMessage: options.answerWithMessage } : interactions,
+    memory: { admitted: options.admitted ?? (async () => options.memory ?? []) },
     agents: { get: vi.fn(async () => (options.agent === undefined ? AGENT : options.agent) as never) },
     recipes: createBotRecipeCatalog(),
     resolveRoute: options.resolveRoute ?? (async () => ({ route: ROUTE, accessSourceId: "matrix_included" as const })),
@@ -175,6 +177,26 @@ describe("bot turns through the matrix_bot adapter", () => {
     ]);
     // Events carry IDs and allowlisted state only.
     expect(JSON.stringify(events)).not.toContain("Casual");
+  });
+
+  it("fails the task when loading admitted memory fails after it starts", async () => {
+    const { adapter, admission } = setup({ admitted: async () => { throw new Error("memory unavailable"); } });
+    const events = await collect(adapter.start(turn()));
+    expect(events.at(-1)).toMatchObject({ type: "run.completed", outcome: "failed" });
+    expect(admission.admit).not.toHaveBeenCalled();
+    await expect(tasks()).resolves.toEqual([expect.objectContaining({ status: "failed" })]);
+  });
+
+  it("fails a continued task when recording its answer fails", async () => {
+    const { adapter, admission } = setup({
+      worker: async (input) => ({ runId: input.command.runId, status: "waiting_person", toolActions: 0, sessionRevision: 1 }),
+      answerWithMessage: async () => { throw new Error("answer unavailable"); },
+    });
+    await collect(adapter.start(turn()));
+    const events = await collect(adapter.start(turn(undefined, "run_turn2", "My answer.")));
+    expect(events.at(-1)).toMatchObject({ type: "run.completed", outcome: "failed" });
+    expect(admission.admit).toHaveBeenCalledTimes(1);
+    await expect(tasks()).resolves.toEqual([expect.objectContaining({ status: "failed", run_id: "run_turn2" })]);
   });
 
   it("blocks without starting a runtime when no model or workspace is available", async () => {

@@ -200,7 +200,12 @@ export function createBotTaskOrchestrator(deps: {
     const { task, continued } = await begin({ ownerId: input.ownerId, botId, chatId: input.chatId, runId: input.runId });
     run.queue.push({ kind: "state", state: { taskId: task.taskId } });
     // A reply in Chat answers a question the waiting task still has open.
-    if (continued) await deps.interactions?.answerWithMessage({ ownerId: input.ownerId, taskId: task.taskId, chatId: input.chatId, text: input.text });
+    try {
+      if (continued) await deps.interactions?.answerWithMessage({ ownerId: input.ownerId, taskId: task.taskId, chatId: input.chatId, text: input.text });
+    } catch (error: unknown) {
+      console.warn("[bots] task answer failed:", error instanceof Error ? error.name : "UnknownError");
+      return settle(task, "failed");
+    }
     if (input.signal.aborted) return settle(task, "cancelled");
 
     let resolved: ResolvedBotRoute;
@@ -211,7 +216,13 @@ export function createBotTaskOrchestrator(deps: {
       return settle(task, "blocked", "model_unavailable");
     }
     const capabilities = recipe.capabilities.filter((capability) => SERVED_CAPABILITIES.includes(capability));
-    const memory = deps.memory ? await deps.memory.admitted({ ownerId: input.ownerId, botId, chatId: input.chatId }) : [];
+    let memory: string[];
+    try {
+      memory = deps.memory ? await deps.memory.admitted({ ownerId: input.ownerId, botId, chatId: input.chatId }) : [];
+    } catch (error: unknown) {
+      console.warn("[bots] admitted memory failed:", error instanceof Error ? error.name : "UnknownError");
+      return settle(task, "failed");
+    }
     try {
       run.spec = BotRunSpecSchema.parse({
         route: resolved.route,
