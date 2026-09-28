@@ -74,11 +74,15 @@ test("a preview project share uses the home, preserves machine-free identities, 
     grantId = grant.id;
 
     // The platform projection carries only a pointer. The member asks the home to activate it.
-    const rawDiscovery = await member.context.request.get(`${config.baseUrl}/api/collaboration/shared`, { timeout: 10_000 });
-    expect(rawDiscovery.ok()).toBe(true);
-    const raw = CollaborationDiscoveryResponseSchema.parse(await rawDiscovery.json());
-    const pointer = raw.items.find((item) => item.scopeId === scopeId);
-    expect(pointer).toMatchObject({ status: "organization_pending", grantId });
+    const loadPointer = async () => {
+      const response = await member.context.request.get(`${config.baseUrl}/api/collaboration/shared`, { timeout: 10_000 });
+      expect(response.ok()).toBe(true);
+      const page = CollaborationDiscoveryResponseSchema.parse(await response.json());
+      return page.items.find((item) => item.scopeId === scopeId);
+    };
+    await expect.poll(async () => loadPointer(), { timeout: 25_000 })
+      .toMatchObject({ status: "organization_pending", grantId });
+    const pointer = await loadPointer();
     expect(pointer && "resource" in pointer).toBe(false);
     await member.direct.post(`${base}/grants/${grantId}/accept`, {});
     const memberScope = CollaborationScopeSchema.parse(await member.direct.get(base));
