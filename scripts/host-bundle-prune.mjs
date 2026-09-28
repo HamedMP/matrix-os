@@ -17,6 +17,12 @@ export const PREFIX = "system-bundles/";
 const OBJECTS_SEGMENT = "objects";
 const LIVE_SNAPSHOT_STATES = ["candidate", "building", "sanitizing", "validating", "ready"];
 const MAX_PLAN_AGE_HOURS = 24;
+// Collection caps for this one-shot CLI. Every Map/Set below is derived from inputs bounded by
+// these, so none can grow past them; oversized inputs are refused rather than truncated.
+export const MAX_LISTED_OBJECTS = 200_000;
+export const MAX_RELEASE_ROWS = 50_000;
+export const MAX_PLAN_KEYS = 100_000;
+export const MAX_REFERENCE_ROWS = 200_000;
 
 /** Reasons each version must be kept, from platform references and operator pins. */
 export function keepReasons(input) {
@@ -66,6 +72,8 @@ function classify(objects) {
  * incremental manifest to the shas it lists, or null when the manifest could not be read.
  */
 export function decidePrune(input, { manifestShas = new Map() } = {}) {
+  if (input.objects.length > MAX_LISTED_OBJECTS) throw new Error(`refusing: object listing exceeds ${MAX_LISTED_OBJECTS} objects`);
+  if (input.releases.length > MAX_RELEASE_ROWS) throw new Error(`refusing: release rows exceed ${MAX_RELEASE_ROWS}`);
   const reasons = keepReasons(input);
   const releases = new Map(input.releases.map((row) => [row.version, row]));
   const recentCutoff = input.now - input.keepRecentDays * 86_400_000;
@@ -121,6 +129,7 @@ export function validatePlanForApply(plan, { bucket, confirm, now }) {
     throw new Error(`plan is ${ageHours.toFixed(1)} hours old; regenerate it (limit ${MAX_PLAN_AGE_HOURS}h)`);
   }
   if (!Array.isArray(plan.deleteKeys) || plan.deleteKeys.length === 0) throw new Error("plan has no keys");
+  if (plan.deleteKeys.length > MAX_PLAN_KEYS) throw new Error(`refusing: plan exceeds ${MAX_PLAN_KEYS} keys`);
   for (const key of plan.deleteKeys) {
     if (typeof key !== "string" || !key.startsWith(PREFIX) || key.split("/").some((part) => part === "" || part === "..")) {
       throw new Error(`refusing unsafe key: ${key}`);
@@ -186,6 +195,8 @@ async function loadReferences(env, keepPerChannel) {
       snapshots: await q(`SELECT bundle_version, state FROM golden_snapshots WHERE state = ANY($1)`, [LIVE_SNAPSHOT_STATES]),
     };
     await client.query("ROLLBACK");
+    const rows = Object.values(refs).reduce((sum, list) => sum + list.length, 0);
+    if (rows > MAX_REFERENCE_ROWS) throw new Error(`refusing: reference rows exceed ${MAX_REFERENCE_ROWS}`);
     return refs;
   } finally {
     await client.end();
@@ -218,6 +229,7 @@ async function createStorage(env) {
         const page = await client.send(new s3.ListObjectsV2Command({ Bucket: bucket, Prefix: PREFIX, ContinuationToken: token }),
           { abortSignal: AbortSignal.timeout(60_000) });
         for (const item of page.Contents ?? []) if (item.Key) objects.push({ key: item.Key, size: item.Size ?? 0, modified: item.LastModified });
+        if (objects.length > MAX_LISTED_OBJECTS) throw new Error(`refusing: object listing exceeds ${MAX_LISTED_OBJECTS} objects`);
         token = page.IsTruncated ? page.NextContinuationToken : undefined;
       } while (token);
       return objects;

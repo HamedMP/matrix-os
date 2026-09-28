@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  MAX_LISTED_OBJECTS,
+  MAX_PLAN_KEYS,
+  MAX_RELEASE_ROWS,
   batchKeysToDelete,
   decidePrune,
   keysToApply,
@@ -142,5 +145,17 @@ describe("host bundle prune apply recomputation", () => {
     const result = batchKeysToDelete(["system-bundles/objects/sha256/zzz"],
       { baselineKept: new Set(), currentKept: new Set(["v-man"]), releases });
     expect(result).toEqual({ keys: [], skipped: ["system-bundles/objects/sha256/zzz"], stopSharedObjects: true });
+  });
+});
+
+describe("host bundle prune bounds", () => {
+  it("refuses inputs larger than its collection caps", () => {
+    const tooManyObjects = Array.from({ length: MAX_LISTED_OBJECTS + 1 }, (_, i) => object(tarball(`v${i}`)));
+    expect(() => decidePrune(baseInput({ objects: tooManyObjects }))).toThrow("object listing exceeds");
+    const tooManyReleases = Array.from({ length: MAX_RELEASE_ROWS + 1 }, (_, i) => release(`r${i}`, null));
+    expect(() => decidePrune(baseInput({ releases: tooManyReleases }))).toThrow("release rows exceed");
+    const keys = Array.from({ length: MAX_PLAN_KEYS + 1 }, (_, i) => tarball(`v${i}`));
+    expect(() => validatePlanForApply({ bucket: "bundles", generatedAt: "2026-09-27T12:00:00Z", deleteKeys: keys },
+      { bucket: "bundles", confirm: String(keys.length), now })).toThrow("plan exceeds");
   });
 });
