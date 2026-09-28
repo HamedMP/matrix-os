@@ -220,6 +220,24 @@ Avoid `--to-latest` here — on this service "latest" is the most recently
 whatever deployed last. To park the host on a known-good target, point traffic
 at an explicit revision/tag you designate as the resting state.
 
+**Collaboration authority.** Each preview revision runs the real collaboration
+composition (organizations, discovery, tickets and relay) against the staging
+database instead of the fail-closed registrar. It signs tickets with the
+preview-only keyring `collaboration-ticket-keys-preview`, never the production
+`collaboration-ticket-keys`, so a preview ticket cannot verify on a production
+home and a production ticket cannot verify on a preview home. The active key ID
+comes from the `Preview` environment variable
+`PREVIEW_COLLABORATION_TICKET_ACTIVE_KEY_ID` (default
+`collaboration-preview-v1`). The browser (allowed) and relay origins are the
+preview host, `https://preview.matrix-os.com`, derived from `PREVIEW_PUBLIC_URL`,
+which must be an HTTPS origin and never a production host. Before deploying, the
+workflow checks that the secret has a readable latest version, that its keyring
+holds at most eight well-formed Ed25519 seeds including the active key, and that
+the preview runtime service account has `secretAccessor` on it. After deploying,
+it confirms the tagged revision binds exactly that secret and those origins and
+that `/api/collaboration/inbox` answers an anonymous request with `401` (the
+fail-closed registrar answers `503`). Key material is never printed.
+
 Provisioning the boot→ready hand-off in the browser is still out of scope (no
 Hetzner token on preview); enabling it is a deliberate follow-up (a
 preview-scoped Hetzner token + VPS reaping). For that slice today, use the
@@ -244,6 +262,17 @@ The label workflow assumes this is already provisioned in GCP/Cloudflare/Stripe
    (`checkout.session.completed`, `.expired`, `customer.subscription.*`); store
    its signing secret as `stripe-webhook-secret-test`.
 4. Grant `matrix-platform-preview-runner` `secretAccessor` on the new secrets.
+5. **Collaboration ticket keys** (preview only): create
+   `collaboration-ticket-keys-preview` holding a freshly generated keyring, a
+   JSON object mapping the active key ID to a base64url 32-byte Ed25519 seed
+   (for example `{"collaboration-preview-v1": "<43 characters>"}`). Generate the
+   seed locally and pipe it into `gcloud secrets create --data-file=-`; never
+   reuse or copy the production keyring. Grant
+   `matrix-platform-preview-runner` `secretAccessor` on it, and set the
+   `Preview` environment variable `PREVIEW_COLLABORATION_TICKET_ACTIVE_KEY_ID`
+   to the key ID. To rotate, add a secret version that holds both the old and
+   the new key IDs, then switch the variable; homes learn the published keys
+   when they re-register.
 
 The GitHub `Preview` environment may set `MATRIX_CARD_TRIALS_ENABLED` to
 `true` or `false`; it defaults to `true`. Disable it temporarily for an immediate-

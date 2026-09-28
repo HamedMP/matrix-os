@@ -8,8 +8,9 @@
 # Cloud Run service running as a dedicated runtime SA
 # (matrix-platform-preview-runner) that can only read preview/staging
 # secrets: the staging database, preview-generated platform/jwt/edge-router
-# secrets, the Clerk keys, the R2 bundles credentials, and Stripe TEST-mode
-# secrets (test secret key, test webhook secret, test price IDs). Production
+# secrets, the preview-only collaboration ticket keyring, the Clerk keys, the
+# R2 bundles credentials, and Stripe TEST-mode secrets (test secret key, test
+# webhook secret, test price IDs). Production
 # CLOUD_RUN_SERVICE, its runtime SA, and its secrets are never referenced, and
 # only test-mode Stripe keys are mounted -- a preview can never touch live money
 # or the production database.
@@ -90,6 +91,8 @@ jobs:
       MATRIX_FUNDED_AI_RELAY_URL: ${{ vars.MATRIX_FUNDED_AI_RELAY_URL }}
       MATRIX_FUNDED_AI_MODEL_PROBE_DAILY_LIMIT: ${{ vars.MATRIX_FUNDED_AI_MODEL_PROBE_DAILY_LIMIT || '0' }}
       MATRIX_FUNDED_AI_MODEL_PROBE_MINUTE_LIMIT: ${{ vars.MATRIX_FUNDED_AI_MODEL_PROBE_MINUTE_LIMIT || '0' }}
+      # Preview-only name, so a production key id can never be inherited from a repository variable.
+      MATRIX_COLLABORATION_TICKET_ACTIVE_KEY_ID: ${{ vars.PREVIEW_COLLABORATION_TICKET_ACTIVE_KEY_ID || 'collaboration-preview-v1' }}
       PR_NUMBER: ${{ github.event.pull_request.number || inputs.pr }}
     steps:
       - name: Check preview configuration
@@ -147,6 +150,22 @@ jobs:
               exit 1
             fi
           fi
+          if ! [[ "${MATRIX_COLLABORATION_TICKET_ACTIVE_KEY_ID:-}" =~ ^[A-Za-z0-9_.-]{1,80}$ ]]; then
+            echo "PREVIEW_COLLABORATION_TICKET_ACTIVE_KEY_ID must be a collaboration ticket key id." >&2
+            exit 1
+          fi
+          # The preview host is also the collaboration browser and relay origin.
+          preview_public_url="${PREVIEW_PUBLIC_URL:-https://preview.matrix-os.com}"
+          if ! [[ "$preview_public_url" =~ ^https://[A-Za-z0-9.-]+/?$ ]]; then
+            echo "PREVIEW_PUBLIC_URL must be an HTTPS origin for preview collaboration." >&2
+            exit 1
+          fi
+          case "${preview_public_url%/}" in
+            https://app.matrix-os.com|https://api.matrix-os.com)
+              echo "PREVIEW_PUBLIC_URL must not be a production host; preview collaboration tickets stay on the preview relay." >&2
+              exit 1
+              ;;
+          esac
           echo "configured=true" >> "$GITHUB_OUTPUT"
 
       - uses: actions/checkout@v6
@@ -186,6 +205,48 @@ jobs:
               exit 1
             fi
           done
+
+      - name: Verify preview collaboration ticket secret
+        if: steps.config.outputs.configured == 'true'
+        run: |
+          set -euo pipefail
+          # Preview-only keyring: tickets it signs never verify on a production home, and the reverse.
+          secret_name=collaboration-ticket-keys-preview
+          gcloud secrets describe "$secret_name" \
+            --project "$GCP_PROJECT_ID" >/dev/null
+          ticket_keys_tmpfile="$(mktemp)"
+          trap 'rm -f "$ticket_keys_tmpfile"' EXIT
+          chmod 600 "$ticket_keys_tmpfile"
+          if ! gcloud secrets versions access latest \
+            --secret "$secret_name" \
+            --project "$GCP_PROJECT_ID" >"$ticket_keys_tmpfile"; then
+            echo "$secret_name must have an accessible latest version." >&2
+            exit 1
+          fi
+          if ! jq -e --arg active_key "$MATRIX_COLLABORATION_TICKET_ACTIVE_KEY_ID" '
+            type == "object"
+            and length >= 1
+            and length <= 8
+            and all(to_entries[];
+              (.key | test("^[A-Za-z0-9_.-]{1,80}$"))
+              and (.value | type == "string" and test("^[A-Za-z0-9_-]{43}$")))
+            and (.[$active_key] | type == "string" and test("^[A-Za-z0-9_-]{43}$"))
+          ' "$ticket_keys_tmpfile" >/dev/null 2>&1; then
+            echo "$secret_name must contain bounded Ed25519 ticket seeds and the configured active key." >&2
+            exit 1
+          fi
+          accessor_member="$(
+            gcloud secrets get-iam-policy "$secret_name" \
+              --project "$GCP_PROJECT_ID" \
+              --flatten='bindings[].members' \
+              --filter="bindings.role:roles/secretmanager.secretAccessor AND bindings.members:serviceAccount:${CLOUD_RUN_SERVICE_ACCOUNT}" \
+              --format='value(bindings.members)' \
+              | head -1
+          )"
+          if [ "$accessor_member" != "serviceAccount:${CLOUD_RUN_SERVICE_ACCOUNT}" ]; then
+            echo "$secret_name must grant roles/secretmanager.secretAccessor to ${CLOUD_RUN_SERVICE_ACCOUNT}." >&2
+            exit 1
+          fi
 
       - name: Build platform image
         if: steps.config.outputs.configured == 'true'
@@ -276,6 +337,9 @@ jobs:
           PREVIEW_DOMAIN="${PREVIEW_PUBLIC_URL#http://}"
           PREVIEW_DOMAIN="${PREVIEW_DOMAIN#https://}"
           PREVIEW_DOMAIN="${PREVIEW_DOMAIN%%/*}"
+          # Browsers, tickets and the relay all use the preview host, never app.matrix-os.com.
+          collaboration_origin="https://${PREVIEW_DOMAIN}"
+          collaboration_env_bindings="|MATRIX_COLLABORATION_TICKET_ACTIVE_KEY_ID=${MATRIX_COLLABORATION_TICKET_ACTIVE_KEY_ID}|MATRIX_COLLABORATION_ALLOWED_ORIGINS=${collaboration_origin}|MATRIX_COLLABORATION_RELAY_ORIGIN=${collaboration_origin}"
           funded_ai_env_bindings="|MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED=${MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED}|MATRIX_FUNDED_AI_RUNTIME_ENABLED=${MATRIX_FUNDED_AI_RUNTIME_ENABLED}"
           funded_ai_secret_bindings=""
           if [ "$MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED" = "true" ]; then
@@ -298,10 +362,21 @@ jobs:
               --tag "pr-${PR_NUMBER}" \
               --no-traffic \
               --allow-unauthenticated \
-              --set-env-vars "^|^PLATFORM_RUNTIME_MODE=cloud_run|PLATFORM_PORT=8080|PLATFORM_PREVIEW=true|CUSTOMER_VPS_ENABLED=true|CUSTOMER_VPS_IMAGE_VERSION=dev|CUSTOMER_VPS_CLOUD_INIT_PATH=distro/customer-vps/cloud-init.yaml|AUTH_SHELL_HOST=127.0.0.1|AUTH_SHELL_PORT=3200|MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED=false|MATRIX_STRIPE_BILLING_ENABLED=true|MATRIX_CARD_TRIALS_ENABLED=${MATRIX_CARD_TRIALS_ENABLED}|MATRIX_CARD_TRIAL_DAYS=${MATRIX_CARD_TRIAL_DAYS}|PLATFORM_PUBLIC_URL=${PREVIEW_PUBLIC_URL}|MATRIX_API_ORIGIN=${api_origin}|MATRIX_APP_URL=${PREVIEW_PUBLIC_URL}|MATRIX_APP_DOMAIN_HOSTS=${PREVIEW_DOMAIN},${api_origin#https://}|CUSTOMER_VPS_TLS_VERIFY=false|CUSTOM_MCP_ENABLED=${CUSTOM_MCP_ENABLED}|MCP_OAUTH_CALLBACK_URL=${api_origin}/api/mcp-servers/oauth/callback|MATRIX_PLATFORM_SPEECH_RUNTIME_ENABLED=true|PLATFORM_SPEECH_ENABLED=true|PLATFORM_SPEECH_PROVIDER=openai|PLATFORM_SPEECH_MODEL=gpt-4o-mini-transcribe|PLATFORM_SPEECH_POLICY_REVISION=preview-speech-v1|PLATFORM_SPEECH_PREVIEW_NO_CHARGE=true|PLATFORM_SPEECH_PREVIEW_MAX_OPERATIONS_PER_RUNTIME=25|PLATFORM_SPEECH_PREVIEW_NOT_AFTER=${PREVIEW_SPEECH_NOT_AFTER}|PLATFORM_SPEECH_OWNER_AUDIO_ENABLED=false${funded_ai_env_bindings}" \
-              --set-secrets "PLATFORM_DATABASE_URL=platform-database-url-staging:latest,PLATFORM_SECRET=platform-preview-secret:latest,GOLDEN_SNAPSHOT_OPERATOR_SECRET=golden-snapshot-operator-secret-preview:latest,PLATFORM_JWT_SECRET=platform-preview-jwt-secret:latest,EDGE_ROUTER_SECRET=edge-router-preview-secret:latest,CLERK_SECRET_KEY=clerk-secret-key:latest,NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=next-public-clerk-publishable-key:latest,R2_BUNDLES_ACCOUNT_ID=r2-bundles-account-id:latest,R2_BUNDLES_BUCKET=r2-bundles-bucket:latest,R2_BUNDLES_ENDPOINT=r2-bundles-endpoint:latest,R2_BUNDLES_ACCESS_KEY_ID=r2-bundles-access-key-id:latest,R2_BUNDLES_SECRET_ACCESS_KEY=r2-bundles-secret-access-key:latest,STRIPE_SECRET_KEY=stripe-secret-key-test:latest,STRIPE_WEBHOOK_SECRET=stripe-webhook-secret-test:latest,STRIPE_PRICE_MATRIX_STARTER_MONTHLY=stripe-price-matrix-starter-monthly-test:latest,STRIPE_PRICE_MATRIX_STARTER_ANNUAL=stripe-price-matrix-starter-annual-test:latest,STRIPE_PRICE_MATRIX_BUILDER_MONTHLY=stripe-price-matrix-builder-monthly-test:latest,STRIPE_PRICE_MATRIX_BUILDER_ANNUAL=stripe-price-matrix-builder-annual-test:latest,STRIPE_PRICE_MATRIX_MAX_MONTHLY=stripe-price-matrix-max-monthly-test:latest,STRIPE_PRICE_MATRIX_MAX_ANNUAL=stripe-price-matrix-max-annual-test:latest,STRIPE_LEGACY_PRICE_CATALOG_JSON=stripe-legacy-price-catalog-json-test:latest,PLATFORM_SPEECH_OPENAI_API_KEY=platform-speech-openai-api-key-preview:latest,PLATFORM_SPEECH_SECRET=platform-speech-secret-preview:latest${custom_mcp_secret_bindings}${funded_ai_secret_bindings}" \
+              --set-env-vars "^|^PLATFORM_RUNTIME_MODE=cloud_run|PLATFORM_PORT=8080|PLATFORM_PREVIEW=true|CUSTOMER_VPS_ENABLED=true|CUSTOMER_VPS_IMAGE_VERSION=dev|CUSTOMER_VPS_CLOUD_INIT_PATH=distro/customer-vps/cloud-init.yaml|AUTH_SHELL_HOST=127.0.0.1|AUTH_SHELL_PORT=3200|MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED=false|MATRIX_STRIPE_BILLING_ENABLED=true|MATRIX_CARD_TRIALS_ENABLED=${MATRIX_CARD_TRIALS_ENABLED}|MATRIX_CARD_TRIAL_DAYS=${MATRIX_CARD_TRIAL_DAYS}|PLATFORM_PUBLIC_URL=${PREVIEW_PUBLIC_URL}|MATRIX_API_ORIGIN=${api_origin}|MATRIX_APP_URL=${PREVIEW_PUBLIC_URL}|MATRIX_APP_DOMAIN_HOSTS=${PREVIEW_DOMAIN},${api_origin#https://}|CUSTOMER_VPS_TLS_VERIFY=false|CUSTOM_MCP_ENABLED=${CUSTOM_MCP_ENABLED}|MCP_OAUTH_CALLBACK_URL=${api_origin}/api/mcp-servers/oauth/callback|MATRIX_PLATFORM_SPEECH_RUNTIME_ENABLED=true|PLATFORM_SPEECH_ENABLED=true|PLATFORM_SPEECH_PROVIDER=openai|PLATFORM_SPEECH_MODEL=gpt-4o-mini-transcribe|PLATFORM_SPEECH_POLICY_REVISION=preview-speech-v1|PLATFORM_SPEECH_PREVIEW_NO_CHARGE=true|PLATFORM_SPEECH_PREVIEW_MAX_OPERATIONS_PER_RUNTIME=25|PLATFORM_SPEECH_PREVIEW_NOT_AFTER=${PREVIEW_SPEECH_NOT_AFTER}|PLATFORM_SPEECH_OWNER_AUDIO_ENABLED=false${collaboration_env_bindings}${funded_ai_env_bindings}" \
+              --set-secrets "PLATFORM_DATABASE_URL=platform-database-url-staging:latest,PLATFORM_SECRET=platform-preview-secret:latest,GOLDEN_SNAPSHOT_OPERATOR_SECRET=golden-snapshot-operator-secret-preview:latest,PLATFORM_JWT_SECRET=platform-preview-jwt-secret:latest,EDGE_ROUTER_SECRET=edge-router-preview-secret:latest,CLERK_SECRET_KEY=clerk-secret-key:latest,NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=next-public-clerk-publishable-key:latest,R2_BUNDLES_ACCOUNT_ID=r2-bundles-account-id:latest,R2_BUNDLES_BUCKET=r2-bundles-bucket:latest,R2_BUNDLES_ENDPOINT=r2-bundles-endpoint:latest,R2_BUNDLES_ACCESS_KEY_ID=r2-bundles-access-key-id:latest,R2_BUNDLES_SECRET_ACCESS_KEY=r2-bundles-secret-access-key:latest,STRIPE_SECRET_KEY=stripe-secret-key-test:latest,STRIPE_WEBHOOK_SECRET=stripe-webhook-secret-test:latest,STRIPE_PRICE_MATRIX_STARTER_MONTHLY=stripe-price-matrix-starter-monthly-test:latest,STRIPE_PRICE_MATRIX_STARTER_ANNUAL=stripe-price-matrix-starter-annual-test:latest,STRIPE_PRICE_MATRIX_BUILDER_MONTHLY=stripe-price-matrix-builder-monthly-test:latest,STRIPE_PRICE_MATRIX_BUILDER_ANNUAL=stripe-price-matrix-builder-annual-test:latest,STRIPE_PRICE_MATRIX_MAX_MONTHLY=stripe-price-matrix-max-monthly-test:latest,STRIPE_PRICE_MATRIX_MAX_ANNUAL=stripe-price-matrix-max-annual-test:latest,STRIPE_LEGACY_PRICE_CATALOG_JSON=stripe-legacy-price-catalog-json-test:latest,PLATFORM_SPEECH_OPENAI_API_KEY=platform-speech-openai-api-key-preview:latest,PLATFORM_SPEECH_SECRET=platform-speech-secret-preview:latest,MATRIX_COLLABORATION_TICKET_KEYS=collaboration-ticket-keys-preview:latest${custom_mcp_secret_bindings}${funded_ai_secret_bindings}" \
               --cpu 1 --memory 1Gi --concurrency 10 --timeout 300 --min-instances 0 --max-instances 2 \
               --quiet
+          }
+          verify_collaboration_revision() {
+            jq -e --arg origin "$collaboration_origin" --arg key_id "$MATRIX_COLLABORATION_TICKET_ACTIVE_KEY_ID" '
+              [.spec.containers[0].env[]?] as $env
+              | ([$env[] | select(.name == "MATRIX_COLLABORATION_TICKET_ACTIVE_KEY_ID") | .value] == [$key_id])
+              and ([$env[] | select(.name == "MATRIX_COLLABORATION_ALLOWED_ORIGINS") | .value] == [$origin])
+              and ([$env[] | select(.name == "MATRIX_COLLABORATION_RELAY_ORIGIN") | .value] == [$origin])
+              and ([$env[] | select(.name == "MATRIX_COLLABORATION_TICKET_KEYS")
+                    | "\(.valueFrom.secretKeyRef.name):\(.valueFrom.secretKeyRef.key)"]
+                   == ["collaboration-ticket-keys-preview:latest"])
+            ' >/dev/null
           }
 
           service_base_url="$(gcloud run services describe "$CLOUD_RUN_PREVIEW_SERVICE" \
@@ -352,8 +427,29 @@ jobs:
             echo "PR-tagged preview revision does not run the exact built image." >&2
             exit 1
           fi
+          if ! gcloud run revisions describe "$revision" \
+            --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json |
+            verify_collaboration_revision; then
+            echo "PR-tagged preview revision is missing its preview collaboration configuration." >&2
+            exit 1
+          fi
           curl --fail --silent --show-error --retry 5 --retry-all-errors \
             --connect-timeout 5 --max-time 10 "${PREVIEW_API_ORIGIN}/health" > /dev/null
+          # The fail-closed registrar answers every collaboration route with 503; the real
+          # composition asks an anonymous caller for credentials.
+          collaboration_status=""
+          for _attempt in {1..5}; do
+            collaboration_status="$(curl --silent --output /dev/null --write-out '%{http_code}' \
+              --connect-timeout 5 --max-time 10 "${PREVIEW_API_ORIGIN}/api/collaboration/inbox" || true)"
+            if [ "$collaboration_status" = "401" ]; then
+              break
+            fi
+            sleep 3
+          done
+          if ! [ "$collaboration_status" = "401" ]; then
+            echo "Preview collaboration is not serving its real composition (HTTP ${collaboration_status:-none})." >&2
+            exit 1
+          fi
           echo "PREVIEW_URL=$url" >> "$GITHUB_ENV"
           echo "PREVIEW_PUBLIC_URL=$PREVIEW_PUBLIC_URL" >> "$GITHUB_ENV"
           echo "PREVIEW_API_ORIGIN=$PREVIEW_API_ORIGIN" >> "$GITHUB_ENV"
