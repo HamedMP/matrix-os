@@ -17,6 +17,7 @@ import {
 import { encodeBase64UrlJson, possessionPayload, signPayload, type ProofKeyPair } from "./direct-crypto.js";
 import type { DirectConnected } from "./direct-client.js";
 import { CollaborationDirectError } from "./direct-client.js";
+import { classifyCollaborationClientError, type ClassifiedCollaborationFailure } from "./failure-classification.js";
 
 const MAX_SOCKET_FRAME_CHARS = 512 * 1024;
 const MAX_RECONNECT_DELAY_MS = 10_000;
@@ -38,7 +39,7 @@ const STALE_SWEEP_INTERVAL_MS = 15_000;
 
 export interface DirectEventHandlers {
   onEvent(): void | Promise<void>;
-  onUnavailable(): void;
+  onUnavailable(failure?: ClassifiedCollaborationFailure): void;
   onConnectionChange?(state: "connected" | "reconnecting"): void;
 }
 
@@ -48,7 +49,7 @@ export interface DirectTerminalHandlers {
   onState(frame: Extract<CollaborationTerminalFrame, { type: "terminal.state" }>): void;
   onRefreshRequired(): void | Promise<void>;
   /** Access ended (revoked, expired, disabled) or the terminal exited: the stream stops. */
-  onUnavailable(): void;
+  onUnavailable(failure?: ClassifiedCollaborationFailure): void;
   /** The home cannot serve the terminal right now (missing dependency, shutdown): the stream keeps retrying. */
   onTemporarilyUnavailable(): void;
   onDisconnected(): void;
@@ -146,7 +147,7 @@ export function createDirectStreams(deps: {
    * The reconnect backoff resets only once the home admits the stream (its ready frame), not on the upgrade: a home that
    * upgrades and then refuses, such as one reporting a retryable unavailable, must not be re-dialed at the base delay.
    */
-  const openStream = (scopeId: string, purpose: Purpose, after: () => string, bind: (socket: WebSocket, connected: DirectConnected, terminate: () => void, admitted: () => void) => void, onFailure: () => void): StreamHandle => {
+  const openStream = (scopeId: string, purpose: Purpose, after: () => string, bind: (socket: WebSocket, connected: DirectConnected, terminate: () => void, admitted: () => void) => void, onFailure: () => void, onTerminalFailure: (failure: ClassifiedCollaborationFailure) => void): StreamHandle => {
     let closed = false;
     let socket: WebSocket | null = null;
     let retryTimer: ReturnType<typeof setTimeout> | undefined;
@@ -229,9 +230,9 @@ export function createDirectStreams(deps: {
         };
         next.onerror = () => next.close();
       } catch (error: unknown) {
-        if (error instanceof CollaborationDirectError && error.code === "upgrade_required") {
-          closed = true;
-          onFailure();
+        if (error instanceof CollaborationDirectError && ["upgrade_required", "access_removed", "not_found", "relay_limit", "forbidden", "denied"].includes(error.code)) {
+          stop();
+          onTerminalFailure(classifyCollaborationClientError(error));
           return;
         }
         console.warn("[collaboration-direct] stream connection failed", error instanceof Error ? error.name : "UnknownError");
@@ -287,7 +288,9 @@ export function createDirectStreams(deps: {
         }
       };
       socket.onclose = () => { usable = false; };
-    }, () => { if (!stopped) handlers.onConnectionChange?.("reconnecting"); });
+    }, () => { if (!stopped) handlers.onConnectionChange?.("reconnecting"); }, (failure) => {
+      if (!stopped) { stopped = true; handlers.onUnavailable(failure); }
+    });
     return register(parsedScopeId, { ...stream, stop: () => { stopped = true; stream.stop(); } });
   };
 
@@ -355,7 +358,9 @@ export function createDirectStreams(deps: {
         }
       };
       socket.onclose = () => { clearHeartbeat(); };
-    }, () => { if (!stopped) handlers.onDisconnected(); });
+    }, () => { if (!stopped) handlers.onDisconnected(); }, (failure) => {
+      if (!stopped) { stopped = true; clearHeartbeat(); handlers.onUnavailable(failure); }
+    });
     return register(parsedScopeId, { ...stream, stop: () => { stopped = true; clearHeartbeat(); stream.stop(); } });
   };
 

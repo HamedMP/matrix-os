@@ -5,6 +5,7 @@ import "@testing-library/jest-dom/vitest";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { ChatSharingButton } from "../../packages/ui/src/chat/ChatSharingButton";
 import { ChatCollaboration } from "../../packages/ui/src/collaboration/ChatCollaboration";
+import { CollaborationDirectError } from "../../packages/ui/src/collaboration/direct-client";
 
 beforeAll(() => {
   HTMLDialogElement.prototype.showModal = vi.fn(function (this: HTMLDialogElement) { this.open = true; });
@@ -15,6 +16,36 @@ const scopeId = "10000000-0000-4000-8000-000000000001";
 const chatId = "chat_one";
 
 describe("Chat collaboration sharing", () => {
+  it.each([
+    ["terminal", "access_removed", "This item is no longer shared with you."],
+    ["project", "host_offline", "The owner's computer is offline. Trying again."],
+    ["terminal", "relay_limit", "Today's collaboration limit is reached. Try again after reset."],
+  ] as const)("shows a safe %s failure for %s", async (kind, code, message) => {
+    const api = { baseUrl: "https://app.matrix-os.com",
+      get: vi.fn(async () => { throw new Error("CollaborationUnavailable", { cause: new CollaborationDirectError(code) }); }),
+      post: vi.fn(), delete: vi.fn(),
+    };
+    render(<ChatCollaboration view={{ kind, scopeId }} api={api} actorId="user_viewer" />);
+    expect(await screen.findByText(message)).toBeVisible();
+  });
+
+  it("shows the offline reason for a shared Chat that cannot load", async () => {
+    const api = { baseUrl: "https://app.matrix-os.com",
+      get: vi.fn(async () => { throw new Error("CollaborationUnavailable", { cause: new CollaborationDirectError("host_offline") }); }),
+      post: vi.fn(), delete: vi.fn(),
+    };
+    render(<ChatCollaboration view={{ kind: "chat", scopeId }} api={api} actorId="user_viewer" />);
+    expect(await screen.findByText("The owner's computer is offline. Trying again.")).toBeVisible();
+  });
+
+  it("shows removed access for an invitation that can no longer load", async () => {
+    const api = { baseUrl: "https://app.matrix-os.com",
+      get: vi.fn(async () => { throw new Error("CollaborationUnavailable", { cause: new CollaborationDirectError("access_removed") }); }),
+      post: vi.fn(), delete: vi.fn(),
+    };
+    render(<ChatCollaboration view={{ kind: "invitation", invitationId: scopeId }} api={api} actorId="user_viewer" />);
+    expect(await screen.findByText("This item is no longer shared with you.")).toBeVisible();
+  });
   it("keeps snapshot sharing and live invitations as distinct choices", () => {
     const api = { baseUrl: "https://gateway.test", get: vi.fn(), post: vi.fn(), delete: vi.fn() };
     render(<ChatSharingButton api={api} collaborationEnabled collaborationApi={api} runtimeId="runtime_owner" organizationId="org_matrix_team" chatId={chatId}

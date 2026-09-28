@@ -11,6 +11,7 @@ import type { CollaborationApi } from "./ChatCollaboratorsDialog.js";
 import { SessionAccessControl } from "./SessionAccessControl.js";
 import { SessionDiscussionLayer, type CollaborationOverlayLayers } from "./SessionDiscussionLayer.js";
 import { useSessionDiscussion } from "./useSessionDiscussion.js";
+import type { ClassifiedCollaborationFailure } from "./failure-classification.js";
 
 const MAX_OUTPUT_BYTES = 2 * 1024 * 1024;
 const LEASE_RENEW_INTERVAL_MS = 10_000;
@@ -26,6 +27,7 @@ type State = {
   loading: boolean;
   pending: boolean;
   unavailable: boolean;
+  failure: ClassifiedCollaborationFailure | null;
   /** The home cannot serve the terminal right now; the stream keeps retrying (spec 535 FR-027). */
   temporarilyUnavailable: boolean;
   error: boolean;
@@ -42,7 +44,7 @@ type Action =
   | { type: "disconnected" }
   | { type: "error" }
   | { type: "temporarily_unavailable" }
-  | { type: "unavailable" };
+  | { type: "unavailable"; failure?: ClassifiedCollaborationFailure };
 
 const initialState: State = {
   terminal: null,
@@ -53,6 +55,7 @@ const initialState: State = {
   loading: true,
   pending: false,
   unavailable: false,
+  failure: null,
   temporarilyUnavailable: false,
   error: false,
 };
@@ -119,7 +122,7 @@ export function SharedTerminalControls({ api, scope, actorId, layers }: {
         if (frame.type === "terminal.state") dispatch({ type: "state", terminal: frame.terminal });
       },
       onRefreshRequired: resync,
-      onUnavailable: () => { if (active) dispatch({ type: "unavailable" }); },
+      onUnavailable: (failure) => { if (active) dispatch({ type: "unavailable", ...(failure ? { failure } : {}) }); },
       onTemporarilyUnavailable: () => { if (active) dispatch({ type: "temporarily_unavailable" }); },
       onDisconnected: () => { if (active) dispatch({ type: "disconnected" }); },
     });
@@ -218,7 +221,7 @@ export function SharedTerminalControls({ api, scope, actorId, layers }: {
       </div>
     </header>
     {state.unavailable ? <p role="alert" className="border-b border-red-400/30 bg-red-950/30 px-4 py-3 text-sm text-red-100">
-      This shared terminal is no longer available. Return to Shared with me to check your access.
+      {state.failure?.message ?? "This shared terminal is no longer available. Return to Shared with me to check your access."}
     </p> : null}
     {state.temporarilyUnavailable && !state.unavailable ? <p role="status" className="border-b border-amber-400/30 bg-amber-950/30 px-4 py-3 text-sm text-amber-100">
       The shared terminal is temporarily unavailable. Reconnecting automatically.
@@ -262,7 +265,7 @@ function reduce(state: State, action: Action): State {
   if (action.type === "error") return { ...state, loading: false, pending: false, error: true };
   if (action.type === "temporarily_unavailable") return { ...state, loading: false, pending: false, temporarilyUnavailable: true,
     connectionId: null, controlConnectionId: null, controlLeaseEpoch: null };
-  return { ...state, loading: false, pending: false, unavailable: true, connectionId: null,
+  return { ...state, loading: false, pending: false, unavailable: true, failure: action.failure ?? null, connectionId: null,
     controlConnectionId: null, controlLeaseEpoch: null };
 }
 

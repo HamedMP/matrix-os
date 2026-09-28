@@ -689,7 +689,7 @@ export async function handle(c: Context, operation: () => Promise<Response>): Pr
     if (error instanceof ResourceCatalogError || error instanceof ProjectResourceAdapterError) {
       const status = error.code === "invalid" ? 400 : error.code === "not_found" ? 404
         : error.code === "forbidden" ? 403 : error.code === "conflict" ? 409 : 503;
-      return c.json({ error: status === 400 ? "Invalid collaboration request" : "Collaboration state changed", code: error.code }, status);
+      return c.json({ error: status === 400 ? "Invalid collaboration request" : "Collaboration state changed", code: status === 404 ? "resource_missing" : error.code }, status);
     }
     if (error instanceof ProjectAppAdapterError) {
       const status = error.code === "invalid_action" ? 400 : error.code === "not_found" ? 404
