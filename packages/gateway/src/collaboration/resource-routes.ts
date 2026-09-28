@@ -11,6 +11,7 @@ import {
   CollaborationAppAssetPathSchema,
   CollaborationAppInstanceIdSchema,
   CollaborationAppInstanceSchema,
+  CollaborationAppRootSchema,
   CollaborationAppViewRequestSchema,
   CollaborationCatalogEntrySchema,
   CollaborationCatalogIdSchema,
@@ -147,6 +148,17 @@ function streamResponse(
 }
 
 export function registerResourceRoutes(routes: Hono, options: CollaborationRouteOptions): void {
+  /** An app scope stores a catalog UUID, so disclose only its authorized root slug. */
+  routes.get("/api/collaboration/scopes/:scopeId/apps", async (c) => handle(c, async () => {
+    const scopeId = CollaborationIdSchema.parse(c.req.param("scopeId"));
+    const context = await authorize(options, c, new Uint8Array(), "read", scopeId);
+    if (context.resourceKind !== "app") throw new ResourceCatalogError("not_found");
+    const namespace = await requireResources(options).catalog.namespaceForScope(context);
+    const root = namespace.root;
+    if (!root || root.kind !== "app") throw new ResourceCatalogError("not_found");
+    return c.json(CollaborationAppRootSchema.parse({ appId: root.path, catalogId: root.id }));
+  }));
+
   routes.get("/api/collaboration/scopes/:scopeId/files", async (c) => handle(c, async () => {
     const scopeId = CollaborationIdSchema.parse(c.req.param("scopeId"));
     const resources = requireResources(options);

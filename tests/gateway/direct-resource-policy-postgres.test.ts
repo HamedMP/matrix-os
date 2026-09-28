@@ -186,6 +186,7 @@ describe("S12 direct resource policy", () => {
   let terminalActions: Array<{ actorId: string; action: unknown }>;
   let ids: { readme: string; notes: string; docs: string; docsGuide: string; app: string };
   let appRegistryCreation: string;
+  let bridgeStorageId: string;
 
   async function seedScope(input: {
     id: string;
@@ -265,6 +266,7 @@ describe("S12 direct resource policy", () => {
   }
 
   beforeEach(async () => {
+    bridgeStorageId = "board";
     requestCounter = 0;
     fixture = hasRealPostgres ? await createRealCollaborationTestDatabase() : await createCollaborationTestDatabase();
     await bootstrapChatDatabase(fixture.db);
@@ -373,7 +375,7 @@ describe("S12 direct resource policy", () => {
       bridge,
       catalog,
       apps: { resolve: async (projectId, appId) => projectId === PROJECT_ID && appId === APP_ID
-        ? { projectId: PROJECT_ID, appId: APP_ID, bridgeAppId: "board", collaborationMode: "scoped", incarnation: appRegistryIncarnation({ slug: APP_ID, created_at: appRegistryCreation }) }
+        ? { projectId: PROJECT_ID, appId: APP_ID, bridgeAppId: bridgeStorageId, collaborationMode: "scoped", incarnation: appRegistryIncarnation({ slug: APP_ID, created_at: appRegistryCreation }) }
         : null },
       now: () => NOW,
     });
@@ -555,6 +557,14 @@ describe("S12 direct resource policy", () => {
   });
 
   describe("standalone app instance share", () => {
+    it("accepts the public instance ID even when its private storage schema differs", async () => {
+      bridgeStorageId = "board_store";
+      const view = await signed({ actorId: collaborationActors.viewer, scopeId: APP_SCOPE, method: "POST",
+        path: `/api/collaboration/scopes/${APP_SCOPE}/apps/${APP_ID}/view`,
+        body: { action: { action: "count", app: APP_ID, table: "cards" } } });
+      expect(view.status).toBe(200);
+      expect(bridgeCalls).toHaveLength(1);
+    });
     it("does not serve a recreated same-slug app through old standalone or project bindings", async () => {
       const standalonePath = `/api/collaboration/scopes/${APP_SCOPE}/apps/${APP_ID}/assets/main.js`;
       const projectPath = `/api/collaboration/scopes/${PROJECT_SCOPE}/apps/${APP_ID}/assets/main.js`;
@@ -573,6 +583,9 @@ describe("S12 direct resource policy", () => {
       expect(response.status).toBe(503);
     });
     it("serves reads and assets to a viewer and refuses mutations through the bridge", async () => {
+      const root = await signed({ actorId: collaborationActors.viewer, scopeId: APP_SCOPE, method: "GET", path: `/api/collaboration/scopes/${APP_SCOPE}/apps` });
+      expect(root.status).toBe(200);
+      expect(await root.json()).toEqual({ appId: APP_ID, catalogId: ids.app });
       const instance = await signed({ actorId: collaborationActors.viewer, scopeId: APP_SCOPE, method: "GET", path: `/api/collaboration/scopes/${APP_SCOPE}/apps/${APP_ID}` });
       expect(instance.status).toBe(200);
       expect(await instance.json()).toMatchObject({ appId: APP_ID, catalogId: ids.app, revision: "0", readiness: "ready" });
@@ -876,7 +889,7 @@ describe("S12 direct resource policy", () => {
   describe("route table", () => {
     it("mounts every file, app, standalone Chat and terminal route from the frozen contract", () => {
       const owned = COLLABORATION_DIRECT_ROUTES.filter((route) =>
-        route.path.includes("/scopes/:scopeId/files") || route.path.includes("/scopes/:scopeId/apps/")
+        route.path.includes("/scopes/:scopeId/files") || route.path.includes("/scopes/:scopeId/apps")
         || ["/api/collaboration/scopes/:scopeId/chat", "/api/collaboration/scopes/:scopeId/chat/messages",
           "/api/collaboration/scopes/:scopeId/discussion/messages", "/api/collaboration/scopes/:scopeId/user-state",
           "/api/collaboration/scopes/:scopeId/terminal", "/api/collaboration/scopes/:scopeId/terminal/actions"].includes(route.path));
