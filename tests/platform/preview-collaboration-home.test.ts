@@ -52,8 +52,11 @@ function guard(command: "restore" | "commit", nonce: string) {
   return python("scripts/preview-collaboration-guard.py", `m["${command}"](pathlib.Path(sys.argv[2]),sys.argv[3])`, nonce);
 }
 
-function claim(nonce: string) {
-  return python("scripts/preview-collaboration-guard.py", `m["claim"](pathlib.Path(sys.argv[2]),sys.argv[3],sys.argv[4])`, nonce, GUARD_SOURCE);
+// Tests stand in for `systemctl is-active` on the run's guard timer.
+function claim(nonce: string, timerArmed = true) {
+  return python("scripts/preview-collaboration-guard.py",
+    `m["claim"](pathlib.Path(sys.argv[2]),sys.argv[3],sys.argv[4],lambda nonce: sys.argv[5] == "true")`,
+    nonce, GUARD_SOURCE, String(timerArmed));
 }
 
 // The workflow's order on the host: arm the guard, claim, then apply as the claiming run.
@@ -71,6 +74,18 @@ const hostEnv = () => readFileSync(join(root, "host.env"), "utf8");
 const envValue = (key: string) => hostEnv().split("\n").filter((line) => line.startsWith(`${key}=`));
 
 describe("preview collaboration host scripts", () => {
+  it("refuses a claim whose guard timer already fired, leaving the earlier owner in charge", () => {
+    expect(connect("108-1").status).toBe(0);
+    // Run 109 stalled past its timer between arming and claiming.
+    const late = claim("109-1", false);
+    expect(late.status).not.toBe(0);
+    expect(JSON.parse(readFileSync(join(root, ".preview-collaboration-state"), "utf8"))).toEqual({ nonce: "108-1", state: "claimed" });
+    expect(applyAs("109-1").status).not.toBe(0);
+    // Run 108's timer still restores its own connection.
+    expect(JSON.parse(guard("restore", "108-1").stdout)).toBe("restored");
+    expect(hostEnv()).toBe(ORIGINAL);
+  });
+
   it("applies only as the run that currently owns the connection", () => {
     // No claim at all.
     expect(applyAs("101-1").status).not.toBe(0);

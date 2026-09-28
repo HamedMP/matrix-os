@@ -353,6 +353,12 @@ jq -cn --arg stdout "$stdout" --argjson code "$code" '{exitCode:$code,timedOut:f
     } finally { rmSync(directory, { recursive: true, force: true }); }
   });
 
+  it("names the guard timer the way the claim checks it", () => {
+    expect(connectStep).toContain('guard_unit="matrix-preview-collaboration-guard-${nonce}"');
+    expect(readFileSync("scripts/preview-collaboration-guard.py", "utf8"))
+      .toContain('TIMER = "matrix-preview-collaboration-guard-{}.timer"');
+  });
+
   it("never replays a transient systemd unit after a lost response", () => {
     const scheduling = connectStep.split("\n").filter((line) => line.includes("send_runtime_command \"$body\""));
     const once = scheduling.filter((line) => line.includes("send_runtime_command \"$body\" once"));

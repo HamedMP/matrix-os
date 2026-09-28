@@ -1,9 +1,9 @@
 """Dead-man guard for spec 535 A0b on a pr-<N> home.
 
 The run that claimed a connection last owns it. A run arms its guard timer first,
-then `claim <nonce>` installs this guard (the exact source the loader ran) and
-records the claim, so ownership only moves to a run whose timer already covers
-the home, and host.env changes only after that. `restore <nonce> [--restart]`
+then `claim <nonce>` checks that timer is still armed, installs this guard (the
+exact source the loader ran) and records the claim, so ownership only moves to a
+run whose timer still covers the home, and host.env changes only after that. `restore <nonce> [--restart]`
 puts the pre-connection host environment back only while that run's claim is
 uncommitted, so an earlier run's timer never undoes a newer connection; the
 rollback copy carries the original owner, group and mode. `commit <nonce>`
@@ -21,6 +21,8 @@ from pathlib import Path
 
 ROLLBACK = ".host.env.preview-collaboration-rollback"
 STATE = ".preview-collaboration-state"
+# The workflow arms `systemd-run --unit=matrix-preview-collaboration-guard-<nonce>`.
+TIMER = "matrix-preview-collaboration-guard-{}.timer"
 
 
 def locked(root):
@@ -58,11 +60,23 @@ def record(root, nonce, state):
     write_atomic(root / STATE, json.dumps({"nonce": nonce, "state": state}), 0o600)
 
 
-def claim(root, nonce, source):
+def timer_armed(nonce):
+    # "waiting" only while armed and not yet elapsed; an elapsed timer can still report active.
+    shown = subprocess.run(["/usr/bin/systemctl", "show", "--property=SubState", "--value", TIMER.format(nonce)],
+                           capture_output=True, text=True, timeout=10, check=False)
+    return shown.returncode == 0 and shown.stdout.strip() == "waiting"
+
+
+def claim(root, nonce, source, armed=timer_armed):
     if not source:
         raise ValueError("The guard source is required to claim")
     lock = locked(root)
     try:
+        # A run whose timer already fired (a stall between arming and claiming) must not take
+        # ownership: it would own the home with nothing left to restore it. Checked under the
+        # lock, so a timer firing after this check waits and then restores this claim.
+        if not armed(nonce):
+            raise ValueError("This run's guard timer is no longer armed")
         write_atomic(root / ".preview-collaboration-guard.py", source, 0o700)
         record(root, nonce, "claimed")
     finally:
