@@ -1,5 +1,4 @@
-import { createInternalIntegrationGuard } from './internal-integration-guard.js';
-import { canClerkUserAccessMachine, getPersonalAccountRestrictedMachineByHandle } from './customer-vps-preview.js';
+import { registerInternalIntegrationRoutes } from './internal-integration-route-registration.js';
 import { Hono, type Context } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import {
@@ -73,6 +72,7 @@ import {
 } from './launch-readiness.js';
 import { createLaunchReadinessRoutes } from './launch-readiness-routes.js';
 import { createHostBundleRoutes } from './host-bundle-routes.js';
+import { createPrivatePreviewUpdateRoutes } from './private-preview-update-routes.js';
 import { createGoldenSnapshotRoutes } from './golden-snapshot-routes.js';
 import type { GoldenSnapshotService } from './golden-snapshot-service.js';
 import type { GoldenSnapshotRuntimeConfig } from './golden-snapshot-schema.js';
@@ -118,7 +118,6 @@ import {
   resolveAppDomainIdentity,
 } from './session-routing-identity.js';
 import { createSessionRoutingMiddleware } from './session-routing-middleware.js';
-import { buildPlatformUserProof } from './session-routing-websocket.js';
 import {
   resolveContainerEndpoint,
 } from './container-endpoint.js';
@@ -407,7 +406,7 @@ export function createApp(deps: {
       operatorSecret: goldenSnapshotOperatorSecret,
     }));
   }
-  app.route('/system-bundles', createHostBundleRoutes({
+  const hostBundleRoutes = createHostBundleRoutes({
     db,
     platformSecret,
     adminBodyLimit: ADMIN_BODY_LIMIT,
@@ -416,6 +415,10 @@ export function createApp(deps: {
     logRouteError: logPlatformRouteError,
     goldenSnapshotCompatibility: deps.goldenSnapshotConfig?.compatibility,
     goldenSnapshotFreshnessMaxAgeMs: deps.goldenSnapshotConfig?.freshnessMaxAgeMs,
+  });
+  app.route('/system-bundles', hostBundleRoutes);
+  app.route('/private-preview-updates', createPrivatePreviewUpdateRoutes({
+    db, hostBundleRoutes, logRouteError: logPlatformRouteError,
   }));
 
   // OAuth 2.0 Device Flow (RFC 8628) -- mounted before any host-based routing
@@ -655,78 +658,11 @@ export function createApp(deps: {
     internalCustomMcpRoutes: deps.internalCustomMcpRoutes,
     internalCustomMcpApprovalRoutes: deps.internalCustomMcpApprovalRoutes,
   });
-  if (deps.internalIntegrationRoutes) {
-    const internalIntegrationApp = new Hono<{
-      Variables: {
-        internalContainerHandle: string;
-        internalContainerClerkUserId: string;
-      };
-    }>();
-    const integrationGuard = createInternalIntegrationGuard();
-    internalIntegrationApp.use('*', async (c, next) => {
-      const handle = c.req.param('handle');
-      if (!handle || !HANDLE_PATTERN.test(handle)) {
-        return c.json({ error: 'Invalid handle' }, 400);
-      }
-      if (!platformSecret) {
-        return c.json({ error: 'Internal integrations not configured' }, 503);
-      }
-      const auth = c.req.header('authorization');
-      const token = auth?.startsWith('Bearer ') ? auth.slice(7) : undefined;
-      const expected = buildPlatformVerificationToken(handle, platformSecret);
-      if (!timingSafeTokenEquals(token, expected)) {
-        return c.json({ error: 'Unauthorized' }, 401);
-      }
-
-      c.set('internalContainerHandle', handle);
-      return integrationGuard.middleware(c, async () => {
-        // Preview and customer slots can share a handle, while their machine
-        // bearer is derived from that handle alone. Check restricted machines
-        // before an unqualified lookup can select a customer primary row.
-        if (await getPersonalAccountRestrictedMachineByHandle(db, handle)) {
-          c.res = c.json({ error: 'Forbidden' }, 403);
-          return;
-        }
-        // Customer VPSes are persisted in user_machines. Keep the legacy
-        // containers lookup for older runtimes that have not migrated yet.
-        const machine = await getRunningUserMachineByHandle(db, handle);
-        const record = machine ?? (await getContainer(db, handle));
-        if (!record?.clerkUserId) {
-          c.res = c.json({ error: 'Unknown handle' }, 404);
-          return;
-        }
-        let actorId = record.clerkUserId;
-        const delegatedId = c.req.header('x-platform-user-id');
-        const delegatedProof = c.req.header('x-platform-verified');
-        // Older single-user customer gateways forward the owner's unsigned
-        // header. The machine bearer already authenticates that gateway, so
-        // retain the owner scope only when the machine has no collaborators.
-        // Shared and Preview machines must use signed delegation.
-        const legacyOwnerHeader = delegatedId === record.clerkUserId
-          && delegatedProof === undefined
-          && machine?.provisioningClass === 'customer'
-          && machine.accessClerkUserIds.length === 0;
-        if ((delegatedId || delegatedProof) && !legacyOwnerHeader) {
-          if (!delegatedId || !delegatedProof || !/^[A-Za-z0-9_-]{1,256}$/.test(delegatedId)
-            || !timingSafeTokenEquals(delegatedProof, buildPlatformUserProof(handle, delegatedId, platformSecret))) {
-            c.res = c.json({ error: 'Unauthorized' }, 401);
-            return;
-          }
-          if (machine ? !canClerkUserAccessMachine(machine, delegatedId) : delegatedId !== record.clerkUserId) {
-            c.res = c.json({ error: 'Forbidden' }, 403);
-            return;
-          }
-          actorId = delegatedId;
-        }
-
-        c.set('internalContainerHandle', handle);
-        c.set('internalContainerClerkUserId', actorId);
-        await next();
-      });
-    });
-    internalIntegrationApp.route('/', deps.internalIntegrationRoutes);
-    app.route('/internal/containers/:handle/integrations', internalIntegrationApp);
-  }
+  registerInternalIntegrationRoutes(app, {
+    db,
+    platformSecret,
+    internalIntegrationRoutes: deps.internalIntegrationRoutes,
+  });
   if (deps.internalSyncRoutes) {
     app.route('/internal/containers/:handle/sync', deps.internalSyncRoutes);
   }

@@ -38,6 +38,7 @@ export function mapUserMachine(row: Selectable<UserMachinesTable>): UserMachineR
     provisioningClass: UserMachineProvisioningClassSchema.parse(row.provisioning_class),
     accessClerkUserIds: row.access_clerk_user_ids,
     sourcePr: row.source_pr,
+    confirmedBundleVersion: row.confirmed_bundle_version,
     developerTools: parseDeveloperToolsJson(row.developer_tools),
     hetznerServerId: row.hetzner_server_id,
     publicIPv4: row.public_ipv4,
@@ -82,6 +83,7 @@ export function toUserMachineRow(record: NewUserMachine): Insertable<UserMachine
     provisioning_class: record.provisioningClass ?? 'customer',
     access_clerk_user_ids: record.accessClerkUserIds ?? [],
     source_pr: record.sourcePr ?? null,
+    confirmed_bundle_version: record.confirmedBundleVersion ?? null,
     developer_tools: serializeDeveloperTools(record.developerTools ?? DEFAULT_DEVELOPER_TOOLS),
     hetzner_server_id: record.hetznerServerId ?? null,
     public_ipv4: record.publicIPv4 ?? null,
@@ -124,6 +126,7 @@ export function toUserMachineUpdate(values: Partial<NewUserMachine>): Updateable
   if (values.provisioningClass !== undefined) update.provisioning_class = values.provisioningClass;
   if (values.accessClerkUserIds !== undefined) update.access_clerk_user_ids = values.accessClerkUserIds;
   if (values.sourcePr !== undefined) update.source_pr = values.sourcePr;
+  if (values.confirmedBundleVersion !== undefined) update.confirmed_bundle_version = values.confirmedBundleVersion;
   if (values.developerTools !== undefined) update.developer_tools = serializeDeveloperTools(values.developerTools);
   if (values.hetznerServerId !== undefined) update.hetzner_server_id = values.hetznerServerId;
   if (values.publicIPv4 !== undefined) update.public_ipv4 = values.publicIPv4;

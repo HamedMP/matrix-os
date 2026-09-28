@@ -47,6 +47,7 @@ function row(overrides: Partial<NewUserMachine> = {}): NewUserMachine {
     runtimeSlot: handle,
     provisioningClass: 'private-preview',
     sourcePr: 1907,
+    confirmedBundleVersion: 'v2026.09.28-pr1907-1-1-abcdef0',
     status: 'running',
     publicIPv4: '203.0.113.19',
     provisionedAt: '2026-09-28T00:00:00.000Z',
