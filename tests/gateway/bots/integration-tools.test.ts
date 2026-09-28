@@ -124,12 +124,12 @@ describe("bot integration tools", () => {
     expect(choice).toMatchObject({ kind: "account_choice", status: "pending" });
     expect(call).not.toHaveBeenCalled();
     const resolved = await interactions.resolve(OWNER, CHAT, choice!.interaction_id, { kind: "account_choice", baseRevision: 1, connectionId: "conn_home" });
-    expect(resolved.continuation?.text).toBe('Use account "Home". Its access is now available to you.');
-    expect(resolved.continuation?.text).not.toContain("conn_home");
-    expect(resolved.continuation?.text).not.toContain("gmail");
+    expect(resolved.continuation?.text).toBe('Use the gmail account "Home" (connection conn_home). Its access is now available to you.');
     const grants = await createBotGrantsRepository(db).listLive({ ownerId: OWNER, botId: BOT, audience: "direct", now: AT });
     // Only what the recipe declares for the service is granted.
     expect(grants).toEqual([expect.objectContaining({ connectionId: "conn_home", accountLabel: "Home", effects: ["read", "send"] })]);
+    await expect(tools.call(binding, { ...read, connectionId: "conn_home" })).resolves.toMatchObject({ ok: true });
+    expect(call).toHaveBeenCalledWith(OWNER, { service: "gmail", action: "list_threads", label: "Home", params: {}, read: true }, undefined);
     await expect(interactions.resolve(OWNER, CHAT, choice!.interaction_id, { kind: "account_choice", baseRevision: 2, connectionId: "conn_work" }))
       .rejects.toMatchObject({ code: "conflict" });
   });
