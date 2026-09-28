@@ -34,6 +34,8 @@ type OpenAiSpeechConfig = {
 } & ({
   fundingMode: "existing_wallet";
   allowedFundingSources: readonly ("promotional" | "addon")[];
+  monthlyBudgetMicrousd: number;
+  monthlyPromotionalCreditMicrousd: number;
 } | {
   fundingMode: "preview_no_charge";
   allowedFundingSources: readonly [];
@@ -147,6 +149,23 @@ export function loadPlatformSpeechConfig(env: NodeJS.ProcessEnv = process.env): 
       previewNotAfter: previewNotAfter.data,
     };
   }
+  const allowedFundingSources = fundingSources(env.PLATFORM_SPEECH_FUNDING_SOURCES);
+  const monthlyBudgetMicrousd = integer(
+    env.PLATFORM_SPEECH_MONTHLY_BUDGET_MICROUSD,
+    undefined,
+    1,
+    Number.MAX_SAFE_INTEGER,
+  );
+  const monthlyPromotionalCreditMicrousd = integer(
+    env.PLATFORM_SPEECH_MONTHLY_PROMOTIONAL_CREDIT_MICROUSD,
+    undefined,
+    0,
+    Number.MAX_SAFE_INTEGER,
+  );
+  if (monthlyPromotionalCreditMicrousd > monthlyBudgetMicrousd
+    || (monthlyPromotionalCreditMicrousd > 0 && !allowedFundingSources.includes("promotional"))) {
+    return invalid();
+  }
   return {
     ...common,
     provider,
@@ -154,6 +173,8 @@ export function loadPlatformSpeechConfig(env: NodeJS.ProcessEnv = process.env): 
     apiKey,
     model: model.data,
     microusdPerMinute: integer(env.PLATFORM_SPEECH_MICROUSD_PER_MINUTE, undefined, 1, 1_000_000_000),
-    allowedFundingSources: fundingSources(env.PLATFORM_SPEECH_FUNDING_SOURCES),
+    allowedFundingSources,
+    monthlyBudgetMicrousd,
+    monthlyPromotionalCreditMicrousd,
   };
 }

@@ -251,6 +251,7 @@ import {
   symphonyUpstreamOriginForPort,
 } from "./server/symphony-origin.js";
 import { registerSystemOperatorRoutes } from "./server/system-operator-routes.js";
+import { createPlatformSpeechHostConfigRoutes } from "./speech/host-activation.js";
 import { registerTerminalWebSocketRoutes } from "./server/terminal-ws-routes.js";
 import type { GatewayConfig, ServerMessage } from "./server/types.js";
 import { registerVoiceWebSocketRoutes } from "./server/voice-ws-routes.js";
@@ -1227,6 +1228,7 @@ export async function createGateway(config: GatewayConfig) {
       })
     : undefined;
   app.route("/api/speech", speechRuntime.routes);
+  app.route("/api/internal/platform-speech", createPlatformSpeechHostConfigRoutes());
   const fundedOwnerIds = new Set([
     fundedAiRuntimeConfig?.identity.ownerId,
     process.env.MATRIX_USER_ID?.trim(),

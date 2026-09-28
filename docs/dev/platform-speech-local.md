@@ -132,7 +132,9 @@ export PLATFORM_SPEECH_OPENAI_API_KEY='<platform-only-key>'
 export PLATFORM_SPEECH_MODEL='<verified-transcription-model>'
 export PLATFORM_SPEECH_POLICY_REVISION='<reviewed-policy-revision>'
 export PLATFORM_SPEECH_MICROUSD_PER_MINUTE='<verified-integer-price>'
-export PLATFORM_SPEECH_FUNDING_SOURCES='addon'
+export PLATFORM_SPEECH_MONTHLY_BUDGET_MICROUSD='1000000'
+export PLATFORM_SPEECH_MONTHLY_PROMOTIONAL_CREDIT_MICROUSD='1000000'
+export PLATFORM_SPEECH_FUNDING_SOURCES='promotional'
 export PLATFORM_SPEECH_SECRET='<separate-at-least-32-byte-local-secret>'
 export PLATFORM_RUNTIME_MODE=local
 export PLATFORM_DATABASE_URL='<local-platform-database-with-reviewed-runtime>'
@@ -157,7 +159,7 @@ bun run dev:speech
 
 Generate `MATRIX_PLATFORM_SPEECH_RUNTIME_TOKEN` with the speech-domain runtime identity and local platform secret. Do not reuse a funded-AI token, copy a customer token or key, or put the OpenAI key in a runtime home, host bundle, gateway env file, renderer, or browser storage. `PLATFORM_SPEECH_FUNDING_SOURCES` may be `addon`, `promotional`, or `promotional,addon`; choose deliberately so a text-only campaign is not spent accidentally.
 
-Production `existing_wallet` rollout requires an operator-provisioned `ai_funded_runtime_policies` row, runtime balance, and eligible promotional or add-on credit before host exposure is enabled. The speech funding adapter uses those database records directly; `MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED` and the text relay's `MATRIX_FUNDED_AI_RUNTIME_ENABLED` remain separate rollout flags. Never seed preview no-charge grants in production.
+Production `existing_wallet` rollout automatically reconciles a speech-only monthly allowance for each running, authorized customer computer. `PLATFORM_SPEECH_MONTHLY_BUDGET_MICROUSD` caps speech usage; `PLATFORM_SPEECH_MONTHLY_PROMOTIONAL_CREDIT_MICROUSD` creates one idempotent UTC-month promotional grant per computer. The shared monetary ledger remains authoritative, while `ai_funded_runtime_policies` and their text-model monthly counters remain untouched. `MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED` and the text relay's `MATRIX_FUNDED_AI_RUNTIME_ENABLED` are separate rollout flags. Never seed preview no-charge grants in production.
 
 ## Device and format gates
 

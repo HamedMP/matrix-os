@@ -70,7 +70,11 @@ export async function reserveFundingSources(
   amountMicrousd: number,
   balance: FundedAiReservationBalance,
   checkedAt: string,
-  allowedSources: { promotional: boolean; addon: boolean } = { promotional: true, addon: true },
+  allowedSources: {
+    promotional: boolean;
+    addon: boolean;
+    promotionalGrantNamespace?: "general" | "speech_monthly";
+  } = { promotional: true, addon: true },
 ): Promise<{
   promotionalReservedMicrousd: number;
   addonReservedMicrousd: number;
@@ -79,12 +83,16 @@ export async function reserveFundingSources(
   const protection = allowedSources.promotional
     ? await activePromotionalProtection(executor, identity)
     : new Map<string, number>();
-  const grants = allowedSources.promotional ? await executor.selectFrom("ai_funded_promotional_grant_balances")
+  let grantsQuery = executor.selectFrom("ai_funded_promotional_grant_balances")
     .selectAll()
     .where("owner_id", "=", identity.ownerId)
     .where("machine_id", "=", identity.machineId)
     .where("runtime_slot", "=", identity.runtimeSlot)
-    .where("remaining_microusd", ">", 0)
+    .where("remaining_microusd", ">", 0);
+  grantsQuery = allowedSources.promotionalGrantNamespace === "speech_monthly"
+    ? grantsQuery.where("grant_entry_id", "like", "speech-monthly:%")
+    : grantsQuery.where("grant_entry_id", "not like", "speech-monthly:%");
+  const grants = allowedSources.promotional ? await grantsQuery
     .orderBy(sql<number>`CASE WHEN expires_at IS NULL THEN 1 ELSE 0 END`)
     .orderBy("expires_at").orderBy("created_at").orderBy("grant_entry_id")
     .limit(MAX_PROMOTIONAL_GRANTS_PER_RUNTIME + 1)

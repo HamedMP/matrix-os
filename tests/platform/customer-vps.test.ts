@@ -2365,6 +2365,62 @@ describe('platform/customer-vps', () => {
     }
   });
 
+  it('activates speech only on running authorized customer computers', async () => {
+    await insertUserMachine(db, {
+      machineId: '9f05824c-8d0a-4d83-9cb4-b312d43ff140',
+      clerkUserId: 'customer_owner',
+      handle: 'customer-one',
+      runtimeSlot: 'primary',
+      provisioningClass: 'customer',
+      publicIPv4: '203.0.113.10',
+      status: 'running',
+      imageVersion: 'v1',
+      provisionedAt: '2026-04-26T12:00:00.000Z',
+      activationState: 'authorized',
+    });
+    await insertUserMachine(db, {
+      machineId: '9f05824c-8d0a-4d83-9cb4-b312d43ff141',
+      clerkUserId: 'preview_owner',
+      handle: 'pr-992',
+      runtimeSlot: 'pr-992',
+      provisioningClass: 'preview',
+      publicIPv4: '203.0.113.11',
+      status: 'running',
+      imageVersion: 'v1',
+      provisionedAt: '2026-04-26T12:01:00.000Z',
+      activationState: 'authorized',
+    });
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response('{}', { status: 202 }))
+      .mockResolvedValueOnce(Response.json({ configured: true }));
+    vi.stubGlobal('fetch', fetchMock);
+    const { service } = createService({
+      config: createTestConfig({
+        platformRegisterUrl: 'https://app.matrix-os.com/vps/register',
+        platformSecret: 'p'.repeat(32),
+      }),
+    });
+
+    try {
+      await expect(service.activateSpeech()).resolves.toMatchObject({ activated: 1, failed: 0 });
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(fetchMock).toHaveBeenNthCalledWith(
+        1,
+        'https://203.0.113.10:443/api/internal/platform-speech/config',
+        expect.objectContaining({ method: 'POST' }),
+      );
+      const request = fetchMock.mock.calls[0]![1] as RequestInit;
+      expect(JSON.parse(String(request.body))).toMatchObject({
+        machineId: '9f05824c-8d0a-4d83-9cb4-b312d43ff140',
+        runtimeSlot: 'primary',
+        enabled: true,
+        origin: 'https://app.matrix-os.com',
+      });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('filters deploy candidates before applying the running-machine limit', async () => {
     await insertUserMachine(db, {
       machineId: '9f05824c-8d0a-4d83-9cb4-b312d43ff120',

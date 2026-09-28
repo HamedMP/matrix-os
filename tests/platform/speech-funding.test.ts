@@ -54,6 +54,139 @@ describe("funded AI speech wallet adapter", () => {
     });
   }
 
+  function monthlyPort(reservationId: string, clock: () => Date = () => now) {
+    return createAiFundedSpeechFundingPort({
+      allowedSources: ["promotional"],
+      credentialHashSecret: "s".repeat(32),
+      reservationIdFactory: () => reservationId,
+      now: clock,
+      monthlyAllowance: {
+        monthlyBudgetMicrousd: 1_000_000,
+        monthlyPromotionalCreditMicrousd: 1_000_000,
+      },
+    });
+  }
+
+  it("uses speech-only monthly counters without enabling or consuming the text-model policy", async () => {
+    await db.executor.updateTable("ai_funded_runtime_balances").set({
+      month_spent_microusd: 77,
+      month_reserved_microusd: 11,
+    }).where("machine_id", "=", identity.machineId).execute();
+    await db.executor.deleteFrom("ai_funded_runtime_policies")
+      .where("machine_id", "=", identity.machineId).execute();
+    const funding = monthlyPort("speech_monthly_1");
+    const reservation = await db.transaction((trx) => funding.reserve(trx.executor, {
+      identity,
+      requestId: `sp_${now.getTime()}_monthlyboundarya`,
+      policyRevision: "speech-1",
+      modelId: "gpt-4o-transcribe",
+      maximumCostMicrousd: 120,
+    }));
+
+    expect(await db.executor.selectFrom("ai_funded_runtime_balances")
+      .select(["month_spent_microusd", "month_reserved_microusd", "reserved_microusd"])
+      .where("machine_id", "=", identity.machineId).executeTakeFirstOrThrow())
+      .toEqual({ month_spent_microusd: 77, month_reserved_microusd: 11, reserved_microusd: 120 });
+    expect(await db.executor.selectFrom("speech_runtime_allowances")
+      .select(["period_spent_microusd", "period_reserved_microusd"])
+      .where("machine_id", "=", identity.machineId).executeTakeFirstOrThrow())
+      .toEqual({ period_spent_microusd: 0, period_reserved_microusd: 120 });
+
+    await db.transaction((trx) => funding.start(trx.executor, reservation.reservationId));
+    await db.transaction((trx) => funding.settle(trx.executor, reservation.reservationId, {
+      mode: "exact",
+      actualCostMicrousd: 40,
+    }));
+    expect(await db.executor.selectFrom("ai_funded_runtime_balances")
+      .select(["month_spent_microusd", "month_reserved_microusd"])
+      .where("machine_id", "=", identity.machineId).executeTakeFirstOrThrow())
+      .toEqual({ month_spent_microusd: 77, month_reserved_microusd: 11 });
+    expect(await db.executor.selectFrom("speech_runtime_allowances")
+      .select(["period_spent_microusd", "period_reserved_microusd"])
+      .where("machine_id", "=", identity.machineId).executeTakeFirstOrThrow())
+      .toEqual({ period_spent_microusd: 40, period_reserved_microusd: 0 });
+    expect(await db.executor.selectFrom("ai_funded_runtime_policies").selectAll().execute()).toEqual([]);
+  });
+
+  it("conservatively cleans up monthly speech without requiring a text-model policy", async () => {
+    await db.executor.updateTable("ai_funded_runtime_balances").set({
+      month_spent_microusd: 77,
+      month_reserved_microusd: 11,
+    }).where("machine_id", "=", identity.machineId).execute();
+    await db.executor.deleteFrom("ai_funded_runtime_policies")
+      .where("machine_id", "=", identity.machineId).execute();
+    let clock = new Date(now);
+    const funding = monthlyPort("speech_monthly_cleanup", () => clock);
+    const reservation = await db.transaction((trx) => funding.reserve(trx.executor, {
+      identity,
+      requestId: `sp_${now.getTime()}_monthlycleanupaa`,
+      policyRevision: "speech-1",
+      modelId: "gpt-4o-transcribe",
+      maximumCostMicrousd: 80,
+    }));
+    await db.transaction((trx) => funding.start(trx.executor, reservation.reservationId));
+    clock = new Date(clock.getTime() + 31 * 60_000);
+
+    await expect(cleanupExpiredReservations({ db, now: () => clock }, { limit: 7 })).resolves.toBe(1);
+    expect(await db.executor.selectFrom("speech_runtime_allowances")
+      .select(["period_spent_microusd", "period_reserved_microusd"])
+      .where("machine_id", "=", identity.machineId).executeTakeFirstOrThrow())
+      .toEqual({ period_spent_microusd: 80, period_reserved_microusd: 0 });
+    expect(await db.executor.selectFrom("ai_funded_runtime_balances")
+      .select(["month_spent_microusd", "month_reserved_microusd"])
+      .where("machine_id", "=", identity.machineId).executeTakeFirstOrThrow())
+      .toEqual({ month_spent_microusd: 77, month_reserved_microusd: 11 });
+  });
+
+  it("does not treat a general promotional grant as monthly speech credit", async () => {
+    await funded.grantCredit({
+      entryId: "promo_general_only",
+      identity,
+      kind: "promotional_grant",
+      amountMicrousd: 500,
+      sourceReference: "general-campaign",
+    });
+    const funding = createAiFundedSpeechFundingPort({
+      allowedSources: ["promotional"],
+      credentialHashSecret: "s".repeat(32),
+      reservationIdFactory: () => "speech_monthly_no_credit",
+      now: () => now,
+      monthlyAllowance: {
+        monthlyBudgetMicrousd: 1_000,
+        monthlyPromotionalCreditMicrousd: 0,
+      },
+    });
+
+    await expect(db.transaction((trx) => funding.reserve(trx.executor, {
+      identity,
+      requestId: `sp_${now.getTime()}_nogeneralpromoa`,
+      policyRevision: "speech-1",
+      modelId: "gpt-4o-transcribe",
+      maximumCostMicrousd: 40,
+    }))).rejects.toMatchObject({ code: "allowance_exhausted" });
+  });
+
+  it("does not expose monthly speech promotional grants to general funding reservations", async () => {
+    const speech = monthlyPort("speech_monthly_isolated");
+    const speechReservation = await db.transaction((trx) => speech.reserve(trx.executor, {
+      identity,
+      requestId: `sp_${now.getTime()}_speechisolationa`,
+      policyRevision: "speech-1",
+      modelId: "gpt-4o-transcribe",
+      maximumCostMicrousd: 40,
+    }));
+    await db.transaction((trx) => speech.release(trx.executor, speechReservation.reservationId));
+
+    const general = port(["promotional"]);
+    await expect(db.transaction((trx) => general.reserve(trx.executor, {
+      identity,
+      requestId: `sp_${now.getTime()}_generalisolation`,
+      policyRevision: "speech-legacy",
+      modelId: "gpt-4o-transcribe",
+      maximumCostMicrousd: 40,
+    }))).rejects.toMatchObject({ code: "allowance_exhausted" });
+  });
+
   it("reserves, starts and settles against an eligible add-on balance in the existing ledger", async () => {
     await funded.grantCredit({
       entryId: "addon_1",

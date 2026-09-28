@@ -13,7 +13,9 @@ const enabledEnv = {
   MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED: 'true', MATRIX_FUNDED_AI_RUNTIME_ENABLED: 'false',
   MATRIX_FUNDED_AI_RELAY_URL: '', PLATFORM_SPEECH_PROVIDER: 'openai', PLATFORM_SPEECH_MODEL: 'gpt-4o-mini-transcribe',
   PLATFORM_SPEECH_POLICY_REVISION: 'speech-v1', PLATFORM_SPEECH_MICROUSD_PER_MINUTE: '1000',
-  PLATFORM_SPEECH_FUNDING_SOURCES: 'addon', PLATFORM_SPEECH_OWNER_AUDIO_ENABLED: 'true',
+  PLATFORM_SPEECH_FUNDING_SOURCES: 'promotional', PLATFORM_SPEECH_OWNER_AUDIO_ENABLED: 'true',
+  PLATFORM_SPEECH_MONTHLY_BUDGET_MICROUSD: '1000000',
+  PLATFORM_SPEECH_MONTHLY_PROMOTIONAL_CREDIT_MICROUSD: '1000000',
 };
 
 function run(mode: string, env: Record<string, string>) {
@@ -43,6 +45,7 @@ describe('production speech deployment contract', () => {
     expect(workflow).toContain("MATRIX_PLATFORM_SPEECH_RUNTIME_ENABLED: ${{ vars.MATRIX_PLATFORM_SPEECH_RUNTIME_ENABLED || 'false' }}");
     expect(workflow).toContain("MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED: ${{ vars.MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED || 'false' }}");
     expect(workflow).toContain("MATRIX_FUNDED_AI_RUNTIME_ENABLED: ${{ vars.MATRIX_FUNDED_AI_RUNTIME_ENABLED || 'false' }}");
+    expect(workflow).toContain("PLATFORM_SPEECH_MONTHLY_BUDGET_MICROUSD: ${{ vars.PLATFORM_SPEECH_MONTHLY_BUDGET_MICROUSD || '1000000' }}");
     expect(workflow).toContain('scripts/ci/platform-speech-production-env.sh validate');
   });
 
@@ -63,6 +66,11 @@ describe('production speech deployment contract', () => {
       { PLATFORM_SPEECH_MODEL: 'model|injected' },
     ]) expect(() => run('validate', { ...enabledEnv, ...override })).toThrow();
     expect(() => run('validate', enabledEnv)).not.toThrow();
+    expect(() => run('validate', {
+      ...enabledEnv,
+      PLATFORM_SPEECH_FUNDING_SOURCES: 'addon',
+      PLATFORM_SPEECH_MONTHLY_PROMOTIONAL_CREDIT_MICROUSD: '0',
+    })).not.toThrow();
     expect(() => run('validate', { ...enabledEnv, MATRIX_FUNDED_AI_RUNTIME_ENABLED: 'true', MATRIX_FUNDED_AI_RELAY_URL: 'http://relay.test' })).toThrow();
   });
 
@@ -106,6 +114,8 @@ describe('production speech deployment contract', () => {
       PLATFORM_SPEECH_POLICY_REVISION: '',
       PLATFORM_SPEECH_MICROUSD_PER_MINUTE: '',
       PLATFORM_SPEECH_FUNDING_SOURCES: '',
+      PLATFORM_SPEECH_MONTHLY_BUDGET_MICROUSD: '',
+      PLATFORM_SPEECH_MONTHLY_PROMOTIONAL_CREDIT_MICROUSD: '',
       PLATFORM_SPEECH_OWNER_AUDIO_ENABLED: '',
     };
     const fixture = (staleSecret: boolean) => JSON.stringify({ spec: { containers: [{ env: [

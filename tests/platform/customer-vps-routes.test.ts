@@ -522,6 +522,37 @@ describe('platform/customer-vps-routes', () => {
     expect(service.deploy).toHaveBeenCalledWith({ channel: 'dev' });
   });
 
+  it('protects and validates the speech activation route contract', async () => {
+    const service = {
+      activateSpeech: vi.fn().mockResolvedValue({ activated: 1, failed: 0, results: [] }),
+    } as unknown as Parameters<typeof createCustomerVpsRoutes>[0]['service'];
+    const app = new Hono();
+    app.route('/vps', createCustomerVpsRoutes({ service, platformSecret }));
+
+    const unauthorized = await app.request('/vps/speech/activate', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{}',
+    });
+    expect(unauthorized.status).toBe(401);
+
+    const invalid = await app.request('/vps/speech/activate', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${platformSecret}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ handle: '../../etc' }),
+    });
+    expect(invalid.status).toBe(400);
+
+    const activated = await app.request('/vps/speech/activate', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${platformSecret}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ handle: 'customer-one' }),
+    });
+    expect(activated.status).toBe(200);
+    expect(await activated.json()).toEqual({ activated: 1, failed: 0 });
+    expect(service.activateSpeech).toHaveBeenCalledWith({ handle: 'customer-one' });
+  });
+
   it('deploys to a named VPS through the route contract', async () => {
     const service = {
       deploy: vi.fn().mockResolvedValue({ triggered: 1, failed: 0, results: [] }),

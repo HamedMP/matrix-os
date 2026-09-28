@@ -43,8 +43,13 @@ All routes are proposed names. Verify platform routing order and reserve these n
 | `DELETE /api/speech/sessions/:id` | Same; body limit even with empty body | Session owner and runtime match | No | Later |
 | Session media channel, path selected by spike | Authenticated short-lived session grant or authenticated relay | Session bound to owner/runtime; grants scoped to one capability/session | No | Later |
 | Existing `/ws/vocal` or STT aliases during migration | Existing route auth, then canonical authorization | Same service; no local provider fallback | No | Transition only |
+| `POST /vps/speech/activate` | Platform operator bearer, constant-time verified by the platform route | Selects only running, authorized customer computers; optional exact safe handle | No | Fleet release |
+| `POST /api/internal/platform-speech/config` | Existing per-host `UPGRADE_TOKEN`; exact route-scoped bearer validation | Body machine/runtime and HTTPS platform origin must exactly match the host environment | No | Fleet release |
+| `GET /api/internal/platform-speech/config` | Same per-host upgrade bearer | Reports only whether the restarted gateway loaded a complete matching configuration | No | Fleet release |
 
 Platform service authentication is not just accepting an owner ID passed by a VPS. Resolve and compare machine/runtime ownership using the platform database, reject inactive/revoked credentials, and verify speech policy for each admission. Local/self-hosted gateways without a managed platform relationship report speech unavailable; do not silently fall back to a runtime key.
+
+Fleet activation is a separate operator-only control path. It sends only machine-bound speech configuration, never the provider key, through the existing independently verified host upgrade bearer. The host applies a fixed allowlisted root helper with a one-time backup and atomic replacement, schedules a bounded delayed gateway restart, and must pass the authenticated GET verification after restart. Deployment of the compatible host bundle precedes activation; old or unreachable hosts remain failed and retryable rather than weakening route authentication.
 
 ## Recording request lifecycle
 

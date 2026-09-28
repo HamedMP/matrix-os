@@ -75,6 +75,10 @@ import {
 } from './customer-vps-host-bundle.js';
 import { selectCustomerVpsDeployMachines } from './customer-vps-deploy-selection.js';
 import {
+  activatePlatformSpeechFleet,
+  type SpeechFleetActivationResult,
+} from './speech/fleet-activation.js';
+import {
   getRuntimeAccessDecision,
   type BillingEntitlement,
 } from './billing.js';
@@ -189,6 +193,10 @@ export interface DeployTarget {
   handle?: string;
 }
 
+export interface SpeechActivationTarget {
+  handle?: string;
+}
+
 export interface CustomerVpsService {
   provision(input: ProvisionRequest, options?: ProvisionOptions): Promise<ProvisionResponse>;
   provisionForCheckout(
@@ -205,6 +213,7 @@ export interface CustomerVpsService {
   status(machineId: string): Promise<StatusResponse>;
   delete(machineId: string): Promise<DeleteResponse>;
   deploy(target?: DeployTarget): Promise<DeployResult>;
+  activateSpeech(target?: SpeechActivationTarget): Promise<SpeechFleetActivationResult>;
   listAllMachines(): Promise<StatusResponse[]>;
   dispatchProvisioningJobs(): Promise<{ checked: number; completed: number; failed: number }>;
   setPrebillingFallbackReconciler?(reconcile: (() => Promise<unknown>) | undefined): void;
@@ -2992,6 +3001,33 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
       }));
 
       return { triggered, failed, results };
+    },
+
+    async activateSpeech(target?: SpeechActivationTarget): Promise<SpeechFleetActivationResult> {
+      const runningMachines = await listRunningUserMachines(
+        deps.db,
+        500,
+        target?.handle
+          ? { handle: target.handle, activationState: 'authorized' }
+          : { provisioningClass: 'customer', activationState: 'authorized' },
+      );
+      const machines = runningMachines.filter((machine) => (
+        machine.provisioningClass === 'customer' && machine.activationState === 'authorized'
+      ));
+      const platformOrigin = new URL(deps.config.platformRegisterUrl).origin;
+      return activatePlatformSpeechFleet({
+        machines: machines.map((machine) => ({
+          machineId: machine.machineId,
+          clerkUserId: machine.clerkUserId,
+          handle: machine.handle,
+          runtimeSlot: machine.runtimeSlot,
+          runtimeTokenEpoch: machine.runtimeTokenEpoch,
+          publicIPv4: machine.publicIPv4,
+        })),
+        platformOrigin,
+        platformSecret: deps.config.platformSecret,
+        fetchDispatcher: deps.fetchDispatcher,
+      });
     },
 
     async reconcileProvisioning() {

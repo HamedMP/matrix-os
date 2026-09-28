@@ -306,6 +306,7 @@ export async function listRunningUserMachines(
   filters: {
     handle?: string;
     provisioningClass?: UserMachineProvisioningClass;
+    activationState?: UserMachineRecord['activationState'];
   } = {},
 ): Promise<UserMachineRecord[]> {
   await db.ready;
@@ -319,6 +320,9 @@ export async function listRunningUserMachines(
   }
   if (filters.provisioningClass !== undefined) {
     query = query.where('provisioning_class', '=', filters.provisioningClass);
+  }
+  if (filters.activationState !== undefined) {
+    query = query.where('activation_state', '=', filters.activationState);
   }
   const rows = await query
     .orderBy('last_seen_at', 'desc')
