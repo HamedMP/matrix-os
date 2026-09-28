@@ -1,0 +1,16 @@
+[Unit]
+Description=Matrix OS local PostgreSQL container
+After=docker.service
+Requires=docker.service
+ConditionPathExists=/usr/local/libexec/matrix-postgres-start
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+ExecStart=/usr/local/libexec/matrix-postgres-start
+TimeoutStartSec=180
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
