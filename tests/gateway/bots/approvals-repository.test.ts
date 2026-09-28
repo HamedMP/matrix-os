@@ -51,6 +51,17 @@ describe("bot approvals repository", () => {
     await expect(repo.claim({ ownerId: OWNER, approvalId, ...binding, now: at(3) })).resolves.toEqual({ status: "refused", reason: "invalidated" });
   });
 
+  it("leaves an expired approval for the expiry sweep when a changed action tries to claim it", async () => {
+    const repo = createBotApprovalsRepository(db);
+    await repo.decide({ ownerId: OWNER, approvalId, baseRevision: 1, decision: "approved", now: at(1) });
+    const late = at(60 * 60_000 + 1);
+    await expect(repo.claim({ ownerId: OWNER, approvalId, ...binding, argsHash: "e".repeat(64), now: late }))
+      .resolves.toEqual({ status: "refused", reason: "not_claimable" });
+    await expect(repo.get({ ownerId: OWNER, approvalId })).resolves.toMatchObject({ status: "approved" });
+    await expect(repo.expireDue({ now: late })).resolves.toEqual([approvalId]);
+    await expect(repo.get({ ownerId: OWNER, approvalId })).resolves.toMatchObject({ status: "expired" });
+  });
+
   it("expires undecided and unclaimed approvals", async () => {
     const repo = createBotApprovalsRepository(db);
     await expect(repo.expireDue({ now: at(30 * 60_000) })).resolves.toEqual([]);

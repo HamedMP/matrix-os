@@ -44,6 +44,9 @@ describe("bot connect requests repository", () => {
     expect(request).toMatchObject({ status: "pending", revision: 1, baselineConnectionIds: ["conn_old"] });
     await expect(repo.reconcile({ ownerId: OWNER, requestId: request.requestId, baseRevision: 1, currentConnectionIds: ["conn_old"], now: at(1) }))
       .resolves.toMatchObject({ outcome: { status: "pending" }, request: { revision: 1 } });
+    // A stale reader is refused even when nothing would change.
+    await expect(repo.reconcile({ ownerId: OWNER, requestId: request.requestId, baseRevision: 5, currentConnectionIds: ["conn_old"], now: at(1) }))
+      .rejects.toEqual(new BotStateError("revision_conflict"));
     const completed = await repo.reconcile({ ownerId: OWNER, requestId: request.requestId, baseRevision: 1, currentConnectionIds: ["conn_old", "conn_new"], now: at(2) });
     expect(completed.request).toMatchObject({ status: "completed", completedConnectionId: "conn_new", revision: 2 });
     await expect(repo.reconcile({ ownerId: OWNER, requestId: request.requestId, baseRevision: 2, currentConnectionIds: ["conn_new"], now: at(3) }))

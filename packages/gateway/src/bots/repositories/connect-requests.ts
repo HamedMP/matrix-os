@@ -8,7 +8,7 @@
  */
 import { sql, type Selectable } from "kysely";
 import type { BotConnectRequestsTable } from "../database.js";
-import { BotStateError, isoTimestamp, newBotStateId, toSafeInteger, type BotExecutor } from "./shared.js";
+import { BotStateError, isoTimestamp, newBotStateId, toSafeInteger, withTransaction, type BotExecutor } from "./shared.js";
 
 const MAX_CONNECTIONS = 64;
 const MAX_LIFETIME_MS = 15 * 60_000;
@@ -107,7 +107,8 @@ export function createBotConnectRequestsRepository(db: BotExecutor) {
     },
     /**
      * Applies the reconciliation outcome at `baseRevision`. A still-pending
-     * outcome changes nothing. Returns the outcome that was recorded.
+     * outcome changes nothing. The row is locked while the outcome is
+     * computed and written, in one transaction. Returns the recorded outcome.
      */
     async reconcile(input: {
       ownerId: string;
@@ -116,25 +117,32 @@ export function createBotConnectRequestsRepository(db: BotExecutor) {
       currentConnectionIds: readonly string[];
       now: string;
     }, executor: BotExecutor = db): Promise<{ request: BotConnectRequest; outcome: BotConnectOutcome }> {
-      const current = await get(input, executor);
-      if (!current) throw new BotStateError("not_found");
-      if (current.status !== "pending") throw new BotStateError("invalid_transition");
-      const outcome = connectOutcome(current, input.currentConnectionIds, input.now);
-      if (outcome.status === "pending") return { request: current, outcome };
-      const row = await executor.updateTable("bot_connect_requests")
-        .set({
-          status: outcome.status,
-          completed_connection_id: outcome.status === "completed" ? outcome.connectionId : null,
-          revision: sql<number>`revision + 1`,
-          updated_at: input.now,
-        })
-        .where("owner_id", "=", input.ownerId).where("request_id", "=", input.requestId)
-        .where("status", "=", "pending").where("revision", "=", input.baseRevision)
-        .where((eb) => (outcome.status === "expired" ? eb("expires_at", "<=", input.now) : eb("expires_at", ">", input.now)))
-        .returningAll()
-        .executeTakeFirst();
-      if (!row) throw new BotStateError("revision_conflict");
-      return { request: fromRow(row), outcome };
+      return withTransaction(executor, async (trx) => {
+        const locked = await trx.selectFrom("bot_connect_requests").selectAll()
+          .where("owner_id", "=", input.ownerId).where("request_id", "=", input.requestId)
+          .forUpdate()
+          .executeTakeFirst();
+        if (!locked) throw new BotStateError("not_found");
+        const current = fromRow(locked);
+        if (current.status !== "pending") throw new BotStateError("invalid_transition");
+        if (current.revision !== input.baseRevision) throw new BotStateError("revision_conflict");
+        const outcome = connectOutcome(current, input.currentConnectionIds, input.now);
+        if (outcome.status === "pending") return { request: current, outcome };
+        const row = await trx.updateTable("bot_connect_requests")
+          .set({
+            status: outcome.status,
+            completed_connection_id: outcome.status === "completed" ? outcome.connectionId : null,
+            revision: sql<number>`revision + 1`,
+            updated_at: input.now,
+          })
+          .where("owner_id", "=", input.ownerId).where("request_id", "=", input.requestId)
+          .where("status", "=", "pending").where("revision", "=", input.baseRevision)
+          .where((eb) => (outcome.status === "expired" ? eb("expires_at", "<=", input.now) : eb("expires_at", ">", input.now)))
+          .returningAll()
+          .executeTakeFirst();
+        if (!row) throw new BotStateError("revision_conflict");
+        return { request: fromRow(row), outcome };
+      });
     },
     async cancel(input: { ownerId: string; requestId: string; now: string }, executor: BotExecutor = db): Promise<boolean> {
       const row = await executor.updateTable("bot_connect_requests")

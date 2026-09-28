@@ -123,12 +123,13 @@ export function createBotApprovalsRepository(db: BotExecutor) {
         .returningAll()
         .executeTakeFirst();
       if (row) return { status: "claimed", approval: fromRow(row) };
-      // One conditional update: an approved, unclaimed row whose binding no longer
-      // matches is invalidated, with no separate read between the check and the write.
+      // One conditional update: an approved, unclaimed, unexpired row whose binding no
+      // longer matches is invalidated, with no separate read between the check and the
+      // write. An expired one is left for the expiry sweep to report as expired.
       const invalidated = await executor.updateTable("bot_approvals")
         .set({ status: "invalidated", revision: sql<number>`revision + 1`, updated_at: input.now })
         .where("owner_id", "=", input.ownerId).where("approval_id", "=", input.approvalId)
-        .where("status", "=", "approved").where("claimed_at", "is", null)
+        .where("status", "=", "approved").where("claimed_at", "is", null).where("expires_at", ">", input.now)
         .where((eb) => eb.not(eb.and([
           eb("run_id", "=", input.runId),
           eb("tool", "=", input.tool),
