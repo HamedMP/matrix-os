@@ -73,6 +73,8 @@ import {
 import { createLaunchReadinessRoutes } from './launch-readiness-routes.js';
 import { createHostBundleRoutes } from './host-bundle-routes.js';
 import { createPrivatePreviewUpdateRoutes } from './private-preview-update-routes.js';
+import { createPrivatePreviewRoutes } from './private-preview-routes.js';
+import { parseInternalOrganizationId } from './private-preview-access.js';
 import { createGoldenSnapshotRoutes } from './golden-snapshot-routes.js';
 import type { GoldenSnapshotService } from './golden-snapshot-service.js';
 import type { GoldenSnapshotRuntimeConfig } from './golden-snapshot-schema.js';
@@ -565,12 +567,13 @@ export function createApp(deps: {
   }
 
   const journeyAppOrigin = appOrigin(appEnv);
+  const resolveJourneyUser = createJourneyUserResolver({
+    clerkAuth: clerkAuth ?? undefined,
+    syncJwtSecret: platformJwtSecret ?? undefined,
+  });
   app.route('/', createJourneyRoutes({
     db,
-    resolveUserId: createJourneyUserResolver({
-      clerkAuth: clerkAuth ?? undefined,
-      syncJwtSecret: platformJwtSecret ?? undefined,
-    }),
+    resolveUserId: resolveJourneyUser,
     provisionRuntime: deps.customerVpsService ? provisionRuntimeForJourney : undefined,
     resumePrebillingPreparation: prebilling
       ? (input) => prebilling.resumePreparation(input)
@@ -601,6 +604,16 @@ export function createApp(deps: {
       publicSiteUrl: appEnv.MATRIX_PUBLIC_SITE_URL ?? 'https://matrix-os.com',
     }));
   }
+
+  // Private Preview routes are platform-owned and must never reach a VPS.
+  app.route('/', createPrivatePreviewRoutes({
+    db,
+    service: deps.customerVpsService,
+    resolveActor: resolveJourneyUser,
+    internalOrganizationId: parseInternalOrganizationId(appEnv.MATRIX_INTERNAL_CLERK_ORG_ID),
+    platformSecret,
+    logRouteError: logPlatformRouteError,
+  }));
 
   // Collaboration routes must precede personal session routing so recipients
   // without a provisioned computer reach the owner's registered authority.
