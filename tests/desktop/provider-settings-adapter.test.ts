@@ -194,6 +194,19 @@ describe("desktop provider settings transport", () => {
 });
 
 describe("desktop provider connection actions", () => {
+  it.each(["before request", "before navigation"])("rejects checkout when its identity leaves %s", async (boundary) => {
+    let current = boundary !== "before request";
+    const post = vi.fn(async () => {
+      current = false;
+      return { url: "https://checkout.stripe.com/c/pay/cs_previous" };
+    });
+    const openExternal = vi.fn();
+    expect(await openAiCreditCheckout({ api: api({ post }), runtimeSlot: "primary", packageId: "usd_5",
+      requestId: crypto.randomUUID(), openExternal, isIdentityCurrent: () => current })).toBe(false);
+    expect(post).toHaveBeenCalledTimes(boundary === "before request" ? 0 : 1);
+    expect(openExternal).not.toHaveBeenCalled();
+  });
+
   it("waits for cold readiness and payment checkout while other authenticated requests keep their default", async () => {
     vi.useFakeTimers();
     const timeout = vi.spyOn(AbortSignal, "timeout").mockImplementation(ms => {

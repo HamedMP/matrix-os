@@ -147,10 +147,12 @@ export async function openAiCreditCheckout(input: {
   requestId: string;
   openExternal?: OpenExternal;
   signal?: AbortSignal;
+  isIdentityCurrent?: () => boolean;
 }): Promise<boolean> {
   const timeout = AbortSignal.timeout(FUNDED_AI_CHECKOUT_TIMEOUT_MS);
   const signal = input.signal ? AbortSignal.any([input.signal, timeout]) : timeout;
   try {
+    if (input.isIdentityCurrent?.() === false) return false;
     signal.throwIfAborted();
     const result = await input.api.post<unknown>("/billing/ai-credit/checkout", {
       packageId: input.packageId,
@@ -160,6 +162,7 @@ export async function openAiCreditCheckout(input: {
     signal.throwIfAborted();
     const url = result && typeof result === "object" ? (result as { url?: unknown }).url : undefined;
     if (!isStripeCheckoutUrl(url)) return false;
+    if (input.isIdentityCurrent?.() === false) return false;
     const openExternal = input.openExternal ?? ((target) => invoke("shell:open-external", { url: target }));
     await openExternal(url);
     return true;

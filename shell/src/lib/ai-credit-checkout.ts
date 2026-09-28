@@ -83,12 +83,14 @@ export async function openWebAiCreditCheckout(input: {
   fetcher?: typeof fetch;
   navigate?: (url: string) => void;
   signal?: AbortSignal;
+  isIdentityCurrent?: () => boolean;
 }): Promise<void> {
   const fetcher = input.fetcher ?? fetch;
   const navigate = input.navigate ?? ((url: string) => window.location.assign(url));
   const timeout = AbortSignal.timeout(FUNDED_AI_CHECKOUT_TIMEOUT_MS);
   const signal = input.signal ? AbortSignal.any([input.signal, timeout]) : timeout;
   try {
+    if (input.isIdentityCurrent?.() === false) throw new AiCreditCheckoutError();
     signal.throwIfAborted();
     const response = await fetcher("/billing/ai-credit/checkout", {
       method: "POST",
@@ -109,6 +111,7 @@ export async function openWebAiCreditCheckout(input: {
     signal.throwIfAborted();
     const url = value && typeof value === "object" ? (value as { url?: unknown }).url : undefined;
     if (!isStripeCheckoutUrl(url)) throw new AiCreditCheckoutError();
+    if (input.isIdentityCurrent?.() === false) throw new AiCreditCheckoutError();
     navigate(url);
   } catch (error) {
     if (error instanceof AiCreditCheckoutError) throw error;
