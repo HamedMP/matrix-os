@@ -22,6 +22,7 @@ import { createPlatformOrganizations } from "../organizations/wiring.js";
 import { createPlatformCollaborationDirect, loadCollaborationRelayOrigin } from "./direct-wiring.js";
 import { PlatformCollaborationRepository } from "./repository.js";
 import type { RuntimeEndpointPlatformDatabase } from "./runtime-endpoints.js";
+import { collaborationRelayHandle, collaborationRuntimeOrigin } from "./runtime-machine.js";
 import { PlatformCollaborationCutover } from "./cutover.js";
 import { createPlatformCutoverHomeResolver } from "./cutover-home-transport.js";
 import { createCompatibleDirectBuildVerifier } from "./compatible-build.js";
@@ -129,14 +130,13 @@ export async function bootstrapPlatformCollaboration(
     resolveRelayHandle: async (runtime) => {
       const machineId = parseVpsRuntimeId(runtime.runtimeId);
       const machine = machineId ? await getUserMachine(options.db, machineId) : undefined;
-      return machine && machine.status === "running" && machine.clerkUserId === runtime.ownerId ? machine.handle : null;
+      return collaborationRelayHandle(machine, runtime.ownerId);
     },
     resolveOrganization: async (scopeId) => (await new PlatformCollaborationRepository(collaborationDb).getDirectoryRoute(scopeId))?.organizationId ?? null,
     resolveRuntimeOrigin: async (runtimeId, ownerId) => {
       const machineId = parseVpsRuntimeId(runtimeId);
       const machine = machineId ? await getUserMachine(options.db, machineId) : undefined;
-      if (!machine || machine.status !== "running" || !machine.publicIPv4 || machine.clerkUserId !== ownerId) return null;
-      return `https://${machine.publicIPv4}:443`;
+      return collaborationRuntimeOrigin(machine, ownerId);
     },
     relayFetch: (input, init) => fetch(input, {
       ...init,

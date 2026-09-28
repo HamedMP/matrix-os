@@ -1,5 +1,8 @@
+import { isReservedMatrixOsHandle } from '@matrix-os/clerk-sync';
 import { z } from 'zod/v4';
 import { DeveloperToolsSchema } from './developer-tools.js';
+
+export { PRIVATE_PREVIEW_HANDLE_PATTERN } from '@matrix-os/clerk-sync';
 
 export const CustomerVpsStatusSchema = z.enum([
   'provisioning',
@@ -16,6 +19,10 @@ export const CustomerVpsStatusSchema = z.enum([
 export type CustomerVpsStatus = z.infer<typeof CustomerVpsStatusSchema>;
 
 export const SafeHandleSchema = z.string().regex(/^[a-z0-9][a-z0-9-]{1,62}$/);
+/** Handles that customer and account-sync paths may assign; excludes platform-reserved machine handles. */
+export const CustomerHandleSchema = SafeHandleSchema.refine((handle) => !isReservedMatrixOsHandle(handle), {
+  message: 'Handle is reserved',
+});
 export const ClerkUserIdSchema = z.string().min(3).max(256).regex(/^[A-Za-z0-9_-]+$/);
 export const PublicIPv4Schema = z.ipv4().refine((ip) => {
   const parts = ip.split('.').map(Number);
@@ -33,7 +40,7 @@ export const HetznerLocationSchema = z.enum(['fsn1', 'nbg1', 'ash', 'hil']);
 
 export const ProvisionRequestSchema = z.object({
   clerkUserId: ClerkUserIdSchema,
-  handle: SafeHandleSchema,
+  handle: CustomerHandleSchema,
   runtimeSlot: RuntimeSlotSchema.optional().default('primary'),
   serverType: HetznerServerTypeSchema.optional(),
   location: HetznerLocationSchema.optional(),
