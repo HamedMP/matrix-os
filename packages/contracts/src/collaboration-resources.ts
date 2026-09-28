@@ -151,6 +151,12 @@ export const CollaborationAppInstanceSchema = z.object({
   collaborationMode: z.enum(["scoped", "unavailable"]),
 }).strict();
 
+/** The single app catalog root reachable through a standalone app scope. */
+export const CollaborationAppRootSchema = z.object({
+  appId: CollaborationAppInstanceIdSchema,
+  catalogId: CollaborationCatalogIdSchema,
+}).strict();
+
 /** The bridge query is validated on the home against the app's read actions; the wire carries it opaquely. */
 export const CollaborationAppViewRequestSchema = z.object({ action: z.unknown() }).strict();
 export const CollaborationAppActionRequestSchema = z.object({

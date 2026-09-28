@@ -19,6 +19,8 @@ import {
   COLLABORATION_DIRECT_PROTOCOL_VERSION,
   COLLABORATION_EXPECTED_MEMBER_REVISION_HEADER,
   COLLABORATION_EXPECTED_REVISION_HEADER,
+  CollaborationAppAssetPathSchema,
+  CollaborationAppInstanceIdSchema,
   CollaborationDirectSessionSchema,
   CollaborationOwnerRuntimeSessionSchema,
   CollaborationSignedOwnerRuntimeTicketSchema,
@@ -108,7 +110,7 @@ export type CollaborationContent =
 export interface CollaborationDirectClient {
   request(scopeId: string, method: DirectMethod, path: string, body?: unknown,
     conditions?: DirectDeleteConditions, signal?: AbortSignal): Promise<unknown>;
-  /** Signed GET of a scope's file content (`/files/:fileId/content`), read up to `maxBytes`. */
+  /** Signed GET of bounded file bytes or a scoped app asset. */
   requestContent(scopeId: string, path: string, options: { maxBytes: number }): Promise<CollaborationContent>;
   requestOwnerRuntime(runtimeId: string, organizationId: string, path: string, body: unknown): Promise<unknown>;
   requestOwnerProject(runtimeId: string, organizationId: string, method: "GET" | "POST", path: string, body?: unknown): Promise<unknown>;
@@ -505,7 +507,11 @@ export function createCollaborationDirectClient(options: CollaborationDirectClie
       throw new CollaborationDirectError("invalid_request", "Invalid collaboration request");
     }
     const { path, query } = splitPath(rawPath, scopeId);
-    if (query !== "" || !new RegExp(`^/api/collaboration/scopes/${scopeId}/files/[0-9a-f-]{36}/content$`).test(path)) {
+    const fileContent = new RegExp(`^/api/collaboration/scopes/${scopeId}/files/[0-9a-f-]{36}/content$`).test(path);
+    const appAsset = new RegExp(`^/api/collaboration/scopes/${scopeId}/apps/([^/]+)/assets/(.+)$`).exec(path);
+    const scopedAsset = Boolean(appAsset && CollaborationAppInstanceIdSchema.safeParse(appAsset[1]).success
+      && CollaborationAppAssetPathSchema.safeParse(appAsset[2]).success);
+    if (query !== "" || (!fileContent && !scopedAsset)) {
       throw new CollaborationDirectError("invalid_request", "Invalid collaboration request");
     }
     const initial = record(scopeId);

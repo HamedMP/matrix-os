@@ -71,10 +71,10 @@ function jsonb(value: unknown) {
   return JSON.stringify(value) as unknown as object;
 }
 
-function parseAction(raw: unknown, expectedApp: string, allowed: readonly BridgeQueryBody["action"][]): BridgeQueryBody {
+function parseAction(raw: unknown, expectedApps: readonly string[], allowed: readonly BridgeQueryBody["action"][]): BridgeQueryBody {
   const parsed = BridgeQueryBodySchema.safeParse(raw);
   if (!parsed.success || !allowed.includes(parsed.data.action) || parsed.data.action === "listApps"
-    || !("app" in parsed.data) || parsed.data.app !== expectedApp) {
+    || !("app" in parsed.data) || !expectedApps.includes(parsed.data.app)) {
     throw new ProjectAppAdapterError("invalid_action");
   }
   return parsed.data;
@@ -205,7 +205,7 @@ export function createAppInstanceAdapter(options: {
       const root = await standaloneRoot(current, appId.data);
       const { record, bridgeAppId } = await resolveApp(root.projectId, appId.data);
       if (record.collaborationMode !== "scoped" || root.incarnation !== record.incarnation) throw new ProjectAppAdapterError("app_unavailable");
-      const parsed = parseAction(action, bridgeAppId, READ_ACTIONS);
+      const parsed = parseAction(action, [bridgeAppId, normalizeAppStorageSlug(appId.data)], READ_ACTIONS);
       const namespace = standaloneNamespace(current.scopeId, appId.data);
       return await options.db.transaction().execute(async (trx) => {
         await requireLiveScope(trx, current, false);
@@ -234,7 +234,7 @@ export function createAppInstanceAdapter(options: {
       const root = await standaloneRoot(current, appId.data);
       const { record, bridgeAppId } = await resolveApp(root.projectId, appId.data);
       if (record.collaborationMode !== "scoped" || root.incarnation !== record.incarnation) throw new ProjectAppAdapterError("app_unavailable");
-      const parsed = parseAction(envelope.data.action, bridgeAppId, MUTATION_ACTIONS);
+      const parsed = parseAction(envelope.data.action, [bridgeAppId, normalizeAppStorageSlug(appId.data)], MUTATION_ACTIONS);
       const namespace = standaloneNamespace(current.scopeId, appId.data);
       const operationKind = `resource.app.${parsed.action}`;
       const payloadHash = createHash("sha256").update(JSON.stringify({ appId: appId.data, ...envelope.data })).digest("hex");
