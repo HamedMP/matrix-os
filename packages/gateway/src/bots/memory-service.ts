@@ -39,23 +39,25 @@ const KIND_ORDER = ["preference", "fact", "episode"] as const;
 const OUTSIDE_CONTENT: readonly string[] = ["integration.call", "artifact.read"];
 /** Answer continuations are admitted under this request prefix with gateway-built text. */
 const CONTINUATION_REQUEST_PREFIX = "req_answer_";
-const WORD = /[\p{L}\p{N}]{4,}/gu;
+const WORD = /[\p{L}\p{N}]+/gu;
 
 function normalized(text: string): string {
   return text.toLocaleLowerCase().normalize("NFKC").replace(/\s+/g, " ").trim();
 }
 
-/** True when the owner's own words carry the item: verbatim, or half its significant words. */
+/** Auto-confirm only a complete owner statement, allowing its subject and verb inflection. */
 export function groundedIn(content: string, message: string): boolean {
-  const item = normalized(content).replace(/[.!?]+$/, "");
-  const said = normalized(message);
-  if (item.length > 0 && said.includes(item)) return true;
-  const words = [...new Set(item.match(WORD) ?? [])];
-  if (words.length === 0) return false;
-  const saidWords = [...new Set(said.match(WORD) ?? [])];
-  // Words match on a shared stem of up to five characters, so "prefers" matches "prefer".
-  const matched = words.filter((word) => saidWords.some((candidate) => candidate.slice(0, 5) === word.slice(0, 5)));
-  return matched.length * 2 >= words.length;
+  const statement = (text: string) => {
+    const words = normalized(text).match(WORD) ?? [];
+    if (words[0] === "i") return words.slice(1);
+    if (words[0] === "the" && words[1] === "owner") return words.slice(2);
+    return words[0] === "owner" ? words.slice(1) : words;
+  };
+  const proposed = statement(content);
+  const said = statement(message);
+  if (proposed.length === 0 || proposed.length !== said.length) return false;
+  return proposed.every((word, index) => word === said[index]
+    || (word.length >= 5 && word.endsWith("s") && word.slice(0, -1) === said[index]));
 }
 
 export type BotMemoryErrorCode = "invalid_request" | "not_found" | "conflict";
