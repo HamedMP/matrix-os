@@ -259,7 +259,7 @@ describe("shared terminal controls", () => {
     expect(await screen.findByRole("status")).toHaveTextContent("temporarily unavailable");
     expect(screen.queryByText(/no longer available/)).not.toBeInTheDocument();
     expect(screen.queryByText(/check your access/)).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Request control" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Request control" })).not.toBeInTheDocument();
     act(() => handlers().onDisconnected());
     expect(screen.getByRole("status")).toHaveTextContent("temporarily unavailable");
 
@@ -267,6 +267,23 @@ describe("shared terminal controls", () => {
     act(() => handlers().onReady(readyFrame("connection_editor_2")));
     await waitFor(() => expect(screen.queryByText(/temporarily unavailable/)).not.toBeInTheDocument());
     expect(screen.getByRole("button", { name: "Request control" })).toBeEnabled();
+  });
+
+  it("fences terminal actions while the home cannot serve the terminal, so none fails silently", async () => {
+    const { api, handlers } = apiFixture();
+    render(<SharedTerminalControls api={api} scope={scope("owner")} actorId="user_owner" />);
+    await waitFor(() => expect(api.subscribeTerminal).toHaveBeenCalled());
+    act(() => handlers().onReady(readyFrame("connection_owner")));
+    expect(await screen.findByRole("button", { name: "Stop terminal" })).toBeEnabled();
+
+    act(() => handlers().onTemporarilyUnavailable());
+    expect(await screen.findByRole("status")).toHaveTextContent("temporarily unavailable");
+    expect(screen.queryByRole("button", { name: "Stop terminal" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Request control" })).not.toBeInTheDocument();
+    expect(api.post).not.toHaveBeenCalled();
+
+    act(() => handlers().onReady(readyFrame("connection_owner_2")));
+    expect(await screen.findByRole("button", { name: "Stop terminal" })).toBeEnabled();
   });
 
   it("stops without a socket and clears local control when the socket disconnects", async () => {

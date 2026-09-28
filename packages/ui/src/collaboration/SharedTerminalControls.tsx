@@ -130,11 +130,13 @@ export function SharedTerminalControls({ api, scope, actorId, layers }: {
   const holdsControl = controller?.actor.actorId === actorId
     && state.controlConnectionId === state.connectionId
     && state.controlLeaseEpoch === controller.leaseEpoch;
-  const canControl = scope.capabilities.controlTerminal && scope.role !== "viewer"
-    && state.terminal?.status === "active" && !state.unavailable;
-  const canStop = state.terminal?.status === "active" && !state.unavailable
+  // Fenced while ended or temporarily unavailable: an action sent then could only fail, and its
+  // error banner is replaced by the reconnecting status.
+  const serviceable = state.terminal?.status === "active" && !state.unavailable && !state.temporarilyUnavailable;
+  const canControl = scope.capabilities.controlTerminal && scope.role !== "viewer" && serviceable;
+  const canStop = serviceable
     && (scope.capabilities.stopTerminal
-      || (scope.role === "editor" && state.terminal.createdBy.actorId === actorId));
+      || (scope.role === "editor" && state.terminal?.createdBy.actorId === actorId));
   const sendAction = useCallback(async (action: Record<string, unknown>) => {
     if (!state.terminal || (action.type !== "stop" && !state.connectionId)) return;
     dispatch({ type: "pending", value: true });
