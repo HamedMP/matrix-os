@@ -129,12 +129,18 @@ export function createBotOperationsRepository(db: BotExecutor) {
       transition({ ...input, to: "active" }, executor),
     markFailed: (input: { ownerId: string; clientRequestId: string; baseRevision: number; failureCode: string; now: string }, executor?: BotExecutor) =>
       transition({ ...input, to: "failed_recoverable" }, executor),
-    /** Unfinished creations last touched before `olderThan`, oldest first, for reconciliation. */
-    async listUnfinished(input: { olderThan: string; limit?: number }, executor: BotExecutor = db): Promise<BotOperation[]> {
+    /**
+     * Unfinished creations last touched before `olderThan`, oldest first, for
+     * reconciliation. `maxAttempts` leaves out operations that already failed
+     * that many times, so they cannot crowd every batch.
+     */
+    async listUnfinished(input: { olderThan: string; limit?: number; maxAttempts?: number }, executor: BotExecutor = db): Promise<BotOperation[]> {
       const limit = Math.max(1, Math.min(Math.trunc(input.limit ?? MAX_UNFINISHED_LIST), MAX_UNFINISHED_LIST));
-      const rows = await executor.selectFrom("bot_operations").selectAll()
+      let query = executor.selectFrom("bot_operations").selectAll()
         .where("status", "<>", "active")
-        .where("updated_at", "<", input.olderThan)
+        .where("updated_at", "<", input.olderThan);
+      if (input.maxAttempts !== undefined) query = query.where("attempts", "<", input.maxAttempts);
+      const rows = await query
         .orderBy("updated_at", "asc")
         .limit(limit)
         .execute();
