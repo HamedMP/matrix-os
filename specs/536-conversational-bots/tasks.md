@@ -175,7 +175,7 @@
 - [ ] T100 [P] Implement `packages/gateway/src/bots/repositories/grants.ts` and `approvals.ts`
 - [ ] T101 [P] Implement `packages/gateway/src/bots/repositories/memory.ts`
 - [ ] T102 [P] Implement `packages/gateway/src/bots/repositories/tasks.ts`, `checkpoints.ts`, and `sessions.ts`
-- [ ] T103 L6 checkpoint: per-layer PR procedure; branch `536-l6-gateway-bot-state`
+- [ ] T103 L6 checkpoint: per-layer PR procedure, split to stay under the PR size limit: `536-l6a-gateway-bot-state` (T090, T091, T095, T096 sessions, T097, T098, T102) and `536-l6b-gateway-bot-interactions` (T092-T094, the rest of T096, T099-T101)
 
 ---
 
