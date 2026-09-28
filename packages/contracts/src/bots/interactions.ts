@@ -33,7 +33,7 @@ const AccountChoicePayloadSchema = z.object({
   options: z.array(z.object({
     connectionId: BotConnectionIdSchema,
     label: BotAccountLabelSchema,
-  }).strict()).min(2).max(10)
+  }).strict()).min(1).max(10)
     .refine((options) => new Set(options.map((option) => option.connectionId)).size === options.length, {
       message: "Account options must be unique",
     }),

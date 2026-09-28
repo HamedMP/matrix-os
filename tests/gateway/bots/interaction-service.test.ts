@@ -96,6 +96,14 @@ describe("bot questions", () => {
     expect((await events()).map((event) => event.type)).toEqual(["interaction.requested", "interaction.resolved"]);
   });
 
+  it("reconstructs a blocking question continuation for older resolved rows", async () => {
+    const pending = await ask();
+    const body = { kind: "question", baseRevision: 1, answer: "Keep it short." };
+    const first = await service().resolve(OWNER, CHAT, pending.interactionId, body);
+    await db.updateTable("bot_interactions").set({ resolution: { answer: "Keep it short." } }).where("interaction_id", "=", pending.interactionId).execute();
+    expect((await service().resolve(OWNER, CHAT, pending.interactionId, body)).continuation).toEqual(first.continuation);
+  });
+
   it("refuses the wrong responder, chat, kind, or question, and answers after expiry as expired", async () => {
     const pending = await ask();
     const body = { kind: "question", baseRevision: 1, answer: "Yes" };

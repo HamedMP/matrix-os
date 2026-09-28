@@ -33,7 +33,11 @@ import { createBotBindingsRepository } from "../bots/repositories/bindings.js";
 import { createBotCheckpointsRepository } from "../bots/repositories/checkpoints.js";
 import { createBotOperationsRepository } from "../bots/repositories/operations.js";
 import { createBotSessionsRepository } from "../bots/repositories/sessions.js";
+import { createBotAccessHandlers } from "../bots/access-handlers.js";
 import { createBotStateTransactions } from "../bots/events.js";
+import { createBotGrantService, type BotGrantService } from "../bots/grants-service.js";
+import { createBotIntegrationClient, type BotIntegrationTransport } from "../bots/integration-client.js";
+import { createBotIntegrationTools } from "../bots/integration-tools.js";
 import { createBotInteractionService, type BotInteractionService } from "../bots/interactions.js";
 import { createBotMemoryService, type BotMemoryService } from "../bots/memory-service.js";
 import { resolveBotRoute } from "../bots/route-resolver.js";
@@ -51,6 +55,7 @@ export interface BotServices {
   instantiation: BotInstantiation;
   interactions: BotInteractionService;
   memory: BotMemoryService;
+  grants: BotGrantService;
   botChats: BotChatLookup;
   /** Present only when the scope runtime can run bot workloads. */
   adapter?: CanonicalChatProviderAdapter<BotChatState>;
@@ -64,6 +69,8 @@ export async function startBots(options: {
   executionRoots: Pick<ChatExecutionRootResolver, "resolve">;
   providers: { getSnapshot(): Promise<AiProviderSnapshotV3> };
   host?: ScopeRuntimeHost;
+  /** How the gateway reaches the owner's integrations; without it bots have no integration tools. */
+  integrations?: BotIntegrationTransport;
   fundedCredentialProvider?: MatrixFundedCredentialProvider;
   fundedAdmission?: FundedAdmissionQueue;
   now?: () => Date;
@@ -90,8 +97,15 @@ export async function startBots(options: {
   const reconciler = createBotOperationReconciler({ operations: createBotOperationsRepository(db), instantiation });
   await reconciler.start();
   const transact = createBotStateTransactions(options.repository);
-  const interactions = createBotInteractionService({ transact });
+  const integrationTools = options.integrations
+    ? createBotIntegrationTools({ client: createBotIntegrationClient(options.integrations), transact, recipes, agents: options.agents })
+    : undefined;
+  const interactions = createBotInteractionService({
+    transact,
+    ...(integrationTools ? { handlers: createBotAccessHandlers({ tools: integrationTools }) } : {}),
+  });
   const memory = createBotMemoryService({ transact });
+  const grants = createBotGrantService({ transact });
   // Overdue questions are expired and announced; passes never overlap and stop on close.
   let sweeping: Promise<unknown> | undefined;
   const sweep = setInterval(() => {
@@ -114,7 +128,7 @@ export async function startBots(options: {
   const host = options.host;
   if (!host?.available) {
     return {
-      instantiation, interactions, memory, botChats,
+      instantiation, interactions, memory, grants, botChats,
       async close() {
         await stopSweep();
         await reconciler.stop();
@@ -176,7 +190,9 @@ export async function startBots(options: {
     checkpoints,
     runs: orchestrator.runSource,
     events: orchestrator.eventSink,
-    tools: createBotToolDispatcher({ homePath: options.homePath, interactions, memory }),
+    tools: createBotToolDispatcher({
+      homePath: options.homePath, interactions, memory, ...(integrationTools ? { integrations: integrationTools } : {}),
+    }),
     inference: {
       homePath: options.homePath,
       lifetime: lifetime.signal,
@@ -194,6 +210,7 @@ export async function startBots(options: {
     instantiation,
     interactions,
     memory,
+    grants,
     botChats,
     adapter,
     async close() {

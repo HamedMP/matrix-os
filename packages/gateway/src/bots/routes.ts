@@ -4,7 +4,7 @@
  * Bodies are bounded and strictly validated, errors come from one mapper
  * with allowlisted codes and generic messages, and responses are private.
  */
-import { BotInteractionIdSchema, BotMemoryItemIdSchema, CanonicalChatIdSchema, ChatAgentIdSchema } from "@matrix-os/contracts";
+import { BotGrantIdSchema, BotInteractionIdSchema, BotMemoryItemIdSchema, CanonicalChatIdSchema, ChatAgentIdSchema } from "@matrix-os/contracts";
 import type { Context } from "hono";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
@@ -13,6 +13,7 @@ import type { BotContinuationAdmitter } from "./continuations.js";
 import { BotInstantiationError, type BotInstantiation } from "./instantiation.js";
 import { BotInteractionError, type BotInteractionService } from "./interactions.js";
 import { BotMemoryError, type BotMemoryService } from "./memory-service.js";
+import { BotGrantError, type BotGrantService } from "./grants-service.js";
 
 const MAX_BODY_BYTES = 64 * 1024;
 
@@ -35,6 +36,7 @@ export function createBotRoutes(options: {
   instantiation?: Pick<BotInstantiation, "instantiate">;
   interactions?: Pick<BotInteractionService, "listPending" | "resolve">;
   memory?: Pick<BotMemoryService, "forget" | "confirm">;
+  grants?: Pick<BotGrantService, "revoke">;
   /** Admits the owner's answer as the next message; resolved at route registration. */
   admitContinuation?: BotContinuationAdmitter;
   getPrincipal(context: Context): RequestPrincipal;
@@ -55,7 +57,8 @@ export function createBotRoutes(options: {
       return context.json(mapped.body, mapped.status);
     }
     if (error instanceof SyntaxError) return errorResponse(context, "invalid_request");
-    if (error instanceof BotInstantiationError || error instanceof BotInteractionError || error instanceof BotMemoryError) {
+    if (error instanceof BotInstantiationError || error instanceof BotInteractionError || error instanceof BotMemoryError
+      || error instanceof BotGrantError) {
       return errorResponse(context, error.code);
     }
     console.warn("[bots] request failed:", error instanceof Error ? error.name : "UnknownError");
@@ -116,6 +119,18 @@ export function createBotRoutes(options: {
       return context.json(result);
     });
   }
+
+  // DELETE is a mutation: bounded like the others, although it ignores any body.
+  routes.delete("/api/chat-agents/:agentId/grants/:grantId", limit, async (context) => {
+    const principal = options.getPrincipal(context);
+    if (!options.grants) return errorResponse(context, "unavailable");
+    const agentId = ChatAgentIdSchema.safeParse(context.req.param("agentId"));
+    const grantId = BotGrantIdSchema.safeParse(context.req.param("grantId"));
+    if (!agentId.success || !grantId.success) return errorResponse(context, "invalid_request");
+    const result = await options.grants.revoke(principal.userId, agentId.data, grantId.data);
+    context.header("Cache-Control", "private, no-store");
+    return context.json(result);
+  });
 
   return routes;
 }
