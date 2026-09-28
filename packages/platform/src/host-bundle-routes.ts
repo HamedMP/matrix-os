@@ -57,6 +57,9 @@ const HostBundleReleaseBodySchema = z.object({
   updateType: z.enum(['manual', 'auto']).optional(),
   changelog: z.string().max(32_000).nullable().optional(),
   channel: z.string().regex(HOST_BUNDLE_CHANNEL_PATTERN).optional(),
+  // Spec 537 provenance, recorded by the Preview workflow for same-repository PRs.
+  sourcePr: z.number().int().min(1).max(999_999_999).optional(),
+  sourceAuthor: z.string().regex(/^[A-Za-z0-9-]{1,39}$/).optional(),
 }).superRefine((value, ctx) => {
   if (value.snapshotEligible === true
     && !GoldenSnapshotBundleVersionSchema.safeParse(value.version).success) {

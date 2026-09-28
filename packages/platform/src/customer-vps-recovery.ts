@@ -278,6 +278,7 @@ export function createCustomerVpsRecovery(context: CustomerVpsContext) {
             handle: row.handle,
             runtimeSlot: row.runtimeSlot,
             developerTools: row.developerTools,
+            provisioningClass: row.provisioningClass,
           },
           row.machineId,
           payload.registrationToken,
@@ -431,6 +432,11 @@ export function createCustomerVpsRecovery(context: CustomerVpsContext) {
     if (active.status === 'resizing') {
       throw new CustomerVpsError(409, 'invalid_state', 'Machine cannot recover');
     }
+    // Spec 537: a Private Preview is disposable and pinned to the bundle its
+    // owner confirmed. Recovery would boot a generic release, so it is refused.
+    if (active.provisioningClass === 'private-preview') {
+      throw new CustomerVpsError(409, 'invalid_state', 'Destroy the Private Preview and start it again');
+    }
     // This R2 check is an advisory fast-fail before the DB claim. The
     // claimUserMachineRecovery WHERE clause below remains the authoritative
     // concurrency guard; keeping the backup check before the claim avoids
@@ -464,6 +470,7 @@ export function createCustomerVpsRecovery(context: CustomerVpsContext) {
         handle: active.handle,
         runtimeSlot: active.runtimeSlot,
         developerTools: active.developerTools,
+        provisioningClass: active.provisioningClass,
       },
       machineId,
       registration.token,

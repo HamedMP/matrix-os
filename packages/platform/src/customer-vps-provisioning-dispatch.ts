@@ -232,6 +232,7 @@ export function createCustomerVpsProvisioningDispatcher(context: CustomerVpsCont
           handle: row.handle,
           runtimeSlot: row.runtimeSlot,
           developerTools: row.developerTools,
+          provisioningClass: row.provisioningClass,
         },
         row.machineId,
         payload.registrationToken,
