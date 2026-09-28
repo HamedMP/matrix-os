@@ -16,7 +16,6 @@ import {
   getContainer,
   getRunningUserMachineByHandle,
   listContainers,
-  sweepStaleCheckoutAttempts,
   updateContainerStatus,
   type PlatformDB,
 } from './db.js';
@@ -37,17 +36,21 @@ import {
   loadPlatformRuntimeConfig,
 } from './runtime-mode.js';
 import { resolvePlatformIntegrationConfig } from './integration-config.js';
-import { buildPlatformVerificationToken } from './platform-token.js';
 import { createInternalCustomMcpApprovalRouteOptions } from './custom-mcp-approval-route-options.js';
 import { createCustomMcpProjectionRequest } from './custom-mcp-projection.js';
 import {
   createGranolaPresetBroker,
   type ManagedMcpPresetBroker,
 } from './granola-preset-broker.js';
-import { backfillFirstRunRecords } from './journey.js';
 import { logPlatformRouteError } from './platform-route-utils.js';
 import { CustomerVpsError } from './customer-vps-errors.js';
-import { dispatchBillingRuntimeActions } from './billing-runtime-actions.js';
+import {
+  runCustomerVpsReconciliationPass,
+  startCustomerVpsReconciliationWorker,
+  type CustomerVpsReconciliationWorker,
+} from './customer-vps-reconciliation-worker.js';
+import { parseInternalOrganizationId } from './private-preview-access.js';
+import { createPrivatePreviewSweep } from './private-preview-sweep.js';
 import { registerPlatformWebSocketUpgradeHandler } from './platform-websocket-upgrade.js';
 import { createAiFundedPolicyRepository, type AiFundedPolicyRepository } from './ai-funded-policy-repository.js';
 import { cleanupExpiredReservations } from './ai-funded-reservation-cleanup.js';
@@ -717,8 +720,7 @@ async function startPlatformServerWithCleanup(
   let customerVpsService: CustomerVpsService | undefined;
   let goldenSnapshotService: GoldenSnapshotService | undefined;
   let goldenSnapshotConfig: GoldenSnapshotRuntimeConfig | undefined;
-  let customerVpsReconciliationInterval: ReturnType<typeof setInterval> | undefined;
-  let customerVpsReconciliationPromise: Promise<void> | undefined;
+  let customerVpsReconciliationWorker: CustomerVpsReconciliationWorker | undefined;
   let goldenSnapshotInterval: ReturnType<typeof setInterval> | undefined;
   let goldenSnapshotPromise: Promise<void> | undefined;
   let billingRuntimeCaptureEvent: ((
@@ -906,86 +908,24 @@ async function startPlatformServerWithCleanup(
     }
     const reconciliationIntervalMs = Number(process.env.CUSTOMER_VPS_RECONCILIATION_INTERVAL_MS ?? 60_000);
     if (backgroundWorkersEnabled && reconciliationIntervalMs > 0) {
-      let reconciliationRunning = false;
-      const runCustomerVpsReconciliation = async () => {
-        if (reconciliationRunning || !customerVpsService) return;
-        reconciliationRunning = true;
-        customerVpsReconciliationPromise = (async () => {
-          try {
-            try {
-              const result = await customerVpsService!.reconcileProvisioning();
-              if (result.checked > 0) {
-                console.log(
-                  `[platform] customer VPS reconciliation checked=${result.checked} running=${result.running} failed=${result.failed}`,
-                );
-              }
-            } catch (err: unknown) {
-              logPlatformRouteError('customer VPS reconciliation', err);
-            }
-            try {
-              const result = await dispatchBillingRuntimeActions({
-                db,
-                customerVpsService: customerVpsService!,
-                captureEvent: billingRuntimeCaptureEvent,
-              });
-              if (result.checked > 0) {
-                console.log(
-                  `[platform] billing runtime actions checked=${result.checked} completed=${result.completed} retried=${result.retried} failed=${result.failed}`,
-                );
-              }
-            } catch (err: unknown) {
-              logPlatformRouteError('billing runtime action reconciliation', err);
-            }
-            try {
-              const thirtyDaysAgoIso = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
-              await sweepStaleCheckoutAttempts(
-                db,
-                thirtyDaysAgoIso,
-                new Date().toISOString(),
-                200,
-              );
-            } catch (err: unknown) {
-              logPlatformRouteError('checkout attempt sweep', err);
-            }
-            try {
-              await backfillFirstRunRecords(db, {
-                limit: 25,
-                probe: async (machine) => {
-                  if (!machine.publicIPv4 || !customerVpsConfig.platformSecret) return null;
-                  const token = buildPlatformVerificationToken(machine.handle, customerVpsConfig.platformSecret);
-                  const res = await fetch(`https://${machine.publicIPv4}:443/api/settings/onboarding-status`, {
-                    headers: { authorization: `Bearer ${token}` },
-                    signal: AbortSignal.timeout(3000),
-                    redirect: 'error',
-                    ...(customerVpsProxyDispatcher ? { dispatcher: customerVpsProxyDispatcher } : {}),
-                  } as RequestInit & { dispatcher?: import('undici').Dispatcher });
-                  if (!res.ok) return null;
-                  let body: { complete?: unknown } | null = null;
-                  try {
-                    body = (await res.json()) as { complete?: unknown };
-                  } catch (parseErr: unknown) {
-                    console.warn(
-                      `[platform] backfill onboarding-status parse failed machine=${machine.machineId}`,
-                      parseErr instanceof Error ? parseErr.name : typeof parseErr,
-                    );
-                    return null;
-                  }
-                  return body?.complete === true ? { completedAt: new Date().toISOString() } : null;
-                },
-              });
-            } catch (err: unknown) {
-              logPlatformRouteError('first-run backfill', err);
-            }
-          } finally {
-            reconciliationRunning = false;
-            customerVpsReconciliationPromise = undefined;
-          }
-        })();
-        await customerVpsReconciliationPromise;
-      };
-      void runCustomerVpsReconciliation();
-      customerVpsReconciliationInterval = setInterval(runCustomerVpsReconciliation, reconciliationIntervalMs);
-      customerVpsReconciliationInterval.unref();
+      const service = customerVpsService;
+      const sweepPrivatePreviews = createPrivatePreviewSweep({
+        db,
+        service,
+        internalOrganizationId: parseInternalOrganizationId(process.env.MATRIX_INTERNAL_CLERK_ORG_ID),
+        logError: logPlatformRouteError,
+      });
+      customerVpsReconciliationWorker = startCustomerVpsReconciliationWorker({
+        intervalMs: reconciliationIntervalMs,
+        runPass: () => runCustomerVpsReconciliationPass({
+          db,
+          customerVpsService: service,
+          platformSecret: customerVpsConfig.platformSecret,
+          customerVpsProxyDispatcher,
+          getBillingRuntimeCaptureEvent: () => billingRuntimeCaptureEvent,
+          sweepPrivatePreviews,
+        }),
+      });
     }
   }
 
@@ -1053,9 +993,7 @@ async function startPlatformServerWithCleanup(
     if (shuttingDown) return;
     shuttingDown = true;
     console.log(`[platform] Received ${signal}, shutting down`);
-    if (customerVpsReconciliationInterval) {
-      clearInterval(customerVpsReconciliationInterval);
-    }
+    customerVpsReconciliationWorker?.stop();
     if (goldenSnapshotInterval) clearInterval(goldenSnapshotInterval);
     if (customMcpSweepInterval) clearInterval(customMcpSweepInterval);
     const shutdownTimer = setTimeout(() => {
@@ -1071,9 +1009,7 @@ async function startPlatformServerWithCleanup(
         console.error('[platform] HTTP server close failed:', err.message);
       }
       (async () => {
-        if (customerVpsReconciliationPromise) {
-          await customerVpsReconciliationPromise;
-        }
+        await customerVpsReconciliationWorker?.drain();
         if (goldenSnapshotPromise) await goldenSnapshotPromise;
         await Promise.allSettled([
           collaboration?.shutdown(),

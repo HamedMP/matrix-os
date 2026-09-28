@@ -78,3 +78,20 @@ export async function confirmPrivatePreviewBundle(
     .executeTakeFirst();
   return row ? mapUserMachine(row) : undefined;
 }
+
+/** Oldest first, so an expiry sweep reaches the longest-running machines within its bound. */
+export async function listActivePrivatePreviews(
+  db: PlatformDB,
+  limit: number,
+): Promise<UserMachineRecord[]> {
+  await db.ready;
+  const rows = await db.executor
+    .selectFrom('user_machines')
+    .selectAll()
+    .where('provisioning_class', '=', 'private-preview')
+    .where('deleted_at', 'is', null)
+    .orderBy('provisioned_at', 'asc')
+    .limit(limit)
+    .execute();
+  return rows.map(mapUserMachine);
+}
