@@ -37,11 +37,12 @@ import { createBotTasksRepository } from "../bots/repositories/tasks.js";
 import { resolveBotRoute } from "../bots/route-resolver.js";
 import { BotRuntimeRegistry } from "../bots/runtime-registry.js";
 import { createBotTaskOrchestrator } from "../bots/task-orchestrator.js";
-import { createBotToolDispatcher } from "../bots/tool-dispatcher.js";
+import { createBotToolDispatcher, sweepBotWorkspaceSaves } from "../bots/tool-dispatcher.js";
 
 /** Passes before the first run is admitted; any rest is finished in the background. */
 const MAX_CHECKPOINT_RECONCILE_PASSES = 50;
 const CHECKPOINT_RECONCILE_INTERVAL_MS = 5_000;
+const SAVE_SWEEP_INTERVAL_MS = 10 * 60_000;
 
 export interface BotServices {
   instantiation: BotInstantiation;
@@ -114,6 +115,16 @@ export async function startBots(options: {
       .finally(() => { reconciling = undefined; });
   }, interval) : undefined;
   checkpointTimer?.unref();
+  // Staged saves a stopped process left behind are removed at start and then periodically.
+  let sweepingSaves: Promise<unknown> | undefined;
+  const sweepSaves = () => {
+    sweepingSaves ??= sweepBotWorkspaceSaves(options.homePath).catch((error: unknown) => {
+      console.warn("[bots] staged save cleanup failed:", error instanceof Error ? error.name : "UnknownError");
+    }).finally(() => { sweepingSaves = undefined; });
+  };
+  sweepSaves();
+  const saveSweepTimer = setInterval(sweepSaves, SAVE_SWEEP_INTERVAL_MS);
+  saveSweepTimer.unref();
 
   const lifetime = new AbortController();
   const registry = new BotRuntimeRegistry();
@@ -157,7 +168,9 @@ export async function startBots(options: {
     adapter,
     async close() {
       if (checkpointTimer) clearInterval(checkpointTimer);
+      clearInterval(saveSweepTimer);
       await reconciling;
+      await sweepingSaves;
       await reconciler.stop();
       unregister();
       lifetime.abort();
