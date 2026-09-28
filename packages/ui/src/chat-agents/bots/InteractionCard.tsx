@@ -5,10 +5,11 @@ import { chatAgentButtonClass, chatAgentMutedStyle } from "../theme.js";
 const MAX_STRUCTURED_ANSWER_BYTES = 700;
 const encoder = new TextEncoder();
 
-export function InteractionCard({ interaction, onResolve, onResolved }: {
+export function InteractionCard({ interaction, onResolve, onResolved, actionsAvailable = true }: {
   interaction: BotInteraction;
   onResolve: (request: ResolveBotInteractionRequest) => Promise<ResolveBotInteractionResponse | void>;
   onResolved?: () => void;
+  actionsAvailable?: boolean;
 }) {
   const [now, setNow] = useState(() => new Date().toISOString());
   const [selectedAnswers, setSelectedAnswers] = useState<Record<string, string[]>>({});
@@ -25,7 +26,7 @@ export function InteractionCard({ interaction, onResolve, onResolved }: {
     return () => clearTimeout(timer);
   }, [interaction.expiresAt, interaction.status]);
   const card = botInteractionCard(interaction, now);
-  const actionable = card.state === "actionable" && !resolved;
+  const actionable = card.state === "actionable" && !resolved && actionsAvailable;
 
   const decide = async (request: ResolveBotInteractionRequest) => {
     if (!actionable || pending) return;
@@ -44,9 +45,9 @@ export function InteractionCard({ interaction, onResolve, onResolved }: {
       setPending(false);
     }
   };
-  const typeAnswer = (questionId: string, multiSelect: boolean | undefined, value: string) => {
+  const typeAnswer = (questionId: string, value: string) => {
     setTypedAnswers((current) => ({ ...current, [questionId]: value }));
-    if (!multiSelect && value.trim()) setSelectedAnswers((current) => ({ ...current, [questionId]: [] }));
+    // Keep the last radio choice underneath Other so clearing Other restores it.
   };
   const payload = interaction.payload;
   const questionAnswers = payload?.kind === "question"
@@ -64,13 +65,16 @@ export function InteractionCard({ interaction, onResolve, onResolved }: {
     && payload.questions.every((question) => questionAnswers[question.questionId]?.length);
   return <section aria-label={card.title} className="matrix-chat-agent-card grid gap-3 rounded-2xl border p-4">
     <div><h3 className="text-sm font-semibold">{card.title}</h3>
-      {!actionable ? <p role="status" className="mt-1 text-xs" style={chatAgentMutedStyle}>{resolved ? "Resolved" : card.state === "unavailable" ? "Only the designated person can respond." : card.state}</p> : null}</div>
+      {!actionable ? <p role="status" className="mt-1 text-xs" style={chatAgentMutedStyle}>{resolved ? "Resolved" : !actionsAvailable && card.state === "actionable" ? "Status unavailable. Refresh to respond." : card.state === "unavailable" ? "Only the designated person can respond." : card.state}</p> : null}</div>
+    {!actionsAvailable && card.state === "actionable" && payload?.kind === "question"
+      ? payload.questions.map((question) => <p key={question.questionId} className="text-sm">{question.question}</p>) : null}
     {actionable && payload?.kind === "question" ? <>
       {payload.questions.map((question) => <fieldset key={question.questionId} className="grid gap-2">
         <legend className="text-sm font-medium">{question.question}</legend>
         {question.options?.map((option) => <label key={option.label} className="flex items-start gap-2 text-sm">
           <input type={question.multiSelect ? "checkbox" : "radio"} name={`${interaction.interactionId}:${question.questionId}`}
-            aria-label={option.label} checked={selectedAnswers[question.questionId]?.includes(option.label) ?? false}
+            aria-label={option.label} checked={!question.multiSelect && Boolean(typedAnswers[question.questionId]?.trim())
+              ? false : selectedAnswers[question.questionId]?.includes(option.label) ?? false}
             disabled={pending} onChange={() => {
               setSelectedAnswers((current) => {
                 const values = current[question.questionId] ?? [];
@@ -88,10 +92,10 @@ export function InteractionCard({ interaction, onResolve, onResolved }: {
           {question.options ? "Other answer" : "Answer"}
           {question.secret ? <input type="password" aria-label={`Answer ${question.header}`}
             value={typedAnswers[question.questionId] ?? ""} maxLength={400} disabled={pending}
-            onChange={(event) => typeAnswer(question.questionId, question.multiSelect, event.currentTarget.value)}
+            onChange={(event) => typeAnswer(question.questionId, event.currentTarget.value)}
             className="w-full rounded-lg border bg-transparent p-2 text-sm" />
             : <textarea aria-label={`Answer ${question.header}`} value={typedAnswers[question.questionId] ?? ""}
-              maxLength={400} disabled={pending} onChange={(event) => typeAnswer(question.questionId, question.multiSelect, event.currentTarget.value)}
+              maxLength={400} disabled={pending} onChange={(event) => typeAnswer(question.questionId, event.currentTarget.value)}
               className="min-h-20 w-full rounded-lg border bg-transparent p-2 text-sm" />}
         </label> : null}
       </fieldset>)}

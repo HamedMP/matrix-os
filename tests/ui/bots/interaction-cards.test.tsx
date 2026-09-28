@@ -57,6 +57,9 @@ describe("bot interaction cards", () => {
     expect(choice.checked).toBe(true);
     fireEvent.change(screen.getByRole("textbox", { name: "Answer Target" }), { target: { value: "Globex" } });
     expect(choice.checked).toBe(false);
+    fireEvent.change(screen.getByRole("textbox", { name: "Answer Target" }), { target: { value: "" } });
+    expect(choice.checked).toBe(true);
+    fireEvent.change(screen.getByRole("textbox", { name: "Answer Target" }), { target: { value: "Globex" } });
     fireEvent.click(screen.getByRole("button", { name: "Answer" }));
     await waitFor(() => expect(resolve).toHaveBeenCalledWith({ kind: "question", baseRevision: 1,
       structuredAnswers: { target: ["Globex"] } }));

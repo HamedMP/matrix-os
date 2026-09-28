@@ -15,6 +15,7 @@ export function BotChatPanel({ chatId, client, refreshKey }: { chatId?: string; 
   const [agentId, setAgentId] = useState<string | null>(null);
   const [name, setName] = useState<string | null>(null);
   const [interactions, setInteractions] = useState<BotInteraction[]>([]);
+  const [interactionsFresh, setInteractionsFresh] = useState(false);
   const [tasks, setTasks] = useState<BotTaskSummary[]>([]);
   const [authority, setAuthority] = useState<BotAuthorityView | null>(null);
   const [showAuthority, setShowAuthority] = useState(false);
@@ -23,6 +24,7 @@ export function BotChatPanel({ chatId, client, refreshKey }: { chatId?: string; 
   useEffect(() => {
     setAgentId(null);
     setInteractions([]);
+    setInteractionsFresh(false);
     setTasks([]);
     setAuthority(null);
     setName(null);
@@ -45,6 +47,7 @@ export function BotChatPanel({ chatId, client, refreshKey }: { chatId?: string; 
         ]);
         if (!current) return;
         if (pending.status === "fulfilled") setInteractions(pending.value);
+        setInteractionsFresh(pending.status === "fulfilled");
         if (activeTasks.status === "fulfilled") setTasks(activeTasks.value);
         if (view.status === "fulfilled") setAuthority(view.value);
         if (library.status === "fulfilled") setName(library.value.agents.find((agent) => agent.id === agentId)?.name ?? null);
@@ -53,7 +56,10 @@ export function BotChatPanel({ chatId, client, refreshKey }: { chatId?: string; 
           ? "Bot status could not be loaded. Try again." : "");
       } catch (failure: unknown) {
         console.warn("[chat-agents] Bot status unavailable:", failure instanceof Error ? failure.name : "UnknownError");
-        if (current) setError("Bot status could not be loaded. Try again.");
+        if (current) {
+          setInteractionsFresh(false);
+          setError("Bot status could not be loaded. Try again.");
+        }
       }
     };
     void refresh();
@@ -71,6 +77,7 @@ export function BotChatPanel({ chatId, client, refreshKey }: { chatId?: string; 
           onClick={() => setShowAuthority((value) => !value)}>Access &amp; memory</button>
       </div>
       {interactions.map((interaction) => <InteractionCard key={interaction.interactionId} interaction={interaction}
+        actionsAvailable={interactionsFresh}
         onResolve={(input) => bots.resolve(chatId, interaction.interactionId, input)} onResolved={() => setTick((value) => value + 1)}
         />)}
       {tasks.map((task) => <BotTaskStatus key={task.taskId} task={task} />)}
