@@ -6,3 +6,4 @@ export * from "#bots/tasks";
 export * from "#bots/interactions";
 export * from "#bots/authority";
 export * from "#bots/broker";
+export * from "#bots/worker";

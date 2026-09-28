@@ -39,7 +39,7 @@ The gateway rejects a supervisor whose advertised digest for a profile differs f
 | Command | Payload | Result |
 |---|---|---|
 | `bot.run` | `{ sessionRevision, turn: { kind: "prompt", text≤64KiB, images≤4 (≤2MiB each) } \| { kind: "continue" } \| { kind: "resume_after_interaction", interactionId }, tools: ToolDescriptor[] ≤64, systemPromptRef }` | streams events over the broker, then `{ status: "completed" \| "waiting_person" \| "waiting_capacity" \| "blocked" \| "failed", checkpointSeq }` |
-| `bot.steer` | `{ text≤8KiB }` | ack |
+| `bot.steer` | `{ text≤8KiB }` | `{ acknowledged }`. Refused once the turn stops taking input. An accepted steer the turn could not answer (blocking question, budget, cancel) is saved as a person message |
 | `bot.cancel` | `{}` | `{ status: "cancelled" \| "uncertain" }` |
 
 ## Broker actions (worker → gateway broker)
@@ -52,12 +52,13 @@ Frames are newline-delimited JSON on the broker Unix socket, not HTTP. Model SDK
 | `inference.responses` | OpenAI Responses body; tools allowed for bot runtimes | Same |
 | `inference.chat_completions` | OpenAI chat-completions body; tools allowed | New; managed Cloudflare Workers AI route |
 | `bot.tool` | `{ toolCallId, capability, args }`. M1 capabilities: `integration.inventory`, `integration.call`, `memory.propose`, `memory.search`, `interaction.create`, `artifact.write`, `artifact.read`. M3 adds `handoff.create` and M4 adds `computer.act` |  Zod-validated per capability; checkpoint written `prepared` before and `observed_complete`/`effect_unknown` after; grant, audience, and approval checks before dispatch |
-| `bot.event` | `{ seq, event: assistant_delta (≤16 KiB) \| tool_progress \| activity }` | Projected into canonical `assistant.delta`, `agent.activity`, `tool.progress`, `tool.output`, and `interaction.requested` events; ≤64 KiB per event; ordered by `seq` |
-| `bot.session.save` | `{ baseRevision, messages delta, compactedThroughSeq? }` | Revision-checked write to `bot_agent_sessions`; ≤512 KiB total |
+| `bot.event` | `{ seq, event: assistant_delta (≤16 KiB) \| tool_progress \| activity }` | Projected into canonical `assistant.delta`, `agent.activity`, `tool.progress`, `tool.output`, and `interaction.requested` events; ≤64 KiB per event; ordered by `seq`. The runtime combines text deltas (at most one send per 250 ms, or at a message or tool boundary) and sends at most 2,000 events per turn; the last one is an `activity` notice that live updates paused, and the gateway renders the final reply from the saved session |
+| `bot.session.load` | `{}` | Returns `{ revision, messages }`; the reply may reach 576 KiB |
+| `bot.session.save` | `{ baseRevision, messages, compactedThroughSeq? }` | Revision-checked write to `bot_agent_sessions`; the transcript is ≤512 KiB and the frame ≤576 KiB. Saved history keeps a text placeholder instead of image bytes, and the runtime cuts oversized tool payloads with a visible note when a transcript would not fit |
 
 Limits:
 
-- Request body 256 KiB; inference response 512 KiB buffered; 8 in-flight requests and 64 connections, shared with the existing broker.
+- Request body 256 KiB, except `bot.session.save` frames and `bot.session.load` replies, which may reach 576 KiB (the 512 KiB session plus envelope headroom). The broker reads bot lines up to that bound. Inference response 512 KiB buffered; 8 in-flight requests and 64 connections, shared with the existing broker.
 - Timeouts: inference 30 seconds per request, integration calls 10 seconds, artifact writes 30 seconds.
 - `egress.fetch` stays disabled for bot runtimes. Web access goes through `integration.call` or the M4 computer service.
 
