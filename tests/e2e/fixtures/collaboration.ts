@@ -2,6 +2,7 @@ import { test as base, type APIRequestContext, type Browser, type BrowserContext
 import { z } from "zod/v4";
 import {
   assertCollaborationPreconditions,
+  assertMultiComputerMemberPreconditions,
   loadCollaborationIdentities,
   type CollaborationActorPreconditions,
   type CollaborationIdentityEnvironment,
@@ -96,9 +97,7 @@ export async function createFourAccountCollaborationJourney(
       const page = await context.newPage();
       await signInCollaborationIdentity(page, config, multiComputerMember);
       const preconditions = await loadPreconditions(context, config);
-      if (preconditions.computers.length < 2 || !preconditions.organizations.some((entry) => entry.organizationId === config.organizationId)) {
-        throw new Error("Optional collaboration member does not have multiple computers and membership");
-      }
+      assertMultiComputerMemberPreconditions(config, preconditions);
       extra = { userId: multiComputerMember.id, context, page, preconditions, direct: createCollaborationDirectHarness({ page, userId: multiComputerMember.id, platformBaseUrl: config.baseUrl }) };
     }
     return {

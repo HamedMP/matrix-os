@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   assertCollaborationPreconditions,
+  assertMultiComputerMemberPreconditions,
   loadCollaborationIdentities,
   parseCollaborationIdentityEnvironment,
   verifyClerkFixtureUser,
@@ -98,5 +99,13 @@ describe("four-identity collaboration fixture", () => {
     expect(() => assertCollaborationPreconditions(config, { ...good, guest: { ...good.guest, phase: "ready" } })).toThrow();
     expect(() => assertCollaborationPreconditions(config, { ...good, outsider: { ...good.outsider, organizations: [{ organizationId: "org_fixture", role: "org:member" }] } })).toThrow();
     expect(() => assertCollaborationPreconditions(config, { ...good, guest: { ...good.guest, sharedCount: 1 } })).toThrow();
+  });
+
+  it("requires the optional multi-computer identity to remain an ordinary member", () => {
+    const config = parseCollaborationIdentityEnvironment(environment);
+    const member = { computers: [{ handle: "one" }, { handle: "two" }], phase: "ready", organizations: [{ organizationId: "org_fixture", role: "org:member" }], inboxCount: 0, sharedCount: 0 };
+    expect(() => assertMultiComputerMemberPreconditions(config, member)).not.toThrow();
+    expect(() => assertMultiComputerMemberPreconditions(config, { ...member, organizations: [{ organizationId: "org_fixture", role: "org:admin" }] })).toThrow();
+    expect(() => assertMultiComputerMemberPreconditions(config, { ...member, computers: [{ handle: "one" }] })).toThrow();
   });
 });

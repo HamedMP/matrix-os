@@ -81,6 +81,16 @@ export function assertCollaborationPreconditions(
   }
 }
 
+export function assertMultiComputerMemberPreconditions(
+  config: CollaborationIdentityEnvironment,
+  actor: CollaborationActorPreconditions,
+): void {
+  const membership = actor.organizations.filter((entry) => entry.organizationId === config.organizationId);
+  if (actor.computers.length < 2 || membership.length !== 1 || membership[0]?.role !== "org:member") {
+    throw new Error("Optional collaboration identity needs multiple computers and member authority");
+  }
+}
+
 /** Parse all identities before any Clerk API call or sign-in token request. */
 export function parseCollaborationIdentityEnvironment(
   environment: Record<string, string | undefined> = process.env,
