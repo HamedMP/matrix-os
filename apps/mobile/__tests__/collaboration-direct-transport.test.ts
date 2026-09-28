@@ -46,6 +46,23 @@ describe("Native Mobile direct collaboration transport", () => {
   beforeEach(() => { warn = jest.spyOn(console, "warn").mockImplementation(() => undefined); });
   afterEach(() => { warn.mockRestore(); });
 
+  it("bounds the test home's response and scope collections with oldest-entry eviction", () => {
+    const world = createDirectTestWorld();
+    for (let index = 0; index < 129; index += 1) {
+      const key = `scope-${index}`;
+      world.home.responses.set(key, { status: 200 });
+      world.platform.scopeKinds.set(key, "chat");
+      world.platform.offlineScopes.add(key);
+      world.home.consumed.add(key);
+    }
+    expect(world.home.responses.size).toBeLessThanOrEqual(128);
+    expect(world.platform.scopeKinds.size).toBeLessThanOrEqual(128);
+    expect(world.platform.offlineScopes.size).toBeLessThanOrEqual(128);
+    expect(world.home.consumed.size).toBeLessThanOrEqual(128);
+    expect(world.home.responses.has("scope-0")).toBe(false);
+    expect(world.platform.offlineScopes.has("scope-0")).toBe(false);
+  });
+
   it("issues a direct-session ticket from the platform and exchanges it on the scope's home", async () => {
     const world = createDirectTestWorld();
     world.home.responses.set(`GET /api/collaboration/scopes/${scopeId}/chat`, { status: 200, body: chat });

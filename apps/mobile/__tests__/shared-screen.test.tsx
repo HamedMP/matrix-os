@@ -747,6 +747,25 @@ describe("native shared Chat screen", () => {
     expect(mockFetchInbox.mock.calls.filter(([, cursor]) => cursor === "old-list-cursor")).toHaveLength(1);
   });
 
+  it("retains the displayed list's pagination after a reload fails", async () => {
+    const accepted = {
+      scopeId, runtimeId: "runtime_owner", ownerId: "user_owner", kind: "chat", authorityGeneration: 1, status: "accepted",
+      resource: { scope: await mockFetchScope(), chat: await mockFetchChat() },
+    };
+    mockFetchShared.mockResolvedValue({ items: [accepted] });
+    mockFetchInbox
+      .mockResolvedValueOnce({ items: [], nextCursor: "retained-cursor" })
+      .mockRejectedValueOnce(new Error("offline"))
+      .mockResolvedValueOnce({ items: [] });
+
+    render(<SharedScreen />);
+    fireEvent.press(await screen.findByLabelText("Open Launch plan"));
+    fireEvent.press(await screen.findByLabelText("Back to Shared with me"));
+    await waitFor(() => expect(screen.getByText("Shared Chats are unavailable. Pull down or return later to try again.")).toBeTruthy());
+    fireEvent.press(await screen.findByLabelText("Load more shared items"));
+    await waitFor(() => expect(mockFetchInbox).toHaveBeenLastCalledWith("clerk-token", "retained-cursor"));
+  });
+
   it("does not let a pending history page overwrite a newer realtime refresh", async () => {
     const message = (sequence: number) => ({
       id: `msg_${sequence}`, chatId: "chat_one", sequence: String(sequence), role: "user", state: "committed", purpose: "ai_request",

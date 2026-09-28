@@ -190,10 +190,10 @@ export default function SharedScreen() {
   }, []);
   const loadHome = useCallback(async () => {
     const generation = ++homeLoadGeneration.current;
-    // The old list's cursors and any in-flight page belong to the list being replaced;
-    // paging stays unavailable until this load installs its own cursors.
+    // Keep the displayed list's cursors if this reload fails. Paging is hidden
+    // while loading, and the generation fence discards an in-flight old page.
     dispatch({ type: "patch", patch: {
-      loading: true, error: "", inboxCursor: null, sharedCursor: null, loadingMoreItems: false, paginationError: "",
+      loading: true, error: "", loadingMoreItems: false, paginationError: "",
     } });
     try {
       const actorToken = await token();
@@ -221,7 +221,7 @@ export default function SharedScreen() {
   }, [hydrateDiscovery, token]);
   useEffect(() => { void loadHome(); }, [loadHome]);
   const loadMoreItems = async () => {
-    if (loadingMoreItems || (!inboxCursor && !sharedCursor)) return;
+    if (state.loading || loadingMoreItems || (!inboxCursor && !sharedCursor)) return;
     const generation = homeLoadGeneration.current;
     dispatch({ type: "patch", patch: { loadingMoreItems: true, paginationError: "" } });
     try {
@@ -812,7 +812,7 @@ function CollaborationHomeScreen({ state, onReview, onAccept, onDecline, onOpen,
     renderItem={renderDiscovery}
     ListFooterComponent={<>
       {state.paginationError ? <Text accessibilityRole="alert" style={styles.error}>{state.paginationError}</Text> : null}
-      {state.inboxCursor || state.sharedCursor ? <Action label={state.loadingMoreItems ? "Loading…" : "Load more shared items"}
+      {!state.loading && (state.inboxCursor || state.sharedCursor) ? <Action label={state.loadingMoreItems ? "Loading…" : "Load more shared items"}
         disabled={state.loadingMoreItems} onPress={() => void onLoadMore()} /> : null}
     </>} />;
 }

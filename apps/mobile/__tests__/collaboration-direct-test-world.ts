@@ -100,24 +100,67 @@ function tokenSubject(authorization: string | null): string | null {
   return typeof claims.sub === "string" ? claims.sub : null;
 }
 
+const TEST_COLLECTION_LIMIT = 128;
+
+/** Test worlds are reused across many requests, so even canned state has an LRU bound. */
+class BoundedMap<K, V> extends Map<K, V> {
+  override get(key: K): V | undefined {
+    const value = super.get(key);
+    if (super.has(key)) {
+      super.delete(key);
+      super.set(key, value!);
+    }
+    return value;
+  }
+
+  override set(key: K, value: V): this {
+    if (super.has(key)) super.delete(key);
+    else if (this.size >= TEST_COLLECTION_LIMIT) {
+      const oldest = this.keys().next();
+      if (!oldest.done) super.delete(oldest.value);
+    }
+    super.set(key, value);
+    return this;
+  }
+}
+
+class BoundedSet<T> extends Set<T> {
+  override has(value: T): boolean {
+    if (!super.has(value)) return false;
+    super.delete(value);
+    super.add(value);
+    return true;
+  }
+
+  override add(value: T): this {
+    if (super.has(value)) super.delete(value);
+    else if (this.size >= TEST_COLLECTION_LIMIT) {
+      const oldest = this.values().next();
+      if (!oldest.done) super.delete(oldest.value);
+    }
+    super.add(value);
+    return this;
+  }
+}
+
 export function createDirectTestWorld(options: { relayOrigin?: string; startAt?: number } = {}) {
   const relayOrigin = options.relayOrigin ?? PLATFORM;
   const home = {
     generation: 3,
-    sessions: new Map<string, HomeSession>(),
-    consumed: new Set<string>(),
+    sessions: new BoundedMap<string, HomeSession>(),
+    consumed: new BoundedSet<string>(),
     protocolVersion: COLLABORATION_DIRECT_PROTOCOL_VERSION as number,
     sessionTtlMs: 300_000,
     renewFails: false,
     /** Canned responses keyed by `${method} ${path}`; anything else is a 404 from the home. */
-    responses: new Map<string, { status: number; body?: unknown }>(),
+    responses: new BoundedMap<string, { status: number; body?: unknown }>(),
     /** Signed requests the home accepted, with the session that authorized them. */
     accepted: [] as Array<{ method: string; path: string; query: string; body: string; session: HomeSession; conditionalHeadersDigest: string }>,
   };
   const platform = {
     tickets: [] as Json[],
-    offlineScopes: new Set<string>(),
-    scopeKinds: new Map<string, string>(),
+    offlineScopes: new BoundedSet<string>(),
+    scopeKinds: new BoundedMap<string, string>(),
     /** Overrides the actor a ticket is issued to, to prove the client refuses a foreign ticket. */
     ticketActorOverride: null as string | null,
     inbox: [] as Json[],
