@@ -35,7 +35,7 @@ import { createBotOperationsRepository } from "../bots/repositories/operations.j
 import { createBotSessionsRepository } from "../bots/repositories/sessions.js";
 import { createBotAccessHandlers } from "../bots/access-handlers.js";
 import { createBotAuthority, type BotAuthority } from "../bots/authority.js";
-import { createBotConnections } from "../bots/connections.js";
+import { createBotConnections, type BotConnections } from "../bots/connections.js";
 import type { BotContinuationAdmitter } from "../bots/continuations.js";
 import { createBotStateTransactions } from "../bots/events.js";
 import { createBotGrantService, type BotGrantService } from "../bots/grants-service.js";
@@ -54,6 +54,33 @@ const CHECKPOINT_RECONCILE_INTERVAL_MS = 5_000;
 const SAVE_SWEEP_INTERVAL_MS = 10 * 60_000;
 const INTERACTION_SWEEP_MS = 60_000;
 const CONNECTION_RECONCILE_MS = 30_000;
+
+/** One bounded pass; each owner and each admission fails independently. */
+export async function runConnectionReconciliationPass(
+  connections: Pick<BotConnections, "ownersWithPending" | "reconcile" | "pendingContinuations" | "ackContinuation" | "deferContinuation">,
+  admit: BotContinuationAdmitter,
+): Promise<void> {
+  for (const ownerId of await connections.ownersWithPending()) {
+    try {
+      await connections.reconcile(ownerId);
+      for (const continuation of await connections.pendingContinuations(ownerId)) {
+        try {
+          await admit({ userId: ownerId, source: "configured-container" }, continuation);
+          await connections.ackContinuation(ownerId, continuation.clientRequestId);
+        } catch (error: unknown) {
+          console.warn("[bots] connection continuation failed:", error instanceof Error ? error.name : "UnknownError");
+          try {
+            await connections.deferContinuation(ownerId, continuation.clientRequestId);
+          } catch (deferError: unknown) {
+            console.warn("[bots] connection continuation retry unavailable:", deferError instanceof Error ? deferError.name : "UnknownError");
+          }
+        }
+      }
+    } catch (error: unknown) {
+      console.warn("[bots] connection reconciliation failed:", error instanceof Error ? error.name : "UnknownError");
+    }
+  }
+}
 
 export interface BotServices {
   instantiation: BotInstantiation;
@@ -130,17 +157,7 @@ export async function startBots(options: {
   const startConnectionReconciler = (admit: BotContinuationAdmitter) => {
     if (!connections || connectionTimer) return;
     connectionTimer = setInterval(() => {
-      connecting ??= (async () => {
-        for (const ownerId of await connections.ownersWithPending()) {
-          for (const continuation of await connections.reconcile(ownerId)) {
-            try {
-              await admit({ userId: ownerId, source: "configured-container" }, continuation);
-            } catch (error: unknown) {
-              console.warn("[bots] connection continuation failed:", error instanceof Error ? error.name : "UnknownError");
-            }
-          }
-        }
-      })().catch((error: unknown) => {
+      connecting ??= runConnectionReconciliationPass(connections, admit).catch((error: unknown) => {
         console.warn("[bots] connection reconciliation unavailable:", error instanceof Error ? error.name : "UnknownError");
       }).finally(() => { connecting = undefined; });
     }, CONNECTION_RECONCILE_MS);
