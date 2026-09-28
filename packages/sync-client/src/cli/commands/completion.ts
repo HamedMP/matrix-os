@@ -21,6 +21,7 @@ const COMMANDS = [
   "agent",
   "doctor",
   "instance",
+  "preview",
   "completion",
 ];
 

@@ -16,6 +16,7 @@ the central Loki on the ops VPS, queryable through one script.
 | Shell/gateway/kernel verification | Preview VPS | ~20 min (bundle build + deploy) | 1 small Hetzner VPS until PR close |
 | Onboarding flows | Preview VPS (virgin by construction) | ~20 min | same |
 | Platform changes | Cloud Run preview revision | ~10 min | Cloud Run free-tier-ish |
+| Personal Integrations / Custom MCP against a PR | Private Preview | ~20 min | 1 small Hetzner VPS for at most 72h |
 | macOS app | CI artifact + preview VPS runtime | n/a | none extra |
 | CLI beta x shell | npm dist-tag + preview VPS profile | minutes | none extra |
 
@@ -80,8 +81,8 @@ do not recreate the preview or affect production machines to repair it.
 
 Add the **`preview-vps`** label to a same-repo PR. The `Preview VPS` workflow:
 
-1. Builds the host bundle as `0.0.0-pr<N>.<sha7>` (re-runs on every push while
-   the label is present).
+1. Builds the host bundle as `v<YYYY.MM.DD>-pr<N>-<run>-<attempt>-<sha7>` (re-runs
+   on every push while the label is present).
 2. Publishes it **register-only** (`publish-release.sh --channel none`): the
    release exists in R2 + platform DB but no channel pointer can ever select
    it, so it cannot reach real users.
@@ -115,8 +116,9 @@ including requests claiming the owner or another collaborator. An isolated
 platform-preview Custom MCP fixture uses a synthetic owner and remains available.
 Personal integrations remain
 available through the platform's Clerk-authenticated routes under each actor's own
-account. Use synthetic fixtures for in-VPS integration acceptance tests until a
-user-bound capability is available that the shared machine cannot mint.
+account. Use synthetic fixtures for in-VPS integration acceptance tests on a
+shared Preview VPS. To test a PR against your own connected accounts, use a
+[Private Preview](#private-preview--your-own-accounts-on-a-pr) instead.
 
 ### Shared preview Terminal authorization
 
@@ -174,6 +176,63 @@ revision for the journey/reliability API, a local `dev:platform` + Stripe CLI
 for the test-mode checkout/webhook race, and a disposable feature VPS for the
 provisioned hand-off) — see the `staging-platform-vps` command and
 [Staging Platform and Feature VPS Runbook](staging-platform-vps.md).
+
+## Private Preview — your own accounts on a PR
+
+A Private Preview runs one same-repository PR's published bundle on a machine
+that only you can reach, under your own Matrix account. Because nobody else can
+reach it, it can use your personal Integrations and Custom MCP from Settings,
+Chat agents, and Terminal agent CLIs. Spec:
+[537](../../specs/537-private-preview/spec.md).
+
+Who can use it: members of the internal Clerk organization named by
+`MATRIX_INTERNAL_CLERK_ORG_ID`. Membership is read through the collaboration
+organization projection, so the platform needs collaboration configured; without
+it the routes return 503 and personal accounts stay denied.
+
+```bash
+matrix preview start 1907    # shows the PR's newest bundle, commit, and author; asks to confirm
+matrix preview list          # handle, status, confirmed version, expiry, URL
+matrix preview update 1907   # moves to the PR's newest bundle after confirming
+matrix preview destroy 1907
+```
+
+Open it at `https://app.matrix-os.com/vm/<handle>`; the handle looks like
+`pv-1907-3fa91c2e`. Pass `--yes` to confirm without a prompt and `--json` for
+machine-readable output.
+
+What keeps it safe:
+
+- Only you: no collaborators, no Preview Terminal grants, and the platform
+  refuses collaboration registration and tickets for it.
+- Only the code you confirmed: it installs only the exact bundle version you
+  confirmed. Its update base serves no other version and no channel manifest,
+  and operator, fleet, and PR workflow deploys skip it. New commits on the PR
+  never deploy themselves; run `matrix preview update`.
+- Only while eligible: personal accounts work only while the machine is running,
+  younger than 72 hours, and you are still a current internal member. Otherwise
+  the platform denies them on every request.
+- Cleanup: the platform destroys it after 72 hours or when you leave the
+  organization, and the Preview workflow destroys it when the PR closes.
+
+It still runs the PR's unmerged code as your production account, much like
+running the branch locally with your own credentials. Only start it for PRs
+whose code you would run that way. Its shell is served on the production origin
+until spec 530 isolates Preview origins (#1951).
+
+Limits: two active Private Previews per person by default
+(`MATRIX_PRIVATE_PREVIEW_LIMIT`, at most four) and one per PR. Starting the same
+PR again returns the existing machine; a failed one must be destroyed first.
+Private Previews cannot be recovered; destroy and start again.
+
+Custom MCP servers reach a Private Preview by a push when you change them, a
+pull when it starts, and a pull every five minutes that catches anything it
+missed. Tool calls from it are still checked against your primary computer, so
+keep that running while you test Custom MCP.
+
+Bundles need PR provenance. The Preview workflow registers the PR number and
+author with each bundle it builds; a bundle registered without them cannot be
+started as a Private Preview.
 
 ## Platform preview revisions
 
@@ -418,5 +477,6 @@ dashboards.
   applied by restarting the respective containers.
 - Staging slot DNS (`staging-<1..4>`, `api-staging-<1..4>`, `logs`) was created
   once via `cloudflared tunnel route dns matrix-os <hostname>`.
-- Preview bundles in R2 (`system-bundles/0.0.0-pr*`) can be cleaned after PR
-  close; they are never referenced by channel pointers.
+- Preview bundles in R2 (`system-bundles/v*-pr*`) can be cleaned after PR
+  close; they are never referenced by channel pointers. Keep any version that an
+  active Private Preview still has confirmed.
