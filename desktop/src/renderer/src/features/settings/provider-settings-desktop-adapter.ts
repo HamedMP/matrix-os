@@ -3,6 +3,8 @@ import {
   ProviderSettingsMutationResponseSchema,
   ProviderSettingsMutationSchema,
   ProviderSettingsSnapshotSchema,
+  FUNDED_AI_READINESS_TIMEOUTS,
+  FUNDED_AI_CHECKOUT_TIMEOUT_MS,
   type ProviderSettingsMutation,
   type ProviderSettingsMutationResponse,
   type ProviderSettingsSnapshot,
@@ -57,6 +59,7 @@ export function createDesktopProviderSettingsTransport(api: ApiClient): Provider
         const value = await api.get<unknown>(`${PROVIDER_SETTINGS_PATH}?includeCapabilities=true${options.refresh ? "&refresh=true" : ""}`, {
           maxBytes: MAX_RESPONSE_BYTES,
           signal,
+          timeoutMs: FUNDED_AI_READINESS_TIMEOUTS.rendererRequestMs,
         });
         const parsed = ProviderSettingsSnapshotSchema.safeParse(value);
         if (!parsed.success) throw new DesktopProviderSettingsTransportError("invalid_response");
@@ -112,7 +115,10 @@ export async function openDesktopProviderAgentSetup(
 ): Promise<boolean> {
   return openProviderAgentSetup({
     harness,
-    getCatalog: () => api.get("/api/chat-providers?refresh=true&includeConnectionLabels=true", { maxBytes: MAX_RESPONSE_BYTES, signal: AbortSignal.timeout(10_000) }),
+    getCatalog: () => api.get("/api/chat-providers?refresh=true&includeConnectionLabels=true", {
+      maxBytes: MAX_RESPONSE_BYTES, timeoutMs: FUNDED_AI_READINESS_TIMEOUTS.rendererRequestMs,
+      signal: AbortSignal.timeout(FUNDED_AI_READINESS_TIMEOUTS.rendererRequestMs),
+    }),
     openCommand: async (cmd) => {
       if (!isIdentityCurrent()) return false;
       const session = await useShellSessions.getState().create(api, { cmd });
@@ -140,15 +146,23 @@ export async function openAiCreditCheckout(input: {
   packageId: "usd_5" | "usd_10" | "usd_25";
   requestId: string;
   openExternal?: OpenExternal;
+  signal?: AbortSignal;
+  isIdentityCurrent?: () => boolean;
 }): Promise<boolean> {
+  const timeout = AbortSignal.timeout(FUNDED_AI_CHECKOUT_TIMEOUT_MS);
+  const signal = input.signal ? AbortSignal.any([input.signal, timeout]) : timeout;
   try {
+    if (input.isIdentityCurrent?.() === false) return false;
+    signal.throwIfAborted();
     const result = await input.api.post<unknown>("/billing/ai-credit/checkout", {
       packageId: input.packageId,
       runtimeSlot: input.runtimeSlot,
       requestId: input.requestId,
-    }, { maxBytes: MAX_CHECKOUT_RESPONSE_BYTES });
+    }, { maxBytes: MAX_CHECKOUT_RESPONSE_BYTES, timeoutMs: FUNDED_AI_CHECKOUT_TIMEOUT_MS, signal });
+    signal.throwIfAborted();
     const url = result && typeof result === "object" ? (result as { url?: unknown }).url : undefined;
     if (!isStripeCheckoutUrl(url)) return false;
+    if (input.isIdentityCurrent?.() === false) return false;
     const openExternal = input.openExternal ?? ((target) => invoke("shell:open-external", { url: target }));
     await openExternal(url);
     return true;

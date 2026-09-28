@@ -159,6 +159,7 @@ function scanAppsDir(
 
         if (!prefix && entry.isFile() && entry.name.endsWith(".html")) {
           const slug = entry.name.replace(/\.html$/, "");
+          if (slug === "symphony") continue;
           if (seen.has(slug)) continue;
           const meta = safeLoadAppMeta(baseDir, entry.name);
           seen.add(slug);

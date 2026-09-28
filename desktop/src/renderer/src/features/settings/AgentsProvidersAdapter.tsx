@@ -3,7 +3,7 @@ import {
   useProviderSettingsController,
 } from "@matrix-os/ui";
 import "@matrix-os/ui/agents-providers.css";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ApiClient } from "../../lib/api";
 import { useConnection } from "../../stores/connection";
 import {
@@ -84,6 +84,15 @@ function ConnectedAgentsProvidersAdapter({
   }, [identityKey]);
   const controller = useProviderSettingsController({ identityKey, transport, onCatalogChanged });
   const [actionError, setActionError] = useState<string | null>(null);
+  const checkoutLifetime = useRef<AbortController | null>(null);
+  useEffect(() => {
+    const lifetime = new AbortController();
+    checkoutLifetime.current = lifetime;
+    return () => {
+      lifetime.abort();
+      checkoutLifetime.current = null;
+    };
+  }, [identityKey]);
 
   const isIdentityCurrent = useCallback(
     () => desktopProviderIdentityKey(useConnection.getState()) === identityKey,
@@ -118,8 +127,14 @@ function ConnectedAgentsProvidersAdapter({
     packageId: "usd_5" | "usd_10" | "usd_25",
     requestId: string,
   ) => {
+    const lifetime = checkoutLifetime.current;
+    if (!lifetime || !isIdentityCurrent()) throw new Error("Checkout unavailable");
     setActionError(null);
-    const opened = await openAiCreditCheckout({ api, runtimeSlot, packageId, requestId });
+    const opened = await openAiCreditCheckout({
+      api, runtimeSlot, packageId, requestId,
+      signal: lifetime.signal,
+      isIdentityCurrent: () => checkoutLifetime.current === lifetime && isIdentityCurrent(),
+    });
     if (!opened) {
       if (isIdentityCurrent()) setActionError(ACTION_ERROR);
       throw new Error("Checkout unavailable");

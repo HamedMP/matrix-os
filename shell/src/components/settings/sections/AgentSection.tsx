@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { AgentsProvidersView, useProviderSettingsController } from "@matrix-os/ui";
 import { getGatewayUrl } from "@/lib/gateway";
 import { openProviderAuthorizationPath } from "@/lib/provider-browser-action";
@@ -14,6 +14,16 @@ export function AgentSection({
 }) {
   const transport = useMemo(() => createProviderSettingsTransport(), []);
   const identityKey = getGatewayUrl();
+  const runtimeSlot = currentAiCreditRuntimeSlot();
+  const checkoutLifetime = useRef<AbortController | null>(null);
+  useEffect(() => {
+    const lifetime = new AbortController();
+    checkoutLifetime.current = lifetime;
+    return () => {
+      lifetime.abort();
+      checkoutLifetime.current = null;
+    };
+  }, [identityKey, runtimeSlot]);
   const controller = useProviderSettingsController({
     identityKey,
     transport,
@@ -63,7 +73,13 @@ export function AgentSection({
         onOpenTerminal={(sessionId) => { onOpenTerminal?.(sessionId); }}
         onOpenBrowser={openProviderAuthorizationPath}
         onAddCredit={async (_sourceId, packageId, requestId) => {
-          await openWebAiCreditCheckout({ packageId, requestId, runtimeSlot: currentAiCreditRuntimeSlot() });
+          const lifetime = checkoutLifetime.current;
+          await openWebAiCreditCheckout({
+            packageId, requestId, runtimeSlot,
+            signal: lifetime?.signal,
+            isIdentityCurrent: () => lifetime !== null && checkoutLifetime.current === lifetime
+              && getGatewayUrl() === identityKey && currentAiCreditRuntimeSlot() === runtimeSlot,
+          });
         }}
       />
     </div>

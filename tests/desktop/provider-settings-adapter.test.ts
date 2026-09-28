@@ -10,6 +10,7 @@ import {
   openProviderAuthorizationPath,
 } from "../../desktop/src/renderer/src/features/settings/provider-settings-desktop-adapter";
 import type { ApiClient } from "../../desktop/src/renderer/src/lib/api";
+import { createApiClient } from "../../desktop/src/renderer/src/lib/api";
 import { useShellSessions } from "../../desktop/src/renderer/src/stores/shell-sessions";
 import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
 
@@ -128,6 +129,23 @@ beforeEach(() => {
 });
 
 describe("desktop provider settings transport", () => {
+  it("extends actual snapshot dispatch while leaving auth and mutation defaults at ten seconds", async () => {
+    const timeout = vi.spyOn(AbortSignal, "timeout");
+    try {
+      const fetchFn = vi.fn().mockResolvedValueOnce(Response.json(snapshot()))
+        .mockResolvedValueOnce(Response.json({ authenticated: true }))
+        .mockResolvedValueOnce(Response.json({ kind: "snapshot", snapshot: snapshot(2) }));
+      const client = createApiClient({ baseUrl: "https://runtime.example.test", getRuntimeSlot: () => "primary", fetchFn });
+      const transport = createDesktopProviderSettingsTransport(client);
+      await transport.getSnapshot(new AbortController().signal);
+      expect(timeout).toHaveBeenLastCalledWith(15_000);
+      await client.get("/api/auth/status");
+      expect(timeout).toHaveBeenLastCalledWith(10_000);
+      await transport.mutate({ type: "set_harness_enabled", harnessInstanceId: "harness_hermes", enabled: false,
+        expectedRevision: 1, idempotencyKey: "cold_read_control" }, new AbortController().signal);
+      expect(timeout).toHaveBeenLastCalledWith(10_000);
+    } finally { timeout.mockRestore(); }
+  });
   it("uses the authenticated runtime-bound API with bounded, abortable JSON reads", async () => {
     const get = vi.fn().mockResolvedValue(snapshot());
     const client = api({ get });
@@ -138,6 +156,7 @@ describe("desktop provider settings transport", () => {
     expect(get).toHaveBeenCalledWith("/api/ai/provider-settings?includeCapabilities=true", {
       maxBytes: 1024 * 1024,
       signal: abort.signal,
+      timeoutMs: 15_000,
     });
   });
 
@@ -175,6 +194,95 @@ describe("desktop provider settings transport", () => {
 });
 
 describe("desktop provider connection actions", () => {
+  it.each(["before request", "before navigation"])("rejects checkout when its identity leaves %s", async (boundary) => {
+    let current = boundary !== "before request";
+    const post = vi.fn(async () => {
+      current = false;
+      return { url: "https://checkout.stripe.com/c/pay/cs_previous" };
+    });
+    const openExternal = vi.fn();
+    expect(await openAiCreditCheckout({ api: api({ post }), runtimeSlot: "primary", packageId: "usd_5",
+      requestId: crypto.randomUUID(), openExternal, isIdentityCurrent: () => current })).toBe(false);
+    expect(post).toHaveBeenCalledTimes(boundary === "before request" ? 0 : 1);
+    expect(openExternal).not.toHaveBeenCalled();
+  });
+
+  it("waits for cold readiness and payment checkout while other authenticated requests keep their default", async () => {
+    vi.useFakeTimers();
+    const timeout = vi.spyOn(AbortSignal, "timeout").mockImplementation(ms => {
+      const controller = new AbortController();
+      setTimeout(() => controller.abort(new DOMException("Timed out", "TimeoutError")), ms);
+      return controller.signal;
+    });
+    try {
+      const fetchFn = vi.fn().mockImplementationOnce((_url: string, init?: RequestInit) => new Promise((resolve, reject) => {
+        const timer = setTimeout(() => resolve(Response.json({ url: "https://checkout.stripe.com/c/pay/cs_cold" })), 18_000);
+        init?.signal?.addEventListener("abort", () => { clearTimeout(timer); reject(init.signal?.reason); }, { once: true });
+      })).mockResolvedValueOnce(Response.json({ authenticated: true }));
+      const client = createApiClient({ baseUrl: "https://runtime.example.test", getRuntimeSlot: () => "primary", fetchFn });
+      const openExternal = vi.fn().mockResolvedValue(undefined);
+      const result = openAiCreditCheckout({ api: client, runtimeSlot: "primary", packageId: "usd_5",
+        requestId: "77f105df-6e24-4e13-a881-af9ce20d6a63", openExternal });
+      await vi.advanceTimersByTimeAsync(18_000);
+      expect(await result).toBe(true);
+      expect(fetchFn).toHaveBeenCalledOnce();
+      expect(openExternal).toHaveBeenCalledWith("https://checkout.stripe.com/c/pay/cs_cold");
+      await client.get("/api/auth/status");
+      expect(timeout).toHaveBeenLastCalledWith(10_000);
+    } finally { vi.useRealTimers(); timeout.mockRestore(); }
+  });
+
+  it.each(["caller", "deadline"])("cancels stalled checkout at its %s boundary without opening a browser or retrying", async mode => {
+    vi.useFakeTimers();
+    const timeout = vi.spyOn(AbortSignal, "timeout").mockImplementation(ms => {
+      const controller = new AbortController();
+      setTimeout(() => controller.abort(new DOMException("Timed out", "TimeoutError")), ms);
+      return controller.signal;
+    });
+    try {
+      const caller = new AbortController();
+      let requestSignal: AbortSignal | null | undefined;
+      const fetchFn = vi.fn((_url: string, init?: RequestInit) => {
+        requestSignal = init?.signal;
+        return new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => reject(init.signal?.reason), { once: true });
+        });
+      });
+      const client = createApiClient({ baseUrl: "https://runtime.example.test", getRuntimeSlot: () => "primary", fetchFn });
+      const openExternal = vi.fn();
+      const result = openAiCreditCheckout({ api: client, runtimeSlot: "primary", packageId: "usd_5",
+        requestId: "77f105df-6e24-4e13-a881-af9ce20d6a63", signal: caller.signal, openExternal });
+      if (mode === "caller") caller.abort();
+      else {
+        await vi.advanceTimersByTimeAsync(29_999);
+        expect(requestSignal?.aborted).toBe(false);
+        await vi.advanceTimersByTimeAsync(2);
+      }
+      expect(requestSignal?.aborted).toBe(true);
+      expect(await result).toBe(false);
+      expect(fetchFn).toHaveBeenCalledOnce();
+      expect(openExternal).not.toHaveBeenCalled();
+    } finally {
+      await vi.advanceTimersByTimeAsync(30_001);
+      vi.useRealTimers(); timeout.mockRestore();
+    }
+  });
+
+  it("does not open a late checkout URL after its caller cancels", async () => {
+    const caller = new AbortController();
+    let resolveResponse!: (response: Response) => void;
+    const fetchFn = vi.fn(() => new Promise<Response>(resolve => { resolveResponse = resolve; }));
+    const client = createApiClient({ baseUrl: "https://runtime.example.test", getRuntimeSlot: () => "primary", fetchFn });
+    const openExternal = vi.fn();
+    const result = openAiCreditCheckout({ api: client, runtimeSlot: "primary", packageId: "usd_5",
+      requestId: "77f105df-6e24-4e13-a881-af9ce20d6a63", signal: caller.signal, openExternal });
+    caller.abort();
+    resolveResponse(Response.json({ url: "https://checkout.stripe.com/c/pay/cs_late" }));
+    expect(await result).toBe(false);
+    expect(fetchFn).toHaveBeenCalledOnce();
+    expect(openExternal).not.toHaveBeenCalled();
+  });
+
   it("opens server-created AI credit checkout externally for the selected runtime", async () => {
     const post = vi.fn().mockResolvedValue({ url: "https://checkout.stripe.com/c/pay/cs_ai_25" });
     const openExternal = vi.fn().mockResolvedValue(undefined);
@@ -189,7 +297,7 @@ describe("desktop provider connection actions", () => {
       packageId: "usd_25",
       runtimeSlot: "studio",
       requestId: "77f105df-6e24-4e13-a881-af9ce20d6a63",
-    }, { maxBytes: 8 * 1024 });
+    }, { maxBytes: 8 * 1024, timeoutMs: 30_000, signal: expect.any(AbortSignal) });
     expect(openExternal).toHaveBeenCalledWith("https://checkout.stripe.com/c/pay/cs_ai_25");
   });
 

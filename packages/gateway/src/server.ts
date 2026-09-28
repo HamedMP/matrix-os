@@ -161,8 +161,6 @@ import { createGatewaySpeechRuntime } from "./speech/gateway-runtime.js";
 import { initializeOwnerDatabaseServices } from "./startup/owner-database.js";
 import { enableOwnerSharedAi } from "./startup/collaboration.js";
 import { initializePlatformIntegrations } from "./startup/platform-integrations.js";
-import { createSymphonyRunner } from "./symphony-runner.js";
-import { createElixirSymphonyProxyRoutes } from "./symphony/proxy.js";
 import { getVersion } from "./system-info.js";
 import { createTaskManager } from "./task-manager.js";
 import { createTerminalLiveOwnership } from "./terminal-live-ownership.js";
@@ -246,10 +244,6 @@ import { registerMainWebSocketRoutes } from "./server/main-ws-routes.js";
 import { registerMessageLayoutRoutes } from "./server/message-layout-routes.js";
 import { registerOperationalRoutes } from "./server/operational-routes.js";
 import { registerShellTerminalRoutes } from "./server/shell-terminal-routes.js";
-import {
-  resolveInitialSymphonyPort,
-  symphonyUpstreamOriginForPort,
-} from "./server/symphony-origin.js";
 import { registerSystemOperatorRoutes } from "./server/system-operator-routes.js";
 import { registerTerminalWebSocketRoutes } from "./server/terminal-ws-routes.js";
 import type { GatewayConfig, ServerMessage } from "./server/types.js";
@@ -266,10 +260,6 @@ export {
   buildAllowedOrigins,
   createAllowedOriginController,
 } from "./allowed-origins.js";
-export {
-  readInitialSymphonyPort,
-  resolveInitialSymphonyPort,
-} from "./server/symphony-origin.js";
 export type { GatewayConfig, ServerMessage } from "./server/types.js";
 export {
   registerTerminalSessionRoutes,
@@ -329,11 +319,6 @@ export async function createGateway(config: GatewayConfig) {
   const workspaceSessionRuntimeBridge = createSessionRuntimeBridge();
   const shellPreferencesStore = new ShellPreferencesStore({ homePath });
   const terminalWindowLayoutStore = new TerminalWindowLayoutStore({ homePath });
-  const symphonyRunner = createSymphonyRunner({ homePath });
-  const initialSymphonyPort = await resolveInitialSymphonyPort(symphonyRunner);
-  if (initialSymphonyPort) {
-    allowedOriginController.updateSymphonyPort(initialSymphonyPort);
-  }
   const forwardTunnelHub = createForwardTunnelHub();
   // One distinct id for every gateway telemetry event so all events on a
   // dev gateway without owner env vars land under the same person.
@@ -692,7 +677,6 @@ export async function createGateway(config: GatewayConfig) {
     githubConnected: false,
     selectedProject: null,
     issueSourceConfigured: false,
-    symphonyReady: false,
     terminalReady: false,
     activeAgents: ["hermes"],
     handoffStatus: "idle",
@@ -1607,9 +1591,6 @@ export async function createGateway(config: GatewayConfig) {
     ...chatBoundWorkspaceRouteDeps,
   }));
   app.route("/api", createShellRoutes(shellRouteDeps));
-  app.route("/api/symphony", createElixirSymphonyProxyRoutes({
-    upstreamOrigin: symphonyUpstreamOriginForPort(initialSymphonyPort),
-  }));
   const workspaceStartupRecoveryController = createWorkspaceStartupRecovery({
     deleteProjectChats,
     homePath,

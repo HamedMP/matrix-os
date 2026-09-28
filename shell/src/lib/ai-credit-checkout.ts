@@ -1,5 +1,5 @@
+import { FUNDED_AI_CHECKOUT_TIMEOUT_MS } from "@matrix-os/contracts";
 const MAX_CHECKOUT_RESPONSE_BYTES = 8 * 1024;
-const CHECKOUT_TIMEOUT_MS = 10_000;
 type PackageId = "usd_5" | "usd_10" | "usd_25";
 
 class AiCreditCheckoutError extends Error {
@@ -82,14 +82,20 @@ export async function openWebAiCreditCheckout(input: {
   requestId: string;
   fetcher?: typeof fetch;
   navigate?: (url: string) => void;
+  signal?: AbortSignal;
+  isIdentityCurrent?: () => boolean;
 }): Promise<void> {
   const fetcher = input.fetcher ?? fetch;
   const navigate = input.navigate ?? ((url: string) => window.location.assign(url));
+  const timeout = AbortSignal.timeout(FUNDED_AI_CHECKOUT_TIMEOUT_MS);
+  const signal = input.signal ? AbortSignal.any([input.signal, timeout]) : timeout;
   try {
+    if (input.isIdentityCurrent?.() === false) throw new AiCreditCheckoutError();
+    signal.throwIfAborted();
     const response = await fetcher("/billing/ai-credit/checkout", {
       method: "POST",
       credentials: "include",
-      signal: AbortSignal.timeout(CHECKOUT_TIMEOUT_MS),
+      signal,
       headers: { "content-type": "application/json", accept: "application/json" },
       body: JSON.stringify({
         packageId: input.packageId,
@@ -102,8 +108,10 @@ export async function openWebAiCreditCheckout(input: {
       throw new AiCreditCheckoutError();
     }
     const value = await readBoundedCheckoutResponse(response);
+    signal.throwIfAborted();
     const url = value && typeof value === "object" ? (value as { url?: unknown }).url : undefined;
     if (!isStripeCheckoutUrl(url)) throw new AiCreditCheckoutError();
+    if (input.isIdentityCurrent?.() === false) throw new AiCreditCheckoutError();
     navigate(url);
   } catch (error) {
     if (error instanceof AiCreditCheckoutError) throw error;

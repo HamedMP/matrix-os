@@ -325,6 +325,24 @@ describe("funded AI add-on checkout", () => {
     await expect(repository.getFundingSummary(identity)).resolves.toMatchObject({ creditBalanceMicrousd: 5_000_000 });
   });
 
+  it("reuses the pending immutable claim after a payment-session failure without another probe or credit grant", async () => {
+    const create = vi.mocked(stripe.createAiCreditCheckoutSession!);
+    create.mockRejectedValueOnce(new Error("simulated payment-session timeout"));
+    expect((await createCheckout()).status).toBe(503);
+    const firstInput = create.mock.calls[0]![0];
+    const pending = await db.executor.selectFrom("ai_credit_checkout_claims")
+      .select(["request_id", "idempotency_key", "status"]).execute();
+    expect(pending).toEqual([{ request_id: firstInput.requestId,
+      idempotency_key: firstInput.idempotencyKey, status: "creating" }]);
+    expect((await createCheckout()).status).toBe(200);
+    expect(create).toHaveBeenCalledTimes(2);
+    expect(create.mock.calls[1]![0]).toEqual(firstInput);
+    expect(relayHealthFetch).toHaveBeenCalledOnce();
+    expect(await db.executor.selectFrom("ai_credit_checkout_claims").select("request_id").execute())
+      .toEqual([{ request_id: firstInput.requestId }]);
+    expect(await db.executor.selectFrom("ai_funded_credit_ledger").selectAll().execute()).toEqual([]);
+  });
+
   it("waits for asynchronous payment success and never grants failed or unpaid Checkout", async () => {
     expect((await createCheckout()).status).toBe(200);
     webhookEvent = completedEvent({ payment_status: "unpaid" });

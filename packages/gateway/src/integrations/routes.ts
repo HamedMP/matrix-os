@@ -1,4 +1,3 @@
-import { SYMPHONY_LINEAR_ACTIONS } from "./symphony-linear.js";
 import { executeIntegrationAction } from "./action-execution.js";
 import { getErrorStatusCode, integrationActionFailure, integrationActionSuccess, isConnectionError, isTimeoutError } from "./call-outcome.js";
 import { formatActionParamValidationError, validateActionParams } from "./parameter-validation.js";
@@ -744,10 +743,6 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
     let selection = resolveIntegrationConnection(connections, service, label);
     if (selection.kind === "ambiguous") return c.json({ error: AMBIGUOUS_CONNECTION_ERROR }, 409);
     let connection = selection.kind === "found" ? selection.connection : undefined;
-
-    if (!connection && service === "linear" && Object.hasOwn(SYMPHONY_LINEAR_ACTIONS, action)) {
-      return c.json({ error: "Integration setup required", code: "not_connected" }, 404);
-    }
 
     if (!connection) {
       try {

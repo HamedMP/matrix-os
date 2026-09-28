@@ -1,8 +1,8 @@
+import { FUNDED_AI_READINESS_TIMEOUTS } from "@matrix-os/contracts";
 import type { AiFundedPolicyRepository } from "./ai-funded-policy-repository.js";
 import { FUNDED_PROBE_MODELS, type FundedModelProbeService } from "./ai-funded-model-probes.js";
 
 const MAX_LEDGER_AGE_MS = 5 * 60_000;
-const PREFLIGHT_DEADLINE_MS = 6_000;
 const MAX_PENDING_FUNDING_READS = 4;
 const pendingFundingReads = new Set<Promise<unknown>>();
 
@@ -19,7 +19,7 @@ export async function isAiCreditCheckoutRouteHealthy(input: {
   const controller = new AbortController();
   try {
     if (!input.modelProbes || pendingFundingReads.size >= MAX_PENDING_FUNDING_READS) return false;
-    const deadlineMs = input.deadlineMs ?? PREFLIGHT_DEADLINE_MS;
+    const deadlineMs = input.deadlineMs ?? FUNDED_AI_READINESS_TIMEOUTS.platformRouteMs;
     const deadlineAtMs = Date.now() + deadlineMs;
     const read = () => {
       if (expired || pendingFundingReads.size >= MAX_PENDING_FUNDING_READS) {

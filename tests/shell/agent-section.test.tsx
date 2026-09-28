@@ -2,15 +2,17 @@
 
 import React from "react";
 import "@testing-library/jest-dom/vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AgentSection } from "../../shell/src/components/settings/sections/AgentSection.js";
 import { IdentityPersonalitySection } from "../../shell/src/components/settings/sections/IdentityPersonalitySection.js";
+import * as checkoutActions from "../../shell/src/lib/ai-credit-checkout.js";
 
 const providerControllerState = vi.hoisted(() => ({
   snapshot: {} as unknown,
   error: null as string | null,
   mutate: vi.fn(),
+  addCredit: null as null | ((source: string, packageId: "usd_5", requestId: string) => Promise<void>),
 }));
 
 vi.mock("@matrix-os/ui", () => ({
@@ -18,18 +20,23 @@ vi.mock("@matrix-os/ui", () => ({
     onOpenTerminal,
     onOpenBrowser,
     onMutate,
+    onAddCredit,
   }: {
     onOpenTerminal: (sessionId: string) => void;
     onOpenBrowser: (path: string) => void;
     onMutate: (intent: unknown) => Promise<boolean>;
-  }) => (
+    onAddCredit: (source: string, packageId: "usd_5", requestId: string) => Promise<void>;
+  }) => {
+    providerControllerState.addCredit = onAddCredit;
+    return (
     <div>
       <h2>Agents &amp; providers</h2>
       <button onClick={() => onOpenTerminal("provider-login")}>Continue in Terminal</button>
       <button onClick={() => onOpenBrowser("/api/ai/providers/login-attempts/attempt-1/authorize")}>Continue in browser</button>
       <button onClick={() => void onMutate({ type: "start_login", harnessInstanceId: "claude", accountId: null, method: "terminal" })}>Sign in</button>
     </div>
-  ),
+    );
+  },
   useProviderSettingsController: () => ({
     snapshot: providerControllerState.snapshot,
     selectedHarnessId: null,
@@ -50,14 +57,92 @@ vi.mock("@matrix-os/ui", () => ({
 }));
 
 afterEach(() => {
+  cleanup();
   providerControllerState.snapshot = {};
   providerControllerState.error = null;
   providerControllerState.mutate.mockReset();
+  providerControllerState.addCredit = null;
   window.history.replaceState({}, "", "/");
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
 describe("Canvas settings sections", () => {
+  it.each(["runtime", "computer", "unmount"])(
+    "cancels checkout and rejects a late URL after %s changes in the rendered caller",
+    async (change) => {
+      window.history.replaceState({}, "", "/vm/alice?runtime=studio");
+      let release!: (response: Response) => void;
+      let requestSignal!: AbortSignal;
+      const fetcher = vi.fn<typeof fetch>((_path, options) => {
+        requestSignal = options!.signal!;
+        return new Promise((resolve) => { release = resolve; });
+      });
+      vi.stubGlobal("fetch", fetcher);
+      const navigate = vi.fn();
+      const realCheckout = checkoutActions.openWebAiCreditCheckout;
+      vi.spyOn(checkoutActions, "openWebAiCreditCheckout")
+        .mockImplementation((input) => realCheckout({ ...input, navigate }));
+      const view = render(<AgentSection />);
+      const pending = providerControllerState.addCredit!("matrix", "usd_5", crypto.randomUUID())
+        .then(() => true, () => false);
+      if (change === "unmount") view.unmount();
+      else {
+        window.history.replaceState({}, "", change === "runtime" ? "/vm/alice?runtime=other" : "/vm/bob?runtime=studio");
+        view.rerender(<AgentSection />);
+      }
+      release(Response.json({ url: "https://checkout.stripe.com/c/pay/cs_previous" }));
+      expect({ completed: await pending, aborted: requestSignal.aborted, opens: navigate.mock.calls.length })
+        .toEqual({ completed: false, aborted: true, opens: 0 });
+      expect(fetcher).toHaveBeenCalledOnce();
+    },
+  );
+
+  it("checks the live runtime before navigating even before a scope effect commits", async () => {
+    let release!: (response: Response) => void;
+    const fetcher = vi.fn<typeof fetch>(() => new Promise((resolve) => { release = resolve; }));
+    vi.stubGlobal("fetch", fetcher);
+    const navigate = vi.fn();
+    const realCheckout = checkoutActions.openWebAiCreditCheckout;
+    vi.spyOn(checkoutActions, "openWebAiCreditCheckout")
+      .mockImplementation((input) => realCheckout({ ...input, navigate }));
+    render(<AgentSection />);
+    const pending = providerControllerState.addCredit!("matrix", "usd_5", crypto.randomUUID())
+      .then(() => true, () => false);
+    window.history.replaceState({}, "", "/?runtime=other");
+    release(Response.json({ url: "https://checkout.stripe.com/c/pay/cs_previous" }));
+    expect(await pending).toBe(false);
+    expect(navigate).not.toHaveBeenCalled();
+    expect(fetcher).toHaveBeenCalledOnce();
+  });
+
+  it("does not start checkout from a callback whose rendered scope has left", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ url: "https://checkout.stripe.com/c/pay/cs_stale" }));
+    vi.stubGlobal("fetch", fetcher);
+    const navigate = vi.fn();
+    const realCheckout = checkoutActions.openWebAiCreditCheckout;
+    vi.spyOn(checkoutActions, "openWebAiCreditCheckout")
+      .mockImplementation((input) => realCheckout({ ...input, navigate }));
+    const view = render(<AgentSection />);
+    const stale = providerControllerState.addCredit!;
+    view.unmount();
+    await expect(stale("matrix", "usd_5", crypto.randomUUID())).rejects.toThrow("Checkout is unavailable.");
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(navigate).not.toHaveBeenCalled();
+  });
+
+  it("opens checkout once while the rendered identity and lifetime are current", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ url: "https://checkout.stripe.com/c/pay/cs_current" }));
+    vi.stubGlobal("fetch", fetcher);
+    const navigate = vi.fn();
+    const realCheckout = checkoutActions.openWebAiCreditCheckout;
+    vi.spyOn(checkoutActions, "openWebAiCreditCheckout")
+      .mockImplementation((input) => realCheckout({ ...input, navigate }));
+    render(<React.StrictMode><AgentSection /></React.StrictMode>);
+    await providerControllerState.addCredit!("matrix", "usd_5", crypto.randomUUID());
+    expect(fetcher).toHaveBeenCalledOnce();
+    expect(navigate).toHaveBeenCalledExactlyOnceWith("https://checkout.stripe.com/c/pay/cs_current");
+  });
   it("renders the shared provider adapter separately from identity and personality", () => {
     vi.stubGlobal("fetch", vi.fn());
     const onOpenTerminal = vi.fn();

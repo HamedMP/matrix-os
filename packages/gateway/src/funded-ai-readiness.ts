@@ -1,11 +1,10 @@
-import { FundedAiRouteReadinessReceiptSchema, FundedAiRuntimeFundingSummaryResponseSchema, type AiProviderReadiness } from "@matrix-os/contracts";
+import { FUNDED_AI_READINESS_TIMEOUTS, FundedAiRouteReadinessReceiptSchema, FundedAiRuntimeFundingSummaryResponseSchema, type AiProviderReadiness } from "@matrix-os/contracts";
 import type { FundedAiFundingSummaryReader } from "./funded-ai-funding-summary-client.js";
 import type { FundedAiRouteReadinessReader } from "./funded-ai-route-readiness-client.js";
 
-// The funding-summary client owns its bounded 5s request. Keep this outer
-// deadline slightly longer so a cold control plane gets the full request
-// window while dependencies that ignore abort still cannot hang readiness.
-const READINESS_DEADLINE_MS = 6_000;
+// Funding-summary stays bounded at 5s; route readiness also permits a cold relay.
+// The outer bound leaves transport margin and covers dependencies ignoring abort.
+const READINESS_DEADLINE_MS = FUNDED_AI_READINESS_TIMEOUTS.gatewayObservationMs;
 
 export interface FundedAiReadiness {
   readiness: AiProviderReadiness;
