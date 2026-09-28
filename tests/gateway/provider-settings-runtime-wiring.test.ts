@@ -17,6 +17,7 @@ describe("provider settings runtime capability wiring", () => {
     expect(source).toContain("createProviderDriverInventoryReader({");
     expect(source).toContain("detectAgentInstallations: agentCredentialLauncher.detectAgentInstallations");
     expect(source).toContain("runtimeSource: agentRuntimeServices.source");
+    expect(source.includes("hermesRuntimeSource: agentRuntimeServices.source")).toBe(true);
     expect(source).toContain("createProviderTerminalLoginCoordinator({");
     const loginCoordinatorWiring = source.match(
       /const providerLoginCoordinator = createProviderTerminalLoginCoordinator\(\{[\s\S]*?\n  \}\);/,

@@ -8,6 +8,7 @@ import type {
 import type { CanonicalProviderChoice } from "./canonical-provider-choice.js";
 import { canonicalProviderAvailabilityLabel } from "./canonical-provider-choice.js";
 import { useLocalObservationExpiry } from "./local-observation-expiry.js";
+import { deriveChatPickerEntries, chatPickerEntryForSelection } from "./chat-picker-entries.js";
 import "./compact-chat-provider-choices.css";
 
 function modelProviderLabel(modelId: string): string | null {
@@ -96,15 +97,16 @@ function TwoPaneChatProviderChoices({
   catalog, choices, selected, lockedInstanceId, onSelect, renderIcon, renderDriverIcon, onSetupAction, onNewChat,
 }: CompactChatProviderChoicesProps & { catalog: CanonicalProviderCatalog }) {
   const [query, setQuery] = useState("");
-  const [activeInstanceId, setActiveInstanceId] = useState(selected?.instanceId ?? catalog.instances[0]?.id ?? "");
+  const entries = deriveChatPickerEntries(catalog);
+  const [activeEntryId, setActiveEntryId] = useState(() => chatPickerEntryForSelection(entries, selected?.instanceId));
   const listId = useId();
   const search = useRef<HTMLInputElement>(null);
   const list = useRef<HTMLDivElement>(null);
-  const activeInstance = catalog.instances.find((instance) => instance.id === activeInstanceId)
-    ?? catalog.instances.find((instance) => instance.id === selected?.instanceId)
-    ?? catalog.instances[0];
+  const activeEntry = entries.find(entry => entry.id === activeEntryId)
+    ?? entries.find(entry => entry.id === chatPickerEntryForSelection(entries, selected?.instanceId));
+  const activeInstance = activeEntry?.instances.find(instance => instance.availability === "available") ?? activeEntry?.instances[0];
   const normalizedQuery = query.trim().toLocaleLowerCase();
-  const activeChoices = choices.filter((choice) => choice.instanceId === activeInstance?.id
+  const activeChoices = choices.filter((choice) => activeEntry?.instances.some(instance => instance.id === choice.instanceId)
     && (normalizedQuery.length === 0
       || `${choice.modelLabel} ${choice.harnessLabel} ${choice.connectionLabel ?? ""} ${choice.modelId}`
         .toLocaleLowerCase().includes(normalizedQuery)));
@@ -117,34 +119,32 @@ function TwoPaneChatProviderChoices({
   return <div className="matrix-chat-model-choices matrix-chat-model-two-pane">
     <div className="matrix-chat-provider-rail">
       {DRIVER_GROUPS.map((group) => {
-        const driverKinds = catalog.drivers
-          .filter((driver) => driver.capabilityClass === group.capabilityClass)
-          .map((driver) => driver.kind);
-        const instances = driverKinds.flatMap((kind) => catalog.instances.filter((instance) => instance.driverKind === kind));
-        if (instances.length === 0) return null;
+        const groupEntries = entries.filter(entry => entry.capabilityClass === group.capabilityClass);
+        if (groupEntries.length === 0) return null;
         return <div key={group.capabilityClass} role="group" aria-label={group.label}
           className="matrix-chat-provider-group">
           <span aria-hidden="true" className="matrix-chat-provider-group-label">{group.shortLabel}</span>
-          {instances.map((instance) => {
-            const unavailable = instance.availability !== "available";
-            const locked = lockedInstanceId !== undefined && instance.id !== lockedInstanceId;
-            const setupBrowsable = unavailable && Boolean(onSetupAction && instance.setupActions.length);
-            const disabledReasonBrowsable = instance.unavailabilityReason === "disabled_in_settings";
+          {groupEntries.map((entry) => {
+            const instance = entry.instances.find(candidate => candidate.availability === "available") ?? entry.instances[0];
+            const unavailable = instance?.availability !== "available";
+            const locked = lockedInstanceId !== undefined && !entry.instances.some(candidate => candidate.id === lockedInstanceId);
+            const setupBrowsable = unavailable && Boolean(onSetupAction && instance?.setupActions.length);
+            const disabledReasonBrowsable = entry.id === "matrix-ai" || instance?.unavailabilityReason === "disabled_in_settings";
             const disabled = (locked || unavailable) && !setupBrowsable && !disabledReasonBrowsable;
-            const active = activeInstance?.id === instance.id;
-            const availability = canonicalProviderAvailabilityLabel(instance);
-            return <button key={instance.id} type="button"
-              aria-label={`${instance.displayName} agent, ${availability}`}
+            const active = activeEntry?.id === entry.id;
+            const availability = instance ? canonicalProviderAvailabilityLabel(instance) : "Unavailable";
+            return <button key={entry.id} type="button"
+              aria-label={`${entry.label} agent, ${availability}`}
               aria-pressed={active} disabled={disabled}
-              title={`${instance.displayName} — ${locked && !unavailable ? "Locked after the first turn" : availability}`}
-              data-availability={instance.availability}
+              title={`${entry.label} — ${locked && !unavailable ? "Locked after the first turn" : availability}`}
+              data-availability={instance?.availability ?? "unavailable"}
               className="matrix-chat-provider-button"
               onClick={() => {
-                setActiveInstanceId(instance.id);
+                setActiveEntryId(entry.id);
                 setQuery("");
                 window.requestAnimationFrame(() => search.current?.focus());
               }}>
-              {renderDriverIcon?.(instance.driverKind) ?? <span aria-hidden="true">●</span>}
+              {renderDriverIcon?.(entry.iconKind) ?? <span aria-hidden="true">●</span>}
             </button>;
           })}
         </div>;
@@ -197,7 +197,7 @@ function TwoPaneChatProviderChoices({
           ? <p role="status" className="matrix-chat-model-secondary px-2 py-6 text-center text-xs">{normalizedQuery ? "No matching models." : "No models found."}</p>
           : null}
         {!activeInstance ? <p role="status" className="matrix-chat-model-secondary px-2 py-6 text-center text-xs">
-          No ready connections. Open Agents &amp; providers settings to connect.
+          {activeEntry?.id === "matrix-ai" ? "Matrix AI is unavailable on this computer." : "No ready connections. Open Agents & providers settings to connect."}
         </p> : null}
       </div>
       {activeInstance && activeInstance.availability !== "available" ? <div className="matrix-chat-provider-setup">

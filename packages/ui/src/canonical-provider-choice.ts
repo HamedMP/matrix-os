@@ -83,6 +83,10 @@ const UNAVAILABLE_LABELS: Record<
 export function canonicalProviderAvailabilityLabel(
   instance: CanonicalProviderInstanceDescriptor,
 ): string {
+  if (instance.unavailabilityReason !== "disabled_in_settings" && instance.unavailabilityReason !== "settings_unavailable") {
+    if (instance.connectionState === "credit_required") return "Matrix AI credit required";
+    if (instance.connectionState === "unavailable") return "Matrix AI unavailable";
+  }
   if (instance.availability === "available") return (instance.driverKind === "codex" || instance.localObservation !== undefined)
     ? codexLocalObservationLabel(instance.localObservation)
     : "Available";

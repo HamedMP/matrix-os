@@ -1406,6 +1406,7 @@ export async function createGateway(config: GatewayConfig) {
   });
   const aiProviderService = new AiProviderService({
     nativeHarnessCatalogReader: genericHarnessModelCatalog,
+    hermesRuntimeSource: agentRuntimeServices.source,
     homePath,
     healthProbe: createOwnerAnthropicKeyPreflight({ homePath }),
     fundedCredentialProvider,

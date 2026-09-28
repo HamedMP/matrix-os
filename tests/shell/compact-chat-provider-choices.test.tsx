@@ -53,6 +53,52 @@ const catalog: CanonicalProviderCatalog = {
 };
 
 describe("compact shared Chat choices", () => {
+  it("shows Matrix AI at the top level and selects its actual Pi execution route", () => {
+    const select = vi.fn();
+    const managed = { ...pi, modelId: "cloudflare:@cf/zai-org/glm-5.3-flash", modelLabel: "GLM Flash", connectionLabel: "Matrix AI" };
+    const managedCatalog = { ...catalog, instances: catalog.instances.filter(instance => instance.driverKind !== "kernel")
+      .map(instance => instance.id === pi.instanceId ? { ...instance, connectionLabel: "Matrix AI", models: [{ ...instance.models[0]!, id: managed.modelId, displayName: managed.modelLabel }] } : instance) };
+    render(<CompactChatProviderChoices catalog={managedCatalog} choices={[managed]} selected={managed} onSelect={select}
+      renderDriverIcon={kind => <span data-testid={`glyph-${kind}`} />} />);
+    const entry = screen.getByRole("button", { name: "Matrix AI agent, Available" });
+    expect(entry).toBeVisible();
+    expect(within(entry).getByTestId("glyph-kernel")).toBeVisible();
+    fireEvent.click(entry);
+    fireEvent.click(screen.getByRole("option", { name: "GLM Flash via Pi · Work · Matrix AI" }));
+    expect(select).toHaveBeenCalledWith(managed);
+    expect(select.mock.calls[0]![0].instanceId).toBe("pi_work");
+  });
+  it("keeps an unavailable Matrix AI entry browsable without inventing a selectable route", () => {
+    const select = vi.fn();
+    const ownCatalog = { ...catalog, instances: catalog.instances.filter(instance => instance.driverKind !== "kernel") };
+    render(<CompactChatProviderChoices catalog={ownCatalog} choices={[pi]} selected={pi} onSelect={select} />);
+    const entry = screen.getByRole("button", { name: "Matrix AI agent, Unavailable" });
+    expect(entry).toBeEnabled();
+    fireEvent.click(entry);
+    expect(screen.getByText("Matrix AI is unavailable on this computer.")).toBeVisible();
+    expect(screen.queryByRole("option")).toBeNull();
+    expect(select).not.toHaveBeenCalled();
+  });
+  it("shows the server's managed credit state without offering an unavailable model", () => {
+    const funded = { ...catalog.instances[1]!, connectionLabel: "Matrix AI", connectionState: "credit_required" as const,
+      availability: "unavailable" as const, models: [], defaultSelection: undefined };
+    render(<CompactChatProviderChoices catalog={{ ...catalog, instances: [funded] }} choices={[]} selected={null} onSelect={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: "Matrix AI agent, Matrix AI credit required" }));
+    expect(screen.getByText("Matrix AI credit required")).toBeVisible();
+    expect(screen.queryByRole("option")).toBeNull();
+  });
+  it("keeps resumed chats locked to the underlying managed instance", () => {
+    const select = vi.fn();
+    const managed = { ...pi, connectionLabel: "Matrix AI" };
+    const managedCatalog = { ...catalog, instances: catalog.instances.map(instance => instance.id === pi.instanceId
+      ? { ...instance, connectionLabel: "Matrix AI" } : instance) };
+    render(<CompactChatProviderChoices catalog={managedCatalog} choices={[managed, matrix]} selected={managed}
+      lockedInstanceId={pi.instanceId} onSelect={select} />);
+    fireEvent.click(screen.getByRole("button", { name: "Matrix AI agent, Available" }));
+    expect(screen.getByRole("option", { name: "Claude Sonnet 5 via Matrix AI" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("option", { name: "Claude Sonnet 5 via Pi · Work · Matrix AI" }));
+    expect(select).toHaveBeenCalledWith(managed);
+  });
   it("keeps a locally configured Codex choice selectable with qualified copy", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-09-26T00:00:00.000Z"));

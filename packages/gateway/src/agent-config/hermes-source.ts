@@ -195,8 +195,13 @@ export function normalizeHermesRuntimeSnapshot(input: {
   const nativeParsed = selectedNativeRecords.length === 1
     ? HermesProviderSchema.safeParse(selectedNativeRecords[0]) : undefined;
   const nativeProvider = nativeParsed?.success ? nativeParsed.data : undefined;
+  // Hermes's built-in openai-codex registry entry is OAuth-only. The installed
+  // native model/options contract omits auth_type for this built-in entry.
+  // Custom, duplicate, or explicitly different credential records stay closed.
+  const builtinCodexProfile = currentProvider === "openai-codex"
+    && nativeProvider?.is_user_defined === false && nativeProvider.auth_type === undefined;
   const nativeCredentialKind = nativeProvider?.is_user_defined === true ? "custom" as const
-    : nativeProvider?.auth_type === "oauth" ? "provider_profile" as const
+    : nativeProvider?.auth_type === "oauth" || builtinCodexProfile ? "provider_profile" as const
     : nativeProvider?.auth_type === "api_key" ? "api_key" as const
       : nativeProvider?.auth_type === "base_url" || nativeProvider?.auth_type === "custom" ? "custom" as const : undefined;
 

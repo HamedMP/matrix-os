@@ -1,5 +1,7 @@
 import { AiNativeHarnessCatalogSchema, ProviderAccessSourceSchema, type AiProviderSnapshotV3 } from "@matrix-os/contracts";
 import type { GenericHarnessModelCatalog, GenericHarnessModelCatalogReader } from "./generic-harness-model-catalog.js";
+import type { AgentRuntimeSource } from "../agent-config/service.js";
+import { projectHermesNativeCatalog } from "./hermes-native-catalog.js";
 
 type Catalog = NonNullable<AiProviderSnapshotV3["nativeHarnessCatalog"]>;
 const unknownObservation = { state: "unknown" as const, checkedAt: null, staleAfter: null };
@@ -23,22 +25,40 @@ function canonicalCatalog(catalog: GenericHarnessModelCatalog): Catalog {
   }
   return AiNativeHarnessCatalogSchema.parse({ profiles, failures });
 }
-export function createCanonicalNativeHarnessCatalogReader(reader: GenericHarnessModelCatalogReader): (refresh: boolean) => Promise<Catalog> {
-  let pending: Promise<Catalog> | null = null;
+export function createCanonicalNativeHarnessCatalogReader(reader: GenericHarnessModelCatalogReader,
+  options: { hermesRuntimeSource?: AgentRuntimeSource; now?: () => Date } = {},
+): (refresh: boolean) => Promise<Catalog> {
+  let pending: { coding: Promise<Catalog>; hermes: Promise<Catalog> } | null = null;
   return async (refresh) => {
     if (!pending) {
-      const attempt = Promise.resolve().then(() => reader.getCatalog({ refresh })).then(canonicalCatalog).catch((error: unknown): Catalog => {
+      const coding = Promise.resolve().then(() => reader.getCatalog({ refresh })).then(canonicalCatalog).catch((error: unknown): Catalog => {
         console.warn("[ai-providers] Native catalog unavailable", { errorClass: error instanceof Error ? error.name : "Unknown" });
         return { profiles: [], failures: ["pi", "opencode"] };
       });
-      pending = attempt.finally(() => { pending = null; });
+      const hermes = options.hermesRuntimeSource
+        ? Promise.resolve().then(() => options.hermesRuntimeSource!(AbortSignal.timeout(6500)))
+          .then((snapshot) => projectHermesNativeCatalog(snapshot, (options.now ?? (() => new Date()))()))
+          .catch((error: unknown): Catalog => {
+            console.warn("[ai-providers] Hermes native catalog unavailable", { errorClass: error instanceof Error ? error.name : "Unknown" });
+            return { profiles: [], failures: ["hermes"] };
+          })
+        : Promise.resolve<Catalog>({ profiles: [], failures: [] });
+      const attempt = { coding, hermes };
+      pending = attempt;
+      void Promise.allSettled([coding, hermes]).then(() => { if (pending === attempt) pending = null; });
     }
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    try {
-      return await Promise.race([pending, new Promise<Catalog>((resolve) => {
-        timer = setTimeout(() => resolve({ profiles: [], failures: ["pi", "opencode"] }), 6500);
-      })]);
-    } finally { if (timer) clearTimeout(timer); }
+    const bounded = async (attempt: Promise<Catalog>, failures: Catalog["failures"]): Promise<Catalog> => {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        return await Promise.race([attempt, new Promise<Catalog>((resolve) => {
+          timer = setTimeout(() => resolve({ profiles: [], failures }), 6500);
+        })]);
+      } finally { if (timer) clearTimeout(timer); }
+    };
+    const [coding, hermes] = await Promise.all([bounded(pending.coding, ["pi", "opencode"]), bounded(pending.hermes, ["hermes"])]);
+    const hasRoom = coding.profiles.length + hermes.profiles.length <= 48;
+    return AiNativeHarnessCatalogSchema.parse({ profiles: [...coding.profiles, ...(hasRoom ? hermes.profiles : [])],
+      failures: [...coding.failures, ...(hasRoom ? hermes.failures : ["hermes"])] });
   };
 }
 
@@ -55,7 +75,7 @@ export function projectCanonicalNativeHarnessCatalog(catalog: Catalog): GenericH
   return { providers, nativeDefaults, failures: catalog.failures, accessSources: catalog.profiles.map((profile) => ProviderAccessSourceSchema.parse({
     id: `harness_${profile.harness}_${profile.providerId}`, kind: "harness_profile", harness: profile.harness,
     fundingKind: "owner_account", providerId: profile.providerId, accountId: null,
-    displayName: `${profile.harness === "pi" ? "Pi" : "OpenCode"} account`,
+    displayName: `${profile.harness === "pi" ? "Pi" : profile.harness === "hermes" ? "Hermes" : "OpenCode"} account`,
     readiness: { state: "unknown", checkedAt: null, staleAfter: null, action: "retry", safeReason: "unknown" },
     localObservation: profile.localObservation, eligibleModelIds: profile.models.filter((model) => model.enabled).map((model) => model.id),
     usage: { kind: "unavailable", authority: "unavailable", state: "not_applicable", scope: "access_source", reason: "provider_does_not_report", asOf: profile.localObservation.checkedAt },

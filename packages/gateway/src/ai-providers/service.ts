@@ -1,6 +1,7 @@
 import type { ProviderSnapshotReadOptions } from "./snapshot-read-options.js";
 import { createCanonicalNativeHarnessCatalogReader } from "./native-harness-canonical-projection.js";
 import type { GenericHarnessModelCatalogReader } from "./generic-harness-model-catalog.js";
+import type { AgentRuntimeSource } from "../agent-config/service.js";
 import {
   AiProviderReadinessSchema,
   AiProviderSnapshotV3Schema,
@@ -49,6 +50,7 @@ export interface AiProviderSnapshotReader {
 
 interface AiProviderServiceOptions {
   nativeHarnessCatalogReader?: GenericHarnessModelCatalogReader;
+  hermesRuntimeSource?: AgentRuntimeSource;
   homePath: string;
   env?: NodeJS.ProcessEnv;
   now?: () => Date;
@@ -209,7 +211,8 @@ export class AiProviderService implements AiProviderSnapshotReader {
       Math.min(options.healthTimeoutMs ?? HEALTH_TIMEOUT_MS, HEALTH_TIMEOUT_MS),
     );
     this.#driverInventory = options.driverInventory;
-    this.#nativeHarnessCatalogReader = options.nativeHarnessCatalogReader ? createCanonicalNativeHarnessCatalogReader(options.nativeHarnessCatalogReader) : undefined;
+    this.#nativeHarnessCatalogReader = options.nativeHarnessCatalogReader ? createCanonicalNativeHarnessCatalogReader(options.nativeHarnessCatalogReader,
+      { hermesRuntimeSource: options.hermesRuntimeSource, now: this.#now }) : undefined;
     this.#fundedReadiness = options.fundedReadinessReader;
     this.#codexLocalObservation = options.codexLocalObservation;
   }
