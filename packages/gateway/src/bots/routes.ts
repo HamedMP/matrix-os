@@ -4,6 +4,7 @@
  * Bodies are bounded and strictly validated, errors come from one mapper
  * with allowlisted codes and generic messages, and responses are private.
  */
+import { BotInteractionIdSchema, BotMemoryItemIdSchema, CanonicalChatIdSchema, ChatAgentIdSchema } from "@matrix-os/contracts";
 import type { Context } from "hono";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
@@ -72,7 +73,9 @@ export function createBotRoutes(options: {
   routes.get("/api/chats/:chatId/interactions", async (context) => {
     const principal = options.getPrincipal(context);
     if (!options.interactions) return errorResponse(context, "unavailable");
-    const interactions = await options.interactions.listPending(principal.userId, context.req.param("chatId"));
+    const chatId = CanonicalChatIdSchema.safeParse(context.req.param("chatId"));
+    if (!chatId.success) return errorResponse(context, "invalid_request");
+    const interactions = await options.interactions.listPending(principal.userId, chatId.data);
     context.header("Cache-Control", "private, no-store");
     return context.json({ interactions });
   });
@@ -80,8 +83,11 @@ export function createBotRoutes(options: {
   routes.post("/api/chats/:chatId/interactions/:interactionId/resolve", limit, async (context) => {
     const principal = options.getPrincipal(context);
     if (!options.interactions || !options.admitContinuation) return errorResponse(context, "unavailable");
+    const chatId = CanonicalChatIdSchema.safeParse(context.req.param("chatId"));
+    const interactionId = BotInteractionIdSchema.safeParse(context.req.param("interactionId"));
+    if (!chatId.success || !interactionId.success) return errorResponse(context, "invalid_request");
     const { response, continuation } = await options.interactions.resolve(
-      principal.userId, context.req.param("chatId"), context.req.param("interactionId"), await context.req.json(),
+      principal.userId, chatId.data, interactionId.data, await context.req.json(),
     );
     if (continuation) {
       // The answer is recorded either way; repeating this request retries the continuation.
@@ -100,8 +106,11 @@ export function createBotRoutes(options: {
     routes.post(`/api/chat-agents/:agentId/memory/:itemId/${action}`, limit, async (context) => {
       const principal = options.getPrincipal(context);
       if (!options.memory) return errorResponse(context, "unavailable");
+      const agentId = ChatAgentIdSchema.safeParse(context.req.param("agentId"));
+      const itemId = BotMemoryItemIdSchema.safeParse(context.req.param("itemId"));
+      if (!agentId.success || !itemId.success) return errorResponse(context, "invalid_request");
       const result = await options.memory[action](
-        principal.userId, context.req.param("agentId"), context.req.param("itemId"), await context.req.json(),
+        principal.userId, agentId.data, itemId.data, await context.req.json(),
       );
       context.header("Cache-Control", "private, no-store");
       return context.json(result);

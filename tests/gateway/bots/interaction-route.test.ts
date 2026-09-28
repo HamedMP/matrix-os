@@ -21,6 +21,20 @@ function app(options: Parameters<typeof createBotRoutes>[0] extends infer O ? Om
 const post = (server: Hono, path: string, body: string) => server.request(path, { method: "POST", headers: { "content-type": "application/json" }, body });
 
 describe("bot interaction and memory routes", () => {
+  it("rejects malformed path IDs before calling any service", async () => {
+    const listPending = vi.fn(async () => []);
+    const resolve = vi.fn();
+    const forget = vi.fn();
+    const server = app({ interactions: { listPending, resolve }, admitContinuation: vi.fn(), memory: { forget, confirm: vi.fn() } });
+    expect((await server.request("/api/chats/wrong/interactions")).status).toBe(400);
+    expect((await post(server, `/api/chats/${CHAT}/interactions/wrong/resolve`, "{}")).status).toBe(400);
+    expect((await post(server, `/api/chats/wrong/interactions/${INTERACTION}/resolve`, "{}")).status).toBe(400);
+    expect((await post(server, "/api/chat-agents/wrong/memory/mem_0123456789ab/forget", "{}")).status).toBe(400);
+    expect((await post(server, "/api/chat-agents/bot_0123456789abcdef/memory/wrong/forget", "{}")).status).toBe(400);
+    expect(listPending).not.toHaveBeenCalled();
+    expect(resolve).not.toHaveBeenCalled();
+    expect(forget).not.toHaveBeenCalled();
+  });
   it("records an answer, then continues the task as the responder", async () => {
     const resolve = vi.fn(async () => ({ response: RESOLVED, continuation: CONTINUATION }));
     const admitContinuation = vi.fn(async () => undefined);
