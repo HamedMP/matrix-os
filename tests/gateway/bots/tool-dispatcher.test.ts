@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, readdir, rm, symlink, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { CanonicalProviderCatalog } from "@matrix-os/contracts";
@@ -60,6 +60,30 @@ describe("bot tool dispatcher", () => {
     await expect(readFile(join(home, "outside", "secret.md"), "utf8")).resolves.toBe("secret");
     await expect(tools.dispatch(binding, read("missing.md"), signal)).rejects.toEqual(new BotBrokerActionError("invalid_arguments"));
     await expect(tools.dispatch(binding, write("a.md", "x", { replace: { baseRevision: 1 } }), signal)).rejects.toEqual(new BotBrokerActionError("invalid_arguments"));
+  });
+
+  it("keeps the previous file when a save fails, and clears stale save files without following links", async () => {
+    const tools = createBotToolDispatcher({ homePath: home });
+    await tools.dispatch(binding, write("notes.md", "v1"), signal);
+    const workspace = join(home, "bots", BOT_ID);
+    await chmod(workspace, 0o555);
+    try {
+      await expect(tools.dispatch(binding, write("notes.md", "v2"), signal)).rejects.toThrow();
+    } finally {
+      await chmod(workspace, 0o755);
+    }
+    await expect(readFile(join(workspace, "notes.md"), "utf8")).resolves.toBe("v1");
+    const stale = join(workspace, ".bot-save-00000000-0000-0000-0000-000000000000.tmp");
+    await writeFile(stale, "partial");
+    await utimes(stale, new Date(Date.now() - 60 * 60_000), new Date(Date.now() - 60 * 60_000));
+    await writeFile(join(home, "outside-target"), "keep");
+    const linked = join(workspace, ".bot-save-11111111-1111-1111-1111-111111111111.tmp");
+    await symlink(join(home, "outside-target"), linked);
+    await tools.dispatch(binding, write("notes.md", "v3"), signal);
+    await expect(readFile(join(workspace, "notes.md"), "utf8")).resolves.toBe("v3");
+    await expect(readFile(stale, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(readFile(join(home, "outside-target"), "utf8")).resolves.toBe("keep");
+    expect((await readdir(workspace)).filter((name) => name.endsWith(".tmp"))).toEqual([".bot-save-11111111-1111-1111-1111-111111111111.tmp"]);
   });
 
   it("refuses capabilities that have no tool yet", async () => {

@@ -21,6 +21,11 @@ import {
 import type { BotTaskOrchestrator, BotTurnResult } from "./task-orchestrator.js";
 
 const MAX_DELTA_CHARS = 4_000;
+/**
+ * Tool progress and activity events per run. Chat keeps at most 500 run
+ * activities; the rest of that room is left for its own terminal records.
+ */
+export const MAX_BOT_ACTIVITY_EVENTS = 400;
 const SAFE_REF = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
 
 const BotChatStateSchema = z.object({
@@ -115,13 +120,27 @@ export function createMatrixBotChatProviderAdapter(options: {
       });
       let result: BotTurnResult;
       let drained = false;
+      let activities = 0;
       try {
         for await (const item of handle.events) {
           if (item.kind === "state") {
             yield CanonicalProviderRunEventSchema.parse({ type: "state.updated", state: BotChatStateSchema.parse(item.state) });
             continue;
           }
-          for (const event of mapEvent(item.event)) yield CanonicalProviderRunEventSchema.parse(event);
+          for (const event of mapEvent(item.event)) {
+            if (event.type === "tool.progress" || event.type === "agent.activity") {
+              // Past the budget the reply still streams; further progress is summarized once.
+              activities += 1;
+              if (activities > MAX_BOT_ACTIVITY_EVENTS) continue;
+              if (activities === MAX_BOT_ACTIVITY_EVENTS) {
+                yield CanonicalProviderRunEventSchema.parse({
+                  type: "agent.activity", activityId: "activity_limit", kind: "phase", label: "More steps were not shown", status: "completed",
+                });
+                continue;
+              }
+            }
+            yield CanonicalProviderRunEventSchema.parse(event);
+          }
         }
         drained = true;
       } finally {

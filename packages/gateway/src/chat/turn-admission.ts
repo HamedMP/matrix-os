@@ -176,7 +176,7 @@ export async function admitCanonicalTurn(
       selection: validated.selection,
       interactionMode: effective.interactionMode,
       ...(prepared?.context ? { context: prepared.context } : {}),
-      permissionMode: input.permissionMode,
+      permissionMode: effective.permissionMode,
       ...(resolvedRoot ? {
         executionRoot: resolvedRoot.ref,
         executionRootFingerprint: resolvedRoot.fingerprint,

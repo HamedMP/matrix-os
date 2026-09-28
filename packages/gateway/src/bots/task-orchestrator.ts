@@ -35,6 +35,8 @@ import { BOT_RUNTIME_REGISTRY_CAPACITY, type BotRuntimeRegistry } from "./runtim
 import { buildBotSystemPrompt, BotSystemPromptError } from "./system-prompt.js";
 
 const ACTIVE_DEADLINE_MS = 10 * 60_000;
+/** How long a worker that took the cancel has to end its run before its runtime is stopped. */
+const CANCEL_GRACE_MS = 10_000;
 const MAX_TOOL_ACTIONS = 60;
 const MAX_QUEUED_EVENTS = 1_000;
 /** Tools the broker serves today; the rest of a recipe's set arrives with later layers. */
@@ -66,6 +68,8 @@ interface ActiveRun {
   runtime?: { runtimeHandle: string; executionGeneration: string };
   queue: CanonicalCliEventQueue<BotTurnEvent>;
   stopping?: "cancelled" | "deadline";
+  finished?: boolean;
+  grace?: ReturnType<typeof setTimeout>;
 }
 
 export class BotTurnError extends Error {
@@ -77,7 +81,7 @@ export class BotTurnError extends Error {
 
 export function createBotTaskOrchestrator(deps: {
   bindings: Pick<BotBindingsRepository, "forChat">;
-  tasks: Pick<BotTasksRepository, "create" | "transition" | "get">;
+  tasks: Pick<BotTasksRepository, "start" | "transition" | "get">;
   agents: Pick<ChatAgentStore, "get">;
   recipes: BotRecipeCatalog;
   resolveRoute(ownerId: string): Promise<ResolvedBotRoute>;
@@ -88,9 +92,12 @@ export function createBotTaskOrchestrator(deps: {
   now?: () => Date;
   /** Active-work deadline per task; 10 minutes, and never longer. */
   activeDeadlineMs?: number;
+  /** Test hook; 10 seconds, and never longer. */
+  cancelGraceMs?: number;
 }) {
   const now = () => (deps.now?.() ?? new Date()).toISOString();
   const activeDeadlineMs = Math.max(1, Math.min(Math.trunc(deps.activeDeadlineMs ?? ACTIVE_DEADLINE_MS), ACTIVE_DEADLINE_MS));
+  const cancelGraceMs = Math.max(1, Math.min(Math.trunc(deps.cancelGraceMs ?? CANCEL_GRACE_MS), CANCEL_GRACE_MS));
   /** At most one entry per bound runtime; the registry allows 64. */
   const active = new Map<string, ActiveRun>();
 
@@ -119,18 +126,27 @@ export function createBotTaskOrchestrator(deps: {
   /**
    * Asks the worker to stop the run. A worker that does not take the cancel
    * (the run has not started, or it is unresponsive) is stopped outright,
-   * which ends the pending `bot.run` relay.
+   * which ends the pending `bot.run` relay; one that takes it but does not
+   * end its run within the grace period is stopped the same way.
    */
   async function stopRuntime(run: ActiveRun, runId: string, reason: "cancelled" | "deadline"): Promise<void> {
     run.stopping ??= reason;
-    if (!run.runtime) return;
+    const runtime = run.runtime;
+    if (!runtime || run.finished) return;
     let delivered = false;
     try {
-      delivered = (await deps.client.runBot({ ...run.runtime, command: { version: 1, kind: "bot.cancel", runId } })).ok;
+      delivered = (await deps.client.runBot({ ...runtime, command: { version: 1, kind: "bot.cancel", runId } })).ok;
     } catch (error: unknown) {
       console.warn("[bots] bot cancel was not delivered:", error instanceof Error ? error.name : "UnknownError");
     }
-    if (!delivered) await deps.admission.release(run.runtime.runtimeHandle);
+    if (!delivered) {
+      await deps.admission.release(runtime.runtimeHandle);
+      return;
+    }
+    run.grace ??= setTimeout(() => {
+      if (!run.finished) void deps.admission.release(runtime.runtimeHandle);
+    }, cancelGraceMs);
+    run.grace.unref?.();
   }
 
   async function execute(input: { ownerId: string; chatId: string; runId: string; text: string; signal: AbortSignal }, run: ActiveRun): Promise<BotTurnResult> {
@@ -145,10 +161,7 @@ export function createBotTaskOrchestrator(deps: {
       if (error instanceof BotRecipeCatalogError) return { status: "failed" };
       throw error;
     }
-    let task = await deps.tasks.create({ ownerId: input.ownerId, botId, chatId: input.chatId, now: now() });
-    task = await deps.tasks.transition({
-      ownerId: input.ownerId, taskId: task.taskId, baseRevision: task.revision, to: "running", runId: input.runId, now: now(),
-    });
+    const task = await deps.tasks.start({ ownerId: input.ownerId, botId, chatId: input.chatId, runId: input.runId, now: now() });
     run.queue.push({ kind: "state", state: { taskId: task.taskId } });
     if (input.signal.aborted) return settle(task, "cancelled");
 
@@ -194,7 +207,8 @@ export function createBotTaskOrchestrator(deps: {
       if (input.signal.aborted || run.stopping) return await settle(task, "cancelled");
       const reply = await deps.client.runBot({ ...run.runtime, command: { version: 1, kind: "bot.run", runId: input.runId } });
       const outcome = reply.ok ? BotRunOutcomeSchema.safeParse(reply.reply) : undefined;
-      if (run.stopping === "deadline" && (!outcome?.success || outcome.data.status === "cancelled")) {
+      // Past the deadline only a finished reply stands; anything else would need more time.
+      if (run.stopping === "deadline" && (!outcome?.success || outcome.data.status !== "completed")) {
         return await settle(task, "blocked", "deadline_reached");
       }
       if (!outcome?.success || outcome.data.runId !== input.runId) return await settle(task, run.stopping ? "cancelled" : "failed");
@@ -204,6 +218,8 @@ export function createBotTaskOrchestrator(deps: {
       return await settle(task, run.stopping === "deadline" ? "blocked" : run.stopping ? "cancelled" : "failed",
         run.stopping === "deadline" ? "deadline_reached" : undefined);
     } finally {
+      run.finished = true;
+      if (run.grace) clearTimeout(run.grace);
       clearTimeout(deadline);
       input.signal.removeEventListener("abort", onAbort);
       await deps.admission.release(run.runtime.runtimeHandle);

@@ -44,12 +44,27 @@ describe("bot route resolver", () => {
     });
   });
 
+  it("prefers Matrix AI's GLM route, launched with the Matrix AI credential as chat completions", () => {
+    const resolved = resolveBotRoute(snapshot({
+      sources: [{ id: "matrix_cloudflare", models: [GLM] }, { id: "matrix_included", models: [SONNET] }],
+      models: [{ id: GLM, vendor: "cloudflare", sources: ["matrix_cloudflare"] }, { id: SONNET, vendor: "anthropic", sources: ["matrix_included"] }],
+      instances: [{ accessSourceId: "matrix_included", defaultModelId: SONNET }, { accessSourceId: "matrix_cloudflare", defaultModelId: GLM }],
+    }), NOW);
+    expect(resolved).toMatchObject({ accessSourceId: "matrix_included", route: { api: "openai-completions", modelId: GLM } });
+    // Matrix AI's Anthropic source never serves another vendor's model.
+    expect(() => resolveBotRoute(snapshot({
+      sources: [{ id: "matrix_included", models: [GLM] }],
+      models: [{ id: GLM, vendor: "cloudflare", sources: ["matrix_included"] }],
+      instances: [{ accessSourceId: "matrix_included", defaultModelId: GLM }],
+    }), NOW)).toThrow(BotRouteError);
+  });
+
   it("falls back to Matrix AI's default, served as chat completions for other vendors", () => {
     const resolved = resolveBotRoute(snapshot({
       active: { accessSourceId: "owner_openai_profile", modelId: "gpt-5" },
-      sources: [{ id: "matrix_included", models: [GLM] }],
-      models: [{ id: GLM, vendor: "zai", sources: ["matrix_included"] }],
-      instances: [{ accessSourceId: "matrix_included", defaultModelId: GLM }],
+      sources: [{ id: "matrix_cloudflare", models: [GLM] }],
+      models: [{ id: GLM, vendor: "zai", sources: ["matrix_cloudflare"] }],
+      instances: [{ accessSourceId: "matrix_cloudflare", defaultModelId: GLM }],
     }), NOW);
     expect(resolved).toMatchObject({ accessSourceId: "matrix_included", route: { api: "openai-completions", modelId: GLM, input: ["text"] } });
   });

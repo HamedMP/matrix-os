@@ -164,7 +164,7 @@ export async function enqueueCanonicalQueuedTurn(options: {
     driverKind: validated.instance.driverKind,
     selection: validated.selection,
     interactionMode: effective.interactionMode,
-    permissionMode: input.permissionMode,
+    permissionMode: effective.permissionMode,
     ...(prepared?.context ? { context: prepared.context } : {}),
     ...(resolvedRoot ? {
       executionRoot: resolvedRoot.ref,

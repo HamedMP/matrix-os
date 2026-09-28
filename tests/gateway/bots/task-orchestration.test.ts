@@ -2,7 +2,7 @@ import type { BotModelRoute } from "@matrix-os/contracts";
 import type { Kysely } from "kysely";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BotAdmissionError } from "../../../packages/gateway/src/bots/admission.js";
-import { createMatrixBotChatProviderAdapter } from "../../../packages/gateway/src/bots/chat-adapter.js";
+import { MAX_BOT_ACTIVITY_EVENTS, createMatrixBotChatProviderAdapter } from "../../../packages/gateway/src/bots/chat-adapter.js";
 import type { OwnerBotDatabase } from "../../../packages/gateway/src/bots/database.js";
 import { createBotRecipeCatalog } from "../../../packages/gateway/src/bots/recipe-catalog.js";
 import { createBotBindingsRepository } from "../../../packages/gateway/src/bots/repositories/bindings.js";
@@ -41,6 +41,7 @@ function setup(options: {
   admit?: () => Promise<never>;
   cancelDelivered?: boolean;
   activeDeadlineMs?: number;
+  cancelGraceMs?: number;
   agent?: Record<string, unknown> | null;
 } = {}) {
   const registry = new BotRuntimeRegistry();
@@ -73,6 +74,7 @@ function setup(options: {
     registry,
     client: { runBot: runBot as never },
     ...(options.activeDeadlineMs ? { activeDeadlineMs: options.activeDeadlineMs } : {}),
+    ...(options.cancelGraceMs ? { cancelGraceMs: options.cancelGraceMs } : {}),
   });
   const stopRuntime = vi.fn(async () => undefined);
   const adapter = createMatrixBotChatProviderAdapter({ orchestrator, stopRuntime });
@@ -209,6 +211,52 @@ describe("bot turns through the matrix_bot adapter", () => {
     finish(undefined);
     expect((await running).at(-1)).toMatchObject({ outcome: "failed", error: { code: "run_failed", safeMessage: expect.stringContaining("time limit") } });
     await expect(tasks()).resolves.toEqual([expect.objectContaining({ status: "blocked", blocked_reason: "deadline_reached" })]);
+  });
+
+  it("stops a worker that took the cancel but did not end its run", async () => {
+    const aborted = new AbortController();
+    const { adapter, commands, admission } = setup({ cancelGraceMs: 30, worker: () => new Promise(() => undefined) });
+    const running = collect(adapter.start(turn(aborted.signal)));
+    await vi.waitFor(() => expect(commands).toHaveLength(1));
+    aborted.abort();
+    await vi.waitFor(() => expect(commands.map((command) => command.kind)).toEqual(["bot.run", "bot.cancel"]));
+    await vi.waitFor(() => expect(admission.release).toHaveBeenCalledWith(RUNTIME));
+    void running;
+  });
+
+  it("blocks a task whose run needs more time after the deadline, but keeps a reply that finished", async () => {
+    for (const [status, expected] of [["waiting_person", { status: "blocked", blocked_reason: "deadline_reached" }], ["completed", { status: "completed", blocked_reason: null }]] as const) {
+      await db.deleteFrom("bot_tasks").execute();
+      let finish: (value: unknown) => void = () => undefined;
+      const { adapter, commands } = setup({
+        activeDeadlineMs: 30,
+        worker: (input) => new Promise((resolve) => { finish = () => resolve({ runId: input.command.runId, status, toolActions: 1, sessionRevision: 1 }); }),
+      });
+      const running = collect(adapter.start(turn(undefined, `run_late_${status}`)));
+      await vi.waitFor(() => expect(commands.map((command) => command.kind)).toContain("bot.cancel"));
+      finish(undefined);
+      await running;
+      await expect(tasks()).resolves.toEqual([expect.objectContaining(expected)]);
+    }
+  });
+
+  it("keeps a chatty turn within Chat's activity budget while the reply still streams", async () => {
+    const { adapter } = setup({
+      worker: async (input, { publish }) => {
+        let seq = 0;
+        for (let index = 0; index < 250; index += 1) {
+          await publish(seq++, { type: "tool_progress", toolCallId: `call_${index}`, capability: "artifact.read", phase: "started" });
+          await publish(seq++, { type: "tool_progress", toolCallId: `call_${index}`, capability: "artifact.read", phase: "completed" });
+        }
+        await publish(seq++, { type: "assistant_delta", text: "Done." });
+        return { runId: input.command.runId, status: "completed", toolActions: 60, sessionRevision: 1 };
+      },
+    });
+    const events = await collect(adapter.start(turn()));
+    const activities = events.filter((event) => event.type === "tool.progress" || event.type === "agent.activity");
+    expect(activities).toHaveLength(MAX_BOT_ACTIVITY_EVENTS);
+    expect(activities.at(-1)).toMatchObject({ type: "agent.activity", label: "More steps were not shown" });
+    expect(events).toContainEqual({ type: "assistant.delta", delta: "Done." });
   });
 
   it("relays steering to the running worker only", async () => {
