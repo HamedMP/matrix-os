@@ -18,23 +18,29 @@ function entry(id: string, kind: "file" | "folder", path: string, parentId: stri
 const root = entry(rootId, "folder", "projects/shared", null);
 const child = entry(childId, "folder", "projects/shared/notes", rootId);
 const file = entry(fileId, "file", "projects/shared/notes/readme.txt", childId);
+const otherScopeId = "10000000-0000-4000-8000-000000000002";
 
 function fakeApi(role: "editor" | "viewer", pages: Array<{ entries: unknown[]; nextCursor?: string }>) {
+  const catalog = pages.map((page) => ({ ...page, entries: [...page.entries] }));
   const api = {
     baseUrl: "https://app.matrix-os.com",
     get: vi.fn(async (path: string) => {
-      if (path === base) return {
-        id: scopeId, ownerId: "user_owner", kind: "folder", resourceId: rootId, membershipMode: "direct", lifecycle: "shared",
+      if (path === base || path === `/api/collaboration/scopes/${otherScopeId}`) return {
+        id: path === base ? scopeId : otherScopeId, ownerId: "user_owner", kind: "folder", resourceId: rootId, membershipMode: "direct", lifecycle: "shared",
         revision: "1", authEpoch: "1", authorityGeneration: "1", role,
         capabilities: { read: true, discuss: true, manageMembers: false, requestAi: false, observeTerminal: false, controlTerminal: false, stopTerminal: false },
       };
-      if (path.startsWith(`${base}/files?`)) return pages[path.includes("cursor=") ? 1 : 0] ?? { entries: [] };
+      if (path.startsWith(`${base}/files?`) || path.startsWith(`/api/collaboration/scopes/${otherScopeId}/files?`)) return catalog[path.includes("cursor=") ? 1 : 0] ?? { entries: [] };
       throw Error(`unexpected ${path}`);
     }),
-    post: vi.fn(async (_path: string, body: { type: string; fileId?: string; path?: string }) => ({
-      entry: body.type === "create" ? entry(crypto.randomUUID(), "folder", body.path!, rootId, "1") : entry(body.fileId!, "folder", body.path ?? child.path, rootId, "5"),
-      replayed: false,
-    })),
+    post: vi.fn(async (_path: string, body: { type: string; fileId?: string; parentId?: string; path?: string }) => {
+      const updated = body.type === "create" ? entry(crypto.randomUUID(), "folder", body.path!, body.parentId ?? rootId, "1")
+        : entry(body.fileId!, "folder", body.path ?? child.path, rootId, "5");
+      if (body.type === "create") catalog[0].entries.push(updated);
+      if (body.type === "rename") catalog.forEach((page) => { page.entries = page.entries.map((item) => (item as { id: string }).id === body.fileId ? updated : item); });
+      if (body.type === "delete") catalog.forEach((page) => { page.entries = page.entries.filter((item) => (item as { id: string }).id !== body.fileId); });
+      return { entry: updated, replayed: false };
+    }),
     delete: vi.fn(),
     getContent: vi.fn(async () => ({ status: "ok" as const, bytes: new TextEncoder().encode("hello"), contentType: "text/plain", size: 5 })),
   };
@@ -52,6 +58,7 @@ describe("SharedFolderView", () => {
     const api = fakeApi("viewer", [{ entries: [root, child], nextCursor: child.path }, { entries: [file] }]);
     render(<ChatCollaboration view={{ kind: "folder", scopeId }} api={api} actorId="user_member" />);
     expect(await screen.findByRole("heading", { name: "shared" })).toBeVisible();
+    expect(document.querySelector('[data-slot="shared-folder-view"]')).toHaveClass("ph-no-capture");
     expect(screen.getByRole("button", { name: "notes" })).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "Load more" }));
     await waitFor(() => expect(screen.queryByRole("button", { name: "Load more" })).toBeNull());
@@ -59,6 +66,60 @@ describe("SharedFolderView", () => {
     expect(screen.getByText("readme.txt")).toBeVisible();
     expect(screen.queryByRole("button", { name: "New folder" })).toBeNull();
     expect(api.get).toHaveBeenCalledWith(`${base}/files?limit=100&cursor=${encodeURIComponent(child.path)}`);
+  });
+
+  it("keeps a folder on a later page selected after refresh", async () => {
+    const api = fakeApi("editor", [{ entries: [root], nextCursor: root.path }, { entries: [child, file] }]);
+    render(<ChatCollaboration view={{ kind: "folder", scopeId }} api={api} actorId="user_member" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Load more" }));
+    fireEvent.click(await screen.findByRole("button", { name: "notes" }));
+    expect(screen.getByRole("heading", { name: "notes" })).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    expect(await screen.findByRole("heading", { name: "notes" })).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "New folder" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "New folder name" }), { target: { value: "drafts" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create folder" }));
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith(`${base}/files/actions`, expect.objectContaining({ parentId: childId })));
+  });
+
+  it("does not create in the root when the selected folder disappears during refresh", async () => {
+    const api = fakeApi("editor", [{ entries: [root, child] }]);
+    render(<ChatCollaboration view={{ kind: "folder", scopeId }} api={api} actorId="user_member" />);
+    fireEvent.click(await screen.findByRole("button", { name: "notes" }));
+    api.get.mockImplementation(async (path: string) => path === base
+      ? { id: scopeId, ownerId: "user_owner", kind: "folder", resourceId: rootId, membershipMode: "direct", lifecycle: "shared",
+        revision: "1", authEpoch: "1", authorityGeneration: "1", role: "editor",
+        capabilities: { read: true, discuss: true, manageMembers: false, requestAi: false, observeTerminal: false, controlTerminal: false, stopTerminal: false } }
+      : { entries: [root] });
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    expect(await screen.findByRole("heading", { name: "Folder no longer available" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "New folder" })).toBeNull();
+    expect(api.post).not.toHaveBeenCalled();
+  });
+
+  it("does not apply a late page from a previous scope", async () => {
+    const api = fakeApi("viewer", [{ entries: [root], nextCursor: root.path }, { entries: [child] }]);
+    let release!: (value: unknown) => void;
+    const pending = new Promise<unknown>((resolve) => { release = resolve; });
+    const get = api.get;
+    api.get = vi.fn(async (path: string) => path.includes("cursor=") ? pending : get(path));
+    const { rerender } = render(<ChatCollaboration view={{ kind: "folder", scopeId }} api={api} actorId="user_member" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Load more" }));
+    rerender(<ChatCollaboration view={{ kind: "folder", scopeId: otherScopeId }} api={api} actorId="user_member" />);
+    release({ entries: [child] });
+    await waitFor(() => expect(api.get).toHaveBeenCalledWith(`/api/collaboration/scopes/${otherScopeId}`));
+    expect(screen.queryByRole("button", { name: "notes" })).toBeNull();
+  });
+
+  it("restarts pagination after a mutation instead of retaining a stale cursor", async () => {
+    const api = fakeApi("editor", [{ entries: [root, child], nextCursor: child.path }, { entries: [file] }]);
+    render(<ChatCollaboration view={{ kind: "folder", scopeId }} api={api} actorId="user_member" />);
+    fireEvent.click(await screen.findByRole("button", { name: "New folder" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "New folder name" }), { target: { value: "drafts" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create folder" }));
+    await waitFor(() => expect(api.get).toHaveBeenCalledTimes(4));
+    expect(screen.getByRole("button", { name: "Load more" })).toBeVisible();
+    expect(api.get).toHaveBeenNthCalledWith(4, `${base}/files?limit=100`);
   });
 
   it("creates, renames and deletes as a Contributor using exact catalog identities and revisions", async () => {
