@@ -199,6 +199,22 @@ describe("bot turns through the matrix_bot adapter", () => {
     await expect(tasks()).resolves.toEqual([expect.objectContaining({ status: "failed", run_id: "run_turn2" })]);
   });
 
+  it("keeps the task waiting when the run ended with a request to the owner still open", async () => {
+    const { adapter, interactions } = setup({
+      worker: async (input) => {
+        const [task] = await db.selectFrom("bot_tasks").select("task_id").execute();
+        // The gateway asked the owner on the bot's behalf; the worker simply finished its turn.
+        await interactions.createFromTool({
+          runtimeHandle: RUNTIME, executionGeneration: "3", ownerId: OWNER, botId: BOT, chatId: CHAT, taskId: task!.task_id, runId: input.command.runId,
+          rootFingerprint: "f".repeat(64), route: ROUTE, accessSourceId: "matrix_included", capabilities: ["interaction.create"], requestClass: "interactive",
+        }, { blocking: true, payload: { kind: "question", questions: [{ questionId: "q1", header: "Account", question: "Which one?", allowOther: true, secret: false }] } });
+        return { runId: input.command.runId, status: "completed", toolActions: 1, sessionRevision: 1 };
+      },
+    });
+    await collect(adapter.start(turn()));
+    await expect(tasks()).resolves.toEqual([expect.objectContaining({ status: "waiting_person" })]);
+  });
+
   it("blocks without starting a runtime when no model or workspace is available", async () => {
     const noModel = setup({ resolveRoute: async () => { throw new BotRouteError("model_unavailable"); } });
     const events = await collect(noModel.adapter.start(turn()));

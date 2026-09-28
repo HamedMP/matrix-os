@@ -3,8 +3,8 @@
  * in the bot's own workspace. Before any effect the workspace is resolved
  * again and must match the fingerprint bound at admission; every path
  * segment is checked without following links, and files are opened with
- * O_NOFOLLOW. Questions and memory go to their services. Capabilities
- * without a tool yet are refused as `not_granted`.
+ * O_NOFOLLOW. Questions, memory, and integrations go to their services.
+ * Capabilities without a tool yet are refused as `not_granted`.
  */
 import { createHash, randomUUID } from "node:crypto";
 import { constants } from "node:fs";
@@ -16,6 +16,7 @@ import { resolveBotWorkspaceRoot } from "../chat/bot-workspace-root.js";
 import type { BotEffectClass } from "./database.js";
 import { BotBrokerActionError, type BotToolDispatcher } from "./broker-actions.js";
 import type { BotInteractionService } from "./interactions.js";
+import type { BotIntegrationTools } from "./integration-tools.js";
 import type { BotMemoryService } from "./memory-service.js";
 import type { BotRuntimeBinding } from "./runtime-registry.js";
 
@@ -162,6 +163,7 @@ export function createBotToolDispatcher(deps: {
   homePath: string;
   interactions?: Pick<BotInteractionService, "createFromTool">;
   memory?: Pick<BotMemoryService, "propose" | "search">;
+  integrations?: Pick<BotIntegrationTools, "inventory" | "call">;
 }): BotToolDispatcher {
   async function workspace(binding: BotRuntimeBinding): Promise<string> {
     try {
@@ -245,7 +247,7 @@ export function createBotToolDispatcher(deps: {
 
   return {
     effectClass: (request) => EFFECTS[request.capability],
-    async dispatch(binding, request) {
+    async dispatch(binding, request, signal) {
       if (request.capability === "artifact.write") {
         // Paths may hold characters the checkpoint reference does not allow; the digest names the file.
         const outcomeRef = `artifact:${createHash("sha256").update(request.args.relPath).digest("hex").slice(0, 32)}`;
@@ -257,6 +259,12 @@ export function createBotToolDispatcher(deps: {
       }
       if (request.capability === "memory.propose" && deps.memory) return { result: await deps.memory.propose(binding, request.args) };
       if (request.capability === "memory.search" && deps.memory) return { result: await deps.memory.search(binding, request.args) };
+      if (request.capability === "integration.inventory" && deps.integrations) {
+        return { result: await deps.integrations.inventory(binding, request.args, signal) };
+      }
+      if (request.capability === "integration.call" && deps.integrations) {
+        return { result: await deps.integrations.call(binding, request.args, signal) };
+      }
       throw new BotBrokerActionError("not_granted");
     },
   };

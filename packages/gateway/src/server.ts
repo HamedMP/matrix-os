@@ -167,6 +167,7 @@ import type { ScopeRuntimeHost } from "./scope-runtime-host/index.js";
 import { startScopeRuntimeHost } from "./startup/scope-runtime-host.js";
 import { startBots, type BotServices } from "./startup/bots.js";
 import { withBotProviderInstance } from "./bots/provider-instance.js";
+import { createLocalIntegrationTransport, createPlatformIntegrationTransport } from "./bots/integration-client.js";
 import { ChatAgentStore } from "./chat/agent-store.js";
 import { initializePlatformIntegrations } from "./startup/platform-integrations.js";
 import { getVersion } from "./system-info.js";
@@ -1511,6 +1512,9 @@ export async function createGateway(config: GatewayConfig) {
     botServices = await startBots({
       homePath, repository: chatRepository, agents: chatAgents, executionRoots: canonicalChatExecutionRoots,
       providers: aiProviderService,
+      ...(internalIntegrationBaseUrl && internalPlatformToken
+        ? { integrations: createPlatformIntegrationTransport({ baseUrl: internalIntegrationBaseUrl, machineToken: internalPlatformToken }) }
+        : integrationRoutes ? { integrations: createLocalIntegrationTransport(integrationRoutes) } : {}),
       ...(scopeRuntimeHost ? { host: scopeRuntimeHost } : {}),
       ...(fundedCredentialProvider ? { fundedCredentialProvider } : {}),
       ...(fundedAdmission ? { fundedAdmission } : {}),

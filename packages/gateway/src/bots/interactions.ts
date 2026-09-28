@@ -4,7 +4,8 @@
  * question ends the bot's turn and keeps its task waiting; the answer is
  * recorded and then continues the same task as the owner's next message,
  * admitted once under a request ID derived from the interaction. Account
- * choices, connection requests, and approvals arrive with grants (L9b).
+ * choices, connection requests, and approvals are created by the gateway
+ * when a bot needs access or approval; their resolution steps are injected.
  *
  * State changes and their Chat events commit in one transaction. A person
  * who is not the responder learns nothing about an interaction.
@@ -20,7 +21,7 @@ import {
   type ResolveBotInteractionResponse,
 } from "@matrix-os/contracts";
 import { BotBrokerActionError } from "./broker-actions.js";
-import type { BotStateTransactions } from "./events.js";
+import type { BotStateTransaction, BotStateTransactions } from "./events.js";
 import { createBotInteractionsRepository, type BotInteractionRecord } from "./repositories/interactions.js";
 import { BotStateError } from "./repositories/shared.js";
 import type { BotRuntimeBinding } from "./runtime-registry.js";
@@ -75,7 +76,20 @@ function mapStateError(error: unknown): never {
   throw error;
 }
 
-export function createBotInteractionService(deps: { transact: BotStateTransactions; now?: () => Date }) {
+/** Resolution steps for the kinds that grant or authorize something. */
+export interface BotInteractionHandlers {
+  /** Grants the chosen account and returns the continuation text. */
+  chooseAccount(tx: BotStateTransaction, interaction: BotInteractionRecord, connectionId: string, responderId: string): Promise<string>;
+  /** Records the decision on the approval and returns the continuation text. */
+  decideApproval(tx: BotStateTransaction, interaction: BotInteractionRecord, decision: "approve" | "deny"): Promise<string>;
+  /** Starts a connection; its network step runs outside any transaction. */
+  startConnect?(responderId: string, chatId: string, interactionId: string, baseRevision: number): Promise<{
+    response: ResolveBotInteractionResponse;
+    continuation?: BotContinuation;
+  }>;
+}
+
+export function createBotInteractionService(deps: { transact: BotStateTransactions; handlers?: BotInteractionHandlers; now?: () => Date }) {
   const now = () => deps.now?.() ?? new Date();
 
   function project(interaction: BotInteractionRecord, viewerId: string): BotInteraction {
@@ -145,7 +159,7 @@ export function createBotInteractionService(deps: { transact: BotStateTransactio
 
     /**
      * Records the responder's answer at the interaction's revision. A blocking
-     * question returns the continuation to admit. Repeating the same answer
+     * interaction returns the continuation to admit. Repeating the same answer
      * after it was recorded returns the same result, so a client can retry a
      * request whose continuation failed.
      */
@@ -158,49 +172,62 @@ export function createBotInteractionService(deps: { transact: BotStateTransactio
       const request = ResolveBotInteractionRequestSchema.safeParse(body);
       if (!chatId.success || !interactionId.success || !request.success) throw new BotInteractionError("invalid_request");
       const input = request.data;
+      // Starting a connection runs its network step before any transaction (L9c).
+      if (input.kind === "connect_request" && input.action === "start") {
+        if (!deps.handlers?.startConnect) throw new BotInteractionError("invalid_request");
+        return deps.handlers.startConnect(responderId, chatId.data, interactionId.data, input.baseRevision);
+      }
+      const requested: Record<string, unknown> = input.kind === "question"
+        ? { ...(input.answer !== undefined ? { answer: input.answer } : {}), ...(input.structuredAnswers !== undefined ? { structuredAnswers: input.structuredAnswers } : {}) }
+        : input.kind === "account_choice" ? { connectionId: input.connectionId }
+        : input.kind === "approval" ? { decision: input.decision }
+        : { action: input.action };
       const at = now().toISOString();
       return deps.transact(responderId, async (tx) => {
         const repository = createBotInteractionsRepository(tx.db);
         const current = await repository.get({ ownerId: responderId, interactionId: interactionId.data }, tx.db);
         if (!current || current.chatId !== chatId.data || current.responderActorId !== responderId) throw new BotInteractionError("not_found");
-        if (current.kind !== input.kind || input.kind !== "question") throw new BotInteractionError("invalid_request");
-        const payload = current.payload as QuestionPayload;
-        const answer: QuestionAnswer = {
-          ...(input.answer !== undefined ? { answer: input.answer } : {}),
-          ...(input.structuredAnswers !== undefined ? { structuredAnswers: input.structuredAnswers } : {}),
-        };
-        const known = new Set(payload.questions.map((question) => question.questionId));
-        if (Object.keys(answer.structuredAnswers ?? {}).some((id) => !known.has(id))) throw new BotInteractionError("invalid_request");
-        const continuation = (interaction: BotInteractionRecord): BotContinuation | undefined => (interaction.blocking
-          ? { chatId: interaction.chatId, clientRequestId: `req_answer_${interaction.interactionId}`, text: renderAnswer(payload, answer) }
-          : undefined);
-        const replay = current.status === "resolved" && current.revision === input.baseRevision + 1
-          && JSON.stringify(current.resolution) === JSON.stringify(answer);
-        if (replay) {
-          const next = continuation(current);
-          return {
-            response: ResolveBotInteractionResponseSchema.parse({ interaction: { interactionId: current.interactionId, status: current.status, revision: current.revision } }),
-            ...(next ? { continuation: next } : {}),
-          };
+        if (current.kind !== input.kind) throw new BotInteractionError("invalid_request");
+        const respond = (interaction: BotInteractionRecord, text: string | undefined) => ({
+          response: ResolveBotInteractionResponseSchema.parse({ interaction: { interactionId: interaction.interactionId, status: interaction.status, revision: interaction.revision } }),
+          ...(interaction.blocking && text ? { continuation: { chatId: interaction.chatId, clientRequestId: `req_answer_${interaction.interactionId}`, text } } : {}),
+        });
+        const { continuation: storedText, ...stored } = current.resolution ?? {};
+        if (current.status === "resolved" && current.revision === input.baseRevision + 1 && JSON.stringify(stored) === JSON.stringify(requested)) {
+          return respond(current, typeof storedText === "string" ? storedText : undefined);
         }
         if (current.status === "expired" || (current.status === "pending" && Date.parse(current.expiresAt) <= Date.parse(at))) {
           throw new BotInteractionError("expired");
+        }
+        if (current.status !== "pending") throw new BotInteractionError("conflict");
+        if (current.revision !== input.baseRevision) throw new BotInteractionError("conflict");
+        let text: string;
+        if (input.kind === "question") {
+          const payload = current.payload as QuestionPayload;
+          const known = new Set(payload.questions.map((question) => question.questionId));
+          if (Object.keys(input.structuredAnswers ?? {}).some((id) => !known.has(id))) throw new BotInteractionError("invalid_request");
+          text = renderAnswer(payload, requested as QuestionAnswer);
+        } else if (input.kind === "account_choice") {
+          if (!deps.handlers) throw new BotInteractionError("unavailable");
+          text = await deps.handlers.chooseAccount(tx, current, input.connectionId, responderId);
+        } else if (input.kind === "approval") {
+          if (!deps.handlers) throw new BotInteractionError("unavailable");
+          text = await deps.handlers.decideApproval(tx, current, input.decision);
+        } else {
+          const service = String((current.payload as { service?: unknown }).service ?? "that service");
+          text = `The owner chose not to connect ${service}. Continue without it, and do not ask again in this task.`;
         }
         let resolved: BotInteractionRecord;
         try {
           resolved = await repository.resolve({
             ownerId: responderId, interactionId: current.interactionId, baseRevision: input.baseRevision,
-            responderActorId: responderId, resolution: answer, now: at,
+            responderActorId: responderId, resolution: { ...requested, continuation: text }, now: at,
           }, tx.db);
         } catch (error: unknown) {
           return mapStateError(error);
         }
         await tx.publish(resolved.chatId, "interaction.resolved", event(resolved));
-        const next = continuation(resolved);
-        return {
-          response: ResolveBotInteractionResponseSchema.parse({ interaction: { interactionId: resolved.interactionId, status: resolved.status, revision: resolved.revision } }),
-          ...(next ? { continuation: next } : {}),
-        };
+        return respond(resolved, text);
       });
     },
 

@@ -16,6 +16,7 @@ export interface BotApprovalRecord {
   ownerId: string;
   botId: string;
   runId: string;
+  taskId: string;
   tool: string;
   argsHash: string;
   account: string;
@@ -27,8 +28,9 @@ export interface BotApprovalRecord {
   revision: number;
 }
 
+/** What an approval is for; any change to it invalidates the approval. */
 export interface BotApprovalBinding {
-  runId: string;
+  taskId: string;
   tool: string;
   argsHash: string;
   account: string;
@@ -42,6 +44,7 @@ function fromRow(row: Selectable<BotApprovalsTable>): BotApprovalRecord {
     ownerId: row.owner_id,
     botId: row.bot_id,
     runId: row.run_id,
+    taskId: row.task_id,
     tool: row.tool,
     argsHash: row.args_hash,
     account: row.account,
@@ -69,6 +72,7 @@ export function createBotApprovalsRepository(db: BotExecutor) {
       ownerId: string;
       approvalId: string;
       botId: string;
+      runId: string;
       expiresAt: string;
       now: string;
     }, executor: BotExecutor = db): Promise<BotApprovalRecord> {
@@ -78,6 +82,7 @@ export function createBotApprovalsRepository(db: BotExecutor) {
         owner_id: input.ownerId,
         bot_id: input.botId,
         run_id: input.runId,
+        task_id: input.taskId,
         tool: input.tool,
         args_hash: input.argsHash,
         account: input.account,
@@ -117,7 +122,7 @@ export function createBotApprovalsRepository(db: BotExecutor) {
         .set({ claimed_at: input.now, revision: sql<number>`revision + 1`, updated_at: input.now })
         .where("owner_id", "=", input.ownerId).where("approval_id", "=", input.approvalId)
         .where("status", "=", "approved").where("claimed_at", "is", null).where("expires_at", ">", input.now)
-        .where("run_id", "=", input.runId).where("tool", "=", input.tool).where("args_hash", "=", input.argsHash)
+        .where("task_id", "=", input.taskId).where("tool", "=", input.tool).where("args_hash", "=", input.argsHash)
         .where("account", "=", input.account).where("audience", "=", input.audience)
         .where("policy_revision", "=", input.policyRevision)
         .returningAll()
@@ -131,7 +136,7 @@ export function createBotApprovalsRepository(db: BotExecutor) {
         .where("owner_id", "=", input.ownerId).where("approval_id", "=", input.approvalId)
         .where("status", "=", "approved").where("claimed_at", "is", null).where("expires_at", ">", input.now)
         .where((eb) => eb.not(eb.and([
-          eb("run_id", "=", input.runId),
+          eb("task_id", "=", input.taskId),
           eb("tool", "=", input.tool),
           eb("args_hash", "=", input.argsHash),
           eb("account", "=", input.account),
@@ -144,6 +149,16 @@ export function createBotApprovalsRepository(db: BotExecutor) {
       const current = await get(input, executor);
       if (!current) throw new BotStateError("not_found");
       return { status: "refused", reason: current.status === "invalidated" ? "invalidated" : "not_claimable" };
+    },
+    /** The newest approval of this exact action in the task that is still open (pending, or approved and unclaimed). */
+    async findOpen(input: { ownerId: string; taskId: string; tool: string; argsHash: string }, executor: BotExecutor = db): Promise<BotApprovalRecord | undefined> {
+      const row = await executor.selectFrom("bot_approvals").selectAll()
+        .where("owner_id", "=", input.ownerId).where("task_id", "=", input.taskId)
+        .where("tool", "=", input.tool).where("args_hash", "=", input.argsHash)
+        .where("status", "in", ["pending", "approved"]).where("claimed_at", "is", null)
+        .orderBy("created_at", "desc")
+        .executeTakeFirst();
+      return row ? fromRow(row) : undefined;
     },
     /** Expires undecided approvals in a bounded batch. */
     async expireDue(input: { now: string; limit?: number }, executor: BotExecutor = db): Promise<string[]> {
