@@ -155,6 +155,8 @@ describe("CollaborationRelay", () => {
     expect(large.status).toBe(413);
     const over = await instance.forward({ actorId: "user_a", method: "GET", path: `/api/collaboration/scopes/${scopeId}`, query: "", headers: new Headers(), body: null });
     expect(over.status).toBe(503);
+    // A declared oversize answer says so, so clients can explain a size limit instead of an outage.
+    await expect(over.json()).resolves.toEqual({ error: "Collaboration response too large", code: "too_large" });
     const { instance: roomy } = relay({}, fetchImpl as never);
     const passthrough = await roomy.forward({ actorId: "user_a", method: "GET", path: `/api/collaboration/scopes/${scopeId}`, query: "", headers: new Headers(), body: null });
     expect(passthrough.status).toBe(409);

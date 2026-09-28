@@ -139,6 +139,58 @@ describe("kind-aware opening in Shared with me", () => {
     expect(openChat).not.toHaveBeenCalled();
   });
 
+  it("explains an accepted invitation or organization share this surface cannot open", async () => {
+    let organizationAccepted = false;
+    const api = {
+      baseUrl: "https://app.matrix-os.com",
+      get: vi.fn(async (path: string) => {
+        if (path.startsWith("/api/collaboration/inbox")) return { items: [{
+          scopeId, runtimeId: "vps:11111111-1111-4111-8111-111111111111", ownerId: "user_owner", kind: "folder",
+          authorityGeneration: 1, status: "invited", invitationId,
+          resource: {
+            id: invitationId, scopeId, owner: { actorId: "user_owner", displayName: "Nima" }, target: { actorId: "user_ada", displayName: "Ada" },
+            scopeKind: "folder", role: "editor", status: "pending", expiresAt: "2026-10-19T12:00:00.000Z", revision: "2",
+          },
+        }] };
+        return { items: organizationAccepted ? [] : [{
+          scopeId: "10000000-0000-4000-8000-000000000009", runtimeId: "vps:11111111-1111-4111-8111-111111111111", ownerId: "user_owner", kind: "app",
+          authorityGeneration: 1, status: "organization_pending", organizationId: "org_matrix_team", grantId,
+        }] };
+      }),
+      post: vi.fn(async (path: string) => {
+        if (path.includes("/grants/")) { organizationAccepted = true; return { state: "active" }; }
+        return { scopeId };
+      }),
+      delete: vi.fn(),
+    };
+    const openChat = vi.fn();
+    render(<ChatCollaboration view={{ kind: "home" }} api={api} actorId="user_ada" openChat={openChat} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Accept" }));
+    expect(await screen.findByRole("status")).toHaveTextContent("Accepted. This shared folder can’t be opened here yet.");
+    fireEvent.click(screen.getByRole("button", { name: "Open" }));
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Accepted. This shared app can’t be opened here yet."));
+    expect(openChat).not.toHaveBeenCalled();
+  });
+
+  it("explains an accepted invitation details page this surface cannot open", async () => {
+    const api = {
+      baseUrl: "https://app.matrix-os.com",
+      get: vi.fn(async () => ({
+        id: invitationId, scopeId, owner: { actorId: "user_owner", displayName: "Nima" }, target: { actorId: "user_ada", displayName: "Ada" },
+        scopeKind: "app", role: "viewer", status: "pending", expiresAt: "2026-10-19T12:00:00.000Z", revision: "2",
+      })),
+      post: vi.fn(async () => ({ scopeId })),
+      delete: vi.fn(),
+    };
+    const openChat = vi.fn();
+    render(<ChatCollaboration view={{ kind: "invitation", invitationId }} api={api} actorId="user_ada" openChat={openChat} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /Accept/ }));
+    expect(await screen.findByRole("status")).toHaveTextContent("Accepted. This shared app can’t be opened here yet.");
+    expect(openChat).not.toHaveBeenCalled();
+  });
+
   it("describes what a file invitation grants instead of Chat access", async () => {
     const api = {
       baseUrl: "https://app.matrix-os.com",

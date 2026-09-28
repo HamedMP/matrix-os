@@ -169,6 +169,62 @@ describe("SharedFileView", () => {
     expect(screen.getByRole("status")).toHaveTextContent("Saved");
   });
 
+  it("keeps the editor read-only while a save is in flight so no typing is lost", async () => {
+    const home: FakeHome = { role: "editor", revision: "3", body: text("draft") };
+    const api = fakeApi(home);
+    let release!: () => void;
+    const post = api.post;
+    api.post = vi.fn(async (path: string, body: { content: string; expectedRevision: string }) => {
+      await new Promise<void>((resolve) => { release = resolve; });
+      return post(path, body);
+    });
+    render(<ChatCollaboration view={{ kind: "file", scopeId }} api={api} actorId="user_ada" />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "File contents" }), { target: { value: "sent text" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "File contents" })).toHaveAttribute("readonly"));
+    release();
+    expect(await screen.findByLabelText("File preview")).toHaveTextContent("sent text");
+  });
+
+  it("stops a draft that grows past the inline edit limit and says why", async () => {
+    const api = fakeApi({ role: "editor", revision: "3", body: text("short") });
+    render(<ChatCollaboration view={{ kind: "file", scopeId }} api={api} actorId="user_ada" />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "File contents" }), { target: { value: "x".repeat(SHARED_FILE_EDIT_MAX_BYTES + 1) } });
+
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+    expect(screen.getByText("This text is over the 64 KB limit for editing here. Shorten it to save.")).toBeVisible();
+    expect(api.post).not.toHaveBeenCalled();
+  });
+
+  it("treats text that is not valid UTF-8 as download-only and keeps its exact bytes", async () => {
+    const bytes = new Uint8Array([0x68, 0x69, 0xff, 0xfe, 0x21]);
+    const api = fakeApi({ role: "editor", revision: "3", body: { status: "ok", bytes, contentType: "text/plain", size: bytes.byteLength } });
+    render(<ChatCollaboration view={{ kind: "file", scopeId }} api={api} actorId="user_ada" />);
+
+    expect(await screen.findByText("No preview for this type of file. Download it to open it.")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Edit" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Download" }));
+    await waitFor(() => expect(clickedDownloads).toHaveLength(1));
+    const saved = createObjectURL.mock.calls[0]![0] as Blob;
+    expect(new Uint8Array(await saved.arrayBuffer())).toEqual(bytes);
+  });
+
+  it("downloads the exact bytes of a previewed text file", async () => {
+    const bytes = new TextEncoder().encode("line one\r\nline two\n");
+    const api = fakeApi({ role: "viewer", revision: "3", body: { status: "ok", bytes, contentType: "text/plain", size: bytes.byteLength } });
+    render(<ChatCollaboration view={{ kind: "file", scopeId }} api={api} actorId="user_ada" />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Download" }));
+    await waitFor(() => expect(clickedDownloads).toHaveLength(1));
+    const saved = createObjectURL.mock.calls[0]![0] as Blob;
+    expect(Array.from(new Uint8Array(await saved.arrayBuffer()))).toEqual(Array.from(bytes));
+  });
+
   it("does not offer editing for text files over the inline edit limit", async () => {
     const api = fakeApi({ role: "editor", revision: "3", body: text("x".repeat(SHARED_FILE_EDIT_MAX_BYTES + 1)) });
     render(<ChatCollaboration view={{ kind: "file", scopeId }} api={api} actorId="user_ada" />);
@@ -247,6 +303,7 @@ describe("SharedFileView", () => {
   it("says the owner moved or deleted the file when it is missing", async () => {
     for (const home of [
       { role: "viewer" as const, revision: "3", body: text("x"), entries: [] },
+      { role: "viewer" as const, revision: "3", body: text("x"), listFailure: unavailable("not_found") },
       { role: "viewer" as const, revision: "3", body: text("x"), contentFailure: unavailable("not_found") },
     ]) {
       const { unmount } = render(<ChatCollaboration view={{ kind: "file", scopeId }} api={fakeApi(home)} actorId="user_ada" />);

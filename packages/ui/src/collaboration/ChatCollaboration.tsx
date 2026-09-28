@@ -109,6 +109,10 @@ function CollaborationHome({ api, openInvitation, openers, emptyStateAction }: {
   const [invitationError, setInvitationError] = useState(false);
   const [organizationPending, setOrganizationPending] = useState<string | null>(null);
   const [organizationError, setOrganizationError] = useState<string | null>(null);
+  const [openNotice, setOpenNotice] = useState<string | null>(null);
+  const openOrExplain = (kind: DiscoveryItem["kind"], scopeId: string) => {
+    setOpenNotice(openSharedResource(kind, scopeId, openers) ? null : unopenableNotice(kind));
+  };
   useEffect(() => {
     let active = true;
     void Promise.all([api.get("/api/collaboration/inbox"), api.get("/api/collaboration/shared")])
@@ -166,7 +170,7 @@ function CollaborationHome({ api, openInvitation, openers, emptyStateAction }: {
       ));
       setItems((current) => current.filter((candidate) => discoveryKey(candidate) !== discoveryKey(item)));
       notifyCollaborationDiscoveryChanged();
-      if (action === "accept") openSharedResource(item.kind, result.scopeId, openers);
+      if (action === "accept") openOrExplain(item.kind, result.scopeId);
     } catch (failure: unknown) {
       console.warn("[chat-collaboration] invitation action failed", failure instanceof Error ? failure.name : "UnknownError");
       setInvitationError(true);
@@ -195,7 +199,7 @@ function CollaborationHome({ api, openInvitation, openers, emptyStateAction }: {
       setSharedCursor(sharedPage.nextCursor ?? null);
       setError(false);
       notifyCollaborationDiscoveryChanged();
-      openSharedResource(item.kind, item.scopeId, openers);
+      openOrExplain(item.kind, item.scopeId);
     } catch (failure: unknown) {
       console.warn("[chat-collaboration] organization share open failed", failure instanceof Error ? failure.name : "UnknownError");
       setOrganizationError(item.scopeId);
@@ -272,6 +276,7 @@ function CollaborationHome({ api, openInvitation, openers, emptyStateAction }: {
         </article>)}
     </div>
     {invitationError ? <p role="alert" className="text-sm">Invitation could not be updated. Try again.</p> : null}
+    {openNotice ? <p role="status" className="text-sm">{openNotice}</p> : null}
     {paginationError ? <p role="alert" className="text-sm">More shared items could not be loaded. Try again.</p> : null}
     {inboxCursor || sharedCursor ? <button type="button" className={buttonClass} disabled={loadingMore} onClick={() => void loadMore()}>
       {loadingMore ? "Loading…" : "Load more shared items"}
@@ -393,6 +398,7 @@ function InvitationView({ api, invitationId, openers }: {
   const [invitation, setInvitation] = useState<z.infer<typeof CollaborationInvitationSchema> | null>(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState(false);
+  const [openNotice, setOpenNotice] = useState<string | null>(null);
   useEffect(() => {
     let active = true;
     void api.get(`/api/collaboration/invitations/${encodeURIComponent(invitationId)}`)
@@ -413,7 +419,7 @@ function InvitationView({ api, invitationId, openers }: {
       ));
       notifyCollaborationDiscoveryChanged();
       if (action === "accept") {
-        openSharedResource(invitation.scopeKind, result.scopeId, openers);
+        if (!openSharedResource(invitation.scopeKind, result.scopeId, openers)) setOpenNotice(unopenableNotice(invitation.scopeKind));
       } else {
         setInvitation((current) => current ? { ...current, status: "revoked" } : current);
       }
@@ -437,6 +443,7 @@ function InvitationView({ api, invitationId, openers }: {
       </div>
       <p className="mt-4 text-sm" style={{ color: "var(--text-secondary)" }}>{sharedResourceInvitationCopy(invitation.scopeKind).roles}</p>
       {invitation.status === "revoked" ? <p role="status" className="mt-4 text-sm">Invitation declined.</p> : null}
+      {openNotice ? <p role="status" className="mt-4 text-sm">{openNotice}</p> : null}
       {error ? <p role="alert" className="mt-4 text-sm">Invitation could not be updated. Refresh and try again.</p> : null}
       <div className="mt-6 grid gap-2 sm:grid-cols-2">
         <button type="button" className={buttonClass} disabled={pending || invitation.status !== "pending"} onClick={() => void act("accept")}>
@@ -913,6 +920,10 @@ function browserStorage(): Pick<Storage, "getItem" | "setItem" | "removeItem"> {
 
 function roleLabel(role: "owner" | "editor" | "viewer"): string {
   return role[0]!.toUpperCase() + role.slice(1);
+}
+
+function unopenableNotice(kind: "chat" | "terminal" | "project" | "file" | "folder" | "app"): string {
+  return `Accepted. This shared ${kindLabel(kind)} can’t be opened here yet.`;
 }
 
 function kindLabel(kind: "chat" | "terminal" | "project" | "file" | "folder" | "app"): string {

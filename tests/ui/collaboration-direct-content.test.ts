@@ -75,6 +75,15 @@ describe("collaboration direct content", () => {
     await expect(client().requestContent(scopeId, contentPath, { maxBytes: 1024 })).resolves.toEqual({ status: "too_large", size: null });
   });
 
+  it("reports a response the relay refused as too large", async () => {
+    respond = () => new Response(JSON.stringify({ error: "Collaboration response too large", code: "too_large" }), {
+      status: 503, headers: { "content-type": "application/json" },
+    });
+    await expect(client().requestContent(scopeId, contentPath, { maxBytes: 1024 })).resolves.toEqual({ status: "too_large", size: null });
+    respond = () => new Response(JSON.stringify({ error: "Collaboration unavailable" }), { status: 503, headers: { "content-type": "application/json" } });
+    await expect(client().requestContent(scopeId, contentPath, { maxBytes: 1024 })).rejects.toMatchObject({ code: "unavailable" });
+  });
+
   it("falls back to a generic type for a malformed content type", async () => {
     respond = () => new Response("x", { status: 200, headers: { "content-type": "text/html; <script>" } });
     await expect(client().requestContent(scopeId, contentPath, { maxBytes: 1024 })).resolves.toMatchObject({ contentType: "text/html" });

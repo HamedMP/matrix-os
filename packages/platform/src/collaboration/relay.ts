@@ -292,7 +292,10 @@ export class CollaborationRelay {
     if (contentLength > maxBytes) {
       await response.body?.cancel();
       finish(503, "limit", home.runtimeId);
-      return plain("Collaboration unavailable", 503);
+      // Still a 503 for existing clients; the code lets resource views explain a size limit instead of an outage.
+      return new Response(JSON.stringify({ error: "Collaboration response too large", code: "too_large" }), {
+        status: 503, headers: { "cache-control": "private, no-store", "content-type": "application/json" },
+      });
     }
     const responseHeaders = new Headers({ "cache-control": "private, no-store" });
     response.headers.forEach((value, name) => {
