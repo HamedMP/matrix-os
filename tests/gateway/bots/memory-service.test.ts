@@ -81,6 +81,13 @@ describe("bot memory", () => {
     expect(groundedIn("The owner does not prefer coffee.", "I prefer coffee in the morning.")).toBe(false);
     expect(groundedIn("Prefers coffee.", "I do not prefer coffee.")).toBe(false);
   });
+  it("confirms a complete owner statement after an explicit remember request or earlier sentence", () => {
+    expect(groundedIn("Prefers short answers.", "Please remember that I prefer short answers.")).toBe(true);
+    expect(groundedIn("Prefers short answers.", "I have an update. I prefer short answers.")).toBe(true);
+    expect(groundedIn("Prefers short answers.", "Please remember that I do not prefer short answers.")).toBe(false);
+    expect(groundedIn("Prefers short answers.", "Please remember that I prefer short answers, not terse ones.")).toBe(false);
+    expect(groundedIn("Prefers coffee.", "I prefer coffee. Actually, I do not prefer coffee.")).toBe(false);
+  });
   it("confirms only what the owner said to start this run; anything else waits for the owner", async () => {
     await expect(propose({})).resolves.toEqual({ ok: true, content: [{ type: "text", text: "Remembered." }] });
     const [stated] = await db.selectFrom("bot_memory_items").select("source").execute();

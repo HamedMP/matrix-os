@@ -45,19 +45,33 @@ function normalized(text: string): string {
   return text.toLocaleLowerCase().normalize("NFKC").replace(/\s+/g, " ").trim();
 }
 
-/** Auto-confirm only a complete owner statement, allowing its subject and verb inflection. */
+/** Auto-confirm only a complete owner statement, allowing a request preface and verb inflection. */
 export function groundedIn(content: string, message: string): boolean {
-  const statement = (text: string) => {
-    const words = normalized(text).match(WORD) ?? [];
+  const statement = (words: string[]) => {
     if (words[0] === "i") return words.slice(1);
     if (words[0] === "the" && words[1] === "owner") return words.slice(2);
     return words[0] === "owner" ? words.slice(1) : words;
   };
-  const proposed = statement(content);
-  const said = statement(message);
-  if (proposed.length === 0 || proposed.length !== said.length) return false;
-  return proposed.every((word, index) => word === said[index]
-    || (word.length >= 5 && word.endsWith("s") && word.slice(0, -1) === said[index]));
+  const prefaces = [
+    ["please", "remember", "that"], ["remember", "that"], ["please", "remember"],
+    ["can", "you", "remember", "that"], ["could", "you", "remember", "that"],
+    ["please", "note", "that"],
+  ];
+  const proposed = statement(normalized(content).match(WORD) ?? []);
+  if (proposed.length === 0) return false;
+  const clauses = message.split(/[.!?;\n]+/u);
+  let laterNegation = false;
+  for (let index = clauses.length - 1; index >= 0; index -= 1) {
+    const part = clauses[index]!;
+    let said: string[] = normalized(part).match(WORD) ?? [];
+    const preface = prefaces.find((words) => words.every((word, index) => said[index] === word));
+    if (preface) said = said.slice(preface.length);
+    said = statement(said);
+    if (!laterNegation && proposed.length === said.length && proposed.every((word, index) => word === said[index]
+      || (word.length >= 5 && word.endsWith("s") && word.slice(0, -1) === said[index]))) return true;
+    laterNegation ||= /\b(?:not|never|no|don['’]?t)\b/iu.test(part);
+  }
+  return false;
 }
 
 export type BotMemoryErrorCode = "invalid_request" | "not_found" | "conflict";
