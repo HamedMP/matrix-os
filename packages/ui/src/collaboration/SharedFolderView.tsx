@@ -40,6 +40,7 @@ export function SharedFolderView({ api, scopeId }: { api: CollaborationApi; scop
   const [actionError, setActionError] = useState<string | null>(null);
   const [downloadError, setDownloadError] = useState<string | null>(null);
   const generation = useRef(0);
+  const downloadGeneration = useRef(0);
   const selectedFolder = useRef<string | null>(null);
   const loadedPages = useRef(1);
   const selectFolder = (id: string | null) => { selectedFolder.current = id; setFolderId(id); setForm(null); };
@@ -79,7 +80,7 @@ export function SharedFolderView({ api, scopeId }: { api: CollaborationApi; scop
   }, [api, scopeId]);
 
   // react-doctor-disable-next-line react-doctor/no-fetch-in-effect -- direct home read, fenced by generation.
-  useEffect(() => { void load(); return () => { generation.current += 1; }; }, [load]);
+  useEffect(() => { void load(); return () => { generation.current += 1; downloadGeneration.current += 1; }; }, [load]);
 
   if (state.status === "loading") return <p role="status" className="p-8">Loading shared folder…</p>;
   if (state.status === "failed") return <main className="mx-auto max-w-xl p-8">
@@ -167,16 +168,18 @@ export function SharedFolderView({ api, scopeId }: { api: CollaborationApi; scop
   };
 
   const download = async (entry: CollaborationCatalogEntry) => {
-    const request = generation.current;
+    // A listing refresh must not discard bytes the member already requested.
+    // A changed scope/API or unmount still invalidates that request.
+    const request = downloadGeneration.current;
     setDownloadError(null);
     try {
       if (!api.getContent) throw new Error("Content unavailable");
       const content = await api.getContent(`${basePath(scopeId)}/files/${encodeURIComponent(entry.id)}/content`, { maxBytes: SHARED_FILE_DOWNLOAD_MAX_BYTES });
-      if (request !== generation.current) return;
+      if (request !== downloadGeneration.current) return;
       if (content.status === "too_large") { setDownloadError("This file is too large to download here."); return; }
       saveBytes(content.bytes, sharedFileName(entry.path), content.contentType);
     } catch (error: unknown) {
-      if (request !== generation.current) return;
+      if (request !== downloadGeneration.current) return;
       console.warn("[shared-folder] download failed", error instanceof Error ? error.name : "UnknownError");
       setDownloadError("The file could not be downloaded. Try again.");
     }
