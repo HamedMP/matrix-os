@@ -127,29 +127,49 @@ No regression is acceptable: owner boot, billing recovery for the owner's own ru
 
 | View | Home routes | Behavior |
 | --- | --- | --- |
-| `SharedFileView` | `GET /scopes/:id/files`, `GET /files/:fileId/content`, `POST /files/actions` (`resource-routes.ts:150-200`) | Text preview up to 1 MiB, download for everything; Contributors edit text files with `expectedRevision`; conflict shows both versions and never overwrites (D7) |
+| `SharedFileView` | `GET /scopes/:id/files`, `GET /files/:fileId/content`, `POST /files/actions` (`resource-routes.ts:150-200`) | Text preview up to 1 MiB, download for everything; Contributors edit text files with `expectedRevision`; conflict shows both versions and never overwrites; a paused grant shows "Owner updated this file; waiting for them to keep sharing it" with no preview (D7) |
 | `SharedFolderView` | same file routes with folder navigation | Lists, navigates subfolders, opens files in `SharedFileView`, downloads; Contributors create, rename and delete. Paging logic moves from `shell/src/components/file-browser/organization-drive-paging.ts` into `packages/ui` and is reused by `OrganizationDrivesView` |
 | `SharedAppView` | `GET /apps/:appId`, `POST /apps/:appId/view`, `GET /apps/:appId/assets/*`, `POST /apps/:appId/actions` (`resource-routes.ts:204-266`) | Renders only `ready` + `scoped` instances in a sandboxed `srcdoc` iframe with `origin: null`; the parent bridge exposes only this instance's view and action routes; otherwise shows "app unavailable" with the reason class |
 | `SharedProjectView` | `GET /scopes/:id/project` (extended), `/project/readiness`, `/project/git`, project-scope `/files` | Title from the project read; navigable sections for Chats, terminals, files and apps. Project read adds `title` (1-200 chars, owner-visible name) and `scopeId` of the inherited child scope for Chat and terminal resources; child views open by that scope |
 
 Routes: `shell/src/app/shared/{file,folder,app}/[scopeId]/page.tsx` follow D2's surface split. In the full OS view the same components render inside the Chat panel's collaboration surface (`ShellHome` via `useCanonicalChatState`), and Electron renders them through `DesktopChatCollaboration`. Native Mobile adds screens for file and folder views; app and project navigation on Native Mobile reuse the existing `SharedProjectScreen`, extended with the child scope IDs.
 
-### D7. File-share conflict detection (FR-026)
+### D7. File-share conflicts and identity (FR-026)
 
-Two separate identities per catalog entry:
+A file grant stays bound to the file's physical identity (`dev:ino:birthtime`, `owner-resource-driver.ts:29-58`). That pin is a security boundary: Matrix cannot tell an external replace-and-rename from a delete-and-recreate, so a recreated path must never inherit a grant. The grant follows a replacement only when Matrix itself performed it and recorded the new identity atomically with the write (spec FR-026, decision 5). Any other identity change pauses the grant until the owner decides. Folder grants stay pinned to the folder's identity, exactly as today.
 
-- **Binding**: the logical file is `(owner namespace, path)` within the share's catalog namespace. For `kind = file`, a changed physical incarnation at the same path is treated as a replacement of the same logical file if the path still resolves (`O_NOFOLLOW`, inside the namespace, regular file, same kind). The home then records the new incarnation, bumps the revision, emits `resource.changed` with action `external_change`, and audits `resource.external_change`. Folders stay pinned to their physical incarnation as today (a folder replacement is rare and the existing rationale at `owner-resource-driver.ts:29-45` still applies). A missing path yields `resource_missing`, not `not_found` of the scope.
-- **Content version**: `content_token = sha256(dev:ino:birthtimeNs:size:mtimeNs:ctimeNs)`, stored in a new `collaboration_resource_catalog.content_token` column (owner migration 16, registered after `migrateTerminalBindingsV15`, `packages/gateway/src/collaboration/database-migrations.ts:474`).
-- **Reconcile first, in its own committed transaction**: `reconcileExternalChange(entryId)` runs before every file action, on every content read, and for the entries of each returned list page (at most 200). Under the catalog row lock it fingerprints the path. If the token differs, it runs `UPDATE collaboration_resource_catalog SET revision = revision + 1, content_token = :current, incarnation = :current WHERE id = :id AND content_token = :stored`, inserts the `resource.changed` event with action `external_change` and the `resource.external_change` audit row, and **commits**. The write transaction starts afterwards and sees the bumped revision, so a stale `expectedRevision` fails with `409` without having to roll back anything the client needs. The write transaction re-fingerprints under its own row lock; if the file changed again in between, it rolls back before writing anything, the executor runs `reconcileExternalChange` in a new transaction and commits it, and only then returns `409`. The executor never throws a conflict from inside a transaction that also carries reconciliation rows.
-- **No-clobber commit** (closes the window between the fingerprint check and the replacement using only `fs.rename`, `fs.link`, `fs.unlink` and `fs.fstat`): inside the write transaction, after the revision check under the row lock:
-  1. The collaborator's bytes go to a temp file in the destination directory and are fsynced (existing `owner-resource-driver.ts:180-196`).
-  2. `rename(destination, displaced)` moves whatever is at the path now to `system/collaboration/displaced/<entryId>/<uuid>` on the same filesystem. `EXDEV` refuses the write with `503 unavailable`; the home never falls back to copy-and-replace.
-  3. `fstat` of the displaced file is compared with the token checked under the lock. If it differs, the owner changed the file after the check. `link(displaced, destination)` puts the owner's version back; if the owner has already created a new file at the path, `link` fails with `EEXIST` and the owner's newest file stays. The collaborator's temp file becomes a conflict copy. The transaction records a reconciliation and a `conflict` event naming the copy, **commits**, and the route returns `409` with the conflict reference.
-  4. Otherwise `link(temp, destination)`. `EEXIST` means the owner created a new file at the path during steps 2-4 and is handled exactly like step 3. On success the temp name is unlinked and the new token and revision are stored.
-  5. After commit, a final `fstat` of the displaced file that differs from the checked token (an owner process writing in place through an open descriptor) records a `conflict` event pointing at the retained displaced version.
-  No step replaces an existing path, so no step can destroy bytes the owner wrote. The only residual is an owner process that keeps writing through a descriptor to the displaced inode after step 5: those bytes are preserved in the retained version for 24 h but are not surfaced automatically; this is documented in the PR and the site docs. Creates use the same `link` step (`EEXIST` is a conflict) instead of renaming over the path.
-- **Brief absence**: the path is absent between steps 2 and 4 (one rename and one link). Reads on this home that hit `ENOENT` for an entry with an in-flight commit retry once after 50 ms; in-flight commits are tracked in a bounded in-process registry (256 entries).
-- **Retention**: displaced versions and conflict copies are kept for 24 h, at most 5 per entry and 1 GiB per home, swept hourly with `lstat` (symlinks skipped) by a timer cleared on shutdown. The writer of a conflict copy and the owner can download it until expiry.
+**Which grants pause.** "File grant" means a scope whose resource kind is `file` (a standalone file share). Entries inside a shared folder or project are covered by that container's grant, which stays pinned to the container. The owner placed those files inside a shared container, so a child entry's identity change is reconciled as a content change (new incarnation recorded, revision bumped, stale writers get a conflict) and pauses nothing.
+
+**1. Content version and committed reconciliation.** Owner migration 16 (registered after `migrateTerminalBindingsV15`, `packages/gateway/src/collaboration/database-migrations.ts:474`) adds to `collaboration_resource_catalog` the columns `content_token` (`sha256(dev:ino:birthtimeNs:size:mtimeNs:ctimeNs)`), `grant_state` (`active` or `paused`), `paused_incarnation` and `paused_at`, plus a `collaboration_resource_write_intents` table. `reconcileExternalChange(entryId)` runs in its own committed transaction before every file action, on every content read, and for the entries of each returned list page (at most 200). Under the catalog row lock it fingerprints the path and classifies what it finds:
+
+| Found at the path | Reconciliation (one committed transaction, conditional `UPDATE ... WHERE id = :id AND content_token = :stored`) | Grant |
+| --- | --- | --- |
+| Same identity, same content token | Nothing | Unchanged |
+| Same identity, new content token (owner edited in place) | Revision bump, new token, `resource.changed` event with action `external_change`, audit | Stays active |
+| New identity equal to an unexpired Matrix write intent | Completes that intent (step 3 below) | Stays active |
+| New identity with no matching intent, on a file-grant root entry | `grant_state = paused`, `paused_incarnation`, `paused_at`, revision bump, `resource.paused` event carrying no size, name, time or hash of the new file, audit `resource.identity_changed` | Paused |
+| New identity with no matching intent, on a child of a folder or project grant | New incarnation and token recorded as a content change, `external_change` event, audit | Container grant unchanged |
+| Nothing at the path | `resource_missing`; no grant change | Unchanged |
+
+The write transaction re-fingerprints under its own row lock. If anything changed since reconciliation, it rolls back before writing, runs reconciliation again in a new committed transaction, and only then returns `409 conflict` (or `423 paused`). A conflict is never thrown from a transaction that carries reconciliation rows.
+
+**2. Matrix-attributed writes.** Contributor saves (`POST /api/collaboration/scopes/:id/files/actions`, write and create) and owner saves through Matrix (`PUT /files/*`, `packages/gateway/src/server/file-routes.ts:285`, through an injected `CollaborationCatalogWriteHook` that applies only when the path is a live catalog entry) use one protocol:
+
+1. The new bytes go to a temp file in the destination directory and are fsynced (existing `owner-resource-driver.ts:180-196`); the temp file's identity is now known.
+2. Transaction A, committed: under the row lock, check `expectedRevision` (Contributor writes), confirm the path's current identity and content token equal the stored ones, and insert a write intent `(entry_id, expected_incarnation = temp identity, expected_content_token, actor_id, client_request_id, expires_at = now + 24 h)`.
+3. No-clobber commit, using only `fs.rename`, `fs.link`, `fs.unlink` and `fs.fstat`: `rename(destination, displaced)` moves whatever is at the path now into `system/collaboration/displaced/<entryId>/<uuid>` on the same filesystem (`EXDEV` refuses with `503 unavailable`; there is no copy-and-replace fallback). `fstat` of the displaced file must equal the identity and token checked in step 2, and then `link(temp, destination)` runs. If the displaced file differs (the owner changed it after the check), `link(displaced, destination)` puts the owner's file back; if the owner has already recreated the path, that link fails with `EEXIST` and the owner's newest file stays. If `link(temp, destination)` fails with `EEXIST` (the owner recreated the path during the commit), the owner's file stays. In both conflict cases the new bytes become a conflict copy, the intent is deleted, a `conflict` event is committed and the route returns `409`; if the owner's change was an identity change, the next reconciliation pauses the grant as above. No step replaces an existing path, so no step can destroy bytes the owner wrote.
+4. Transaction B, committed: under the row lock, confirm the path identity equals the intent's expected identity, store it as the grant's incarnation with the new token, bump the revision, write the event and audit rows, and delete the intent.
+
+If the process stops between steps 3 and 4, the next reconciliation finds the path identity equal to an unexpired intent and completes transaction B, so a Matrix write never pauses its own grant. A final `fstat` of the displaced file after commit that differs from the checked token (an owner process writing in place through an open descriptor) records a `conflict` event pointing at the retained version. The remaining residual is an owner process that keeps writing through that descriptor after the final check: those bytes are preserved in the retained version for 24 h but not surfaced automatically, and this is documented. If the hook is absent or its transaction fails, the owner's own save still proceeds (the owner's editing must not depend on sharing), is logged, and the next reconciliation pauses the grant instead of silently continuing it. Owner renames and deletes through Matrix keep today's behavior (the share reports `resource_missing`).
+
+**3. Paused grant.** While `grant_state = paused`:
+
+- The home serves no bytes of the entry: content, download and stream requests, upload commits and file actions return `423` with `code: "paused"`. List and scope reads show the entry as `paused` without the new file's size, hash or times. Open streams stop at their next chunk, because the per-chunk lease check (`resource-routes.ts:71-126`) also reads `grant_state`, and live clients drop cached previews on the `resource.paused` event.
+- Recipients on every surface see "Owner updated this file; waiting for them to keep sharing it", with no preview.
+- The owner's Share control for the file (shared `ResourceSharingButton`) shows "Changed outside Matrix" with one action each: **Keep sharing** and **Stop sharing**. **Keep sharing** calls `POST /api/collaboration/scopes/:scopeId/files/:fileId/identity` with `{ decision: "keep_sharing", pausedRevision, clientRequestId }`. The route is owner-only (scope owner authority through the owner-runtime session), has a `bodyLimit` and a strict schema, and is idempotent by `clientRequestId`. Under the row lock the home re-fingerprints: if the identity still equals `paused_incarnation`, it becomes the grant's incarnation, the pause clears, the revision bumps, and `resource.resumed` plus an audit row are committed; if the identity changed again, the home re-pauses with the new identity and returns `409`, so the owner confirms the file that is actually there. **Stop sharing** runs the existing scope unshare lifecycle operation (`lifecycle-routes.ts:27`) with the same `decision: "end_share"` audit reason.
+- Folders never pause: a folder identity change keeps today's denial.
+
+**Brief absence and retention.** The path is absent for one rename plus one link during step 3. Reads on this home that hit `ENOENT` for an entry with an in-flight commit retry once after 50 ms; in-flight commits live in a bounded in-process registry (256 entries). Displaced versions and conflict copies are kept 24 h, at most 5 per entry and 1 GiB per home; the writer of a conflict copy and the owner can download it until expiry. An hourly sweeper using `lstat` (symlinks skipped) removes expired copies and unmatched intents older than 24 h, and its timer is cleared on shutdown.
 
 ### D8. Unavailable versus not-found (FR-027)
 
@@ -164,6 +184,7 @@ Builds on #1952. One classification shared by all clients:
 | Not shared, revoked, expired or not a member | `404` (non-disclosing, `ticket-issuer.ts:339`) or home `not_found` for the scope | Access removed |
 | Role does not allow the action | `403 forbidden` | Action unavailable for role |
 | File or folder missing after authorization | `404`, `code: "resource_missing"` | Item moved or deleted by owner |
+| File grant paused by an identity change outside Matrix (D7) | `423`, `code: "paused"` | "Owner updated this file; waiting for them to keep sharing it" |
 
 Work: a `CollaborationFailureCode` schema in `packages/contracts`; the platform and home error mappers (`packages/gateway/src/collaboration/route-support.ts:629-716`) always include `code`; `classifyCollaborationFailure` in `packages/ui/src/collaboration/` replaces the single `SafeError` mapping; the direct client stops reconnecting on `access_removed`, `upgrade_required` and `relay_limit`. A table-driven regression test builds the home and platform collaboration routes with each optional dependency absent and asserts `503 unavailable`, never `404`.
 
@@ -229,8 +250,10 @@ M1 adds no new grant type, so no new lease mechanism. Decision recorded for M1: 
 | `POST /webhooks/clerk/organizations` | POST | Svix signature (`routes.ts:106-154`) | Changed (invitation accepted/revoked cleanup) | None |
 | `POST /api/auth/device/token` | POST | Device code (public, polled) | Changed (account credential when no machine) | Unchanged pending/expired responses |
 | `GET /api/auth/computers` | GET | Existing auth plus account JWT | Changed | None |
-| Home `GET /api/collaboration/scopes/:id/files`, `/files/:fileId/content` | GET | Signed direct session, `read` | Changed (external-change reconciliation, `resource_missing`) | None |
-| Home `POST /api/collaboration/scopes/:id/files/actions` | POST | Signed direct session, `mutate_resource`/`mutate_project`; existing `bodyLimit` | Changed (content-token conflict) | None |
+| Home `GET /api/collaboration/scopes/:id/files`, `/files/:fileId/content` | GET | Signed direct session, `read` | Changed (committed reconciliation, `resource_missing`, `423 paused` with no bytes) | None |
+| Home `POST /api/collaboration/scopes/:id/files/actions` | POST | Signed direct session, `mutate_resource`/`mutate_project`; existing `bodyLimit` | Changed (write intent, no-clobber commit, conflict, `423 paused`) | None |
+| Home `POST /api/collaboration/scopes/:id/files/:fileId/identity` | POST | Owner-runtime session, scope owner authority; `bodyLimit`; strict `{ decision, pausedRevision, clientRequestId }` | New (keep sharing or end share after a pause) | None |
+| Home `PUT /files/*` (owner file save) | PUT | Existing owner auth | Changed (catalog write hook for live catalog entries) | None |
 | Home `GET /api/collaboration/scopes/:id/project` | GET | Signed direct session, `read` | Changed (child scope IDs, titles) | None |
 | All home and platform collaboration routes | any | Existing | Changed (failure `code` on every error) | Generic messages only |
 
@@ -273,7 +296,7 @@ No route in this plan grants content without the home's authority, and none acce
 
 **Platform shutdown**: collaboration shutdown already drains `direct` and `organizations` (`packages/platform/src/collaboration/wiring.ts:105-109`). Order inside `direct.shutdown()`: `relay.close()` (drains sockets) then `meter.stop()` with a final bounded flush (5 s timeout) and timer clear; the database pool is closed only by `main.ts`, its owner. Organization shutdown clears the rate-limit prune timer and stops the creation finisher (awaiting an in-flight batch, 5 s bound) before the projection shutdown.
 
-**Gateway (home)**: migration 16 registers in `packages/gateway/src/collaboration/database-migrations.ts` after version 15; `createOwnerResourceDriver` exposes `contentToken` and the no-clobber commit; `createFileActionExecutor` gains `reconcileExternalChange`; a `DisplacedVersionSweeper` (hourly, `lstat`, symlinks skipped) is constructed in `resource-wiring.ts` and stopped on gateway shutdown before the owner database closes. Project read extension lives in `project-sharing.ts` `read()` (`:98`).
+**Gateway (home)**: migration 16 registers in `packages/gateway/src/collaboration/database-migrations.ts` after version 15; `createOwnerResourceDriver` exposes `contentToken` and the no-clobber commit; `createFileActionExecutor` gains `reconcileExternalChange` and the write-intent protocol; the gateway composition root passes a `CollaborationCatalogWriteHook` built from the same catalog into `registerFileRoutes` (`packages/gateway/src/server/file-routes.ts`), or nothing when collaboration is fail-closed; a `DisplacedVersionSweeper` (hourly, `lstat`, symlinks skipped) is constructed in `resource-wiring.ts` and stopped on gateway shutdown before the owner database closes. Project read extension lives in `project-sharing.ts` `read()` (`:98`).
 
 **Shell**: `CollaborationFrame` uses the bounded API registry (`shell/src/lib/collaboration.ts:33-50`, 32 live APIs). Organization settings use a new `createPlatformOrganizationClient(origin)` in `packages/ui/src/organizations/`; no `globalThis`.
 
@@ -291,7 +314,8 @@ No route in this plan grants content without the home's authority, and none acce
 | Organization invite | Clerk 10 s | Unique `(organization_id, address_digest)` for pending rows; concurrent duplicates converge on one Clerk invitation | Clerk created the invitation but the row write failed: a retry lists Clerk pending invitations for the address and adopts the existing one | Webhook or 30-day TTL removes stale rows |
 | Admin authority | Reconciliation coalesced per organization (`projection.ts:101-113`) | Role checked after a reconciliation that started after the request | Clerk unavailable: admin operations answer `503` (fail closed) | Next request reconciles |
 | Rate limits | Postgres statement timeout | Atomic conditional upsert | Counter write failure denies the action (`503`) | Windows roll over; prune job hourly |
-| File conflict | Postgres `lock_timeout` as configured | Catalog row lock plus namespace lock (`resource-actions.ts:131-158`); reconciliation committed separately before the write | Link succeeded, commit failed: the next operation sees a token mismatch and reconciles (same contract as `resource-actions.ts:5-7`); the displaced version is retained | Event history shows both revisions; conflict copies downloadable for 24 h |
+| File write and identity | Postgres `lock_timeout` as configured | Catalog row lock plus namespace lock (`resource-actions.ts:131-158`); reconciliation, intent (A) and completion (B) are separate committed transactions | Link succeeded, B failed: the next reconciliation matches the intent and completes B, so the grant never pauses for Matrix's own write; the displaced version is retained | Event history shows both revisions; conflict copies downloadable for 24 h |
+| Paused grant | n/a | Owner decision re-fingerprints under the row lock | Identity changed again before the decision: re-pause with the new identity, `409` | Owner confirms the file actually present; no bytes served meanwhile |
 | Relay meter | Flush statement 5 s | Single flusher per instance; additive upsert | Flush failure keeps the local delta (bounded) and retries next interval; admission still counts the local delta | Final flush on shutdown |
 | Relay admission | Classifier query 2 s; on failure treat as machine-free (stricter) | Per-instance counters | Classification unavailable never raises limits | Cache refresh after 60 s |
 | Account credential | Device flow timeouts unchanged | Existing claim/consume transaction | Old clients reject the response exactly as today | User signs in again after upgrading |
@@ -313,6 +337,7 @@ No route in this plan grants content without the home's authority, and none acce
 | Electron active organization | One ID per credential user | Cleared on sign-out |
 | Displaced versions and conflict copies (home) | 5 per entry, 1 GiB per home, 24 h | Hourly `lstat` sweep, timer cleared on shutdown |
 | In-flight commit registry (home) | 256 entries | Removed when the commit settles |
+| Write intents (home) | At most 16 unexpired per entry; 24 h expiry | Completed by transaction B or reconciliation; unmatched intents removed by the hourly sweeper and audited |
 | Pending organization creations | One row per request, 24 h to resolve | Finisher marks `listed` or `failed`; 7-day retention |
 
 Third-party data flow: organization names, inviter IDs and invitation email addresses are sent to Clerk, as Clerk already stores organization data. Nothing new is sent to any other service.
@@ -333,7 +358,7 @@ A0, A0b and A1 edit `.github/workflows/*`, so pushing them needs a GitHub token 
    - **S1, routing only.** With a signed-in machine-free test account, `/shared`, `/shared/chat/<uuid>` and `/shared/invitations/<uuid>` are served by the platform auth shell (whatever that shell renders at S1), never redirected to `/?billing=setup` and never answered with the VPS boot page. An account with an entitled running computer still reaches its VPS shell, and a signup billing handoff still reaches checkout. The auth-shell failure page is covered by unit tests only, because the failure cannot be forced on Cloud Run.
    - **S3, stack head for S1-S3.** The frame renders on every `/shared*` path; signed-out sign-in returns to the exact destination; `/` shows **Open Shared with me** in `plan_required`; Shared with me loads from the preview composition (empty state for an account with no shares); a scope whose home is not connected shows host unavailable.
    - **B3, B4, B5.** Relay `429` states; organization create, invite, list and revoke against a test organization in production Clerk; account-credential sign-in through device approval.
-3. **Full pre-merge gate** (one PR carries both labels, so the platform revision and the host bundle come from the same head). After the B-series and X-series PRs merge and the S-stack is restacked on `main`, label S5 with `preview-platform`, `preview-vps` and `preview-collaboration`, move preview traffic to its tag, and run the `connect_share_preview` dispatch with `connect_collaboration_preview` for that PR number. Run `test:e2e:collaboration` with the five identities against `https://preview.matrix-os.com` and its `/vm/pr-<N>` route. The stack merges only after J1-J13 pass there. Standalone PRs whose behavior needs a live home (B1, B2, B6a-d) run their affected journeys the same way on their own PR number before they merge.
+3. **Full pre-merge gate** (one PR carries both labels, so the platform revision and the host bundle come from the same head). After the B-series and X-series PRs merge and the S-stack is restacked on `main`, label S5 with `preview-platform`, `preview-vps` and `preview-collaboration`, move preview traffic to its tag, and run the `connect_share_preview` dispatch with `connect_collaboration_preview` for that PR number. Run `test:e2e:collaboration` with the five identities against `https://preview.matrix-os.com` and its `/vm/pr-<N>` route. The stack merges only after J1-J13 pass there. Standalone PRs whose behavior needs a live home (B1a, B1b, B2, B6a-d) run their affected journeys the same way on their own PR number before they merge.
 
 **Identities** (decisions 1 and 8, D12): owner `m-e2e-owner` (`PREVIEW_COLLABORATION_OWNER_USER_ID`), which owns `pr-<N>` through the `preview-collaboration` label and administers "Matrix E2E Collaboration"; machine-free member `m-e2e-member` with no computer and no subscription; outsider `m-e2e-outsider` with no organization membership; external guest `m-e2e-guest` with no membership or grant; a multi-computer member for J11 once provisioned. All carry `matrixE2e` metadata and are on the fixture allowlist. Collaboration previews have an empty preview-access list, so preview-access proofs cannot mask organization checks.
 
@@ -345,7 +370,7 @@ A0, A0b and A1 edit `.github/workflows/*`, so pushing them needs a GitHub token 
 | --- | --- | --- |
 | J1 | Member signs in, opens a Chat share link | Frame opens the Chat; zero computers and `plan_required` before and after; no request to billing, checkout, provisioning, `/api/system/info` or `/api/journey` from the frame; first permitted contribution within 2 minutes |
 | J2 | Member opens file, folder, app and project shares | Each opens its own view; project navigates to a Chat, a terminal and a file |
-| J3 | Owner edits the shared file on the host (in place, then atomic save) while the member edits | Member's stale save gets a conflict; the share survives the atomic save; both revisions visible |
+| J3 | Owner edits the shared file in place on the host while the member edits; then saves through Matrix; then saves it with an external replace-and-rename; then deletes and recreates it | In-place edit: the member's stale save gets a conflict and both revisions are visible. Save through Matrix: the grant stays active. External replace or recreate: the member sees "Owner updated this file; waiting for them to keep sharing it" and no bytes are served. Owner **Keep sharing**: the member reads the new file. |
 | J4 | Owner stops the host | Member sees host unavailable with retry, not access removed or billing |
 | J5 | Owner removes the member from the organization | New requests denied within 20 s; open sockets and streams close within 25 s; renewal fails |
 | J6 | Outsider and guest probe every scope, ticket, session, socket and parent/sibling reference | All denied with non-disclosing responses; guest remains denied (M2 not delivered) |
@@ -363,13 +388,13 @@ After evidence is recorded, release preview traffic from the tag and ask the pro
 
 | Surface | UI | Behavior | State/recovery | Automated tests | Real evidence |
 | --- | --- | --- | --- | --- | --- |
-| Web Canvas | Full OS for computer owners; recipient views in the Chat panel | D4, D6 | D8 states | Shell component tests | J2, J8 screenshots |
+| Web Canvas | Full OS for computer owners; recipient views in the Chat panel; owner Keep sharing/Stop sharing on paused files | D4, D6, D7 | D8 states | Shell component tests | J2, J3, J8 screenshots |
 | Web Desktop | Same as Web Canvas | Same | Same | Same | J2, J8 screenshots |
 | Electron Desktop | Recipient views in `DesktopChatCollaboration`; Settings, Organization; machine-free mode (D11) | Same derivations | Same | Desktop unit tests, J12 | J8, J12 captures |
 | Web Mobile | Frame at 390x844 for machine-free accounts; full mobile OS for owners | Same | Same | J1-J10 at phone viewport | Phone-viewport captures |
-| Native Mobile | Account-only drawer, file/folder screens, organization settings | Same contracts | Same | Jest (`apps/mobile`) | J13 device evidence |
+| Native Mobile | Account-only drawer, file/folder screens (including the paused copy), organization settings | Same contracts | Same | Jest (`apps/mobile`) | J13 device evidence |
 
-Recorded limitation (decision 6): on Native Mobile, shared app instances open on the web in M1 through a deep link to the frame's app view, because the sandboxed app bridge is DOM-based. Every other M1 capability ships on Native Mobile.
+Native Mobile has no owner file-sharing controls today, so the owner's Keep sharing/Stop sharing decision is N/A there (the capability does not exist on that surface); recipients on Native Mobile see the paused state. Recorded limitation (decision 6): on Native Mobile, shared app instances open on the web in M1 through a deep link to the frame's app view, because the sandboxed app bridge is DOM-based. Every other M1 capability ships on Native Mobile.
 
 ## Requirement traceability
 
@@ -383,7 +408,7 @@ Recorded limitation (decision 6): on Native Mobile, shared app instances open on
 | FR-023 | A4, S6, site docs PR |
 | FR-024 | B0, B4, B7, B8, B10b, S4 |
 | FR-025 | B6a, B6b, B6c, B6d, S4 |
-| FR-026 | B1, B6a |
+| FR-026 | B1a, B1b, B1c, B6a |
 | FR-027 | #1952, B2 |
 | FR-028 | B3 |
 | FR-029 | A2, A3 |
@@ -403,7 +428,7 @@ FR-004, FR-006, FR-008 to FR-017 and FR-021 belong to M2-M5. SC-001, SC-003, SC-
 | 2 | The preview platform gets preview-only collaboration configuration (separate ticket keys and origins). The preview test is a pre-merge gate, not post-merge verification. | Preview test plan, A0, A0b |
 | 3 | Machine-free Electron is fixed in M1; B5 and B9 are in scope. | D11, B5, B9 |
 | 4 | Relay limits for machine-free accounts: 8 sockets and 1 GiB per day, configurable. | D9, B3 |
-| 5 | Files follow their path across atomic saves; folders stay pinned. | D7, B1 |
+| 5 | File grants stay bound to physical identity. A grant follows a replacement only when Matrix performed it and recorded the new identity atomically with the write; any other identity change (external replace-and-rename, delete-and-recreate) pauses the grant with no bytes served until the owner keeps sharing or ends the share. Folders stay pinned. This supersedes the earlier path-following decision (spec change 342ee47ce7). | D7, B1a, B1b, B1c |
 | 6 | Native Mobile opens shared app instances on the web in M1, recorded as a limitation. | Surface parity, B10a |
 | 7 | The active organization lives in Clerk session state (Electron: main-process state), with no platform-persisted preference. | D5, B0, B8 |
 | 8 | `PREVIEW_CLERK_USER_ID` is not repointed and never used by the fixture. A `preview-collaboration` label provisions a preview with the collaboration-only owner `PREVIEW_COLLABORATION_OWNER_USER_ID` from the protected environment; fork PRs never receive it. | D12, A0b |
@@ -415,6 +440,7 @@ FR-004, FR-006, FR-008 to FR-017 and FR-021 belong to M2-M5. SC-001, SC-003, SC-
 - Organization rename, deletion, role changes, member removal UI and billing: not in M1; Clerk remains the administration tool for those, and member removal is exercised through the Backend API in tests.
 - CLI account-only mode: the CLI keeps requiring a computer; it receives a clear error when approved with an account credential.
 - Cross-instance exact relay accounting: bounded overshoot documented in D9.
+- Grant continuity across owner renames and moves through Matrix: shares report `resource_missing` as today; an owner notification for paused grants waits for M3 activity.
 - Fresh per-run guest signups: M2, where invitation acceptance by a new account is under test.
 
 ## Project structure

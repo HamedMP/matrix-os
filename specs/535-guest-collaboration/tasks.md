@@ -187,25 +187,36 @@ Owners of X1-X3 keep their own plans. B0 and B8 reuse the single-membership rule
 
 ## Phase 6: M1 correctness and limits (FR-026, FR-027, FR-028)
 
-### B1: file-share conflict detection
+### B1a: committed reconciliation and Matrix-attributed writes
 
-- [ ] T058 US6 Write `tests/gateway/collaboration-resource-conflicts.test.ts`: owner in-place edit then stale Contributor write returns `409` with the reconciliation committed (the next read shows the new revision); owner replace-and-rename keeps the share readable and bumps the revision; folder replacement still denies; symlink swap denied; missing path returns `resource_missing`; `EXDEV` refuses with `503`.
-- [ ] T059 US6 Write `tests/gateway/collaboration-no-clobber-commit.test.ts` with an injectable filesystem that interleaves owner actions between every commit step: owner rename before the move-aside, between the move-aside and the check, and between the check and the link-in; owner in-place write through an open descriptor. Each case ends with the owner's bytes at the path or in the retained version, the collaborator's bytes at the path or in a conflict copy, and a committed conflict event whenever the collaborator did not win.
-- [ ] T060 US6 Write `tests/gateway/collaboration-resource-conflicts-postgres.test.ts` (real Postgres): concurrent Contributor writes and an external change produce exactly one successful write and one committed external-change revision; retained versions respect the per-entry and per-home caps.
-- [ ] T061 US6 Implement migration 16 (`content_token`), `reconcileExternalChange`, the no-clobber commit in `owner-resource-driver.ts`, executor changes in `resource-actions.ts` and `resource-catalog.ts`, the in-flight commit registry, and the `DisplacedVersionSweeper` wired in `resource-wiring.ts`.
+- [ ] T058 US6 Write `tests/gateway/collaboration-resource-conflicts.test.ts`: owner in-place edit then stale Contributor write returns `409` with the reconciliation committed (the next read shows the new revision and the grant stays active); a Contributor save keeps the grant active with the new identity; symlink swap denied; missing path returns `resource_missing`; `EXDEV` refuses with `503`.
+- [ ] T059 US6 Write `tests/gateway/collaboration-no-clobber-commit.test.ts` with an injectable filesystem that interleaves owner actions between every step: owner rename before the move-aside, between the move-aside and the check, and between the check and the link-in; owner in-place write through an open descriptor; process stop between the link and transaction B. Each case ends with the owner's bytes at the path or in the retained version, the new bytes at the path or in a conflict copy, a committed conflict event whenever the writer did not win, and, after a stop, reconciliation completing the intent without pausing the grant.
+- [ ] T060 US6 Write `tests/gateway/collaboration-resource-conflicts-postgres.test.ts` (real Postgres): concurrent Contributor writes and an external in-place change produce exactly one successful write and one committed external-change revision; intents are bounded per entry; retained versions respect the per-entry and per-home caps.
+- [ ] T061 US6 Implement migration 16 (`content_token`, `grant_state`, `paused_incarnation`, `paused_at`, `collaboration_resource_write_intents`), `reconcileExternalChange`, the write-intent protocol and no-clobber commit in `owner-resource-driver.ts`, executor changes in `resource-actions.ts` and `resource-catalog.ts`, the in-flight commit registry, and the `DisplacedVersionSweeper` wired in `resource-wiring.ts`.
+
+### B1b: paused file grants and owner decision
+
+- [ ] T062 US6 Write `tests/gateway/collaboration-paused-grant.test.ts`: an external replace-and-rename and a delete-and-recreate of a file-grant root both pause the grant; while paused, content, download, stream, upload commit and file actions return `423 paused` and **no bytes of the new file are served** (asserted on every byte-bearing path, including an already-open stream that stops at its next chunk); list and scope reads omit the new file's size, hash and times; a child entry of a shared folder or project records a content change and pauses nothing; a folder identity change keeps today's denial.
+- [ ] T063 US6 Write `tests/gateway/collaboration-file-identity-route.test.ts`: `POST /files/:fileId/identity` is owner-only, has a `bodyLimit` and a strict schema, and is idempotent by `clientRequestId`; `keep_sharing` resumes only when the identity still equals `paused_incarnation` and re-pauses with `409` otherwise; `end_share` runs the unshare lifecycle; and an owner save through `PUT /files/*` with the catalog write hook keeps the grant active, while a hook failure lets the owner save proceed and the next reconciliation pauses the grant.
+- [ ] T064 US6 Implement the pause classification, `423 paused` handling on every byte-bearing route and in `watchResourceStream`, the identity decision route, the `CollaborationCatalogWriteHook` injected into `packages/gateway/src/server/file-routes.ts`, and the `resource.paused`/`resource.resumed` events.
+
+### B1c: paused-grant presentation
+
+- [ ] T065 [P] US6 Write `tests/ui/resource-sharing-paused.test.tsx` (owner control shows "Changed outside Matrix" with **Keep sharing** and **Stop sharing**, one request each, errors allowlisted) and extend `tests/ui/shared-file-view.test.tsx` (recipient copy "Owner updated this file; waiting for them to keep sharing it", cached preview cleared on `resource.paused`, content reloads on `resource.resumed`); add the Native Mobile Jest case for the recipient copy.
+- [ ] T066 US6 Implement the paused state in `packages/ui/src/collaboration/ResourceSharingButton.tsx` and `SharedFileView.tsx`, the Native Mobile file screen copy, and run react-doctor on `shell` and `packages/ui`.
 
 ### B2: unavailable, host offline and access removed
 
-- [ ] T062 US6 Write `tests/gateway/collaboration-missing-dependencies.test.ts` and `tests/platform/collaboration-failure-codes.test.ts` (each optional dependency absent yields `503 unavailable`, never `404`; every error body carries `code`).
-- [ ] T063 [P] US6 Write `tests/ui/collaboration-failure-classification.test.ts` (wire to state mapping in plan D8; no reconnect on terminal states).
-- [ ] T064 US6 Write lease tests for a machine-free member in `tests/gateway/collaboration-direct-sessions.test.ts` (plan D10: denial after evidence expiry, streams closed within 25 s, renewal after removal fails).
-- [ ] T065 US6 Implement `CollaborationFailureCode` in `packages/contracts`, the mapper changes in `packages/gateway/src/collaboration/route-support.ts` and `packages/platform/src/collaboration/{routes,direct-routes}.ts`, and `classifyCollaborationFailure` plus direct-client handling in `packages/ui/src/collaboration/`.
+- [ ] T067 US6 Write `tests/gateway/collaboration-missing-dependencies.test.ts` and `tests/platform/collaboration-failure-codes.test.ts` (each optional dependency absent yields `503 unavailable`, never `404`; every error body carries `code`).
+- [ ] T068 [P] US6 Write `tests/ui/collaboration-failure-classification.test.ts` (wire to state mapping in plan D8; no reconnect on terminal states).
+- [ ] T069 US6 Write lease tests for a machine-free member in `tests/gateway/collaboration-direct-sessions.test.ts` (plan D10: denial after evidence expiry, streams closed within 25 s, renewal after removal fails).
+- [ ] T070 US6 Implement `CollaborationFailureCode` in `packages/contracts`, the mapper changes in `packages/gateway/src/collaboration/route-support.ts` and `packages/platform/src/collaboration/{routes,direct-routes}.ts`, and `classifyCollaborationFailure` plus direct-client handling in `packages/ui/src/collaboration/`.
 
 ### B3: relay limits for machine-free accounts
 
-- [ ] T066 US6 Write `tests/platform/collaboration-relay-account-limits.test.ts`: classification (owned machines only, cache TTL and cap, failure is stricter); socket cap; `429 relay_limit` at ticket, HTTP relay and upgrade; 110% hard stop; accounts with computers unaffected; environment overrides accepted within bounds and rejected outside them; metadata contains no path beyond route class.
-- [ ] T067 US6 Write `tests/platform/collaboration-relay-usage-postgres.test.ts` (real Postgres): additive flush from two meters, bounded overshoot, prune after 35 days, final flush on shutdown.
-- [ ] T068 US6 Implement `packages/platform/src/collaboration/relay-usage.ts`, relay admission and byte recording in `relay.ts` and `platform-websocket-upgrade.ts`, wiring in `direct-wiring.ts`, the table in `packages/platform/src/collaboration/database.ts`, and limits plus environment overrides in `packages/contracts` and platform config validation.
+- [ ] T071 US6 Write `tests/platform/collaboration-relay-account-limits.test.ts`: classification (owned machines only, cache TTL and cap, failure is stricter); socket cap; `429 relay_limit` at ticket, HTTP relay and upgrade; 110% hard stop; accounts with computers unaffected; environment overrides accepted within bounds and rejected outside them; metadata contains no path beyond route class.
+- [ ] T072 US6 Write `tests/platform/collaboration-relay-usage-postgres.test.ts` (real Postgres): additive flush from two meters, bounded overshoot, prune after 35 days, final flush on shutdown.
+- [ ] T073 US6 Implement `packages/platform/src/collaboration/relay-usage.ts`, relay admission and byte recording in `relay.ts` and `platform-websocket-upgrade.ts`, wiring in `direct-wiring.ts`, the table in `packages/platform/src/collaboration/database.ts`, and limits plus environment overrides in `packages/contracts` and platform config validation.
 
 ---
 
@@ -213,19 +224,19 @@ Owners of X1-X3 keep their own plans. B0 and B8 reuse the single-membership rule
 
 ### B5: account credential
 
-- [ ] T069 US1 Write `tests/platform/account-credential.test.ts`: device flow issues an account credential only when the account owns no machine; `verifySyncJwt` rejects it; session routing, runtime proxy and `/api/auth/ws-token` reject it; collaboration and organization resolvers accept it; `resolveAppDomainIdentity` accepts it only with `clerkPrincipalOnly` and a relayed direct events or terminal socket opens with it; every other upgrade path refuses it; expiry 1 h.
-- [ ] T070 US1 Write desktop tests: an account credential is stored with `handle: null`, header injection targets the platform origin for that credential kind (HTTP and upgrade requests), and sign-out clears it.
-- [ ] T071 US1 Implement `packages/platform/src/account-jwt.ts`, the `issueToken` branch in `auth-routes.ts`/`device-flow.ts`, resolver changes in `journey-routes.ts` and `session-routing-identity.ts`, and `desktop/src/main/auth/{auth-service,device-auth,credential-store,header-injection}.ts` support.
+- [ ] T074 US1 Write `tests/platform/account-credential.test.ts`: device flow issues an account credential only when the account owns no machine; `verifySyncJwt` rejects it; session routing, runtime proxy and `/api/auth/ws-token` reject it; collaboration and organization resolvers accept it; `resolveAppDomainIdentity` accepts it only with `clerkPrincipalOnly` and a relayed direct events or terminal socket opens with it; every other upgrade path refuses it; expiry 1 h.
+- [ ] T075 US1 Write desktop tests: an account credential is stored with `handle: null`, header injection targets the platform origin for that credential kind (HTTP and upgrade requests), and sign-out clears it.
+- [ ] T076 US1 Implement `packages/platform/src/account-jwt.ts`, the `issueToken` branch in `auth-routes.ts`/`device-flow.ts`, resolver changes in `journey-routes.ts` and `session-routing-identity.ts`, and `desktop/src/main/auth/{auth-service,device-auth,credential-store,header-injection}.ts` support.
 
 ### B9: Electron Shared with me without a computer
 
-- [ ] T072 US1 Write renderer tests: a signed-in account credential shows Shared with me and Settings, Organization; no runtime, terminal or file surface is requested; live events connect through the relayed direct socket.
-- [ ] T073 US1 Implement the account-only renderer mode using `DesktopChatCollaboration` and the B6 views.
+- [ ] T077 US1 Write renderer tests: a signed-in account credential shows Shared with me and Settings, Organization; no runtime, terminal or file surface is requested; live events connect through the relayed direct socket.
+- [ ] T078 US1 Implement the account-only renderer mode using `DesktopChatCollaboration` and the B6 views.
 
 ### B10a: Native Mobile account-only entry
 
-- [ ] T074 US1 Write Jest tests: `plan_required` shows **Open Shared with me**; the account-only drawer exposes only Shared and Settings; file and folder screens; app instances open on the web (decision 6).
-- [ ] T075 US1 Implement changes in `apps/mobile/app/index.tsx`, `apps/mobile/app/(drawer)/_layout.tsx`, `apps/mobile/components/collaboration/`, and project navigation with child scope IDs.
+- [ ] T079 US1 Write Jest tests: `plan_required` shows **Open Shared with me**; the account-only drawer exposes only Shared and Settings; file and folder screens; app instances open on the web (decision 6).
+- [ ] T080 US1 Implement changes in `apps/mobile/app/index.tsx`, `apps/mobile/app/(drawer)/_layout.tsx`, `apps/mobile/components/collaboration/`, and project navigation with child scope IDs.
 
 ---
 
@@ -233,16 +244,16 @@ Owners of X1-X3 keep their own plans. B0 and B8 reuse the single-membership rule
 
 ### S5: M1 journeys
 
-- [ ] T076 US1 Write `tests/e2e/collaboration/account-only.spec.ts` covering J1-J6, J9, J10 at 390x844 and 1440x900 with SC-002 timing.
-- [ ] T077 US1 Write `tests/e2e/collaboration/organization.spec.ts` covering J7 (email acceptance as a measured manual step) and J8, plus J12 Electron device approval driven from the signed-in browser context.
+- [ ] T081 US1 Write `tests/e2e/collaboration/account-only.spec.ts` covering J1-J6, J9, J10 at 390x844 and 1440x900 with SC-002 timing.
+- [ ] T082 US1 Write `tests/e2e/collaboration/organization.spec.ts` covering J7 (email acceptance as a measured manual step) and J8, plus J12 Electron device approval driven from the signed-in browser context.
 
 ### S6: evidence
 
-- [ ] T078 US1 Run S5 as the full pre-merge gate in plan "Preview test plan (pre-merge gate)" step 3; capture J11 and J13 manually; write `specs/535-guest-collaboration/evidence/m1-account-only.md` with the surface matrix and screenshots under `docs/pr-evidence/`. Release preview traffic and ask whether to delete the preview VPS.
+- [ ] T083 US1 Run S5 as the full pre-merge gate in plan "Preview test plan (pre-merge gate)" step 3; capture J11 and J13 manually; write `specs/535-guest-collaboration/evidence/m1-account-only.md` with the surface matrix and screenshots under `docs/pr-evidence/`. Release preview traffic and ask whether to delete the preview VPS.
 
 ### Site docs (separate repository)
 
-- [ ] T079 [P] US1 Open a PR in `FinnaAI/matrix-os-site` under `content/docs/`: joining shared work without a computer, organization create/switch/invite, recipient views, host availability, relay limits, file conflicts and retained versions, and the Native Mobile app-instance limitation. Publish only what S6 verified; public-safe content only.
+- [ ] T084 [P] US1 Open a PR in `FinnaAI/matrix-os-site` under `content/docs/`: joining shared work without a computer, organization create/switch/invite, recipient views, host availability, relay limits, file conflicts and retained versions, and the Native Mobile app-instance limitation. Publish only what S6 verified; public-safe content only.
 
 ---
 
@@ -251,7 +262,7 @@ Owners of X1-X3 keep their own plans. B0 and B8 reuse the single-membership rule
 - Phase 1 spikes precede the PRs they inform (T001 before A2, T002 before A1, T003 before B4, T004 before A0b).
 - A0 and A0b gate every live preview run; A2 and A3 gate the M1 journeys.
 - S1 then S2 then S3 merge in order and back to back, because the platform deploys on `main` and serves the auth shell from the same image; they merge only after the S5 full gate passes.
-- B-series dependencies: B2 after X1; B6a before B6b-d (shared opener); B0 after X3's rule is settled; B7 after B4 and B0; B8 after B4, B7 and X3; B9 after B5, B6a and X3; B10a after X2 and B6d; B10b after B4 and B0.
+- B-series dependencies: B1b after B1a; B1c after B1b and B6a; B2 after X1; B6a before B6b-d (shared opener); B0 after X3's rule is settled; B7 after B4 and B0; B8 after B4, B7 and X3; B9 after B5, B6a and X3; B10a after X2 and B6d; B10b after B4 and B0.
 - S4 restacks onto `main` after B6a-d and B7 merge; S5 after S4, A0, A0b, A2 and A3; S6 after everything.
 
 ## PR slicing map
@@ -270,16 +281,18 @@ Sizes are estimates including tests; every PR must stay under 1000 additions and
 | S2 | `codex/535-m1-collaboration-frame` | S1 | `feat(shell): add the account-only collaboration frame` | `shell/src/app/shared/**`, `shell/src/app/sign-{in,up}`, `shell/src/components/collaboration/`, `shell/src/lib/`, `tests/shell/`, `shell/e2e/` | 850 / 14 | S1 |
 | S3 | `codex/535-m1-account-landing` | S2 | `feat(shell): land accounts without a computer on Shared with me` | `shell/src/lib/account-only-landing.ts`, `shell/src/components/BootSequence.tsx` (call site), `tests/shell/` | 300 / 4 | S2 |
 | S4 | `codex/535-m1-frame-views` | S3 (restacked on `main` after B6a-d, B7) | `feat(shell): route recipient views and organization settings through the frame` | `shell/src/app/shared/{organization,...}`, `CollaborationFrame.tsx`, `tests/shell/` | 350 / 6 | S3, B6a-d, B7 |
-| S5 | `codex/535-m1-account-journeys` | S4 | `test(collaboration): add M1 account-only journeys` | `tests/e2e/collaboration/account-only.spec.ts`, `organization.spec.ts` | 800 / 4 | S4, A0, A0b, A2, A3, B1-B5, B8, B9 |
+| S5 | `codex/535-m1-account-journeys` | S4 | `test(collaboration): add M1 account-only journeys` | `tests/e2e/collaboration/account-only.spec.ts`, `organization.spec.ts` | 800 / 4 | S4, A0, A0b, A2, A3, B1a-c, B2-B5, B8, B9 |
 | S6 | `codex/535-m1-evidence` | S5 | `docs(collaboration): record M1 account-only evidence` | `specs/535-guest-collaboration/evidence/`, `docs/pr-evidence/` | 250 / 10 (mostly images) | S5 gate run, X2 |
 | B0 | `codex/535-m1-web-active-organization` | `main` | `fix(shell): use the only organization when none is active` | `packages/ui/src/organizations/active-organization.ts`, `shell/src/lib/collaboration-organization.tsx`, tests | 250 / 4 | X3 rule settled |
-| B1 | `codex/535-m1-file-conflicts` | `main` | `feat(collaboration): detect external changes to shared files` | `packages/gateway/src/collaboration/{owner-resource-driver,resource-actions,resource-catalog,resource-wiring,database-migrations}.ts`, `tests/gateway/` | 950 / 9 | none |
+| B1a | `codex/535-m1-file-write-integrity` | `main` | `feat(collaboration): commit shared-file reconciliation and Matrix-attributed writes` | `packages/gateway/src/collaboration/{owner-resource-driver,resource-actions,resource-catalog,resource-wiring,database-migrations}.ts`, `tests/gateway/` | 950 / 9 | none |
+| B1b | `codex/535-m1-paused-file-grants` | B1a (stack parent) | `feat(collaboration): pause file grants after identity changes outside Matrix` | `packages/gateway/src/collaboration/{resource-routes,resource-actions,resource-catalog,route-support}.ts`, `packages/gateway/src/server/file-routes.ts`, `packages/contracts`, `tests/gateway/` | 800 / 9 | B1a |
+| B1c | `codex/535-m1-paused-file-ui` | `main` | `feat(ui): show paused file shares and the owner keep-sharing action` | `packages/ui/src/collaboration/{ResourceSharingButton,SharedFileView}.tsx`, `apps/mobile/components/collaboration/`, tests | 450 / 6 | B1b, B6a |
 | B2 | `codex/535-m1-unavailable-states` | `main` | `fix(collaboration): distinguish unavailable, host offline and removed access` | `packages/contracts`, `packages/gateway/src/collaboration/route-support.ts`, `packages/platform/src/collaboration/{routes,direct-routes}.ts`, `packages/ui/src/collaboration/`, tests | 600 / 11 | X1 |
 | B3 | `codex/535-m1-relay-account-limits` | `main` | `feat(platform): bound relay use by accounts without a computer` | `packages/platform/src/collaboration/{relay,relay-usage,direct-wiring,direct-routes,database}.ts`, `platform-websocket-upgrade.ts`, `packages/contracts`, tests | 900 / 10 | none |
 | B4a | `codex/535-m1-organization-create` | `main` | `feat(platform): create organizations from Matrix` | `packages/platform/src/organizations/{admin-routes,clerk-admin-client,admin-repository,creation-finisher,wiring}.ts`, `packages/contracts/src/organizations.ts`, tests | 600 / 8 | T003 |
 | B4b | `codex/535-m1-organization-invitations` | B4a (stack parent) | `feat(platform): invite organization members from Matrix` | `packages/platform/src/organizations/{admin-routes,clerk-admin-client,admin-repository,routes,roles}.ts`, tests | 650 / 7 | B4a |
 | B5 | `codex/535-m1-account-credentials` | `main` | `feat(auth): issue account-only device credentials without a computer` | `packages/platform/src/{account-jwt,auth-routes,device-flow,journey-routes,session-routing-identity}.ts`, `desktop/src/main/auth/`, tests | 850 / 12 | none |
-| B6a | `codex/535-m1-file-views` | `main` | `feat(ui): open shared files and route every kind to its own view` | `packages/ui/src/collaboration/{recipient-views,SharedFileView}.ts(x)`, `ChatCollaboration.tsx` (call sites), `shell/src/app/shared/file/`, tests | 700 / 8 | none (B1 for conflict copy, soft) |
+| B6a | `codex/535-m1-file-views` | `main` | `feat(ui): open shared files and route every kind to its own view` | `packages/ui/src/collaboration/{recipient-views,SharedFileView}.ts(x)`, `ChatCollaboration.tsx` (call sites), `shell/src/app/shared/file/`, tests | 700 / 8 | none (B1a for the conflict copy, soft) |
 | B6b | `codex/535-m1-folder-views` | `main` | `feat(ui): open shared folders in a folder view` | `packages/ui/src/collaboration/{SharedFolderView,shared-folder-paging}.ts(x)`, `shell/src/components/file-browser/OrganizationDrivesView.tsx`, `shell/src/app/shared/folder/`, tests | 700 / 8 | B6a |
 | B6c | `codex/535-m1-app-views` | `main` | `feat(ui): open shared app instances in a sandboxed view` | `packages/ui/src/collaboration/SharedAppView.tsx` and bridge, `shell/src/app/shared/app/`, tests | 650 / 6 | B6a |
 | B6d | `codex/535-m1-project-navigation` | `main` | `feat(collaboration): make shared projects navigable` | `packages/contracts/src/collaboration.ts`, `packages/gateway/src/collaboration/project-sharing.ts`, `packages/ui/src/collaboration/SharedProjectView.tsx`, tests | 750 / 7 | B6a |
@@ -293,13 +306,13 @@ Sizes are estimates including tests; every PR must stay under 1000 additions and
 **Graphite stacks**:
 
 - Account-only entry stack (the only stack that is truly entry-dependent): `main` -> S1 -> S2 -> S3 -> S4 -> S5 -> S6. S4 is restacked with `gt restack` after B6a-d and B7 merge to `main`.
-- Two short dependency stacks for convenience: A2 -> A3, and B4a -> B4b -> B7. "B4" elsewhere means both B4a and B4b. They may instead be opened off `main` after their parent merges.
+- Three short dependency stacks for convenience: A2 -> A3, B1a -> B1b, and B4a -> B4b -> B7. "B4" elsewhere means both B4a and B4b. They may instead be opened off `main` after their parent merges.
 - All other rows are standalone PRs off `main`. Do not flatten the stack; land it with Graphite one layer at a time.
 
 ## Implementation strategy
 
 1. M0 first in parallel: A0 (after the owner creates the preview secret), A1, A2 (after T001), then A0b (after T004) and A3, then A4 once X1 is deployed.
-2. Start M1 standalone PRs immediately (B0 once X3's rule is settled, B1, B2 after X1, B3, B4, B5, B6a), then B6b-d, B7.
+2. Start M1 standalone PRs immediately (B0 once X3's rule is settled, B1a, B2 after X1, B3, B4, B5, B6a), then B1b, B6b-d, B7, then B1c.
 3. Build S1-S3; run their platform-only preview checks.
 4. After the B-series and X-series merge, restack S4-S6, run the full pre-merge gate on S5, record evidence, merge the stack layer by layer, and open the site docs PR.
 5. M1 is released only when S6 evidence passes on every surface in the plan's surface table, not when individual PRs merge.
