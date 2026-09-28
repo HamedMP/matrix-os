@@ -13,6 +13,7 @@ const MAX_MEMBERSHIP_EFFECTS = 1_000;
 const ScopeIdSchema = z.uuid();
 const ActorIdSchema = z.string().min(1).max(128).regex(/^[A-Za-z0-9_-]+$/);
 const DigestSchema = z.string().regex(/^[a-f0-9]{64}$/);
+const ProjectTitleSchema = z.string().trim().min(1).max(200);
 
 interface InventoryResult {
   projectId: string;
@@ -75,6 +76,8 @@ export class ProjectSharingError extends Error {
 
 export function createProjectSharingService(options: {
   db: Kysely<OwnerCollaborationDatabase>;
+  /** Runtime project metadata; test fixtures without a manager use the bounded project ID. */
+  resolveProjectTitle?(ownerId: string, projectId: string): Promise<string | null>;
   inventory: ProjectInventoryPort;
   transitions: ProjectTransitionPort;
   resolveDestination(input: { scopeId: string; ownerId: string; projectId: string }): Promise<{
@@ -105,23 +108,42 @@ export function createProjectSharingService(options: {
           .where("deleted_at", "is", null)
           .executeTakeFirst();
         if (!scope) throw new ProjectSharingError("not_found");
-        const resources = await options.db.selectFrom("collaboration_resource_bindings")
-          .select(["resource_kind", "resource_id", "revision", "readiness", "incarnation"])
-          .where("project_scope_id", "=", scope.id)
-          .where("authority_runtime_id", "=", scope.authority_runtime_id)
-          .where("authority_generation", "=", Number(scope.authority_generation))
-          .orderBy("resource_kind", "asc")
-          .orderBy("resource_id", "asc")
+        const title = ProjectTitleSchema.safeParse(options.resolveProjectTitle
+          ? await options.resolveProjectTitle(scope.owner_id, scope.resource_id)
+          : scope.resource_id.slice(0, 200));
+        if (!title.success) throw new ProjectSharingError("unavailable");
+        const resources = await options.db.selectFrom("collaboration_resource_bindings as binding")
+          .leftJoin("collaboration_scopes as child", "child.id", "binding.resource_scope_id")
+          .select([
+            "binding.resource_kind", "binding.resource_id", "binding.revision", "binding.readiness", "binding.incarnation",
+            "child.id as child_id", "child.kind as child_kind", "child.resource_id as child_resource_id",
+            "child.parent_scope_id as child_parent_scope_id", "child.membership_mode as child_membership_mode",
+            "child.lifecycle as child_lifecycle", "child.authority_runtime_id as child_runtime_id",
+            "child.authority_generation as child_generation", "child.deleted_at as child_deleted_at",
+          ])
+          .where("binding.project_scope_id", "=", scope.id)
+          .where("binding.authority_runtime_id", "=", scope.authority_runtime_id)
+          .where("binding.authority_generation", "=", Number(scope.authority_generation))
+          .orderBy("binding.resource_kind", "asc")
+          .orderBy("binding.resource_id", "asc")
           .limit(100_001)
           .execute();
         if (resources.length > 100_000) throw new ProjectSharingError("capacity");
         return {
           id: scope.resource_id,
           scopeId: scope.id,
+          title: title.data,
           status: scope.lifecycle === "archived" ? "archived" as const : "active" as const,
           resources: resources.map((resource) => ({
             kind: resource.resource_kind,
             id: resource.resource_id,
+            title: resource.resource_id.split("/").at(-1)!.slice(0, 200),
+            ...(resource.child_id && (resource.resource_kind === "chat" || resource.resource_kind === "terminal")
+              && resource.child_kind === resource.resource_kind && resource.child_resource_id === resource.resource_id
+              && resource.child_parent_scope_id === scope.id && resource.child_membership_mode === "inherited"
+              && resource.child_lifecycle === "shared" && resource.child_runtime_id === scope.authority_runtime_id
+              && Number(resource.child_generation) === Number(scope.authority_generation) && resource.child_deleted_at === null
+              ? { scopeId: resource.child_id } : {}),
             revision: String(resource.revision),
             readiness: resource.readiness,
             ...(resource.incarnation ? { incarnation: resource.incarnation } : {}),

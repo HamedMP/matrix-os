@@ -562,6 +562,7 @@ export async function createGatewayCollaboration(options: {
     async enableSharedProject(input: {
       homePath: string;
       inventorySource: ProjectInventoryResourceSource;
+      resolveProjectTitle(ownerId: string, projectId: string): Promise<string | null>;
     }): Promise<{ available: true }> {
       if (registered || closing || projectSharing) {
         throw new Error("Shared project must be initialized exactly once before route registration");
@@ -581,6 +582,7 @@ export async function createGatewayCollaboration(options: {
       await projectTransitionCoordinator.recover();
       projectSharing = createProjectSharingService({
         db: options.db,
+        resolveProjectTitle: input.resolveProjectTitle,
         inventory,
         transitions: projectTransitions,
         onPrepared: (transition) => projectTransitionCoordinator!.schedule(transition.id),

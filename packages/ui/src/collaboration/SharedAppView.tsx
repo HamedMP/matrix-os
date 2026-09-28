@@ -1,6 +1,6 @@
 import {
   CollaborationAppActionResponseSchema, CollaborationAppInstanceSchema, CollaborationAppRootSchema,
-  CollaborationScopeSchema, type CollaborationAppInstance,
+  CollaborationScopeSchema, CollaborationAppInstanceIdSchema, type CollaborationAppInstance,
 } from "@matrix-os/contracts";
 import { useEffect, useRef, useState } from "react";
 import { z } from "zod/v4";
@@ -17,7 +17,7 @@ const ViewResponseSchema = z.strictObject({ result: z.json() });
 const MAX_MESSAGE_BYTES = 256 * 1024;
 
 /** Recipient app view: the scope's catalog root chooses the only instance this frame can reach. */
-export function SharedAppView({ api, scopeId }: { api: CollaborationApi; scopeId: string }) {
+export function SharedAppView({ api, scopeId, appId }: { api: CollaborationApi; scopeId: string; appId?: string }) {
   const [state, setState] = useState<State>({ status: "loading" });
   useEffect(() => {
     let active = true;
@@ -26,11 +26,12 @@ export function SharedAppView({ api, scopeId }: { api: CollaborationApi; scopeId
       try {
         const base = `/api/collaboration/scopes/${encodeURIComponent(scopeId)}`;
         const scope = CollaborationScopeSchema.parse(await api.get(base));
-        if (scope.kind !== "app") throw new Error("Scope kind mismatch");
-        const root = CollaborationAppRootSchema.parse(await api.get(`${base}/apps`));
-        if (root.catalogId !== scope.resourceId) throw new Error("App root mismatch");
-        const instance = CollaborationAppInstanceSchema.parse(await api.get(`${base}/apps/${encodeURIComponent(root.appId)}`));
-        if (instance.appId !== root.appId || instance.catalogId !== root.catalogId) throw new Error("App instance mismatch");
+        if (appId ? scope.kind !== "project" : scope.kind !== "app") throw new Error("Scope kind mismatch");
+        const root = appId ? null : CollaborationAppRootSchema.parse(await api.get(`${base}/apps`));
+        if (root && root.catalogId !== scope.resourceId) throw new Error("App root mismatch");
+        const selectedAppId = CollaborationAppInstanceIdSchema.parse(appId ?? root?.appId);
+        const instance = CollaborationAppInstanceSchema.parse(await api.get(`${base}/apps/${encodeURIComponent(selectedAppId)}`));
+        if (instance.appId !== selectedAppId || (root && instance.catalogId !== root.catalogId)) throw new Error("App instance mismatch");
         if (instance.readiness !== "ready" || instance.collaborationMode !== "scoped") {
           if (active) setState({ status: "unavailable", reason: instance.readiness === "blocked" ? "blocked" : "unsupported" });
           return;
@@ -43,7 +44,7 @@ export function SharedAppView({ api, scopeId }: { api: CollaborationApi; scopeId
       }
     })();
     return () => { active = false; };
-  }, [api, scopeId]);
+  }, [api, scopeId, appId]);
 
   if (state.status === "loading") return <p role="status" className="p-8">Loading shared app…</p>;
   if (state.status === "unavailable") return <div role="alert" data-reason={state.reason} className="m-auto max-w-lg rounded-2xl border p-8 text-center">

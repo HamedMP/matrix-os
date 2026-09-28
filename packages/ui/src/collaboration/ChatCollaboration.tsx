@@ -5,7 +5,6 @@ import {
   CollaborationDiscoveryItemSchema,
   CollaborationInvitationSchema,
   CollaborationMemberSchema,
-  CollaborationProjectSchema,
   CollaborationScopeSchema,
   CollaborationSharedChatMessageSchema,
   type CanonicalChatMessagePart,
@@ -28,6 +27,7 @@ import { notifyCollaborationDiscoveryChanged } from "./discovery-events.js";
 import { canOpenSharedResource, openSharedResource, sharedResourceInvitationCopy, type SharedResourceOpeners } from "./recipient-views.js";
 import { SharedFileView } from "./SharedFileView.js";
 import { SharedAppView } from "./SharedAppView.js";
+import { SharedProjectView } from "./SharedProjectView.js";
 
 type DiscoveryItem = z.infer<typeof CollaborationDiscoveryItemSchema>;
 type SharedMessage = z.infer<typeof CollaborationSharedChatMessageSchema>;
@@ -87,7 +87,7 @@ export function ChatCollaboration({
   if (view.kind === "file") return <SharedFileView api={api} scopeId={view.scopeId} />;
   if (view.kind === "app") return <SharedAppView api={api} scopeId={view.scopeId} />;
   if (view.kind === "terminal") return <SharedTerminalView api={api} actorId={actorId} scopeId={view.scopeId} layers={layers} />;
-  if (view.kind === "project") return <SharedProjectView api={api} scopeId={view.scopeId} />;
+  if (view.kind === "project") return <SharedProjectView api={api} scopeId={view.scopeId} openChat={openChat} openTerminal={openTerminal} />;
   if (view.kind === "canonical-chat") return <CanonicalSharedChatPanel api={api} actorId={actorId}
     runtimeId={runtimeId ?? "platform"} chatId={view.chatId} storage={storage} onMetadata={onChatMetadata}
     headerContainer={headerContainer} layers={layers} />;
@@ -314,70 +314,6 @@ function SharedTerminalView({ api, actorId, scopeId, layers }: {
   if (failed) return <SafeError title="Shared terminal unavailable" />;
   if (!scope) return <p role="status" className="p-8">Loading shared terminal…</p>;
   return <SharedTerminalControls api={api} scope={scope} actorId={actorId} layers={layers} />;
-}
-
-function SharedProjectView({ api, scopeId }: { api: CollaborationApi; scopeId: string }) {
-  const [value, setValue] = useState<{ scope: SharedScope; project: z.infer<typeof CollaborationProjectSchema> } | null>(null);
-  const [failed, setFailed] = useState(false);
-  const loadGeneration = useRef(0);
-  const load = useCallback(async () => {
-    const generation = ++loadGeneration.current;
-    const base = `/api/collaboration/scopes/${encodeURIComponent(scopeId)}`;
-    try {
-      const [scopeValue, projectValue] = await Promise.all([api.get(base), api.get(`${base}/project`)]);
-      const scope = CollaborationScopeSchema.parse(scopeValue);
-      const project = CollaborationProjectSchema.parse(projectValue);
-      if (scope.kind !== "project" || project.scopeId !== scope.id || project.id !== scope.resourceId) {
-        throw new Error("Project scope mismatch");
-      }
-      if (generation === loadGeneration.current) {
-        setValue({ scope, project });
-        setFailed(false);
-      }
-    } catch (error: unknown) {
-      console.warn("[project-collaboration] project load failed", error instanceof Error ? error.name : "UnknownError");
-      if (generation === loadGeneration.current) {
-        setValue(null);
-        setFailed(true);
-      }
-      throw error;
-    }
-  }, [api, scopeId]);
-  useEffect(() => {
-    setValue(null);
-    setFailed(false);
-    void load().catch((error: unknown) => {
-      console.warn("[project-collaboration] initial load unavailable", error instanceof Error ? error.name : "UnknownError");
-    });
-    return () => { loadGeneration.current += 1; };
-  }, [load]);
-  useEffect(() => api.subscribe?.(scopeId, load, () => {
-    loadGeneration.current += 1;
-    setValue(null);
-    setFailed(true);
-  }), [api, load, scopeId]);
-  if (failed) return <SafeError title="Shared project unavailable" />;
-  if (!value) return <p role="status" className="p-8">Loading shared project…</p>;
-  return <main className="mx-auto flex min-h-full w-full max-w-5xl flex-col gap-5 p-5 sm:p-8">
-    <header>
-      <p className="text-xs font-medium uppercase tracking-[0.16em]" style={{ color: "var(--text-tertiary)" }}>Shared project</p>
-      <h1 className="mt-1 text-2xl font-semibold">{value.project.id}</h1>
-      <p className="mt-1 text-sm" style={{ color: "var(--text-secondary)" }}>
-        {roleLabel(value.scope.role)} · {value.scope.role === "viewer" ? "read only" : "can edit"}
-      </p>
-    </header>
-    {value.project.status === "archived" ? <p role="status" className="rounded-xl border p-4 text-sm">This project is archived.</p> : null}
-    <section aria-labelledby="shared-project-contents">
-      <h2 id="shared-project-contents" className="font-medium">Project contents</h2>
-      <ul className="mt-3 grid gap-2 sm:grid-cols-2">
-        {value.project.resources.map((resource) => <li key={`${resource.kind}:${resource.id}`}
-          className="rounded-xl border px-3 py-2 text-sm">
-          <span className="font-medium">{resource.id}</span>
-          <span className="ml-2 capitalize" style={{ color: "var(--text-secondary)" }}>{resource.kind}</span>
-        </li>)}
-      </ul>
-    </section>
-  </main>;
 }
 
 /** Why a discovered item could not be opened: ended access is not a lapsed sign-in. */

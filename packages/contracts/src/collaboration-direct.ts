@@ -450,6 +450,7 @@ export const COLLABORATION_DIRECT_ROUTES: readonly CollaborationDirectRoute[] = 
   home("GET", `${SCOPE}/project/layout`),
   home("PATCH", `${SCOPE}/project/layout`),
   home("GET", `${SCOPE}/files`),
+  home("GET", `${SCOPE}/files/:fileId`, { response: "CollaborationCatalogEntrySchema" }),
   home("GET", `${SCOPE}/files/:fileId/content`),
   home("POST", `${SCOPE}/files/actions`),
   home("GET", `${SCOPE}/apps`, { response: "CollaborationAppRootSchema" }),
