@@ -1,7 +1,10 @@
 import type { Context, Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { MATRIX_MCP_RUN_CONTEXT_KEY } from "../../chat/matrix-mcp-launch.js";
+import { isPrivatePreviewHandle } from "@matrix-os/contracts";
+import { bootstrapCustomMcpProjection } from "./projection-bootstrap.js";
 import { createCustomMcpProjectionRoutes } from "./projection-routes.js";
+import { CustomMcpProjectionStore } from "./projection-store.js";
 
 const CUSTOM_MCP_PROXY_BODY_LIMIT = 64 * 1024;
 
@@ -55,11 +58,13 @@ export function registerCustomMcpGatewayRoutes(
   app: Hono,
   options: CustomMcpGatewayRouteOptions,
 ): void {
+  const store = new CustomMcpProjectionStore(options.homePath);
   if (options.clerkUserId && options.projectionToken) {
     app.route(
       "/api/internal/mcp-projection",
       createCustomMcpProjectionRoutes({
         homePath: options.homePath,
+        store,
         token: options.projectionToken,
         clerkUserId: options.clerkUserId,
       }),
@@ -69,6 +74,12 @@ export function registerCustomMcpGatewayRoutes(
   const proxy = options.platformProxy;
   if (!proxy) return;
   const targetBase = `${proxy.internalPlatformUrl}/internal/containers/${encodeURIComponent(proxy.handle)}/mcp-servers`;
+  if (isPrivatePreviewHandle(proxy.handle)) {
+    // Spec 537: fetch the servers the owner configured before this machine existed.
+    void bootstrapCustomMcpProjection({ store, listUrl: targetBase, token: proxy.token }).catch((error: unknown) => {
+      console.warn("[custom-mcp] projection pull crashed", error instanceof Error ? error.name : "UnknownError");
+    });
+  }
   app.all(
     "/api/mcp-servers",
     bodyLimit({ maxSize: CUSTOM_MCP_PROXY_BODY_LIMIT }),

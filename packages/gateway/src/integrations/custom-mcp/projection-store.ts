@@ -38,6 +38,8 @@ export class CustomMcpProjectionStore {
   async upsert(server: CustomMcpServerProjection): Promise<void> {
     return this.mutate(async (file) => {
       const existingIndex = file.servers.findIndex((entry) => entry.id === server.id);
+      // Pushes and startup pulls can arrive out of order; never regress a server.
+      if (existingIndex !== -1 && file.servers[existingIndex]!.revision > server.revision) return;
       if (existingIndex === -1 && file.servers.length >= MAX_SERVERS) {
         throw new Error("Custom MCP server limit reached");
       }

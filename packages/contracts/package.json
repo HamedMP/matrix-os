@@ -11,6 +11,7 @@
   },
   "imports": {
     "#chat-subagent": "./src/chat-subagent.ts",
+    "#private-preview": "./src/private-preview.ts",
     "#sync": "./src/sync.ts",
     "#app-ai": "./src/app-ai.ts",
     "#file-download": "./src/file-download.ts",
