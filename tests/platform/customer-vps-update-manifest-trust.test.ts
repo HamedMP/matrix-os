@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -35,10 +35,13 @@ load_trusted_apply_manifest`;
   }
 }
 
-function probeApply(marker: unknown, trusted: unknown) {
+function probeApply(marker: unknown, trusted: unknown, badDigest = false) {
   const directory = mkdtempSync(join(tmpdir(), 'matrix-update-apply-'));
   const markerPath = join(directory, 'marker.json');
   const downloadLog = join(directory, 'download.log');
+  const errorLog = join(directory, 'error.log');
+  const installLog = join(directory, 'install.log');
+  mkdirSync(join(directory, 'staging'));
   writeFileSync(markerPath, JSON.stringify(marker));
   const updater = readFileSync(updaterPath, 'utf8');
   const trustedStart = updater.indexOf('load_trusted_apply_manifest() {');
@@ -52,6 +55,8 @@ STAGING_DIR="$2/staging"
 APP_DIR="$2"
 TRUSTED_JSON="$3"
 DOWNLOAD_LOG="$4"
+ERROR_LOG="$5"
+INSTALL_LOG="$6"
 log() { :; }
 json_field() { python3 -c 'import json,sys; print(json.load(sys.stdin).get(sys.argv[1], ""))' "$2" <<< "$1"; }
 release_url_for_version() { printf 'https://platform.example/system-bundles/releases/%s.json\\n' "$1"; }
@@ -60,13 +65,57 @@ sudo() { :; }
 current_version() { printf 'v2026.09.27-1\\n'; }
 ensure_update_headroom() { :; }
 write_update_phase() { :; }
-download_bundle() { printf '%s\\n' "$@" > "$DOWNLOAD_LOG"; return 1; }
+write_update_error() { printf '%s' "$1" > "$ERROR_LOG"; }
+tar() { printf 'reached' > "$INSTALL_LOG"; return 1; }
+download_bundle() { printf '%s\\n' "$@" > "$DOWNLOAD_LOG"; ${badDigest ? 'printf corrupt > "$5"; return 0;' : 'return 1;'} }
 ${updater.slice(trustedStart, trustedEnd)}
 ${updater.slice(applyStart, applyEnd)}
 apply_update other`;
   try {
-    const result = spawnSync('bash', ['-c', script, 'test', markerPath, directory, JSON.stringify(trusted), downloadLog], { encoding: 'utf8' });
-    return { result, download: readFileSync(downloadLog, 'utf8') };
+    const result = spawnSync('bash', ['-c', script, 'test', markerPath, directory, JSON.stringify(trusted), downloadLog, errorLog, installLog], { encoding: 'utf8' });
+    return {
+      result,
+      download: readFileSync(downloadLog, 'utf8'),
+      error: existsSync(errorLog) ? readFileSync(errorLog, 'utf8') : '',
+      installReached: existsSync(installLog),
+    };
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+}
+
+function probeRetryUrl(refreshedUrl: string) {
+  const directory = mkdtempSync(join(tmpdir(), 'matrix-update-retry-url-'));
+  const bin = join(directory, 'bin');
+  mkdirSync(bin);
+  const curlLog = join(directory, 'curl.log');
+  const fakeCurl = join(bin, 'curl');
+  writeFileSync(fakeCurl, '#!/bin/sh\nprintf "%s\\n" "$*" >> "$CURL_LOG"\nexit 1\n');
+  chmodSync(fakeCurl, 0o755);
+  writeFileSync(curlLog, '');
+  const updater = readFileSync(updaterPath, 'utf8');
+  const start = updater.indexOf('bundle_url_is_https() {');
+  const end = updater.indexOf('prepare_triggered_update_action=apply', start);
+  const script = `set -euo pipefail
+log() { :; }
+json_field() { python3 -c 'import json,sys; print(json.load(sys.stdin).get(sys.argv[1], ""))' "$2" <<< "$1"; }
+release_url_for_version() { printf 'https://platform.example/releases/%s.json\\n' "$1"; }
+fetch_manifest() { printf '%s' "$REFRESHED_JSON"; }
+write_update_error() { :; }
+${updater.slice(start, end)}
+download_bundle v2026.09.28-1 "$SHA256" 100 https://storage.example/initial "$1/bundle.tar.gz"`;
+  try {
+    const result = spawnSync('bash', ['-c', script, 'test', directory], {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        PATH: `${bin}:${process.env.PATH ?? ''}`,
+        CURL_LOG: curlLog,
+        SHA256: sha256,
+        REFRESHED_JSON: JSON.stringify({ version: 'v2026.09.28-1', sha256, size: 100, url: refreshedUrl }),
+      },
+    });
+    return { result, curlCalls: readFileSync(curlLog, 'utf8').trim().split('\n').filter(Boolean) };
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
@@ -117,5 +166,20 @@ describe('VPS update manifest trust boundary', () => {
     );
     expect(result.status).toBe(1); // The stubbed download stops before installation.
     expect(download.split('\n').slice(0, 4)).toEqual([trusted.version, sha256, '100', trusted.url]);
+  });
+
+  it('stops before extraction when downloaded bytes do not match the platform digest', () => {
+    const trusted = { version: 'v2026.09.28-1', sha256, size: 100, url: 'https://storage.example/signed-bundle' };
+    const { result, error, installReached } = probeApply({ version: trusted.version }, trusted, true);
+    expect(result.status).toBe(1);
+    expect(error).toBe('checksum_mismatch');
+    expect(installReached).toBe(false);
+  });
+
+  it('rejects a retry manifest that changes the bundle URL to HTTP', () => {
+    const { result, curlCalls } = probeRetryUrl('http://storage.example/plaintext-bundle');
+    expect(result.status).toBe(1);
+    expect(curlCalls).toHaveLength(1);
+    expect(curlCalls[0]).toContain('--proto =https --proto-redir =https');
   });
 });

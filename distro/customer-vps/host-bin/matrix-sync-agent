@@ -1118,10 +1118,29 @@ write_prepared_update_marker() {
   fi
 }
 
+bundle_url_is_https() {
+  python3 - "$1" <<'PY'
+import sys
+from urllib.parse import urlsplit
+
+url = sys.argv[1]
+if len(url) > 8192:
+    raise SystemExit(1)
+parts = urlsplit(url)
+if parts.scheme != "https" or not parts.hostname or parts.username or parts.password or parts.fragment:
+    raise SystemExit(1)
+PY
+}
+
 download_bundle() {
   local version="$1" expected_sha256="$2" expected_size="$3" bundle_url="$4" bundle_file="$5"
   local attempt refreshed refreshed_version refreshed_sha256 refreshed_size refreshed_url partial_size
   local -a continue_args
+  if ! bundle_url_is_https "$bundle_url"; then
+    write_update_error "download_metadata_changed" \
+      "The immutable release metadata changed during download." "$version"
+    return 1
+  fi
   rm -f -- "$bundle_file"
   for attempt in 1 2; do
     continue_args=()
@@ -1135,7 +1154,8 @@ download_bundle() {
       refreshed_url="$(json_field "$refreshed" url)"
       if ! [ "$refreshed_version" = "$version" ] ||
         ! [ "$refreshed_sha256" = "$expected_sha256" ] ||
-        ! [ "$refreshed_size" = "$expected_size" ] || [ -z "$refreshed_url" ]; then
+        ! [ "$refreshed_size" = "$expected_size" ] ||
+        ! bundle_url_is_https "$refreshed_url"; then
         write_update_error "download_metadata_changed" \
           "The immutable release metadata changed during download." "$version"
         rm -f -- "$bundle_file"
@@ -1159,6 +1179,7 @@ download_bundle() {
       fi
     fi
     if /usr/bin/timeout --signal=KILL 1800 curl --fail --location \
+      --proto '=https' --proto-redir '=https' --max-redirs 3 \
       --connect-timeout 10 --max-time 1770 --http1.1 \
       "${continue_args[@]}" "$bundle_url" -o "$bundle_file"; then
       [ -f "$bundle_file" ] && [ ! -L "$bundle_file" ] && return 0
