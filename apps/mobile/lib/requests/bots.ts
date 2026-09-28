@@ -2,9 +2,11 @@ import { z } from "zod/v4";
 import {
   BotAuthorityViewSchema, BotDirectChatResponseSchema, BotGrantIdSchema, BotInteractionIdSchema,
   BotInteractionSchema, BotMemoryItemIdSchema, BotMemoryMutationRequestSchema, BotMemoryMutationResponseSchema,
-  BotTaskListResponseSchema, CanonicalChatIdSchema, ChatAgentIdSchema, ChatAgentListResponseSchema,
+  BotRecipeListResponseSchema, BotTaskListResponseSchema, CanonicalChatIdSchema, ChatAgentIdSchema, ChatAgentListResponseSchema,
+  InstantiateBotRequestSchema, InstantiateBotResponseSchema,
   ResolveBotInteractionRequestSchema, ResolveBotInteractionResponseSchema, RevokeBotGrantResponseSchema,
-  type BotAuthorityView, type BotInteraction, type BotMemoryMutationRequest, type BotTaskSummary,
+  type BotAuthorityView, type BotInteraction, type BotMemoryMutationRequest, type BotRecipeSummary, type BotTaskSummary,
+  type InstantiateBotRequest, type InstantiateBotResponse,
   type ResolveBotInteractionRequest, type ResolveBotInteractionResponse,
 } from "@matrix-os/contracts";
 import { buildGatewayRequestUrl, fetchAuthenticatedJson } from "./http";
@@ -21,6 +23,7 @@ const interactionsSchema = z.object({ interactions: z.array(BotInteractionSchema
 const STATUS_ERROR = "Bot status could not be loaded. Try again.";
 const ACTION_ERROR = "Could not save your response. Try again.";
 const ACCESS_ERROR = "Could not change bot access. Try again.";
+const CREATE_ERROR = "Bot could not be created. Try again.";
 
 function chatPath(chatId: string) {
   return `/api/chats/${encodeURIComponent(CanonicalChatIdSchema.parse(chatId))}`;
@@ -28,6 +31,24 @@ function chatPath(chatId: string) {
 
 function agentPath(agentId: string) {
   return `/api/chat-agents/${encodeURIComponent(ChatAgentIdSchema.parse(agentId))}`;
+}
+
+export async function fetchNativeBotRecipes(token: string, gatewayUrl: string): Promise<BotRecipeSummary[]> {
+  const result = await fetchAuthenticatedJson({
+    url: buildGatewayRequestUrl(gatewayUrl, "/api/chat-agents/bot-recipes"), token,
+    schema: BotRecipeListResponseSchema, errorMessage: STATUS_ERROR,
+  });
+  return result.recipes;
+}
+
+export function instantiateNativeBot(token: string, gatewayUrl: string,
+  input: InstantiateBotRequest): Promise<InstantiateBotResponse> {
+  return fetchAuthenticatedJson({
+    url: buildGatewayRequestUrl(gatewayUrl, "/api/chat-agents/instantiate"), token,
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(InstantiateBotRequestSchema.parse(input)),
+    schema: InstantiateBotResponseSchema, errorMessage: CREATE_ERROR,
+  });
 }
 
 export async function fetchNativeBotChat(token: string, gatewayUrl: string, chatId: string): Promise<NativeBotChatSnapshot | null> {

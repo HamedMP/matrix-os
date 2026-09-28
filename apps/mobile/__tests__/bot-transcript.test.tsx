@@ -1,6 +1,7 @@
 import React from "react";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react-native";
 import { BotChatControls } from "@/components/BotChatControls";
+import { BotRecipeChooser } from "@/components/BotRecipeChooser";
 
 jest.mock("micromark", () => ({ micromark: jest.fn() }));
 jest.mock("micromark-extension-gfm", () => ({ gfm: jest.fn(), gfmHtml: jest.fn() }));
@@ -46,6 +47,20 @@ it("shows Native Mobile bot identity, question mapping, task status, and authori
   await waitFor(() => expect(onRevoke).toHaveBeenCalledWith("gr_abcdefgh"));
 }, 20_000);
 
+it("reuses the bot creation request ID on retry and opens the new Chat", async () => {
+  const onCreate = jest.fn().mockRejectedValueOnce(new Error("response lost"))
+    .mockResolvedValueOnce("chat_research");
+  const onOpenChat = jest.fn();
+  render(<BotRecipeChooser recipes={[{ recipeId: "inbox-triage", version: "v1",
+    name: "Inbox helper", description: "Summarize the inbox", output: "A daily brief" }]}
+    onCreate={onCreate} onOpenChat={onOpenChat} />);
+  fireEvent.press(screen.getByText("Build in Chat"));
+  await waitFor(() => expect(screen.getByText("Bot could not be created. Try again.")).toBeTruthy());
+  fireEvent.press(screen.getByText("Build in Chat"));
+  await waitFor(() => expect(onOpenChat).toHaveBeenCalledWith("chat_research"));
+  expect(onCreate.mock.calls[0]![1]).toBe(onCreate.mock.calls[1]![1]);
+}, 20_000);
+
 it("keeps a resolved connect request settled when opening consent fails", async () => {
   const connect = { ...snapshot.interactions[0], kind: "connect_request",
     payload: { kind: "connect_request", service: "gmail", access: ["read"], benefit: "Read your inbox",
@@ -62,3 +77,12 @@ it("keeps a resolved connect request settled when opening consent fails", async 
   await waitFor(() => expect(screen.getByText("Could not open the connection page. Try again.")).toBeTruthy());
   expect(screen.queryByText("Could not save your response. Try again.")).toBeNull();
 }, 20_000);
+
+it("shows cached bot status read-only after a refresh fails", () => {
+  render(<BotChatControls snapshot={snapshot as never} actionsAvailable={false}
+    onResolve={jest.fn()} onRevoke={jest.fn()} onMemory={jest.fn()} onRefresh={jest.fn()} />);
+  expect(screen.getByText("Which company?")).toBeTruthy();
+  expect(screen.queryByText("Answer")).toBeNull();
+  fireEvent.press(screen.getByText("Access & memory"));
+  expect(screen.getByRole("button", { name: "Revoke Work" }).props.accessibilityState.disabled).toBe(true);
+});
