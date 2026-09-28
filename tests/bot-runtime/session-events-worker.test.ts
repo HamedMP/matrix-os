@@ -103,6 +103,18 @@ describe("bot session codec and compaction", () => {
     expect(() => encodeSession(kept)).toThrow(expect.objectContaining({ code: "too_large" }));
   });
 
+  it("shortens a reply by just the overflow instead of a fixed cap", () => {
+    const reply = "R".repeat(150 * 1024);
+    const turns = [user("ask", 1), fauxAssistantMessage(fauxText(reply))];
+    const limit = encodedSessionBytes(turns) - 4 * 1024;
+    const fitted = fitForStorage(turns, limit, () => 1, { allowDroppingTurns: false });
+    expect(encodedSessionBytes(fitted)).toBeLessThanOrEqual(limit);
+    const kept = (fitted[1] as { content: Array<{ text: string }> }).content[0]!.text;
+    // Only the overflow (plus a small margin for the note) is lost, not all but 8 KiB.
+    expect(kept.length).toBeGreaterThan(reply.length - 5 * 1024);
+    expect(kept).toContain("left out of saved history");
+  });
+
   it("lets a cancelled run shorten its latest reply rather than drop earlier turns", () => {
     const turns = [
       ...[1, 2].flatMap((index) => [user(`ask ${index}:${"q".repeat(80 * 1024)}`, index), fauxAssistantMessage(fauxText("a"))]),

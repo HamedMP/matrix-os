@@ -9,8 +9,8 @@ const KEEP_RECENT_USER_TURNS = 4;
 const ROLES = new Set(["system", "user", "assistant", "toolResult"]);
 /** Progressively tighter caps on tool payloads in the saved transcript only. */
 const TOOL_PAYLOAD_CAPS = [32 * 1024, 8 * 1024, 2 * 1024, 512] as const;
-/** Assistant prose is cut only after old turns are dropped and it still does not fit. */
-const ASSISTANT_TEXT_CAPS = [8 * 1024, 2 * 1024, 512] as const;
+/** A shortened reply always keeps at least this much of its text. */
+const MIN_KEPT_CHARS = 512;
 /** Headroom so the encoded save always fits the session cap. */
 const STORAGE_TARGET_BYTES = SESSION_MAX_BYTES - 16 * 1024;
 const DROPPED_HISTORY_NOTE = "[Earlier conversation was removed to fit saved history.]";
@@ -96,11 +96,6 @@ function capToolPayloads(message: AgentMessage, cap: number): AgentMessage {
   return message;
 }
 
-function capAssistantText(message: AgentMessage, cap: number): AgentMessage {
-  if (message.role !== "assistant") return message;
-  return { ...message, content: message.content.map((part) => (part.type === "text" ? { ...part, text: capText(part.text, cap) } : part)) };
-}
-
 /**
  * Drops whole turns from the oldest end, cutting at person messages so tool
  * calls stay with their results. The latest turn is always kept.
@@ -149,6 +144,52 @@ function latestTurnStart(messages: readonly AgentMessage[]): number {
  * reply instead; if even that cannot fit, `encodeSession` refuses it and the
  * previous session is kept.
  */
+/**
+ * Shortens the longest eligible assistant text by just the overflow, one part
+ * at a time, so no more of a reply is lost than the save limit requires.
+ */
+function trimAssistantOverflow(
+  messages: AgentMessage[],
+  maxBytes: number,
+  eligible: (index: number) => boolean,
+): AgentMessage[] {
+  let stored = messages;
+  for (let attempt = 0; attempt < 64; attempt += 1) {
+    const overflow = encodedSessionBytes(stored) - maxBytes;
+    if (overflow <= 0) return stored;
+    let target: { message: number; part: number; length: number } | undefined;
+    stored.forEach((message, messageIndex) => {
+      if (message.role !== "assistant" || !eligible(messageIndex)) return;
+      message.content.forEach((part, partIndex) => {
+        if (part.type === "text" && part.text.length > (target?.length ?? MIN_KEPT_CHARS)) {
+          target = { message: messageIndex, part: partIndex, length: part.text.length };
+        }
+      });
+    });
+    if (!target) return stored;
+    const { message: at, part: partAt, length } = target;
+    // Characters cost at least one byte, so cutting the overflow in characters (plus room for the note) always shrinks enough.
+    const keep = Math.max(MIN_KEPT_CHARS, length - overflow - 128);
+    stored = stored.map((message, messageIndex) => (messageIndex !== at || message.role !== "assistant"
+      ? message
+      : {
+          ...message,
+          content: message.content.map((part, partIndex) => (partIndex === partAt && part.type === "text" ? { ...part, text: capText(part.text, keep) } : part)),
+        }));
+  }
+  return stored;
+}
+
+/**
+ * Fits a transcript for storage. Images always become placeholders. While
+ * it is still too large: tool payloads are cut with a visible note, then
+ * earlier replies are shortened by just the overflow, then (if allowed) the
+ * oldest turns are dropped behind a note, and only as a last resort the
+ * latest reply is shortened, again by just the overflow. The person's words
+ * are never shortened. A cancelled run may not drop turns; if even the
+ * shortened transcript cannot fit, `encodeSession` refuses it and the
+ * previous session is kept.
+ */
 export function fitForStorage(
   messages: readonly AgentMessage[],
   maxBytes = STORAGE_TARGET_BYTES,
@@ -162,18 +203,10 @@ export function fitForStorage(
     stored = stored.map((message) => capToolPayloads(message, cap));
   }
   const latest = latestTurnStart(stored);
-  for (const cap of ASSISTANT_TEXT_CAPS) {
-    if (fits()) return stored;
-    stored = stored.map((message, index) => (index < latest ? capAssistantText(message, cap) : message));
-  }
+  stored = trimAssistantOverflow(stored, maxBytes, (index) => index < latest);
   if (fits()) return stored;
-  // A cancelled run keeps every turn and shortens its latest reply instead.
   if (options.allowDroppingTurns !== false) stored = dropOldestTurns(stored, maxBytes, now());
-  for (const cap of ASSISTANT_TEXT_CAPS) {
-    if (fits()) return stored;
-    stored = stored.map((message) => capAssistantText(message, cap));
-  }
-  return stored;
+  return trimAssistantOverflow(stored, maxBytes, () => true);
 }
 
 export function needsCompaction(messages: readonly AgentMessage[], contextWindow: number): boolean {
