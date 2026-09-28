@@ -2,14 +2,14 @@ import { botInteractionCard, type BotInteraction, type ResolveBotInteractionRequ
 import { useEffect, useState } from "react";
 import { chatAgentButtonClass, chatAgentMutedStyle } from "../theme.js";
 
-export function InteractionCard({ interaction, onResolve, onResolved, onConnectUrl }: {
+export function InteractionCard({ interaction, onResolve, onResolved }: {
   interaction: BotInteraction;
   onResolve: (request: ResolveBotInteractionRequest) => Promise<ResolveBotInteractionResponse | void>;
   onResolved?: () => void;
-  onConnectUrl?: (url: string) => void;
 }) {
   const [now, setNow] = useState(() => new Date().toISOString());
-  const [answer, setAnswer] = useState("");
+  const [selectedAnswers, setSelectedAnswers] = useState<Record<string, string[]>>({});
+  const [typedAnswers, setTypedAnswers] = useState<Record<string, string>>({});
   const [pending, setPending] = useState(false);
   const [resolved, setResolved] = useState(false);
   const [error, setError] = useState("");
@@ -30,12 +30,10 @@ export function InteractionCard({ interaction, onResolve, onResolved, onConnectU
     setError("");
     try {
       const response = await onResolve(request);
-      if (response?.connectUrl) {
-        setConnectUrl(response.connectUrl);
-        onConnectUrl?.(response.connectUrl);
-      }
+      if (response?.connectUrl) setConnectUrl(response.connectUrl);
       setResolved(true);
-      onResolved?.();
+      // Keep the returned consent link visible until the next status refresh.
+      if (!response?.connectUrl) onResolved?.();
     } catch (failure: unknown) {
       console.warn("[chat-agents] Bot interaction failed:", failure instanceof Error ? failure.name : "UnknownError");
       setError("Could not save your response. Refresh and try again.");
@@ -44,16 +42,51 @@ export function InteractionCard({ interaction, onResolve, onResolved, onConnectU
     }
   };
   const payload = interaction.payload;
+  const questionAnswers = payload?.kind === "question"
+    ? Object.fromEntries(payload.questions.map((question) => {
+        const typed = typedAnswers[question.questionId]?.trim();
+        const selected = selectedAnswers[question.questionId] ?? [];
+        return [question.questionId, question.multiSelect
+          ? [...selected, ...(typed ? [typed] : [])] : typed ? [typed] : selected.slice(0, 1)];
+      })) as Record<string, string[]>
+    : {};
+  const allQuestionsAnswered = payload?.kind === "question"
+    && payload.questions.every((question) => questionAnswers[question.questionId]?.length);
   return <section aria-label={card.title} className="matrix-chat-agent-card grid gap-3 rounded-2xl border p-4">
     <div><h3 className="text-sm font-semibold">{card.title}</h3>
       {!actionable ? <p role="status" className="mt-1 text-xs" style={chatAgentMutedStyle}>{resolved ? "Resolved" : card.state === "unavailable" ? "Only the designated person can respond." : card.state}</p> : null}</div>
     {actionable && payload?.kind === "question" ? <>
-      {payload.questions.map((question) => <p key={question.questionId} className="text-sm">{question.question}</p>)}
-      <label className="grid gap-1 text-xs">Answer
-        <textarea aria-label="Answer" value={answer} maxLength={30_000} disabled={pending} onChange={(event) => setAnswer(event.currentTarget.value)}
-          className="min-h-20 w-full rounded-lg border bg-transparent p-2 text-sm" /></label>
-      <button type="button" className={`${chatAgentButtonClass} justify-self-start`} disabled={pending || !answer.trim()}
-        onClick={() => { void decide({ kind: "question", baseRevision: interaction.revision, answer: answer.trim() }); }}>Answer</button>
+      {payload.questions.map((question) => <fieldset key={question.questionId} className="grid gap-2">
+        <legend className="text-sm font-medium">{question.question}</legend>
+        {question.options?.map((option) => <label key={option.label} className="flex items-start gap-2 text-sm">
+          <input type={question.multiSelect ? "checkbox" : "radio"} name={`${interaction.interactionId}:${question.questionId}`}
+            aria-label={option.label} checked={selectedAnswers[question.questionId]?.includes(option.label) ?? false}
+            disabled={pending} onChange={() => {
+              setSelectedAnswers((current) => {
+                const values = current[question.questionId] ?? [];
+                const next = question.multiSelect
+                  ? values.includes(option.label) ? values.filter((value) => value !== option.label)
+                    : values.length < 10 ? [...values, option.label] : values
+                  : [option.label];
+                return { ...current, [question.questionId]: next };
+              });
+              if (!question.multiSelect) setTypedAnswers((current) => ({ ...current, [question.questionId]: "" }));
+            }} />
+          <span>{option.label}<span className="block text-xs" style={chatAgentMutedStyle}>{option.description}</span></span>
+        </label>)}
+        {(!question.options || question.allowOther) ? <label className="grid gap-1 text-xs">
+          {question.options ? "Other answer" : "Answer"}
+          {question.secret ? <input type="password" aria-label={`Answer ${question.header}`}
+            value={typedAnswers[question.questionId] ?? ""} maxLength={400} disabled={pending}
+            onChange={(event) => setTypedAnswers((current) => ({ ...current, [question.questionId]: event.currentTarget.value }))}
+            className="w-full rounded-lg border bg-transparent p-2 text-sm" />
+            : <textarea aria-label={`Answer ${question.header}`} value={typedAnswers[question.questionId] ?? ""}
+              maxLength={400} disabled={pending} onChange={(event) => setTypedAnswers((current) => ({ ...current, [question.questionId]: event.currentTarget.value }))}
+              className="min-h-20 w-full rounded-lg border bg-transparent p-2 text-sm" />}
+        </label> : null}
+      </fieldset>)}
+      <button type="button" className={`${chatAgentButtonClass} justify-self-start`} disabled={pending || !allQuestionsAnswered}
+        onClick={() => { void decide({ kind: "question", baseRevision: interaction.revision, structuredAnswers: questionAnswers }); }}>Answer</button>
     </> : null}
     {actionable && payload?.kind === "account_choice" ? <div className="flex flex-wrap gap-2">
       {payload.options.map((option) => <button key={option.connectionId} type="button" className={chatAgentButtonClass} disabled={pending}

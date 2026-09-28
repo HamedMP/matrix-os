@@ -37,4 +37,12 @@ describe("bot authority panel", () => {
     expect(screen.getByText(/Work · read/)).toBeTruthy();
     expect(screen.getByRole("alert").textContent).not.toMatch(/postgres|\/home/);
   });
+
+  it("stops showing granted access after the last grant is revoked", async () => {
+    render(<BotAuthorityPanel view={view} onRevoke={vi.fn(async () => undefined)} onMemory={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: "Revoke Work" }));
+    await waitFor(() => expect(screen.queryByText(/Work · read/)).toBeNull());
+    expect(screen.queryByText("granted")).toBeNull();
+    expect(screen.getByText("connected not granted")).toBeTruthy();
+  });
 });

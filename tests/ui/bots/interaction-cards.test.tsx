@@ -16,9 +16,25 @@ describe("bot interaction cards", () => {
   it("submits a question answer with its revision and waits for the server", async () => {
     const resolve = vi.fn(async () => undefined);
     render(<InteractionCard interaction={base} onResolve={resolve} />);
-    fireEvent.change(screen.getByRole("textbox", { name: "Answer" }), { target: { value: "Acme" } });
+    fireEvent.change(screen.getByRole("textbox", { name: "Answer Target" }), { target: { value: "Acme" } });
     fireEvent.click(screen.getByRole("button", { name: "Answer" }));
-    await waitFor(() => expect(resolve).toHaveBeenCalledWith({ kind: "question", baseRevision: 1, answer: "Acme" }));
+    await waitFor(() => expect(resolve).toHaveBeenCalledWith({ kind: "question", baseRevision: 1,
+      structuredAnswers: { target: ["Acme"] } }));
+  });
+
+  it("sends each answer with its question ID and supports selected options", async () => {
+    const resolve = vi.fn(async () => undefined);
+    const card: BotInteraction = { ...base, payload: { kind: "question", questions: [
+      { questionId: "target", header: "Target", question: "Which company?", allowOther: true, secret: false },
+      { questionId: "format", header: "Format", question: "Which format?", allowOther: false, secret: false,
+        options: [{ label: "Brief", description: "One page" }, { label: "Full", description: "Detailed" }] },
+    ] } };
+    render(<InteractionCard interaction={card} onResolve={resolve} />);
+    fireEvent.change(screen.getByRole("textbox", { name: "Answer Target" }), { target: { value: "Acme" } });
+    fireEvent.click(screen.getByRole("radio", { name: "Brief" }));
+    fireEvent.click(screen.getByRole("button", { name: "Answer" }));
+    await waitFor(() => expect(resolve).toHaveBeenCalledWith({ kind: "question", baseRevision: 1,
+      structuredAnswers: { target: ["Acme"], format: ["Brief"] } }));
   });
 
   it("shows account choices and never exposes the connection id", async () => {

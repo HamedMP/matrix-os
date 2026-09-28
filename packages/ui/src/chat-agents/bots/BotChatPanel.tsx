@@ -19,7 +19,6 @@ export function BotChatPanel({ chatId, client, refreshKey }: { chatId?: string; 
   const [authority, setAuthority] = useState<BotAuthorityView | null>(null);
   const [showAuthority, setShowAuthority] = useState(false);
   const [error, setError] = useState("");
-  const [connectUrl, setConnectUrl] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
   useEffect(() => {
     setAgentId(null);
@@ -29,7 +28,6 @@ export function BotChatPanel({ chatId, client, refreshKey }: { chatId?: string; 
     setName(null);
     setShowAuthority(false);
     setError("");
-    setConnectUrl(null);
     if (!chatId || !bots) return;
     let current = true;
     void bots.directBot(chatId).then((id) => { if (current) setAgentId(id); }).catch((failure: unknown) => {
@@ -42,13 +40,17 @@ export function BotChatPanel({ chatId, client, refreshKey }: { chatId?: string; 
     let current = true;
     const refresh = async () => {
       try {
-        const [pending, activeTasks, view, library] = await Promise.all([bots.interactions(chatId), bots.tasks(chatId), bots.authority(agentId), client.list()]);
+        const [pending, activeTasks, view, library] = await Promise.allSettled([
+          bots.interactions(chatId), bots.tasks(chatId), bots.authority(agentId), client.list(),
+        ]);
         if (!current) return;
-        setInteractions(pending);
-        setTasks(activeTasks);
-        setAuthority(view);
-        setName(library.agents.find((agent) => agent.id === agentId)?.name ?? null);
-        setError("");
+        setInteractions(pending.status === "fulfilled" ? pending.value : []);
+        setTasks(activeTasks.status === "fulfilled" ? activeTasks.value : []);
+        setAuthority(view.status === "fulfilled" ? view.value : null);
+        if (library.status === "fulfilled") setName(library.value.agents.find((agent) => agent.id === agentId)?.name ?? null);
+        if (library.status === "rejected") console.warn("[chat-agents] Bot name unavailable:", library.reason instanceof Error ? library.reason.name : "UnknownError");
+        setError(pending.status === "rejected" || activeTasks.status === "rejected" || view.status === "rejected"
+          ? "Bot status could not be loaded. Try again." : "");
       } catch (failure: unknown) {
         console.warn("[chat-agents] Bot status unavailable:", failure instanceof Error ? failure.name : "UnknownError");
         if (current) setError("Bot status could not be loaded. Try again.");
@@ -68,11 +70,9 @@ export function BotChatPanel({ chatId, client, refreshKey }: { chatId?: string; 
         <button type="button" aria-label="Show bot authority" aria-expanded={showAuthority} className={chatAgentButtonClass}
           onClick={() => setShowAuthority((value) => !value)}>Access &amp; memory</button>
       </div>
-      {connectUrl && !interactions.some((interaction) => interaction.kind === "connect_request")
-        ? <a className={chatAgentButtonClass} href={connectUrl} rel="noopener noreferrer">Continue connecting</a> : null}
       {interactions.map((interaction) => <InteractionCard key={interaction.interactionId} interaction={interaction}
         onResolve={(input) => bots.resolve(chatId, interaction.interactionId, input)} onResolved={() => setTick((value) => value + 1)}
-        onConnectUrl={setConnectUrl} />)}
+        />)}
       {tasks.map((task) => <BotTaskStatus key={task.taskId} task={task} />)}
       {showAuthority && authority ? <BotAuthorityPanel view={authority}
         onRevoke={(grantId) => bots.revoke(agentId, grantId)}
