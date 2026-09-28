@@ -236,7 +236,7 @@
 - [ ] T142 [US1] Register `matrix_bot` as a non-user-selectable driver in `packages/gateway/src/chat/provider-catalog.ts`, and in `executableDriverKinds` and the adapter registry in `packages/gateway/src/server.ts`
 - [ ] T143 [US1] Add the `runtime: "matrix_bot"` selection and `recipeRef` in `packages/gateway/src/chat/agent-store.ts`; add the capability-set policy in `packages/gateway/src/chat/agent-context.ts`
 - [ ] T144 [US1] Implement `packages/gateway/src/bots/system-prompt.ts`
-- [ ] T145 L8 checkpoint: per-layer PR procedure; branch `536-l8-bot-instantiation-runtime`
+- [ ] T145 L8 checkpoint: per-layer PR procedure, split to stay under the PR size limit: `536-l8a-bot-instantiation` (T130, T131, T136, T137, T138, T144, creation reconciliation from T141, and `recipeRef` from T143, with the server-side M1 recipe catalog) and `536-l8b-bot-chat-adapter` (T132-T135, T139, T140, run reconciliation from T141, T142, and the capability-set policy from T143). Jev Inbox Triage joins the recipe catalog in L9, once its owner-bound Gmail capability is a bot tool
 
 ---
 
