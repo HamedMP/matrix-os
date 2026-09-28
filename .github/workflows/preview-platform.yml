@@ -1239,31 +1239,38 @@ jobs:
             '{command:["/usr/bin/sudo","/usr/bin/python3","-I","-c",$script,$handle,$owner,$machine,$binding],timeoutMs:15000}')"
           send_runtime_command "$body" || fail_connection "The preview home refused the collaboration binding; restoring the host environment."
 
-          # 7. A synchronous restart drops the gateway connection that carries this request.
-          enrollment_since="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          # 7. Record the serving gateway process, then restart it. A synchronous restart drops the
+          #    gateway connection that carries this request.
+          health_body="$(jq -cn --rawfile script scripts/preview-collaboration-probe.py \
+            '{command:["/usr/bin/python3","-I","-c",$script,"health"],timeoutMs:30000}')"
+          send_runtime_command "$health_body" || fail_connection "The preview gateway could not be probed; restoring the host environment."
+          previous_pid="$(jq -er '.stdout | fromjson | .pid | select(type == "number")' "$response")" \
+            || fail_connection "The preview gateway process is unknown; restoring the host environment."
           body="$(jq -cn --arg unit "--unit=matrix-preview-collaboration-restart-${nonce}" \
             '{command:["/usr/bin/sudo","/usr/bin/systemd-run",$unit,"--on-active=2s","--collect","/usr/bin/systemctl","restart","matrix-gateway.service"],timeoutMs:10000}')"
           send_runtime_command "$body" once || fail_connection "The gateway restart could not be scheduled; restoring the host environment."
           sleep 5
 
-          # 8. Health: the gateway answers locally and reports collaboration configured.
+          # 8. Health: a new gateway process answers locally and reports collaboration configured.
           healthy=false
-          body="$(jq -cn --rawfile script scripts/preview-collaboration-probe.py \
-            '{command:["/usr/bin/python3","-I","-c",$script,"health"],timeoutMs:30000}')"
           for _attempt in {1..12}; do
-            if send_runtime_command "$body" \
-              && jq -e '.stdout | fromjson | .healthy == true and .collaboration == true' "$response" >/dev/null 2>&1; then
+            if send_runtime_command "$health_body" \
+              && jq -e --argjson previous "$previous_pid" \
+                '.stdout | fromjson | .healthy == true and .collaboration == true and .pid > 0 and .pid != $previous' \
+                "$response" >/dev/null 2>&1; then
               healthy=true
               break
             fi
             sleep 5
           done
           if [ "$healthy" != true ]; then
-            fail_connection "The preview gateway did not become healthy with collaboration configured; restoring the host environment."
+            fail_connection "The preview gateway did not restart healthy with collaboration configured; restoring the host environment."
           fi
+          # Only the new process can refresh enrollment from here on (control pongs every 15 s).
+          enrollment_since="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
-          # 9. Enrollment: the home registered its runtime endpoint and attached its control stream
-          #    to the preview platform after the restart, with time left to commit before the guard fires.
+          # 9. Enrollment: the new process registered its runtime endpoint and its control stream is
+          #    live on the preview platform, with time left to commit before the guard fires.
           remaining=$((270 - (SECONDS - armed_at)))
           if [ "$remaining" -le 0 ]; then
             fail_connection "The connection ran out of time before its guard deadline; restoring the host environment."

@@ -1,14 +1,15 @@
 """Read-only steps of spec 535 A0b, run as the runtime user on a pr-<N> home.
 
 `identity <handle> <owner>` prints the machine ID once the host proves it is that
-collaboration preview; `health` prints whether the local gateway is healthy and
-reports collaboration configured. Never prints the file or a secret. Kept under
-the 4096-character terminal argument cap."""
+collaboration preview; `health` prints whether the local gateway is healthy,
+reports collaboration configured, and which process serves it. Never prints the
+file or a secret. Kept under the 4096-character terminal argument cap."""
 import json
 import os
 import re
 import shlex
 import stat
+import subprocess
 import sys
 import urllib.request
 from pathlib import Path
@@ -49,14 +50,20 @@ def identity(root, handle, owner):
     return machine
 
 
-def health(root, opener=urllib.request.urlopen):
+def gateway_pid():
+    shown = subprocess.run(["/usr/bin/systemctl", "show", "--property=MainPID", "--value", "matrix-gateway.service"],
+                           capture_output=True, text=True, timeout=10, check=True).stdout.strip()
+    return int(shown) if shown.isdigit() else 0
+
+
+def health(root, opener=urllib.request.urlopen, pid=gateway_pid):
     token = one(read_lines(root / "host.env"), "MATRIX_AUTH_TOKEN")
     with opener(f"{GATEWAY}/health", timeout=10) as response:
         healthy = response.status == 200
     request = urllib.request.Request(f"{GATEWAY}/api/system/info", headers={"authorization": f"Bearer {token}"})
     with opener(request, timeout=10) as response:
         capabilities = json.load(response).get("capabilities") or {}
-    return {"healthy": healthy, "collaboration": capabilities.get("collaboration") is True}
+    return {"healthy": healthy, "collaboration": capabilities.get("collaboration") is True, "pid": pid()}
 
 
 if __name__ == "__main__":

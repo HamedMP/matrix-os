@@ -349,9 +349,10 @@ The `Connect collaboration preview home` job, also gated by
   copy (`.host.env.preview-collaboration-rollback`, the file before the first
   connection) sits next to it. Nothing prints the file or a value.
 - It restarts the gateway and requires local health with collaboration
-  configured. Next it requires the home to register its runtime endpoint
-  (`vps-<machine ID>`) and attach its control stream to the preview platform
-  after the restart. Only then does it commit and disarm the guard. Any failure
+  configured from a new gateway process (a different `MainPID`). Next it
+  requires that process to register its runtime endpoint (`vps-<machine ID>`)
+  and keep its control stream live on the preview platform, with enrollment
+  evidence dated after the new process was healthy. Only then does it commit and disarm the guard. Any failure
   after the guard is armed fires it immediately, and a lost runner leaves the
   timer to fire. A failed reconnection therefore returns the home to its
   original binding.

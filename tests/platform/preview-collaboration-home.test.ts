@@ -228,11 +228,11 @@ def opener(request,timeout):
     url=request if isinstance(request,str) else request.full_url
     seen.append((url, None if isinstance(request,str) else request.get_header("Authorization")))
     return R(json.dumps({"capabilities":{"collaboration":sys.argv[3]=="true"}}))
-print(json.dumps([m["health"](pathlib.Path(sys.argv[2]),opener), seen[1][1]==f"Bearer {'a'*64}"]))`;
+print(json.dumps([m["health"](pathlib.Path(sys.argv[2]),opener,lambda: 4242), seen[1][1]==f"Bearer {'a'*64}"]))`;
     for (const configured of [true, false]) {
       const result = spawnSync("python3", ["-I", "-c", script, resolve("scripts/preview-collaboration-probe.py"), root, String(configured)], { encoding: "utf8" });
       expect(result.status, result.stderr).toBe(0);
-      expect(JSON.parse(result.stdout)).toEqual([{ healthy: true, collaboration: configured }, true]);
+      expect(JSON.parse(result.stdout)).toEqual([{ healthy: true, collaboration: configured, pid: 4242 }, true]);
       expect(result.stdout).not.toContain(TOKEN);
     }
   });

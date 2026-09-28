@@ -247,6 +247,7 @@ describe("preview platform collaboration home connection", () => {
     apply?: boolean;
     arm?: boolean;
     healthy?: boolean;
+    restarted?: boolean;
     enrolled?: boolean;
   };
 
@@ -290,8 +291,9 @@ case "$command" in
   *" -c claim "*) op=claim; ok="$CLAIM" ;;
   *"/usr/bin/sudo /usr/bin/python3 -I -c"*) op=apply; ok="$APPLY" ;;
   *"--on-active=300s"*"restore"*) op=arm; ok="$ARM" ;;
-  *"restart matrix-gateway.service"*) op=restart ;;
-  *" health") op=health; stdout="{\\"healthy\\":$HEALTHY,\\"collaboration\\":$HEALTHY}" ;;
+  *"restart matrix-gateway.service"*) op=restart; : > "$RESTARTED" ;;
+  *" health") if [ -f "$RESTARTED" ] && [ "$RESTART_WORKS" = true ]; then op=health; pid=200; else op=baseline; pid=100; fi
+    stdout="{\\"healthy\\":$HEALTHY,\\"collaboration\\":$HEALTHY,\\"pid\\":$pid}" ;;
   *"guard.py commit"*) op=commit ;;
   *"start --no-block"*) op=fire-guard ;;
   *"stop "*".timer"*) op=disarm ;;
@@ -307,7 +309,7 @@ jq -cn --arg stdout "$stdout" --argjson code "$code" '{exitCode:$code,timedOut:f
         PREVIEW_COLLABORATION_OWNER_USER_ID: OWNER, CLERK_SECRET_KEY: "sk_synthetic",
         PREVIEW_TAG_URL: "https://pr-1990---preview.example.test", COLLABORATION_CLIENT_ORIGINS: "https://preview.example.test",
         SESSION: String(scenario.session ?? true), IDENTITY: String(scenario.identity ?? true), REGISTER: String(scenario.register ?? true),
-        CLAIM: String(scenario.claim ?? true),
+        CLAIM: String(scenario.claim ?? true), RESTARTED: join(directory, "restarted"), RESTART_WORKS: String(scenario.restarted ?? true),
         APPLY: String(scenario.apply ?? true), ARM: String(scenario.arm ?? true), HEALTHY: String(scenario.healthy ?? true),
         ENROLLED: String(scenario.enrolled ?? true),
       } });
@@ -318,7 +320,7 @@ jq -cn --arg stdout "$stdout" --argjson code "$code" '{exitCode:$code,timedOut:f
   it("verifies identity, registers, claims, arms the guard before re-pointing, then commits after health and enrollment", () => {
     const result = runConnect({});
     expect(result.status, result.stderr).toBe(0);
-    expect(result.operations).toEqual(["identity", "register", "claim", "arm", "apply", "restart", "health", "enrollment", "commit", "disarm"]);
+    expect(result.operations).toEqual(["identity", "register", "claim", "arm", "apply", "baseline", "restart", "health", "enrollment", "commit", "disarm"]);
     // Values appear only inside the masking commands that register them.
     const printed = `${result.stdout}${result.stderr}`.split("\n").filter((line) => !line.startsWith("::add-mask::"));
     expect(printed.join("\n")).not.toContain("synthetic-secret-value");
@@ -370,12 +372,20 @@ jq -cn --arg stdout "$stdout" --argjson code "$code" '{exitCode:$code,timedOut:f
   it("fires the guard to restore and restart when health or enrollment fails", () => {
     const unhealthy = runConnect({ healthy: false });
     expect(unhealthy.status).not.toBe(0);
-    expect(unhealthy.operations.slice(0, 6)).toEqual(["identity", "register", "claim", "arm", "apply", "restart"]);
+    expect(unhealthy.operations.slice(0, 7)).toEqual(["identity", "register", "claim", "arm", "apply", "baseline", "restart"]);
     expect(unhealthy.operations.filter((operation) => operation === "health")).toHaveLength(12);
     expect(unhealthy.operations.at(-1)).toBe("fire-guard");
     expect(unhealthy.operations).not.toContain("commit");
     const unenrolled = runConnect({ enrolled: false });
     expect(unenrolled.status).not.toBe(0);
-    expect(unenrolled.operations).toEqual(["identity", "register", "claim", "arm", "apply", "restart", "health", "enrollment", "fire-guard"]);
+    expect(unenrolled.operations).toEqual(["identity", "register", "claim", "arm", "apply", "baseline", "restart", "health", "enrollment", "fire-guard"]);
+  });
+
+  it("never accepts the pre-restart gateway process as the healthy, enrolled one", () => {
+    const stale = runConnect({ restarted: false });
+    expect(stale.status).not.toBe(0);
+    expect(stale.operations.filter((operation) => operation === "baseline")).toHaveLength(13);
+    expect(stale.operations).not.toContain("enrollment");
+    expect(stale.operations.at(-1)).toBe("fire-guard");
   });
 });
