@@ -124,6 +124,7 @@ describe("scope runtime host", () => {
     cleanup.push(() => host.close());
     const handled: unknown[] = [];
     host.registerAuthorizer({
+      id: "bots",
       owns: (request) => request.runtimeHandle === RUNTIME_B,
       authorize: async () => ({ allowed: false }),
       handleFrame: async (raw) => {
@@ -131,7 +132,7 @@ describe("scope runtime host", () => {
         return { version: 1, requestId: (raw as { requestId: string }).requestId, ok: true, result: { revision: 3, messages: [] } };
       },
     });
-    host.registerAuthorizer(authorizer(RUNTIME_A));
+    host.registerAuthorizer(authorizer(RUNTIME_A, "shared_ai"));
     const send = (frame: Record<string, unknown>) => new Promise<string>((resolve, reject) => {
       const socket = createConnection({ path: paths.broker });
       let output = "";

@@ -123,7 +123,7 @@ export async function createScopeRuntimeHost(options: {
       if (closed) return undefined;
       const frame = FrameOwnerSchema.safeParse(raw);
       if (!frame.success) return undefined;
-      const owners = [...authorizers].filter((authorizer) => authorizer.owns(frame.data));
+      const owners = [...authorizers.values()].filter((authorizer) => authorizer.owns(frame.data));
       const owner = owners.length === 1 ? owners[0] : undefined;
       return owner?.handleFrame ? owner.handleFrame(raw) : undefined;
     },

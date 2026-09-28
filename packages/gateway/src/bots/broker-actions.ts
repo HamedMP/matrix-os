@@ -276,6 +276,7 @@ export function registerBotBroker(
   actions: Pick<BotBrokerActions, "owns" | "handleFrame">,
 ): () => void {
   return host.registerAuthorizer({
+    id: "bots",
     owns: actions.owns,
     authorize: async () => ({ allowed: false }),
     handleFrame: actions.handleFrame,
