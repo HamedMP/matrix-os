@@ -150,12 +150,15 @@ export function createBotApprovalsRepository(db: BotExecutor) {
       if (!current) throw new BotStateError("not_found");
       return { status: "refused", reason: current.status === "invalidated" ? "invalidated" : "not_claimable" };
     },
-    /** The newest approval of this exact action in the task that is still open (pending, or approved and unclaimed). */
-    async findOpen(input: { ownerId: string; taskId: string; tool: string; argsHash: string }, executor: BotExecutor = db): Promise<BotApprovalRecord | undefined> {
+    /** The latest active approval or denial of this exact action in the task. */
+    async findOpen(input: { ownerId: string; taskId: string; tool: string; argsHash: string; now: string }, executor: BotExecutor = db): Promise<BotApprovalRecord | undefined> {
       const row = await executor.selectFrom("bot_approvals").selectAll()
         .where("owner_id", "=", input.ownerId).where("task_id", "=", input.taskId)
         .where("tool", "=", input.tool).where("args_hash", "=", input.argsHash)
-        .where("status", "in", ["pending", "approved"]).where("claimed_at", "is", null)
+        .where((eb) => eb.or([
+          eb("status", "=", "denied"),
+          eb.and([eb("status", "in", ["pending", "approved"]), eb("claimed_at", "is", null), eb("expires_at", ">", input.now)]),
+        ]))
         .orderBy("created_at", "desc")
         .executeTakeFirst();
       return row ? fromRow(row) : undefined;

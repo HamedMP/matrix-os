@@ -194,7 +194,9 @@ export function createBotInteractionService(deps: { transact: BotStateTransactio
         });
         const { continuation: storedText, ...stored } = current.resolution ?? {};
         if (current.status === "resolved" && current.revision === input.baseRevision + 1 && JSON.stringify(stored) === JSON.stringify(requested)) {
-          return respond(current, typeof storedText === "string" ? storedText : undefined);
+          const replayText = typeof storedText === "string" ? storedText
+            : current.kind === "question" ? renderAnswer(current.payload as QuestionPayload, requested as QuestionAnswer) : undefined;
+          return respond(current, replayText);
         }
         if (current.status === "expired" || (current.status === "pending" && Date.parse(current.expiresAt) <= Date.parse(at))) {
           throw new BotInteractionError("expired");

@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createBotAccessHandlers } from "../../../packages/gateway/src/bots/access-handlers.js";
 import { BotBrokerActionError } from "../../../packages/gateway/src/bots/broker-actions.js";
 import type { OwnerBotDatabase } from "../../../packages/gateway/src/bots/database.js";
-import { createBotStateTransactions } from "../../../packages/gateway/src/bots/events.js";
+import { createBotStateTransactions, type BotStateTransactions } from "../../../packages/gateway/src/bots/events.js";
 import { BotIntegrationError, type BotIntegrationConnection } from "../../../packages/gateway/src/bots/integration-client.js";
 import { approvalDigest, createBotIntegrationTools, effectOf } from "../../../packages/gateway/src/bots/integration-tools.js";
 import { createBotInteractionService } from "../../../packages/gateway/src/bots/interactions.js";
@@ -34,6 +34,7 @@ let db: Kysely<OwnerBotDatabase>;
 let destroy: () => Promise<void>;
 let binding: BotRuntimeBinding;
 let connected: BotIntegrationConnection[];
+let toolClock: Date;
 
 beforeEach(async () => {
   ({ db, destroy } = await createBotStateDatabase());
@@ -47,18 +48,24 @@ beforeEach(async () => {
     accessSourceId: "matrix_included", capabilities: ["integration.inventory", "integration.call"], requestClass: "interactive",
   };
   connected = [WORK];
+  toolClock = new Date("2026-09-28T10:00:00.000Z");
 });
 afterEach(async () => destroy());
 
-function setup(call = vi.fn(async () => ({ data: { threads: [{ id: "t1", subject: "Hello" }] }, summary: "1 thread" }))) {
-  const transact = createBotStateTransactions(new ChatRepository(db as unknown as Kysely<ChatDatabase>));
+function setup(call = vi.fn(async () => ({ data: { threads: [{ id: "t1", subject: "Hello" }] }, summary: "1 thread" })), beforeTransaction?: (number: number) => Promise<void>) {
+  const baseTransact = createBotStateTransactions(new ChatRepository(db as unknown as Kysely<ChatDatabase>));
+  let transactions = 0;
+  const transact: BotStateTransactions = async (ownerId, work) => {
+    await beforeTransaction?.(++transactions);
+    return baseTransact(ownerId, work);
+  };
   const client = { inventory: vi.fn(async () => connected), call };
   const tools = createBotIntegrationTools({
     client, transact, recipes: createBotRecipeCatalog([RECIPE]),
     agents: { get: vi.fn(async () => ({ id: BOT, recipeRef: { recipeId: "mail-helper", version: "1" } }) as never) },
-    now: () => new Date("2026-09-28T10:00:00.000Z"),
+    now: () => toolClock,
   });
-  const interactions = createBotInteractionService({ transact, handlers: createBotAccessHandlers({ tools }), now: () => new Date("2026-09-28T10:00:00.000Z") });
+  const interactions = createBotInteractionService({ transact, handlers: createBotAccessHandlers({ tools }), now: () => toolClock });
   return { tools, client, call, interactions };
 }
 
@@ -125,6 +132,15 @@ describe("bot integration tools", () => {
       .rejects.toMatchObject({ code: "conflict" });
   });
 
+  it("offers a single connected account for a grant without starting a new connection", async () => {
+    const { tools, interactions } = setup();
+    await tools.call(binding, read);
+    const [choice] = await pending();
+    expect(choice).toMatchObject({ kind: "account_choice", payload: { kind: "account_choice", service: "gmail", options: [{ connectionId: "conn_work", label: "Work" }] } });
+    await interactions.resolve(OWNER, CHAT, choice!.interaction_id, { kind: "account_choice", baseRevision: 1, connectionId: "conn_work" });
+    expect(await createBotGrantsRepository(db).findUsable({ ownerId: OWNER, botId: BOT, service: "gmail", connectionId: "conn_work", audience: "direct", effect: "read", now: AT })).toBeDefined();
+  });
+
   it("asks to connect when nothing usable is connected, and never nags after a decline", async () => {
     connected = [];
     const { tools, interactions } = setup();
@@ -142,7 +158,7 @@ describe("bot integration tools", () => {
   it("asks again when a granted account was renamed or removed", async () => {
     await grant(WORK);
     connected = [{ ...WORK, label: "Renamed" }];
-    await expect(setup().tools.call(binding, read)).resolves.toEqual({ ok: true, content: [{ type: "text", text: expect.stringContaining("asked to connect") }] });
+    await expect(setup().tools.call(binding, read)).resolves.toEqual({ ok: true, content: [{ type: "text", text: expect.stringContaining("which Gmail account") }] });
   });
 
   it("needs the owner's approval of the exact call before a send, and claims it once in a later run", async () => {
@@ -166,6 +182,48 @@ describe("bot integration tools", () => {
     await expect(tools.call(later, send)).resolves.toEqual({ ok: true, content: [{ type: "text", text: expect.stringContaining("asked to approve") }] });
     // Different arguments are a different action.
     expect(sent).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses to request approval for arguments the owner cannot see in full", async () => {
+    await grant(WORK);
+    const { tools, call } = setup();
+    await expect(tools.call(binding, { ...send, params: { ...send.params, body: "a".repeat(3_100) } }))
+      .rejects.toEqual(new BotBrokerActionError("invalid_arguments"));
+    expect(await pending()).toEqual([]);
+    expect(call).not.toHaveBeenCalled();
+  });
+
+  it("does not re-ask for an action the owner denied in this task", async () => {
+    await grant(WORK);
+    const { tools, interactions, call } = setup();
+    await tools.call(binding, send);
+    const [approval] = await pending();
+    await interactions.resolve(OWNER, CHAT, approval!.interaction_id, { kind: "approval", baseRevision: 1, decision: "deny" });
+    await expect(tools.call(binding, send)).resolves.toEqual({ ok: true, content: [{ type: "text", text: expect.stringContaining("do not ask again") }] });
+    expect(await pending()).toHaveLength(1);
+    expect(call).not.toHaveBeenCalled();
+  });
+
+  it("asks again after an unclaimed approval expires", async () => {
+    await grant(WORK);
+    const { tools } = setup();
+    await tools.call(binding, send);
+    const [approval] = await pending();
+    await db.updateTable("bot_approvals").set({ expires_at: "2026-09-28T10:30:00.000Z" }).where("approval_id", "=", approval!.interaction_id).execute();
+    await db.updateTable("bot_interactions").set({ expires_at: "2026-09-28T10:30:00.000Z" }).where("interaction_id", "=", approval!.interaction_id).execute();
+    toolClock = new Date("2026-09-28T11:00:00.000Z");
+    await expect(tools.call(binding, send)).resolves.toEqual({ ok: true, content: [{ type: "text", text: expect.stringContaining("asked to approve") }] });
+    expect(await pending()).toHaveLength(2);
+  });
+
+  it("refuses dispatch if the grant was revoked after the first grant lookup", async () => {
+    const granted = await grant(WORK);
+    const call = vi.fn(async () => ({ data: { threads: [] } }));
+    const { tools } = setup(call, async (number) => {
+      if (number === 2) await createBotGrantsRepository(db).revoke({ ownerId: OWNER, grantId: granted.grantId, now: AT });
+    });
+    await expect(tools.call(binding, read)).rejects.toEqual(new BotBrokerActionError("not_granted"));
+    expect(call).not.toHaveBeenCalled();
   });
 
   it("invalidates an approval when the grant changed, and honors a denial", async () => {
