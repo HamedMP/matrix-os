@@ -1,11 +1,12 @@
 /**
- * Bot memory (spec 536, technical-design "Memory Model"). A bot proposes an
- * item; it is confirmed only when its source is the owner's own committed
- * message in this chat, checked on the server. Anything sourced from a web
- * page, an email, or a tool stays unconfirmed, is never searched or put in
- * context, and waits for the owner to confirm it. Admitted memory is capped
- * at a 2K-token budget, preferences first. The owner can forget or confirm
- * an item at its revision.
+ * Bot memory (spec 536, technical-design "Memory Model"). Provenance is
+ * decided on the server, never by the bot: an item is confirmed only when
+ * the run was started by the owner's own committed message in this chat, the
+ * item names no outside source, and the run has not yet read outside
+ * content (an integration call or a file read). Anything else stays
+ * unconfirmed, is never searched or put in context, and waits for the owner
+ * to confirm it. Admitted memory is capped at a 2K-token budget, preferences
+ * first. The owner can forget or confirm an item at its revision.
  */
 import {
   BotMemoryItemIdSchema,
@@ -19,6 +20,7 @@ import type { z } from "zod/v4";
 import { BotBrokerActionError } from "./broker-actions.js";
 import type { BotStateTransaction, BotStateTransactions } from "./events.js";
 import { createBotBindingsRepository } from "./repositories/bindings.js";
+import { createBotCheckpointsRepository } from "./repositories/checkpoints.js";
 import { createBotMemoryRepository, type BotMemoryRecord } from "./repositories/memory.js";
 import { BotStateError } from "./repositories/shared.js";
 import type { BotRuntimeBinding } from "./runtime-registry.js";
@@ -27,6 +29,8 @@ import { estimatePromptTokens } from "./system-prompt.js";
 export const BOT_MEMORY_TOKEN_BUDGET = 2_000;
 type BotMemoryMutationResponse = z.infer<typeof BotMemoryMutationResponseSchema>;
 const KIND_ORDER = ["preference", "fact", "episode"] as const;
+/** Tools whose results can carry someone else's words into the run. */
+const OUTSIDE_CONTENT: readonly string[] = ["integration.call", "artifact.read"];
 
 export type BotMemoryErrorCode = "invalid_request" | "not_found" | "conflict";
 
@@ -63,14 +67,23 @@ export function admitMemory(items: readonly Pick<BotMemoryRecord, "kind" | "cont
 export function createBotMemoryService(deps: { transact: BotStateTransactions; now?: () => Date }) {
   const now = () => (deps.now?.() ?? new Date()).toISOString();
 
-  /** True only for the owner's own committed message in this chat. */
-  async function ownerMessage(tx: BotStateTransaction, binding: BotRuntimeBinding, messageId: string): Promise<boolean> {
-    const row = await tx.db.selectFrom("chat_messages").select("id")
-      .where("id", "=", messageId).where("chat_id", "=", binding.chatId)
-      .where("role", "=", "user").where("state", "=", "committed")
-      .where((eb) => eb.or([eb("actor_id", "is", null), eb("actor_id", "=", binding.ownerId)]))
+  /** The message that started this run, when it is the owner's own committed message in this chat. */
+  async function ownerMessage(tx: BotStateTransaction, binding: BotRuntimeBinding): Promise<string | undefined> {
+    const row = await tx.db.selectFrom("chat_runs as run")
+      .innerJoin("chat_turns as turn", "turn.id", "run.turn_id")
+      .innerJoin("chat_messages as message", "message.id", "turn.input_message_id")
+      .select("message.id")
+      .where("run.id", "=", binding.runId).where("run.chat_id", "=", binding.chatId)
+      .where("message.chat_id", "=", binding.chatId).where("message.role", "=", "user").where("message.state", "=", "committed")
+      .where((eb) => eb.or([eb("message.actor_id", "is", null), eb("message.actor_id", "=", binding.ownerId)]))
       .executeTakeFirst();
-    return row !== undefined;
+    return row?.id;
+  }
+
+  /** True once the run has used a tool that can bring outside content into it. */
+  async function readOutsideContent(tx: BotStateTransaction, binding: BotRuntimeBinding): Promise<boolean> {
+    const used = await createBotCheckpointsRepository(tx.db).listForRun({ ownerId: binding.ownerId, runId: binding.runId }, tx.db);
+    return used.some((checkpoint) => OUTSIDE_CONTENT.includes(String(checkpoint.action.capability)));
   }
 
   /** Locks nothing; finds the owner's item and checks it belongs to the bot. */
@@ -101,11 +114,17 @@ export function createBotMemoryService(deps: { transact: BotStateTransactions; n
       if (!scopesFor(binding.chatId).includes(args.scope)) throw new BotBrokerActionError("invalid_arguments");
       try {
         const item = await deps.transact(binding.ownerId, async (tx) => {
-          const confirmed = args.source.url === undefined && args.source.messageId !== undefined
-            && await ownerMessage(tx, binding, args.source.messageId);
+          // A message ID from the bot is ignored; the server names the source.
+          const messageId = await ownerMessage(tx, binding);
+          const confirmed = args.source.url === undefined && messageId !== undefined && !await readOutsideContent(tx, binding);
+          const source = {
+            at: args.source.at,
+            ...(args.source.url !== undefined ? { url: args.source.url } : {}),
+            ...(messageId !== undefined ? { messageId } : {}),
+          };
           const remembered = await createBotMemoryRepository(tx.db).remember({
             ownerId: binding.ownerId, botId: binding.botId, kind: args.kind, scope: args.scope,
-            content: args.content, source: args.source, confirmed, now: now(),
+            content: args.content, source, confirmed, now: now(),
           }, tx.db);
           await tx.publish(binding.chatId, "bot.memory.remembered", {
             agentId: binding.botId, chatId: binding.chatId, itemId: remembered.itemId, kind: remembered.kind, confirmed: remembered.confirmed,
