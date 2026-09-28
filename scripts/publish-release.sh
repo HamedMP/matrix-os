@@ -13,6 +13,8 @@ set -euo pipefail
 #   --channel <name>       Promote channel after registering: dev, canary, beta, stable
 #   --severity <level>     Update severity: normal (default) or security
 #   --changelog <text>     One-line changelog entry for the manifest
+#   --source-pr <n>        Same-repository PR the bundle was built from (spec 537)
+#   --source-author <login> GitHub login of that PR's author
 #
 # Expects build-host-bundle.sh to have already run (tarball at dist/host-bundle/).
 # Env: R2_ACCOUNT_ID, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, R2_BUCKET
@@ -27,6 +29,8 @@ VERSION=""
 DRY_RUN=""
 SEVERITY="normal"
 CHANGELOG=""
+SOURCE_PR=""
+SOURCE_AUTHOR=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -37,6 +41,10 @@ while [ $# -gt 0 ]; do
       CHANNEL="${2:-dev}"; shift 2 ;;
     --changelog)
       CHANGELOG="${2:-}"; shift 2 ;;
+    --source-pr)
+      SOURCE_PR="${2:-}"; shift 2 ;;
+    --source-author)
+      SOURCE_AUTHOR="${2:-}"; shift 2 ;;
     *)
       if [ -z "$VERSION" ]; then
         VERSION="$1"
@@ -46,7 +54,15 @@ while [ $# -gt 0 ]; do
 done
 
 if [ -z "$VERSION" ]; then
-  echo "Usage: publish-release.sh <version> [--dry-run] [--channel <name>] [--severity <level>] [--changelog <text>]" >&2; exit 1
+  echo "Usage: publish-release.sh <version> [--dry-run] [--channel <name>] [--severity <level>] [--changelog <text>] [--source-pr <n>] [--source-author <login>]" >&2; exit 1
+fi
+
+# Same patterns as scripts/release-provenance.mjs and the platform schema.
+if [ -n "$SOURCE_PR" ] && ! [[ "$SOURCE_PR" =~ ^[1-9][0-9]{0,8}$ ]]; then
+  echo "--source-pr must be a pull request number" >&2; exit 1
+fi
+if [ -n "$SOURCE_AUTHOR" ] && ! [[ "$SOURCE_AUTHOR" =~ ^[A-Za-z0-9-]{1,39}$ ]]; then
+  echo "--source-author must be a GitHub login" >&2; exit 1
 fi
 
 case "$CHANNEL" in
@@ -76,6 +92,12 @@ if ! command -v aws >/dev/null 2>&1; then
   NODE_PUBLISH_ARGS=("$VERSION" "--channel" "$CHANNEL" "--severity" "$SEVERITY")
   if [ -n "$CHANGELOG" ]; then
     NODE_PUBLISH_ARGS+=("--changelog" "$CHANGELOG")
+  fi
+  if [ -n "$SOURCE_PR" ]; then
+    NODE_PUBLISH_ARGS+=("--source-pr" "$SOURCE_PR")
+  fi
+  if [ -n "$SOURCE_AUTHOR" ]; then
+    NODE_PUBLISH_ARGS+=("--source-author" "$SOURCE_AUTHOR")
   fi
   if [ "$DRY_RUN" = "1" ]; then
     NODE_PUBLISH_ARGS+=("--dry-run")
@@ -141,9 +163,11 @@ print(json.dumps({
     'updateType': sys.argv[12],
     'changelog': sys.argv[13] or None,
     'snapshotEligible': sys.argv[15] == 'true',
+    **({'sourcePr': int(sys.argv[16])} if sys.argv[16] else {}),
+    **({'sourceAuthor': sys.argv[17]} if sys.argv[17] else {}),
     **({} if sys.argv[14] == 'none' else {'channel': sys.argv[14]}),
 }, indent=2))
-" "$VERSION" "$GIT_COMMIT" "$GIT_REF" "$BUILD_TIME" "$BUNDLE_KEY" "$CHECKSUM_KEY" "$INCREMENTAL_MANIFEST_KEY" "$INCREMENTAL_MANIFEST_SHA256" "$SHA256" "$SIZE" "$SEVERITY" "$UPDATE_TYPE" "$CHANGELOG" "$CHANNEL" "$SNAPSHOT_ELIGIBLE")
+" "$VERSION" "$GIT_COMMIT" "$GIT_REF" "$BUILD_TIME" "$BUNDLE_KEY" "$CHECKSUM_KEY" "$INCREMENTAL_MANIFEST_KEY" "$INCREMENTAL_MANIFEST_SHA256" "$SHA256" "$SIZE" "$SEVERITY" "$UPDATE_TYPE" "$CHANGELOG" "$CHANNEL" "$SNAPSHOT_ELIGIBLE" "$SOURCE_PR" "$SOURCE_AUTHOR")
 
 incremental_object_count() {
   python3 -c "import json,sys; print(len(json.load(open(sys.argv[1])).get('files', [])))" "$INCREMENTAL_MANIFEST"
