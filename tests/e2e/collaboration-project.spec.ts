@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { expect, collaborationTest as test } from "./fixtures/collaboration";
+import { expect, collaborationTest as test } from "./fixtures/collaboration-legacy";
 
 test("owner publishes one complete project, then viewer downgrade and revoke apply to the same account", async ({ collaborationJourney }) => {
   const config = collaborationJourney;
