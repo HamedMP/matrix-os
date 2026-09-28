@@ -74,9 +74,14 @@ describe("matrix preview", () => {
   });
 
   it("shows the exact bundle and starts only that version after confirmation", async () => {
+    let started = false;
     const calls = platformServer({
       "GET /api/private-previews/bundles?pr=1907": () => [200, bundle],
-      "POST /api/private-previews": () => [202, { machineId: machine.machineId, handle: machine.handle, status: "provisioning", etaSeconds: 300 }],
+      "GET /api/private-previews": () => [200, { privatePreviews: started ? [{ ...machine, status: "provisioning" }] : [] }],
+      "POST /api/private-previews": () => {
+        started = true;
+        return [202, { machineId: machine.machineId, handle: machine.handle, status: "provisioning", etaSeconds: 300 }];
+      },
     });
     const { out } = capture();
     const confirm = vi.fn(async () => true);
@@ -88,38 +93,96 @@ describe("matrix preview", () => {
     expect(confirm.mock.calls[0]![0]).toContain("octo-dev");
     expect(calls.map((call) => `${call.method} ${call.path}`)).toEqual([
       "GET /api/private-previews/bundles?pr=1907",
+      "GET /api/private-previews",
       "POST /api/private-previews",
+      "GET /api/private-previews",
     ]);
-    expect(calls[1]!.body).toEqual({ pr: 1907, bundleVersion: bundle.version });
+    expect(calls[2]!.body).toEqual({ pr: 1907, bundleVersion: bundle.version });
     expect(calls.every((call) => call.authorization === "Bearer cli-token")).toBe(true);
     expect(out.join("\n")).toContain(`${platform}/vm/${machine.handle}`);
     expect(process.exitCode).toBeUndefined();
   });
 
   it("starts nothing when the owner declines", async () => {
-    const calls = platformServer({ "GET /api/private-previews/bundles?pr=1907": () => [200, bundle] });
+    const calls = platformServer({
+      "GET /api/private-previews/bundles?pr=1907": () => [200, bundle],
+      "GET /api/private-previews": () => [200, { privatePreviews: [] }],
+    });
     capture();
     await runPreviewStart({ ...base, pr: "1907" }, { confirm: async () => false });
-    expect(calls.map((call) => call.method)).toEqual(["GET"]);
+    expect(calls.map((call) => call.method)).toEqual(["GET", "GET"]);
   });
 
   it("requires --yes when it cannot ask", async () => {
-    const calls = platformServer({ "GET /api/private-previews/bundles?pr=1907": () => [200, bundle] });
+    const calls = platformServer({
+      "GET /api/private-previews/bundles?pr=1907": () => [200, bundle],
+      "GET /api/private-previews": () => [200, { privatePreviews: [] }],
+    });
     const { err } = capture();
     await runPreviewStart({ ...base, pr: "1907" }, { interactive: false });
-    expect(calls.map((call) => call.method)).toEqual(["GET"]);
+    expect(calls.map((call) => call.method)).toEqual(["GET", "GET"]);
     expect(err.join("\n")).toContain("--yes");
     expect(process.exitCode).toBe(1);
   });
 
   it("skips the prompt with --yes", async () => {
+    let started = false;
     const calls = platformServer({
       "GET /api/private-previews/bundles?pr=1907": () => [200, bundle],
-      "POST /api/private-previews": () => [202, { machineId: machine.machineId, handle: machine.handle, status: "provisioning", etaSeconds: 300 }],
+      "GET /api/private-previews": () => [200, { privatePreviews: started ? [machine] : [] }],
+      "POST /api/private-previews": () => {
+        started = true;
+        return [202, { machineId: machine.machineId, handle: machine.handle, status: "provisioning", etaSeconds: 300 }];
+      },
     });
     capture();
     await runPreviewStart({ ...base, pr: "1907", yes: true }, { interactive: false });
-    expect(calls.map((call) => call.method)).toEqual(["GET", "POST"]);
+    expect(calls.map((call) => call.method)).toEqual(["GET", "GET", "POST", "GET"]);
+    expect(process.exitCode).toBeUndefined();
+  });
+
+  it("points to the existing Private Preview instead of starting a second one", async () => {
+    const calls = platformServer({
+      "GET /api/private-previews/bundles?pr=1907": () => [200, bundle],
+      "GET /api/private-previews": () => [200, { privatePreviews: [machine] }],
+    });
+    const { out } = capture();
+    const confirm = vi.fn(async () => true);
+    await runPreviewStart({ ...base, pr: "1907" }, { confirm });
+    expect(confirm).not.toHaveBeenCalled();
+    expect(calls.map((call) => call.method)).toEqual(["GET", "GET"]);
+    expect(out.join("\n")).toContain(`${platform}/vm/${machine.handle}`);
+    expect(process.exitCode).toBeUndefined();
+  });
+
+  it("does not claim a newer bundle when the existing Private Preview runs an older one", async () => {
+    const calls = platformServer({
+      "GET /api/private-previews/bundles?pr=1907": () => [200, newer],
+      "GET /api/private-previews": () => [200, { privatePreviews: [machine] }],
+    });
+    const { err } = capture();
+    await runPreviewStart({ ...base, pr: "1907", yes: true }, { interactive: false });
+    expect(calls.map((call) => call.method)).toEqual(["GET", "GET"]);
+    expect(err.join("\n")).toContain("matrix preview update 1907");
+    expect(err.join("\n")).toContain(bundle.version);
+    expect(process.exitCode).toBe(1);
+  });
+
+  it("reports a concurrent start that kept another bundle", async () => {
+    let started = false;
+    platformServer({
+      "GET /api/private-previews/bundles?pr=1907": () => [200, newer],
+      "GET /api/private-previews": () => [200, { privatePreviews: started ? [machine] : [] }],
+      "POST /api/private-previews": () => {
+        started = true;
+        return [202, { machineId: machine.machineId, handle: machine.handle, status: "running" }];
+      },
+    });
+    const { out, err } = capture();
+    await runPreviewStart({ ...base, pr: "1907", yes: true }, { interactive: false });
+    expect(out.join("\n")).not.toContain("Open it at");
+    expect(err.join("\n")).toContain("matrix preview update 1907");
+    expect(process.exitCode).toBe(1);
   });
 
   it("rejects an invalid PR number before any request", async () => {
@@ -157,17 +220,32 @@ describe("matrix preview", () => {
     expect(calls.at(-1)).toMatchObject({ method: "POST", body: { bundleVersion: newer.version } });
   });
 
-  it("reports an update that is already current without asking", async () => {
+  it("says a matching version is confirmed, not installed, and sends nothing without --yes", async () => {
     const calls = platformServer({
       "GET /api/private-previews": () => [200, { privatePreviews: [machine] }],
       "GET /api/private-previews/bundles?pr=1907": () => [200, bundle],
     });
     const { out } = capture();
+    await runPreviewUpdate({ ...base, pr: "1907" }, { interactive: false });
+    expect(calls.map((call) => call.method)).toEqual(["GET", "GET"]);
+    const text = out.join("\n");
+    expect(text).toContain("already confirmed");
+    expect(text).not.toContain("runs");
+    expect(text).toContain("--yes");
+    expect(process.exitCode).toBeUndefined();
+  });
+
+  it("can ask for the confirmed version again after a failed install", async () => {
+    const calls = platformServer({
+      "GET /api/private-previews": () => [200, { privatePreviews: [machine] }],
+      "GET /api/private-previews/bundles?pr=1907": () => [200, bundle],
+      [`POST /api/private-previews/${machine.machineId}/deploy`]: () => [202, { machineId: machine.machineId, status: "updating" }],
+    });
+    capture();
     const confirm = vi.fn(async () => true);
     await runPreviewUpdate({ ...base, pr: "1907" }, { confirm });
-    expect(confirm).not.toHaveBeenCalled();
-    expect(calls.map((call) => call.method)).toEqual(["GET", "GET"]);
-    expect(out.join("\n")).toContain("already runs");
+    expect(confirm.mock.calls[0]![0]).toContain("install");
+    expect(calls.at(-1)).toMatchObject({ method: "POST", body: { bundleVersion: bundle.version } });
   });
 
   it("destroys the owner's Private Preview for a PR after confirmation", async () => {

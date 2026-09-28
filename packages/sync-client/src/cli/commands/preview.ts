@@ -107,12 +107,23 @@ async function bundleFor(args: Record<string, unknown>, pr: number): Promise<Pre
     `No bundle is registered for PR #${pr}. Add the preview-bundle label to the PR and wait for its build.`) as unknown as PreviewBundle;
 }
 
-async function previewFor(args: Record<string, unknown>, pr: number): Promise<PrivatePreviewView> {
+async function findPreview(args: Record<string, unknown>, pr: number): Promise<PrivatePreviewView | undefined> {
   const data = await request(args, "GET", "/api/private-previews");
   const machines = Array.isArray(data.privatePreviews) ? data.privatePreviews as PrivatePreviewView[] : [];
-  const machine = machines.find((entry) => entry.pr === pr);
+  return machines.find((entry) => entry.pr === pr);
+}
+
+async function previewFor(args: Record<string, unknown>, pr: number): Promise<PrivatePreviewView> {
+  const machine = await findPreview(args, pr);
   if (!machine) throw new PreviewCliError("not_found", `No Private Preview for PR #${pr}.`);
   return machine;
+}
+
+/** The platform keeps one Private Preview per owner and PR, on the version the owner confirmed. */
+function otherBundleError(machine: PrivatePreviewView, pr: number, bundle: PreviewBundle): PreviewCliError {
+  return new PreviewCliError("preview_exists",
+    `Your Private Preview ${machine.handle} for PR #${pr} is confirmed for ${machine.confirmedBundleVersion}. `
+    + `Run \`matrix preview update ${pr}\` to move it to ${bundle.version}.`);
 }
 
 function describeBundle(bundle: PreviewBundle): string {
@@ -130,14 +141,17 @@ async function promptYesNo(question: string): Promise<boolean> {
   }
 }
 
+function canAsk(io: PreviewIo): boolean {
+  return io.confirm !== undefined || (io.interactive ?? Boolean(process.stdin.isTTY && process.stdout.isTTY));
+}
+
 /**
  * The owner confirms the exact code that will run with their accounts
  * (spec 537 P3). Without a terminal, only --yes can confirm.
  */
 async function confirmed(args: Record<string, unknown>, io: PreviewIo, question: string): Promise<boolean> {
   if (args.yes === true) return true;
-  const interactive = io.interactive ?? Boolean(process.stdin.isTTY && process.stdout.isTTY);
-  if (!io.confirm && !interactive) {
+  if (!canAsk(io)) {
     throw new PreviewCliError("confirmation_required", "Confirmation is required. Re-run with --yes to confirm.");
   }
   return await (io.confirm ?? promptYesNo)(question);
@@ -167,12 +181,25 @@ export async function runPreviewStart(args: Record<string, unknown>, io: Preview
   try {
     const pr = parsePr(args.pr);
     const bundle = await bundleFor(args, pr);
+    const profile = await resolveCliProfile(args);
+    const existing = await findPreview(args, pr);
+    if (existing) {
+      if (existing.confirmedBundleVersion !== bundle.version) throw otherBundleError(existing, pr, bundle);
+      succeed(args, { ...existing }, [
+        `You already have Private Preview ${existing.handle} for PR #${pr}, confirmed for ${bundle.version}.`,
+        `Open it at ${previewUrl(profile.platformUrl, existing.handle)}.`,
+      ]);
+      return;
+    }
     if (!await confirmed(args, io, `Start a Private Preview running ${describeBundle(bundle)} with your own accounts?`)) {
       console.log("Cancelled.");
       return;
     }
     const started = await request(args, "POST", "/api/private-previews", { pr, bundleVersion: bundle.version });
-    const profile = await resolveCliProfile(args);
+    // A concurrent start may have won with another bundle; the platform then
+    // returns that machine unchanged.
+    const machine = await findPreview(args, pr);
+    if (machine && machine.confirmedBundleVersion !== bundle.version) throw otherBundleError(machine, pr, bundle);
     const handle = String(started.handle);
     succeed(args, started, [
       `Private Preview ${handle} is ${String(started.status)} for PR #${pr}.`,
@@ -189,12 +216,21 @@ export async function runPreviewUpdate(args: Record<string, unknown>, io: Previe
     const machine = await previewFor(args, pr);
     const bundle = await bundleFor(args, pr);
     if (bundle.version === machine.confirmedBundleVersion) {
-      succeed(args, { machineId: machine.machineId, status: "current", version: bundle.version }, [
-        `${machine.handle} already runs the newest bundle for PR #${pr} (${bundle.version}).`,
-      ]);
-      return;
-    }
-    if (!await confirmed(args, io, `Update ${machine.handle} to ${describeBundle(bundle)}?`)) {
+      // Confirmation is recorded before the install is requested, so a matching
+      // version does not prove the machine installed it; offer to ask again.
+      const note = `${machine.handle} is already confirmed for ${bundle.version}, the newest bundle for PR #${pr}.`;
+      if (args.yes !== true && !canAsk(io)) {
+        succeed(args, { machineId: machine.machineId, status: "confirmed", version: bundle.version }, [
+          note,
+          "If it is not on that version, re-run with --yes to ask it to install it again.",
+        ]);
+        return;
+      }
+      if (!await confirmed(args, io, `${note} Ask it to install that version again?`)) {
+        console.log("Cancelled.");
+        return;
+      }
+    } else if (!await confirmed(args, io, `Update ${machine.handle} to ${describeBundle(bundle)}?`)) {
       console.log("Cancelled.");
       return;
     }

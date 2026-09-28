@@ -190,6 +190,12 @@ Who can use it: members of the internal Clerk organization named by
 organization projection, so the platform needs collaboration configured; without
 it the routes return 503 and personal accounts stay denied.
 
+First give the PR a bundle: add the **`preview-bundle`** label (same-repository
+PRs only). The Preview workflow builds the exact head, registers it without a
+channel and with the PR number and author, and comments the version on the PR.
+It rebuilds on every push while the label is on, and provisions nothing.
+Bundles built for the `preview-vps` label also qualify.
+
 ```bash
 matrix preview start 1907    # shows the PR's newest bundle, commit, and author; asks to confirm
 matrix preview list          # handle, status, confirmed version, expiry, URL
@@ -213,7 +219,9 @@ What keeps it safe:
   younger than 72 hours, and you are still a current internal member. Otherwise
   the platform denies them on every request.
 - Cleanup: the platform destroys it after 72 hours or when you leave the
-  organization, and the Preview workflow destroys it when the PR closes.
+  organization. When a PR with either preview label closes, the Preview
+  workflow destroys its Private Previews, and the daily reaper catches any
+  whose PR closed without that run.
 
 It still runs the PR's unmerged code as your production account, much like
 running the branch locally with your own credentials. Only start it for PRs
@@ -222,17 +230,25 @@ until spec 530 isolates Preview origins (#1951).
 
 Limits: two active Private Previews per person by default
 (`MATRIX_PRIVATE_PREVIEW_LIMIT`, at most four) and one per PR. Starting the same
-PR again returns the existing machine; a failed one must be destroyed first.
-Private Previews cannot be recovered; destroy and start again.
+PR again shows the existing machine, and points to `matrix preview update` when
+it is on an older bundle; a failed one must be destroyed first. Private Previews
+cannot be recovered; destroy and start again.
+
+`matrix preview update` records your confirmation before asking the machine to
+install, so a matching version means confirmed, not necessarily installed. If
+the machine is not on it, run `matrix preview update <pr>` again and accept the
+offer to install it again (or pass `--yes`).
 
 Custom MCP servers reach a Private Preview by a push when you change them, a
 pull when it starts, and a pull every five minutes that catches anything it
 missed. Tool calls from it are still checked against your primary computer, so
 keep that running while you test Custom MCP.
 
-Bundles need PR provenance. The Preview workflow registers the PR number and
-author with each bundle it builds; a bundle registered without them cannot be
-started as a Private Preview.
+Bundles need PR provenance. A bundle registered without a PR number cannot be
+started as a Private Preview. `preview-bundle` builds always carry it, using the
+release scripts from `main`. `preview-vps` builds carry it once the PR branch
+includes the provenance flags, so rebase an older branch or add
+`preview-bundle`.
 
 ## Platform preview revisions
 
