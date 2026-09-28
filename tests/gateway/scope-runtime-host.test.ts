@@ -52,8 +52,9 @@ function probe(brokerPath: string, runtimeHandle: string): Promise<Record<string
   });
 }
 
-function authorizer(handle: string): ScopeRuntimeAuthorizer & { authorize: ReturnType<typeof vi.fn> } {
+function authorizer(handle: string, id = "bots"): ScopeRuntimeAuthorizer & { authorize: ReturnType<typeof vi.fn> } {
   return {
+    id,
     owns: (request) => request.runtimeHandle === handle,
     authorize: vi.fn(async () => ({ allowed: true as const, allowedModelIds: [], allowedEgressOrigins: [] })),
   };
@@ -71,7 +72,7 @@ describe("scope runtime host", () => {
     expect(host.client.profileCapability("scope-runtime-bot-v1")).toMatchObject({ available: true });
     expect((await stat(paths.broker)).isSocket()).toBe(true);
 
-    const shared = authorizer(RUNTIME_A);
+    const shared = authorizer(RUNTIME_A, "shared_ai");
     const bots = authorizer(RUNTIME_B);
     host.registerAuthorizer(shared);
     const unregisterBots = host.registerAuthorizer(bots);
@@ -81,9 +82,16 @@ describe("scope runtime host", () => {
     // A handle nobody owns is denied.
     await expect(probe(paths.broker, `runtime_${"c".repeat(32)}`)).resolves.toMatchObject({ ok: false, error: "action_denied" });
     // A handle claimed by two registries is denied rather than guessed.
-    host.registerAuthorizer(authorizer(RUNTIME_B));
+    const unregisterOther = host.registerAuthorizer(authorizer(RUNTIME_B, "other"));
     await expect(probe(paths.broker, RUNTIME_B)).resolves.toMatchObject({ ok: false, error: "action_denied" });
+    unregisterOther();
+    // Registering an id again replaces the old registration, and the old one's unregister is then a no-op.
+    const replacement = authorizer(RUNTIME_B);
+    host.registerAuthorizer(replacement);
     unregisterBots();
+    await expect(probe(paths.broker, RUNTIME_B)).resolves.toMatchObject({ ok: true, status: 200 });
+    expect(replacement.authorize).toHaveBeenCalledTimes(1);
+    expect(bots.authorize).toHaveBeenCalledTimes(1);
   });
 
   it("stays unavailable without listening when the supervisor is down, and caps registrations", async () => {
@@ -97,8 +105,11 @@ describe("scope runtime host", () => {
     const upPaths = await sockets();
     await fakeSupervisor(upPaths.supervisor);
     const host = await createScopeRuntimeHost({ homePath: "/tmp", profileCatalog: catalog, supervisorSocket: upPaths.supervisor, brokerSocket: upPaths.broker });
-    for (let index = 0; index < 4; index += 1) host.registerAuthorizer(authorizer(RUNTIME_A));
-    expect(() => host.registerAuthorizer(authorizer(RUNTIME_A))).toThrow(new ScopeRuntimeHostError("capacity_exceeded"));
+    for (let index = 0; index < 4; index += 1) host.registerAuthorizer(authorizer(RUNTIME_A, `registry_${index}`));
+    expect(() => host.registerAuthorizer(authorizer(RUNTIME_A, "registry_4"))).toThrow(new ScopeRuntimeHostError("capacity_exceeded"));
+    // Replacing an existing id needs no new slot.
+    expect(() => host.registerAuthorizer(authorizer(RUNTIME_A, "registry_0"))).not.toThrow();
+    expect(() => host.registerAuthorizer(authorizer(RUNTIME_A, "Bad-Id"))).toThrow(new ScopeRuntimeHostError("invalid_authorizer"));
     await host.close();
     // Closed in order: the socket is gone and no registration is accepted.
     await expect(stat(upPaths.broker)).rejects.toMatchObject({ code: "ENOENT" });

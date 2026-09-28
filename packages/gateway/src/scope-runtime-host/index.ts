@@ -21,6 +21,7 @@ const SUPERVISOR_SOCKET = "/run/matrix-scope-runtime/supervisor.sock";
 const BROKER_SOCKET = "/run/matrix-scope-runtime/broker.sock";
 /** Shared AI and private bots today; the cap keeps registration bounded. */
 const MAX_AUTHORIZERS = 4;
+const AUTHORIZER_ID = /^[a-z][a-z0-9_]{0,31}$/;
 
 export interface ScopeRuntimeAuthorizationRequest {
   runtimeHandle: string;
@@ -32,6 +33,12 @@ export interface ScopeRuntimeAuthorizationRequest {
 }
 
 export interface ScopeRuntimeAuthorizer {
+  /**
+   * Names the registry, such as `shared_ai` or `bots`. Registering the same
+   * id again replaces the earlier registration, so a restarted registry
+   * never leaves a stale one behind.
+   */
+  id: string;
   /** True when this registry bound the runtime handle at this generation. */
   owns(input: { runtimeHandle: string; executionGeneration: string }): boolean;
   authorize(request: ScopeRuntimeAuthorizationRequest): Promise<ScopeRuntimeBrokerAuthorization>;
@@ -43,13 +50,13 @@ export interface ScopeRuntimeHost {
   readonly client: ScopeRuntimeHostClient;
   /** False when the supervisor was unavailable at start; nothing listens then. */
   readonly available: boolean;
-  /** Returns the function that removes the registration. */
+  /** Returns the function that removes this registration (and not one that replaced it). */
   registerAuthorizer(authorizer: ScopeRuntimeAuthorizer): () => void;
   close(): Promise<void>;
 }
 
 export class ScopeRuntimeHostError extends Error {
-  constructor(readonly code: "closed" | "capacity_exceeded") {
+  constructor(readonly code: "closed" | "capacity_exceeded" | "invalid_authorizer") {
     super(`Scope runtime host refused the registration: ${code}`);
     this.name = "ScopeRuntimeHostError";
   }
@@ -68,7 +75,8 @@ export async function createScopeRuntimeHost(options: {
     socketPath: options.supervisorSocket ?? SUPERVISOR_SOCKET,
     profileCatalog: options.profileCatalog,
   });
-  const authorizers = new Set<ScopeRuntimeAuthorizer>();
+  /** At most MAX_AUTHORIZERS, keyed by registry id; a new registration for an id evicts the old one. */
+  const authorizers = new Map<string, ScopeRuntimeAuthorizer>();
   let closed = false;
 
   const unavailable = (): ScopeRuntimeHost => ({
@@ -91,7 +99,7 @@ export async function createScopeRuntimeHost(options: {
     ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
     async authorize(request) {
       if (closed) return { allowed: false };
-      const owners = [...authorizers].filter((authorizer) => authorizer.owns(request));
+      const owners = [...authorizers.values()].filter((authorizer) => authorizer.owns(request));
       if (owners.length !== 1) return { allowed: false };
       return owners[0]!.authorize(request);
     },
@@ -113,9 +121,14 @@ export async function createScopeRuntimeHost(options: {
     available: true,
     registerAuthorizer(authorizer) {
       if (closed) throw new ScopeRuntimeHostError("closed");
-      if (authorizers.size >= MAX_AUTHORIZERS) throw new ScopeRuntimeHostError("capacity_exceeded");
-      authorizers.add(authorizer);
-      return () => { authorizers.delete(authorizer); };
+      if (!AUTHORIZER_ID.test(authorizer.id)) throw new ScopeRuntimeHostError("invalid_authorizer");
+      if (!authorizers.has(authorizer.id) && authorizers.size >= MAX_AUTHORIZERS) {
+        throw new ScopeRuntimeHostError("capacity_exceeded");
+      }
+      authorizers.set(authorizer.id, authorizer);
+      return () => {
+        if (authorizers.get(authorizer.id) === authorizer) authorizers.delete(authorizer.id);
+      };
     },
     /** Stops new frames first, then drops registrations, then the supervisor connection. */
     async close() {

@@ -474,6 +474,7 @@ export async function createSharedAiRuntime(options: {
 
   // Frames from runtimes this registry bound are authorized here; the host routes them.
   const unregisterAuthorizer = host.registerAuthorizer({
+    id: "shared_ai",
     owns: (request) => registry.lookup(request) !== null,
     authorize: async (request) => {
       const binding = registry.lookup(request);
