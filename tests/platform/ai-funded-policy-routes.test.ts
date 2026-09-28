@@ -204,7 +204,7 @@ describe("funded AI policy routes", () => {
     });
     expect(response.status).toBe(503);
     expect(probe).not.toHaveBeenCalled();
-  }, 10_000);
+  }, 15_000);
 
   it("normalizes relay control token transport whitespace without changing identity or hash secrets", () => {
     expect(loadAiFundedControlPlaneConfig({

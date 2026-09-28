@@ -10,6 +10,7 @@ import {
   openProviderAuthorizationPath,
 } from "../../desktop/src/renderer/src/features/settings/provider-settings-desktop-adapter";
 import type { ApiClient } from "../../desktop/src/renderer/src/lib/api";
+import { createApiClient } from "../../desktop/src/renderer/src/lib/api";
 import { useShellSessions } from "../../desktop/src/renderer/src/stores/shell-sessions";
 import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
 
@@ -128,6 +129,23 @@ beforeEach(() => {
 });
 
 describe("desktop provider settings transport", () => {
+  it("extends actual snapshot dispatch while leaving auth and mutation defaults at ten seconds", async () => {
+    const timeout = vi.spyOn(AbortSignal, "timeout");
+    try {
+      const fetchFn = vi.fn().mockResolvedValueOnce(Response.json(snapshot()))
+        .mockResolvedValueOnce(Response.json({ authenticated: true }))
+        .mockResolvedValueOnce(Response.json({ kind: "snapshot", snapshot: snapshot(2) }));
+      const client = createApiClient({ baseUrl: "https://runtime.example.test", getRuntimeSlot: () => "primary", fetchFn });
+      const transport = createDesktopProviderSettingsTransport(client);
+      await transport.getSnapshot(new AbortController().signal);
+      expect(timeout).toHaveBeenLastCalledWith(15_000);
+      await client.get("/api/auth/status");
+      expect(timeout).toHaveBeenLastCalledWith(10_000);
+      await transport.mutate({ type: "set_harness_enabled", harnessInstanceId: "harness_hermes", enabled: false,
+        expectedRevision: 1, idempotencyKey: "cold_read_control" }, new AbortController().signal);
+      expect(timeout).toHaveBeenLastCalledWith(10_000);
+    } finally { timeout.mockRestore(); }
+  });
   it("uses the authenticated runtime-bound API with bounded, abortable JSON reads", async () => {
     const get = vi.fn().mockResolvedValue(snapshot());
     const client = api({ get });
@@ -138,6 +156,7 @@ describe("desktop provider settings transport", () => {
     expect(get).toHaveBeenCalledWith("/api/ai/provider-settings?includeCapabilities=true", {
       maxBytes: 1024 * 1024,
       signal: abort.signal,
+      timeoutMs: 15_000,
     });
   });
 

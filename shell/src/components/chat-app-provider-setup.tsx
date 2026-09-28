@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
   CanonicalProviderCatalogSchema,
+  FUNDED_AI_READINESS_TIMEOUTS,
   type CanonicalChatModelSelection,
   type CanonicalProviderCatalog,
   type CanonicalProviderInstanceDescriptor,
@@ -123,7 +124,7 @@ export function useChatProviderState(
         forcePending = false;
         try {
           const response = await fetch(`${getGatewayUrl()}${forceRefresh ? "/api/chat-providers?refresh=true&includeConnectionLabels=true" : "/api/chat-providers?includeConnectionLabels=true"}`, {
-            signal: AbortSignal.timeout(10_000),
+            signal: AbortSignal.timeout(FUNDED_AI_READINESS_TIMEOUTS.rendererRequestMs),
           });
           if (!response.ok) throw new Error("ProviderCatalogUnavailable");
           const value = CanonicalProviderCatalogSchema.parse(await response.json());

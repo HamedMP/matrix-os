@@ -1,11 +1,12 @@
 import {
   AiProviderSnapshotV3Schema,
+  FUNDED_AI_READINESS_TIMEOUTS,
   type AiProviderSnapshotV3,
 } from "@matrix-os/contracts";
 import { getGatewayUrl } from "./gateway";
 
 const MAX_RESPONSE_BYTES = 1024 * 1024;
-const READ_TIMEOUT_MS = 10_000;
+const READ_TIMEOUT_MS = FUNDED_AI_READINESS_TIMEOUTS.rendererRequestMs;
 const SAFE_ERROR_MAX = 64;
 
 type Fetcher = typeof fetch;

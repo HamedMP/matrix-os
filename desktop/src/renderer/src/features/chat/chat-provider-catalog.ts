@@ -1,5 +1,6 @@
 import {
   CanonicalProviderCatalogSchema,
+  FUNDED_AI_READINESS_TIMEOUTS,
   type CanonicalProviderCatalog,
 } from "@matrix-os/contracts";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -26,6 +27,7 @@ export async function fetchCanonicalProviderCatalog(
 ): Promise<CanonicalProviderCatalog> {
   return CanonicalProviderCatalogSchema.parse(await api.get<unknown>(
     refresh ? "/api/chat-providers?refresh=true&includeConnectionLabels=true" : "/api/chat-providers?includeConnectionLabels=true",
+    { timeoutMs: FUNDED_AI_READINESS_TIMEOUTS.rendererRequestMs },
   ));
 }
 

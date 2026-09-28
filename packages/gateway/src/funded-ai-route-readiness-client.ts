@@ -1,4 +1,4 @@
-import { FundedAiRouteReadinessReceiptSchema, FundedAiRouteReadinessRequestSchema, JEV_MODEL_ID, type FundedAiRouteReadinessReceipt } from "@matrix-os/contracts";
+import { FUNDED_AI_READINESS_TIMEOUTS, FundedAiRouteReadinessReceiptSchema, FundedAiRouteReadinessRequestSchema, JEV_MODEL_ID, type FundedAiRouteReadinessReceipt } from "@matrix-os/contracts";
 import type { FundedAiRuntimeConfig } from "./funded-ai-credential-manager.js";
 import { readBoundedFundedJson } from "./funded-ai-funding-summary-client.js";
 
@@ -13,7 +13,10 @@ export function createFundedAiRouteReadinessClient(
 ): FundedAiRouteReadinessReader {
   return {
     async getRouteReadiness(options = {}) {
-      const timeout = AbortSignal.timeout(config.requestTimeoutMs);
+      // Generic readiness also waits for a cold relay. Do not extend credential
+      // issuance/funding-summary timeouts or the separate owner-funded Jev probe.
+      const timeout = AbortSignal.timeout(options.modelId === JEV_MODEL_ID
+        ? config.requestTimeoutMs : FUNDED_AI_READINESS_TIMEOUTS.gatewayRequestMs);
       const signal = options.signal ? AbortSignal.any([options.signal, timeout]) : timeout;
       const response = await fetchFn(config.routeReadinessUrl, {
         method: "POST", redirect: "error", signal,

@@ -16,7 +16,7 @@ describe("Settings catalog connection-label negotiation", () => {
     const api = { get: vi.fn(async () => ({ revision: "revision", drivers: [], instances: [] })) };
     expect(await openDesktopProviderAgentSetup(api as never, "pi", () => true)).toBe(false);
     expect(api.get).toHaveBeenCalledWith("/api/chat-providers?refresh=true&includeConnectionLabels=true",
-      expect.objectContaining({ maxBytes: 1024 * 1024, signal: expect.any(AbortSignal) }));
+      expect.objectContaining({ maxBytes: 1024 * 1024, signal: expect.any(AbortSignal), timeoutMs: 15_000 }));
     expect(api.get).toHaveBeenCalledOnce();
   });
 });
