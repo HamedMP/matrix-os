@@ -168,6 +168,7 @@ import { startScopeRuntimeHost } from "./startup/scope-runtime-host.js";
 import { startBots, type BotServices } from "./startup/bots.js";
 import { withBotProviderInstance } from "./bots/provider-instance.js";
 import { createLocalIntegrationTransport, createPlatformIntegrationTransport } from "./bots/integration-client.js";
+import { createBotContinuationAdmitter } from "./bots/continuations.js";
 import { ChatAgentStore } from "./chat/agent-store.js";
 import { initializePlatformIntegrations } from "./startup/platform-integrations.js";
 import { getVersion } from "./system-info.js";
@@ -1582,6 +1583,7 @@ export async function createGateway(config: GatewayConfig) {
       ...(jevInboxRuntime ? { admitJevWorkflow: (owner, agent) => jevInboxRuntime.admit(owner.ownerId, agent) } : {}),
     });
     canonicalChatOrchestrator = canonicalChatRuntime.orchestrator;
+    botServices?.startConnectionReconciler(createBotContinuationAdmitter({ repository: chatRepository, orchestrator: canonicalChatOrchestrator }));
     backgroundChatProjection.setReconciler(ownerId => canonicalChatOrchestrator?.reconcileActiveRuns({ type: "personal", ownerId }) ?? Promise.resolve());
     // Shared AI marks runs the previous process lost (gateway_restart) before the
     // owner reconcile loop below finishes them; the reverse order loses attribution.

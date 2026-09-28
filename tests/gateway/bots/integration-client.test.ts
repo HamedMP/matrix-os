@@ -55,6 +55,20 @@ describe("bot integration client", () => {
     await expect(createBotIntegrationClient(async () => { throw new TypeError("network down"); }).inventory(OWNER)).rejects.toEqual(new BotIntegrationError("unavailable"));
   });
 
+  it("starts a connection with an https consent URL only, and syncs", async () => {
+    const fetchImpl = vi.fn(async (url: string) => (url.endsWith("/connect")
+      ? json({ url: "https://connect.example/oauth?state=abc", service: "gmail" })
+      : json({ synced: 1, services: [] })));
+    const client = createBotIntegrationClient(createPlatformIntegrationTransport({ baseUrl: "https://platform.internal/i", machineToken: "t", fetchImpl: fetchImpl as never }));
+    await expect(client.connect(OWNER, "gmail")).resolves.toBe("https://connect.example/oauth?state=abc");
+    await expect(client.sync(OWNER)).resolves.toBeUndefined();
+    const calls = fetchImpl.mock.calls as unknown as Array<[string, RequestInit]>;
+    expect(calls.map(([url, init]) => [url, init.method])).toEqual([["https://platform.internal/i/connect", "POST"], ["https://platform.internal/i/sync", "POST"]]);
+    expect(JSON.parse(String(calls[0]![1].body))).toEqual({ service: "gmail" });
+    const insecure = createBotIntegrationClient(async () => json({ url: "http://connect.example/oauth" }));
+    await expect(insecure.connect(OWNER, "gmail")).rejects.toEqual(new BotIntegrationError("unavailable"));
+  });
+
   it("calls local integration routes in process as the owner", async () => {
     const routes = new Hono();
     const seen = vi.fn();
