@@ -18,9 +18,9 @@ Recorded 2026-09-28 before provisioning or model calls. The owner authorized the
 
 | Stage | Machine/IP USD | Model USD | Notes |
 | --- | ---: | ---: | --- |
-| S0 | 0.00 | 0.00 | Not started |
+| S0 | 0.00 | 0.007683 observed, 0.10 reserved | Local package probe and one-token provider check; failed zero-usage attempts remain unbilled-unknown pending reconciliation |
 | Spike A | 0.00 | 0.00 | Not started |
 | Spike B | 0.00 | 0.00 | Not started |
 | Spike C | 0.00 | 0.00 | Not started |
 
-No spend had been incurred when this authorization was recorded.
+The S0 observation is below its USD 2 subcap. The USD 0.10 reservation conservatively covers the earlier calls that returned no usage; budget decisions use the reservation until provider reconciliation. No preview VPS had been provisioned when this entry was updated.
