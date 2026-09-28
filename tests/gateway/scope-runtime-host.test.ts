@@ -116,4 +116,49 @@ describe("scope runtime host", () => {
     expect(() => host.registerAuthorizer(authorizer(RUNTIME_A))).toThrow(new ScopeRuntimeHostError("closed"));
     expect(host.client.capability()).toEqual({ available: false, reason: "supervisor_unavailable" });
   });
+
+  it("routes bot frames to the bot registry and keeps tools off the shared path", async () => {
+    const paths = await sockets();
+    await fakeSupervisor(paths.supervisor);
+    const host = await createScopeRuntimeHost({ homePath: "/tmp", profileCatalog: catalog, supervisorSocket: paths.supervisor, brokerSocket: paths.broker });
+    cleanup.push(() => host.close());
+    const handled: unknown[] = [];
+    host.registerAuthorizer({
+      id: "bots",
+      owns: (request) => request.runtimeHandle === RUNTIME_B,
+      authorize: async () => ({ allowed: false }),
+      handleFrame: async (raw) => {
+        handled.push(raw);
+        return { version: 1, requestId: (raw as { requestId: string }).requestId, ok: true, result: { revision: 3, messages: [] } };
+      },
+    });
+    host.registerAuthorizer(authorizer(RUNTIME_A, "shared_ai"));
+    const send = (frame: Record<string, unknown>) => new Promise<string>((resolve, reject) => {
+      const socket = createConnection({ path: paths.broker });
+      let output = "";
+      socket.setEncoding("utf8");
+      socket.once("error", reject);
+      socket.on("data", (chunk) => { output += chunk; });
+      socket.once("close", () => resolve(output));
+      socket.once("connect", () => socket.end(`${JSON.stringify(frame)}\n`));
+    });
+    const envelope = { version: 1, requestId: "018f0ce5-7b4a-7f95-a7c8-acae0dc5c5d1", executionGeneration: "3" };
+
+    const load = await send({ ...envelope, runtimeHandle: RUNTIME_B, runId: "run_one", action: "bot.session.load" });
+    expect(JSON.parse(load)).toMatchObject({ ok: true, result: { revision: 3 } });
+    // A whole-transcript save frame above the old 512 KiB cap still reaches the bot handler.
+    const big = await send({ ...envelope, runtimeHandle: RUNTIME_B, runId: "run_one", action: "bot.session.save",
+      session: { baseRevision: 3, messages: [{ role: "user", content: "x".repeat(540 * 1024), timestamp: 1 }] } });
+    expect(JSON.parse(big)).toMatchObject({ ok: true });
+    expect(handled).toHaveLength(2);
+
+    // A shared runtime may not send tools, and bot actions from it never parse.
+    const shared = await send({ ...envelope, runtimeHandle: RUNTIME_A, action: "inference.messages", method: "POST",
+      path: "/v1/messages?beta=true", headers: {}, body: JSON.stringify({ model: "claude-sonnet-5", stream: true, messages: [{}], tools: [{ name: "x" }] }) });
+    expect(JSON.parse(shared)).toMatchObject({ ok: false, error: "invalid_request" });
+    await expect(send({ ...envelope, runtimeHandle: RUNTIME_A, runId: "run_one", action: "bot.session.load" })).resolves.toBe("");
+    // An unbound runtime's bot frame is dropped.
+    await expect(send({ ...envelope, runtimeHandle: `runtime_${"c".repeat(32)}`, runId: "run_one", action: "bot.session.load" })).resolves.toBe("");
+    expect(handled).toHaveLength(2);
+  });
 });

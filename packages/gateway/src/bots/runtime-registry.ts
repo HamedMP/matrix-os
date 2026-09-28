@@ -42,6 +42,8 @@ export interface BotRuntimeBinding {
   route: BotModelRoute;
   accessSourceId: KernelCredentialAccessSourceId;
   capabilities: readonly BotToolCapability[];
+  /** Funded priority for this run: a person waiting in chat, or a routine. */
+  requestClass: "interactive" | "background";
 }
 
 interface StoredBinding extends BotRuntimeBinding {
@@ -67,6 +69,7 @@ const BindingSchema = z.object({
   route: BotModelRouteSchema,
   accessSourceId: KernelCredentialAccessSourceIdSchema,
   capabilities: z.array(BotToolCapabilitySchema).max(16),
+  requestClass: z.enum(["interactive", "background"]),
 }).strict();
 
 /** The broker action each model API uses; a route never reaches another. */
