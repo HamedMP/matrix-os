@@ -1,4 +1,8 @@
-/** 525 CLI compatibility over the v2 owner-home collaboration protocol. No keys or sessions are persisted. */
+/**
+ * 525 CLI compatibility over the v2 owner-home collaboration protocol. No keys or sessions are persisted.
+ * The platform relay names the actor before it forwards anything, so a request to an endpoint on the
+ * platform origin carries the bearer ticket issuance carries; any other origin receives none.
+ */
 import { createHash, generateKeyPairSync, randomBytes, randomUUID, sign, type KeyObject } from "node:crypto";
 import {
   COLLABORATION_DIRECT_LIMITS, COLLABORATION_DIRECT_PROTOCOL_VERSION,
@@ -10,6 +14,8 @@ const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
 const MAX_SCOPES = 32;
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1", "localhost"]);
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+/** Set only by the platform relay on its own 401; the relay never forwards it from a home. */
+const PLATFORM_CHALLENGE_HEADER = "www-authenticate";
 const TicketResponse = z.object({
   signedTicket: CollaborationSignedConnectionTicketSchema,
   endpoint: z.object({ origin: z.url(), protocolVersion: z.number().int() }).strict(),
@@ -30,6 +36,10 @@ export interface CliCollaborationTransportOptions {
 }
 
 function unavailable(): Error { return new Error("Collaboration request failed"); }
+/** The platform no longer accepts this CLI's credential; the message never carries the credential. */
+export function collaborationAuthRejected(): Error & { code: "auth_rejected" } {
+  return Object.assign(new Error("Matrix rejected this CLI sign-in. Run `matrix login` to sign in again."), { code: "auth_rejected" as const });
+}
 function digest(bytes: Uint8Array | string): string { return createHash("sha256").update(bytes).digest("hex"); }
 function b64json(value: unknown): string { return Buffer.from(JSON.stringify(value)).toString("base64url"); }
 function canonical(value: unknown): string {
@@ -88,6 +98,12 @@ export function createCliCollaborationTransport(options: CliCollaborationTranspo
   const fetchImpl = options.fetchImpl ?? fetch;
   const now = options.now ?? (() => new Date());
   const scopes = new Map<string, Entry>();
+  /** The bearer for exactly the platform origin; every other origin gets no credential. */
+  const credentialFor = (target: string): Record<string, string> =>
+    target === platform ? { authorization: `Bearer ${options.token}` } : {};
+  /** A 401 the platform itself answered, from ticket issuance or the relay's own challenge. */
+  const rejectedByPlatform = (response: Response, target: string, platformRoute = false): boolean =>
+    target === platform && response.status === 401 && (platformRoute || response.headers.has(PLATFORM_CHALLENGE_HEADER));
 
   const entry = (scopeId: string): Entry => {
     let current = scopes.get(scopeId);
@@ -100,10 +116,11 @@ export function createCliCollaborationTransport(options: CliCollaborationTranspo
 
   const issueTicket = async (scopeId: string, purpose: TicketPurpose, key: Key) => {
     const response = await fetchImpl(`${platform}/api/collaboration/connections`, {
-      method: "POST", headers: { authorization: `Bearer ${options.token}`, accept: "application/json", "content-type": "application/json" },
+      method: "POST", headers: { ...credentialFor(platform), accept: "application/json", "content-type": "application/json" },
       body: JSON.stringify({ clientRequestId: randomUUID(), scopeId, purpose, proofPublicKey: key.publicKeyRaw }),
       redirect: "error", signal: AbortSignal.timeout(COLLABORATION_DIRECT_LIMITS.externalApiTimeoutMs),
     });
+    if (rejectedByPlatform(response, platform, true)) { await response.body?.cancel(); throw collaborationAuthRejected(); }
     const raw = await boundedJson(response);
     const advertised = raw as { endpoint?: { protocolVersion?: unknown }; signedTicket?: { ticket?: { protocolVersion?: unknown } } };
     if ([advertised?.endpoint?.protocolVersion, advertised?.signedTicket?.ticket?.protocolVersion]
@@ -114,11 +131,15 @@ export function createCliCollaborationTransport(options: CliCollaborationTranspo
     return { ...parsed.data, origin: origin(parsed.data.endpoint.origin) };
   };
 
-  const homePost = async (home: string, path: string, body: unknown, runtimeId: string) => boundedJson(await fetchImpl(`${home}${path}`, {
-    method: "POST", headers: { accept: "application/json", "content-type": "application/json",
-      "x-matrix-collaboration-runtime": runtimeId },
-    body: JSON.stringify(body), redirect: "error", signal: AbortSignal.timeout(COLLABORATION_DIRECT_LIMITS.externalApiTimeoutMs),
-  }));
+  const homePost = async (home: string, path: string, body: unknown, runtimeId: string) => {
+    const response = await fetchImpl(`${home}${path}`, {
+      method: "POST", headers: { ...credentialFor(home), accept: "application/json", "content-type": "application/json",
+        "x-matrix-collaboration-runtime": runtimeId },
+      body: JSON.stringify(body), redirect: "error", signal: AbortSignal.timeout(COLLABORATION_DIRECT_LIMITS.externalApiTimeoutMs),
+    });
+    if (rejectedByPlatform(response, home)) { await response.body?.cancel(); throw collaborationAuthRejected(); }
+    return boundedJson(response);
+  };
 
   const connect = async (scopeId: string, key: Key): Promise<Connected> => {
     const issued = await issueTicket(scopeId, "direct_session", key);
@@ -154,6 +175,8 @@ export function createCliCollaborationTransport(options: CliCollaborationTranspo
       if (current && !fresh && Date.parse(current.session.expiresAt) > at + 1_000) {
         try { return await renew(scopeId, current); }
         catch (error: unknown) {
+          // A rejected credential rejects a fresh session too.
+          if ((error as { code?: unknown }).code === "auth_rejected") throw error;
           console.warn("[cli-collaboration] session renewal failed", error instanceof Error ? error.name : "UnknownError");
           // A new ticket and session is the bounded recovery path.
         }
@@ -174,6 +197,7 @@ export function createCliCollaborationTransport(options: CliCollaborationTranspo
     const requestProof = proof(connected.key, `matrix-collaboration-request-v2\n${canonical(signature)}`);
     return fetchImpl(`${connected.origin}${path}${query ? `?${query}` : ""}`, {
       method, headers: {
+        ...credentialFor(connected.origin),
         accept: "application/json", ...(body === undefined ? {} : { "content-type": "application/json" }),
         "x-matrix-collaboration-session": connected.session.id,
         "x-matrix-collaboration-request": b64json({ signature, proof: requestProof }),
@@ -191,16 +215,19 @@ export function createCliCollaborationTransport(options: CliCollaborationTranspo
     if (body && Buffer.byteLength(body) > COLLABORATION_DIRECT_LIMITS.httpJsonBytes) throw unavailable();
     let connected = await ensure(scopeId);
     let response = await signedRequest(connected, method, url.pathname, url.search.slice(1), body);
-    if (response.status === 401) {
+    if (response.status === 401 && !rejectedByPlatform(response, connected.origin)) {
+      // The session ended on the home: one fresh ticket, one retry.
       await response.body?.cancel();
       connected = await ensure(scopeId, true);
       response = await signedRequest(connected, method, url.pathname, url.search.slice(1), body);
     }
+    if (rejectedByPlatform(response, connected.origin)) { await response.body?.cancel(); throw collaborationAuthRejected(); }
     if (response.status === 204) { await response.body?.cancel(); return null; }
     return boundedJson(response);
   };
 
-  const terminal = async (scopeId: string): Promise<{ url: string; actorId: string; handshake: string }> => {
+  /** `headers` goes on the upgrade: the relay names the actor from it, and only the platform origin gets it. */
+  const terminal = async (scopeId: string): Promise<{ url: string; actorId: string; handshake: string; headers: Record<string, string> }> => {
     const connected = await ensure(scopeId);
     const issued = await issueTicket(scopeId, "terminal", connected.key);
     if (issued.origin !== connected.origin) throw unavailable();
@@ -210,7 +237,7 @@ export function createCliCollaborationTransport(options: CliCollaborationTranspo
     url.searchParams.set("ticket", b64json(issued.signedTicket));
     url.searchParams.set("after", "0");
     return {
-      url: url.href, actorId: ticket.actorId,
+      url: url.href, actorId: ticket.actorId, headers: credentialFor(issued.origin),
       handshake: JSON.stringify({ protocolVersion: COLLABORATION_DIRECT_PROTOCOL_VERSION, type: "handshake",
         sessionId: connected.session.id, ticketNonce: ticket.nonce,
         possession: proof(connected.key, `matrix-collaboration-possession-v2\n${ticket.nonce}\nterminal\n${connected.session.id}`) }),
