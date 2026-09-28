@@ -85,7 +85,7 @@ export function ChatCollaboration({
   }
   if (view.kind === "invitation") return <InvitationView api={api} invitationId={view.invitationId} openers={openers} />;
   if (view.kind === "file") return <SharedFileView api={api} scopeId={view.scopeId} />;
-  if (view.kind === "folder") return <SharedFolderView api={api} scopeId={view.scopeId} />;
+  if (view.kind === "folder") return <SharedFolderView key={view.scopeId} api={api} scopeId={view.scopeId} />;
   if (view.kind === "terminal") return <SharedTerminalView api={api} actorId={actorId} scopeId={view.scopeId} layers={layers} />;
   if (view.kind === "project") return <SharedProjectView api={api} scopeId={view.scopeId} />;
   if (view.kind === "canonical-chat") return <CanonicalSharedChatPanel api={api} actorId={actorId}
