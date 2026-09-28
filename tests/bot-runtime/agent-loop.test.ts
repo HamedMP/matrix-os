@@ -65,6 +65,17 @@ const run = (input: {
 });
 
 describe("bot agent loop", () => {
+  it("passes the bridge placeholder key to Pi for every model stream", async () => {
+    const { route } = scripted([fauxAssistantMessage(fauxText("Ready."))]);
+    const streamSimple = vi.spyOn(route.provider, "streamSimple");
+    const { broker } = memoryBroker();
+
+    await run({ broker, route });
+
+    expect(streamSimple).toHaveBeenCalledWith(route.model, expect.anything(),
+      expect.objectContaining({ apiKey: "matrix-broker-placeholder" }));
+  });
+
   it("runs a tool through the broker, forwards ordered events, and saves the session at its base revision", async () => {
     const { route } = scripted([
       fauxAssistantMessage(fauxToolCall("write_artifact", { path: "briefs/acme.md", content: "# Acme", mimeType: "text/markdown" }, { id: "call_write" }), { stopReason: "toolUse" }),
