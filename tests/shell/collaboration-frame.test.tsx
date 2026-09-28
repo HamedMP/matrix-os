@@ -447,6 +447,12 @@ describe("CollaborationFrame", () => {
     await waitFor(() => expect(requests.filter((request) => request.path === "/api/collaboration/inbox")).toHaveLength(2));
   });
 
+  it("builds Tailwind classes for the shared collaboration views the frame renders", async () => {
+    const { readFileSync } = await vi.importActual<typeof import("node:fs")>("node:fs");
+    const css = readFileSync(`${process.cwd()}/shell/src/app/globals.css`, "utf8");
+    expect(css).toContain('@source "../../../packages/ui/src/collaboration";');
+  });
+
   it("uses brand tokens instead of hard-coded colors", async () => {
     const { readFileSync } = await vi.importActual<typeof import("node:fs")>("node:fs");
     const source = readFileSync(`${process.cwd()}/shell/src/components/collaboration/CollaborationFrame.tsx`, "utf8");
