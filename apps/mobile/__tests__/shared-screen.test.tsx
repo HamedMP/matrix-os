@@ -709,6 +709,44 @@ describe("native shared Chat screen", () => {
     expect(mockFetchInbox).toHaveBeenLastCalledWith("clerk-token", "opaque-next-page");
   });
 
+  it("does not page with the old list's cursors while a newer discovery load is pending", async () => {
+    const accepted = {
+      scopeId, runtimeId: "runtime_owner", ownerId: "user_owner", kind: "chat", authorityGeneration: 1, status: "accepted",
+      resource: { scope: await mockFetchScope(), chat: await mockFetchChat() },
+    };
+    const stalePage = {
+      scopeId: "10000000-0000-4000-8000-000000000008", runtimeId: "runtime_owner", ownerId: "user_owner_two", kind: "chat",
+      authorityGeneration: 1, status: "invited", invitationId: "30000000-0000-4000-8000-000000000008",
+      resource: { ...invitation, id: "30000000-0000-4000-8000-000000000008", scopeId: "10000000-0000-4000-8000-000000000008",
+        owner: { actorId: "user_owner_two", displayName: "Grace" } },
+    };
+    let finishOldPage: (() => void) | undefined;
+    let finishReload: (() => void) | undefined;
+    mockFetchShared.mockResolvedValue({ items: [accepted] });
+    mockFetchInbox
+      .mockResolvedValueOnce({ items: [], nextCursor: "old-list-cursor" })
+      .mockImplementationOnce(() => new Promise((resolve) => { finishOldPage = () => resolve({ items: [stalePage] }); }))
+      .mockImplementationOnce(() => new Promise((resolve) => { finishReload = () => resolve({ items: [], nextCursor: "new-list-cursor" }); }))
+      .mockResolvedValue({ items: [] });
+
+    render(<SharedScreen />);
+    fireEvent.press(await screen.findByLabelText("Load more shared items"));
+    await waitFor(() => expect(mockFetchInbox).toHaveBeenLastCalledWith("clerk-token", "old-list-cursor"));
+    fireEvent.press(screen.getByLabelText("Open Launch plan"));
+    fireEvent.press(await screen.findByLabelText("Back to Shared with me"));
+    await waitFor(() => expect(mockFetchInbox).toHaveBeenCalledTimes(3));
+
+    // The old page settles while the reload is still pending: it must neither append nor re-enable paging.
+    await act(async () => finishOldPage?.());
+    expect(screen.queryByText("Grace invited you")).toBeNull();
+    expect(screen.queryByLabelText("Load more shared items")).toBeNull();
+
+    await act(async () => finishReload?.());
+    fireEvent.press(await screen.findByLabelText("Load more shared items"));
+    await waitFor(() => expect(mockFetchInbox).toHaveBeenLastCalledWith("clerk-token", "new-list-cursor"));
+    expect(mockFetchInbox.mock.calls.filter(([, cursor]) => cursor === "old-list-cursor")).toHaveLength(1);
+  });
+
   it("does not let a pending history page overwrite a newer realtime refresh", async () => {
     const message = (sequence: number) => ({
       id: `msg_${sequence}`, chatId: "chat_one", sequence: String(sequence), role: "user", state: "committed", purpose: "ai_request",

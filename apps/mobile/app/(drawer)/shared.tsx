@@ -190,7 +190,11 @@ export default function SharedScreen() {
   }, []);
   const loadHome = useCallback(async () => {
     const generation = ++homeLoadGeneration.current;
-    dispatch({ type: "patch", patch: { loading: true, error: "" } });
+    // The old list's cursors and any in-flight page belong to the list being replaced;
+    // paging stays unavailable until this load installs its own cursors.
+    dispatch({ type: "patch", patch: {
+      loading: true, error: "", inboxCursor: null, sharedCursor: null, loadingMoreItems: false, paginationError: "",
+    } });
     try {
       const actorToken = await token();
       const [inbox, shared] = await Promise.all([
@@ -239,7 +243,9 @@ export default function SharedScreen() {
       if (generation === homeLoadGeneration.current) {
         dispatch({ type: "patch", patch: { paginationError: "More shared items could not be loaded. Try again." } });
       }
-    } finally { dispatch({ type: "patch", patch: { loadingMoreItems: false } }); }
+    } finally {
+      if (generation === homeLoadGeneration.current) dispatch({ type: "patch", patch: { loadingMoreItems: false } });
+    }
   };
   const loadChat = useCallback(async (scopeId: string) => {
     const generation = ++chatLoadGeneration.current;
