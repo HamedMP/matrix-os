@@ -36,6 +36,7 @@ export const BotTaskSummarySchema = z.object({
   revision: BotRevisionSchema,
   updatedAt: IsoTimestampSchema,
 }).strict();
+export const BotTaskListResponseSchema = z.object({ tasks: z.array(BotTaskSummarySchema).max(20) }).strict();
 
 export type BotTaskStatus = z.infer<typeof BotTaskStatusSchema>;
 export type BotBlockedReason = z.infer<typeof BotBlockedReasonSchema>;

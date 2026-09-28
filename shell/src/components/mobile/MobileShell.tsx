@@ -639,7 +639,7 @@ function MobileAppFrame({
         activeConversationTitle={chat.activeConversationTitle}
         onRenameConversation={chat.renameConversation}
         onSubmit={chat.submitMessage}
-              agentClient={chat.agentClient} queuedTurns={chat.queuedTurns} onCancelQueuedTurn={chat.cancelQueuedTurn}
+              agentClient={chat.agentClient} botEventRevision={chat.botEventRevision} queuedTurns={chat.queuedTurns} onCancelQueuedTurn={chat.cancelQueuedTurn}
         onSubmitApproval={chat.submitApproval}
         onSubmitInput={chat.submitInput}
         providerSelection={chat.providerSelection}

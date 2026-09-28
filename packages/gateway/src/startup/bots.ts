@@ -27,12 +27,13 @@ import { createBotBrokerActions, registerBotBroker } from "../bots/broker-action
 import { createMatrixBotChatProviderAdapter, type BotChatState } from "../bots/chat-adapter.js";
 import { bootstrapBotDatabase } from "../bots/database.js";
 import { createBotInstantiation, ensureBotWorkspace, ownerBotExecutor, type BotInstantiation } from "../bots/instantiation.js";
-import { createBotRecipeCatalog } from "../bots/recipe-catalog.js";
+import { createBotRecipeCatalog, type BotRecipeCatalog } from "../bots/recipe-catalog.js";
 import { createBotOperationReconciler } from "../bots/reconciliation.js";
 import { createBotBindingsRepository } from "../bots/repositories/bindings.js";
 import { createBotCheckpointsRepository } from "../bots/repositories/checkpoints.js";
 import { createBotOperationsRepository } from "../bots/repositories/operations.js";
 import { createBotSessionsRepository } from "../bots/repositories/sessions.js";
+import { createBotTasksRepository } from "../bots/repositories/tasks.js";
 import { createBotAccessHandlers } from "../bots/access-handlers.js";
 import { createBotAuthority, type BotAuthority } from "../bots/authority.js";
 import { createBotConnections, type BotConnections } from "../bots/connections.js";
@@ -92,6 +93,7 @@ export async function runConnectionReconciliationPass(
 }
 
 export interface BotServices {
+  recipes: BotRecipeCatalog;
   instantiation: BotInstantiation;
   authority: BotAuthority;
   /**
@@ -103,6 +105,7 @@ export interface BotServices {
   memory: BotMemoryService;
   grants: BotGrantService;
   botChats: BotChatLookup;
+  tasks(ownerId: string, chatId: string): Promise<import("@matrix-os/contracts").BotTaskSummary[]>;
   /** Present only when the scope runtime can run bot workloads. */
   adapter?: CanonicalChatProviderAdapter<BotChatState>;
   close(): Promise<void>;
@@ -198,10 +201,18 @@ export async function startBots(options: {
       return bound.find((binding) => binding.kind === "direct")?.botId ?? null;
     },
   };
+  const tasks: BotServices["tasks"] = async (ownerId, chatId) => {
+    const botId = await botChats.directBot({ type: "personal", ownerId }, chatId);
+    if (!botId) return [];
+    return transact(ownerId, async (tx) => (await createBotTasksRepository(tx.db).listOpen({ ownerId, botId, chatId }, tx.db))
+      .map((task) => ({ taskId: task.taskId, chatId: task.chatId, agentId: task.botId,
+        status: task.status, ...(task.blockedReason ? { blockedReason: task.blockedReason } : {}),
+        revision: task.revision, updatedAt: task.updatedAt })));
+  };
   const host = options.host;
   if (!host?.available) {
     return {
-      instantiation, interactions, memory, grants, authority, botChats, startConnectionReconciler,
+      recipes, instantiation, interactions, memory, grants, authority, botChats, tasks, startConnectionReconciler,
       async close() {
         await stopConnections();
         await stopSweep();
@@ -281,6 +292,7 @@ export async function startBots(options: {
     stopRuntime: (runtimeHandle) => admission.release(runtimeHandle),
   });
   return {
+    recipes,
     instantiation,
     interactions,
     memory,
@@ -288,6 +300,7 @@ export async function startBots(options: {
     authority,
     startConnectionReconciler,
     botChats,
+    tasks,
     adapter,
     async close() {
       if (checkpointTimer) clearInterval(checkpointTimer);

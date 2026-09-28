@@ -38,3 +38,4 @@ export const BotMemoryMutationResponseSchema = z.object({
 export type BotMemoryKind = z.infer<typeof BotMemoryKindSchema>;
 export type BotMemoryScope = z.infer<typeof BotMemoryScopeSchema>;
 export type BotMemoryItem = z.infer<typeof BotMemoryItemSchema>;
+export type BotMemoryMutationRequest = z.infer<typeof BotMemoryMutationRequestSchema>;

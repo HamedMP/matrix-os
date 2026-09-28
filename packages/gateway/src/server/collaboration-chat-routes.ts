@@ -82,6 +82,9 @@ export function registerCollaborationChatRoutes(options: CollaborationChatRouteO
   }));
   app.route("/", createBotRoutes({
     ...(botServices ? {
+      recipes: botServices.recipes,
+      botChats: botServices.botChats,
+      tasks: botServices.tasks,
       instantiation: botServices.instantiation,
       interactions: botServices.interactions,
       memory: botServices.memory,

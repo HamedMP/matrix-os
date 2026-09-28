@@ -33,7 +33,7 @@ describe("canonical shell Chat client", () => {
     expect(opened).toBe(response);
     expect(opened.bodyUsed).toBe(false);
     expect(fetchFn).toHaveBeenCalledWith(
-      "https://matrix.test/api/chats/events?messageVersion=2&inputVersion=1&readStateVersion=1",
+      "https://matrix.test/api/chats/events?messageVersion=2&inputVersion=1&readStateVersion=1&eventVersion=1",
       expect.objectContaining({
         method: "GET",
         headers: { Accept: "text/event-stream", "Last-Event-ID": "12", "X-Matrix-Chat-Protocol": "2", "X-Matrix-Chat-Metadata": "1" },
