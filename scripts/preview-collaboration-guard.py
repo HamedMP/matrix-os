@@ -90,6 +90,8 @@ def restore(root, nonce, restart=None):
         try:
             metadata = os.lstat(rollback)
         except FileNotFoundError:
+            # Nothing was applied yet; end the claim anyway so a late apply cannot outlive the timer.
+            record(root, nonce, "restored")
             return "none"
         if not stat.S_ISREG(metadata.st_mode) or metadata.st_mode & 0o022:
             raise ValueError("Unsafe rollback copy")

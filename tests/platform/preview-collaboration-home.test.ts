@@ -124,8 +124,10 @@ describe("preview collaboration host scripts", () => {
     expect(readFileSync(join(root, ".preview-collaboration-guard.py"), "utf8")).toBe(GUARD_SOURCE);
     expect(JSON.parse(readFileSync(join(root, ".preview-collaboration-state"), "utf8"))).toEqual({ nonce: "101-1", state: "claimed" });
     expect(hostEnv()).toBe(ORIGINAL);
-    // A runner lost after arming but before applying leaves nothing to restore on a first connection.
+    // A runner lost after arming but before applying leaves nothing to restore on a first connection,
+    // and a runner that resumes after its timer fired cannot apply any more.
     expect(JSON.parse(guard("restore", "101-1").stdout)).toBe("none");
+    expect(applyAs("101-1").status).not.toBe(0);
     expect(hostEnv()).toBe(ORIGINAL);
   });
 
