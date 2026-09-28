@@ -19,7 +19,7 @@ vi.mock("../../shell/src/components/terminal/PaneGrid.js", () => ({
 }));
 
 vi.mock("@/components/projects/ProjectSharing", () => ({
-  ProjectSharing: ({ projectId }: { projectId: string }) => <button type="button">Share project {projectId}</button>,
+  ProjectSharing: ({ projectName }: { projectName: string }) => <button type="button">Share project {projectName}</button>,
   ProjectSharingControl: ({ projectId }: { projectId: string }) => <button type="button">Share project {projectId}</button>,
   useShellCollaborationRuntimeId: () => null,
 }));
@@ -176,6 +176,39 @@ describe("TerminalApp workspace contract", () => {
       onDragStart={vi.fn()} onDragOver={vi.fn()} onDrop={vi.fn()} onDragEnd={vi.fn()} />);
 
     expect(screen.getByRole("button", { name: "Share project proj_alpha" })).toBeTruthy();
+  });
+
+  it("names the project heading and its Share control in the web project group", () => {
+    const projectShell: ShellSessionSummary = {
+      name: REF_KEY, workspaceId: WORKSPACE_ID, tabId: TAB_ID, revision: 1, workspaceRevision: 1,
+      projectId: "proj_alpha", project: "proj_alpha", status: "active",
+    };
+    render(<ShellSessionGroup label="Active" shells={[projectShell]} expanded foreground
+      deletingShellNames={[]} selectedShellName={null} projectName={(id) => (id === "proj_alpha" ? "Alpha" : id)}
+      onOpen={vi.fn()} onToggle={vi.fn()} onPin={vi.fn()} onRename={vi.fn(async () => true)}
+      onDelete={vi.fn()} draggingShellName={null} dragOverShellName={null}
+      onDragStart={vi.fn()} onDragOver={vi.fn()} onDrop={vi.fn()} onDragEnd={vi.fn()} />);
+
+    expect(screen.getByText("Alpha")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Share project Alpha" })).toBeTruthy();
+  });
+
+  it("reads project names for the Web Canvas and Web Mobile drawer", async () => {
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/api/terminal/workspaces")) return json({ workspaces: [workspace([tab()], "proj_alpha")] });
+      if (url.endsWith("/api/workspace/projects")) return json({ projects: [{ id: "proj_alpha", slug: "alpha", name: "Alpha" }] });
+      if (url.endsWith("/api/terminal/preferences")) return json({ preferences: {} });
+      if (url.includes("/api/terminal/layout")) return json({});
+      if (url.endsWith("/api/agents")) return json({ agents: [] });
+      return json({});
+    });
+    render(<TerminalApp initialSessionId={REF_KEY} />);
+    await settle();
+    await settle();
+
+    expect(screen.getByRole("button", { name: "Share project Alpha" })).toBeTruthy();
+    expect(vi.mocked(fetch).mock.calls.filter(([input]) => String(input).endsWith("/api/workspace/projects"))).toHaveLength(1);
   });
 
   it("locks an already-open menu and rename editor during deletion, then recovers on failure", () => {

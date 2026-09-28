@@ -42,6 +42,8 @@ import {
 } from "./TerminalSidebarItems";
 import { TERMINAL_MONO_FONT_FAMILY } from "./terminal-typography";
 import { DesktopTerminalSidebar } from "./DesktopTerminalSidebar";
+import { MAIN_TERMINAL_PROJECT } from "./terminal-project-groups";
+import { useWorkspaceProjectNames } from "./useWorkspaceProjectNames";
 
 const SHELLS_REFRESH_INTERVAL_MS = 5_000;
 const SHELL_SESSION_NAME_PATTERN = /^[a-z0-9][a-z0-9-]{0,30}$/;
@@ -550,6 +552,10 @@ export function LocalTerminalSidebar({
   const pinnedFirst = (left: ShellSessionSummary, right: ShellSessionSummary) => (
     Number(Boolean(right.pinned)) - Number(Boolean(left.pinned))
   );
+  // Drawer project headings show project names; the Web Desktop sidebar reads its own.
+  const projectName = useWorkspaceProjectNames(desktopParity ? [] : shells.flatMap((shell) => (
+    shell.project && shell.project !== MAIN_TERMINAL_PROJECT ? [shell.project] : []
+  )));
   const activeShells = renderedShells
     .filter((shell) => (shell.placement ?? (openSessionIds.has(shell.name) ? "active" : "background")) === "active")
     .sort(pinnedFirst);
@@ -1099,6 +1105,7 @@ export function LocalTerminalSidebar({
             onDragOver={hoverShellDropTarget}
             onDrop={dropShellOnTarget}
             onDragEnd={finishShellDrag}
+            projectName={projectName}
           />
         )}
         {!shellsLoading && renderedShells.length > 0 && (
@@ -1122,6 +1129,7 @@ export function LocalTerminalSidebar({
             onDragOver={hoverShellDropTarget}
             onDrop={dropShellOnTarget}
             onDragEnd={finishShellDrag}
+            projectName={projectName}
           />
         )}
       </div>

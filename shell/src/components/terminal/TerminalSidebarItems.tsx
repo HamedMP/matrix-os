@@ -644,6 +644,8 @@ function CollapsedRailButton({
   );
 }
 
+const projectIdAsName = (projectId: string) => projectId;
+
 export function ShellSessionGroup({
   label,
   shells,
@@ -665,6 +667,7 @@ export function ShellSessionGroup({
   onDragOver,
   onDrop,
   onDragEnd,
+  projectName = projectIdAsName,
 }: {
   label: "Active" | "Background";
   shells: ShellSessionSummary[];
@@ -686,6 +689,8 @@ export function ShellSessionGroup({
   onDragOver: (shell: ShellSessionSummary) => void;
   onDrop: (shell: ShellSessionSummary) => void;
   onDragEnd: () => void;
+  /** Display name for a canonical project id; defaults to the id. */
+  projectName?: (projectId: string) => string;
 }) {
   const collapsible = label === "Background";
   const contentId = `terminal-session-group-${label.toLowerCase()}-content`;
@@ -745,8 +750,8 @@ export function ShellSessionGroup({
               <div key={`${label}-${project}`} data-terminal-project-group={project} style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 <div className="flex items-center justify-between gap-2"
                   style={{ color: "var(--terminal-drawer-subtle)", fontSize: 11, fontWeight: 700, letterSpacing: "0.04em" }}>
-                  <span>{project === MAIN_TERMINAL_PROJECT ? "Main" : project}</span>
-                  {project !== MAIN_TERMINAL_PROJECT ? <ProjectSharing projectId={project} projectName={project} /> : null}
+                  <span>{project === MAIN_TERMINAL_PROJECT ? "Main" : projectName(project)}</span>
+                  {project !== MAIN_TERMINAL_PROJECT ? <ProjectSharing projectId={project} projectName={projectName(project)} /> : null}
                 </div>
                 {projectShells.map((shell) => (
                   <ShellCard
