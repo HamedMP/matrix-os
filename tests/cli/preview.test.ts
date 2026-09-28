@@ -168,6 +168,46 @@ describe("matrix preview", () => {
     expect(process.exitCode).toBe(1);
   });
 
+  it("sends the owner to destroy a failed Private Preview instead of opening it", async () => {
+    const calls = platformServer({
+      "GET /api/private-previews/bundles?pr=1907": () => [200, bundle],
+      "GET /api/private-previews": () => [200, { privatePreviews: [{ ...machine, status: "failed" }] }],
+    });
+    const { out, err } = capture();
+    await runPreviewStart({ ...base, pr: "1907", yes: true }, { interactive: false });
+    expect(calls.map((call) => call.method)).toEqual(["GET", "GET"]);
+    expect(out.join("\n")).not.toContain("/vm/");
+    expect(err.join("\n")).toContain("matrix preview destroy 1907");
+    expect(process.exitCode).toBe(1);
+  });
+
+  it("still reports a start the platform accepted when the follow-up check fails", async () => {
+    let started = false;
+    platformServer({
+      "GET /api/private-previews/bundles?pr=1907": () => [200, bundle],
+      "GET /api/private-previews": () => (started ? [503, { error: "x" }] : [200, { privatePreviews: [] }]),
+      "POST /api/private-previews": () => {
+        started = true;
+        return [202, { machineId: machine.machineId, handle: machine.handle, status: "provisioning" }];
+      },
+    });
+    const { out } = capture();
+    await runPreviewStart({ ...base, pr: "1907", yes: true }, { interactive: false });
+    const text = out.join("\n");
+    expect(text).toContain(`${platform}/vm/${machine.handle}`);
+    expect(text).toContain("matrix preview list");
+    expect(process.exitCode).toBeUndefined();
+  });
+
+  it.each([409, 502, 418])("shows a generic message, never the server's text, for a %s", async (status) => {
+    platformServer({ "GET /api/private-previews/bundles?pr=1907": () => [status, { error: "provider detail at /opt/matrix/secret" }] });
+    const { err } = capture();
+    await runPreviewStart({ ...base, pr: "1907", yes: true }, { interactive: false });
+    expect(err.join("\n")).not.toContain("provider detail");
+    expect(err.join("\n").length).toBeGreaterThan(0);
+    expect(process.exitCode).toBe(1);
+  });
+
   it("reports a concurrent start that kept another bundle", async () => {
     let started = false;
     platformServer({

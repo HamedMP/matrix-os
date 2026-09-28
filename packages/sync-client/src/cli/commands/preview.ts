@@ -41,7 +41,9 @@ class PreviewCliError extends Error {
 const STATUS_MESSAGES: Record<number, { code: string; message: string }> = {
   401: { code: "not_authenticated", message: "Not signed in. Run `matrix login` and try again." },
   403: { code: "forbidden", message: "Private Previews are available to Matrix OS team members." },
+  409: { code: "invalid_state", message: "The Private Preview is not ready for that yet. Check `matrix preview list`." },
   429: { code: "quota_exceeded", message: "You already have the maximum number of Private Previews. Destroy one first." },
+  502: { code: "unavailable", message: "The platform could not reach the Private Preview. Try again." },
   503: { code: "unavailable", message: "Private Previews are unavailable right now." },
 };
 
@@ -77,13 +79,10 @@ async function request(
   }
   if (!res.ok) {
     if (res.status === 404) throw new PreviewCliError("not_found", notFoundMessage);
+    // Server text never reaches the terminal; each status maps to fixed guidance.
     const known = STATUS_MESSAGES[res.status];
     if (known) throw new PreviewCliError(known.code, known.message);
-    // 409 and 502 carry the platform's own generic, user-safe message.
-    const serverMessage = typeof (data as { error?: unknown })?.error === "string"
-      ? (data as { error: string }).error.slice(0, 200)
-      : "Request failed.";
-    throw new PreviewCliError("request_failed", serverMessage);
+    throw new PreviewCliError("request_failed", "Private Preview request failed.");
   }
   if (typeof data !== "object" || data === null || Array.isArray(data)) {
     throw new PreviewCliError("invalid_response", "The platform returned an unexpected response.");
@@ -184,6 +183,10 @@ export async function runPreviewStart(args: Record<string, unknown>, io: Preview
     const profile = await resolveCliProfile(args);
     const existing = await findPreview(args, pr);
     if (existing) {
+      if (existing.status === "failed") {
+        throw new PreviewCliError("preview_failed",
+          `Your Private Preview ${existing.handle} for PR #${pr} failed. Run \`matrix preview destroy ${pr}\`, then start again.`);
+      }
       if (existing.confirmedBundleVersion !== bundle.version) throw otherBundleError(existing, pr, bundle);
       succeed(args, { ...existing }, [
         `You already have Private Preview ${existing.handle} for PR #${pr}, confirmed for ${bundle.version}.`,
@@ -197,13 +200,22 @@ export async function runPreviewStart(args: Record<string, unknown>, io: Preview
     }
     const started = await request(args, "POST", "/api/private-previews", { pr, bundleVersion: bundle.version });
     // A concurrent start may have won with another bundle; the platform then
-    // returns that machine unchanged.
-    const machine = await findPreview(args, pr);
+    // returns that machine unchanged. The start itself succeeded, so a failed
+    // check only adds a hint.
+    let machine: PrivatePreviewView | undefined;
+    let checked = true;
+    try {
+      machine = await findPreview(args, pr);
+    } catch (err: unknown) {
+      if (!(err instanceof PreviewCliError)) throw err;
+      checked = false;
+    }
     if (machine && machine.confirmedBundleVersion !== bundle.version) throw otherBundleError(machine, pr, bundle);
     const handle = String(started.handle);
     succeed(args, started, [
       `Private Preview ${handle} is ${String(started.status)} for PR #${pr}.`,
       `Open it at ${previewUrl(profile.platformUrl, handle)} once it is running.`,
+      ...(checked ? [] : ["Could not confirm which bundle it is on; check `matrix preview list`."]),
     ]);
   } catch (err: unknown) {
     fail(args, err);
