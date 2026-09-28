@@ -1,18 +1,23 @@
-import { useRef, useState } from "react";
+import { useRef, useState, type RefObject } from "react";
 import { FlatList, Pressable, Text, TextInput, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import type { BotRecipeRef, BotRecipeSummary } from "@matrix-os/contracts";
 import { canonicalChatRequestId } from "@/lib/requests";
 
-export function BotRecipeChooser({ recipes, onCreate, onOpenChat }: {
+export interface BotCreationAttempt { scope: string; key: string; requestId: string }
+
+export function BotRecipeChooser({ recipes, onCreate, onOpenChat, attemptRef, attemptScope = "" }: {
   recipes: BotRecipeSummary[];
   onCreate: (recipe: BotRecipeRef, requestId: string) => Promise<string>;
   onOpenChat: (chatId: string) => void;
+  attemptRef?: RefObject<BotCreationAttempt | null>;
+  attemptScope?: string;
 }) {
   const [query, setQuery] = useState("");
   const [pending, setPending] = useState<string | null>(null);
   const [error, setError] = useState("");
-  const attempt = useRef<{ key: string; requestId: string } | null>(null);
+  const localAttempt = useRef<BotCreationAttempt | null>(null);
+  const attempt = attemptRef ?? localAttempt;
   const normalized = query.trim().toLocaleLowerCase();
   const visible = recipes.filter((recipe) => !normalized || [recipe.name, recipe.description, recipe.output]
     .some((value) => value.toLocaleLowerCase().includes(normalized)));
@@ -20,13 +25,15 @@ export function BotRecipeChooser({ recipes, onCreate, onOpenChat }: {
   const create = async (recipe: BotRecipeSummary) => {
     if (pending) return;
     const key = `${recipe.recipeId}@${recipe.version}`;
-    if (attempt.current?.key !== key) attempt.current = { key, requestId: canonicalChatRequestId() };
+    if (attempt.current?.key !== key || attempt.current.scope !== attemptScope) {
+      attempt.current = { scope: attemptScope, key, requestId: canonicalChatRequestId() };
+    }
     setPending(key);
     setError("");
     try {
       const chatId = await onCreate({ recipeId: recipe.recipeId, version: recipe.version }, attempt.current.requestId);
-      attempt.current = null;
       onOpenChat(chatId);
+      attempt.current = null;
     } catch (failure: unknown) {
       console.warn("[mobile-bots] Bot creation failed:", failure instanceof Error ? failure.name : "UnknownError");
       setError("Bot could not be created. Try again.");
