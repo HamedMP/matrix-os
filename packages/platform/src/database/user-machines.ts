@@ -338,13 +338,14 @@ export async function* iterateRunningUserMachinePages(
     handle?: string;
     provisioningClass?: UserMachineProvisioningClass;
     activationState?: UserMachineRecord['activationState'];
+    afterMachineId?: string;
   } = {},
 ): AsyncGenerator<UserMachineRecord[]> {
   if (!Number.isSafeInteger(pageSize) || pageSize < 1 || pageSize > 500) {
     throw new Error('Invalid running machine page size');
   }
   await db.ready;
-  let afterMachineId: string | undefined;
+  let afterMachineId = filters.afterMachineId;
   while (true) {
     let query = db.executor.selectFrom('user_machines').selectAll()
       .where('status', '=', 'running').where('deleted_at', 'is', null);

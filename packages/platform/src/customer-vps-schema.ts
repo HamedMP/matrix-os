@@ -102,7 +102,10 @@ export const DeployRequestSchema = z.object({
 
 export const SpeechActivationRequestSchema = z.object({
   handle: SafeHandleSchema.optional(),
-}).strict();
+  afterMachineId: z.uuid().optional(),
+}).strict().refine((value) => !(value.handle && value.afterMachineId), {
+  message: 'Specify either handle or continuation cursor',
+});
 
 export type ProvisionRequest = z.infer<typeof ProvisionRequestSchema>;
 export type PreviewProvisionInput = z.input<typeof PreviewProvisionRequestSchema>;

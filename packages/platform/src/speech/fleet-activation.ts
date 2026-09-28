@@ -23,7 +23,11 @@ export interface SpeechFleetActivationResult {
     status: "activated" | "failed";
     error?: string;
   }>;
-  detailsTruncated?: boolean;
+}
+
+export interface SpeechFleetActivationPageResult extends SpeechFleetActivationResult {
+  complete: boolean;
+  nextCursor: string | null;
 }
 
 async function configured(response: Response, expectedRevision: string): Promise<boolean> {
@@ -137,31 +141,4 @@ export async function activatePlatformSpeechFleet(options: {
   }));
   const activated = results.filter((result) => result.status === "activated").length;
   return { activated, failed: results.length - activated, results };
-}
-
-export async function activatePlatformSpeechFleetPages(options: {
-  pages: AsyncIterable<readonly z.input<typeof MachineSchema>[]>;
-  platformOrigin: string;
-  platformSecret: string;
-  fetchImpl?: typeof fetch;
-  fetchDispatcher?: import("undici").Dispatcher;
-  wait?: (delayMs: number) => Promise<void>;
-  verificationAttempts?: number;
-  concurrency?: number;
-  detailLimit?: number;
-}): Promise<SpeechFleetActivationResult> {
-  const detailLimit = options.detailLimit ?? 500;
-  if (!Number.isSafeInteger(detailLimit) || detailLimit < 0 || detailLimit > 500) {
-    throw new Error("Speech activation detail limit is invalid");
-  }
-  const aggregate: SpeechFleetActivationResult = { activated: 0, failed: 0, results: [] };
-  for await (const machines of options.pages) {
-    const batch = await activatePlatformSpeechFleet({ ...options, machines });
-    aggregate.activated += batch.activated;
-    aggregate.failed += batch.failed;
-    const remaining = detailLimit - aggregate.results.length;
-    if (remaining > 0) aggregate.results.push(...batch.results.slice(0, remaining));
-    if (batch.results.length > remaining) aggregate.detailsTruncated = true;
-  }
-  return aggregate;
 }

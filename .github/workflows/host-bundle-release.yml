@@ -424,22 +424,51 @@ jobs:
         run: |
           set -euo pipefail
           for attempt in $(seq 1 20); do
-            ACTIVATE_RESPONSE="$(curl --fail --silent --show-error --max-time 180 \
-              -X POST "${PLATFORM_PUBLIC_URL%/}/vps/speech/activate" \
-              -H "Authorization: Bearer ${PLATFORM_SECRET}" \
-              -H "Content-Type: application/json" \
-              -d '{}')"
-            failed="$(printf '%s' "$ACTIVATE_RESPONSE" | jq -r '.failed')"
-            activated="$(printf '%s' "$ACTIVATE_RESPONSE" | jq -r '.activated')"
-            if ! [[ "$failed" =~ ^[0-9]+$ && "$activated" =~ ^[0-9]+$ ]]; then
-              echo "Speech activation returned an invalid summary." >&2
+            TOTAL_ACTIVATED=0
+            TOTAL_FAILED=0
+            NEXT_CURSOR=""
+            COMPLETE="false"
+            for page in $(seq 1 1000); do
+              if [ -z "$NEXT_CURSOR" ]; then
+                ACTIVATE_BODY='{}'
+              else
+                ACTIVATE_BODY="$(jq -cn --arg afterMachineId "$NEXT_CURSOR" '{afterMachineId: $afterMachineId}')"
+              fi
+              ACTIVATE_RESPONSE="$(curl --fail --silent --show-error --max-time 180 \
+                -X POST "${PLATFORM_PUBLIC_URL%/}/vps/speech/activate" \
+                -H "Authorization: Bearer ${PLATFORM_SECRET}" \
+                -H "Content-Type: application/json" \
+                -d "$ACTIVATE_BODY")"
+              failed="$(printf '%s' "$ACTIVATE_RESPONSE" | jq -r '.failed')"
+              activated="$(printf '%s' "$ACTIVATE_RESPONSE" | jq -r '.activated')"
+              complete="$(printf '%s' "$ACTIVATE_RESPONSE" | jq -r '.complete')"
+              next_cursor="$(printf '%s' "$ACTIVATE_RESPONSE" | jq -r '.nextCursor // empty')"
+              if ! [[ "$failed" =~ ^[0-9]+$ && "$activated" =~ ^[0-9]+$ ]] \
+                || ! [[ "$complete" == "true" || "$complete" == "false" ]]; then
+                echo "Speech activation returned an invalid summary." >&2
+                exit 1
+              fi
+              TOTAL_ACTIVATED=$((TOTAL_ACTIVATED + activated))
+              TOTAL_FAILED=$((TOTAL_FAILED + failed))
+              if [ "$complete" = "true" ]; then
+                COMPLETE="true"
+                break
+              fi
+              if [ -z "$next_cursor" ] || [ "$next_cursor" = "$NEXT_CURSOR" ]; then
+                echo "Speech activation returned an invalid continuation cursor." >&2
+                exit 1
+              fi
+              NEXT_CURSOR="$next_cursor"
+            done
+            if [ "$COMPLETE" != "true" ]; then
+              echo "Speech activation exceeded the bounded page count." >&2
               exit 1
             fi
-            if [ "$failed" -eq 0 ] && [ "$activated" -gt 0 ]; then
-              echo "Managed speech activation verified: activated=$activated failed=$failed"
+            if [ "$TOTAL_FAILED" -eq 0 ] && [ "$TOTAL_ACTIVATED" -gt 0 ]; then
+              echo "Managed speech activation verified: activated=$TOTAL_ACTIVATED failed=$TOTAL_FAILED"
               exit 0
             fi
-            echo "Managed speech activation is still converging: activated=$activated failed=$failed attempt=$attempt/20"
+            echo "Managed speech activation is still converging: activated=$TOTAL_ACTIVATED failed=$TOTAL_FAILED attempt=$attempt/20"
             sleep 30
           done
           echo "Managed speech activation did not converge within the bounded rollout window." >&2

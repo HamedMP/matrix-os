@@ -375,7 +375,12 @@ export function createCustomerVpsRoutes(deps: CustomerVpsRoutesDeps): Hono {
       const parsed = SpeechActivationRequestSchema.safeParse(await readJson(c));
       if (!parsed.success) return c.json({ error: 'Invalid request' }, 400);
       const result = await deps.service.activateSpeech(parsed.data);
-      return c.json({ activated: result.activated, failed: result.failed }, 200);
+      return c.json({
+        activated: result.activated,
+        failed: result.failed,
+        complete: result.complete,
+        nextCursor: result.nextCursor,
+      }, 200);
     } catch (err: unknown) {
       return jsonError(c, err, '/vps/speech/activate');
     }

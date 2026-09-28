@@ -161,6 +161,8 @@ Generate `MATRIX_PLATFORM_SPEECH_RUNTIME_TOKEN` with the speech-domain runtime i
 
 Production `existing_wallet` rollout automatically reconciles a speech-only monthly allowance for each running, authorized customer computer. `PLATFORM_SPEECH_MONTHLY_BUDGET_MICROUSD` caps speech usage; `PLATFORM_SPEECH_MONTHLY_PROMOTIONAL_CREDIT_MICROUSD` creates one idempotent UTC-month promotional grant per computer. The shared monetary ledger remains authoritative, while `ai_funded_runtime_policies` and their text-model monthly counters remain untouched. `MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED` and the text relay's `MATRIX_FUNDED_AI_RUNTIME_ENABLED` are separate rollout flags. Never seed preview no-charge grants in production.
 
+Fleet host activation is deliberately request-bounded. The operator route configures and verifies at most 16 computers per call, returning a UUID continuation cursor until the eligible fleet is complete. Release automation must follow the cursor rather than holding one request open across the fleet or repeatedly restarting at the first page.
+
 ## Device and format gates
 
 The automated composed check exercises the responsive Web Mobile renderer inside an owned desktop browser. It does not prove:
