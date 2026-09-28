@@ -330,6 +330,7 @@ install_host_bin_payload() {
       sudo rm -f -- "$incoming"
       return 1
     fi
+    sudo chmod 0644 "$BIN_DIR/matrix-support-access" || return 1
   fi
 }
 
