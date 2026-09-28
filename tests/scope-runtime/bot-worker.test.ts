@@ -3,7 +3,7 @@ import { execFile } from "node:child_process";
 import { rm } from "node:fs/promises";
 import { request as httpRequest } from "node:http";
 import { isBuiltin } from "node:module";
-import { connect, createServer, type Server } from "node:net";
+import { connect, createServer, type Server, type Socket } from "node:net";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -162,6 +162,34 @@ describe("bot workload worker", () => {
     });
     await expect(post("/v1/files")).resolves.toMatchObject({ status: 404 });
     expect(frames).toHaveLength(1);
+  });
+
+  it("waits on the broker for the configured time before answering 502", async () => {
+    const directory = await createUnixSocketTempDir();
+    cleanup.push(() => rm(directory, { recursive: true, force: true }));
+    const brokerSocket = join(directory, "silent.sock");
+    const held: Socket[] = [];
+    const silent: Server = createServer((socket) => { held.push(socket); });
+    await new Promise<void>((resolve) => silent.listen(brokerSocket, resolve));
+    cleanup.push(() => new Promise<void>((resolve) => {
+      for (const socket of held) socket.destroy();
+      silent.close(() => resolve());
+    }));
+    const bridge = await startInferenceBridge({
+      brokerSocket, runtimeHandle: RUNTIME, executionGeneration: "7", actionFor: botInferenceAction, brokerTimeoutMs: 100,
+    });
+    cleanup.push(() => bridge.close());
+    const started = Date.now();
+    const status = await new Promise<number>((resolve, reject) => {
+      const req = httpRequest({ host: "127.0.0.1", port: bridge.port, path: "/v1/messages?beta=true", method: "POST" }, (res) => {
+        res.resume();
+        resolve(res.statusCode ?? 0);
+      });
+      req.once("error", reject);
+      req.end("{}");
+    });
+    expect(status).toBe(502);
+    expect(Date.now() - started).toBeLessThan(5_000);
   });
 
   it("ships as one file of Node built-ins that never includes the Chat worker entry", async () => {

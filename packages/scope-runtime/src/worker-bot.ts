@@ -40,6 +40,8 @@ const FRAME_READ_TIMEOUT_MS = 10_000;
 const RUN_TIMEOUT_MS = 920_000;
 const CONTROL_TIMEOUT_MS = 10_000;
 const SHUTDOWN_GRACE_MS = 5_000;
+/** A funded background request may wait in the owner's queue for up to ten minutes before it is sent. */
+const BOT_INFERENCE_TIMEOUT_MS = 11 * 60_000;
 /** Lets replies already written (a cancelled run's outcome) flush before sockets are destroyed. */
 const CLOSE_GRACE_MS = 1_000;
 
@@ -219,6 +221,7 @@ export async function runScopeRuntimeBotWorker(options: {
     runtimeHandle: invocation.runtimeHandle,
     executionGeneration: invocation.executionGeneration,
     actionFor: botInferenceAction,
+    brokerTimeoutMs: BOT_INFERENCE_TIMEOUT_MS,
   });
   let commands: Awaited<ReturnType<typeof startBotCommandServer>> | undefined;
   let handler: ScopeRuntimeBotHandler | undefined;

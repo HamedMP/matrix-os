@@ -11,6 +11,8 @@ import { connect } from "node:net";
 export const MAX_BRIDGE_REQUEST_BYTES = 256 * 1024;
 export const MAX_BRIDGE_RESPONSE_BYTES = 512 * 1024;
 const BROKER_TIMEOUT_MS = 30_000;
+/** Upper bound for a caller-chosen broker wait (a funded background request may queue for minutes). */
+const MAX_BROKER_TIMEOUT_MS = 11 * 60_000;
 
 export type ScopeInferenceAction = "inference.messages" | "inference.responses" | "inference.chat_completions";
 
@@ -35,7 +37,9 @@ export function brokerRequest(
   socketPath: string,
   frame: Record<string, unknown>,
   maxResponseBytes = MAX_BRIDGE_RESPONSE_BYTES,
+  timeoutMs = BROKER_TIMEOUT_MS,
 ): Promise<Record<string, unknown>> {
+  const timeout = Math.max(1, Math.min(Math.trunc(timeoutMs), MAX_BROKER_TIMEOUT_MS));
   return new Promise((resolve, reject) => {
     const socket = connect({ path: socketPath });
     let response = Buffer.alloc(0);
@@ -47,7 +51,7 @@ export function brokerRequest(
       if (error) reject(error);
       else resolve(value ?? {});
     };
-    socket.setTimeout(BROKER_TIMEOUT_MS, () => finish(new ScopeRuntimeBrokerError("Broker timed out")));
+    socket.setTimeout(timeout, () => finish(new ScopeRuntimeBrokerError("Broker timed out")));
     socket.once("connect", () => socket.write(`${JSON.stringify(frame)}\n`));
     socket.on("data", (chunk) => {
       const bytes = Buffer.from(chunk);
@@ -95,6 +99,8 @@ export interface ScopeInferenceBridgeOptions {
   executionGeneration: string;
   /** Returns the broker action for a request, or undefined to refuse it with 404. */
   actionFor(request: IncomingMessage): ScopeInferenceAction | undefined;
+  /** How long one inference may wait on the broker; defaults to 30 seconds. */
+  brokerTimeoutMs?: number;
 }
 
 export interface ScopeInferenceBridge {
@@ -127,7 +133,7 @@ export async function startInferenceBridge(options: ScopeInferenceBridgeOptions)
             ? { "anthropic-beta": request.headers["anthropic-beta"] } : {}),
         },
         body,
-      });
+      }, MAX_BRIDGE_RESPONSE_BYTES, options.brokerTimeoutMs);
       if (brokerResponse.ok !== true || typeof brokerResponse.status !== "number"
         || typeof brokerResponse.body !== "string" || !brokerResponse.headers
         || typeof brokerResponse.headers !== "object") {
