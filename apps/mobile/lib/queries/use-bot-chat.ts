@@ -27,7 +27,10 @@ export function useBotChat(chatId: string | null, gatewayUrl: string | null) {
   return {
     snapshot: query.data ?? null,
     isError: query.isError,
-    refresh: async () => { await query.refetch(); },
+    refresh: async () => {
+      const result = await query.refetch();
+      if (result.isError) throw new Error("Bot status could not be loaded. Try again.");
+    },
     resolve: async (interactionId: string, input: ResolveBotInteractionRequest) => {
       const auth = await requireAuth();
       return resolveNativeBotInteraction(auth.token, auth.gatewayUrl, auth.chatId, interactionId, input);

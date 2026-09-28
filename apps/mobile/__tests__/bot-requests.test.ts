@@ -1,4 +1,5 @@
-import { fetchNativeBotChat, resolveNativeBotInteraction, revokeNativeBotGrant } from "@/lib/requests/bots";
+import { fetchNativeBotChat, fetchNativeBotRecipes, instantiateNativeBot,
+  resolveNativeBotInteraction, revokeNativeBotGrant } from "@/lib/requests/bots";
 
 jest.mock("micromark", () => ({ micromark: jest.fn() }));
 jest.mock("micromark-extension-gfm", () => ({ gfm: jest.fn(), gfmHtml: jest.fn() }));
@@ -39,4 +40,20 @@ it("sends a revision-bound answer and uses DELETE for grant revocation", async (
   expect(JSON.parse(fetchMock.mock.calls[0]![1]!.body as string).structuredAnswers).toEqual({ target: ["Acme"] });
   expect(fetchMock.mock.calls[1]![1]!.method).toBe("DELETE");
   expect(String(fetchMock.mock.calls[1]![0])).toContain("/api/chat-agents/bot_research1/grants/gr_abcdefgh");
+});
+
+it("lists launch recipes and instantiates one with a stable caller request ID", async () => {
+  const recipe = { recipeId: "inbox-triage", version: "v1", name: "Inbox helper",
+    description: "Summarize the inbox", output: "A daily brief" };
+  const fetchMock = jest.spyOn(global, "fetch").mockImplementation(async (input) => ({
+    ok: true, json: async () => String(input).endsWith("/bot-recipes") ? { recipes: [recipe] } : {
+      agent: { id: "bot_research1", name: "Inbox helper", avatarSeed: "a".repeat(16), revision: 1, status: "active" },
+      chatId: "chat_research", operation: "created",
+    },
+  } as Response));
+  expect(await fetchNativeBotRecipes(token, gatewayUrl)).toEqual([recipe]);
+  expect((await instantiateNativeBot(token, gatewayUrl, { clientRequestId: "req_abcdefgh", recipe: {
+    recipeId: recipe.recipeId, version: recipe.version,
+  } })).chatId).toBe("chat_research");
+  expect(JSON.parse(fetchMock.mock.calls[1]![1]!.body as string).clientRequestId).toBe("req_abcdefgh");
 });

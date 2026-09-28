@@ -17,6 +17,7 @@ export interface BotChatSnapshot {
 
 interface BotChatControlsProps {
   snapshot: BotChatSnapshot;
+  actionsAvailable?: boolean;
   onResolve: (interactionId: string, input: ResolveBotInteractionRequest) => Promise<ResolveBotInteractionResponse>;
   onRevoke: (grantId: string) => Promise<unknown>;
   onMemory: (itemId: string, action: "confirm" | "forget", input: BotMemoryMutationRequest) => Promise<unknown>;
@@ -83,8 +84,9 @@ function BotQuestion({ interaction, onResolve, busy }: {
   </View>;
 }
 
-function BotInteractionControl({ interaction, onResolve, onRefresh, onConnectUrl }: {
+function BotInteractionControl({ interaction, onResolve, onRefresh, onConnectUrl, actionsAvailable }: {
   interaction: BotInteraction;
+  actionsAvailable: boolean;
   onResolve: BotChatControlsProps["onResolve"];
   onRefresh: BotChatControlsProps["onRefresh"];
   onConnectUrl?: BotChatControlsProps["onConnectUrl"];
@@ -94,7 +96,7 @@ function BotInteractionControl({ interaction, onResolve, onRefresh, onConnectUrl
   const [settled, setSettled] = useState(false);
   const [connectUrl, setConnectUrl] = useState<string | null>(null);
   const card = botInteractionCard(interaction, new Date().toISOString());
-  const actionable = card.state === "actionable" && !settled;
+  const actionable = card.state === "actionable" && !settled && actionsAvailable;
   const resolve = async (input: ResolveBotInteractionRequest) => {
     if (!actionable || busy) return;
     setBusy(true);
@@ -122,7 +124,10 @@ function BotInteractionControl({ interaction, onResolve, onRefresh, onConnectUrl
   const payload = interaction.payload;
   return <View style={styles.card}>
     <Text style={styles.heading}>{card.title}</Text>
-    {!actionable ? <Text style={styles.muted}>{settled ? "Resolved" : card.state}</Text> : null}
+    {!actionable ? <Text style={styles.muted}>{settled ? "Resolved" : !actionsAvailable && card.state === "actionable"
+      ? "Status unavailable. Refresh to respond." : card.state}</Text> : null}
+    {!actionsAvailable && card.state === "actionable" && payload?.kind === "question"
+      ? payload.questions.map((question) => <Text key={question.questionId} style={styles.text}>{question.question}</Text>) : null}
     {actionable && payload?.kind === "question" ? <BotQuestion interaction={interaction} busy={busy} onResolve={resolve} /> : null}
     {actionable && payload?.kind === "account_choice" ? <>
       {payload.options.map((option) => <Pressable key={option.connectionId} accessibilityRole="button"
@@ -159,20 +164,27 @@ function BotInteractionControl({ interaction, onResolve, onRefresh, onConnectUrl
   </View>;
 }
 
-export function BotChatControls({ snapshot, onResolve, onRevoke, onMemory, onRefresh, onConnectUrl }: BotChatControlsProps) {
+export function BotChatControls({ snapshot, actionsAvailable = true, onResolve, onRevoke, onMemory, onRefresh, onConnectUrl }: BotChatControlsProps) {
   const [showAuthority, setShowAuthority] = useState(false);
   const [pending, setPending] = useState<string | null>(null);
   const [error, setError] = useState("");
   const change = async (key: string, action: () => Promise<unknown>) => {
-    if (pending) return;
+    if (pending || !actionsAvailable) return;
     setPending(key);
     setError("");
     try {
       await action();
-      await onRefresh();
     } catch (failure: unknown) {
       console.warn("[mobile-bots] Authority change failed:", failure instanceof Error ? failure.name : "UnknownError");
       setError("Could not change bot access. Try again.");
+      setPending(null);
+      return;
+    }
+    try {
+      await onRefresh();
+    } catch (failure: unknown) {
+      console.warn("[mobile-bots] Status refresh failed:", failure instanceof Error ? failure.name : "UnknownError");
+      setError("Bot status could not be loaded. Try again.");
     } finally {
       setPending(null);
     }
@@ -186,7 +198,8 @@ export function BotChatControls({ snapshot, onResolve, onRevoke, onMemory, onRef
     </View>
     <ScrollView style={styles.scroller} contentContainerStyle={styles.group} nestedScrollEnabled>
       {snapshot.interactions.map((interaction) => <BotInteractionControl key={interaction.interactionId}
-        interaction={interaction} onResolve={onResolve} onRefresh={onRefresh} onConnectUrl={onConnectUrl} />)}
+        interaction={interaction} actionsAvailable={actionsAvailable}
+        onResolve={onResolve} onRefresh={onRefresh} onConnectUrl={onConnectUrl} />)}
       {snapshot.tasks.map((task) => <Text key={task.taskId} style={styles.muted}>{botTaskStatusCopy(task)}</Text>)}
       {showAuthority ? <View style={styles.card}>
         <Text style={styles.heading}>What this bot can access</Text>
@@ -194,7 +207,8 @@ export function BotChatControls({ snapshot, onResolve, onRevoke, onMemory, onRef
           <Text style={styles.text}>{group.service.replaceAll("_", " ")} · {group.state.replaceAll("_", " ")}</Text>
           {group.grants.map((grant) => <View key={grant.grantId} style={styles.group}>
             <Text style={styles.text}>{grant.accountLabel} · {grant.effects.join(", ")}</Text>
-            <Pressable accessibilityRole="button" disabled={!!pending} style={styles.button}
+            <Pressable accessibilityRole="button" accessibilityState={{ disabled: !!pending || !actionsAvailable }}
+              disabled={!!pending || !actionsAvailable} style={styles.button}
               onPress={() => void change(grant.grantId, () => onRevoke(grant.grantId))}>
               <Text style={styles.text}>Revoke {grant.accountLabel}</Text></Pressable>
           </View>)}
@@ -203,10 +217,10 @@ export function BotChatControls({ snapshot, onResolve, onRevoke, onMemory, onRef
         {authority.memory.items.map((item) => <View key={item.itemId} style={styles.group}>
           <Text style={styles.text}>{item.content}</Text>
           <Text style={styles.muted}>From Chat · {item.source.at}</Text>
-          {!item.confirmed ? <Pressable accessibilityRole="button" disabled={!!pending} style={styles.button}
+          {!item.confirmed ? <Pressable accessibilityRole="button" disabled={!!pending || !actionsAvailable} style={styles.button}
             onPress={() => void change(item.itemId, () => onMemory(item.itemId, "confirm", { baseRevision: item.revision }))}>
             <Text style={styles.text}>Confirm memory</Text></Pressable> : null}
-          <Pressable accessibilityRole="button" disabled={!!pending} style={styles.button}
+          <Pressable accessibilityRole="button" disabled={!!pending || !actionsAvailable} style={styles.button}
             onPress={() => void change(item.itemId, () => onMemory(item.itemId, "forget", { baseRevision: item.revision }))}>
             <Text style={styles.text}>Forget memory</Text></Pressable>
         </View>)}
