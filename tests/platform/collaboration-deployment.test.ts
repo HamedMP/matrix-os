@@ -21,7 +21,7 @@ describe("platform collaboration deployment contract", () => {
   it("keeps long-lived collaboration sockets within a bounded Cloud Run capacity envelope", () => {
     expect(workflow).toContain("--timeout 3600");
     expect(workflow).toContain("--concurrency 80");
-    expect(workflow).toContain("--max-instances 10");
+    expect(workflow).toContain("--max-instances 15");
   });
 
   it("verifies the direct ticket key secret and deployed revision contract", () => {

@@ -798,7 +798,7 @@ jobs:
             --concurrency 80 \
             --timeout 3600 \
             --min-instances 0 \
-            --max-instances 10 \
+            --max-instances 15 \
             --ingress all \
             --allow-unauthenticated \
             "${traffic_flags[@]}" \
