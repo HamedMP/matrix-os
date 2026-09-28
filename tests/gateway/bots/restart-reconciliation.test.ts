@@ -67,6 +67,7 @@ describe("bot services at gateway start", () => {
     const connections = { ownersWithPending: async () => ["bad", "good"], reconcile, pendingContinuations, ackContinuation, deferContinuation };
     await runConnectionReconciliationPass(connections, admit);
     expect(reconcile).toHaveBeenCalledWith("good");
+    expect(pendingContinuations).toHaveBeenCalledWith("bad");
     expect(deferContinuation).toHaveBeenCalledWith("good", continuation.clientRequestId);
     fail = false;
     await runConnectionReconciliationPass(connections, admit);
