@@ -19,7 +19,6 @@ import {
   completeUserMachineResize,
   updateUserMachine,
 } from './db.js';
-import { buildPlatformVerificationToken } from './platform-token.js';
 import type { HetznerClient } from './customer-vps-hetzner.js';
 import { CustomerVpsError, genericProviderError, logCustomerVpsError } from './customer-vps-errors.js';
 import { buildVpsMeta } from './customer-vps-r2.js';
@@ -43,12 +42,14 @@ import {
   toFailureCode,
   assertMachineProviderMutationAllowed,
   sleep,
+  triggerMachineSystemUpdate,
 } from './customer-vps-support.js';
 import { createCustomerVpsContext } from './customer-vps-context.js';
 import { createCustomerVpsProvisioningDispatcher } from './customer-vps-provisioning-dispatch.js';
 import { createCustomerVpsProvisioner } from './customer-vps-provision.js';
 import { createCustomerVpsRecovery } from './customer-vps-recovery.js';
 import { createCustomerVpsRegistration } from './customer-vps-registration.js';
+import { createCustomerVpsPrivatePreviews } from './customer-vps-private-preview.js';
 
 export type {
   ProvisionResponse,
@@ -73,6 +74,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
   const { provision } = createCustomerVpsProvisioner(context, dispatcher);
   const { reconcilePendingRecoveryCreate, recover } = createCustomerVpsRecovery(context);
   const { register } = createCustomerVpsRegistration(context);
+  const privatePreviews = createCustomerVpsPrivatePreviews(context, dispatcher);
 
   async function waitForServerStatus(
     serverId: number,
@@ -245,6 +247,17 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
     register,
 
     recover,
+
+    async startPrivatePreview(input, options) {
+      // One owner's starts share a key so the quota check and insert serialize
+      // locally; the owner advisory lock covers other platform instances.
+      return withLocalProvisionLock(
+        `${input.clerkUserId}:private-preview`,
+        () => privatePreviews.startPrivatePreview(input, options),
+      );
+    },
+
+    updatePrivatePreview: privatePreviews.updatePrivatePreview,
 
     async suspendForBilling(machineId, shouldContinue) {
       if (shouldContinue && !(await shouldContinue())) return;
@@ -589,23 +602,13 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
           failed++;
           return;
         }
-        const token = buildPlatformVerificationToken(machine.handle, deps.config.platformSecret);
         const body = target?.version
           ? JSON.stringify({ version: target.version })
           : target?.channel
             ? JSON.stringify({ channel: target.channel })
             : '{}';
         try {
-          const res = await fetch(`https://${machine.publicIPv4}:443/api/system/update`, {
-            method: 'POST',
-            headers: {
-              'authorization': `Bearer ${token}`,
-              'content-type': 'application/json',
-            },
-            body,
-            signal: AbortSignal.timeout(10_000),
-            ...(deps.fetchDispatcher ? { dispatcher: deps.fetchDispatcher } : {}),
-          } as RequestInit & { dispatcher?: import('undici').Dispatcher });
+          const res = await triggerMachineSystemUpdate(deps, machine, body);
           if (res.ok) {
             results.push({ machineId: machine.machineId, handle: machine.handle, status: 'triggered' });
             triggered++;

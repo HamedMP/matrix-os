@@ -1,6 +1,7 @@
 /** Stateless customer VPS helpers: constants, responses, server names, and billing guards. */
 import type { PlatformDB, UserMachineProvisioningClass, UserMachineRecord } from './db.js';
 import { getActiveUserMachineByClerkId } from './db.js';
+import { buildPlatformVerificationToken } from './platform-token.js';
 import {
   CustomerVpsError,
   genericProviderError,
@@ -202,15 +203,38 @@ export async function assertMachineProviderMutationAllowed(
   now: Date,
   authorizationBasis: 'billing_entitlement' | 'prebilling_intent' = 'billing_entitlement',
 ): Promise<void> {
-  // Preview authorization is platform/operator scoped and deliberately does
-  // not consume or depend on the owner's customer billing entitlement.
-  if (machine.provisioningClass === 'preview') return;
+  // Preview and Private Preview authorization is platform scoped and
+  // deliberately does not consume or depend on the owner's customer billing
+  // entitlement; their own quotas bound them (spec 537 P4).
+  if (machine.provisioningClass === 'preview' || machine.provisioningClass === 'private-preview') return;
   // The provisioning worker validates the exact intent, selection, machine
   // binding, and unexpired lease before reaching either provider-create path.
   if (authorizationBasis === 'prebilling_intent'
     && machine.activationState === 'awaiting_billing'
     && machine.prebillingIntentId !== null) return;
   await assertBillingResizeAllowed(deps, machine.clerkUserId, machine.runtimeSlot, serverType, now);
+}
+
+/**
+ * Asks one running machine's gateway to install a release. The body names an
+ * exact version or a channel; the machine's updater fetches the metadata.
+ */
+export async function triggerMachineSystemUpdate(
+  deps: Pick<CustomerVpsServiceDeps, 'config' | 'fetchDispatcher'>,
+  machine: Pick<UserMachineRecord, 'handle' | 'publicIPv4'>,
+  body: string,
+): Promise<Response> {
+  const token = buildPlatformVerificationToken(machine.handle, deps.config.platformSecret);
+  return fetch(`https://${machine.publicIPv4}:443/api/system/update`, {
+    method: 'POST',
+    headers: {
+      'authorization': `Bearer ${token}`,
+      'content-type': 'application/json',
+    },
+    body,
+    signal: AbortSignal.timeout(10_000),
+    ...(deps.fetchDispatcher ? { dispatcher: deps.fetchDispatcher } : {}),
+  } as RequestInit & { dispatcher?: import('undici').Dispatcher });
 }
 
 export function sleep(ms: number): Promise<void> {
