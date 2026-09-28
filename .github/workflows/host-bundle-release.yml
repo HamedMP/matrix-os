@@ -389,7 +389,7 @@ jobs:
     needs: [dev-bundle-gate, build, publish]
     if: ${{ needs.dev-bundle-gate.outputs.should_build == 'true' && github.event_name == 'workflow_dispatch' && inputs.deploy_after_publish && ((github.ref_type == 'branch' && github.ref_name == 'main') || github.ref_type == 'tag') }}
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 90
     env:
       PLATFORM_PUBLIC_URL: ${{ vars.PLATFORM_PUBLIC_URL || 'https://app.matrix-os.com' }}
       PLATFORM_SECRET: ${{ secrets.PLATFORM_SECRET }}
@@ -423,16 +423,15 @@ jobs:
         if: env.MATRIX_PLATFORM_SPEECH_RUNTIME_ENABLED == 'true'
         run: |
           set -euo pipefail
-          for attempt in $(seq 1 20); do
-            TOTAL_ACTIVATED=0
-            TOTAL_FAILED=0
-            NEXT_CURSOR=""
-            COMPLETE="false"
-            for page in $(seq 1 1000); do
-              if [ -z "$NEXT_CURSOR" ]; then
+          TOTAL_ACTIVATED=0
+          PAGE_CURSOR=""
+          for page in $(seq 1 1000); do
+            PAGE_VERIFIED="false"
+            for page_attempt in $(seq 1 20); do
+              if [ -z "$PAGE_CURSOR" ]; then
                 ACTIVATE_BODY='{}'
               else
-                ACTIVATE_BODY="$(jq -cn --arg afterMachineId "$NEXT_CURSOR" '{afterMachineId: $afterMachineId}')"
+                ACTIVATE_BODY="$(jq -cn --arg afterMachineId "$PAGE_CURSOR" '{afterMachineId: $afterMachineId}')"
               fi
               ACTIVATE_RESPONSE="$(curl --fail --silent --show-error --max-time 180 \
                 -X POST "${PLATFORM_PUBLIC_URL%/}/vps/speech/activate" \
@@ -448,28 +447,32 @@ jobs:
                 echo "Speech activation returned an invalid summary." >&2
                 exit 1
               fi
-              TOTAL_ACTIVATED=$((TOTAL_ACTIVATED + activated))
-              TOTAL_FAILED=$((TOTAL_FAILED + failed))
-              if [ "$complete" = "true" ]; then
-                COMPLETE="true"
-                break
-              fi
-              if [ -z "$next_cursor" ] || [ "$next_cursor" = "$NEXT_CURSOR" ]; then
+              if [ "$complete" = "false" ] \
+                && { [ -z "$next_cursor" ] || [ "$next_cursor" = "$PAGE_CURSOR" ]; }; then
                 echo "Speech activation returned an invalid continuation cursor." >&2
                 exit 1
               fi
-              NEXT_CURSOR="$next_cursor"
+              if [ "$failed" -eq 0 ]; then
+                TOTAL_ACTIVATED=$((TOTAL_ACTIVATED + activated))
+                PAGE_VERIFIED="true"
+                break
+              fi
+              echo "Managed speech activation page is still converging: page=$page activated=$activated failed=$failed attempt=$page_attempt/20"
+              sleep 30
             done
-            if [ "$COMPLETE" != "true" ]; then
-              echo "Speech activation exceeded the bounded page count." >&2
+            if [ "$PAGE_VERIFIED" != "true" ]; then
+              echo "Managed speech activation did not converge within the bounded rollout window." >&2
               exit 1
             fi
-            if [ "$TOTAL_FAILED" -eq 0 ] && [ "$TOTAL_ACTIVATED" -gt 0 ]; then
-              echo "Managed speech activation verified: activated=$TOTAL_ACTIVATED failed=$TOTAL_FAILED"
+            if [ "$complete" = "true" ]; then
+              if [ "$TOTAL_ACTIVATED" -eq 0 ]; then
+                echo "Managed speech activation found no eligible customer computers." >&2
+                exit 1
+              fi
+              echo "Managed speech activation verified: activated=$TOTAL_ACTIVATED failed=0"
               exit 0
             fi
-            echo "Managed speech activation is still converging: activated=$TOTAL_ACTIVATED failed=$TOTAL_FAILED attempt=$attempt/20"
-            sleep 30
+            PAGE_CURSOR="$next_cursor"
           done
-          echo "Managed speech activation did not converge within the bounded rollout window." >&2
+          echo "Speech activation exceeded the bounded page count." >&2
           exit 1

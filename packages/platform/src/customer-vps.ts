@@ -23,7 +23,6 @@ import {
   listPendingProviderDeletions,
   listAllUserMachines,
   listRunningUserMachines,
-  iterateRunningUserMachinePages,
   listStaleResizingUserMachines,
   listStaleUserMachines,
   lockUserMachineProvisioning,
@@ -76,7 +75,10 @@ import {
 } from './customer-vps-host-bundle.js';
 import { selectCustomerVpsDeployMachines } from './customer-vps-deploy-selection.js';
 import {
-  activatePlatformSpeechFleet,
+  activateCustomerVpsSpeechPage,
+  type CustomerVpsSpeechActivationTarget,
+} from './customer-vps-speech-activation.js';
+import {
   type SpeechFleetActivationPageResult,
 } from './speech/fleet-activation.js';
 import {
@@ -194,10 +196,7 @@ export interface DeployTarget {
   handle?: string;
 }
 
-export interface SpeechActivationTarget {
-  handle?: string;
-  afterMachineId?: string;
-}
+export type SpeechActivationTarget = CustomerVpsSpeechActivationTarget;
 
 export interface CustomerVpsService {
   provision(input: ProvisionRequest, options?: ProvisionOptions): Promise<ProvisionResponse>;
@@ -3006,39 +3005,13 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
     },
 
     async activateSpeech(target?: SpeechActivationTarget): Promise<SpeechFleetActivationPageResult> {
-      const platformOrigin = new URL(deps.config.platformRegisterUrl).origin;
-      // One request handles at most one concurrent wave. Even if every gateway
-      // status probe reaches its 10-second timeout, the response remains inside
-      // the release workflow's 180-second request deadline.
-      const pageSize = 16;
-      const pages = iterateRunningUserMachinePages(deps.db, pageSize, {
-        ...(target?.handle ? { handle: target.handle } : {}),
-        ...(target?.afterMachineId ? { afterMachineId: target.afterMachineId } : {}),
-        provisioningClass: 'customer',
-        activationState: 'authorized',
-      });
-      const firstPage = await pages.next();
-      await pages.return(undefined);
-      const machines: UserMachineRecord[] = firstPage.done ? [] : firstPage.value;
-      const result = await activatePlatformSpeechFleet({
-        machines: machines.map((machine) => ({
-          machineId: machine.machineId,
-          clerkUserId: machine.clerkUserId,
-          handle: machine.handle,
-          runtimeSlot: machine.runtimeSlot,
-          runtimeTokenEpoch: machine.runtimeTokenEpoch,
-          publicIPv4: machine.publicIPv4,
-        })),
-        platformOrigin,
+      return activateCustomerVpsSpeechPage({
+        db: deps.db,
+        target,
+        platformRegisterUrl: deps.config.platformRegisterUrl,
         platformSecret: deps.config.platformSecret,
         fetchDispatcher: deps.fetchDispatcher,
       });
-      const complete = target?.handle !== undefined || machines.length < pageSize;
-      return {
-        ...result,
-        complete,
-        nextCursor: complete ? null : machines.at(-1)!.machineId,
-      };
     },
 
     async reconcileProvisioning() {
