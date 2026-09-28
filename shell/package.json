@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev --webpack",
+    "dev": "next dev -p ${PORT:-3000}",
     "build": "pnpm --dir .. --filter '@matrix-os/observability' --filter '@matrix-os/brand' build && next build --webpack",
     "start": "next start",
     "lint": "eslint",

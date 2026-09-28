@@ -50,9 +50,29 @@ function readRuntimeSlotFromLocation(): string | null {
   return new URLSearchParams(window.location.search).get("runtime");
 }
 
-export function ShellHome({ initialCollaborationView }: { initialCollaborationView?: ChatCollaborationView } = {}) {
-  const isMobile = useMobileViewport();
+type ShellHomeProps = { initialCollaborationView?: ChatCollaborationView };
+
+const localAuthBypass = process.env.NEXT_PUBLIC_E2E_TEST_BYPASS === "1";
+
+export function ShellHome(props: ShellHomeProps = {}) {
+  if (localAuthBypass) {
+    return <ShellHomeContent {...props} userId={null} sessionId={null} />;
+  }
+
+  return <ManagedShellHome {...props} />;
+}
+
+function ManagedShellHome(props: ShellHomeProps) {
   const { userId, sessionId } = useAuth();
+  return <ShellHomeContent {...props} userId={userId} sessionId={sessionId} />;
+}
+
+function ShellHomeContent({
+  initialCollaborationView,
+  userId,
+  sessionId,
+}: ShellHomeProps & { userId: string | null | undefined; sessionId: string | null | undefined }) {
+  const isMobile = useMobileViewport();
   const cachePathname = typeof window === "undefined" ? "/" : window.location.pathname;
   const cacheScope = createShellSnapshotScope({ userId, pathname: cachePathname });
   useTheme({ cacheScope });
