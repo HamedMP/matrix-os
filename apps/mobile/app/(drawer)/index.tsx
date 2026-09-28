@@ -5,6 +5,7 @@ import {
   FlatList,
   InteractionManager,
   KeyboardAvoidingView,
+  Linking,
   Platform,
   Pressable,
   Text,
@@ -40,6 +41,8 @@ import { Icon, IconButton } from "@/components/ui";
 import { AnalyticsMask } from "@/lib/analytics";
 import { CanonicalInputMessage } from "@/components/CanonicalInputMessage";
 import { CanonicalApprovalMessage } from "@/components/CanonicalApprovalMessage";
+import { BotChatControls } from "@/components/BotChatControls";
+import { useBotChat } from "@/lib/queries/use-bot-chat";
 import { ChatContextMenu } from "@/components/ChatContextMenu";
 import { HOSTED_GATEWAY_URL } from "@/lib/storage";
 
@@ -62,6 +65,8 @@ export default function ChatScreen() {
     ?? "there";
 
   const { detail, computer, refresh } = useCanonicalChatDetail(activeChatId);
+  const gatewayUrl = computer ? `${HOSTED_GATEWAY_URL}${computer.gatewayPath}` : null;
+  const botChat = useBotChat(activeChatId, gatewayUrl);
   const { catalog } = useChatProviderCatalog();
   const { projects } = useProjects();
   const sendMessage = useSendChatMessage();
@@ -205,6 +210,15 @@ export default function ChatScreen() {
       behavior={Platform.OS === "ios" ? "padding" : undefined}
       keyboardVerticalOffset={84}
     >
+      {botChat.snapshot ? <BotChatControls snapshot={botChat.snapshot} onResolve={botChat.resolve}
+        onRevoke={botChat.revoke} onMemory={botChat.memory} onRefresh={botChat.refresh}
+        onConnectUrl={async (url) => {
+          if (new URL(url).protocol !== "https:") throw new Error("Invalid consent link");
+          await Linking.openURL(url);
+        }} /> : null}
+      {botChat.isError && activeChatId ? <Text accessibilityRole="alert" style={styles.systemText}>
+        Bot status could not be loaded. Try again.
+      </Text> : null}
       <FlatList
         style={styles.hero}
         data={messages}
