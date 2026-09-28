@@ -96,6 +96,37 @@ describe("DesktopTerminalSidebar project sharing (#1798)", () => {
     expect(calls.filter((url) => url.endsWith("/api/workspace/projects"))).toHaveLength(1);
   });
 
+  it("looks up the name of a project whose session appears after the first lookup", async () => {
+    const view = await renderSidebar([shell("tws_launch:tt_2", "api-server", "proj_launch")]);
+    expect(screen.getByRole("group", { name: "Launch Site" })).toBeTruthy();
+
+    view.rerender(<DesktopTerminalSidebar sessions={[
+      shell("tws_launch:tt_2", "api-server", "proj_launch"),
+      shell("tws_docs:tt_4", "writer", "proj_docs"),
+    ]} selectedName={null} creating={false} onCreate={vi.fn()} onOpen={vi.fn()} onDelete={vi.fn()} />);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(screen.getByRole("group", { name: "Docs" })).toBeTruthy();
+    const calls = vi.mocked(fetch).mock.calls.map(([input]) => String(input));
+    expect(calls.filter((url) => url.endsWith("/api/workspace/projects"))).toHaveLength(2);
+    expect(calls.filter((url) => url.endsWith("/api/system/info"))).toHaveLength(1);
+  });
+
+  it("does not look names up again while the set of projects is unchanged", async () => {
+    const sessions = [shell("tws_launch:tt_2", "api-server", "proj_launch")];
+    const view = await renderSidebar(sessions);
+    view.rerender(<DesktopTerminalSidebar sessions={[...sessions, shell("tws_launch:tt_3", "worker", "proj_launch")]}
+      selectedName={null} creating={false} onCreate={vi.fn()} onOpen={vi.fn()} onDelete={vi.fn()} />);
+    await act(async () => { await Promise.resolve(); });
+
+    const calls = vi.mocked(fetch).mock.calls.map(([input]) => String(input));
+    expect(calls.filter((url) => url.endsWith("/api/workspace/projects"))).toHaveLength(1);
+  });
+
   it("falls back to the project id when its name is unavailable", async () => {
     await renderSidebar([shell("tws_other:tt_5", "shell", "proj_unknown")]);
 

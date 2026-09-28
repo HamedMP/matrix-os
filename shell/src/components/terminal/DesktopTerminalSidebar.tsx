@@ -29,7 +29,9 @@ export function DesktopTerminalSidebar({
   const grouped = projectGroups.some(([project]) => project !== MAIN_TERMINAL_PROJECT);
   // Resolved once for every project heading, and only when there is one.
   const runtimeId = useShellCollaborationRuntimeId(grouped);
-  const projectName = useWorkspaceProjectNames(grouped);
+  const projectName = useWorkspaceProjectNames(
+    projectGroups.flatMap(([project]) => (project === MAIN_TERMINAL_PROJECT ? [] : [project])),
+  );
   const rows = (items: ShellSessionSummary[]) => items.map((shell) => (
     <DesktopTerminalSessionRow key={shell.name} shell={shell} selected={selectedName === shell.name}
       onOpen={onOpen} onDelete={onDelete} />

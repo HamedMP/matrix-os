@@ -14,14 +14,17 @@ const WorkspaceProjectsSchema = z.looseObject({
 });
 
 /**
- * Display names by canonical project id, fetched once while `enabled`. Unknown
- * ids (or a failed lookup) fall back to the id itself.
+ * Display names for the given canonical project ids. The list is fetched again
+ * only when the set of ids changes (a project's first session appears or its
+ * last one goes), not on every session refresh. Unknown ids (or a failed
+ * lookup) fall back to the id itself.
  */
-export function useWorkspaceProjectNames(enabled: boolean): (projectId: string) => string {
+export function useWorkspaceProjectNames(projectIds: readonly string[]): (projectId: string) => string {
   const [names, setNames] = useState<Record<string, string>>({});
+  const projectSetKey = [...new Set(projectIds)].sort().join("\n");
   // react-doctor-disable-next-line react-doctor/no-fetch-in-effect -- project names are client-local gateway state for display only; the bounded request is aborted on unmount and does not belong to a user event.
   useEffect(() => {
-    if (!enabled) return undefined;
+    if (!projectSetKey) return undefined;
     const controller = new AbortController();
     void fetch(`${getGatewayUrl()}/api/workspace/projects`, {
       headers: { accept: "application/json" },
@@ -39,6 +42,6 @@ export function useWorkspaceProjectNames(enabled: boolean): (projectId: string) 
       console.warn("[terminal-projects] project names unavailable", error instanceof Error ? error.name : "UnknownError");
     });
     return () => controller.abort();
-  }, [enabled]);
+  }, [projectSetKey]);
   return (projectId) => (Object.hasOwn(names, projectId) ? names[projectId]! : projectId);
 }
