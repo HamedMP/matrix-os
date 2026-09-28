@@ -23,6 +23,27 @@ export interface ProvisionResponse {
   etaSeconds: number;
 }
 
+export interface PrivatePreviewStartInput {
+  clerkUserId: string;
+  sourcePr: number;
+  bundleVersion: string;
+}
+
+export interface PrivatePreviewStartResponse extends ProvisionResponse {
+  handle: string;
+}
+
+export interface PrivatePreviewUpdateInput {
+  clerkUserId: string;
+  machineId: string;
+  bundleVersion: string;
+}
+
+export interface PrivatePreviewUpdateResponse {
+  machineId: string;
+  status: 'updating';
+}
+
 export interface ProvisionOptions {
   dispatch?: 'wait' | 'detached';
 }
@@ -93,6 +114,8 @@ export interface CustomerVpsService {
     options?: ProvisionOptions,
   ): Promise<ProvisionResponse>;
   provisionPreview(input: PreviewProvisionInput): Promise<ProvisionResponse>;
+  startPrivatePreview(input: PrivatePreviewStartInput, options?: ProvisionOptions): Promise<PrivatePreviewStartResponse>;
+  updatePrivatePreview(input: PrivatePreviewUpdateInput): Promise<PrivatePreviewUpdateResponse>;
   register(token: string | undefined, input: RegisterRequest): Promise<RegisterResponse>;
   recover(input: RecoverRequest): Promise<RecoverResponse>;
   resize(input: ResizeMachineRequest & { machineId: string }): Promise<ResizeResponse>;
