@@ -102,14 +102,18 @@ export function classifySharedFileFailure(error: unknown): Exclude<SharedFileUna
   return "unavailable";
 }
 
-/** Text detection for previews: a declared text type, or UTF-8 without NUL bytes in the first 8 KiB. */
+/**
+ * Text detection for previews: a text-like or unlabeled type whose bytes are
+ * valid UTF-8 without NUL bytes. Invalid UTF-8 is never shown or edited, so a
+ * save can never rewrite bytes the preview could not represent.
+ */
 export function decodeSharedFileText(bytes: Uint8Array, contentType: string): string | null {
   const textual = contentType.startsWith("text/") || /(?:json|xml|yaml|javascript|typescript|csv|markdown)$/.test(contentType);
   const sample = bytes.subarray(0, 8 * 1024);
   if (sample.includes(0)) return null;
   if (!textual && contentType !== "application/octet-stream") return null;
   try {
-    return new TextDecoder("utf-8", { fatal: !textual }).decode(bytes);
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
   } catch (error: unknown) {
     if (!(error instanceof TypeError)) console.warn("[shared-file] text decode failed", error instanceof Error ? error.name : "UnknownError");
     return null;

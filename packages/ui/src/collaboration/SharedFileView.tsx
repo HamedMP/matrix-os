@@ -58,13 +58,26 @@ function saveBytes(bytes: Uint8Array | string, name: string, contentType: string
   window.setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
-function textPreview(text: string, contentType: string): Preview {
-  return { kind: "text", text, bytes: new TextEncoder().encode(text), contentType };
+/** `bytes` are what the home holds (or what a save just wrote), never a re-encoding of a lossy decode. */
+function textPreview(text: string, contentType: string, bytes: Uint8Array = new TextEncoder().encode(text)): Preview {
+  return { kind: "text", text, bytes, contentType };
+}
+
+function byteLength(text: string): number {
+  return new TextEncoder().encode(text).byteLength;
 }
 
 /** The file entry of a file scope and a bounded preview of its bytes. */
 async function readSharedFile(api: CollaborationApi, scopeId: string): Promise<SharedFile> {
-  const page = CollaborationFileListResponseSchema.parse(await api.get(`${scopePath(scopeId)}/files?limit=1`));
+  let listed: unknown;
+  try {
+    listed = await api.get(`${scopePath(scopeId)}/files?limit=1`);
+  } catch (error: unknown) {
+    // The scope itself was just authorized; a missing listing means the owner moved or deleted the file.
+    if (sharedFileFailureCode(error) === "not_found") throw new ResourceMissing();
+    throw error;
+  }
+  const page = CollaborationFileListResponseSchema.parse(listed);
   const entry = page.entries.find((candidate) => candidate.kind === "file");
   if (!entry || !api.getContent) throw new ResourceMissing();
   let content;
@@ -78,7 +91,9 @@ async function readSharedFile(api: CollaborationApi, scopeId: string): Promise<S
   const text = decodeSharedFileText(content.bytes, content.contentType);
   return {
     entry,
-    preview: text === null ? { kind: "binary", bytes: content.bytes, contentType: content.contentType } : textPreview(text, content.contentType),
+    preview: text === null
+      ? { kind: "binary", bytes: content.bytes, contentType: content.contentType }
+      : textPreview(text, content.contentType, content.bytes),
   };
 }
 
@@ -87,6 +102,54 @@ function saveFailureMessage(error: unknown): string {
   if (reason === "host_offline") return "Your changes were not saved. The owner's computer is offline.";
   if (reason === "access_removed") return "Your changes were not saved. Your access may have changed.";
   return "Your changes were not saved. Try again.";
+}
+
+/** Downloads the previewed bytes, or reads them bounded when the preview held none; returns an error notice or null. */
+async function downloadSharedFile(api: CollaborationApi, scopeId: string, file: SharedFile): Promise<Notice> {
+  const name = sharedFileName(file.entry.path);
+  if (file.preview.kind !== "too_large") {
+    saveBytes(file.preview.bytes, name, file.preview.contentType);
+    return null;
+  }
+  try {
+    const content = await api.getContent!(contentPath(scopeId, file.entry.id), { maxBytes: SHARED_FILE_DOWNLOAD_MAX_BYTES });
+    if (content.status === "too_large") return { kind: "error", message: "This file is too large to download here." };
+    saveBytes(content.bytes, name, content.contentType);
+    return null;
+  } catch (error: unknown) {
+    console.warn("[shared-file] download failed", error instanceof Error ? error.name : "UnknownError");
+    return { kind: "error", message: "The file could not be downloaded. Try again." };
+  }
+}
+
+/** A write the home rejected is a conflict when the home now holds a newer revision. */
+async function findSharedFileConflict(api: CollaborationApi, scopeId: string, readRevision: string): Promise<Conflict | null> {
+  try {
+    const latest = await readSharedFile(api, scopeId);
+    if (latest.entry.revision === readRevision) return null;
+    return { text: latest.preview.kind === "text" ? latest.preview.text : null, file: latest };
+  } catch (error: unknown) {
+    console.warn("[shared-file] conflict check failed", error instanceof Error ? error.name : "UnknownError");
+    return null;
+  }
+}
+
+type SaveOutcome = { kind: "saved"; file: SharedFile } | { kind: "conflict"; conflict: Conflict } | { kind: "failed"; message: string };
+
+/** Writes `draft` conditional on the revision it was based on; never retries over a newer revision. */
+async function saveSharedFileDraft(api: CollaborationApi, scopeId: string, file: SharedFile, draft: string, clientRequestId: string): Promise<SaveOutcome> {
+  try {
+    const result = CollaborationFileActionResponseSchema.parse(await api.post(`${scopePath(scopeId)}/files/actions`, {
+      type: "write", fileId: file.entry.id, content: draft, expectedRevision: file.entry.revision, clientRequestId,
+    }));
+    const contentType = file.preview.kind === "too_large" ? "text/plain" : file.preview.contentType;
+    return { kind: "saved", file: { entry: result.entry ?? file.entry, preview: textPreview(draft, contentType) } };
+  } catch (error: unknown) {
+    const code = sharedFileFailureCode(error);
+    console.warn("[shared-file] save failed", code ?? (error instanceof Error ? error.name : "UnknownError"));
+    const conflict = code === "invalid_request" ? await findSharedFileConflict(api, scopeId, file.entry.revision) : null;
+    return conflict ? { kind: "conflict", conflict } : { kind: "failed", message: saveFailureMessage(error) };
+  }
 }
 
 /**
@@ -156,101 +219,111 @@ function SharedFileEditor({ api, scopeId, scope, initial }: {
   const { entry, preview } = file;
   const name = sharedFileName(entry.path);
   const canEdit = scope.role !== "viewer" && preview.kind === "text" && preview.bytes.byteLength <= SHARED_FILE_EDIT_MAX_BYTES;
+  const draftTooLarge = draft !== null && byteLength(draft) > SHARED_FILE_EDIT_MAX_BYTES;
 
   const download = async () => {
     setNotice(null);
-    if (preview.kind !== "too_large") {
-      saveBytes(preview.bytes, name, preview.contentType);
-      return;
-    }
-    try {
-      const content = await api.getContent!(contentPath(scopeId, entry.id), { maxBytes: SHARED_FILE_DOWNLOAD_MAX_BYTES });
-      if (content.status === "too_large") {
-        setNotice({ kind: "error", message: "This file is too large to download here." });
-        return;
-      }
-      saveBytes(content.bytes, name, content.contentType);
-    } catch (error: unknown) {
-      console.warn("[shared-file] download failed", error instanceof Error ? error.name : "UnknownError");
-      setNotice({ kind: "error", message: "The file could not be downloaded. Try again." });
-    }
-  };
-
-  /** A write the home rejected is a conflict when the home now holds a newer revision. */
-  const findConflict = async (): Promise<Conflict | null> => {
-    try {
-      const latest = await readSharedFile(api, scopeId);
-      if (latest.entry.revision === entry.revision) return null;
-      return { text: latest.preview.kind === "text" ? latest.preview.text : null, file: latest };
-    } catch (error: unknown) {
-      console.warn("[shared-file] conflict check failed", error instanceof Error ? error.name : "UnknownError");
-      return null;
-    }
+    setNotice(await downloadSharedFile(api, scopeId, file));
   };
 
   const save = async () => {
-    if (draft === null || saving) return;
+    if (draft === null || saving || draftTooLarge) return;
     const key = `${entry.revision}:${draft}`;
     if (saveRequest.current?.key !== key) saveRequest.current = { key, id: crypto.randomUUID() };
     setSaving(true);
     setNotice(null);
     try {
-      const result = CollaborationFileActionResponseSchema.parse(await api.post(`${scopePath(scopeId)}/files/actions`, {
-        type: "write", fileId: entry.id, content: draft, expectedRevision: entry.revision, clientRequestId: saveRequest.current.id,
-      }));
-      setFile({ entry: result.entry ?? entry, preview: textPreview(draft, preview.kind === "too_large" ? "text/plain" : preview.contentType) });
-      setDraft(null);
-      setNotice({ kind: "saved" });
-    } catch (error: unknown) {
-      const code = sharedFileFailureCode(error);
-      console.warn("[shared-file] save failed", code ?? (error instanceof Error ? error.name : "UnknownError"));
-      const found = code === "invalid_request" ? await findConflict() : null;
-      if (found) setConflict(found);
-      else setNotice({ kind: "error", message: saveFailureMessage(error) });
+      const outcome = await saveSharedFileDraft(api, scopeId, file, draft, saveRequest.current.id);
+      if (outcome.kind === "saved") {
+        setFile(outcome.file);
+        setDraft(null);
+        setNotice({ kind: "saved" });
+      } else if (outcome.kind === "conflict") {
+        setConflict(outcome.conflict);
+      } else {
+        setNotice({ kind: "error", message: outcome.message });
+      }
     } finally {
       setSaving(false);
     }
   };
 
   // Explicit resolution either way; nothing is written until the Contributor saves again.
-  const keepMyEdits = (resolved: Conflict) => {
+  const resolveConflict = (resolved: Conflict, keepDraft: boolean) => {
     setFile(resolved.file);
     setConflict(null);
+    if (!keepDraft) setDraft(null);
   };
-  const takeOwnerVersion = (resolved: Conflict) => {
-    setFile(resolved.file);
-    setConflict(null);
-    setDraft(null);
+  const toggleEditing = (open: boolean) => {
+    setNotice(null);
+    setDraft(open && preview.kind === "text" ? preview.text : null);
   };
 
   return <main data-slot="shared-file-view" className="mx-auto flex min-h-full w-full max-w-4xl flex-col gap-4 p-5 sm:p-8">
-    <header className="flex flex-wrap items-start gap-3">
-      <div className="min-w-0" style={{ flex: "1 1 15rem" }}>
-        <p className="text-xs font-medium uppercase tracking-[0.16em]" style={{ color: "var(--text-tertiary)" }}>Shared file</p>
-        <h1 className="mt-1 break-words text-2xl font-semibold">{name}</h1>
-        <p className="mt-1 text-sm" style={{ color: "var(--text-secondary)" }}>{ROLE_LABEL[scope.role]}</p>
-      </div>
-      <div className="flex flex-wrap gap-2">
-        {canEdit && draft === null && preview.kind === "text"
-          ? <button type="button" className={buttonClass} onClick={() => { setNotice(null); setDraft(preview.text); }}>Edit</button> : null}
-        {draft !== null && conflict === null ? <>
-          <button type="button" className={buttonClass} disabled={saving} onClick={() => void save()}>{saving ? "Saving…" : "Save"}</button>
-          <button type="button" className={buttonClass} disabled={saving} onClick={() => { setDraft(null); setNotice(null); }}>Cancel</button>
-        </> : null}
-        <button type="button" className={buttonClass} onClick={() => void download()}>Download</button>
-      </div>
-    </header>
-    {notice?.kind === "saved" ? <p role="status" className="text-sm">Saved</p> : null}
-    {notice?.kind === "error" ? <p role="alert" className="text-sm">{notice.message}</p> : null}
-    {conflict ? <ConflictPanel conflict={conflict} onKeep={() => keepMyEdits(conflict)} onTakeOwner={() => takeOwnerVersion(conflict)}
+    <FileHeader name={name} role={scope.role}>
+      <FileActions canEdit={canEdit} draftOpen={draft !== null} editing={draft !== null && conflict === null} saving={saving}
+        saveBlocked={draftTooLarge} onEdit={() => toggleEditing(true)} onSave={() => void save()} onCancel={() => toggleEditing(false)}
+        onDownload={() => void download()} />
+    </FileHeader>
+    <FileNotice notice={notice} />
+    {conflict ? <ConflictPanel conflict={conflict} onKeep={() => resolveConflict(conflict, true)} onTakeOwner={() => resolveConflict(conflict, false)}
       onDownloadMine={() => saveBytes(draft ?? "", sharedFileCopyName(name), "text/plain")} /> : null}
-    {draft !== null ? <>
-      {conflict ? <p className="text-sm font-medium">Your version</p> : null}
-      <textarea aria-label="File contents" value={draft} onChange={(event) => setDraft(event.target.value)} spellCheck={false}
-        className="w-full rounded-2xl border bg-transparent p-4 font-mono text-sm" style={{ minHeight: conflict ? "30vh" : "50vh" }} />
-    </>
+    {draft !== null
+      ? <DraftEditor draft={draft} onChange={setDraft} saving={saving} tooLarge={draftTooLarge} inConflict={conflict !== null} />
       : <FilePreview preview={preview} showEditLimit={scope.role !== "viewer" && !canEdit} />}
   </main>;
+}
+
+function FileActions({ canEdit, draftOpen, editing, saving, saveBlocked, onEdit, onSave, onCancel, onDownload }: {
+  canEdit: boolean;
+  draftOpen: boolean;
+  editing: boolean;
+  saving: boolean;
+  saveBlocked: boolean;
+  onEdit: () => void;
+  onSave: () => void;
+  onCancel: () => void;
+  onDownload: () => void;
+}) {
+  return <>
+    {canEdit && !draftOpen ? <button type="button" className={buttonClass} onClick={onEdit}>Edit</button> : null}
+    {editing ? <button type="button" className={buttonClass} disabled={saving || saveBlocked} onClick={onSave}>{saving ? "Saving…" : "Save"}</button> : null}
+    {editing ? <button type="button" className={buttonClass} disabled={saving} onClick={onCancel}>Cancel</button> : null}
+    <button type="button" className={buttonClass} onClick={onDownload}>Download</button>
+  </>;
+}
+
+function FileNotice({ notice }: { notice: Notice }) {
+  if (notice?.kind === "saved") return <p role="status" className="text-sm">Saved</p>;
+  if (notice?.kind === "error") return <p role="alert" className="text-sm">{notice.message}</p>;
+  return null;
+}
+
+function FileHeader({ name, role, children }: { name: string; role: Scope["role"]; children: ReactNode }) {
+  return <header className="flex flex-wrap items-start gap-3">
+    <div className="min-w-0" style={{ flex: "1 1 15rem" }}>
+      <p className="text-xs font-medium uppercase tracking-[0.16em]" style={{ color: "var(--text-tertiary)" }}>Shared file</p>
+      <h1 className="mt-1 break-words text-2xl font-semibold">{name}</h1>
+      <p className="mt-1 text-sm" style={{ color: "var(--text-secondary)" }}>{ROLE_LABEL[role]}</p>
+    </div>
+    <div className="flex flex-wrap gap-2">{children}</div>
+  </header>;
+}
+
+function DraftEditor({ draft, onChange, saving, tooLarge, inConflict }: {
+  draft: string;
+  onChange: (value: string) => void;
+  saving: boolean;
+  tooLarge: boolean;
+  inConflict: boolean;
+}) {
+  return <>
+    {inConflict ? <p className="text-sm font-medium">Your version</p> : null}
+    {tooLarge ? <p className="text-sm">This text is over the 64 KB limit for editing here. Shorten it to save.</p> : null}
+    {/* Read-only while saving: the request carries this exact text, so nothing typed meanwhile can be dropped. */}
+    <textarea aria-label="File contents" value={draft} readOnly={saving} onChange={(event) => onChange(event.target.value)} spellCheck={false}
+      className="w-full rounded-2xl border bg-transparent p-4 font-mono text-sm" style={{ minHeight: inConflict ? "30vh" : "50vh" }} />
+  </>;
 }
 
 function ConflictPanel({ conflict, onKeep, onTakeOwner, onDownloadMine }: {

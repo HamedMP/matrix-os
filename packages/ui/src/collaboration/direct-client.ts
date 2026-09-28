@@ -521,6 +521,7 @@ export function createCollaborationDirectClient(options: CollaborationDirectClie
       response = await signedFetch(scopeId, connected, "GET", path, "", undefined);
       if (disposed || initial.generation !== generation) { await response.body?.cancel(); throw closedError(); }
     }
+    if (response.status === 503 && await isRelayTooLarge(response)) return { status: "too_large", size: null };
     if (response.status < 200 || response.status >= 300) await response.body?.cancel();
     throwForStatus(response.status);
     return readBoundedContent(response, maxBytes);
@@ -621,6 +622,21 @@ function scopeStateFor(code: CollaborationDirectErrorCode): DirectScopeState {
   if (code === "host_offline") return "offline";
   if (code === "upgrade_required" || code === "unauthenticated" || code === "denied") return code;
   return "idle";
+}
+
+/** The platform relay answers a declared oversize response with a 503 carrying `code: "too_large"`. */
+async function isRelayTooLarge(response: Response): Promise<boolean> {
+  if (!response.headers.get("content-type")?.startsWith("application/json")) return false;
+  if (Number(response.headers.get("content-length") ?? 0) > 1_024) return false;
+  try {
+    const text = await response.clone().text();
+    if (text.length > 1_024) return false;
+    const body = JSON.parse(text) as unknown;
+    return typeof body === "object" && body !== null && (body as { code?: unknown }).code === "too_large";
+  } catch (error: unknown) {
+    if (!(error instanceof SyntaxError)) console.warn("[collaboration-direct] relay error parse failed", error instanceof Error ? error.name : "UnknownError");
+    return false;
+  }
 }
 
 async function readBoundedContent(response: Response, maxBytes: number): Promise<CollaborationContent> {
