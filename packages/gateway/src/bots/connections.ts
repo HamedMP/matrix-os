@@ -78,7 +78,7 @@ export function createBotConnections(deps: {
       if (error instanceof BotStateError && error.code === "conflict") throw new BotInteractionError("conflict");
       throw error;
     }
-    const text = `Connected ${payload.service} account "${connection.label}" (connection ${connection.connectionId}). Continue the task.`;
+    const text = `Connected account "${connection.label}". Continue the task.`;
     const resolved = await createBotInteractionsRepository(tx.db).resolve({
       ownerId: interaction.ownerId, interactionId: interaction.interactionId, baseRevision: interaction.revision,
       responderActorId: interaction.responderActorId, resolution: { action: "start", connectionId: connection.connectionId, continuation: text }, now: at,
@@ -187,11 +187,20 @@ export function createBotConnections(deps: {
         // A failed sync still leaves the current inventory to compare against.
         if (!(error instanceof BotIntegrationError)) throw error;
       }
-      const connected = await deps.client.inventory(ownerId);
+      let connected: BotIntegrationConnection[] | undefined;
+      try {
+        connected = await deps.client.inventory(ownerId);
+      } catch (error: unknown) {
+        if (!(error instanceof BotIntegrationError)) throw error;
+        // An unreachable inventory cannot prove a new account, but the clock
+        // still proves expiry. Retire overdue requests without the provider.
+        console.warn("[bots] connection inventory unavailable:", error.name);
+      }
       const continuations: BotContinuation[] = [];
       for (const request of pending) {
-        const accounts = connected.filter((connection) => connection.service === request.service);
         const at = now().toISOString();
+        if (!connected && Date.parse(request.expiresAt) > Date.parse(at)) continue;
+        const accounts = connected?.filter((connection) => connection.service === request.service) ?? [];
         const outcome = connectOutcome(request, accounts.map((connection) => connection.connectionId), at);
         if (outcome.status === "pending") continue;
         try {
@@ -261,13 +270,25 @@ export function createBotConnections(deps: {
         .execute());
     },
 
+    /** One failed owner yields its place to other owners until the next retry. */
+    async deferOwner(ownerId: string): Promise<void> {
+      const at = now();
+      const retryAt = new Date(at.getTime() + CONTINUATION_RETRY_MS).toISOString();
+      await deps.transact(ownerId, (tx) => tx.db.updateTable("bot_connect_requests")
+        .set({ retry_after: retryAt, updated_at: at.toISOString() })
+        .where("owner_id", "=", ownerId).where("status", "=", "pending")
+        .execute());
+    },
+
     /** Owners with started requests or due continuations, a bounded number per pass. */
     async ownersWithPending(): Promise<string[]> {
       const at = now().toISOString();
       const [requests, continuations] = await deps.transact(PASS_OWNER, async (tx) => {
         const requests = await tx.db.selectFrom("bot_connect_requests")
           .select("owner_id").select((eb) => eb.fn.min("requested_at").as("oldest"))
-          .where("status", "=", "pending").groupBy("owner_id")
+          .where("status", "=", "pending")
+          .where((eb) => eb.or([eb("retry_after", "is", null), eb("retry_after", "<=", at)]))
+          .groupBy("owner_id")
           .orderBy("oldest", "asc").orderBy("owner_id", "asc").limit(MAX_OWNERS_PER_PASS).execute();
         const continuations = await tx.db.selectFrom("bot_interactions")
           .select("owner_id").select((eb) => eb.fn.min("created_at").as("oldest"))
@@ -279,13 +300,14 @@ export function createBotConnections(deps: {
           .limit(MAX_OWNERS_PER_PASS).execute();
         return [requests, continuations] as const;
       });
-      const oldest = new Map<string, number>();
-      for (const row of [...requests, ...continuations]) {
-        const time = new Date(row.oldest).getTime();
-        oldest.set(row.owner_id, Math.min(oldest.get(row.owner_id) ?? time, time));
+      // Each query is already oldest-first and capped. Admit due continuations
+      // before filling the remaining slots with pending provider requests.
+      const owners = continuations.map((row) => row.owner_id);
+      for (const row of requests) {
+        if (owners.length >= MAX_OWNERS_PER_PASS) break;
+        if (!owners.includes(row.owner_id)) owners.push(row.owner_id);
       }
-      return [...oldest].sort((a, b) => a[1] - b[1] || a[0].localeCompare(b[0]))
-        .slice(0, MAX_OWNERS_PER_PASS).map(([ownerId]) => ownerId);
+      return owners;
     },
   };
 }

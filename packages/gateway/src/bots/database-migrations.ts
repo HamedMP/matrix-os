@@ -306,6 +306,12 @@ async function migrateApprovalsByTaskV2(trx: Transaction<OwnerBotDatabase>): Pro
   `.execute(trx);
 }
 
+/** Failed inventory reads defer one owner briefly so later owners make progress. */
+async function migrateConnectRetryScheduleV3(trx: Transaction<OwnerBotDatabase>): Promise<void> {
+  await sql`ALTER TABLE bot_connect_requests ADD COLUMN retry_after TIMESTAMPTZ`.execute(trx);
+  await sql`CREATE INDEX idx_bot_connect_requests_due ON bot_connect_requests(retry_after, requested_at) WHERE status = 'pending'`.execute(trx);
+}
+
 export interface BotMigration {
   readonly version: number;
   readonly name: string;
@@ -316,4 +322,5 @@ export interface BotMigration {
 export const BOT_MIGRATIONS: readonly BotMigration[] = [
   { version: 1, name: "bot_state_m1", up: migrateBotStateV1 },
   { version: 2, name: "bot_approvals_by_task", up: migrateApprovalsByTaskV2 },
+  { version: 3, name: "bot_connect_retry_schedule", up: migrateConnectRetryScheduleV3 },
 ];

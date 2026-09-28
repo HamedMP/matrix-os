@@ -62,11 +62,13 @@ describe("bot services at gateway start", () => {
     const pendingContinuations = vi.fn(async () => [continuation]);
     const ackContinuation = vi.fn(async () => undefined);
     const deferContinuation = vi.fn(async () => undefined);
+    const deferOwner = vi.fn(async () => undefined);
     let fail = true;
     const admit = vi.fn(async () => { if (fail) throw new Error("temporarily busy"); });
-    const connections = { ownersWithPending: async () => ["bad", "good"], reconcile, pendingContinuations, ackContinuation, deferContinuation };
+    const connections = { ownersWithPending: async () => ["bad", "good"], reconcile, pendingContinuations, ackContinuation, deferContinuation, deferOwner };
     await runConnectionReconciliationPass(connections, admit);
     expect(reconcile).toHaveBeenCalledWith("good");
+    expect(deferOwner).toHaveBeenCalledWith("bad");
     expect(pendingContinuations).toHaveBeenCalledWith("bad");
     expect(deferContinuation).toHaveBeenCalledWith("good", continuation.clientRequestId);
     fail = false;
