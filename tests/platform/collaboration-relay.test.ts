@@ -357,6 +357,22 @@ describe("CollaborationRelay", () => {
     expect([...sent.keys()].some((name) => name.startsWith("x-matrix-collaboration-client"))).toBe(false);
   });
 
+  it("forwards the owner-runtime marker under the same bounds as every other protocol header", async () => {
+    const fetchImpl = vi.fn(async () => new Response(null, { status: 204 }));
+    const { instance } = relay({}, fetchImpl as never);
+    const send = (value: string) => instance.forward({
+      actorId: "user_owner", method: "GET", path: `/api/collaboration/scopes/${scopeId}/project/inventory`, query: "",
+      headers: new Headers({ "x-matrix-collaboration-session": "20000000-0000-4000-8000-000000000001", "x-matrix-collaboration-owner-runtime": value }),
+      body: null,
+    });
+    await send("1");
+    await send("1".repeat(8_193));
+    const sent = fetchImpl.mock.calls.map((call) => new Headers((call as unknown as [string, RequestInit])[1].headers));
+    expect(sent[0]!.get("x-matrix-collaboration-owner-runtime")).toBe("1");
+    expect(sent[1]!.has("x-matrix-collaboration-owner-runtime")).toBe(false);
+    expect(sent[1]!.get("x-matrix-collaboration-session")).toBe("20000000-0000-4000-8000-000000000001");
+  });
+
   it("resolves null and never rejects when the directory lookup fails during a socket upgrade", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     try {
