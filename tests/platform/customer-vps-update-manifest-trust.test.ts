@@ -89,6 +89,7 @@ function probeRetryUrl(refreshedUrl: string) {
   const bin = join(directory, 'bin');
   mkdirSync(bin);
   const curlLog = join(directory, 'curl.log');
+  const errorLog = join(directory, 'error.log');
   const fakeCurl = join(bin, 'curl');
   writeFileSync(fakeCurl, '#!/bin/sh\nprintf "%s\\n" "$*" >> "$CURL_LOG"\nexit 1\n');
   chmodSync(fakeCurl, 0o755);
@@ -101,7 +102,7 @@ log() { :; }
 json_field() { python3 -c 'import json,sys; print(json.load(sys.stdin).get(sys.argv[1], ""))' "$2" <<< "$1"; }
 release_url_for_version() { printf 'https://platform.example/releases/%s.json\\n' "$1"; }
 fetch_manifest() { printf '%s' "$REFRESHED_JSON"; }
-write_update_error() { :; }
+write_update_error() { printf '%s' "$1" > "$ERROR_LOG"; }
 ${updater.slice(start, end)}
 download_bundle v2026.09.28-1 "$SHA256" 100 https://storage.example/initial "$1/bundle.tar.gz"`;
   try {
@@ -111,11 +112,16 @@ download_bundle v2026.09.28-1 "$SHA256" 100 https://storage.example/initial "$1/
         ...process.env,
         PATH: `${bin}:${process.env.PATH ?? ''}`,
         CURL_LOG: curlLog,
+        ERROR_LOG: errorLog,
         SHA256: sha256,
         REFRESHED_JSON: JSON.stringify({ version: 'v2026.09.28-1', sha256, size: 100, url: refreshedUrl }),
       },
     });
-    return { result, curlCalls: readFileSync(curlLog, 'utf8').trim().split('\n').filter(Boolean) };
+    return {
+      result,
+      curlCalls: readFileSync(curlLog, 'utf8').trim().split('\n').filter(Boolean),
+      error: existsSync(errorLog) ? readFileSync(errorLog, 'utf8') : '',
+    };
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
@@ -177,9 +183,10 @@ describe('VPS update manifest trust boundary', () => {
   });
 
   it('rejects a retry manifest that changes the bundle URL to HTTP', () => {
-    const { result, curlCalls } = probeRetryUrl('http://storage.example/plaintext-bundle');
+    const { result, curlCalls, error } = probeRetryUrl('http://storage.example/plaintext-bundle');
     expect(result.status).toBe(1);
     expect(curlCalls).toHaveLength(1);
     expect(curlCalls[0]).toContain('--proto =https --proto-redir =https');
+    expect(error).toBe('download_metadata_changed');
   });
 });

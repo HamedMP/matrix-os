@@ -1042,6 +1042,11 @@ fetch_manifest() {
   printf '%s' "$manifest"
 }
 
+# Extraction plan for this long orchestration script: before moving updates to
+# a root-owned service, move version parsing, platform release validation,
+# HTTPS download retries, and checksum verification into one protected helper
+# under /usr/local/libexec. Keep only typed requests and service sequencing
+# here. The manifest trust and apply-path tests become its contract tests.
 load_trusted_apply_manifest() {
   local version manifest
   # The marker is owner-writable. Its only authority is the requested version;
