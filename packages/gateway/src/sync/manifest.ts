@@ -182,7 +182,9 @@ async function readWebStreamAsText(
       chunks.push(chunk);
     }
   } catch (err: unknown) {
-    await reader.cancel().catch((cancelErr: unknown) => {
+    // Request cleanup without awaiting it: a cancellation that never settles
+    // must not hold the caller (possibly inside the manifest advisory lock).
+    reader.cancel().catch((cancelErr: unknown) => {
       console.warn("[manifest] body cancel failed:", cancelErr instanceof Error ? cancelErr.message : String(cancelErr));
     });
     throw err;

@@ -134,7 +134,7 @@ describe("readManifest", () => {
     expect(mockDb.upsertManifestMeta).not.toHaveBeenCalled();
   });
 
-  function webStream(chunks: Uint8Array[], onCancel?: () => void): ReadableStream<Uint8Array> {
+  function webStream(chunks: Uint8Array[], onCancel?: () => void | Promise<void>): ReadableStream<Uint8Array> {
     let index = 0;
     return new ReadableStream<Uint8Array>({
       pull(controller) {
@@ -142,7 +142,7 @@ describe("readManifest", () => {
         else controller.close();
       },
       cancel() {
-        onCancel?.();
+        return onCancel?.();
       },
     });
   }
@@ -197,6 +197,22 @@ describe("readManifest", () => {
     mockDb.getManifestMeta.mockResolvedValue(null);
 
     await expect(readManifest(store, "user1")).rejects.toThrow(ManifestTooLargeError);
+    expect(onCancel).toHaveBeenCalled();
+  });
+
+  it("rejects oversized streamed manifests even when stream cancellation never settles", async () => {
+    const onCancel = vi.fn(() => new Promise<void>(() => {}));
+    const chunk = new Uint8Array(1024 * 1024);
+    const chunks = Array.from({ length: MANIFEST_JSON_MAX_BYTES / chunk.length + 2 }, () => chunk);
+    mockR2.getObject.mockResolvedValue({ body: webStream(chunks, onCancel), etag: '"etag-stuck"' });
+    mockDb.getManifestMeta.mockResolvedValue(null);
+
+    const outcome = await Promise.race([
+      readManifest(store, "user1").then(() => "resolved", (err: unknown) => err),
+      new Promise((resolve) => setTimeout(() => resolve("stalled"), 1_000)),
+    ]);
+
+    expect(outcome).toBeInstanceOf(ManifestTooLargeError);
     expect(onCancel).toHaveBeenCalled();
   });
 
