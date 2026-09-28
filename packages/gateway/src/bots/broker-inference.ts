@@ -49,9 +49,11 @@ function failure(
 }
 
 /**
- * Forwards one bot inference frame. `authorize` is consulted before the
- * first attempt and again before any funded retry, so a run whose binding
- * was released or changed never starts another paid request.
+ * Forwards one bot inference frame. `authorize` is consulted before every
+ * send, including the first funded attempt after a queue wait, so a run whose
+ * binding was released or changed never starts a paid request. The funded
+ * queue bounds how long a request waits for capacity (two minutes for a
+ * person in chat, ten for a routine); each send then has its own deadline.
  */
 export async function forwardBotInference(
   request: ScopeRuntimeBotInferenceRequest,
@@ -80,51 +82,52 @@ export async function forwardBotInference(
   }
 
   const accessSourceId = authorization.accessSourceId;
-  const resolveCredentials = deps.resolveCredentials ?? buildKernelCredentialLaunch;
-  const launch = await resolveCredentials(
-    deps.homePath,
-    process.env,
-    accessSourceId,
-    deps.fundedCredentialProvider,
-    { requestClass: binding.requestClass, claimKey: request.runtimeHandle },
-  );
-  const env = launch.env;
-  const apiKey = env?.ANTHROPIC_API_KEY;
-  const authToken = env?.ANTHROPIC_AUTH_TOKEN;
-  if ((!apiKey && !authToken) || (apiKey && authToken)) return failure(request.requestId, "provider_unavailable");
-  const baseUrl = env?.ANTHROPIC_BASE_URL?.replace(/\/$/, "") ?? "https://api.anthropic.com";
-  const headers = new Headers({ accept: "text/event-stream", "content-type": "application/json" });
-  if (apiKey) headers.set("x-api-key", apiKey);
-  if (authToken) headers.set("authorization", `Bearer ${authToken}`);
-  if (request.action === "inference.messages") {
-    for (const [name, value] of Object.entries(request.headers)) {
-      if (value) headers.set(name, value);
-    }
-  }
+  const stillAuthorized = () => {
+    const current = authorize(modelId);
+    return current.allowed && current.accessSourceId === accessSourceId && current.allowedModelIds.includes(modelId);
+  };
   const funded = accessSourceId === "matrix_included" ? deps.fundedAdmission : undefined;
-  if (accessSourceId === "matrix_included") headers.set("x-matrix-funded-claim-key", request.runtimeHandle);
-  const deadline = AbortSignal.any([deps.lifetime, AbortSignal.timeout(INFERENCE_TIMEOUT_MS)]);
   const fetchImpl = deps.fetchImpl ?? fetch;
-  const send = () => fetchImpl(`${baseUrl}${request.path}`, {
-    method: "POST",
-    headers,
-    body: request.body,
-    redirect: "error",
-    signal: deadline,
-  });
 
   try {
-    let attempts = 0;
+    const resolveCredentials = deps.resolveCredentials ?? buildKernelCredentialLaunch;
+    const launch = await resolveCredentials(
+      deps.homePath,
+      process.env,
+      accessSourceId,
+      deps.fundedCredentialProvider,
+      { requestClass: binding.requestClass, claimKey: request.runtimeHandle },
+    );
+    const env = launch.env;
+    const apiKey = env?.ANTHROPIC_API_KEY;
+    const authToken = env?.ANTHROPIC_AUTH_TOKEN;
+    if ((!apiKey && !authToken) || (apiKey && authToken)) return failure(request.requestId, "provider_unavailable");
+    const baseUrl = env?.ANTHROPIC_BASE_URL?.replace(/\/$/, "") ?? "https://api.anthropic.com";
+    const headers = new Headers({ accept: "text/event-stream", "content-type": "application/json" });
+    if (apiKey) headers.set("x-api-key", apiKey);
+    if (authToken) headers.set("authorization", `Bearer ${authToken}`);
+    if (request.action === "inference.messages") {
+      for (const [name, value] of Object.entries(request.headers)) {
+        if (value) headers.set(name, value);
+      }
+    }
+    if (accessSourceId === "matrix_included") headers.set("x-matrix-funded-claim-key", request.runtimeHandle);
+    // Returns "denied" instead of sending when the run lost its authorization.
+    const send = async (): Promise<Response | "denied"> => {
+      if (!stillAuthorized()) return "denied";
+      return fetchImpl(`${baseUrl}${request.path}`, {
+        method: "POST",
+        headers,
+        body: request.body,
+        redirect: "error",
+        signal: AbortSignal.any([deps.lifetime, AbortSignal.timeout(INFERENCE_TIMEOUT_MS)]),
+      });
+    };
+
     const response = funded
-      ? await funded.run<Response | "denied">({ requestClass: binding.requestClass, signal: deadline }, async () => {
-        attempts += 1;
-        if (attempts > 1) {
-          const current = authorize(modelId);
-          if (!current.allowed || current.accessSourceId !== accessSourceId || !current.allowedModelIds.includes(modelId)) {
-            return { kind: "done", value: "denied" };
-          }
-        }
+      ? await funded.run<Response | "denied">({ requestClass: binding.requestClass, signal: deps.lifetime }, async () => {
         const attempt = await send();
+        if (attempt === "denied") return { kind: "done", value: "denied" };
         // Only a relay capacity refusal is safe to repeat; upstream provider 429s are final.
         if (attempt.status !== 429 || attempt.headers.get("x-matrix-funded-reason") === null) {
           return { kind: "done", value: attempt };

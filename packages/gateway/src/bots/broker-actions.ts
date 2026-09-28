@@ -25,7 +25,7 @@ import type { BotEffectClass } from "./database.js";
 import { forwardBotInference, type BotInferenceDependencies } from "./broker-inference.js";
 import type { BotCheckpointsRepository } from "./repositories/checkpoints.js";
 import type { BotSessionsRepository } from "./repositories/sessions.js";
-import { BotStateError } from "./repositories/shared.js";
+import { BotStateError, withTransaction, type BotExecutor } from "./repositories/shared.js";
 import type { BotRuntimeBinding, BotRuntimeRegistry } from "./runtime-registry.js";
 import type { ScopeRuntimeHost } from "../scope-runtime-host/index.js";
 
@@ -73,6 +73,28 @@ function stateCode(error: BotStateError): BotToolErrorCode {
   return "unavailable";
 }
 
+/**
+ * Settles with `work`, or rejects when `signal` aborts first, so a dispatcher
+ * that ignores cancellation cannot hold the broker past its timeout.
+ */
+function untilAborted<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) return Promise.reject(signal.reason);
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(signal.reason);
+    signal.addEventListener("abort", onAbort, { once: true });
+    work.then(
+      (value) => {
+        signal.removeEventListener("abort", onAbort);
+        resolve(value);
+      },
+      (error: unknown) => {
+        signal.removeEventListener("abort", onAbort);
+        reject(error);
+      },
+    );
+  });
+}
+
 function canonicalJson(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
   if (value && typeof value === "object") {
@@ -82,6 +104,8 @@ function canonicalJson(value: unknown): string {
 }
 
 export function createBotBrokerActions(deps: {
+  /** The owner database the repositories use; pre-dispatch checkpoint writes share one transaction on it. */
+  db: BotExecutor;
   registry: BotRuntimeRegistry;
   sessions: BotSessionsRepository;
   checkpoints: BotCheckpointsRepository;
@@ -94,39 +118,68 @@ export function createBotBrokerActions(deps: {
 }) {
   const now = deps.now ?? (() => new Date());
   const toolTimeoutMs = Math.max(1, Math.min(Math.trunc(deps.toolTimeoutMs ?? DEFAULT_TOOL_TIMEOUT_MS), MAX_TOOL_TIMEOUT_MS));
-  /** Last accepted event `seq` per run, least recently used first. */
-  const lastSeq = new Map<string, number>();
+  /**
+   * Event order per run, least recently used first: the last published `seq`
+   * and whether a publish is in flight. Frames arrive on concurrent sockets,
+   * so the next `seq` is reserved before publishing and nothing else for the
+   * run is accepted until that publish settles.
+   */
+  const eventOrder = new Map<string, { lastSeq: number; publishing: boolean }>();
 
-  function rememberSeq(runId: string, seq: number): void {
-    lastSeq.delete(runId);
-    lastSeq.set(runId, seq);
-    while (lastSeq.size > MAX_TRACKED_RUNS) {
-      const oldest = lastSeq.keys().next().value;
+  function trackOrder(runId: string, order: { lastSeq: number; publishing: boolean }): void {
+    eventOrder.delete(runId);
+    eventOrder.set(runId, order);
+    while (eventOrder.size > MAX_TRACKED_RUNS) {
+      const oldest = eventOrder.keys().next().value;
       if (oldest === undefined) break;
-      lastSeq.delete(oldest);
+      eventOrder.delete(oldest);
     }
+  }
+
+  async function publishEvent(binding: BotRuntimeBinding, event: BotEvent): Promise<boolean> {
+    const order = eventOrder.get(binding.runId) ?? { lastSeq: -1, publishing: false };
+    // Events must arrive in order with no gaps, starting at 0 for each run.
+    if (order.publishing || event.seq !== order.lastSeq + 1) return false;
+    order.publishing = true;
+    trackOrder(binding.runId, order);
+    try {
+      await deps.events.publish(binding, event);
+      order.lastSeq = event.seq;
+    } finally {
+      order.publishing = false;
+    }
+    return true;
   }
 
   async function runTool(binding: BotRuntimeBinding, request: BotToolRequest): Promise<BotToolResult> {
     if (!binding.capabilities.includes(request.capability)) throw new BotBrokerActionError("denied");
     const effectClass = deps.tools.effectClass(request);
     const argsHash = createHash("sha256").update(canonicalJson(request.args)).digest("hex");
-    const prepared = await deps.checkpoints.prepare({
-      ownerId: binding.ownerId,
-      taskId: binding.taskId,
-      runId: binding.runId,
-      toolCallId: request.toolCallId,
-      action: { capability: request.capability, argsHash },
-      effectClass,
-      now: now().toISOString(),
+    // Prepared and dispatched commit together; the tool call itself runs outside the transaction.
+    const id = await withTransaction(deps.db, async (trx) => {
+      const prepared = await deps.checkpoints.prepare({
+        ownerId: binding.ownerId,
+        taskId: binding.taskId,
+        runId: binding.runId,
+        toolCallId: request.toolCallId,
+        action: { capability: request.capability, argsHash },
+        effectClass,
+        now: now().toISOString(),
+      }, trx);
+      // A tool call ID is used once per run; a repeat is never dispatched again.
+      if (!prepared.created) throw new BotBrokerActionError("denied");
+      const checkpointId = { ownerId: binding.ownerId, checkpointId: prepared.checkpoint.checkpointId };
+      await deps.checkpoints.markDispatched({ ...checkpointId, now: now().toISOString() }, trx);
+      return checkpointId;
     });
-    // A tool call ID is used once per run; a repeat is never dispatched again.
-    if (!prepared.created) throw new BotBrokerActionError("denied");
-    const id = { ownerId: binding.ownerId, checkpointId: prepared.checkpoint.checkpointId };
-    await deps.checkpoints.markDispatched({ ...id, now: now().toISOString() });
+    // The run may have been released while the checkpoint was written; nothing was dispatched.
+    if (!deps.registry.lookupRun(binding)) {
+      await deps.checkpoints.markObserved({ ...id, now: now().toISOString() });
+      throw new BotBrokerActionError("stale_generation");
+    }
     const signal = AbortSignal.any([deps.inference.lifetime, AbortSignal.timeout(toolTimeoutMs)]);
     try {
-      const { result, outcomeRef } = await deps.tools.dispatch(binding, request, signal);
+      const { result, outcomeRef } = await untilAborted(deps.tools.dispatch(binding, request, signal), signal);
       await deps.checkpoints.markObserved({ ...id, ...(outcomeRef ? { outcomeRef } : {}), now: now().toISOString() });
       return result;
     } catch (error: unknown) {
@@ -191,14 +244,9 @@ export function createBotBrokerActions(deps: {
             });
             return success(request.requestId, { revision: saved.revision });
           }
-          case "bot.event": {
-            // Events must arrive in order with no gaps, starting at 0 for each run.
-            const expected = (lastSeq.get(binding.runId) ?? -1) + 1;
-            if (request.event.seq !== expected) return refusal(request.requestId, "invalid_arguments");
-            await deps.events.publish(binding, request.event);
-            rememberSeq(binding.runId, request.event.seq);
+          case "bot.event":
+            if (!await publishEvent(binding, request.event)) return refusal(request.requestId, "invalid_arguments");
             return success(request.requestId, { accepted: true });
-          }
           case "bot.tool":
             return success(request.requestId, await runTool(binding, request.tool));
         }
@@ -211,7 +259,7 @@ export function createBotBrokerActions(deps: {
     },
     /** Forget per-run ordering state when a run is released. */
     forgetRun(runId: string): void {
-      lastSeq.delete(runId);
+      eventOrder.delete(runId);
     },
   };
 }
