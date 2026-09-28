@@ -1500,6 +1500,8 @@ export async function createGateway(config: GatewayConfig) {
     credentialedDriverKinds: ["pi", "opencode"],
   });
   if (chatRepository && canonicalChatExecutionRoots) {
+    // Extraction plan for this 1,000+ line composition entrypoint:
+    // specs/536-conversational-bots/plan.md#gateway-entrypoint-extraction.
     // The host starts before the adapters so the bot adapter can bind to it; shared AI
     // registers on it after the orchestrator exists (below).
     scopeRuntimeHost = await startScopeRuntimeHost({

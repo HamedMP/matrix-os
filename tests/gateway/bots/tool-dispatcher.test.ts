@@ -93,6 +93,30 @@ describe("bot tool dispatcher", () => {
     await expect(tools.dispatch(binding, write(".bot-save/x.md"), signal)).rejects.toEqual(new BotBrokerActionError("invalid_arguments"));
   });
 
+  it("eventually sweeps staging files beyond both per-pass scan limits", async () => {
+    const staleAt = new Date(Date.now() - 60 * 60_000);
+    const staging = join(home, "bots", BOT_ID, ".bot-save");
+    await mkdir(staging);
+    for (let index = 0; index < 257; index += 1) {
+      const path = join(staging, `00000000-0000-0000-0000-${String(index).padStart(12, "0")}.tmp`);
+      await writeFile(path, "partial");
+      await utimes(path, staleAt, staleAt);
+    }
+    for (let index = 0; index < 128; index += 1) {
+      const workspace = join(home, "bots", `bot_${String(index).padStart(24, "0")}`);
+      await mkdir(join(workspace, ".bot-save"), { recursive: true });
+      const path = join(workspace, ".bot-save", "00000000-0000-0000-0000-000000000000.tmp");
+      await writeFile(path, "partial");
+      await utimes(path, staleAt, staleAt);
+    }
+    for (let pass = 0; pass < 3; pass += 1) await sweepBotWorkspaceSaves(home);
+    expect(await readdir(staging)).toEqual([]);
+    for (let index = 0; index < 128; index += 1) {
+      const workspace = join(home, "bots", `bot_${String(index).padStart(24, "0")}`);
+      expect(await readdir(join(workspace, ".bot-save"))).toEqual([]);
+    }
+  });
+
   it("refuses capabilities that have no tool yet", async () => {
     const tools = createBotToolDispatcher({ homePath: home });
     await expect(tools.dispatch(binding, { toolCallId: "call_m", capability: "memory.search", args: { query: "x", limit: 3 } } as never, signal))

@@ -27,7 +27,21 @@ const TEMP_NAME = /^[a-f0-9-]{36}\.tmp$/;
 const TEMP_TTL_MS = 15 * 60_000;
 const MAX_SWEEP_ENTRIES = 256;
 const MAX_SWEPT_WORKSPACES = 128;
+const MAX_SWEEP_CURSORS = 256;
+/** Bounded cursors let recurring passes reach entries beyond one pass's work budget. */
+const sweepOffsets = new Map<string, number>();
 const SEGMENT = /^(?!\.{1,2}$)[^/\\\u0000]{1,255}$/;
+
+function scanOffset(directory: string): number {
+  return sweepOffsets.get(directory) ?? 0;
+}
+
+function rememberScanOffset(directory: string, offset: number): void {
+  sweepOffsets.delete(directory);
+  if (offset <= 0) return;
+  if (sweepOffsets.size >= MAX_SWEEP_CURSORS) sweepOffsets.delete(sweepOffsets.keys().next().value!);
+  sweepOffsets.set(directory, offset);
+}
 
 const EFFECTS: Record<BotToolRequest["capability"], BotEffectClass> = {
   "artifact.read": "read",
@@ -69,8 +83,8 @@ async function directoryFor(root: string, parts: readonly string[], create: bool
 }
 
 /**
- * Removes staged saves a process left when it stopped mid-save. Reads a
- * bounded number of entries and never follows or removes a link.
+ * Removes staged saves a process left when it stopped mid-save. Processes a
+ * bounded number per pass, resuming on the next pass without following links.
  */
 async function sweepStaging(directory: string, now: number): Promise<void> {
   let entries;
@@ -82,23 +96,33 @@ async function sweepStaging(directory: string, now: number): Promise<void> {
     if (isCode(error, "ENOENT", "ENOTDIR")) return;
     throw error;
   }
+  const offset = scanOffset(directory);
+  let skipped = 0;
   let seen = 0;
+  let removed = 0;
   for await (const entry of entries) {
+    if (skipped < offset) { skipped += 1; continue; }
     if (++seen > MAX_SWEEP_ENTRIES) break;
     if (!TEMP_NAME.test(entry.name)) continue;
     const path = join(directory, entry.name);
     try {
       const info = await lstat(path);
-      if (info.isFile() && !info.isSymbolicLink() && now - info.mtimeMs > TEMP_TTL_MS) await unlink(path);
+      if (info.isFile() && !info.isSymbolicLink() && now - info.mtimeMs > TEMP_TTL_MS) {
+        await unlink(path);
+        removed += 1;
+      }
     } catch (error: unknown) {
       if (!isCode(error, "ENOENT")) console.warn("[bots] stale save cleanup failed:", error instanceof Error ? error.name : "UnknownError");
     }
   }
+  rememberScanOffset(directory, seen > MAX_SWEEP_ENTRIES && skipped === offset
+    ? Math.max(0, offset + MAX_SWEEP_ENTRIES - removed) : 0);
 }
 
 /**
  * The recurring cleanup: every bot workspace's staging directory, a bounded
- * number of workspaces per pass. Links are never followed.
+ * number of workspaces per pass, continuing from the next entry on later
+ * passes. Links are never followed.
  */
 export async function sweepBotWorkspaceSaves(homePath: string, now = Date.now()): Promise<void> {
   const root = join(homePath, "bots");
@@ -111,12 +135,16 @@ export async function sweepBotWorkspaceSaves(homePath: string, now = Date.now())
     if (isCode(error, "ENOENT")) return;
     throw error;
   }
+  const offset = scanOffset(root);
+  let skipped = 0;
   let seen = 0;
   for await (const entry of workspaces) {
+    if (skipped < offset) { skipped += 1; continue; }
     if (++seen > MAX_SWEPT_WORKSPACES) break;
     if (!entry.isDirectory() || !/^bot_[a-z0-9]{8,64}$/.test(entry.name)) continue;
     await sweepStaging(join(root, entry.name, BOT_SAVE_STAGING), now);
   }
+  rememberScanOffset(root, seen > MAX_SWEPT_WORKSPACES && skipped === offset ? offset + MAX_SWEPT_WORKSPACES : 0);
 }
 
 function textResult(text: string): BotToolResult {
