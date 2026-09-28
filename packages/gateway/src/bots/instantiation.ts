@@ -45,6 +45,18 @@ export class BotInstantiationError extends Error {
   }
 }
 
+/** Another request moved the same creation forward first. Internal only. */
+class ConcurrentCreationError extends Error {
+  constructor() {
+    super("Bot creation advanced concurrently");
+    this.name = "ConcurrentCreationError";
+  }
+}
+
+const CONCURRENT_WAIT_ATTEMPTS = 20;
+const CONCURRENT_WAIT_MS = 250;
+const sleep = (ms: number) => new Promise<void>((resolve) => { setTimeout(resolve, ms); });
+
 /** Recorded on the operation when a step fails; never shown to a client. */
 type FailureCode =
   | "capacity_exceeded" | "definition_conflict" | "definition_failed" | "definition_missing" | "workspace_failed" | "activation_failed";
@@ -143,7 +155,9 @@ export function createBotInstantiation(deps: {
 
   /**
    * Moves an unfinished operation forward with its fixed IDs. `definition`
-   * creates or reads the bot's file; everything after it is idempotent.
+   * creates or reads the bot's file; everything after it is idempotent. The
+   * workspace is checked on every attempt, so an operation is never
+   * activated with its workspace missing.
    */
   async function advance(operation: BotOperation, definition: () => Promise<ChatAgent | null>): Promise<{ operation: BotOperation; agent: ChatAgent }> {
     let current = operation;
@@ -154,9 +168,9 @@ export function createBotInstantiation(deps: {
         step = "definition_missing";
         throw new BotInstantiationError("unavailable");
       }
+      step = "workspace_failed";
+      await deps.ensureWorkspace(current.botId);
       if (current.status !== "file_created") {
-        step = "workspace_failed";
-        await deps.ensureWorkspace(current.botId);
         current = await operations.markFileCreated({
           ownerId: current.ownerId, clientRequestId: current.clientRequestId, baseRevision: current.revision, now: now(),
         });
@@ -164,6 +178,10 @@ export function createBotInstantiation(deps: {
       step = "activation_failed";
       return { operation: await activate(current, agent), agent };
     } catch (error: unknown) {
+      // Another request for the same creation moved it forward first; it is not a failure.
+      if (error instanceof BotStateError && (error.code === "revision_conflict" || error.code === "invalid_transition")) {
+        throw new ConcurrentCreationError();
+      }
       const capacity = error instanceof ChatAgentStoreError && error.code === "agent_capacity";
       const conflict = error instanceof ChatAgentStoreError && error.code === "agent_conflict";
       if (!(error instanceof BotInstantiationError)) {
@@ -182,6 +200,18 @@ export function createBotInstantiation(deps: {
     return response(operation, agent, created);
   }
 
+  /** Waits, bounded, for a concurrent request to finish the same creation. */
+  async function awaitConcurrent(ownerId: string, clientRequestId: string, created: boolean): Promise<InstantiateBotResponse> {
+    for (let attempt = 0; attempt < CONCURRENT_WAIT_ATTEMPTS; attempt += 1) {
+      const latest = await operations.get(ownerId, clientRequestId);
+      const replayed = latest ? await replay(latest, created) : undefined;
+      if (replayed) return replayed;
+      if (!latest || latest.status === "failed_recoverable") break;
+      await sleep(CONCURRENT_WAIT_MS);
+    }
+    throw new BotInstantiationError("unavailable");
+  }
+
   function response(operation: BotOperation, agent: ChatAgent, created: boolean): InstantiateBotResponse {
     return InstantiateBotResponseSchema.parse({
       agent: { id: agent.id, name: agent.name, avatarSeed: botAvatarSeed(agent.id), revision: agent.revision, status: "active" },
@@ -195,19 +225,24 @@ export function createBotInstantiation(deps: {
       const parsed = InstantiateBotRequestSchema.safeParse(requestValue);
       if (!parsed.success) throw new BotInstantiationError("invalid_request");
       const request = parsed.data;
+      const payloadHash = instantiationPayloadHash(request);
+      const scope = owner(ownerId);
+      // A retry is answered from its operation first, so retiring a recipe never breaks replay.
+      const existing = await operations.get(ownerId, request.clientRequestId);
+      if (existing && existing.payloadHash !== payloadHash) throw new BotInstantiationError("conflict");
+      const replayedExisting = existing ? await replay(existing, false) : undefined;
+      if (replayedExisting) return replayedExisting;
       let recipe;
       try {
         recipe = deps.recipes.resolve(request.recipe);
       } catch (error: unknown) {
-        if (error instanceof BotRecipeCatalogError) throw new BotInstantiationError("invalid_request");
-        throw error;
+        if (!(error instanceof BotRecipeCatalogError)) throw error;
+        if (!existing) throw new BotInstantiationError("invalid_request");
+        // An unfinished creation of a now-retired recipe finishes only from its saved definition.
+        recipe = undefined;
       }
-      const payloadHash = instantiationPayloadHash(request);
-      const scope = owner(ownerId);
       // Checked before reserving so a full owner is refused without leaving an operation behind.
-      if (!await operations.get(ownerId, request.clientRequestId) && await deps.agents.count(scope) >= 100) {
-        throw new BotInstantiationError("rate_limited");
-      }
+      if (!existing && await deps.agents.count(scope) >= 100) throw new BotInstantiationError("rate_limited");
       let reserved: { operation: BotOperation; created: boolean };
       try {
         reserved = await operations.reserve({ ownerId, clientRequestId: request.clientRequestId, payloadHash, now: now() });
@@ -218,9 +253,8 @@ export function createBotInstantiation(deps: {
       const { operation, created } = reserved;
       const replayed = await replay(operation, false);
       if (replayed) return replayed;
-      let finished: { operation: BotOperation; agent: ChatAgent };
-      try {
-        finished = await advance(operation, () => deps.agents.createRecipeBot(scope, {
+      const definition = recipe
+        ? () => deps.agents.createRecipeBot(scope, {
           id: operation.botId,
           createHash: payloadHash,
           fields: {
@@ -230,15 +264,19 @@ export function createBotInstantiation(deps: {
             selection: MATRIX_BOT_SELECTION,
           },
           recipeRef: { recipeId: recipe.recipeId, version: recipe.version },
-        }));
+        })
+        : () => deps.agents.get(scope, operation.botId);
+      try {
+        const finished = await advance(operation, definition);
+        return response(finished.operation, finished.agent, created);
       } catch (error: unknown) {
+        if (error instanceof ConcurrentCreationError) return awaitConcurrent(ownerId, request.clientRequestId, created);
         if (!(error instanceof BotInstantiationError) || error.code !== "unavailable") throw error;
         const latest = await operations.get(ownerId, request.clientRequestId);
         const concurrent = latest ? await replay(latest, created) : undefined;
         if (concurrent) return concurrent;
         throw error;
       }
-      return response(finished.operation, finished.agent, created);
     },
     /**
      * Reconciliation: finishes an unfinished operation whose definition file
@@ -246,7 +284,12 @@ export function createBotInstantiation(deps: {
      * recoverable and only a retried request can finish it.
      */
     async resume(operation: BotOperation): Promise<void> {
-      await advance(operation, () => deps.agents.get(owner(operation.ownerId), operation.botId));
+      try {
+        await advance(operation, () => deps.agents.get(owner(operation.ownerId), operation.botId));
+      } catch (error: unknown) {
+        // A request finishing the same creation is not a reconciliation failure.
+        if (!(error instanceof ConcurrentCreationError)) throw error;
+      }
     },
   };
 }
