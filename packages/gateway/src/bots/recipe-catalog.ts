@@ -196,7 +196,11 @@ export interface BotRecipeCatalog {
   resolve(ref: BotRecipeRef): BotRecipe;
 }
 
+/** The catalog is fixed at startup; this bounds it, and nothing is ever added later. */
+export const MAX_BOT_RECIPE_VERSIONS = 128;
+
 export function createBotRecipeCatalog(recipes: readonly BotRecipe[] = RECIPES): BotRecipeCatalog {
+  if (recipes.length > MAX_BOT_RECIPE_VERSIONS) throw new RangeError("Too many bot recipe versions");
   const byKey = new Map(recipes.map((recipe) => [`${recipe.recipeId}@${recipe.version}`, RecipeSchema.parse(recipe) as BotRecipe]));
   return {
     list: () => [...byKey.values()],
