@@ -105,6 +105,35 @@ it("retains a live socket's actor slot after its usage has flushed", async () =>
   } finally { (meter as unknown as { pending: Map<string, unknown> }).pending.clear(); await meter.close(); await fixture.destroy(); }
 });
 
+it("keeps a carried socket's actor slot when a new-day admission joins its rollover", async () => {
+  const fixture = await createCollaborationTestDatabase();
+  const db = fixture.db as unknown as Kysely<CollaborationPlatformDatabase>;
+  let now = Date.parse("2026-09-28T23:59:59.000Z");
+  const meter = new RelayUsageMeter({ db, now: () => now, startTimers: false });
+  const pending = (meter as unknown as { pending: Map<string, unknown> }).pending;
+  const filler = (i: number) => ({ actorId: `user_${i}`, day: "2026-09-28", machineFree: true,
+    knownBytes: 0, flushingBytes: 0, delta: { requests: 0, bytes: 0, socketOpens: 0, refusals: 0 },
+    lastTouched: now, activeSockets: 1 });
+  try {
+    await bootstrapPlatformCollaborationDatabase(db);
+    expect(await meter.canAdmit("user_live", true, 100)).toBe(true);
+    const release = meter.retainSocket("user_live");
+    meter.record("user_live", true, { bytes: 40 }, 100);
+    await meter.flush();
+    for (let i = 1; i < 16_384; i++) pending.set(`user_${i}:2026-09-28`, filler(i));
+    now = Date.parse("2026-09-29T00:00:01.000Z");
+    meter.record("user_live", true, { bytes: 10 }, 100);
+    pending.delete("user_1:2026-09-28");
+    expect(await meter.canAdmit("user_live", true, 100)).toBe(true);
+    await meter.flush();
+    pending.set("user_1:2026-09-28", filler(1));
+    expect(pending.size).toBe(16_384);
+    expect(await meter.canAdmit("user_new", true, 100)).toBe(false);
+    release();
+    expect(await meter.canAdmit("user_new", true, 100)).toBe(true);
+  } finally { pending.clear(); await meter.close(); await fixture.destroy(); }
+});
+
 it("refreshes global usage on flush so a long-lived socket sees other instances", async () => {
   const fixture = await createCollaborationTestDatabase();
   const db = fixture.db as unknown as Kysely<CollaborationPlatformDatabase>;

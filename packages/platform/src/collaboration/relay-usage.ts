@@ -86,7 +86,7 @@ export class RelayAccountClassifier {
 
 type UsageDelta = { requests: number; bytes: number; socketOpens: number; refusals: number };
 type DailyUsage = { day: string; knownBytes: number; flushingBytes: number; delta: UsageDelta };
-type UsageEntry = DailyUsage & { actorId: string; machineFree: boolean; lastTouched: number; activeSockets: number; rollover?: DailyUsage };
+type UsageEntry = DailyUsage & { actorId: string; machineFree: boolean; lastTouched: number; activeSockets: number; rollover?: DailyUsage; forwardedTo?: UsageEntry };
 const emptyDelta = (): UsageDelta => ({ requests: 0, bytes: 0, socketOpens: 0, refusals: 0 });
 const hasDelta = (value: UsageDelta) => value.requests > 0 || value.bytes > 0 || value.socketOpens > 0 || value.refusals > 0;
 const busy = (entry: UsageEntry) => hasDelta(entry.delta) || entry.flushingBytes > 0 || entry.activeSockets > 0
@@ -203,7 +203,11 @@ export class RelayUsageMeter {
     return () => {
       if (released) return;
       released = true;
-      entry.activeSockets = Math.max(0, entry.activeSockets - 1);
+      // A rollover may merge this entry into a separately admitted new-day
+      // entry. Follow that move so the live reservation stays protected until close.
+      let current = entry;
+      while (current.forwardedTo) current = current.forwardedTo;
+      current.activeSockets = Math.max(0, current.activeSockets - 1);
     };
   }
 
@@ -252,6 +256,9 @@ export class RelayUsageMeter {
         const nextKey = `${entry.actorId}:${next.day}`;
         const concurrent = this.pending.get(nextKey);
         if (concurrent && concurrent !== entry) {
+          concurrent.activeSockets += entry.activeSockets;
+          entry.activeSockets = 0;
+          entry.forwardedTo = concurrent;
           concurrent.knownBytes = Math.max(concurrent.knownBytes, next.knownBytes);
           concurrent.delta.requests += next.delta.requests;
           concurrent.delta.bytes += next.delta.bytes;
