@@ -19,6 +19,11 @@ export const FUNDED_AI_READINESS_TIMEOUTS = Object.freeze({
   jevRouteMs: 6_000,
 });
 
+// Checkout clients have a total cutoff distinct from readiness. Stripe keeps
+// its existing 10s per-attempt timeout and SDK retries; an interrupted client
+// may leave an idempotent claim for deliberate reuse, never an automatic retry.
+export const FUNDED_AI_CHECKOUT_TIMEOUT_MS = 30_000;
+
 const RevisionSchema = z.number().int().nonnegative();
 const RuntimeSlotSchema = z.string().min(1).max(80).regex(/^[a-z0-9][a-z0-9_-]*$/);
 const UniqueModelIdsSchema = z.array(ProviderModelReferenceSchema).max(64)

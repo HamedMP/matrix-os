@@ -10,6 +10,7 @@ import { loadFundedAiRuntimeConfig } from "../../packages/gateway/src/funded-ai-
 import { createFundedAiFundingSummaryClient } from "../../packages/gateway/src/funded-ai-funding-summary-client.js";
 import { createFundedAiRouteReadinessClient } from "../../packages/gateway/src/funded-ai-route-readiness-client.js";
 import { createFundedAiReadinessReader } from "../../packages/gateway/src/funded-ai-readiness.js";
+import { isAiCreditCheckoutRouteHealthy } from "../../packages/platform/src/ai-credit-checkout-readiness.js";
 
 const model = "@cf/zai-org/glm-5.3-flash";
 const identity = { ownerId: "cold_owner", machineId: "cold_machine", runtimeSlot: "primary" };
@@ -58,7 +59,7 @@ async function fixture(delayMs: number) {
   const platformFetch = ((url, init) => app.request(String(url), init)) as typeof fetch;
   const reader = createFundedAiReadinessReader({ summary: createFundedAiFundingSummaryClient(config, { fetchFn: platformFetch }),
     routes: createFundedAiRouteReadinessClient(config, platformFetch), now });
-  return { reader, repository, relayFetch, relayResolved, config };
+  return { reader, repository, relayFetch, relayResolved, config, probes };
 }
 
 async function waitForProbe(fetchFn: ReturnType<typeof vi.fn<typeof fetch>>) {
@@ -75,6 +76,40 @@ async function expectOneUnspentProbe() {
 }
 
 describe("cold funded relay readiness", () => {
+  it("allows credit checkout after a seven-second cold relay and a fresh funding reread", async () => {
+    const f = await fixture(7000);
+    const result = isAiCreditCheckoutRouteHealthy({ repository: f.repository, identity, modelProbes: f.probes });
+    await waitForProbe(f.relayFetch);
+    await vi.advanceTimersByTimeAsync(7000);
+    expect(await result).toBe(true);
+    expect(f.relayResolved).toHaveBeenCalledOnce();
+    await expectOneUnspentProbe();
+  });
+
+  it("rejects checkout when owner policy is revoked while the cold relay starts", async () => {
+    const f = await fixture(7000);
+    const result = isAiCreditCheckoutRouteHealthy({ repository: f.repository, identity, modelProbes: f.probes });
+    await waitForProbe(f.relayFetch);
+    await vi.advanceTimersByTimeAsync(3000);
+    await f.repository.setRuntimePolicy({ identity, expectedRevision: 1, enabled: false, allowedModelIds: [model],
+      monthlyBudgetMicrousd: 100000, expiresAt: null });
+    await vi.advanceTimersByTimeAsync(4000);
+    expect(await result).toBe(false);
+    expect(f.relayResolved).toHaveBeenCalledOnce();
+    await expectOneUnspentProbe();
+  });
+
+  it("aborts a stalled checkout probe and keeps its single admission counted", async () => {
+    const f = await fixture(20000);
+    const result = isAiCreditCheckoutRouteHealthy({ repository: f.repository, identity, modelProbes: f.probes });
+    await waitForProbe(f.relayFetch);
+    await vi.advanceTimersByTimeAsync(10001);
+    expect(await result).toBe(false);
+    expect(f.relayFetch.mock.calls[0]![1]!.signal!.aborted).toBe(true);
+    expect(f.relayResolved).not.toHaveBeenCalled();
+    await expectOneUnspentProbe();
+  });
+
   it("waits for a seven-second cold relay through Platform and the default Gateway client", async () => {
     const f = await fixture(7000);
     expect(f.config.requestTimeoutMs).toBe(5000); // credential/funding calls retain their existing bound
