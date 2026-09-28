@@ -1166,9 +1166,9 @@ jobs:
           }
           applied=false
           guard_armed=false
-          # Never leave a half-connected home: before the guard is armed, restore the rollback
-          # copy at once (the running gateway still has the old binding); once it is armed, fire
-          # it, which restores the copy and restarts the gateway even if this runner goes away.
+          # Never leave a half-connected home. The guard restores the rollback copy, then restarts
+          # the gateway only if it restored something; it runs detached, so that restart cannot
+          # drop this request. Once armed, firing its unit also covers a runner that goes away.
           fail_connection() {
             echo "$1" >&2
             if [ "$guard_armed" = true ]; then
@@ -1176,8 +1176,8 @@ jobs:
                 '{command:["/usr/bin/sudo","/usr/bin/systemctl","start","--no-block",$unit],timeoutMs:10000}')"
               send_runtime_command "$body" || echo "The armed guard restores the home when its timer fires." >&2
             elif [ "$applied" = true ]; then
-              body="$(jq -cn --arg guard "$guard_path" --arg nonce "$nonce" \
-                '{command:["/usr/bin/sudo","/usr/bin/python3","-I",$guard,"restore",$nonce],timeoutMs:10000}')"
+              body="$(jq -cn --arg unit "--unit=${guard_unit}-now" --arg guard "$guard_path" --arg nonce "$nonce" \
+                '{command:["/usr/bin/sudo","/usr/bin/systemd-run",$unit,"--on-active=1s","--collect","/usr/bin/python3","-I",$guard,"restore",$nonce,"--restart"],timeoutMs:10000}')"
               send_runtime_command "$body" || echo "Restoring the host environment failed; use an authorized operator connection." >&2
             fi
             exit 1

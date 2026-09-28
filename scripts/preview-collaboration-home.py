@@ -1,5 +1,4 @@
-"""Root step of spec 535 A0b: bind a pr-<N> home to its preview collaboration authority.
-Kept under the 4096-character terminal argument cap; prints a fixed status only."""
+"""Spec 535 A0b, as root: bind a pr-<N> home to its preview collaboration authority."""
 import json
 import os
 import re
@@ -83,12 +82,13 @@ def apply(root, handle, owner, machine, config, guard, root_owned=True):
     if len(pin) != 1 or len(pin[0]) != 1 or not re.fullmatch(ORIGIN + "/?", pin[0][0]):
         raise ValueError("Invalid original binding")
     config = {**config, PIN: pin[0][0]}
+    # Guard first, so any later failure can be restored.
+    write_like(root / ".preview-collaboration-guard.py", guard, meta, 0o700)
     kept = [line for line in lines if line.split("=", 1)[0] not in config]
     write_like(path, "\n".join(kept + [f"{key}={config[key]}" for key in sorted(config)]) + "\n", meta, mode)
     after = os.lstat(path)
     if (after.st_uid, after.st_gid, stat.S_IMODE(after.st_mode)) != (meta.st_uid, meta.st_gid, mode):
         raise ValueError("Metadata changed")
-    write_like(root / ".preview-collaboration-guard.py", guard, meta, 0o700)
 
 
 if __name__ == "__main__":
