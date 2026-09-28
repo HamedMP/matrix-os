@@ -213,7 +213,9 @@ export function createBotInteractionService(deps: { transact: BotStateTransactio
       await deps.transact(input.ownerId, async (tx) => {
         const repository = createBotInteractionsRepository(tx.db);
         const pending = (await repository.listPending({ ownerId: input.ownerId, chatId: input.chatId, now: at }, tx.db))
-          .filter((interaction) => interaction.taskId === input.taskId && interaction.kind === "question" && interaction.responderActorId === input.ownerId);
+          // Only the question the task waits on; other open questions keep their own answers.
+          .filter((interaction) => interaction.taskId === input.taskId && interaction.kind === "question"
+            && interaction.blocking && interaction.responderActorId === input.ownerId);
         for (const interaction of pending) {
           const resolved = await repository.resolve({
             ownerId: input.ownerId, interactionId: interaction.interactionId, baseRevision: interaction.revision,
@@ -227,8 +229,11 @@ export function createBotInteractionService(deps: { transact: BotStateTransactio
     /** Expires overdue questions for every owner that has some, a bounded number of owners per pass. */
     async expireAllDue(): Promise<number> {
       const at = now().toISOString();
-      const owners = await deps.transact(SWEEP_OWNER, (tx) => tx.db.selectFrom("bot_interactions").select("owner_id").distinct()
-        .where("status", "=", "pending").where("expires_at", "<=", at).limit(MAX_OWNERS_PER_SWEEP).execute());
+      // Owners with the oldest overdue questions first, so no owner waits behind others indefinitely.
+      const owners = await deps.transact(SWEEP_OWNER, (tx) => tx.db.selectFrom("bot_interactions")
+        .select((eb) => ["owner_id", eb.fn.min("expires_at").as("oldest")])
+        .where("status", "=", "pending").where("expires_at", "<=", at)
+        .groupBy("owner_id").orderBy("oldest", "asc").limit(MAX_OWNERS_PER_SWEEP).execute());
       let expired = 0;
       for (const { owner_id: ownerId } of owners) expired += await this.expireDue(ownerId);
       return expired;
