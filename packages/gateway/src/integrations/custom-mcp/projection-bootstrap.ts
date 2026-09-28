@@ -7,6 +7,8 @@ const DEFAULT_ATTEMPTS = 6;
 const BASE_DELAY_MS = 5_000;
 const MAX_DELAY_MS = 120_000;
 const RESYNC_INTERVAL_MS = 5 * 60_000;
+const STALE_RETRY_DELAY_MS = 2_000;
+const STALE_RETRIES = 3;
 const MAX_SERVERS = 100;
 
 const ListedServerSchema = z.object({
@@ -111,10 +113,28 @@ export async function bootstrapCustomMcpProjection(options: PullOptions & {
   return false;
 }
 
+function abortableSleep(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    if (signal.aborted) {
+      resolve();
+      return;
+    }
+    const done = () => {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", done);
+      resolve();
+    };
+    const timer = setTimeout(done, ms);
+    timer.unref?.();
+    signal.addEventListener("abort", done, { once: true });
+  });
+}
+
 /**
  * Starts the startup pull, then pulls again on an interval so a push the
  * preview missed (it was restarting, or the platform's bounded delivery queue
- * dropped it) converges without a restart. `stop` ends both.
+ * dropped it) converges without a restart. A periodic pull that a push
+ * overtook is retried shortly instead of an interval later. `stop` ends both.
  */
 export function startCustomMcpProjectionSync(options: PullOptions & {
   sleep?: (ms: number) => Promise<void>;
@@ -122,35 +142,24 @@ export function startCustomMcpProjectionSync(options: PullOptions & {
   intervalMs?: number;
 }): { stop(): void } {
   const controller = new AbortController();
-  const pullOptions = { ...options, signal: controller.signal };
-  let timer: ReturnType<typeof setInterval> | undefined;
-  let pulling = false;
-  const resync = async () => {
-    if (pulling || controller.signal.aborted) return;
-    pulling = true;
-    try {
-      await pullCustomMcpProjection(pullOptions);
-    } finally {
-      pulling = false;
+  const signal = controller.signal;
+  const sleep = options.sleep ?? ((ms: number) => abortableSleep(ms, signal));
+  const pullOptions = { ...options, sleep, signal };
+  void (async () => {
+    await bootstrapCustomMcpProjection(pullOptions);
+    while (!signal.aborted) {
+      await sleep(options.intervalMs ?? RESYNC_INTERVAL_MS);
+      for (let attempt = 0; attempt <= STALE_RETRIES && !signal.aborted; attempt += 1) {
+        if (attempt > 0) await sleep(STALE_RETRY_DELAY_MS);
+        if (signal.aborted || await pullCustomMcpProjection(pullOptions) !== "stale") break;
+      }
     }
-  };
-  void bootstrapCustomMcpProjection(pullOptions)
-    .catch((error: unknown) => {
-      console.warn("[custom-mcp] projection pull crashed", error instanceof Error ? error.name : "UnknownError");
-    })
-    .finally(() => {
-      if (controller.signal.aborted) return;
-      timer = setInterval(() => {
-        void resync().catch((error: unknown) => {
-          console.warn("[custom-mcp] projection resync crashed", error instanceof Error ? error.name : "UnknownError");
-        });
-      }, options.intervalMs ?? RESYNC_INTERVAL_MS);
-      timer.unref?.();
-    });
+  })().catch((error: unknown) => {
+    console.warn("[custom-mcp] projection sync crashed", error instanceof Error ? error.name : "UnknownError");
+  });
   return {
     stop() {
       controller.abort();
-      if (timer) clearInterval(timer);
     },
   };
 }

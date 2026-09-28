@@ -122,6 +122,37 @@ describe('Custom MCP projection fan-out to Private Previews', () => {
     expect(previewMethods()).toEqual(['POST', 'DELETE']);
   });
 
+  it('keeps the owner\'s order even when the primary answers out of order', async () => {
+    let releasePrimary!: () => void;
+    const heldPrimary = new Promise<void>((resolve) => { releasePrimary = resolve; });
+    let primaryCalls = 0;
+    const fetchFn = vi.fn(async (url: string) => {
+      if (url.includes('203.0.113.1')) {
+        primaryCalls += 1;
+        if (primaryCalls === 1) await heldPrimary;
+      }
+      return new Response('{}');
+    });
+    const projection = createCustomMcpProjection({
+      getUser: async () => owner,
+      getMachine: async () => primary,
+      listPrivatePreviews: async () => [preview] as never,
+      isEligible: async () => true,
+      platformSecret,
+      fetchFn: fetchFn as unknown as typeof fetch,
+      logError: vi.fn(),
+    });
+    const first = projection.upsert('user-id', { id: 'server', revision: 3 });
+    await projection.remove('user-id', 'server');
+    releasePrimary();
+    await first;
+    await projection.drain();
+    const previewMethods = fetchFn.mock.calls
+      .filter(([url]) => String(url).includes('203.0.113.2'))
+      .map(([, init]) => (init as RequestInit).method);
+    expect(previewMethods).toEqual(['POST', 'DELETE']);
+  });
+
   it('bounds the delivery backlog and leaves the rest to the preview\'s own reconciliation', async () => {
     let release!: () => void;
     const held = new Promise<void>((resolve) => { release = resolve; });

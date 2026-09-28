@@ -16,7 +16,9 @@ function isMissingFile(error: unknown): boolean {
 
 export class CustomMcpProjectionStore {
   readonly path: string;
-  private mutationQueue: Promise<void> = Promise.resolve();
+  // Holds the latest mutation itself; its caller handles its rejection, so no
+  // derived promise is left unhandled.
+  private mutationQueue: Promise<unknown> = Promise.resolve();
   // Counts pushed writes as they are queued, so a pull can tell whether a
   // push overtook the list it fetched.
   private pushedWrites = 0;
@@ -93,7 +95,7 @@ export class CustomMcpProjectionStore {
       await atomicWriteJson(this.path, file);
       return true;
     });
-    this.mutationQueue = next.then(() => undefined);
+    this.mutationQueue = next;
     return next;
   }
 }

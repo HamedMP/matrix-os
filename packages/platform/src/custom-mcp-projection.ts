@@ -151,12 +151,11 @@ export function createCustomMcpProjection<PreviewMachine extends ProjectionMachi
   }
 
   async function write(userId: string, method: ProjectionMethod, serverId?: string, body?: unknown): Promise<void> {
-    try {
-      await primary(userId, method, serverId, body);
-    } finally {
-      // Private Previews follow the change whether or not the primary accepted it.
-      queueFanOut(userId, method, serverId, body);
-    }
+    // Queue before the primary answers, so Private Previews receive changes in
+    // the order the broker made them, whatever order the primary answers in.
+    // They follow the change whether or not the primary accepts it.
+    queueFanOut(userId, method, serverId, body);
+    await primary(userId, method, serverId, body);
   }
 
   return {

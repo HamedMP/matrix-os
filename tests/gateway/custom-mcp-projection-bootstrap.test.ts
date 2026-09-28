@@ -1,4 +1,4 @@
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Hono } from "hono";
@@ -64,6 +64,22 @@ describe("Custom MCP projection store", () => {
     expect((await projection.read()).servers).toEqual([]);
     await expect(projection.replaceFromPull([projected], projection.writeGeneration())).resolves.toBe(true);
     expect((await projection.read()).servers).toEqual([projected]);
+  });
+
+  it("leaves no unhandled rejection behind when a write fails", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-mcp-broken-"));
+    await writeFile(join(homePath, "system"), "not a directory");
+    const projection = new CustomMcpProjectionStore(homePath);
+    const unhandled: unknown[] = [];
+    const listener = (reason: unknown) => { unhandled.push(reason); };
+    process.on("unhandledRejection", listener);
+    try {
+      await expect(projection.upsert(projected)).rejects.toThrow();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off("unhandledRejection", listener);
+    }
   });
 
   it("refuses a pulled list over the server limit", async () => {
@@ -142,6 +158,28 @@ describe("Private Preview Custom MCP projection pull", () => {
     const calls = fetchImpl.mock.calls.length;
     await new Promise((resolve) => setTimeout(resolve, 30));
     expect(fetchImpl).toHaveBeenCalledTimes(calls);
+  });
+
+  it("pulls again soon when a periodic pull is overtaken by a push", async () => {
+    const projection = await store();
+    const sleeps: number[] = [];
+    let calls = 0;
+    const fetchImpl = vi.fn(async () => {
+      calls += 1;
+      if (calls === 2) await projection.upsert({ ...projected, id: "22222222-2222-4222-8222-222222222222", revision: 1 });
+      return new Response(JSON.stringify([listed]), { status: 200 });
+    });
+    const sync = startCustomMcpProjectionSync({
+      store: projection, listUrl: "https://platform.test/list", token: "t", fetchImpl, intervalMs: 60_000,
+      sleep: async (ms) => {
+        sleeps.push(ms);
+        if (sleeps.length > 2) await new Promise(() => {});
+      },
+    });
+    await vi.waitFor(() => expect(fetchImpl).toHaveBeenCalledTimes(3));
+    sync.stop();
+    expect(sleeps.slice(0, 2)).toEqual([60_000, 2_000]);
+    await vi.waitFor(async () => expect((await projection.read()).servers).toEqual([projected]));
   });
 
   it("retries while the platform is not ready and then converges", async () => {
