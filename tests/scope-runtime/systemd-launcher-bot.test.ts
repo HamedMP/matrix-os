@@ -91,6 +91,19 @@ function readyRunner(stateRoot: string, calls: Array<{ command: string; args: re
 }
 
 describe("scope runtime systemd launcher bot profile", () => {
+  it("advertises the bot profile before the gateway broker binds, but refuses a run until it does", async () => {
+    const { paths, home } = await fixture();
+    await rm(paths.brokerSocket);
+    const runCommand = vi.fn(async () => ({ stdout: "" }));
+    const launcher = createSystemdScopeRuntimeLauncher({ ...paths, runCommand });
+
+    await expect(launcher.supportedAdapters?.(SCOPE_RUNTIME_BOT_PROFILE_ID)).resolves.toEqual([
+      { adapterId: "matrix-bot", harnessVersion: "0.86.1", workloads: ["bot_agent"] },
+    ]);
+    await expect(launcher.start(botLaunch(join(home, "bots", "bot_abcdef12"))))
+      .rejects.toMatchObject({ code: "ENOENT" });
+    expect(runCommand).not.toHaveBeenCalledWith("/usr/bin/systemd-run", expect.anything());
+  });
   it("builds the bot unit from the bot profile with a mandatory sandbox", () => {
     const paths = {
       scopeRoot: "/var/lib/matrix-scope-runtime/runtimes/222/root",

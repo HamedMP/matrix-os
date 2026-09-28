@@ -21,6 +21,7 @@ TimeoutStartSec=30
 TimeoutStopSec=45
 KillMode=control-group
 RuntimeDirectory=matrix-scope-runtime
+RuntimeDirectoryPreserve=yes
 RuntimeDirectoryMode=0770
 StateDirectory=matrix-scope-runtime
 StateDirectoryMode=0700
