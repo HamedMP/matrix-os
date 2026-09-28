@@ -48,6 +48,7 @@ jobs:
       GCP_REGION: ${{ vars.GCP_REGION }}
       ARTIFACT_REPOSITORY: ${{ vars.ARTIFACT_REPOSITORY }}
       CLOUD_RUN_SERVICE: ${{ vars.CLOUD_RUN_SERVICE }}
+      PLATFORM_MAX_INSTANCES: '15'
       CLOUD_RUN_SERVICE_ACCOUNT: ${{ vars.CLOUD_RUN_SERVICE_ACCOUNT }}
       PLATFORM_PUBLIC_URL: ${{ vars.PLATFORM_PUBLIC_URL }}
       MATRIX_API_ORIGIN: ${{ vars.MATRIX_API_ORIGIN }}
@@ -798,7 +799,7 @@ jobs:
             --concurrency 80 \
             --timeout 3600 \
             --min-instances 0 \
-            --max-instances 15 \
+            --max-instances "$PLATFORM_MAX_INSTANCES" \
             --ingress all \
             --allow-unauthenticated \
             "${traffic_flags[@]}" \
@@ -1040,6 +1041,7 @@ jobs:
             --tag production-candidate \
             --no-traffic \
             --min-instances "$min_instances" \
+            --max-instances "$PLATFORM_MAX_INSTANCES" \
             --no-cpu-throttling \
             --update-env-vars "PLATFORM_BACKGROUND_WORKERS_ENABLED=true,CUSTOMER_VPS_IMAGE_VERSION=${CUSTOMER_VPS_IMAGE_VERSION},MATRIX_CARD_TRIALS_ENABLED=${MATRIX_CARD_TRIALS_ENABLED},MATRIX_CARD_TRIAL_DAYS=${MATRIX_CARD_TRIAL_DAYS},MATRIX_PREBILLING_PROVISIONING_ENABLED=${MATRIX_PREBILLING_PROVISIONING_ENABLED},MATRIX_PREBILLING_PROVISIONING_ROLLOUT_PERCENT=${MATRIX_PREBILLING_PROVISIONING_ROLLOUT_PERCENT},MATRIX_PREBILLING_PROVISIONING_MAX_ACTIVE=${MATRIX_PREBILLING_PROVISIONING_MAX_ACTIVE},GOLDEN_SNAPSHOT_BUILDS_ENABLED=${GOLDEN_SNAPSHOT_BUILDS_ENABLED},GOLDEN_SNAPSHOTS_ENABLED=${GOLDEN_SNAPSHOTS_ENABLED},GOLDEN_SNAPSHOT_ROLLOUT_PERCENT=${GOLDEN_SNAPSHOT_ROLLOUT_PERCENT}" \
             --remove-env-vars "MATRIX_PREBILLING_PROVISIONING_MAX_HOURLY_COST_MICROS,MATRIX_PREBILLING_PROVISIONING_COSTS" \
@@ -1059,6 +1061,11 @@ jobs:
             --project "$GCP_PROJECT_ID" \
             --region "$GCP_REGION" \
             --format=json)"
+          actual_max_instances="$(printf '%s\n' "$revision_json" | jq -r '.metadata.annotations["autoscaling.knative.dev/maxScale"] // empty')"
+          if [ "$actual_max_instances" != "$PLATFORM_MAX_INSTANCES" ]; then
+            echo "production revision maximum instances is $actual_max_instances, expected $PLATFORM_MAX_INSTANCES" >&2
+            exit 1
+          fi
           required_production_env=(
             "PLATFORM_BACKGROUND_WORKERS_ENABLED=true"
             "CUSTOMER_VPS_IMAGE_VERSION=stable"
