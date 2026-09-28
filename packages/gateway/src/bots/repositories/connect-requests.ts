@@ -53,11 +53,11 @@ function fromRow(row: Selectable<BotConnectRequestsTable>): BotConnectRequest {
 }
 
 function connectionIds(values: readonly string[]): string[] {
-  const unique = [...new Set(values)];
-  if (unique.length > MAX_CONNECTIONS || unique.some((value) => !CONNECTION_ID.test(value))) {
+  // Bounded before anything is built from the input.
+  if (values.length > MAX_CONNECTIONS || values.some((value) => typeof value !== "string" || !CONNECTION_ID.test(value))) {
     throw new BotStateError("invalid_input");
   }
-  return unique.sort();
+  return [...new Set(values)].sort();
 }
 
 /** Pure outcome of comparing the live inventory with the baseline. */

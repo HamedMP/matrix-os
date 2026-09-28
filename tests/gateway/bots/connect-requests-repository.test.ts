@@ -36,6 +36,8 @@ describe("bot connect requests repository", () => {
     // A connection that appears after the deadline does not complete the request.
     expect(connectOutcome(request, ["conn_old", "conn_late"], at(60_000))).toEqual({ status: "expired" });
     expect(() => connectOutcome(request, ["bad id!"], at(1))).toThrow(BotStateError);
+    // Oversized inventories are refused before any set is built from them.
+    expect(() => connectOutcome(request, Array.from({ length: 65 }, (_, index) => `conn_${index}`), at(1))).toThrow(BotStateError);
   });
 
   it("records one outcome at the row's revision and leaves pending requests unchanged", async () => {
