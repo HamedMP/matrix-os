@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { BotBrokerActionError } from "../../../packages/gateway/src/bots/broker-actions.js";
 import type { OwnerBotDatabase } from "../../../packages/gateway/src/bots/database.js";
 import { createBotStateTransactions } from "../../../packages/gateway/src/bots/events.js";
-import { BotMemoryError, admitMemory, createBotMemoryService } from "../../../packages/gateway/src/bots/memory-service.js";
+import { BotMemoryError, admitMemory, createBotMemoryService, groundedIn } from "../../../packages/gateway/src/bots/memory-service.js";
 import { createBotBindingsRepository } from "../../../packages/gateway/src/bots/repositories/bindings.js";
 import { createBotCheckpointsRepository } from "../../../packages/gateway/src/bots/repositories/checkpoints.js";
 import { createBotTasksRepository } from "../../../packages/gateway/src/bots/repositories/tasks.js";
@@ -76,6 +76,11 @@ async function items() {
 }
 
 describe("bot memory", () => {
+  it("never confirms a paraphrase that adds or removes a negation", () => {
+    expect(groundedIn("Prefers short answers.", "I prefer short answers.")).toBe(true);
+    expect(groundedIn("The owner does not prefer coffee.", "I prefer coffee in the morning.")).toBe(false);
+    expect(groundedIn("Prefers coffee.", "I do not prefer coffee.")).toBe(false);
+  });
   it("confirms only what the owner said to start this run; anything else waits for the owner", async () => {
     await expect(propose({})).resolves.toEqual({ ok: true, content: [{ type: "text", text: "Remembered." }] });
     const [stated] = await db.selectFrom("bot_memory_items").select("source").execute();
