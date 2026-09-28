@@ -1843,7 +1843,10 @@ json_field() { python3 -c "import json,sys; print(json.load(sys.stdin).get(sys.a
     expect(workflow).toContain('curl --fail --silent --show-error --max-time 20 --range 0-0 "$bundle_url"');
     expect(workflow).toContain('R2_ENDPOINT=r2-endpoint:latest');
     expect(workflow).toContain('PLATFORM_BACKGROUND_WORKERS_ENABLED=false');
-    expect(workflow).toContain('PLATFORM_BACKGROUND_WORKERS_ENABLED=true');
+    // Background workers run only in the dedicated worker service, whose manifest
+    // the renderer flips to "true" (asserted in worker-deployment.test.ts).
+    expect(workflow).not.toContain('PLATFORM_BACKGROUND_WORKERS_ENABLED=true');
+    expect(workflow).toContain('node scripts/render-platform-worker-service.mjs "$worker_service"');
     expect(workflow).toContain('$CANDIDATE_URL/vps/storage-check');
     expect(workflow).toContain('PRODUCTION_REVISION');
     expect(workflow).toContain('--to-revisions "$PRODUCTION_REVISION=100"');
