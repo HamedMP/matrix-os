@@ -11,6 +11,7 @@ import { createCodexChatImportRoutes } from "../chat/codex-import-routes.js";
 import { registerLocalChatImports } from "../chat/local-import/runtime.js";
 import type { R2Client } from "../sync/r2-client.js";
 import { CodexChatImporter } from "../chat/codex-importer.js";
+import { createBotContinuationAdmitter } from "../bots/continuations.js";
 import { createBotRoutes } from "../bots/routes.js";
 import type { BotServices } from "../startup/bots.js";
 import { registerCanonicalChatEventHttpRoute } from "../chat/event-http-route.js";
@@ -93,7 +94,14 @@ export function registerCollaborationChatRoutes(options: CollaborationChatRouteO
     getPrincipal: (c) => requireRequestPrincipal(c),
   }));
   app.route("/", createBotRoutes({
-    ...(botServices ? { instantiation: botServices.instantiation } : {}),
+    ...(botServices ? {
+      instantiation: botServices.instantiation,
+      interactions: botServices.interactions,
+      memory: botServices.memory,
+    } : {}),
+    ...(botServices && chatRepository && canonicalChatOrchestrator ? {
+      admitContinuation: createBotContinuationAdmitter({ repository: chatRepository, orchestrator: canonicalChatOrchestrator }),
+    } : {}),
     getPrincipal: (c) => requireRequestPrincipal(c),
   }));
   app.route("/", createChatAgentRoutes({

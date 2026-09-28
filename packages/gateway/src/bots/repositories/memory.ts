@@ -146,14 +146,16 @@ export function createBotMemoryRepository(db: BotExecutor) {
       return fromRow(row);
     },
     /**
-     * Forgets an item and flags the bot's transcripts for recompaction in one
-     * transaction, so a summary that cited it is regenerated before reuse.
+     * Forgets an item at its revision and flags the bot's transcripts for
+     * recompaction in one transaction, so a summary that cited it is
+     * regenerated before reuse. False when it changed or is already gone.
      */
-    async forget(input: { ownerId: string; itemId: string; now: string }, executor: BotExecutor = db): Promise<boolean> {
+    async forget(input: { ownerId: string; itemId: string; baseRevision: number; now: string }, executor: BotExecutor = db): Promise<boolean> {
       return withTransaction(executor, async (trx) => {
         const row = await trx.updateTable("bot_memory_items")
           .set({ forgotten_at: input.now, revision: sql<number>`revision + 1`, updated_at: input.now })
           .where("owner_id", "=", input.ownerId).where("item_id", "=", input.itemId).where("forgotten_at", "is", null)
+          .where("revision", "=", input.baseRevision)
           .returning("bot_id")
           .executeTakeFirst();
         if (!row) return false;

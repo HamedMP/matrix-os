@@ -48,9 +48,11 @@ describe("bot memory repository", () => {
     await sessions.save({ ownerId: OWNER, botId: BOT, chatId: "chat_mem1", baseRevision: 0, messages: [], tokenEstimate: 0, runtimeVersions: {}, now: NOW });
     const repo = createBotMemoryRepository(db);
     const item = await repo.remember({ ...base, content: "The person is allergic to peanuts", kind: "preference", now: NOW });
-    await expect(repo.forget({ ownerId: OTHER_OWNER, itemId: item.itemId, now: at(1) })).resolves.toBe(false);
-    await expect(repo.forget({ ownerId: OWNER, itemId: item.itemId, now: at(1) })).resolves.toBe(true);
-    await expect(repo.forget({ ownerId: OWNER, itemId: item.itemId, now: at(2) })).resolves.toBe(false);
+    await expect(repo.forget({ ownerId: OTHER_OWNER, itemId: item.itemId, baseRevision: item.revision, now: at(1) })).resolves.toBe(false);
+    // A stale revision forgets nothing.
+    await expect(repo.forget({ ownerId: OWNER, itemId: item.itemId, baseRevision: item.revision + 1, now: at(1) })).resolves.toBe(false);
+    await expect(repo.forget({ ownerId: OWNER, itemId: item.itemId, baseRevision: item.revision, now: at(1) })).resolves.toBe(true);
+    await expect(repo.forget({ ownerId: OWNER, itemId: item.itemId, baseRevision: item.revision + 1, now: at(2) })).resolves.toBe(false);
     await expect(repo.search({ ownerId: OWNER, botId: BOT, query: "peanuts", scopes: ["bot"], now: at(3) })).resolves.toEqual([]);
     await expect(sessions.load({ ownerId: OWNER, botId: BOT, chatId: "chat_mem1" })).resolves.toMatchObject({ needsRecompaction: true });
   });
@@ -62,7 +64,7 @@ describe("bot memory repository", () => {
     await expect(repo.remember({ ...base, content: "one too many", now: at(2) })).rejects.toEqual(new BotStateError("capacity_exceeded"));
     // Forgotten items free their slots.
     const first = (await repo.list({ ownerId: OWNER, botId: BOT, limit: 1, now: at(3) }))[0]!;
-    await repo.forget({ ownerId: OWNER, itemId: first.itemId, now: at(4) });
+    await repo.forget({ ownerId: OWNER, itemId: first.itemId, baseRevision: first.revision, now: at(4) });
     await expect(repo.remember({ ...base, content: "fits again", now: at(5) })).resolves.toMatchObject({ content: "fits again" });
     await expect(repo.remember({ ...base, content: "x".repeat(5_000), now: NOW })).rejects.toEqual(new BotStateError("too_large"));
   }, 60_000);

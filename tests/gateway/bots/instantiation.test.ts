@@ -99,6 +99,11 @@ describe("bot instantiation", () => {
     await expect(createBotBindingsRepository(db).directChatId({ ownerId: OWNER, botId: created.agent.id })).resolves.toBe(created.chatId);
     expect((await stat(join(home, "bots", created.agent.id))).isDirectory()).toBe(true);
     await expect(operation()).resolves.toMatchObject({ status: "active", botId: created.agent.id, chatId: created.chatId });
+    // Activation announces the bot once, with IDs only.
+    const events = await db.selectFrom("chat_outbox").select(["event_type", "payload"]).where("chat_id", "=", created.chatId).execute();
+    expect(events.filter((event) => event.event_type === "bot.created")).toEqual([
+      { event_type: "bot.created", payload: { agentId: created.agent.id, chatId: created.chatId, revision: 1 } },
+    ]);
   });
 
   it("refuses another payload for the same request, unknown recipes, and malformed input", async () => {

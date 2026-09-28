@@ -260,7 +260,7 @@
 - [ ] T163 [US1] Implement `packages/gateway/src/bots/memory.ts` and the memory `forget`/`confirm` routes
 - [ ] T164 [US1] Implement `GET /api/chat-agents/:agentId/authority` in `packages/gateway/src/bots/authority.ts`
 - [ ] T165 [US1] Publish the `contracts/chat-events.md` events after commit through the chat outbox from each bots service
-- [ ] T166 L9 checkpoint: per-layer PR procedure; branch `536-l9-bot-setup-grants-memory`
+- [ ] T166 L9 checkpoint: per-layer PR procedure, split to stay under the PR size limit: `536-l9a-bot-interactions-memory` (T150, T151, T155, T158, T163, and T165 for creation, question, task, and memory events) and `536-l9b-bot-grants-connections` (T152-T154, T156, T157, T159-T162, T164, the rest of T165, approvals bound to a task so they survive the continuation run, and Jev in the recipe catalog)
 
 ---
 
