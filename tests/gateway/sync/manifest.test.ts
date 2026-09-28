@@ -115,6 +115,26 @@ describe("readManifest", () => {
     expect(result.etag).toBe('"etag2"');
   });
 
+  it("reads a web stream returned by the platform storage proxy", async () => {
+    const manifest = makeManifest({ "proxied.txt": { hash: HASH_A, size: 100 } });
+    const encoded = new TextEncoder().encode(JSON.stringify({ ...manifest, manifestVersion: 5 }));
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoded.subarray(0, 7));
+        controller.enqueue(encoded.subarray(7));
+        controller.close();
+      },
+    });
+    mockR2.getObject.mockResolvedValue({ body, etag: '"etag-proxy"' });
+    mockDb.getManifestMeta.mockResolvedValue({ version: 5, etag: '"etag-proxy"' });
+
+    const result = await readManifest(store, "user1");
+
+    expect(result.manifest.files["proxied.txt"]!.hash).toBe(HASH_A);
+    expect(result.manifestVersion).toBe(5);
+    expect(result.etag).toBe('"etag-proxy"');
+  });
+
   it("does not promote an unaccepted manifest generation when R2 is ahead", async () => {
     const manifest = makeManifest({ "ahead.txt": { hash: HASH_A, size: 100 } });
     const body = { text: () => Promise.resolve(JSON.stringify({ ...manifest, manifestVersion: 7 })) };

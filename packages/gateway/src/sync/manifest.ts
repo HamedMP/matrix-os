@@ -4,6 +4,7 @@ import type { SyncScope } from "@matrix-os/contracts";
 import { ManifestSchema, type Manifest, type CommitFile } from "./types.js";
 import { buildManifestGenerationKey, buildManifestKey } from "./r2-client.js";
 import type { R2Client } from "./r2-client.js";
+import { streamToBuffer } from "./home-mirror-body.js";
 import type { SyncDatabase } from "./sharing-db.js";
 
 const MANIFEST_FILE_CAP = 50_000;
@@ -144,7 +145,7 @@ async function readObjectBodyAsText(
     ensureManifestSize(Buffer.byteLength(text, "utf-8"), maxBytes);
     return text;
   }
-  throw new Error("Unsupported R2 object body type");
+  return (await streamToBuffer(body, maxBytes)).toString("utf-8");
 }
 
 const EMPTY_MANIFEST: Manifest = { version: 2, files: {} };
