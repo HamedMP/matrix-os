@@ -121,6 +121,58 @@ describe("machine-free relay policy", () => {
     instance.close(); classifier.close();
   });
 
+  it("meters concurrent HTTP response chunks and stops a stream at the daily bound", async () => {
+    const classifier = new RelayAccountClassifier({ ownsActiveComputer: async () => false });
+    let used = 0;
+    const usage = {
+      canAdmit: vi.fn(async () => used < 100),
+      record: vi.fn((_actor: string, _free: boolean, delta: { bytes?: number }, _limit?: number, ratio = 1.1) => {
+        used += delta.bytes ?? 0;
+        return used > 100 * ratio;
+      }),
+    };
+    const fetchImpl = vi.fn(async () => new Response(new ReadableStream<Uint8Array>({
+      start(controller) { controller.enqueue(new Uint8Array(60)); controller.close(); },
+    }))) as unknown as typeof fetch;
+    const instance = relay(classifier, usage, fetchImpl);
+    const input = { actorId: "user_without_computer", method: "GET", path: `/api/collaboration/scopes/${scopeId}`,
+      query: "", headers: new Headers(), body: null };
+    const [first, second] = await Promise.all([instance.forward(input), instance.forward(input)]);
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+    expect((await first.arrayBuffer()).byteLength).toBe(60);
+    await expect(second.arrayBuffer()).rejects.toThrow();
+    expect(used).toBe(120);
+    expect(usage.record.mock.calls.some((call) => call[4] === 1)).toBe(true);
+    instance.close(); classifier.close();
+  });
+
+  it("stops an upload before forwarding bytes past the account bound", async () => {
+    const classifier = new RelayAccountClassifier({ ownsActiveComputer: async () => false });
+    let used = 0;
+    const usage = {
+      canAdmit: vi.fn(async () => true),
+      record: vi.fn((_actor: string, _free: boolean, delta: { bytes?: number }, _limit?: number, ratio = 1.1) => {
+        used += delta.bytes ?? 0;
+        return used > 100 * ratio;
+      }),
+    };
+    const fetchImpl = vi.fn(async (_url: string, init: RequestInit) => {
+      await new Response(init.body as ReadableStream<Uint8Array>).arrayBuffer();
+      return new Response("ok");
+    }) as unknown as typeof fetch;
+    const instance = relay(classifier, usage, fetchImpl);
+    const source = new ReadableStream<Uint8Array>({
+      start(controller) { controller.enqueue(new Uint8Array(60)); controller.enqueue(new Uint8Array(60)); controller.close(); },
+    });
+    const response = await instance.forward({ actorId: "user_without_computer", method: "POST", path: `/api/collaboration/scopes/${scopeId}`,
+      query: "", headers: new Headers(), body: source });
+    expect(response.status).toBe(429);
+    expect(used).toBe(120);
+    expect(fetchImpl).toHaveBeenCalledOnce();
+    instance.close(); classifier.close();
+  });
+
   it("refuses a new socket at the daily limit without reserving a connection", async () => {
     const classifier = new RelayAccountClassifier({ ownsActiveComputer: async () => false });
     const usage = { canAdmit: vi.fn(async () => false), record: vi.fn(() => false) };

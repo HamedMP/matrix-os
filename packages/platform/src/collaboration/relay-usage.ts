@@ -85,9 +85,12 @@ export class RelayAccountClassifier {
 }
 
 type UsageDelta = { requests: number; bytes: number; socketOpens: number; refusals: number };
-type UsageEntry = { actorId: string; day: string; machineFree: boolean; knownBytes: number; flushingBytes: number; delta: UsageDelta; lastTouched: number };
+type DailyUsage = { day: string; knownBytes: number; flushingBytes: number; delta: UsageDelta };
+type UsageEntry = DailyUsage & { actorId: string; machineFree: boolean; lastTouched: number; activeSockets: number; rollover?: DailyUsage };
 const emptyDelta = (): UsageDelta => ({ requests: 0, bytes: 0, socketOpens: 0, refusals: 0 });
 const hasDelta = (value: UsageDelta) => value.requests > 0 || value.bytes > 0 || value.socketOpens > 0 || value.refusals > 0;
+const busy = (entry: UsageEntry) => hasDelta(entry.delta) || entry.flushingBytes > 0 || entry.activeSockets > 0
+  || Boolean(entry.rollover && (hasDelta(entry.rollover.delta) || entry.rollover.flushingBytes > 0));
 const dayFor = (now: number) => new Date(now).toISOString().slice(0, 10);
 export function relayDailyRetryAfterSeconds(now = Date.now()): number {
   const date = new Date(now);
@@ -138,11 +141,11 @@ export class RelayUsageMeter {
     let entry = this.pending.get(key);
     if (!entry) {
       if (this.pending.size >= MAX_PENDING_ACTORS) {
-        const idle = [...this.pending].find(([, value]) => !hasDelta(value.delta) && value.flushingBytes === 0);
+        const idle = [...this.pending].find(([, value]) => !busy(value));
         if (idle) this.pending.delete(idle[0]);
       }
-      if (this.pending.size >= MAX_PENDING_ACTORS) return false;
-      entry = { actorId, day, machineFree, knownBytes: persisted, flushingBytes: 0, delta: emptyDelta(), lastTouched: now };
+      if (this.pending.size >= MAX_PENDING_ACTORS) return !machineFree;
+      entry = { actorId, day, machineFree, knownBytes: persisted, flushingBytes: 0, delta: emptyDelta(), lastTouched: now, activeSockets: 0 };
       this.pending.set(key, entry);
     } else {
       entry.machineFree = machineFree;
@@ -155,8 +158,9 @@ export class RelayUsageMeter {
   }
 
   /** Returns true only when an open machine-free socket must be closed at the 110% hard stop. */
-  record(actorId: string, machineFree: boolean, input: { bytes?: number; requests?: number; socketOpens?: number; refusals?: number }, dailyBytes = COLLABORATION_RELAY_ACCOUNT_LIMITS.dailyBytes): boolean {
+  record(actorId: string, machineFree: boolean, input: { bytes?: number; requests?: number; socketOpens?: number; refusals?: number }, dailyBytes = COLLABORATION_RELAY_ACCOUNT_LIMITS.dailyBytes, hardStopRatio = 1.1): boolean {
     if (this.closed) return machineFree;
+    if (hardStopRatio !== 1 && hardStopRatio !== 1.1) throw new Error("Invalid relay hard-stop ratio");
     const now = this.now();
     const day = dayFor(now);
     const key = `${actorId}:${day}`;
@@ -165,36 +169,64 @@ export class RelayUsageMeter {
       // A socket can stay open across UTC midnight without another admission call.
       // Start that day's local counter rather than closing it as an unknown actor.
       if (this.pending.size >= MAX_PENDING_ACTORS) {
-        const idle = [...this.pending].find(([, value]) => !hasDelta(value.delta) && value.flushingBytes === 0);
+        const idle = [...this.pending].find(([, value]) => !busy(value));
         if (idle) this.pending.delete(idle[0]);
       }
-      if (this.pending.size >= MAX_PENDING_ACTORS) return machineFree;
-      entry = { actorId, day, machineFree, knownBytes: 0, flushingBytes: 0, delta: emptyDelta(), lastTouched: now };
-      this.pending.set(key, entry);
+      if (this.pending.size >= MAX_PENDING_ACTORS) {
+        // A socket admitted yesterday must not be mistaken for a quota hard stop
+        // at midnight. Carry today's bytes on its existing bounded actor slot.
+        const priorDay = dayFor(now - 24 * 60 * 60_000);
+        const prior = this.pending.get(`${actorId}:${priorDay}`);
+        if (!prior || (prior.rollover && prior.rollover.day !== day)) return false;
+        prior.rollover ??= { day, knownBytes: 0, flushingBytes: 0, delta: emptyDelta() };
+        entry = prior;
+      } else {
+        entry = { actorId, day, machineFree, knownBytes: 0, flushingBytes: 0, delta: emptyDelta(), lastTouched: now, activeSockets: 0 };
+        this.pending.set(key, entry);
+      }
     }
+    const target = entry.day === day ? entry : entry.rollover!;
     for (const [field, amount] of Object.entries({ bytes: input.bytes ?? 0, requests: input.requests ?? 0, socketOpens: input.socketOpens ?? 0, refusals: input.refusals ?? 0 })) {
       if (!Number.isSafeInteger(amount) || amount < 0) throw new Error("Invalid relay usage delta");
-      entry.delta[field as keyof UsageDelta] += amount;
+      target.delta[field as keyof UsageDelta] += amount;
     }
     entry.lastTouched = now;
-    return machineFree && entry.knownBytes + entry.flushingBytes + entry.delta.bytes > Math.floor(dailyBytes * 1.1);
+    return machineFree && target.knownBytes + target.flushingBytes + target.delta.bytes > Math.floor(dailyBytes * hardStopRatio);
+  }
+
+  /** Holds a live socket's actor slot across flushes and UTC rollover. */
+  retainSocket(actorId: string): () => void {
+    const entry = this.pending.get(`${actorId}:${dayFor(this.now())}`);
+    if (!entry) return () => undefined;
+    entry.activeSockets++;
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      entry.activeSockets = Math.max(0, entry.activeSockets - 1);
+    };
   }
 
   async flush(): Promise<void> {
     if (this.flushing) return this.flushing;
-    const snapshot = [...this.pending.values()].filter((entry) => hasDelta(entry.delta))
-      .map((entry) => ({ entry, persistedBytes: entry.knownBytes, delta: { ...entry.delta } }));
+    const snapshot = [...this.pending.values()].flatMap((entry) => {
+      const items: Array<{ entry: UsageEntry; target: DailyUsage; day: string; persistedBytes: number; delta: UsageDelta }> = [];
+      if (hasDelta(entry.delta)) items.push({ entry, target: entry, day: entry.day, persistedBytes: entry.knownBytes, delta: { ...entry.delta } });
+      if (entry.rollover && hasDelta(entry.rollover.delta)) items.push({ entry, target: entry.rollover, day: entry.rollover.day,
+        persistedBytes: entry.rollover.knownBytes, delta: { ...entry.rollover.delta } });
+      return items;
+    });
     if (snapshot.length === 0) return;
-    for (const { entry, delta } of snapshot) {
-      entry.flushingBytes += delta.bytes;
-      entry.delta = emptyDelta();
+    for (const { target, delta } of snapshot) {
+      target.flushingBytes += delta.bytes;
+      target.delta = emptyDelta();
     }
     this.flushing = this.options.db.transaction().execute(async (trx) => {
       for (const item of snapshot) {
         const { entry, delta } = item;
         const result = await sql<{ bytes: string | number }>`
           INSERT INTO collaboration_relay_usage_daily (actor_id, usage_day, account_class, requests, bytes, socket_opens, refusals)
-          VALUES (${entry.actorId}, ${entry.day}::date, ${entry.machineFree ? "machine_free" : "computer_owner"},
+          VALUES (${entry.actorId}, ${item.day}::date, ${entry.machineFree ? "machine_free" : "computer_owner"},
             ${delta.requests}, ${delta.bytes}, ${delta.socketOpens}, ${delta.refusals})
           ON CONFLICT (actor_id, usage_day) DO UPDATE SET
             account_class = EXCLUDED.account_class,
@@ -209,17 +241,38 @@ export class RelayUsageMeter {
         item.persistedBytes = persisted;
       }
     }).then(() => {
-      for (const { entry, delta, persistedBytes } of snapshot) {
-        entry.flushingBytes -= delta.bytes;
-        entry.knownBytes = Math.max(entry.knownBytes, persistedBytes);
+      for (const { target, delta, persistedBytes } of snapshot) {
+        target.flushingBytes -= delta.bytes;
+        target.knownBytes = Math.max(target.knownBytes, persistedBytes);
+      }
+      for (const entry of new Set(snapshot.map((item) => item.entry))) {
+        if (!entry.rollover || hasDelta(entry.delta) || entry.flushingBytes > 0) continue;
+        const next = entry.rollover;
+        this.pending.delete(`${entry.actorId}:${entry.day}`);
+        const nextKey = `${entry.actorId}:${next.day}`;
+        const concurrent = this.pending.get(nextKey);
+        if (concurrent && concurrent !== entry) {
+          concurrent.knownBytes = Math.max(concurrent.knownBytes, next.knownBytes);
+          concurrent.delta.requests += next.delta.requests;
+          concurrent.delta.bytes += next.delta.bytes;
+          concurrent.delta.socketOpens += next.delta.socketOpens;
+          concurrent.delta.refusals += next.delta.refusals;
+          continue;
+        }
+        entry.day = next.day;
+        entry.knownBytes = next.knownBytes;
+        entry.flushingBytes = next.flushingBytes;
+        entry.delta = next.delta;
+        entry.rollover = undefined;
+        this.pending.set(nextKey, entry);
       }
     }).catch((error: unknown) => {
-      for (const { entry, delta } of snapshot) {
-        entry.flushingBytes -= delta.bytes;
-        entry.delta.requests += delta.requests;
-        entry.delta.bytes += delta.bytes;
-        entry.delta.socketOpens += delta.socketOpens;
-        entry.delta.refusals += delta.refusals;
+      for (const { target, delta } of snapshot) {
+        target.flushingBytes -= delta.bytes;
+        target.delta.requests += delta.requests;
+        target.delta.bytes += delta.bytes;
+        target.delta.socketOpens += delta.socketOpens;
+        target.delta.refusals += delta.refusals;
       }
       throw error;
     }).finally(() => { this.flushing = undefined; });
@@ -229,7 +282,7 @@ export class RelayUsageMeter {
   async prune(now = this.now()): Promise<void> {
     const cutoff = dayFor(now - 35 * 24 * 60 * 60_000);
     await this.options.db.deleteFrom("collaboration_relay_usage_daily").where("usage_day", "<", cutoff).execute();
-    for (const [key, entry] of this.pending) if (entry.day < cutoff && !hasDelta(entry.delta) && entry.flushingBytes === 0) this.pending.delete(key);
+    for (const [key, entry] of this.pending) if (entry.day < cutoff && !busy(entry)) this.pending.delete(key);
   }
 
   async close(): Promise<void> {

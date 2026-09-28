@@ -198,7 +198,7 @@ export class CollaborationRelay {
     onMetadata?(metadata: RelayMetadata): void;
     accountClassifier?: RelayAccountClassifier;
     accountLimits?: RelayAccountLimits;
-    accountUsage?: Pick<RelayUsageMeter, "canAdmit" | "record">;
+    accountUsage?: Pick<RelayUsageMeter, "canAdmit" | "record"> & Partial<Pick<RelayUsageMeter, "retainSocket">>;
   }) {
     this.limits = { ...DEFAULT_LIMITS, ...options.limits };
     this.fetchImpl = options.fetchImpl ?? fetch;
@@ -224,8 +224,15 @@ export class CollaborationRelay {
     const route = parseRelayRoute(input.method, input.path);
     let machineFree = false;
     let metered = false;
+    let accountLimited = false;
+    const recordHttpBytes = (bytes: number): boolean => {
+      if (!metered || bytes === 0) return false;
+      const reached = this.options.accountUsage?.record(input.actorId, machineFree, { bytes }, this.options.accountLimits?.dailyBytes, 1) ?? false;
+      if (reached) accountLimited = true;
+      return reached;
+    };
     const finish = (status: number, outcome: RelayMetadata["outcome"], runtimeId: string | null, responseBytes = 0) => {
-      if (metered) this.options.accountUsage?.record(input.actorId, machineFree, { requests: 1, bytes: requestBytes + responseBytes }, this.options.accountLimits?.dailyBytes);
+      if (metered) this.options.accountUsage?.record(input.actorId, machineFree, { requests: 1 }, this.options.accountLimits?.dailyBytes);
       try {
         this.options.onMetadata?.({
           actorId: input.actorId, runtimeId, resourceId: route?.identifier ?? null, method: input.method, routeClass: routeClass(route, input.path),
@@ -259,6 +266,10 @@ export class CollaborationRelay {
       finish(413, "limit", null);
       return plain("Collaboration request too large", 413);
     }
+    if (input.body instanceof Uint8Array && recordHttpBytes(requestBytes)) {
+      finish(429, "limit", null);
+      return relayLimitResponse(relayDailyRetryAfterSeconds(this.now()));
+    }
     const home = await this.resolveHome(input.actorId, route, input.headers.get(RELAY_RUNTIME_HEADER));
     if (!home) {
       finish(404, "unroutable", null);
@@ -276,8 +287,14 @@ export class CollaborationRelay {
     const requestBodySettled = input.body instanceof ReadableStream
       ? new Promise<void>((resolve) => { settleRequestBody = resolve; })
       : Promise.resolve();
+    let meteredRequestBytes = 0;
     const requestBody = input.body instanceof ReadableStream
-      ? boundedRequestStream(input.body, this.limits.requestBytes, (bytes) => { requestBytes = bytes; }, () => { overflowed = true; }, () => { settleRequestBody?.(); })
+      ? boundedRequestStream(input.body, this.limits.requestBytes, (bytes) => {
+        requestBytes = bytes;
+        const delta = bytes - meteredRequestBytes;
+        meteredRequestBytes = bytes;
+        if (recordHttpBytes(delta)) throw new RelayAccountLimitError(relayDailyRetryAfterSeconds(this.now()));
+      }, () => { overflowed = true; }, () => { settleRequestBody?.(); })
       : input.body;
     const headers = new Headers();
     input.headers.forEach((value, name) => {
@@ -296,6 +313,10 @@ export class CollaborationRelay {
         signal: AbortSignal.timeout(isExport ? this.limits.exportTimeoutMs : this.limits.requestTimeoutMs),
       } as RequestInit);
     } catch (error: unknown) {
+      if (accountLimited) {
+        finish(429, "limit", home.runtimeId);
+        return relayLimitResponse(relayDailyRetryAfterSeconds(this.now()));
+      }
       if (overflowed) {
         finish(413, "limit", home.runtimeId);
         return plain("Collaboration request too large", 413);
@@ -320,6 +341,11 @@ export class CollaborationRelay {
       finish(503, "upstream_error", home.runtimeId);
       return plain("Collaboration unavailable", 503);
     }
+    if (accountLimited) {
+      await response.body?.cancel();
+      finish(429, "limit", home.runtimeId);
+      return relayLimitResponse(relayDailyRetryAfterSeconds(this.now()));
+    }
     if (overflowed) {
       await response.body?.cancel();
       finish(413, "limit", home.runtimeId);
@@ -337,7 +363,13 @@ export class CollaborationRelay {
       if (FORWARDED_RESPONSE_HEADERS.has(name.toLowerCase()) && value.length <= MAX_HEADER_VALUE) responseHeaders.set(name, value);
     });
     let counted = 0;
-    const body = response.body ? boundedStream(response.body, maxBytes, (bytes) => { counted = bytes; }, () => finish(response.status, "forwarded", home.runtimeId, counted)) : null;
+    let meteredResponseBytes = 0;
+    const body = response.body ? boundedStream(response.body, maxBytes, (bytes) => {
+      counted = bytes;
+      const delta = bytes - meteredResponseBytes;
+      meteredResponseBytes = bytes;
+      return recordHttpBytes(delta);
+    }, () => finish(response.status, accountLimited ? "limit" : "forwarded", home.runtimeId, counted)) : null;
     if (!body) finish(response.status, "forwarded", home.runtimeId, 0);
     return new Response(body, { status: response.status, headers: responseHeaders });
   }
@@ -432,6 +464,7 @@ export class CollaborationRelay {
       || (actorCount === 0 && this.actorConnections.size >= this.limits.maxTrackedActors)) return null;
     this.homeConnections.set(home.runtimeId, homeCount + 1);
     this.actorConnections.set(input.actorId, actorCount + 1);
+    const releaseMeterSlot = this.options.accountUsage?.retainSocket?.(input.actorId);
     const lines = Object.entries(input.incomingHeaders).flatMap(([name, raw]) => {
       if (!FORWARDED_SOCKET_HEADERS.has(name) || raw === undefined) return [];
       const value = Array.isArray(raw) ? raw.join(", ") : raw;
@@ -446,6 +479,7 @@ export class CollaborationRelay {
         if (!this.reservations.delete(id)) return;
         decrement(this.homeConnections, home.runtimeId);
         decrement(this.actorConnections, input.actorId);
+        releaseMeterSlot?.();
       },
     };
     this.reservations.set(id, reservation);
@@ -559,7 +593,7 @@ async function settleWithin(settled: Promise<void>, timeoutMs: number): Promise<
   }
 }
 
-function boundedStream(source: ReadableStream<Uint8Array>, maxBytes: number, onBytes: (bytes: number) => void, onDone: () => void): ReadableStream<Uint8Array> {
+function boundedStream(source: ReadableStream<Uint8Array>, maxBytes: number, onBytes: (bytes: number) => boolean | void, onDone: () => void): ReadableStream<Uint8Array> {
   const reader = source.getReader();
   let size = 0;
   // `onDone` emits the request's one metadata event. It sits inside the try, so a throwing
@@ -579,7 +613,12 @@ function boundedStream(source: ReadableStream<Uint8Array>, maxBytes: number, onB
           return;
         }
         size += chunk.value.byteLength;
-        onBytes(size);
+        if (onBytes(size)) {
+          await reader.cancel();
+          controller.error(new Error("Collaboration relay account limit reached"));
+          finishOnce();
+          return;
+        }
         if (size > maxBytes) {
           await reader.cancel();
           controller.error(new Error("Collaboration response exceeds safe limits"));
