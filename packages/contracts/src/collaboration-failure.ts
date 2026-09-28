@@ -3,7 +3,7 @@ import { z } from "zod/v4";
 /** Stable recipient-facing failure codes shared by the platform, home, and renderers. */
 export const CollaborationFailureCodeSchema = z.enum([
   "unavailable", "host_offline", "upgrade_required", "relay_limit", "not_found",
-  "forbidden", "resource_missing", "paused",
+  "forbidden", "unauthorized", "resource_missing", "paused",
 ]);
 export type CollaborationFailureCode = z.infer<typeof CollaborationFailureCodeSchema>;
 

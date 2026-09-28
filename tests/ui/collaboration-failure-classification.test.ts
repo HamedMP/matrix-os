@@ -9,6 +9,7 @@ describe("collaboration failure classification", () => {
     [{ status: 429, code: "relay_limit", retryAfterSeconds: 25 }, "relay_limit", false],
     [{ status: 404, code: "not_found" }, "access_removed", false],
     [{ status: 403, code: "forbidden" }, "forbidden", false],
+    [{ status: 401, code: "unauthorized" }, "unauthorized", false],
     [{ status: 404, code: "resource_missing" }, "resource_missing", false],
     [{ status: 423, code: "paused" }, "paused", false],
   ] as const)("maps %j to %s", (failure, state, reconnect) => {

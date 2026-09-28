@@ -230,7 +230,7 @@ export function createDirectStreams(deps: {
         };
         next.onerror = () => next.close();
       } catch (error: unknown) {
-        if (error instanceof CollaborationDirectError && ["upgrade_required", "access_removed", "not_found", "relay_limit", "forbidden", "denied"].includes(error.code)) {
+        if (error instanceof CollaborationDirectError && ["upgrade_required", "access_removed", "not_found", "relay_limit", "forbidden", "unauthorized", "denied"].includes(error.code)) {
           stop();
           onTerminalFailure(classifyCollaborationClientError(error));
           return;

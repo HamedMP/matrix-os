@@ -1,7 +1,7 @@
 import { CollaborationFailureCodeSchema } from "@matrix-os/contracts";
 
 export type CollaborationFailureState = "unavailable" | "host_offline" | "upgrade_required"
-  | "relay_limit" | "access_removed" | "forbidden" | "resource_missing" | "paused";
+  | "relay_limit" | "access_removed" | "forbidden" | "unauthorized" | "resource_missing" | "paused";
 export interface ClassifiedCollaborationFailure {
   state: CollaborationFailureState;
   reconnect: boolean;
@@ -16,13 +16,14 @@ const STATES = {
   relay_limit: { state: "relay_limit", reconnect: false, message: "Today's collaboration limit is reached. Try again after reset." },
   not_found: { state: "access_removed", reconnect: false, message: "This item is no longer shared with you." },
   forbidden: { state: "forbidden", reconnect: false, message: "Your role cannot perform this action." },
+  unauthorized: { state: "unauthorized", reconnect: false, message: "Sign in again to continue." },
   resource_missing: { state: "resource_missing", reconnect: false, message: "This item was moved or deleted by its owner." },
   paused: { state: "paused", reconnect: false, message: "The owner updated this item; waiting for them to keep sharing it." },
 } as const;
 
 const EXPECTED_STATUS = {
   unavailable: 503, host_offline: 503, upgrade_required: 426, relay_limit: 429,
-  not_found: 404, forbidden: 403, resource_missing: 404, paused: 423,
+  not_found: 404, forbidden: 403, unauthorized: 401, resource_missing: 404, paused: 423,
 } as const;
 
 /** Classifies a bounded wire failure. Text from the server is never displayed. */
@@ -54,6 +55,7 @@ export function classifyCollaborationClientError(error: unknown): ClassifiedColl
     return { ...STATES.relay_limit, ...(retry ? { retryAfterSeconds: retry } : {}) };
   }
   if (value.code === "forbidden") return { ...STATES.forbidden };
+  if (value.code === "unauthorized" || value.code === "denied") return { ...STATES.unauthorized };
   if (value.code === "resource_missing") return { ...STATES.resource_missing };
   if (value.code === "paused") return { ...STATES.paused };
   return { ...STATES.unavailable };
