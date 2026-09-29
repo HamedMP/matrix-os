@@ -1,0 +1,40 @@
+# Public Free Tools: Research and Keyword Evidence
+
+**Checked:** 2026-09-29. Search estimates are Ahrefs US ranges, not exact traffic forecasts. Reddit posts are qualitative anecdotes, not market-size measurements.
+
+## Competitive pattern
+
+- [TabTasker](https://tabtasker.com/) lists 73 browser tool/app entries across PDF, image, text, audio, developer, AI, and workflow categories. Its live SEO audit accepts pasted HTML, a local file, or a URL. The URL mode explicitly uses a server fetch before browser analysis, so privacy language must distinguish those paths.
+- [Ahrefs free SEO tools](https://ahrefs.com/free-seo-tools), [Semrush free tools](https://www.semrush.com/free-tools/seo/), [HubSpot business tools](https://www.hubspot.com/free-business-tools), and [Buffer free tools](https://buffer.com/free-tools) each use free task pages as a product entry point. Their catalog breadth is evidence of a distribution pattern, not proof that any one tool converts to a Matrix computer.
+- [Google Search Central](https://developers.google.com/search/docs/essentials/spam-policies) warns against near-identical doorway pages, scaled low-value pages, and misleading tool functionality. The tool must work before its page is indexed. Pages need original instructions and task-specific limitations.
+
+## Ahrefs keyword check
+
+The connected Ahrefs API reported a zero-unit workspace limit and rejected an eight-keyword overview query (`Expected usage: 344, API units left: 0`). The public [Ahrefs Keyword Generator](https://ahrefs.com/keyword-generator/) remained usable. With United States selected, it showed these ranges and qualitative difficulty labels:
+
+| Seed query | US monthly search range shown | Difficulty label | Implication |
+|---|---:|---|---|
+| `json formatter` | >10,000 | Hard | Useful developer essential, but a crowded head term. |
+| `image compressor` | >10,000 | Easy | Strong broad utility candidate, though weaker Matrix fit than agent tools. |
+| `pdf merge` | >10,000 | Hard | Broad demand, but a heavy file-tool category and crowded head term. |
+| `seo audit` | >10,000 | Easy | Good marketing use case; first release can audit pasted HTML without a URL proxy. |
+| `mcp server` | >10,000 | Hard | Strong Matrix audience fit, but informational intent dominates the broad query. |
+| `mcp config validator` | No keyword ideas returned | N/A | Valuable niche utility should be judged on product fit and community demand, not claimed head-term volume. |
+
+The public UI exposes rounded ranges, not precise volumes or full difficulty scores. Ahrefs' connected API was unavailable, so no exact-volume ranking of all 45 tools exists. The first release should use Search Console outcomes to reprioritize.
+
+## Community signals
+
+- A [Reddit SEO discussion](https://www.reddit.com/r/SEO/comments/1sdtjx0/im_new_to_seo_what_are_the_best_free_tools_for/) repeatedly points beginners to Search Console, Keyword Planner, Trends, and actionable audits. This supports tools that solve a concrete job and explain the result.
+- A [SideProject account](https://www.reddit.com/r/SideProject/comments/1rtntq0/i_built_an_ai_website_audit_tool_as_a_solo_dev/) reports that a free audit helped acquisition, but its numbers are self-reported and not a benchmark.
+- A [44-tool builder](https://www.reddit.com/r/SideProject/comments/1ssvm2r/drop_your_saas_and_ill_tell_you_how_id_try_to_get/) reported traffic from a Reddit post while asking how to earn repeat visits. Matrix's continuation should be a useful workflow connection, not an interruption to a free result.
+
+## Matrix Search Console and Google Trends
+
+The owner-visible [Search Console performance report](https://search.google.com/search-console/performance/search-analytics?resource_id=sc-domain%3Amatrix-os.com&breakdown=page) showed **3.67K clicks, 215K impressions, 1.7% CTR, and average position 5.9** for web search over the three months ending September 27, 2026. The home page had 1,906 clicks from 10,727 impressions. Two articles about keeping Claude Code running after closing a laptop had 705 clicks / 102,793 impressions and 326 clicks / 56,654 impressions. The query table likewise surfaced agent-continuity searches. This is strong evidence that Matrix's current organic audience is seeking persistent agent work; generic utility traffic should be measured for conversion rather than treated as equivalent.
+
+[Google Trends comparison](https://trends.google.com/trends/explore?geo=US&q=json%20formatter,image%20compressor,pdf%20merge,seo%20audit,mcp%20server) for US web searches over the past 12 months showed normalized average interest of 4 for `json formatter`, 4 for `image compressor`, 18 for `pdf merge`, 5 for `seo audit`, and 41 for `mcp server`. Trends values are relative indices within that comparison, **not search volumes**. `mcp server` rose into mid-2026 and eased by late September; utility terms were steadier. This supports an agent-heavy catalog with some durable utility pages.
+
+## Selection rationale
+
+The 45-tool initial set favors small, truthful browser operations that can run without a Matrix computer or per-use provider cost. Developer and agent tools match Matrix's current audience; SEO and writing tools add B2B reach. PDF editing, browser AI models, audio transcription, peer-to-peer calls, and server-side website crawling are later candidates because they add large downloads, cross-browser performance problems, or infrastructure and abuse costs. High volume alone is insufficient if visitors have little reason to use Matrix afterward.
