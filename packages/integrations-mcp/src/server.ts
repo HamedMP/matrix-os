@@ -49,6 +49,18 @@ export function createIntegrationsMcpServer(
   const full = surface === "full";
   const chat = surface === "chat-call" || surface === "chat-discovery";
   const discovery = surface === "custom-mcp-discovery" || surface === "chat-discovery";
+  const approvalSchema: z.ZodRawShape = chat ? { matrix_approval_receipt: z.string().regex(/^[a-f0-9]{64}$/).optional()
+    .describe("Reserved: Matrix fills this only after human approval; never supply it yourself.") } : {};
+  // Per-invocation closure: concurrent calls never share approval transport state.
+  function actionFetcher(input: Record<string, unknown>): GatewayFetcher | undefined {
+    if (!chat || typeof input.matrix_approval_receipt !== "string") return fetcher;
+    const receipt = input.matrix_approval_receipt;
+    return (url, init) => {
+      const headers = new Headers(init.headers);
+      headers.set("x-matrix-integration-approval", receipt);
+      return (fetcher ?? fetch)(url, { ...init, headers });
+    };
+  }
   const server = new McpServer(
     { name: "matrix-integrations", version: "1.0.0" },
     {
@@ -99,16 +111,17 @@ export function createIntegrationsMcpServer(
         {
           description:
             "Start a Matrix Settings-compatible OAuth connection and return the browser authorization URL.",
-          inputSchema: { service: serviceSchema, label: labelSchema },
+          inputSchema: { service: serviceSchema, label: labelSchema, ...approvalSchema },
         },
-        async (input) => connectServiceHandler(input, fetcher),
+        async (input) => connectServiceHandler(input, actionFetcher(input)),
       );
       server.registerTool(
         "sync_services",
         {
           description: "Refresh Matrix connection metadata after the user completes OAuth.",
+          inputSchema: { ...approvalSchema },
         },
-        async () => syncServicesHandler(fetcher),
+        async (input) => syncServicesHandler(actionFetcher(input)),
       );
       server.registerTool(
         "call_service",
@@ -120,20 +133,21 @@ export function createIntegrationsMcpServer(
             action: z.string().min(1).max(100).regex(/^[a-zA-Z0-9_-]+$/),
             params: z.record(z.string(), z.unknown()).optional(),
             label: chat ? z.string().trim().min(1).max(100) : labelSchema,
+            ...approvalSchema,
           },
           annotations: { destructiveHint: true },
         },
-        async (input) => callServiceHandler(input, fetcher),
+        async (input) => callServiceHandler(input, actionFetcher(input)),
       );
       server.registerTool(
         "disconnect_service",
         {
           description:
             "Disconnect one external account by its explicit Matrix connection id. Only use when the user asks to disconnect it.",
-          inputSchema: { connection_id: z.uuid() },
+          inputSchema: { connection_id: z.uuid(), ...approvalSchema },
           annotations: { destructiveHint: true },
         },
-        async (input) => disconnectServiceHandler(input, fetcher),
+        async (input) => disconnectServiceHandler(input, actionFetcher(input)),
       );
     }
   }

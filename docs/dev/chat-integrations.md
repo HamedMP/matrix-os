@@ -32,8 +32,12 @@ must use the exact account label from inventory. Supervised, automatic and
 accept-edits runs ask through the canonical Chat approval UI for each built-in
 action, including writes and account management. A browser-authenticated decision
 is verified by Platform before Gateway grants one exact request. The grant binds
-method, route and normalized arguments, expires after 90 seconds, and is consumed
-once. Cancellation, steering, expiry and run completion revoke the capability.
+method, route, normalized arguments and a unique execution receipt, expires after
+90 seconds, and is consumed once. The native approval response supplies the receipt
+to MCP; it travels only to the local Gateway and never to Platform/provider arguments.
+Cancelling a native request retracts its exact receipt even when another approved
+request has identical arguments. Steering, run cancellation and completion revoke
+the run capability.
 Full access explicitly authorizes the fixed built-in action routes for that run;
 it does not authorize other Gateway routes. Custom MCP retains its broker policy
 and receipts in every mode.

@@ -17,6 +17,6 @@ export async function authorizeChatIntegrationRequest(c: Context): Promise<Respo
     console.warn("[chat-integrations] Invalid action body", error instanceof Error ? error.name : "UnknownError");
     return c.json({ error: "Invalid integration action" }, 400);
   }
-  return run.consumeIntegrationRequest(c.req.method, c.req.path, body)
+  return run.consumeIntegrationRequest(c.req.method, c.req.path, body, c.req.header("x-matrix-integration-approval"))
     ? null : c.json({ error: "Integration action approval required" }, 403);
 }

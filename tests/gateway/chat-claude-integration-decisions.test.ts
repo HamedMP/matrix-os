@@ -23,6 +23,16 @@ function fixture(verified = true) {
 const proof = { chatId: "chat_1", clientRequestId: "req_1", platformApprovalProof: "signed-decision" };
 
 describe("built-in integration human decisions", () => {
+  it("retracts a completed native allow when cancellation arrives before execution", async () => {
+    const f = fixture();
+    await f.control.submit(f.requested.approvalId, "approve", proof);
+    const receipt = (f.respond.mock.calls[0]![0] as { updatedInput: { matrix_approval_receipt: string } }).updatedInput.matrix_approval_receipt;
+    f.control.onToolPermissionCancel("native_1");
+    expect(f.context.consumeIntegrationRequest!("POST", "/api/integrations/call", action, receipt)).toBe(false);
+    expect(f.registry.resolveRunContext(f.capability.token, "GET", "/api/mcp-servers")).not.toBeNull();
+    expect(f.events.filter(event => event.type === "approval.resolved")).toHaveLength(1);
+    f.control.close(); f.registry.close();
+  });
   it.each(["decline", "cancel"] as const)("%s never grants provider execution", async decision => {
     const f = fixture();
     await f.control.submit(f.requested.approvalId, decision, proof);
@@ -42,6 +52,7 @@ describe("built-in integration human decisions", () => {
     const f = fixture();
     f.respond.mockRejectedValueOnce(new Error("Disconnected native transport"));
     await expect(f.control.submit(f.requested.approvalId, decision, proof)).rejects.toThrow();
+    expect(f.registry.resolveRunContext(f.capability.token, "GET", "/api/mcp-servers")).toBeNull();
     expect(f.context.consumeIntegrationRequest!("POST", "/api/integrations/call", action)).toBe(false);
     expect(f.events.at(-1)).toMatchObject({ type: "approval.resolved", decision: "cancel" });
     expect(f.onError).toHaveBeenCalledOnce();
@@ -68,9 +79,11 @@ describe("built-in integration human decisions", () => {
     const submission = f.control.submit(f.requested.approvalId, "approve", proof);
     const outcome = expect(submission).rejects.toThrow();
     await writing;
+    const receipt = (f.respond.mock.calls[0]![0] as { updatedInput: { matrix_approval_receipt: string } }).updatedInput.matrix_approval_receipt;
     if (cancellation === "native") f.control.onToolPermissionCancel("native_1");
     else f.control.close();
-    expect(f.context.consumeIntegrationRequest!("POST", "/api/integrations/call", action)).toBe(false);
+    expect(f.context.consumeIntegrationRequest!("POST", "/api/integrations/call", action, receipt)).toBe(false);
+    expect(f.registry.resolveRunContext(f.capability.token, "GET", "/api/mcp-servers") === null).toBe(cancellation === "close");
     finish();
     await outcome;
     expect(f.events.filter(event => event.type === "approval.resolved")).toEqual([
@@ -80,7 +93,11 @@ describe("built-in integration human decisions", () => {
   });
   it("cancels only its exact grant and preserves an unrelated identical approval and Custom MCP capability", async () => {
     const f = fixture();
-    expect(f.capability.approveIntegrationTool!(toolName, action)).toBe(true);
+    const otherRespond = vi.fn(async (_value: unknown) => {});
+    f.control.onToolPermission({ nativeRequestId: "native_2", toolName, input: action }, otherRespond);
+    const otherApproval = f.events.at(-1) as Extract<CanonicalProviderRunEvent, { type: "approval.requested" }>;
+    await f.control.submit(otherApproval.approvalId, "approve", { ...proof, clientRequestId: "req_2" });
+    const otherReceipt = (otherRespond.mock.calls[0]![0] as { updatedInput: { matrix_approval_receipt: string } }).updatedInput.matrix_approval_receipt;
     let finish!: () => void;
     let started!: () => void;
     const writing = new Promise<void>(resolve => { started = resolve; });
@@ -88,15 +105,43 @@ describe("built-in integration human decisions", () => {
     const submission = f.control.submit(f.requested.approvalId, "approve", proof);
     const outcome = expect(submission).rejects.toThrow();
     await writing;
+    const input = (f.respond.mock.calls[0]![0] as { updatedInput: Record<string, unknown> }).updatedInput;
+    const receipt = input.matrix_approval_receipt as string;
+    expect(input).toEqual({ ...action, matrix_approval_receipt: expect.stringMatching(/^[a-f0-9]{64}$/) });
     f.control.onToolPermissionCancel("native_1");
     expect(f.registry.resolveRunContext(f.capability.token, "GET", "/api/mcp-servers")).not.toBeNull();
-    expect(f.context.consumeIntegrationRequest!("POST", "/api/integrations/call", action)).toBe(true);
-    expect(f.context.consumeIntegrationRequest!("POST", "/api/integrations/call", action)).toBe(false);
+    expect(f.context.consumeIntegrationRequest!("POST", "/api/integrations/call", action, receipt)).toBe(false);
+    expect(f.context.consumeIntegrationRequest!("POST", "/api/integrations/call", action, otherReceipt)).toBe(true);
+    expect(f.context.consumeIntegrationRequest!("POST", "/api/integrations/call", action, otherReceipt)).toBe(false);
     finish(); await outcome;
     expect(f.onError).not.toHaveBeenCalled();
     expect(f.events.filter(event => event.type === "approval.resolved")).toEqual([
+      expect.objectContaining({ decision: "approve" }),
       expect.objectContaining({ decision: "cancel" }),
     ]);
+    f.control.close(); f.registry.close();
+  });
+  it("rejects model-provided execution receipts before requesting human approval", () => {
+    const f = fixture();
+    const respond = vi.fn(async (_value: unknown) => {});
+    f.control.onToolPermission({ nativeRequestId: "forged", toolName,
+      input: { ...action, matrix_approval_receipt: "a".repeat(64) } }, respond);
+    expect(respond).toHaveBeenCalledWith(expect.objectContaining({ behavior: "deny" }));
+    expect(f.events.filter(event => event.type === "approval.requested")).toHaveLength(1);
+    expect(f.verify).not.toHaveBeenCalled();
+    f.control.close(); f.registry.close();
+  });
+  it("sweeps consumed receipts so sequential approvals do not exhaust the retention cap", async () => {
+    const f = fixture();
+    await f.control.submit(f.requested.approvalId, "decline", proof);
+    for (let i = 0; i < 20; i++) {
+      f.control.onToolPermission({ nativeRequestId: `native_seq_${i}`, toolName, input: action }, f.respond);
+      const requested = f.events.at(-1) as Extract<CanonicalProviderRunEvent, { type: "approval.requested" }>;
+      expect(requested.type).toBe("approval.requested");
+      await f.control.submit(requested.approvalId, "approve", { ...proof, clientRequestId: `req_seq_${i}` });
+      const receipt = (f.respond.mock.calls.at(-1)![0] as { updatedInput: { matrix_approval_receipt: string } }).updatedInput.matrix_approval_receipt;
+      expect(f.context.consumeIntegrationRequest!("POST", "/api/integrations/call", action, receipt)).toBe(true);
+    }
     f.control.close(); f.registry.close();
   });
   it("expires pending approvals, drains them on close and rejects blanket session approval", async () => {

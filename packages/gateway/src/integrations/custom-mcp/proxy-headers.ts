@@ -9,6 +9,7 @@ export function integrationProxyHeaders(context: Context, routePrefix: string): 
     const normalized = key.toLowerCase();
     if (normalized !== "host" && normalized !== "authorization"
       && normalized !== "x-matrix-mcp-run-id"
+      && normalized !== "x-matrix-integration-approval"
       && normalized !== INTEGRATION_READ_SCOPE_HEADER
       && normalized !== "x-matrix-custom-mcp-approval-proof" && value) headers.set(key, value);
   }

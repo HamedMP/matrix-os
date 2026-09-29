@@ -47,7 +47,6 @@ export function matrixMcpConfig(scope: "call" | "discovery" | "chat_call" | "cha
 export interface MatrixMcpRunCapability {
   token: string;
   revoke(): void;
-  approveIntegrationTool?: ReturnType<typeof createIntegrationToolAuthority>["approveIntegrationTool"];
   grantIntegrationTool?: ReturnType<typeof createIntegrationToolAuthority>["grantIntegrationTool"];
 }
 
@@ -126,8 +125,7 @@ export function createMatrixMcpCapabilityRegistry(options: {
       }) : undefined;
       active.set(key, { actorId: input.owner.ownerId, runId: input.runId, scope: input.scope, expiresAt, authority });
       return { token, revoke: () => { active.delete(key); },
-        ...(authority ? { approveIntegrationTool: authority.approveIntegrationTool,
-          grantIntegrationTool: authority.grantIntegrationTool } : {}) };
+        ...(authority ? { grantIntegrationTool: authority.grantIntegrationTool } : {}) };
     },
     resolve(token, method, path) {
       return resolveRunContext(token, method, path)?.actorId ?? null;

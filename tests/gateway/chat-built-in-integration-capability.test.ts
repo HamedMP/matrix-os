@@ -33,15 +33,17 @@ describe("Claude built-in integration authority", () => {
     const next = registry.issue({ owner, runId: "next", scope: "chat_call" })!;
     const current = registry.resolveRunContext(cap.token, "POST", "/api/integrations/call")!;
     const resumed = registry.resolveRunContext(next.token, "POST", "/api/integrations/call")!;
-    for (let i = 0; i < 16; i++) expect(cap.approveIntegrationTool!(tool, action)).toBe(true);
-    expect(cap.approveIntegrationTool!(tool, action)).toBe(false);
-    expect(resumed.consumeIntegrationRequest!("POST", "/api/integrations/call", action)).toBe(false);
+    const grant = cap.grantIntegrationTool!(tool, action)!;
+    for (let i = 1; i < 16; i++) expect(cap.grantIntegrationTool!(tool, action)).not.toBeNull();
+    expect(cap.grantIntegrationTool!(tool, action)).toBeNull();
+    expect(resumed.consumeIntegrationRequest!("POST", "/api/integrations/call", action, grant.receipt)).toBe(false);
     now = 90_000;
-    expect(current.consumeIntegrationRequest!("POST", "/api/integrations/call", action)).toBe(false);
-    expect(cap.approveIntegrationTool!(tool, action)).toBe(true);
+    expect(current.consumeIntegrationRequest!("POST", "/api/integrations/call", action, grant.receipt)).toBe(false);
+    const fresh = cap.grantIntegrationTool!(tool, action)!;
+    expect(fresh).not.toBeNull();
     cap.revoke();
-    expect(current.consumeIntegrationRequest!("POST", "/api/integrations/call", action)).toBe(false);
-    expect(cap.approveIntegrationTool!(tool, action)).toBe(false);
+    expect(current.consumeIntegrationRequest!("POST", "/api/integrations/call", action, fresh.receipt)).toBe(false);
+    expect(cap.grantIntegrationTool!(tool, action)).toBeNull();
     registry.close();
   });
   it("does not forward an unapproved or replayed request to Platform", async () => {
@@ -51,33 +53,32 @@ describe("Claude built-in integration authority", () => {
     const app = new Hono();
     app.use("*", authMiddleware("host-secret", { resolveMatrixMcpRunContext: registry.resolveRunContext }));
     app.all("*", c => proxyIntegrationRequest(c, { targetBase: "https://platform.test/internal/integrations", machineToken: "platform-token", fetcher }));
-    const request = () => app.request("/api/integrations/call", { method: "POST",
-      headers: { authorization: `Bearer ${capability.token}`, "content-type": "application/json" }, body: JSON.stringify(action) });
+    const request = (receipt?: string) => app.request("/api/integrations/call", { method: "POST",
+      headers: { authorization: `Bearer ${capability.token}`, "content-type": "application/json",
+        ...(receipt ? { "x-matrix-integration-approval": receipt } : {}) }, body: JSON.stringify(action) });
     expect((await request()).status).toBe(403);
     expect(fetcher).not.toHaveBeenCalled();
-    expect(capability.approveIntegrationTool!(tool, action)).toBe(true);
-    expect((await request()).status).toBe(200);
+    const grant = capability.grantIntegrationTool!(tool, action)!;
+    expect((await request()).status).toBe(403);
+    expect((await request(grant.receipt)).status).toBe(200);
     expect(fetcher).toHaveBeenCalledTimes(1);
     expect(JSON.parse(await (fetcher.mock.calls[0]![1]!.body as Blob).text())).toEqual(action);
-    expect((await request()).status).toBe(403);
+    expect(new Headers(fetcher.mock.calls[0]![1]!.headers).has("x-matrix-integration-approval")).toBe(false);
+    expect((await request(grant.receipt)).status).toBe(403);
     registry.close();
   });
   it("allows one exact approved action, rejects changed accounts/params and replay", () => {
     const registry = createMatrixMcpCapabilityRegistry({ configuredOwnerId: owner.ownerId });
-    const capability = registry.issue({ owner, runId: "run_drive", scope: "chat_call" as never })!;
+    const capability = registry.issue({ owner, runId: "run_drive", scope: "chat_call" })!;
     expect(capability).not.toBeNull();
-    const authority = capability as typeof capability & {
-      approveIntegrationTool(name: string, input: Record<string, unknown>): boolean;
-    };
-    const context = registry.resolveRunContext(capability.token, "POST", "/api/integrations/call") as
-      { consumeIntegrationRequest(method: string, path: string, body: unknown): boolean };
-    expect(context.consumeIntegrationRequest("POST", "/api/integrations/call", action)).toBe(false);
-    expect(authority.approveIntegrationTool(tool, action)).toBe(true);
-    expect(context.consumeIntegrationRequest("POST", "/api/integrations/call", { ...action, label: "personal" })).toBe(false);
-    expect(context.consumeIntegrationRequest("POST", "/api/integrations/call", { ...action, params: { max_results: 100 } })).toBe(false);
-    expect(context.consumeIntegrationRequest("POST", "/api/integrations/call", action)).toBe(true);
-    expect(context.consumeIntegrationRequest("POST", "/api/integrations/call", action)).toBe(false);
-    expect(authority.approveIntegrationTool(tool, { ...action, label: undefined })).toBe(false);
+    const context = registry.resolveRunContext(capability.token, "POST", "/api/integrations/call")!;
+    expect(context.consumeIntegrationRequest!("POST", "/api/integrations/call", action)).toBe(false);
+    const grant = capability.grantIntegrationTool!(tool, action)!;
+    expect(context.consumeIntegrationRequest!("POST", "/api/integrations/call", { ...action, label: "personal" }, grant.receipt)).toBe(false);
+    expect(context.consumeIntegrationRequest!("POST", "/api/integrations/call", { ...action, params: { max_results: 100 } }, grant.receipt)).toBe(false);
+    expect(context.consumeIntegrationRequest!("POST", "/api/integrations/call", action, grant.receipt)).toBe(true);
+    expect(context.consumeIntegrationRequest!("POST", "/api/integrations/call", action, grant.receipt)).toBe(false);
+    expect(capability.grantIntegrationTool!(tool, { ...action, label: undefined })).toBeNull();
     expect(registry.resolve(capability.token, "POST", "/api/chats/chat_1/runs/run_drive/approvals/a")).toBeNull();
     registry.close();
   });

@@ -34,11 +34,11 @@ describe("scoped Claude-to-Matrix MCP transport", () => {
     app.get("/api/integrations", c => c.json(forbiddenInventory()));
     app.get("/api/integrations/agent-catalog", c => c.json([{ id: "google_drive", name: "Google Drive",
       actions: { list_files: { description: "List bounded file metadata", risk: "read", params: { max_results: { type: "number" } } } } }]));
-    const providerRead = vi.fn(async () => ({ files: [{ id: "fixture-public", name: "Synthetic document" }] }));
+    const providerRead = vi.fn(async (_input: unknown) => ({ files: [{ id: "fixture-public", name: "Synthetic document" }] }));
     app.post("/api/integrations/call", async c => {
       const denied = await authorizeChatIntegrationRequest(c);
       if (denied) return denied;
-      return c.json(await providerRead());
+      return c.json(await providerRead(await c.req.json()));
     });
     app.get("/api/mcp-servers", (c) => c.json([{
       id: serverId, name: "Public docs fixture", status: "ready", enabled: true, revision: 10,
@@ -110,12 +110,14 @@ describe("scoped Claude-to-Matrix MCP transport", () => {
         const denied = await client.callTool({ name: "call_service", arguments: action });
         expect(JSON.stringify(denied.content)).toContain("approval required");
         expect(providerRead).not.toHaveBeenCalled();
-        capability.approveIntegrationTool!("mcp__matrix-integrations__call_service", action);
-        const read = await client.callTool({ name: "call_service", arguments: action });
+        const grant = capability.grantIntegrationTool!("mcp__matrix-integrations__call_service", action)!;
+        const approved = { ...action, matrix_approval_receipt: grant.receipt };
+        const read = await client.callTool({ name: "call_service", arguments: approved });
         expect(JSON.stringify(read.content)).toContain("Synthetic document");
-        const replay = await client.callTool({ name: "call_service", arguments: action });
+        const replay = await client.callTool({ name: "call_service", arguments: approved });
         expect(JSON.stringify(replay.content)).toContain("approval required");
         expect(providerRead).toHaveBeenCalledOnce();
+        expect(providerRead).toHaveBeenCalledWith(action);
       }
       if (surface === "full") {
         const deniedInventory = await client.callTool({ name: "list_integration_inventory" });

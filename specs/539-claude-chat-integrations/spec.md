@@ -33,7 +33,12 @@ and model-provided approval fields never grant authority.
 The Gateway registry binds the personal owner, live run, expiry and bounded
 one-use action grants. Canonical approvals verify the Platform-signed actor/chat/
 run/approval/decision proof before creating a grant. Grants bind normalized JSON
-request arguments, expire promptly and are cleared on steering/run cancellation/completion.
+request arguments and a unique unpredictable execution receipt, expire promptly and
+are cleared on steering/run cancellation/completion. Verified native approvals add
+the receipt to `updatedInput`; the MCP boundary carries it only in a local Gateway
+header, stripped before Platform forwarding. Supervised requests without the exact
+receipt never fall back to argument-only matching. Model-supplied receipts in native
+approval requests are rejected.
 Cancelling one native permission request retracts only its own outstanding grant,
 including when another approval has identical arguments. Other integration and
 Custom MCP authority remains live; native transport failure closes run authority.

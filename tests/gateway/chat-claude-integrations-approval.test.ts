@@ -45,8 +45,10 @@ describe("Claude Chat built-in action approval", () => {
           responses.push(frame.response.response);
           if (frame.response.response.behavior === "allow") {
             const context = registry.resolveRunContext(options.env.MATRIX_AGENT_INTEGRATIONS_TOKEN!, method, path);
-            expect(context?.consumeIntegrationRequest?.(method, path, body)).toBe(true);
-            expect(context?.consumeIntegrationRequest?.(method, path, body)).toBe(false);
+            const receipt = frame.response.response.updatedInput.matrix_approval_receipt;
+            expect(receipt).toMatch(/^[a-f0-9]{64}$/);
+            expect(context?.consumeIntegrationRequest?.(method, path, body, receipt)).toBe(true);
+            expect(context?.consumeIntegrationRequest?.(method, path, body, receipt)).toBe(false);
             providerCalls.push(requestedAction);
           }
           queueMicrotask(() => {
@@ -80,7 +82,8 @@ describe("Claude Chat built-in action approval", () => {
     expect(events).toContain("approval.resolved");
     expect(verifyIntegrationDecision).toHaveBeenCalledWith(expect.objectContaining({ chatId: "chat_1", runId: "run_1",
       clientRequestId: "req_1", decision: "approve", platformApprovalProof: "signed-human-decision" }));
-    expect(responses).toEqual([{ behavior: "allow", updatedInput: requestedAction }]);
+    expect(responses).toEqual([{ behavior: "allow", updatedInput: { ...requestedAction,
+      matrix_approval_receipt: expect.stringMatching(/^[a-f0-9]{64}$/) } }]);
     expect(providerCalls).toEqual([requestedAction]);
     const args = spawnFn.mock.calls[0]![1];
     const settings = JSON.parse(args[args.indexOf("--settings") + 1]!);

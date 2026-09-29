@@ -1,4 +1,5 @@
 import { z } from "zod/v4";
+import { createHash, randomBytes } from "node:crypto";
 import { customMcpArgumentsDigest } from "../integrations/custom-mcp/approval-digest.js";
 
 const service = z.string().min(1).max(64).regex(/^[a-z0-9_-]+$/);
@@ -70,36 +71,36 @@ function requestDigest(method: string, path: string, body: unknown): string | nu
 
 /** Main-process grants, never agent-provided approval flags. Bound to one live capability. */
 export function createIntegrationToolAuthority(options: { live(): boolean; now(): number; fullAccess?: boolean }) {
-  const grants: Array<{ digest: string; expiresAt: number }> = [];
+  const grants: Array<{ digest: string; receiptHash: string; expiresAt: number }> = [];
   function sweep() {
     for (let i = grants.length - 1; i >= 0; i--) if (grants[i]!.expiresAt <= options.now()) grants.splice(i, 1);
   }
-  function grantIntegrationTool(tool: string, input: Record<string, unknown>): (() => void) | null {
+  function grantIntegrationTool(tool: string, input: Record<string, unknown>): { receipt: string; revoke(): void; isLive(): boolean } | null {
     if (!options.live()) return null;
     const request = integrationToolRequest(tool, input);
     const digest = request && requestDigest(request.method, request.path, request.body);
     sweep();
     if (!digest || grants.length >= 16) return null;
-    const grant = { digest, expiresAt: options.now() + 90_000 };
+    const receipt = randomBytes(32).toString("hex");
+    const grant = { digest, receiptHash: createHash("sha256").update(receipt).digest("hex"), expiresAt: options.now() + 90_000 };
     grants.push(grant);
-    return () => {
+    return { receipt, revoke() {
       // Identity, rather than digest, isolates concurrent identical approvals.
       const index = grants.indexOf(grant);
       if (index >= 0) grants.splice(index, 1);
-    };
+    }, isLive() { return options.live() && grant.expiresAt > options.now() && grants.includes(grant); } };
   }
   return {
     grantIntegrationTool,
-    approveIntegrationTool(tool: string, input: Record<string, unknown>): boolean {
-      return grantIntegrationTool(tool, input) !== null;
-    },
-    consumeIntegrationRequest(method: string, path: string, body: unknown): boolean {
+    consumeIntegrationRequest(method: string, path: string, body: unknown, receipt?: string): boolean {
       if (!options.live()) return false;
       const digest = requestDigest(method, path, body);
       if (!digest) return false;
       if (options.fullAccess) return true;
+      if (!receipt || !/^[a-f0-9]{64}$/.test(receipt)) return false;
+      const receiptHash = createHash("sha256").update(receipt).digest("hex");
       sweep();
-      const index = grants.findIndex(grant => grant.digest === digest);
+      const index = grants.findIndex(grant => grant.receiptHash === receiptHash && grant.digest === digest);
       if (index < 0) return false;
       grants.splice(index, 1);
       return true;
