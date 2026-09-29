@@ -23,15 +23,18 @@ function Editor({ catalog = { enabled: true, skills, services: [] }, selected = 
 }
 
 describe("installed Recipe skill selection", () => {
-  it("keeps selected identity a hint and requests only the receipt-bound read-only broker", () => {
+  it("keeps identity a hint and requests the receipt-bound broker with labeling off by default", () => {
     expect(jevAgentRecipe("my-work-gmail").integrations).toEqual([{ service: "gmail", accountLabel: "my-work-gmail" }]);
     expect(jevAgentInstructions("owner@example.com")).toContain('"owner@example.com"');
     expect(jevAgentInstructions("owner@example.com")).toContain("server-owned saved account binding is authoritative");
     expect(jevAgentInstructions("owner@example.com")).toContain("jev_inbox_preview");
     expect(jevAgentInstructions("owner@example.com")).toContain("receipt");
-    expect(jevAgentInstructions("owner@example.com")).toContain("Do not use generic Gmail or Jev evaluation tools");
-    expect(jevAgentInstructions("owner@example.com")).toContain("setup or funding unavailable");
-    expect(jevAgentRecipe("my-work-gmail").output).not.toContain("applied");
+    expect(jevAgentInstructions("owner@example.com")).toContain("Do not use generic Gmail or Jev tools");
+    expect(jevAgentInstructions("owner@example.com")).toContain("setup or funding is unavailable");
+    expect(jevAgentRecipe("my-work-gmail").jevInboxLabeling).toBe(false);
+    expect(jevAgentRecipe("my-work-gmail", true).jevInboxLabeling).toBe(true);
+    expect(jevAgentInstructions("owner@example.com")).toContain("saved labeling permission");
+    expect(jevAgentInstructions("owner@example.com")).toContain("Never archive, send, delete, mark read or change files");
     expect(jevAgentInstructions("owner@example.com")).toContain("Creating this Agent does not run triage or modify Gmail");
     expect(() => jevAgentInstructions("gmail")).toThrow();
   });

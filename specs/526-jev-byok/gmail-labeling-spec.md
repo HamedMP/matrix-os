@@ -17,7 +17,7 @@ The authenticated Agent API stores the opt-in and derives the owner/account bind
 | --- | --- | --- |
 | Existing Agent create/patch | Authenticated owner | Saves explicit opt-in; not public |
 | Existing `/api/jev/inbox/preview` | Active restricted run capability and owner principal | Historical path retained; evaluate may label only with saved grant; not public |
-| Internal `/integrations/jev-label-call` | Existing Platform principal / verified machine delegation | Exact owner, active Gmail binding, fixed category labels and 1–4 IDs; rejects read-only run scope; not public |
+| Internal `/integrations/jev-label-call` | Verified machine bearer plus signed owner delegation | One fixed operation, exact owner and active Gmail binding; public owner HTTP and read-only run scope are rejected; not public |
 
 The Gmail transport permits only label inventory, message label readback, fixed-name label creation and message modify with **addLabelIds only**. All URLs/methods are constructed internally; redirects are rejected. OAuth resolution, response streaming and external calls have deadlines and byte caps. Live Gmail identity is checked before each mutation. Gmail calls are not transactional: completed label creations or partial message updates may remain after failure. Report **unconfirmed** rather than claiming no changes or success; retain the run's failed attempt and never blindly replay it. A later explicit run reads existing labels first; additive updates are idempotent.
 
@@ -25,7 +25,7 @@ Successful results require independent Gmail message readback showing every expe
 
 Verified scores that require Review also produce no writes, with an explicit `review_required` reason. A read-only result is not proof that the saved grant is disabled; `preview_only` is reported separately. The bot must not ask users to enable an already-enabled permission.
 
-Authorization is rechecked before dispatch and between broker stages. Revocation/cancellation prevents subsequent dispatches but cannot recall a Gmail mutation already in flight. The same distributed race applies if mail arrives after the last snapshot check: writes stay limited to the server's originally classified message IDs. These are additive operations; no thread-wide mutation is used.
+The owning Gateway retains the label plan and rechecks saved active-run authorization before every later label creation or message update, including remote transport. The Platform seam accepts only one operation per request; it cannot execute a remote multi-write loop. Its authorizer is installed only on the internal mount and reads trusted context produced by Platform machine HMAC, signed owner proof and membership verification. The public integration mount defaults to denial. Legacy unsigned owner delegation is insufficient for this seam. Authorization is also rechecked between broker stages. Revocation/cancellation prevents subsequent dispatches but cannot recall a Gmail mutation already in flight. The same distributed race applies if mail arrives after the last snapshot check: writes stay limited to the server's originally classified message IDs. These are additive operations; no thread-wide mutation is used.
 
 Existing integration registration exceeds the preferred file size. New behavior is extracted into `jev-label-call.ts`, `jev-bound-labels.ts` and `pipedream-bounded-labels.ts`; the existing registry receives one composition line only. A later registry cleanup should extract route assembly without combining provider behavior into that large file.
 

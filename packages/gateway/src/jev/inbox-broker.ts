@@ -46,7 +46,8 @@ export function createJevInboxBroker(options: {
   authorize: (ownerId: string, scope: HermesJevScope) => Promise<void>;
   read: (ownerId: string, scope: HermesJevScope, action: string, params?: Record<string, unknown>, signal?: AbortSignal) => Promise<unknown>;
   evaluate: JevService["evaluate"];
-  label?: (ownerId: string, scope: HermesJevScope, input: z.infer<typeof JevLabelInput>, signal?: AbortSignal) => Promise<unknown>;
+  label?: (ownerId: string, scope: HermesJevScope, input: z.infer<typeof JevLabelInput>, signal: AbortSignal | undefined,
+    authorize: () => Promise<void>) => Promise<unknown>;
   now?: () => number;
 }) {
   const records = new Map<string, RecordState>();
@@ -208,7 +209,9 @@ export function createJevInboxBroker(options: {
           current.presentation = { ...outcome, kind: "labeling_unconfirmed" };
           try {
             const plan = JevLabelInput.parse({ threadId: selected.threadId, messageIds: fresh.messageIds.slice(-4), labels: policy.labels });
-            const confirmation = JevLabelConfirmation.parse(await options.label(ownerId, scope, plan, signal));
+            const confirmation = JevLabelConfirmation.parse(await options.label(ownerId, scope, plan, signal, async () => {
+              alive(ownerId, scope, current, signal); await options.authorize(ownerId, scope); alive(ownerId, scope, current, signal);
+            }));
             if (JSON.stringify(confirmation.messageIds) !== JSON.stringify(fresh.messageIds.slice(-4))
               || confirmation.labelIds.length !== policy.labels.length) throw new InboxPreviewError("unavailable");
             alive(ownerId, scope, current, signal);
