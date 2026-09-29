@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -18,12 +19,14 @@ import {
   assertLocalParityMachinesAvailable,
   assertOrbStackCapacity,
   assertTcpPortAvailable,
+  buildBundle,
   builderSetupScript,
   clerkSecretIsConfigured,
   cleanupLocalParityResources,
   createLocalParityPlan,
   fetchConfiguredClerkJwtKey,
   fixtureRouterArguments,
+  installLocalParitySignalHandlers,
   lastSuccessfullySeededMachineId,
   LOCAL_PARITY_OWNER_LABEL,
   platformContainerArguments,
@@ -33,6 +36,7 @@ import {
   renderLocalParityCloudInit,
   runtimeProcessIsOwned,
   runtimeProcessPids,
+  runAbortableCommand,
   startArtifactServer,
   storageTlsProxyArguments,
 } from "../../scripts/dev-production-parity.mjs";
@@ -317,6 +321,104 @@ describe("local development contracts", () => {
         "  789 rg /runtime/disk.qcow2",
       ].join("\n"),
     })).toEqual([123]);
+  });
+
+  it("deletes its invocation-owned builder when interrupted during the bundle build", async () => {
+    const listeners = new Map<NodeJS.Signals, () => void>();
+    const signalTarget = {
+      on(signal: NodeJS.Signals, listener: () => void) {
+        listeners.set(signal, listener);
+      },
+      off(signal: NodeJS.Signals, listener: () => void) {
+        if (listeners.get(signal) === listener) listeners.delete(signal);
+      },
+    };
+    const controller = new AbortController();
+    const removeSignalHandlers = installLocalParitySignalHandlers(signalTarget, controller);
+    const commands: string[][] = [];
+    let builderExists = false;
+
+    await expect(buildBundle({
+      builderCreate: ["orb", "create", "local-builder"],
+      buildCommand: "build bundle",
+    }, {
+      builderName: "local-builder",
+      machineExists: () => builderExists,
+      reuseBundle: false,
+      signal: controller.signal,
+      runCommand: async (command: string, args: string[]) => {
+        commands.push([command, ...args]);
+        if (args[0] === "create") builderExists = true;
+        if (args.includes("root")) listeners.get("SIGINT")?.();
+        if (args[0] === "delete") builderExists = false;
+      },
+    })).rejects.toThrow("Interrupted by SIGINT");
+    removeSignalHandlers();
+
+    expect(commands[0]).toEqual(["orb", "create", "local-builder"]);
+    expect(commands.at(-1)).toEqual(["orb", "delete", "--force", "local-builder"]);
+    expect(commands.some((command) => command.includes("build bundle"))).toBe(false);
+    expect(builderExists).toBe(false);
+    expect(listeners.size).toBe(0);
+  });
+
+  it("delivers a real process signal while an abortable child command is running", async () => {
+    const script = [
+      `import { runAbortableCommand } from ${JSON.stringify(new URL("../../scripts/dev-production-parity.mjs", import.meta.url).href)};`,
+      "const controller = new AbortController();",
+      "process.once('SIGTERM', () => controller.abort(new Error('interrupted')));",
+      "const signaler = setTimeout(() => process.kill(process.pid, 'SIGTERM'), 100);",
+      "try {",
+      "  await runAbortableCommand(process.execPath, ['-e', 'setTimeout(() => {}, 30000)'], { signal: controller.signal });",
+      "} catch (error) {",
+      "  console.log(error.message);",
+      "} finally {",
+      "  clearTimeout(signaler);",
+      "  console.log('cleanup-reached');",
+      "}",
+    ].join("\n");
+    const child = spawn(process.execPath, ["--input-type=module", "--eval", script], {
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk) => { stdout += chunk; });
+    child.stderr.on("data", (chunk) => { stderr += chunk; });
+    const result = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolvePromise) => {
+      child.once("close", (code, signal) => resolvePromise({ code, signal }));
+    });
+
+    expect(result).toEqual({ code: 0, signal: null });
+    expect(stderr).toBe("");
+    expect(stdout).toContain("interrupted");
+    expect(stdout).toContain("cleanup-reached");
+  });
+
+  it("cleans an invocation-owned builder left by a failed create", async () => {
+    const commands: string[][] = [];
+    let builderExists = false;
+    await expect(buildBundle({
+      builderCreate: ["orb", "create", "unique-builder"],
+      buildCommand: "build bundle",
+    }, {
+      builderName: "unique-builder",
+      machineExists: () => builderExists,
+      reuseBundle: false,
+      runCommand: async (command: string, args: string[]) => {
+        commands.push([command, ...args]);
+        if (args[0] === "create") {
+          builderExists = true;
+          throw new Error("create acknowledgement failed");
+        }
+        if (args[0] === "delete") builderExists = false;
+      },
+    })).rejects.toThrow("create acknowledgement failed");
+
+    expect(commands).toEqual([
+      ["orb", "create", "unique-builder"],
+      ["orb", "delete", "--force", "unique-builder"],
+    ]);
+    expect(builderExists).toBe(false);
   });
 
   it("cleans all owned resources after failure but preserves a live runtime disk", async () => {

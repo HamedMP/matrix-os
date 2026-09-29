@@ -16,7 +16,7 @@ const cloudInitPath = resolve(stateDirectory, "cloud-init.yaml");
 const bundlePath = resolve(bundleDirectory, "matrix-host-bundle.tar.gz");
 const bundleChecksumPath = `${bundlePath}.sha256`;
 const machineName = process.env.MATRIX_PARITY_MACHINE_NAME ?? "matrix-os-local";
-const builderName = `${machineName}-builder`;
+const builderName = `${machineName}-builder-${randomUUID()}`;
 const runtimeDirectory = resolve(stateDirectory, "runtime");
 const runtimeDiskPath = resolve(runtimeDirectory, "disk.qcow2");
 const runtimeSeedPath = resolve(runtimeDirectory, "cidata.iso");
@@ -177,6 +177,33 @@ function run(command, args, options = {}) {
     throw new Error(`${command} ${args.join(" ")} failed${detail ? `: ${detail}` : ""}`);
   }
   return options.capture ? result.stdout.trim() : "";
+}
+
+export function runAbortableCommand(command, args, options = {}) {
+  return new Promise((resolvePromise, rejectPromise) => {
+    options.signal?.throwIfAborted();
+    const child = spawn(command, args, {
+      cwd: root,
+      stdio: "inherit",
+      env: options.env ?? process.env,
+    });
+    const onAbort = () => child.kill("SIGTERM");
+    const settle = (callback) => {
+      options.signal?.removeEventListener("abort", onAbort);
+      callback();
+    };
+    options.signal?.addEventListener("abort", onAbort, { once: true });
+    child.once("error", (error) => settle(() => rejectPromise(error)));
+    child.once("close", (code, terminationSignal) => settle(() => {
+      if (options.signal?.aborted) {
+        rejectPromise(options.signal.reason);
+      } else if (code === 0) {
+        resolvePromise();
+      } else {
+        rejectPromise(new Error(`${command} ${args.join(" ")} failed (code ${code}, signal ${terminationSignal})`));
+      }
+    }));
+  });
 }
 
 function machineExists(name) {
@@ -675,11 +702,32 @@ ln -sf /opt/beam/elixir/bin/* /usr/local/bin/
 `;
 }
 
-function buildBundle(plan) {
-  if (process.argv.includes("--reuse-bundle") && existsSync(bundlePath) && existsSync(bundleChecksumPath)) return;
-  run(plan.builderCreate[0], plan.builderCreate.slice(1));
+export function installLocalParitySignalHandlers(signalTarget, controller) {
+  const handlers = new Map([
+    ["SIGINT", () => controller.abort(new Error("Interrupted by SIGINT"))],
+    ["SIGTERM", () => controller.abort(new Error("Interrupted by SIGTERM"))],
+  ]);
+  for (const [signal, handler] of handlers) signalTarget.on(signal, handler);
+  return () => {
+    for (const [signal, handler] of handlers) signalTarget.off(signal, handler);
+  };
+}
+
+export async function buildBundle(plan, options = {}) {
+  const execute = options.runCommand ?? runAbortableCommand;
+  const exists = options.machineExists ?? machineExists;
+  const buildName = options.builderName ?? builderName;
+  const signal = options.signal;
+  const reuseBundle = options.reuseBundle ?? (
+    process.argv.includes("--reuse-bundle") && existsSync(bundlePath) && existsSync(bundleChecksumPath)
+  );
+  if (reuseBundle) return;
   try {
-    run("orb", ["-m", builderName, "-u", "root", "bash", "-lc", builderSetupScript()]);
+    signal?.throwIfAborted();
+    await execute(plan.builderCreate[0], plan.builderCreate.slice(1), { signal });
+    signal?.throwIfAborted();
+    await execute("orb", ["-m", buildName, "-u", "root", "bash", "-lc", builderSetupScript()], { signal });
+    signal?.throwIfAborted();
     const env = { ...parseEnvFile(resolve(root, ".env")), ...process.env };
     const forwarded = [
       "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY", "NEXT_PUBLIC_CLERK_SIGN_IN_URL", "NEXT_PUBLIC_CLERK_SIGN_UP_URL",
@@ -687,15 +735,17 @@ function buildBundle(plan) {
     ];
     if (!env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY) throw new Error("NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY is required to build the production shell");
     const forwardedEnv = Object.fromEntries(forwarded.flatMap((key) => env[key] === undefined ? [] : [[key, env[key]]]));
-    run("orb", ["-m", builderName, "-u", "root", "bash", "-lc", plan.buildCommand], {
+    await execute("orb", ["-m", buildName, "-u", "root", "bash", "-lc", plan.buildCommand], {
+      signal,
       env: {
         ...process.env,
         ...forwardedEnv,
         ORBENV: Object.keys(forwardedEnv).join(":"),
       },
     });
+    signal?.throwIfAborted();
   } finally {
-    if (machineExists(builderName)) run("orb", ["delete", "--force", builderName]);
+    if (exists(buildName)) await execute("orb", ["delete", "--force", buildName]);
   }
 }
 
@@ -850,34 +900,30 @@ async function up() {
   const clerkJwtKey = await fetchConfiguredClerkJwtKey(publicEnv.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY);
   const state = loadState();
   const plan = createLocalParityPlan({ root, machineName, builderName });
-  buildBundle(plan);
-  const configuredEnv = { ...parseEnvFile(resolve(root, ".env.docker")), ...parseEnvFile(resolve(root, ".env")), ...process.env };
-  if (!clerkSecretIsConfigured(configuredEnv.CLERK_SECRET_KEY)) {
-    console.warn("CLERK_SECRET_KEY is unavailable; browser auth will return a bounded unavailable response, while the production VM still starts");
-  }
-  run("docker", platformImageBuildArguments(publicEnv));
-  prepareBaseImage();
-  prepareStorageTlsCertificate();
-  state.bundleSha256 = readFileSync(bundleChecksumPath, "utf8").trim().split(/\s+/)[0];
-  writeFileSync(statePath, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600 });
-  const template = readFileSync(resolve(root, "distro/customer-vps/cloud-init.yaml"), "utf8");
-  const rendered = renderLocalParityCloudInit(template, {
-    ...state,
-    hostBundleUrl: `${localArtifactUrl}/matrix-host-bundle.tar.gz`,
-    platformUrl: localPlatformUrl,
-  });
-  mkdirSync(stateDirectory, { recursive: true });
-  writeFileSync(cloudInitPath, rendered, { mode: 0o600 });
-  prepareRuntimeFiles(rendered, state.machineId);
-
   const shutdown = new AbortController();
-  const handleSigint = () => shutdown.abort(new Error("Interrupted by SIGINT"));
-  const handleSigterm = () => shutdown.abort(new Error("Interrupted by SIGTERM"));
-  process.once("SIGINT", handleSigint);
-  process.once("SIGTERM", handleSigterm);
+  const removeSignalHandlers = installLocalParitySignalHandlers(process, shutdown);
   let artifactServer;
   let ready = false;
   try {
+    await buildBundle(plan, { signal: shutdown.signal });
+    const configuredEnv = { ...parseEnvFile(resolve(root, ".env.docker")), ...parseEnvFile(resolve(root, ".env")), ...process.env };
+    if (!clerkSecretIsConfigured(configuredEnv.CLERK_SECRET_KEY)) {
+      console.warn("CLERK_SECRET_KEY is unavailable; browser auth will return a bounded unavailable response, while the production VM still starts");
+    }
+    run("docker", platformImageBuildArguments(publicEnv));
+    prepareBaseImage();
+    prepareStorageTlsCertificate();
+    state.bundleSha256 = readFileSync(bundleChecksumPath, "utf8").trim().split(/\s+/)[0];
+    writeFileSync(statePath, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600 });
+    const template = readFileSync(resolve(root, "distro/customer-vps/cloud-init.yaml"), "utf8");
+    const rendered = renderLocalParityCloudInit(template, {
+      ...state,
+      hostBundleUrl: `${localArtifactUrl}/matrix-host-bundle.tar.gz`,
+      platformUrl: localPlatformUrl,
+    });
+    mkdirSync(stateDirectory, { recursive: true });
+    writeFileSync(cloudInitPath, rendered, { mode: 0o600 });
+    prepareRuntimeFiles(rendered, state.machineId);
     run("docker", ["compose", "-f", "docker-compose.dev.yml", "up", "--detach", "postgres", "minio", "minio-alias", "minio-init"]);
     shutdown.signal.throwIfAborted();
     startFixtureRouter();
@@ -918,8 +964,7 @@ async function up() {
     }
     throw error;
   } finally {
-    process.off("SIGINT", handleSigint);
-    process.off("SIGTERM", handleSigterm);
+    removeSignalHandlers();
     artifactServer?.close();
     if (ready) stopPlatformContainer();
   }
