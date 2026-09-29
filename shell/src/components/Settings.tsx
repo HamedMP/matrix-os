@@ -16,6 +16,7 @@ import {
   CreditCardIcon,
   DownloadIcon,
   CheckCircle2Icon,
+  UploadIcon,
 } from "@/lib/hugeicons";
 import { AppearanceSection } from "./settings/sections/AppearanceSection";
 import { AgentSection } from "./settings/sections/AgentSection";
@@ -27,6 +28,7 @@ import { CronSection } from "./settings/sections/CronSection";
 import { SecuritySection } from "./settings/sections/SecuritySection";
 import { PluginsSection } from "./settings/sections/PluginsSection";
 import { SystemSection } from "./settings/sections/SystemSection";
+import { ChatImportSection } from "./settings/sections/ChatImportSection";
 import { BillingSection } from "./settings/sections/BillingSection";
 import type { ComputerSetupSelection } from "./settings/sections/BillingPanel";
 import { useMatrixBillingAccess } from "@/hooks/useMatrixBillingAccess";
@@ -53,6 +55,7 @@ const sections = [
   { id: "channels", label: "Channels", icon: MessageSquareIcon },
   { id: "integrations", label: "Services", icon: CableIcon },
   { id: "skills", label: "Skills", icon: SparklesIcon },
+  { id: "chat-import", label: "Import chats", icon: UploadIcon },
   { id: "security", label: "Security", icon: ShieldIcon },
   { id: "billing", label: "Billing", icon: CreditCardIcon },
   { id: "cron", label: "Cron", icon: ClockIcon },
@@ -411,6 +414,7 @@ function SettingsFrame({
               {activeSection === "channels" && <ChannelsSection />}
               {activeSection === "integrations" && <IntegrationsSection />}
               {activeSection === "skills" && <SkillsSection />}
+              {activeSection === "chat-import" && <ChatImportSection />}
               {activeSection === "cron" && <CronSection />}
               {activeSection === "security" && <SecuritySection />}
               {showBillingSection && activeSection === "billing" && (

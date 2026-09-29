@@ -6,6 +6,7 @@ export type { CardProps, CardHeaderProps, CardTitleProps, CardContentProps, Card
 
 export { Input } from "./Input.js";
 export type { InputProps } from "./Input.js";
+export { ChatImportPanel } from "./chat-import/ChatImportPanel.js";
 
 export { Dialog } from "./Dialog.js";
 export type { DialogProps } from "./Dialog.js";

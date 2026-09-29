@@ -7,6 +7,8 @@ import { ProviderSettingsStore } from "../ai-providers/provider-settings-store.j
 import type { GmailAccountRow } from "../chat/jev-recipe-authority.js";
 import { createProviderSettingsRoutes } from "../ai-providers/provider-settings-routes.js";
 import { createChatAgentRoutes } from "../chat/agent-routes.js";
+import { createCodexChatImportRoutes } from "../chat/codex-import-routes.js";
+import { CodexChatImporter } from "../chat/codex-importer.js";
 import { registerCanonicalChatEventHttpRoute } from "../chat/event-http-route.js";
 import { registerCanonicalChatEventWebSocketRoute } from "../chat/event-websocket-route.js";
 import { createGatewayChatEventStream } from "../chat/gateway-event-stream.js";
@@ -65,6 +67,10 @@ export function registerCollaborationChatRoutes(options: CollaborationChatRouteO
   }
   app.route("/", createChatSharingRoutes(chatRepository ? new ChatSharing(chatRepository.kysely) : null));
   registerOwnerCollaborationRoutes({ app, upgradeWebSocket, gatewayCollaboration, collaborationFailClosedReason });
+  app.route("/", createCodexChatImportRoutes({
+    importer: chatRepository ? new CodexChatImporter(chatRepository) : null,
+    getPrincipal: (c) => requireRequestPrincipal(c),
+  }));
   app.route("/", createCanonicalChatRoutes({
     service: chatRepository
         ? createCanonicalChatService(chatRepository, {
