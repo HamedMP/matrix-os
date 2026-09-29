@@ -72,6 +72,9 @@ export class CodexChatImporter {
     const request = BeginSchema.parse(input);
     await this.sweepExpired();
     return this.db.transaction().execute(async (trx) => {
+      // Completion holds this same source lock through provenance publication
+      // and staging deletion, so a retry cannot create a second staging job.
+      await sql`SELECT pg_advisory_xact_lock(53902, hashtext(${`${ownerId}:${request.sourceId}`}))`.execute(trx);
       const existingImport = await trx.selectFrom("chat_legacy_imports").selectAll()
         .where("owner_type", "=", "personal").where("owner_id", "=", ownerId)
         .where("source_kind", "=", "codex_jsonl").where("source_id", "=", request.sourceId)
@@ -163,6 +166,7 @@ export class CodexChatImporter {
     const request = CompleteSchema.parse(input);
     return this.repository.withTransaction(async (transactionRepository) => {
       const trx = transactionRepository.kysely;
+      await sql`SELECT pg_advisory_xact_lock(53902, hashtext(${`${ownerId}:${sourceId}`}))`.execute(trx);
       const job = await trx.selectFrom("chat_import_jobs").selectAll()
         .where("owner_id", "=", ownerId).where("source_id", "=", sourceId)
         .forUpdate().executeTakeFirst();

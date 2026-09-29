@@ -52,6 +52,8 @@ authentication, staging, publication, and repository read-back.
   file through the user-selected browser File stream; the renderer does not
   receive arbitrary local filesystem access. Each request has a body limit and timeout.
 - Owner-scoped Postgres staging rows are bounded by count, bytes and age.
+  Start and completion share a per-session transaction lock, so a retry cannot
+  create fresh staging between provenance publication and completed-job deletion.
   Batch offsets are contiguous and idempotent. Retrying the same session and
   hash resumes or returns the existing Chat; an edited title updates the open
   staging job. A changed hash for one session ID is a conflict. Abandoned

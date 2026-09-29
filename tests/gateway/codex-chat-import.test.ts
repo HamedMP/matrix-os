@@ -96,6 +96,21 @@ describe("Codex Chat import", () => {
       .toEqual(Array.from({ length: 150 }, (_, index) => `Question ${index + 1}`));
   });
 
+  it("does not strand a job when a retry overlaps completion", async () => {
+    await importer.begin(owner, { sourceId, sourceHash, title: "Concurrent" });
+    await importer.append(owner, sourceId, { startSeq: 1, messages: [
+      { role: "user", text: "Hello", createdAt: "2026-09-03T16:01:00.000Z" },
+    ] });
+    const [completed, retry] = await Promise.all([
+      importer.complete(owner, sourceId, { messageCount: 1 }),
+      importer.begin(owner, { sourceId, sourceHash, title: "Concurrent" }),
+    ]);
+    expect(["uploading", "verified"]).toContain(retry.status);
+    expect(await importer.begin(owner, { sourceId, sourceHash, title: "Concurrent" }))
+      .toMatchObject({ status: "verified", chatId: completed.chatId });
+    expect(await chats.kysely.selectFrom("chat_import_jobs").select("source_id").execute()).toEqual([]);
+  });
+
   it("does not report success for an imported Chat that the owner deleted", async () => {
     await importer.begin(owner, { sourceId, sourceHash, title: "Deleted" });
     await importer.append(owner, sourceId, { startSeq: 1, messages: [
