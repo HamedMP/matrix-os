@@ -7,6 +7,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./speech": "./src/speech/index.ts",
+    "./voice-session": "./src/voice-session/index.ts",
+    "./voice-session.css": "./src/voice-session/voice-session.css",
     "./styles.css": "./src/styles.css",
     "./agents-providers.css": "./src/agents-providers/agents-providers.css",
     "./chat-agents.css": "./src/chat-agents/chat-agents.css"

@@ -50,6 +50,7 @@ export default defineConfig({
       "@matrix-os/brand": path.resolve(__dirname, "packages/brand/src/index.ts"),
       "@matrix-os/contracts/chat-subagent": path.resolve(__dirname, "packages/contracts/src/chat-subagent.ts"),
       "@matrix-os/contracts/collaboration": path.resolve(__dirname, "packages/contracts/src/collaboration.ts"),
+      "@matrix-os/contracts/voice-session": path.resolve(__dirname, "packages/contracts/src/voice-session.ts"),
       "@matrix-os/contracts": path.resolve(__dirname, "packages/contracts/src/index.ts"),
       "@matrix-os/observability/client": path.resolve(
         __dirname,

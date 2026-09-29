@@ -28,6 +28,7 @@
     "dev:gateway": "pnpm --filter '@matrix-os/observability' --filter '@matrix-os/kernel' build && pnpm --filter '@matrix-os/gateway' dev",
     "dev:speech": "node scripts/dev-speech-stack.mjs",
     "dev:speech:fixture": "node --import=tsx scripts/dev-speech-fixture.ts",
+    "dev:voice:fixture": "vite --config tests/fixtures/voice-session/ui-fixture/vite.config.ts",
     "dev:shell": "pnpm --filter '@matrix-os/observability' --filter '@matrix-os/brand' build && pnpm --filter './shell' dev",
     "dev:mobile-shell": "pnpm --filter '@matrix-os/observability' build && pnpm --filter '@matrix-os/kernel' build && echo 'Mobile shell: http://localhost:3000/?launch=__terminal__' && (MATRIX_AUTH_ALLOW_INSECURE_DEV=1 pnpm --filter '@matrix-os/gateway' dev & E2E_TEST_BYPASS=1 NEXT_PUBLIC_E2E_TEST_BYPASS=1 pnpm --filter './shell' dev)",
     "dev:desktop": "pnpm --filter desktop dev",

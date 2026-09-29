@@ -1,0 +1,271 @@
+html {
+  min-width: 320px;
+  min-height: 100%;
+  background: var(--matrix-bg);
+}
+
+body {
+  min-height: 100vh;
+  margin: 0;
+  color: var(--matrix-fg);
+  background:
+    radial-gradient(circle at 80% 10%, color-mix(in srgb, var(--matrix-accent) 9%, transparent), transparent 28rem),
+    var(--matrix-bg);
+  font-family: var(--matrix-font-sans);
+}
+
+button,
+select {
+  font: inherit;
+}
+
+.fixture-shell {
+  width: min(76rem, 100%);
+  margin: 0 auto;
+  padding: clamp(1rem, 3vw, 2.5rem);
+}
+
+.fixture-toolbar {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 1.5rem;
+  margin-bottom: 1.25rem;
+}
+
+.fixture-toolbar p,
+.fixture-toolbar h1,
+.fixture-chat h2,
+.fixture-chat p,
+.fixture-command {
+  margin: 0;
+}
+
+.fixture-toolbar > div > p {
+  color: var(--matrix-muted-fg);
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.fixture-toolbar h1 {
+  margin-top: 0.3rem;
+  font-size: clamp(1.4rem, 4vw, 2.2rem);
+  letter-spacing: -0.035em;
+}
+
+.fixture-toolbar label {
+  display: grid;
+  gap: 0.35rem;
+  min-width: 12rem;
+  color: var(--matrix-muted-fg);
+  font-size: 0.76rem;
+  font-weight: 700;
+}
+
+.fixture-toolbar select {
+  min-height: 44px;
+  padding: 0.55rem 2.2rem 0.55rem 0.7rem;
+  color: var(--matrix-fg);
+  background: var(--matrix-card);
+  border: 1px solid var(--matrix-border);
+  border-radius: var(--matrix-radius-md);
+}
+
+.fixture-toolbar select:focus-visible {
+  outline: 3px solid var(--matrix-ring);
+  outline-offset: 2px;
+}
+
+.fixture-stage {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(19rem, 34rem);
+  min-height: 39rem;
+  overflow: hidden;
+  background: var(--matrix-card);
+  border: 1px solid var(--matrix-border);
+  border-radius: calc(var(--matrix-radius-xl) + 0.35rem);
+  box-shadow: 0 30px 80px color-mix(in srgb, var(--matrix-fg) 10%, transparent);
+}
+
+.fixture-chat {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  padding: 1.25rem;
+}
+
+.fixture-chat > header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--matrix-border);
+}
+
+.fixture-chat > header p {
+  margin-top: 0.15rem;
+  color: var(--matrix-muted-fg);
+  font-size: 0.75rem;
+}
+
+.fixture-avatar {
+  display: grid;
+  width: 2.5rem;
+  height: 2.5rem;
+  place-items: center;
+  color: var(--matrix-primary-fg);
+  background: var(--matrix-primary);
+  border-radius: 50%;
+  font-weight: 750;
+}
+
+.fixture-messages {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 1rem;
+  justify-content: center;
+  padding: 2rem 0;
+}
+
+.fixture-message {
+  max-width: 34rem;
+  padding: 0.85rem 1rem;
+  border-radius: var(--matrix-radius-lg);
+  line-height: 1.55;
+}
+
+.fixture-message--user {
+  align-self: flex-end;
+  background: var(--matrix-secondary);
+  border-end-end-radius: var(--matrix-radius-sm);
+}
+
+.fixture-message--assistant {
+  align-self: flex-start;
+  background: color-mix(in srgb, var(--matrix-card) 75%, var(--matrix-muted));
+  border: 1px solid var(--matrix-border);
+  border-end-start-radius: var(--matrix-radius-sm);
+}
+
+.fixture-message ul {
+  margin: 0.7rem 0 0;
+  padding-left: 1.15rem;
+  color: var(--matrix-muted-fg);
+}
+
+.fixture-composer {
+  display: flex;
+  min-height: 3.2rem;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.6rem 0.8rem;
+  color: var(--matrix-muted-fg);
+  background: var(--matrix-bg);
+  border: 1px solid var(--matrix-border);
+  border-radius: var(--matrix-radius-lg);
+}
+
+.fixture-composer span:last-child {
+  color: var(--matrix-primary-fg);
+  background: var(--matrix-primary);
+  border-radius: var(--matrix-radius-sm);
+  padding: 0.45rem 0.65rem;
+}
+
+.fixture-panel-slot {
+  display: grid;
+  align-items: end;
+  padding: clamp(1rem, 3vw, 2rem);
+  background: color-mix(in srgb, var(--matrix-secondary) 42%, var(--matrix-card));
+  border-left: 1px solid var(--matrix-border);
+}
+
+.fixture-command {
+  min-height: 1.1rem;
+  margin-top: 0.65rem;
+  color: var(--matrix-muted-fg);
+  font-size: 0.72rem;
+  text-align: center;
+}
+
+.fixture-evidence {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.4rem 0.8rem;
+  margin: 0.65rem 0 0;
+  padding: 0.6rem 0.7rem;
+  color: var(--matrix-muted-fg);
+  background: color-mix(in srgb, var(--matrix-card) 70%, transparent);
+  border: 1px solid var(--matrix-border);
+  border-radius: var(--matrix-radius-md);
+  font-size: 0.68rem;
+}
+
+.fixture-evidence > div {
+  display: grid;
+  gap: 0.1rem;
+}
+
+.fixture-evidence dt,
+.fixture-evidence dd {
+  margin: 0;
+}
+
+.fixture-evidence dt {
+  font-weight: 700;
+}
+
+.fixture-evidence dd {
+  color: var(--matrix-fg);
+  font-weight: 600;
+}
+
+.fixture-reduced-motion *,
+.fixture-reduced-motion *::before,
+.fixture-reduced-motion *::after {
+  animation: none !important;
+  scroll-behavior: auto !important;
+  transition: none !important;
+}
+
+@media (max-width: 52rem) {
+  .fixture-stage {
+    grid-template-columns: 1fr;
+  }
+
+  .fixture-panel-slot {
+    border-top: 1px solid var(--matrix-border);
+    border-left: 0;
+  }
+}
+
+@media (max-width: 35rem) {
+  .fixture-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .fixture-toolbar label {
+    min-width: 0;
+  }
+
+  .fixture-shell {
+    padding: 0.75rem;
+  }
+
+  .fixture-chat,
+  .fixture-panel-slot {
+    padding: 0.85rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    scroll-behavior: auto !important;
+    transition: none !important;
+  }
+}
