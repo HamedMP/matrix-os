@@ -70,6 +70,7 @@ import {
 } from "./voice-session/adapter.js";
 import { createCanonicalVoicePorts } from "./voice-session/canonical-ports.js";
 import { VoiceSessionEngine } from "./voice-session/engine.js";
+import { createOpenAiVoiceMediaAdapter } from "./voice-session/openai-adapter.js";
 import { createSystemVoiceClock } from "./voice-session/ports.js";
 import {
   createVoiceSessionRoutes,
@@ -1570,8 +1571,11 @@ export async function createGateway(config: GatewayConfig) {
     });
     const voiceAdapters = new VoiceMediaAdapterRegistry();
     // The deterministic simulator is an explicit dev/integration seam only —
-    // it never registers implicitly, so production reports `not_configured`
-    // until a real provider adapter lands behind this registry.
+    // it never registers implicitly, and when set it is the ONLY adapter so a
+    // stray provider key cannot silently route dev sessions to paid calls.
+    // Production registers the OpenAI adapter solely when its key is present;
+    // otherwise capability reports `not_configured`.
+    const voiceOpenAiKey = process.env.MATRIX_VOICE_OPENAI_API_KEY?.trim();
     if (process.env.MATRIX_VOICE_SIMULATOR === "1") {
       voiceAdapters.register(new SimulatorVoiceMediaAdapter({
         scenario: {
@@ -1582,6 +1586,13 @@ export async function createGateway(config: GatewayConfig) {
           timeline: [],
         },
         clock: createSystemVoiceClock(),
+      }));
+    } else if (voiceOpenAiKey) {
+      voiceAdapters.register(createOpenAiVoiceMediaAdapter({
+        apiKey: voiceOpenAiKey,
+        transcriptionModel: process.env.MATRIX_VOICE_TRANSCRIPTION_MODEL ?? "gpt-4o-mini-transcribe",
+        speechModel: process.env.MATRIX_VOICE_SPEECH_MODEL ?? "gpt-4o-mini-tts",
+        voice: process.env.MATRIX_VOICE_SPEECH_VOICE ?? "alloy",
       }));
     }
     const voiceCapabilities = createAdapterCapabilityPort({
