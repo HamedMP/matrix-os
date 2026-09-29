@@ -327,6 +327,23 @@ describe("Electron Terminal protected file drag", () => {
     expect(readText).not.toHaveBeenCalled();
   });
 
+  it.each(["directory", "unreadable"])("rejects an entire mixed drop containing an %s item", async (kind) => {
+    const post = vi.fn();
+    useConnection.setState({ api: { post } as never });
+    const { container } = render(<TerminalView sessionName={TERMINAL_REF_KEY} />);
+    const file = new File(["notes"], "notes.txt");
+    const event = new Event("drop", { bubbles: true, cancelable: true });
+    Object.defineProperty(event, "dataTransfer", { value: { types: ["Files"], files: [file], items: [
+      { kind: "file", getAsFile: () => file },
+      { kind: "file", getAsFile: () => null, webkitGetAsEntry: () => ({ isDirectory: kind === "directory" }) },
+    ] } });
+    fireEvent(container.querySelector("[data-terminal-viewport]")!, event);
+    expect(event.defaultPrevented).toBe(true);
+    expect(await screen.findByText("Drop individual files only. Some items could not be read.")).toBeTruthy();
+    expect(post).not.toHaveBeenCalled();
+    expect(attachmentWrite).not.toHaveBeenCalled();
+  });
+
   it("reports a copied-file error without falling back to its name", async () => {
     const readText = vi.fn(async () => "too-big.bin");
     Object.defineProperty(navigator, "clipboard", { configurable: true, value: { readText } });

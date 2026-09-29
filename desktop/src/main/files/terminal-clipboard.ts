@@ -48,6 +48,10 @@ export async function readTerminalClipboardFiles(
     const legacyMetadata = clipboard.readBuffer("NSFilenamesPboardType");
     const format = legacyMetadata.length > 0 ? "NSFilenamesPboardType" : "public.file-url";
     const metadata = format === "NSFilenamesPboardType" ? legacyMetadata : clipboard.readBuffer(format);
+    if (metadata.length === 0 && !formats.some((value) => ["NSFilenamesPboardType", "public.file-url"].includes(value))) {
+      // A URI list may be an ordinary web URL, with no copied file behind it.
+      return { status: "empty" };
+    }
     if (metadata.length === 0 || metadata.length > MAX_METADATA_BYTES) {
       return { status: "error", error: "file_unavailable" };
     }

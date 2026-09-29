@@ -771,6 +771,14 @@ export default function TerminalView({
     const onDrag = captureTerminalFileDrag;
     const onDrop = (event: DragEvent) => {
       const files = terminalDropFiles(event.dataTransfer);
+      if (files === null) {
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation();
+        pasteOperationGenerationRef.current += 1;
+        reportClipboardFailure(++clipboardOperationSequenceRef.current, "Drop individual files only. Some items could not be read.");
+        return;
+      }
       if (files.length === 0) return;
       event.preventDefault();
       event.stopPropagation();

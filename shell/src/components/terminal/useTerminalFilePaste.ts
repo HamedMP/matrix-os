@@ -195,6 +195,14 @@ export function useTerminalFilePaste({
     const onDrag = captureTerminalFileDrag;
     const onDrop = (event: DragEvent) => {
       const files = terminalDropFiles(event.dataTransfer);
+      if (files === null) {
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation();
+        operationGenerationRef.current += 1;
+        reportPasteFailure(++feedbackSequenceRef.current, "Drop individual files only. Some items could not be read.");
+        return;
+      }
       if (files.length > 0) {
         event.preventDefault();
         event.stopPropagation();

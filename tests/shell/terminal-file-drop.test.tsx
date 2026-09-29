@@ -112,4 +112,18 @@ describe("Web Terminal protected file drag", () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
+  it.each(["directory", "unreadable"])("rejects an entire mixed drop containing an %s item", (kind) => {
+    const { getByTestId } = render(<FilePasteHarness />);
+    const file = new File(["notes"], "notes.txt");
+    const event = dragEvent("drop", { types: ["Files"], files: [file], items: [
+      { kind: "file", getAsFile: () => file },
+      { kind: "file", getAsFile: () => null, webkitGetAsEntry: () => ({ isDirectory: kind === "directory" }) },
+    ] });
+    getByTestId("terminal-host").dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(true);
+    expect(reportPasteFailure).toHaveBeenLastCalledWith(expect.any(Number), "Drop individual files only. Some items could not be read.");
+    expect(fetch).not.toHaveBeenCalled();
+    expect(send).not.toHaveBeenCalled();
+  });
+
 });

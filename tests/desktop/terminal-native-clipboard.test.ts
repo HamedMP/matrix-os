@@ -60,6 +60,18 @@ describe.runIf(process.platform === "darwin")("native Terminal file clipboard", 
       .toMatchObject({ status: "files", files: [{ name: "copied.txt" }] });
   });
 
+  it("leaves ordinary URI clipboard text to text paste when native file data is absent", async () => {
+    expect(await readTerminalClipboardFiles({
+      availableFormats: () => ["text/plain", "text/uri-list"], readBuffer: () => Buffer.alloc(0),
+    }, "darwin")).toEqual({ status: "empty" });
+  });
+
+  it("does not fall back to text for an advertised native file format with empty data", async () => {
+    expect(await readTerminalClipboardFiles({
+      availableFormats: () => ["public.file-url", "text/plain"], readBuffer: () => Buffer.alloc(0),
+    }, "darwin")).toEqual({ status: "error", error: "file_unavailable" });
+  });
+
   it("rejects more than eight files before opening any file", async () => {
     expect(await readTerminalClipboardFiles(clipboardFor(Array.from({ length: 9 }, (_, i) => join(directory, `${i}.txt`))), "darwin"))
       .toEqual({ status: "error", error: "too_many_files" });

@@ -15,8 +15,8 @@ export function captureTerminalFileDrag(event: DragEvent): void {
 export const MAX_TERMINAL_DROP_FILES = 8;
 export const MAX_TERMINAL_DROP_FILE_BYTES = 10 * 1024 * 1024;
 
-/** Return at most one over the limit so callers can reject a whole batch. */
-export function terminalDropFiles(payload: DataTransfer | null): File[] {
+/** Null rejects unreadable/folder batches; keep one over the limit for validation. */
+export function terminalDropFiles(payload: DataTransfer | null): File[] | null {
   if (!payload) return [];
   const files: File[] = [];
   let hasFileItems = false;
@@ -26,9 +26,10 @@ export function terminalDropFiles(payload: DataTransfer | null): File[] {
     const entry = (item as DataTransferItem & {
       webkitGetAsEntry?: () => { isDirectory?: boolean } | null;
     }).webkitGetAsEntry?.();
-    if (entry?.isDirectory) continue;
+    if (entry?.isDirectory) return null;
     const file = item.getAsFile();
-    if (file) files.push(file);
+    if (!file) return null;
+    files.push(file);
     if (files.length > MAX_TERMINAL_DROP_FILES) break;
   }
   return hasFileItems ? files : Array.from(payload.files ?? []).slice(0, MAX_TERMINAL_DROP_FILES + 1);

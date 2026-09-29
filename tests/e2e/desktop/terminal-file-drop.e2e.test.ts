@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import type { Server } from "node:http";
 import { tmpdir } from "node:os";
@@ -144,6 +144,31 @@ suite("built Electron Desktop Terminal local attachments", () => {
     ]);
   });
 
+  it.runIf(process.platform === "darwin")("pastes an ordinary native URL clipboard without treating it as a file", async () => {
+    const url = "https://example.org/terminal-file-paste";
+    const { execFile } = await import("node:child_process");
+    const { promisify } = await import("node:util");
+    await promisify(execFile)("/usr/bin/osascript", ["-l", "JavaScript", "-e", `
+      ObjC.import('AppKit');
+      var pasteboard = $.NSPasteboard.generalPasteboard;
+      pasteboard.clearContents;
+      pasteboard.declareTypesOwner($(['public.url', 'public.utf8-plain-text']), null);
+      pasteboard.setStringForType($(${JSON.stringify(url)}), $('public.url'));
+      pasteboard.setStringForType($(${JSON.stringify(url)}), $('public.utf8-plain-text'));
+    `], { timeout: 5_000 });
+    const formats = await app.evaluate(({ clipboard }) => clipboard.availableFormats());
+    // Electron exposes this AppKit URL clipboard as text/plain. The mapped
+    // text/uri-list-without-native-data case is covered by the main IPC test.
+    expect(formats).toContain("text/plain");
+    expect(await page.evaluate(() => window.operator.invoke("terminal:read-clipboard-files", {}))).toEqual({ status: "empty" });
+    const count = gateway.state.terminalInputs.length;
+    const uploadCount = uploads.length;
+    await surface().locator(".xterm-helper-textarea").focus();
+    await page.keyboard.press(pasteShortcut);
+    await expect.poll(() => gateway.state.terminalInputs.slice(count)).toEqual([url]);
+    expect(uploads).toHaveLength(uploadCount);
+  });
+
   it("accepts a native mixed file drag and preserves each file's bytes and extension", async () => {
     const fixtures = [
       { name: "design.png", bytes: png },
@@ -222,6 +247,26 @@ suite("built Electron Desktop Terminal local attachments", () => {
     await expect.poll(() => gateway.state.terminalInputs.slice(count)).toEqual([
       `\x1b[200~${names.map((name) => `/home/matrix/home/${copied.find((upload) => upload.name === name)!.path}`).join(" ")}\x1b[201~`,
     ]);
+  });
+
+  it("rejects a native mixed folder/file drag without uploading a partial batch", async () => {
+    const file = join(profile, "mixed-drop.txt");
+    const folder = join(profile, "mixed-drop-folder");
+    await writeFile(file, "should not upload");
+    await mkdir(folder);
+    const count = gateway.state.terminalInputs.length;
+    const uploadCount = uploads.length;
+    const cdp = await page.context().newCDPSession(page);
+    const box = await surface().boundingBox();
+    if (!box) throw new Error("Terminal drop target is unavailable");
+    for (const type of ["dragEnter", "dragOver", "drop"]) {
+      await cdp.send("Input.dispatchDragEvent", { type, x: box.x + box.width / 2, y: box.y + box.height / 2,
+        data: { items: [], files: [file, folder], dragOperationsMask: 1 } });
+    }
+    await cdp.detach();
+    await page.getByText("Drop individual files only. Some items could not be read.").waitFor();
+    expect(uploads).toHaveLength(uploadCount);
+    expect(gateway.state.terminalInputs).toHaveLength(count);
   });
 
   it("uploads files from the small attachment action beside the pane actions", async () => {

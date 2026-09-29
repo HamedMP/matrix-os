@@ -11,6 +11,9 @@ Failures display a safe message instead of inserting the original file names.
 Electron Desktop, Web Desktop and Web Canvas Terminal accept local file drags
 using protected drag metadata. Reading actual files happens only on drop.
 Ordinary text paste and screenshot/image clipboard paste retain their behavior.
+An ordinary URI clipboard without native file metadata retains text paste.
+Drops containing a folder or an unreadable file reject the entire batch with
+feedback before uploading; supported items are never silently selected out.
 An accessible **Attach files** icon sits beside the existing pane actions in
 Electron Desktop, Web Desktop and Web Canvas. It opens a multi-file picker and
 uses the same bounded upload flow; it is disabled while the terminal is
@@ -60,6 +63,8 @@ Finder XML/binary metadata, unsafe file types, error fallback and stale terminal
 destinations. Built Electron tests use the native clipboard, real Chromium file
 drag events, the production upload route and an isolated filesystem; the
 terminal runtime itself is a fixture.
+The CI E2E job builds Electron first and then runs the required attachment suite;
+the macOS Finder/URI clipboard cases also run in local macOS Electron validation.
 
 Native file-copy paste is macOS-specific in this change. Windows/Linux retain
 text/image paste and file drag/drop. Web clients cannot read Finder file paths
