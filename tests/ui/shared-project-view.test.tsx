@@ -35,6 +35,9 @@ function fixture() {
   let currentProject = { ...project, resources: [...project.resources] };
   let currentFileId = fileId;
   let nextCursor: string | undefined;
+  let fileListError = false;
+  let descriptorError: Error | null = null;
+  let descriptorGate: Promise<void> | null = null;
   const changed = new Set<() => void | Promise<void>>();
   let unavailable: (() => void) | undefined;
   const api = {
@@ -42,8 +45,16 @@ function fixture() {
     get: vi.fn(async (path: string) => {
       if (path === base) return currentScope;
       if (path === `${base}/project`) return currentProject;
-      if (path === `${base}/files?limit=100`) return { entries: [{ id: currentFileId, kind: "file", path: "notes/launch.md", parentId: null, revision: "1", incarnation: "a".repeat(64), updatedAt: "2026-09-28T12:00:00.000Z" }], ...(nextCursor ? { nextCursor } : {}) };
-      if (path === `${base}/files/${currentFileId}`) return { id: currentFileId, kind: "file", path: "notes/launch.md", parentId: null, revision: "1", incarnation: "a".repeat(64), updatedAt: "2026-09-28T12:00:00.000Z" };
+      if (path === `${base}/files?limit=100`) {
+        if (fileListError) throw new Error("temporary file list failure");
+        return { entries: [{ id: currentFileId, kind: "file", path: "notes/launch.md", parentId: null, revision: "1", incarnation: "a".repeat(64), updatedAt: "2026-09-28T12:00:00.000Z" }], ...(nextCursor ? { nextCursor } : {}) };
+      }
+      if (path === `${base}/files/${fileId}` || path === `${base}/files/${currentFileId}`) {
+        if (descriptorGate) await descriptorGate;
+        if (descriptorError) throw descriptorError;
+        if (path !== `${base}/files/${currentFileId}`) throw Object.assign(new Error("missing"), { code: "not_found" });
+        return { id: currentFileId, kind: "file", path: "notes/launch.md", parentId: null, revision: "1", incarnation: "a".repeat(64), updatedAt: "2026-09-28T12:00:00.000Z" };
+      }
       if (path === `${base}/apps/notes`) return { appId: "notes", revision: "1", readiness: "ready", collaborationMode: "scoped" };
       throw new Error(`Unexpected ${path}`);
     }),
@@ -63,8 +74,12 @@ function fixture() {
     setResources: (resources: typeof project.resources) => { currentProject = { ...currentProject, resources }; },
     setCursor: (cursor: string | undefined) => { nextCursor = cursor; },
     setFileId: (id: string) => { currentFileId = id; },
+    setFileListError: (value: boolean) => { fileListError = value; },
+    setDescriptorError: (error: Error | null) => { descriptorError = error; },
+    setDescriptorGate: (gate: Promise<void> | null) => { descriptorGate = gate; },
     setRole: (role: "viewer" | "editor") => { currentScope = { ...scope, role }; },
     refresh: async () => { await act(async () => { await Promise.all([...changed].map((listener) => listener())); }); },
+    emit: () => Promise.all([...changed].map((listener) => listener())),
     disconnect: async () => { await act(async () => { unavailable?.(); }); },
   };
 }
@@ -158,5 +173,39 @@ describe("shared project navigation", () => {
     await f.refresh();
     expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
     expect(screen.getByRole("textbox", { name: "Preserved unsaved text" })).toHaveValue("Old file draft");
+  });
+
+  it("keeps the editor open when a file identity check fails temporarily", async () => {
+    const f = fixture();
+    f.setRole("editor");
+    render(<ChatCollaboration view={{ kind: "project", scopeId }} api={f.api} actorId="user_editor" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Open launch.md" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "File contents" }), { target: { value: "Work in progress" } });
+    f.setFileListError(true);
+    f.setDescriptorError(new Error("temporary network failure"));
+    await f.refresh();
+    expect(screen.getByRole("button", { name: "Save" })).toBeVisible();
+    expect(screen.getByRole("textbox", { name: "File contents" })).toHaveValue("Work in progress");
+  });
+
+  it("does not close a newer selection when an older descriptor lookup finishes", async () => {
+    const f = fixture();
+    render(<ChatCollaboration view={{ kind: "project", scopeId }} api={f.api} actorId="user_viewer" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Open launch.md" }));
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    f.setFileListError(true);
+    f.setDescriptorGate(gate);
+    f.setDescriptorError(Object.assign(new Error("missing"), { code: "not_found" }));
+    f.api.get.mockClear();
+    const pending = f.emit();
+    await waitFor(() => expect(f.api.get).toHaveBeenCalledWith(`${base}/files/${fileId}`));
+    fireEvent.click(screen.getByRole("button", { name: "Back to project" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Open Notes" }));
+    expect(await screen.findByTitle("Shared app")).toBeVisible();
+    release();
+    await act(async () => { await pending; });
+    expect(screen.getByTitle("Shared app")).toBeVisible();
   });
 });
