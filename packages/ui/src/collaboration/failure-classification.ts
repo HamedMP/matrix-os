@@ -55,7 +55,8 @@ export function classifyCollaborationClientError(error: unknown): ClassifiedColl
     return { ...STATES.relay_limit, ...(retry ? { retryAfterSeconds: retry } : {}) };
   }
   if (value.code === "forbidden") return { ...STATES.forbidden };
-  if (value.code === "unauthorized" || value.code === "denied") return { ...STATES.unauthorized };
+  if (value.code === "unauthorized") return { ...STATES.unauthorized };
+  if (value.code === "denied") return { ...STATES.unavailable };
   if (value.code === "resource_missing") return { ...STATES.resource_missing };
   if (value.code === "paused") return { ...STATES.paused };
   return { ...STATES.unavailable };

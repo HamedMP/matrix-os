@@ -58,6 +58,17 @@ describe("collaboration direct client", () => {
     expect(direct.describe(scopeId).state).toBe("unauthorized");
   });
 
+  it.each([[401, "unauthorized"], [403, "forbidden"]] as const)("classifies an untyped %s ticket response as %s", async (status, code) => {
+    const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) =>
+      String(input).endsWith("/api/collaboration/connections")
+        ? new Response("untyped", { status, headers: { "content-type": "text/plain" } })
+        : world.fetchImpl(input, init)) as typeof fetch;
+    const direct = client({ fetchImpl });
+    await expect(direct.request(scopeId, "GET", `/api/collaboration/scopes/${scopeId}`))
+      .rejects.toMatchObject({ code });
+    expect(direct.describe(scopeId).state).toBe(code);
+  });
+
   it("treats a malformed 404 ticket response as unavailable", async () => {
     const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) =>
       String(input).endsWith("/api/collaboration/connections")

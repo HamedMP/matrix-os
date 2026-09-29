@@ -27,4 +27,8 @@ describe("collaboration failure classification", () => {
       state: "access_removed", reconnect: false, message: "This item is no longer shared with you.",
     });
   });
+
+  it("does not tell a closed direct session to sign in again", () => {
+    expect(classifyCollaborationClientError({ code: "denied" })).toMatchObject({ state: "unavailable" });
+  });
 });
