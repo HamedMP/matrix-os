@@ -1342,7 +1342,17 @@ apply_update() {
     log "No update available — nothing to apply"; return 1
   fi
   local manifest version sha256 bundle_url cur bundle_file extract_dir
-  manifest="$(load_trusted_apply_manifest)" || return 1
+  if ! manifest="$(load_trusted_apply_manifest)"; then
+    # A rejected request is final. Keeping the trigger would let the next poll
+    # replace the marker and apply a release the owner never requested.
+    rm -f -- "$UPDATE_MARKER"
+    if [ "$trigger_source" = explicit ]; then
+      consume_update_trigger || log "WARN: failed to consume update trigger"
+    fi
+    write_update_error "update_request_rejected" \
+      "The requested update could not be verified against platform release metadata." || true
+    return 1
+  fi
   version="$(json_field "$manifest" version)"
   sha256="$(json_field "$manifest" sha256)"
   bundle_url="$(json_field "$manifest" url)"
