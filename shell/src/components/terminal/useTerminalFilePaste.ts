@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { captureTerminalFileDrag } from "@matrix-os/ui";
 import { getGatewayUrl } from "@/lib/gateway";
 import { getWebSocketAuthToken } from "@/lib/websocket-auth";
 import {
@@ -175,9 +176,7 @@ export function useTerminalFilePaste({
         void uploadAndPasteFiles(files);
       }
     };
-    const onDrag = (event: DragEvent) => {
-      captureImagePayload(event);
-    };
+    const onDrag = captureTerminalFileDrag;
     const onDrop = (event: DragEvent) => {
       const files = captureImagePayload(event);
       if (files.length > 0) {

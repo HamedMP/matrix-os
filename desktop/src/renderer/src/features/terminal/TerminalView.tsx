@@ -1,7 +1,7 @@
 import { Terminal } from "@xterm/xterm";
 import { DESKTOP_Z_INDEX } from "../../design/layering";
 import { createPortal } from "react-dom";
-import { TerminalControls, createTerminalNativeHistory, createTerminalGridPresentation, measureTerminalGridDimensions } from "@matrix-os/ui";
+import { TerminalControls, captureTerminalFileDrag, createTerminalNativeHistory, createTerminalGridPresentation, measureTerminalGridDimensions } from "@matrix-os/ui";
 import {
   resolveTerminalClipboardKeyEvent,
   classifyTerminalPointerEvent,
@@ -738,9 +738,7 @@ export default function TerminalView({
       const files = captureFiles(event);
       if (files.length > 0) void uploadAndPaste(files);
     };
-    const onDrag = (event: DragEvent) => {
-      captureFiles(event);
-    };
+    const onDrag = captureTerminalFileDrag;
     const onDrop = (event: DragEvent) => {
       const files = captureFiles(event);
       if (files.length > 0) void uploadAndPaste(files);
