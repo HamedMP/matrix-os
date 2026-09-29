@@ -1,4 +1,4 @@
-import { chatContextRequestHash } from "./agent-context.js";
+import { chatRequestHash } from "./argument-digest.js";
 import {
   CanonicalChatIdSchema, CanonicalChatMessageSchema, CanonicalChatRunSchema,
   CanonicalChatTurnSchema, CanonicalOwnerScopeSchema,
@@ -41,6 +41,10 @@ export async function admitChatTurn(deps: TurnAdmissionDependencies, ownerInput:
       || input.adapterState.schemaVersion < 1 || stateBytes > 64 * 1024)) {
       throw new ChatConflictError(input.chatId, input.baseRevision);
     }
+    // The immutable run policy participates in the replay hash so a retried
+    // clientRequestId with a different policy conflicts instead of adopting.
+    const requestHash = input.requestHash ?? run.context?.requestHash
+      ?? chatRequestHash({ ...run, parts: message.parts }, run.runPolicy);
 
     return deps.transact(async (trx) => {
       const current = await deps.selectOwnedChat(trx, owner, input.chatId, true);
@@ -56,9 +60,8 @@ export async function admitChatTurn(deps: TurnAdmissionDependencies, ownerInput:
         const accepted = await deps.hydrateAdmission(trx, owner, toTurn(duplicate));
         const original = await trx.selectFrom("chat_runs").selectAll()
           .where("turn_id", "=", duplicate.id).orderBy("attempt", "asc").executeTakeFirstOrThrow();
-        const requestHash = input.requestHash ?? run.context?.requestHash ?? chatContextRequestHash({ ...run, parts: message.parts });
         if ((original.request_hash ?? accepted.run.context?.requestHash
-          ?? chatContextRequestHash({ ...accepted.run, parts: accepted.message.parts })) !== requestHash) {
+          ?? chatRequestHash({ ...accepted.run, parts: accepted.message.parts }, accepted.run.runPolicy)) !== requestHash) {
           throw new ChatConflictError(input.chatId, Number(current.revision));
         }
         return accepted;
@@ -141,8 +144,9 @@ export async function admitChatTurn(deps: TurnAdmissionDependencies, ownerInput:
         completed_at: run.completedAt ?? null,
         history_boundary_seq: run.historyBoundarySeq,
         context_snapshot: run.context ? jsonb(run.context) : null,
-        request_hash: input.requestHash ?? run.context?.requestHash ?? chatContextRequestHash({ ...run, parts: message.parts }),
+        request_hash: requestHash,
         capability_snapshot: jsonb(run.capabilitySnapshot),
+        run_policy: run.runPolicy ? jsonb(run.runPolicy) : null,
         created_at: run.createdAt,
         updated_at: run.updatedAt,
       }).execute();

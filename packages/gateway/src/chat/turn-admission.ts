@@ -1,4 +1,5 @@
-import { chatContextRequestHash, type ChatAgentContext } from "./agent-context.js";
+import { type ChatAgentContext } from "./agent-context.js";
+import { chatRequestHash, truthfulCancellationGranularity } from "./argument-digest.js";
 import { randomUUID } from "node:crypto";
 import {
   CanonicalCreateChatTurnRequestSchema, CanonicalChatMessageSchema, CanonicalChatTurnSchema,
@@ -38,15 +39,25 @@ export interface TurnAdmissionOptions {
 
 const id = (prefix: string) => `${prefix}${randomUUID().replaceAll("-", "")}`;
 
+export interface TurnAdmissionExecutionHints {
+  /**
+   * Delivery awareness supplied by the caller (e.g. a voice session that knows
+   * which assistant responses were never heard). Checkpoints produced by those
+   * responses are ineligible for reuse.
+   */
+  deliveryContext?: { unheardResponses?: readonly string[] };
+}
+
 export async function admitCanonicalTurn(
   deps: TurnAdmissionOptions, principal: RequestPrincipal, owner: ChatOwner,
   chatId: string, inputValue: CanonicalCreateChatTurnRequest,
+  admissionHints: TurnAdmissionExecutionHints = {},
 ): Promise<CanonicalChatTurnAdmissionResponse> {
     deps.assertOpen();
     await deps.assertPersonalExecutionAllowed(owner, chatId);
     await deps.reconcileActiveRuns(owner);
     const input = CanonicalCreateChatTurnRequestSchema.parse(inputValue);
-    const requestHash = chatContextRequestHash(input);
+    const requestHash = chatRequestHash(input, input.runPolicy);
     try {
       const duplicate = await deps.repository.findTurnAdmission(owner, chatId, input.clientRequestId, requestHash);
       if (duplicate) return CanonicalChatTurnAdmissionResponseSchema.parse({ record: duplicate.chat,
@@ -117,6 +128,8 @@ export async function admitCanonicalTurn(
       instanceId: validated.instance.id,
       executionRootFingerprint: resolvedRoot?.fingerprint ?? null,
       mode: "follow_up",
+      ...(input.runPolicy ? { runPolicy: input.runPolicy } : {}),
+      ...(admissionHints.deliveryContext ? { deliveryContext: admissionHints.deliveryContext } : {}),
     });
     if (resumeState !== undefined && prepared?.context?.history) {
       const { history: _history, ...context } = prepared.context;
@@ -162,6 +175,7 @@ export async function admitCanonicalTurn(
       interactionMode: effective.interactionMode,
       ...(prepared?.context ? { context: prepared.context } : {}),
       permissionMode: input.permissionMode,
+      ...(input.runPolicy ? { runPolicy: input.runPolicy } : {}),
       ...(resolvedRoot ? {
         executionRoot: resolvedRoot.ref,
         executionRootFingerprint: resolvedRoot.fingerprint,
@@ -177,7 +191,11 @@ export async function admitCanonicalTurn(
         approvals: validated.instance.supports.approvals,
         userInput: validated.instance.supports.userInput,
         resume: validated.instance.supports.resume,
-        cancellation: validated.instance.supports.cancellation,
+        // Snapshots only promise what the loaded adapter can actually honour.
+        cancellation: truthfulCancellationGranularity(validated.instance.supports.cancellation, adapter),
+        ...(validated.instance.supports.approvalBinding
+          ? { approvalBinding: validated.instance.supports.approvalBinding }
+          : {}),
         steering: validated.instance.supports.steering ?? "none",
         worktrees: validated.instance.supports.worktrees,
         interactionModes: validated.instance.supports.interactionModes,

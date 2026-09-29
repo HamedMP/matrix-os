@@ -1,5 +1,5 @@
 import { CanonicalChatIdSchema, CanonicalChatRequestIdSchema, CanonicalChatTurnIdSchema, CanonicalOwnerScopeSchema } from "@matrix-os/contracts";
-import { chatContextRequestHash } from "./agent-context.js";
+import { chatRequestHash } from "./argument-digest.js";
 import { ChatConflictError, ChatNotFoundError } from "./errors.js";
 import { toMessage, toRun, toTurn, type ChatOwner } from "./records.js";
 import type { AdmittedRun, AdmittedTurn } from "./repository.js";
@@ -31,7 +31,8 @@ export async function findChatTurnAdmission(
     const run = toRun(row);
     const message = toMessage(messageRow);
     // Older rows can only attest to their persisted fields/context; new rows keep the original input hash.
-    const originalHash = row.request_hash ?? run.context?.requestHash ?? chatContextRequestHash({ ...run, parts: message.parts });
+    const originalHash = row.request_hash ?? run.context?.requestHash
+      ?? chatRequestHash({ ...run, parts: message.parts }, run.runPolicy);
     if (originalHash !== requestHash) throw new ChatConflictError(chatId, Number(chat.revision));
     return { chat: await deps.toPrincipalRecord(trx, owner, chat), message, turn: toTurn(turnRow), run, alreadyAccepted: true };
   });

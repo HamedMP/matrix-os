@@ -131,6 +131,60 @@ export const CanonicalChatForkProvenanceSchema = z.object({
   throughMessageId: CanonicalChatMessageIdSchema,
 }).strict();
 
+/** SHA-256 hex digest of the canonical-JSON normalized tool arguments. */
+export const CanonicalChatArgumentDigestSchema = z.string()
+  .length(64)
+  .regex(/^[a-f0-9]{64}$/);
+
+/** Whether approvals are bound to the exact normalized argument digest. */
+export const CanonicalChatApprovalBindingSchema = z.enum(["none", "argument_digest"]);
+
+/**
+ * Truthful cancellation granularity: run-level abort, per-tool cancel, or none.
+ * Legacy producers wrote a boolean; readers MUST treat `true` as "run" and
+ * `false` as "none" rather than implying tool-level cancellation.
+ */
+export const CanonicalChatCancellationGranularitySchema = z.enum(["none", "run", "tool"]);
+export const CanonicalChatCancellationCapabilitySchema = z.union([
+  z.boolean(),
+  CanonicalChatCancellationGranularitySchema,
+]);
+
+/**
+ * Immutable execution policy snapshotted at turn admission (FR-037). Session-only
+ * is structural, not prompt-enforced: disposable native checkpoints and no memory
+ * tools are required up front so routes that cannot enforce them stay hidden.
+ */
+export const CanonicalChatRunPolicySchema = z.object({
+  memoryMode: z.enum(["ordinary", "session_only"]),
+  source: z.enum(["typed", "voice"]),
+  voiceSessionId: canonicalReferenceId(160).optional(),
+  nativeCheckpointPolicy: z.enum(["reusable", "disposable"]),
+  memoryTools: z.array(canonicalReferenceId(80)).max(32).optional(),
+  providerRetentionClass: z.enum(["verified_ephemeral", "standard"]).optional(),
+  deliveryContextRevision: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).optional(),
+  actionCapabilityRevision: canonicalReferenceId(160).optional(),
+}).strict().superRefine((policy, ctx) => {
+  if (policy.memoryTools && new Set(policy.memoryTools).size !== policy.memoryTools.length) {
+    ctx.addIssue({ code: "custom", path: ["memoryTools"], message: "Duplicate memory tool capability" });
+  }
+  if (policy.memoryMode !== "session_only") return;
+  if (policy.nativeCheckpointPolicy !== "disposable") {
+    ctx.addIssue({
+      code: "custom",
+      path: ["nativeCheckpointPolicy"],
+      message: "Session-only turns require disposable native checkpoints",
+    });
+  }
+  if ((policy.memoryTools ?? []).length > 0) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["memoryTools"],
+      message: "Session-only turns cannot enable memory tools",
+    });
+  }
+});
+
 export const CanonicalChatSchema = z.object({
   id: CanonicalChatIdSchema,
   ownerScope: CanonicalOwnerScopeSchema,
@@ -188,6 +242,8 @@ export const CanonicalChatRunSchema = z.object({
   completedAt: IsoTimestampSchema.optional(),
   historyBoundarySeq: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
   context: ChatRunContextSchema.optional(),
+  /** Immutable execution policy carried from admission; absent for ordinary turns. */
+  runPolicy: CanonicalChatRunPolicySchema.optional(),
   capabilitySnapshot: z.object({
     revision: canonicalReferenceId(160),
     rootChat: z.boolean(),
@@ -197,7 +253,8 @@ export const CanonicalChatRunSchema = z.object({
     approvals: z.boolean(),
     userInput: z.boolean(),
     resume: z.boolean(),
-    cancellation: z.boolean(),
+    cancellation: CanonicalChatCancellationCapabilitySchema,
+    approvalBinding: CanonicalChatApprovalBindingSchema.optional(),
     steering: z.enum(["none", "same_run"]).optional(),
     worktrees: z.enum(["none", "optional", "required"]),
     interactionModes: z.array(canonicalReferenceId(80)).max(16),
@@ -235,6 +292,13 @@ export const CanonicalChatRunSchema = z.object({
   }
   if (!run.capabilitySnapshot.permissionModes.includes(run.permissionMode)) {
     ctx.addIssue({ code: "custom", path: ["permissionMode"], message: "Permission mode is not in the Run snapshot" });
+  }
+  if (run.capabilitySnapshot.approvalBinding === "argument_digest" && !run.capabilitySnapshot.approvals) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["capabilitySnapshot", "approvalBinding"],
+      message: "Digest-bound approvals require approval capability",
+    });
   }
   const terminal = run.status === "completed" || run.status === "failed" || run.status === "aborted";
   if (terminal !== (run.outcome !== undefined)) {
@@ -301,6 +365,8 @@ export const CanonicalChatMessagePartSchema = z.discriminatedUnion("type", [
     title: canonicalSafeLabel(160, 640),
     description: canonicalSafeLabel(1_000, 4_000),
     risk: z.enum(["low", "medium", "high"]),
+    /** Normalized tool-argument digest the decision is bound to (FR-022). */
+    argumentDigest: CanonicalChatArgumentDigestSchema.optional(),
     allowedDecisions: z.array(CanonicalChatApprovalDecisionSchema)
       .min(1)
       .max(4),
@@ -542,12 +608,16 @@ export const CanonicalChatRunActivitySchema = z.discriminatedUnion("type", [
     title: canonicalSafeLabel(160, 640),
     risk: z.enum(["low", "medium", "high"]),
     safeDescription: z.string().min(1).max(4_000).optional(),
+    /** Normalized tool-argument digest this approval is bound to (FR-022). */
+    argumentDigest: CanonicalChatArgumentDigestSchema.optional(),
     allowedDecisions: z.array(CanonicalChatApprovalDecisionSchema).min(1).max(4),
   }).strict(),
   CanonicalChatRunActivityBaseSchema.extend({
     type: z.literal("approval.resolved"),
     approvalId: canonicalReferenceId(128),
     decision: CanonicalChatApprovalDecisionSchema,
+    /** Echoed binding so resolution stays auditable against the proposal. */
+    argumentDigest: CanonicalChatArgumentDigestSchema.optional(),
   }).strict(),
   CanonicalChatRunActivityBaseSchema.extend({
     type: z.literal("input.requested"),
@@ -598,6 +668,11 @@ export type CanonicalChatMessagePart = z.infer<typeof CanonicalChatMessagePartSc
 export type CanonicalChatMessage = z.infer<typeof CanonicalChatMessageSchema>;
 export type CanonicalChatRunActivity = z.infer<typeof CanonicalChatRunActivitySchema>;
 export type CanonicalChatApprovalDecision = z.infer<typeof CanonicalChatApprovalDecisionSchema>;
+export type CanonicalChatArgumentDigest = z.infer<typeof CanonicalChatArgumentDigestSchema>;
+export type CanonicalChatApprovalBinding = z.infer<typeof CanonicalChatApprovalBindingSchema>;
+export type CanonicalChatCancellationGranularity = z.infer<typeof CanonicalChatCancellationGranularitySchema>;
+export type CanonicalChatCancellationCapability = z.infer<typeof CanonicalChatCancellationCapabilitySchema>;
+export type CanonicalChatRunPolicy = z.infer<typeof CanonicalChatRunPolicySchema>;
 export type CanonicalChatSafeError = z.infer<typeof CanonicalChatSafeErrorSchema>;
 export type CanonicalChatAgentActivityKind = z.infer<typeof CanonicalChatAgentActivityKindSchema>;
 export type CanonicalChatAgentActivityStatus = z.infer<typeof CanonicalChatAgentActivityStatusSchema>;

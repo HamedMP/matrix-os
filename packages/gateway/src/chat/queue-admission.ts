@@ -1,4 +1,5 @@
-import { chatContextRequestHash, type ChatAgentContext } from "./agent-context.js";
+import { type ChatAgentContext } from "./agent-context.js";
+import { chatRequestHash, truthfulCancellationGranularity } from "./argument-digest.js";
 import { randomUUID } from "node:crypto";
 import {
   CanonicalChatQueueAdmissionResponseSchema,
@@ -74,7 +75,7 @@ export async function enqueueCanonicalQueuedTurn(options: {
     );
   }
   const duplicate = await options.repository.findQueuedAdmission(options.owner, options.chatId, input.clientRequestId,
-    chatContextRequestHash(input));
+    chatRequestHash(input, input.runPolicy));
   if (duplicate) return CanonicalChatQueueAdmissionResponseSchema.parse({ queuedTurn: duplicate.queuedTurn, queueDepth: duplicate.queueDepth, ...(duplicate.alreadyClaimed ? { alreadyClaimed: true } : {}) });
   if (!record.activeRun) {
     throw new CanonicalQueueAdmissionError(
@@ -98,7 +99,8 @@ export async function enqueueCanonicalQueuedTurn(options: {
       validated.error.code === "provider_instance_locked" ? 409 : 400,
     );
   }
-  if (!options.adapters.get(validated.instance.driverKind)) {
+  const adapter = options.adapters.get(validated.instance.driverKind);
+  if (!adapter) {
     throw new CanonicalQueueAdmissionError(
       safeError("provider_unavailable", "The selected Provider cannot run yet.", false, ["select_provider"]),
       503,
@@ -144,12 +146,13 @@ export async function enqueueCanonicalQueuedTurn(options: {
     baseRevision: input.baseRevision,
     queuedTurnId: `qturn_${randomUUID().replaceAll("-", "")}`,
     clientRequestId: input.clientRequestId,
-    requestHash: chatContextRequestHash(input),
+    requestHash: chatRequestHash(input, input.runPolicy),
     parts: input.parts,
     driverKind: validated.instance.driverKind,
     selection: validated.selection,
     interactionMode: effective.interactionMode,
     permissionMode: input.permissionMode,
+    ...(input.runPolicy ? { runPolicy: input.runPolicy } : {}),
     ...(prepared?.context ? { context: prepared.context } : {}),
     ...(resolvedRoot ? {
       executionRoot: resolvedRoot.ref,
@@ -164,7 +167,11 @@ export async function enqueueCanonicalQueuedTurn(options: {
       approvals: validated.instance.supports.approvals,
       userInput: validated.instance.supports.userInput,
       resume: validated.instance.supports.resume,
-      cancellation: validated.instance.supports.cancellation,
+      // Queued snapshots carry the same truthful granularity as live ones.
+      cancellation: truthfulCancellationGranularity(validated.instance.supports.cancellation, adapter),
+      ...(validated.instance.supports.approvalBinding
+        ? { approvalBinding: validated.instance.supports.approvalBinding }
+        : {}),
       steering: validated.instance.supports.steering ?? "none",
       worktrees: validated.instance.supports.worktrees,
       interactionModes: validated.instance.supports.interactionModes,

@@ -1,6 +1,8 @@
 import { ChatRunContextSchema } from "#chat-agent-context";
 import { z } from "zod/v4";
 import {
+  CanonicalChatArgumentDigestSchema,
+  CanonicalChatCancellationGranularitySchema,
   CanonicalChatMessagePartSchema,
   CanonicalChatMessageSchema,
   CanonicalChatApprovalDecisionSchema,
@@ -8,6 +10,7 @@ import {
   CanonicalChatRequestIdSchema,
   CanonicalChatRunActivitySchema,
   CanonicalChatRunIdSchema,
+  CanonicalChatRunPolicySchema,
   CanonicalChatRunSchema,
   CanonicalChatSchema,
   CanonicalChatTurnSchema,
@@ -144,6 +147,8 @@ export const CanonicalCreateChatTurnRequestSchema = z.object({
   interactionMode: canonicalReferenceId(80),
   permissionMode: canonicalReferenceId(80),
   executionRoot: CanonicalChatExecutionRootRefSchema.optional(),
+  /** Immutable execution policy for this turn (voice/session-only); replay binds to it. */
+  runPolicy: CanonicalChatRunPolicySchema.optional(),
 }).strict();
 
 export const CanonicalChatQueuedTurnIdSchema = canonicalReferenceId(128)
@@ -198,6 +203,8 @@ export const CanonicalChatQueuedTurnSchema = z.object({
   interactionMode: canonicalReferenceId(80),
   permissionMode: canonicalReferenceId(80),
   executionRoot: CanonicalChatExecutionRootRefSchema.optional(),
+  /** Immutable execution policy carried from queue admission into the claimed Run. */
+  runPolicy: CanonicalChatRunPolicySchema.optional(),
   createdAt: IsoTimestampSchema,
   updatedAt: IsoTimestampSchema,
 }).strict();
@@ -256,6 +263,8 @@ export type CanonicalChatInputSubmissionResponse = z.infer<typeof CanonicalChatI
 export const CanonicalSubmitChatApprovalRequestSchema = z.object({
   clientRequestId: CanonicalChatRequestIdSchema,
   decision: CanonicalChatApprovalDecisionSchema,
+  /** Echo of the normalized argument digest shown at proposal time (FR-022/FR-023). */
+  argumentDigest: CanonicalChatArgumentDigestSchema.optional(),
 }).strict();
 
 export const CanonicalRetryChatTurnRequestSchema = z.object({
@@ -361,6 +370,12 @@ export const CanonicalChatTurnAdmissionResponseSchema = z.object({
 export const CanonicalChatRunCancellationResponseSchema = z.object({
   run: CanonicalChatRunSchema,
   cancellation: z.enum(["aborted", "already_terminal"]),
+  /**
+   * Truthful granularity of the cancellation actually applied (FR-023/FR-024):
+   * "run" for a whole-run abort, "tool" when only a tool call was cancelled,
+   * absent when the run was already terminal and nothing was cancelled.
+   */
+  granularity: CanonicalChatCancellationGranularitySchema.optional(),
 }).strict();
 
 export const CanonicalChatApprovalSubmissionResponseSchema = z.object({

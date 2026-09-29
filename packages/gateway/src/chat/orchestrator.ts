@@ -1,5 +1,6 @@
 import { createOrderedRunControls } from "./ordered-run-controls.js";
-import { admitCanonicalTurn } from "./turn-admission.js";
+import { admitCanonicalTurn, type TurnAdmissionExecutionHints } from "./turn-admission.js";
+import { truthfulCancellationGranularity } from "./argument-digest.js";
 import { contextPrompt, type ChatAgentContext } from "./agent-context.js";
 import { promptFor, retryPromptFor } from "./orchestration-input.js";
 import { submitCanonicalInput } from "./input-control.js";
@@ -303,6 +304,7 @@ export class CanonicalChatOrchestrator {
   async admitTurn(
     principal: RequestPrincipal, owner: ChatOwner, chatId: string,
     inputValue: CanonicalCreateChatTurnRequest,
+    admissionHints?: TurnAdmissionExecutionHints,
   ): Promise<CanonicalChatTurnAdmissionResponse> {
     return admitCanonicalTurn({
       ...this.options,
@@ -314,7 +316,7 @@ export class CanonicalChatOrchestrator {
       atCapacity: (scope) => this.atCapacity(scope),
       hasStoppingExecution: (scope, id, admissionKey) => hasStoppingChatExecution(this.active.values(), scope, id, admissionKey),
       startDispatch: (...args) => this.startDispatch(...args),
-    }, principal, owner, chatId, inputValue);
+    }, principal, owner, chatId, inputValue, admissionHints);
   }
 
   async enqueueQueuedTurn(
@@ -414,6 +416,7 @@ export class CanonicalChatOrchestrator {
       instanceId: context.latestRun.instanceId,
       executionRootFingerprint: resolvedRoot?.fingerprint ?? null,
       mode: "retry",
+      ...(context.latestRun.runPolicy ? { runPolicy: context.latestRun.runPolicy } : {}),
     });
     const availability = await retryAvailability(adapter, owner, resumeState, () => this.options.repository.getAdapterState(owner, {
       runId: context.latestRun.id, driverKind: context.latestRun.driverKind, instanceId: context.latestRun.instanceId,
@@ -439,6 +442,9 @@ export class CanonicalChatOrchestrator {
       selection: validated.selection,
       interactionMode: context.latestRun.interactionMode,
       permissionMode: context.latestRun.permissionMode,
+      // Immutable policy retries verbatim; admitRetry re-checks it against the
+      // persisted previous attempt before writing.
+      ...(context.latestRun.runPolicy ? { runPolicy: context.latestRun.runPolicy } : {}),
       ...(context.latestRun.context ? { context: context.latestRun.context } : {}),
       ...(resolvedRoot ? {
         executionRoot: resolvedRoot.ref,
@@ -455,7 +461,10 @@ export class CanonicalChatOrchestrator {
         approvals: validated.instance.supports.approvals,
         userInput: validated.instance.supports.userInput,
         resume: validated.instance.supports.resume,
-        cancellation: validated.instance.supports.cancellation,
+        cancellation: truthfulCancellationGranularity(validated.instance.supports.cancellation, adapter),
+        ...(validated.instance.supports.approvalBinding
+          ? { approvalBinding: validated.instance.supports.approvalBinding }
+          : {}),
         steering: validated.instance.supports.steering ?? "none",
         worktrees: validated.instance.supports.worktrees,
         interactionModes: validated.instance.supports.interactionModes,
@@ -616,6 +625,7 @@ export class CanonicalChatOrchestrator {
             instanceId: claimed.run.instanceId,
             executionRootFingerprint: resolvedRoot?.fingerprint ?? null,
             mode: "follow_up",
+            ...(claimed.run.runPolicy ? { runPolicy: claimed.run.runPolicy } : {}),
           });
         } catch (error: unknown) {
           console.warn(
@@ -694,6 +704,7 @@ export class CanonicalChatOrchestrator {
         selection: run.selection,
         interactionMode: run.interactionMode,
         permissionMode: run.permissionMode,
+        ...(run.runPolicy ? { runPolicy: run.runPolicy } : {}),
         ...(resolvedRoot ? { executionRoot: resolvedRoot.primaryWorkspaceRoot } : {}),
         ...(resolvedRoot ? { projectSlug: resolvedRoot.projectSlug } : {}),
         ...(resolvedRoot?.ref.kind === "worktree" ? { worktreeId: resolvedRoot.ref.worktreeId } : {}),
@@ -950,6 +961,9 @@ export class CanonicalChatOrchestrator {
       return {
         run: finished.run,
         cancellation: finished.transitioned ? "aborted" : "already_terminal",
+        // Truthful granularity: this path aborts the whole Run only; a tool
+        // level is never implied. Nothing applied when already terminal.
+        ...(finished.transitioned ? { granularity: "run" as const } : {}),
       };
     } catch (error: unknown) {
       return mapRepositoryError(error);
@@ -1210,6 +1224,18 @@ export class CanonicalChatOrchestrator {
         409,
       );
     }
+    // FR-021/FR-022: when the admitted snapshot binds approvals to argument
+    // digests, the decision must echo the exact digest the provider proposed.
+    // A bound proposal without a digest — or any mismatch — fails closed; the
+    // submitted digest is never trusted over the persisted proposal.
+    if (pending.capabilitySnapshot?.approvalBinding === "argument_digest") {
+      if (pending.argumentDigest === undefined || input.argumentDigest !== pending.argumentDigest) {
+        throw new CanonicalChatOrchestrationError(
+          safeError("capability_mismatch", "This approval is no longer available."),
+          409,
+        );
+      }
+    }
     const state = await this.options.repository.getAdapterState(owner, {
       runId,
       driverKind: active.adapter.driverKind,
@@ -1223,6 +1249,7 @@ export class CanonicalChatOrchestrator {
         approvalId,
         decision: input.decision,
         clientRequestId: input.clientRequestId,
+        ...(pending.argumentDigest !== undefined ? { argumentDigest: pending.argumentDigest } : {}),
         ...(provenance?.platformApprovalProof ? { platformApprovalProof: provenance.platformApprovalProof } : {}),
         ...(state ? { state: active.adapter.parseState(state.state) } : {}),
       });

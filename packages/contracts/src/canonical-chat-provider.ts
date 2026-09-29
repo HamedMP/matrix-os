@@ -1,6 +1,8 @@
 import { z } from "zod/v4";
 import {
+  CanonicalChatApprovalBindingSchema,
   CanonicalChatAttachmentKindSchema,
+  CanonicalChatCancellationCapabilitySchema,
   CanonicalChatModelReferenceSchema,
   CanonicalChatModelSelectionSchema,
   CanonicalChatResourceKindSchema,
@@ -121,7 +123,9 @@ export const CanonicalProviderSetupActionSchema = z.discriminatedUnion("kind", [
 export const CanonicalProviderSupportSchema = z.object({
   rootChat: z.boolean(),
   resume: z.boolean(),
-  cancellation: z.boolean(),
+  cancellation: CanonicalChatCancellationCapabilitySchema,
+  /** "argument_digest" only when the harness binds approvals to exact normalized arguments. */
+  approvalBinding: CanonicalChatApprovalBindingSchema.optional(),
   steering: z.enum(["none", "same_run"]).optional(),
   attachments: z.array(CanonicalChatAttachmentKindSchema).max(8),
   tools: z.array(canonicalReferenceId(80)).max(128),
@@ -136,6 +140,13 @@ export const CanonicalProviderSupportSchema = z.object({
     if (!unique(supports[key])) {
       ctx.addIssue({ code: "custom", path: [key], message: "Duplicate capability value" });
     }
+  }
+  if (supports.approvalBinding === "argument_digest" && !supports.approvals) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["approvalBinding"],
+      message: "Digest-bound approvals require approval capability",
+    });
   }
 });
 

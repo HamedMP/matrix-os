@@ -5,6 +5,8 @@ import {
   CanonicalChatMessagePartSchema,
   CanonicalChatMessageSchema,
   CanonicalChatRunActivitySchema,
+  CanonicalChatRunPolicySchema,
+  CanonicalChatRunSchema,
   CanonicalOwnerScopeSchema,
   type CanonicalChatMessage,
   type AgentAttachment,
@@ -173,9 +175,22 @@ export class ChatRunLifecycleRepository {
     schemaVersion: number;
     executionRootFingerprint: string | null;
     includeInterrupted?: boolean;
+    /**
+     * Delivery-aware eligibility: run ids or assistant message ids whose output
+     * was never delivered (or whose delivery is unknown). A checkpoint produced
+     * by such a run would silently continue from context the user never heard,
+     * so it is ineligible (FR-026). Caller-supplied, bounded, fail-closed.
+     */
+    unheardResponses?: readonly string[];
+    /** Session-only callers never reuse a native checkpoint; the harness may
+     *  rebuild strictly from Matrix-owned state. */
+    sessionOnly?: boolean;
   }): Promise<{ schemaVersion: number; state: unknown; executionRootFingerprint?: string } | null> {
     const owner = validateOwner(ownerInput);
     [input.driverKind, input.instanceId].forEach(requireSafeRef);
+    // Disposable/session-only policy never resumes a native checkpoint.
+    if (input.sessionOnly) return null;
+    const unheard = (input.unheardResponses ?? []).slice(0, 100).map((entry) => requireSafeRef(entry));
     if (!await selectOwnedChat(this.kysely, owner, CanonicalChatIdSchema.parse(input.chatId))) return null;
     const row = await this.kysely.selectFrom("chat_run_adapter_state")
       .innerJoin("chat_runs", "chat_runs.id", "chat_run_adapter_state.run_id")
@@ -195,11 +210,23 @@ export class ChatRunLifecycleRepository {
           AND agent_boundary.context_snapshot -> 'agent' IS NOT NULL
           AND agent_boundary.history_boundary_seq >= chat_runs.history_boundary_seq
       )`)
+      // Only explicitly reusable checkpoints qualify: a disposable or
+      // session-only policy forbids later native reuse of that state.
+      .where(sql<boolean>`(chat_runs.run_policy IS NULL OR chat_runs.run_policy ->> 'nativeCheckpointPolicy' = 'reusable')`)
       // A new user turn continues the native conversation even when its last
       // run failed. Explicit retry callers retain the completed-only boundary.
       .where("chat_runs.status", "in", input.includeInterrupted
         ? ["completed", "failed", "aborted"]
         : ["completed"])
+      // Runs whose output was never heard cannot seed the next native context.
+      .$if(unheard.length > 0, (query) => query
+        .where("chat_runs.id", "not in", unheard)
+        .where((eb) => eb.not(eb.exists(
+          eb.selectFrom("chat_messages as unheard_message")
+            .select("unheard_message.id")
+            .whereRef("unheard_message.run_id", "=", "chat_runs.id")
+            .where("unheard_message.id", "in", unheard),
+        ))))
       .where("chat_run_adapter_state.driver_kind", "=", input.driverKind)
       .where("chat_run_adapter_state.instance_id", "=", input.instanceId)
       .where("chat_run_adapter_state.schema_version", "=", input.schemaVersion)
@@ -241,10 +268,37 @@ export class ChatRunLifecycleRepository {
     chatId: string;
     runId: string;
     approvalId: string;
-  }): Promise<Extract<CanonicalChatRunActivity, { type: "approval.requested" }> | null> {
+  }): Promise<(Extract<CanonicalChatRunActivity, { type: "approval.requested" }> & {
+    capabilitySnapshot?: CanonicalChatRun["capabilitySnapshot"];
+    runPolicy?: CanonicalChatRun["runPolicy"];
+  }) | null> {
     const owner = validateOwner(ownerInput);
     const chatId = CanonicalChatIdSchema.parse(input.chatId);
     [input.runId, input.approvalId].forEach(requireSafeRef);
+    const runRows = await this.kysely.selectFrom("chat_runs")
+      .innerJoin("chats", "chats.id", "chat_runs.chat_id")
+      .select(["chat_runs.capability_snapshot", "chat_runs.run_policy"])
+      .where("chats.owner_type", "=", owner.type)
+      .where("chats.owner_id", "=", owner.ownerId)
+      .where("chat_runs.chat_id", "=", chatId)
+      .where("chat_runs.id", "=", input.runId)
+      .where("chat_runs.status", "in", [...ACTIVE_RUNS])
+      .executeTakeFirst();
+    if (!runRows) return null;
+    // The capability snapshot authorizes this approval; corrupt or unreadable
+    // snapshots fail closed instead of silently skipping binding enforcement.
+    const capabilitySnapshot = runRows.capability_snapshot === null
+      ? undefined
+      : CanonicalChatRunSchema.shape.capabilitySnapshot.parse(
+        typeof runRows.capability_snapshot === "string"
+          ? JSON.parse(runRows.capability_snapshot)
+          : runRows.capability_snapshot,
+      );
+    const runPolicy = runRows.run_policy === null
+      ? undefined
+      : CanonicalChatRunPolicySchema.parse(
+        typeof runRows.run_policy === "string" ? JSON.parse(runRows.run_policy) : runRows.run_policy,
+      );
     const rows = await this.kysely.selectFrom("chat_run_events")
       .innerJoin("chat_runs", "chat_runs.id", "chat_run_events.run_id")
       .innerJoin("chats", "chats.id", "chat_runs.chat_id")
@@ -266,7 +320,11 @@ export class ChatRunLifecycleRepository {
       if (activity.data.type === "approval.requested") pending = activity.data;
       if (activity.data.type === "approval.resolved") pending = null;
     }
-    return pending;
+    return pending === null ? null : {
+      ...pending,
+      ...(capabilitySnapshot ? { capabilitySnapshot } : {}),
+      ...(runPolicy ? { runPolicy } : {}),
+    };
   }
 
   async markRunRunning(ownerInput: ChatOwner, input: {

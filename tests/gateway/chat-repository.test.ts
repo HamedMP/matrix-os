@@ -226,6 +226,7 @@ describe("ChatRepository", () => {
       "chat_terminal_bindings",
       "chat_turns",
       "chat_user_state",
+      "chat_voice_deliveries",
       "chats",
     ]);
     const activityIndex = await sql<{ indexname: string }>`
