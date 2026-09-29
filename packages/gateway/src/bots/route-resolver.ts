@@ -13,11 +13,11 @@
  */
 import type { AiProviderSnapshotV3, BotModelRoute } from "@matrix-os/contracts";
 import { BotModelRouteSchema } from "@matrix-os/contracts";
-import type { KernelCredentialAccessSourceId } from "../kernel-credentials.js";
+import type { BotCredentialAccessSourceId } from "./credentials.js";
 import { MATRIX_DEFAULT_MODEL_ID } from "../ai-providers/model-catalog.js";
 
 /** Provider V3 access sources bots can use, in fallback order, and the credential each launches with. */
-const SOURCES_IN_ORDER: ReadonlyArray<{ id: string; credential: KernelCredentialAccessSourceId; anthropicOnly: boolean }> = [
+const SOURCES_IN_ORDER: ReadonlyArray<{ id: string; credential: BotCredentialAccessSourceId; anthropicOnly: boolean }> = [
   { id: "matrix_cloudflare", credential: "matrix_included", anthropicOnly: false },
   { id: "matrix_included", credential: "matrix_included", anthropicOnly: true },
   { id: "owner_anthropic_key", credential: "owner_anthropic_key", anthropicOnly: true },
@@ -29,7 +29,7 @@ const OTHER_CONTEXT_WINDOW = 128_000;
 
 export interface ResolvedBotRoute {
   route: BotModelRoute;
-  accessSourceId: KernelCredentialAccessSourceId;
+  accessSourceId: BotCredentialAccessSourceId;
 }
 
 export class BotRouteError extends Error {

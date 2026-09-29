@@ -44,7 +44,8 @@ import { createBotIntegrationClient, type BotIntegrationTransport } from "../bot
 import { createBotIntegrationTools } from "../bots/integration-tools.js";
 import { createBotInteractionService, type BotInteractionService } from "../bots/interactions.js";
 import { createBotMemoryService, type BotMemoryService } from "../bots/memory-service.js";
-import { resolveBotRoute } from "../bots/route-resolver.js";
+import { createBotModelRouteResolver } from "../bots/codex-route.js";
+import { createCodexOwnerIdentityResolver } from "../collaboration/codex-owner-identity.js";
 import { BotRuntimeRegistry } from "../bots/runtime-registry.js";
 import { createBotTaskOrchestrator } from "../bots/task-orchestrator.js";
 import { createBotToolDispatcher, sweepBotWorkspaceSaves } from "../bots/tool-dispatcher.js";
@@ -252,6 +253,7 @@ export async function startBots(options: {
   saveSweepTimer.unref();
 
   const lifetime = new AbortController();
+  const resolveCodexIdentity = createCodexOwnerIdentityResolver({ homePath: options.homePath });
   const registry = new BotRuntimeRegistry();
   const admission = createPrivateBotAdmission({ db, host, roots: options.executionRoots, registry });
   let forgetRun: (runId: string) => void = () => undefined;
@@ -262,7 +264,12 @@ export async function startBots(options: {
     memory,
     agents: options.agents,
     recipes,
-    resolveRoute: async () => resolveBotRoute(await options.providers.getSnapshot()),
+    resolveRoute: createBotModelRouteResolver({
+      providers: options.providers,
+      resolveCodexIdentity,
+      lifetime: lifetime.signal,
+      ...(process.env.MATRIX_BOT_CODEX_MODEL !== undefined ? { codexModel: process.env.MATRIX_BOT_CODEX_MODEL } : {}),
+    }),
     admission,
     registry,
     client: host.client,
@@ -281,6 +288,7 @@ export async function startBots(options: {
     inference: {
       homePath: options.homePath,
       lifetime: lifetime.signal,
+      resolveCodexIdentity,
       ...(options.fundedCredentialProvider ? { fundedCredentialProvider: options.fundedCredentialProvider } : {}),
       ...(options.fundedAdmission ? { fundedAdmission: options.fundedAdmission } : {}),
     },

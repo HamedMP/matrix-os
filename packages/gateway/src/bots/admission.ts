@@ -17,7 +17,7 @@ import {
 import type { ScopeRuntimeSandboxManifest } from "@matrix-os/scope-runtime";
 import type { ChatExecutionRootResolver } from "../chat/execution-root.js";
 import { ChatExecutionRootError } from "../chat/execution-root.js";
-import type { KernelCredentialAccessSourceId } from "../kernel-credentials.js";
+import type { BotCredentialAccessSourceId } from "./credentials.js";
 import type { ScopeRuntimeHost } from "../scope-runtime-host/index.js";
 import { ScopeRuntimeClientError } from "../collaboration/scope-runtime-client.js";
 import type { BotExecutor } from "./repositories/shared.js";
@@ -45,7 +45,7 @@ export interface PrivateBotRunRequest {
   taskId: string;
   runId: string;
   route: BotModelRoute;
-  accessSourceId: KernelCredentialAccessSourceId;
+  accessSourceId: BotCredentialAccessSourceId;
   capabilities: readonly BotToolCapability[];
   requestClass: "interactive" | "background";
   /** The fingerprint stored with the task; a drift blocks the run as `root_changed`. */

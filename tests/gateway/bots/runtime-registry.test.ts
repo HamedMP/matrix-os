@@ -19,6 +19,17 @@ const binding = (overrides: Partial<BotRuntimeBinding> = {}): BotRuntimeBinding 
 });
 
 describe("bot runtime registry", () => {
+  it("binds an owner Codex subscription only to its admitted Responses model and generation", () => {
+    const registry = new BotRuntimeRegistry();
+    registry.bind(binding({ accessSourceId: "owner_openai_profile", route: {
+      api: "openai-responses", modelId: "gpt-5.6-luna", input: ["text", "image"], contextWindow: 128_000, maxOutputTokens: 8_192,
+    } }));
+    expect(registry.authorize({ runtimeHandle: handle(1), executionGeneration: "4", action: "inference.responses", modelId: "gpt-5.6-luna" }))
+      .toMatchObject({ allowed: true, accessSourceId: "owner_openai_profile" });
+    expect(registry.authorize({ runtimeHandle: handle(1), executionGeneration: "3", action: "inference.responses", modelId: "gpt-5.6-luna" })).toEqual({ allowed: false });
+    expect(registry.authorize({ runtimeHandle: handle(1), executionGeneration: "4", action: "inference.responses", modelId: "gpt-6-astra" })).toEqual({ allowed: false });
+    expect(registry.authorize({ runtimeHandle: handle(1), executionGeneration: "4", action: "inference.messages" })).toEqual({ allowed: false });
+  });
   it("binds, looks up by generation and run, and authorizes only the route's action and model", () => {
     const registry = new BotRuntimeRegistry();
     registry.bind(binding());
