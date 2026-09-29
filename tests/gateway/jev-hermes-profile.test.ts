@@ -11,6 +11,7 @@ describe("immutable recipe-only Hermes inputs", () => {
       expect(config.model).toMatchObject({ provider: "anthropic", default: "claude-sonnet-5", api_mode: "anthropic_messages" });
       expect(config.tools).toEqual({ tool_search: false });
       expect(Object.keys(config.mcp_servers)).toEqual(["matrix_jev_recipe"]);
+      expect(config.mcp_servers.matrix_jev_recipe.timeout).toBe(390);
       expect(config.mcp_servers.matrix_jev_recipe.args).toEqual(["--require-scoped-capability", "--tool-surface=jev-inbox-preview"]);
       expect(config.auxiliary.title_generation.enabled).toBe(false); expect(config.auxiliary.background_review.enabled).toBe(false);
       expect(JSON.stringify(config)).not.toContain("sk-ant-api"); expect(JSON.stringify(config)).not.toContain("a".repeat(64));
