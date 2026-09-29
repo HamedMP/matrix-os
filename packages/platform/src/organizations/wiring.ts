@@ -42,6 +42,7 @@ export async function createPlatformOrganizations(options: {
   directory?: DirectoryReader;
   clerkSecretKey?: string;
   platformSecret?: string;
+  appOrigin?: string;
   webhookSigningSecret?: string;
   upstream?: ClerkOrganizationUpstream;
   adminClient?: ClerkOrganizationAdmin;
@@ -98,7 +99,9 @@ export async function createPlatformOrganizations(options: {
   });
   const adminRoutes = createOrganizationAdminRoutes({
     repository: adminRepository, ...(adminClient ? { clerk: adminClient } : {}), projection,
-    resolveActor: options.resolveActor, ...(options.platformSecret ? { platformSecret: options.platformSecret } : {}), now,
+    membershipRepository: repository,
+    resolveActor: options.resolveActor, ...(options.platformSecret ? { platformSecret: options.platformSecret } : {}),
+    ...(options.appOrigin ? { appOrigin: options.appOrigin } : {}), now,
   });
   const creationFinisher = new OrganizationCreationFinisher({
     repository: adminRepository, ...(adminClient ? { clerk: adminClient } : {}), projection,
