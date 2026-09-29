@@ -48,6 +48,17 @@ describe("Pi bot Codex subscription inference", () => {
     deps.fetchImpl.mockResolvedValue(upstream);
     expect(await forwardBotInference(request, binding, () => authorization as never, deps)).toMatchObject({ ok: false, error: "provider_unavailable" });
   });
+  it("allows a bounded Codex tool continuation to finish after 30 seconds", async () => {
+    const deps = setup();
+    const fetchImpl: typeof fetch = async (_input, init) => new Promise<Response>((resolve, reject) => {
+      const timer = setTimeout(() => resolve(new Response('event: response.created\ndata: {"type":"response.created"}\n\n', {
+        headers: { "content-type": "text/event-stream" },
+      })), 31_000);
+      init?.signal?.addEventListener("abort", () => { clearTimeout(timer); reject(init.signal?.reason); }, { once: true });
+    });
+    expect(await forwardBotInference(request, binding, () => authorization as never, { ...deps, fetchImpl }))
+      .toMatchObject({ ok: true, status: 200 });
+  }, 40_000);
   it("rejects API-key identities instead of silently using paid API access", async () => {
     const deps = setup();
     deps.resolveCodexIdentity.mockResolvedValue({ url: "https://api.openai.com/v1/responses", headers: { authorization: "Bearer key", "chatgpt-account-id": "" } });
