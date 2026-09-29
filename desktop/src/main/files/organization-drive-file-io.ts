@@ -41,7 +41,8 @@ export async function readDriveUploadFile(path: string): Promise<{ name: string;
 }
 
 /** The caller passes only the path returned by a trusted native save dialog. */
-export async function saveDriveDownloadFile(destination: string, bytes: Uint8Array): Promise<void> {
+export async function saveDriveDownloadFile(destination: string, bytes: Uint8Array,
+  canPublish: () => boolean = () => true): Promise<void> {
   if (!isAbsolute(destination) || bytes.byteLength > MAX_FILE_BYTES) throw new Error("Invalid download destination");
   const before = await destinationSnapshot(destination);
   const temporary = join(dirname(destination), `.matrix-drive-${randomUUID()}.partial`);
@@ -53,6 +54,7 @@ export async function saveDriveDownloadFile(destination: string, bytes: Uint8Arr
     await file.close();
     file = null;
     if (await destinationSnapshot(destination) !== before) throw new Error("Download destination changed");
+    if (!canPublish()) throw new Error("Download session changed");
     if (before === null) await link(temporary, destination);
     else await rename(temporary, destination);
   } finally {

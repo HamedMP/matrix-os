@@ -29,4 +29,14 @@ describe("native organization drive local files", () => {
       await expect(readDriveUploadFile(linked)).rejects.toThrow();
     } finally { await rm(root, { recursive: true, force: true }); }
   });
+
+  it("does not publish a download after its session is cancelled", async () => {
+    const root = await mkdtemp(join(tmpdir(), "matrix-drive-io-"));
+    try {
+      const destination = join(root, "download.txt");
+      await expect(saveDriveDownloadFile(destination, new TextEncoder().encode("private"), () => false))
+        .rejects.toThrow();
+      await expect(readFile(destination)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
 });

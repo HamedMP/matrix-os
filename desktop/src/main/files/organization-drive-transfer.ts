@@ -30,7 +30,7 @@ interface TransferDeps {
   auth: TransferAuth;
   chooseUpload(): Promise<{ name: string; bytes: Uint8Array } | null>;
   chooseDownload(filename: string): Promise<string | null>;
-  saveDownload?(destination: string, bytes: Uint8Array): Promise<void>;
+  saveDownload?(destination: string, bytes: Uint8Array, canPublish: () => boolean): Promise<void>;
   fetchFn?: typeof fetch;
   validateTransferUrl?: (url: string) => Promise<void>;
   directFactory?: (options: { origin: string; token: string }) => Pick<CollaborationDirectClient, "request" | "close">;
@@ -97,15 +97,17 @@ export function createOrganizationDriveTransferService(deps: TransferDeps) {
         redirect: "error", signal: AbortSignal.any([operation.signal, AbortSignal.timeout(15 * 60_000)]) });
       if (operation.signal.aborted || !current()) return { status: "cancelled" };
       if (!response.ok) return { status: "error", code: "unavailable" };
+      if (!current() || operation.signal.aborted) return { status: "cancelled" };
       const file = OrganizationDriveFileSchema.parse(await direct.request(parsed.data.scopeId, "POST",
-        `${base}/uploads/${reservationId}/commit`, {}));
+        `${base}/uploads/${reservationId}/commit`, {}, undefined, operation.signal));
       reservationId = null;
+      if (!current() || operation.signal.aborted) return { status: "cancelled" };
       if (file.organizationId !== parsed.data.organizationId || file.path !== path.data || file.sha256 !== sha256) {
         return { status: "error", code: "unavailable" };
       }
       return { status: "uploaded", fileId: file.id };
     } catch (error: unknown) {
-      if (operation.signal.aborted) return { status: "cancelled" };
+      if (operation.signal.aborted || !current()) return { status: "cancelled" };
       console.warn("[organization-drive] native upload failed", error instanceof Error ? error.name : "UnknownError");
       return { status: "error", code: "unavailable" };
     } finally {
@@ -187,10 +189,11 @@ export function createOrganizationDriveTransferService(deps: TransferDeps) {
       if (!current() || operation.signal.aborted) return { status: "cancelled" };
       if (!destination) return { status: "cancelled" };
       if (!deps.saveDownload) return { status: "error", code: "unavailable" };
-      await deps.saveDownload(destination, bytes);
+      await deps.saveDownload(destination, bytes, () => current() && !operation.signal.aborted);
+      if (!current() || operation.signal.aborted) return { status: "cancelled" };
       return { status: "downloaded" };
     } catch (error: unknown) {
-      if (operation.signal.aborted) return { status: "cancelled" };
+      if (operation.signal.aborted || !current()) return { status: "cancelled" };
       console.warn("[organization-drive] native download failed", error instanceof Error ? error.name : "UnknownError");
       return { status: "error", code: "unavailable" };
     } finally {

@@ -7,9 +7,9 @@ import {
   type OrganizationDriveOption,
   type OrganizationDrivePageCounts,
 } from "@matrix-os/ui";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "../../lib/operator";
-import { createDesktopCollaborationApi } from "../../lib/collaboration";
+import { createDesktopCollaborationApi, releaseDesktopCollaborationApi } from "../../lib/collaboration";
 import { useConnection } from "../../stores/connection";
 
 const button = "rounded-md border px-3 py-1.5 text-xs font-medium disabled:opacity-50";
@@ -26,7 +26,7 @@ export function DesktopOrganizationDrivesView() {
   const platformHost = useConnection((state) => state.platformHost);
   const runtimeSlot = useConnection((state) => state.runtimeSlot);
   const authGeneration = useConnection((state) => state.authGeneration);
-  const api = useMemo(() => createDesktopCollaborationApi(platformHost), [platformHost, runtimeSlot, authGeneration]);
+  const [api, setApi] = useState<ReturnType<typeof createDesktopCollaborationApi>>(null);
   const [options, setOptions] = useState<OrganizationDriveOption[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -36,6 +36,12 @@ export function DesktopOrganizationDrivesView() {
   const [error, setError] = useState<string | null>(null);
   const pageCounts = useRef<OrganizationDrivePageCounts>({});
   const [guard] = useState(createRefreshGuard);
+
+  useEffect(() => {
+    const created = createDesktopCollaborationApi(platformHost);
+    setApi(created);
+    return () => { if (created) releaseDesktopCollaborationApi(created); };
+  }, [platformHost, runtimeSlot, authGeneration]);
 
   const load = useCallback(async () => {
     if (!api) return;
@@ -56,7 +62,7 @@ export function DesktopOrganizationDrivesView() {
 
   useEffect(() => {
     void load();
-    return () => { guard.invalidate(); api?.direct.close(); };
+    return () => { guard.invalidate(); };
   }, [api, guard, load]);
   useEffect(() => {
     if (!api || !selected) return;

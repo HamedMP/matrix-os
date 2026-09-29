@@ -52,6 +52,8 @@ describe("Electron organization drive transfer", () => {
     expect(fx.fetchFn).toHaveBeenCalledWith("https://example.r2.cloudflarestorage.com/upload",
       expect.objectContaining({ method: "PUT", body: expect.any(Uint8Array), redirect: "error" }));
     expect(fx.fetchFn.mock.calls[0]?.[1]?.body).toEqual(bytes);
+    expect(fx.request).toHaveBeenCalledWith(scopeId, "POST", expect.stringMatching(/\/commit$/),
+      {}, undefined, expect.any(AbortSignal));
     expect(fx.close).toHaveBeenCalled();
   });
 
@@ -102,6 +104,27 @@ describe("Electron organization drive transfer", () => {
     expect(fx.request).toHaveBeenCalledWith(scopeId, "DELETE", expect.stringMatching(/\/uploads\//));
   });
 
+  it("aborts a pending commit request after a runtime switch", async () => {
+    const fx = fixture();
+    const ordinaryRequest = fx.request.getMockImplementation()! as (...args: unknown[]) => Promise<unknown>;
+    let entered!: () => void;
+    const reachedCommit = new Promise<void>((resolve) => { entered = resolve; });
+    fx.request.mockImplementation(async (...args: unknown[]) => {
+      if (String(args[2]).endsWith("/commit")) {
+        entered();
+        return new Promise<unknown>((_resolve, reject) => (args[5] as AbortSignal).addEventListener("abort", () =>
+          reject(new DOMException("Aborted", "AbortError")), { once: true }));
+      }
+      return ordinaryRequest(...args);
+    });
+    const pending = fx.service.upload({ scopeId, organizationId, folder: "", runtimeSlot: "primary", authGeneration: 3 });
+    await reachedCommit;
+    fx.state.runtimeSlot = "other";
+    fx.service.cancelAll();
+    expect(await pending).toEqual({ status: "cancelled" });
+    expect(fx.request).toHaveBeenCalledWith(scopeId, "DELETE", expect.stringMatching(/\/uploads\//));
+  });
+
   it("verifies download bytes before asking for a destination", async () => {
     const fx = fixture();
     fx.fetchFn.mockResolvedValueOnce(new Response(bytes, { status: 200 }));
@@ -109,7 +132,7 @@ describe("Electron organization drive transfer", () => {
       runtimeSlot: "primary", authGeneration: 3 });
     expect(result).toEqual({ status: "downloaded" });
     expect(fx.chooseDownload).toHaveBeenCalledWith("example.txt");
-    expect(fx.saveDownload).toHaveBeenCalledWith("/tmp/example.txt", bytes);
+    expect(fx.saveDownload).toHaveBeenCalledWith("/tmp/example.txt", bytes, expect.any(Function));
   });
 
   it("rejects a changed download before writing a local file", async () => {
@@ -120,5 +143,17 @@ describe("Electron organization drive transfer", () => {
     expect(result).toEqual({ status: "error", code: "unavailable" });
     expect(fx.chooseDownload).not.toHaveBeenCalled();
     expect(fx.saveDownload).not.toHaveBeenCalled();
+  });
+
+  it("cancels publication when the account changes during the local save", async () => {
+    const fx = fixture();
+    fx.fetchFn.mockResolvedValueOnce(new Response(bytes, { status: 200 }));
+    fx.saveDownload.mockImplementationOnce(async (_path, _bytes, canPublish: () => boolean) => {
+      fx.state.authGeneration = 4;
+      if (!canPublish()) throw new Error("Cancelled save");
+    });
+    const result = await fx.service.download({ scopeId, organizationId, fileId,
+      runtimeSlot: "primary", authGeneration: 3 });
+    expect(result).toEqual({ status: "cancelled" });
   });
 });

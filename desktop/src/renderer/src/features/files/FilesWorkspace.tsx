@@ -46,6 +46,7 @@ export default function FilesWorkspace() {
   const authGeneration = useConnection((state) => state.authGeneration);
   const [tabs, setTabs] = useState<FileTab[]>([HOME_TAB]);
   const [activeTabId, setActiveTabId] = useState(HOME_TAB.id);
+  const [driveOpened, setDriveOpened] = useState(false);
   const [selections, setSelections] = useState<Record<string, FileSelection | null>>({});
   const [refreshes, setRefreshes] = useState<Record<string, number>>({});
   const [newFolderRequest, setNewFolderRequest] = useState<NewFolderRequest | null>(null);
@@ -65,6 +66,7 @@ export default function FilesWorkspace() {
     setSelections({});
     setTabs([HOME_TAB]);
     setActiveTabId(HOME_TAB.id);
+    setDriveOpened(false);
     setNewFolderRequest(null);
     setNewFolderName("");
     setNewFolderError(null);
@@ -175,7 +177,7 @@ export default function FilesWorkspace() {
           );
         })}
         <button type="button" role="tab" aria-selected={activeTabId === ORGANIZATION_DRIVES_TAB}
-          onClick={() => setActiveTabId(ORGANIZATION_DRIVES_TAB)}
+          onClick={() => { setDriveOpened(true); setActiveTabId(ORGANIZATION_DRIVES_TAB); }}
           className="flex h-8 shrink-0 items-center rounded-t-lg border border-b-0 px-3 text-xs font-medium outline-none focus-visible:ring-1 focus-visible:ring-[var(--accent)]"
           style={{ borderColor: "var(--border-subtle)", background: activeTabId === ORGANIZATION_DRIVES_TAB ? "var(--bg-surface)" : "transparent",
             color: activeTabId === ORGANIZATION_DRIVES_TAB ? "var(--text-primary)" : "var(--text-tertiary)" }}>
@@ -206,7 +208,9 @@ export default function FilesWorkspace() {
               </RetainedPane>
             );
           })}
-          {activeTabId === ORGANIZATION_DRIVES_TAB && <DesktopOrganizationDrivesView key={`${runtimeSlot}:${authGeneration}`} />}
+          {driveOpened && <RetainedPane active={activeTabId === ORGANIZATION_DRIVES_TAB} visible={activeTabId === ORGANIZATION_DRIVES_TAB}>
+            <DesktopOrganizationDrivesView key={`${runtimeSlot}:${authGeneration}`} />
+          </RetainedPane>}
         </div>
         {previewSelection ? (
           <Suspense fallback={<div className="flex flex-1 items-center justify-center text-xs" style={{ color: "var(--text-tertiary)" }}>Loading preview…</div>}>
