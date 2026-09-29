@@ -158,7 +158,9 @@ async function saveSharedFileDraft(api: CollaborationApi, scopeId: string, file:
  * everything downloads; Contributors edit text against the revision they read,
  * and a conflict keeps their text beside the owner's version, never overwriting.
  */
-export function SharedFileView({ api, scopeId, fileId }: { api: CollaborationApi; scopeId: string; fileId?: string }) {
+export function SharedFileView({ api, scopeId, fileId, onDraftChange }: {
+  api: CollaborationApi; scopeId: string; fileId?: string; onDraftChange?: (draft: string | null) => void;
+}) {
   const [state, setState] = useState<FileState>({ status: "loading" });
   const generation = useRef(0);
 
@@ -190,7 +192,8 @@ export function SharedFileView({ api, scopeId, fileId }: { api: CollaborationApi
   if (state.status === "loading") return <p role="status" className="p-8">Loading shared file…</p>;
   if (state.status === "no_content") return <FileMessage title="Shared file" body="Files can’t be opened in this version of Matrix." />;
   if (state.status === "failed") return <SharedFileFailure reason={state.reason} retry={() => void load()} />;
-  return <SharedFileEditor key={state.file.entry.id} api={api} scopeId={scopeId} scope={state.scope} initial={state.file} fileId={fileId} />;
+  return <SharedFileEditor key={state.file.entry.id} api={api} scopeId={scopeId} scope={state.scope} initial={state.file}
+    fileId={fileId} onDraftChange={onDraftChange} />;
 }
 
 function SharedFileFailure({ reason, retry }: { reason: SharedFileUnavailableReason; retry: () => void }) {
@@ -205,12 +208,13 @@ function SharedFileFailure({ reason, retry }: { reason: SharedFileUnavailableRea
   />;
 }
 
-function SharedFileEditor({ api, scopeId, scope, initial, fileId }: {
+function SharedFileEditor({ api, scopeId, scope, initial, fileId, onDraftChange }: {
   api: CollaborationApi;
   scopeId: string;
   scope: Scope;
   initial: SharedFile;
   fileId?: string;
+  onDraftChange?: (draft: string | null) => void;
 }) {
   const [file, setFile] = useState(initial);
   const [draft, setDraft] = useState<string | null>(null);
@@ -240,6 +244,7 @@ function SharedFileEditor({ api, scopeId, scope, initial, fileId }: {
       if (outcome.kind === "saved") {
         setFile(outcome.file);
         setDraft(null);
+        onDraftChange?.(null);
         setSaveNotice({ kind: "saved" });
       } else if (outcome.kind === "conflict") {
         setConflict(outcome.conflict);
@@ -255,12 +260,14 @@ function SharedFileEditor({ api, scopeId, scope, initial, fileId }: {
   const resolveConflict = (resolved: Conflict, keepDraft: boolean) => {
     setFile(resolved.file);
     setConflict(null);
-    if (!keepDraft) setDraft(null);
+    if (!keepDraft) { setDraft(null); onDraftChange?.(null); }
   };
   const toggleEditing = (open: boolean) => {
     setSaveNotice(null);
     setDownloadNotice(null);
-    setDraft(open && preview.kind === "text" ? preview.text : null);
+    const next = open && preview.kind === "text" ? preview.text : null;
+    setDraft(next);
+    onDraftChange?.(next);
   };
 
   return <main data-slot="shared-file-view" className="mx-auto flex min-h-full w-full max-w-4xl flex-col gap-4 p-5 sm:p-8">
@@ -274,7 +281,7 @@ function SharedFileEditor({ api, scopeId, scope, initial, fileId }: {
     {conflict ? <ConflictPanel conflict={conflict} onKeep={() => resolveConflict(conflict, true)} onTakeOwner={() => resolveConflict(conflict, false)}
       onDownloadMine={() => saveBytes(draft ?? "", sharedFileCopyName(name), "text/plain")} /> : null}
     {draft !== null
-      ? <DraftEditor draft={draft} onChange={setDraft} saving={saving} tooLarge={draftTooLarge} inConflict={conflict !== null} />
+      ? <DraftEditor draft={draft} onChange={(next) => { setDraft(next); onDraftChange?.(next); }} saving={saving} tooLarge={draftTooLarge} inConflict={conflict !== null} />
       : <FilePreview preview={preview} showEditLimit={scope.role !== "viewer" && !canEdit} />}
   </main>;
 }

@@ -10,7 +10,7 @@ import { SharedAppView } from "./SharedAppView.js";
 
 type Scope = z.infer<typeof CollaborationScopeSchema>;
 type Project = z.infer<typeof CollaborationProjectSchema>;
-type Selection = { kind: "file"; id: string } | { kind: "app"; id: string };
+type Selection = { kind: "file" | "app"; id: string; resourceId: string; title: string };
 const buttonClass = "rounded-xl border px-3 py-2 text-sm transition-colors hover:enabled:bg-[var(--bg-hover)] disabled:opacity-50";
 
 export function SharedProjectView({ api, scopeId, openChat, openTerminal }: {
@@ -25,8 +25,12 @@ export function SharedProjectView({ api, scopeId, openChat, openTerminal }: {
   const [fileError, setFileError] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [selection, setSelection] = useState<Selection | null>(null);
+  const [removedSelection, setRemovedSelection] = useState(false);
+  const [preservedDraft, setPreservedDraft] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
   const generation = useRef(0);
+  const selectionRef = useRef<Selection | null>(null);
+  const draftRef = useRef<string | null>(null);
   const base = `/api/collaboration/scopes/${encodeURIComponent(scopeId)}`;
 
   const load = useCallback(async () => {
@@ -37,21 +41,34 @@ export function SharedProjectView({ api, scopeId, openChat, openTerminal }: {
       const project = CollaborationProjectSchema.parse(rawProject);
       if (scope.kind !== "project" || project.scopeId !== scope.id || project.id !== scope.resourceId) throw new Error("Project scope mismatch");
       if (current !== generation.current) return;
-      setValue({ scope, project });
-      setFailed(false);
+      let nextFiles: CollaborationCatalogEntry[] = [];
+      let nextCursor: string | null = null;
+      let nextFileError = false;
       if (project.resources.some((resource) => resource.kind === "file" && resource.readiness === "ready")) {
         try {
           const page = CollaborationFileListResponseSchema.parse(await api.get(`${base}/files?limit=100`));
-          if (current === generation.current) {
-            setFiles(page.entries.filter((entry) => entry.kind === "file"));
-            setCursor(page.nextCursor ?? null);
-            setFileError(false);
-          }
+          nextFiles = page.entries.filter((entry) => entry.kind === "file");
+          nextCursor = page.nextCursor ?? null;
         } catch (error: unknown) {
           console.warn("[project-collaboration] file list failed", error instanceof Error ? error.name : "UnknownError");
-          if (current === generation.current) setFileError(true);
+          nextFileError = true;
         }
       }
+      if (current !== generation.current) return;
+      const selected = selectionRef.current;
+      if (selected && !project.resources.some((resource) => resource.kind === selected.kind
+        && resource.id === selected.resourceId && resource.readiness === "ready")) {
+        selectionRef.current = null;
+        setSelection(null);
+        setRemovedSelection(true);
+        setPreservedDraft(draftRef.current);
+        draftRef.current = null;
+      }
+      setValue({ scope, project });
+      setFiles(nextFiles);
+      setCursor(nextCursor);
+      setFileError(nextFileError);
+      setFailed(false);
     } catch (error: unknown) {
       console.warn("[project-collaboration] project load failed", error instanceof Error ? error.name : "UnknownError");
       if (current === generation.current) { setValue(null); setFailed(true); }
@@ -63,6 +80,10 @@ export function SharedProjectView({ api, scopeId, openChat, openTerminal }: {
     setFiles([]);
     setCursor(null);
     setSelection(null);
+    selectionRef.current = null;
+    draftRef.current = null;
+    setRemovedSelection(false);
+    setPreservedDraft(null);
     setFailed(false);
     void load();
     return () => { generation.current += 1; };
@@ -70,6 +91,7 @@ export function SharedProjectView({ api, scopeId, openChat, openTerminal }: {
   useEffect(() => api.subscribe?.(scopeId, load, () => {
     generation.current += 1;
     setSelection(null);
+    selectionRef.current = null;
     setValue(null);
     setFailed(true);
   }), [api, load, scopeId]);
@@ -100,9 +122,16 @@ export function SharedProjectView({ api, scopeId, openChat, openTerminal }: {
       <p className="mt-1 text-sm" style={{ color: "var(--text-secondary)" }}>{value.scope.role === "viewer" ? "Viewer · read only" : value.scope.role === "editor" ? "Contributor · can edit" : "Owner"}</p>
     </header>
     {value.project.status === "archived" ? <p role="status" className="rounded-xl border p-4 text-sm">This project is archived.</p> : null}
+    {removedSelection ? <section role="alert" className="rounded-xl border p-4 text-sm">
+      <p>The selected item is no longer available in this shared project.</p>
+      {preservedDraft !== null ? <><p className="mt-2">Your unsaved text is kept here so you can copy it.</p>
+        <textarea aria-label="Preserved unsaved text" className="mt-2 w-full rounded-xl border bg-transparent p-3" rows={8} readOnly value={preservedDraft} /></> : null}
+      <button type="button" className={`${buttonClass} mt-3`} onClick={() => { setRemovedSelection(false); setPreservedDraft(null); }}>Dismiss</button>
+    </section> : null}
     {selection ? <section>
-      <button type="button" className={buttonClass} onClick={() => setSelection(null)}>Back to project</button>
-      {selection.kind === "file" ? <SharedFileView key={selection.id} api={api} scopeId={scopeId} fileId={selection.id} />
+      <button type="button" className={buttonClass} onClick={() => { selectionRef.current = null; draftRef.current = null; setSelection(null); }}>Back to project</button>
+      {selection.kind === "file" ? <SharedFileView key={selection.id} api={api} scopeId={scopeId} fileId={selection.id}
+        onDraftChange={(draft) => { draftRef.current = draft; }} />
         : <SharedAppView key={selection.id} api={api} scopeId={scopeId} appId={selection.id} />}
     </section> : <>
       {(["chat", "terminal", "file", "app"] as const).map((kind) => <section key={kind} aria-label={kind === "chat" ? "Chats" : kind === "terminal" ? "Terminals" : kind === "file" ? "Files" : "Apps"}>
@@ -115,8 +144,13 @@ export function SharedProjectView({ api, scopeId, openChat, openTerminal }: {
             {openable ? <button type="button" className={buttonClass} aria-label={`Open ${resource.title}`} onClick={() => {
               if (kind === "chat" && resource.scopeId) openChat(resource.scopeId, resource.id, resource.title);
               else if (kind === "terminal" && resource.scopeId) openTerminal(resource.scopeId);
-              else if (kind === "file" && file) setSelection({ kind: "file", id: file.id });
-              else if (kind === "app") setSelection({ kind: "app", id: resource.id });
+              else if (kind === "file" && file) {
+                const next = { kind: "file" as const, id: file.id, resourceId: resource.id, title: resource.title };
+                selectionRef.current = next; draftRef.current = null; setSelection(next); setRemovedSelection(false); setPreservedDraft(null);
+              } else if (kind === "app") {
+                const next = { kind: "app" as const, id: resource.id, resourceId: resource.id, title: resource.title };
+                selectionRef.current = next; draftRef.current = null; setSelection(next); setRemovedSelection(false); setPreservedDraft(null);
+              }
             }}>Open</button> : <span className="text-xs" style={{ color: "var(--text-secondary)" }}>{resource.readiness === "blocked" ? "Unavailable" : "Not available"}</span>}
           </li>;
         })}</ul>
