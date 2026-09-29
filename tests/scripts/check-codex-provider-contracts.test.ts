@@ -89,27 +89,27 @@ describe("Codex provider contract checker", () => {
     }
   });
 
-  it("qualifies exact published Codex 0.158.0 bytes on both supported targets", () => {
-    const version = "0.158.0";
+  it("qualifies exact published Codex 0.159.0 bytes on both supported targets", () => {
+    const version = "0.159.0";
     const execSchemaBytes = readFileSync(new URL(
       "../fixtures/codex-0158/exec-events.rs",
       import.meta.url,
     ));
     const appServerSchemaBytes = gunzipSync(readFileSync(new URL(
-      "../fixtures/codex-0158/app-server-schema-0158.json.gz",
+      "../fixtures/codex-0159/app-server-schema-0159.json.gz",
       import.meta.url,
     )));
     const digest = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex");
 
     // The checked-in fixture is the tagged source plus published CLI-generated
     // schema, not a hand-built approximation of the methods we consume.
-    // Exact 0.158.0 exec source is identical to 0.157.1; the app-server
-    // schema adds flexUnavailable and removes unrelated plugin extensions.
+    // Exact 0.159.0 exec source is identical to 0.157.1; the app-server
+    // schema adds a denial reason and documents error metadata on interrupted turns.
     expect(digest(execSchemaBytes)).toBe(
       "dafa872d7e86a099e56e28a329dcb9c03db90ed768c3b88cca8c91d46dc1d0e5",
     );
     expect(digest(appServerSchemaBytes)).toBe(
-      "aa5cb3fbcdebf833515fb42cd085a0670eb755d461037a0ad67bb72a709dcd0f",
+      "7243ba241962af92ca60581f1a81808ebda4212a800f8b205f54703bcfd508c5",
     );
 
     for (const runtimeTarget of ["darwin-arm64", "linux-x64"]) {
@@ -145,8 +145,8 @@ describe("Codex provider contract checker", () => {
     })).toThrow("Codex 0.158.1 is not verified");
   });
 
-  it("retains reviewed Codex schemas through 0.158.0", () => {
-    expect(contract.latestVerifiedVersion).toBe("0.158.0");
+  it("retains reviewed Codex schemas through 0.159.0", () => {
+    expect(contract.latestVerifiedVersion).toBe("0.159.0");
     expect(contract.verifiedVersions["0.156.0"]).toEqual({
       schemaSha256: "dafa872d7e86a099e56e28a329dcb9c03db90ed768c3b88cca8c91d46dc1d0e5",
     });
@@ -156,7 +156,14 @@ describe("Codex provider contract checker", () => {
     expect(contract.verifiedVersions["0.157.0"]).toEqual(contract.verifiedVersions["0.156.1"]);
     expect(contract.verifiedVersions["0.157.1"]).toEqual(contract.verifiedVersions["0.157.0"]);
     expect(contract.verifiedVersions["0.158.0"]).toEqual(contract.verifiedVersions["0.157.1"]);
-    expect(appServerContract.latestVerifiedVersion).toBe("0.158.0");
+    expect(contract.verifiedVersions["0.159.0"]).toEqual(contract.verifiedVersions["0.158.0"]);
+    expect(appServerContract.verifiedVersions["0.159.0"]).toEqual({
+      schemaSha256ByTarget: {
+        "darwin-arm64": "7243ba241962af92ca60581f1a81808ebda4212a800f8b205f54703bcfd508c5",
+        "linux-x64": "7243ba241962af92ca60581f1a81808ebda4212a800f8b205f54703bcfd508c5",
+      },
+    });
+    expect(appServerContract.latestVerifiedVersion).toBe("0.159.0");
     expect(appServerContract.verifiedVersions["0.156.0"]).toEqual({
       schemaSha256ByTarget: {
         "darwin-arm64": "655adafa0ccea3d84f30bcbdc74e201fa14511c51e08d0cd024a0280daa8bc60",
@@ -193,7 +200,7 @@ describe("Codex provider contract checker", () => {
       "mcpServer/elicitation/request": "d164b1519690cfb0b5f353c8e6eb37087f720e7dcd81df4c145bc964f9416d05",
       "item/started": "7e1fcd8e3953999660d5c80e2ba4479697645e179ce3a95555712d4f60097d6b",
       "item/completed": "33f9ba75a8594be59e8ad8c841c9a405df51917739cf2dd87da1a87b0f5e2b83",
-      "turn/completed": "873327cc9c902d8bc5eaf96eb241df1498213d5723029134b8a476ef03005972",
+      "turn/completed": "cbba93d35c49dee9ac42aa7bca7eeeeb935e0cc89c223c31094a27660427f57f",
     });
   });
 
