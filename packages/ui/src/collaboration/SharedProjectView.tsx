@@ -80,12 +80,14 @@ export function SharedProjectView({ api, scopeId, openChat, openTerminal }: {
             selectedReady = live.id === selected.id && live.path === selected.resourceId;
           } catch (error: unknown) {
             console.warn("[project-collaboration] selected file check failed", error instanceof Error ? error.name : "UnknownError");
-            selectedReady = false;
+            const code = error && typeof error === "object" && "code" in error ? error.code : undefined;
+            if (code === "not_found" || code === "resource_missing") selectedReady = false;
+            else nextFileError = true;
           }
         }
       }
       if (current !== generation.current) return;
-      if (selected && !selectedReady) closeSelection();
+      if (selected && !selectedReady && selectionRef.current === selected) closeSelection();
       setValue({ scope, project });
       setFiles(nextFiles);
       setCursor(nextCursor);
