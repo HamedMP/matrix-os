@@ -9,8 +9,8 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { Kysely, Transaction } from "kysely";
 import { z } from "zod/v4";
-import { BridgeQueryBodySchema, type BridgeQueryBody } from "../app-db-contracts.js";
 import { normalizeAppStorageSlug } from "../app-db-types.js";
+import { ScopedAppActionSchema, type ScopedAppAction } from "./scoped-app-action.js";
 import { CollaborationAuthorizationError, type AuthorizedCollaborationContext, type CollaborationAuthority } from "./authority.js";
 import type { OwnerCollaborationDatabase } from "./database.js";
 import {
@@ -35,8 +35,8 @@ const EnvelopeSchema = z.object({
   expectedRevision: z.number().int().nonnegative(),
   action: z.unknown(),
 }).strict();
-const READ_ACTIONS: readonly BridgeQueryBody["action"][] = ["find", "findOne", "count", "schema", "appInfo"];
-const MUTATION_ACTIONS: readonly BridgeQueryBody["action"][] = ["insert", "bulkInsert", "update", "bulkUpdate", "delete"];
+const READ_ACTIONS: readonly ScopedAppAction["action"][] = ["find", "findOne", "count", "schema", "appInfo", "readData"];
+const MUTATION_ACTIONS: readonly ScopedAppAction["action"][] = ["insert", "bulkInsert", "update", "bulkUpdate", "delete", "writeData"];
 
 export interface AppInstanceDescription {
   appId: string;
@@ -71,8 +71,8 @@ function jsonb(value: unknown) {
   return JSON.stringify(value) as unknown as object;
 }
 
-function parseAction(raw: unknown, expectedApps: readonly string[], allowed: readonly BridgeQueryBody["action"][]): BridgeQueryBody {
-  const parsed = BridgeQueryBodySchema.safeParse(raw);
+function parseAction(raw: unknown, expectedApps: readonly string[], allowed: readonly ScopedAppAction["action"][]): ScopedAppAction {
+  const parsed = ScopedAppActionSchema.safeParse(raw);
   if (!parsed.success || !allowed.includes(parsed.data.action) || parsed.data.action === "listApps"
     || !("app" in parsed.data) || !expectedApps.includes(parsed.data.app)) {
     throw new ProjectAppAdapterError("invalid_action");
@@ -212,7 +212,7 @@ export function createAppInstanceAdapter(options: {
         if (!await options.catalog.get(root.id, trx)) throw new ProjectAppAdapterError("not_found");
         return jsonValue(await options.bridge.execute({
           namespace, appId: appId.data, storageSchema: bridgeAppId, scopeId: current.scopeId, actorId: current.actorId,
-          action: { ...parsed, app: namespace } as BridgeQueryBody, transaction: trx,
+          action: { ...parsed, app: namespace } as ScopedAppAction, transaction: trx,
         }));
       });
     } catch (error: unknown) {
@@ -253,7 +253,7 @@ export function createAppInstanceAdapter(options: {
         if (locked.revision !== envelope.data.expectedRevision) throw new ProjectAppAdapterError("conflict");
         const result = jsonValue(await options.bridge.execute({
           namespace, appId: appId.data, storageSchema: bridgeAppId, scopeId: current.scopeId, actorId: current.actorId,
-          action: { ...parsed, app: namespace } as BridgeQueryBody, transaction: trx,
+          action: { ...parsed, app: namespace } as ScopedAppAction, transaction: trx,
         }));
         const bumped = await options.catalog.bump(trx, { id: root.id, expectedRevision: locked.revision });
         const timestamp = now();

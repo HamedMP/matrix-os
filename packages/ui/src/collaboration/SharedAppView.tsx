@@ -14,7 +14,7 @@ type State =
   | { status: "ready"; html: string; role: "owner" | "editor" | "viewer"; instance: CollaborationAppInstance };
 
 const ViewResponseSchema = z.strictObject({ result: z.json() });
-const MAX_MESSAGE_BYTES = 64 * 1024;
+const MAX_MESSAGE_BYTES = 256 * 1024;
 
 /** Recipient app view: the scope's catalog root chooses the only instance this frame can reach. */
 export function SharedAppView({ api, scopeId }: { api: CollaborationApi; scopeId: string }) {
@@ -59,6 +59,8 @@ function ReadyAppFrame({ api, scopeId, html, role, instance }: {
   api: CollaborationApi; scopeId: string; html: string; role: "owner" | "editor" | "viewer"; instance: CollaborationAppInstance;
 }) {
   const frame = useRef<HTMLIFrameElement>(null);
+  const documentPort = useRef<MessagePort | null>(null);
+  const loadCount = useRef(0);
   const revision = useRef(instance.revision);
   const writing = useRef(false);
   const [unavailable, setUnavailable] = useState(false);
@@ -77,7 +79,7 @@ function ReadyAppFrame({ api, scopeId, html, role, instance }: {
           return;
         }
         revision.current = current.revision;
-        frame.current?.contentWindow?.postMessage({ type: "matrix:app-changed", scopeId, appId: instance.appId }, "*");
+        documentPort.current?.postMessage({ type: "matrix:app-changed", scopeId, appId: instance.appId });
       } catch (error: unknown) {
         console.warn("[shared-app] refresh failed", error instanceof Error ? error.name : "UnknownError");
         if (active) setUnavailable(true);
@@ -89,8 +91,8 @@ function ReadyAppFrame({ api, scopeId, html, role, instance }: {
   useEffect(() => {
     let active = true;
     const path = `/api/collaboration/scopes/${encodeURIComponent(scopeId)}/apps/${encodeURIComponent(instance.appId)}`;
-    const onMessage = (event: MessageEvent) => {
-      if (event.source !== frame.current?.contentWindow || event.origin !== "null" || !event.ports[0]) return;
+    const onRequest = (event: MessageEvent, port: MessagePort) => {
+      if (!active || port !== documentPort.current) return;
       const message = SharedAppMessageSchema.safeParse(event.data);
       if (!message.success || message.data.scopeId !== scopeId || message.data.appId !== instance.appId) return;
       let size: number;
@@ -98,10 +100,8 @@ function ReadyAppFrame({ api, scopeId, html, role, instance }: {
       catch { return; }
       if (size > MAX_MESSAGE_BYTES) return;
       const action = message.data.action;
-      const port = event.ports[0];
       const reply = (value: { ok: true; result: unknown } | { ok: false; error: string }) => {
-        if (active) port.postMessage(value);
-        port.close?.();
+        if (active && port === documentPort.current) port.postMessage({ type: "matrix:app-result", id: message.data.id, ...value });
       };
       if (!action || typeof action !== "object" || Array.isArray(action) || !("app" in action)
         || action.app !== instance.appId || !("action" in action) || typeof action.action !== "string") return;
@@ -124,10 +124,10 @@ function ReadyAppFrame({ api, scopeId, html, role, instance }: {
             }));
             if (active) revision.current = String(result.revision);
             reply({ ok: true, result: result.result });
-            if (active) frame.current?.contentWindow?.postMessage({
+            if (active && port === documentPort.current) port.postMessage({
               type: "matrix:app-changed", scopeId, appId: instance.appId,
               table: "table" in action && typeof action.table === "string" ? action.table : undefined,
-            }, "*");
+            });
           }
         } catch (error: unknown) {
           console.warn("[shared-app] bridge request failed", error instanceof Error ? error.name : "UnknownError");
@@ -137,8 +137,22 @@ function ReadyAppFrame({ api, scopeId, html, role, instance }: {
         }
       })();
     };
-    window.addEventListener("message", onMessage);
-    return () => { active = false; window.removeEventListener("message", onMessage); };
+    const onReady = (event: MessageEvent) => {
+      if (documentPort.current || event.source !== frame.current?.contentWindow || event.origin !== "null"
+        || event.data?.type !== "matrix:app-bridge-ready" || event.data.scopeId !== scopeId
+        || event.data.appId !== instance.appId || !event.ports[0]) return;
+      const port = event.ports[0];
+      documentPort.current = port;
+      port.onmessage = (message) => onRequest(message, port);
+      port.start?.();
+    };
+    window.addEventListener("message", onReady);
+    return () => {
+      active = false;
+      window.removeEventListener("message", onReady);
+      documentPort.current?.close();
+      documentPort.current = null;
+    };
   }, [api, scopeId, instance.appId, role]);
 
   if (unavailable) return <div role="alert" className="m-auto max-w-lg rounded-2xl border p-8 text-center">
@@ -149,6 +163,14 @@ function ReadyAppFrame({ api, scopeId, html, role, instance }: {
     <header className="flex items-center justify-between border-b px-4 py-2 text-sm">
       <span className="font-medium">{instance.appId}</span><span>{role === "viewer" ? "Viewer · read only" : role === "editor" ? "Contributor" : "Owner"}</span>
     </header>
-    <iframe ref={frame} title="Shared app" sandbox="allow-scripts" srcDoc={html} className="min-h-0 w-full flex-1 border-0" />
+    <iframe ref={frame} title="Shared app" sandbox="allow-scripts" srcDoc={html}
+      onLoad={() => {
+        loadCount.current += 1;
+        if (loadCount.current > 1) {
+          documentPort.current?.close();
+          documentPort.current = null;
+          setUnavailable(true);
+        }
+      }} className="min-h-0 w-full flex-1 border-0" />
   </section>;
 }
