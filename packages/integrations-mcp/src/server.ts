@@ -115,14 +115,10 @@ export function createIntegrationsMcpServer(
         },
         async (input) => connectServiceHandler(input, actionFetcher(input)),
       );
-      server.registerTool(
-        "sync_services",
-        {
-          description: "Refresh Matrix connection metadata after the user completes OAuth.",
-          inputSchema: { ...approvalSchema },
-        },
-        async (input) => syncServicesHandler(actionFetcher(input)),
-      );
+      const syncDescription = "Refresh Matrix connection metadata after the user completes OAuth.";
+      if (chat) server.registerTool("sync_services", { description: syncDescription, inputSchema: approvalSchema },
+        async (input) => syncServicesHandler(actionFetcher(input)));
+      else server.registerTool("sync_services", { description: syncDescription }, async () => syncServicesHandler(fetcher));
       server.registerTool(
         "call_service",
         {

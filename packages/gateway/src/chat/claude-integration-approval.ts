@@ -121,6 +121,9 @@ export function createClaudeIntegrationApprovalControl(options: {
         } catch (error: unknown) {
           const transportFailed = responseStarted && !responseWritten;
           if (transportFailed) {
+            // respond only writes canonical CLI stdin: it rejects on a closed/broken
+            // pipe or timeout, never merely because this native request was cancelled.
+            // That shared transport is unusable, so abort the run rather than retain grants.
             options.capability.revoke();
           }
           cancel(id, current);

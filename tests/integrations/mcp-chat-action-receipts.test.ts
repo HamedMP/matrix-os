@@ -5,6 +5,19 @@ import { createIntegrationsMcpServer } from "../../packages/integrations-mcp/dis
 import type { GatewayFetcher } from "../../packages/kernel/src/tools/integrations.js";
 
 describe("Chat MCP action receipt transport", () => {
+  it("preserves full-surface sync calls with omitted arguments", async () => {
+    const fetcher = vi.fn<GatewayFetcher>(async () => ({ ok: true, status: 200,
+      json: async () => ({ synced: 0 }), text: async () => "Synthetic" }));
+    const server = createIntegrationsMcpServer({ toolSurface: "full", fetcher });
+    const client = new Client({ name: "full-sync-compatibility", version: "1.0.0" });
+    const [left, right] = InMemoryTransport.createLinkedPair();
+    try {
+      await Promise.all([server.connect(right), client.connect(left)]);
+      await client.callTool({ name: "sync_services" });
+      expect(fetcher).toHaveBeenCalledOnce();
+      expect(new Headers(fetcher.mock.calls[0]![1].headers).has("x-matrix-integration-approval")).toBe(false);
+    } finally { await client.close(); await server.close(); }
+  });
   it.each([
     { name: "call_service", args: { service: "google_drive", action: "list_files", label: "work", params: {} }, method: "POST", path: "/api/integrations/call", body: { service: "google_drive", action: "list_files", label: "work", params: {} } },
     { name: "connect_service", args: { service: "google_drive", label: "work" }, method: "POST", path: "/api/integrations/connect", body: { service: "google_drive", label: "work" } },
