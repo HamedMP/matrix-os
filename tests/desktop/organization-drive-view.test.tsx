@@ -35,4 +35,33 @@ describe("Electron organization drive view", () => {
     expect(clients.at(-1)!.close).not.toHaveBeenCalled();
     expect(clients.at(-1)!.get).toHaveBeenCalledWith("/api/organizations");
   });
+
+  it("stops its live subscription while the retained pane is hidden", async () => {
+    const scopeId = "00000000-0000-4000-8000-000000000001";
+    const organizationId = "org_example";
+    const unsubscribe = vi.fn();
+    const subscribe = vi.fn(() => unsubscribe);
+    const direct = { close: vi.fn(), subscribe, request: vi.fn(async (_scope: string, _method: string, path: string) => {
+      if (path.endsWith(`/scopes/${scopeId}`)) return { id: scopeId, ownerId: "user_owner", kind: "folder",
+        resourceId: "folder_example", organizationId, membershipMode: "direct", lifecycle: "shared",
+        revision: "1", authEpoch: "1", authorityGeneration: "1", role: "viewer",
+        capabilities: { read: true, discuss: false, manageMembers: false, requestAi: false } };
+      return { organizationId, scopeId, usedBytes: 0, reservedBytes: 0,
+        quotaBytes: 1_000_000_000_000, files: [] };
+    }) };
+    createApi.mockReturnValue({
+      get: vi.fn(async (path: string) => path === "/api/organizations"
+        ? { organizations: [{ organizationId, name: "Authority" }] }
+        : { items: path.startsWith("/api/collaboration/shared") ? [{ scopeId,
+          runtimeId: "runtime_owner", ownerId: "user_owner", kind: "folder",
+          authorityGeneration: 1, organizationId, status: "accepted" }] : [] }),
+      direct,
+      subscribe,
+    });
+    useConnection.setState({ platformHost: "https://app.matrix-os.com", runtimeSlot: "primary", authGeneration: 3 });
+    const view = render(<DesktopOrganizationDrivesView isActive />);
+    await waitFor(() => expect(subscribe).toHaveBeenCalled());
+    view.rerender(<DesktopOrganizationDrivesView isActive={false} />);
+    await waitFor(() => expect(unsubscribe).toHaveBeenCalled());
+  });
 });

@@ -209,7 +209,7 @@ export default function FilesWorkspace() {
             );
           })}
           {driveOpened && <RetainedPane active={activeTabId === ORGANIZATION_DRIVES_TAB} visible={activeTabId === ORGANIZATION_DRIVES_TAB}>
-            <DesktopOrganizationDrivesView key={`${runtimeSlot}:${authGeneration}`} />
+            <DesktopOrganizationDrivesView key={`${runtimeSlot}:${authGeneration}`} isActive={activeTabId === ORGANIZATION_DRIVES_TAB} />
           </RetainedPane>}
         </div>
         {previewSelection ? (

@@ -22,7 +22,7 @@ function message(error: unknown): string {
   return "Organization drive is unavailable. Try again.";
 }
 
-export function DesktopOrganizationDrivesView() {
+export function DesktopOrganizationDrivesView({ isActive = true }: { isActive?: boolean }) {
   const platformHost = useConnection((state) => state.platformHost);
   const runtimeSlot = useConnection((state) => state.runtimeSlot);
   const authGeneration = useConnection((state) => state.authGeneration);
@@ -44,7 +44,7 @@ export function DesktopOrganizationDrivesView() {
   }, [platformHost, runtimeSlot, authGeneration]);
 
   const load = useCallback(async () => {
-    if (!api) return;
+    if (!api || !isActive) return;
     const token = guard.begin();
     try {
       const next = await loadOrganizationDriveOptions(api, pageCounts.current);
@@ -58,18 +58,19 @@ export function DesktopOrganizationDrivesView() {
     } catch (failure: unknown) {
       if (guard.isCurrent(token)) setError(message(failure));
     } finally { guard.finish(token); setLoading(false); }
-  }, [api, guard]);
+  }, [isActive, api, guard]);
 
   useEffect(() => {
+    if (!isActive) { guard.invalidate(); return; }
     void load();
     return () => { guard.invalidate(); };
-  }, [api, guard, load]);
+  }, [isActive, api, guard, load]);
   useEffect(() => {
-    if (!api || !selected) return;
+    if (!isActive || !api || !selected) return;
     const unsubscribe = api.subscribe?.(selected, () => load(), () => setError("Organization drive is unavailable. Try again."));
     const timer = setInterval(() => { void load(); }, 30_000);
-    return () => { unsubscribe?.(); clearInterval(timer); };
-  }, [api, selected, load]);
+    return () => { unsubscribe?.(); clearInterval(timer); api.direct.close(selected); };
+  }, [isActive, api, selected, load]);
 
   const active = options.find((item) => item.scopeId === selected);
   const run = async (action: () => Promise<void>) => {
