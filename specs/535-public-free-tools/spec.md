@@ -46,6 +46,14 @@ These are 45 distinct tasks with different input contracts and outputs. Shared e
 
 No new mutating endpoint, database table, server fetch, shared file store, or AI inference is in scope. Browser operations must cap memory, terminate costly work, and avoid rendering input as trusted HTML. Security tests must cover XSS-like strings, malformed JSON/CSV, invalid URLs, large input, and regex timeouts. The route wiring test must verify that every catalog slug resolves to a rendered page and sitemap entry.
 
+### Runtime wiring and failure modes
+
+- The public website's Next.js App Router serves `src/app/tools/page.tsx` and `src/app/tools/[slug]/page.tsx`. The detail route generates its allowed slugs from one catalog, sets `dynamicParams = false`, and returns 404 for an unknown slug. The site header links to the hub; `src/app/sitemap.ts` enumerates the same catalog. Each route sets its own canonical metadata.
+- The server renders page content and passes only the catalog slug and example to `ToolWorkspace`. A click calls the browser-side `runTool()` dispatcher, which checks the same catalog, validates the input cap, selects the category engine, and writes the result or a safe error to local React state. No execution request goes to the website, gateway, Matrix computer, database, or third-party API.
+- Visitors use independent browser tabs. Concurrent runs have no shared mutable state, transaction, lock, queue, or cross-user contention. A tab close, browser crash, or navigation discards unsaved input and output; reopening the URL starts from the example. No server job or orphan record exists to recover. The UI offers copy/download before leaving the page, and an unsuccessful run remains retryable after correcting the input.
+- Malformed or oversized input is rejected before expensive work. A regex worker is terminated on completion, error, or its deadline; unsupported browsers fail closed. Download object URLs are revoked. Server-side SSRF, external-fetch timeouts, database rollback, and subscriber shutdown are not applicable because these routes perform no server-side tool execution or URL fetching.
+- The website integration check must request the public hub and a representative detail page without auth, verify an unknown slug returns 404, count all 45 detail URLs in the sitemap, and execute representative developer, writing, SEO, and agent tools through the browser UI. It must assert that tool text is absent from network requests and telemetry.
+
 ### Enforceable resource limits
 
 | Operation | Limit | Failure behavior |
