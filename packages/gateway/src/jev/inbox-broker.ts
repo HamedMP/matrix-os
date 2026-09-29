@@ -5,6 +5,7 @@ import { z } from "zod/v4";
 import type { HermesJevScope } from "../chat/hermes-integration-capability.js";
 import type { JevService } from "./service.js";
 import { assembleInboxEvidence, GmailId, threadIdentity } from "./inbox-evidence.js";
+import { JevLabelConfirmation, JevLabelInput } from "../integrations/jev-bound-labels.js";
 
 const Receipt = z.string().regex(/^[a-f0-9]{64}$/);
 export const InboxPreviewInput = z.discriminatedUnion("operation", [
@@ -27,7 +28,9 @@ export function assertJevInboxProfile(raw: unknown, scope: HermesJevScope): void
 const review = () => ({ kind: "review" as const, verified: false as const, readonly: true as const,
   labels: [EMAIL_TRIAGE_LABELS.review], archiveProposal: null });
 type Evidence = ReturnType<typeof assembleInboxEvidence>;
-type Proposal = ReturnType<typeof review> | { kind: "proposal"; verified: true; readonly: true; threadId: string;
+type LabelOutcome = { kind: "labeled" | "labeling_unconfirmed"; verified: true; readonly: false; threadId: string;
+  messageCount: number; labels: string[]; observedAt: string; requestId: string };
+type Proposal = LabelOutcome | ReturnType<typeof review> | { kind: "proposal"; verified: true; readonly: true; threadId: string;
   messageCount: number; labels: string[]; archiveProposal: { removeLabelIds: ["INBOX"] } | null; observedAt: string; requestId: string };
 type RecordState = { fingerprint: string; expiresAt: number; discoveryReceipt: string;
   discovery?: { kind: "discovery"; receipt: string; threads: { id: string; snippet: string }[]; readonly: true };
@@ -42,6 +45,7 @@ export function createJevInboxBroker(options: {
   authorize: (ownerId: string, scope: HermesJevScope) => Promise<void>;
   read: (ownerId: string, scope: HermesJevScope, action: string, params?: Record<string, unknown>, signal?: AbortSignal) => Promise<unknown>;
   evaluate: JevService["evaluate"];
+  label?: (ownerId: string, scope: HermesJevScope, input: z.infer<typeof JevLabelInput>, signal?: AbortSignal) => Promise<unknown>;
   now?: () => number;
 }) {
   const records = new Map<string, RecordState>();
@@ -180,6 +184,37 @@ export function createJevInboxBroker(options: {
         const proposal = { kind: "proposal" as const, verified: true as const, readonly: true as const, threadId: selected.threadId,
           messageCount: evidence.messageCount, labels: policy.labels, archiveProposal: policy.archive, observedAt, requestId: result.requestId };
         current.presentation = proposal;
+        if (scope.account.labelingEnabled === true && !policy.labels.includes(EMAIL_TRIAGE_LABELS.review)) {
+          // Re-read content, not model claims, immediately before the authorized write.
+          await profile(ownerId, scope, current, signal);
+          const fresh = threadIdentity(await options.read(ownerId, scope, "get_thread_ids", { threadId: selected.threadId }, signal), selected.threadId);
+          if (JSON.stringify(fresh) !== JSON.stringify(selected.identity)) return markReview(current);
+          const messages: unknown[] = [];
+          for (const messageId of fresh.messageIds.slice(-4)) {
+            alive(ownerId, scope, current, signal);
+            messages.push(await options.read(ownerId, scope, "get_message", { messageId }, signal));
+          }
+          const checked = assembleInboxEvidence(ownerId, scope, selected.threadId, fresh.messageIds.slice(-4), messages, now(), fresh.internalDates.slice(-4));
+          if (checked.hash !== evidence.hash) return markReview(current);
+          await options.authorize(ownerId, scope); alive(ownerId, scope, current, signal);
+          const outcome: LabelOutcome = { kind: "labeled", verified: true, readonly: false, threadId: selected.threadId,
+            messageCount: evidence.messageCount, labels: policy.labels, observedAt, requestId: result.requestId };
+          if (!policy.labels.length) { current.presentation = outcome; return outcome; }
+          if (!options.label) throw new InboxPreviewError("unavailable");
+          current.presentation = { ...outcome, kind: "labeling_unconfirmed" };
+          try {
+            const plan = JevLabelInput.parse({ threadId: selected.threadId, messageIds: fresh.messageIds.slice(-4), labels: policy.labels });
+            const confirmation = JevLabelConfirmation.parse(await options.label(ownerId, scope, plan, signal));
+            if (JSON.stringify(confirmation.messageIds) !== JSON.stringify(fresh.messageIds.slice(-4))
+              || confirmation.labelIds.length !== policy.labels.length) throw new InboxPreviewError("unavailable");
+            alive(ownerId, scope, current, signal);
+            await options.authorize(ownerId, scope); alive(ownerId, scope, current, signal);
+            current.presentation = outcome;
+          } catch (error) {
+            console.warn("[jev] Labeling could not be confirmed", { errorName: error instanceof Error ? error.name : "UnknownError" });
+          }
+          return current.presentation;
+        }
         return proposal;
       })();
       return current.evaluating;

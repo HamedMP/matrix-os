@@ -4,6 +4,12 @@ import { EMAIL_TRIAGE_LABELS } from "@matrix-os/contracts";
 const proposal = { kind: "proposal", verified: true, readonly: true, threadId: "thread_fixture", messageCount: 4,
   labels: [EMAIL_TRIAGE_LABELS.coldOutreach], archiveProposal: { removeLabelIds: ["INBOX"] },
   observedAt: "2026-09-26T00:00:00.000Z", requestId: "jev_req_fixture_result" };
+it("distinguishes confirmed labels from an unknown write outcome without claiming no changes", () => {
+  const { archiveProposal: _archive, ...base } = proposal;
+  expect(formatJevInboxPresentation({ ...base, kind: "labeled", readonly: false })).toContain("Confirmed in Gmail");
+  const unknown = formatJevInboxPresentation({ ...base, kind: "labeling_unconfirmed", readonly: false });
+  expect(unknown).toContain("could not be confirmed"); expect(unknown).not.toContain("No mailbox changes");
+});
 it("formats bounded server proposal with explicit snapshot and no applied-email claim", () => {
   const text = formatJevInboxPresentation(proposal);
   expect(text).toContain("Read-only Inbox triage proposal"); expect(text).toContain("4 messages");

@@ -6,7 +6,7 @@ import type { HermesJevScope } from "../../packages/gateway/src/chat/hermes-inte
 const ownerId = "owner_fixture";
 const scope: HermesJevScope = { kind: "jev_inbox_preview", runId: "run_fixture", agentId: "agent_fixture", revision: 1,
   account: { service: "gmail", accountLabel: "My Gmail", connectionId: "conn_fixture", expectedEmail: "me@example.test" } };
-function fixture(mode = "valid") {
+function fixture(mode = "valid", labeling = false) {
   let now = Date.UTC(2026, 8, 26);
   const authorize = vi.fn(async (actor: string, candidate: HermesJevScope) => {
     if (actor !== ownerId || candidate.account.connectionId !== "conn_fixture" || candidate.revision !== 1) throw new Error("denied");
@@ -29,10 +29,46 @@ function fixture(mode = "valid") {
   const evaluate = vi.fn(async (_owner: string, _input: import("@matrix-os/contracts").JevEvaluateRequest, _signal?: AbortSignal) => ({ requestId: "jev_req_fixture_result", recipe: "email-triage-v1" as const,
     model: "typesafe/jev" as const, latencyMs: 1, answers: JEV_EMAIL_TRIAGE_ANSWER_IDS.map((id) => ({ id, type: "boolean" as const,
       probability: id === "cold_outreach" ? 0.94 : 0.1 })) }));
-  const broker = createJevInboxBroker({ authorize, read, evaluate, now: () => now });
-  const execute = (input: unknown, actor = ownerId, candidate = scope) => broker.execute(actor, candidate, input);
-  return { broker, execute, read, evaluate, authorize, advance: () => { now += 600_001; } };
+  const label = vi.fn(async (_owner: string, _scope: HermesJevScope, input: { messageIds: string[] }) =>
+    ({ confirmed: true as const, messageIds: input.messageIds, labelIds: ["Label_Cold"] }));
+  const broker = createJevInboxBroker({ authorize, read, evaluate, label, now: () => now });
+  const candidateScope = labeling ? { ...scope, account: { ...scope.account, labelingEnabled: true } } : scope;
+  const execute = (input: unknown, actor = ownerId, candidate = candidateScope) => broker.execute(actor, candidate, input);
+  return { broker, execute, read, evaluate, authorize, label, advance: () => { now += 600_001; } };
 }
+it("labels the exact evaluated messages only with a saved grant and returns server-owned confirmation", async () => {
+  const f = fixture("valid", true); const evidence = await selected(f);
+  if (evidence.kind !== "evidence") throw new Error("Missing evidence");
+  const result = await f.execute({ operation: "evaluate", receipt: evidence.receipt });
+  expect(result).toMatchObject({ kind: "labeled", readonly: false, labels: [EMAIL_TRIAGE_LABELS.coldOutreach], messageCount: 4 });
+  expect(f.label.mock.calls[0]?.[2]).toEqual({ threadId: "thread_fixture", messageIds: ["message_1", "message_2", "message_3", "message_4"], labels: [EMAIL_TRIAGE_LABELS.coldOutreach] });
+});
+it("retains an unknown labeling attempt without claiming no changes or blindly retrying", async () => {
+  const f = fixture("valid", true); const evidence = await selected(f);
+  if (evidence.kind !== "evidence") throw new Error("Missing evidence");
+  f.label.mockRejectedValue(new Error("External write timeout"));
+  const input = { operation: "evaluate", receipt: evidence.receipt };
+  expect(await f.execute(input)).toMatchObject({ kind: "labeling_unconfirmed", readonly: false });
+  expect(await f.execute(input)).toMatchObject({ kind: "labeling_unconfirmed" });
+  expect(f.label).toHaveBeenCalledOnce(); expect(f.evaluate).toHaveBeenCalledOnce();
+});
+it("never labels an old preview bot even when Jev confidently proposes categories", async () => {
+  const f = fixture(); const evidence = await selected(f);
+  if (evidence.kind !== "evidence") throw new Error("Missing evidence");
+  expect(await f.execute({ operation: "evaluate", receipt: evidence.receipt })).toMatchObject({ kind: "proposal", readonly: true });
+  expect(f.label).not.toHaveBeenCalled();
+});
+it("rechecks changed evidence after paid classification and performs no write", async () => {
+  const f = fixture("valid", true); const evidence = await selected(f);
+  if (evidence.kind !== "evidence") throw new Error("Missing evidence");
+  const original = f.read.getMockImplementation()!;
+  f.read.mockImplementation(async (...args) => {
+    const value = await original(...args);
+    return args[2] === "get_thread_ids" && f.evaluate.mock.calls.length ? { ...value, historyId: "changed_history" } : value;
+  });
+  expect(await f.execute({ operation: "evaluate", receipt: evidence.receipt })).toMatchObject({ kind: "review" });
+  expect(f.label).not.toHaveBeenCalled();
+});
 it("preflights live profile identity without mailbox reads or paid evaluation", async () => {
   const f = fixture();
   await f.broker.preflight(ownerId, scope, new AbortController().signal);

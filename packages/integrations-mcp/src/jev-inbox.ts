@@ -17,7 +17,7 @@ const inputSchema = z.strictObject({
 });
 const MAX_BYTES = 64 * 1024;
 const failure = () => ({ isError: true, content: [{ type: "text" as const,
-  text: "Inbox preview is unavailable. No mailbox changes have been made." }] });
+  text: "Inbox result is unavailable. If labeling is enabled, changes may be unconfirmed; check Gmail before retrying." }] });
 function cancelBody(body: ReadableStream<Uint8Array> | ReadableStreamDefaultReader<Uint8Array> | null): void {
   if (body) void body.cancel().catch((error: unknown) => {
     console.warn("[jev-inbox-tool] Body cleanup failed:", error instanceof Error ? error.name : "UnknownError");
@@ -27,12 +27,12 @@ function cancelBody(body: ReadableStream<Uint8Array> | ReadableStreamDefaultRead
 /** Sole tool for an isolated recipe process. Account/content/verification authority remains on the server. */
 export function registerJevInboxTool(server: McpServer, fetcher: GatewayFetcher = fetch): void {
   server.registerTool("jev_inbox_preview", {
-    description: "Read-only Inbox workflow. Discover bounded thread candidates, select a discovered thread with its receipt, then evaluate the resulting evidence receipt. Returns proposals only and never changes email.",
-    inputSchema, annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+    description: "Discover bounded Inbox candidates, select a thread with its receipt, then evaluate. The server returns proposals or, when the owner saved labeling permission for this bot, adds verified Jev labels and confirms Gmail readback. Never archives, sends or deletes email.",
+    inputSchema, annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
   }, async (rawInput) => {
     let response: Response | undefined;
     let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
-    const signal = AbortSignal.timeout(30_000);
+    const signal = AbortSignal.timeout(60_000);
     let aborted: (() => void) | undefined;
     try {
       const input = inputSchema.parse(rawInput);

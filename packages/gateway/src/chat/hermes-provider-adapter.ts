@@ -584,7 +584,9 @@ export function createHermesChatProviderAdapter(options: {
           const active = resolveHermesIntegrationCapability(integrationCapability.token, "POST", "/api/jev/inbox/preview") === input.owner.ownerId;
           const summary = validTool && active && !failed ? options.jev!.summary(input.owner.ownerId, jevScope) : null;
           queue.push({ type: "tool.output", toolCallId: activityId,
-            text: summary ?? "Inbox review has no verified proposal. No mailbox changes have been made.", truncated: false });
+            text: summary ?? (jevScope.account.labelingEnabled === true
+              ? "Inbox result is unavailable. Labeling may be unconfirmed; check Gmail before retrying."
+              : "Inbox review has no verified proposal. No mailbox changes have been made."), truncated: false });
           return;
         }
         const output = hermesToolOutput(stored?.name ?? hermesToolName(parsed.data.name), parsed.data.result,

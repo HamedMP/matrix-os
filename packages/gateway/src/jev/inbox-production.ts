@@ -9,6 +9,7 @@ import type { FundedAiRouteReadinessReader } from "../funded-ai-route-readiness-
 import type { PlatformDb } from "../platform-db.js";
 import type { PipedreamConnectClient } from "../integrations/pipedream.js";
 import { createJevRecipeReadClient } from "./recipe-read-client.js";
+import { createJevRecipeLabelClient } from "./recipe-label-client.js";
 import { createJevInboxRuntime } from "./inbox-runtime.js";
 import { InboxPreviewError } from "./inbox-broker.js";
 import type { JevService } from "./service.js";
@@ -58,6 +59,7 @@ export function createProductionJevInboxRuntime(options: {
       return result.readiness.state === "ready" && result.allowedModelIds.includes(JEV_MODEL_ID);
     },
     read,
+    label: createJevRecipeLabelClient(options),
     evaluate: async (owner, input, signal) => {
       if (owner !== options.ownerId || !options.service || !options.fundedOwnerId) throw new InboxPreviewError("denied");
       return options.service.evaluate(options.fundedOwnerId, input, signal);
