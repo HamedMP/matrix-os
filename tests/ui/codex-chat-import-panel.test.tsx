@@ -32,7 +32,8 @@ describe("Chat import Settings panel", () => {
       if (path.endsWith("/chat_imported?limit=1")) return { record: { chat: { messageCount: 1 } } };
       return { status: "uploading", nextSeq: 1 };
     });
-    render(<ChatImportPanel request={request} />);
+    const onOpenChat = vi.fn();
+    render(<ChatImportPanel request={request} onOpenChat={onOpenChat} />);
     fireEvent.change(screen.getByLabelText("Choose a Codex transcript"), { target: { files: [file] } });
     expect(await screen.findByText("1 message ready to import")).toBeTruthy();
     expect(screen.getByText("Session: 019eb0ae-9a30-7541-bdb8-db4d17e65146")).toBeTruthy();
@@ -41,5 +42,7 @@ describe("Chat import Settings panel", () => {
     fireEvent.click(screen.getByRole("button", { name: "Import private Chat" }));
     expect(await screen.findByText("Imported 1 message into Matrix Chat.")).toBeTruthy();
     expect(request).toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Open Chat" }));
+    expect(onOpenChat).toHaveBeenCalledWith("chat_imported", "Hello");
   });
 });

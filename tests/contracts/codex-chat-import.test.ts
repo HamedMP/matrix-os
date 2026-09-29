@@ -67,4 +67,15 @@ describe("Codex transcript import projection", () => {
     const result = await parseCodexTranscript(decodeCodexJsonl(chunks()));
     expect(result.messages).toMatchObject([{ role: "user", text: "Keep this" }]);
   });
+
+  it("reports physical line numbers after skipped internal records", async () => {
+    const raw = [
+      line({ type: "session_meta", payload: { id: "019eb0ae-9a30-7541-bdb8-db4d17e65146", cwd: "/tmp/example" } }),
+      line({ type: "response_item", payload: { type: "function_call_output", output: "x".repeat(10_000) } }),
+      '{"type":"response_item","payload":',
+    ].join("\n") + "\n";
+    async function* chunks() { yield new TextEncoder().encode(raw); }
+    await expect(parseCodexTranscript(decodeCodexJsonl(chunks())))
+      .rejects.toThrow("Invalid Codex JSONL at line 3");
+  });
 });

@@ -3,7 +3,7 @@
 import { ChatImportPanel } from "@matrix-os/ui";
 import { getGatewayUrl } from "@/lib/gateway";
 
-export function ChatImportSection() {
+export function ChatImportSection({ onOpenChat }: { onOpenChat?: (chatId: string) => void }) {
   const gatewayUrl = getGatewayUrl();
   return <div className="p-6">
     <ChatImportPanel request={async (path, body) => {
@@ -17,6 +17,6 @@ export function ChatImportSection() {
       });
       if (!response.ok) throw new Error("Matrix Chat import request failed.");
       return response.json() as Promise<unknown>;
-    }} />
+    }} onOpenChat={onOpenChat ? (chatId) => onOpenChat(chatId) : undefined} />
   </div>;
 }

@@ -59,6 +59,9 @@ export async function* decodeCodexJsonl(chunks: AsyncIterable<Uint8Array>): Asyn
       append(text.slice(start, end));
       if (!discarding && !ignorableRecordPrefix(current.slice(0, 2048))) {
         yield current.endsWith("\r") ? current.slice(0, -1) : current;
+      } else {
+        // Keep physical JSONL positions while avoiding materializing internal records.
+        yield "";
       }
       current = "";
       discarding = false;

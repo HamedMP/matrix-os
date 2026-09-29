@@ -78,15 +78,12 @@ export class CodexChatImporter {
         .executeTakeFirst();
       if (existingImport) {
         if (existingImport.source_hash !== request.sourceHash) throw new CodexChatImportError("conflict");
-        const liveChat = await trx.selectFrom("chats").select("id")
+        const liveChat = await trx.selectFrom("chats").select(["id", "message_count"])
           .where("id", "=", existingImport.chat_id).where("owner_type", "=", "personal")
           .where("owner_id", "=", ownerId).executeTakeFirst();
         if (!liveChat) throw new CodexChatImportError("conflict");
-        const completedJob = await trx.selectFrom("chat_import_jobs").select("next_seq")
-          .where("owner_id", "=", ownerId).where("source_id", "=", request.sourceId)
-          .executeTakeFirst();
         return { status: "verified" as const,
-          nextSeq: completedJob ? Number(completedJob.next_seq) : 0, chatId: existingImport.chat_id };
+          nextSeq: Number(liveChat.message_count) + 1, chatId: existingImport.chat_id };
       }
       // Serialize per-owner admission so concurrent starts cannot exceed the
       // eight-job staging budget under PostgreSQL READ COMMITTED.
@@ -105,9 +102,14 @@ export class CodexChatImporter {
       }).onConflict((oc) => oc.columns(["owner_id", "source_id"]).doNothing()).execute();
       const job = await trx.selectFrom("chat_import_jobs").selectAll()
         .where("owner_id", "=", ownerId).where("source_id", "=", request.sourceId)
-        .executeTakeFirstOrThrow();
-      if (job.source_hash !== request.sourceHash || job.title !== request.title) {
+        .forUpdate().executeTakeFirstOrThrow();
+      if (job.source_hash !== request.sourceHash) {
         throw new CodexChatImportError("conflict");
+      }
+      if (job.title !== request.title && job.status === "uploading") {
+        await trx.updateTable("chat_import_jobs").set({ title: request.title,
+          updated_at: sql`now()` }).where("owner_id", "=", ownerId)
+          .where("source_id", "=", request.sourceId).execute();
       }
       return state(job);
     });
@@ -164,7 +166,20 @@ export class CodexChatImporter {
       const job = await trx.selectFrom("chat_import_jobs").selectAll()
         .where("owner_id", "=", ownerId).where("source_id", "=", sourceId)
         .forUpdate().executeTakeFirst();
-      if (!job) throw new CodexChatImportError("not_found");
+      if (!job) {
+        const imported = await trx.selectFrom("chat_legacy_imports").select("chat_id")
+          .where("owner_type", "=", "personal").where("owner_id", "=", ownerId)
+          .where("source_kind", "=", "codex_jsonl").where("source_id", "=", sourceId)
+          .executeTakeFirst();
+        if (!imported) throw new CodexChatImportError("not_found");
+        const chat = await trx.selectFrom("chats").select("message_count")
+          .where("id", "=", imported.chat_id).where("owner_type", "=", "personal")
+          .where("owner_id", "=", ownerId).executeTakeFirst();
+        if (!chat || Number(chat.message_count) !== request.messageCount) {
+          throw new CodexChatImportError("conflict");
+        }
+        return { chatId: imported.chat_id, messageCount: request.messageCount };
+      }
       if (job.status === "verified") {
         if (!job.chat_id || Number(job.next_seq) !== request.messageCount + 1) {
           throw new CodexChatImportError("conflict");
@@ -182,6 +197,7 @@ export class CodexChatImporter {
       if (staged.length !== request.messageCount || staged.some((row, index) => Number(row.seq) !== index + 1)) {
         throw new CodexChatImportError("incomplete");
       }
+      if (staged[0]?.role !== "user") throw new CodexChatImportError("incomplete");
       const chatId = `chat_${randomUUID().replaceAll("-", "")}`;
       const firstAt = new Date(staged[0]!.created_at).toISOString();
       const lastAt = new Date(staged.at(-1)!.created_at).toISOString();
@@ -201,19 +217,42 @@ export class CodexChatImporter {
       await trx.insertInto("chat_user_state").values({ chat_id: chatId,
         principal_id: ownerId, read_through_seq: 0, pinned: false,
         muted: false, attention_acknowledged_at: null, last_opened_at: null }).execute();
-      const messages = staged.map((row, index) => CanonicalChatMessageSchema.parse({
-        id: `msg_${randomUUID().replaceAll("-", "")}`, chatId, seq: index + 1,
-        role: row.role, state: "committed", actorId: row.role === "user" ? ownerId : undefined,
-        purpose: row.role === "user" ? "ai_request" : "assistant",
-        parts: [{ type: "text", text: row.text }], createdAt: new Date(row.created_at).toISOString(),
-      }));
+      const turns: Array<{ id: string; inputMessageId: string; baseMessageSeq: number;
+        createdAt: string; updatedAt: string }> = [];
+      let activeTurn: (typeof turns)[number] | undefined;
+      const messages = staged.map((row, index) => {
+        const messageId = `msg_${randomUUID().replaceAll("-", "")}`;
+        const createdAt = new Date(row.created_at).toISOString();
+        if (row.role === "user") {
+          activeTurn = { id: `cturn_${randomUUID().replaceAll("-", "")}`,
+            inputMessageId: messageId, baseMessageSeq: index,
+            createdAt, updatedAt: createdAt };
+          turns.push(activeTurn);
+        } else if (activeTurn) {
+          activeTurn.updatedAt = createdAt;
+        }
+        return CanonicalChatMessageSchema.parse({
+          id: messageId, chatId, seq: index + 1, turnId: activeTurn!.id,
+          role: row.role, state: "committed", actorId: row.role === "user" ? ownerId : undefined,
+          purpose: row.role === "user" ? "ai_request" : "assistant",
+          parts: [{ type: "text", text: row.text }], createdAt,
+        });
+      });
       for (let offset = 0; offset < messages.length; offset += 100) {
         await trx.insertInto("chat_messages").values(messages.slice(offset, offset + 100).map((message) => ({
           id: message.id, chat_id: chatId, seq: message.seq, role: message.role,
           state: message.state, purpose: message.purpose ?? "system",
-          turn_id: null, run_id: null, actor_id: message.actorId ?? null,
+          turn_id: message.turnId!, run_id: null, actor_id: message.actorId ?? null,
           parts: jsonb(message.parts), byte_count: Buffer.byteLength(JSON.stringify(message.parts), "utf8"),
           search_text: messageSearchText(message), created_at: message.createdAt,
+        }))).execute();
+      }
+      for (let offset = 0; offset < turns.length; offset += 100) {
+        await trx.insertInto("chat_turns").values(turns.slice(offset, offset + 100).map((turn) => ({
+          id: turn.id, chat_id: chatId,
+          client_request_id: `req_codex_${sourceId.replaceAll("-", "")}_${turn.baseMessageSeq + 1}`,
+          base_message_seq: turn.baseMessageSeq, input_message_id: turn.inputMessageId,
+          status: "completed" as const, created_at: turn.createdAt, updated_at: turn.updatedAt,
         }))).execute();
       }
       await trx.insertInto("chat_legacy_imports").values({
@@ -225,9 +264,8 @@ export class CodexChatImporter {
         "chat.created", { importedMessages: messages.length });
       await trx.deleteFrom("chat_import_messages")
         .where("owner_id", "=", ownerId).where("source_id", "=", sourceId).execute();
-      await trx.updateTable("chat_import_jobs").set({ status: "verified", chat_id: chatId,
-        updated_at: sql`now()` }).where("owner_id", "=", ownerId)
-        .where("source_id", "=", sourceId).execute();
+      await trx.deleteFrom("chat_import_jobs")
+        .where("owner_id", "=", ownerId).where("source_id", "=", sourceId).execute();
       return { chatId, messageCount: messages.length };
     });
   }

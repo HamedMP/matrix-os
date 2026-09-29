@@ -53,11 +53,12 @@ authentication, staging, publication, and repository read-back.
   receive arbitrary local filesystem access. Each request has a body limit and timeout.
 - Owner-scoped Postgres staging rows are bounded by count, bytes and age.
   Batch offsets are contiguous and idempotent. Retrying the same session and
-  hash resumes or returns the existing Chat; a changed hash for one session ID
-  is a conflict. Abandoned staging rows expire and are removed by a bounded
-  sweep on the next import start.
+  hash resumes or returns the existing Chat; an edited title updates the open
+  staging job. A changed hash for one session ID is a conflict. Abandoned
+  staging rows expire and are removed by a bounded sweep on the next import
+  start. Completed staging rows are deleted after provenance is committed.
 - Completion checks the expected count and commits Chat, members, messages,
-  provenance, and outbox in one database transaction. A failure leaves no
+  completed turns, provenance, and outbox in one database transaction. A failure leaves no
   visible partial Chat. The client verifies the resulting Chat ID and message
   count before reporting success.
 - No client-supplied owner ID is accepted. The gateway derives owner identity
@@ -72,8 +73,8 @@ authentication, staging, publication, and repository read-back.
   uploading unrelated sessions.
 - Electron Desktop Settings has an **Import chats** action with a local file
   picker, per-session preview, progress, retry, and a link
-  to the imported Chat. Web Desktop/Canvas receive the same import state and
-  action when a browser file is selected; Native Mobile is limited by local
+  to the imported Chat. Web Desktop, Web Canvas, and Web Mobile receive the same
+  import state and action when a browser file is selected; Native Mobile is limited by local
   file access and is deferred explicitly.
 - File sharing through the organization drive and project sharing use the
   existing collaboration authority. Import itself makes no grant.

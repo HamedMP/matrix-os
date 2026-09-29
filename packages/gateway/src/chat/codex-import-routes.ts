@@ -1,8 +1,10 @@
 import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
-import { ZodError } from "zod/v4";
+import { z, ZodError } from "zod/v4";
 import { isRequestPrincipalError, mapRequestPrincipalError, type RequestPrincipal } from "../request-principal.js";
 import { CodexChatImporter, CodexChatImportError } from "./codex-importer.js";
+
+const SourcePathSchema = z.uuid();
 
 function fail(context: Context, error: unknown): Response {
   if (isRequestPrincipalError(error)) {
@@ -46,13 +48,15 @@ export function createCodexChatImportRoutes(options: {
   });
   routes.post("/api/chats/imports/codex/:sourceId/messages", batchBody, async (context) => {
     try {
-      const result = await importer().append(owner(context), context.req.param("sourceId"), await context.req.json());
+      const sourceId = SourcePathSchema.parse(context.req.param("sourceId"));
+      const result = await importer().append(owner(context), sourceId, await context.req.json());
       return context.json(result);
     } catch (error: unknown) { return fail(context, error); }
   });
   routes.post("/api/chats/imports/codex/:sourceId/complete", smallBody, async (context) => {
     try {
-      const result = await importer().complete(owner(context), context.req.param("sourceId"), await context.req.json());
+      const sourceId = SourcePathSchema.parse(context.req.param("sourceId"));
+      const result = await importer().complete(owner(context), sourceId, await context.req.json());
       return context.json(result);
     } catch (error: unknown) { return fail(context, error); }
   });

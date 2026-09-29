@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 import { KyselyPGlite } from "kysely-pglite";
 import { ChatRepository } from "../../packages/gateway/src/chat/repository.js";
@@ -65,5 +65,18 @@ describe("Codex Chat import routes", () => {
       sourceId, sourceHash: "a".repeat(64), title: "Imported session",
     });
     expect(response.status).toBe(503);
+  });
+
+  it("validates source path IDs before calling the importer", async () => {
+    const importer = new CodexChatImporter(chats);
+    const append = vi.spyOn(importer, "append");
+    const complete = vi.spyOn(importer, "complete");
+    const routes = new Hono().route("/", createCodexChatImportRoutes({
+      importer, getPrincipal: () => ({ userId: "ash_test", source: "jwt" }),
+    }));
+    expect((await post(routes, "/api/chats/imports/codex/bad/messages", {})).status).toBe(400);
+    expect((await post(routes, "/api/chats/imports/codex/bad/complete", {})).status).toBe(400);
+    expect(append).not.toHaveBeenCalled();
+    expect(complete).not.toHaveBeenCalled();
   });
 });

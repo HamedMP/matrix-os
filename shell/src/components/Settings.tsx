@@ -156,6 +156,7 @@ interface SettingsProps {
   };
   onOpenAgentTerminal?: (action: TerminalLaunchAction) => void;
   onOpenProviderTerminalSession?: (sessionId: string) => void;
+  onOpenImportedChat?: (chatId: string) => void;
 }
 
 export function Settings({
@@ -195,6 +196,7 @@ function SettingsFrame({
   billingCheckoutRuntimeSlot,
   onboardingDefaultInstalls,
   onOpenProviderTerminalSession,
+  onOpenImportedChat,
   billingActive,
   showBillingSection,
 }: SettingsFrameProps) {
@@ -414,7 +416,7 @@ function SettingsFrame({
               {activeSection === "channels" && <ChannelsSection />}
               {activeSection === "integrations" && <IntegrationsSection />}
               {activeSection === "skills" && <SkillsSection />}
-              {activeSection === "chat-import" && <ChatImportSection />}
+              {activeSection === "chat-import" && <ChatImportSection onOpenChat={onOpenImportedChat} />}
               {activeSection === "cron" && <CronSection />}
               {activeSection === "security" && <SecuritySection />}
               {showBillingSection && activeSection === "billing" && (

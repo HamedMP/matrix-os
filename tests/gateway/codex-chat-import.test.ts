@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { KyselyPGlite } from "kysely-pglite";
 import { ChatRepository } from "../../packages/gateway/src/chat/repository.js";
 import { CodexChatImporter } from "../../packages/gateway/src/chat/codex-importer.js";
+import { canonicalChatPresentation } from "../../desktop/src/renderer/src/features/chat/canonical-chat-presentation.js";
 
 const owner = { type: "personal" as const, ownerId: "ash_test" };
 const other = { type: "personal" as const, ownerId: "nithin_test" };
@@ -44,6 +45,14 @@ describe("Codex Chat import", () => {
       { role: "user", text: { type: "text", text: "Fix login" }, createdAt: "2026-09-03T16:01:00.000Z" },
       { role: "assistant", text: { type: "text", text: "Fixed it." }, createdAt: "2026-09-03T16:03:00.000Z" },
     ]);
+    expect(detail?.turns).toHaveLength(1);
+    expect(detail?.messages.every((message) => message.turnId === detail.turns[0]?.id)).toBe(true);
+    expect(canonicalChatPresentation(detail!)[0]).toMatchObject({
+      user: { markdown: "Fix login" },
+      final: { markdown: "Fixed it." },
+    });
+    expect(await chats.kysely.selectFrom("chat_import_jobs").select("source_id").execute()).toEqual([]);
+    expect(await importer.complete(owner, sourceId, { messageCount: 2 })).toEqual(result);
     expect(await chats.get(other, result.chatId)).toBeNull();
     expect(await importer.begin(owner, { sourceId, sourceHash, title: "Fix login" }))
       .toMatchObject({ status: "verified", chatId: result.chatId, nextSeq: 3 });
@@ -51,6 +60,10 @@ describe("Codex Chat import", () => {
 
   it("keeps incomplete imports invisible and expires abandoned staging rows", async () => {
     await importer.begin(owner, { sourceId, sourceHash, title: "Unfinished" });
+    expect(await importer.begin(owner, { sourceId, sourceHash, title: "Edited title" }))
+      .toMatchObject({ status: "uploading", nextSeq: 1 });
+    expect(await chats.kysely.selectFrom("chat_import_jobs").select("title").executeTakeFirst())
+      .toMatchObject({ title: "Edited title" });
     await importer.append(owner, sourceId, { startSeq: 1, messages: [
       { role: "user", text: "Hello", createdAt: "2026-09-03T16:01:00.000Z" },
     ] });
@@ -64,6 +77,23 @@ describe("Codex Chat import", () => {
     expect(await chats.kysely.selectFrom("chat_import_messages").select("seq").execute()).toEqual([]);
     expect(await importer.begin(owner, { sourceId, sourceHash: "b".repeat(64), title: "Retry" }))
       .toMatchObject({ status: "uploading", nextSeq: 1 });
+  });
+
+  it("shows every turn in a full Chat detail page", async () => {
+    await importer.begin(owner, { sourceId, sourceHash, title: "Long history" });
+    for (let start = 1; start <= 150; start += 50) {
+      await importer.append(owner, sourceId, { startSeq: start,
+        messages: Array.from({ length: 50 }, (_, offset) => ({
+          role: "user" as const, text: `Question ${start + offset}`,
+          createdAt: new Date(Date.UTC(2026, 8, 3, 16, start + offset)).toISOString(),
+        })) });
+    }
+    const { chatId } = await importer.complete(owner, sourceId, { messageCount: 150 });
+    const detail = await chats.getDetailPage(owner, chatId, { limit: 200 });
+    expect(detail?.messages).toHaveLength(150);
+    expect(detail?.turns).toHaveLength(150);
+    expect(canonicalChatPresentation(detail!).map((turn) => turn.user?.markdown))
+      .toEqual(Array.from({ length: 150 }, (_, index) => `Question ${index + 1}`));
   });
 
   it("does not report success for an imported Chat that the owner deleted", async () => {

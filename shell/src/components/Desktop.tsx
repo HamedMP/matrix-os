@@ -1591,6 +1591,11 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
           setSettingsOpen(false);
           openExistingProviderTerminal(sessionId);
         }}
+        onOpenImportedChat={(chatId) => {
+          chat?.switchConversation(chatId);
+          setSettingsOpen(false);
+          openAppOrFocus("__chat__", "Chat");
+        }}
       />
       {/* No fullscreen exit pill: every maximized window keeps its own header
           (Desktop CardHeader / Canvas in-window title bar) with traffic lights,
