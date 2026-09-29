@@ -1032,4 +1032,31 @@ describe('CI workflows', () => {
     expect(releaseDocs).toContain('Security severity does not override this opt-in deployment gate.');
     expect(releaseDocs).not.toContain('which auto-deploys the built version after publish');
   });
+
+  it('supports a fail-closed targeted retry for one unhealthy customer computer', () => {
+    const root = process.cwd();
+    const workflow = readFileSync(join(root, '.github/workflows/host-bundle-release.yml'), 'utf8');
+    const targetedJob = workflow.slice(workflow.indexOf('\n  targeted-deploy:'));
+
+    expect(workflow).toMatch(/target_unhealthy_customer:[\s\S]*?default: false/);
+    expect(workflow).toMatch(/existing_version:[\s\S]*?default: ""/);
+    expect(targetedJob).toContain("github.ref_type == 'branch' && github.ref_name == 'main'");
+    expect(targetedJob).toContain('inputs.skip_dev_bundle && inputs.target_unhealthy_customer');
+    expect(targetedJob).toContain('^v[0-9]{4}\\.[0-9]{2}\\.[0-9]{2}-[0-9]+$');
+    expect(targetedJob).toContain(".version == $version");
+    expect(targetedJob).toContain('.status == "running" and .healthy == false');
+    expect(targetedJob).toContain('(.handle | test("^pr-[1-9][0-9]{0,9}$") | not)');
+    expect(targetedJob).toContain('if length == 1 then .[0].handle else empty end');
+    expect(targetedJob).toContain('for attempt in $(seq 1 20); do');
+    expect(targetedJob).toContain('{version: $version, handle: $handle}');
+    expect(targetedJob).toContain('.triggered == 1 and .failed == 0');
+    expect(targetedJob).toContain('.healthy == true and .runtimeVersion == $version');
+    expect(targetedJob).toContain('{handle: $handle}');
+    expect(targetedJob).toContain('.activated == 1 and .failed == 0 and .complete == true');
+    expect(targetedJob).toContain('--arg afterMachineId "$PAGE_CURSOR"');
+    expect(targetedJob).toContain('TOTAL_ACTIVATED=$((TOTAL_ACTIVATED + activated))');
+    expect(targetedJob).toContain('Managed speech fleet verification complete: activated=$TOTAL_ACTIVATED failed=0');
+    expect(targetedJob).toContain('::add-mask::$TARGET_HANDLE');
+    expect(targetedJob).not.toContain('printf \'%s\\n\' "$FLEET_RESPONSE"');
+  });
 });
