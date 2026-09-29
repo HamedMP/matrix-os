@@ -4,7 +4,7 @@ import { JevInboxGmailIdSchema } from "@matrix-os/contracts";
 export const BatchJobId = z.string().regex(/^jev_batch_[a-f0-9]{32}$/);
 const Item = z.object({ id: JevInboxGmailIdSchema, status: z.enum(["labeled", "no_op", "review", "proposal", "unconfirmed"]), messages: z.number().int().min(0).max(4) });
 export const BatchDocumentSchema = z.object({ jobId: BatchJobId, ownerId: z.string().min(1).max(256), agentId: z.string().min(1).max(160),
-  binding: z.string().regex(/^[a-f0-9]{64}$/), revision: z.number().int().min(1), status: z.enum(["ready", "running", "paused", "completed", "completed_with_unconfirmed", "limit_reached"]),
+  binding: z.string().regex(/^[a-f0-9]{64}$/), activeRunId: z.string().min(1).max(160).nullable().default(null), revision: z.number().int().min(1), status: z.enum(["ready", "running", "paused", "completed", "completed_with_unconfirmed", "limit_reached"]),
   maxThreads: z.number().int().min(1).max(10000), createdAt: z.number().int(), expiresAt: z.number().int(),
   queue: z.array(JevInboxGmailIdSchema).max(30), pageToken: z.string().min(1).max(4096).nullable(), listed: z.boolean(),
   items: z.array(Item).max(10000), pages: z.array(z.string().regex(/^[a-f0-9]{64}$/)).max(1000).default([]),

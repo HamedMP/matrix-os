@@ -25,7 +25,7 @@ describe.skipIf(!url)("durable Inbox checkpoints across independent PostgreSQL c
     await admin?.end();
   });
   function document(jobId = "jev_batch_" + "a".repeat(32)): BatchDocument {
-    return { jobId, ownerId: "owner_1", agentId: "agent_1", binding: "b".repeat(64), revision: 1, status: "ready", maxThreads: 100,
+    return { jobId, ownerId: "owner_1", agentId: "agent_1", binding: "b".repeat(64), activeRunId:"run_1", revision: 1, status: "ready", maxThreads: 100,
       createdAt: Date.now(), expiresAt: Date.now() + 86400000, queue: ["thread_1"], pageToken: "opaque-page", listed: true, items: [], pending: null, last: null, pages: [] };
   }
   it("admits one unfinished job and one step winner, preserves data after reconnect, and filters foreign owners", async () => {

@@ -98,7 +98,7 @@ export function createJevInboxBatch(options: {
       if (!jobId)
         return;
       const d = await options.store.get(owner, scope.agentId, jobId);
-      if (d && d.binding === stamp(scope) && d.status !== "completed" && d.status !== "completed_with_unconfirmed" && d.status !== "limit_reached"
+      if (d && d.activeRunId === scope.runId && d.binding === stamp(scope) && d.status !== "completed" && d.status !== "completed_with_unconfirmed" && d.status !== "limit_reached"
         && (!d.pending || d.pending.runId === scope.runId))
         await save(d, interrupted(d));
     },
@@ -116,8 +116,20 @@ export function createJevInboxBatch(options: {
       if (input.operation === "batch_start") {
         const createdAt = now();
         const jobId = "jev_batch_" + createHash("sha256").update(JSON.stringify([owner, scope.agentId, scope.runId])).digest("hex").slice(0, 32);
-        d = await options.store.open({ jobId, ownerId: owner, agentId: scope.agentId, binding: stamp(scope), revision: 1, status: "ready", maxThreads: input.maxThreads ?? 10000,
+        d = await options.store.open({ jobId, ownerId: owner, agentId: scope.agentId, binding: stamp(scope), activeRunId: scope.runId, revision: 1, status: "ready", maxThreads: input.maxThreads ?? 10000,
           createdAt, expiresAt: createdAt + 7 * 86400000, queue: [], pageToken: null, listed: false, items: [], pages: [], pending: null, last: null });
+        const limit = Math.min(d.maxThreads, input.maxThreads ?? d.maxThreads);
+        const narrowing = limit < d.maxThreads;
+        const interruptedRun = d.status === "running" && (!active.has(d.jobId) || d.activeRunId !== scope.runId || narrowing);
+        if (interruptedRun || d.status === "paused" || (d.status === "ready" && (narrowing || d.activeRunId !== scope.runId))) {
+          const patch = interruptedRun ? interrupted(d) : {};
+          const items = patch.items ?? d.items;
+          d = await save(d, { ...patch, maxThreads: limit, activeRunId: scope.runId,
+            status: items.length >= limit ? "limit_reached" : "ready" });
+          // Persist revocation before aborting an older local callback.
+          if (interruptedRun)
+            active.get(d.jobId)?.controller.abort();
+        }
         return remember(owner, scope, d);
       }
       if (input.operation === "batch_status" && !input.jobId && !await options.store.get(owner, scope.agentId))
@@ -126,14 +138,21 @@ export function createJevInboxBatch(options: {
       if (input.operation === "batch_status")
         return remember(owner, scope, d);
       if (input.operation === "batch_resume") {
-        if (d.status === "running") {
-          active.get(d.jobId)?.controller.abort();
-          d = await save(d, interrupted(d));
+        if (d.status === "running" || d.status === "paused") {
+          const wasRunning = d.status === "running";
+          const patch = wasRunning ? interrupted(d) : {};
+          const items = patch.items ?? d.items;
+          d = await save(d, { ...patch, activeRunId: scope.runId, status: items.length >= d.maxThreads ? "limit_reached" : "ready" });
+          if (wasRunning)
+            active.get(d.jobId)?.controller.abort();
         }
-        if (d.status === "paused")
-          d = await save(d, { status: "ready" });
+        else if (d.status === "ready" && d.activeRunId !== scope.runId) {
+          d = await save(d, { activeRunId: scope.runId });
+        }
         return remember(owner, scope, d);
       }
+      if (d.activeRunId !== scope.runId)
+        throw new Error("Inbox batch unavailable");
       if (d.status === "ready" && d.items.length >= d.maxThreads) {
         d = await save(d, { status: "limit_reached" });
         return remember(owner, scope, d);
@@ -161,7 +180,7 @@ export function createJevInboxBatch(options: {
             throw new Error("Inbox batch interrupted");
         };
         // Claim before any mailbox reads/inference; CAS is the concurrency authority.
-        d = await save(d, { status: "running", pending: { threadId: d.queue[0] ?? null, attempt, runId: scope.runId } });
+        d = await save(d, { status: "running", activeRunId: scope.runId, pending: { threadId: d.queue[0] ?? null, attempt, runId: scope.runId } });
         try {
           await alive();
           if (!d.queue.length && (!d.listed || d.pageToken)) {

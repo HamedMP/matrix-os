@@ -42,7 +42,7 @@ type RecordState = { fingerprint: string; expiresAt: number; discoveryReceipt: s
   discovering?: Promise<NonNullable<RecordState["discovery"]>>;
   selection?: { threadId: string; receipt: string; identity?: ReturnType<typeof threadIdentity>; evidence?: Evidence };
   selecting?: Promise<{ kind: "evidence"; receipt: string; threadId: string; messageCount: number; readonly: true } | ReturnType<typeof review>>;
-  evaluating?: Promise<Proposal>; presentation?: Proposal };
+  evaluating?: Promise<Proposal>; presentation?: Proposal; batchVisible?: boolean };
 export type JevInboxBroker = ReturnType<typeof createJevInboxBroker>;
 
 /** Run-local bounded receipts; no model text, IDs, verification flags or scores grant authority. */
@@ -75,9 +75,9 @@ export function createJevInboxBroker(options: {
   }
   return {
     presentation(ownerId: string, scope: HermesJevScope): Proposal | BatchPresentation | null {
-      const batch = options.batch?.presentation(ownerId, scope); if (batch) return batch;
       sweep();
       const record = records.get(key(ownerId, scope.runId));
+      if (record?.fingerprint === fingerprint(scope) && record.batchVisible) return options.batch?.presentation(ownerId,scope) ?? null;
       return record?.fingerprint === fingerprint(scope) && record.presentation ? structuredClone(record.presentation) : null;
     },
     async preflight(ownerId: string, scope: HermesJevScope, signal: AbortSignal): Promise<void> {
@@ -97,13 +97,20 @@ export function createJevInboxBroker(options: {
       await options.authorize(ownerId, scope);
       sweep();
       const input = parsed.data;
-      if (input.operation === "batch_start" || input.operation === "batch_next" || input.operation === "batch_resume" || input.operation === "batch_status") {
-        if (!options.batch) throw new InboxPreviewError("unavailable");
-        return options.batch.execute(ownerId, scope, input, signal);
-      }
       const runKey = key(ownerId, scope.runId);
       let record = records.get(runKey);
       if (record && record.fingerprint !== fingerprint(scope)) throw new InboxPreviewError("denied");
+      if (input.operation === "batch_start" || input.operation === "batch_next" || input.operation === "batch_resume" || input.operation === "batch_status") {
+        if (!options.batch) throw new InboxPreviewError("unavailable");
+        if (!record) {
+          if (records.size >= MAX_RUNS) throw new InboxPreviewError("unavailable");
+          record = {fingerprint:fingerprint(scope),expiresAt:now()+TTL,discoveryReceipt:randomBytes(32).toString("hex")};
+          records.set(runKey,record);
+        }
+        record.batchVisible = true;
+        return options.batch.execute(ownerId, scope, input, signal);
+      }
+      if (record) record.batchVisible = false;
       if (input.operation === "discover") {
         if (!record) {
           if (records.size >= MAX_RUNS) throw new InboxPreviewError("unavailable");

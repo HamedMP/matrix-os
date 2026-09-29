@@ -6,7 +6,7 @@ import type { HermesJevScope } from "../../packages/gateway/src/chat/hermes-inte
 const ownerId = "owner_fixture";
 const scope: HermesJevScope = { kind: "jev_inbox_preview", runId: "run_fixture", agentId: "agent_fixture", revision: 1,
   account: { service: "gmail", accountLabel: "My Gmail", connectionId: "conn_fixture", expectedEmail: "me@example.test" } };
-function fixture(mode = "valid", labeling = false) {
+function fixture(mode = "valid", labeling = false, batch?: Parameters<typeof createJevInboxBroker>[0]["batch"]) {
   let now = Date.UTC(2026, 8, 26);
   const authorize = vi.fn(async (actor: string, candidate: HermesJevScope) => {
     if (actor !== ownerId || candidate.account.connectionId !== "conn_fixture" || candidate.revision !== 1) throw new Error("denied");
@@ -31,7 +31,7 @@ function fixture(mode = "valid", labeling = false) {
       probability: id === "cold_outreach" ? 0.94 : 0.1 })) }));
   const label = vi.fn(async (_owner: string, _scope: HermesJevScope, input: { messageIds: string[] }) =>
     ({ confirmed: true as const, messageIds: input.messageIds, labelIds: ["Label_Cold"] }));
-  const broker = createJevInboxBroker({ authorize, read, evaluate, label, now: () => now });
+  const broker = createJevInboxBroker({ authorize, read, evaluate, label, batch, now: () => now });
   const candidateScope = labeling ? { ...scope, account: { ...scope.account, labelingEnabled: true } } : scope;
   const execute = (input: unknown, actor = ownerId, candidate = candidateScope) => broker.execute(actor, candidate, input);
   return { broker, execute, read, evaluate, authorize, label, advance: () => { now += 900_001; } };
@@ -312,4 +312,13 @@ it("bounds pre-label evidence/classification work and never writes when that sta
     expect((await outcome).error).toBeInstanceOf(Error);
     expect(f.label).not.toHaveBeenCalled();
   } finally {vi.useRealTimers();}
+});
+
+it("a later targeted result is visible after a batch status was cached for the same run",async()=>{
+ const progress={kind:"batch" as const,jobId:"jev_batch_"+"a".repeat(32),revision:1,status:"ready" as const,processed:0,labeled:0,noChange:0,review:0,preview:0,unconfirmed:0,messagesLabeled:0,remainingQueued:0,hasMore:true,maxThreads:10,last:null};
+ const f=fixture("valid",true,{execute:async()=>progress,presentation:()=>progress});
+ await f.execute({operation:"batch_status"});expect(f.broker.presentation(ownerId,{...scope,account:{...scope.account,labelingEnabled:true}})?.kind).toBe("batch");
+ const e=await selected(f);if(e.kind!=="evidence")throw new Error("No evidence");
+ await f.execute({operation:"evaluate",receipt:e.receipt});
+ expect(f.broker.presentation(ownerId,{...scope,account:{...scope.account,labelingEnabled:true}})?.kind).toBe("labeled");
 });

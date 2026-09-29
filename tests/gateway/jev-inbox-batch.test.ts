@@ -154,3 +154,61 @@ it("does not count messages as labeled when verified classification has no eligi
   const start = await f.batch.execute("owner_1", scope, { operation: "batch_start" });
   expect(await next(f, start.jobId)).toMatchObject({ labeled: 0, noChange: 1, messagesLabeled: 0 });
 });
+it("start recovers an interrupted persisted attempt after process restart", async () => {
+  const f = fixture();
+  const start = await f.batch.execute("owner_1", scope, { operation: "batch_start" });
+  const d = f.get()!;
+  await f.store.save({ ...d, revision: d.revision + 1, status: "running", listed: true, queue: ["thread_1", "thread_2"], pending: { threadId: "thread_1", runId: scope.runId, attempt: "old" } }, d.revision);
+  const engine = createJevInboxBatch({ store: f.store, read: f.read, process: f.process, authorize: f.authorize });
+  const resumed = { ...scope, runId: "run_restart" };
+  const recovered = await engine.execute("owner_1", resumed, { operation: "batch_start" });
+  expect(recovered).toMatchObject({ jobId: start.jobId, status: "ready", unconfirmed: 1 });
+  expect(await next(f, start.jobId, resumed, engine)).toMatchObject({ status: "completed_with_unconfirmed", labeled: 1 });
+  expect(f.process.mock.calls.map(x => x[0])).toEqual(["thread_2"]);
+});
+it("a smaller new request caps an existing larger unfinished job before dispatch", async () => {
+  const f = fixture();
+  await f.batch.execute("owner_1", scope, { operation: "batch_start", maxThreads: 100 });
+  await f.batch.pause("owner_1", scope);
+  const current = { ...scope, runId: "run_small" };
+  const start = await f.batch.execute("owner_1", current, { operation: "batch_start", maxThreads: 1 });
+  expect(start).toMatchObject({ status: "ready", maxThreads: 1 });
+  expect(await next(f, start.jobId, current)).toMatchObject({ status: "limit_reached", processed: 1 });
+  await next(f, start.jobId, current);
+  expect(f.process).toHaveBeenCalledOnce();
+});
+it("an old run closing cannot pause the ready checkpoint taken over by a new authorized run", async () => {
+  const f = fixture();
+  const start = await f.batch.execute("owner_1", scope, { operation: "batch_start" });
+  await f.batch.pause("owner_1", scope);
+  const fresh = { ...scope, runId: "run_new" };
+  await f.batch.execute("owner_1", fresh, { operation: "batch_resume", jobId: start.jobId });
+  await f.batch.pause("owner_1", scope);
+  expect(await f.batch.execute("owner_1", fresh, { operation: "batch_status", jobId: start.jobId })).toMatchObject({ status: "ready" });
+});
+it("narrowing an in-flight batch revokes its old claim before later work and limits the new request", async () => {
+  const f = fixture();
+  const start = await f.batch.execute("owner_1", scope, { operation: "batch_start", maxThreads: 100 });
+  const barrier = Promise.withResolvers<void>();
+  f.process.mockImplementationOnce(async (thread, _signal, authorize) => { await barrier.promise; await authorize(); return { kind: "labeled", threadId: thread, messageCount: 1, labels: [] }; });
+  const old = next(f, start.jobId).catch(() => null);
+  await vi.waitFor(() => expect(f.process).toHaveBeenCalledOnce());
+  const current = { ...scope, runId: "run_narrow" };
+  const bounded = await f.batch.execute("owner_1", current, { operation: "batch_start", maxThreads: 1 });
+  expect(bounded).toMatchObject({ status: "limit_reached", maxThreads: 1, unconfirmed: 1 });
+  barrier.resolve();
+  await old;
+  await f.batch.pause("owner_1", scope);
+  expect(await f.batch.execute("owner_1", current, { operation: "batch_status", jobId: start.jobId })).toMatchObject({ status: "limit_reached", processed: 1 });
+  expect(f.process).toHaveBeenCalledOnce();
+});
+it("ready checkpoint ownership changes on resume, denying old-run continuation and late cleanup", async () => {
+  const f = fixture();
+  const start = await f.batch.execute("owner_1", scope, { operation: "batch_start" });
+  const fresh = { ...scope, runId: "run_takeover" };
+  const resumed = await f.batch.execute("owner_1", fresh, { operation: "batch_resume", jobId: start.jobId });
+  await expect(f.batch.execute("owner_1", scope, { operation: "batch_next", jobId: start.jobId, revision: resumed.revision })).rejects.toThrow();
+  await f.batch.pause("owner_1", scope);
+  expect(await f.batch.execute("owner_1", fresh, { operation: "batch_status", jobId: start.jobId })).toMatchObject({ status: "ready" });
+  expect(f.read).not.toHaveBeenCalled();
+});
