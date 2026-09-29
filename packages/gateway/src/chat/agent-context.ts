@@ -12,6 +12,12 @@ import {
 } from "./agent-recipe.js";
 import type { ChatOwner } from "./records.js";
 import type { ChatRepository } from "./repository.js";
+import { MATRIX_BOT_INSTANCE_ID, MATRIX_BOT_SELECTION } from "../bots/selection.js";
+
+/** Finds the recipe bot whose live direct chat this is, if any. */
+export interface BotChatLookup {
+  directBot(owner: ChatOwner, chatId: string): Promise<string | null>;
+}
 
 export class ChatAgentContextError extends Error {
   constructor(readonly code: "feature_disabled" | "context_unavailable" | "agent_permission_required" | "workflow_unavailable" | "workflow_setup_required" | "workflow_funding_required") {
@@ -53,6 +59,7 @@ export class ChatAgentContext {
     recipes?: ChatAgentRecipeResolver;
     enabled: () => boolean;
     admitJevWorkflow?: (owner: ChatOwner, agent: ChatAgent) => Promise<void>;
+    botChats?: BotChatLookup;
   }) {}
 
   private async snapshot(owner: ChatOwner, chatId: string, limit: number): Promise<ChatContextSnapshot> {
@@ -95,6 +102,16 @@ export class ChatAgentContext {
   async prepare(owner: ChatOwner, chatId: string, inputValue: CanonicalCreateChatTurnRequest) {
     const input = CanonicalCreateChatTurnRequestSchema.parse(inputValue);
     const references = input.parts.flatMap((part) => part.type === "resource_reference" ? [part.resource] : []);
+    // A recipe bot's direct chat always runs that bot, whatever the client selected. Its
+    // authority is the bot's capability set and grants, not the Chat permission mode.
+    if (this.options.botChats && await this.options.botChats.directBot(owner, chatId)) {
+      if (references.some((reference) => reference.kind === "agent" || reference.kind === "chat")) {
+        throw new ChatAgentContextError("context_unavailable");
+      }
+      return { selection: MATRIX_BOT_SELECTION, interactionMode: "default", permissionMode: "default" };
+    }
+    // Only a bot's own chat can run the bot runtime.
+    if (input.selection.instanceId === MATRIX_BOT_INSTANCE_ID) throw new ChatAgentContextError("context_unavailable");
     const agentReference = references.find((reference) => reference.kind === "agent");
     const chatReferences = references.filter((reference) => reference.kind === "chat");
     if ((agentReference || chatReferences.length) && !this.options.enabled()) {
@@ -102,6 +119,8 @@ export class ChatAgentContext {
     }
     if (chatReferences.some((reference) => reference.id === chatId)) throw new ChatAgentContextError("context_unavailable");
     const agent = agentReference ? await this.agent(owner, agentReference.id) : undefined;
+    // A recipe bot is reached in its own chat; a mention elsewhere cannot run it.
+    if (agent?.selection.instanceId === MATRIX_BOT_INSTANCE_ID) throw new ChatAgentContextError("context_unavailable");
     if (agent && input.permissionMode !== "full_access") throw new ChatAgentContextError("agent_permission_required");
     if (agent?.recipe?.skills.includes("matrix-jev-email-triage") &&
       (!agent.recipe.jevInboxTriage || agent.recipe.jevInboxTriage.ownerId !== owner.ownerId)) {

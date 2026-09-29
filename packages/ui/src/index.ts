@@ -139,6 +139,7 @@ export { dispatchTerminalPaneRequest, TerminalPaneActionsUnavailableError } from
 export { createChatAgentClient, type ChatAgentClient, type ChatAgentIntegrationConnection, type ChatAgentDraftRequest, type StartAgentChat } from "./chat-agents/client.js";
 export { ChatAgentsEntry, ChatAgentsRailSection } from "./chat-agents/ChatAgentsEntry.js";
 export { ChatAgentsContent } from "./chat-agents/ChatAgentsContent.js";
+export { BotChatPanel } from "./chat-agents/bots/BotChatPanel.js";
 export { ChatAgentsWorkspace, useChatAgentsNavigation } from "./chat-agents/ChatAgentsNavigation.js";
 export { ChatMentionControls, useChatMentionPermission } from "./chat-agents/ChatMentionControls.js";
 export { isChatMention, hasChatMentionParts, canAddChatMention, orderChatResources, chatAgentAttribution } from "./chat-agents/mentions.js";

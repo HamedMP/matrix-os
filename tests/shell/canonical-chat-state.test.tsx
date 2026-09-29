@@ -47,7 +47,7 @@ describe("canonical shell Chat state", () => {
     };
     let detailCalls = 0;
     const fetchFn = vi.fn(async (url: string) => {
-      if (url.endsWith("/api/chats/events?messageVersion=2&inputVersion=1&readStateVersion=1")) return streamResponse;
+      if (url.endsWith("/api/chats/events?messageVersion=2&inputVersion=1&readStateVersion=1&eventVersion=1")) return streamResponse;
       if (url.includes("/api/chats?")) return Response.json({ items: [runningRecord] });
       if (url.includes("/api/chats/chat_stream?")) {
         detailCalls += 1;
@@ -111,7 +111,7 @@ describe("canonical shell Chat state", () => {
     };
     let detailCalls = 0;
     vi.stubGlobal("fetch", vi.fn(async (url: string) => {
-      if (url.endsWith("/api/chats/events?messageVersion=2&inputVersion=1&readStateVersion=1")) return streamResponse;
+      if (url.endsWith("/api/chats/events?messageVersion=2&inputVersion=1&readStateVersion=1&eventVersion=1")) return streamResponse;
       if (url.includes("/api/chats?")) return Response.json({ items: [runningRecord] });
       if (url.includes("/api/chats/chat_fallback?")) {
         detailCalls += 1;

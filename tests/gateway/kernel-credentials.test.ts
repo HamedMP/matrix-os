@@ -10,17 +10,23 @@ import {
 } from "../../packages/gateway/src/kernel-credentials.js";
 import type { MatrixFundedCredentialProvider } from "../../packages/gateway/src/funded-ai-credential-manager.js";
 
+const requestedClasses: string[] = [];
+
 function fundedProvider(): MatrixFundedCredentialProvider {
   return {
     enabled: true,
     maxRunMs: 600_000,
-    getCredential: async () => ({
-      token: `sk-matrix-funded-credential_123.${"A".repeat(43)}`,
-      tokenId: "credential_123",
-      expiresAt: "2026-08-30T10:15:00.000Z",
-      relayBaseUrl: "https://relay.matrix-os.com",
-      maxRunMs: 600_000,
-    }),
+    getCredential: async ({ requestClass }) => {
+      requestedClasses.push(requestClass);
+      return {
+        token: `sk-matrix-funded-credential_123.${"A".repeat(43)}`,
+        tokenId: "credential_123",
+        expiresAt: "2026-08-30T10:15:00.000Z",
+        relayBaseUrl: "https://relay.matrix-os.com",
+        maxRunMs: 600_000,
+        requestClass,
+      };
+    },
     invalidate: () => {},
     close: () => {},
   };
@@ -117,7 +123,7 @@ describe("kernel credential resolution", () => {
       MATRIX_CODE_PROXY_TOKEN: "code-proxy-secret",
       AI_RELAY_CONTROL_TOKEN: "relay-control-secret",
       CF_AIG_AUTHORIZATION: "cloudflare-secret",
-    }, "matrix_included", provider);
+    }, "matrix_included", provider, { requestClass: "interactive" });
     expect(launch).toMatchObject({
       fundedRunTimeoutMs: 600_000,
       env: {
@@ -212,5 +218,39 @@ describe("kernel credential resolution", () => {
       ownerApiKey: { state: "invalid" },
       ownerProfile: { state: "unavailable" },
     });
+  });
+});
+
+describe("funded kernel launch classes", () => {
+  let homePath: string;
+  beforeEach(() => {
+    homePath = mkdtempSync(join(tmpdir(), "kernel-funding-"));
+    mkdirSync(join(homePath, "system"), { recursive: true });
+    requestedClasses.length = 0;
+  });
+  afterEach(() => rmSync(homePath, { recursive: true, force: true }));
+
+  it("requests the caller's class and forwards a valid claim key as a relay header", async () => {
+    const launch = await buildKernelCredentialLaunch(homePath, {}, "matrix_included", fundedProvider(), {
+      requestClass: "background",
+      claimKey: "run_abc:turn.1",
+    });
+    expect(requestedClasses).toEqual(["background"]);
+    expect(launch.env?.ANTHROPIC_CUSTOM_HEADERS).toBe("x-matrix-funded-claim-key: run_abc:turn.1");
+  });
+
+  it("omits an invalid claim key and never sends one outside funded access", async () => {
+    const invalid = await buildKernelCredentialLaunch(homePath, {}, "matrix_included", fundedProvider(), {
+      requestClass: "interactive",
+      claimKey: "run abc\nx-evil: 1",
+    });
+    expect(invalid.env).not.toHaveProperty("ANTHROPIC_CUSTOM_HEADERS");
+    writeFileSync(join(homePath, "system/config.json"), JSON.stringify({ kernel: { anthropicApiKey: "sk-ant-owner" } }));
+    const owner = await buildKernelCredentialLaunch(homePath, {}, "owner_anthropic_key", fundedProvider(), {
+      requestClass: "interactive",
+      claimKey: "run_abc",
+    });
+    expect(owner.env).not.toHaveProperty("ANTHROPIC_CUSTOM_HEADERS");
+    expect(requestedClasses).toEqual(["interactive"]);
   });
 });

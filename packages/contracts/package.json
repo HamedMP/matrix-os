@@ -7,10 +7,14 @@
     ".": "./src/index.ts",
     "./chat-subagent": "./src/chat-subagent.ts",
     "./collaboration": "./src/collaboration.ts",
-    "./collaboration-direct": "./src/collaboration-direct.ts"
+    "./collaboration-direct": "./src/collaboration-direct.ts",
+    "./bots": "./src/bots/index.ts"
   },
   "imports": {
     "#chat-subagent": "./src/chat-subagent.ts",
+    "#bots": "./src/bots/index.ts",
+    "#bots/*": "./src/bots/*.ts",
+    "#chat-event-wire": "./src/chat-event-wire.ts",
     "#sync": "./src/sync.ts",
     "#app-ai": "./src/app-ai.ts",
     "#file-download": "./src/file-download.ts",

@@ -346,4 +346,23 @@ export async function migrateAiFunded(db: PlatformMigrationExecutor): Promise<vo
       AND usage.runtime_slot = promo.runtime_slot
     ON CONFLICT (grant_entry_id) DO NOTHING
   `.execute(db);
+  // Interactive priority (spec 536): credentials carry an immutable request class,
+  // each class has its own issuance cooldown, and waiting interactive runtimes hold
+  // owner-wide priority claims written inside authorization.
+  await sql`ALTER TABLE ai_runtime_credentials ADD COLUMN IF NOT EXISTS request_class TEXT NOT NULL DEFAULT 'interactive' CHECK (request_class IN ('interactive', 'background'))`.execute(db);
+  await sql`ALTER TABLE ai_funded_runtime_policies ADD COLUMN IF NOT EXISTS next_background_issue_at TEXT NOT NULL DEFAULT '1970-01-01T00:00:00.000Z'`.execute(db);
+  await sql`
+    CREATE TABLE IF NOT EXISTS ai_funded_priority_claims (
+      owner_id TEXT NOT NULL,
+      machine_id TEXT NOT NULL,
+      runtime_slot TEXT NOT NULL,
+      claim_key TEXT NOT NULL DEFAULT '' CHECK (claim_key = '' OR claim_key ~ '^[A-Za-z0-9_.:-]{1,128}$'),
+      billing_mode TEXT NOT NULL CHECK (billing_mode IN ('usage', 'hold')),
+      created_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL CHECK (expires_at > created_at),
+      PRIMARY KEY (owner_id, machine_id, runtime_slot, claim_key)
+    )
+  `.execute(db);
+  await sql`CREATE INDEX IF NOT EXISTS idx_ai_funded_priority_claims_owner_created ON ai_funded_priority_claims(owner_id, created_at)`.execute(db);
+  await sql`CREATE INDEX IF NOT EXISTS idx_ai_funded_priority_claims_expires ON ai_funded_priority_claims(expires_at)`.execute(db);
 }

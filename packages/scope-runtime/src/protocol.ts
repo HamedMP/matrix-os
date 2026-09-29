@@ -8,6 +8,10 @@ const AdapterIdSchema = z.string().regex(/^[a-z][a-z0-9-]{0,63}$/);
 const SemanticVersionSchema = z.string().regex(/^[0-9]+\.[0-9]+\.[0-9]+$/);
 const GenerationSchema = z.string().regex(/^(0|[1-9][0-9]{0,19})$/);
 const DigestSchema = z.string().regex(/^[a-f0-9]{64}$/);
+export const ScopeRuntimeWorkloadSchema = z.enum(["chat_ai", "terminal", "bot_agent"]);
+const WorkloadListSchema = z.array(ScopeRuntimeWorkloadSchema).min(1).max(3);
+const BotRunIdSchema = z.string().regex(/^run_[A-Za-z0-9_-]{1,128}$/);
+const MAX_BOT_REPLY_BYTES = 16 * 1024;
 const BoundedPromptSchema = z.string().min(1).refine(
   (value) => Buffer.byteLength(value, "utf8") <= 64 * 1024,
   "Prompt exceeds scope runtime limit",
@@ -52,7 +56,7 @@ export type ScopeRuntimeSandboxManifest = z.infer<typeof ScopeRuntimeSandboxMani
 const SandboxCapabilitySchema = z.object({
   policyVersion: z.number().int().min(1).max(1_000_000),
   policyDigest: DigestSchema,
-  workloads: z.array(z.enum(["chat_ai", "terminal"])).min(1).max(2),
+  workloads: WorkloadListSchema,
 }).strict();
 
 const CapabilityRequestSchema = z.object({
@@ -67,7 +71,7 @@ const RuntimeCreateRequestSchema = z.object({
   requestId: RequestIdSchema,
   scopeHandle: ScopeHandleSchema,
   profileId: ProfileIdSchema,
-  workload: z.enum(["chat_ai", "terminal"]),
+  workload: ScopeRuntimeWorkloadSchema,
   adapterId: AdapterIdSchema,
   harnessVersion: SemanticVersionSchema,
   sandbox: ScopeRuntimeSandboxManifestSchema.optional(),
@@ -90,11 +94,48 @@ const RuntimeChatRequestSchema = z.object({
   prompt: BoundedPromptSchema,
 }).strict();
 
+/**
+ * Bot commands relayed to a `bot_agent` worker. They carry identifiers and
+ * steering text only: the worker loads the run itself (prompt, route,
+ * capabilities, images) from the gateway broker, so the supervisor never
+ * handles prompt content.
+ */
+export const ScopeRuntimeBotCommandSchema = z.discriminatedUnion("kind", [
+  z.object({ version: z.literal(1), kind: z.literal("bot.run"), runId: BotRunIdSchema }).strict(),
+  z.object({
+    version: z.literal(1),
+    kind: z.literal("bot.steer"),
+    runId: BotRunIdSchema,
+    text: z.string().min(1).max(8 * 1024),
+  }).strict(),
+  z.object({ version: z.literal(1), kind: z.literal("bot.cancel"), runId: BotRunIdSchema }).strict(),
+]);
+
+const RuntimeBotRequestSchema = z.object({
+  version: z.literal(1),
+  type: z.literal("runtime.bot"),
+  requestId: RequestIdSchema,
+  runtimeHandle: RuntimeHandleSchema,
+  executionGeneration: GenerationSchema,
+  command: ScopeRuntimeBotCommandSchema,
+}).strict();
+
 export const ScopeRuntimeRequestSchema = z.discriminatedUnion("type", [
   CapabilityRequestSchema,
   RuntimeCreateRequestSchema,
   RuntimeStopRequestSchema,
   RuntimeChatRequestSchema,
+  RuntimeBotRequestSchema,
+]);
+
+/** The worker's reply is opaque here and validated by the gateway against the bot contracts. */
+const BotReplySchema = z.record(z.string(), z.unknown())
+  .refine((reply) => Buffer.byteLength(JSON.stringify(reply), "utf8") <= MAX_BOT_REPLY_BYTES, "Bot reply exceeds scope runtime limit");
+
+/** Frames on a `bot_agent` worker's command socket, one request and one reply per connection. */
+export const ScopeRuntimeBotWorkerReplySchema = z.discriminatedUnion("ok", [
+  z.object({ version: z.literal(1), ok: z.literal(true), reply: BotReplySchema }).strict(),
+  z.object({ version: z.literal(1), ok: z.literal(false), error: z.enum(["busy", "invalid_command", "unavailable"]) }).strict(),
 ]);
 
 const RuntimeLimitsSchema = z.object({
@@ -124,7 +165,7 @@ const CapabilityProfileSchema = z.object({
   adapters: z.array(z.object({
     adapterId: AdapterIdSchema,
     harnessVersion: SemanticVersionSchema,
-    workloads: z.array(z.enum(["chat_ai", "terminal"])).min(1).max(2),
+    workloads: WorkloadListSchema,
   }).strict()).min(1).max(16),
   sandbox: SandboxCapabilitySchema.optional(),
 }).strict();
@@ -135,7 +176,12 @@ const CapabilityResultSchema = z.object({
   requestId: RequestIdSchema,
   ok: z.literal(true),
   supervisorVersion: SemanticVersionSchema,
+  /** The shared-chat profile, kept for gateways that predate the catalog. */
   profile: CapabilityProfileSchema,
+  /** Every launchable profile, the shared-chat profile included. */
+  profiles: z.array(CapabilityProfileSchema).min(1).max(4)
+    .refine((profiles) => new Set(profiles.map((entry) => entry.profileId)).size === profiles.length, "Duplicate profile")
+    .optional(),
 }).strict();
 
 const CapabilityErrorSchema = z.object({
@@ -197,6 +243,30 @@ const RuntimeChatErrorSchema = z.object({
   ]),
 }).strict();
 
+const RuntimeBotResultSchema = z.object({
+  version: z.literal(1),
+  type: z.literal("runtime.bot.result"),
+  requestId: RequestIdSchema,
+  ok: z.literal(true),
+  runtimeHandle: RuntimeHandleSchema,
+  executionGeneration: GenerationSchema,
+  reply: BotReplySchema,
+}).strict();
+
+const RuntimeBotErrorSchema = z.object({
+  version: z.literal(1),
+  type: z.literal("runtime.bot.result"),
+  requestId: RequestIdSchema,
+  ok: z.literal(false),
+  error: z.enum([
+    "invalid_request",
+    "runtime_not_found",
+    "runtime_unavailable",
+    "generation_mismatch",
+    "busy",
+  ]),
+}).strict();
+
 export const ScopeRuntimeResponseSchema = z.union([
   CapabilityResultSchema,
   CapabilityErrorSchema,
@@ -204,8 +274,13 @@ export const ScopeRuntimeResponseSchema = z.union([
   RuntimeErrorSchema,
   RuntimeChatResultSchema,
   RuntimeChatErrorSchema,
+  RuntimeBotResultSchema,
+  RuntimeBotErrorSchema,
 ]);
 
 export type ScopeRuntimeRequest = z.infer<typeof ScopeRuntimeRequestSchema>;
 export type ScopeRuntimeResponse = z.infer<typeof ScopeRuntimeResponseSchema>;
 export type ScopeRuntimeCapabilityProfile = z.infer<typeof CapabilityProfileSchema>;
+export type ScopeRuntimeWorkload = z.infer<typeof ScopeRuntimeWorkloadSchema>;
+export type ScopeRuntimeBotCommand = z.infer<typeof ScopeRuntimeBotCommandSchema>;
+export type ScopeRuntimeBotWorkerReply = z.infer<typeof ScopeRuntimeBotWorkerReplySchema>;

@@ -115,6 +115,7 @@ import {
   createFundedAiCredentialManager,
   loadFundedAiRuntimeConfig,
 } from "./funded-ai-credential-manager.js";
+import { createFundedAdmissionQueue } from "./funded-ai/admission-queue.js";
 import { createFundedAiFundingSummaryClient } from "./funded-ai-funding-summary-client.js";
 import { createFundedAiRouteReadinessClient } from "./funded-ai-route-readiness-client.js";
 import { createFundedAiReadinessReader } from "./funded-ai-readiness.js";
@@ -160,6 +161,13 @@ import {
 import { createGatewaySpeechRuntime } from "./speech/gateway-runtime.js";
 import { initializeOwnerDatabaseServices } from "./startup/owner-database.js";
 import { enableOwnerSharedAi } from "./startup/collaboration.js";
+import type { ScopeRuntimeHost } from "./scope-runtime-host/index.js";
+import { startScopeRuntimeHost } from "./startup/scope-runtime-host.js";
+import { startBots, type BotServices } from "./startup/bots.js";
+import { withBotProviderInstance } from "./bots/provider-instance.js";
+import { createLocalIntegrationTransport, createPlatformIntegrationTransport } from "./bots/integration-client.js";
+import { createBotContinuationAdmitter } from "./bots/continuations.js";
+import { ChatAgentStore } from "./chat/agent-store.js";
 import { initializePlatformIntegrations } from "./startup/platform-integrations.js";
 import { getVersion } from "./system-info.js";
 import { createTaskManager } from "./task-manager.js";
@@ -282,6 +290,8 @@ export async function createGateway(config: GatewayConfig) {
   const fundedCredentialProvider = fundedAiRuntimeConfig
     ? createFundedAiCredentialManager(fundedAiRuntimeConfig)
     : undefined;
+  // Orders this gateway's own funded retries; the platform enforces owner-wide priority.
+  const fundedAdmission = fundedCredentialProvider ? createFundedAdmissionQueue() : undefined;
   const fundedAiFundingSummaryReader = fundedAiRuntimeConfig
     ? createFundedAiFundingSummaryClient(fundedAiRuntimeConfig)
     : undefined;
@@ -781,6 +791,8 @@ export async function createGateway(config: GatewayConfig) {
   let canonicalChatExecutionRoots: ChatExecutionRootResolver | null = null;
   let canonicalChatCollaborationGuard: ReturnType<typeof createDiscussionOnlyChatExecutionGuard> | null = null;
   let gatewayCollaboration: GatewayCollaborationRuntime | null = null;
+  let scopeRuntimeHost: ScopeRuntimeHost | undefined;
+  let botServices: BotServices | undefined;
   let messagingRepository: MessagingKyselyRepository | null = null;
   // Collaboration wiring always constructs (S20): there is no release flag.
   // Incomplete configuration or a missing owner database registers the
@@ -1026,7 +1038,7 @@ export async function createGateway(config: GatewayConfig) {
         `Diagnose and fix the issue.`;
 
       try {
-        await dispatcher.dispatch(healPrompt, undefined, () => {});
+        await dispatcher.dispatch(healPrompt, undefined, () => {}, undefined, undefined, { fundedRequestClass: "background" });
 
         const result = await checkModuleHealth(target.port, target.healthPath, 5000);
         if (result.ok) {
@@ -1477,6 +1489,28 @@ export async function createGateway(config: GatewayConfig) {
     credentialedDriverKinds: ["pi", "opencode"],
   });
   if (chatRepository && canonicalChatExecutionRoots) {
+    // Extraction plan for this 1,000+ line composition entrypoint:
+    // specs/536-conversational-bots/plan.md#gateway-entrypoint-extraction.
+    // The host starts before the adapters so the bot adapter can bind to it; shared AI
+    // registers on it after the orchestrator exists (below).
+    scopeRuntimeHost = await startScopeRuntimeHost({
+      homePath,
+      ...(fundedCredentialProvider ? { fundedCredentialProvider } : {}),
+      ...(fundedAdmission ? { fundedAdmission } : {}),
+      onFailure: logBestEffortFailure,
+    });
+    const chatAgents = new ChatAgentStore({ homePath, db: chatRepository.kysely });
+    await chatAgents.bootstrap();
+    botServices = await startBots({
+      homePath, repository: chatRepository, agents: chatAgents, executionRoots: canonicalChatExecutionRoots,
+      providers: aiProviderService,
+      ...(internalIntegrationBaseUrl && internalPlatformToken
+        ? { integrations: createPlatformIntegrationTransport({ baseUrl: internalIntegrationBaseUrl, machineToken: internalPlatformToken }) }
+        : integrationRoutes ? { integrations: createLocalIntegrationTransport(integrationRoutes) } : {}),
+      ...(scopeRuntimeHost ? { host: scopeRuntimeHost } : {}),
+      ...(fundedCredentialProvider ? { fundedCredentialProvider } : {}),
+      ...(fundedAdmission ? { fundedAdmission } : {}),
+    });
     const canonicalAdapters: CanonicalChatProviderAdapter[] = [
       createKernelChatProviderAdapter({ dispatcher }),
       createHermesChatProviderAdapter({ homePath, toolOutputKey, ...(jevInboxRuntime ? { jev: jevInboxRuntime.launch } : {}) }),
@@ -1518,10 +1552,13 @@ export async function createGateway(config: GatewayConfig) {
         }));
       }
     }
+    if (botServices?.adapter) canonicalAdapters.push(botServices.adapter);
     canonicalChatRuntime = await createCanonicalChatRuntime({
       homePath,
       repository: chatRepository,
-      catalog: canonicalChatProviderCatalog,
+      catalog: botServices?.adapter ? withBotProviderInstance(canonicalChatProviderCatalog) : canonicalChatProviderCatalog,
+      agents: chatAgents,
+      ...(botServices ? { botChats: botServices.botChats } : {}),
       adapters: new CanonicalChatProviderRegistry(canonicalAdapters.map(adapter => withAsyncChatInput(adapter))),
       executionRoots: canonicalChatExecutionRoots,
       ...(canonicalChatCollaborationGuard ? { collaborationGuard: canonicalChatCollaborationGuard } : {}),
@@ -1532,6 +1569,7 @@ export async function createGateway(config: GatewayConfig) {
       ...(jevInboxRuntime ? { admitJevWorkflow: (owner, agent) => jevInboxRuntime.admit(owner.ownerId, agent) } : {}),
     });
     canonicalChatOrchestrator = canonicalChatRuntime.orchestrator;
+    botServices?.startConnectionReconciler(createBotContinuationAdmitter({ repository: chatRepository, orchestrator: canonicalChatOrchestrator }));
     backgroundChatProjection.setReconciler(ownerId => canonicalChatOrchestrator?.reconcileActiveRuns({ type: "personal", ownerId }) ?? Promise.resolve());
     // Shared AI marks runs the previous process lost (gateway_restart) before the
     // owner reconcile loop below finishes them; the reverse order loses attribution.
@@ -1541,6 +1579,7 @@ export async function createGateway(config: GatewayConfig) {
     await enableOwnerSharedAi({
       gatewayCollaboration,
       input: {
+        ...(scopeRuntimeHost ? { host: scopeRuntimeHost } : {}),
         orchestrator: canonicalChatOrchestrator,
         homePath,
         providerCatalog: canonicalChatProviderCatalog,
@@ -1549,6 +1588,7 @@ export async function createGateway(config: GatewayConfig) {
         // shared AI reports no eligibility instead of launching unmounted runs.
         ...(canonicalChatExecutionRoots ? { executionRoots: canonicalChatExecutionRoots } : {}),
         ...(fundedCredentialProvider ? { fundedCredentialProvider } : {}),
+        ...(fundedAdmission ? { fundedAdmission } : {}),
       },
     });
     for (const ownerId of new Set(codingAgentOwnerIds)) {
@@ -1613,7 +1653,7 @@ export async function createGateway(config: GatewayConfig) {
     app, upgradeWebSocket, canonicalChatEventStream, chatRepository, gatewayCollaboration,
     collaborationFailClosedReason, canonicalChatOrchestrator, canonicalChatExecutionRoots,
     canonicalChatCollaborationGuard, projectOwnerToolOutput, canonicalChatRuntime,
-    canonicalChatProviderCatalog, aiProviderService, providerSettingsStore,
+    canonicalChatProviderCatalog, aiProviderService, providerSettingsStore, botServices,
     listGmailAccounts: (ownerId) => withCapabilityLookupTimeout(() => lookupJevGmailAccounts(ownerId)),
   });
 
@@ -1794,9 +1834,13 @@ export async function createGateway(config: GatewayConfig) {
       await backgroundChatProjection.close();
       await canonicalChatOrchestrator?.close();
       canonicalChatOrchestrator = null;
+      await botServices?.close();
+      botServices = undefined;
       await canonicalChatRuntime?.agents.close();
       canonicalChatRuntime = null;
       await gatewayCollaboration?.shutdown();
+      // After collaboration unregisters, so no shared run loses its broker mid-shutdown.
+      await scopeRuntimeHost?.close();
       gatewayCollaboration = null;
       await backgroundAgentRuntime.close();
       await codingAgentWorkspaceRuntime?.close();
@@ -1805,6 +1849,7 @@ export async function createGateway(config: GatewayConfig) {
       terminalLiveOwnership.close();
       await agentRuntimeServices.controller.close();
       aiProviderService.close();
+      fundedAdmission?.close();
       fundedCredentialProvider?.close();
       await jevRuntime?.cleanup.close();
       await codingAgentTurnLifecycle.shutdown();

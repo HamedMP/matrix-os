@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import type { ScopeRuntimeHost } from "../scope-runtime-host/index.js";
+import type { FundedAdmissionQueue } from "../funded-ai/admission-queue.js";
 import { sql, type Kysely } from "kysely";
 import type { GatewayCollaborationConfig } from "./config.js";
 import type { Hono } from "hono";
@@ -437,6 +439,9 @@ export async function createGatewayCollaboration(options: {
       orchestrator: CanonicalChatOrchestrator;
       homePath: string;
       fundedCredentialProvider?: MatrixFundedCredentialProvider;
+      fundedAdmission?: FundedAdmissionQueue;
+      /** The gateway's one scope-runtime host; shared AI registers on it instead of opening its own broker. */
+      host?: ScopeRuntimeHost;
       supervisorSocket?: string;
       brokerSocket?: string;
       fetchImpl?: typeof fetch;
@@ -476,6 +481,8 @@ export async function createGatewayCollaboration(options: {
         executionPolicies,
         runLoss,
         ...(input.fundedCredentialProvider ? { fundedCredentialProvider: input.fundedCredentialProvider } : {}),
+        ...(input.fundedAdmission ? { fundedAdmission: input.fundedAdmission } : {}),
+        ...(input.host ? { host: input.host } : {}),
         ...(input.supervisorSocket ? { supervisorSocket: input.supervisorSocket } : {}),
         ...(input.brokerSocket ? { brokerSocket: input.brokerSocket } : {}),
         ...(input.fetchImpl ? { fetchImpl: input.fetchImpl } : {}),

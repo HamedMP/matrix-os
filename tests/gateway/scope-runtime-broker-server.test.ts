@@ -73,4 +73,26 @@ describe("scope runtime broker socket server", () => {
     await server.close();
     expect(broker.close).toHaveBeenCalledTimes(1);
   });
+
+  it("gives routed frames their own timeout and drops a frame the routed handler refuses", async () => {
+    const root = await mkdtemp(join(tmpdir(), "matrix-scope-broker-server-"));
+    cleanup.push(() => rm(root, { recursive: true, force: true }));
+    const socketPath = join(root, "broker.sock");
+    const broker = { handle: vi.fn(), close: vi.fn(async () => undefined) };
+    const routeFrame = vi.fn((raw: unknown) => {
+      const action = (raw as { action?: string }).action;
+      if (action === "bot.slow") return new Promise<Record<string, unknown>>((resolve) => setTimeout(() => resolve({ ok: true }), 300));
+      if (action === "bot.refused") return Promise.resolve(undefined);
+      return undefined;
+    });
+    const server = createScopeRuntimeBrokerServer({
+      socketPath, broker: broker as never, routeFrame, requestTimeoutMs: 100, routedRequestTimeoutMs: 2_000,
+    });
+    await server.start();
+    cleanup.push(() => server.close());
+
+    await expect(exchange(socketPath, `${JSON.stringify({ action: "bot.slow" })}\n`)).resolves.toBe(`${JSON.stringify({ ok: true })}\n`);
+    await expect(exchange(socketPath, `${JSON.stringify({ action: "bot.refused" })}\n`)).resolves.toBe("");
+    expect(broker.handle).not.toHaveBeenCalled();
+  });
 });

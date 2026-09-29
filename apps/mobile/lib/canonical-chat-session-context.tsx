@@ -104,12 +104,16 @@ export function CanonicalChatSessionProvider({ children }: { children: ReactNode
     return source.subscribe((event) => {
       const uid = userId ?? "signed-out";
       const key = computerKey ?? "none";
+      const botKey = activeChatId && computer
+        ? mobileQueryKeys.botChat(uid, `${HOSTED_GATEWAY_URL}${computer.gatewayPath}`, activeChatId)
+        : null;
       if (event.type === "chat.full_refresh") {
         void queryClient.invalidateQueries({ queryKey: mobileQueryKeys.canonicalChats(uid, key) });
         if (activeChatId) {
           void queryClient.invalidateQueries({
             queryKey: mobileQueryKeys.canonicalChatDetail(uid, key, activeChatId),
           });
+          if (botKey) void queryClient.invalidateQueries({ queryKey: botKey });
         }
         return;
       }
@@ -118,6 +122,7 @@ export function CanonicalChatSessionProvider({ children }: { children: ReactNode
         void queryClient.invalidateQueries({
           queryKey: mobileQueryKeys.canonicalChatDetail(uid, key, event.chatId),
         });
+        if (botKey) void queryClient.invalidateQueries({ queryKey: botKey });
       }
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
