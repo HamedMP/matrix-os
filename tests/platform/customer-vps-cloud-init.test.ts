@@ -947,7 +947,7 @@ exit 99
     for (const bin of ['matrixctl', 'matrix-r2-broker.mjs', 'matrix-db-backup.sh', 'matrix-restore.sh']) {
       expect(existsSync(join(root, 'distro/customer-vps/host-bin', bin))).toBe(true);
     }
-    expect(cloudInit).toMatch(/for required_bin in matrixctl matrix-r2-broker\.mjs matrix-db-backup\.sh matrix-restore\.sh matrix-postgres-start matrix-owner-env matrix-gateway matrix-shell /);
+    expect(cloudInit).toMatch(/for required_bin in matrixctl matrix-r2-broker\.mjs matrix-db-backup\.sh matrix-restore\.sh matrix-owner-env matrix-gateway matrix-shell /);
     expect(cloudInit).toContain('path: /etc/systemd/system/matrix-db-backup.timer');
     expect(cloudInit).toContain('docker.io file git postgresql-client procps python3-cryptography nginx openssl socat sudo unzip zsh');
     expect(cloudInit).toContain('https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip');

@@ -59,8 +59,8 @@ write_files:
     content: |
       [Unit]
       Description=Matrix OS customer restore gate
-      After=matrix-postgres.service
-      Requires=matrix-postgres.service
+      After=docker.service
+      Requires=docker.service
 
       [Service]
       Type=oneshot
@@ -664,11 +664,9 @@ runcmd:
       chown root:matrix /opt/matrix/release.json
       chmod 0644 /opt/matrix/release.json
     fi
-    for required_bin in matrixctl matrix-r2-broker.mjs matrix-db-backup.sh matrix-restore.sh matrix-postgres-start matrix-owner-env matrix-gateway matrix-shell matrix-code matrix-sync-agent matrix-install-hermes; do
+    for required_bin in matrixctl matrix-r2-broker.mjs matrix-db-backup.sh matrix-restore.sh matrix-owner-env matrix-gateway matrix-shell matrix-code matrix-sync-agent matrix-install-hermes; do
       chmod 0750 "/opt/matrix/bin/${required_bin}"
     done
-    install -d -o root -g root -m 0755 /usr/local/libexec
-    install -o root -g root -m 0755 /opt/matrix/bin/matrix-postgres-start /usr/local/libexec/matrix-postgres-start
     for optional_bin in matrix-register-vps matrix-integrations matrix-integrations-mcp matrix-register-integrations-mcp matrix-hermes-dashboard matrix-install-openclaw matrix-openclaw-gateway matrix-agent-runtime-control matrix-install-linux-tools matrix-install-developer-tools matrix-messaging-health matrix-messaging-backup matrix-messaging-restore; do
       if [ -e "/opt/matrix/bin/${optional_bin}" ]; then
         chmod 0750 "/opt/matrix/bin/${optional_bin}"
@@ -689,8 +687,22 @@ runcmd:
     ln -sf /etc/nginx/sites-available/matrix /etc/nginx/sites-enabled/matrix
     nginx -t
 
+    # Bundles older than the root PostgreSQL helper keep inline startup.
+    if [ -f /opt/matrix/bin/matrix-postgres-start ] && [ ! -L /opt/matrix/bin/matrix-postgres-start ] && [ -f /etc/systemd/system/matrix-postgres.service ]; then
+      chmod 0750 /opt/matrix/bin/matrix-postgres-start
+      install -d -o root -g root -m 0755 /usr/local/libexec
+      install -o root -g root -m 0755 /opt/matrix/bin/matrix-postgres-start /usr/local/libexec/matrix-postgres-start
+      systemctl daemon-reload
+      systemctl start matrix-postgres.service
+    elif docker ps -a --format '{{.Names}}' | grep -qx matrix-postgres; then
+      docker start matrix-postgres >/dev/null
+    else
+      docker volume create matrix-postgres >/dev/null
+      docker run -d --name matrix-postgres --restart unless-stopped --env-file /opt/matrix/env/postgres.env \
+        -v matrix-postgres:/var/lib/postgresql/data -p 127.0.0.1:5432:5432 postgres:16 >/dev/null
+    fi
+
     systemctl daemon-reload
-    systemctl start matrix-postgres.service
     loginctl enable-linger matrix
     systemctl start "user@$(id -u matrix).service"
     matrix_uid="$(id -u matrix)"
