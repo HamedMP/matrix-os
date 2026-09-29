@@ -141,3 +141,16 @@ it("counts a verified classification requiring Review as Review rather than disa
   const start = await f.batch.execute("owner_1", scope, { operation: "batch_start" });
   expect(await next(f, start.jobId)).toMatchObject({ review: 1, preview: 0, status: "ready" });
 });
+it("returns an explicit empty status before a batch exists, with no mailbox read or inference", async () => {
+  const f = fixture();
+  expect(await f.batch.execute("owner_1", scope, { operation: "batch_status" })).toEqual({ kind: "batch_absent" });
+  expect(f.batch.presentation("owner_1", scope)).toEqual({ kind: "batch_absent" });
+  expect(f.read).not.toHaveBeenCalled();
+  expect(f.process).not.toHaveBeenCalled();
+});
+it("does not count messages as labeled when verified classification has no eligible labels", async () => {
+  const f = fixture();
+  f.process.mockResolvedValueOnce({ kind: "labeled", messageCount: 4, labels: [] } as never);
+  const start = await f.batch.execute("owner_1", scope, { operation: "batch_start" });
+  expect(await next(f, start.jobId)).toMatchObject({ labeled: 0, noChange: 1, messagesLabeled: 0 });
+});

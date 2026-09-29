@@ -1,6 +1,7 @@
 import { BatchJobId } from "./inbox-batch-store.js";
 import { EMAIL_TRIAGE_LABELS, JevInboxGmailIdSchema } from "@matrix-os/contracts";
 import { z } from "zod/v4";
+const Absent = z.strictObject({ kind: z.literal("batch_absent") });
 const Labels = z.enum(Object.values(EMAIL_TRIAGE_LABELS));
 const Presentation = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("review"), verified: z.literal(false), readonly: z.literal(true),
@@ -19,18 +20,18 @@ const Presentation = z.discriminatedUnion("kind", [
 ]);
 const Batch = z.strictObject({ kind: z.literal("batch"), jobId: BatchJobId, revision: z.number().int().min(1),
   status: z.enum(["ready", "running", "paused", "completed", "completed_with_unconfirmed", "limit_reached"]),
-  processed: z.number().int().min(0).max(10000), labeled: z.number().int().min(0).max(10000), review: z.number().int().min(0).max(10000),
+  processed: z.number().int().min(0).max(10000), labeled: z.number().int().min(0).max(10000), noChange: z.number().int().min(0).max(10000).default(0), review: z.number().int().min(0).max(10000),
   preview: z.number().int().min(0).max(10000), unconfirmed: z.number().int().min(0).max(10000), messagesLabeled: z.number().int().min(0).max(40000),
   remainingQueued: z.number().int().min(0).max(30), hasMore: z.boolean(), maxThreads: z.number().int().min(1).max(10000),
-  last: z.object({ threadId: JevInboxGmailIdSchema, status: z.enum(["labeled", "review", "proposal", "unconfirmed"]) }).nullable()
-}).refine(b => b.processed === b.labeled + b.review + b.preview + b.unconfirmed && b.messagesLabeled <= b.labeled * 4);
+  last: z.object({ threadId: JevInboxGmailIdSchema, status: z.enum(["labeled", "no_op", "review", "proposal", "unconfirmed"]) }).nullable()
+}).refine(b => b.processed === b.labeled + b.noChange + b.review + b.preview + b.unconfirmed && b.messagesLabeled <= b.labeled * 4);
 function formatBatch(value: unknown): string | null {
   const parsed = Batch.safeParse(value);
   if (!parsed.success)
     return null;
   const b = parsed.data;
   return ["Inbox batch progress", `Job: ${b.jobId}`, `State: ${b.status}`, `Examined: ${b.processed} threads`,
-    `Confirmed: ${b.labeled} threads / ${b.messagesLabeled} messages`, `Review: ${b.review}; Preview: ${b.preview}; Unconfirmed: ${b.unconfirmed}`,
+    `Confirmed: ${b.labeled} threads / ${b.messagesLabeled} messages`, `No change needed: ${b.noChange}; Review: ${b.review}; Preview: ${b.preview}; Unconfirmed: ${b.unconfirmed}`,
     `Queued: ${b.remainingQueued}; More pages: ${b.hasMore ? "yes" : "no"}; Thread limit: ${b.maxThreads}`,
     ...(b.last ? [`Last thread: ${b.last.threadId} — ${b.last.status}`] : []),
     b.status === "completed" ? "All listed Inbox threads were examined; Review and preview results were not labeled." :
@@ -41,6 +42,8 @@ function formatBatch(value: unknown): string | null {
 }
 /** Only a completed broker-owned result enters this formatter. Native tool/model output is never an input. */
 export function formatJevInboxPresentation(value: unknown): string | null {
+  if (Absent.safeParse(value).success)
+    return "No saved Inbox batch. Start a new batch when requested. No mailbox changes have been made.";
   if (value && typeof value === "object" && "kind" in value && value.kind === "batch")
     return formatBatch(value);
   const parsed = Presentation.safeParse(value);
@@ -63,4 +66,14 @@ export function formatJevInboxPresentation(value: unknown): string | null {
     `Archive proposal: ${result.archiveProposal ? "Remove INBOX only" : "None"}`,
     ...(result.labelingSkipped === "review_required" ? ["Labeling permission is enabled, but the classification requires review. No labels were added."] : []),
     "No mailbox changes have been made."].join("\n");
+}
+/** Compact activity text uses the same validated broker counters as the full receipt. */
+export function formatJevInboxActivitySummary(value: unknown): string | null {
+  if (Absent.safeParse(value).success)
+    return "No saved Inbox batch";
+  const parsed = Batch.safeParse(value);
+  if (!parsed.success)
+    return null;
+  const b = parsed.data;
+  return `Inbox batch: ${b.processed} examined, ${b.labeled} confirmed, ${b.noChange} no change, ${b.review} Review, ${b.unconfirmed} unconfirmed (${b.status})`;
 }

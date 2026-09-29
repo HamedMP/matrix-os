@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod/v4";
-import { JevInboxGmailIdSchema } from "@matrix-os/contracts";
+import { JevInboxGmailIdSchema, EMAIL_TRIAGE_LABELS } from "@matrix-os/contracts";
 import type { HermesJevScope } from "../chat/hermes-integration-capability.js";
 import { boundedOperation } from "../bounded-operation.js";
 import { BatchJobId, type BatchDocument, type JevInboxBatchStore } from "./inbox-batch-store.js";
@@ -11,13 +11,14 @@ export const BatchInput = z.discriminatedUnion("operation", [
   z.strictObject({ operation: z.literal("batch_status"), jobId: BatchJobId.optional() }),
 ]);
 const Page = z.object({ threads: z.array(z.object({ id: JevInboxGmailIdSchema })).max(30).optional(), nextPageToken: z.string().min(1).max(4096).optional() });
-export type BatchPresentation = {
+export type BatchProgress = {
   kind: "batch";
   jobId: string;
   revision: number;
   status: BatchDocument["status"];
   processed: number;
   labeled: number;
+  noChange: number;
   review: number;
   preview: number;
   unconfirmed: number;
@@ -27,9 +28,12 @@ export type BatchPresentation = {
   maxThreads: number;
   last: BatchDocument["last"];
 };
-function present(d: BatchDocument): BatchPresentation {
+export type BatchPresentation = BatchProgress | {
+  kind: "batch_absent";
+};
+function present(d: BatchDocument): BatchProgress {
   return { kind: "batch", jobId: d.jobId, revision: d.revision, status: d.status, processed: d.items.length,
-    labeled: d.items.filter(x => x.status === "labeled").length, review: d.items.filter(x => x.status === "review").length,
+    labeled: d.items.filter(x => x.status === "labeled").length, noChange: d.items.filter(x => x.status === "no_op").length, review: d.items.filter(x => x.status === "review").length,
     preview: d.items.filter(x => x.status === "proposal").length, unconfirmed: d.items.filter(x => x.status === "unconfirmed").length,
     messagesLabeled: d.items.filter(x => x.status === "labeled").reduce((n, x) => n + x.messages, 0), remainingQueued: d.queue.length,
     hasMore: !d.listed || d.pageToken !== null, maxThreads: d.maxThreads, last: d.last };
@@ -47,7 +51,7 @@ export function createJevInboxBatch(options: {
     owner: string;
     scope: HermesJevScope;
     controller: AbortController;
-    promise: Promise<BatchPresentation>;
+    promise: Promise<BatchProgress>;
   }>(); // max 128; deleted in finally/close
   const presentations = new Map<string, {
     value: BatchPresentation;
@@ -55,14 +59,18 @@ export function createJevInboxBatch(options: {
     binding: string;
   }>(); // max 128; TTL + oldest eviction
   const key = (owner: string, scope: HermesJevScope) => JSON.stringify([owner, scope.runId]);
-  function remember(owner: string, scope: HermesJevScope, d: BatchDocument) {
+  function cache(owner: string, scope: HermesJevScope, value: BatchPresentation) {
     for (const [k, v] of presentations)
       if (v.expiresAt <= now())
         presentations.delete(k);
     if (presentations.size >= 128)
       presentations.delete(presentations.keys().next().value!);
-    const value = present(d);
     presentations.set(key(owner, scope), { value, expiresAt: now() + 35 * 60000, binding: stamp(scope) });
+    return value;
+  }
+  function remember(owner: string, scope: HermesJevScope, d: BatchDocument) {
+    const value = present(d);
+    cache(owner, scope, value);
     return value;
   }
   async function load(owner: string, scope: HermesJevScope, jobId?: string) {
@@ -85,7 +93,8 @@ export function createJevInboxBatch(options: {
       for (const record of active.values())
         if (record.owner === owner && record.scope.runId === scope.runId)
           record.controller.abort();
-      const jobId = presentations.get(key(owner, scope))?.value.jobId;
+      const remembered = presentations.get(key(owner, scope))?.value;
+      const jobId = remembered?.kind === "batch" ? remembered.jobId : undefined;
       if (!jobId)
         return;
       const d = await options.store.get(owner, scope.agentId, jobId);
@@ -111,6 +120,8 @@ export function createJevInboxBatch(options: {
           createdAt, expiresAt: createdAt + 7 * 86400000, queue: [], pageToken: null, listed: false, items: [], pages: [], pending: null, last: null });
         return remember(owner, scope, d);
       }
+      if (input.operation === "batch_status" && !input.jobId && !await options.store.get(owner, scope.agentId))
+        return cache(owner, scope, { kind: "batch_absent" });
       d = await load(owner, scope, input.jobId);
       if (input.operation === "batch_status")
         return remember(owner, scope, d);
@@ -183,9 +194,9 @@ export function createJevInboxBatch(options: {
           await alive();
           const rawResult = await options.process(threadId, signal, alive, owner, scope);
           await alive();
-          const result = z.object({ kind: z.enum(["labeled", "review", "proposal", "labeling_unconfirmed"]), messageCount: z.number().int().min(0).max(4).optional(), labelingSkipped: z.enum(["preview_only", "review_required"]).optional() }).parse(rawResult);
-          const status = result.kind === "labeling_unconfirmed" ? "unconfirmed" : result.labelingSkipped === "review_required" ? "review" : result.kind;
-          const items: BatchDocument["items"] = [...d.items, { id: threadId, status, messages: result.messageCount ?? 0 }];
+          const result = z.object({ kind: z.enum(["labeled", "review", "proposal", "labeling_unconfirmed"]), messageCount: z.number().int().min(0).max(4).optional(), labels: z.array(z.enum(Object.values(EMAIL_TRIAGE_LABELS))).max(8).optional(), labelingSkipped: z.enum(["preview_only", "review_required"]).optional() }).parse(rawResult);
+          const status = result.kind === "labeling_unconfirmed" ? "unconfirmed" : result.labelingSkipped === "review_required" ? "review" : result.kind === "labeled" && result.labels?.length === 0 ? "no_op" : result.kind;
+          const items: BatchDocument["items"] = [...d.items, { id: threadId, status, messages: result.kind === "labeled" && result.labels?.length === 0 ? 0 : result.messageCount ?? 0 }];
           const queue = d.queue.slice(1);
           const state = status === "unconfirmed" ? "paused" : !queue.length && !d.pageToken ? (items.some(x => x.status === "unconfirmed") ? "completed_with_unconfirmed" : "completed") :
             items.length >= d.maxThreads ? "limit_reached" : "ready";

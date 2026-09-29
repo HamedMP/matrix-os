@@ -8,7 +8,7 @@ import type { JevHermesCredentials } from "../chat/jev-hermes-credentials.js";
 import { boundedOperation } from "../bounded-operation.js";
 import { createJevInboxBroker, InboxPreviewError, assertJevInboxProfile } from "./inbox-broker.js";
 import type { JevService } from "./service.js";
-import { formatJevInboxPresentation } from "./inbox-presentation.js";
+import { formatJevInboxPresentation, formatJevInboxActivitySummary } from "./inbox-presentation.js";
 
 const TTL = 35 * 60_000;
 const MAX_RUNS = 128;
@@ -124,6 +124,10 @@ export function createJevInboxRuntime(options: {
         catch (error) { clearRun(owner, scope.runId); throw error; }
       },
       clearRun,
+      activitySummary(owner: string, scope: HermesJevScope): string | null {
+        try {admitted(owner,scope);return formatJevInboxActivitySummary(broker.presentation(owner,scope));}
+        catch(error: unknown) {if(!(error instanceof InboxPreviewError))console.warn("[jev-inbox] Progress unavailable",{errorName:error instanceof Error?error.name:"UnknownError"});return null;}
+      },
       summary(owner: string, scope: HermesJevScope): string | null {
         try { admitted(owner, scope); return formatJevInboxPresentation(broker.presentation(owner, scope)); }
         catch (error: unknown) {

@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { formatJevInboxPresentation } from "../../packages/gateway/src/jev/inbox-presentation.js";
+import { formatJevInboxPresentation, formatJevInboxActivitySummary } from "../../packages/gateway/src/jev/inbox-presentation.js";
 import { EMAIL_TRIAGE_LABELS } from "@matrix-os/contracts";
 const proposal = { kind: "proposal", verified: true, readonly: true, threadId: "thread_fixture", messageCount: 4,
   labels: [EMAIL_TRIAGE_LABELS.coldOutreach], archiveProposal: { removeLabelIds: ["INBOX"] },
@@ -50,4 +50,14 @@ it("shows confirmed, Review and unconfirmed batch progress without claiming unfi
  expect(text).toContain("Confirmed: 1 threads / 2 messages");expect(text).toContain("Review: 1");expect(text).toContain("Unconfirmed: 1");
  expect(text).toContain("Resume");expect(text).not.toContain("Whole Inbox complete");
  expect(formatJevInboxPresentation({...batch,labeled:999})).toBeNull();
+});
+it("presents no saved batch as an empty state rather than an unconfirmed mutation",()=>{
+ expect(formatJevInboxPresentation({kind:"batch_absent"})).toContain("No saved Inbox batch");
+ expect(formatJevInboxPresentation({kind:"batch_absent"})).not.toContain("unconfirmed");
+});
+
+it("shows compact verified batch counters during tool activity",()=>{
+ const value={kind:"batch",revision:1,jobId:"jev_batch_"+"a".repeat(32),status:"ready",processed:3,labeled:2,review:1,preview:0,unconfirmed:0,messagesLabeled:3,remainingQueued:4,hasMore:true,maxThreads:6,last:null};
+ expect(formatJevInboxActivitySummary(value)).toBe("Inbox batch: 3 examined, 2 confirmed, 0 no change, 1 Review, 0 unconfirmed (ready)");
+ expect(formatJevInboxActivitySummary({...value,processed:999})).toBeNull();
 });

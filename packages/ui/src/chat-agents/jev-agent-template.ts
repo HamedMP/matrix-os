@@ -26,6 +26,6 @@ export function jevAgentRecipe(accountLabel: string, labeling = false): ChatAgen
     skills: ["matrix-jev-email-triage", "matrix-integrations"],
     integrations: [{ service: "gmail", accountLabel }],
     jevInboxLabeling: labeling,
-    output: "Batch job progress: examined and confirmed thread/message counts, queued pages, Review, previews, unconfirmed outcomes, limits and resume instructions. Targeted thread triage is available. Preserve existing labels. No full email bodies, archiving, sending or deleting.",
+    output: "Batch job progress: examined and confirmed thread/message counts, queued pages, no-change outcomes, Review, previews, unconfirmed outcomes, limits and resume instructions. Targeted thread triage is available. Preserve existing labels. No full email bodies, archiving, sending or deleting.",
   };
 }

@@ -19,9 +19,9 @@ Use this skill when the user asks the built-in Jev Inbox bot to classify or labe
 
 Use only `jev_inbox_preview`, the isolated broker tool. Its historical name also covers owner-authorized labeling.
 
-For Inbox-wide requests, call `batch_start` (optional `maxThreads` for a requested limit), then repeatedly call `batch_next` with the latest returned `jobId` and `revision`. Each step processes the next server-discovered thread, follows Inbox pagination and saves progress. Continue automatically while status is `ready`; do not require a user prompt for each thread. Stop on `completed`, `completed_with_unconfirmed`, `limit_reached` or `paused`. Report counts and limits truthfully. Review outcomes are skipped without writes and do not stop other threads.
+For Inbox-wide requests, call `batch_start` (optional `maxThreads` for a requested limit), then repeatedly call `batch_next` with the latest returned `jobId` and `revision`. Each step processes the next server-discovered thread, follows Inbox pagination and saves progress. Continue automatically while status is `ready`; do not require a user prompt for each thread. Stop on `completed`, `completed_with_unconfirmed`, `limit_reached` or `paused`. Report counts and limits truthfully. `noChange` counts complete classifications with no eligible labels; never call them labeled. Review outcomes are skipped without writes and do not stop other threads.
 
-For a resume/continue request, call `batch_status` without a jobId to locate the saved job for this bot, then `batch_resume` with that jobId and continue `batch_next`. Completed and unconfirmed attempts are not replayed. Chat Stop pauses work; a subsequent authorized run resumes the checkpoint. Never restart a paused job as a new batch to bypass an unknown outcome.
+For a resume/continue request, call `batch_status` without a jobId to locate the saved job for this bot, then `batch_resume` with that jobId and continue `batch_next`. If status returns `batch_absent`, explain that there is no saved job; start a new batch only when requested. Completed and unconfirmed attempts are not replayed. Chat Stop pauses work; a subsequent authorized run resumes the checkpoint. Never restart a paused job as a new batch to bypass an unknown outcome.
 
 For a specific thread only:
 

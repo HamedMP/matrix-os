@@ -2,7 +2,7 @@ import { Kysely, sql, type ColumnType } from "kysely";
 import { z } from "zod/v4";
 import { JevInboxGmailIdSchema } from "@matrix-os/contracts";
 export const BatchJobId = z.string().regex(/^jev_batch_[a-f0-9]{32}$/);
-const Item = z.object({ id: JevInboxGmailIdSchema, status: z.enum(["labeled", "review", "proposal", "unconfirmed"]), messages: z.number().int().min(0).max(4) });
+const Item = z.object({ id: JevInboxGmailIdSchema, status: z.enum(["labeled", "no_op", "review", "proposal", "unconfirmed"]), messages: z.number().int().min(0).max(4) });
 export const BatchDocumentSchema = z.object({ jobId: BatchJobId, ownerId: z.string().min(1).max(256), agentId: z.string().min(1).max(160),
   binding: z.string().regex(/^[a-f0-9]{64}$/), revision: z.number().int().min(1), status: z.enum(["ready", "running", "paused", "completed", "completed_with_unconfirmed", "limit_reached"]),
   maxThreads: z.number().int().min(1).max(10000), createdAt: z.number().int(), expiresAt: z.number().int(),
