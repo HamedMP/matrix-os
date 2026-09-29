@@ -3,7 +3,7 @@ import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod/v4";
 import { ClerkActorIdSchema, ClerkOrganizationIdSchema } from "./roles.js";
-import { OrganizationAdminRepository, OrganizationCreateLimitError, OrganizationInvitationLimitError } from "./admin-repository.js";
+import { OrganizationAdminRepository, OrganizationCreateLimitError, OrganizationInvitationConflictError, OrganizationInvitationLimitError } from "./admin-repository.js";
 import type { ClerkOrganizationAdmin } from "./clerk-admin-client.js";
 import type { OrganizationMembershipProjection } from "./projection.js";
 import type { PlatformOrganizationRepository } from "./repository.js";
@@ -149,13 +149,17 @@ export function createOrganizationAdminRoutes(options: {
     try {
       const addressDigest = options.repository.invitationDigest(body.emailAddress, options.platformSecret!);
       const { record, claimed, reclaim } = await options.repository.beginInvitation({ ...authority, addressDigest, clientRequestId: body.clientRequestId, role: body.role });
+      if (record.role !== body.role) throw new OrganizationInvitationConflictError();
       if (record.invitationId) return c.json({ invitationId: record.invitationId, status: "pending" }, 201);
       if (!claimed) {
         // Another request owns the external call. Bound the wait and let the caller retry.
         for (let attempt = 0; attempt < 48; attempt++) {
           await new Promise((resolve) => setTimeout(resolve, 250));
           const settled = await options.repository.getInvitation(authority.organizationId, addressDigest);
-          if (settled?.invitationId) return c.json({ invitationId: settled.invitationId, status: "pending" }, 201);
+          if (settled?.invitationId) {
+            if (settled.role !== body.role) throw new OrganizationInvitationConflictError();
+            return c.json({ invitationId: settled.invitationId, status: "pending" }, 201);
+          }
         }
         c.header("Retry-After", String(Math.max(1, Math.ceil((record.leaseUntil.getTime() - now().getTime()) / 1000))));
         return c.json({ error: "Organizations unavailable" }, 503);
@@ -166,7 +170,11 @@ export function createOrganizationAdminRoutes(options: {
         for (let offset = 0; offset < 500; offset += 50) {
           const page = await options.clerk!.listInvitations({ organizationId: authority.organizationId, limit: 50, offset });
           const match = page.invitations.find((entry) => entry.status === "pending" && entry.emailAddress.trim().toLowerCase() === body.emailAddress);
-          if (match) { invitation = { invitationId: match.invitationId, expiresAt: match.expiresAt }; break; }
+          if (match) {
+            if (match.role !== record.role) throw new OrganizationInvitationConflictError();
+            invitation = { invitationId: match.invitationId, expiresAt: match.expiresAt };
+            break;
+          }
           if (offset + 50 >= page.totalCount) break;
           if (offset === 450) throw new Error("Invitation adoption scan exceeded limit");
         }
@@ -174,13 +182,14 @@ export function createOrganizationAdminRoutes(options: {
       invitation ??= await options.clerk!.createInvitation({
         organizationId: authority.organizationId, actorId: authority.actorId,
         emailAddress: body.emailAddress, role: record.role,
-        requestId: record.clientRequestId,
+        requestId: record.attemptRequestId,
         redirectUrl: `${options.appOrigin}/shared/organization-invitation`,
       });
       const completed = await options.repository.completeInvitation(record, invitation.invitationId, invitation.expiresAt);
       c.header("Cache-Control", "private, no-store");
       return c.json({ invitationId: completed.invitationId, status: "pending" }, 201);
     } catch (error: unknown) {
+      if (error instanceof OrganizationInvitationConflictError) return c.json({ error: "Conflicting invitation" }, 409);
       if (error instanceof OrganizationInvitationLimitError || (error instanceof Error && error.name === "OrganizationInvitationLimitError")) {
         c.header("Retry-After", String((error as OrganizationInvitationLimitError).retryAfterSeconds));
         return c.json({ error: "Too many requests" }, 429);

@@ -124,6 +124,7 @@ export interface OrganizationInvitationRecordsTable {
   organization_id: string;
   address_digest: string;
   client_request_id: string;
+  attempt_request_id: string;
   role: "org:admin" | "org:member";
   invitation_id: string | null;
   inviter_id: string;
@@ -149,6 +150,7 @@ async function createOrganizationTables(db: Transaction<OrganizationPlatformData
       organization_id TEXT NOT NULL CHECK (organization_id ~ '^org_[A-Za-z0-9]{1,124}$'),
       address_digest CHAR(64) NOT NULL,
       client_request_id UUID NOT NULL,
+      attempt_request_id UUID NOT NULL,
       role TEXT NOT NULL CHECK (role IN ('org:admin', 'org:member')),
       invitation_id TEXT CHECK (invitation_id IS NULL OR char_length(invitation_id) BETWEEN 1 AND 128),
       inviter_id TEXT NOT NULL CHECK (char_length(inviter_id) BETWEEN 1 AND 128),
@@ -159,6 +161,11 @@ async function createOrganizationTables(db: Transaction<OrganizationPlatformData
       UNIQUE (organization_id, client_request_id)
     )
   `.execute(db);
+  // Preview databases may already have the invitation table from an earlier
+  // branch bundle. Preserve its rows and fence old webhooks with their marker.
+  await sql`ALTER TABLE organization_invitation_records ADD COLUMN IF NOT EXISTS attempt_request_id UUID`.execute(db);
+  await sql`UPDATE organization_invitation_records SET attempt_request_id = client_request_id WHERE attempt_request_id IS NULL`.execute(db);
+  await sql`ALTER TABLE organization_invitation_records ALTER COLUMN attempt_request_id SET NOT NULL`.execute(db);
   await sql`CREATE INDEX IF NOT EXISTS idx_organization_invitation_records_expiry ON organization_invitation_records(expires_at)`.execute(db);
   await sql`
     CREATE TABLE IF NOT EXISTS organization_admin_requests (

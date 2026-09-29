@@ -1,5 +1,5 @@
 import { sql, type Kysely, type Selectable, type Transaction } from "kysely";
-import { createHmac, hkdfSync } from "node:crypto";
+import { createHmac, hkdfSync, randomUUID } from "node:crypto";
 import type { OrganizationAdminRequestsTable, OrganizationAdminRequestState, OrganizationInvitationRecordsTable, OrganizationPlatformDatabase } from "./database.js";
 
 const CREATE_LIMIT = 3;
@@ -14,10 +14,15 @@ export class OrganizationInvitationLimitError extends Error {
   constructor(readonly retryAfterSeconds: number) { super("Organization invitation limit reached"); }
 }
 
+export class OrganizationInvitationConflictError extends Error {
+  constructor() { super("Invitation request conflicts with a pending role or address"); }
+}
+
 export interface OrganizationInvitationRecord {
   organizationId: string;
   addressDigest: string;
   clientRequestId: string;
+  attemptRequestId: string;
   role: "org:admin" | "org:member";
   invitationId: string | null;
   inviterId: string;
@@ -64,10 +69,10 @@ export class OrganizationAdminRepository {
       // A reused request ID for another address is a conflict, never an invitation to the new address.
       const reused = await trx.selectFrom("organization_invitation_records").selectAll()
         .where("organization_id", "=", input.organizationId).where("client_request_id", "=", input.clientRequestId).executeTakeFirst();
-      if (reused && reused.address_digest !== input.addressDigest) throw new Error("Conflicting invitation request");
+      if (reused && reused.address_digest !== input.addressDigest) throw new OrganizationInvitationConflictError();
       const inserted = await trx.insertInto("organization_invitation_records").values({
         organization_id: input.organizationId, address_digest: input.addressDigest,
-        client_request_id: input.clientRequestId, role: input.role, invitation_id: null,
+        client_request_id: input.clientRequestId, attempt_request_id: randomUUID(), role: input.role, invitation_id: null,
         inviter_id: input.actorId, expires_at: expiresAt, lease_until: leaseUntil, created_at: now,
       }).onConflict((conflict) => conflict.columns(["organization_id", "address_digest"]).doNothing())
         .returningAll().executeTakeFirst();
@@ -79,11 +84,12 @@ export class OrganizationAdminRepository {
       const existing = await trx.selectFrom("organization_invitation_records").selectAll()
         .where("organization_id", "=", input.organizationId).where("address_digest", "=", input.addressDigest)
         .forUpdate().executeTakeFirstOrThrow();
+      if (existing.role !== input.role) throw new OrganizationInvitationConflictError();
       if (existing.invitation_id || new Date(existing.lease_until).getTime() > now.getTime()) {
         return { record: mapInvitation(existing), claimed: false, reclaim: false };
       }
       const claimed = await trx.updateTable("organization_invitation_records")
-        .set({ lease_until: leaseUntil, inviter_id: input.actorId }).where("organization_id", "=", input.organizationId)
+        .set({ lease_until: leaseUntil, inviter_id: input.actorId, attempt_request_id: randomUUID() }).where("organization_id", "=", input.organizationId)
         .where("address_digest", "=", input.addressDigest).where("invitation_id", "is", null)
         .where("lease_until", "<=", now).returningAll().executeTakeFirst();
       return { record: mapInvitation(claimed ?? existing), claimed: Boolean(claimed), reclaim: Boolean(claimed) };
@@ -110,7 +116,7 @@ export class OrganizationAdminRepository {
     const updated = await this.db.updateTable("organization_invitation_records")
       .set({ invitation_id: invitationId, expires_at: expiresAt })
       .where("organization_id", "=", record.organizationId).where("address_digest", "=", record.addressDigest)
-      .where("client_request_id", "=", record.clientRequestId).where("invitation_id", "is", null)
+      .where("attempt_request_id", "=", record.attemptRequestId).where("invitation_id", "is", null)
       .where("lease_until", "=", record.leaseUntil)
       .returningAll().executeTakeFirst();
     if (!updated) throw new Error("Invitation claim lost");
@@ -126,7 +132,7 @@ export class OrganizationAdminRepository {
     await this.db.deleteFrom("organization_invitation_records")
       .where("organization_id", "=", organizationId)
       .where((eb) => requestId
-        ? eb.or([eb("invitation_id", "=", invitationId), eb.and([eb("invitation_id", "is", null), eb("client_request_id", "=", requestId)])])
+        ? eb.or([eb("invitation_id", "=", invitationId), eb.and([eb("invitation_id", "is", null), eb("attempt_request_id", "=", requestId)])])
         : eb("invitation_id", "=", invitationId))
       .execute();
   }
@@ -255,7 +261,7 @@ export class OrganizationAdminRepository {
 function mapInvitation(row: Selectable<OrganizationInvitationRecordsTable>): OrganizationInvitationRecord {
   return {
     organizationId: row.organization_id, addressDigest: row.address_digest,
-    clientRequestId: row.client_request_id, role: row.role, invitationId: row.invitation_id,
+    clientRequestId: row.client_request_id, attemptRequestId: row.attempt_request_id, role: row.role, invitationId: row.invitation_id,
     inviterId: row.inviter_id, expiresAt: new Date(row.expires_at), leaseUntil: new Date(row.lease_until),
   };
 }

@@ -79,7 +79,8 @@ export class ClerkOrganizationAdminClient implements ClerkOrganizationAdmin {
       body: JSON.stringify({ email_address: input.emailAddress, inviter_user_id: actorId, role: input.role, redirect_url: input.redirectUrl,
         private_metadata: { matrixInviteRequestId: requestId } }),
     }));
-    if (invite.organization_id !== organizationId || invite.email_address.toLowerCase() !== input.emailAddress.toLowerCase()) {
+    if (invite.organization_id !== organizationId || invite.email_address.toLowerCase() !== input.emailAddress.toLowerCase()
+      || invite.role !== input.role) {
       throw new Error("Clerk invitation identity mismatch");
     }
     return { invitationId: invite.id, expiresAt: new Date(invite.expires_at) };

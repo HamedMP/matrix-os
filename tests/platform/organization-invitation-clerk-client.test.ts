@@ -37,4 +37,10 @@ describe("Clerk organization invitation client", () => {
     await expect(clerk.createInvitation({ organizationId, actorId, emailAddress: invitation.email_address,
       role: "org:member", redirectUrl: "https://preview.example.com/shared/organization-invitation", requestId })).rejects.toThrow();
   });
+
+  it("rejects an upstream invitation created with a different role", async () => {
+    const clerk = new ClerkOrganizationAdminClient({ secretKey: "test-secret", fetchImpl: vi.fn(async () => Response.json({ ...invitation, role: "org:admin" })) as typeof fetch });
+    await expect(clerk.createInvitation({ organizationId, actorId, emailAddress: invitation.email_address,
+      role: "org:member", redirectUrl: "https://preview.example.com/shared/organization-invitation", requestId })).rejects.toThrow();
+  });
 });

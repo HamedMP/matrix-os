@@ -102,12 +102,11 @@ describe("platform organization routes (T018)", () => {
     expect(await adminRepository.getInvitation(org, addressDigest)).toBeNull();
 
     const pendingDigest = adminRepository.invitationDigest("pending@example.com", "test-secret");
-    const pendingId = "a77b8e1c-6112-4250-93d8-650d6fca8175";
-    await adminRepository.beginInvitation({ organizationId: org, actorId: admin, addressDigest: pendingDigest,
-      clientRequestId: pendingId, role: "org:member" });
+    const pending = await adminRepository.beginInvitation({ organizationId: org, actorId: admin, addressDigest: pendingDigest,
+      clientRequestId: "a77b8e1c-6112-4250-93d8-650d6fca8175", role: "org:member" });
     const early = JSON.stringify({ type: "organizationInvitation.revoked", data: {
       id: "orginv_early0000000000000000", organization_id: org,
-      private_metadata: { matrixInviteRequestId: pendingId },
+      private_metadata: { matrixInviteRequestId: pending.record.attemptRequestId },
     }, timestamp: clock.getTime() });
     expect((await app.request("/webhooks/clerk/organizations", { method: "POST", headers: signed("msg_invite_early", early, clock), body: early })).status).toBe(200);
     expect(await adminRepository.getInvitation(org, pendingDigest)).toBeNull();

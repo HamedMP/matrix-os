@@ -1,6 +1,7 @@
 import type { Kysely } from "kysely";
 import type { Agent } from "undici";
 import type { ClerkAuth } from "../clerk-auth.js";
+import { appOrigin } from "../origins.js";
 import {
   getPlatformUserByClerkId,
   getUserMachine,
@@ -81,7 +82,7 @@ export async function bootstrapPlatformCollaboration(
   const organizations = await createPlatformOrganizations({
     db: options.db.kysely as unknown as Kysely<OrganizationPlatformDatabase>,
     platformSecret: options.platformSecret,
-    appOrigin: relayOrigin,
+    appOrigin: appOrigin(options.env),
     ...(options.env.CLERK_SECRET_KEY ? { clerkSecretKey: options.env.CLERK_SECRET_KEY } : {}),
     ...(options.env.CLERK_ORGANIZATION_WEBHOOK_SIGNING_SECRET
       ? { webhookSigningSecret: options.env.CLERK_ORGANIZATION_WEBHOOK_SIGNING_SECRET }

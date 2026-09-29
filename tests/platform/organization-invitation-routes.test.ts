@@ -5,6 +5,7 @@ import type { ClerkOrganizationAdmin } from "../../packages/platform/src/organiz
 const organizationId = "org_invites000000000000000";
 const actorId = "user_admin000000000000000";
 const invitationId = "orginv_00000000000000000000";
+const attemptRequestId = "a77b8e1c-6112-4250-93d8-650d6fca8179";
 const url = `/api/organizations/${organizationId}/invitations`;
 const body = { emailAddress: "member@example.com", role: "org:member", clientRequestId: "a77b8e1c-6112-4250-93d8-650d6fca8174" };
 
@@ -12,7 +13,7 @@ function fixture() {
   let actor: string | null = actorId;
   let admin = true;
   let verified = true;
-  const record = { organizationId, addressDigest: "digest", invitationId: null as string | null, inviterId: actorId, expiresAt: new Date("2026-10-01"), role: "org:member" as const };
+  const record = { organizationId, addressDigest: "digest", invitationId: null as string | null, inviterId: actorId, expiresAt: new Date("2026-10-01"), role: "org:member" as const, attemptRequestId };
   const repository = {
     invitationDigest: vi.fn(() => "digest"),
     beginInvitation: vi.fn(async () => ({ record, claimed: true })),
@@ -72,6 +73,7 @@ describe("organization invitation routes", () => {
     expect(await result.json()).toEqual({ invitationId, status: "pending" });
     expect(f.clerk.createInvitation).toHaveBeenCalledWith(expect.objectContaining({
       organizationId, actorId, role: "org:member", redirectUrl: "https://preview.example.com/shared/organization-invitation",
+      requestId: attemptRequestId,
     }));
     expect((await f.app.request(url)).status).toBe(200);
     expect(f.clerk.listInvitations).toHaveBeenCalledWith({ organizationId, limit: 50, offset: 0 });
@@ -86,6 +88,22 @@ describe("organization invitation routes", () => {
     expect(response.status).toBe(201);
     expect(await response.json()).toEqual({ invitationId, status: "pending" });
     expect(f.clerk.listInvitations).toHaveBeenCalledWith({ organizationId, limit: 50, offset: 0 });
+    expect(f.clerk.createInvitation).not.toHaveBeenCalled();
+  });
+
+  it("refuses an existing invitation whose role differs from the requested role", async () => {
+    const f = fixture();
+    f.repository.beginInvitation.mockResolvedValueOnce({ record: { ...await f.repository.getInvitation(), role: "org:admin" }, claimed: false } as never);
+    const response = await f.post(body);
+    expect(response.status).toBe(409);
+    expect(f.clerk.createInvitation).not.toHaveBeenCalled();
+  });
+
+  it("does not adopt a pending upstream invitation with a different role", async () => {
+    const f = fixture();
+    f.repository.beginInvitation.mockResolvedValueOnce({ record: { ...await f.repository.getInvitation(), invitationId: null }, claimed: true, reclaim: true } as never);
+    f.clerk.listInvitations.mockResolvedValueOnce({ invitations: [{ invitationId, emailAddress: body.emailAddress, role: "org:admin", status: "pending" }], totalCount: 1 } as never);
+    expect((await f.post(body)).status).toBe(409);
     expect(f.clerk.createInvitation).not.toHaveBeenCalled();
   });
 
