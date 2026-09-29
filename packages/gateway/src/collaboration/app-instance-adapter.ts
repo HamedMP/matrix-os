@@ -11,6 +11,7 @@ import type { Kysely, Transaction } from "kysely";
 import { z } from "zod/v4";
 import { normalizeAppStorageSlug } from "../app-db-types.js";
 import { ScopedAppActionSchema, type ScopedAppAction } from "./scoped-app-action.js";
+import { scopedAppNamespace } from "./scoped-app-namespace.js";
 import { CollaborationAuthorizationError, type AuthorizedCollaborationContext, type CollaborationAuthority } from "./authority.js";
 import type { OwnerCollaborationDatabase } from "./database.js";
 import {
@@ -53,10 +54,6 @@ export interface AppInstanceAdapter {
   describe(context: AuthorizedCollaborationContext, appId: string): Promise<AppInstanceDescription>;
   query(context: AuthorizedCollaborationContext, appId: string, action: unknown): Promise<unknown>;
   mutate(context: AuthorizedCollaborationContext, appId: string, envelope: unknown): Promise<{ result: unknown; revision: number; replayed: boolean }>;
-}
-
-function standaloneNamespace(scopeId: string, appId: string): string {
-  return `s${createHash("sha256").update(scopeId).update("\0").update(appId).digest("hex").slice(0, 32)}`;
 }
 
 function jsonValue(value: unknown): unknown {
@@ -206,7 +203,7 @@ export function createAppInstanceAdapter(options: {
       const { record, bridgeAppId } = await resolveApp(root.projectId, appId.data);
       if (record.collaborationMode !== "scoped" || root.incarnation !== record.incarnation) throw new ProjectAppAdapterError("app_unavailable");
       const parsed = parseAction(action, [bridgeAppId, normalizeAppStorageSlug(appId.data)], READ_ACTIONS);
-      const namespace = standaloneNamespace(current.scopeId, appId.data);
+      const namespace = scopedAppNamespace(current.scopeId, appId.data, "standalone");
       return await options.db.transaction().execute(async (trx) => {
         await requireLiveScope(trx, current, false);
         if (!await options.catalog.get(root.id, trx)) throw new ProjectAppAdapterError("not_found");
@@ -235,7 +232,7 @@ export function createAppInstanceAdapter(options: {
       const { record, bridgeAppId } = await resolveApp(root.projectId, appId.data);
       if (record.collaborationMode !== "scoped" || root.incarnation !== record.incarnation) throw new ProjectAppAdapterError("app_unavailable");
       const parsed = parseAction(envelope.data.action, [bridgeAppId, normalizeAppStorageSlug(appId.data)], MUTATION_ACTIONS);
-      const namespace = standaloneNamespace(current.scopeId, appId.data);
+      const namespace = scopedAppNamespace(current.scopeId, appId.data, "standalone");
       const operationKind = `resource.app.${parsed.action}`;
       const payloadHash = createHash("sha256").update(JSON.stringify({ appId: appId.data, ...envelope.data })).digest("hex");
       const committed = await options.db.transaction().execute(async (trx) => {
