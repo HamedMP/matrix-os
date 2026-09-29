@@ -23,6 +23,8 @@ The Gmail transport permits only label inventory, message label readback, fixed-
 
 Successful results require independent Gmail message readback showing every expected label ID on each targeted message. The broker owns the user-visible receipt and persisted Chat tool output. Do not trust Hermes's success claim. Unknown/partial results instruct users to check Gmail. Unverified Review results produce no writes. Empty verified label sets are a successful no-op.
 
+Verified scores that require Review also produce no writes, with an explicit `review_required` reason. A read-only result is not proof that the saved grant is disabled; `preview_only` is reported separately. The bot must not ask users to enable an already-enabled permission.
+
 Authorization is rechecked before dispatch and between broker stages. Revocation/cancellation prevents subsequent dispatches but cannot recall a Gmail mutation already in flight. The same distributed race applies if mail arrives after the last snapshot check: writes stay limited to the server's originally classified message IDs. These are additive operations; no thread-wide mutation is used.
 
 Existing integration registration exceeds the preferred file size. New behavior is extracted into `jev-label-call.ts`, `jev-bound-labels.ts` and `pipedream-bounded-labels.ts`; the existing registry receives one composition line only. A later registry cleanup should extract route assembly without combining provider behavior into that large file.

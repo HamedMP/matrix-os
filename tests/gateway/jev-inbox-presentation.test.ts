@@ -16,6 +16,14 @@ it("formats bounded server proposal with explicit snapshot and no applied-email 
   expect(text).toContain(EMAIL_TRIAGE_LABELS.coldOutreach); expect(text).toContain("Remove INBOX only");
   expect(text).toContain("No mailbox changes have been made."); expect(text).toContain(proposal.observedAt);
 });
+it("explains a review skip without incorrectly claiming the owner's labeling permission is disabled", () => {
+  const text = formatJevInboxPresentation({ ...proposal, labels: [EMAIL_TRIAGE_LABELS.newsletter, EMAIL_TRIAGE_LABELS.review],
+    archiveProposal: null, labelingSkipped: "review_required" });
+  expect(text).toContain("Review required");
+  expect(text).toContain("Labeling permission is enabled");
+  expect(text).toContain("No mailbox changes");
+  expect(text).not.toContain("permission is disabled");
+});
 it("retains a broker-valid maximum-length thread identifier", () => {
   expect(formatJevInboxPresentation({ ...proposal, threadId: "t".repeat(160) })).toContain("t".repeat(160));
 });

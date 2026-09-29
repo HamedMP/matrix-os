@@ -1,7 +1,7 @@
 ---
 name: matrix-jev-email-triage
 description: Classify a bound Gmail thread with Matrix-funded Jev and add verified labels under the bot owner permission.
-version: 1.1.0
+version: 1.1.1
 author: Matrix OS
 license: MIT
 platforms: [linux, macos]
@@ -23,6 +23,8 @@ Use only `jev_inbox_preview`, the isolated broker tool. Its historical name also
 2. Select one returned thread using operation `select`, the discovery `receipt` and its `threadId`. The server reads only the latest four full messages and returns an evidence receipt, or an unverified Review result.
 3. Call operation `evaluate` with that evidence `receipt`. The server constructs the paid Jev state, applies the fixed multi-label policy and rechecks live evidence. With the saved labeling permission enabled, it automatically creates/reuses eligible Jev labels, adds them only to the classified messages and verifies Gmail readback. Otherwise it returns proposals without writing.
 4. Report the server result exactly: confirmed labels, a preview proposal, Review, no eligible labels, or unconfirmed labeling. Do not claim success from your own inference or the mere absence of a tool error.
+
+`readonly: true` describes this result, not the saved permission. If `labelingSkipped` is `review_required`, labeling permission is enabled but the category policy needs review; say that no labels were added. Only `preview_only` means this run had no labeling grant. Do not ask the owner to re-enable a grant that is already enabled.
 
 Do not call generic Gmail, inventory, integration, shell, filesystem or `jev_evaluate` tools. Do not choose another account, provider, model or funding source. If permission is disabled and labeling is requested, explain how to enable it in the bot's Recipe settings; do not try to supply confirmation fields to the tool. The server funds Jev through Matrix AI independently of the configured Hermes primary account. Never request a personal Jev key.
 

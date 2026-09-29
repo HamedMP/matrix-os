@@ -58,6 +58,20 @@ it("never labels an old preview bot even when Jev confidently proposes categorie
   expect(await f.execute({ operation: "evaluate", receipt: evidence.receipt })).toMatchObject({ kind: "proposal", readonly: true });
   expect(f.label).not.toHaveBeenCalled();
 });
+it("reports review-required instead of disabled permission when an enabled bot's scores need review", async () => {
+  const f = fixture("valid", true); const evidence = await selected(f);
+  if (evidence.kind !== "evidence") throw new Error("Missing evidence");
+  const original = f.evaluate.getMockImplementation()!;
+  f.evaluate.mockImplementation(async (...args) => {
+    const result = await original(...args);
+    return { ...result, answers: result.answers.map(a => ({ ...a, probability: a.id === "newsletter" ? 0.96 : a.id === "urgent" ? 0.5 : 0.1 })) };
+  });
+  expect(await f.execute({ operation: "evaluate", receipt: evidence.receipt })).toMatchObject({
+    kind: "proposal", readonly: true, labelingSkipped: "review_required",
+    labels: [EMAIL_TRIAGE_LABELS.newsletter, EMAIL_TRIAGE_LABELS.review],
+  });
+  expect(f.label).not.toHaveBeenCalled();
+});
 it("rechecks changed evidence after paid classification and performs no write", async () => {
   const f = fixture("valid", true); const evidence = await selected(f);
   if (evidence.kind !== "evidence") throw new Error("Missing evidence");

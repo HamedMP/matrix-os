@@ -31,7 +31,8 @@ type Evidence = ReturnType<typeof assembleInboxEvidence>;
 type LabelOutcome = { kind: "labeled" | "labeling_unconfirmed"; verified: true; readonly: false; threadId: string;
   messageCount: number; labels: string[]; observedAt: string; requestId: string };
 type Proposal = LabelOutcome | ReturnType<typeof review> | { kind: "proposal"; verified: true; readonly: true; threadId: string;
-  messageCount: number; labels: string[]; archiveProposal: { removeLabelIds: ["INBOX"] } | null; observedAt: string; requestId: string };
+  messageCount: number; labels: string[]; archiveProposal: { removeLabelIds: ["INBOX"] } | null; observedAt: string; requestId: string;
+  labelingSkipped?: "preview_only" | "review_required" };
 type RecordState = { fingerprint: string; expiresAt: number; discoveryReceipt: string;
   discovery?: { kind: "discovery"; receipt: string; threads: { id: string; snippet: string }[]; readonly: true };
   discovering?: Promise<NonNullable<RecordState["discovery"]>>;
@@ -181,8 +182,11 @@ export function createJevInboxBroker(options: {
         alive(ownerId, scope, current, signal);
         const scores = JevEmailTriageScoresSchema.parse(Object.fromEntries(result.answers.map((answer) => [answer.id, answer.probability])));
         const policy = evaluateEmailTriagePolicy({ scores, verified: true, ageDays: evidence.ageDays });
+        const labelingSkipped: "preview_only" | "review_required" = scope.account.labelingEnabled === true
+          && policy.labels.includes(EMAIL_TRIAGE_LABELS.review) ? "review_required" : "preview_only";
         const proposal = { kind: "proposal" as const, verified: true as const, readonly: true as const, threadId: selected.threadId,
-          messageCount: evidence.messageCount, labels: policy.labels, archiveProposal: policy.archive, observedAt, requestId: result.requestId };
+          messageCount: evidence.messageCount, labels: policy.labels, archiveProposal: policy.archive, observedAt, requestId: result.requestId,
+          labelingSkipped };
         current.presentation = proposal;
         if (scope.account.labelingEnabled === true && !policy.labels.includes(EMAIL_TRIAGE_LABELS.review)) {
           // Re-read content, not model claims, immediately before the authorized write.
