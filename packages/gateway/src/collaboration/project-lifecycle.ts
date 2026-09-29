@@ -2,6 +2,7 @@ import { CollaborationOperationSchema, type CollaborationOperation } from "@matr
 import { sql, type Kysely, type Transaction } from "kysely";
 import { z } from "zod/v4";
 import type { OwnerCollaborationDatabase } from "./database.js";
+import { removeScopedAppData } from "./scoped-app-namespace.js";
 import {
   appendMutationRecords,
   CollaborationRepositoryError,
@@ -428,6 +429,12 @@ export function createCollaborationProjectLifecycle(options: {
         deletedAt: completedAt,
         updatedAt: completedAt,
       });
+      const appBindings = await trx.selectFrom("collaboration_resource_bindings")
+        .select("resource_id")
+        .where("project_scope_id", "=", scope.id)
+        .where("resource_kind", "=", "app")
+        .execute();
+      await removeScopedAppData(trx, scope.id, appBindings.map((binding) => binding.resource_id), "project");
       const operation = completedOperation(journal, nextRevision, completedAt);
       await completeJournal(trx, journal, { ...journal, operation });
       await appendLifecycleRecords(trx, updatedScope, journal.sourceOwnerId, "scope.deleted", completedAt);

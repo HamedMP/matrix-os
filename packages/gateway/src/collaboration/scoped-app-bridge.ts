@@ -1,17 +1,14 @@
 /** Transactional bridge from a verified shared app instance to its owner Postgres schema. */
-import { createHash } from "node:crypto";
 import { sql, type RawBuilder } from "kysely";
 import type { BridgeQueryBody } from "../app-db-contracts.js";
 import { isSafeName } from "../app-db-types.js";
 import { ProjectAppAdapterError, type ProjectAppBridge } from "./project-app-adapter.js";
 import { ScopedAppActionSchema } from "./scoped-app-action.js";
+import { scopedAppNamespace } from "./scoped-app-namespace.js";
 
 type AppRecord = { storageSchema: string; tables: readonly string[] };
 type Filter = NonNullable<Extract<BridgeQueryBody, { action: "find" }>["filter"]>;
 
-function expectedNamespace(scopeId: string, appId: string, kind: "project" | "standalone"): string {
-  return `${kind === "project" ? "p" : "s"}${createHash("sha256").update(scopeId).update("\0").update(appId).digest("hex").slice(0, 32)}`;
-}
 function validIdentifier(value: string): string {
   if (!isSafeName(value)) throw new ProjectAppAdapterError("forbidden");
   return value;
@@ -73,8 +70,8 @@ export function createScopedAppBridge(options: {
   return {
     async execute(input) {
       if (!input.transaction) throw new ProjectAppAdapterError("unavailable");
-      if (input.namespace !== expectedNamespace(input.scopeId, input.appId, "project")
-        && input.namespace !== expectedNamespace(input.scopeId, input.appId, "standalone")) {
+      if (input.namespace !== scopedAppNamespace(input.scopeId, input.appId, "project")
+        && input.namespace !== scopedAppNamespace(input.scopeId, input.appId, "standalone")) {
         throw new ProjectAppAdapterError("forbidden");
       }
       const record = await options.resolveApp(input.appId);
