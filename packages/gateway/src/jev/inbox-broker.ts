@@ -1,4 +1,5 @@
 import { boundedOperation } from "../bounded-operation.js";
+import { BatchInput, type BatchPresentation } from "./inbox-batch.js";
 import { randomBytes } from "node:crypto";
 import { EMAIL_TRIAGE_LABELS, JevEmailTriageResultSchema, JevEmailTriageScoresSchema,
   evaluateEmailTriagePolicy } from "@matrix-os/contracts";
@@ -9,11 +10,12 @@ import { assembleInboxEvidence, GmailId, threadIdentity } from "./inbox-evidence
 import { JevLabelConfirmation, JevLabelInput } from "../integrations/jev-bound-labels.js";
 
 const Receipt = z.string().regex(/^[a-f0-9]{64}$/);
-export const InboxPreviewInput = z.discriminatedUnion("operation", [
+const SingleInboxInput = z.discriminatedUnion("operation", [
   z.strictObject({ operation: z.literal("discover") }),
   z.strictObject({ operation: z.literal("select"), receipt: Receipt, threadId: GmailId }),
   z.strictObject({ operation: z.literal("evaluate"), receipt: Receipt }),
 ]);
+export const InboxPreviewInput = z.union([SingleInboxInput, BatchInput]);
 const Discovery = z.object({ threads: z.array(z.object({ id: GmailId, snippet: z.string().max(4096).optional() })).max(30).optional(),
   nextPageToken: z.string().max(4096).optional() });
 const Profile = z.object({ emailAddress: z.email().max(320) });
@@ -50,6 +52,8 @@ export function createJevInboxBroker(options: {
   evaluate: JevService["evaluate"];
   label?: (ownerId: string, scope: HermesJevScope, input: z.infer<typeof JevLabelInput>, signal: AbortSignal | undefined,
     authorize: () => Promise<void>) => Promise<unknown>;
+  batch?: { execute(owner:string,scope:HermesJevScope,input:unknown,signal?:AbortSignal):Promise<BatchPresentation>;
+    presentation(owner:string,scope:HermesJevScope):BatchPresentation|null };
   now?: () => number;
 }) {
   const records = new Map<string, RecordState>();
@@ -70,7 +74,8 @@ export function createJevInboxBroker(options: {
     assertJevInboxProfile(value, scope);
   }
   return {
-    presentation(ownerId: string, scope: HermesJevScope): Proposal | null {
+    presentation(ownerId: string, scope: HermesJevScope): Proposal | BatchPresentation | null {
+      const batch = options.batch?.presentation(ownerId, scope); if (batch) return batch;
       sweep();
       const record = records.get(key(ownerId, scope.runId));
       return record?.fingerprint === fingerprint(scope) && record.presentation ? structuredClone(record.presentation) : null;
@@ -92,6 +97,10 @@ export function createJevInboxBroker(options: {
       await options.authorize(ownerId, scope);
       sweep();
       const input = parsed.data;
+      if (input.operation === "batch_start" || input.operation === "batch_next" || input.operation === "batch_resume" || input.operation === "batch_status") {
+        if (!options.batch) throw new InboxPreviewError("unavailable");
+        return options.batch.execute(ownerId, scope, input, signal);
+      }
       const runKey = key(ownerId, scope.runId);
       let record = records.get(runKey);
       if (record && record.fingerprint !== fingerprint(scope)) throw new InboxPreviewError("denied");

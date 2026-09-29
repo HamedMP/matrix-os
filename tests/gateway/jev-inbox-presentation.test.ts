@@ -43,3 +43,11 @@ it.each([
 ])("withholds malformed or untrusted summary %j", value => {
   expect(formatJevInboxPresentation(value)).toBeNull();
 });
+it("shows confirmed, Review and unconfirmed batch progress without claiming unfinished Inbox completion",()=>{
+ const batch={kind:"batch",revision:1,jobId:"jev_batch_"+"a".repeat(32),status:"paused",processed:3,labeled:1,review:1,preview:0,unconfirmed:1,
+  messagesLabeled:2,remainingQueued:4,hasMore:true,maxThreads:10000,last:{threadId:"thread_3",status:"unconfirmed"}};
+ const text=formatJevInboxPresentation(batch);
+ expect(text).toContain("Confirmed: 1 threads / 2 messages");expect(text).toContain("Review: 1");expect(text).toContain("Unconfirmed: 1");
+ expect(text).toContain("Resume");expect(text).not.toContain("Whole Inbox complete");
+ expect(formatJevInboxPresentation({...batch,labeled:999})).toBeNull();
+});
