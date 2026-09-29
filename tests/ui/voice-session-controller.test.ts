@@ -179,6 +179,13 @@ describe("VoiceSessionController", () => {
     expect(controller.getState().turnMode).toBe("push_to_talk");
     controller.receive(frame(1, { type: "session.state", state: "listening" }));
     controller.receive(frame(2, { type: "response.started", responseId: "vresp_1", runId: "run_1" }));
+    controller.receive(frame(3, {
+      type: "response.audio",
+      responseId: "vresp_1",
+      segmentId: "vseg_1",
+      startMs: 0,
+      data: Buffer.from("segment-1").toString("base64"),
+    }));
 
     controller.beginPushToTalk();
     expect(controller.getState().pushToTalkActive).toBe(true);
@@ -350,7 +357,8 @@ describe("VoiceSessionController", () => {
     }));
 
     // No acknowledgement yet: nothing has been heard, and invalid or
-    // foreign-response acknowledgements do not move the boundary.
+    // foreign-response acknowledgements do not move the boundary. A segment
+    // that was never buffered for this response cannot inflate it either.
     expect(controller.acknowledgePlayback({
       responseId: "vresp_other",
       segmentId: "vseg_1",
@@ -362,6 +370,12 @@ describe("VoiceSessionController", () => {
       segmentId: "vseg_1",
       deliveryRevision: 1,
       playedThroughMs: -1,
+    })).toBe(false);
+    expect(controller.acknowledgePlayback({
+      responseId: "vresp_1",
+      segmentId: "vseg_9",
+      deliveryRevision: 1,
+      playedThroughMs: 999_999,
     })).toBe(false);
     controller.stopSpeaking();
     expect(commands).toEqual([
@@ -382,6 +396,13 @@ describe("VoiceSessionController", () => {
       deliveryRevision: 1,
       playedThroughMs: 640,
     })).toBe(true);
+    // A replayed acknowledgement for the same segment cannot re-apply.
+    expect(controller.acknowledgePlayback({
+      responseId: "vresp_2",
+      segmentId: "vseg_3",
+      deliveryRevision: 2,
+      playedThroughMs: 999_999,
+    })).toBe(false);
     controller.stopSpeaking();
     expect(commands).toEqual([
       { type: "response.interrupt", responseId: "vresp_1", playedThroughMs: 0 },

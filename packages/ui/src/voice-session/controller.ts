@@ -328,6 +328,9 @@ export class VoiceSessionController {
       return false;
     }
     const ack = parsed.data;
+    // Only segments buffered for this response may advance the heard boundary:
+    // unknown or already-acknowledged segments cannot inflate it.
+    if (!active.pendingSegmentIds.has(ack.segmentId)) return false;
     this.command({ type: "playback.segment_played", ...ack });
     active.pendingSegmentIds.delete(ack.segmentId);
     active.playedThroughMs = Math.max(active.playedThroughMs, ack.playedThroughMs);

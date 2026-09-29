@@ -106,7 +106,11 @@ function VoiceFixture({ scenario }: { scenario: Scenario }) {
         </div>
         <div>
           <dt>Terminal state</dt>
-          <dd>{run.evidence.mediaTerminalState}</dd>
+          <dd>
+            {run.evidence.mediaDisplayCutMs === null
+              ? run.evidence.mediaTerminalState
+              : `${run.evidence.mediaTerminalState} (display cut at ${run.evidence.mediaDisplayCutMs} ms)`}
+          </dd>
         </div>
         <div>
           <dt>Frames</dt>
