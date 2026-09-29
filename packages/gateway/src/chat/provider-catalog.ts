@@ -131,8 +131,8 @@ function codingSupports(
     attachments: driverKind === "pi" || driverKind === "opencode"
       ? ["file", "structured_ref"]
       : ["file", "image", "structured_ref"],
-    tools: [],
-    approvals: isCodex,
+    tools: driverKind === "claude_code" ? ["integrations", "custom_mcp"] : [],
+    approvals: isCodex || driverKind === "claude_code",
     userInput: true,
     worktrees: "optional",
     resources: ["file", "folder", "project", "task", "app", "terminal_session"],

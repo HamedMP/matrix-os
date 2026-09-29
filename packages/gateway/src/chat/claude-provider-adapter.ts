@@ -330,12 +330,16 @@ export function createClaudeChatProviderAdapter(options: {
     }
     const credentialEnv = credentialLaunch.env;
     const runEnv = credentialEnv === undefined
-      ? capability ? definedEnvironment({ ...process.env, ...launch.env }) : launch.env
+      ? definedEnvironment({ ...process.env, ...launch.env })
       : definedEnvironment({ ...credentialEnv, ...launch.env });
+    // Host control credentials are never delegated, including launches where
+    // scoped capability issuance fails (for example shared Preview runtimes).
+    for (const name of ["MATRIX_AUTH_TOKEN", "UPGRADE_TOKEN", "MATRIX_CODE_PROXY_TOKEN", "AI_RELAY_CONTROL_TOKEN"]) {
+      delete runEnv[name];
+    }
     if (capability) {
       // The MCP child receives only this actor/run capability, never the VPS
       // machine bearer. The wrapper requires the scoped bearer for this launch.
-      delete runEnv.MATRIX_AUTH_TOKEN;
       runEnv.MATRIX_AGENT_INTEGRATIONS_TOKEN = capability.token;
     }
 
@@ -744,7 +748,7 @@ export function createClaudeChatProviderAdapter(options: {
       args: launch.args,
       cwd: launch.cwd,
       env: runEnv,
-      replaceEnv: credentialEnv !== undefined || capability !== null,
+      replaceEnv: true,
       signal: processSignal,
       timeoutMs: Math.min(timeoutMs, credentialLaunch.fundedRunTimeoutMs ?? timeoutMs),
       maxStdoutBytes: MAX_STREAM_BYTES,

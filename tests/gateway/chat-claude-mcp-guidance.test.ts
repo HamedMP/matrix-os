@@ -12,8 +12,8 @@ const context: ChatRunContext = {
 };
 
 it.each([
-  { mode: "default", permission: "supervised", ownerMatches: true, scope: "call" },
-  { mode: "review", permission: "full_access", ownerMatches: true, scope: "discovery" },
+  { mode: "default", permission: "supervised", ownerMatches: true, scope: "chat_call" },
+  { mode: "review", permission: "full_access", ownerMatches: true, scope: "chat_discovery" },
   { mode: "default", permission: "supervised", ownerMatches: false, scope: null },
 ])("projects successful $scope authority into the actual Claude stdin prompt", async ({ mode, permission, ownerMatches, scope }) => {
   const registry = createMatrixMcpCapabilityRegistry({ configuredOwnerId: ownerMatches ? "owner_fixture" : "other_owner" });
@@ -44,11 +44,14 @@ it.each([
     })) { /* Drain the native transport. */ }
     const prompt = frames.find(frame => frame.type === "user")!.message!.content;
     expect(prompt).not.toContain("call list_integration_inventory");
-    expect(prompt).toContain("Selected integration dependencies are unavailable through this route");
+    expect(prompt).toContain("Follow the actual run tool guidance for built-in integrations and Custom MCP availability.");
+    expect(prompt).not.toContain("Selected integration dependencies are unavailable through this route");
     if (scope) {
+      expect(prompt).toContain("Discover built-in integrations with list_integration_inventory and describe_service");
+      expect(prompt).toContain("Preserve the exact account label for calls");
       expect(prompt).toContain("list_custom_mcp_servers");
       expect(prompt).toContain("describe_custom_mcp_server");
-      if (scope === "call") expect(prompt).toContain("call_custom_mcp_tool");
+      if (scope === "chat_call") expect(prompt).toContain("call_custom_mcp_tool");
       else {
         expect(prompt).not.toContain("call_custom_mcp_tool");
         expect(prompt).toContain("discovery only");

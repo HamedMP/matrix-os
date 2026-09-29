@@ -10,7 +10,7 @@ type Respond = (value: unknown) => Promise<void>;
 interface Pending {
   nativeId: string; tool: string; input: Record<string, unknown>; respond: Respond;
   timer: ReturnType<typeof setTimeout>; deciding?: Promise<void>;
-  resolved?: boolean;
+  resolved?: boolean; granted?: boolean;
 }
 
 export function createClaudeIntegrationApprovalControl(options: {
@@ -36,6 +36,8 @@ export function createClaudeIntegrationApprovalControl(options: {
   }
   function cancel(id: string, current: Pending) {
     if (!forget(id, current)) return;
+    // A cancelled native write must not leave an executable action behind.
+    if (current.granted) options.capability.revoke();
     resolved(id, "cancel", current);
     void deny(current.respond).catch(options.onError);
   }
@@ -84,15 +86,17 @@ export function createClaudeIntegrationApprovalControl(options: {
             throw new Error("Integration authority unavailable");
           }
           granted = decision === "approve";
-          forget(id, current);
+          current.granted = granted;
           await current.respond(decision === "approve" ? { behavior: "allow", updatedInput: current.input }
             : { behavior: "deny", message: "Integration action declined." });
+          if (closed || pending.get(id) !== current) throw new Error("Integration approval cancelled");
+          forget(id, current);
           resolved(id, decision, current);
         } catch (error: unknown) {
           if (granted) {
             options.capability.revoke();
           }
-          const transportFailed = !current.resolved && !pending.has(id);
+          const transportFailed = granted && !current.resolved;
           cancel(id, current);
           resolved(id, "cancel", current);
           if (transportFailed) options.onError(error);

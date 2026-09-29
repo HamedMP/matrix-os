@@ -879,7 +879,8 @@ describe("canonical Chat Provider catalog", () => {
 
     expect((await service.getCatalog(principal)).instances.find((instance) => (
       instance.id === "claude_code_default"
-    ))).toMatchObject({ availability: "available", displayName: "Claude" });
+    ))).toMatchObject({ availability: "available", displayName: "Claude",
+      supports: { approvals: true, tools: ["integrations", "custom_mcp"] } });
   });
 
   it("keeps a configured Hermes runtime available without a duplicate settings row", async () => {

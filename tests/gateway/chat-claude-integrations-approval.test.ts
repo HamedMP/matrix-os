@@ -16,7 +16,16 @@ describe("Claude Chat built-in action approval", () => {
   it.each([
     { permissionMode: "supervised", resumed: false }, { permissionMode: "auto_accept_edits", resumed: false },
     { permissionMode: "auto", resumed: false }, { permissionMode: "supervised", resumed: true },
-  ])("pauses $permissionMode (resumed=$resumed) until the authenticated decision grants the exact request", async ({ permissionMode, resumed }) => {
+    { permissionMode: "supervised", resumed: false, tool: "connect_service", action: { service: "google_drive", label: "work" }, method: "POST", path: "/api/integrations/connect" },
+    { permissionMode: "supervised", resumed: false, tool: "sync_services", action: {}, method: "POST", path: "/api/integrations/sync" },
+    { permissionMode: "supervised", resumed: false, tool: "disconnect_service", action: { connection_id: "00000000-0000-4000-8000-000000000001" }, method: "DELETE", path: "/api/integrations/00000000-0000-4000-8000-000000000001" },
+  ])("pauses $permissionMode (resumed=$resumed, tool=$tool) until the authenticated decision grants the exact request", async testCase => {
+    const { permissionMode, resumed } = testCase;
+    const tool = "tool" in testCase ? testCase.tool : "call_service";
+    const requestedAction = "action" in testCase ? testCase.action : action;
+    const method = "method" in testCase ? testCase.method : "POST";
+    const path = "path" in testCase ? testCase.path : "/api/integrations/call";
+    const body = tool === "disconnect_service" ? {} : requestedAction;
     const registry = createMatrixMcpCapabilityRegistry({ configuredOwnerId: input.owner.ownerId });
     const responses: unknown[] = [];
     const providerCalls: unknown[] = [];
@@ -30,14 +39,15 @@ describe("Claude Chat built-in action approval", () => {
         const frame = JSON.parse(chunk);
         if (frame.type === "user") queueMicrotask(() => child.stdout!.emit("data", Buffer.from(`${JSON.stringify({
           type: "control_request", request_id: "native_drive", request: { subtype: "can_use_tool",
-            tool_name: "mcp__matrix-integrations__call_service", input: action },
+            tool_name: `mcp__matrix-integrations__${tool}`, input: requestedAction },
         })}\n`)));
         if (frame.type === "control_response") {
           responses.push(frame.response.response);
           if (frame.response.response.behavior === "allow") {
-            const context = registry.resolveRunContext(options.env.MATRIX_AGENT_INTEGRATIONS_TOKEN!, "POST", "/api/integrations/call");
-            expect(context?.consumeIntegrationRequest?.("POST", "/api/integrations/call", action)).toBe(true);
-            providerCalls.push(action);
+            const context = registry.resolveRunContext(options.env.MATRIX_AGENT_INTEGRATIONS_TOKEN!, method, path);
+            expect(context?.consumeIntegrationRequest?.(method, path, body)).toBe(true);
+            expect(context?.consumeIntegrationRequest?.(method, path, body)).toBe(false);
+            providerCalls.push(requestedAction);
           }
           queueMicrotask(() => {
             child.stdout!.emit("data", Buffer.from(`${JSON.stringify({ type: "result", subtype: "success", result: "done" })}\n`));
@@ -70,11 +80,11 @@ describe("Claude Chat built-in action approval", () => {
     expect(events).toContain("approval.resolved");
     expect(verifyIntegrationDecision).toHaveBeenCalledWith(expect.objectContaining({ chatId: "chat_1", runId: "run_1",
       clientRequestId: "req_1", decision: "approve", platformApprovalProof: "signed-human-decision" }));
-    expect(responses).toEqual([{ behavior: "allow", updatedInput: action }]);
-    expect(providerCalls).toEqual([action]);
+    expect(responses).toEqual([{ behavior: "allow", updatedInput: requestedAction }]);
+    expect(providerCalls).toEqual([requestedAction]);
     const args = spawnFn.mock.calls[0]![1];
     const settings = JSON.parse(args[args.indexOf("--settings") + 1]!);
-    expect(settings.permissions.ask).toContain("mcp__matrix-integrations__call_service");
+    expect(settings.permissions.ask).toContain(`mcp__matrix-integrations__${tool}`);
     registry.close();
   });
 });

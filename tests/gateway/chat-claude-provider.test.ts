@@ -156,13 +156,17 @@ describe("Claude canonical Chat Provider adapter", () => {
       const token = options.env.MATRIX_AGENT_INTEGRATIONS_TOKEN!;
       tokens.push(token);
       expect(options.env.MATRIX_AUTH_TOKEN).toBeUndefined();
+      expect(options.env.UPGRADE_TOKEN).toBeUndefined();
+      expect(options.env.MATRIX_CODE_PROXY_TOKEN).toBeUndefined();
+      expect(options.env.AI_RELAY_CONTROL_TOKEN).toBeUndefined();
       expect(registry.resolve(token, "GET", "/api/mcp-servers")).toBe(baseInput.owner.ownerId);
       if (failStart) throw new Error("fixture executable unavailable");
       return child([JSON.stringify({ type: "result", subtype: "success", result: "done" })]);
     });
     const adapter = createClaudeChatProviderAdapter({
       homePath: "/home/matrix/home", spawnFn,
-      resolveCredentialEnv: async () => ({ MATRIX_AUTH_TOKEN: "machine-secret" }),
+      resolveCredentialEnv: async () => ({ MATRIX_AUTH_TOKEN: "machine-secret", UPGRADE_TOKEN: "machine-secret",
+        MATRIX_CODE_PROXY_TOKEN: "machine-secret", AI_RELAY_CONTROL_TOKEN: "relay-control" }),
       matrixMcpCapabilityIssuer: registry,
     });
 
@@ -758,6 +762,8 @@ describe("Claude canonical Chat Provider adapter", () => {
       resolveCredentialEnv: vi.fn(async () => ({
         PATH: "/credential/bin",
         ANTHROPIC_API_KEY: "owner-key",
+        MATRIX_AUTH_TOKEN: "machine-secret", UPGRADE_TOKEN: "machine-secret",
+        MATRIX_CODE_PROXY_TOKEN: "machine-secret", AI_RELAY_CONTROL_TOKEN: "relay-control",
       })),
     });
 
@@ -770,6 +776,27 @@ describe("Claude canonical Chat Provider adapter", () => {
       HOME: "/home/matrix/home",
       MATRIX_HOME: "/home/matrix/home",
     });
+    for (const name of ["MATRIX_AUTH_TOKEN", "UPGRADE_TOKEN", "MATRIX_CODE_PROXY_TOKEN", "AI_RELAY_CONTROL_TOKEN"]) {
+      expect(spawnFn.mock.calls[0]![2].env[name]).toBeUndefined();
+    }
+  });
+
+  it("uses a fully sanitized replacement environment when no credentials or scoped capability are returned", async () => {
+    vi.stubEnv("UPGRADE_TOKEN", "host-secret");
+    vi.stubEnv("MATRIX_CODE_PROXY_TOKEN", "host-secret");
+    try {
+      const spawnFn = vi.fn<CanonicalCliSpawn>(() => {
+        return child([JSON.stringify({ type: "result", subtype: "success", result: "done" })]);
+      });
+      const adapter = createClaudeChatProviderAdapter({ homePath: "/safe/home", spawnFn,
+        resolveCredentialEnv: async () => undefined, matrixMcpCapabilityIssuer: { issue: () => null } });
+      for await (const _event of adapter.start(baseInput)) { /* Drain. */ }
+      expect(spawnFn).toHaveBeenCalledOnce();
+      const env = spawnFn.mock.calls[0]![2].env;
+      expect(env.UPGRADE_TOKEN).toBeUndefined();
+      expect(env.MATRIX_CODE_PROXY_TOKEN).toBeUndefined();
+      expect(env.PATH).toContain(process.env.PATH);
+    } finally { vi.unstubAllEnvs(); }
   });
 
   it("uses the rotating funded credential and its shorter run deadline", async () => {

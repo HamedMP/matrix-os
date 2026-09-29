@@ -59,6 +59,25 @@ describe("built-in integration human decisions", () => {
     expect(f.events.filter(event => event.type === "approval.resolved")).toHaveLength(1);
     f.control.close(); f.registry.close();
   });
+  it.each(["native", "close"] as const)("revokes a grant when %s cancellation races with the native response write", async cancellation => {
+    const f = fixture();
+    let finish!: () => void;
+    let started!: () => void;
+    const writing = new Promise<void>(resolve => { started = resolve; });
+    f.respond.mockImplementationOnce(() => new Promise<void>(resolve => { finish = resolve; started(); }));
+    const submission = f.control.submit(f.requested.approvalId, "approve", proof);
+    const outcome = expect(submission).rejects.toThrow();
+    await writing;
+    if (cancellation === "native") f.control.onToolPermissionCancel("native_1");
+    else f.control.close();
+    expect(f.context.consumeIntegrationRequest!("POST", "/api/integrations/call", action)).toBe(false);
+    finish();
+    await outcome;
+    expect(f.events.filter(event => event.type === "approval.resolved")).toEqual([
+      expect.objectContaining({ decision: "cancel" }),
+    ]);
+    f.control.close(); f.registry.close();
+  });
   it("expires pending approvals, drains them on close and rejects blanket session approval", async () => {
     vi.useFakeTimers();
     const f = fixture();
