@@ -4,6 +4,8 @@ import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { createAgentRuntimeServices } from "../../packages/gateway/src/agent-config/runtime-services.js";
 import { AiProviderService } from "../../packages/gateway/src/ai-providers/service.js";
+import { createHermesRuntimeSource } from "../../packages/gateway/src/agent-config/hermes-source.js";
+import { createCanonicalNativeHarnessCatalogReader } from "../../packages/gateway/src/ai-providers/native-harness-canonical-projection.js";
 
 // Exercise the production dependency choice with real runtime composition.
 // The messaging projection intentionally omits native-only profile evidence.
@@ -15,6 +17,29 @@ async function productionSource(services: ReturnType<typeof createAgentRuntimeSe
 }
 
 describe("production Hermes native catalog wiring", () => {
+  it.each([true, false])("refreshes cached native credential evidence for each catalog read (authenticated: %s)", async (authenticated) => {
+    let clock = 0;
+    let currentAuth = true;
+    const source = createHermesRuntimeSource(async (path) => path === "/api/status" ? { gateway_running: false } : {
+      provider: "openai-codex", model: "gpt-5.6-sol", providers: [{
+        slug: "openai-codex", authenticated: currentAuth, is_user_defined: false, models: ["gpt-5.6-sol"],
+      }],
+    }, { now: () => clock });
+    await source(AbortSignal.timeout(1000));
+    clock = 4000;
+    currentAuth = authenticated;
+    const reader = createCanonicalNativeHarnessCatalogReader({
+      getCatalog: async () => ({ providers: [], accessSources: [], failures: [] }),
+    }, { hermesRuntimeSource: source, now: () => new Date(clock) });
+    const catalog = await reader(false);
+    if (authenticated) {
+      expect(catalog.profiles[0]?.localObservation).toEqual({ state: "present_unverified",
+        checkedAt: new Date(4000).toISOString(), staleAfter: new Date(9000).toISOString() });
+    } else {
+      expect(catalog).toEqual({ profiles: [], failures: ["hermes"] });
+    }
+  });
+
   it.each(["copilot", "openai-codex"])("retains Codex evidence with native default %s", async (provider) => {
     const homePath = await mkdtemp(join(tmpdir(), "hermes-native-wiring-"));
     const mutateNative = vi.fn();

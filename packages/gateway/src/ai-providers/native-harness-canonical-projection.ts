@@ -36,7 +36,12 @@ export function createCanonicalNativeHarnessCatalogReader(reader: GenericHarness
         return { profiles: [], failures: ["pi", "opencode"] };
       });
       const hermes = options.hermesRuntimeSource
-        ? Promise.resolve().then(() => options.hermesRuntimeSource!(AbortSignal.timeout(6500)))
+        ? Promise.resolve().then(() => {
+          // A cached observation can expire during the other bounded catalog
+          // probes. Renew native metadata without extending its five-second TTL.
+          options.hermesRuntimeSource!.invalidate?.();
+          return options.hermesRuntimeSource!(AbortSignal.timeout(6500));
+        })
           .then((snapshot) => projectHermesNativeCatalog(snapshot, (options.now ?? (() => new Date()))()))
           .catch((error: unknown): Catalog => {
             console.warn("[ai-providers] Hermes native catalog unavailable", { errorClass: error instanceof Error ? error.name : "Unknown" });

@@ -188,6 +188,8 @@ switch.
 Hermes exposes its own authenticated Codex subscription profile even when its
 native default uses another provider. V3 reads the harness's native runtime source
 directly so the messaging compatibility projection cannot discard profile evidence.
+Each canonical catalog read renews native metadata instead of reusing an observation
+near expiry; the five-second observation TTL and pre-prompt route checks remain intact.
 Bounded inventory gives each provider model
 slots before filling larger catalogs, and Codex model IDs retain the
 `openai-codex:` namespace. This fresh local profile observation does not verify
