@@ -143,6 +143,22 @@ describe("collaboration direct client", () => {
     expect(pulls).toBeLessThanOrEqual(2);
   });
 
+  it("rejects an undeclared oversized failure stream before EOF", async () => {
+    let controller!: ReadableStreamDefaultController<Uint8Array>;
+    const response = new Response(new ReadableStream<Uint8Array>({
+      start(stream) {
+        controller = stream;
+        stream.enqueue(new Uint8Array(2 * 1024 * 1024 + 1));
+      },
+    }), { status: 503, headers: { "content-type": "application/json" } });
+    const direct = client({ fetchImpl: (async () => response) as typeof fetch });
+    const result = direct.request(scopeId, "GET", `/api/collaboration/scopes/${scopeId}`)
+      .then(() => "resolved", (error: unknown) => error instanceof CollaborationDirectError ? error.code : "unexpected_error");
+    const outcome = await Promise.race([result, new Promise<string>((resolve) => realSetTimeout(() => resolve("stalled"), 1_000))]);
+    if (outcome === "stalled") controller.close();
+    expect(outcome).toBe("unavailable");
+  });
+
   it("routes session exchange, renewal and close through the real relay's runtime directory", async () => {
     const home = { runtimeId, origin: "https://owner-home.example" };
     const relay = new CollaborationRelay({
