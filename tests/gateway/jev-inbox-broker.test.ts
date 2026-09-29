@@ -83,6 +83,45 @@ it("rechecks changed evidence after paid classification and performs no write", 
   expect(await f.execute({ operation: "evaluate", receipt: evidence.receipt })).toMatchObject({ kind: "review" });
   expect(f.label).not.toHaveBeenCalled();
 });
+it.each(["get_profile", "get_thread_ids", "get_message"])("publishes no verified result when the fresh %s check fails", async action => {
+  for (const failure of ["transport", "malformed"] as const) {
+    const f = fixture("valid", true); const evidence = await selected(f);
+    if (evidence.kind !== "evidence") throw new Error("Missing evidence");
+    const original = f.read.getMockImplementation()!;
+    f.read.mockImplementation(async (...args) => {
+      if (args[2] === action && f.evaluate.mock.calls.length) {
+        if (failure === "transport") throw new Error("Synthetic fresh evidence unavailable");
+        return { malformed: true };
+      }
+      return original(...args);
+    });
+    const input = { operation: "evaluate", receipt: evidence.receipt };
+    await expect(f.execute(input)).rejects.toThrow();
+    const labelingScope = { ...scope, account: { ...scope.account, labelingEnabled: true } };
+    expect(f.broker.presentation(ownerId, labelingScope)).toBeNull();
+    await expect(f.execute(input)).rejects.toThrow();
+    expect(f.evaluate).toHaveBeenCalledOnce();
+    expect(f.label).not.toHaveBeenCalled();
+  }
+});
+it("publishes no proposal while the fresh evidence check is still pending", async () => {
+  const f = fixture("valid", true); const evidence = await selected(f);
+  if (evidence.kind !== "evidence") throw new Error("Missing evidence");
+  const original = f.read.getMockImplementation()!;
+  const barrier = Promise.withResolvers<void>(); let waiting = false;
+  f.read.mockImplementation(async (...args) => {
+    if (args[2] === "get_profile" && f.evaluate.mock.calls.length) { waiting = true; await barrier.promise; }
+    return original(...args);
+  });
+  const evaluation = f.execute({ operation: "evaluate", receipt: evidence.receipt });
+  await vi.waitFor(() => expect(waiting).toBe(true));
+  const labelingScope = { ...scope, account: { ...scope.account, labelingEnabled: true } };
+  try {
+    expect(f.broker.presentation(ownerId, labelingScope)).toBeNull();
+    expect(f.label).not.toHaveBeenCalled();
+  } finally { barrier.resolve(); }
+  await expect(evaluation).resolves.toMatchObject({ kind: "labeled" });
+});
 it("preflights live profile identity without mailbox reads or paid evaluation", async () => {
   const f = fixture();
   await f.broker.preflight(ownerId, scope, new AbortController().signal);

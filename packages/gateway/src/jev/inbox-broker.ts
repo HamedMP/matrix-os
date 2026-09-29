@@ -191,7 +191,6 @@ export function createJevInboxBroker(options: {
           const proposal = { kind: "proposal" as const, verified: true as const, readonly: true as const, threadId: selected.threadId,
             messageCount: evidence.messageCount, labels: policy.labels, archiveProposal: policy.archive, observedAt, requestId: result.requestId,
             labelingSkipped };
-          current.presentation = proposal;
           if (scope.account.labelingEnabled === true && !policy.labels.includes(EMAIL_TRIAGE_LABELS.review)) {
             // Re-read content, not model claims, immediately before the authorized write.
             await profile(ownerId, scope, current, preparationSignal);
