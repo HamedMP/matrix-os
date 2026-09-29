@@ -532,7 +532,7 @@ jobs:
         run: |
           set -euo pipefail
           DEPLOY_VERIFIED=false
-          for attempt in $(seq 1 10); do
+          for attempt in $(seq 1 5); do
             DEPLOY_BODY="$(jq -cn --arg version "$EXISTING_VERSION" --arg handle "$TARGET_HANDLE" \
               '{version: $version, handle: $handle}')"
             if DEPLOY_RESPONSE="$(curl --fail --silent --show-error --max-time 30 \
@@ -546,7 +546,7 @@ jobs:
               DEPLOY_VERIFIED=true
               break
             fi
-            echo "Targeted exact-version trigger is still converging: attempt=$attempt/10"
+            echo "Targeted exact-version trigger is still converging: attempt=$attempt/5"
             sleep 30
           done
           if [ "$DEPLOY_VERIFIED" != true ]; then
@@ -559,7 +559,7 @@ jobs:
         run: |
           set -euo pipefail
           RUNTIME_VERIFIED=false
-          for attempt in $(seq 1 40); do
+          for attempt in $(seq 1 30); do
             if FLEET_RESPONSE="$(curl --fail --silent --show-error --max-time 30 \
               -H "Authorization: Bearer ${PLATFORM_SECRET}" \
               "${PLATFORM_PUBLIC_URL%/}/vps/fleet")" \
@@ -570,7 +570,7 @@ jobs:
               RUNTIME_VERIFIED=true
               break
             fi
-            echo "Targeted computer is still installing the pinned version: attempt=$attempt/40"
+            echo "Targeted computer is still installing the pinned version: attempt=$attempt/30"
             sleep 15
           done
           if [ "$RUNTIME_VERIFIED" != true ]; then
@@ -584,7 +584,7 @@ jobs:
         run: |
           set -euo pipefail
           SPEECH_VERIFIED=false
-          for attempt in $(seq 1 10); do
+          for attempt in $(seq 1 5); do
             ACTIVATE_BODY="$(jq -cn --arg handle "$TARGET_HANDLE" '{handle: $handle}')"
             if ACTIVATE_RESPONSE="$(curl --fail --silent --show-error --max-time 30 \
               -X POST "${PLATFORM_PUBLIC_URL%/}/vps/speech/activate" \
@@ -596,7 +596,7 @@ jobs:
               SPEECH_VERIFIED=true
               break
             fi
-            echo "Targeted managed-speech activation is still converging: attempt=$attempt/10"
+            echo "Targeted managed-speech activation is still converging: attempt=$attempt/5"
             sleep 30
           done
           if [ "$SPEECH_VERIFIED" != true ]; then

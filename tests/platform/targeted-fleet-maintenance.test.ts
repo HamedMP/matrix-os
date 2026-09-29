@@ -102,4 +102,30 @@ describe('targeted fleet maintenance', () => {
     })).rejects.toThrow('elapsed-time budget');
     expect(fetchImpl).not.toHaveBeenCalled();
   });
+
+  it('can verify a fully slow 500-computer fleet within the default budget', async () => {
+    let currentTime = 0;
+    const fetchImpl = vi.fn(async () => {
+      currentTime += 150_000;
+      const page = fetchImpl.mock.calls.length;
+      const complete = page === 16;
+      return Response.json({
+        activated: complete ? 20 : 32,
+        failed: 0,
+        complete,
+        nextCursor: complete
+          ? null
+          : `9f05824c-8d0a-4d83-9cb4-b312d43ff${String(200 + page).padStart(3, '0')}`,
+      });
+    });
+
+    await expect(activateSpeechFleet({
+      platformUrl: 'https://app.matrix-os.com',
+      platformSecret: 'secret',
+      fetchImpl,
+      sleep: async () => undefined,
+      now: () => currentTime,
+    })).resolves.toEqual({ activated: 500 });
+    expect(fetchImpl).toHaveBeenCalledTimes(16);
+  });
 });

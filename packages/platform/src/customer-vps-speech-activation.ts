@@ -9,7 +9,7 @@ import {
   type SpeechFleetActivationPageResult,
 } from './speech/fleet-activation.js';
 
-const SPEECH_ACTIVATION_PAGE_SIZE = 16;
+const SPEECH_ACTIVATION_PAGE_SIZE = 32;
 
 export interface CustomerVpsSpeechActivationTarget {
   handle?: string;
@@ -50,6 +50,7 @@ export async function activateCustomerVpsSpeechPage(options: {
     platformOrigin,
     platformSecret: options.platformSecret,
     fetchDispatcher: options.fetchDispatcher,
+    concurrency: SPEECH_ACTIVATION_PAGE_SIZE,
   });
   const complete = options.target?.handle !== undefined
     || machines.length < SPEECH_ACTIVATION_PAGE_SIZE;

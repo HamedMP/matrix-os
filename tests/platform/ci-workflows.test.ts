@@ -1046,8 +1046,8 @@ describe('CI workflows', () => {
     expect(targetedJob).toContain(".version == $version");
     expect(targetedJob).toContain('uses: actions/checkout@v4');
     expect(targetedJob).toContain('node scripts/ci/targeted-fleet-maintenance.mjs select-target');
-    expect(targetedJob).toContain('for attempt in $(seq 1 10); do');
-    expect(targetedJob).toContain('for attempt in $(seq 1 40); do');
+    expect(targetedJob).toContain('for attempt in $(seq 1 5); do');
+    expect(targetedJob).toContain('for attempt in $(seq 1 30); do');
     expect(targetedJob).toContain('{version: $version, handle: $handle}');
     expect(targetedJob).toContain('.triggered == 1 and .failed == 0');
     expect(targetedJob).toContain('.healthy == true and .runtimeVersion == $version');

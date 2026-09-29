@@ -2444,7 +2444,7 @@ describe('platform/customer-vps', () => {
 
   it('continues speech activation after one request-bounded machine page', async () => {
     const machineIds: string[] = [];
-    for (let index = 0; index < 17; index += 1) {
+    for (let index = 0; index < 33; index += 1) {
       const suffix = String(200 + index).padStart(3, '0');
       const machineId = `9f05824c-8d0a-4d83-9cb4-b312d43ff${suffix}`;
       machineIds.push(machineId);
@@ -2489,10 +2489,10 @@ describe('platform/customer-vps', () => {
     try {
       const first = await service.activateSpeech();
       expect(first).toMatchObject({
-        activated: 16,
+        activated: 32,
         failed: 0,
         complete: false,
-        nextCursor: machineIds[15],
+        nextCursor: machineIds[31],
       });
       const second = await service.activateSpeech({ afterMachineId: first.nextCursor! });
       expect(second).toMatchObject({
@@ -2500,7 +2500,7 @@ describe('platform/customer-vps', () => {
         failed: 0,
         complete: true,
         nextCursor: null,
-        results: [expect.objectContaining({ machineId: machineIds[16] })],
+        results: [expect.objectContaining({ machineId: machineIds[32] })],
       });
     } finally {
       vi.unstubAllGlobals();

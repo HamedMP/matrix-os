@@ -4,7 +4,7 @@ const SAFE_HANDLE = /^[a-z0-9][a-z0-9-]{1,62}$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const MAX_STDIN_BYTES = 5 * 1024 * 1024;
 const DEFAULT_RETRY_DELAY_MS = 30_000;
-const DEFAULT_BUDGET_MS = 25 * 60_000;
+const DEFAULT_BUDGET_MS = 45 * 60_000;
 
 export function selectTargetMachine(payload) {
   if (!payload || typeof payload !== 'object' || payload.truncated !== false || !Array.isArray(payload.machines)) {
@@ -71,7 +71,7 @@ export async function activateSpeechFleet({
             'content-type': 'application/json',
           },
           body: JSON.stringify(pageCursor ? { afterMachineId: pageCursor } : {}),
-          signal: AbortSignal.timeout(Math.min(180_000, remainingMs)),
+          signal: AbortSignal.timeout(Math.min(150_000, remainingMs)),
         });
         if (!response.ok) throw new Error('Speech fleet activation request failed.');
         const result = parseActivationPage(await response.json(), pageCursor);
