@@ -245,16 +245,34 @@ export async function assertTcpPortAvailable(port, host = "0.0.0.0") {
   });
 }
 
-export async function fetchProductionClerkJwtKey(fetchImpl = fetch) {
-  const response = await fetchImpl("https://clerk.matrix-os.com/.well-known/jwks.json", {
+function clerkFrontendApiHost(publishableKey) {
+  const match = /^pk_(?:test|live)_([A-Za-z0-9_-]+)$/.exec(publishableKey);
+  if (!match) throw new Error("Invalid Clerk publishable key");
+  const decoded = Buffer.from(match[1], "base64url").toString("utf8");
+  if (!decoded.endsWith("$")) throw new Error("Invalid Clerk publishable key");
+  const host = decoded.slice(0, -1);
+  const labels = host.split(".");
+  if (
+    host.length > 253
+    || labels.length < 2
+    || labels.some((label) => !/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/i.test(label))
+  ) {
+    throw new Error("Invalid Clerk publishable key");
+  }
+  return host;
+}
+
+export async function fetchConfiguredClerkJwtKey(publishableKey, fetchImpl = fetch) {
+  const clerkHost = clerkFrontendApiHost(publishableKey);
+  const response = await fetchImpl(`https://${clerkHost}/.well-known/jwks.json`, {
     signal: AbortSignal.timeout(10_000),
   });
-  if (!response.ok) throw new Error("Unable to load the production Clerk public key");
+  if (!response.ok) throw new Error("Unable to load the configured Clerk public key");
   const body = await response.json();
   const jwk = Array.isArray(body?.keys)
     ? body.keys.find((candidate) => candidate?.kty === "RSA" && candidate?.n && candidate?.e)
     : undefined;
-  if (!jwk) throw new Error("Production Clerk JWKS did not contain an RSA signing key");
+  if (!jwk) throw new Error("Configured Clerk JWKS did not contain an RSA signing key");
   return createPublicKey({ key: jwk, format: "jwk" })
     .export({ type: "spki", format: "pem" })
     .toString();
@@ -696,14 +714,14 @@ async function up() {
     assertTcpPortAvailable(storageTlsPort),
   ]);
   assertFixtureAddressInstalled();
-  const clerkJwtKey = await fetchProductionClerkJwtKey();
-  const state = loadState();
-  const plan = createLocalParityPlan({ root, machineName, builderName });
-  buildBundle(plan);
   const publicEnv = publicBuildEnvironment();
   if (!publicEnv.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY) {
     throw new Error("NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY is required to build the production platform image");
   }
+  const clerkJwtKey = await fetchConfiguredClerkJwtKey(publicEnv.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY);
+  const state = loadState();
+  const plan = createLocalParityPlan({ root, machineName, builderName });
+  buildBundle(plan);
   const configuredEnv = { ...parseEnvFile(resolve(root, ".env.docker")), ...parseEnvFile(resolve(root, ".env")), ...process.env };
   if (!clerkSecretIsConfigured(configuredEnv.CLERK_SECRET_KEY)) {
     console.warn("CLERK_SECRET_KEY is unavailable; browser auth will return a bounded unavailable response, while the production VM still starts");

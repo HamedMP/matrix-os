@@ -20,7 +20,7 @@ import {
   builderSetupScript,
   clerkSecretIsConfigured,
   createLocalParityPlan,
-  fetchProductionClerkJwtKey,
+  fetchConfiguredClerkJwtKey,
   platformContainerArguments,
   platformImageBuildArguments,
   qemuRuntimeArguments,
@@ -159,9 +159,11 @@ describe("local development contracts", () => {
     expect(qemuArgs).not.toContain("-no-reboot");
   });
 
-  it("uses Clerk's public production JWKS for local token verification", async () => {
+  it("uses the configured Clerk instance JWKS for local token verification", async () => {
+    const publishableKey = `pk_test_${Buffer.from("modest-bengal-5417.clerk.accounts.dev$").toString("base64url")}`;
+    const requestedUrls: string[] = [];
     const fetchImpl = async (input: string | URL | Request, init?: RequestInit) => {
-      expect(String(input)).toBe("https://clerk.matrix-os.com/.well-known/jwks.json");
+      requestedUrls.push(String(input));
       expect(init?.signal).toBeInstanceOf(AbortSignal);
       return Response.json({
         keys: [{
@@ -172,9 +174,19 @@ describe("local development contracts", () => {
       });
     };
 
-    await expect(fetchProductionClerkJwtKey(fetchImpl)).resolves.toMatch(
+    await expect(fetchConfiguredClerkJwtKey(publishableKey, fetchImpl)).resolves.toMatch(
       /^-----BEGIN PUBLIC KEY-----/,
     );
+    const productionKey = `pk_live_${Buffer.from("clerk.matrix-os.com$").toString("base64url")}`;
+    await expect(fetchConfiguredClerkJwtKey(productionKey, fetchImpl)).resolves.toMatch(
+      /^-----BEGIN PUBLIC KEY-----/,
+    );
+    expect(requestedUrls).toEqual([
+      "https://modest-bengal-5417.clerk.accounts.dev/.well-known/jwks.json",
+      "https://clerk.matrix-os.com/.well-known/jwks.json",
+    ]);
+    await expect(fetchConfiguredClerkJwtKey("pk_test_not-base64", fetchImpl))
+      .rejects.toThrow("Invalid Clerk publishable key");
     const launcher = readFileSync(resolve(root, "scripts/dev-production-parity.mjs"), "utf8");
     expect(launcher).toContain("AUTH_SHELL_CLERK_SECRET_KEY: clerkSecret");
     expect(launcher).toContain("CLERK_JWT_KEY: clerkJwtKey");

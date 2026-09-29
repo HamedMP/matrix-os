@@ -114,11 +114,13 @@ Prerequisites on macOS:
   platform PostgreSQL and object storage. The QEMU runtime separately uses 4 GiB.
 - Rosetta 2 (`softwareupdate --install-rosetta --agree-to-license`). Production
   bundles contain x86_64 Node/Zellij assets; an arm64 guest is not parity.
-- The production `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` in `.env` so the bundled
-  shell matches the production build. The launcher fetches Clerk's public JWKS
-  for local token verification. A valid `CLERK_SECRET_KEY` is optional: without
-  it browser auth returns a bounded unavailable response while the VM, Files
-  synchronization, Terminal runtime, and other credential-free services start.
+- A `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` in `.env` so the bundled shell matches
+  the selected Clerk instance. The launcher fetches that instance's public JWKS
+  for local token verification, so a personal Clerk development instance can be
+  used when production workspace access is unavailable. A matching, valid
+  `CLERK_SECRET_KEY` is optional: without it browser auth returns a bounded
+  unavailable response while the VM, Files synchronization, Terminal runtime,
+  and other credential-free services start.
 - `MATRIX_LOCAL_CLERK_USER_ID` in `.env`, set to the Clerk user that will sign
   in. The local platform database maps that identity to the disposable machine.
 - One explicitly approved host-network setup step. Add the RFC 5737 fixture
