@@ -309,8 +309,15 @@ describe("ChatRepository", () => {
     })).rejects.toThrow("force rollback");
     expect(delivered).toHaveLength(2);
 
+    // The outbox is a bounded multi-sink fan-out (canonical event stream,
+    // voice sessions, telemetry): registration only fails at the cap.
+    const extras: { dispose(): void }[] = [];
+    for (let index = 0; index < 7; index += 1) {
+      extras.push(events.registerOutboxSink(() => undefined));
+    }
     expect(() => events.registerOutboxSink(() => undefined))
-      .toThrow(/sink|registered/i);
+      .toThrow(/sink|registered|limit/i);
+    for (const extra of extras) extra.dispose();
     registration.dispose();
     const replacement = events.registerOutboxSink(() => undefined);
     replacement.dispose();
