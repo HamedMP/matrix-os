@@ -24,6 +24,13 @@ The requested product surface and acceptance target are Electron Desktop. Shared
 
 Source of truth: the authenticated runtime's installed catalog and file-preview metadata; persisted run execution roots select home versus project/worktree reads. Auth authority remains the existing runtime-scoped API and native download service. There are no related database writes or new orphan states.
 
+## Review regressions
+
+- Preserve exact public route references followed by prose punctuation; keep descendants, queries and fragments redacted.
+- Resolve Browser through the shared catalog path aliases.
+- Preserve the first 64 KiB of large project text/Markdown with a truncation notice through authenticated range reads.
+- Offer buffered project downloads only up to 50 MiB and explain the limit for larger files. Home downloads retain native streaming without this buffer limit.
+
 ## Validation and delivery
 
 1. Contract and streaming-redaction regressions, including all split boundaries and private-path counterexamples.

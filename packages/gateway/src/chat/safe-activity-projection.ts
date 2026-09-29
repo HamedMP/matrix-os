@@ -7,7 +7,8 @@ const ABSOLUTE_PATH = /(^|[\s"'`(=:<>|;&])\/(?=[A-Za-z0-9._~-])(?!\/)[^\s"'`<>)]
 // No descendants, query strings, or arbitrary /api paths are exempted.
 const PUBLIC_PRODUCT_ROUTES = new Set(["/api/integrations", "/api/apps"]);
 function redactAbsolutePath(match: string, prefix: string): string {
-  return PUBLIC_PRODUCT_ROUTES.has(match.slice(prefix.length)) ? match : `${prefix}[redacted path]`;
+  const path = match.slice(prefix.length).replace(/[.,;!]+$/, "");
+  return PUBLIC_PRODUCT_ROUTES.has(path) ? match : `${prefix}[redacted path]`;
 }
 const DANGLING_BEARER = /(?:^|[^A-Za-z0-9_])Bearer\s+$/i;
 const ACTIVE_BEARER = /(?:^|[^A-Za-z0-9_])Bearer\s+/i;

@@ -5,6 +5,9 @@ import { useConnection } from "../../stores/connection";
 import { useDesktopFileDownload } from "../files/use-file-download";
 import type { InspectorFileTarget } from "./InspectorFilesPanel";
 
+const MAX_PROJECT_DOWNLOAD_BYTES = 50 * 1024 * 1024;
+const PROJECT_TEXT_PREFIX_BYTES = 64 * 1024;
+
 export function InspectorResourcePreview({ target }: { target: InspectorFileTarget }) {
   const api = useConnection((state) => state.api);
   const runtimeSlot = useConnection((state) => state.runtimeSlot);
@@ -42,15 +45,23 @@ export function InspectorResourcePreview({ target }: { target: InspectorFileTarg
     if (!isCurrent()) throw new Error("PreviewUnavailable");
     return blob;
   }, [api, runtimeSlot, isCurrent]);
-  const loadText = useCallback(async (url: string, maxBytes: number) => (await loadBlob(url, maxBytes)).text(), [loadBlob]);
+  const textPrefix = target.kind === "project" && descriptor && ["text", "markdown"].includes(descriptor.kind) && descriptor.sizeBytes > 1024 * 1024;
+  const loadText = useCallback(async (url: string, maxBytes: number) => {
+    if (!textPrefix) return (await loadBlob(url, maxBytes)).text();
+    if (!api || !isCurrent()) throw new Error("PreviewUnavailable");
+    const text = await api.forRuntime(runtimeSlot).getText(url, { maxBytes, headers: { Range: `bytes=0-${maxBytes - 1}` } });
+    if (!isCurrent()) throw new Error("PreviewUnavailable");
+    return text;
+  }, [api, isCurrent, loadBlob, runtimeSlot, textPrefix]);
   if (!descriptor) return <div className="p-4 text-xs" role={failed ? "alert" : "status"}>
     {failed ? <>File preview unavailable. <button type="button" className="underline" onClick={() => setAttempt((value) => value + 1)}>Retry</button></> : "Loading preview…"}
   </div>;
   const contentUrl = filePreviewContentUrl(descriptor.resource);
-  const onDownload = descriptor.canDownload ? async () => {
+  const projectDownloadTooLarge = target.kind === "project" && descriptor.sizeBytes > MAX_PROJECT_DOWNLOAD_BYTES;
+  const onDownload = descriptor.canDownload && !projectDownloadTooLarge ? async () => {
     if (!isCurrent()) throw new Error("PreviewUnavailable");
     if (target.kind === "home") { download.download(target.path); return; }
-    const blob = await loadBlob(filePreviewContentUrl(descriptor.resource, { download: true }), 50 * 1024 * 1024);
+    const blob = await loadBlob(filePreviewContentUrl(descriptor.resource, { download: true }), MAX_PROJECT_DOWNLOAD_BYTES);
     if (isCurrent()) savePreviewBlob(blob, descriptor.name);
   } : undefined;
   return <div className="flex min-h-0 flex-1 flex-col">
@@ -59,9 +70,10 @@ export function InspectorResourcePreview({ target }: { target: InspectorFileTarg
       <FilePreviewActions key={contentUrl} name={descriptor.name} onDownload={onDownload} pending={download.pending}
         onCopyImage={descriptor.kind === "image" ? async () => copyFileImage(await loadBlob(contentUrl, 50 * 1024 * 1024), isCurrent) : undefined} />
       {download.message ? <span role={download.error ? "alert" : "status"} className="text-xs">{download.message}</span> : null}
+      {projectDownloadTooLarge ? <p className="text-xs">Project downloads are available for files up to 50 MiB.</p> : null}
     </header>
     <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto p-4">
-      <FilePreviewContent key={`${contentUrl}:${attempt}`} descriptor={descriptor} contentUrl={contentUrl} loadBlob={loadBlob} loadText={loadText} retry={() => setAttempt((value) => value + 1)} />
+      <FilePreviewContent key={`${contentUrl}:${attempt}`} descriptor={descriptor} contentUrl={contentUrl} loadBlob={loadBlob} loadText={loadText} textPreviewBytes={textPrefix ? PROJECT_TEXT_PREFIX_BYTES : undefined} retry={() => setAttempt((value) => value + 1)} />
     </div>
   </div>;
 }

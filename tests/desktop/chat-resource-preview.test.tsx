@@ -58,3 +58,23 @@ it("does not copy an image when its selected preview is replaced during the read
   await act(async () => resolveRead(new Blob(["png"])));
   expect(copy).not.toHaveBeenCalled();
 });
+
+it.each(["text", "markdown"])("keeps a bounded preview for large project %s and labels its truncation", async (kind) => {
+  const resource = { kind: "project" as const, projectId: "project_1", path: "large.txt" };
+  get.mockResolvedValue({ ...descriptor, resource, name: "large.txt", kind, mimeType: "text/plain", sizeBytes: 2 * 1024 * 1024 });
+  const getText = vi.fn(async () => "First bounded part");
+  forRuntime.mockReturnValue({ get, getBlob, getText });
+  render(<InspectorFilePreview target={{ ...resource, label: "large.txt" }} />);
+  await screen.findByText("First bounded part");
+  expect(screen.getByText("Preview truncated.")).toBeTruthy();
+  expect(getText).toHaveBeenCalledWith(expect.stringContaining("projectId=project_1"), { maxBytes: 65536, headers: { Range: "bytes=0-65535" } });
+});
+
+it("does not offer an impossible buffered download for a large project file", async () => {
+  const resource = { kind: "project" as const, projectId: "project_1", path: "large.zip" };
+  get.mockResolvedValue({ ...descriptor, resource, name: "large.zip", kind: "unsupported", mimeType: "application/zip", sizeBytes: 60 * 1024 * 1024 });
+  render(<InspectorFilePreview target={{ ...resource, label: "large.zip" }} />);
+  await screen.findByText("Project downloads are available for files up to 50 MiB.");
+  expect(screen.queryByRole("button", { name: "Download large.zip" })).toBeNull();
+  expect(getBlob).not.toHaveBeenCalled();
+});

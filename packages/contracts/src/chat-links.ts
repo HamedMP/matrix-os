@@ -1,4 +1,5 @@
 import { safeRelativePath } from "#legacy-contract-primitives";
+import { normalizeOsViewDesktopAppPath } from "./os-view.js";
 
 const PathSchema = safeRelativePath();
 
@@ -12,8 +13,12 @@ export function resolveChatAppReference<T extends { slug: string; path?: string 
   const target = resolveChatMessageLink(input.replace(/\/+$/, ""));
   if (target?.kind !== "file" || !target.path.startsWith("apps/")) return null;
   for (const app of apps) {
-    if (!app.path?.startsWith("apps/") || !app.path.endsWith("/index.html")) continue;
-    const root = app.path.replace(/\/(?:dist\/)?index\.html$/, "");
+    if (!app.path) continue;
+    const catalogPath = normalizeOsViewDesktopAppPath(app.path);
+    const entryPath = target.path.endsWith("/index.html") ? target.path : `${target.path}/index.html`;
+    if (catalogPath.startsWith("__") && normalizeOsViewDesktopAppPath(entryPath) === catalogPath) return app;
+    if (!catalogPath.startsWith("apps/") || !catalogPath.endsWith("/index.html")) continue;
+    const root = catalogPath.replace(/\/(?:dist\/)?index\.html$/, "");
     if (target.path === root || target.path === `${root}/index.html` || target.path === `${root}/dist/index.html`) return app;
   }
   return null;

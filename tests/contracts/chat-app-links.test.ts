@@ -26,3 +26,11 @@ it("does not reinterpret a project's relative apps directory as an installed hom
   expect(resolveChatAppReference("~/apps/ai-adoption", apps, { allowRelative: false })).toBe(apps[0]);
   expect(resolveChatAppReference("/home/matrix/home/apps/ai-adoption", apps, { allowRelative: false })).toBe(apps[0]);
 });
+
+it("recognizes the installed Browser catalog alias without launching other built-ins", () => {
+  const browser = { slug: "browser", path: "__browser__" };
+  for (const path of ["~/apps/browser", "apps/browser/index.html", "apps/browser/dist/index.html"]) {
+    expect(resolveChatAppReference(path, [browser])).toBe(browser);
+  }
+  expect(resolveChatAppReference("apps/terminal", [{ slug: "terminal", path: "__terminal__" }])).toBeNull();
+});
