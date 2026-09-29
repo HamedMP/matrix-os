@@ -115,6 +115,7 @@ export interface ChatRunsTable {
   context_snapshot: Generated<unknown>;
   request_hash: Generated<string | null>;
   capability_snapshot: JsonValue;
+  run_policy: JsonValue | null;
   created_at: Timestamp;
   updated_at: Timestamp;
 }
@@ -145,6 +146,7 @@ export interface ChatQueuedTurnsTable {
   context_snapshot: Generated<unknown>;
   request_hash: Generated<string | null>;
   capability_snapshot: JsonValue;
+  run_policy: JsonValue | null;
   claimed_turn_id: string | null;
   claimed_run_id: string | null;
   cancelled_at: NullableTimestamp;
@@ -247,6 +249,29 @@ export interface ChatMigrationsTable {
   updated_at: Timestamp;
 }
 
+/**
+ * CanonicalVoiceDelivery (specs/535-aoede-rewrite): the post-run record of what
+ * assistant audio the owner actually heard. One row per (chat, response); never
+ * holds audio bytes.
+ */
+export interface ChatVoiceDeliveriesTable {
+  chat_id: string;
+  response_id: string;
+  run_id: string;
+  message_id: string;
+  state: "pending" | "playing" | "complete" | "interrupted" | "unknown";
+  revision: ColumnType<number, number | undefined, number>;
+  segments: JsonValue;
+  acknowledged_segment: string | null;
+  delivered_through_ms: ColumnType<number, number | undefined, number>;
+  played_through_ms: ColumnType<number, number | undefined, number>;
+  effective_text_end: ColumnType<number, number | undefined, number>;
+  transport_epoch: number;
+  terminal_reason: string | null;
+  created_at: Timestamp;
+  updated_at: Timestamp;
+}
+
 export interface ChatDatabase {
   chat_shares: {
     id: string;
@@ -273,6 +298,7 @@ export interface ChatDatabase {
   chat_deletions: ChatDeletionsTable;
   chat_legacy_imports: ChatLegacyImportsTable;
   chat_migrations: ChatMigrationsTable;
+  chat_voice_deliveries: ChatVoiceDeliveriesTable;
 }
 
 export async function bootstrapChatDatabase<Database extends ChatDatabase>(
@@ -403,6 +429,7 @@ export async function bootstrapChatDatabase<Database extends ChatDatabase>(
   `.execute(db);
   await sql`ALTER TABLE chat_runs ADD COLUMN IF NOT EXISTS context_snapshot JSONB`.execute(db);
   await sql`ALTER TABLE chat_runs ADD COLUMN IF NOT EXISTS request_hash TEXT`.execute(db);
+  await sql`ALTER TABLE chat_runs ADD COLUMN IF NOT EXISTS run_policy JSONB`.execute(db);
   await sql`
     ALTER TABLE chat_runs
     ADD COLUMN IF NOT EXISTS execution_root_fingerprint TEXT
@@ -473,6 +500,7 @@ export async function bootstrapChatDatabase<Database extends ChatDatabase>(
   await sql`ALTER TABLE chat_queued_turns ADD COLUMN IF NOT EXISTS accepted_auth_epoch BIGINT`.execute(db);
   await sql`ALTER TABLE chat_queued_turns ADD COLUMN IF NOT EXISTS accepted_execution_generation BIGINT`.execute(db);
   await sql`ALTER TABLE chat_queued_turns ADD COLUMN IF NOT EXISTS accepted_execution_eligibility JSONB`.execute(db);
+  await sql`ALTER TABLE chat_queued_turns ADD COLUMN IF NOT EXISTS run_policy JSONB`.execute(db);
   await sql`
     ALTER TABLE chat_queued_turns
     ADD COLUMN IF NOT EXISTS retry_of_queued_turn_id TEXT REFERENCES chat_queued_turns(id) ON DELETE SET NULL
@@ -682,6 +710,29 @@ export async function bootstrapChatDatabase<Database extends ChatDatabase>(
       created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       PRIMARY KEY (owner_type, owner_id, migration_id)
+    )
+  `.execute(db);
+  // CanonicalVoiceDelivery records (specs/535-aoede-rewrite). The
+  // (chat_id, response_id) primary key already serves chat-scoped projections,
+  // so no secondary index is needed.
+  await sql`
+    CREATE TABLE IF NOT EXISTS chat_voice_deliveries (
+      chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+      response_id TEXT NOT NULL,
+      run_id TEXT NOT NULL,
+      message_id TEXT NOT NULL,
+      state TEXT NOT NULL CHECK (state IN ('pending', 'playing', 'complete', 'interrupted', 'unknown')),
+      revision BIGINT NOT NULL DEFAULT 1,
+      segments JSONB NOT NULL,
+      acknowledged_segment TEXT,
+      delivered_through_ms BIGINT NOT NULL DEFAULT 0,
+      played_through_ms BIGINT NOT NULL DEFAULT 0,
+      effective_text_end BIGINT NOT NULL DEFAULT 0,
+      transport_epoch BIGINT NOT NULL,
+      terminal_reason TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      PRIMARY KEY (chat_id, response_id)
     )
   `.execute(db);
 
