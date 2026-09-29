@@ -1,3 +1,4 @@
+import type { SafeVoiceErrorCode } from "@matrix-os/contracts/voice-session";
 import type {
   VoiceSimulatorAction,
   VoiceSimulatorJournalEntry,
@@ -18,6 +19,24 @@ export {
 } from "./simulator-validation.js";
 
 type Details = Readonly<Record<string, string | number | boolean | null>>;
+
+const SAFE_ERROR_CODES = {
+  permission: "permission_denied",
+  durationLimit: "session_limit_reached",
+  sessionQuota: "session_limit_reached",
+  usageQuota: "usage_limit_reached",
+  backpressure: "audio_backpressure",
+  inputLost: "input_unavailable",
+  outputLost: "output_unavailable",
+} satisfies Record<string, SafeVoiceErrorCode>;
+
+const TERMINAL_OPERATION_STATES = new Set([
+  "succeeded",
+  "failed",
+  "cancelled",
+  "timed_out",
+  "outcome_unknown",
+]);
 
 type MutableResources = {
   capture: boolean;
@@ -84,14 +103,7 @@ export class DeterministicVoiceSimulator {
 
     for (const action of orderedTimeline(scenario.timeline)) {
       if (!state.terminal && action.atMs >= scenario.limits.maxDurationMs) {
-        state.sessionState = "failed";
-        state.terminal = true;
-        cleanup(state);
-        this.record(state, scenario.limits.maxDurationMs, "session.duration_limit", {
-          errorCode: "session_limit_reached",
-          limitMs: scenario.limits.maxDurationMs,
-          recoverable: false,
-        });
+        this.durationLimit(state, scenario.limits.maxDurationMs);
         break;
       }
 
@@ -105,11 +117,26 @@ export class DeterministicVoiceSimulator {
       this.apply(state, action, scenario.limits.maxQueuedAudioMs, identityLimit);
     }
 
+    if (!state.terminal) {
+      this.durationLimit(state, scenario.limits.maxDurationMs);
+    }
+
     return {
       journal: state.journal,
       resources: { ...state.resources },
       terminalState: state.sessionState,
     };
+  }
+
+  private durationLimit(state: RunState, limitMs: number): void {
+    state.sessionState = "failed";
+    state.terminal = true;
+    cleanup(state);
+    this.record(state, limitMs, "session.duration_limit", {
+      errorCode: SAFE_ERROR_CODES.durationLimit,
+      limitMs,
+      recoverable: false,
+    });
   }
 
   private record(state: RunState, atMs: number, type: string, details: Details): void {
@@ -198,6 +225,20 @@ export class DeterministicVoiceSimulator {
       case "device":
         this.device(state, action);
         return;
+      case "operation": {
+        if (!TERMINAL_OPERATION_STATES.has(action.state)) {
+          state.sessionState = "using_tool";
+        } else if (state.sessionState === "using_tool") {
+          state.sessionState = "thinking";
+        }
+        this.record(state, action.atMs, "operation.status", {
+          operationId: action.operationId,
+          runId: action.runId,
+          label: action.label,
+          state: action.state,
+        });
+        return;
+      }
       case "end":
         state.sessionState = action.reason === "failure" ? "failed" : "ended";
         state.terminal = true;
@@ -221,7 +262,7 @@ export class DeterministicVoiceSimulator {
     state.terminal = true;
     cleanup(state);
     this.record(state, action.atMs, `permission.${action.outcome}`, {
-      errorCode: action.outcome === "revoked" ? "permission_revoked" : "permission_denied",
+      errorCode: SAFE_ERROR_CODES.permission,
       outcome: action.outcome,
       recoverable: true,
     });
@@ -321,7 +362,7 @@ export class DeterministicVoiceSimulator {
       state.resources.capture = false;
       state.sessionState = "paused";
       this.record(state, action.atMs, "backpressure.limit", {
-        errorCode: "audio_backpressure",
+        errorCode: SAFE_ERROR_CODES.backpressure,
         limitMs,
         queuedAudioMs: state.resources.queuedAudioMs,
         recoverable: true,
@@ -339,7 +380,7 @@ export class DeterministicVoiceSimulator {
     state.terminal = terminal;
     if (terminal) cleanup(state);
     this.record(state, action.atMs, "quota.reached", {
-      errorCode: action.quota === "session" ? "session_limit_reached" : "usage_limit_reached",
+      errorCode: action.quota === "session" ? SAFE_ERROR_CODES.sessionQuota : SAFE_ERROR_CODES.usageQuota,
       quota: action.quota,
       recoverable: true,
     });
@@ -355,7 +396,7 @@ export class DeterministicVoiceSimulator {
     if (action.action === "input_lost") state.resources.capture = false;
     if (action.action === "output_lost") state.resources.playbackSegments = 0;
     this.record(state, action.atMs, `device.${action.action}`, {
-      errorCode: action.action === "input_lost" ? "input_unavailable" : "output_unavailable",
+      errorCode: action.action === "input_lost" ? SAFE_ERROR_CODES.inputLost : SAFE_ERROR_CODES.outputLost,
       recoverable: true,
     });
   }

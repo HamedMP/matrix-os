@@ -143,6 +143,36 @@ describe("DeterministicVoiceSimulator", () => {
     expect(result.resources).toEqual(CLEAN_RESOURCES);
   });
 
+  it("fires the duration limit on its own when no later action reaches the deadline", () => {
+    const empty = run(createVoiceSimulatorScenario("empty", [], {
+      limits: { maxQueuedAudioMs: 1_000, maxDurationMs: 250 },
+    }));
+    expect(empty.journal).toEqual([{
+      atMs: 250,
+      sequence: 1,
+      type: "session.duration_limit",
+      sessionState: "failed",
+      epoch: 1,
+      details: { errorCode: "session_limit_reached", limitMs: 250, recoverable: false },
+    }]);
+    expect(empty.resources).toEqual(CLEAN_RESOURCES);
+    expect(empty.terminalState).toBe("failed");
+
+    // An early-ending timeline still reaches the duration deadline and leaves
+    // capture/transport/timers cleaned rather than live.
+    const early = run(createVoiceSimulatorScenario("early-end", [
+      { atMs: 0, type: "permission", outcome: "granted" },
+      { atMs: 10, type: "capture", action: "start", turnId: "turn-1" },
+    ], { limits: { maxQueuedAudioMs: 1_000, maxDurationMs: 500 } }));
+    expect(early.journal.at(-1)).toMatchObject({
+      atMs: 500,
+      type: "session.duration_limit",
+      sessionState: "failed",
+    });
+    expect(early.resources).toEqual(CLEAN_RESOURCES);
+    expect(early.terminalState).toBe("failed");
+  });
+
   it("runs idempotent cleanup for every terminal path", () => {
     const result = run(terminalCleanupScenario);
     expect(result.journal.slice(-2)).toEqual([
@@ -283,6 +313,53 @@ describe("DeterministicVoiceSimulator", () => {
       {
         name: "missing timeline",
         scenario: { scenarioId: "no-timeline", version: 1, initialEpoch: 1, limits: { maxQueuedAudioMs: 1_000, maxDurationMs: 1_000 } },
+        error: TypeError,
+      },
+      {
+        name: "unknown scenario key",
+        scenario: { ...createVoiceSimulatorScenario("extra-key", []), provider: "openai" },
+        error: TypeError,
+      },
+      {
+        name: "unknown limits key",
+        scenario: createVoiceSimulatorScenario("extra-limit", [], {
+          limits: { maxQueuedAudioMs: 1_000, maxDurationMs: 1_000, maxRetries: 3 } as never,
+        }),
+        error: TypeError,
+      },
+      {
+        name: "unknown action key",
+        scenario: createVoiceSimulatorScenario("extra-action-key", [
+          { atMs: 0, type: "end", reason: "user", severity: "high" } as never,
+        ]),
+        error: TypeError,
+      },
+      {
+        name: "segment index above cap",
+        scenario: createVoiceSimulatorScenario("big-segment-index", [
+          { atMs: 0, type: "synthesis.segment", responseId: "response-1", segmentId: "segment-1", segmentIndex: 512, durationMs: 10 },
+        ]),
+        error: RangeError,
+      },
+      {
+        name: "segment duration above cap",
+        scenario: createVoiceSimulatorScenario("big-segment-duration", [
+          { atMs: 0, type: "synthesis.segment", responseId: "response-1", segmentId: "segment-1", segmentIndex: 0, durationMs: 3_600_001 },
+        ]),
+        error: RangeError,
+      },
+      {
+        name: "action timestamp above the scenario duration",
+        scenario: createVoiceSimulatorScenario("past-deadline", [
+          { atMs: 101, type: "end", reason: "user" },
+        ], { limits: { maxQueuedAudioMs: 1_000, maxDurationMs: 100 } }),
+        error: RangeError,
+      },
+      {
+        name: "operation state outside the canonical enum",
+        scenario: createVoiceSimulatorScenario("bad-operation-state", [
+          { atMs: 0, type: "operation", operationId: "op-1", runId: "run-1", label: "Read files", state: "exploded" } as never,
+        ]),
         error: TypeError,
       },
     ];

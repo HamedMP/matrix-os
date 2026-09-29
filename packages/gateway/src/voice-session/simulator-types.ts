@@ -1,3 +1,5 @@
+import type { CanonicalOperationState } from "@matrix-os/contracts/voice-session";
+
 type EpochBoundAction = { epoch?: number };
 
 export type VoiceSimulatorAction = EpochBoundAction & (
@@ -14,6 +16,7 @@ export type VoiceSimulatorAction = EpochBoundAction & (
   | { atMs: number; type: "backpressure"; queuedAudioMs: number }
   | { atMs: number; type: "quota"; quota: "session" | "usage" }
   | { atMs: number; type: "device"; action: "input_lost" | "output_lost" | "restored" }
+  | { atMs: number; type: "operation"; operationId: string; runId: string; label: string; state: CanonicalOperationState }
   | { atMs: number; type: "end"; reason: "user" | "failure" | "shutdown" }
 );
 

@@ -7,6 +7,8 @@ export const VOICE_SIMULATOR_LIMITS = {
   maxIdChars: 160,
   maxQueuedAudioMs: 10_000,
   maxDurationMs: 3_600_000,
+  maxSegments: 512,
+  maxOperationLabelChars: 120,
 } as const;
 
 const textEncoder = new TextEncoder();
@@ -67,12 +69,67 @@ function requireEnum(value: unknown, field: string, allowed: readonly string[]):
   }
 }
 
-function validateAction(action: unknown, index: number): void {
+function requireLabel(value: unknown, field: string): void {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new TypeError(`${field} must be a non-empty string`);
+  }
+  if ([...value].length > VOICE_SIMULATOR_LIMITS.maxOperationLabelChars) {
+    throw new RangeError(`${field} exceeds ${VOICE_SIMULATOR_LIMITS.maxOperationLabelChars} characters`);
+  }
+}
+
+const CANONICAL_OPERATION_STATES = [
+  "queued",
+  "running",
+  "waiting_for_approval",
+  "waiting_for_input",
+  "succeeded",
+  "failed",
+  "cancelled",
+  "timed_out",
+  "outcome_unknown",
+] as const;
+
+const ACTION_FIELDS: Record<string, readonly string[]> = {
+  permission: ["atMs", "type", "epoch", "outcome"],
+  capture: ["atMs", "type", "epoch", "action", "turnId"],
+  vad: ["atMs", "type", "epoch", "action", "turnId"],
+  "transcript.provisional": ["atMs", "type", "epoch", "turnId", "revision", "text"],
+  "transcript.final": ["atMs", "type", "epoch", "turnId", "finalityId", "localOrder", "text"],
+  generation: ["atMs", "type", "epoch", "action", "responseId"],
+  "synthesis.segment": ["atMs", "type", "epoch", "responseId", "segmentId", "segmentIndex", "durationMs"],
+  playback: ["atMs", "type", "epoch", "action", "responseId", "segmentId"],
+  interrupt: ["atMs", "type", "epoch", "responseId", "source"],
+  transport: ["atMs", "type", "epoch", "action"],
+  backpressure: ["atMs", "type", "epoch", "queuedAudioMs"],
+  quota: ["atMs", "type", "epoch", "quota"],
+  device: ["atMs", "type", "epoch", "action"],
+  operation: ["atMs", "type", "epoch", "operationId", "runId", "label", "state"],
+  end: ["atMs", "type", "epoch", "reason"],
+};
+
+function rejectUnknownKeys(
+  value: Record<string, unknown>,
+  allowed: readonly string[],
+  location: string,
+): void {
+  const allowedKeys = new Set(allowed);
+  for (const key of Object.keys(value)) {
+    if (!allowedKeys.has(key)) {
+      throw new TypeError(`${location}.${key} is not a supported field`);
+    }
+  }
+}
+
+function validateAction(action: unknown, index: number, maxDurationMs: number): void {
   const field = (name: string) => `timeline[${index}].${name}`;
   if (!isRecord(action)) {
     throw new TypeError(`timeline[${index}] must be an object`);
   }
   requireNonNegativeSafeInteger(action.atMs, field("atMs"));
+  if (action.atMs > maxDurationMs) {
+    throw new RangeError(`timeline[${index}].atMs exceeds the scenario duration limit`);
+  }
   if (typeof action.type !== "string") {
     throw new TypeError(field("type") + " must be a string");
   }
@@ -106,8 +163,16 @@ function validateAction(action: unknown, index: number): void {
     case "synthesis.segment":
       requireIdentifier(action.responseId, field("responseId"));
       requireIdentifier(action.segmentId, field("segmentId"));
-      requireNonNegativeSafeInteger(action.segmentIndex, field("segmentIndex"));
-      requireNonNegativeSafeInteger(action.durationMs, field("durationMs"));
+      requireBoundedNonNegative(
+        action.segmentIndex,
+        field("segmentIndex"),
+        VOICE_SIMULATOR_LIMITS.maxSegments - 1,
+      );
+      requireBoundedNonNegative(
+        action.durationMs,
+        field("durationMs"),
+        VOICE_SIMULATOR_LIMITS.maxDurationMs,
+      );
       break;
     case "playback":
       requireEnum(action.action, field("action"), ["start", "segment_played", "stop"]);
@@ -135,16 +200,30 @@ function validateAction(action: unknown, index: number): void {
     case "device":
       requireEnum(action.action, field("action"), ["input_lost", "output_lost", "restored"]);
       break;
+    case "operation":
+      requireIdentifier(action.operationId, field("operationId"));
+      requireIdentifier(action.runId, field("runId"));
+      requireLabel(action.label, field("label"));
+      requireEnum(action.state, field("state"), CANONICAL_OPERATION_STATES);
+      break;
     case "end":
       requireEnum(action.reason, field("reason"), ["user", "failure", "shutdown"]);
       break;
     default:
       throw new TypeError(`timeline[${index}].type is not a supported simulator action`);
   }
+  rejectUnknownKeys(
+    action,
+    ACTION_FIELDS[action.type as string] ?? [],
+    `timeline[${index}]`,
+  );
   if (action.epoch !== undefined) {
     requirePositiveSafeInteger(action.epoch, field("epoch"));
   }
 }
+
+const SCENARIO_FIELDS = ["scenarioId", "version", "initialEpoch", "limits", "timeline"] as const;
+const LIMIT_FIELDS = ["maxQueuedAudioMs", "maxDurationMs"] as const;
 
 export function assertValidVoiceSimulatorScenario(
   scenario: unknown,
@@ -152,6 +231,7 @@ export function assertValidVoiceSimulatorScenario(
   if (!isRecord(scenario)) {
     throw new TypeError("scenario must be an object");
   }
+  rejectUnknownKeys(scenario, SCENARIO_FIELDS, "scenario");
   requireIdentifier(scenario.scenarioId, "scenarioId");
   if (scenario.version !== 1) {
     throw new RangeError("scenario.version must be 1");
@@ -160,6 +240,7 @@ export function assertValidVoiceSimulatorScenario(
   if (!isRecord(scenario.limits)) {
     throw new TypeError("scenario.limits must be an object");
   }
+  rejectUnknownKeys(scenario.limits, LIMIT_FIELDS, "scenario.limits");
   const maxQueuedAudioMs = scenario.limits.maxQueuedAudioMs;
   const maxDurationMs = scenario.limits.maxDurationMs;
   requirePositiveSafeInteger(maxQueuedAudioMs, "limits.maxQueuedAudioMs");
@@ -176,5 +257,5 @@ export function assertValidVoiceSimulatorScenario(
   if (scenario.timeline.length > VOICE_SIMULATOR_LIMITS.maxTimelineActions) {
     throw new RangeError(`scenario.timeline exceeds ${VOICE_SIMULATOR_LIMITS.maxTimelineActions} actions`);
   }
-  scenario.timeline.forEach(validateAction);
+  scenario.timeline.forEach((action, index) => validateAction(action, index, maxDurationMs));
 }
