@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type { ProcessManager } from "../../../packages/gateway/src/app-runtime/process-manager.js";
 import type { PortPool } from "../../../packages/gateway/src/app-runtime/port-pool.js";
 import { SpawnError } from "../../../packages/gateway/src/app-runtime/errors.js";
-import { mkdtemp, cp, mkdir, writeFile } from "node:fs/promises";
+import { mkdtemp, cp, mkdir, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { TEST_PORT_RANGES } from "./test-ports.js";
@@ -62,6 +62,7 @@ describe("ProcessManager", () => {
 
   afterEach(async () => {
     await pm.shutdownAll();
+    await rm(tmpHome, { recursive: true, force: true });
   });
 
   // T051: Spawn + health check tests
