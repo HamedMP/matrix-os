@@ -260,10 +260,9 @@ export function createProviderGenericHarnessCoordinator(options: {
     try {
       return (await options.runtimeController.update(update.data)).revision;
     } catch (error) {
-      // The runtime validates its live catalog before changing its route, so
-      // these rejections are safe refusals rather than runtime outages.
-      if (isAgentConfigError(error)
-        && (error.kind === "not_configured" || error.kind === "agent_config_invalid")) {
+      // Adapters raise not_configured only when the live catalog rejects the
+      // route, before changing it, so this is a safe refusal, not an outage.
+      if (isAgentConfigError(error) && error.kind === "not_configured") {
         throw new ProviderSettingsStoreError("invalid_route", 400);
       }
       throw error;
@@ -274,6 +273,12 @@ export function createProviderGenericHarnessCoordinator(options: {
     const config = await readConfig(join(options.homePath, "system/config.json"));
     const revision = readAgentConfig(config).value.revision ?? 0;
     const snapshot = await readRuntimeSnapshot(options.runtimeSource);
+    if (!snapshot.messaging.configured && snapshot.messagingObserved !== true) {
+      // A stopped or unreadable runtime reports no route without proving that
+      // none exists. Recording it as unset would drop its rollback target.
+      console.warn("[provider-settings] Generic harness runtime route is not observable");
+      throw new ProviderSettingsStoreError("runtime_unavailable", 503);
+    }
     const route = RuntimeRouteSchema.safeParse({
       harness: snapshot.runtime.selected,
       providerId: snapshot.messaging.configured ? snapshot.messaging.provider : null,

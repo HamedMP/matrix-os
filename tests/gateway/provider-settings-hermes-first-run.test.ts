@@ -55,6 +55,8 @@ describe("Hermes enablement for a first-run owner", () => {
   async function setup(options: {
     initialRoute?: Route;
     runtimeCatalog?: string[];
+    routeObserved?: boolean;
+    updateError?: AgentConfigError;
   } = {}) {
     homePath = await mkdtemp(join(tmpdir(), "provider-hermes-first-run-"));
     await mkdir(join(homePath, "system"), { recursive: true });
@@ -65,6 +67,7 @@ describe("Hermes enablement for a first-run owner", () => {
     const catalog = new Set(options.runtimeCatalog ?? ["claude-opus-5"]);
     const update = vi.fn(async (input: AgentSettingsUpdate) => {
       if (input.revision !== revision) throw new AgentConfigError("agent_config_conflict");
+      if (options.updateError) throw options.updateError;
       // Mirrors the Hermes adapter: only models in the live runtime catalog are accepted.
       if (!input.provider || !input.messagingModel || !catalog.has(input.messagingModel)) {
         throw new AgentConfigError("not_configured");
@@ -113,6 +116,7 @@ describe("Hermes enablement for a first-run owner", () => {
         model: route?.model ?? null,
         configured: route !== null,
       },
+      messagingObserved: options.routeObserved ?? true,
     });
     const createCoordinator = () => createProviderGenericHarnessCoordinator({
       homePath: homePath!,
@@ -222,6 +226,41 @@ describe("Hermes enablement for a first-run owner", () => {
     const after = await store.getSnapshot();
     expect(after.revision).toBe(revision);
     expect(after.harnesses.find((harness) => harness.id === hermesId)?.enabled).toBe(false);
+  });
+
+  it("fails closed when the runtime cannot prove that its messaging route is empty", async () => {
+    const { store, coordinator, update, receiptsPath } = await setup({ routeObserved: false });
+    const { hermesId, revision } = await selectDisabledHermesRoute(store, "claude-opus-5");
+
+    await expect(store.mutate(enableMutation(hermesId, revision))).rejects.toMatchObject({
+      code: "runtime_unavailable",
+      status: 503,
+    });
+
+    expect(update).not.toHaveBeenCalled();
+    expect(coordinator.isRecoveryReady()).toBe(true);
+    // The route is read before a prepared receipt is written, so none remains.
+    expect(JSON.parse(await readFile(receiptsPath, "utf8")).receipts)
+      .not.toContainEqual(expect.objectContaining({ key: "first_run_enable" }));
+    expect((await store.getSnapshot()).harnesses.find((harness) => harness.id === hermesId)?.enabled).toBe(false);
+  });
+
+  it("does not report runtime configuration failures as route refusals", async () => {
+    const { store, update, receiptsPath } = await setup({
+      updateError: new AgentConfigError("agent_config_invalid"),
+    });
+    const { hermesId, revision } = await selectDisabledHermesRoute(store, "claude-opus-5");
+
+    await expect(store.mutate(enableMutation(hermesId, revision))).rejects.toMatchObject({
+      code: "runtime_unavailable",
+      status: 503,
+    });
+
+    expect(update).toHaveBeenCalledTimes(1);
+    // The runtime state is uncertain, so the prepared receipt stays for recovery.
+    expect(JSON.parse(await readFile(receiptsPath, "utf8")).receipts).toEqual(expect.arrayContaining([
+      expect.objectContaining({ key: "first_run_enable", state: "prepared" }),
+    ]));
   });
 
   it("rolls back a first-run enable without inventing a prior runtime route", async () => {
