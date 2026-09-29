@@ -7,7 +7,8 @@
     ".": "./src/index.ts",
     "./chat-subagent": "./src/chat-subagent.ts",
     "./collaboration": "./src/collaboration.ts",
-    "./collaboration-direct": "./src/collaboration-direct.ts"
+    "./collaboration-direct": "./src/collaboration-direct.ts",
+    "./voice-session": "./src/voice-session.ts"
   },
   "imports": {
     "#chat-subagent": "./src/chat-subagent.ts",
@@ -72,7 +73,8 @@
     "#terminal-keyboard": "./src/terminal-keyboard.ts",
     "#terminal-scroll": "./src/terminal-scroll.ts",
     "#terminal-snapshot": "./src/terminal-snapshot.ts",
-    "#terminal-links": "./src/terminal-links.ts"
+    "#terminal-links": "./src/terminal-links.ts",
+    "#voice-session": "./src/voice-session.ts"
   },
   "main": "src/index.ts",
   "types": "src/index.ts",

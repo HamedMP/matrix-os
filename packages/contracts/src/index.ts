@@ -74,6 +74,7 @@ export * from "#jev";
 export * from "#getting-started";
 export * from "#safe-client-error";
 export * from "#speech";
+export * from "#voice-session";
 export * from "#support-chat-properties";
 export * from "#sync";
 export * from "#terminal-clipboard";
