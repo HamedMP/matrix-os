@@ -2344,25 +2344,27 @@ describe('platform/customer-vps', () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response('{}', { status: 202 }));
     const timeoutSpy = vi.spyOn(AbortSignal, 'timeout');
     vi.stubGlobal('fetch', fetchMock);
-    const { service } = createService();
-    const provisioned = await service.provision({ clerkUserId: 'user_123', handle: 'alice' });
-    await service.register('registration-token', {
-      machineId: provisioned.machineId,
-      hetznerServerId: 123456,
-      publicIPv4: '203.0.113.10',
-      imageVersion: 'stable',
-    });
 
     try {
+      const { service } = createService();
+      const provisioned = await service.provision({ clerkUserId: 'user_123', handle: 'alice' });
+      await service.register('registration-token', {
+        machineId: provisioned.machineId,
+        hetznerServerId: 123456,
+        publicIPv4: '203.0.113.10',
+        imageVersion: 'stable',
+      });
       await expect(service.deploy({ channel: 'dev' })).resolves.toMatchObject({ triggered: 1, failed: 0 });
+      expect(timeoutSpy).toHaveBeenCalledOnce();
+      expect(timeoutSpy).toHaveBeenCalledWith(30_000);
       expect(fetchMock).toHaveBeenCalledWith(
         'https://203.0.113.10:443/api/system/update',
         expect.objectContaining({
           method: 'POST',
           body: JSON.stringify({ channel: 'dev' }),
+          signal: timeoutSpy.mock.results[0]?.value,
         }),
       );
-      expect(timeoutSpy).toHaveBeenCalledWith(30_000);
     } finally {
       timeoutSpy.mockRestore();
       vi.unstubAllGlobals();
