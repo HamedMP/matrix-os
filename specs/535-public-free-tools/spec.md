@@ -22,7 +22,7 @@ Offer 45 useful tools at `matrix-os.com/tools` without a Matrix account, payment
 |---|---|
 | Developer (17) | JSON formatter, JSON validator, JSON minifier, JSON to CSV, CSV to JSON, Base64 encoder, Base64 decoder, URL encoder, URL decoder, HTML encoder, HTML decoder, hash generator, UUID generator, regex tester, text diff, timestamp converter, color converter |
 | Writing and data (13) | Word counter, character counter, readability checker, case converter, slug generator, text cleaner, line sorter, duplicate line remover, find and replace, Markdown preview, HTML to text, lorem ipsum generator, keyword density checker |
-| SEO and marketing (11) | Meta tag generator, robots.txt generator, sitemap XML generator, canonical URL generator, hreflang generator, UTM builder, title length checker, meta description checker, social preview, JSON-LD generator, pasted HTML SEO audit |
+| SEO and marketing (11) | Meta tag generator, robots.txt generator, sitemap XML generator, canonical URL generator, hreflang generator, UTM builder, title length checker, meta description checker, social card tag generator, JSON-LD generator, pasted HTML SEO audit |
 | Agent development (4) | AGENTS.md structure checker, MCP configuration validator, approximate prompt token estimator, cron expression explainer |
 
 These are 45 distinct tasks with different input contracts and outputs. Shared engines and UI primitives are encouraged; pages must not be empty aliases or route variants that only change keywords.
