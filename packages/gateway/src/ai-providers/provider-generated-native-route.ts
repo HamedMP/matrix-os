@@ -5,7 +5,7 @@ import type { HarnessConfiguration } from "./provider-settings-persistence.js";
 export function generatedNativeHarnessConfiguration(
   driver: AiProviderSnapshotV3["drivers"][number], catalog: GenericHarnessModelCatalog | undefined, now: Date,
 ): HarnessConfiguration | null {
-  if ((driver.id !== "pi" && driver.id !== "opencode") || !catalog || catalog.failures.includes(driver.id)) return null;
+  if ((driver.id !== "pi" && driver.id !== "opencode" && driver.id !== "hermes") || !catalog || catalog.failures.includes(driver.id)) return null;
   const modelId = catalog.nativeDefaults?.[driver.id];
   if (!modelId) return null;
   const source = catalog.accessSources.find((candidate) => candidate.kind === "harness_profile" && candidate.harness === driver.id

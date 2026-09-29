@@ -15,6 +15,7 @@ reference: `docs/dev/preview-environments.md`. Spec: `specs/093-preview-environm
 | Shell/gateway/kernel UI, fast iteration | **Staging slot** (HMR, seconds per change) | `./scripts/staging-slot.sh up <worktree>` |
 | Shell/gateway/kernel, production-shaped verify; onboarding (needs virgin VPS) | **Preview VPS** | add the `preview-vps` label to the PR |
 | Platform (packages/platform) | **Platform preview revision** | add the `preview-platform` label to the PR |
+| Organization collaboration (pre-merge gate) | **Collaboration preview** | labels `preview-vps`, `preview-collaboration` and `preview-platform`, then the `connect_collaboration_preview` dispatch (docs, "Collaboration previews") |
 | macOS app | CI artifact + any preview VPS via `app.matrix-os.com/vm/<handle>` | build artifact from `macos-086.yml` |
 | CLI | npm dist-tag paired with a preview VPS profile | see docs |
 

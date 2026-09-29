@@ -6,6 +6,8 @@ This package is the only managed speech admission boundary. Runtime callers auth
 
 - `speech_operations` is the durable source of truth for execution and cancellation metadata. It deliberately contains no audio, transcript, provider response, or chat context.
 - The existing machine/runtime funded-AI balance and ledger remain the only monetary source of truth. The production `SpeechFundingPort` reserves and settles that wallet with an explicit operator allowlist of promotional and/or add-on sources; it is not a second balance.
+- `speech_runtime_allowances` is the speech-only monthly cap and usage-counter source of truth. It does not enable or mutate `ai_funded_runtime_policies`, and speech reservations do not consume those text-model monthly counters. Monthly promotional grants remain visible in the shared monetary ledger under the `platform-speech-monthly:<UTC month>` source namespace so a later move to the customer's Matrix AI allowance has an explicit accounting boundary.
+- Allowance and grant terms are frozen per machine for the active UTC month; changed operator defaults take effect on the next UTC-month reconciliation. Reservation settlement and release follow the funding policy stored on the reservation so pre-rollout holds finish against their original counters.
 - Source audio remains owner data. Dictation audio is held only for the bounded request. `owner_audio` can be enabled by platform policy for callers that preserve the owner source before invoking the same service; platform persistence never receives a path or retains the bytes.
 - A funding start receipt is replayable bookkeeping. Only the conditional `reserved -> dispatching` update is the durable provider-dispatch claim.
 
@@ -25,7 +27,7 @@ This package is the only managed speech admission boundary. Runtime callers auth
 
 ## Operational gates
 
-Startup mounts the configured service only when the operator explicitly supplies provider, policy revision, price, eligible funding sources, and platform-only secrets. Otherwise it exposes an authenticated, disabled capability response. Production rollout still requires the external evidence gates below:
+Startup mounts the configured service only when the operator explicitly supplies provider, policy revision, price, speech monthly budget, promotional-credit amount, eligible funding sources, and platform-only secrets. Otherwise it exposes an authenticated, disabled capability response. An idempotent cursor-paginated sweep creates the current UTC-month speech allowance and promotional grant only for every running, authorized customer computer while keeping each database page bounded. General funded-AI text relay/control-plane flags remain independent. Production rollout still requires the external evidence gates below:
 
 1. account-specific OpenAI model, file, usage, timeout, and billing-unit validation using non-private fixtures;
 2. media memory/load validation and supported browser/device recording evidence;

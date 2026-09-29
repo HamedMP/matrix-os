@@ -4,7 +4,6 @@ import type { SyncScope } from "@matrix-os/contracts";
 import { ManifestSchema, type Manifest, type CommitFile } from "./types.js";
 import { buildManifestGenerationKey, buildManifestKey } from "./r2-client.js";
 import type { R2Client } from "./r2-client.js";
-import { streamToBuffer } from "./home-mirror-body.js";
 import type { SyncDatabase } from "./sharing-db.js";
 
 const MANIFEST_FILE_CAP = 50_000;
@@ -145,7 +144,71 @@ async function readObjectBodyAsText(
     ensureManifestSize(Buffer.byteLength(text, "utf-8"), maxBytes);
     return text;
   }
-  return (await streamToBuffer(body, maxBytes)).toString("utf-8");
+  // The platform sync broker returns a web ReadableStream and Node storage
+  // clients may return a Readable; decode both within the same byte cap.
+  const streamed = body as {
+    getReader?: () => ReadableStreamDefaultReader<Uint8Array>;
+    [Symbol.asyncIterator]?: () => AsyncIterator<unknown>;
+  };
+  if (typeof streamed.getReader === "function") {
+    return readWebStreamAsText(streamed.getReader(), maxBytes);
+  }
+  if (typeof streamed[Symbol.asyncIterator] === "function") {
+    return readAsyncIterableAsText(body as AsyncIterable<unknown>, maxBytes);
+  }
+  throw new Error("Unsupported R2 object body type");
+}
+
+function toByteChunk(value: unknown): Uint8Array {
+  if (value instanceof Uint8Array) return value;
+  if (typeof value === "string") return Buffer.from(value, "utf-8");
+  if (value instanceof ArrayBuffer) return new Uint8Array(value);
+  throw new Error("Unsupported R2 object chunk type");
+}
+
+async function readWebStreamAsText(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  maxBytes: number,
+): Promise<string> {
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      const chunk = toByteChunk(value);
+      total += chunk.byteLength;
+      ensureManifestSize(total, maxBytes);
+      chunks.push(chunk);
+    }
+  } catch (err: unknown) {
+    // Request cleanup without awaiting it: a cancellation that never settles
+    // must not hold the caller (possibly inside the manifest advisory lock).
+    reader.cancel().catch((cancelErr: unknown) => {
+      console.warn("[manifest] body cancel failed:", cancelErr instanceof Error ? cancelErr.message : String(cancelErr));
+    });
+    throw err;
+  } finally {
+    reader.releaseLock();
+  }
+  return Buffer.concat(chunks).toString("utf-8");
+}
+
+async function readAsyncIterableAsText(
+  body: AsyncIterable<unknown>,
+  maxBytes: number,
+): Promise<string> {
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  // Leaving the loop early (including by throwing) returns the iterator,
+  // which destroys Node streams.
+  for await (const value of body) {
+    const chunk = toByteChunk(value);
+    total += chunk.byteLength;
+    ensureManifestSize(total, maxBytes);
+    chunks.push(chunk);
+  }
+  return Buffer.concat(chunks).toString("utf-8");
 }
 
 const EMPTY_MANIFEST: Manifest = { version: 2, files: {} };

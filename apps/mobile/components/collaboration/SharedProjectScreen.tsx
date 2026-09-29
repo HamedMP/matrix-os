@@ -10,10 +10,7 @@ import {
   CollaborationRecoverySupersededError,
   useSharedProjectWorkflow,
 } from "./useSharedProjectWorkflow";
-import {
-  collaborationEventsUrl,
-  fetchCollaborationEventTicket,
-} from "@/lib/requests/collaboration";
+import { openCollaborationStream } from "@/lib/requests/collaboration";
 
 type ProjectState = {
   scope: CollaborationScope | null;
@@ -64,19 +61,15 @@ export function SharedProjectScreen({
     };
     const connect = async () => {
       try {
-        const actorToken = await getToken();
-        const ticket = await fetchCollaborationEventTicket(actorToken, scopeId, randomUuid());
+        // A reconnect replaces the session in case the home ended it (denial or authority change).
+        const stream = await openCollaborationStream(await getToken(), scopeId, "events", eventSequenceRef.current, attempt > 0);
         if (closed) return;
         const NativeWebSocket = WebSocket as unknown as new (
           target: string,
           protocols?: string | string[],
           options?: { headers: Record<string, string> },
         ) => WebSocket;
-        const next = new NativeWebSocket(
-          collaborationEventsUrl(scopeId, ticket.ticket, eventSequenceRef.current),
-          undefined,
-          { headers: { Authorization: `Bearer ${actorToken}` } },
-        );
+        const next = new NativeWebSocket(stream.url, undefined, { headers: stream.headers });
         socket = next;
         let usable = true;
         let refreshQueue = Promise.resolve();
@@ -96,7 +89,11 @@ export function SharedProjectScreen({
             }
           });
         };
-        next.onopen = () => { attempt = 0; };
+        next.onopen = () => {
+          attempt = 0;
+          // The home admits a direct stream only after this first-frame possession proof.
+          next.send(stream.handshake);
+        };
         next.onmessage = (event) => {
           if (!usable) return;
           if (typeof event.data !== "string" || event.data.length > 64 * 1024) {
@@ -166,15 +163,6 @@ export function SharedProjectScreen({
 
 function roleLabel(role: "owner" | "editor" | "viewer"): string {
   return role[0]!.toUpperCase() + role.slice(1);
-}
-
-function randomUuid(): string {
-  const bytes = new Uint8Array(16);
-  crypto.getRandomValues(bytes);
-  bytes[6] = (bytes[6]! & 0x0f) | 0x40;
-  bytes[8] = (bytes[8]! & 0x3f) | 0x80;
-  const hex = [...bytes].map((value) => value.toString(16).padStart(2, "0")).join("");
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
 const styles = StyleSheet.create((theme) => ({

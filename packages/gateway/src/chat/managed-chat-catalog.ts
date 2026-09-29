@@ -14,25 +14,29 @@ export function managedChatInstances(
   return snapshot.instances.flatMap((instance) => {
     const source = snapshot.accessSources.find((entry) => entry.id === instance.accessSourceId);
     if (instance.driverId !== "kernel" || instance.id !== "kernel_matrix_included"
-      || source?.id !== "matrix_included" || source.fundingKind !== "matrix_included"
-      || source.state !== "ready" || instance.readiness.state !== "ready"
-      || (source.staleAfter !== null && Date.parse(source.staleAfter) <= now)
-      || (instance.readiness.staleAfter !== null && Date.parse(instance.readiness.staleAfter) <= now)) return [];
+      || source?.id !== "matrix_included" || source.fundingKind !== "matrix_included") return [];
+    const fresh = (source.staleAfter === null || Date.parse(source.staleAfter) > now)
+      && (instance.readiness.staleAfter === null || Date.parse(instance.readiness.staleAfter) > now);
+    const ready = fresh && source.state === "ready" && instance.readiness.state === "ready";
     const eligible = snapshot.models.filter((model) => instance.modelIds.includes(model.id)
       && source.eligibleModelIds.includes(model.id)
       && model.eligibleAccessSourceIds.includes(source.id)
       && model.status !== "unavailable" && model.status !== "retired");
-    if (eligible.length === 0) return [];
-    const efforts = [...new Set(eligible.flatMap((model) => model.effortControls))];
-    const defaultModel = eligible.find((model) => model.id === instance.defaultModelId)?.id;
+    const selectable = ready ? eligible : [];
+    const available = selectable.length > 0;
+    const efforts = [...new Set(selectable.flatMap((model) => model.effortControls))];
+    const defaultModel = selectable.find((model) => model.id === instance.defaultModelId)?.id;
     return [{
       id: instance.id,
       driverKind: "kernel" as const,
       displayName: "Matrix AI",
       connectionLabel: "Matrix AI",
-      availability: "available" as const,
+      connectionState: available ? "ready" as const : fresh
+        && (source.safeReason === "credit_required" || instance.readiness.safeReason === "credit_required")
+        ? "credit_required" as const : "unavailable" as const,
+      availability: available ? "available" as const : "unavailable" as const,
       workspaceRequirement: "none" as const,
-      models: eligible.map((model) => ({
+      models: selectable.map((model) => ({
         id: model.id, displayName: model.displayName, availability: "available" as const,
         capabilities: model.capabilities,
         supportsVision: model.capabilities.includes("vision"),

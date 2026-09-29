@@ -41,6 +41,11 @@ export function createPlatformCollaborationRoutes(options: {
   repository: PlatformCollaborationRepository;
   /** S05: transparent relay for direct-protocol requests (session routes or requests carrying a direct session). */
   relay?: CollaborationRelay;
+  /**
+   * Exact browser origins allowed to send cookie-authenticated relay mutations
+   * (`MATRIX_COLLABORATION_ALLOWED_ORIGINS`). Absent or empty refuses every one.
+   */
+  allowedOrigins?: readonly string[];
   resolveActor(c: RouteContext): Promise<string | null>;
   authenticateRuntime(input: {
     runtimeId: string;
@@ -56,6 +61,7 @@ export function createPlatformCollaborationRoutes(options: {
   now?: () => Date;
 }): Hono {
   const app = new Hono();
+  const allowedOrigins = new Set(options.allowedOrigins ?? []);
 
   app.on(
     ["POST", "PUT", "PATCH", "DELETE"],
@@ -71,7 +77,8 @@ export function createPlatformCollaborationRoutes(options: {
     const relayRoute = options.relay ? parseRelayRoute(c.req.method, c.req.path) : null;
     if (options.relay && relayRoute && (relayRoute.kind === "session" || c.req.header(DIRECT_SESSION_HEADER))) {
       const actorId = await resolveValidatedActor(c, options.resolveActor);
-      if (!actorId) return safeJson(c, "Unauthorized", 401);
+      if (!actorId) return relayUnauthenticated(c);
+      if (!relayOriginAllowed(c, allowedOrigins)) return safeJson(c, "Forbidden", 403);
       const declared = Number(c.req.header("content-length") ?? 0);
       return options.relay.forward({
         actorId,
@@ -272,6 +279,30 @@ async function requireRuntime(
     console.warn("[platform-collaboration] runtime authentication failed", error instanceof Error ? error.name : "UnknownError");
     return null;
   }
+}
+
+/**
+ * A browser attaches the platform cookie on its own, so a relayed mutation that the cookie
+ * authenticated must come from an allowlisted origin. The actor resolver reads the cookie only
+ * when no `Bearer` authorization is present, and a cross-origin page cannot set one without a
+ * preflight the platform never grants.
+ */
+function relayOriginAllowed(c: RouteContext, allowedOrigins: ReadonlySet<string>): boolean {
+  if (c.req.method === "GET" || c.req.method === "HEAD") return true;
+  if (c.req.header("authorization")?.startsWith("Bearer ")) return true;
+  const origin = c.req.header("origin");
+  return origin !== undefined && allowedOrigins.has(origin);
+}
+
+/**
+ * The relay's own authentication failure. The relay forwards no `WWW-Authenticate` from a home,
+ * so the challenge tells a client to sign in again rather than that a home ended its access.
+ * It is exposed for the cross-origin Electron renderer, whose trusted core answers CORS.
+ */
+function relayUnauthenticated(c: RouteContext) {
+  c.header("WWW-Authenticate", 'Bearer realm="matrix-os"');
+  c.header("Access-Control-Expose-Headers", "WWW-Authenticate");
+  return safeJson(c, "Unauthorized", 401);
 }
 
 async function resolveValidatedActor(

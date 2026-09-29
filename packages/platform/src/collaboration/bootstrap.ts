@@ -149,6 +149,7 @@ export async function bootstrapPlatformCollaboration(
     db: collaborationDb,
     organizations,
     direct,
+    allowedOrigins: config.allowedOrigins,
     resolveActor,
     authenticateRuntime,
     resolveParticipant: async (actorId) => {

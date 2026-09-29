@@ -1,8 +1,10 @@
 /**
- * S06 / T034: session hygiene. Home requests carry no actor token or
- * cookies, failures never log tickets or session ids, nothing is cached so a
- * computer switch cannot serve stale resource content, and the platform is
- * never asked to authorize a scope request.
+ * S06 / T034: session hygiene. Platform credentials go to the platform origin
+ * only: a home endpoint on any other origin gets no actor token or cookie, and
+ * the platform relay, which names the actor before forwarding, gets exactly
+ * what ticket issuance gets. Failures never log tickets or session ids,
+ * nothing is cached so a computer switch cannot serve stale resource content,
+ * and the platform is never asked to authorize a scope request.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createCollaborationDirectClient } from "../../packages/ui/src/collaboration/direct-client.js";
@@ -17,14 +19,19 @@ describe("collaboration direct session hygiene", () => {
   });
   afterEach(() => { warn.mockRestore(); });
 
-  const client = () => createCollaborationDirectClient({
-    platformBaseUrl: PLATFORM, fetchImpl: world.fetchImpl, webSocketFactory: world.webSocketFactory, clientOrigin: CLIENT_ORIGIN, now: world.now,
+  const client = (target = world) => createCollaborationDirectClient({
+    platformBaseUrl: PLATFORM, fetchImpl: target.fetchImpl, webSocketFactory: target.webSocketFactory, clientOrigin: CLIENT_ORIGIN, now: target.now,
     getHeaders: async () => ({ Authorization: "Bearer actor-token" }),
   });
 
-  it("never sends the actor token or cookies to a home and never sends home credentials to the platform", async () => {
+  it("never sends the actor token or cookies to a home endpoint on any origin but the platform", async () => {
     const direct = client();
     await direct.request(scopeId, "GET", `/api/collaboration/scopes/${scopeId}`);
+    await direct.request(scopeId, "POST", `/api/collaboration/scopes/${scopeId}/chat/messages`, { text: "hello" });
+    direct.close(scopeId);
+    await vi.waitFor(() => expect(world.home.requests.some((request) => request.method === "DELETE")).toBe(true));
+    const homeCalls = world.fetchImpl.mock.calls.filter(([url]) => new URL(String(url)).origin !== PLATFORM);
+    expect(homeCalls.length).toBeGreaterThanOrEqual(4);
     for (const [url, init] of world.fetchImpl.mock.calls) {
       const target = new URL(String(url));
       const headers = new Headers(init?.headers);
@@ -37,6 +44,24 @@ describe("collaboration direct session hygiene", () => {
         expect(headers.get("x-matrix-collaboration-session")).toBeNull();
         expect(headers.get("x-matrix-collaboration-request")).toBeNull();
       }
+    }
+  });
+
+  it("presents the platform relay exactly the credentials ticket issuance carries, and nothing to another origin", async () => {
+    const relayed = fakeDirectWorld({ endpointOrigin: PLATFORM });
+    const direct = client(relayed);
+    await direct.request(scopeId, "GET", `/api/collaboration/scopes/${scopeId}`);
+    await direct.request(scopeId, "POST", `/api/collaboration/scopes/${scopeId}/chat/messages`, { text: "hello" });
+    direct.close(scopeId);
+    await vi.waitFor(() => expect(relayed.home.requests.some((request) => request.method === "DELETE")).toBe(true));
+    const calls = relayed.fetchImpl.mock.calls;
+    // Ticket, session exchange, two signed requests and the session close: all on the platform origin.
+    expect(calls.length).toBeGreaterThanOrEqual(5);
+    for (const [url, init] of calls) {
+      expect(new URL(String(url)).origin).toBe(PLATFORM);
+      expect(new Headers(init?.headers).get("authorization")).toBe("Bearer actor-token");
+      expect(new Headers(init?.headers).get("cookie")).toBeNull();
+      expect(init?.credentials).toBe("same-origin");
     }
   });
 

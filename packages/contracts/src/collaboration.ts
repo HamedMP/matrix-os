@@ -600,10 +600,11 @@ const CollaborationDirectoryBaseSchema = z.object({
 /**
  * S06 / T032: discovery is a platform metadata projection. `resource` is filled by
  * the client from the resource's home; when that home is unreachable or denies the
- * caller, the client marks the item with `home` instead. Organization-wide shares that
+ * caller, or the platform no longer recognizes the caller (`unauthenticated`), the
+ * client marks the item with `home` instead. Organization-wide shares that
  * this member has not opened yet appear as `organization_pending` (S04 activation).
  */
-export const CollaborationDiscoveryHomeStateSchema = z.enum(["offline", "denied"]);
+export const CollaborationDiscoveryHomeStateSchema = z.enum(["offline", "denied", "unauthenticated"]);
 
 export const CollaborationDiscoveryItemSchema = z.discriminatedUnion("status", [
   CollaborationDirectoryBaseSchema.extend({

@@ -155,4 +155,24 @@ export async function migrateSpeech(db: PlatformMigrationExecutor): Promise<void
     CREATE INDEX IF NOT EXISTS idx_speech_operations_expiry
     ON speech_operations(expires_at, execution_state)
   `.execute(db);
+  await sql`
+    CREATE TABLE IF NOT EXISTS speech_runtime_allowances (
+      machine_id TEXT PRIMARY KEY REFERENCES user_machines(machine_id) ON UPDATE CASCADE ON DELETE CASCADE,
+      owner_id TEXT NOT NULL,
+      runtime_slot TEXT NOT NULL,
+      enabled BOOLEAN NOT NULL DEFAULT TRUE,
+      monthly_budget_microusd BIGINT NOT NULL CHECK (monthly_budget_microusd > 0),
+      monthly_promotional_credit_microusd BIGINT NOT NULL
+        CHECK (monthly_promotional_credit_microusd >= 0),
+      period_start TEXT NOT NULL,
+      period_spent_microusd BIGINT NOT NULL DEFAULT 0 CHECK (period_spent_microusd >= 0),
+      period_reserved_microusd BIGINT NOT NULL DEFAULT 0 CHECK (period_reserved_microusd >= 0),
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )
+  `.execute(db);
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_speech_runtime_allowances_owner
+    ON speech_runtime_allowances(owner_id, runtime_slot)
+  `.execute(db);
 }

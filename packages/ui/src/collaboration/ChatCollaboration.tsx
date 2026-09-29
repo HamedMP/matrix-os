@@ -231,7 +231,7 @@ function CollaborationHome({ api, openInvitation, openChat, openTerminal, openPr
         ? <article key={discoveryKey(item)} className="flex flex-wrap items-center gap-4 rounded-2xl border p-4">
           <div className="min-w-0 flex-1">
             <p className="font-medium">{item.status === "invited" ? "Invitation" : `Shared ${kindLabel(item.kind)}`}</p>
-            <p className="text-sm" style={{ color: "var(--text-secondary)" }}>{item.home === "denied" ? "Access is no longer available." : "The owner's computer is offline. Try again later."}</p>
+            <p className="text-sm" style={{ color: "var(--text-secondary)" }}>{homeStateMessage(item.home)}</p>
           </div>
         </article>
         : item.status === "invited"
@@ -362,6 +362,13 @@ function SharedProjectView({ api, scopeId }: { api: CollaborationApi; scopeId: s
       </ul>
     </section>
   </main>;
+}
+
+/** Why a discovered item could not be opened: ended access is not a lapsed sign-in. */
+function homeStateMessage(home: DiscoveryItem["home"]): string {
+  if (home === "denied") return "Access is no longer available.";
+  if (home === "unauthenticated") return "Sign in again to open this share.";
+  return "The owner's computer is offline. Try again later.";
 }
 
 function discoveryKey(item: DiscoveryItem): string {

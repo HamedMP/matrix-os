@@ -15,6 +15,7 @@ import { readRuntimeSnapshot, type AgentRuntimeSource } from "../agent-config/se
 import type { ProviderSettingsRuntimeCoordinator } from "./provider-settings-coordinators.js";
 import { ProviderSettingsStoreError } from "./provider-settings-errors.js";
 import { assertSpecializedHarnessEnablement, isSpecializedHarness } from "./provider-specialized-harness-enablement.js";
+import { hermesNativeModelId } from "./hermes-native-catalog.js";
 import {
   MAX_PROVIDER_SETTINGS_RECEIPTS,
   ProviderSettingsConfigurationSchema,
@@ -259,11 +260,15 @@ export function createProviderGenericHarnessCoordinator(options: {
 
   function configuredRuntimeRoute(harness: HarnessConfiguration & {
     harness: "hermes" | "openclaw";
-  }): RuntimeRoute {
+  }, snapshot?: Parameters<ProviderSettingsRuntimeCoordinator["applyConfiguration"]>[0]["snapshot"]): RuntimeRoute {
+    const source = snapshot?.accessSources.find((candidate) => candidate.id === harness.accessSourceId);
+    const nativeModel = source?.kind === "harness_profile" && harness.harness === "hermes"
+      ? hermesNativeModelId(harness, source) : undefined;
+    if (nativeModel === null) throw new ProviderSettingsStoreError("invalid_route", 400);
     return RuntimeRouteSchema.parse({
       harness: harness.harness,
       providerId: harness.route.providerId,
-      modelId: harness.route.modelId,
+      modelId: nativeModel ?? harness.route.modelId,
     });
   }
 
@@ -494,12 +499,12 @@ export function createProviderGenericHarnessCoordinator(options: {
       await requireRuntimeSupport(supportedFallback, input.canonical, input.snapshot);
       return configuredRuntimeRoute(supportedFallback as typeof supportedFallback & {
         harness: "hermes" | "openclaw";
-      });
+      }, input.snapshot);
     }
     if (affected.after?.enabled === true
       && mutation.type !== "update_harness"
       && mutation.type !== "remove_harness") {
-      return configuredRuntimeRoute(systemTarget);
+      return configuredRuntimeRoute(systemTarget, input.snapshot);
     }
     return null;
   }

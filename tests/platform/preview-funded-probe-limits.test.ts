@@ -22,6 +22,7 @@ function environment(enabled: boolean, limits: Record<string, string> = {}) {
     MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED: String(enabled),
     MATRIX_FUNDED_AI_RUNTIME_ENABLED: String(enabled),
     MATRIX_FUNDED_AI_RELAY_URL: "https://synthetic-relay.example.test",
+    MATRIX_COLLABORATION_TICKET_ACTIVE_KEY_ID: "collaboration-preview-v1",
     ...limits,
   };
 }

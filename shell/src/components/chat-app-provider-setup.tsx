@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { rabbitMarkSvg } from "@matrix-os/brand/marks";
 import {
   CanonicalProviderCatalogSchema,
   FUNDED_AI_READINESS_TIMEOUTS,
@@ -123,7 +124,7 @@ export function useChatProviderState(
         const forceRefresh = forcePending;
         forcePending = false;
         try {
-          const response = await fetch(`${getGatewayUrl()}${forceRefresh ? "/api/chat-providers?refresh=true&includeConnectionLabels=true" : "/api/chat-providers?includeConnectionLabels=true"}`, {
+          const response = await fetch(`${getGatewayUrl()}${forceRefresh ? "/api/chat-providers?refresh=true&includeConnectionLabels=true&includeConnectionState=true" : "/api/chat-providers?includeConnectionLabels=true&includeConnectionState=true"}`, {
             signal: AbortSignal.timeout(FUNDED_AI_READINESS_TIMEOUTS.rendererRequestMs),
           });
           if (!response.ok) throw new Error("ProviderCatalogUnavailable");
@@ -309,7 +310,8 @@ export function ChatProviderSetupPanel({
       <div className="grid min-w-0 gap-3">
         <div>
           <CompactChatProviderChoices catalog={catalog ?? undefined} choices={choices} selected={selected} lockedInstanceId={lockedInstanceId}
-            renderDriverIcon={(kind) => kind === "kernel" ? <span aria-hidden="true">✦</span> : (
+            renderDriverIcon={(kind) => kind === "kernel" ? <span aria-hidden="true" className="inline-flex size-5 [&_svg]:size-full"
+              dangerouslySetInnerHTML={{ __html: rabbitMarkSvg("matrix-chat-rabbit-mark") }} /> : (
               <span className="inline-flex size-5 shrink-0 items-center justify-center [&_.matrix-ap-agent-logo]:!size-5 [&_.matrix-ap-agent-logo]:!rounded [&_img]:!size-3 [&_svg]:size-4">
                 <HarnessIcon harness={kind === "claude_code" ? "claude" : kind} />
               </span>

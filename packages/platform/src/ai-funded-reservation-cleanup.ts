@@ -5,6 +5,7 @@ import type { PlatformDB } from "./db.js";
 import { AiFundedPolicyError } from "./ai-funded-policy-errors.js";
 import { exactInteger, utcMonthStart, fundingSummary, recordUsageFunding } from "./ai-funded-metering-helpers.js";
 import { reconcileExpiredPromotionalCredit, reservationDebitSplit, debitAttributedPromotionalGrants, debitPromotionalGrants } from "./ai-funded-reservation-sources.js";
+import { isSpeechMonthlyAuthorization } from "./speech/reservation-policy.js";
 export const CleanupSchema = z.object({ limit: z.number().int().min(1).max(1_000) }).strict();
 
 export interface AiFundedReservationCleanupOptions {
@@ -71,7 +72,7 @@ export async function cleanupExpiredReservations(options: AiFundedReservationCle
           .select([
             "reservation_id", "request_id", "token_id", "owner_id", "machine_id", "runtime_slot",
             "period_start", "reserved_microusd", "promotional_reserved_microusd",
-            "addon_reserved_microusd", "status",
+            "addon_reserved_microusd", "authorization_response", "status",
           ])
           .where("reservation_id", "=", candidate.reservation_id)
           .where("status", "in", ["reserved", "in_flight"]).where("expires_at", "<=", checkedAt)
@@ -83,6 +84,7 @@ export async function cleanupExpiredReservations(options: AiFundedReservationCle
           machineId: reservation.machine_id,
           runtimeSlot: reservation.runtime_slot,
         };
+        const speechMonthly = isSpeechMonthlyAuthorization(reservation.authorization_response);
         if (reservation.status === "in_flight") {
           // Preserve explicit grant allocations while the reservation remains
           // active, but retire expired, unattributed legacy backing before
@@ -99,12 +101,15 @@ export async function cleanupExpiredReservations(options: AiFundedReservationCle
           .where("status", "=", reservation.status).returning("reservation_id").executeTakeFirst();
         if (!claimed) return false;
         const reserved = exactInteger(reservation.reserved_microusd);
-        const currentBalance = await trx.executor.updateTable("ai_funded_runtime_balances").set({
-          month_period_start: currentPeriod,
-          month_spent_microusd: sql<number>`CASE WHEN month_period_start = ${currentPeriod} THEN month_spent_microusd ELSE 0 END`,
-          month_reserved_microusd: sql<number>`CASE WHEN month_period_start = ${currentPeriod} THEN month_reserved_microusd ELSE 0 END`,
-          updated_at: checkedAt,
-        }).where("machine_id", "=", reservation.machine_id).returningAll().executeTakeFirstOrThrow();
+        const currentBalance = speechMonthly
+          ? await trx.executor.selectFrom("ai_funded_runtime_balances").selectAll()
+            .where("machine_id", "=", reservation.machine_id).forUpdate().executeTakeFirstOrThrow()
+          : await trx.executor.updateTable("ai_funded_runtime_balances").set({
+            month_period_start: currentPeriod,
+            month_spent_microusd: sql<number>`CASE WHEN month_period_start = ${currentPeriod} THEN month_spent_microusd ELSE 0 END`,
+            month_reserved_microusd: sql<number>`CASE WHEN month_period_start = ${currentPeriod} THEN month_reserved_microusd ELSE 0 END`,
+            updated_at: checkedAt,
+          }).where("machine_id", "=", reservation.machine_id).returningAll().executeTakeFirstOrThrow();
         if (reservation.status === "in_flight") {
           const { promotionalDebit, addonDebit, attributed } = await reservationDebitSplit(
             trx.executor,
@@ -140,7 +145,34 @@ export async function cleanupExpiredReservations(options: AiFundedReservationCle
             appliedPromotionalDebit,
             addonDebit,
             checkedAt,
+            false,
+            !speechMonthly,
           );
+          if (speechMonthly) {
+            const allowance = await trx.executor.updateTable("speech_runtime_allowances").set({
+              period_reserved_microusd: sql<number>`CASE WHEN period_start = ${reservation.period_start}
+                THEN period_reserved_microusd - ${reserved} ELSE period_reserved_microusd END`,
+              period_spent_microusd: sql<number>`CASE WHEN period_start = ${reservation.period_start}
+                THEN period_spent_microusd + ${reserved} ELSE period_spent_microusd END`,
+              updated_at: checkedAt,
+            }).where("machine_id", "=", reservation.machine_id)
+              .where("owner_id", "=", reservation.owner_id)
+              .where("runtime_slot", "=", reservation.runtime_slot)
+              .where(sql<boolean>`period_start <> ${reservation.period_start} OR period_reserved_microusd >= ${reserved}`)
+              .returning("machine_id").executeTakeFirst();
+            if (!allowance) throw new Error("Funded AI speech allowance invariant violated");
+            const settled = await trx.executor.updateTable("ai_funded_usage_reservations").set({
+              status: "settled", actual_microusd: reserved, settled_at: checkedAt,
+              finalization_mode: "conservative",
+              settlement_response: JSON.stringify({
+                capability: "speech:transcribe",
+                actualCostMicrousd: reserved,
+              }),
+            }).where("reservation_id", "=", reservation.reservation_id).where("status", "=", "settling")
+              .returning("reservation_id").executeTakeFirst();
+            if (!settled) throw new Error("Funded AI reservation invariant violated");
+            return true;
+          }
           const runtime = await trx.executor.selectFrom("ai_funded_runtime_policies")
             .select("monthly_budget_microusd").where("machine_id", "=", reservation.machine_id)
             .executeTakeFirstOrThrow();
@@ -174,12 +206,26 @@ export async function cleanupExpiredReservations(options: AiFundedReservationCle
         }
         const balance = await trx.executor.updateTable("ai_funded_runtime_balances").set({
           reserved_microusd: sql<number>`reserved_microusd - ${reserved}`,
-          month_reserved_microusd: sql<number>`CASE WHEN month_period_start = ${reservation.period_start} THEN month_reserved_microusd - ${reserved} ELSE month_reserved_microusd END`,
+          ...(!speechMonthly ? {
+            month_reserved_microusd: sql<number>`CASE WHEN month_period_start = ${reservation.period_start} THEN month_reserved_microusd - ${reserved} ELSE month_reserved_microusd END`,
+          } : {}),
           updated_at: checkedAt,
         }).where("machine_id", "=", reservation.machine_id)
           .where(sql<boolean>`reserved_microusd >= ${reserved}`)
           .returning("machine_id").executeTakeFirst();
         if (!balance) throw new Error("Funded AI balance invariant violated");
+        if (speechMonthly) {
+          const allowance = await trx.executor.updateTable("speech_runtime_allowances").set({
+            period_reserved_microusd: sql<number>`CASE WHEN period_start = ${reservation.period_start}
+              THEN period_reserved_microusd - ${reserved} ELSE period_reserved_microusd END`,
+            updated_at: checkedAt,
+          }).where("machine_id", "=", reservation.machine_id)
+            .where("owner_id", "=", reservation.owner_id)
+            .where("runtime_slot", "=", reservation.runtime_slot)
+            .where(sql<boolean>`period_start <> ${reservation.period_start} OR period_reserved_microusd >= ${reserved}`)
+            .returning("machine_id").executeTakeFirst();
+          if (!allowance) throw new Error("Funded AI speech allowance invariant violated");
+        }
         await reconcileExpiredPromotionalCredit(trx.executor, {
           ownerId: reservation.owner_id,
           machineId: reservation.machine_id,

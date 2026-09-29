@@ -75,6 +75,13 @@ import {
 } from './customer-vps-host-bundle.js';
 import { selectCustomerVpsDeployMachines } from './customer-vps-deploy-selection.js';
 import {
+  activateCustomerVpsSpeechPage,
+  type CustomerVpsSpeechActivationTarget,
+} from './customer-vps-speech-activation.js';
+import {
+  type SpeechFleetActivationPageResult,
+} from './speech/fleet-activation.js';
+import {
   getRuntimeAccessDecision,
   type BillingEntitlement,
 } from './billing.js';
@@ -166,6 +173,8 @@ export interface StatusResponse {
   clerkUserId: string;
   handle: string;
   runtimeSlot: string;
+  provisioningClass: UserMachineProvisioningClass;
+  activationState: 'awaiting_billing' | 'authorized';
   status: CustomerVpsStatus;
   imageVersion: string | null;
   publicIPv4: string | null;
@@ -189,6 +198,8 @@ export interface DeployTarget {
   handle?: string;
 }
 
+export type SpeechActivationTarget = CustomerVpsSpeechActivationTarget;
+
 export interface CustomerVpsService {
   provision(input: ProvisionRequest, options?: ProvisionOptions): Promise<ProvisionResponse>;
   provisionForCheckout(
@@ -205,6 +216,7 @@ export interface CustomerVpsService {
   status(machineId: string): Promise<StatusResponse>;
   delete(machineId: string): Promise<DeleteResponse>;
   deploy(target?: DeployTarget): Promise<DeployResult>;
+  activateSpeech(target?: SpeechActivationTarget): Promise<SpeechFleetActivationPageResult>;
   listAllMachines(): Promise<StatusResponse[]>;
   dispatchProvisioningJobs(): Promise<{ checked: number; completed: number; failed: number }>;
   setPrebillingFallbackReconciler?(reconcile: (() => Promise<unknown>) | undefined): void;
@@ -287,6 +299,8 @@ function statusResponse(row: UserMachineRecord): StatusResponse {
     clerkUserId: row.clerkUserId,
     handle: row.handle,
     runtimeSlot: row.runtimeSlot,
+    provisioningClass: row.provisioningClass,
+    activationState: row.activationState,
     status: row.status as CustomerVpsStatus,
     imageVersion: row.imageVersion,
     publicIPv4: row.publicIPv4,
@@ -2975,7 +2989,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
               'content-type': 'application/json',
             },
             body,
-            signal: AbortSignal.timeout(10_000),
+            signal: AbortSignal.timeout(30_000),
             ...(deps.fetchDispatcher ? { dispatcher: deps.fetchDispatcher } : {}),
           } as RequestInit & { dispatcher?: import('undici').Dispatcher });
           if (res.ok) {
@@ -2992,6 +3006,16 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
       }));
 
       return { triggered, failed, results };
+    },
+
+    async activateSpeech(target?: SpeechActivationTarget): Promise<SpeechFleetActivationPageResult> {
+      return activateCustomerVpsSpeechPage({
+        db: deps.db,
+        target,
+        platformRegisterUrl: deps.config.platformRegisterUrl,
+        platformSecret: deps.config.platformSecret,
+        fetchDispatcher: deps.fetchDispatcher,
+      });
     },
 
     async reconcileProvisioning() {

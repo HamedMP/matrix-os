@@ -300,6 +300,24 @@ describe("T133: Auth token middleware", () => {
     expect(lookalike?.status).toBe(401);
   });
 
+  it("delegates only the exact platform speech config route to its upgrade-token verifier", async () => {
+    const mw = authMiddleware("user-token");
+    let nextCalled = false;
+    await mw(
+      mockContext("/api/internal/platform-speech/config", "Bearer upgrade-token", undefined, "10.67.0.1"),
+      async () => { nextCalled = true; },
+    );
+    expect(nextCalled).toBe(true);
+
+    nextCalled = false;
+    const lookalike = await mw(
+      mockContext("/api/internal/platform-speech/config/unsafe", "Bearer upgrade-token", undefined, "10.67.0.2"),
+      async () => { nextCalled = true; },
+    );
+    expect(nextCalled).toBe(false);
+    expect(lookalike?.status).toBe(401);
+  });
+
   it("delegates only exact collaboration WebSocket routes to their signed-proof verifier", async () => {
     const mw = authMiddleware("secret-token");
     const scopeId = "10000000-0000-4000-8000-000000000001";

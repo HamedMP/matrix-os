@@ -142,6 +142,8 @@ describe('platform/customer-vps provisioning durability', () => {
       machines: [expect.objectContaining({
         handle: 'pr-919',
         runtimeSlot: 'pr-919',
+        provisioningClass: 'preview',
+        activationState: 'authorized',
         status: 'provisioning',
       })],
     });

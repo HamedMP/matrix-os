@@ -129,6 +129,23 @@ function normalizeProvider(
   return validated.success ? validated.data : null;
 }
 
+function nativeProviderRecord(rawProviders: unknown[], providerId: string | null) {
+  const records = rawProviders.filter((raw) => typeof raw === "object" && raw !== null
+    && "slug" in raw && typeof raw.slug === "string" && raw.slug.trim() === providerId);
+  const parsed = records.length === 1 ? HermesProviderSchema.safeParse(records[0]) : undefined;
+  return parsed?.success ? parsed.data : undefined;
+}
+
+function nativeCredentialKind(providerId: string | null, provider: z.infer<typeof HermesProviderSchema> | undefined) {
+  if (provider?.is_user_defined === true) return "custom" as const;
+  const builtinCodexProfile = providerId === "openai-codex"
+    && provider?.is_user_defined === false && provider.auth_type === undefined;
+  if (provider?.auth_type === "oauth" || builtinCodexProfile) return "provider_profile" as const;
+  if (provider?.auth_type === "api_key") return "api_key" as const;
+  if (provider?.auth_type === "base_url" || provider?.auth_type === "custom") return "custom" as const;
+  return undefined;
+}
+
 export function normalizeHermesRuntimeSnapshot(input: {
   status: unknown;
   options: unknown;
@@ -167,17 +184,21 @@ export function normalizeHermesRuntimeSnapshot(input: {
       : left.id.localeCompare(right.id);
   });
 
-  const providers: AgentProviderDescriptor[] = [];
+  const boundedProviders = normalizedProviders.slice(0, MAX_HERMES_PROVIDERS);
+  const providers: AgentProviderDescriptor[] = boundedProviders.map((provider) => ({ ...provider, models: [] }));
   let modelCount = 0;
-  for (const provider of normalizedProviders) {
-    const remainingModels = MAX_HERMES_MODELS - modelCount;
-    if (remainingModels <= 0) break;
-    const boundedProvider = provider.models.length <= remainingModels
-      ? provider
-      : { ...provider, models: provider.models.slice(0, remainingModels) };
-    providers.push(boundedProvider);
-    modelCount += boundedProvider.models.length;
-    if (providers.length === MAX_HERMES_PROVIDERS) break;
+  // Keep each provider represented before giving a large inventory more slots.
+  // The selected provider and its selected model are already first.
+  for (let position = 0; modelCount < MAX_HERMES_MODELS; position++) {
+    let hasPosition = false;
+    for (let index = 0; index < boundedProviders.length && modelCount < MAX_HERMES_MODELS; index++) {
+      const model = boundedProviders[index]!.models[position];
+      if (!model) continue;
+      hasPosition = true;
+      providers[index]!.models.push(model);
+      modelCount++;
+    }
+    if (!hasPosition) break;
   }
 
   const selectedProvider = currentProvider === null
@@ -189,16 +210,19 @@ export function normalizeHermesRuntimeSnapshot(input: {
   const version = VersionSchema.safeParse(status.version);
   // Legacy authKind defaults to OAuth for display compatibility. Exact source
   // evidence requires a unique raw provider with an explicit credential origin.
-  const selectedNativeRecords = options.providers.filter((raw) =>
-    typeof raw === "object" && raw !== null && "slug" in raw
-      && typeof raw.slug === "string" && raw.slug.trim() === currentProvider);
-  const nativeParsed = selectedNativeRecords.length === 1
-    ? HermesProviderSchema.safeParse(selectedNativeRecords[0]) : undefined;
-  const nativeProvider = nativeParsed?.success ? nativeParsed.data : undefined;
-  const nativeCredentialKind = nativeProvider?.is_user_defined === true ? "custom" as const
-    : nativeProvider?.auth_type === "oauth" ? "provider_profile" as const
-    : nativeProvider?.auth_type === "api_key" ? "api_key" as const
-      : nativeProvider?.auth_type === "base_url" || nativeProvider?.auth_type === "custom" ? "custom" as const : undefined;
+  const nativeProvider = nativeProviderRecord(options.providers, currentProvider);
+  // Hermes's built-in openai-codex registry entry is OAuth-only. The installed
+  // native model/options contract omits auth_type for this built-in entry.
+  // Custom, duplicate, or explicitly different credential records stay closed.
+  const selectedCredentialKind = nativeCredentialKind(currentProvider, nativeProvider);
+  const codexProvider = nativeProviderRecord(options.providers, "openai-codex");
+  const codexCredentialKind = nativeCredentialKind("openai-codex", codexProvider);
+  const localObservation = (authenticated: boolean | undefined) => ({
+    state: authenticated === true ? "present_unverified" as const
+      : authenticated === false ? "absent" as const : "unknown" as const,
+    checkedAt: new Date(input.observedAt!).toISOString(),
+    staleAfter: new Date(input.observedAt! + 5_000).toISOString(),
+  });
 
   return {
     runtime: {
@@ -211,16 +235,11 @@ export function normalizeHermesRuntimeSnapshot(input: {
           health: status.gateway_running === true ? "healthy" : "degraded",
           selectionState: "active",
           configured,
-          ...(configured && selectedProvider && nativeCredentialKind && input.observedAt !== undefined ? {
+          ...(configured && selectedProvider && selectedCredentialKind && input.observedAt !== undefined ? {
             nativeRouteObservation: {
               providerId: currentProvider!, modelId: currentModel!,
-              credentialKind: nativeCredentialKind,
-              localObservation: {
-                state: nativeProvider?.authenticated === true ? "present_unverified" as const
-                  : nativeProvider?.authenticated === false ? "absent" as const : "unknown" as const,
-                checkedAt: new Date(input.observedAt).toISOString(),
-                staleAfter: new Date(input.observedAt + 5_000).toISOString(),
-              },
+              credentialKind: selectedCredentialKind,
+              localObservation: localObservation(nativeProvider?.authenticated),
             },
           } : {}),
           ...(version.success ? { version: version.data } : {}),
@@ -245,6 +264,10 @@ export function normalizeHermesRuntimeSnapshot(input: {
       transition: null,
     },
     providers,
+    ...(codexProvider && codexCredentialKind && input.observedAt !== undefined ? {
+      nativeProfileObservations: [{ providerId: "openai-codex", credentialKind: codexCredentialKind,
+        localObservation: localObservation(codexProvider.authenticated) }],
+    } : {}),
     messaging: {
       runtime: "hermes",
       provider: configured ? currentProvider : null,

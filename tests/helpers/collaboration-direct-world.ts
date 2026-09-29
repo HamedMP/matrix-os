@@ -32,7 +32,15 @@ export interface HomeState {
   renewFails: boolean;
 }
 
-export function fakeDirectWorld() {
+/** Paths the platform itself serves; with the relay on the platform origin every other path reaches the home. */
+const PLATFORM_ROUTES = new Set(["/api/collaboration/connections", "/api/collaboration/inbox", "/api/collaboration/shared"]);
+
+/**
+ * `endpointOrigin` is the origin tickets name for the home. It defaults to a separate relay origin;
+ * production names the platform origin itself, where only `PLATFORM_ROUTES` stay with the platform.
+ */
+export function fakeDirectWorld(options: { endpointOrigin?: string } = {}) {
+  const endpointOrigin = options.endpointOrigin ?? RELAY;
   const home: HomeState = {
     generation: 3, sessions: new Map(), consumed: new Set(), offline: false, protocolVersion: COLLABORATION_DIRECT_PROTOCOL_VERSION,
     nextSessionTtlMs: 300_000, requests: [], renewFails: false,
@@ -51,7 +59,7 @@ export function fakeDirectWorld() {
       issuedAt: issuedAt.toISOString(), expiresAt: new Date(issuedAt.getTime() + 30_000).toISOString(),
     };
     platform.tickets.push(ticket);
-    return { signedTicket: signTicket(ticket), endpoint: { origin: RELAY, protocolVersion: home.protocolVersion } };
+    return { signedTicket: signTicket(ticket), endpoint: { origin: endpointOrigin, protocolVersion: home.protocolVersion } };
   };
   const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status, headers: { "content-type": "application/json" } });
   const sessionFor = (ticket: Json, publicKey: string, previous?: string) => {
@@ -79,7 +87,7 @@ export function fakeDirectWorld() {
     const method = (init?.method ?? "GET").toUpperCase();
     const headers = new Headers(init?.headers);
     const body = typeof init?.body === "string" ? init.body : "";
-    if (url.origin === PLATFORM) {
+    if (url.origin === PLATFORM && (endpointOrigin !== PLATFORM || PLATFORM_ROUTES.has(url.pathname))) {
       if (url.pathname === "/api/collaboration/connections" && method === "POST") {
         const parsed = JSON.parse(body) as Json;
         if (platform.offlineScopes.has(parsed.scopeId as string)) return json({ error: "Collaboration unavailable" }, 503);
@@ -89,7 +97,7 @@ export function fakeDirectWorld() {
       if (url.pathname === "/api/collaboration/shared") return json({ items: platform.shared });
       return json({ error: "not found" }, 404);
     }
-    if (url.origin !== RELAY) return json({ error: "wrong origin" }, 404);
+    if (url.origin !== endpointOrigin) return json({ error: "wrong origin" }, 404);
     home.requests.push({ method, url: url.href, headers, body });
     if (home.offline) return json({ error: "Collaboration unavailable" }, 503);
     if (url.pathname === "/api/collaboration/direct-sessions" && method === "POST") {
@@ -142,6 +150,6 @@ export function fakeDirectWorld() {
     sockets.push(socket as never);
     return socket as unknown as WebSocket;
   };
-  return { home, platform, fetchImpl, webSocketFactory, sockets, now, advance, verifyTicket };
+  return { home, platform, fetchImpl, webSocketFactory, sockets, now, advance, verifyTicket, issue };
 }
 

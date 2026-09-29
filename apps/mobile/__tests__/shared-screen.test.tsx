@@ -16,7 +16,8 @@ const mockFetchAiRequests = jest.fn();
 const mockPostAiRequest = jest.fn();
 const mockControlAiRequest = jest.fn();
 const mockDecideAiApproval = jest.fn();
-const mockFetchEventTicket = jest.fn();
+const mockOpenStream = jest.fn();
+const mockHydrate = jest.fn();
 
 jest.mock("@clerk/clerk-expo", () => ({ useAuth: () => ({ getToken: mockGetToken, userId: "user_editor" }) }));
 jest.mock("@/lib/requests/collaboration", () => ({
@@ -37,8 +38,11 @@ jest.mock("@/lib/requests/collaboration", () => ({
   postSharedAiRequest: (...args: unknown[]) => mockPostAiRequest(...args),
   controlSharedAiRequest: (...args: unknown[]) => mockControlAiRequest(...args),
   decideSharedAiApproval: (...args: unknown[]) => mockDecideAiApproval(...args),
-  fetchCollaborationEventTicket: (...args: unknown[]) => mockFetchEventTicket(...args),
-  collaborationEventsUrl: jest.fn(() => "wss://app.matrix-os.com/ws/collaboration/events?ticket=test"),
+  hydrateCollaborationDiscovery: (...args: unknown[]) => mockHydrate(...args),
+  collaborationDiscoveryNeedsHydration: (item: { status: string; kind: string; resource?: unknown; home?: unknown }) =>
+    item.status !== "organization_pending" && item.resource === undefined && item.home === undefined
+      && (item.status === "invited" || ["chat", "terminal", "project"].includes(item.kind)),
+  openCollaborationStream: (...args: unknown[]) => mockOpenStream(...args),
   updateSharedChatReadState: jest.fn(async () => undefined),
 }));
 jest.mock("@/components/collaboration/SharedTerminalScreen", () => ({
@@ -62,6 +66,15 @@ const invitation = {
 
 type TestSocket = WebSocket & {
   onmessage: ((event: { data: string }) => void) | null;
+  onopen: (() => void) | null;
+  target: string;
+  options: unknown;
+  send: jest.Mock;
+};
+const directStream = {
+  url: "wss://app.matrix-os.com/ws/collaboration/direct/scopes/10000000-0000-4000-8000-000000000001/events?ticket=signed&after=0",
+  headers: { Authorization: "Bearer clerk-token" },
+  handshake: JSON.stringify({ protocolVersion: 2, type: "handshake" }),
 };
 
 const sockets: TestSocket[] = [];
@@ -80,7 +93,7 @@ class TestWebSocket {
   send = jest.fn();
   close = jest.fn(() => { this.readyState = TestWebSocket.CLOSED; });
 
-  constructor() {
+  constructor(public target: string, _protocols?: unknown, public options?: unknown) {
     sockets.push(this as unknown as TestSocket);
   }
 }
@@ -140,7 +153,11 @@ describe("native shared Chat screen", () => {
     });
     mockControlAiRequest.mockResolvedValue({ state: "accepted" });
     mockDecideAiApproval.mockResolvedValue({ state: "accepted" });
-    mockFetchEventTicket.mockResolvedValue({ ticket: "t".repeat(43), expiresAt: "2026-09-07T12:00:30.000Z" });
+    mockOpenStream.mockResolvedValue(directStream);
+    mockHydrate.mockImplementation(async (_token: string, items: unknown[], onHydrated?: (item: unknown) => void) => {
+      items.forEach((item) => onHydrated?.(item));
+      return items;
+    });
   });
 
   afterAll(() => {
@@ -161,6 +178,105 @@ describe("native shared Chat screen", () => {
     await waitFor(() => expect(mockPostAiRequest).toHaveBeenCalledWith(
       "clerk-token", scopeId, "1", "Ready", expect.any(String),
     ));
+  });
+
+  it("hydrates metadata-only discovery and routes invitation actions through the invitation's scope", async () => {
+    const metadata = {
+      scopeId, runtimeId: "runtime_owner", ownerId: "user_owner", kind: "chat", authorityGeneration: 1,
+      status: "invited", invitationId,
+    };
+    mockFetchInbox.mockResolvedValue({ items: [metadata] });
+    mockHydrate.mockImplementation(async (_token: string, items: unknown[], onHydrated?: (item: unknown) => void) => {
+      const hydrated = [{ ...metadata, resource: invitation }];
+      hydrated.forEach((item) => onHydrated?.(item));
+      return hydrated;
+    });
+
+    render(<SharedScreen />);
+    fireEvent.press(await screen.findByLabelText("View invitation details from Nima"));
+    expect(mockHydrate).toHaveBeenCalledWith("clerk-token", [metadata], expect.any(Function));
+    await waitFor(() => expect(mockFetchInvitation).toHaveBeenCalledWith("clerk-token", scopeId, invitationId));
+    fireEvent.press(await screen.findByLabelText("Accept invitation"));
+    await waitFor(() => expect(mockAcceptInvitation).toHaveBeenCalledWith(
+      "clerk-token", scopeId, invitationId, "1", expect.any(String),
+    ));
+  });
+
+  it("shows discovery metadata at once and fills each card when its home answers", async () => {
+    const metadata = {
+      scopeId, runtimeId: "runtime_owner", ownerId: "user_owner", kind: "chat", authorityGeneration: 1,
+      status: "invited", invitationId,
+    };
+    let finish: (() => void) | undefined;
+    mockFetchInbox.mockResolvedValue({ items: [metadata] });
+    mockHydrate.mockImplementation((_token: string, _items: unknown[], onHydrated?: (item: unknown) => void) => new Promise((resolve) => {
+      finish = () => { onHydrated?.({ ...metadata, resource: invitation }); resolve([]); };
+    }));
+
+    render(<SharedScreen />);
+    expect(await screen.findByText("Loading from the owner's computer…")).toBeTruthy();
+    expect(screen.queryByLabelText("Loading shared items")).toBeNull();
+    await act(async () => finish?.());
+    expect(await screen.findByText("Nima invited you")).toBeTruthy();
+    expect(screen.queryByText("Loading from the owner's computer…")).toBeNull();
+  });
+
+  it("does not let an older discovery load or its hydration overwrite a newer list", async () => {
+    const invited = {
+      scopeId: "10000000-0000-4000-8000-000000000009", runtimeId: "runtime_owner", ownerId: "user_owner", kind: "chat",
+      authorityGeneration: 1, status: "invited", invitationId,
+    };
+    const accepted = {
+      scopeId, runtimeId: "runtime_owner", ownerId: "user_owner", kind: "chat", authorityGeneration: 1, status: "accepted",
+      resource: { scope: await mockFetchScope(), chat: await mockFetchChat() },
+    };
+    let finishStale: (() => void) | undefined;
+    mockFetchInbox.mockResolvedValueOnce({ items: [invited] }).mockResolvedValue({ items: [] });
+    mockFetchShared.mockResolvedValue({ items: [accepted] });
+    mockHydrate.mockImplementationOnce((_token: string, _items: unknown[], onHydrated?: (item: unknown) => void) => new Promise((resolve) => {
+      finishStale = () => { onHydrated?.({ ...invited, resource: { ...invitation, scopeId: invited.scopeId } }); resolve([]); };
+    }));
+
+    render(<SharedScreen />);
+    fireEvent.press(await screen.findByLabelText("Open Launch plan"));
+    fireEvent.press(await screen.findByLabelText("Back to Shared with me"));
+    await waitFor(() => expect(mockFetchInbox).toHaveBeenCalledTimes(2));
+    expect(await screen.findByLabelText("Open Launch plan")).toBeTruthy();
+    await act(async () => finishStale?.());
+    expect(screen.queryByText("Nima invited you")).toBeNull();
+    expect(screen.queryByText("Invitation")).toBeNull();
+  });
+
+  it("keeps unreachable and organization-pending shares visible without offering to open them", async () => {
+    const base = { runtimeId: "runtime_owner", ownerId: "user_owner", kind: "chat", authorityGeneration: 1 };
+    mockFetchInbox.mockResolvedValue({ items: [{ ...base, scopeId, status: "invited", invitationId, home: "offline" }] });
+    mockFetchShared.mockResolvedValue({ items: [
+      { ...base, scopeId: "10000000-0000-4000-8000-000000000002", status: "accepted", home: "denied" },
+      { ...base, scopeId: "10000000-0000-4000-8000-000000000003", kind: "file", status: "accepted" },
+      { ...base, scopeId: "10000000-0000-4000-8000-000000000004", status: "organization_pending",
+        organizationId: "org_direct_1", grantId: "50000000-0000-4000-8000-000000000001" },
+    ] });
+
+    render(<SharedScreen />);
+    expect(await screen.findByText("Invitation")).toBeTruthy();
+    expect(screen.getByText("The owner's computer is offline. Try again later.")).toBeTruthy();
+    expect(screen.getByText("Access is no longer available.")).toBeTruthy();
+    expect(screen.getByText("Open this shared file from Matrix on the web.")).toBeTruthy();
+    expect(screen.getByText("Shared with your organization")).toBeTruthy();
+    expect(screen.queryByLabelText(/^Open /)).toBeNull();
+    expect(screen.queryByLabelText(/^Accept invitation/)).toBeNull();
+  });
+
+  it("opens the shared Chat event stream on the direct route and proves possession first", async () => {
+    render(<SharedScreen />);
+    fireEvent.press(await screen.findByLabelText("Accept invitation from Nima"));
+    expect(await screen.findByText("Launch plan")).toBeTruthy();
+    await waitFor(() => expect(sockets).toHaveLength(1));
+    expect(mockOpenStream).toHaveBeenCalledWith("clerk-token", scopeId, "events", "0", false);
+    expect(sockets[0]!.target).toBe(directStream.url);
+    expect(sockets[0]!.options).toEqual({ headers: directStream.headers });
+    act(() => sockets[0]!.onopen?.());
+    expect(sockets[0]!.send.mock.calls[0]).toEqual([directStream.handshake]);
   });
 
   it("accepts a terminal invitation and opens the scoped terminal surface", async () => {
@@ -249,6 +365,9 @@ describe("native shared Chat screen", () => {
     fireEvent.press(await screen.findByLabelText("Open shared project project_launch"));
     expect(await screen.findByText("Viewer · read only")).toBeTruthy();
     await waitFor(() => expect(sockets).toHaveLength(1));
+    expect(mockOpenStream).toHaveBeenCalledWith("clerk-token", scopeId, "events", "0", false);
+    act(() => sockets[0]!.onopen?.());
+    expect(sockets[0]!.send.mock.calls[0]).toEqual([directStream.handshake]);
     mockFetchScope.mockResolvedValue({
       ...viewerScope,
       revision: "2",
@@ -588,6 +707,63 @@ describe("native shared Chat screen", () => {
     expect(await screen.findByText("Grace invited you")).toBeTruthy();
     expect(screen.getByText("Nima invited you")).toBeTruthy();
     expect(mockFetchInbox).toHaveBeenLastCalledWith("clerk-token", "opaque-next-page");
+  });
+
+  it("does not page with the old list's cursors while a newer discovery load is pending", async () => {
+    const accepted = {
+      scopeId, runtimeId: "runtime_owner", ownerId: "user_owner", kind: "chat", authorityGeneration: 1, status: "accepted",
+      resource: { scope: await mockFetchScope(), chat: await mockFetchChat() },
+    };
+    const stalePage = {
+      scopeId: "10000000-0000-4000-8000-000000000008", runtimeId: "runtime_owner", ownerId: "user_owner_two", kind: "chat",
+      authorityGeneration: 1, status: "invited", invitationId: "30000000-0000-4000-8000-000000000008",
+      resource: { ...invitation, id: "30000000-0000-4000-8000-000000000008", scopeId: "10000000-0000-4000-8000-000000000008",
+        owner: { actorId: "user_owner_two", displayName: "Grace" } },
+    };
+    let finishOldPage: (() => void) | undefined;
+    let finishReload: (() => void) | undefined;
+    mockFetchShared.mockResolvedValue({ items: [accepted] });
+    mockFetchInbox
+      .mockResolvedValueOnce({ items: [], nextCursor: "old-list-cursor" })
+      .mockImplementationOnce(() => new Promise((resolve) => { finishOldPage = () => resolve({ items: [stalePage] }); }))
+      .mockImplementationOnce(() => new Promise((resolve) => { finishReload = () => resolve({ items: [], nextCursor: "new-list-cursor" }); }))
+      .mockResolvedValue({ items: [] });
+
+    render(<SharedScreen />);
+    fireEvent.press(await screen.findByLabelText("Load more shared items"));
+    await waitFor(() => expect(mockFetchInbox).toHaveBeenLastCalledWith("clerk-token", "old-list-cursor"));
+    fireEvent.press(screen.getByLabelText("Open Launch plan"));
+    fireEvent.press(await screen.findByLabelText("Back to Shared with me"));
+    await waitFor(() => expect(mockFetchInbox).toHaveBeenCalledTimes(3));
+
+    // The old page settles while the reload is still pending: it must neither append nor re-enable paging.
+    await act(async () => finishOldPage?.());
+    expect(screen.queryByText("Grace invited you")).toBeNull();
+    expect(screen.queryByLabelText("Load more shared items")).toBeNull();
+
+    await act(async () => finishReload?.());
+    fireEvent.press(await screen.findByLabelText("Load more shared items"));
+    await waitFor(() => expect(mockFetchInbox).toHaveBeenLastCalledWith("clerk-token", "new-list-cursor"));
+    expect(mockFetchInbox.mock.calls.filter(([, cursor]) => cursor === "old-list-cursor")).toHaveLength(1);
+  });
+
+  it("retains the displayed list's pagination after a reload fails", async () => {
+    const accepted = {
+      scopeId, runtimeId: "runtime_owner", ownerId: "user_owner", kind: "chat", authorityGeneration: 1, status: "accepted",
+      resource: { scope: await mockFetchScope(), chat: await mockFetchChat() },
+    };
+    mockFetchShared.mockResolvedValue({ items: [accepted] });
+    mockFetchInbox
+      .mockResolvedValueOnce({ items: [], nextCursor: "retained-cursor" })
+      .mockRejectedValueOnce(new Error("offline"))
+      .mockResolvedValueOnce({ items: [] });
+
+    render(<SharedScreen />);
+    fireEvent.press(await screen.findByLabelText("Open Launch plan"));
+    fireEvent.press(await screen.findByLabelText("Back to Shared with me"));
+    await waitFor(() => expect(screen.getByText("Shared Chats are unavailable. Pull down or return later to try again.")).toBeTruthy());
+    fireEvent.press(await screen.findByLabelText("Load more shared items"));
+    await waitFor(() => expect(mockFetchInbox).toHaveBeenLastCalledWith("clerk-token", "retained-cursor"));
   });
 
   it("does not let a pending history page overwrite a newer realtime refresh", async () => {

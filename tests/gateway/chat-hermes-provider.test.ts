@@ -39,6 +39,18 @@ async function collectRaw(iterable: AsyncIterable<unknown>): Promise<unknown[]> 
 }
 
 describe("Hermes canonical Chat Provider adapter", () => {
+  it("forwards an explicit Codex subscription model to native session creation without a configured Anthropic override", async () => {
+    const gateway = fakeGateway();
+    const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn: gateway.spawnFn });
+    const events = collect(adapter.start({ ...baseInput,
+      selection: { instanceId: "hermes_default", model: "openai-codex:gpt-5.6-sol" },
+    }));
+    await vi.waitFor(() => expect(gateway.requests.some(({ method }) => method === "prompt.submit")).toBe(true));
+    expect(gateway.requests.find(({ method }) => method === "session.create")?.params)
+      .toMatchObject({ provider: "openai-codex", model: "gpt-5.6-sol" });
+    gateway.event("message.complete", { text: "synthetic reply", status: "complete" });
+    expect(await events).toContainEqual({ type: "run.completed", outcome: "completed" });
+  });
   it("derives the Jev preview bearer from server run context, not prompt text", async () => {
     const gatewaySecrets = ["MATRIX_AUTH_TOKEN", "UPGRADE_TOKEN", "MATRIX_CODE_PROXY_TOKEN", "PLATFORM_JWT_SECRET",
       "DATABASE_URL", "PIPEDREAM_CLIENT_SECRET", "CLERK_SECRET_KEY", "MATRIX_SYNC_RUNTIME_TOKEN",
