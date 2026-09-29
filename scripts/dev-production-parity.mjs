@@ -1018,9 +1018,21 @@ async function up() {
   }
 }
 
-async function down() {
-  cleanupAbandonedLocalParityBuilder();
-  await cleanupLocalParityResources();
+export async function down(options = {}) {
+  const cleanupBuilder = options.cleanupBuilder ?? cleanupAbandonedLocalParityBuilder;
+  const cleanupResources = options.cleanupResources ?? cleanupLocalParityResources;
+  const errors = [];
+  try {
+    cleanupBuilder();
+  } catch (error) {
+    errors.push(error);
+  }
+  try {
+    await cleanupResources();
+  } catch (error) {
+    errors.push(error);
+  }
+  if (errors.length > 0) throw new AggregateError(errors, "Failed to tear down local parity resources safely");
 }
 
 function status() {

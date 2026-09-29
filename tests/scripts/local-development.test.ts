@@ -26,6 +26,7 @@ import {
   cleanupAbandonedLocalParityBuilder,
   cleanupLocalParityResources,
   createLocalParityPlan,
+  down,
   fetchConfiguredClerkJwtKey,
   fixtureRouterArguments,
   installLocalParitySignalHandlers,
@@ -363,6 +364,32 @@ describe("local development contracts", () => {
     });
 
     expect(deleted).toEqual(["builder-one"]);
+  });
+
+  it("continues parity teardown when abandoned builder cleanup fails", async () => {
+    const events: string[] = [];
+    const failure = await down({
+      cleanupBuilder: () => {
+        events.push("builder");
+        throw new Error("builder deletion failed");
+      },
+      cleanupResources: async () => {
+        events.push("runtime");
+        throw new Error("runtime cleanup failed");
+      },
+    }).catch((error: unknown) => error);
+
+    expect(events).toEqual(["builder", "runtime"]);
+    expect(failure).toBeInstanceOf(AggregateError);
+    expect((failure as AggregateError).errors).toEqual([
+      new Error("builder deletion failed"),
+      new Error("runtime cleanup failed"),
+    ]);
+
+    await expect(down({
+      cleanupBuilder: () => undefined,
+      cleanupResources: async () => undefined,
+    })).resolves.toBeUndefined();
   });
 
   it("wraps parity up/down in an exec-owned advisory lock", () => {
