@@ -37,6 +37,7 @@ export interface FakeCanonicalSnapshot {
   activeRunId: string | null;
   approvalWait: boolean;
   admittedRequestIds: readonly string[];
+  queuedRequestIds: readonly string[];
   operations: readonly {
     operationId: string;
     state: "running" | "succeeded" | "failed" | "cancelled" | "outcome_unknown";
@@ -48,26 +49,46 @@ export interface FakeCanonicalSnapshot {
   }[];
 }
 
-type AdmissionResult = {
-  outcome:
-    | "sent"
-    | "queued"
-    | "steered"
-    | "rejected"
-    | "duplicate"
-    | "stale_revision"
-    | "waiting_for_approval";
+export type FakeAdmissionOutcome =
+  | "sent"
+  | "queued"
+  | "steered"
+  | "rejected"
+  | "duplicate"
+  | "stale_revision"
+  | "waiting_for_approval";
+
+export type AdmissionResult = {
+  outcome: FakeAdmissionOutcome;
   canonicalTurnId?: string;
+  runId?: string;
   revision: number;
 };
 
 type OperationState = FakeCanonicalSnapshot["operations"][number]["state"];
 type DeliveryState = FakeCanonicalSnapshot["deliveries"][number]["state"];
 
+const APPROVAL_BOUND_OPERATION_STATES: ReadonlySet<OperationState> = new Set([
+  "running",
+  "succeeded",
+  "failed",
+  "outcome_unknown",
+]);
+const TERMINAL_DELIVERY_STATES: ReadonlySet<DeliveryState> = new Set([
+  "complete",
+  "interrupted",
+  "unknown",
+]);
+
 interface AdmissionRecord {
   requestId: string;
   finalityId: string;
   result: AdmissionResult;
+}
+
+interface QueuedTurn {
+  requestId: string;
+  canonicalTurnId: string;
 }
 
 interface ApprovalRecord {
@@ -80,6 +101,8 @@ interface ApprovalRecord {
 interface OperationRecord {
   operationId: string;
   idempotencyKey: string;
+  argumentDigest: string;
+  consequential: boolean;
   state: OperationState;
 }
 
@@ -111,6 +134,8 @@ export class FakeCanonicalChatHarness {
   private activeRunId: string | null;
   private approvalWait: boolean;
   private acceptedTurnCount = 0;
+  private acceptedRunCount = 0;
+  private queuedTurns: QueuedTurn[] = [];
   private terminalRunIds: string[] = [];
   private admissions: AdmissionRecord[] = [];
   private admittedRequestIds: string[] = [];
@@ -135,7 +160,13 @@ export class FakeCanonicalChatHarness {
     );
     if (prior) return { ...prior.result };
 
-    if (request.baseRevision !== this.revision) {
+    // Queue and steer requests deliberately defer revision validation: a queued
+    // turn re-reads Chat at dispatch and a steer targets the live run. Ordinary
+    // sends and rejects still fail closed on a stale base revision.
+    const revisionCheckedNow = request.choice === "send"
+      || request.choice === "reject"
+      || (request.choice === "steer" && this.activeRunId === null);
+    if (revisionCheckedNow && request.baseRevision !== this.revision) {
       return this.rememberAdmission(request, { outcome: "stale_revision", revision: this.revision }, "admission.stale_revision");
     }
 
@@ -156,11 +187,20 @@ export class FakeCanonicalChatHarness {
     this.assertAdmissionCapacity();
     this.acceptedTurnCount += 1;
     this.revision += 1;
+    const canonicalTurnId = `cturn_${String(this.acceptedTurnCount).padStart(4, "0")}`;
     const result: AdmissionResult = {
       outcome,
-      canonicalTurnId: `cturn_${String(this.acceptedTurnCount).padStart(4, "0")}`,
+      canonicalTurnId,
       revision: this.revision,
     };
+    if (outcome === "sent") {
+      result.runId = this.startRun();
+    } else if (outcome === "steered") {
+      result.runId = this.activeRunId ?? undefined;
+    } else if (outcome === "queued") {
+      requireCapacity(this.queuedTurns, "queuedTurns");
+      this.queuedTurns.push({ requestId: request.requestId, canonicalTurnId });
+    }
     this.admittedRequestIds.push(request.requestId);
     return this.rememberAdmission(request, result, "admission.accepted");
   }
@@ -218,6 +258,10 @@ export class FakeCanonicalChatHarness {
     this.appendJournal(`assistant.${input.kind}`, details);
     if (recordsTerminal) {
       this.terminalRunIds.push(input.runId);
+      if (this.activeRunId === input.runId) {
+        this.activeRunId = null;
+        this.promoteQueuedTurn();
+      }
     }
   }
 
@@ -282,10 +326,16 @@ export class FakeCanonicalChatHarness {
   recordOperation(input: {
     operationId: string;
     idempotencyKey: string;
+    argumentDigest: string;
+    consequential: boolean;
     state: OperationState;
   }): void {
     requireIdentifier(input.operationId, "operationId");
     requireIdentifier(input.idempotencyKey, "idempotencyKey");
+    requireIdentifier(input.argumentDigest, "argumentDigest");
+    if (typeof input.consequential !== "boolean") {
+      throw new TypeError("consequential must be a boolean");
+    }
     requireEnum(input.state, "state", ["running", "succeeded", "failed", "cancelled", "outcome_unknown"]);
 
     const keyIndex = this.operations.findIndex(
@@ -298,23 +348,27 @@ export class FakeCanonicalChatHarness {
         || prior.state === input.state
         || prior.state === "outcome_unknown"
       ) return;
+      if (!this.assertExecutionApproved(input)) return;
       this.assertJournalCapacity(1);
       prior.state = input.state;
       this.appendJournal("operation.updated", {
         operationId: prior.operationId,
         idempotencyKey: prior.idempotencyKey,
+        argumentDigest: prior.argumentDigest,
         state: prior.state,
       });
       return;
     }
     if (this.operations.some((operation) => operation.operationId === input.operationId)) return;
 
+    if (!this.assertExecutionApproved(input)) return;
     requireCapacity(this.operations, "operations");
     this.assertJournalCapacity(1);
     this.operations.push({ ...input });
     this.appendJournal("operation.recorded", {
       operationId: input.operationId,
       idempotencyKey: input.idempotencyKey,
+      argumentDigest: input.argumentDigest,
       state: input.state,
     });
   }
@@ -334,6 +388,16 @@ export class FakeCanonicalChatHarness {
       throw new TypeError("first delivery record must be pending");
     }
     if (prior !== undefined && input.revision <= prior.revision) return;
+    if (prior !== undefined && TERMINAL_DELIVERY_STATES.has(prior.state)) {
+      this.assertJournalCapacity(1);
+      this.appendJournal("delivery.terminal_ignored", {
+        responseId: input.responseId,
+        revision: input.revision,
+        state: input.state,
+        priorState: prior.state,
+      });
+      return;
+    }
 
     if (index < 0) requireCapacity(this.deliveries, "deliveries");
     this.assertJournalCapacity(1);
@@ -356,6 +420,8 @@ export class FakeCanonicalChatHarness {
       approvalWait: this.approvalWait,
     });
     restarted.acceptedTurnCount = this.acceptedTurnCount;
+    restarted.acceptedRunCount = this.acceptedRunCount;
+    restarted.queuedTurns = this.queuedTurns.map((turn) => ({ ...turn }));
     restarted.terminalRunIds = [...this.terminalRunIds];
     restarted.admissions = this.admissions.map((record) => ({
       requestId: record.requestId,
@@ -373,6 +439,7 @@ export class FakeCanonicalChatHarness {
       details: { ...entry.details },
     }));
     restarted.nextJournalSequence = this.nextJournalSequence;
+    restarted.promoteQueuedTurn();
     return restarted;
   }
 
@@ -382,6 +449,7 @@ export class FakeCanonicalChatHarness {
       activeRunId: this.activeRunId,
       approvalWait: this.approvalWait,
       admittedRequestIds: [...this.admittedRequestIds],
+      queuedRequestIds: this.queuedTurns.map((turn) => turn.requestId),
       operations: this.operations.map(({ operationId, state }) => ({ operationId, state })),
       deliveries: this.deliveries.map(({ responseId, state, revision }) => ({
         responseId,
@@ -400,11 +468,65 @@ export class FakeCanonicalChatHarness {
   }
 
   private admissionOutcome(choice: FakeAdmissionChoice): "sent" | "queued" | "steered" | "rejected" {
+    if (choice === "reject") return "rejected";
     if (this.activeRunId !== null && choice === "send") return "rejected";
     if (choice === "queue") return "queued";
-    if (choice === "steer") return "steered";
-    if (choice === "reject") return "rejected";
+    if (choice === "steer" && this.activeRunId !== null) return "steered";
     return "sent";
+  }
+
+  private startRun(): string {
+    this.acceptedRunCount += 1;
+    const runId = `run_${String(this.acceptedRunCount).padStart(4, "0")}`;
+    this.activeRunId = runId;
+    return runId;
+  }
+
+  private promoteQueuedTurn(): void {
+    if (this.activeRunId !== null || this.queuedTurns.length === 0) return;
+    const next = this.queuedTurns.shift();
+    if (next === undefined) return;
+    const record = this.admissions.find((admission) => admission.requestId === next.requestId);
+    this.revision += 1;
+    const result: AdmissionResult = {
+      outcome: "sent",
+      canonicalTurnId: next.canonicalTurnId,
+      runId: this.startRun(),
+      revision: this.revision,
+    };
+    if (record !== undefined) record.result = { ...result };
+    this.appendJournal("admission.queue_promoted", {
+      requestId: next.requestId,
+      canonicalTurnId: next.canonicalTurnId,
+      runId: result.runId ?? null,
+      revision: this.revision,
+    });
+  }
+
+  private assertExecutionApproved(input: {
+    operationId: string;
+    idempotencyKey: string;
+    argumentDigest: string;
+    consequential: boolean;
+    state: OperationState;
+  }): boolean {
+    if (!input.consequential || !APPROVAL_BOUND_OPERATION_STATES.has(input.state)) {
+      return true;
+    }
+    const approved = this.approvals.some(
+      (approval) => approval.operationId === input.operationId
+        && approval.argumentDigest === input.argumentDigest
+        && approval.decision === "approved",
+    );
+    if (approved) return true;
+    this.assertJournalCapacity(1);
+    this.appendJournal("operation.unapproved_rejected", {
+      operationId: input.operationId,
+      idempotencyKey: input.idempotencyKey,
+      argumentDigest: input.argumentDigest,
+      state: input.state,
+    });
+    return false;
   }
 
   private assertAdmissionCapacity(): void {
@@ -446,6 +568,9 @@ export class FakeCanonicalChatHarness {
     };
     if (result.canonicalTurnId !== undefined) {
       details.canonicalTurnId = result.canonicalTurnId;
+    }
+    if (result.runId !== undefined) {
+      details.runId = result.runId;
     }
     this.appendJournal(eventType, details);
     return { ...result };

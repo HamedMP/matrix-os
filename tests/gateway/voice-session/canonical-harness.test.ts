@@ -30,13 +30,14 @@ describe("FakeCanonicalChatHarness", () => {
     expect(harness.admit(request())).toEqual({
       outcome: "sent",
       canonicalTurnId: "cturn_0001",
+      runId: "run_0001",
       revision: 1,
     });
+    expect(harness.snapshot().activeRunId).toBe("run_0001");
     expect(harness.admit(request({
       requestId: "request_2",
       finalityId: "final_2",
       localOrder: 2,
-      baseRevision: 1,
       routeId: "route_codex",
       interactionMode: "plan",
       permissionMode: "trusted",
@@ -71,6 +72,7 @@ describe("FakeCanonicalChatHarness", () => {
             choice: "send",
             textLength: 21,
             canonicalTurnId: "cturn_0001",
+            runId: "run_0001",
             outcome: "sent",
             revision: 1,
           },
@@ -83,7 +85,7 @@ describe("FakeCanonicalChatHarness", () => {
             finalityId: "final_2",
             source: "voice",
             localOrder: 2,
-            baseRevision: 1,
+            baseRevision: 0,
             routeId: "route_codex",
             interactionMode: "plan",
             permissionMode: "trusted",
@@ -118,22 +120,62 @@ describe("FakeCanonicalChatHarness", () => {
     });
   });
 
-  it("orders reordered voice finals by local order with a deterministic identity tie-break", () => {
+  it("orders reordered voice finals deterministically and queues behind the live run", () => {
     const harness = new FakeCanonicalChatHarness();
     const results = harness.flushReorderedFinals([
-      request({ requestId: "request_c", finalityId: "final_c", localOrder: 2 }),
-      request({ requestId: "request_b", finalityId: "final_b", localOrder: 1 }),
-      request({ requestId: "request_a", finalityId: "final_a", localOrder: 1 }),
+      request({ requestId: "request_c", finalityId: "final_c", localOrder: 3, choice: "queue" }),
+      request({ requestId: "request_b", finalityId: "final_b", localOrder: 2, choice: "queue" }),
+      request({ requestId: "request_a", finalityId: "final_a", localOrder: 1, choice: "send" }),
     ]);
 
+    // Call order is deterministic by localOrder: the earliest turn sends and
+    // creates the active run; the reordered finals deliberately queue behind
+    // it instead of silently disappearing as stale revisions.
     expect(results).toEqual([
-      { outcome: "sent", canonicalTurnId: "cturn_0001", revision: 1 },
-      { outcome: "stale_revision", revision: 1 },
-      { outcome: "stale_revision", revision: 1 },
+      { outcome: "sent", canonicalTurnId: "cturn_0001", runId: "run_0001", revision: 1 },
+      { outcome: "queued", canonicalTurnId: "cturn_0002", revision: 2 },
+      { outcome: "queued", canonicalTurnId: "cturn_0003", revision: 3 },
     ]);
-    expect(harness.snapshot().admittedRequestIds).toEqual(["request_a"]);
-    expect(harness.journal().map((entry) => entry.details.requestId))
-      .toEqual(["request_a", "request_b", "request_c"]);
+    expect(harness.snapshot()).toMatchObject({
+      activeRunId: "run_0001",
+      admittedRequestIds: ["request_a", "request_b", "request_c"],
+      queuedRequestIds: ["request_b", "request_c"],
+    });
+
+    // A non-terminal assistant event keeps the queue parked; only the run's
+    // terminal event promotes the next queued turn into a fresh run.
+    harness.appendAssistantEvent({ runId: "run_0001", eventId: "evt_a_text", kind: "text" });
+    expect(harness.snapshot()).toMatchObject({
+      activeRunId: "run_0001",
+      queuedRequestIds: ["request_b", "request_c"],
+    });
+    harness.appendAssistantEvent({ runId: "run_0001", eventId: "evt_a_result", kind: "result" });
+    expect(harness.snapshot()).toMatchObject({
+      activeRunId: "run_0002",
+      queuedRequestIds: ["request_c"],
+    });
+    expect(harness.journal().at(-1)).toMatchObject({
+      type: "admission.queue_promoted",
+      details: {
+        requestId: "request_b",
+        canonicalTurnId: "cturn_0002",
+        runId: "run_0002",
+        revision: 4,
+      },
+    });
+
+    // The promoted admission's durable identity replays the promoted result.
+    expect(harness.admit(request({
+      requestId: "request_b",
+      finalityId: "final_b",
+      localOrder: 2,
+      choice: "queue",
+    }))).toEqual({
+      outcome: "sent",
+      canonicalTurnId: "cturn_0002",
+      runId: "run_0002",
+      revision: 4,
+    });
   });
 
   it("serializes typed races by call order and reports stale voice revisions explicitly", () => {
@@ -169,7 +211,7 @@ describe("FakeCanonicalChatHarness", () => {
 
     const steerHarness = new FakeCanonicalChatHarness({ activeRunId: "run_active" });
     expect(steerHarness.admit(request({ choice: "steer" })))
-      .toEqual({ outcome: "steered", canonicalTurnId: "cturn_0001", revision: 1 });
+      .toEqual({ outcome: "steered", canonicalTurnId: "cturn_0001", runId: "run_active", revision: 1 });
 
     const rejectHarness = new FakeCanonicalChatHarness({ activeRunId: "run_active" });
     expect(rejectHarness.admit(request({ choice: "reject" })))
@@ -225,14 +267,24 @@ describe("FakeCanonicalChatHarness", () => {
 
   it("deduplicates operation idempotency keys and preserves outcome unknown across restart", () => {
     const harness = new FakeCanonicalChatHarness();
+    harness.recordApproval({
+      approvalId: "approval_1",
+      operationId: "operation_1",
+      argumentDigest: "digest_1",
+      decision: "approved",
+    });
     harness.recordOperation({
       operationId: "operation_1",
       idempotencyKey: "effect_once",
+      argumentDigest: "digest_1",
+      consequential: true,
       state: "outcome_unknown",
     });
     harness.recordOperation({
       operationId: "operation_replay",
       idempotencyKey: "effect_once",
+      argumentDigest: "digest_replay",
+      consequential: true,
       state: "succeeded",
     });
 
@@ -245,6 +297,8 @@ describe("FakeCanonicalChatHarness", () => {
     restarted.recordOperation({
       operationId: "operation_after_restart",
       idempotencyKey: "effect_once",
+      argumentDigest: "digest_after",
+      consequential: true,
       state: "running",
     });
     expect(restarted.snapshot().operations).toEqual([
@@ -265,6 +319,114 @@ describe("FakeCanonicalChatHarness", () => {
     ]);
     expect(harness.journal().filter((entry) => entry.type === "delivery.recorded"))
       .toHaveLength(2);
+  });
+
+  it("makes terminal delivery states absorbing and journals reopening attempts", () => {
+    const harness = new FakeCanonicalChatHarness();
+    harness.recordDelivery({ responseId: "response_1", revision: 1, state: "pending" });
+    harness.recordDelivery({ responseId: "response_1", revision: 2, state: "complete" });
+
+    // A later revision cannot reopen a terminal state back to pending or move
+    // it to a different terminal state: the delivery record stays absorbing.
+    harness.recordDelivery({ responseId: "response_1", revision: 3, state: "pending" });
+    harness.recordDelivery({ responseId: "response_1", revision: 4, state: "interrupted" });
+    expect(harness.snapshot().deliveries).toEqual([
+      { responseId: "response_1", revision: 2, state: "complete" },
+    ]);
+    expect(harness.journal().filter((entry) => entry.type === "delivery.terminal_ignored"))
+      .toEqual([
+        {
+          sequence: 3,
+          type: "delivery.terminal_ignored",
+          details: {
+            responseId: "response_1",
+            revision: 3,
+            state: "pending",
+            priorState: "complete",
+          },
+        },
+        {
+          sequence: 4,
+          type: "delivery.terminal_ignored",
+          details: {
+            responseId: "response_1",
+            revision: 4,
+            state: "interrupted",
+            priorState: "complete",
+          },
+        },
+      ]);
+  });
+
+  it("refuses consequential operation effects without an exact-digest approval", () => {
+    const harness = new FakeCanonicalChatHarness();
+
+    // No approval at all: a consequential running/succeeded record must not
+    // land and is journaled as an unapproved rejection.
+    harness.recordOperation({
+      operationId: "operation_1",
+      idempotencyKey: "effect_1",
+      argumentDigest: "digest_a",
+      consequential: true,
+      state: "running",
+    });
+    expect(harness.snapshot().operations).toEqual([]);
+    expect(harness.journal()).toEqual([{
+      sequence: 1,
+      type: "operation.unapproved_rejected",
+      details: {
+        operationId: "operation_1",
+        idempotencyKey: "effect_1",
+        argumentDigest: "digest_a",
+        state: "running",
+      },
+    }]);
+
+    // An approval bound to a different digest still fails closed.
+    harness.recordApproval({
+      approvalId: "approval_1",
+      operationId: "operation_1",
+      argumentDigest: "digest_a",
+      decision: "approved",
+    });
+    harness.recordOperation({
+      operationId: "operation_1",
+      idempotencyKey: "effect_1",
+      argumentDigest: "digest_b",
+      consequential: true,
+      state: "succeeded",
+    });
+    expect(harness.snapshot().operations).toEqual([]);
+
+    // Exact identity + digest approval admits the same effect once; a
+    // non-consequential operation needs no approval binding.
+    harness.recordOperation({
+      operationId: "operation_1",
+      idempotencyKey: "effect_1",
+      argumentDigest: "digest_a",
+      consequential: true,
+      state: "running",
+    });
+    harness.recordOperation({
+      operationId: "operation_2",
+      idempotencyKey: "effect_2",
+      argumentDigest: "digest_2",
+      consequential: false,
+      state: "succeeded",
+    });
+    expect(harness.snapshot().operations).toEqual([
+      { operationId: "operation_1", state: "running" },
+      { operationId: "operation_2", state: "succeeded" },
+    ]);
+    expect(harness.journal().map((entry) => entry.type)).toEqual([
+      "operation.unapproved_rejected",
+      "approval.recorded",
+      "operation.unapproved_rejected",
+      "operation.recorded",
+      "operation.recorded",
+    ]);
+    expect(harness.journal().map((entry) => entry.details.argumentDigest ?? null)
+      .filter((digest) => digest !== null)).toContain("digest_a");
   });
 
   it("keeps transcript text and exact action arguments out of the ordinary journal", () => {
@@ -447,6 +609,8 @@ describe("FakeCanonicalChatHarness", () => {
     expect(() => harness.recordOperation({
       operationId: "operation_1",
       idempotencyKey: "key_1",
+      argumentDigest: "digest_1",
+      consequential: false,
       state: "exploded" as never,
     })).toThrow(TypeError);
     expect(() => harness.recordDelivery({ responseId: "response_1", revision: -1, state: "pending" }))
@@ -482,13 +646,13 @@ describe("FakeCanonicalChatHarness", () => {
       admissions.admit(request({
         requestId: `request_${index}`,
         finalityId: `final_${index}`,
-        baseRevision: index,
+        choice: "queue",
       }));
     }
     expect(() => admissions.admit(request({
       requestId: "request_over",
       finalityId: "final_over",
-      baseRevision: 512,
+      choice: "queue",
     }))).toThrow(RangeError);
     expect(admissions.snapshot().admittedRequestIds).toHaveLength(512);
   });
@@ -500,7 +664,13 @@ describe("FakeCanonicalChatHarness", () => {
       harness.appendAssistantEvent({ runId: "run_7", eventId: "event_text", kind: "text" });
       harness.appendAssistantEvent({ runId: "run_7", eventId: "event_result", kind: "result" });
       harness.recordApproval({ approvalId: "approval_7", operationId: "operation_7", argumentDigest: "digest_7", decision: "approved" });
-      harness.recordOperation({ operationId: "operation_7", idempotencyKey: "once_7", state: "succeeded" });
+      harness.recordOperation({
+        operationId: "operation_7",
+        idempotencyKey: "once_7",
+        argumentDigest: "digest_7",
+        consequential: true,
+        state: "succeeded",
+      });
       harness.recordDelivery({ responseId: "response_7", revision: 1, state: "pending" });
       harness.recordDelivery({ responseId: "response_7", revision: 2, state: "complete" });
       return harness.restart();
