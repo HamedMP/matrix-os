@@ -7,6 +7,7 @@ import type { z } from "zod/v4";
 import type { CollaborationApi } from "./ChatCollaboratorsDialog.js";
 import { SharedFileView } from "./SharedFileView.js";
 import { SharedAppView } from "./SharedAppView.js";
+import { sharedFileFailureCode } from "./recipient-views.js";
 
 type Scope = z.infer<typeof CollaborationScopeSchema>;
 type Project = z.infer<typeof CollaborationProjectSchema>;
@@ -80,7 +81,8 @@ export function SharedProjectView({ api, scopeId, openChat, openTerminal }: {
             selectedReady = live.id === selected.id && live.path === selected.resourceId;
           } catch (error: unknown) {
             console.warn("[project-collaboration] selected file check failed", error instanceof Error ? error.name : "UnknownError");
-            const code = error && typeof error === "object" && "code" in error ? error.code : undefined;
+            const code = sharedFileFailureCode(error)
+              ?? (error && typeof error === "object" && "code" in error ? error.code : undefined);
             if (code === "not_found" || code === "resource_missing") selectedReady = false;
             else nextFileError = true;
           }
@@ -152,6 +154,9 @@ export function SharedProjectView({ api, scopeId, openChat, openTerminal }: {
       {preservedDraft !== null ? <PreservedDraft text={preservedDraft} /> : null}
       <button type="button" className={`${buttonClass} mt-3`} onClick={() => { setRemovedSelection(false); setPreservedDraft(null); }}>Dismiss</button>
     </section> : null}
+    {fileError ? <div role="alert" className="flex items-center gap-3 text-sm">Files could not be loaded.
+      <button type="button" className={buttonClass} onClick={() => void load()}>Try again</button>
+    </div> : null}
     {selection ? <section>
       <button type="button" className={buttonClass} onClick={() => { selectionRef.current = null; draftRef.current = null; setSelection(null); }}>Back to project</button>
       {selection.kind === "file" ? <SharedFileView key={selection.id} api={api} scopeId={scopeId} fileId={selection.id}
@@ -180,9 +185,6 @@ export function SharedProjectView({ api, scopeId, openChat, openTerminal }: {
         })}</ul>
       </section>)}
       {cursor ? <button type="button" className={buttonClass} disabled={loadingMore} onClick={() => void loadMoreFiles()}>{loadingMore ? "Loading…" : "Load more files"}</button> : null}
-      {fileError ? <div role="alert" className="flex items-center gap-3 text-sm">Files could not be loaded.
-        <button type="button" className={buttonClass} onClick={() => void load()}>Try again</button>
-      </div> : null}
     </>}
   </main>;
 }

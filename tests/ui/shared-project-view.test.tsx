@@ -4,6 +4,7 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import "@testing-library/jest-dom/vitest";
 import { describe, expect, it, vi } from "vitest";
 import { ChatCollaboration } from "../../packages/ui/src/collaboration/ChatCollaboration";
+import { CollaborationDirectError } from "../../packages/ui/src/collaboration/direct-client";
 
 const scopeId = "10000000-0000-4000-8000-000000000001";
 const chatScopeId = "10000000-0000-4000-8000-000000000002";
@@ -187,6 +188,22 @@ describe("shared project navigation", () => {
     await f.refresh();
     expect(screen.getByRole("button", { name: "Save" })).toBeVisible();
     expect(screen.getByRole("textbox", { name: "File contents" })).toHaveValue("Work in progress");
+    expect(screen.getByRole("alert")).toHaveTextContent("Files could not be loaded");
+    expect(screen.getByRole("button", { name: "Try again" })).toBeVisible();
+  });
+
+  it("closes a deleted file beyond the first page when the API wraps not_found", async () => {
+    const f = fixture();
+    f.setRole("editor");
+    render(<ChatCollaboration view={{ kind: "project", scopeId }} api={f.api} actorId="user_editor" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Open launch.md" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "File contents" }), { target: { value: "Deleted file draft" } });
+    f.setFileListError(true);
+    f.setDescriptorError(new Error("Request failed", { cause: new CollaborationDirectError("not_found") }));
+    await f.refresh();
+    expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
+    expect(screen.getByRole("textbox", { name: "Preserved unsaved text" })).toHaveValue("Deleted file draft");
   });
 
   it("does not close a newer selection when an older descriptor lookup finishes", async () => {
