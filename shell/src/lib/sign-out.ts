@@ -1,3 +1,4 @@
+import { z } from "zod/v4";
 import { closeShellCollaborationSessions } from "@/lib/collaboration";
 
 const SIGN_OUT_TIMEOUT_MS = 10_000;
@@ -7,7 +8,14 @@ export function getSignInRedirectUrl(): string {
   return new URL(configured, window.location.origin).toString();
 }
 
-export async function clearMatrixAppSession(): Promise<void> {
+const AppSessionClearResponseSchema = z.object({ clerkSessionRevoked: z.boolean() });
+
+/**
+ * Ends direct collaboration sessions, clears the Matrix app session and asks
+ * the platform to revoke the Clerk session. Resolves whether the platform
+ * confirmed that revocation; failures resolve `false` and are logged.
+ */
+export async function clearMatrixAppSession(): Promise<{ clerkSessionRevoked: boolean }> {
   // S06 / T034: direct collaboration sessions end with the actor's app session.
   closeShellCollaborationSessions();
   const controller = new AbortController();
@@ -20,9 +28,14 @@ export async function clearMatrixAppSession(): Promise<void> {
     });
     if (!response.ok) {
       console.warn("[auth] Matrix app session clear returned non-OK status", response.status);
+      await response.body?.cancel();
+      return { clerkSessionRevoked: false };
     }
+    const parsed = AppSessionClearResponseSchema.safeParse(await response.json());
+    return { clerkSessionRevoked: parsed.success && parsed.data.clerkSessionRevoked };
   } catch (error: unknown) {
     console.warn("[auth] Matrix app session clear failed", error instanceof Error ? error.name : typeof error);
+    return { clerkSessionRevoked: false };
   } finally {
     window.clearTimeout(timeoutId);
   }

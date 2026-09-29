@@ -5,12 +5,11 @@ import {
   CollaborationDiscoveryItemSchema,
   CollaborationInvitationSchema,
   CollaborationMemberSchema,
-  CollaborationProjectSchema,
   CollaborationScopeSchema,
   CollaborationSharedChatMessageSchema,
   type CanonicalChatMessagePart,
 } from "@matrix-os/contracts";
-import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -25,6 +24,10 @@ import { SessionAccessControl } from "./SessionAccessControl.js";
 import { SessionDiscussionLayer, type CollaborationOverlayLayers } from "./SessionDiscussionLayer.js";
 import { useSessionDiscussion } from "./useSessionDiscussion.js";
 import { notifyCollaborationDiscoveryChanged } from "./discovery-events.js";
+import { canOpenSharedResource, openSharedResource, sharedResourceInvitationCopy, type SharedResourceOpeners } from "./recipient-views.js";
+import { SharedFileView } from "./SharedFileView.js";
+import { SharedAppView } from "./SharedAppView.js";
+import { SharedProjectView } from "./SharedProjectView.js";
 
 type DiscoveryItem = z.infer<typeof CollaborationDiscoveryItemSchema>;
 type SharedMessage = z.infer<typeof CollaborationSharedChatMessageSchema>;
@@ -35,7 +38,9 @@ export type ChatCollaborationView =
   | { kind: "chat"; scopeId: string }
   | { kind: "canonical-chat"; chatId: string }
   | { kind: "terminal"; scopeId: string }
-  | { kind: "project"; scopeId: string };
+  | { kind: "project"; scopeId: string }
+  | { kind: "file"; scopeId: string }
+  | { kind: "app"; scopeId: string };
 
 export function ChatCollaboration({
   view,
@@ -47,9 +52,13 @@ export function ChatCollaboration({
   openChat = () => undefined,
   openTerminal = () => undefined,
   openProject = () => undefined,
+  openFile,
+  openFolder,
+  openApp,
   onChatMetadata,
   headerContainer,
   layers,
+  emptyStateAction,
 }: {
   view: ChatCollaborationView;
   api: CollaborationApi;
@@ -60,20 +69,25 @@ export function ChatCollaboration({
   openChat?: (scopeId: string, chatId?: string, title?: string) => void;
   openTerminal?: (scopeId: string) => void;
   openProject?: (scopeId: string) => void;
+  /** Kinds without an opener show that this surface cannot open them; they never fall back to Chat. */
+  openFile?: (scopeId: string) => void;
+  openFolder?: (scopeId: string) => void;
+  openApp?: (scopeId: string) => void;
   onChatMetadata?: (metadata: { title: string; role: "owner" | "editor" | "viewer" }) => void;
   headerContainer?: HTMLElement | null;
   layers?: CollaborationOverlayLayers;
+  /** Optional call to action inside the empty Shared with me state. */
+  emptyStateAction?: ReactNode;
 }) {
+  const openers: SharedResourceOpeners = { openChat, openTerminal, openProject, openFile, openFolder, openApp };
   if (view.kind === "home") {
-    return <CollaborationHome api={api} openInvitation={openInvitation} openChat={openChat}
-      openTerminal={openTerminal} openProject={openProject} />;
+    return <CollaborationHome api={api} openInvitation={openInvitation} openers={openers} emptyStateAction={emptyStateAction} />;
   }
-  if (view.kind === "invitation") {
-    return <InvitationView api={api} invitationId={view.invitationId} openChat={openChat}
-      openTerminal={openTerminal} openProject={openProject} />;
-  }
+  if (view.kind === "invitation") return <InvitationView api={api} invitationId={view.invitationId} openers={openers} />;
+  if (view.kind === "file") return <SharedFileView api={api} scopeId={view.scopeId} />;
+  if (view.kind === "app") return <SharedAppView api={api} scopeId={view.scopeId} />;
   if (view.kind === "terminal") return <SharedTerminalView api={api} actorId={actorId} scopeId={view.scopeId} layers={layers} />;
-  if (view.kind === "project") return <SharedProjectView api={api} scopeId={view.scopeId} />;
+  if (view.kind === "project") return <SharedProjectView api={api} scopeId={view.scopeId} openChat={openChat} openTerminal={openTerminal} />;
   if (view.kind === "canonical-chat") return <CanonicalSharedChatPanel api={api} actorId={actorId}
     runtimeId={runtimeId ?? "platform"} chatId={view.chatId} storage={storage} onMetadata={onChatMetadata}
     headerContainer={headerContainer} layers={layers} />;
@@ -81,12 +95,11 @@ export function ChatCollaboration({
     scopeId={view.scopeId} storage={storage} onMetadata={onChatMetadata} headerContainer={headerContainer} layers={layers} />;
 }
 
-function CollaborationHome({ api, openInvitation, openChat, openTerminal, openProject }: {
+function CollaborationHome({ api, openInvitation, openers, emptyStateAction }: {
   api: CollaborationApi;
   openInvitation: (invitationId: string) => void;
-  openChat: (scopeId: string, chatId?: string, title?: string) => void;
-  openTerminal: (scopeId: string) => void;
-  openProject: (scopeId: string) => void;
+  openers: SharedResourceOpeners;
+  emptyStateAction?: ReactNode;
 }) {
   const [items, setItems] = useState<DiscoveryItem[]>([]);
   const [inboxCursor, setInboxCursor] = useState<string | null>(null);
@@ -99,6 +112,10 @@ function CollaborationHome({ api, openInvitation, openChat, openTerminal, openPr
   const [invitationError, setInvitationError] = useState(false);
   const [organizationPending, setOrganizationPending] = useState<string | null>(null);
   const [organizationError, setOrganizationError] = useState<string | null>(null);
+  const [openNotice, setOpenNotice] = useState<string | null>(null);
+  const openOrExplain = (kind: DiscoveryItem["kind"], scopeId: string) => {
+    setOpenNotice(openSharedResource(kind, scopeId, openers) ? null : unopenableNotice(kind));
+  };
   useEffect(() => {
     let active = true;
     void Promise.all([api.get("/api/collaboration/inbox"), api.get("/api/collaboration/shared")])
@@ -156,11 +173,7 @@ function CollaborationHome({ api, openInvitation, openChat, openTerminal, openPr
       ));
       setItems((current) => current.filter((candidate) => discoveryKey(candidate) !== discoveryKey(item)));
       notifyCollaborationDiscoveryChanged();
-      if (action === "accept") {
-        if (item.kind === "terminal") openTerminal(result.scopeId);
-        else if (item.kind === "project") openProject(result.scopeId);
-        else openChat(result.scopeId);
-      }
+      if (action === "accept") openOrExplain(item.kind, result.scopeId);
     } catch (failure: unknown) {
       console.warn("[chat-collaboration] invitation action failed", failure instanceof Error ? failure.name : "UnknownError");
       setInvitationError(true);
@@ -189,9 +202,7 @@ function CollaborationHome({ api, openInvitation, openChat, openTerminal, openPr
       setSharedCursor(sharedPage.nextCursor ?? null);
       setError(false);
       notifyCollaborationDiscoveryChanged();
-      if (item.kind === "terminal") openTerminal(item.scopeId);
-      else if (item.kind === "project") openProject(item.scopeId);
-      else openChat(item.scopeId);
+      openOrExplain(item.kind, item.scopeId);
     } catch (failure: unknown) {
       console.warn("[chat-collaboration] organization share open failed", failure instanceof Error ? failure.name : "UnknownError");
       setOrganizationError(item.scopeId);
@@ -215,6 +226,7 @@ function CollaborationHome({ api, openInvitation, openChat, openTerminal, openPr
       <div aria-hidden className="text-3xl">◇</div>
       <h2 className="mt-3 text-lg font-medium">Nothing shared yet</h2>
       <p className="mt-1 text-sm" style={{ color: "var(--text-secondary)" }}>Invitations and accepted shared items will appear here.</p>
+      {emptyStateAction ? <div className="mt-5">{emptyStateAction}</div> : null}
     </div> : null}
     <div className="grid gap-3">
       {items.map((item) => item.status === "organization_pending"
@@ -236,7 +248,7 @@ function CollaborationHome({ api, openInvitation, openChat, openTerminal, openPr
         </article>
         : item.status === "invited"
         ? <article key={`invite:${item.invitationId}`} className="flex flex-wrap items-center gap-4 rounded-2xl border p-4">
-          <div className="min-w-0 flex-1">
+          <div className="min-w-0 grow basis-48">
             <p className="font-medium">{item.resource.owner.displayName} invited you</p>
             <p className="text-sm" style={{ color: "var(--text-secondary)" }}>Shared {kindLabel(item.kind)} · {roleLabel(item.resource.role)}</p>
           </div>
@@ -253,17 +265,21 @@ function CollaborationHome({ api, openInvitation, openChat, openTerminal, openPr
           <div className="min-w-0 flex-1">
             <p className="truncate font-medium">{"chat" in item.resource
               ? item.resource.chat.title
-              : "terminal" in item.resource ? item.resource.terminal.id : item.resource.project.id}</p>
+              : "terminal" in item.resource ? item.resource.terminal.id
+                : "project" in item.resource ? item.resource.project.id : item.resource.name ?? `Shared ${kindLabel(item.kind)}`}</p>
             <p className="text-sm" style={{ color: "var(--text-secondary)" }}>Shared {kindLabel(item.kind)} · {roleLabel(item.resource.scope.role)}</p>
+            {!canOpenSharedResource(item.kind, openers)
+              ? <p className="text-sm" style={{ color: "var(--text-secondary)" }}>This shared {kindLabel(item.kind)} can’t be opened here yet.</p> : null}
           </div>
           {"chat" in item.resource
-            ? <button type="button" className={buttonClass} onClick={() => openAcceptedChat(item, openChat)}>Open Chat</button>
-            : "terminal" in item.resource
-              ? <button type="button" className={buttonClass} onClick={() => openTerminal(item.scopeId)}>Open terminal</button>
-              : <button type="button" className={buttonClass} onClick={() => openProject(item.scopeId)}>Open project</button>}
+            ? <button type="button" className={buttonClass} onClick={() => openAcceptedChat(item, openers.openChat)}>Open Chat</button>
+            : canOpenSharedResource(item.kind, openers)
+              ? <button type="button" className={buttonClass} onClick={() => openSharedResource(item.kind, item.scopeId, openers)}>Open {kindLabel(item.kind)}</button>
+              : null}
         </article>)}
     </div>
     {invitationError ? <p role="alert" className="text-sm">Invitation could not be updated. Try again.</p> : null}
+    {openNotice ? <p role="status" className="text-sm">{openNotice}</p> : null}
     {paginationError ? <p role="alert" className="text-sm">More shared items could not be loaded. Try again.</p> : null}
     {inboxCursor || sharedCursor ? <button type="button" className={buttonClass} disabled={loadingMore} onClick={() => void loadMore()}>
       {loadingMore ? "Loading…" : "Load more shared items"}
@@ -300,70 +316,6 @@ function SharedTerminalView({ api, actorId, scopeId, layers }: {
   return <SharedTerminalControls api={api} scope={scope} actorId={actorId} layers={layers} />;
 }
 
-function SharedProjectView({ api, scopeId }: { api: CollaborationApi; scopeId: string }) {
-  const [value, setValue] = useState<{ scope: SharedScope; project: z.infer<typeof CollaborationProjectSchema> } | null>(null);
-  const [failed, setFailed] = useState(false);
-  const loadGeneration = useRef(0);
-  const load = useCallback(async () => {
-    const generation = ++loadGeneration.current;
-    const base = `/api/collaboration/scopes/${encodeURIComponent(scopeId)}`;
-    try {
-      const [scopeValue, projectValue] = await Promise.all([api.get(base), api.get(`${base}/project`)]);
-      const scope = CollaborationScopeSchema.parse(scopeValue);
-      const project = CollaborationProjectSchema.parse(projectValue);
-      if (scope.kind !== "project" || project.scopeId !== scope.id || project.id !== scope.resourceId) {
-        throw new Error("Project scope mismatch");
-      }
-      if (generation === loadGeneration.current) {
-        setValue({ scope, project });
-        setFailed(false);
-      }
-    } catch (error: unknown) {
-      console.warn("[project-collaboration] project load failed", error instanceof Error ? error.name : "UnknownError");
-      if (generation === loadGeneration.current) {
-        setValue(null);
-        setFailed(true);
-      }
-      throw error;
-    }
-  }, [api, scopeId]);
-  useEffect(() => {
-    setValue(null);
-    setFailed(false);
-    void load().catch((error: unknown) => {
-      console.warn("[project-collaboration] initial load unavailable", error instanceof Error ? error.name : "UnknownError");
-    });
-    return () => { loadGeneration.current += 1; };
-  }, [load]);
-  useEffect(() => api.subscribe?.(scopeId, load, () => {
-    loadGeneration.current += 1;
-    setValue(null);
-    setFailed(true);
-  }), [api, load, scopeId]);
-  if (failed) return <SafeError title="Shared project unavailable" />;
-  if (!value) return <p role="status" className="p-8">Loading shared project…</p>;
-  return <main className="mx-auto flex min-h-full w-full max-w-5xl flex-col gap-5 p-5 sm:p-8">
-    <header>
-      <p className="text-xs font-medium uppercase tracking-[0.16em]" style={{ color: "var(--text-tertiary)" }}>Shared project</p>
-      <h1 className="mt-1 text-2xl font-semibold">{value.project.id}</h1>
-      <p className="mt-1 text-sm" style={{ color: "var(--text-secondary)" }}>
-        {roleLabel(value.scope.role)} · {value.scope.role === "viewer" ? "read only" : "can edit"}
-      </p>
-    </header>
-    {value.project.status === "archived" ? <p role="status" className="rounded-xl border p-4 text-sm">This project is archived.</p> : null}
-    <section aria-labelledby="shared-project-contents">
-      <h2 id="shared-project-contents" className="font-medium">Project contents</h2>
-      <ul className="mt-3 grid gap-2 sm:grid-cols-2">
-        {value.project.resources.map((resource) => <li key={`${resource.kind}:${resource.id}`}
-          className="rounded-xl border px-3 py-2 text-sm">
-          <span className="font-medium">{resource.id}</span>
-          <span className="ml-2 capitalize" style={{ color: "var(--text-secondary)" }}>{resource.kind}</span>
-        </li>)}
-      </ul>
-    </section>
-  </main>;
-}
-
 /** Why a discovered item could not be opened: ended access is not a lapsed sign-in. */
 function homeStateMessage(home: DiscoveryItem["home"]): string {
   if (home === "denied") return "Access is no longer available.";
@@ -384,16 +336,15 @@ function openAcceptedChat(
   openChat(item.scopeId, item.resource.chat.id, item.resource.chat.title);
 }
 
-function InvitationView({ api, invitationId, openChat, openTerminal, openProject }: {
+function InvitationView({ api, invitationId, openers }: {
   api: CollaborationApi;
   invitationId: string;
-  openChat: (scopeId: string, chatId?: string, title?: string) => void;
-  openTerminal: (scopeId: string) => void;
-  openProject: (scopeId: string) => void;
+  openers: SharedResourceOpeners;
 }) {
   const [invitation, setInvitation] = useState<z.infer<typeof CollaborationInvitationSchema> | null>(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState(false);
+  const [openNotice, setOpenNotice] = useState<string | null>(null);
   useEffect(() => {
     let active = true;
     void api.get(`/api/collaboration/invitations/${encodeURIComponent(invitationId)}`)
@@ -414,9 +365,8 @@ function InvitationView({ api, invitationId, openChat, openTerminal, openProject
       ));
       notifyCollaborationDiscoveryChanged();
       if (action === "accept") {
-        if (invitation.scopeKind === "terminal") openTerminal(result.scopeId);
-        else if (invitation.scopeKind === "project") openProject(result.scopeId);
-        else openChat(result.scopeId);
+        setInvitation((current) => current ? { ...current, status: "accepted" } : current);
+        if (!openSharedResource(invitation.scopeKind, result.scopeId, openers)) setOpenNotice(unopenableNotice(invitation.scopeKind));
       } else {
         setInvitation((current) => current ? { ...current, status: "revoked" } : current);
       }
@@ -434,20 +384,13 @@ function InvitationView({ api, invitationId, openChat, openTerminal, openProject
       <p className="mt-3">{invitation.owner.displayName} invited you as an {invitation.role}.</p>
       <div className="mt-5 rounded-xl border p-4 text-sm">
         <p className="font-medium">What you’ll get</p>
-        <p className="mt-1" style={{ color: "var(--text-secondary)" }}>{invitation.scopeKind === "terminal"
-          ? "Access to this terminal’s retained and live output, with input control when your role permits."
-          : invitation.scopeKind === "project"
-            ? "Access to the complete project inventory, including future project-owned contents."
-            : "Access to this ongoing Chat’s history, human discussion, and its ordered AI queue when shared AI is available."}</p>
+        <p className="mt-1" style={{ color: "var(--text-secondary)" }}>{sharedResourceInvitationCopy(invitation.scopeKind).grants}</p>
         <p className="mt-3 font-medium">What stays private</p>
-        <p className="mt-1" style={{ color: "var(--text-secondary)" }}>{invitation.scopeKind === "project"
-          ? "External references, personal presentation state, credentials, and unrelated resources stay private."
-          : "This does not include its project, sibling Chats or terminals, files, apps, or anyone’s private state."}</p>
+        <p className="mt-1" style={{ color: "var(--text-secondary)" }}>{sharedResourceInvitationCopy(invitation.scopeKind).private}</p>
       </div>
-      <p className="mt-4 text-sm" style={{ color: "var(--text-secondary)" }}>{invitation.scopeKind === "terminal"
-        ? "Owners and editors can request input control. Viewers watch only, and no role can create sibling terminals from this share."
-        : "Editors can discuss and request AI. Viewers remain read-only. Owners decide any AI approvals."}</p>
+      <p className="mt-4 text-sm" style={{ color: "var(--text-secondary)" }}>{sharedResourceInvitationCopy(invitation.scopeKind).roles}</p>
       {invitation.status === "revoked" ? <p role="status" className="mt-4 text-sm">Invitation declined.</p> : null}
+      {openNotice ? <p role="status" className="mt-4 text-sm">{openNotice}</p> : null}
       {error ? <p role="alert" className="mt-4 text-sm">Invitation could not be updated. Refresh and try again.</p> : null}
       <div className="mt-6 grid gap-2 sm:grid-cols-2">
         <button type="button" className={buttonClass} disabled={pending || invitation.status !== "pending"} onClick={() => void act("accept")}>
@@ -924,6 +867,10 @@ function browserStorage(): Pick<Storage, "getItem" | "setItem" | "removeItem"> {
 
 function roleLabel(role: "owner" | "editor" | "viewer"): string {
   return role[0]!.toUpperCase() + role.slice(1);
+}
+
+function unopenableNotice(kind: "chat" | "terminal" | "project" | "file" | "folder" | "app"): string {
+  return `Accepted. This shared ${kindLabel(kind)} can’t be opened here yet.`;
 }
 
 function kindLabel(kind: "chat" | "terminal" | "project" | "file" | "folder" | "app"): string {

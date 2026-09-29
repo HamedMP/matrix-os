@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+import { sql } from "kysely";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { bootstrapChatDatabase } from "../../packages/gateway/src/chat/database.js";
 import { bootstrapCollaborationDatabase } from "../../packages/gateway/src/collaboration/database.js";
@@ -274,6 +276,18 @@ describe("collaboration project lifecycle", () => {
   });
 
   it("keeps deletion fenced until cleanup succeeds and removes no unrelated scope", async () => {
+    await sql`CREATE TABLE public._kv (app TEXT NOT NULL, key TEXT NOT NULL, value TEXT, PRIMARY KEY (app, key))`.execute(fixture.db);
+    const appId = "board";
+    const sharedNamespace = `p${createHash("sha256").update(PROJECT_SCOPE_ID).update("\0").update(appId).digest("hex").slice(0, 32)}`;
+    const unrelatedNamespace = `p${createHash("sha256").update(UNRELATED_SCOPE_ID).update("\0").update(appId).digest("hex").slice(0, 32)}`;
+    await fixture.db.insertInto("collaboration_resource_bindings").values({
+      id: "30000000-0000-4000-8000-000000000302", project_scope_id: PROJECT_SCOPE_ID,
+      resource_scope_id: null, resource_kind: "app", resource_id: appId,
+      authority_runtime_id: SOURCE_RUNTIME, authority_generation: 3, revision: 1,
+      readiness: "ready", blocker: null, incarnation: "a".repeat(64), created_at: NOW, updated_at: NOW,
+    }).execute();
+    await sql`INSERT INTO public._kv (app, key, value) VALUES
+      (${sharedNamespace}, 'shared', 'remove'), (${unrelatedNamespace}, 'personal', 'keep')`.execute(fixture.db);
     let fail = true;
     const deleteProject = vi.fn(async ({ signal }: { signal: AbortSignal }) => {
       expect(signal.aborted).toBe(false);
@@ -289,12 +303,15 @@ describe("collaboration project lifecycle", () => {
       payloadHash: "e".repeat(64),
     });
     expect(accepted).toMatchObject({ type: "delete", status: "accepted", revision: "5" });
+    expect((await sql`SELECT key FROM public._kv WHERE app = ${sharedNamespace}`.execute(fixture.db)).rows).toHaveLength(1);
     await expect(fixture.db.selectFrom("collaboration_scopes").select("lifecycle")
       .where("id", "=", PROJECT_SCOPE_ID).executeTakeFirstOrThrow())
       .resolves.toEqual({ lifecycle: "deleting" });
 
     fail = false;
     await expect(lifecycle.recoverPending()).resolves.toEqual({ recovered: 1, failed: 0 });
+    expect((await sql`SELECT key FROM public._kv WHERE app = ${sharedNamespace}`.execute(fixture.db)).rows).toHaveLength(0);
+    expect((await sql`SELECT key FROM public._kv WHERE app = ${unrelatedNamespace}`.execute(fixture.db)).rows).toHaveLength(1);
     await expect(fixture.db.selectFrom("collaboration_scopes")
       .select(["lifecycle", "deleted_at"])
       .where("id", "in", [PROJECT_SCOPE_ID, CHAT_SCOPE_ID])

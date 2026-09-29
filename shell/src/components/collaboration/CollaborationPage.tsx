@@ -23,5 +23,7 @@ export function CollaborationPage({ view }: { view: ChatCollaborationView }) {
     openInvitation={(invitationId) => router.push(`/shared/invitations/${encodeURIComponent(invitationId)}`)}
     openChat={(scopeId) => router.push(`/shared/chat/${encodeURIComponent(scopeId)}`)}
     openTerminal={(scopeId) => router.push(`/shared/terminal/${encodeURIComponent(scopeId)}`)}
-    openProject={(scopeId) => router.push(`/shared/project/${encodeURIComponent(scopeId)}`)} />;
+    openProject={(scopeId) => router.push(`/shared/project/${encodeURIComponent(scopeId)}`)}
+    openFile={(scopeId) => router.push(`/shared/file/${encodeURIComponent(scopeId)}`)}
+    openApp={(scopeId) => router.push(`/shared/app/${encodeURIComponent(scopeId)}`)} />;
 }

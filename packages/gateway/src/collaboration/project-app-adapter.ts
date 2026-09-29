@@ -1,13 +1,14 @@
 import { createHash, randomUUID } from "node:crypto";
-import { BridgeQueryBodySchema, type BridgeQueryBody } from "../app-db-contracts.js";
 import { normalizeAppStorageSlug } from "../app-db-types.js";
 import { type Kysely, type Transaction } from "kysely";
 import { z } from "zod/v4";
+import { ScopedAppActionSchema, type ScopedAppAction } from "./scoped-app-action.js";
 import {
   CollaborationAuthorizationError,
   type AuthorizedCollaborationContext,
 } from "./authority.js";
 import type { OwnerCollaborationDatabase } from "./database.js";
+import { scopedAppNamespace } from "./scoped-app-namespace.js";
 
 const OPERATION_RETENTION_MS = 7 * 24 * 60 * 60 * 1_000;
 const MAX_RESULT_BYTES = 1024 * 1024;
@@ -27,8 +28,8 @@ const MutationEnvelopeSchema = z.object({
   action: z.unknown(),
 }).strict();
 
-const READ_ACTIONS: readonly BridgeQueryBody["action"][] = ["find", "findOne", "count", "schema", "appInfo"];
-const MUTATION_ACTIONS: readonly BridgeQueryBody["action"][] = ["insert", "bulkInsert", "update", "bulkUpdate", "delete"];
+const READ_ACTIONS: readonly ScopedAppAction["action"][] = ["find", "findOne", "count", "schema", "appInfo", "readData"];
+const MUTATION_ACTIONS: readonly ScopedAppAction["action"][] = ["insert", "bulkInsert", "update", "bulkUpdate", "delete", "writeData"];
 
 export interface ProjectAppBridge {
   execute(input: {
@@ -37,7 +38,7 @@ export interface ProjectAppBridge {
     storageSchema: string;
     scopeId: string;
     actorId: string;
-    action: BridgeQueryBody;
+    action: ScopedAppAction;
     transaction?: Transaction<OwnerCollaborationDatabase>;
   }): Promise<unknown>;
 }
@@ -53,10 +54,6 @@ export class ProjectAppAdapterError extends Error {
     super("Shared project app is unavailable");
     this.name = "ProjectAppAdapterError";
   }
-}
-
-function projectNamespace(scopeId: string, appId: string): string {
-  return `p${createHash("sha256").update(scopeId).update("\0").update(appId).digest("hex").slice(0, 32)}`;
 }
 
 function jsonValue(value: unknown): unknown {
@@ -122,11 +119,11 @@ export function createProjectAppAdapter(options: {
     if (app.data.collaborationMode !== "scoped") throw new ProjectAppAdapterError("app_unavailable");
     const bridgeAppId = normalizeAppStorageSlug(app.data.bridgeAppId);
     if (!/^[a-z][a-z0-9_-]{0,62}$/.test(bridgeAppId)) throw new ProjectAppAdapterError("app_unavailable");
-    return { app: app.data, bridgeAppId, namespace: projectNamespace(context.scopeId, appId) };
+    return { app: app.data, bridgeAppId, namespace: scopedAppNamespace(context.scopeId, appId, "project") };
   }
 
-  function parseAction(raw: unknown, expectedApp: string, allowed: readonly BridgeQueryBody["action"][]): BridgeQueryBody {
-    const parsed = BridgeQueryBodySchema.safeParse(raw);
+  function parseAction(raw: unknown, expectedApp: string, allowed: readonly ScopedAppAction["action"][]): ScopedAppAction {
+    const parsed = ScopedAppActionSchema.safeParse(raw);
     if (!parsed.success || !allowed.includes(parsed.data.action) || parsed.data.action === "listApps"
       || !("app" in parsed.data) || parsed.data.app !== expectedApp) {
       throw new ProjectAppAdapterError("invalid_action");
@@ -212,7 +209,7 @@ export function createProjectAppAdapter(options: {
           storageSchema: app.bridgeAppId,
           scopeId: current.scopeId,
           actorId: current.actorId,
-          action: { ...action, app: app.namespace } as BridgeQueryBody,
+          action: { ...action, app: app.namespace } as ScopedAppAction,
           transaction: trx,
         }));
       });
@@ -265,7 +262,7 @@ export function createProjectAppAdapter(options: {
           storageSchema: app.bridgeAppId,
           scopeId: current.scopeId,
           actorId: current.actorId,
-          action: { ...action, app: app.namespace } as BridgeQueryBody,
+          action: { ...action, app: app.namespace } as ScopedAppAction,
           transaction: trx,
         }));
         const revision = Number(binding.revision) + 1;
