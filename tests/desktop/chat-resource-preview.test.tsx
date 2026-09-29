@@ -29,10 +29,13 @@ afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 it("loads a selected home image from the pinned runtime and offers native download and image copy", async () => {
   render(<InspectorFilePreview target={home} />);
-  fireEvent.click(await screen.findByRole("button", { name: "Download chart.png" }));
+  const image = await screen.findByRole("img", { name: "chart.png" });
+  expect(screen.queryByRole("button", { name: "Download chart.png" })).toBeNull();
+  fireEvent.contextMenu(image);
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Download chart.png" }));
   expect(download).toHaveBeenCalledWith(home.path);
-  await waitFor(() => expect((screen.getByRole("button", { name: "Copy image chart.png" }) as HTMLButtonElement).disabled).toBe(false));
-  fireEvent.click(screen.getByRole("button", { name: "Copy image chart.png" }));
+  await waitFor(() => expect(screen.getByRole("menuitem", { name: "Copy image chart.png" }).hasAttribute("data-disabled")).toBe(false));
+  fireEvent.click(screen.getByRole("menuitem", { name: "Copy image chart.png" }));
   await waitFor(() => expect(copy).toHaveBeenCalled());
   expect(forRuntime).toHaveBeenCalledWith("pr-qa");
   expect(getBlob.mock.calls.every(([url]) => url.includes("kind=home") && url.includes("path=apps%2Fchart%2Fchart.png"))).toBe(true);
@@ -53,7 +56,8 @@ it("does not copy an image when its selected preview is replaced during the read
   let resolveRead!: (blob: Blob) => void;
   getBlob.mockImplementation(() => new Promise<Blob>((resolve) => { resolveRead = resolve; }));
   const { unmount } = render(<InspectorFilePreview target={home} />);
-  fireEvent.click(await screen.findByRole("button", { name: "Copy image chart.png" }));
+  fireEvent.contextMenu(await screen.findByText("chart.png", { selector: "span" }));
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Copy image chart.png" }));
   unmount();
   await act(async () => resolveRead(new Blob(["png"])));
   expect(copy).not.toHaveBeenCalled();

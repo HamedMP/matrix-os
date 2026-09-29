@@ -11,9 +11,10 @@ The current assistant sanitizer reproduces `[redacted path]` for the public prod
 ## Behavior
 
 - Preserve only the exact public product route names `/api/apps` and `/api/integrations`. Absolute host paths, private descendants, query strings and credentials retain redaction.
-- Resolve installed app directory and entry-point references against the runtime-scoped app catalog. Open the normal Electron app tab. Source files and unknown directories retain file/folder semantics.
+- Resolve installed app directory and entry-point references against the runtime-scoped app catalog. Open the normal Electron app tab. When Chat is maximized, retain its tab workspace and open or focus the app as another maximized tab without returning to the Desktop; preserve the selected Chat and its draft. Source files and unknown directories retain file/folder semantics.
 - Render owner-local Markdown images, image links and explicit inline-code image paths through authenticated bounded reads. Use the existing image lightbox and File Preview navigation. Failed loads are retryable.
 - Chat File Preview resolves both home and project/worktree resources through the existing typed preview API. HTML remains script-disabled and network-blocked; interactive charts open as installed apps.
+- File Preview exposes Copy image and Download through right click, with no permanent action buttons. The menu retains safe failure/retry and completion feedback and disables duplicate actions while pending.
 - Home downloads use the existing native Save dialog and streaming download service. Project downloads use a bounded authenticated blob download. Copy image writes rasterized PNG pixels with byte/dimension limits, completion and safe failure feedback.
 - Runtime changes, authentication changes and preview replacement invalidate in-flight image actions. Object URLs and decoded image buffers are released.
 - App-builder guidance presents clickable owner-relative app directories and Markdown chart images, without claiming a renderer limitation that has not been observed.

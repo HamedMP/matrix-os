@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { FilePreviewDescriptorSchema, type FilePreviewDescriptor } from "@matrix-os/contracts";
 import { FilePreviewContent, FilePreviewActions, copyFileImage, savePreviewBlob, filePreviewContentUrl, filePreviewMetadataUrl } from "@matrix-os/ui";
+import { DESKTOP_Z_INDEX } from "../../design/layering";
 import { useConnection } from "../../stores/connection";
 import { useDesktopFileDownload } from "../files/use-file-download";
 import type { InspectorFileTarget } from "./InspectorFilesPanel";
@@ -64,16 +65,16 @@ export function InspectorResourcePreview({ target }: { target: InspectorFileTarg
     const blob = await loadBlob(filePreviewContentUrl(descriptor.resource, { download: true }), MAX_PROJECT_DOWNLOAD_BYTES);
     if (isCurrent()) savePreviewBlob(blob, descriptor.name);
   } : undefined;
-  return <div className="flex min-h-0 flex-1 flex-col">
+  return <FilePreviewActions key={contentUrl} name={descriptor.name} onDownload={onDownload} pending={download.pending} zIndex={DESKTOP_Z_INDEX.popover}
+    onCopyImage={descriptor.kind === "image" ? async () => copyFileImage(await loadBlob(contentUrl, 50 * 1024 * 1024), isCurrent) : undefined}>
+    <div className="flex min-h-0 flex-1 flex-col" tabIndex={0} aria-label={`File preview ${descriptor.name}`}>
     <header className="flex flex-wrap items-center justify-between gap-2 border-b px-3 py-2" style={{ borderColor: "var(--border-subtle)" }}>
       <span className="min-w-0 truncate text-xs">{descriptor.name}</span>
-      <FilePreviewActions key={contentUrl} name={descriptor.name} onDownload={onDownload} pending={download.pending}
-        onCopyImage={descriptor.kind === "image" ? async () => copyFileImage(await loadBlob(contentUrl, 50 * 1024 * 1024), isCurrent) : undefined} />
       {download.message ? <span role={download.error ? "alert" : "status"} className="text-xs">{download.message}</span> : null}
       {projectDownloadTooLarge ? <p className="text-xs">Project downloads are available for files up to 50 MiB.</p> : null}
     </header>
     <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto p-4">
       <FilePreviewContent key={`${contentUrl}:${attempt}`} descriptor={descriptor} contentUrl={contentUrl} loadBlob={loadBlob} loadText={loadText} textPreviewBytes={textPrefix ? PROJECT_TEXT_PREFIX_BYTES : undefined} retry={() => setAttempt((value) => value + 1)} />
     </div>
-  </div>;
+  </div></FilePreviewActions>;
 }
