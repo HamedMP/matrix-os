@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import React from "react";
-import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ShellSocketEvents } from "@desktop/renderer/src/lib/shell-socket";
 import TerminalView from "@desktop/renderer/src/features/terminal/TerminalView";
@@ -225,6 +225,7 @@ describe("Electron Terminal protected file drag", () => {
   });
 
   afterEach(() => {
+    Reflect.deleteProperty(window, "operator");
     window.getSelection()?.removeAllRanges();
     cleanup();
     vi.unstubAllGlobals();
@@ -276,4 +277,97 @@ describe("Electron Terminal protected file drag", () => {
     host.dispatchEvent(file);
     expect(file.defaultPrevented).toBe(false);
   });
+  it.each([
+    ["brief.pdf", "application/pdf", "%PDF-1.7"],
+    ["说明.txt", "text/plain", "design notes"],
+    ["archive.zip", "application/zip", "zip bytes"],
+    ["unknown.bin", "", "binary bytes"],
+    ["empty.txt", "text/plain", ""],
+  ])("uploads dropped file %s and inserts only the remote path", async (name, type, contents) => {
+    const post = vi.fn(async () => ({ assets: [{ terminalPath: "/home/matrix/home/temporary/terminal-pastes/file.txt" }] }));
+    useConnection.setState({ api: { post } as never });
+    const { container } = render(<TerminalView sessionName={TERMINAL_REF_KEY} />);
+    const host = container.querySelector<HTMLElement>("[data-terminal-viewport]")!;
+    fireEvent.drop(host, { dataTransfer: { files: [new File([contents], name, { type })] } });
+    await waitFor(() => expect(post).toHaveBeenCalledOnce());
+    expect(post.mock.calls[0]).toEqual([
+      expect.stringContaining("/paste-assets"),
+      { kind: "file", assets: [{ name, mimeType: type || "application/octet-stream", dataBase64: btoa(contents) }] },
+      { timeoutMs: 30_000 },
+    ]);
+    await waitFor(() => expect(attachmentWrite).toHaveBeenCalledExactlyOnceWith("\u001b[200~/home/matrix/home/temporary/terminal-pastes/file.txt\u001b[201~"));
+  });
+
+  it("rejects more than eight dropped files without silently truncating the batch", async () => {
+    const post = vi.fn();
+    useConnection.setState({ api: { post } as never });
+    const { container } = render(<TerminalView sessionName={TERMINAL_REF_KEY} />);
+    fireEvent.drop(container.querySelector("[data-terminal-viewport]")!, {
+      dataTransfer: { files: Array.from({ length: 9 }, (_, n) => new File(["x"], `${n}.txt`)) },
+    });
+    expect(await screen.findByText("Upload up to 8 files at a time.")).toBeTruthy();
+    expect(post).not.toHaveBeenCalled();
+    expect(attachmentWrite).not.toHaveBeenCalled();
+  });
+
+  it("uploads copied Finder files on Cmd+V instead of pasting the name", async () => {
+    const readText = vi.fn(async () => "IMG_0330.JPG");
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { readText } });
+    const invoke = vi.fn(async () => ({ status: "files", files: [{ name: "IMG_0330.JPG", mimeType: "application/octet-stream", dataBase64: "eA==" }] }));
+    Object.defineProperty(window, "operator", { configurable: true, value: { invoke } });
+    const post = vi.fn(async () => ({ assets: [{ terminalPath: "/home/matrix/home/temporary/terminal-pastes/copied.jpg" }] }));
+    useConnection.setState({ api: { post } as never });
+    render(<TerminalView sessionName={TERMINAL_REF_KEY} />);
+    createdTerminals.at(-1)!.customKeyEventHandler?.(new KeyboardEvent("keydown", { key: "v", metaKey: true, cancelable: true }));
+    await waitFor(() => expect(attachmentWrite).toHaveBeenCalledExactlyOnceWith("\x1b[200~/home/matrix/home/temporary/terminal-pastes/copied.jpg\x1b[201~"));
+    expect(invoke).toHaveBeenCalledWith("terminal:read-clipboard-files", {});
+    expect(post).toHaveBeenCalledWith(expect.stringContaining("/paste-assets"), {
+      kind: "file", assets: [{ name: "IMG_0330.JPG", mimeType: "application/octet-stream", dataBase64: "eA==" }],
+    }, { timeoutMs: 30_000 });
+    expect(readText).not.toHaveBeenCalled();
+  });
+
+  it("reports a copied-file error without falling back to its name", async () => {
+    const readText = vi.fn(async () => "too-big.bin");
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { readText } });
+    Object.defineProperty(window, "operator", { configurable: true, value: { invoke: vi.fn(async () => ({ status: "error", error: "too_large" })) } });
+    render(<TerminalView sessionName={TERMINAL_REF_KEY} />);
+    createdTerminals.at(-1)!.customKeyEventHandler?.(new KeyboardEvent("keydown", { key: "v", metaKey: true }));
+    expect(await screen.findByText("Files are limited to 10 MB.")).toBeTruthy();
+    expect(readText).not.toHaveBeenCalled();
+    expect(attachmentWrite).not.toHaveBeenCalled();
+  });
+
+  it("discards copied files when the active terminal changes during native clipboard read", async () => {
+    let resolveClipboard!: (value: unknown) => void;
+    const invoke = vi.fn(() => new Promise((resolve) => { resolveClipboard = resolve; }));
+    Object.defineProperty(window, "operator", { configurable: true, value: { invoke } });
+    const post = vi.fn();
+    useConnection.setState({ api: { post } as never });
+    const { rerender } = render(<TerminalView sessionName={TERMINAL_REF_KEY} />);
+    createdTerminals.at(-1)!.customKeyEventHandler?.(new KeyboardEvent("keydown", { key: "v", metaKey: true }));
+    await waitFor(() => expect(invoke).toHaveBeenCalledOnce());
+    rerender(<TerminalView sessionName={`tws_${"a".repeat(32)}:tt_${"c".repeat(32)}`} />);
+    resolveClipboard({ status: "files", files: [{ name: "copied.txt", mimeType: "application/octet-stream", dataBase64: "eA==" }] });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(post).not.toHaveBeenCalled();
+    expect(attachmentWrite).not.toHaveBeenCalled();
+  });
+
+  it("uploads selected files from the attachment action using the same terminal path flow", async () => {
+    attachMock.mockImplementation((_name: string, events: ShellSocketEvents) => {
+      events.onState("attached");
+      return { resize: attachmentResize, write: attachmentWrite, writeBinary: attachmentWriteBinary };
+    });
+    const post = vi.fn(async () => ({ assets: [{ terminalPath: "/home/matrix/home/temporary/terminal-pastes/selected.pdf" }] }));
+    useConnection.setState({ api: { post } as never });
+    const { container } = render(<TerminalView sessionName={TERMINAL_REF_KEY} />);
+    fireEvent.click(screen.getByRole("button", { name: "Attach files" }));
+    fireEvent.change(container.querySelector('input[type="file"]')!, { target: { files: [new File(["pdf"], "brief.pdf", { type: "application/pdf" })] } });
+    await waitFor(() => expect(attachmentWrite).toHaveBeenCalledExactlyOnceWith("\x1b[200~/home/matrix/home/temporary/terminal-pastes/selected.pdf\x1b[201~"));
+    expect(post).toHaveBeenCalledWith(expect.stringContaining("/paste-assets"), {
+      kind: "file", assets: [{ name: "brief.pdf", mimeType: "application/pdf", dataBase64: "cGRm" }],
+    }, { timeoutMs: 30_000 });
+  });
+
 });

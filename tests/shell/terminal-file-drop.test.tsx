@@ -79,4 +79,37 @@ describe("Web Terminal protected file drag", () => {
     expect(textEvent.defaultPrevented).toBe(false);
     expect(fetch).not.toHaveBeenCalled();
   });
+  it.each([
+    ["brief.pdf", "application/pdf", "%PDF-1.7"],
+    ["说明.txt", "text/plain", "design notes"],
+    ["archive.zip", "application/zip", "zip bytes"],
+    ["unknown.bin", "", "binary bytes"],
+    ["empty.txt", "text/plain", ""],
+  ])("uploads dropped file %s without losing its bytes", async (name, type, contents) => {
+    const { getByTestId } = render(<FilePasteHarness />);
+    const file = new File([contents], name, { type });
+    const event = dragEvent("drop", { files: [file], items: [] });
+    getByTestId("terminal-host").dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(true);
+    await waitFor(() => expect(fetch).toHaveBeenCalledOnce());
+    const options = vi.mocked(fetch).mock.calls[0]![1]!;
+    expect(JSON.parse(String(options.body))).toEqual({ kind: "file", assets: [{
+      name, mimeType: type || "application/octet-stream", dataBase64: btoa(contents),
+    }] });
+    await waitFor(() => expect(send).toHaveBeenCalledOnce());
+    expect(reportPasteFailure).not.toHaveBeenCalled();
+  });
+
+  it("rejects too many or oversized dropped files before uploading", () => {
+    const { getByTestId } = render(<FilePasteHarness />);
+    const host = getByTestId("terminal-host");
+    host.dispatchEvent(dragEvent("drop", { files: Array.from({ length: 9 }, (_, n) => new File(["x"], `${n}.txt`)) }));
+    expect(reportPasteFailure).toHaveBeenLastCalledWith(expect.any(Number), "Upload up to 8 files at a time.");
+    const big = new File(["x"], "large.pdf", { type: "application/pdf" });
+    Object.defineProperty(big, "size", { value: 10 * 1024 * 1024 + 1 });
+    host.dispatchEvent(dragEvent("drop", { files: [big] }));
+    expect(reportPasteFailure).toHaveBeenLastCalledWith(expect.any(Number), "Files are limited to 10 MB.");
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
 });

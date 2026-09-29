@@ -57,6 +57,7 @@ import {
   DesktopUpdateVersionSchema,
 } from "./desktop-update";
 import { DesktopAnalyticsDetailSchema } from "./desktop-analytics";
+import { TerminalClipboardResultSchema } from "./terminal-clipboard";
 
 const Empty = z.object({}).strict();
 
@@ -136,6 +137,7 @@ const BoundedJsonValue = z.unknown().refine(
 );
 
 export const INVOKE_CHANNELS = {
+  "terminal:read-clipboard-files": { request: Empty, response: TerminalClipboardResultSchema },
   "analytics:flush-complete": { request: Empty, response: Ok },
   "auth:start-device-flow": {
     request: z.strictObject({ intent: z.enum(["sign-up", "sign-in"]).optional() }),

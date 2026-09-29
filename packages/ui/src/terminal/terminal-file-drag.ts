@@ -11,3 +11,29 @@ export function captureTerminalFileDrag(event: DragEvent): void {
   event.stopImmediatePropagation();
   payload.dropEffect = "copy";
 }
+
+export const MAX_TERMINAL_DROP_FILES = 8;
+export const MAX_TERMINAL_DROP_FILE_BYTES = 10 * 1024 * 1024;
+
+/** Return at most one over the limit so callers can reject a whole batch. */
+export function terminalDropFiles(payload: DataTransfer | null): File[] {
+  if (!payload) return [];
+  const files: File[] = [];
+  let hasFileItems = false;
+  for (const item of Array.from(payload.items ?? [])) {
+    if (item.kind !== "file") continue;
+    hasFileItems = true;
+    const entry = (item as DataTransferItem & {
+      webkitGetAsEntry?: () => { isDirectory?: boolean } | null;
+    }).webkitGetAsEntry?.();
+    if (entry?.isDirectory) continue;
+    const file = item.getAsFile();
+    if (file) files.push(file);
+    if (files.length > MAX_TERMINAL_DROP_FILES) break;
+  }
+  return hasFileItems ? files : Array.from(payload.files ?? []).slice(0, MAX_TERMINAL_DROP_FILES + 1);
+}
+
+export function terminalDropMimeType(file: File): string {
+  return file.type.trim().toLowerCase() || "application/octet-stream";
+}

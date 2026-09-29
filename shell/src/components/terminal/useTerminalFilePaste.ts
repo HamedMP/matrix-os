@@ -1,5 +1,5 @@
-import { useEffect } from "react";
-import { captureTerminalFileDrag } from "@matrix-os/ui";
+import { useCallback, useEffect, useRef } from "react";
+import { captureTerminalFileDrag, terminalDropFiles, terminalDropMimeType, MAX_TERMINAL_DROP_FILES, MAX_TERMINAL_DROP_FILE_BYTES } from "@matrix-os/ui";
 import { getGatewayUrl } from "@/lib/gateway";
 import { getWebSocketAuthToken } from "@/lib/websocket-auth";
 import {
@@ -35,7 +35,9 @@ export function useTerminalFilePaste({
   sessionIdRef,
   socketGenerationRef,
   wsRef,
-}: TerminalFilePasteOptions): void {
+}: TerminalFilePasteOptions): (files: File[]) => void {
+  const selectionRef = useRef<(files: File[]) => void>(() => undefined);
+  const selectFiles = useCallback((files: File[]) => selectionRef.current(files), []);
   // react-doctor-disable-next-line react-doctor/no-fetch-in-effect -- this effect only registers paste/drop listeners; the fetch runs later from those user event handlers with an AbortSignal timeout.
   useEffect(() => {
     const container = containerRef.current;
@@ -63,7 +65,7 @@ export function useTerminalFilePaste({
       return false;
     };
 
-    const uploadAndPasteFiles = async (files: File[]) => {
+    const uploadAndPasteFiles = async (files: File[], kind: "image" | "file" = "image") => {
       const operation = ++operationGenerationRef.current;
       const feedbackSequence = ++feedbackSequenceRef.current;
       const sessionId = sessionIdRef.current;
@@ -73,13 +75,22 @@ export function useTerminalFilePaste({
         && sessionIdRef.current === sessionId
         && wsRef.current === initiatingSocket
         && socketGenerationRef.current === initiatingSocketGeneration;
+      const failureMessage = kind === "file" ? "File upload failed. Try again." : "Image paste failed. Try again.";
+      if (files.length > MAX_TERMINAL_DROP_FILES) {
+        reportPasteFailure(feedbackSequence, "Upload up to 8 files at a time.");
+        return;
+      }
+      if (files.some((file) => file.size > MAX_TERMINAL_DROP_FILE_BYTES)) {
+        reportPasteFailure(feedbackSequence, kind === "file" ? "Files are limited to 10 MB." : "Images are limited to 10 MB.");
+        return;
+      }
       if (!sessionId || !initiatingSocket) {
-        if (canCommit()) reportPasteFailure(feedbackSequence, "Image paste failed. Try again.");
+        if (canCommit()) reportPasteFailure(feedbackSequence, failureMessage);
         return;
       }
       const terminalRef = parseTerminalRefKey(sessionId);
       if (!terminalRef) {
-        if (canCommit()) reportPasteFailure(feedbackSequence, "Image paste failed. Try again.");
+        if (canCommit()) reportPasteFailure(feedbackSequence, failureMessage);
         return;
       }
       const terminalPaths: string[] = [];
@@ -94,7 +105,7 @@ export function useTerminalFilePaste({
       }
       for (const file of files) {
         if (!canCommit()) return;
-        const mimeType = terminalPasteMimeType(file);
+        const mimeType = kind === "file" ? terminalDropMimeType(file) : terminalPasteMimeType(file);
         if (!mimeType) {
           continue;
         }
@@ -103,7 +114,6 @@ export function useTerminalFilePaste({
         try {
           const headers: Record<string, string> = {
             "Content-Type": "application/json",
-            "X-Matrix-Filename": file.name,
           };
           if (authToken) {
             headers.Authorization = `Bearer ${authToken}`;
@@ -121,6 +131,7 @@ export function useTerminalFilePaste({
             headers,
             signal: uploadTimeout.signal,
             body: JSON.stringify({
+              ...(kind === "file" ? { kind } : {}),
               assets: [{ name: file.name, mimeType, dataBase64: btoa(binary) }],
             }),
           });
@@ -147,13 +158,13 @@ export function useTerminalFilePaste({
       }
       if (!canCommit()) return;
       if (failed || terminalPaths.length === 0) {
-        reportPasteFailure(feedbackSequence, "Image paste failed. Try again.");
+        reportPasteFailure(feedbackSequence, failureMessage);
         return;
       }
       if (sendBracketedPaste(terminalPaths, initiatingSocket, sessionId)) {
         reportPasteSuccess(feedbackSequence);
       } else {
-        reportPasteFailure(feedbackSequence, "Image paste failed. Try again.");
+        reportPasteFailure(feedbackSequence, failureMessage);
       }
     };
 
@@ -170,6 +181,11 @@ export function useTerminalFilePaste({
       return files;
     };
 
+    const uploadSelection = (files: File[]) => {
+      container.querySelector<HTMLTextAreaElement>(".xterm-helper-textarea")?.focus();
+      void uploadAndPasteFiles(files, "file");
+    };
+    selectionRef.current = uploadSelection;
     const onPaste = (event: ClipboardEvent) => {
       const files = captureImagePayload(event);
       if (files.length > 0) {
@@ -178,9 +194,12 @@ export function useTerminalFilePaste({
     };
     const onDrag = captureTerminalFileDrag;
     const onDrop = (event: DragEvent) => {
-      const files = captureImagePayload(event);
+      const files = terminalDropFiles(event.dataTransfer);
       if (files.length > 0) {
-        void uploadAndPasteFiles(files);
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation();
+        void uploadAndPasteFiles(files, "file");
       }
     };
 
@@ -189,6 +208,7 @@ export function useTerminalFilePaste({
     container.addEventListener("dragover", onDrag, { capture: true });
     container.addEventListener("drop", onDrop, { capture: true });
     return () => {
+      if (selectionRef.current === uploadSelection) selectionRef.current = () => undefined;
       container.removeEventListener("paste", onPaste, { capture: true });
       container.removeEventListener("dragenter", onDrag, { capture: true });
       container.removeEventListener("dragover", onDrag, { capture: true });
@@ -204,4 +224,5 @@ export function useTerminalFilePaste({
     socketGenerationRef,
     wsRef,
   ]);
+  return selectFiles;
 }
