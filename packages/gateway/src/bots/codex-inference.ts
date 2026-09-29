@@ -60,6 +60,17 @@ export async function forwardCodexBotInference(request: ScopeRuntimeBotInference
     await discard(response);
     return fail("provider_unavailable");
   }
+  const responseBody = await readBoundedBody(response);
+  const headers = new Headers(response.headers);
+  // The Codex subscription endpoint currently emits SSE without Content-Type.
+  // Trust only its exact URL, and require an SSE data object before adding the
+  // missing type; an unrelated headerless/HTML response must still be refused.
+  if (!headers.has("content-type")) {
+    if (!/^(?:event: [^\r\n]{1,128}\r?\n)?data: \{/.test(responseBody)) {
+      throw new Error("Codex subscription response is not SSE");
+    }
+    headers.set("content-type", "text/event-stream");
+  }
   return ScopeRuntimeBrokerResponseSchema.parse({ version: 1, requestId: request.requestId, ok: true,
-    status: response.status, headers: safeResponseHeaders(response, "inference"), body: await readBoundedBody(response) });
+    status: response.status, headers: safeResponseHeaders(new Response(null, { headers }), "inference"), body: responseBody });
 }

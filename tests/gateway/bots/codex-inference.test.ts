@@ -33,6 +33,21 @@ describe("Pi bot Codex subscription inference", () => {
     expect(body.input).toHaveLength(1);
     expect(JSON.stringify(result)).not.toContain("owner-subscription");
   });
+  it("accepts a valid Codex subscription SSE reply when the endpoint omits Content-Type", async () => {
+    const deps = setup();
+    const upstream = new Response('event: response.created\ndata: {"type":"response.created"}\n\n');
+    upstream.headers.delete("content-type");
+    deps.fetchImpl.mockResolvedValue(upstream);
+    const result = await forwardBotInference(request, binding, () => authorization as never, deps);
+    expect(result).toMatchObject({ ok: true, status: 200, headers: { "content-type": "text/event-stream" } });
+  });
+  it("rejects a headerless non-SSE reply", async () => {
+    const deps = setup();
+    const upstream = new Response('<html>unexpected</html>');
+    upstream.headers.delete("content-type");
+    deps.fetchImpl.mockResolvedValue(upstream);
+    expect(await forwardBotInference(request, binding, () => authorization as never, deps)).toMatchObject({ ok: false, error: "provider_unavailable" });
+  });
   it("rejects API-key identities instead of silently using paid API access", async () => {
     const deps = setup();
     deps.resolveCodexIdentity.mockResolvedValue({ url: "https://api.openai.com/v1/responses", headers: { authorization: "Bearer key", "chatgpt-account-id": "" } });
