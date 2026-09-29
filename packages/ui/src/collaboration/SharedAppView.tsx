@@ -97,7 +97,10 @@ function ReadyAppFrame({ api, scopeId, html, role, instance }: {
       if (!message.success || message.data.scopeId !== scopeId || message.data.appId !== instance.appId) return;
       let size: number;
       try { size = new TextEncoder().encode(JSON.stringify(message.data)).byteLength; }
-      catch { return; }
+      catch (error: unknown) {
+        console.warn("[shared-app] invalid request body", error instanceof Error ? error.name : "UnknownError");
+        return;
+      }
       if (size > MAX_MESSAGE_BYTES) return;
       const action = message.data.action;
       const reply = (value: { ok: true; result: unknown } | { ok: false; error: string }) => {
