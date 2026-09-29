@@ -1,5 +1,5 @@
 import { safeRelativePath } from "#legacy-contract-primitives";
-import { normalizeOsViewDesktopAppPath } from "./os-view.js";
+import { normalizeOsViewDesktopAppPath } from "#os-view";
 
 const PathSchema = safeRelativePath();
 
