@@ -98,6 +98,28 @@ export class PlatformOrganizationRepository {
     return row ? toOrganization(row) : null;
   }
 
+  /**
+   * Reads an organization's verification and one actor's membership in a single
+   * statement, so both come from the same snapshot even while a reconciliation
+   * is committing. Returns null when the organization is unknown.
+   */
+  async getMembershipSnapshot(input: { organizationId: string; actorId: string }): Promise<{
+    lifecycle: OrganizationRecord["lifecycle"];
+    verifiedAt: Date | null;
+    membershipState: MembershipRecord["state"] | null;
+  } | null> {
+    const row = await this.db
+      .selectFrom("organizations as o")
+      .leftJoin("organization_memberships as m", (join) => join
+        .onRef("m.organization_id", "=", "o.organization_id")
+        .on("m.actor_id", "=", input.actorId))
+      .select(["o.lifecycle", "o.verified_at", "m.state"])
+      .where("o.organization_id", "=", input.organizationId)
+      .executeTakeFirst();
+    if (!row) return null;
+    return { lifecycle: row.lifecycle, verifiedAt: asDate(row.verified_at), membershipState: row.state ?? null };
+  }
+
   async getMembership(input: { organizationId: string; actorId: string }): Promise<MembershipRecord | null> {
     const row = await this.db.selectFrom("organization_memberships").selectAll()
       .where("organization_id", "=", input.organizationId).where("actor_id", "=", input.actorId).executeTakeFirst();

@@ -59,18 +59,33 @@ export async function listActivePrivatePreviewsForOwner(
   return rows.map(mapUserMachine);
 }
 
+export interface PrivatePreviewCursor {
+  provisionedAt: string;
+  machineId: string;
+}
+
+/** One page of a PR's active Private Previews, ordered for keyset pagination. */
 export async function listActivePrivatePreviewsForPr(
   db: PlatformDB,
   sourcePr: number,
+  after?: PrivatePreviewCursor,
 ): Promise<UserMachineRecord[]> {
   await db.ready;
-  const rows = await db.executor
+  let query = db.executor
     .selectFrom('user_machines')
     .selectAll()
     .where('provisioning_class', '=', 'private-preview')
     .where('source_pr', '=', sourcePr)
-    .where('deleted_at', 'is', null)
+    .where('deleted_at', 'is', null);
+  if (after) {
+    query = query.where((eb) => eb.or([
+      eb('provisioned_at', '>', after.provisionedAt),
+      eb.and([eb('provisioned_at', '=', after.provisionedAt), eb('machine_id', '>', after.machineId)]),
+    ]));
+  }
+  const rows = await query
     .orderBy('provisioned_at', 'asc')
+    .orderBy('machine_id', 'asc')
     .limit(PRIVATE_PREVIEW_LIST_LIMIT)
     .execute();
   return rows.map(mapUserMachine);
@@ -97,4 +112,30 @@ export async function confirmPrivatePreviewBundle(
     .returningAll()
     .executeTakeFirst();
   return row ? mapUserMachine(row) : undefined;
+}
+
+/** One page of every owner's active Private Previews, ordered for keyset pagination. */
+export async function listActivePrivatePreviews(
+  db: PlatformDB,
+  limit: number,
+  after?: PrivatePreviewCursor,
+): Promise<UserMachineRecord[]> {
+  await db.ready;
+  let query = db.executor
+    .selectFrom('user_machines')
+    .selectAll()
+    .where('provisioning_class', '=', 'private-preview')
+    .where('deleted_at', 'is', null);
+  if (after) {
+    query = query.where((eb) => eb.or([
+      eb('provisioned_at', '>', after.provisionedAt),
+      eb.and([eb('provisioned_at', '=', after.provisionedAt), eb('machine_id', '>', after.machineId)]),
+    ]));
+  }
+  const rows = await query
+    .orderBy('provisioned_at', 'asc')
+    .orderBy('machine_id', 'asc')
+    .limit(limit)
+    .execute();
+  return rows.map(mapUserMachine);
 }
