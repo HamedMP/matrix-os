@@ -75,7 +75,7 @@ test("a preview project share uses the home, preserves machine-free identities, 
 
     // The platform projection carries only a pointer. The member asks the home to activate it.
     const loadPointer = async () => {
-      const response = await member.context.request.get(`${config.baseUrl}/api/collaboration/shared`, { timeout: 10_000 });
+      const response = await member.context.request.get(`${config.baseUrl}/api/collaboration/inbox`, { timeout: 10_000 });
       expect(response.ok()).toBe(true);
       const page = CollaborationDiscoveryResponseSchema.parse(await response.json());
       return page.items.find((item) => item.scopeId === scopeId);
@@ -101,6 +101,7 @@ test("a preview project share uses the home, preserves machine-free identities, 
       const discovery = CollaborationDiscoveryResponseSchema.parse(await actor.direct.get("/api/collaboration/shared"));
       expect(discovery.items.some((item) => item.scopeId === scopeId)).toBe(false);
     }
+    expect(CollaborationScopeSchema.parse(await owner.direct.get(base)).id).toBe(scopeId);
 
     const afterGrant = CollaborationScopeSchema.parse(await owner.direct.get(base));
     const downgraded = CollaborationGrantSchema.parse(await owner.direct.patch!(`${base}/grants/${grantId}`, {
@@ -119,7 +120,8 @@ test("a preview project share uses the home, preserves machine-free identities, 
     await expect.poll(async () => {
       try { await member.direct.direct.request(scopeId!, "GET", base); return "allowed"; }
       catch (error: unknown) { return error instanceof Error && "code" in error ? String(error.code) : "unexpected"; }
-    }, { timeout: 25_000 }).toBe("denied");
+    }, { timeout: 25_000 }).toMatch(/^(denied|host_offline)$/);
+    expect(CollaborationScopeSchema.parse(await owner.direct.get(base)).id).toBe(scopeId);
     for (const actor of [member, outsider, guest]) {
       const [computerResponse, journeyResponse] = await Promise.all([
         actor.context.request.get(`${config.baseUrl}/api/auth/computers`, { timeout: 10_000 }),
@@ -148,15 +150,15 @@ test("a preview project share uses the home, preserves machine-free identities, 
         await owner.direct.post(`/api/collaboration/scopes/${scopeId}/lifecycle`, {
           type: "delete", clientRequestId: randomUUID(), expectedRevision: latest.revision,
         });
-      } catch (error: unknown) { console.warn("[collaboration-e2e] preview scope cleanup failed", error instanceof Error ? error.name : "UnknownError"); }
+      } catch (error: unknown) { console.warn("[collaboration-e2e] preview scope cleanup failed", { scopeId, slug, error: error instanceof Error ? error.name : "UnknownError" }); }
     }
     if (createdProject) {
       try {
         const response = await owner.context.request.delete(`${config.baseUrl}${previewRoot}/api/projects/${slug}`, {
           data: { confirmation: name, confirmTerminate: true }, timeout: 10_000,
         });
-        if (!response.ok()) console.warn("[collaboration-e2e] preview project cleanup failed", response.status());
-      } catch (error: unknown) { console.warn("[collaboration-e2e] preview project cleanup failed", error instanceof Error ? error.name : "UnknownError"); }
+        if (!response.ok()) console.warn("[collaboration-e2e] preview project cleanup failed", { scopeId, slug, status: response.status() });
+      } catch (error: unknown) { console.warn("[collaboration-e2e] preview project cleanup failed", { scopeId, slug, error: error instanceof Error ? error.name : "UnknownError" }); }
     }
   }
 });

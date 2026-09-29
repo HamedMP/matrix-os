@@ -11,7 +11,8 @@ interface RequestSource {
 }
 
 export function classifyAccountOnlyRequest(path: string): "allowed" | "forbidden" {
-  return FORBIDDEN_PREFIXES.some((prefix) => path === prefix || path.startsWith(`${prefix}/`))
+  const routedPath = path.replace(/^\/vm\/[^/]+(?=\/|$)/, "") || "/";
+  return FORBIDDEN_PREFIXES.some((prefix) => routedPath === prefix || routedPath.startsWith(`${prefix}/`))
     ? "forbidden" : "allowed";
 }
 
@@ -21,7 +22,10 @@ export function assertMachineFreeJourney(value: { computers: readonly { handle: 
 }
 
 export function assertNonDisclosingDenial(error: unknown, sensitiveValues: readonly string[]): void {
-  if (!(error instanceof Error) || !("code" in error) || error.code !== "denied") {
+  // The platform intentionally maps an unknown/nonmember scope to 404; the
+  // direct client calls that `host_offline` without revealing which case it is.
+  if (!(error instanceof Error) || !("code" in error)
+    || !["denied", "host_offline"].includes(String(error.code))) {
     throw new Error("Direct transport did not deny the request");
   }
   const message = error.message;
