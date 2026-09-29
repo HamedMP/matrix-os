@@ -10,7 +10,7 @@ type Respond = (value: unknown) => Promise<void>;
 interface Pending {
   nativeId: string; tool: string; input: Record<string, unknown>; respond: Respond;
   timer: ReturnType<typeof setTimeout>; deciding?: Promise<void>;
-  resolved?: boolean; granted?: boolean;
+  resolved?: boolean; revokeGrant?: () => void;
 }
 
 export function createClaudeIntegrationApprovalControl(options: {
@@ -37,7 +37,7 @@ export function createClaudeIntegrationApprovalControl(options: {
   function cancel(id: string, current: Pending) {
     if (!forget(id, current)) return;
     // A cancelled native write must not leave an executable action behind.
-    if (current.granted) options.capability.revoke();
+    current.revokeGrant?.();
     resolved(id, "cancel", current);
     void deny(current.respond).catch(options.onError);
   }
@@ -49,7 +49,7 @@ export function createClaudeIntegrationApprovalControl(options: {
       const duplicate = [...pending.values()].some(value => value.nativeId === request.nativeRequestId);
       if (duplicate) return true;
       const description = JSON.stringify(request.input);
-      if (closed || !action || !options.verify || !options.capability.approveIntegrationTool || pending.size >= 16 || description.length > 4000) {
+      if (closed || !action || !options.verify || !options.capability.grantIntegrationTool || pending.size >= 16 || description.length > 4000) {
         void deny(respond).catch(options.onError);
         return true;
       }
@@ -75,28 +75,31 @@ export function createClaudeIntegrationApprovalControl(options: {
       if (!current || closed || decision === "approve_for_session") throw new Error("Integration approval unavailable");
       if (current.deciding) throw new Error("Integration approval already resolving");
       current.deciding = (async () => {
-        let granted = false;
+        let responseStarted = false;
+        let responseWritten = false;
         try {
           if (!provenance?.platformApprovalProof || !options.verify || !await options.verify({
             runId: options.runId, approvalId: id, decision, chatId: provenance.chatId,
             clientRequestId: provenance.clientRequestId, platformApprovalProof: provenance.platformApprovalProof,
           })) throw new Error("Authenticated integration approval unavailable");
           if (closed || pending.get(id) !== current) throw new Error("Integration approval cancelled");
-          if (decision === "approve" && !options.capability.approveIntegrationTool?.(current.tool, current.input)) {
-            throw new Error("Integration authority unavailable");
+          if (decision === "approve") {
+            const revoke = options.capability.grantIntegrationTool?.(current.tool, current.input);
+            if (!revoke) throw new Error("Integration authority unavailable");
+            current.revokeGrant = revoke;
           }
-          granted = decision === "approve";
-          current.granted = granted;
+          responseStarted = true;
           await current.respond(decision === "approve" ? { behavior: "allow", updatedInput: current.input }
             : { behavior: "deny", message: "Integration action declined." });
+          responseWritten = true;
           if (closed || pending.get(id) !== current) throw new Error("Integration approval cancelled");
           forget(id, current);
           resolved(id, decision, current);
         } catch (error: unknown) {
-          if (granted) {
+          const transportFailed = responseStarted && !responseWritten;
+          if (transportFailed) {
             options.capability.revoke();
           }
-          const transportFailed = granted && !current.resolved;
           cancel(id, current);
           resolved(id, "cancel", current);
           if (transportFailed) options.onError(error);
@@ -108,6 +111,7 @@ export function createClaudeIntegrationApprovalControl(options: {
     close() {
       closed = true;
       for (const [id, current] of pending) cancel(id, current);
+      options.capability.revoke();
     },
   };
 }

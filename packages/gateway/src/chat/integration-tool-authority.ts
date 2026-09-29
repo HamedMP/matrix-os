@@ -74,15 +74,24 @@ export function createIntegrationToolAuthority(options: { live(): boolean; now()
   function sweep() {
     for (let i = grants.length - 1; i >= 0; i--) if (grants[i]!.expiresAt <= options.now()) grants.splice(i, 1);
   }
+  function grantIntegrationTool(tool: string, input: Record<string, unknown>): (() => void) | null {
+    if (!options.live()) return null;
+    const request = integrationToolRequest(tool, input);
+    const digest = request && requestDigest(request.method, request.path, request.body);
+    sweep();
+    if (!digest || grants.length >= 16) return null;
+    const grant = { digest, expiresAt: options.now() + 90_000 };
+    grants.push(grant);
+    return () => {
+      // Identity, rather than digest, isolates concurrent identical approvals.
+      const index = grants.indexOf(grant);
+      if (index >= 0) grants.splice(index, 1);
+    };
+  }
   return {
+    grantIntegrationTool,
     approveIntegrationTool(tool: string, input: Record<string, unknown>): boolean {
-      if (!options.live()) return false;
-      const request = integrationToolRequest(tool, input);
-      const digest = request && requestDigest(request.method, request.path, request.body);
-      sweep();
-      if (!digest || grants.length >= 16) return false;
-      grants.push({ digest, expiresAt: options.now() + 90_000 });
-      return true;
+      return grantIntegrationTool(tool, input) !== null;
     },
     consumeIntegrationRequest(method: string, path: string, body: unknown): boolean {
       if (!options.live()) return false;

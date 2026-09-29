@@ -38,10 +38,10 @@ describe("built-in integration human decisions", () => {
     expect(f.context.consumeIntegrationRequest!("POST", "/api/integrations/call", action)).toBe(false);
     f.control.close(); f.registry.close();
   });
-  it("revokes authorization and resolves the UI if the native response transport fails", async () => {
+  it.each(["approve", "decline", "cancel"] as const)("revokes authorization when the %s native response transport fails", async decision => {
     const f = fixture();
     f.respond.mockRejectedValueOnce(new Error("Disconnected native transport"));
-    await expect(f.control.submit(f.requested.approvalId, "approve", proof)).rejects.toThrow();
+    await expect(f.control.submit(f.requested.approvalId, decision, proof)).rejects.toThrow();
     expect(f.context.consumeIntegrationRequest!("POST", "/api/integrations/call", action)).toBe(false);
     expect(f.events.at(-1)).toMatchObject({ type: "approval.resolved", decision: "cancel" });
     expect(f.onError).toHaveBeenCalledOnce();
@@ -73,6 +73,27 @@ describe("built-in integration human decisions", () => {
     expect(f.context.consumeIntegrationRequest!("POST", "/api/integrations/call", action)).toBe(false);
     finish();
     await outcome;
+    expect(f.events.filter(event => event.type === "approval.resolved")).toEqual([
+      expect.objectContaining({ decision: "cancel" }),
+    ]);
+    f.control.close(); f.registry.close();
+  });
+  it("cancels only its exact grant and preserves an unrelated identical approval and Custom MCP capability", async () => {
+    const f = fixture();
+    expect(f.capability.approveIntegrationTool!(toolName, action)).toBe(true);
+    let finish!: () => void;
+    let started!: () => void;
+    const writing = new Promise<void>(resolve => { started = resolve; });
+    f.respond.mockImplementationOnce(() => new Promise<void>(resolve => { finish = resolve; started(); }));
+    const submission = f.control.submit(f.requested.approvalId, "approve", proof);
+    const outcome = expect(submission).rejects.toThrow();
+    await writing;
+    f.control.onToolPermissionCancel("native_1");
+    expect(f.registry.resolveRunContext(f.capability.token, "GET", "/api/mcp-servers")).not.toBeNull();
+    expect(f.context.consumeIntegrationRequest!("POST", "/api/integrations/call", action)).toBe(true);
+    expect(f.context.consumeIntegrationRequest!("POST", "/api/integrations/call", action)).toBe(false);
+    finish(); await outcome;
+    expect(f.onError).not.toHaveBeenCalled();
     expect(f.events.filter(event => event.type === "approval.resolved")).toEqual([
       expect.objectContaining({ decision: "cancel" }),
     ]);

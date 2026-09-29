@@ -33,7 +33,10 @@ and model-provided approval fields never grant authority.
 The Gateway registry binds the personal owner, live run, expiry and bounded
 one-use action grants. Canonical approvals verify the Platform-signed actor/chat/
 run/approval/decision proof before creating a grant. Grants bind normalized JSON
-request arguments, expire promptly and are cleared on steering/cancel/completion.
+request arguments, expire promptly and are cleared on steering/run cancellation/completion.
+Cancelling one native permission request retracts only its own outstanding grant,
+including when another approval has identical arguments. Other integration and
+Custom MCP authority remains live; native transport failure closes run authority.
 Integration account credentials stay at the provider boundary. Host control
 bearers and their upgrade/code-proxy aliases are removed from the agent's
 environment; its selected Claude model credential remains available to the CLI.
