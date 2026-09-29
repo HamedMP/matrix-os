@@ -71,4 +71,26 @@ describe("Clerk organization administration", () => {
     const capped = new ClerkOrganizationAdminClient({ secretKey: "sk_test", fetchImpl: vi.fn(async () => json({ data: page, total_count: 1_001 })) as typeof fetch });
     expect(await capped.findCreatedOrganization({ actorId, requestId, createdAt: new Date(900_000) })).toEqual({ kind: "inconclusive" });
   });
+
+  it("checks marker candidates with bounded concurrency", async () => {
+    const page = Array.from({ length: 32 }, (_, index) => ({ organization: {
+      id: `org_${String(index).padStart(24, "0")}`, created_at: 1_000_000,
+    } }));
+    let active = 0;
+    let peak = 0;
+    const fetchImpl = vi.fn(async (url: string) => {
+      const parsed = new URL(url);
+      if (parsed.pathname.endsWith("organization_memberships")) return json({ data: page, total_count: page.length });
+      active += 1;
+      peak = Math.max(peak, active);
+      await new Promise((resolve) => setTimeout(resolve, 2));
+      active -= 1;
+      return json({ id: parsed.pathname.split("/").at(-1), private_metadata: {} });
+    });
+    const client = new ClerkOrganizationAdminClient({ secretKey: "sk_test", fetchImpl: fetchImpl as typeof fetch });
+    expect(await client.findCreatedOrganization({ actorId, requestId, createdAt: new Date(900_000) }))
+      .toEqual({ kind: "absent" });
+    expect(peak).toBeGreaterThan(1);
+    expect(peak).toBeLessThanOrEqual(16);
+  });
 });

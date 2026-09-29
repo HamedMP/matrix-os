@@ -84,10 +84,10 @@ export function createPlatformOrganizationRoutes(options: {
       if (options.adminRepository) {
         const listed = new Set(organizations.map((organization) => organization.organizationId));
         for (const pending of await options.adminRepository.listSettingUp(actorId)) {
-          if (!listed.has(pending.organizationId)
-            && await options.projection.isCurrentMember({ organizationId: pending.organizationId, actorId })) {
-            organizations.push(pending);
-          }
+          // The creator's durable request is the source of truth while Clerk
+          // membership is still being projected. This row grants no access;
+          // normal listed organizations above still require current membership.
+          if (!listed.has(pending.organizationId)) organizations.push(pending);
         }
       }
       c.header("Cache-Control", "private, no-store");

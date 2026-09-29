@@ -59,7 +59,7 @@ describe("organization create routes", () => {
     expect(clerk.createOrganization).not.toHaveBeenCalled();
   });
 
-  it("creates once for an idempotency key and lists setting-up rows only while membership is current", async () => {
+  it("keeps a new organization visible during setup, then uses current membership for listed rows", async () => {
     reconcileWorks = false;
     const first = await post(app, body);
     expect(first.status).toBe(201);
@@ -77,11 +77,14 @@ describe("organization create routes", () => {
       resolveActor: async () => actor,
       authenticateRuntime: async () => null,
     });
-    expect(await (await readRoutes.request("/api/organizations")).json()).toEqual({ organizations: [] });
+    expect(await (await readRoutes.request("/api/organizations")).json()).toEqual({
+      organizations: [{ organizationId, name: "A team", state: "setting_up" }],
+    });
     reconcileWorks = true;
     expect(await (await readRoutes.request("/api/organizations")).json()).toEqual({
       organizations: [{ organizationId, name: "A team", state: "setting_up" }],
     });
+    await repository.markListed((await repository.getRequest(actorId, requestId))!);
     reconcileWorks = false;
     expect(await (await readRoutes.request("/api/organizations")).json()).toEqual({ organizations: [] });
     expect((await post(app, { ...body, name: "A different team" })).status).toBe(409);
