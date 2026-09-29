@@ -173,6 +173,8 @@ export interface StatusResponse {
   clerkUserId: string;
   handle: string;
   runtimeSlot: string;
+  provisioningClass: UserMachineProvisioningClass;
+  activationState: 'awaiting_billing' | 'authorized';
   status: CustomerVpsStatus;
   imageVersion: string | null;
   publicIPv4: string | null;
@@ -297,6 +299,8 @@ function statusResponse(row: UserMachineRecord): StatusResponse {
     clerkUserId: row.clerkUserId,
     handle: row.handle,
     runtimeSlot: row.runtimeSlot,
+    provisioningClass: row.provisioningClass,
+    activationState: row.activationState,
     status: row.status as CustomerVpsStatus,
     imageVersion: row.imageVersion,
     publicIPv4: row.publicIPv4,

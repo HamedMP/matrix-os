@@ -494,6 +494,10 @@ jobs:
       EXISTING_VERSION: ${{ inputs.existing_version || '' }}
       MATRIX_PLATFORM_SPEECH_RUNTIME_ENABLED: ${{ vars.MATRIX_PLATFORM_SPEECH_RUNTIME_ENABLED || 'false' }}
     steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
       - name: Validate the existing stable version
         run: |
           set -euo pipefail
@@ -516,23 +520,10 @@ jobs:
       - name: Select exactly one unhealthy customer computer
         run: |
           set -euo pipefail
-          FLEET_RESPONSE="$(curl --fail --silent --show-error --max-time 180 \
+          FLEET_RESPONSE="$(curl --fail --silent --show-error --max-time 30 \
             -H "Authorization: Bearer ${PLATFORM_SECRET}" \
             "${PLATFORM_PUBLIC_URL%/}/vps/fleet")"
-          TARGET_COUNT="$(jq '[.machines[] | select(
-            .status == "running" and .healthy == false and .deletedAt == null and
-            .publicIPv4 != null and
-            (.handle | test("^pr-[1-9][0-9]{0,9}$") | not)
-          )] | length' <<<"$FLEET_RESPONSE")"
-          TARGET_HANDLE="$(jq -r '[.machines[] | select(
-            .status == "running" and .healthy == false and .deletedAt == null and
-            .publicIPv4 != null and
-            (.handle | test("^pr-[1-9][0-9]{0,9}$") | not)
-          )] | if length == 1 then .[0].handle else empty end' <<<"$FLEET_RESPONSE")"
-          if [ "$TARGET_COUNT" -ne 1 ] || [ -z "$TARGET_HANDLE" ]; then
-            echo "Targeted maintenance requires exactly one unhealthy non-preview running computer; found ${TARGET_COUNT}." >&2
-            exit 1
-          fi
+          TARGET_HANDLE="$(printf '%s' "$FLEET_RESPONSE" | node scripts/ci/targeted-fleet-maintenance.mjs select-target)"
           echo "::add-mask::$TARGET_HANDLE"
           echo "TARGET_HANDLE=$TARGET_HANDLE" >> "$GITHUB_ENV"
           echo "Selected exactly one unhealthy customer computer."
@@ -541,10 +532,10 @@ jobs:
         run: |
           set -euo pipefail
           DEPLOY_VERIFIED=false
-          for attempt in $(seq 1 20); do
+          for attempt in $(seq 1 10); do
             DEPLOY_BODY="$(jq -cn --arg version "$EXISTING_VERSION" --arg handle "$TARGET_HANDLE" \
               '{version: $version, handle: $handle}')"
-            if DEPLOY_RESPONSE="$(curl --fail --silent --show-error --max-time 60 \
+            if DEPLOY_RESPONSE="$(curl --fail --silent --show-error --max-time 30 \
               -X POST "${PLATFORM_PUBLIC_URL%/}/vps/deploy" \
               -H "Authorization: Bearer ${PLATFORM_SECRET}" \
               -H "Content-Type: application/json" \
@@ -555,7 +546,7 @@ jobs:
               DEPLOY_VERIFIED=true
               break
             fi
-            echo "Targeted exact-version trigger is still converging: attempt=$attempt/20"
+            echo "Targeted exact-version trigger is still converging: attempt=$attempt/10"
             sleep 30
           done
           if [ "$DEPLOY_VERIFIED" != true ]; then
@@ -568,8 +559,8 @@ jobs:
         run: |
           set -euo pipefail
           RUNTIME_VERIFIED=false
-          for attempt in $(seq 1 80); do
-            if FLEET_RESPONSE="$(curl --fail --silent --show-error --max-time 180 \
+          for attempt in $(seq 1 40); do
+            if FLEET_RESPONSE="$(curl --fail --silent --show-error --max-time 30 \
               -H "Authorization: Bearer ${PLATFORM_SECRET}" \
               "${PLATFORM_PUBLIC_URL%/}/vps/fleet")" \
               && jq -e --arg handle "$TARGET_HANDLE" --arg version "$EXISTING_VERSION" '
@@ -579,7 +570,7 @@ jobs:
               RUNTIME_VERIFIED=true
               break
             fi
-            echo "Targeted computer is still installing the pinned version: attempt=$attempt/80"
+            echo "Targeted computer is still installing the pinned version: attempt=$attempt/40"
             sleep 15
           done
           if [ "$RUNTIME_VERIFIED" != true ]; then
@@ -593,9 +584,9 @@ jobs:
         run: |
           set -euo pipefail
           SPEECH_VERIFIED=false
-          for attempt in $(seq 1 20); do
+          for attempt in $(seq 1 10); do
             ACTIVATE_BODY="$(jq -cn --arg handle "$TARGET_HANDLE" '{handle: $handle}')"
-            if ACTIVATE_RESPONSE="$(curl --fail --silent --show-error --max-time 180 \
+            if ACTIVATE_RESPONSE="$(curl --fail --silent --show-error --max-time 30 \
               -X POST "${PLATFORM_PUBLIC_URL%/}/vps/speech/activate" \
               -H "Authorization: Bearer ${PLATFORM_SECRET}" \
               -H "Content-Type: application/json" \
@@ -605,7 +596,7 @@ jobs:
               SPEECH_VERIFIED=true
               break
             fi
-            echo "Targeted managed-speech activation is still converging: attempt=$attempt/20"
+            echo "Targeted managed-speech activation is still converging: attempt=$attempt/10"
             sleep 30
           done
           if [ "$SPEECH_VERIFIED" != true ]; then
@@ -616,58 +607,4 @@ jobs:
 
       - name: Activate and verify managed speech across the customer fleet
         if: env.MATRIX_PLATFORM_SPEECH_RUNTIME_ENABLED == 'true'
-        run: |
-          set -euo pipefail
-          TOTAL_ACTIVATED=0
-          PAGE_CURSOR=""
-          for page in $(seq 1 1000); do
-            PAGE_VERIFIED="false"
-            for page_attempt in $(seq 1 20); do
-              if [ -z "$PAGE_CURSOR" ]; then
-                ACTIVATE_BODY='{}'
-              else
-                ACTIVATE_BODY="$(jq -cn --arg afterMachineId "$PAGE_CURSOR" '{afterMachineId: $afterMachineId}')"
-              fi
-              ACTIVATE_RESPONSE="$(curl --fail --silent --show-error --max-time 180 \
-                -X POST "${PLATFORM_PUBLIC_URL%/}/vps/speech/activate" \
-                -H "Authorization: Bearer ${PLATFORM_SECRET}" \
-                -H "Content-Type: application/json" \
-                -d "$ACTIVATE_BODY")"
-              failed="$(printf '%s' "$ACTIVATE_RESPONSE" | jq -r '.failed')"
-              activated="$(printf '%s' "$ACTIVATE_RESPONSE" | jq -r '.activated')"
-              complete="$(printf '%s' "$ACTIVATE_RESPONSE" | jq -r '.complete')"
-              next_cursor="$(printf '%s' "$ACTIVATE_RESPONSE" | jq -r '.nextCursor // empty')"
-              if ! [[ "$failed" =~ ^[0-9]+$ && "$activated" =~ ^[0-9]+$ ]] \
-                || ! [[ "$complete" == "true" || "$complete" == "false" ]]; then
-                echo "Speech fleet activation returned an invalid summary." >&2
-                exit 1
-              fi
-              if [ "$complete" = "false" ] \
-                && { [ -z "$next_cursor" ] || [ "$next_cursor" = "$PAGE_CURSOR" ]; }; then
-                echo "Speech fleet activation returned an invalid continuation cursor." >&2
-                exit 1
-              fi
-              if [ "$failed" -eq 0 ]; then
-                TOTAL_ACTIVATED=$((TOTAL_ACTIVATED + activated))
-                PAGE_VERIFIED="true"
-                break
-              fi
-              echo "Managed speech fleet verification is still converging: page=$page activated=$activated failed=$failed attempt=$page_attempt/20"
-              sleep 30
-            done
-            if [ "$PAGE_VERIFIED" != "true" ]; then
-              echo "Managed speech fleet verification did not converge within the bounded rollout window." >&2
-              exit 1
-            fi
-            if [ "$complete" = "true" ]; then
-              if [ "$TOTAL_ACTIVATED" -eq 0 ]; then
-                echo "Managed speech fleet verification found no eligible customer computers." >&2
-                exit 1
-              fi
-              echo "Managed speech fleet verification complete: activated=$TOTAL_ACTIVATED failed=0"
-              exit 0
-            fi
-            PAGE_CURSOR="$next_cursor"
-          done
-          echo "Speech fleet verification exceeded the bounded page count." >&2
-          exit 1
+        run: node scripts/ci/targeted-fleet-maintenance.mjs activate-fleet
