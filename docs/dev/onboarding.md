@@ -140,14 +140,17 @@ bun run dev:parity:down         # delete the disposable machine; preserve infra 
 
 The command starts platform Postgres and object storage as external local
 dependencies. Presigned backup traffic reaches that object store through a
-launcher-owned TLS endpoint trusted only by the disposable guest; the production
-broker's HTTPS requirement is unchanged. The platform uses normal customer-VPS
-routing and registration path; it does **not** enable legacy container routing. Keep the
-foreground command running because it serves the working-tree bundle and local
-provider-metadata adapter during provisioning and updates. Provider-backed AI,
-billing, speech, and integrations still require their normal credentials and
-should fail with their bounded unavailable states when those credentials are
-absent.
+loopback-only, launcher-owned TLS endpoint trusted only by the disposable guest;
+the production broker's HTTPS requirement is unchanged. `dev:parity:down` removes
+only QEMU and labeled bridge containers owned by this checkout. It deliberately
+leaves the shared PostgreSQL and object-storage containers running for source
+development; stop those separately with `bun run dev:infra:stop` when they are no
+longer needed. The platform uses normal customer-VPS routing and registration
+path; it does **not** enable legacy container routing. Keep the foreground command
+running because it serves the working-tree bundle and local provider-metadata
+adapter during provisioning and updates. Provider-backed AI, billing, speech,
+and integrations still require their normal credentials and should fail with
+their bounded unavailable states when those credentials are absent.
 
 Open `https://192.0.2.2` after provisioning. Generated state, the cached Ubuntu
 image, and bundles live under ignored `.amp/in/local-production-parity/`.

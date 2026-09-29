@@ -14,18 +14,27 @@ import {
 import {
   addLocalParityOperator,
   assertFixtureAddressInstalled,
+  assertLocalParityContainerOwnership,
   assertLocalParityMachinesAvailable,
   assertOrbStackCapacity,
   assertTcpPortAvailable,
   builderSetupScript,
   clerkSecretIsConfigured,
+  cleanupLocalParityResources,
   createLocalParityPlan,
   fetchConfiguredClerkJwtKey,
+  fixtureRouterArguments,
+  lastSuccessfullySeededMachineId,
+  LOCAL_PARITY_OWNER_LABEL,
   platformContainerArguments,
   platformImageBuildArguments,
+  pendingLocalParityMachineId,
   qemuRuntimeArguments,
   renderLocalParityCloudInit,
   runtimeProcessIsOwned,
+  runtimeProcessPids,
+  startArtifactServer,
+  storageTlsProxyArguments,
 } from "../../scripts/dev-production-parity.mjs";
 import {
   createSmokeCancellation,
@@ -231,11 +240,14 @@ describe("local development contracts", () => {
       containerName: "platform-local",
       imageName: "platform:test",
       hostPort: 9443,
+      owner: "/workspace/matrix-os",
     })).toEqual([
       "run",
       "--detach",
       "--name",
       "platform-local",
+      "--label",
+      `${LOCAL_PARITY_OWNER_LABEL}=/workspace/matrix-os`,
       "--publish",
       "0.0.0.0:9443:8080",
       "--env",
@@ -244,6 +256,26 @@ describe("local development contracts", () => {
       "PLATFORM_DATABASE_URL",
       "platform:test",
     ]);
+  });
+
+  it("limits parity bridge containers to this checkout and loopback storage", () => {
+    expect(fixtureRouterArguments({ name: "router", owner: "/workspace/one" })).toContain(
+      `${LOCAL_PARITY_OWNER_LABEL}=/workspace/one`,
+    );
+    expect(storageTlsProxyArguments({
+      name: "storage",
+      owner: "/workspace/one",
+      port: 9444,
+      tlsDirectory: "/tls",
+    })).toEqual(expect.arrayContaining([
+      `${LOCAL_PARITY_OWNER_LABEL}=/workspace/one`,
+      "127.0.0.1:9444:9444",
+      "/tls:/tls:ro",
+    ]));
+    expect(() => assertLocalParityContainerOwnership("storage", "/workspace/two", "/workspace/one"))
+      .toThrow("storage belongs to another checkout");
+    expect(() => assertLocalParityContainerOwnership("storage", "/workspace/one", "/workspace/one"))
+      .not.toThrow();
   });
 
   it("refuses to replace an existing parity runtime or builder", () => {
@@ -277,6 +309,87 @@ describe("local development contracts", () => {
       diskPath: "/runtime/disk.qcow2",
       processCommand: () => "unrelated-process",
     })).toBe(false);
+    expect(runtimeProcessPids({
+      diskPath: "/runtime/disk.qcow2",
+      processList: () => [
+        "  123 qemu-system-x86_64 -drive file=/runtime/disk.qcow2",
+        "  456 qemu-system-x86_64 -drive file=/other/disk.qcow2",
+        "  789 rg /runtime/disk.qcow2",
+      ].join("\n"),
+    })).toEqual([123]);
+  });
+
+  it("cleans all owned resources after failure but preserves a live runtime disk", async () => {
+    const events: string[] = [];
+    await cleanupLocalParityResources({
+      stopRuntime: async () => events.push("runtime"),
+      stopContainers: [
+        () => events.push("router"),
+        () => events.push("storage"),
+        () => events.push("platform"),
+      ],
+      removeRuntime: () => events.push("files"),
+    });
+    expect(events).toEqual(["runtime", "router", "storage", "platform", "files"]);
+
+    events.length = 0;
+    await expect(cleanupLocalParityResources({
+      stopRuntime: async () => { throw new Error("still running"); },
+      stopContainers: [() => events.push("router"), () => events.push("storage")],
+      removeRuntime: () => events.push("files"),
+    })).rejects.toThrow("Failed to clean up local parity resources safely");
+    expect(events).toEqual(["router", "storage"]);
+  });
+
+  it("keeps the last successfully seeded machine across failed candidates", () => {
+    expect(lastSuccessfullySeededMachineId({ machineId: "machine-a" })).toBeUndefined();
+    expect(pendingLocalParityMachineId({ machineId: "machine-a" })).toBe("machine-a");
+    const interrupted = JSON.parse(JSON.stringify({
+      stateVersion: 2,
+      machineId: "machine-b",
+      previousMachineId: "machine-a",
+      seededMachineId: "machine-a",
+    }));
+    expect(lastSuccessfullySeededMachineId(interrupted)).toBe("machine-a");
+    expect(pendingLocalParityMachineId(interrupted)).toBe("machine-b");
+    const failedBeforeSecondSeed = JSON.parse(JSON.stringify({
+      ...interrupted,
+      machineId: pendingLocalParityMachineId(interrupted) ?? "machine-c",
+    }));
+    expect(pendingLocalParityMachineId(failedBeforeSecondSeed)).toBe("machine-b");
+    expect(lastSuccessfullySeededMachineId({
+      stateVersion: 2,
+      machineId: "machine-b",
+      seededMachineId: "machine-b",
+    })).toBe("machine-b");
+
+    const firstFailedLaunch = JSON.parse(JSON.stringify({
+      stateVersion: 2,
+      machineId: "machine-first-candidate",
+      seededMachineId: null,
+    }));
+    expect(lastSuccessfullySeededMachineId(firstFailedLaunch)).toBeUndefined();
+    expect(pendingLocalParityMachineId(firstFailedLaunch)).toBe("machine-first-candidate");
+  });
+
+  it("rejects an artifact-server bind race through the startup promise", async () => {
+    const { createServer } = await import("node:net");
+    const listener = createServer();
+    await new Promise<void>((resolvePromise) => listener.listen(0, "127.0.0.1", resolvePromise));
+    const address = listener.address();
+    if (!address || typeof address === "string") throw new Error("expected a TCP address");
+
+    try {
+      await expect(startArtifactServer({ hetznerServerId: 424242 }, {
+        port: address.port,
+        host: "127.0.0.1",
+      })).rejects.toMatchObject({ code: "EADDRINUSE" });
+    } finally {
+      await new Promise<void>((resolvePromise, rejectPromise) => listener.close((error) => {
+        if (error) rejectPromise(error);
+        else resolvePromise();
+      }));
+    }
   });
 
   it("fails before building when OrbStack's shared memory cap is too small", () => {

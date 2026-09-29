@@ -41,6 +41,7 @@ const fixtureRouterName = "matrix-os-parity-router";
 const storageTlsProxyName = "matrix-os-parity-storage-tls";
 const platformContainerName = "matrix-os-parity-platform";
 const platformImageName = "matrix-os-parity-platform:working-tree";
+export const LOCAL_PARITY_OWNER_LABEL = "com.matrix-os.local-production-parity.root";
 
 function shellQuote(value) {
   return `'${String(value).replaceAll("'", "'\\''")}'`;
@@ -198,10 +199,26 @@ export function runtimeProcessIsOwned(options = {}) {
   return pid !== null && processCommand(pid).includes(diskPath);
 }
 
+export function runtimeProcessPids(options = {}) {
+  const diskPath = options.diskPath ?? runtimeDiskPath;
+  const processList = options.processList ?? (() => run("ps", ["-axo", "pid=,command="], { capture: true }));
+  return processList().split("\n").flatMap((line) => {
+    const match = /^\s*(\d+)\s+(.+)$/.exec(line);
+    if (!match || !match[2].includes("qemu-system-x86_64") || !match[2].includes(`file=${diskPath}`)) return [];
+    return [Number(match[1])];
+  });
+}
+
+export function assertLocalParityContainerOwnership(name, owner, expectedOwner = root) {
+  if (owner !== expectedOwner) {
+    throw new Error(`${name} belongs to another checkout; refusing to remove it`);
+  }
+}
+
 export function assertLocalParityMachinesAvailable(options = {}) {
   const buildName = options.builderName ?? builderName;
   const exists = options.machineExists ?? machineExists;
-  const runtimeExists = options.runtimeExists ?? runtimeProcessIsOwned;
+  const runtimeExists = options.runtimeExists ?? (() => runtimeProcessPids().length > 0);
   const containerExists = options.containerExists ?? ((name) => (
     spawnSync("docker", ["container", "inspect", name], { stdio: "ignore" }).status === 0
   ));
@@ -209,7 +226,7 @@ export function assertLocalParityMachinesAvailable(options = {}) {
     throw new Error(`${machineName} QEMU runtime already exists; run dev:parity:down only if you own that environment`);
   }
   if (exists(buildName)) {
-    throw new Error(`${buildName} already exists; run dev:parity:down only if you own that environment`);
+    throw new Error(`${buildName} already exists; remove it manually only if you own that OrbStack machine`);
   }
   for (const name of [platformContainerName, fixtureRouterName, storageTlsProxyName]) {
     if (containerExists(name)) {
@@ -391,44 +408,120 @@ export function assertFixtureAddressInstalled(isInstalled = fixtureAddressIsInst
   }
 }
 
-function startFixtureRouter() {
-  if (spawnSync("docker", ["container", "inspect", fixtureRouterName], { stdio: "ignore" }).status === 0) {
-    throw new Error(`${fixtureRouterName} already exists; run dev:parity:down only if you own it`);
-  }
-  run("docker", [
-    "run", "--detach", "--name", fixtureRouterName,
+export function fixtureRouterArguments(options = {}) {
+  const name = options.name ?? fixtureRouterName;
+  const owner = options.owner ?? root;
+  return [
+    "run", "--detach", "--name", name,
+    "--label", `${LOCAL_PARITY_OWNER_LABEL}=${owner}`,
     "--publish", `${fixturePublicAddress}:443:443`,
     "alpine:latest", "sh", "-c",
     "apk add --no-cache socat >/dev/null && exec socat TCP-LISTEN:443,fork,reuseaddr TCP:host.docker.internal:8443",
-  ]);
+  ];
 }
 
-function stopFixtureRouter() {
-  if (spawnSync("docker", ["container", "inspect", fixtureRouterName], { stdio: "ignore" }).status === 0) {
-    run("docker", ["rm", "--force", fixtureRouterName]);
-  }
+function startFixtureRouter() {
+  run("docker", fixtureRouterArguments());
+}
+
+export function storageTlsProxyArguments(options = {}) {
+  const name = options.name ?? storageTlsProxyName;
+  const owner = options.owner ?? root;
+  const port = options.port ?? storageTlsPort;
+  const tlsDirectory = options.tlsDirectory ?? storageTlsDirectory;
+  return [
+    "run", "--detach", "--name", name,
+    "--label", `${LOCAL_PARITY_OWNER_LABEL}=${owner}`,
+    "--publish", `127.0.0.1:${port}:${port}`,
+    "--volume", `${tlsDirectory}:/tls:ro`,
+    "alpine:latest", "sh", "-c",
+    `apk add --no-cache socat >/dev/null && exec socat OPENSSL-LISTEN:${port},fork,reuseaddr,cert=/tls/certificate.pem,key=/tls/key.pem,verify=0 TCP:host.docker.internal:9100`,
+  ];
 }
 
 function startStorageTlsProxy() {
-  run("docker", [
-    "run", "--detach", "--name", storageTlsProxyName,
-    "--publish", `0.0.0.0:${storageTlsPort}:${storageTlsPort}`,
-    "--volume", `${storageTlsDirectory}:/tls:ro`,
-    "alpine:latest", "sh", "-c",
-    `apk add --no-cache socat >/dev/null && exec socat OPENSSL-LISTEN:${storageTlsPort},fork,reuseaddr,cert=/tls/certificate.pem,key=/tls/key.pem,verify=0 TCP:host.docker.internal:9100`,
-  ]);
+  run("docker", storageTlsProxyArguments());
+}
+
+function containerExists(name) {
+  return spawnSync("docker", ["container", "inspect", name], { stdio: "ignore" }).status === 0;
+}
+
+function stopOwnedContainer(name) {
+  if (!containerExists(name)) return;
+  const owner = run("docker", [
+    "container", "inspect", "--format", `{{ index .Config.Labels ${JSON.stringify(LOCAL_PARITY_OWNER_LABEL)} }}`, name,
+  ], { capture: true });
+  assertLocalParityContainerOwnership(name, owner);
+  run("docker", ["rm", "--force", name]);
+}
+
+function stopFixtureRouter() {
+  stopOwnedContainer(fixtureRouterName);
 }
 
 function stopStorageTlsProxy() {
-  if (spawnSync("docker", ["container", "inspect", storageTlsProxyName], { stdio: "ignore" }).status === 0) {
-    run("docker", ["rm", "--force", storageTlsProxyName]);
-  }
+  stopOwnedContainer(storageTlsProxyName);
 }
 
 function stopPlatformContainer() {
-  if (spawnSync("docker", ["container", "inspect", platformContainerName], { stdio: "ignore" }).status === 0) {
-    run("docker", ["rm", "--force", platformContainerName]);
+  stopOwnedContainer(platformContainerName);
+}
+
+async function stopQemuRuntime() {
+  const candidates = runtimeProcessPids();
+  if (candidates.length > 1) {
+    throw new Error(`Multiple QEMU processes use ${runtimeDiskPath}; refusing automatic cleanup`);
   }
+  const pid = candidates[0];
+  if (!pid) {
+    const recordedPid = readRuntimePid();
+    if (recordedPid) {
+      try {
+        process.kill(recordedPid, 0);
+      } catch (error) {
+        if (error && typeof error === "object" && "code" in error && error.code === "ESRCH") return;
+        throw error;
+      }
+      throw new Error(`Process ${recordedPid} is still alive but does not match ${runtimeDiskPath}; refusing to remove the runtime disk`);
+    }
+    return;
+  }
+  try {
+    process.kill(pid, "SIGTERM");
+  } catch (error) {
+    if (!(error && typeof error === "object" && "code" in error && error.code === "ESRCH")) throw error;
+  }
+  const deadline = Date.now() + 30_000;
+  while (runtimeProcessPids().includes(pid) && Date.now() < deadline) {
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 250));
+  }
+  if (runtimeProcessPids().includes(pid)) {
+    throw new Error(`QEMU pid ${pid} did not stop; refusing to remove its disk`);
+  }
+}
+
+export async function cleanupLocalParityResources(options = {}) {
+  const stopRuntime = options.stopRuntime ?? stopQemuRuntime;
+  const stopContainers = options.stopContainers ?? [stopFixtureRouter, stopStorageTlsProxy, stopPlatformContainer];
+  const removeRuntime = options.removeRuntime ?? (() => rmSync(runtimeDirectory, { recursive: true, force: true }));
+  const errors = [];
+  let runtimeStopped = false;
+  try {
+    await stopRuntime();
+    runtimeStopped = true;
+  } catch (error) {
+    errors.push(error);
+  }
+  for (const stopContainer of stopContainers) {
+    try {
+      stopContainer();
+    } catch (error) {
+      errors.push(error);
+    }
+  }
+  if (runtimeStopped) removeRuntime();
+  if (errors.length > 0) throw new AggregateError(errors, "Failed to clean up local parity resources safely");
 }
 
 function sshArguments(command) {
@@ -445,9 +538,10 @@ function sshArguments(command) {
   ];
 }
 
-async function waitForRuntimeSsh(timeoutMs = 15 * 60_000) {
+async function waitForRuntimeSsh(timeoutMs = 15 * 60_000, signal) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
+    signal?.throwIfAborted();
     const result = spawnSync("ssh", sshArguments(["true"]), { cwd: root, stdio: "ignore" });
     if (result.status === 0) return;
     if (!runtimeProcessIsOwned()) throw new Error(`QEMU exited during startup; inspect ${runtimeLogPath}`);
@@ -456,7 +550,7 @@ async function waitForRuntimeSsh(timeoutMs = 15 * 60_000) {
   throw new Error(`Timed out waiting for the production VM; inspect ${runtimeLogPath}`);
 }
 
-async function waitForRuntimeReadiness(timeoutMs = 30 * 60_000) {
+async function waitForRuntimeReadiness(timeoutMs = 30 * 60_000, signal) {
   const deadline = Date.now() + timeoutMs;
   const probe = [
     "sudo", "test", "-f", "/opt/matrix/register-complete", "&&",
@@ -464,6 +558,7 @@ async function waitForRuntimeReadiness(timeoutMs = 30 * 60_000) {
     "nginx", "matrix-gateway", "matrix-shell", "matrix-scope-runtime", "matrix-terminal-runtime",
   ];
   while (Date.now() < deadline) {
+    signal?.throwIfAborted();
     const result = spawnSync("ssh", sshArguments(probe), { cwd: root, stdio: "ignore" });
     if (result.status === 0) return;
     if (!runtimeProcessIsOwned()) throw new Error(`QEMU exited during readiness checks; inspect ${runtimeLogPath}`);
@@ -476,13 +571,16 @@ function runInRuntime(command, options = {}) {
   return run("ssh", sshArguments(command), options);
 }
 
-function runInRuntimeAsync(command) {
+function runInRuntimeAsync(command, startupSignal) {
   return new Promise((resolvePromise, rejectPromise) => {
     const child = spawn("ssh", sshArguments(command), { cwd: root, stdio: "inherit" });
+    const onAbort = () => child.kill("SIGTERM");
+    startupSignal?.addEventListener("abort", onAbort, { once: true });
     child.once("error", rejectPromise);
-    child.once("exit", (code, signal) => {
+    child.once("exit", (code, terminationSignal) => {
+      startupSignal?.removeEventListener("abort", onAbort);
       if (code === 0) resolvePromise();
-      else rejectPromise(new Error(`ssh ${command.join(" ")} failed (code ${code}, signal ${signal})`));
+      else rejectPromise(new Error(`ssh ${command.join(" ")} failed (code ${code}, signal ${terminationSignal})`));
     });
   });
 }
@@ -500,6 +598,20 @@ function parseEnvFile(path) {
   return result;
 }
 
+export function lastSuccessfullySeededMachineId(previous) {
+  if (previous.stateVersion === 2) {
+    return typeof previous.seededMachineId === "string" ? previous.seededMachineId : undefined;
+  }
+  if (typeof previous.seededMachineId === "string") return previous.seededMachineId;
+  return undefined;
+}
+
+export function pendingLocalParityMachineId(previous) {
+  return typeof previous.machineId === "string" && previous.machineId !== previous.seededMachineId
+    ? previous.machineId
+    : undefined;
+}
+
 function loadState() {
   const env = { ...parseEnvFile(resolve(root, ".env.docker")), ...parseEnvFile(resolve(root, ".env")), ...process.env };
   const clerkUserId = env.MATRIX_LOCAL_CLERK_USER_ID?.trim();
@@ -507,9 +619,14 @@ function loadState() {
     throw new Error("MATRIX_LOCAL_CLERK_USER_ID is required so production auth routes the signed-in user to the local machine");
   }
   const previous = existsSync(statePath) ? JSON.parse(readFileSync(statePath, "utf8")) : {};
+  const seededMachineId = lastSuccessfullySeededMachineId(previous);
+  const pendingMachineId = pendingLocalParityMachineId(previous);
   const state = {
     ...previous,
-    machineId: randomUUID(),
+    stateVersion: 2,
+    machineId: pendingMachineId ?? randomUUID(),
+    previousMachineId: seededMachineId,
+    seededMachineId: seededMachineId ?? null,
     clerkUserId,
     handle: env.MATRIX_PARITY_HANDLE?.trim() || "local",
     hetznerServerId: 424242,
@@ -582,9 +699,10 @@ function buildBundle(plan) {
   }
 }
 
-async function waitFor(url, timeoutMs = 120_000) {
+async function waitFor(url, timeoutMs = 120_000, signal) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
+    signal?.throwIfAborted();
     try {
       const response = await fetch(url, { signal: AbortSignal.timeout(2_000) });
       if (response.ok) return;
@@ -596,8 +714,8 @@ async function waitFor(url, timeoutMs = 120_000) {
   throw new Error(`Timed out waiting for ${url}`);
 }
 
-function startArtifactServer(state) {
-  return createServer((request, response) => {
+export async function startArtifactServer(state, options = {}) {
+  const server = createServer((request, response) => {
     if (request.url === "/health") return response.end("ok\n");
     if (request.url === "/metadata/instance-id") return response.end(`${state.hetznerServerId}\n`);
     if (request.url === "/metadata/public-ipv4") return response.end(`${fixturePublicAddress}\n`);
@@ -608,7 +726,16 @@ function startArtifactServer(state) {
       return response.end("not found\n");
     }
     createReadStream(path).pipe(response);
-  }).listen(artifactPort, "0.0.0.0");
+  });
+  await new Promise((resolvePromise, rejectPromise) => {
+    const onError = (error) => rejectPromise(error);
+    server.once("error", onError);
+    server.listen(options.port ?? artifactPort, options.host ?? "0.0.0.0", () => {
+      server.off("error", onError);
+      resolvePromise();
+    });
+  });
+  return server;
 }
 
 function publicBuildEnvironment() {
@@ -692,8 +819,10 @@ export function platformContainerArguments(env, options = {}) {
   const containerName = options.containerName ?? platformContainerName;
   const imageName = options.imageName ?? platformImageName;
   const hostPort = options.hostPort ?? platformPort;
+  const owner = options.owner ?? root;
   const args = [
     "run", "--detach", "--name", containerName,
+    "--label", `${LOCAL_PARITY_OWNER_LABEL}=${owner}`,
     "--publish", `0.0.0.0:${hostPort}:8080`,
   ];
   for (const key of Object.keys(env)) args.push("--env", key);
@@ -741,58 +870,63 @@ async function up() {
   writeFileSync(cloudInitPath, rendered, { mode: 0o600 });
   prepareRuntimeFiles(rendered, state.machineId);
 
-  run("docker", ["compose", "-f", "docker-compose.dev.yml", "up", "--detach", "postgres", "minio", "minio-alias", "minio-init"]);
-  startFixtureRouter();
-  await waitFor("http://127.0.0.1:9100/minio/health/live");
-  startStorageTlsProxy();
-  const env = platformEnvironment(state, clerkJwtKey);
-  run("pnpm", ["exec", "tsx", "scripts/dev-production-parity-seed.ts"], {
-    env: {
-      ...env,
-      PLATFORM_DATABASE_URL: "postgresql://matrixos:matrixos@127.0.0.1:5432/matrixos_platform",
-    },
-  });
-  const artifactServer = startArtifactServer(state);
-  startPlatformContainer(env);
+  const shutdown = new AbortController();
+  const handleSigint = () => shutdown.abort(new Error("Interrupted by SIGINT"));
+  const handleSigterm = () => shutdown.abort(new Error("Interrupted by SIGTERM"));
+  process.once("SIGINT", handleSigint);
+  process.once("SIGTERM", handleSigterm);
+  let artifactServer;
+  let ready = false;
   try {
-    await waitFor(`http://127.0.0.1:${platformPort}/health`);
+    run("docker", ["compose", "-f", "docker-compose.dev.yml", "up", "--detach", "postgres", "minio", "minio-alias", "minio-init"]);
+    shutdown.signal.throwIfAborted();
+    startFixtureRouter();
+    await waitFor("http://127.0.0.1:9100/minio/health/live", 120_000, shutdown.signal);
+    startStorageTlsProxy();
+    const env = platformEnvironment(state, clerkJwtKey);
+    run("pnpm", ["exec", "tsx", "scripts/dev-production-parity-seed.ts"], {
+      env: {
+        ...env,
+        PLATFORM_DATABASE_URL: "postgresql://matrixos:matrixos@127.0.0.1:5432/matrixos_platform",
+      },
+    });
+    state.seededMachineId = state.machineId;
+    delete state.previousMachineId;
+    writeFileSync(statePath, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600 });
+    artifactServer = await startArtifactServer(state);
+    startPlatformContainer(env);
+    await waitFor(`http://127.0.0.1:${platformPort}/health`, 120_000, shutdown.signal);
     startQemuRuntime();
-    await waitForRuntimeSsh();
+    await waitForRuntimeSsh(15 * 60_000, shutdown.signal);
     // Keep the event loop available to serve the host bundle while cloud-init
     // downloads and installs it in the guest.
-    await runInRuntimeAsync(["sudo", "cloud-init", "status", "--wait", "--long"]);
-    await waitForRuntimeReadiness();
+    await runInRuntimeAsync(["sudo", "cloud-init", "status", "--wait", "--long"], shutdown.signal);
+    await waitForRuntimeReadiness(30 * 60_000, shutdown.signal);
+    ready = true;
     console.log(`\nProduction-parity VM is ready. Platform: http://127.0.0.1:${platformPort}`);
     console.log(`Machine: https://${fixturePublicAddress} (production auth still applies)`);
     console.log("Keep this process running; Ctrl+C stops only the local platform and artifact server.\n");
     await new Promise((resolvePromise) => {
-      process.once("SIGINT", resolvePromise);
-      process.once("SIGTERM", resolvePromise);
+      if (shutdown.signal.aborted) resolvePromise();
+      else shutdown.signal.addEventListener("abort", resolvePromise, { once: true });
     });
+  } catch (error) {
+    try {
+      await cleanupLocalParityResources();
+    } catch (cleanupError) {
+      throw new AggregateError([error, cleanupError], "Local parity startup and cleanup both failed");
+    }
+    throw error;
   } finally {
-    artifactServer.close();
-    stopPlatformContainer();
+    process.off("SIGINT", handleSigint);
+    process.off("SIGTERM", handleSigterm);
+    artifactServer?.close();
+    if (ready) stopPlatformContainer();
   }
 }
 
 async function down() {
-  const pid = readRuntimePid();
-  if (runtimeProcessIsOwned({ pid })) {
-    process.kill(pid, "SIGTERM");
-    const deadline = Date.now() + 30_000;
-    while (runtimeProcessIsOwned({ pid }) && Date.now() < deadline) {
-      await new Promise((resolvePromise) => setTimeout(resolvePromise, 250));
-    }
-    if (runtimeProcessIsOwned({ pid })) {
-      throw new Error(`QEMU pid ${pid} did not stop; refusing to remove its disk`);
-    }
-  }
-  stopFixtureRouter();
-  stopStorageTlsProxy();
-  stopPlatformContainer();
-  rmSync(runtimeDirectory, { recursive: true, force: true });
-  if (machineExists(builderName)) run("orb", ["delete", "--force", builderName]);
-  run("docker", ["compose", "-f", "docker-compose.dev.yml", "stop", "postgres", "minio"]);
+  await cleanupLocalParityResources();
 }
 
 function status() {
