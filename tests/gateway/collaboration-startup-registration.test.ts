@@ -38,7 +38,7 @@ describe("owner collaboration startup registration", () => {
     ]) {
       const response = await app.request(path);
       expect(response.status).toBe(503);
-      expect(await response.json()).toEqual({ error: "Collaboration unavailable" });
+      expect(await response.json()).toEqual({ error: "Collaboration unavailable", code: "unavailable" });
     }
   });
 
