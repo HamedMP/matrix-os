@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { parse } from "yaml";
@@ -22,6 +23,7 @@ import {
   buildBundle,
   builderSetupScript,
   clerkSecretIsConfigured,
+  cleanupAbandonedLocalParityBuilder,
   cleanupLocalParityResources,
   createLocalParityPlan,
   fetchConfiguredClerkJwtKey,
@@ -29,6 +31,8 @@ import {
   installLocalParitySignalHandlers,
   lastSuccessfullySeededMachineId,
   LOCAL_PARITY_OWNER_LABEL,
+  localParityBuilderName,
+  localParityLauncherLockArguments,
   platformContainerArguments,
   platformImageBuildArguments,
   pendingLocalParityMachineId,
@@ -37,6 +41,7 @@ import {
   runtimeProcessIsOwned,
   runtimeProcessPids,
   runAbortableCommand,
+  runLocalParityLauncherWithLock,
   startArtifactServer,
   storageTlsProxyArguments,
 } from "../../scripts/dev-production-parity.mjs";
@@ -321,6 +326,94 @@ describe("local development contracts", () => {
         "  789 rg /runtime/disk.qcow2",
       ].join("\n"),
     })).toEqual([123]);
+  });
+
+  it("uses a stable checkout-owned builder name", () => {
+    const first = localParityBuilderName("/workspace/one", "matrix-os-local");
+    expect(first).toBe(localParityBuilderName("/workspace/one", "matrix-os-local"));
+    expect(first).not.toBe(localParityBuilderName("/workspace/two", "matrix-os-local"));
+    expect(first).toMatch(/^matrix-os-local-builder-[a-f0-9]{12}$/);
+  });
+
+  it("reclaims an abandoned builder owned by this checkout", () => {
+    let builderExists = true;
+    const deleted: string[] = [];
+    cleanupAbandonedLocalParityBuilder({
+      builderName: "builder-one",
+      machineExists: () => builderExists,
+      deleteBuilder: (name: string) => {
+        deleted.push(name);
+        builderExists = false;
+      },
+    });
+
+    expect(deleted).toEqual(["builder-one"]);
+  });
+
+  it("lets parity down remove a stale checkout-owned builder", () => {
+    let builderExists = true;
+    const deleted: string[] = [];
+    cleanupAbandonedLocalParityBuilder({
+      builderName: "builder-one",
+      machineExists: () => builderExists,
+      deleteBuilder: (name: string) => {
+        deleted.push(name);
+        builderExists = false;
+      },
+    });
+
+    expect(deleted).toEqual(["builder-one"]);
+  });
+
+  it("wraps parity up/down in an exec-owned advisory lock", () => {
+    expect(localParityLauncherLockArguments("/tmp/parity.lock", "/usr/bin/node", ["launcher.mjs", "up"]))
+      .toEqual([
+        resolve(root, "scripts/dev-production-parity-lock.py"),
+        "/tmp/parity.lock",
+        "/usr/bin/node",
+        "launcher.mjs",
+        "up",
+      ]);
+  });
+
+  it("rejects a contending launcher and recovers immediately after abrupt owner death", async () => {
+    const directory = mkdtempSync(resolve(tmpdir(), "matrix-parity-lock-"));
+    const lockPath = resolve(directory, "launcher.lock");
+    const readyPath = resolve(directory, "ready");
+    const rejectedPath = resolve(directory, "rejected");
+    const recoveredPath = resolve(directory, "recovered");
+    const holder = spawn("python3", localParityLauncherLockArguments(lockPath, process.execPath, [
+      "--eval",
+      `require("node:fs").writeFileSync(${JSON.stringify(readyPath)}, "ready"); setTimeout(() => {}, 30000)`,
+    ]), { stdio: "ignore" });
+    try {
+      const deadline = Date.now() + 5_000;
+      while (!existsSync(readyPath) && Date.now() < deadline) {
+        await new Promise((resolvePromise) => setTimeout(resolvePromise, 20));
+      }
+      expect(existsSync(readyPath)).toBe(true);
+
+      await expect(runLocalParityLauncherWithLock({
+        lockPath,
+        command: process.execPath,
+        args: ["--eval", `require("node:fs").writeFileSync(${JSON.stringify(rejectedPath)}, "ran")`],
+      })).rejects.toThrow("Local parity launcher failed");
+      expect(existsSync(rejectedPath)).toBe(false);
+
+      holder.kill("SIGKILL");
+      await new Promise((resolvePromise) => holder.once("close", resolvePromise));
+      await runLocalParityLauncherWithLock({
+        lockPath,
+        command: process.execPath,
+        args: ["--eval", `require("node:fs").writeFileSync(${JSON.stringify(recoveredPath)}, "ran")`],
+      });
+      expect(existsSync(recoveredPath)).toBe(true);
+    } finally {
+      if (holder.exitCode === null && holder.signalCode === null) {
+        holder.kill("SIGKILL");
+      }
+      rmSync(directory, { recursive: true, force: true });
+    }
   });
 
   it("deletes its invocation-owned builder when interrupted during the bundle build", async () => {

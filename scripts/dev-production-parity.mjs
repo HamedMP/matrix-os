@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { createHmac, createPublicKey, randomBytes, randomUUID } from "node:crypto";
+import { createHash, createHmac, createPublicKey, randomBytes, randomUUID } from "node:crypto";
 import { closeSync, createReadStream, existsSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { createConnection, createServer as createTcpServer } from "node:net";
@@ -9,6 +9,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const launcherLockHelperPath = resolve(root, "scripts/dev-production-parity-lock.py");
 const stateDirectory = resolve(root, ".amp/in/local-production-parity");
 const statePath = resolve(stateDirectory, "state.json");
 const bundleDirectory = resolve(stateDirectory, "host-bundle");
@@ -16,7 +17,12 @@ const cloudInitPath = resolve(stateDirectory, "cloud-init.yaml");
 const bundlePath = resolve(bundleDirectory, "matrix-host-bundle.tar.gz");
 const bundleChecksumPath = `${bundlePath}.sha256`;
 const machineName = process.env.MATRIX_PARITY_MACHINE_NAME ?? "matrix-os-local";
-const builderName = `${machineName}-builder-${randomUUID()}`;
+export function localParityBuilderName(projectRoot, runtimeName) {
+  const checkoutId = createHash("sha256").update(projectRoot).digest("hex").slice(0, 12);
+  return `${runtimeName}-builder-${checkoutId}`;
+}
+const builderName = localParityBuilderName(root, machineName);
+const launcherLockPath = resolve(stateDirectory, "launcher.lock");
 const runtimeDirectory = resolve(stateDirectory, "runtime");
 const runtimeDiskPath = resolve(runtimeDirectory, "disk.qcow2");
 const runtimeSeedPath = resolve(runtimeDirectory, "cidata.iso");
@@ -243,7 +249,6 @@ export function assertLocalParityContainerOwnership(name, owner, expectedOwner =
 }
 
 export function assertLocalParityMachinesAvailable(options = {}) {
-  const buildName = options.builderName ?? builderName;
   const exists = options.machineExists ?? machineExists;
   const runtimeExists = options.runtimeExists ?? (() => runtimeProcessPids().length > 0);
   const containerExists = options.containerExists ?? ((name) => (
@@ -252,8 +257,8 @@ export function assertLocalParityMachinesAvailable(options = {}) {
   if (runtimeExists()) {
     throw new Error(`${machineName} QEMU runtime already exists; run dev:parity:down only if you own that environment`);
   }
-  if (exists(buildName)) {
-    throw new Error(`${buildName} already exists; remove it manually only if you own that OrbStack machine`);
+  if (options.builderName && exists(options.builderName)) {
+    throw new Error(`${options.builderName} already exists; remove it manually only if you own that OrbStack machine`);
   }
   for (const name of [platformContainerName, fixtureRouterName, storageTlsProxyName]) {
     if (containerExists(name)) {
@@ -713,6 +718,48 @@ export function installLocalParitySignalHandlers(signalTarget, controller) {
   };
 }
 
+export function cleanupAbandonedLocalParityBuilder(options = {}) {
+  const buildName = options.builderName ?? builderName;
+  const exists = options.machineExists ?? machineExists;
+  const deleteBuilder = options.deleteBuilder ?? ((name) => run("orb", ["delete", "--force", name]));
+  if (exists(buildName)) deleteBuilder(buildName);
+}
+
+export function localParityLauncherLockArguments(lockPath, command, args) {
+  return [launcherLockHelperPath, lockPath, command, ...args];
+}
+
+export function runLocalParityLauncherWithLock(options = {}) {
+  const lockPath = options.lockPath ?? launcherLockPath;
+  const command = options.command ?? process.execPath;
+  const args = options.args ?? [fileURLToPath(import.meta.url), ...process.argv.slice(2)];
+  const spawnImpl = options.spawn ?? spawn;
+  return new Promise((resolvePromise, rejectPromise) => {
+    const child = spawnImpl("python3", localParityLauncherLockArguments(lockPath, command, args), {
+      cwd: root,
+      stdio: "inherit",
+      env: options.env ?? process.env,
+    });
+    const signalHandlers = new Map([
+      ["SIGINT", () => child.kill("SIGINT")],
+      ["SIGTERM", () => child.kill("SIGTERM")],
+    ]);
+    const removeSignalHandlers = () => {
+      for (const [signal, handler] of signalHandlers) process.off(signal, handler);
+    };
+    for (const [signal, handler] of signalHandlers) process.on(signal, handler);
+    child.once("error", (error) => {
+      removeSignalHandlers();
+      rejectPromise(error);
+    });
+    child.once("close", (code, signal) => {
+      removeSignalHandlers();
+      if (code === 0) resolvePromise();
+      else rejectPromise(new Error(`Local parity launcher failed (code ${code}, signal ${signal})`));
+    });
+  });
+}
+
 export async function buildBundle(plan, options = {}) {
   const execute = options.runCommand ?? runAbortableCommand;
   const exists = options.machineExists ?? machineExists;
@@ -886,7 +933,8 @@ function startPlatformContainer(env) {
 
 async function up() {
   assertPrerequisites();
-  assertLocalParityMachinesAvailable({ machineName, builderName });
+  cleanupAbandonedLocalParityBuilder();
+  assertLocalParityMachinesAvailable({ machineName });
   await Promise.all([
     assertTcpPortAvailable(platformPort),
     assertTcpPortAvailable(artifactPort),
@@ -971,6 +1019,7 @@ async function up() {
 }
 
 async function down() {
+  cleanupAbandonedLocalParityBuilder();
   await cleanupLocalParityResources();
 }
 
@@ -1006,6 +1055,9 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const action = command === "up" ? up : command === "down" ? down : command === "status" ? status : command === "logs" ? logs : undefined;
   Promise.resolve().then(() => {
     if (!action) throw new Error("usage: dev-production-parity.mjs <up|down|status|logs> [--reuse-bundle]");
+    if ((command === "up" || command === "down") && process.env.MATRIX_PARITY_LAUNCHER_LOCKED !== "1") {
+      return runLocalParityLauncherWithLock();
+    }
     return action();
   }).catch((error) => {
     console.error(error instanceof Error ? error.message : String(error));
