@@ -186,7 +186,9 @@ advertise standalone account/source selection until they own a real profile
 switch.
 
 Hermes exposes its own authenticated Codex subscription profile even when its
-native default uses another provider. Bounded inventory gives each provider model
+native default uses another provider. V3 reads the harness's native runtime source
+directly so the messaging compatibility projection cannot discard profile evidence.
+Bounded inventory gives each provider model
 slots before filling larger catalogs, and Codex model IDs retain the
 `openai-codex:` namespace. This fresh local profile observation does not verify
 funding or change the selected route. A legacy instance with no access source
