@@ -69,11 +69,11 @@ const SPECS: ToolSpec[] = [
   {
     name: "remember",
     capability: "memory.propose",
-    description: "Remember a preference, fact, or finished task. Say where it came from.",
+    description: "Remember an owner-stated preference, fact, or finished task. For owner-stated content, omit optional sourceUrl; never invent a URL. A pending-confirmation result is not active memory.",
     parameters: Type.Object({
       kind: Type.Union([Type.Literal("preference"), Type.Literal("fact"), Type.Literal("episode")]),
       content: Type.String({ minLength: 1, maxLength: 4096 }),
-      sourceUrl: Type.Optional(Type.String({ maxLength: 2048, pattern: "^https://", description: "HTTPS link to the source, if any." })),
+      sourceUrl: Type.Optional(Type.String({ maxLength: 2048, pattern: "^https://", description: "Optional real HTTPS source link; omit for the owner's own statement." })),
     }),
     toArgs: (params, now) => ({
       kind: params.kind,
