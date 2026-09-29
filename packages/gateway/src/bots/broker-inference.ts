@@ -26,6 +26,9 @@ import {
 import type { BotRuntimeBinding } from "./runtime-registry.js";
 
 const INFERENCE_TIMEOUT_MS = 30_000;
+/** Codex tool continuations can outlast one short provider call; the worker
+ * and broker still bound the whole turn independently. */
+const CODEX_INFERENCE_TIMEOUT_MS = 120_000;
 export const MAX_BOT_TOOLS = 64;
 
 const BotInferenceBodySchema = z.object({
@@ -98,7 +101,7 @@ export async function forwardBotInference(
       return await forwardCodexBotInference(request, {
         resolveIdentity: deps.resolveCodexIdentity ?? createCodexOwnerIdentityResolver({ homePath: deps.homePath, fetchImpl }),
         stillAuthorized,
-        signal: AbortSignal.any([deps.lifetime, AbortSignal.timeout(INFERENCE_TIMEOUT_MS)]),
+        signal: AbortSignal.any([deps.lifetime, AbortSignal.timeout(CODEX_INFERENCE_TIMEOUT_MS)]),
         fetchImpl,
       });
     }
