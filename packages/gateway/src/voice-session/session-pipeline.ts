@@ -109,6 +109,7 @@ export class VoiceSessionPipeline {
       finalityId: null,
       finalText: null,
       canonicalTurnId: null,
+      canonicalQueuedTurnId: null,
       runId: null,
       startedAtMs: this.host.clock.now(),
     };
@@ -245,6 +246,8 @@ export class VoiceSessionPipeline {
     try {
       ack = await this.host.delivery.acknowledge({
         sessionId: s.sessionId,
+        chatId: s.chatId,
+        principalId: s.principalId,
         responseId: ledger.responseId,
         segmentId: segment.segmentId,
         transportEpoch: s.epoch,
@@ -346,6 +349,7 @@ export class VoiceSessionPipeline {
         }
         segment.durationMs = event.durationMs;
         ledger.deliveredThroughMs += event.durationMs;
+        await this.runtime.recordDeliveredProgress(ledger);
         this.runtime.emit({
           type: "response.audio",
           responseId: ledger.responseId,
@@ -417,6 +421,10 @@ export class VoiceSessionPipeline {
     turn.finalityId = event.finalityId;
     turn.finalText = event.text;
     const result = await this.host.admission.admitFinalTranscript({
+      sessionId: s.sessionId,
+      chatId: s.chatId,
+      principalId: s.principalId,
+      principalSource: s.principalSource,
       clientRequestId: turn.requestId,
       finalityId: event.finalityId,
       localOrder: turn.localOrder,
@@ -440,9 +448,12 @@ export class VoiceSessionPipeline {
       return;
     }
     s.lastKnownChatRevision = Math.max(s.lastKnownChatRevision, result.revision);
+    const carriesIdentity = result.outcome === "queued"
+      ? result.canonicalQueuedTurnId !== undefined
+      : result.canonicalTurnId !== undefined;
     if ((result.outcome === "sent" || result.outcome === "steered"
       || result.outcome === "already_accepted" || result.outcome === "queued")
-      && !result.canonicalTurnId) {
+      && !carriesIdentity) {
       // Port contract violation: admitted outcomes must carry canonical identity.
       turn.phase = "rejected";
       this.runtime.emitError("internal_failure", true);
@@ -469,12 +480,12 @@ export class VoiceSessionPipeline {
       }
       case "queued": {
         turn.phase = "admitted";
-        turn.canonicalTurnId = result.canonicalTurnId ?? null;
+        turn.canonicalQueuedTurnId = result.canonicalQueuedTurnId ?? null;
         this.runtime.emit({
           type: "transcript.final",
           turnId: turn.turnId,
           finalityId: event.finalityId,
-          canonicalTurnId: result.canonicalTurnId!,
+          canonicalQueuedTurnId: result.canonicalQueuedTurnId!,
           localOrder: turn.localOrder,
           text: event.text,
         });
@@ -507,8 +518,13 @@ export class VoiceSessionPipeline {
       // Queued admissions only learn their run identity when canonical Chat
       // dispatches later — link by canonicalTurnId before the run filter.
       for (const turn of s.turns.values()) {
-        if (turn.canonicalTurnId === event.canonicalTurnId && turn.runId === null) {
+        if (turn.runId !== null) continue;
+        const matches = turn.canonicalTurnId === event.canonicalTurnId
+          || (event.canonicalQueuedTurnId !== undefined
+            && turn.canonicalQueuedTurnId === event.canonicalQueuedTurnId);
+        if (matches) {
           turn.runId = event.runId;
+          turn.canonicalTurnId = event.canonicalTurnId;
           if (s.runIds.size < this.host.maxRunIds) s.runIds.add(event.runId);
           break;
         }

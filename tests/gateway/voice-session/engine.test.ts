@@ -228,13 +228,15 @@ describe("frames, turns, and admission", () => {
   });
 
   it("links queued admissions to their later canonical run", async () => {
-    rig.admission.push({ outcome: "queued", canonicalTurnId: "cturn_q", revision: 2 });
+    rig.admission.push({ outcome: "queued", canonicalQueuedTurnId: "qturn_q", revision: 2 });
     const s = await listeningSession(rig);
     await s.handle.receive(clientFrame(s.sessionId, s.epoch, { type: "capture.start", turnId: "vturn_1", mode: "hands_free" }));
     rig.adapter.emit({ type: "transcript.final", turnId: "vturn_1", finalityId: "vfinal_1", text: "queued turn" });
     await flush(rig, s.sessionId);
-    expect(lastFrame(s.sink, "transcript.final")).toMatchObject({ canonicalTurnId: "cturn_q" });
-    rig.events.emit({ type: "run.started", runId: "run_q", canonicalTurnId: "cturn_q" });
+    expect(lastFrame(s.sink, "transcript.final")).toMatchObject({ canonicalQueuedTurnId: "qturn_q" });
+    // queue.claimed projects both identities: the promoted `cturn_` and the
+    // `qturn_` the voice turn recorded at admission.
+    rig.events.emit({ type: "run.started", runId: "run_q", canonicalTurnId: "cturn_q", canonicalQueuedTurnId: "qturn_q" });
     await flush(rig, s.sessionId);
     rig.events.emit({ type: "assistant.text", runId: "run_q", text: "hi", textStart: 0, textEnd: 2 });
     await flush(rig, s.sessionId);

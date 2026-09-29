@@ -105,6 +105,7 @@ export class FakeAdmission implements VoiceAdmissionPort {
 
 export class FakeDelivery implements VoiceDeliveryPort {
   readonly pendings: Parameters<VoiceDeliveryPort["recordPending"]>[0][] = [];
+  readonly delivered: Parameters<VoiceDeliveryPort["recordDelivered"]>[0][] = [];
   readonly acks: Parameters<VoiceDeliveryPort["acknowledge"]>[0][] = [];
   readonly terminals: Parameters<VoiceDeliveryPort["recordTerminal"]>[0][] = [];
   ackResult: { revision: number } | "ignored" | Error = { revision: 0 };
@@ -112,6 +113,11 @@ export class FakeDelivery implements VoiceDeliveryPort {
 
   async recordPending(input: Parameters<VoiceDeliveryPort["recordPending"]>[0]) {
     this.pendings.push(input);
+    return { revision: ++this.revision };
+  }
+
+  async recordDelivered(input: Parameters<VoiceDeliveryPort["recordDelivered"]>[0]) {
+    this.delivered.push(input);
     return { revision: ++this.revision };
   }
 

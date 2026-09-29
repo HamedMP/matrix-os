@@ -18,6 +18,7 @@ export interface FixtureAdmissionEvidence {
   requestId: string;
   outcome: string;
   canonicalTurnId: string | null;
+  canonicalQueuedTurnId: string | null;
   runId: string | null;
 }
 
@@ -149,6 +150,7 @@ export function runFixtureSession(
       requestId: `req_${action.finalityId}`,
       outcome: replay ? `${result.outcome} (replayed)` : result.outcome,
       canonicalTurnId: result.canonicalTurnId ?? null,
+      canonicalQueuedTurnId: result.canonicalQueuedTurnId ?? null,
       runId: result.runId ?? null,
     });
     return result;
@@ -175,12 +177,13 @@ export function runFixtureSession(
       case "transcript.final":
         if (action?.type === "transcript.final") {
           const result = admit(action, false);
-          if (result.canonicalTurnId !== undefined) {
+          if (result.canonicalTurnId !== undefined || result.canonicalQueuedTurnId !== undefined) {
             emit(entry, {
               type: "transcript.final",
               turnId: turnId(action.turnId),
               finalityId: finalityId(action.finalityId),
-              canonicalTurnId: result.canonicalTurnId,
+              ...(result.canonicalTurnId !== undefined ? { canonicalTurnId: result.canonicalTurnId } : {}),
+              ...(result.canonicalQueuedTurnId !== undefined ? { canonicalQueuedTurnId: result.canonicalQueuedTurnId } : {}),
               localOrder: action.localOrder,
               text: action.text,
             });

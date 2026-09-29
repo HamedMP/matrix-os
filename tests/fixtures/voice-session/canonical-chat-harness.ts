@@ -61,6 +61,7 @@ export type FakeAdmissionOutcome =
 export type AdmissionResult = {
   outcome: FakeAdmissionOutcome;
   canonicalTurnId?: string;
+  canonicalQueuedTurnId?: string;
   runId?: string;
   revision: number;
 };
@@ -88,7 +89,7 @@ interface AdmissionRecord {
 
 interface QueuedTurn {
   requestId: string;
-  canonicalTurnId: string;
+  canonicalQueuedTurnId: string;
 }
 
 interface ApprovalRecord {
@@ -187,19 +188,26 @@ export class FakeCanonicalChatHarness {
     this.assertAdmissionCapacity();
     this.acceptedTurnCount += 1;
     this.revision += 1;
-    const canonicalTurnId = `cturn_${String(this.acceptedTurnCount).padStart(4, "0")}`;
     const result: AdmissionResult = {
       outcome,
-      canonicalTurnId,
       revision: this.revision,
     };
+    if (outcome === "queued") {
+      // Mirror canonical Chat: queued turns hold a `qturn_` identity; a fresh
+      // `cturn_` is only minted when the queue claims the turn later.
+      result.canonicalQueuedTurnId = `qturn_${String(this.acceptedTurnCount).padStart(4, "0")}`;
+      requireCapacity(this.queuedTurns, "queuedTurns");
+      this.queuedTurns.push({
+        requestId: request.requestId,
+        canonicalQueuedTurnId: result.canonicalQueuedTurnId,
+      });
+    } else {
+      result.canonicalTurnId = `cturn_${String(this.acceptedTurnCount).padStart(4, "0")}`;
+    }
     if (outcome === "sent") {
       result.runId = this.startRun();
     } else if (outcome === "steered") {
       result.runId = this.activeRunId ?? undefined;
-    } else if (outcome === "queued") {
-      requireCapacity(this.queuedTurns, "queuedTurns");
-      this.queuedTurns.push({ requestId: request.requestId, canonicalTurnId });
     }
     this.admittedRequestIds.push(request.requestId);
     return this.rememberAdmission(request, result, "admission.accepted");
@@ -488,16 +496,20 @@ export class FakeCanonicalChatHarness {
     if (next === undefined) return;
     const record = this.admissions.find((admission) => admission.requestId === next.requestId);
     this.revision += 1;
+    // Claiming mints a fresh canonical `cturn_` for the promoted run — the
+    // `qturn_` identity stays the link from admission to promotion.
+    this.acceptedTurnCount += 1;
     const result: AdmissionResult = {
       outcome: "sent",
-      canonicalTurnId: next.canonicalTurnId,
+      canonicalTurnId: `cturn_${String(this.acceptedTurnCount).padStart(4, "0")}`,
       runId: this.startRun(),
       revision: this.revision,
     };
     if (record !== undefined) record.result = { ...result };
     this.appendJournal("admission.queue_promoted", {
       requestId: next.requestId,
-      canonicalTurnId: next.canonicalTurnId,
+      canonicalQueuedTurnId: next.canonicalQueuedTurnId,
+      canonicalTurnId: result.canonicalTurnId ?? null,
       runId: result.runId ?? null,
       revision: this.revision,
     });
@@ -568,6 +580,9 @@ export class FakeCanonicalChatHarness {
     };
     if (result.canonicalTurnId !== undefined) {
       details.canonicalTurnId = result.canonicalTurnId;
+    }
+    if (result.canonicalQueuedTurnId !== undefined) {
+      details.canonicalQueuedTurnId = result.canonicalQueuedTurnId;
     }
     if (result.runId !== undefined) {
       details.runId = result.runId;

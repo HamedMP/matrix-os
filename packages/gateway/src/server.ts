@@ -1,4 +1,5 @@
 import { createOwnerAnthropicKeyPreflight } from "./ai-providers/owner-key-preflight.js";
+import { createHmac } from "node:crypto";
 import { serve } from "@hono/node-server";
 import { createNodeWebSocket } from "@hono/node-ws";
 import {
@@ -32,7 +33,7 @@ import { createJevGmailAccountLookup } from "./chat/jev-recipe-authority.js";
 import { createAgentSandbox } from "./agent-sandbox.js";
 import { createAgentSessionManager } from "./agent-session-manager.js";
 import { createAiGenerationRecorder } from "./ai-analytics.js";
-import { createAllowedOriginController } from "./allowed-origins.js";
+import { buildAllowedOrigins, createAllowedOriginController } from "./allowed-origins.js";
 import { createRuntimeAppAiRoutes } from "./app-ai/runtime.js";
 import type { AppRegistry } from "./app-db-registry.js";
 import type { AppDb } from "./app-db.js";
@@ -61,6 +62,24 @@ import {
 import { closeCanonicalChatEventLifecycle } from "./chat/routes.js";
 import { createGatewayChatProviderCatalog } from "./chat/runtime-provider-catalog.js";
 import { createCanonicalChatRuntime } from "./chat/runtime.js";
+import { ChatVoiceDeliveryRepository } from "./chat/voice-delivery-repository.js";
+import {
+  createAdapterCapabilityPort,
+  SimulatorVoiceMediaAdapter,
+  VoiceMediaAdapterRegistry,
+} from "./voice-session/adapter.js";
+import { createCanonicalVoicePorts } from "./voice-session/canonical-ports.js";
+import { VoiceSessionEngine } from "./voice-session/engine.js";
+import { createSystemVoiceClock } from "./voice-session/ports.js";
+import {
+  createVoiceSessionRoutes,
+  registerVoiceSessionWebSocketRoute,
+} from "./voice-session/routes.js";
+import {
+  createVoiceOriginAllowlist,
+  VoiceTicketAuthority,
+} from "./voice-session/ticket-auth.js";
+import { createRateLimiter } from "./security/rate-limiter.js";
 import { createBackgroundChatProjection, restoreBackgroundChatThread } from "./coding-agents/background-chat-recovery.js";
 import {
   createChatIdleReaper,
@@ -777,6 +796,7 @@ export async function createGateway(config: GatewayConfig) {
   let chatIdleReaper: ReturnType<typeof createChatIdleReaper> | null = null;
   let canonicalChatEventStream: ReturnType<typeof createGatewayChatEventStream> | null = null;
   let canonicalChatOrchestrator: CanonicalChatOrchestrator | null = null;
+  let voiceSessionEngine: VoiceSessionEngine | null = null;
   let canonicalChatRuntime: Awaited<ReturnType<typeof createCanonicalChatRuntime>> | null = null;
   let canonicalChatExecutionRoots: ChatExecutionRootResolver | null = null;
   let canonicalChatCollaborationGuard: ReturnType<typeof createDiscussionOnlyChatExecutionGuard> | null = null;
@@ -1533,6 +1553,93 @@ export async function createGateway(config: GatewayConfig) {
     });
     canonicalChatOrchestrator = canonicalChatRuntime.orchestrator;
     backgroundChatProjection.setReconciler(ownerId => canonicalChatOrchestrator?.reconcileActiveRuns({ type: "personal", ownerId }) ?? Promise.resolve());
+
+    // ------------------------------------------------------------------
+    // Canonical voice sessions — voice as a mode of exactly one canonical
+    // Chat. Finalized speech enters through canonical admission; assistant
+    // output/activity arrives from the canonical outbox; the engine owns
+    // only ephemeral transport/media state.
+    const voiceLog = (event: string, fields: Record<string, unknown>) =>
+      console.warn("[voice-session]", event, fields);
+    const voiceDeliveries = new ChatVoiceDeliveryRepository(chatRepository.kysely);
+    const voicePorts = createCanonicalVoicePorts({
+      orchestrator: canonicalChatOrchestrator,
+      repository: chatRepository,
+      deliveries: voiceDeliveries,
+      log: voiceLog,
+    });
+    const voiceAdapters = new VoiceMediaAdapterRegistry();
+    // The deterministic simulator is an explicit dev/integration seam only —
+    // it never registers implicitly, so production reports `not_configured`
+    // until a real provider adapter lands behind this registry.
+    if (process.env.MATRIX_VOICE_SIMULATOR === "1") {
+      voiceAdapters.register(new SimulatorVoiceMediaAdapter({
+        scenario: {
+          scenarioId: "matrix-voice-sim",
+          version: 1,
+          initialEpoch: 1,
+          limits: { maxQueuedAudioMs: 10_000, maxDurationMs: 3_600_000 },
+          timeline: [],
+        },
+        clock: createSystemVoiceClock(),
+      }));
+    }
+    const voiceCapabilities = createAdapterCapabilityPort({
+      registry: voiceAdapters,
+      limits: { maxSessionSeconds: 3_600, maxIdleSeconds: 300 },
+    });
+    const voiceTickets = new VoiceTicketAuthority({
+      hmacKey: process.env.MATRIX_AUTH_TOKEN
+        ? createHmac("sha256", process.env.MATRIX_AUTH_TOKEN)
+          .update("matrix-os/voice-transport-tickets").digest()
+        : undefined,
+    });
+    voiceSessionEngine = new VoiceSessionEngine({
+      admission: voicePorts.admission,
+      delivery: voicePorts.delivery,
+      chatEvents: voicePorts.chatEvents,
+      runControl: voicePorts.runControl,
+      adapters: voiceAdapters,
+      tickets: voiceTickets,
+      log: voiceLog,
+    });
+    const voiceSessionRateLimiter = createRateLimiter({
+      maxAttempts: 30,
+      windowMs: 60_000,
+      lockoutMs: 60_000,
+    });
+    app.route("/", createVoiceSessionRoutes({
+      engine: voiceSessionEngine,
+      resolvePrincipal: requireRequestPrincipal,
+      chatAccess: voicePorts.chatAccess,
+      capabilities: {
+        capabilities: async (input) => {
+          const capability = await voiceCapabilities.capabilities(input);
+          // No canonical harness enforces per-run memory suppression yet, so
+          // no surface may claim an enforceable session-only route.
+          return capability.status === "available"
+            ? { ...capability, sessionOnly: "unsupported" as const }
+            : capability;
+        },
+      },
+      checkRateLimit: ({ principal }) => voiceSessionRateLimiter.check(principal.userId),
+    }));
+    registerVoiceSessionWebSocketRoute({
+      app,
+      upgradeWebSocket,
+      engine: voiceSessionEngine,
+      tickets: voiceTickets,
+      isOriginAllowed: createVoiceOriginAllowlist(
+        buildAllowedOrigins({
+          shellOrigin: process.env.SHELL_ORIGIN,
+          proxyOrigin: process.env.PROXY_ORIGIN,
+        }),
+        // Native/Electron WebSocket clients send no Origin header; the ticket
+        // itself carries the session/principal/path binding.
+        { allowMissing: true },
+      ),
+      log: voiceLog,
+    });
     // Shared AI marks runs the previous process lost (gateway_restart) before the
     // owner reconcile loop below finishes them; the reverse order loses attribution.
     // S07: this layer has no execution-root resolver, so no `sandboxManifests` source is passed
@@ -1792,6 +1899,10 @@ export async function createGateway(config: GatewayConfig) {
       proactiveHeartbeat.stop();
       cronService.stop();
       await backgroundChatProjection.close();
+      // Voice sessions drain before canonical Chat: terminal deliveries and
+      // run cancellations still need a live orchestrator and repository.
+      await voiceSessionEngine?.close();
+      voiceSessionEngine = null;
       await canonicalChatOrchestrator?.close();
       canonicalChatOrchestrator = null;
       await canonicalChatRuntime?.agents.close();

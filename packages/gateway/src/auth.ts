@@ -120,6 +120,12 @@ const WS_QUERY_TOKEN_PATH_PATTERNS = [
   /^\/ws\/coding-agents\/thread\/thread_[A-Za-z0-9_-]+$/,
 ];
 
+/**
+ * `/ws/chats/:chatId/voice/:sessionId` — ticket-authenticated voice transport.
+ * Bound to safe bounded ids; never joins the generic query-token allowlist.
+ */
+const VOICE_TRANSPORT_WS_PATH = /^\/ws\/chats\/[A-Za-z0-9_-]{1,160}\/voice\/[A-Za-z0-9_-]{1,160}$/;
+
 // Constant-time string compare. Previously, the length-mismatch branch ran
 // timingSafeEqual(bufB, bufB) as a dummy call -- but the work done in
 // timingSafeEqual is proportional to bufB.length, not bufA.length. An
@@ -324,6 +330,19 @@ export function authMiddleware(
     const webhookMatch = normalizedPath.match(/^\/voice\/webhook\/([a-z0-9-]+)$/);
     const isWebhook = webhookMatch && webhookProviders.has(webhookMatch[1]);
     if (isWebhook) {
+      const ip = getClientIp(c);
+      if (!rateLimiter.check(ip)) {
+        return tooManyRequests(c);
+      }
+      return nextWithReady(c, next);
+    }
+
+    // Dedicated voice transport: the WebSocket upgrade carries a one-time,
+    // path-bound ticket — not a bearer token. The route verifier performs
+    // Origin allowlist, constant-time digest check, atomic consume, and
+    // chat/session/principal/epoch binding before any session mutation, so
+    // bearer auth must not run first. Still IP rate-limited here.
+    if (VOICE_TRANSPORT_WS_PATH.test(normalizedPath)) {
       const ip = getClientIp(c);
       if (!rateLimiter.check(ip)) {
         return tooManyRequests(c);

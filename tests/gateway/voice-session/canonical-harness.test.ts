@@ -46,7 +46,7 @@ describe("FakeCanonicalChatHarness", () => {
       transcript: "Second turn",
     }))).toEqual({
       outcome: "queued",
-      canonicalTurnId: "cturn_0002",
+      canonicalQueuedTurnId: "qturn_0002",
       revision: 2,
     });
 
@@ -92,7 +92,7 @@ describe("FakeCanonicalChatHarness", () => {
             memoryMode: "session_only",
             choice: "queue",
             textLength: 11,
-            canonicalTurnId: "cturn_0002",
+            canonicalQueuedTurnId: "qturn_0002",
             outcome: "queued",
             revision: 2,
           },
@@ -133,8 +133,8 @@ describe("FakeCanonicalChatHarness", () => {
     // it instead of silently disappearing as stale revisions.
     expect(results).toEqual([
       { outcome: "sent", canonicalTurnId: "cturn_0001", runId: "run_0001", revision: 1 },
-      { outcome: "queued", canonicalTurnId: "cturn_0002", revision: 2 },
-      { outcome: "queued", canonicalTurnId: "cturn_0003", revision: 3 },
+      { outcome: "queued", canonicalQueuedTurnId: "qturn_0002", revision: 2 },
+      { outcome: "queued", canonicalQueuedTurnId: "qturn_0003", revision: 3 },
     ]);
     expect(harness.snapshot()).toMatchObject({
       activeRunId: "run_0001",
@@ -158,7 +158,8 @@ describe("FakeCanonicalChatHarness", () => {
       type: "admission.queue_promoted",
       details: {
         requestId: "request_b",
-        canonicalTurnId: "cturn_0002",
+        canonicalQueuedTurnId: "qturn_0002",
+        canonicalTurnId: "cturn_0004",
         runId: "run_0002",
         revision: 4,
       },
@@ -172,7 +173,7 @@ describe("FakeCanonicalChatHarness", () => {
       choice: "queue",
     }))).toEqual({
       outcome: "sent",
-      canonicalTurnId: "cturn_0002",
+      canonicalTurnId: "cturn_0004",
       runId: "run_0002",
       revision: 4,
     });
@@ -207,7 +208,7 @@ describe("FakeCanonicalChatHarness", () => {
       finalityId: "final_queue",
       baseRevision: 4,
       choice: "queue",
-    }))).toEqual({ outcome: "queued", canonicalTurnId: "cturn_0001", revision: 5 });
+    }))).toEqual({ outcome: "queued", canonicalQueuedTurnId: "qturn_0001", revision: 5 });
 
     const steerHarness = new FakeCanonicalChatHarness({ activeRunId: "run_active" });
     expect(steerHarness.admit(request({ choice: "steer" })))

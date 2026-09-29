@@ -74,6 +74,7 @@ export const VoiceFinalityIdSchema = prefixedId("vfinal_");
 export const VoiceActionIdSchema = prefixedId("action_");
 export const VoiceCanonicalChatIdSchema = prefixedId("chat_");
 export const VoiceCanonicalTurnIdSchema = prefixedId("cturn_");
+export const VoiceCanonicalQueuedTurnIdSchema = prefixedId("qturn_");
 export const VoiceCanonicalRunIdSchema = prefixedId("run_");
 export const VoiceEpochSchema = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
 export const VoiceSequenceSchema = z.number().int().nonnegative().max(VOICE_SESSION_LIMITS.maxSequence);
@@ -199,10 +200,17 @@ export const VoiceTranscriptProvisionalSchema = z.object({
 export const VoiceTranscriptFinalSchema = z.object({
   turnId: VoiceTurnIdSchema,
   finalityId: VoiceFinalityIdSchema,
-  canonicalTurnId: VoiceCanonicalTurnIdSchema,
+  /** Present once the turn holds a canonical `cturn_` (sent/steered/promoted). */
+  canonicalTurnId: VoiceCanonicalTurnIdSchema.optional(),
+  /** Present when the turn was admitted to the canonical queue (`qturn_`). */
+  canonicalQueuedTurnId: VoiceCanonicalQueuedTurnIdSchema.optional(),
   localOrder: VoiceSequenceSchema,
   text: VoiceTranscriptTextSchema,
-}).strict();
+}).strict().refine((frame) => frame.canonicalTurnId !== undefined
+  || frame.canonicalQueuedTurnId !== undefined, {
+  message: "Final transcript requires a canonical turn or queued-turn identity",
+  path: ["canonicalTurnId"],
+});
 export const VoiceTranscriptCorrectionSchema = z.object({
   turnId: VoiceTurnIdSchema,
   finalityId: VoiceFinalityIdSchema,

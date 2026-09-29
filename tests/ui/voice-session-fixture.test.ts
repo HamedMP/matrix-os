@@ -34,6 +34,7 @@ describe("runFixtureSession (single-pipeline fixture)", () => {
         requestId: "req_final-1",
         outcome: "sent",
         canonicalTurnId: "cturn_0001",
+        canonicalQueuedTurnId: null,
         runId: "run_0001",
       },
     ]);

@@ -27,6 +27,7 @@ import type {
   VoiceTurnMode,
 } from "@matrix-os/contracts/voice-session";
 import type { CanonicalChatModelSelection } from "@matrix-os/contracts";
+import type { PrincipalSource } from "../request-principal.js";
 import type {
   VoiceMediaAdapterRegistry,
   VoiceMediaSession,
@@ -76,6 +77,7 @@ export interface VoiceTurnRecord {
   finalityId: string | null;
   finalText: string | null;
   canonicalTurnId: string | null;
+  canonicalQueuedTurnId: string | null;
   runId: string | null;
   startedAtMs: number;
 }
@@ -114,6 +116,8 @@ export interface VoiceSessionRecord {
   sessionId: string;
   chatId: string;
   principalId: string;
+  /** Auth-time principal provenance — canonical admission must not guess it. */
+  principalSource: PrincipalSource;
   clientRequestId: string;
   /** Semantic fingerprint of the create request (idempotent reuse check). */
   fingerprint: string;
@@ -425,6 +429,8 @@ export class VoiceSessionRuntime {
     try {
       const result = await this.host.delivery.recordPending({
         sessionId: s.sessionId,
+        chatId: s.chatId,
+        principalId: s.principalId,
         responseId: ledger.responseId,
         runId: ledger.runId,
         transportEpoch: s.epoch,
@@ -435,6 +441,28 @@ export class VoiceSessionRuntime {
     } catch (error: unknown) {
       // Missing pending leaves delivery unknown — never "fully heard".
       this.host.log("voice.delivery.pending_failed", {
+        sessionId: s.sessionId,
+        error: error instanceof Error ? error.name : "UnknownError",
+      });
+    }
+  }
+
+  async recordDeliveredProgress(ledger: VoiceResponseLedger): Promise<void> {
+    const s = this.session;
+    if (!ledger.pendingRecorded || ledger.state !== "open") return;
+    try {
+      const result = await this.host.delivery.recordDelivered({
+        sessionId: s.sessionId,
+        chatId: s.chatId,
+        principalId: s.principalId,
+        responseId: ledger.responseId,
+        transportEpoch: s.epoch,
+        deliveredThroughMs: ledger.deliveredThroughMs,
+        deliveryRevision: ledger.deliveryRevision,
+      });
+      if (result !== "ignored") ledger.deliveryRevision = result.revision;
+    } catch (error: unknown) {
+      this.host.log("voice.delivery.delivered_failed", {
         sessionId: s.sessionId,
         error: error instanceof Error ? error.name : "UnknownError",
       });
@@ -452,11 +480,16 @@ export class VoiceSessionRuntime {
     try {
       await this.host.delivery.recordTerminal({
         sessionId: s.sessionId,
+        chatId: s.chatId,
+        principalId: s.principalId,
         responseId: ledger.responseId,
+        runId: ledger.runId,
         transportEpoch: s.epoch,
         reason,
         effectiveThroughMs,
         effectiveTextEnd: this.heardTextEnd(ledger),
+        ...(ledger.pendingRecorded ? { deliveryRevision: ledger.deliveryRevision } : {}),
+        segments: ledger.segments.map(({ played: _played, ...segment }) => segment),
       });
     } catch (error: unknown) {
       this.host.log("voice.delivery.terminal_failed", {

@@ -13,6 +13,7 @@ import type {
   CanonicalChatModelSelection,
   CanonicalCreateChatTurnRequest,
 } from "@matrix-os/contracts";
+import type { PrincipalSource } from "../request-principal.js";
 import type {
   CanonicalOperationState,
   SafeVoiceErrorCode,
@@ -52,6 +53,14 @@ export function createSystemVoiceClock(): VoiceClock {
  * policy from live session state.
  */
 export interface VoiceTurnAdmissionRequest {
+  /** Session producing this turn — binds admission to the owning Chat/principal. */
+  sessionId: string;
+  /** Canonical owning Chat the session is bound to. */
+  chatId: string;
+  /** Trusted runtime principal for the session owner. */
+  principalId: string;
+  /** Principal provenance captured at session create; drives catalog trust. */
+  principalSource: PrincipalSource;
   /** Stable idempotent request identity (`req_…`), generated once per turn. */
   clientRequestId: string;
   /** Provider/STT final identity; dedupes duplicate and reordered finals. */
@@ -79,8 +88,10 @@ export type VoiceTurnAdmissionOutcome =
 
 export interface VoiceTurnAdmissionResult {
   outcome: VoiceTurnAdmissionOutcome;
-  /** Canonical `cturn_` identity once admitted or queued. */
+  /** Canonical `cturn_` identity once admitted (sent/steered/already). */
   canonicalTurnId?: string;
+  /** Canonical `qturn_` identity while the turn waits in the queue. */
+  canonicalQueuedTurnId?: string;
   /** Canonical `run_` identity when the turn dispatched or steered a run. */
   runId?: string;
   /** Chat revision observed by the admission authority. */
@@ -127,6 +138,8 @@ export interface VoiceDeliveryPort {
    */
   recordPending(input: {
     sessionId: string;
+    chatId: string;
+    principalId: string;
     responseId: string;
     runId: string;
     transportEpoch: number;
@@ -140,6 +153,21 @@ export interface VoiceDeliveryPort {
   }): Promise<{ revision: number }>;
 
   /**
+   * Report audio actually emitted to the transport. The stored boundary caps
+   * future `playedThroughMs` claims — a client cannot ack into undelivered audio.
+   * Returns `"ignored"` for stale epochs/revisions or unknown records.
+   */
+  recordDelivered(input: {
+    sessionId: string;
+    chatId: string;
+    principalId: string;
+    responseId: string;
+    transportEpoch: number;
+    deliveredThroughMs: number;
+    deliveryRevision: number;
+  }): Promise<{ revision: number } | "ignored">;
+
+  /**
    * Advance delivery to the end of exactly one acknowledged segment.
    * Returns `"ignored"` for stale epochs/revisions or unknown records.
    * `effectiveTextEnd` is the canonical text offset of that segment's end;
@@ -147,6 +175,8 @@ export interface VoiceDeliveryPort {
    */
   acknowledge(input: {
     sessionId: string;
+    chatId: string;
+    principalId: string;
     responseId: string;
     segmentId: string;
     transportEpoch: number;
@@ -161,17 +191,37 @@ export interface VoiceDeliveryPort {
    */
   recordTerminal(input: {
     sessionId: string;
+    chatId: string;
+    principalId: string;
     responseId: string;
+    /** Canonical run the response was synthesized from (backfill identity). */
+    runId: string;
     transportEpoch: number;
     reason: VoiceDeliveryTerminalReason;
     effectiveThroughMs: number;
     effectiveTextEnd: number;
+    /** Last ledger revision this session observed; absent when pending never committed. */
+    deliveryRevision?: number;
+    /** Ledger segments for conservative backfill when no pending row exists. */
+    segments?: readonly {
+      segmentId: string;
+      segmentIndex: number;
+      textStart: number;
+      textEnd: number;
+      durationMs: number;
+    }[];
   }): Promise<{ revision: number } | "ignored">;
 }
 
 /** Canonical run events the voice channel may consume for synthesis/status. */
 export type VoiceCanonicalChatEvent =
-  | { type: "run.started"; runId: string; canonicalTurnId: string }
+  | {
+      type: "run.started";
+      runId: string;
+      canonicalTurnId: string;
+      /** Set when a queued voice turn is promoted: links to its `qturn_` id. */
+      canonicalQueuedTurnId?: string;
+    }
   | {
       type: "operation.status";
       runId: string;
