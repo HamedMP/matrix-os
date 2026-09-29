@@ -590,7 +590,12 @@ async function throwForResponse(response: Response, platformChallenge = false, t
   if (ticketEndpoint && response.status === 503) throw new CollaborationDirectError("host_offline", "Collaboration home is unavailable");
   if (response.status === 404) throw new CollaborationDirectError("unavailable");
   if (response.status === 426) throw new CollaborationDirectError("upgrade_required", "Collaboration client update required");
-  if (response.status === 401) throw new CollaborationDirectError("unauthorized", "Sign in again to continue");
+  if (response.status === 401) {
+    if (source === "platform") throw new CollaborationDirectError("unauthorized", "Sign in again to continue");
+    // Older homes omit failure codes when a direct session expires. Renewal must
+    // fall through to a fresh ticket; the home cannot diagnose the Clerk login.
+    throw new CollaborationDirectError("unavailable");
+  }
   if (response.status === 403) throw new CollaborationDirectError("forbidden", "Collaboration action denied");
   if (response.status === 409 || response.status === 413 || response.status === 422) throw new CollaborationDirectError("invalid_request", "Collaboration state changed");
   throw new CollaborationDirectError("unavailable");

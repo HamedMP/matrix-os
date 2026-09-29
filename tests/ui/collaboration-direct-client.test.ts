@@ -257,6 +257,24 @@ describe("collaboration direct client", () => {
     expect(world.platform.tickets).toHaveLength(4);
   });
 
+  it("reconnects with a fresh ticket when an older home gives an untyped 401 on renewal", async () => {
+    const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (new URL(String(input)).pathname.endsWith("/renew")) {
+        return new Response("session lost", { status: 401, headers: { "content-type": "text/plain" } });
+      }
+      return world.fetchImpl(input, init);
+    }) as typeof fetch;
+    const direct = client({ fetchImpl });
+    await direct.request(scopeId, "GET", `/api/collaboration/scopes/${scopeId}`);
+    const first = world.home.requests.at(-1)!.headers.get("x-matrix-collaboration-session");
+    world.advance(245_000);
+
+    await expect(direct.request(scopeId, "GET", `/api/collaboration/scopes/${scopeId}`))
+      .resolves.toMatchObject({ id: scopeId });
+    expect(world.home.requests.at(-1)!.headers.get("x-matrix-collaboration-session")).not.toBe(first);
+    expect(direct.describe(scopeId).state).toBe("connected");
+  });
+
   it("tells old clients to upgrade instead of retrying", async () => {
     world.home.protocolVersion = 3;
     const direct = client();
