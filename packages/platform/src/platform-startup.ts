@@ -37,7 +37,9 @@ import {
 } from './runtime-mode.js';
 import { resolvePlatformIntegrationConfig } from './integration-config.js';
 import { createInternalCustomMcpApprovalRouteOptions } from './custom-mcp-approval-route-options.js';
-import { createCustomMcpProjectionRequest } from './custom-mcp-projection.js';
+import { createCustomMcpProjection } from './custom-mcp-projection.js';
+import { listActivePrivatePreviewsForOwner } from './database/private-previews.js';
+import { createPrivatePreviewAccess } from './private-preview-wiring.js';
 import {
   createGranolaPresetBroker,
   type ManagedMcpPresetBroker,
@@ -49,7 +51,6 @@ import {
   startCustomerVpsReconciliationWorker,
   type CustomerVpsReconciliationWorker,
 } from './customer-vps-reconciliation-worker.js';
-import { membershipLookupFromOrganizations, parseInternalOrganizationId } from './private-preview-access.js';
 import { createPrivatePreviewSweep } from './private-preview-sweep.js';
 import { registerPlatformWebSocketUpgradeHandler } from './platform-websocket-upgrade.js';
 import { createAiFundedPolicyRepository, type AiFundedPolicyRepository } from './ai-funded-policy-repository.js';
@@ -440,6 +441,9 @@ async function startPlatformServerWithCleanup(
     clerkAuth,
     customerVpsProxyDispatcher,
   });
+  const privatePreviewAccess = createPrivatePreviewAccess({
+    env: process.env, collaboration, logError: logPlatformRouteError,
+  });
 
   let matrixProvisioner: MatrixProvisioner | undefined;
   const homeserverUrl = process.env.MATRIX_HOMESERVER_URL;
@@ -592,17 +596,15 @@ async function startPlatformServerWithCleanup(
 
     const resolveCustomMcpUserId = (clerkUserId: string | undefined, handle: string | undefined) =>
       resolveCustomMcpUserIdForMachine(db, customDb, clerkUserId, handle);
-    const projectionRequest = createCustomMcpProjectionRequest({
+    const projection = createCustomMcpProjection({
       getUser: (userId) => customDb.getUserById(userId),
       getMachine: (user) => getCustomMcpProjectionMachine(db, user),
+      listPrivatePreviews: (clerkUserId) => listActivePrivatePreviewsForOwner(db, clerkUserId),
+      isEligible: privatePreviewAccess.eligibility,
       platformSecret,
       dispatcher: customerVpsProxyDispatcher,
+      logError: logPlatformRouteError,
     });
-    const projection = {
-      upsert: (userId: string, server: unknown) => projectionRequest(userId, 'POST', undefined, server).then(() => undefined),
-      remove: (userId: string, serverId: string) => projectionRequest(userId, 'DELETE', serverId).then(() => undefined),
-      read: (userId: string, serverId: string) => projectionRequest(userId, 'GET', serverId),
-    };
     let oauthManager: InstanceType<GatewayCustomMcpModules['oauth']['CustomMcpOAuthManager']>;
     const broker = new brokerModule.CustomMcpBroker({
       db: customDb,
@@ -617,6 +619,7 @@ async function startPlatformServerWithCleanup(
       customMcpClosed = true;
       try {
         await broker.shutdown();
+        await projection.drain();
       } finally {
         await closeCustomMcpDb();
       }
@@ -912,10 +915,8 @@ async function startPlatformServerWithCleanup(
       const sweepPrivatePreviews = createPrivatePreviewSweep({
         db,
         service,
-        internalOrganizationId: parseInternalOrganizationId(process.env.MATRIX_INTERNAL_CLERK_ORG_ID),
-        lookupMembership: membershipLookupFromOrganizations(collaboration && 'organizations' in collaboration
-          ? collaboration.organizations
-          : undefined),
+        internalOrganizationId: privatePreviewAccess.internalOrganizationId,
+        lookupMembership: privatePreviewAccess.lookupMembership,
         logError: logPlatformRouteError,
       });
       customerVpsReconciliationWorker = startCustomerVpsReconciliationWorker({

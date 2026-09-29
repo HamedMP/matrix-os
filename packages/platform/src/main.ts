@@ -74,12 +74,8 @@ import { createLaunchReadinessRoutes } from './launch-readiness-routes.js';
 import { createHostBundleRoutes } from './host-bundle-routes.js';
 import { createPrivatePreviewUpdateRoutes } from './private-preview-update-routes.js';
 import { createPrivatePreviewRoutes } from './private-preview-routes.js';
-import { createPrivatePreviewEligibility } from './private-preview-eligibility.js';
-import {
-  membershipCheckFromProjection,
-  parseInternalOrganizationId,
-  type PrivatePreviewMembershipCheck,
-} from './private-preview-access.js';
+import { createPrivatePreviewAccess } from './private-preview-wiring.js';
+import type { PrivatePreviewMembershipCheck } from './private-preview-access.js';
 import { createGoldenSnapshotRoutes } from './golden-snapshot-routes.js';
 import type { GoldenSnapshotService } from './golden-snapshot-service.js';
 import type { GoldenSnapshotRuntimeConfig } from './golden-snapshot-schema.js';
@@ -573,16 +569,13 @@ export function createApp(deps: {
     }
   }
 
-  const privatePreviewOrganizationId = parseInternalOrganizationId(appEnv.MATRIX_INTERNAL_CLERK_ORG_ID);
-  const privatePreviewMembership = deps.privatePreviewMembership
-    ?? membershipCheckFromProjection(deps.collaboration && 'organizations' in deps.collaboration
-      ? deps.collaboration.organizations?.projection
-      : undefined);
-  const privatePreviewEligibility = createPrivatePreviewEligibility({
-    internalOrganizationId: privatePreviewOrganizationId,
-    isMember: privatePreviewMembership,
+  const privatePreviewAccess = createPrivatePreviewAccess({
+    env: appEnv,
+    collaboration: deps.collaboration,
+    membershipOverride: deps.privatePreviewMembership,
     logError: logPlatformRouteError,
   });
+  const privatePreviewEligibility = privatePreviewAccess.eligibility;
   const journeyAppOrigin = appOrigin(appEnv);
   const resolveJourneyUser = createJourneyUserResolver({
     clerkAuth: clerkAuth ?? undefined,
@@ -627,8 +620,8 @@ export function createApp(deps: {
     db,
     service: deps.customerVpsService,
     resolveActor: resolveJourneyUser,
-    internalOrganizationId: privatePreviewOrganizationId,
-    isMember: privatePreviewMembership,
+    internalOrganizationId: privatePreviewAccess.internalOrganizationId,
+    isMember: privatePreviewAccess.isMember,
     platformSecret,
     logRouteError: logPlatformRouteError,
   }));
