@@ -155,7 +155,7 @@ server.listen(Number(process.env.PORT), "127.0.0.1");
 
       const scopedPm = new ProcessManagerCtor({
         homeDir: tmpHome,
-        portPool: new PortPoolCtor({ min: 50000, max: 50010 }),
+        portPool: new PortPoolCtor(TEST_PORT_RANGES.processManagerDatabaseUrl),
         maxProcesses: 10,
         reaperIntervalMs: 0,
         appDatabaseUrlResolver: (slug) =>
@@ -220,7 +220,7 @@ server.listen(Number(process.env.PORT), "127.0.0.1");
 
     it("throws SpawnError with startup_timeout when health check never succeeds", async () => {
       // Use a dedicated port pool to avoid port reuse from other tests
-      const timeoutPool = new PortPoolCtor({ min: 49000, max: 49010 });
+      const timeoutPool = new PortPoolCtor(TEST_PORT_RANGES.processManagerStartupTimeout);
       const timeoutPm = new ProcessManagerCtor({
         homeDir: tmpHome,
         portPool: timeoutPool,
@@ -255,7 +255,7 @@ server.listen(Number(process.env.PORT), "127.0.0.1");
     }, 20_000);
 
     it("throws SpawnError when the start command fails", async () => {
-      const badPool = new PortPoolCtor({ min: 49500, max: 49510 });
+      const badPool = new PortPoolCtor(TEST_PORT_RANGES.processManagerBadCommand);
       const badPm = new ProcessManagerCtor({
         homeDir: tmpHome,
         portPool: badPool,
@@ -293,7 +293,7 @@ server.listen(Number(process.env.PORT), "127.0.0.1");
 
     it("releases port on startup failure", async () => {
       // Use a separate PM to avoid shared state issues
-      const failPool = new PortPoolCtor({ min: 46000, max: 46010 });
+      const failPool = new PortPoolCtor(TEST_PORT_RANGES.processManagerStartupFailure);
       const failPm = new ProcessManagerCtor({
         homeDir: tmpHome,
         portPool: failPool,
@@ -348,7 +348,7 @@ server.listen(Number(process.env.PORT), "127.0.0.1");
     }, 15_000);
 
     it("failure rejects all concurrent callers", async () => {
-      const crashPool = new PortPoolCtor({ min: 47000, max: 47010 });
+      const crashPool = new PortPoolCtor(TEST_PORT_RANGES.processManagerConcurrentFailure);
       const crashPm = new ProcessManagerCtor({
         homeDir: tmpHome,
         portPool: crashPool,
@@ -426,7 +426,7 @@ server.listen(Number(process.env.PORT), "127.0.0.1");
       await writeFile(join(shortDir, "package.json"), JSON.stringify({ type: "module" }));
       await mkdir(join(tmpHome, "data", "short-idle"), { recursive: true });
 
-      const idlePool1 = new PortPoolCtor({ min: 48000, max: 48010 });
+      const idlePool1 = new PortPoolCtor(TEST_PORT_RANGES.processManagerIdle);
       const shortPm = new ProcessManagerCtor({
         homeDir: tmpHome,
         portPool: idlePool1,
@@ -475,7 +475,7 @@ server.listen(Number(process.env.PORT), "127.0.0.1");
       await writeFile(join(shortDir, "package.json"), JSON.stringify({ type: "module" }));
       await mkdir(join(tmpHome, "data", "keep-alive"), { recursive: true });
 
-      const idlePool2 = new PortPoolCtor({ min: 48020, max: 48030 });
+      const idlePool2 = new PortPoolCtor(TEST_PORT_RANGES.processManagerIdleReset);
       const shortPm = new ProcessManagerCtor({
         homeDir: tmpHome,
         portPool: idlePool2,

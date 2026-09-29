@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtemp, cp, readFile, writeFile, rm, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -28,6 +28,15 @@ function isAlive(pid: number): boolean {
   } catch (err: unknown) {
     if ((err as NodeJS.ErrnoException).code === "ESRCH") return false;
     throw err;
+  }
+}
+
+// Polls on setImmediate so it keeps working while setTimeout is faked.
+async function waitForFile(path: string, timeoutMs = 10_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!existsSync(path)) {
+    if (Date.now() >= deadline) throw new Error(`timed out waiting for ${path}`);
+    await new Promise((r) => setImmediate(r));
   }
 }
 
@@ -121,7 +130,7 @@ describe("BuildOrchestrator", () => {
       runtimeVersion: "^1.0.0",
       listingTrust: "first_party",
       build: {
-        install: "sleep 30 & echo $! > grandchild.pid; wait",
+        install: "sleep 30 & echo $! > grandchild.pid.tmp && mv grandchild.pid.tmp grandchild.pid; wait",
         command: "node -e \"process.exit(0)\"",
         output: "dist",
         timeout: 120,
@@ -129,15 +138,38 @@ describe("BuildOrchestrator", () => {
       },
     }));
 
-    const result = await orch.build("hello-vite", appDir, { timeoutMs: 1_000 });
+    // Fake only the orchestrator's timers so the timeout fires exactly when
+    // the test says, after the grandchild is known to be running.
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      let settled = false;
+      const buildPromise = orch
+        .build("hello-vite", appDir, { timeoutMs: 60_000 })
+        .finally(() => {
+          settled = true;
+        });
 
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect((result.error as BuildError).code).toBe("timeout");
+      const pidPath = join(appDir, "grandchild.pid");
+      await waitForFile(pidPath);
+      const grandchildPid = Number(await readFile(pidPath, "utf8"));
+      expect(grandchildPid).toBeGreaterThan(0);
+      expect(isAlive(grandchildPid)).toBe(true);
+
+      await vi.advanceTimersByTimeAsync(60_000);
+      while (!settled) {
+        await vi.advanceTimersByTimeAsync(20);
+        await new Promise((r) => setImmediate(r));
+      }
+
+      const result = await buildPromise;
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect((result.error as BuildError).code).toBe("timeout");
+      }
+      expect(isAlive(grandchildPid)).toBe(false);
+    } finally {
+      vi.useRealTimers();
     }
-    const grandchildPid = Number(await readFile(join(appDir, "grandchild.pid"), "utf8"));
-    expect(grandchildPid).toBeGreaterThan(0);
-    expect(isAlive(grandchildPid)).toBe(false);
   }, 10_000);
 
   it("serializes concurrent builds for same slug", async () => {
