@@ -1,5 +1,5 @@
 import {
-  CollaborationFileListResponseSchema, CollaborationProjectSchema, CollaborationScopeSchema,
+  CollaborationCatalogEntrySchema, CollaborationFileListResponseSchema, CollaborationProjectSchema, CollaborationScopeSchema,
   type CollaborationCatalogEntry,
 } from "@matrix-os/contracts";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -12,6 +12,11 @@ type Scope = z.infer<typeof CollaborationScopeSchema>;
 type Project = z.infer<typeof CollaborationProjectSchema>;
 type Selection = { kind: "file" | "app"; id: string; resourceId: string; title: string };
 const buttonClass = "rounded-xl border px-3 py-2 text-sm transition-colors hover:enabled:bg-[var(--bg-hover)] disabled:opacity-50";
+
+function PreservedDraft({ text }: { text: string }) {
+  return <><p className="mt-2">Your unsaved text is kept here so you can copy it.</p>
+    <textarea aria-label="Preserved unsaved text" className="mt-2 w-full rounded-xl border bg-transparent p-3" rows={8} readOnly value={text} /></>;
+}
 
 export function SharedProjectView({ api, scopeId, openChat, openTerminal }: {
   api: CollaborationApi;
@@ -32,6 +37,14 @@ export function SharedProjectView({ api, scopeId, openChat, openTerminal }: {
   const selectionRef = useRef<Selection | null>(null);
   const draftRef = useRef<string | null>(null);
   const base = `/api/collaboration/scopes/${encodeURIComponent(scopeId)}`;
+  const closeSelection = useCallback(() => {
+    if (!selectionRef.current) return;
+    selectionRef.current = null;
+    setSelection(null);
+    setRemovedSelection(true);
+    setPreservedDraft(draftRef.current);
+    draftRef.current = null;
+  }, []);
 
   const load = useCallback(async () => {
     const current = ++generation.current;
@@ -56,14 +69,23 @@ export function SharedProjectView({ api, scopeId, openChat, openTerminal }: {
       }
       if (current !== generation.current) return;
       const selected = selectionRef.current;
-      if (selected && !project.resources.some((resource) => resource.kind === selected.kind
-        && resource.id === selected.resourceId && resource.readiness === "ready")) {
-        selectionRef.current = null;
-        setSelection(null);
-        setRemovedSelection(true);
-        setPreservedDraft(draftRef.current);
-        draftRef.current = null;
+      let selectedReady = !selected || project.resources.some((resource) => resource.kind === selected.kind
+        && resource.id === selected.resourceId && resource.readiness === "ready");
+      if (selected?.kind === "file" && selectedReady) {
+        const listed = nextFiles.find((entry) => entry.path === selected.resourceId);
+        if (listed) selectedReady = listed.id === selected.id;
+        else {
+          try {
+            const live = CollaborationCatalogEntrySchema.parse(await api.get(`${base}/files/${encodeURIComponent(selected.id)}`));
+            selectedReady = live.id === selected.id && live.path === selected.resourceId;
+          } catch (error: unknown) {
+            console.warn("[project-collaboration] selected file check failed", error instanceof Error ? error.name : "UnknownError");
+            selectedReady = false;
+          }
+        }
       }
+      if (current !== generation.current) return;
+      if (selected && !selectedReady) closeSelection();
       setValue({ scope, project });
       setFiles(nextFiles);
       setCursor(nextCursor);
@@ -71,9 +93,9 @@ export function SharedProjectView({ api, scopeId, openChat, openTerminal }: {
       setFailed(false);
     } catch (error: unknown) {
       console.warn("[project-collaboration] project load failed", error instanceof Error ? error.name : "UnknownError");
-      if (current === generation.current) { setValue(null); setFailed(true); }
+      if (current === generation.current) { closeSelection(); setValue(null); setFailed(true); }
     }
-  }, [api, base]);
+  }, [api, base, closeSelection]);
 
   useEffect(() => {
     setValue(null);
@@ -90,11 +112,10 @@ export function SharedProjectView({ api, scopeId, openChat, openTerminal }: {
   }, [load]);
   useEffect(() => api.subscribe?.(scopeId, load, () => {
     generation.current += 1;
-    setSelection(null);
-    selectionRef.current = null;
+    closeSelection();
     setValue(null);
     setFailed(true);
-  }), [api, load, scopeId]);
+  }), [api, closeSelection, load, scopeId]);
 
   const loadMoreFiles = async () => {
     if (!cursor || loadingMore) return;
@@ -113,7 +134,9 @@ export function SharedProjectView({ api, scopeId, openChat, openTerminal }: {
     } finally { setLoadingMore(false); }
   };
 
-  if (failed) return <div role="alert" className="p-8">Shared project unavailable. Refresh to try again.</div>;
+  if (failed) return <div role="alert" className="p-8">Shared project unavailable. Refresh to try again.
+    {preservedDraft !== null ? <PreservedDraft text={preservedDraft} /> : null}
+  </div>;
   if (!value) return <p role="status" className="p-8">Loading shared project…</p>;
   return <main className="mx-auto flex min-h-full w-full max-w-5xl flex-col gap-5 p-5 sm:p-8">
     <header>
@@ -124,8 +147,7 @@ export function SharedProjectView({ api, scopeId, openChat, openTerminal }: {
     {value.project.status === "archived" ? <p role="status" className="rounded-xl border p-4 text-sm">This project is archived.</p> : null}
     {removedSelection ? <section role="alert" className="rounded-xl border p-4 text-sm">
       <p>The selected item is no longer available in this shared project.</p>
-      {preservedDraft !== null ? <><p className="mt-2">Your unsaved text is kept here so you can copy it.</p>
-        <textarea aria-label="Preserved unsaved text" className="mt-2 w-full rounded-xl border bg-transparent p-3" rows={8} readOnly value={preservedDraft} /></> : null}
+      {preservedDraft !== null ? <PreservedDraft text={preservedDraft} /> : null}
       <button type="button" className={`${buttonClass} mt-3`} onClick={() => { setRemovedSelection(false); setPreservedDraft(null); }}>Dismiss</button>
     </section> : null}
     {selection ? <section>
