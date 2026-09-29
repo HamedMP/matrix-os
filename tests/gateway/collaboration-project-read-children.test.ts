@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { CollaborationProjectSchema } from "@matrix-os/contracts";
 import { bootstrapChatDatabase } from "../../packages/gateway/src/chat/database.js";
 import { bootstrapCollaborationDatabase } from "../../packages/gateway/src/collaboration/database.js";
 import { createProjectSharingService } from "../../packages/gateway/src/collaboration/project-sharing.js";
@@ -73,5 +74,19 @@ describe("shared project read children", () => {
       expect.objectContaining({ kind: "app", id: "app_board" }),
     ]));
     expect(result.resources.find((resource) => resource.kind === "terminal")).not.toHaveProperty("scopeId");
+  });
+
+  it("keeps a whitespace-only file basename from invalidating the whole project view", async () => {
+    await fixture.db.insertInto("collaboration_resource_bindings").values(
+      binding("30000000-0000-4000-8000-000000000705", "file", "notes/   ", null),
+    ).execute();
+    const service = createProjectSharingService({
+      db: fixture.db,
+      inventory: { preview: async () => { throw new Error("unused"); }, verifyConfirmation: async () => undefined },
+      transitions: { replayPreparation: async () => null, prepare: async () => { throw new Error("unused"); } },
+      resolveDestination: async () => ({ runtimeId: "runtime_owner", authorityGeneration: 1 }),
+    });
+    expect(CollaborationProjectSchema.parse(await service.read({ scopeId: projectScope })).resources)
+      .toEqual(expect.arrayContaining([expect.objectContaining({ id: "notes/   ", title: "Untitled file" })]));
   });
 });

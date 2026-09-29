@@ -15,6 +15,11 @@ const ActorIdSchema = z.string().min(1).max(128).regex(/^[A-Za-z0-9_-]+$/);
 const DigestSchema = z.string().regex(/^[a-f0-9]{64}$/);
 const ProjectTitleSchema = z.string().trim().min(1).max(200);
 
+function resourceTitle(kind: ProjectInventoryItem["kind"], resourceId: string): string {
+  const basename = resourceId.split("/").at(-1)?.trim() ?? "";
+  return basename ? basename.slice(0, 200) : kind === "file" ? "Untitled file" : "Untitled resource";
+}
+
 interface InventoryResult {
   projectId: string;
   projectRevision: number;
@@ -137,7 +142,7 @@ export function createProjectSharingService(options: {
           resources: resources.map((resource) => ({
             kind: resource.resource_kind,
             id: resource.resource_id,
-            title: resource.resource_id.split("/").at(-1)!.slice(0, 200),
+            title: resourceTitle(resource.resource_kind, resource.resource_id),
             ...(resource.child_id && (resource.resource_kind === "chat" || resource.resource_kind === "terminal")
               && resource.child_kind === resource.resource_kind && resource.child_resource_id === resource.resource_id
               && resource.child_parent_scope_id === scope.id && resource.child_membership_mode === "inherited"
