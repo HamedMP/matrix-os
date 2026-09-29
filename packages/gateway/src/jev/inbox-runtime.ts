@@ -7,7 +7,7 @@ import { createJevInboxBroker, InboxPreviewError, assertJevInboxProfile } from "
 import type { JevService } from "./service.js";
 import { formatJevInboxPresentation } from "./inbox-presentation.js";
 
-const TTL = 10 * 60_000;
+const TTL = 15 * 60_000;
 const MAX_RUNS = 128;
 type Active = { scope: string; expiresAt: number; signal: AbortSignal; onAbort: () => void; ready: boolean };
 

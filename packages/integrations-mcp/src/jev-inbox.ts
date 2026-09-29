@@ -32,7 +32,7 @@ export function registerJevInboxTool(server: McpServer, fetcher: GatewayFetcher 
   }, async (rawInput) => {
     let response: Response | undefined;
     let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
-    const signal = AbortSignal.timeout(rawInput.operation === "evaluate" ? 360_000 : 60_000);
+    const signal = AbortSignal.timeout(rawInput.operation === "evaluate" ? 540_000 : 60_000);
     let aborted: (() => void) | undefined;
     try {
       const input = inputSchema.parse(rawInput);

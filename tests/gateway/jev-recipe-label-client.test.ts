@@ -70,3 +70,56 @@ it("allows healthy bounded remote operations whose aggregate work exceeds 45 sec
     expect((await outcome).result).toMatchObject({confirmed:true,messageIds:["message_1","message_2"]});
   } finally { vi.useRealTimers(); }
 });
+it("starts each remote operation deadline after its saved-grant lookup", async () => {
+  vi.useFakeTimers();
+  try {
+    let added=false;let authorizations=0;
+    const authorize=async()=>{if(++authorizations===3)await new Promise<void>(resolve=>setTimeout(resolve,30_000));};
+    const fetcher=async(url:string,init:RequestInit)=>{
+      const operation=JSON.parse(String(init.body)).operation;
+      if(url.endsWith("/read-call"))return Response.json({service:"gmail",action:"get_profile",data:{emailAddress:"me@example.test"}});
+      if(operation.kind==="labels"){
+        await new Promise<void>(resolve=>setTimeout(resolve,35_000)); init.signal?.throwIfAborted();
+        return Response.json({labels:[{id:"Label_News",name:"00 • Jev/8 Newsletter",type:"user"}]});
+      }
+      if(operation.kind==="message-labels")return Response.json({id:"message_1",threadId:"thread_1",labelIds:added?["INBOX","Label_News"]:["INBOX"]});
+      if(operation.kind==="add-labels"){added=true;return Response.json({});}
+      throw new Error("Unexpected operation");
+    };
+    const label=createJevRecipeLabelClient({internalBaseUrl:"https://platform.internal/integrations",machineToken:"synthetic",fetcher});
+    const scope={kind:"jev_inbox_preview" as const,runId:"run_1",agentId:"agent_1",revision:1,
+      account:{service:"gmail" as const,accountLabel:"My Gmail",connectionId:"conn_1",expectedEmail:"me@example.test",labelingEnabled:true}};
+    const outcome=label("owner_fixture",scope,{threadId:"thread_1",messageIds:["message_1"],labels:["00 • Jev/8 Newsletter"]},undefined,authorize)
+      .then(result=>({result,error:null}),error=>({result:null,error}));
+    await vi.advanceTimersByTimeAsync(70_000);
+    expect((await outcome).error).toBeNull();
+    expect((await outcome).result).toMatchObject({confirmed:true});
+  } finally {vi.useRealTimers();}
+});
+
+it("allows transport overhead around the server’s 45-second operation budget", async () => {
+  vi.useFakeTimers();
+  try {
+    let added=false;
+    const authorize=async()=>undefined;
+    const fetcher=async(url:string,init:RequestInit)=>{
+      const operation=JSON.parse(String(init.body)).operation;
+      if(url.endsWith("/read-call"))return Response.json({service:"gmail",action:"get_profile",data:{emailAddress:"me@example.test"}});
+      if(operation.kind==="labels"){
+        await new Promise<void>(resolve=>setTimeout(resolve,48_000)); init.signal?.throwIfAborted();
+        return Response.json({labels:[{id:"Label_News",name:"00 • Jev/8 Newsletter",type:"user"}]});
+      }
+      if(operation.kind==="message-labels")return Response.json({id:"message_1",threadId:"thread_1",labelIds:added?["INBOX","Label_News"]:["INBOX"]});
+      if(operation.kind==="add-labels"){added=true;return Response.json({});}
+      throw new Error("Unexpected operation");
+    };
+    const label=createJevRecipeLabelClient({internalBaseUrl:"https://platform.internal/integrations",machineToken:"synthetic",fetcher});
+    const scope={kind:"jev_inbox_preview" as const,runId:"run_1",agentId:"agent_1",revision:1,
+      account:{service:"gmail" as const,accountLabel:"My Gmail",connectionId:"conn_1",expectedEmail:"me@example.test",labelingEnabled:true}};
+    const outcome=label("owner_fixture",scope,{threadId:"thread_1",messageIds:["message_1"],labels:["00 • Jev/8 Newsletter"]},undefined,authorize)
+      .then(result=>({result,error:null}),error=>({result:null,error}));
+    await vi.advanceTimersByTimeAsync(70_000);
+    expect((await outcome).error).toBeNull();
+    expect((await outcome).result).toMatchObject({confirmed:true});
+  } finally {vi.useRealTimers();}
+});

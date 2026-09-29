@@ -34,7 +34,7 @@ function fixture(mode = "valid", labeling = false) {
   const broker = createJevInboxBroker({ authorize, read, evaluate, label, now: () => now });
   const candidateScope = labeling ? { ...scope, account: { ...scope.account, labelingEnabled: true } } : scope;
   const execute = (input: unknown, actor = ownerId, candidate = candidateScope) => broker.execute(actor, candidate, input);
-  return { broker, execute, read, evaluate, authorize, label, advance: () => { now += 600_001; } };
+  return { broker, execute, read, evaluate, authorize, label, advance: () => { now += 900_001; } };
 }
 it("labels the exact evaluated messages only with a saved grant and returns server-owned confirmation", async () => {
   const f = fixture("valid", true); const evidence = await selected(f);
@@ -261,4 +261,16 @@ describe("server-owned Jev Inbox receipts", () => {
     await expect(evaluation).rejects.toThrow();
   });
 
+});
+it("bounds pre-label evidence/classification work and never writes when that stage hangs", async () => {
+  vi.useFakeTimers();
+  try {
+    const f=fixture("valid",true); const evidence=await selected(f);
+    if(evidence.kind!=="evidence")throw new Error("Missing evidence");
+    f.evaluate.mockImplementation(()=>new Promise(()=>undefined));
+    const outcome=f.execute({operation:"evaluate",receipt:evidence.receipt}).then(value=>({value,error:null}),error=>({value:null,error}));
+    await vi.advanceTimersByTimeAsync(180_001);
+    expect((await outcome).error).toBeInstanceOf(Error);
+    expect(f.label).not.toHaveBeenCalled();
+  } finally {vi.useRealTimers();}
 });

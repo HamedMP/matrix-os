@@ -32,35 +32,37 @@ export function createJevRecipeLabelClient(options: { internalBaseUrl: string | 
       if (!options.machineToken) throw new Error("Labeling unavailable");
       const internalBaseUrl = options.internalBaseUrl;
       const machineToken = options.machineToken;
-      const call = async (operation: z.infer<typeof JevLabelOperation>): Promise<unknown> => boundedOperation(async requestSignal => {
-        await authorize(); requestSignal.throwIfAborted();
-        const response = await (options.fetcher ?? fetch)(`${internalBaseUrl.replace(/\/$/, "")}/jev-label-call`, {
-          method: "POST", body: JSON.stringify({ binding, operation }), redirect: "error", signal: requestSignal,
-          headers: { Authorization: `Bearer ${machineToken}`, "content-type": "application/json",
-            ...delegatedIntegrationHeaders(ownerId, machineToken) } });
-        const cancel = () => { void response.body?.cancel().catch((error: unknown) => console.warn("[jev-labels] Response cleanup failed", {
-          errorName: error instanceof Error ? error.name : "UnknownError" })); };
-        const length = response.headers.get("content-length");
-        const maxBytes = operation.kind === "labels" ? 512 * 1024 : 32 * 1024;
-        if (requestSignal.aborted || !response.ok || !response.body || (length !== null && (!/^\d+$/.test(length) || Number(length) > maxBytes))) {
-          cancel(); throw new Error("Labeling unconfirmed");
-        }
-        const reader = response.body.getReader(); const chunks: Uint8Array[] = []; let bytes = 0;
-        const aborted = () => { void reader.cancel().catch((error: unknown) => console.warn("[jev-labels] Read cleanup failed", {
-          errorName: error instanceof Error ? error.name : "UnknownError" })); };
-        requestSignal.addEventListener("abort", aborted, { once: true });
-        try {
-          for (;;) {
-            requestSignal.throwIfAborted(); const next = await reader.read(); if (next.done) break;
-            bytes += next.value.byteLength;
-            if (bytes > maxBytes || chunks.length >= 4096) throw new Error("Labeling unconfirmed");
-            chunks.push(next.value);
+      const call = async (operation: z.infer<typeof JevLabelOperation>): Promise<unknown> => {
+        await authorize(); signal.throwIfAborted();
+        return boundedOperation(async requestSignal => {
+          const response = await (options.fetcher ?? fetch)(`${internalBaseUrl.replace(/\/$/, "")}/jev-label-call`, {
+            method: "POST", body: JSON.stringify({ binding, operation }), redirect: "error", signal: requestSignal,
+            headers: { Authorization: `Bearer ${machineToken}`, "content-type": "application/json",
+              ...delegatedIntegrationHeaders(ownerId, machineToken) } });
+          const cancel = () => { void response.body?.cancel().catch((error: unknown) => console.warn("[jev-labels] Response cleanup failed", {
+            errorName: error instanceof Error ? error.name : "UnknownError" })); };
+          const length = response.headers.get("content-length");
+          const maxBytes = operation.kind === "labels" ? 512 * 1024 : 32 * 1024;
+          if (requestSignal.aborted || !response.ok || !response.body || (length !== null && (!/^\d+$/.test(length) || Number(length) > maxBytes))) {
+            cancel(); throw new Error("Labeling unconfirmed");
           }
-          requestSignal.throwIfAborted();
-          return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(chunks, bytes))) as unknown;
-        } catch (error) { aborted(); throw error; }
-        finally { requestSignal.removeEventListener("abort", aborted); reader.releaseLock(); }
-      }, 45_000, signal);
+          const reader = response.body.getReader(); const chunks: Uint8Array[] = []; let bytes = 0;
+          const aborted = () => { void reader.cancel().catch((error: unknown) => console.warn("[jev-labels] Read cleanup failed", {
+            errorName: error instanceof Error ? error.name : "UnknownError" })); };
+          requestSignal.addEventListener("abort", aborted, { once: true });
+          try {
+            for (;;) {
+              requestSignal.throwIfAborted(); const next = await reader.read(); if (next.done) break;
+              bytes += next.value.byteLength;
+              if (bytes > maxBytes || chunks.length >= 4096) throw new Error("Labeling unconfirmed");
+              chunks.push(next.value);
+            }
+            requestSignal.throwIfAborted();
+            return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(chunks, bytes))) as unknown;
+          } catch (error) { aborted(); throw error; }
+          finally { requestSignal.removeEventListener("abort", aborted); reader.releaseLock(); }
+        }, 55_000, signal);
+      };
       return applyJevLabels({ input, signal, authorize, call,
         verify: async () => { await read(ownerId, scope, "get_profile", {}, signal); } });
     }, 300_000, parent);

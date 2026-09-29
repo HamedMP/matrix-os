@@ -73,6 +73,6 @@ it("gives evaluate a bounded labeling budget while retaining the shorter discove
     await client.callTool({name:"jev_inbox_preview",arguments:{operation:"discover"}});
     expect(timeout).toHaveBeenLastCalledWith(60_000);
     await client.callTool({name:"jev_inbox_preview",arguments:{operation:"evaluate",receipt:"a".repeat(64)}});
-    expect(timeout).toHaveBeenLastCalledWith(360_000);
+    expect(timeout).toHaveBeenLastCalledWith(540_000);
   } finally { timeout.mockRestore(); await close(); }
 });

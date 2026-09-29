@@ -1,3 +1,4 @@
+import { boundedOperation } from "../bounded-operation.js";
 import { randomBytes } from "node:crypto";
 import { EMAIL_TRIAGE_LABELS, JevEmailTriageResultSchema, JevEmailTriageScoresSchema,
   evaluateEmailTriagePolicy } from "@matrix-os/contracts";
@@ -16,7 +17,7 @@ export const InboxPreviewInput = z.discriminatedUnion("operation", [
 const Discovery = z.object({ threads: z.array(z.object({ id: GmailId, snippet: z.string().max(4096).optional() })).max(30).optional(),
   nextPageToken: z.string().max(4096).optional() });
 const Profile = z.object({ emailAddress: z.email().max(320) });
-const TTL = 10 * 60_000;
+const TTL = 15 * 60_000;
 const MAX_RUNS = 128;
 export class InboxPreviewError extends Error {
   constructor(readonly code: "denied" | "unavailable" | "invalid_request") { super("Inbox preview unavailable"); }
@@ -30,6 +31,7 @@ const review = () => ({ kind: "review" as const, verified: false as const, reado
 type Evidence = ReturnType<typeof assembleInboxEvidence>;
 type LabelOutcome = { kind: "labeled" | "labeling_unconfirmed"; verified: true; readonly: false; threadId: string;
   messageCount: number; labels: string[]; observedAt: string; requestId: string };
+type PreparedEvaluation = { presentation: Proposal; outcome?: LabelOutcome; plan?: z.infer<typeof JevLabelInput> };
 type Proposal = LabelOutcome | ReturnType<typeof review> | { kind: "proposal"; verified: true; readonly: true; threadId: string;
   messageCount: number; labels: string[]; archiveProposal: { removeLabelIds: ["INBOX"] } | null; observedAt: string; requestId: string;
   labelingSkipped?: "preview_only" | "review_required" };
@@ -167,62 +169,67 @@ export function createJevInboxBroker(options: {
       const selected = current.selection;
       if (!selected?.evidence || !selected.identity || input.receipt !== selected.receipt) throw new InboxPreviewError("denied");
       if (!current.evaluating) current.evaluating = (async () => {
-        await profile(ownerId, scope, current, signal);
-        const identity = threadIdentity(await options.read(ownerId, scope, "get_thread_ids", { threadId: selected.threadId }, signal), selected.threadId);
-        alive(ownerId, scope, current, signal);
-        if (JSON.stringify(identity) !== JSON.stringify(selected.identity)) return markReview(current);
-        // Recheck immediately before the sole paid call; cancellation/rebind cannot reuse this receipt.
-        await options.authorize(ownerId, scope);
-        alive(ownerId, scope, current, signal);
-        const evidence = selected.evidence!;
-        const observedAt = new Date(now()).toISOString();
-        const result = JevEmailTriageResultSchema.parse(await options.evaluate(ownerId, { recipe: "email-triage-v1",
-          state: evidence.state, idempotencyKey: `jev_email_triage_v1:${evidence.hash}` }, signal));
-        alive(ownerId, scope, current, signal);
-        await options.authorize(ownerId, scope);
-        alive(ownerId, scope, current, signal);
-        const scores = JevEmailTriageScoresSchema.parse(Object.fromEntries(result.answers.map((answer) => [answer.id, answer.probability])));
-        const policy = evaluateEmailTriagePolicy({ scores, verified: true, ageDays: evidence.ageDays });
-        const labelingSkipped: "preview_only" | "review_required" = scope.account.labelingEnabled === true
-          && policy.labels.includes(EMAIL_TRIAGE_LABELS.review) ? "review_required" : "preview_only";
-        const proposal = { kind: "proposal" as const, verified: true as const, readonly: true as const, threadId: selected.threadId,
-          messageCount: evidence.messageCount, labels: policy.labels, archiveProposal: policy.archive, observedAt, requestId: result.requestId,
-          labelingSkipped };
-        current.presentation = proposal;
-        if (scope.account.labelingEnabled === true && !policy.labels.includes(EMAIL_TRIAGE_LABELS.review)) {
-          // Re-read content, not model claims, immediately before the authorized write.
-          await profile(ownerId, scope, current, signal);
-          const fresh = threadIdentity(await options.read(ownerId, scope, "get_thread_ids", { threadId: selected.threadId }, signal), selected.threadId);
-          if (JSON.stringify(fresh) !== JSON.stringify(selected.identity)) return markReview(current);
-          const messages: unknown[] = [];
-          for (const messageId of fresh.messageIds.slice(-4)) {
-            alive(ownerId, scope, current, signal);
-            messages.push(await options.read(ownerId, scope, "get_message", { messageId }, signal));
+        const prepared = await boundedOperation<PreparedEvaluation>(async preparationSignal => {
+          await profile(ownerId, scope, current, preparationSignal);
+          const identity = threadIdentity(await options.read(ownerId, scope, "get_thread_ids", { threadId: selected.threadId }, preparationSignal), selected.threadId);
+          alive(ownerId, scope, current, preparationSignal);
+          if (JSON.stringify(identity) !== JSON.stringify(selected.identity)) return { presentation: markReview(current) };
+          // Recheck immediately before the sole paid call; cancellation/rebind cannot reuse this receipt.
+          await options.authorize(ownerId, scope);
+          alive(ownerId, scope, current, preparationSignal);
+          const evidence = selected.evidence!;
+          const observedAt = new Date(now()).toISOString();
+          const result = JevEmailTriageResultSchema.parse(await options.evaluate(ownerId, { recipe: "email-triage-v1",
+            state: evidence.state, idempotencyKey: `jev_email_triage_v1:${evidence.hash}` }, preparationSignal));
+          alive(ownerId, scope, current, preparationSignal);
+          await options.authorize(ownerId, scope);
+          alive(ownerId, scope, current, preparationSignal);
+          const scores = JevEmailTriageScoresSchema.parse(Object.fromEntries(result.answers.map((answer) => [answer.id, answer.probability])));
+          const policy = evaluateEmailTriagePolicy({ scores, verified: true, ageDays: evidence.ageDays });
+          const labelingSkipped: "preview_only" | "review_required" = scope.account.labelingEnabled === true
+            && policy.labels.includes(EMAIL_TRIAGE_LABELS.review) ? "review_required" : "preview_only";
+          const proposal = { kind: "proposal" as const, verified: true as const, readonly: true as const, threadId: selected.threadId,
+            messageCount: evidence.messageCount, labels: policy.labels, archiveProposal: policy.archive, observedAt, requestId: result.requestId,
+            labelingSkipped };
+          current.presentation = proposal;
+          if (scope.account.labelingEnabled === true && !policy.labels.includes(EMAIL_TRIAGE_LABELS.review)) {
+            // Re-read content, not model claims, immediately before the authorized write.
+            await profile(ownerId, scope, current, preparationSignal);
+            const fresh = threadIdentity(await options.read(ownerId, scope, "get_thread_ids", { threadId: selected.threadId }, preparationSignal), selected.threadId);
+            if (JSON.stringify(fresh) !== JSON.stringify(selected.identity)) return { presentation: markReview(current) };
+            const messages: unknown[] = [];
+            for (const messageId of fresh.messageIds.slice(-4)) {
+              alive(ownerId, scope, current, preparationSignal);
+              messages.push(await options.read(ownerId, scope, "get_message", { messageId }, preparationSignal));
+            }
+            const checked = assembleInboxEvidence(ownerId, scope, selected.threadId, fresh.messageIds.slice(-4), messages, now(), fresh.internalDates.slice(-4));
+            if (checked.hash !== evidence.hash) return { presentation: markReview(current) };
+            await options.authorize(ownerId, scope); alive(ownerId, scope, current, preparationSignal);
+            const outcome: LabelOutcome = { kind: "labeled", verified: true, readonly: false, threadId: selected.threadId,
+              messageCount: evidence.messageCount, labels: policy.labels, observedAt, requestId: result.requestId };
+            if (!policy.labels.length) return { presentation: outcome };
+            if (!options.label) throw new InboxPreviewError("unavailable");
+            return { presentation: { ...outcome, kind: "labeling_unconfirmed" }, outcome,
+              plan: JevLabelInput.parse({ threadId: selected.threadId, messageIds: fresh.messageIds.slice(-4), labels: policy.labels }) };
           }
-          const checked = assembleInboxEvidence(ownerId, scope, selected.threadId, fresh.messageIds.slice(-4), messages, now(), fresh.internalDates.slice(-4));
-          if (checked.hash !== evidence.hash) return markReview(current);
-          await options.authorize(ownerId, scope); alive(ownerId, scope, current, signal);
-          const outcome: LabelOutcome = { kind: "labeled", verified: true, readonly: false, threadId: selected.threadId,
-            messageCount: evidence.messageCount, labels: policy.labels, observedAt, requestId: result.requestId };
-          if (!policy.labels.length) { current.presentation = outcome; return outcome; }
-          if (!options.label) throw new InboxPreviewError("unavailable");
-          current.presentation = { ...outcome, kind: "labeling_unconfirmed" };
+          return { presentation: proposal };
+        }, 180_000, signal);
+        current.presentation = prepared.presentation;
+        if (prepared.plan && prepared.outcome) {
           try {
-            const plan = JevLabelInput.parse({ threadId: selected.threadId, messageIds: fresh.messageIds.slice(-4), labels: policy.labels });
-            const confirmation = JevLabelConfirmation.parse(await options.label(ownerId, scope, plan, signal, async () => {
+            const confirmation = JevLabelConfirmation.parse(await options.label!(ownerId, scope, prepared.plan, signal, async () => {
               alive(ownerId, scope, current, signal); await options.authorize(ownerId, scope); alive(ownerId, scope, current, signal);
             }));
-            if (JSON.stringify(confirmation.messageIds) !== JSON.stringify(fresh.messageIds.slice(-4))
-              || confirmation.labelIds.length !== policy.labels.length) throw new InboxPreviewError("unavailable");
+            if (JSON.stringify(confirmation.messageIds) !== JSON.stringify(prepared.plan.messageIds)
+              || confirmation.labelIds.length !== prepared.plan.labels.length) throw new InboxPreviewError("unavailable");
             alive(ownerId, scope, current, signal);
             await options.authorize(ownerId, scope); alive(ownerId, scope, current, signal);
-            current.presentation = outcome;
+            current.presentation = prepared.outcome;
           } catch (error) {
             console.warn("[jev] Labeling could not be confirmed", { errorName: error instanceof Error ? error.name : "UnknownError" });
           }
-          return current.presentation;
         }
-        return proposal;
+        return current.presentation;
       })();
       return current.evaluating;
     },
