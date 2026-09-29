@@ -45,7 +45,7 @@ type TerminalHandlers = {
   onOutput(frame: unknown): void;
   onState(frame: unknown): void;
   onRefreshRequired(): void | Promise<void>;
-  onUnavailable(): void;
+  onUnavailable(failure?: { state: "relay_limit"; reconnect: false; message: string }): void;
   onTemporarilyUnavailable(): void;
   onDisconnected(): void;
 };
@@ -66,6 +66,17 @@ function apiFixture() {
   };
   return { api, handlers: () => handlers! };
 }
+
+describe("shared terminal transport limits", () => {
+  it("shows the limit state when a direct socket stops at the account limit", async () => {
+    const { api, handlers } = apiFixture();
+    render(<SharedTerminalControls api={api} scope={scope("viewer")} actorId="user_viewer" />);
+    await waitFor(() => expect(api.subscribeTerminal).toHaveBeenCalled());
+    act(() => handlers().onUnavailable({ state: "relay_limit", reconnect: false,
+      message: "Today's collaboration limit is reached. Try again after reset." }));
+    expect(screen.getByRole("alert")).toHaveTextContent("Today's collaboration limit is reached. Try again after reset.");
+  });
+});
 
 function readyFrame(connectionId: string, current = terminal) {
   return {

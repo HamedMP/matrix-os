@@ -247,8 +247,8 @@ describe("platform relay actor authentication for direct clients", () => {
   it("reports reauthentication when the platform refuses the ticket for a signed-out actor", async () => {
     const { world, app } = relayStack();
     const direct = createCollaborationDirectClient({ platformBaseUrl: PLATFORM, fetchImpl: browserFetch(app, { value: null }), clientOrigin: CLIENT_ORIGIN, now: world.now });
-    await expect(direct.request(scopeId, "GET", `/api/collaboration/scopes/${scopeId}`)).rejects.toMatchObject({ code: "unauthenticated" });
-    expect(direct.describe(scopeId).state).toBe("unauthenticated");
+    await expect(direct.request(scopeId, "GET", `/api/collaboration/scopes/${scopeId}`)).rejects.toMatchObject({ code: "unauthorized" });
+    expect(direct.describe(scopeId).state).toBe("unauthorized");
     expect(world.platform.tickets).toHaveLength(0);
   });
 

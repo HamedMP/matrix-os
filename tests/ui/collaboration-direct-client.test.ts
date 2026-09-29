@@ -28,6 +28,137 @@ describe("collaboration direct client", () => {
     getHeaders: async () => ({ Authorization: "Bearer actor-token" }), ...extra,
   });
 
+  it.each([
+    [404, "not_found", "access_removed", "access_removed"],
+    [503, "host_offline", "host_offline", "offline"],
+    [503, "unavailable", "unavailable", "unavailable"],
+    [426, "upgrade_required", "upgrade_required", "upgrade_required"],
+    [429, "relay_limit", "relay_limit", "relay_limit"],
+  ] as const)("keeps ticket failure %s/%s distinct", async (status, code, expectedCode, state) => {
+    const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).endsWith("/api/collaboration/connections")) {
+        return new Response(JSON.stringify({ error: "Safe failure", code, retryAfterSeconds: 30 }),
+          { status, headers: { "content-type": "application/json" } });
+      }
+      return world.fetchImpl(input, init);
+    }) as typeof fetch;
+    const direct = client({ fetchImpl });
+    await expect(direct.request(scopeId, "GET", `/api/collaboration/scopes/${scopeId}`))
+      .rejects.toMatchObject({ code: expectedCode });
+    expect(direct.describe(scopeId).state).toBe(state);
+  });
+
+  it("stops retrying a typed 401 ticket failure", async () => {
+    const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) =>
+      String(input).endsWith("/api/collaboration/connections")
+        ? new Response(JSON.stringify({ error: "Sign in required", code: "unauthorized" }), { status: 401, headers: { "content-type": "application/json" } })
+        : world.fetchImpl(input, init)) as typeof fetch;
+    const direct = client({ fetchImpl });
+    await expect(direct.request(scopeId, "GET", `/api/collaboration/scopes/${scopeId}`)).rejects.toMatchObject({ code: "unauthorized" });
+    expect(direct.describe(scopeId).state).toBe("unauthorized");
+  });
+
+  it.each([[401, "unauthorized"], [403, "forbidden"]] as const)("classifies an untyped %s ticket response as %s", async (status, code) => {
+    const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) =>
+      String(input).endsWith("/api/collaboration/connections")
+        ? new Response("untyped", { status, headers: { "content-type": "text/plain" } })
+        : world.fetchImpl(input, init)) as typeof fetch;
+    const direct = client({ fetchImpl });
+    await expect(direct.request(scopeId, "GET", `/api/collaboration/scopes/${scopeId}`))
+      .rejects.toMatchObject({ code });
+    expect(direct.describe(scopeId).state).toBe(code);
+  });
+
+  it("treats a malformed 404 ticket response as unavailable", async () => {
+    const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) =>
+      String(input).endsWith("/api/collaboration/connections")
+        ? new Response("not-json", { status: 404, headers: { "content-type": "text/plain" } })
+        : world.fetchImpl(input, init)) as typeof fetch;
+    await expect(client({ fetchImpl }).request(scopeId, "GET", `/api/collaboration/scopes/${scopeId}`))
+      .rejects.toMatchObject({ code: "unavailable" });
+  });
+
+  it("ignores a ticket failure from a closed generation after the scope reconnects", async () => {
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    let firstTicket = true;
+    const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).endsWith("/api/collaboration/connections") && firstTicket) {
+        firstTicket = false;
+        await held;
+        return new Response(JSON.stringify({ error: "Home offline", code: "host_offline" }),
+          { status: 503, headers: { "content-type": "application/json" } });
+      }
+      return world.fetchImpl(input, init);
+    }) as typeof fetch;
+    const direct = client({ fetchImpl });
+    const old = direct.request(scopeId, "GET", `/api/collaboration/scopes/${scopeId}`).catch(() => undefined);
+    await vi.waitFor(() => expect(firstTicket).toBe(false));
+    direct.close(scopeId);
+    await direct.request(scopeId, "GET", `/api/collaboration/scopes/${scopeId}`);
+    release();
+    await old;
+    expect(direct.describe(scopeId).state).toBe("connected");
+  });
+
+  it.each(["not_found", "upgrade_required", "relay_limit", "unauthorized"] as const)("stops an event stream on %s without redialing", async (code) => {
+    vi.useFakeTimers();
+    const status = code === "not_found" ? 404 : code === "upgrade_required" ? 426 : code === "unauthorized" ? 401 : 429;
+    const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).endsWith("/api/collaboration/connections")) {
+        const body = JSON.parse(String(init?.body)) as { purpose: string };
+        if (body.purpose === "events") return new Response(JSON.stringify({ error: "Safe failure", code }),
+          { status, headers: { "content-type": "application/json" } });
+      }
+      return world.fetchImpl(input, init);
+    }) as typeof fetch;
+    const direct = client({ fetchImpl });
+    const unavailable = vi.fn();
+    direct.subscribeEvents(scopeId, { onEvent: vi.fn(), onUnavailable: unavailable });
+    await vi.waitFor(() => expect(unavailable).toHaveBeenCalledOnce());
+    expect(unavailable).toHaveBeenCalledWith(expect.objectContaining({
+      state: code === "not_found" ? "access_removed" : code,
+      reconnect: false,
+    }));
+    expect(direct.describe(scopeId).state).toBe("connected");
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(world.sockets).toHaveLength(0);
+    expect(unavailable).toHaveBeenCalledOnce();
+    direct.close();
+    await settle();
+  });
+
+  it("stops reading an undeclared oversized failure body at the client limit", async () => {
+    let pulls = 0;
+    const fetchImpl = (async () => new Response(new ReadableStream<Uint8Array>({
+      pull(controller) {
+        pulls += 1;
+        if (pulls > 1) { controller.close(); return; }
+        controller.enqueue(new Uint8Array(2 * 1024 * 1024 + 1));
+      },
+    }, { highWaterMark: 0 }), { status: 503, headers: { "content-type": "application/json" } })) as typeof fetch;
+    const direct = client({ fetchImpl });
+    await expect(direct.request(scopeId, "GET", `/api/collaboration/scopes/${scopeId}`))
+      .rejects.toMatchObject({ code: "unavailable" });
+    expect(pulls).toBeLessThanOrEqual(2);
+  });
+
+  it("rejects an undeclared oversized failure stream before EOF", async () => {
+    let controller!: ReadableStreamDefaultController<Uint8Array>;
+    const response = new Response(new ReadableStream<Uint8Array>({
+      start(stream) {
+        controller = stream;
+        stream.enqueue(new Uint8Array(2 * 1024 * 1024 + 1));
+      },
+    }), { status: 503, headers: { "content-type": "application/json" } });
+    const direct = client({ fetchImpl: (async () => response) as typeof fetch });
+    const result = direct.request(scopeId, "GET", `/api/collaboration/scopes/${scopeId}`)
+      .then(() => "resolved", (error: unknown) => error instanceof CollaborationDirectError ? error.code : "unexpected_error");
+    const outcome = await Promise.race([result, new Promise<string>((resolve) => realSetTimeout(() => resolve("stalled"), 1_000))]);
+    if (outcome === "stalled") controller.close();
+    expect(outcome).toBe("unavailable");
+  });
+
   it("routes session exchange, renewal and close through the real relay's runtime directory", async () => {
     const home = { runtimeId, origin: "https://owner-home.example" };
     const relay = new CollaborationRelay({
@@ -140,6 +271,24 @@ describe("collaboration direct client", () => {
     const latest = world.home.requests.at(-1)!.headers.get("x-matrix-collaboration-session");
     expect(latest).not.toBe(first);
     expect(world.platform.tickets).toHaveLength(4);
+  });
+
+  it("reconnects with a fresh ticket when an older home gives an untyped 401 on renewal", async () => {
+    const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (new URL(String(input)).pathname.endsWith("/renew")) {
+        return new Response("session lost", { status: 401, headers: { "content-type": "text/plain" } });
+      }
+      return world.fetchImpl(input, init);
+    }) as typeof fetch;
+    const direct = client({ fetchImpl });
+    await direct.request(scopeId, "GET", `/api/collaboration/scopes/${scopeId}`);
+    const first = world.home.requests.at(-1)!.headers.get("x-matrix-collaboration-session");
+    world.advance(245_000);
+
+    await expect(direct.request(scopeId, "GET", `/api/collaboration/scopes/${scopeId}`))
+      .resolves.toMatchObject({ id: scopeId });
+    expect(world.home.requests.at(-1)!.headers.get("x-matrix-collaboration-session")).not.toBe(first);
+    expect(direct.describe(scopeId).state).toBe("connected");
   });
 
   it("tells old clients to upgrade instead of retrying", async () => {
@@ -327,7 +476,7 @@ describe("collaboration direct client", () => {
     const shared = await api.get("/api/collaboration/shared") as { items: Json[] };
     expect(shared.items[0]).toMatchObject({ scopeId, status: "accepted", home: "unauthenticated" });
     expect(CollaborationDiscoveryItemSchema.safeParse(shared.items[0]).success).toBe(true);
-    expect(api.direct.describe(scopeId).state).toBe("unauthenticated");
+    expect(api.direct.describe(scopeId).state).toBe("unauthorized");
     expect(world.home.requests).toHaveLength(0);
   });
 

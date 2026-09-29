@@ -287,7 +287,7 @@ describe("platform collaboration routes", () => {
         body: JSON.stringify({ identifier: `unknown-${index}`, organizationId: "org_matrix_team" }),
       });
       expect(unresolved.status).toBe(404);
-      expect(await unresolved.json()).toEqual({ error: "Invitation target unavailable" });
+      expect(await unresolved.json()).toEqual({ error: "Invitation target unavailable", code: "not_found" });
     }
     const limited = await app.request("/internal/collaboration/participants/resolve", {
       method: "POST",

@@ -68,7 +68,7 @@ describe("S20 platform organization precondition: fail-closed composition", () =
     ]);
     for (const response of responses) {
       expect(response.status).toBe(503);
-      await expect(response.json()).resolves.toEqual({ error: "Collaboration unavailable" });
+      await expect(response.json()).resolves.toEqual({ error: "Collaboration unavailable", code: "unavailable" });
     }
     expect(warn).toHaveBeenCalledTimes(1);
     clock += 61_000;

@@ -107,7 +107,7 @@ describe("platform internal collaboration routes", () => {
 
     const unknown = await request("missing-person");
     expect(unknown.status).toBe(404);
-    expect(await unknown.json()).toEqual({ error: "Invitation target unavailable" });
+    expect(await unknown.json()).toEqual({ error: "Invitation target unavailable", code: "not_found" });
   });
 
   it("rate limits invitation resolution per authenticated owner runtime", async () => {

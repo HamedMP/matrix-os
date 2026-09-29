@@ -18,7 +18,7 @@ const terminalPath = `/ws/collaboration/direct/scopes/${scopeId}/terminal`;
 
 type FakeWs = { send: ReturnType<typeof vi.fn>; close: ReturnType<typeof vi.fn>; raw: { bufferedAmount: number } };
 
-function harness(options: { verifyTicket?: () => unknown; openStream?: () => Promise<unknown> } = {}) {
+function harness(options: { verifyTicket?: () => unknown; openStream?: () => Promise<unknown>; evidenceExpiresAt?: string; terminal?: boolean } = {}) {
   const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
   const commitAdmission = vi.fn();
   const release = vi.fn();
@@ -33,10 +33,17 @@ function harness(options: { verifyTicket?: () => unknown; openStream?: () => Pro
       release,
     }))),
     subscribeEnded: vi.fn(() => () => undefined),
-    describe: vi.fn(() => null),
+    describe: vi.fn(() => options.evidenceExpiresAt ? {
+      authorityGeneration: 3, evidenceExpiresAt: options.evidenceExpiresAt,
+      expiresAt: new Date(Date.parse(options.evidenceExpiresAt) + 280_000).toISOString(),
+    } : null),
     runStreamInput: vi.fn(),
   };
-  const events = { open: vi.fn() };
+  const events = { open: vi.fn(async () => ({ close: vi.fn(), touch: vi.fn() })) };
+  const terminal = options.terminal ? {
+    dispatcher: {}, registry: { open: vi.fn(async () => ({ close: vi.fn(), touch: vi.fn() })) },
+    control: { markDisconnected: vi.fn() },
+  } : undefined;
   let socketEvents: WSEvents<unknown> | undefined;
   const upgradeWebSocket = ((factory: (context: Context) => WSEvents<unknown>) => (
     async (context: Context) => {
@@ -52,12 +59,13 @@ function harness(options: { verifyTicket?: () => unknown; openStream?: () => Pro
     sessions: sessions as never,
     authority: {} as never,
     events: events as never,
+    ...(terminal ? { terminal: terminal as never } : {}),
   });
   return { app, warn, verifier, sessions, events, commitAdmission, release, socket: () => socketEvents! };
 }
 
-function ticketQuery(): string {
-  const ticket = { purpose: "terminal", resource: { scopeId, kind: "terminal" }, nonce };
+function ticketQuery(purpose: "events" | "terminal" = "terminal"): string {
+  const ticket = { purpose, resource: { scopeId, kind: purpose === "events" ? "chat" : "terminal" }, nonce };
   return `ticket=${Buffer.from(JSON.stringify(ticket)).toString("base64url")}`;
 }
 
@@ -135,5 +143,27 @@ describe("direct terminal WebSocket without the shared terminal dependency", () 
     await vi.waitFor(() => expect(ws.close).toHaveBeenCalledWith(1008, "Invalid frame"));
     expect(frames(ws)).toEqual([{ version: 1, type: "collaboration.error", code: "unavailable" }]);
     expect(release).not.toHaveBeenCalled();
+  });
+});
+
+describe("machine-free member direct stream evidence lease", () => {
+  afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
+
+  it.each(["events", "terminal"] as const)("closes an idle %s stream within 25 seconds of membership evidence expiry", async (purpose) => {
+    const started = new Date("2026-09-28T09:00:00.000Z");
+    vi.useFakeTimers();
+    vi.setSystemTime(started);
+    const evidenceExpiresAt = new Date(started.getTime() + 20_000).toISOString();
+    const { app, sessions, commitAdmission, socket } = harness({ evidenceExpiresAt, terminal: purpose === "terminal" });
+    const path = `/ws/collaboration/direct/scopes/${scopeId}/${purpose}`;
+    await app.request(`${path}?${ticketQuery(purpose)}`);
+    const ws: FakeWs = { send: vi.fn(), close: vi.fn(), raw: { bufferedAmount: 0 } };
+    socket().onOpen?.({} as never, ws as never);
+    socket().onMessage?.({ data: handshake() } as never, ws as never);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(commitAdmission).toHaveBeenCalledOnce();
+    expect(sessions.describe).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(25_000);
+    expect(ws.close).toHaveBeenCalledWith(1008, "Lease expired");
   });
 });

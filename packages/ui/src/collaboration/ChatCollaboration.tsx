@@ -25,6 +25,7 @@ import { SessionAccessControl } from "./SessionAccessControl.js";
 import { SessionDiscussionLayer, type CollaborationOverlayLayers } from "./SessionDiscussionLayer.js";
 import { useSessionDiscussion } from "./useSessionDiscussion.js";
 import { notifyCollaborationDiscoveryChanged } from "./discovery-events.js";
+import { classifyCollaborationClientError, type ClassifiedCollaborationFailure } from "./failure-classification.js";
 
 type DiscoveryItem = z.infer<typeof CollaborationDiscoveryItemSchema>;
 type SharedMessage = z.infer<typeof CollaborationSharedChatMessageSchema>;
@@ -278,11 +279,11 @@ function SharedTerminalView({ api, actorId, scopeId, layers }: {
   layers?: CollaborationOverlayLayers;
 }) {
   const [scope, setScope] = useState<SharedScope | null>(null);
-  const [failed, setFailed] = useState(false);
+  const [failed, setFailed] = useState<ClassifiedCollaborationFailure | null>(null);
   useEffect(() => {
     let active = true;
     setScope(null);
-    setFailed(false);
+    setFailed(null);
     void api.get(`/api/collaboration/scopes/${scopeId}`)
       .then((value) => {
         const parsed = CollaborationScopeSchema.parse(value);
@@ -291,18 +292,18 @@ function SharedTerminalView({ api, actorId, scopeId, layers }: {
       })
       .catch((error: unknown) => {
         console.warn("[terminal-collaboration] scope load failed", error instanceof Error ? error.name : "UnknownError");
-        if (active) setFailed(true);
+        if (active) setFailed(classifyCollaborationClientError(error));
       });
     return () => { active = false; };
   }, [api, scopeId]);
-  if (failed) return <SafeError title="Shared terminal unavailable" />;
+  if (failed) return <SafeError title="Shared terminal unavailable" failure={failed} />;
   if (!scope) return <p role="status" className="p-8">Loading shared terminal…</p>;
   return <SharedTerminalControls api={api} scope={scope} actorId={actorId} layers={layers} />;
 }
 
 function SharedProjectView({ api, scopeId }: { api: CollaborationApi; scopeId: string }) {
   const [value, setValue] = useState<{ scope: SharedScope; project: z.infer<typeof CollaborationProjectSchema> } | null>(null);
-  const [failed, setFailed] = useState(false);
+  const [failed, setFailed] = useState<ClassifiedCollaborationFailure | null>(null);
   const loadGeneration = useRef(0);
   const load = useCallback(async () => {
     const generation = ++loadGeneration.current;
@@ -316,31 +317,31 @@ function SharedProjectView({ api, scopeId }: { api: CollaborationApi; scopeId: s
       }
       if (generation === loadGeneration.current) {
         setValue({ scope, project });
-        setFailed(false);
+        setFailed(null);
       }
     } catch (error: unknown) {
       console.warn("[project-collaboration] project load failed", error instanceof Error ? error.name : "UnknownError");
       if (generation === loadGeneration.current) {
         setValue(null);
-        setFailed(true);
+        setFailed(classifyCollaborationClientError(error));
       }
       throw error;
     }
   }, [api, scopeId]);
   useEffect(() => {
     setValue(null);
-    setFailed(false);
+    setFailed(null);
     void load().catch((error: unknown) => {
       console.warn("[project-collaboration] initial load unavailable", error instanceof Error ? error.name : "UnknownError");
     });
     return () => { loadGeneration.current += 1; };
   }, [load]);
-  useEffect(() => api.subscribe?.(scopeId, load, () => {
+  useEffect(() => api.subscribe?.(scopeId, load, (failure) => {
     loadGeneration.current += 1;
     setValue(null);
-    setFailed(true);
+    setFailed(failure ?? classifyCollaborationClientError(null));
   }), [api, load, scopeId]);
-  if (failed) return <SafeError title="Shared project unavailable" />;
+  if (failed) return <SafeError title="Shared project unavailable" failure={failed} />;
   if (!value) return <p role="status" className="p-8">Loading shared project…</p>;
   return <main className="mx-auto flex min-h-full w-full max-w-5xl flex-col gap-5 p-5 sm:p-8">
     <header>
@@ -393,20 +394,20 @@ function InvitationView({ api, invitationId, openChat, openTerminal, openProject
 }) {
   const [invitation, setInvitation] = useState<z.infer<typeof CollaborationInvitationSchema> | null>(null);
   const [pending, setPending] = useState(false);
-  const [error, setError] = useState(false);
+  const [error, setError] = useState<ClassifiedCollaborationFailure | null>(null);
   useEffect(() => {
     let active = true;
     void api.get(`/api/collaboration/invitations/${encodeURIComponent(invitationId)}`)
       .then((value) => { if (active) setInvitation(CollaborationInvitationSchema.parse(value)); })
       .catch((failure: unknown) => {
         console.warn("[chat-collaboration] invitation load failed", failure instanceof Error ? failure.name : "UnknownError");
-        if (active) setError(true);
+        if (active) setError(classifyCollaborationClientError(failure));
       });
     return () => { active = false; };
   }, [api, invitationId]);
   const act = async (action: "accept" | "decline") => {
     if (!invitation) return;
-    setPending(true); setError(false);
+    setPending(true); setError(null);
     try {
       const result = z.looseObject({ scopeId: z.uuid() }).parse(await api.post(
         `/api/collaboration/invitations/${encodeURIComponent(invitation.id)}/${action}`,
@@ -422,10 +423,10 @@ function InvitationView({ api, invitationId, openChat, openTerminal, openProject
       }
     } catch (failure: unknown) {
       console.warn("[chat-collaboration] invitation action failed", failure instanceof Error ? failure.name : "UnknownError");
-      setError(true);
+      setError(classifyCollaborationClientError(failure));
     } finally { setPending(false); }
   };
-  if (error && !invitation) return <SafeError title="Invitation unavailable" />;
+  if (error && !invitation) return <SafeError title="Invitation unavailable" failure={error} />;
   if (!invitation) return <p role="status" className="p-8">Loading invitation…</p>;
   return <main className="mx-auto flex min-h-full w-full max-w-2xl items-center p-5 sm:p-8">
     <section className="w-full rounded-2xl border p-6 sm:p-8">
@@ -483,6 +484,7 @@ interface SharedChatState {
   loading: boolean;
   sending: boolean;
   error: SharedChatError;
+  failure: ClassifiedCollaborationFailure | null;
   connection: "connecting" | "connected" | "reconnecting";
   refreshVersion: number;
 }
@@ -490,7 +492,7 @@ interface SharedChatState {
 type SharedChatAction =
   | { type: "reset" }
   | { type: "loaded"; scope: SharedScope; chat: SharedChat; messages: SharedMessage[]; clearForegroundError: boolean }
-  | { type: "load_failed" }
+  | { type: "load_failed"; failure: ClassifiedCollaborationFailure }
   | { type: "page_started" }
   | { type: "page_cancelled" }
   | { type: "page_loaded"; messages: SharedMessage[]; hasMore: boolean }
@@ -501,7 +503,7 @@ type SharedChatAction =
   | { type: "send_finished" }
   | { type: "send_failed" }
   | { type: "connection_changed"; connection: SharedChatState["connection"] }
-  | { type: "unavailable" };
+  | { type: "unavailable"; failure?: ClassifiedCollaborationFailure };
 
 const initialSharedChatState: SharedChatState = {
   scope: null,
@@ -514,6 +516,7 @@ const initialSharedChatState: SharedChatState = {
   loading: true,
   sending: false,
   error: null,
+  failure: null,
   connection: "connecting",
   refreshVersion: 0,
 };
@@ -526,8 +529,9 @@ function reduceSharedChat(state: SharedChatState, action: SharedChatAction): Sha
         hasMoreMessages: BigInt(action.chat.messageCount) > BigInt(action.messages.length),
         loadingMoreMessages: false, historyPageError: false, loading: false,
         refreshVersion: state.refreshVersion + 1,
-        error: action.clearForegroundError || state.error === "load" || state.error === "unavailable" ? null : state.error };
-    case "load_failed": return { ...state, loading: false, error: "load" };
+        error: action.clearForegroundError || state.error === "load" || state.error === "unavailable" ? null : state.error,
+        failure: action.clearForegroundError || state.error === "load" || state.error === "unavailable" ? null : state.failure };
+    case "load_failed": return { ...state, loading: false, error: "load", failure: action.failure };
     case "page_started": return { ...state, loadingMoreMessages: true, historyPageError: false };
     case "page_cancelled": return { ...state, loadingMoreMessages: false };
     case "page_loaded": return { ...state, messages: action.messages, hasMoreMessages: action.hasMore,
@@ -539,7 +543,7 @@ function reduceSharedChat(state: SharedChatState, action: SharedChatAction): Sha
     case "send_finished": return { ...state, sending: false };
     case "send_failed": return { ...state, sending: false, error: "send" };
     case "connection_changed": return { ...state, connection: action.connection };
-    case "unavailable": return { ...state, error: "unavailable" };
+    case "unavailable": return { ...state, error: "unavailable", failure: action.failure ?? null };
   }
 }
 
@@ -578,7 +582,7 @@ function useSharedChatController({ api, actorId, runtimeId, scopeId, storage, on
       markRead(api, base, nextMessages);
     } catch (failure: unknown) {
       console.warn("[chat-collaboration] Chat load failed", failure instanceof Error ? failure.name : "UnknownError");
-      if (generation === loadGeneration.current) dispatch({ type: "load_failed" });
+      if (generation === loadGeneration.current) dispatch({ type: "load_failed", failure: classifyCollaborationClientError(failure) });
     }
   }, [api, scopeId]);
   const recoverCanonical = useCallback(async () => {
@@ -650,7 +654,7 @@ function useSharedChatController({ api, actorId, runtimeId, scopeId, storage, on
   useEffect(() => api.subscribe?.(
     scopeId,
     recoverCanonical,
-    () => dispatch({ type: "unavailable" }),
+    (failure) => dispatch({ type: "unavailable", ...(failure ? { failure } : {}) }),
     (connection) => dispatch({ type: "connection_changed", connection }),
   ), [api, recoverCanonical, scopeId]);
   const updateDraft = (text: string, mode: CollaborationDraft["mode"] = state.draft.mode) => {
@@ -678,7 +682,7 @@ function useSharedChatController({ api, actorId, runtimeId, scopeId, storage, on
       } catch (failure: unknown) {
         if (failure instanceof CollaborationRecoverySupersededError) return;
         console.warn("[chat-collaboration] sent message refresh failed", failure instanceof Error ? failure.name : "UnknownError");
-        dispatch({ type: "load_failed" });
+        dispatch({ type: "load_failed", failure: classifyCollaborationClientError(failure) });
       }
     } catch (failure: unknown) {
       console.warn("[chat-collaboration] discussion send failed", failure instanceof Error ? failure.name : "UnknownError");
@@ -697,7 +701,7 @@ export function SharedChatPanel(props: Parameters<typeof useSharedChatController
   const { state, loadMoreMessages, updateDraft, changeDraftMode, send } = useSharedChatController(props);
   if (state.loading) return <p role="status" className="p-8">Loading shared Chat…</p>;
   if (!state.scope || !state.chat || state.error === "load" || state.error === "unavailable") {
-    return <SafeError title="Shared Chat unavailable" />;
+    return <SafeError title="Shared Chat unavailable" failure={state.failure ?? undefined} />;
   }
   return <NativeSharedChatPanel {...props} state={{ ...state, scope: state.scope, chat: state.chat }} loadMoreMessages={loadMoreMessages}
     updateDraft={updateDraft} changeDraftMode={changeDraftMode} send={send} />;
@@ -891,10 +895,10 @@ function markRead(api: CollaborationApi, base: string, messages: readonly Shared
   });
 }
 
-function SafeError({ title }: { title: string }) {
+function SafeError({ title, failure }: { title: string; failure?: ClassifiedCollaborationFailure }) {
   return <div role="alert" className="m-auto max-w-lg rounded-2xl border p-8 text-center">
     <div aria-hidden className="text-3xl">◇</div><h1 className="mt-3 text-lg font-medium">{title}</h1>
-    <p className="mt-1 text-sm">Your access may have changed. Return to Shared with me and refresh.</p>
+    <p className="mt-1 text-sm">{failure?.message ?? "Your access may have changed. Return to Shared with me and refresh."}</p>
   </div>;
 }
 

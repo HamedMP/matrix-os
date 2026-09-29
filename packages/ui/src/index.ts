@@ -123,6 +123,7 @@ export { collaborationDraftKey, collaborationDraftModeKey, createCollaborationDr
 export { deriveChatPermissions } from "./collaboration/permissions.js";
 export { createCollaborationBrowserApi } from "./collaboration/client.js";
 export { createCollaborationDirectClient, CollaborationDirectError, type CollaborationDirectClient, type CollaborationDirectClientOptions, type CollaborationDirectErrorCode, type DirectScopeState } from "./collaboration/direct-client.js";
+export { classifyCollaborationFailure, classifyCollaborationClientError, type ClassifiedCollaborationFailure, type CollaborationFailureState } from "./collaboration/failure-classification.js";
 export { createCollaborationDirectApi, type CollaborationDirectApi } from "./collaboration/direct-api.js";
 export {
   COLLABORATION_DISCOVERY_CHANGED_EVENT,

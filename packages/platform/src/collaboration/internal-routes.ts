@@ -1,4 +1,5 @@
 import {
+  collaborationHttpFailureCode,
   COLLABORATION_HTTP_BODY_LIMIT,
   CollaborationActorIdSchema,
   CollaborationDirectoryEventSchema,
@@ -111,5 +112,5 @@ function safeJson(
   status: 401 | 403 | 404 | 409 | 413 | 422 | 429 | 503,
 ) {
   c.header("Cache-Control", "no-store");
-  return c.json({ error }, status);
+  return c.json({ error, code: collaborationHttpFailureCode(status, error) }, status);
 }

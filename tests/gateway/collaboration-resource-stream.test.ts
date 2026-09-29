@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { watchResourceStream } from "../../packages/gateway/src/collaboration/resource-routes.js";
 
 describe("bounded collaboration resource streams", () => {
@@ -39,6 +39,27 @@ describe("bounded collaboration resource streams", () => {
     });
     const delivered = await drain(watchResourceStream(source, 11, () => active));
     expect(delivered).toEqual({ text: "first", errored: true });
+  });
+
+  it("closes an idle machine-free member download within 25 seconds of evidence expiry", async () => {
+    vi.useFakeTimers();
+    try {
+      let active = true;
+      let finishPull: (() => void) | undefined;
+      const source = new ReadableStream<Uint8Array>({
+        pull: () => new Promise<void>((resolve) => { finishPull = resolve; }),
+      });
+      const reader = watchResourceStream(source, 1, () => active).getReader();
+      const reading = reader.read();
+      const rejected = expect(reading).rejects.toThrow("Shared resource stream unavailable");
+      await vi.advanceTimersByTimeAsync(20_000);
+      active = false;
+      await vi.advanceTimersByTimeAsync(5_000);
+      await rejected;
+      finishPull?.();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

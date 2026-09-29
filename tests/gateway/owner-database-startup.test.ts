@@ -33,7 +33,7 @@ describe("owner database startup", () => {
     ]) {
       const response = await app.request(route);
       expect(response.status).toBe(503);
-      expect(await response.json()).toEqual({ error: "Collaboration unavailable" });
+      expect(await response.json()).toEqual({ error: "Collaboration unavailable", code: "unavailable" });
     }
   });
 
