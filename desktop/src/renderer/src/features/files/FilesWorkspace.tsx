@@ -8,6 +8,7 @@ import { isCurrentRuntimeGeneration } from "../../stores/runtime-generation";
 import { useConnection } from "../../stores/connection";
 import ComputerFileBrowser, { type BrowserSelection } from "./ComputerFileBrowser";
 import { DesktopResourceSharing } from "./DesktopResourceSharing";
+import { DesktopOrganizationDrivesView } from "./DesktopOrganizationDrivesView";
 import { PreviewPane, resolveActivePath, type FileSelection } from "./FilePreviewPane";
 import { openFileInDesktopEditor } from "../editor/desktop-editor-store";
 
@@ -28,6 +29,7 @@ interface NewFolderRequest {
   authGeneration: number;
 }
 const HOME_TAB: FileTab = { id: "files-home", path: "", initialPath: "", title: "Matrix home" };
+const ORGANIZATION_DRIVES_TAB = "organization-drives";
 
 function pathTitle(path: string): string {
   return path.split("/").filter(Boolean).at(-1) ?? "Matrix home";
@@ -172,6 +174,13 @@ export default function FilesWorkspace() {
             </div>
           );
         })}
+        <button type="button" role="tab" aria-selected={activeTabId === ORGANIZATION_DRIVES_TAB}
+          onClick={() => setActiveTabId(ORGANIZATION_DRIVES_TAB)}
+          className="flex h-8 shrink-0 items-center rounded-t-lg border border-b-0 px-3 text-xs font-medium outline-none focus-visible:ring-1 focus-visible:ring-[var(--accent)]"
+          style={{ borderColor: "var(--border-subtle)", background: activeTabId === ORGANIZATION_DRIVES_TAB ? "var(--bg-surface)" : "transparent",
+            color: activeTabId === ORGANIZATION_DRIVES_TAB ? "var(--text-primary)" : "var(--text-tertiary)" }}>
+          Organization drives
+        </button>
         {activePath && activeSelection?.entry ? <DesktopResourceSharing key={`${activeSelection.entry.type}:${activePath}`}
           kind={activeSelection.entry.type === "directory" ? "folder" : "file"} path={activePath} /> : null}
         <button type="button" aria-label="Open Matrix home in new tab" onClick={() => openFolderTab("", "Matrix home")} className="mb-1 flex size-7 shrink-0 items-center justify-center rounded-md hover:bg-[var(--bg-hover)]" style={{ color: "var(--text-tertiary)" }}><Plus size={15} /></button>
@@ -197,6 +206,7 @@ export default function FilesWorkspace() {
               </RetainedPane>
             );
           })}
+          {activeTabId === ORGANIZATION_DRIVES_TAB && <DesktopOrganizationDrivesView key={`${runtimeSlot}:${authGeneration}`} />}
         </div>
         {previewSelection ? (
           <Suspense fallback={<div className="flex flex-1 items-center justify-center text-xs" style={{ color: "var(--text-tertiary)" }}>Loading preview…</div>}>

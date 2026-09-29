@@ -163,6 +163,8 @@ describe("organization drive service", () => {
       const second = await f.service.list({ organizationId: org, scopeId: scope, after: first.nextCursor, limit: 2 });
       expect(second.files.map((file) => file.path)).toEqual(["c.txt"]);
       expect(second.nextCursor).toBeUndefined();
+      expect(await f.service.versionForPath({ organizationId: org, scopeId: scope, path: "c.txt" })).toBe(1);
+      expect(await f.service.versionForPath({ organizationId: org, scopeId: scope, path: "missing.txt" })).toBe(0);
     } finally { await f.close(); }
   });
 });
