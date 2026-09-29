@@ -25,7 +25,7 @@ function cloudInitPostgresBlock(): string {
     .replaceAll('/usr/local/libexec', '$TEST_ROOT/libexec');
 }
 
-function runCloudInitPostgresBlock(options: { helper: boolean; unit: boolean }) {
+function runCloudInitPostgresBlock(options: { helper: boolean; unit: boolean; running?: string; existing?: string }) {
   const testRoot = mkdtempSync(join(tmpdir(), 'matrix-postgres-cloud-init-'));
   mkdirSync(join(testRoot, 'opt/matrix/bin'), { recursive: true });
   mkdirSync(join(testRoot, 'etc/systemd/system'), { recursive: true });
@@ -37,12 +37,15 @@ calls="$TEST_ROOT/calls"
 chmod() { printf 'chmod %s\\n' "$*" >>"$calls"; }
 install() { printf 'install %s\\n' "$*" >>"$calls"; }
 systemctl() { printf 'systemctl %s\\n' "$*" >>"$calls"; }
-docker() { printf 'docker %s\\n' "$*" >>"$calls"; }
+docker() {
+  printf 'docker %s\\n' "$*" >>"$calls"
+  if [ "$1" = ps ] && [ "$2" = -a ]; then printf '%s' "$EXISTING"; elif [ "$1" = ps ]; then printf '%s' "$RUNNING"; fi
+}
 `;
   try {
     const result = spawnSync('bash', ['-c', `${stubs}\n${cloudInitPostgresBlock()}`], {
       encoding: 'utf8',
-      env: { ...process.env, TEST_ROOT: testRoot },
+      env: { ...process.env, TEST_ROOT: testRoot, RUNNING: options.running ?? '', EXISTING: options.existing ?? '' },
     });
     const calls = existsSync(join(testRoot, 'calls')) ? readFileSync(join(testRoot, 'calls'), 'utf8') : '';
     return { result, calls };
@@ -179,6 +182,20 @@ describe('customer VPS PostgreSQL privilege boundary', () => {
     expect(calls).not.toContain('systemctl start matrix-postgres.service');
     expect(calls).toContain('docker volume create matrix-postgres');
     expect(calls).toContain('docker run -d --name matrix-postgres --restart unless-stopped');
+  });
+
+  it('leaves a running legacy PostgreSQL container alone when bootstrap is retried', () => {
+    const { result, calls } = runCloudInitPostgresBlock({ helper: false, unit: false, running: 'matrix-postgres\n', existing: 'matrix-postgres\n' });
+    expect(result.status, result.stderr).toBe(0);
+    expect(calls).not.toContain('docker start');
+    expect(calls).not.toContain('docker run');
+  });
+
+  it('starts a stopped legacy PostgreSQL container instead of recreating it', () => {
+    const { result, calls } = runCloudInitPostgresBlock({ helper: false, unit: false, existing: 'matrix-postgres\n' });
+    expect(result.status, result.stderr).toBe(0);
+    expect(calls).toContain('docker start matrix-postgres');
+    expect(calls).not.toContain('docker run');
   });
 
   it('falls back to inline startup when the helper ships without its unit', () => {

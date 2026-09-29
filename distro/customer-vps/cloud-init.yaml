@@ -694,6 +694,8 @@ runcmd:
       install -o root -g root -m 0755 /opt/matrix/bin/matrix-postgres-start /usr/local/libexec/matrix-postgres-start
       systemctl daemon-reload
       systemctl start matrix-postgres.service
+    elif docker ps --format '{{.Names}}' | grep -qx matrix-postgres; then
+      :
     elif docker ps -a --format '{{.Names}}' | grep -qx matrix-postgres; then
       docker start matrix-postgres >/dev/null
     else
