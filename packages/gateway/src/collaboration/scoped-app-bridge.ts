@@ -1,9 +1,10 @@
 /** Transactional bridge from a verified shared app instance to its owner Postgres schema. */
 import { createHash } from "node:crypto";
 import { sql, type RawBuilder } from "kysely";
-import { BridgeQueryBodySchema, type BridgeQueryBody } from "../app-db-contracts.js";
+import type { BridgeQueryBody } from "../app-db-contracts.js";
 import { isSafeName } from "../app-db-types.js";
 import { ProjectAppAdapterError, type ProjectAppBridge } from "./project-app-adapter.js";
+import { ScopedAppActionSchema } from "./scoped-app-action.js";
 
 type AppRecord = { storageSchema: string; tables: readonly string[] };
 type Filter = NonNullable<Extract<BridgeQueryBody, { action: "find" }>["filter"]>;
@@ -80,17 +81,33 @@ export function createScopedAppBridge(options: {
       if (!record || record.storageSchema !== input.storageSchema || !isSafeName(record.storageSchema)) {
         throw new ProjectAppAdapterError("forbidden");
       }
-      const action = BridgeQueryBodySchema.safeParse(input.action);
+      const action = ScopedAppActionSchema.safeParse(input.action);
       if (!action.success || action.data.action === "listApps" || action.data.app !== input.namespace) {
         throw new ProjectAppAdapterError("invalid_action");
       }
       if (action.data.action === "appInfo") return { id: input.appId };
       if (action.data.action === "schema") return { tables: record.tables };
+      const trx = input.transaction;
+      if (action.data.action === "readData") {
+        const result = await sql<{ value: string | null }>`SELECT value FROM public._kv WHERE app = ${input.namespace} AND key = ${action.data.key}`.execute(trx);
+        return result.rows[0]?.value ?? null;
+      }
+      if (action.data.action === "writeData") {
+        // The adapter holds the scope's write lock. Bound owner storage even for
+        // apps without declared SQL tables, while allowing an existing key to update.
+        const count = await sql<{ count: number }>`SELECT COUNT(*)::int AS count FROM public._kv WHERE app = ${input.namespace}`.execute(trx);
+        if (Number(count.rows[0]?.count ?? 0) >= 128) {
+          const existing = await sql`SELECT 1 FROM public._kv WHERE app = ${input.namespace} AND key = ${action.data.key}`.execute(trx);
+          if (!existing.rows.length) throw new ProjectAppAdapterError("app_unavailable");
+        }
+        await sql`INSERT INTO public._kv (app, key, value) VALUES (${input.namespace}, ${action.data.key}, ${action.data.value})
+          ON CONFLICT (app, key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`.execute(trx);
+        return { ok: true };
+      }
       if (!record.tables.includes(action.data.table) || !isSafeName(action.data.table)) {
         throw new ProjectAppAdapterError("forbidden");
       }
       const table = sql`${sql.id(record.storageSchema)}.${sql.id(action.data.table)}`;
-      const trx = input.transaction;
       switch (action.data.action) {
         case "find": {
           const where = whereClause(action.data.filter);

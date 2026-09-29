@@ -11,7 +11,7 @@ const utf8 = new TextDecoder("utf-8", { fatal: true });
 
 const csp = [
   "default-src 'none'", "base-uri 'none'", "form-action 'none'", "object-src 'none'", "frame-src 'none'",
-  "script-src 'unsafe-inline' data:", "style-src 'unsafe-inline'", "img-src data:", "font-src data:", "connect-src 'none'",
+  "script-src 'unsafe-inline' data:", "style-src 'unsafe-inline'", "img-src data:", "font-src data:", "connect-src 'self'",
 ].join("; ");
 
 function localAssetPath(value: string): string {
@@ -112,22 +112,35 @@ function bridgeScript(scopeId: string, appId: string, role: string): string {
   return `(()=>{
     const identity=${identity};
     const listeners=[];
-    window.addEventListener('message',(event)=>{
-      if(event.source!==parent||!event.data||event.data.type!=='matrix:app-changed'||
-        event.data.scopeId!==identity.scopeId||event.data.appId!==identity.appId)return;
-      for(const listener of listeners.slice())if(!event.data.table||event.data.table===listener.table)listener.callback({table:listener.table});
-    });
+    const channel=new MessageChannel();
+    const port=channel.port1;
+    const pending=new Map();
+    let nextId=0;
+    port.onmessage=(event)=>{
+      const data=event.data;
+      if(!data||typeof data!=='object')return;
+      if(data.type==='matrix:app-changed'&&data.scopeId===identity.scopeId&&data.appId===identity.appId){
+        for(const listener of listeners.slice())if(!data.table||data.table===listener.table)listener.callback({table:listener.table});
+        return;
+      }
+      if(data.type!=='matrix:app-result'||!Number.isSafeInteger(data.id))return;
+      const entry=pending.get(data.id);
+      if(!entry)return;
+      pending.delete(data.id);clearTimeout(entry.timer);
+      if(data.ok)entry.resolve(data.result);else entry.reject(new Error('App request unavailable'));
+    };
+    parent.postMessage({type:'matrix:app-bridge-ready',scopeId:identity.scopeId,appId:identity.appId},'*',[channel.port2]);
     function request(action){return new Promise((resolve,reject)=>{
-      const channel=new MessageChannel();
-      const timer=setTimeout(()=>{channel.port1.close();reject(new Error('App request timed out'));},10000);
-      channel.port1.onmessage=(event)=>{clearTimeout(timer);channel.port1.close();
-        if(event.data&&event.data.ok)resolve(event.data.result);else reject(new Error('App request unavailable'));};
-      parent.postMessage({type:'matrix:app-query',scopeId:identity.scopeId,appId:identity.appId,action},'*',[channel.port2]);
+      if(pending.size>=32){reject(new Error('Too many app requests'));return;}
+      const id=++nextId;
+      const timer=setTimeout(()=>{pending.delete(id);reject(new Error('App request timed out'));},10000);
+      pending.set(id,{resolve,reject,timer});
+      port.postMessage({type:'matrix:app-query',scopeId:identity.scopeId,appId:identity.appId,id,action});
     });}
     function call(action,fields){return request({app:identity.appId,action,...fields});}
     window.MatrixOS={app:{name:identity.appId},db:{
       find:(table,opts={})=>call('find',{table,...(opts.where?{filter:opts.where}:{}),...(opts.orderBy?{orderBy:opts.orderBy}:{}),...(opts.limit?{limit:opts.limit}:{}),...(opts.offset?{offset:opts.offset}:{})}),
-      findOne:(table,id)=>call('findOne',{table,id}),count:(table,filter)=>call('count',{table,...(filter?{filter}:{})}).then(value=>value.count),
+      findOne:(table,id)=>call('findOne',{table,id}),count:(table,filter)=>call('count',{table,...(filter?{filter}:{})}),
       schema:()=>call('schema',{}),appInfo:()=>call('appInfo',{}),
       insert:(table,data)=>call('insert',{table,data}),bulkInsert:(table,rows)=>call('bulkInsert',{table,rows}),
       update:(table,id,data)=>call('update',{table,id,data}),bulkUpdate:(table,updates)=>call('bulkUpdate',{table,updates}),
@@ -135,13 +148,24 @@ function bridgeScript(scopeId: string, appId: string, role: string): string {
       onChange:(table,callback)=>{if(listeners.length>=32)throw new Error('Too many app listeners');
         const listener={table,callback};listeners.push(listener);
         return ()=>{const index=listeners.indexOf(listener);if(index>=0)listeners.splice(index,1);};}
-    }};
+    },
+    readData:(key)=>call('readData',{key}).then((stored)=>{
+      if(stored===null)return null;
+      if(typeof stored!=='string')throw new Error('App data unavailable');
+      const envelope=JSON.parse(stored);
+      if(!envelope||typeof envelope!=='object')throw new Error('App data unavailable');
+      if(envelope.undefined===true)return undefined;
+      if(Object.prototype.hasOwnProperty.call(envelope,'value'))return envelope.value;
+      throw new Error('App data unavailable');
+    }),
+    writeData:(key,value)=>call('writeData',{key,value:JSON.stringify(value===undefined?{undefined:true}:{value})}).then(()=>undefined)
+    };
   })();`;
 }
 
 export const SharedAppMessageSchema = z.object({
-  type: z.literal("matrix:app-query"), scopeId: z.string(), appId: z.string(), action: z.json(),
+  type: z.literal("matrix:app-query"), scopeId: z.string(), appId: z.string(), id: z.number().int().nonnegative(), action: z.json(),
 }).strict();
 
-export const SHARED_APP_READ_ACTIONS = new Set(["find", "findOne", "count", "schema", "appInfo"]);
-export const SHARED_APP_WRITE_ACTIONS = new Set(["insert", "bulkInsert", "update", "bulkUpdate", "delete"]);
+export const SHARED_APP_READ_ACTIONS = new Set(["find", "findOne", "count", "schema", "appInfo", "readData"]);
+export const SHARED_APP_WRITE_ACTIONS = new Set(["insert", "bulkInsert", "update", "bulkUpdate", "delete", "writeData"]);

@@ -1,8 +1,8 @@
 import { createHash, randomUUID } from "node:crypto";
-import { BridgeQueryBodySchema, type BridgeQueryBody } from "../app-db-contracts.js";
 import { normalizeAppStorageSlug } from "../app-db-types.js";
 import { type Kysely, type Transaction } from "kysely";
 import { z } from "zod/v4";
+import { ScopedAppActionSchema, type ScopedAppAction } from "./scoped-app-action.js";
 import {
   CollaborationAuthorizationError,
   type AuthorizedCollaborationContext,
@@ -27,8 +27,8 @@ const MutationEnvelopeSchema = z.object({
   action: z.unknown(),
 }).strict();
 
-const READ_ACTIONS: readonly BridgeQueryBody["action"][] = ["find", "findOne", "count", "schema", "appInfo"];
-const MUTATION_ACTIONS: readonly BridgeQueryBody["action"][] = ["insert", "bulkInsert", "update", "bulkUpdate", "delete"];
+const READ_ACTIONS: readonly ScopedAppAction["action"][] = ["find", "findOne", "count", "schema", "appInfo", "readData"];
+const MUTATION_ACTIONS: readonly ScopedAppAction["action"][] = ["insert", "bulkInsert", "update", "bulkUpdate", "delete", "writeData"];
 
 export interface ProjectAppBridge {
   execute(input: {
@@ -37,7 +37,7 @@ export interface ProjectAppBridge {
     storageSchema: string;
     scopeId: string;
     actorId: string;
-    action: BridgeQueryBody;
+    action: ScopedAppAction;
     transaction?: Transaction<OwnerCollaborationDatabase>;
   }): Promise<unknown>;
 }
@@ -125,8 +125,8 @@ export function createProjectAppAdapter(options: {
     return { app: app.data, bridgeAppId, namespace: projectNamespace(context.scopeId, appId) };
   }
 
-  function parseAction(raw: unknown, expectedApp: string, allowed: readonly BridgeQueryBody["action"][]): BridgeQueryBody {
-    const parsed = BridgeQueryBodySchema.safeParse(raw);
+  function parseAction(raw: unknown, expectedApp: string, allowed: readonly ScopedAppAction["action"][]): ScopedAppAction {
+    const parsed = ScopedAppActionSchema.safeParse(raw);
     if (!parsed.success || !allowed.includes(parsed.data.action) || parsed.data.action === "listApps"
       || !("app" in parsed.data) || parsed.data.app !== expectedApp) {
       throw new ProjectAppAdapterError("invalid_action");
@@ -212,7 +212,7 @@ export function createProjectAppAdapter(options: {
           storageSchema: app.bridgeAppId,
           scopeId: current.scopeId,
           actorId: current.actorId,
-          action: { ...action, app: app.namespace } as BridgeQueryBody,
+          action: { ...action, app: app.namespace } as ScopedAppAction,
           transaction: trx,
         }));
       });
@@ -265,7 +265,7 @@ export function createProjectAppAdapter(options: {
           storageSchema: app.bridgeAppId,
           scopeId: current.scopeId,
           actorId: current.actorId,
-          action: { ...action, app: app.namespace } as BridgeQueryBody,
+          action: { ...action, app: app.namespace } as ScopedAppAction,
           transaction: trx,
         }));
         const revision = Number(binding.revision) + 1;
