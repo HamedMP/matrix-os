@@ -115,7 +115,7 @@
   "devDependencies": {
     "@excalidraw/excalidraw": "^0.18.0",
     "@matrix-os/gateway": "workspace:*",
-    "@testing-library/react": "^16.3.2",
+    "@testing-library/react": "^16.3.3",
     "@types/better-sqlite3": "^7.6.13",
     "@types/react": "^19.2.7",
     "@types/react-dom": "^19.2.3",
