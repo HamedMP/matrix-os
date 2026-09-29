@@ -126,8 +126,10 @@ async function exercise(parentRoot: string) {
       await writeFile(env.ZELLIJ_CONFIG_FILE, `${common}default_mode "locked"\n`);
       await writeFile(inputPath, "");
       await writeFile(probe, `
-import { appendFile, writeFile } from 'node:fs/promises';
-await writeFile(${JSON.stringify(pidPath)}, String(process.pid));
+import { appendFile, rename, writeFile } from 'node:fs/promises';
+const pidPath = ${JSON.stringify(pidPath)};
+await writeFile(pidPath + '.next', String(process.pid));
+await rename(pidPath + '.next', pidPath);
 process.stdin.setRawMode(true);
 let bytes = 0;
 let writes = Promise.resolve();
@@ -148,11 +150,15 @@ setTimeout(() => process.exit(0), ${scaledTimeout(30_000)});
       await run(binary, ["--config", serverConfig, "--layout", layout, "attach", "--create-background", session], {
         env, cwd: root, timeout: 5_000,
       });
-      await waitFor(async () => readFile(pidPath).then(() => true, (error) => {
+      let originalPid = "";
+      await waitFor(async () => readFile(pidPath, "utf8").then((value) => {
+        if (!/^[1-9][0-9]*$/.test(value)) return false;
+        originalPid = value;
+        return true;
+      }, (error) => {
         if (error.code === "ENOENT") return false;
         throw error;
       }), "pane did not start");
-      const originalPid = await readFile(pidPath, "utf8");
       const adapter = createZellijAdapter({ binaryPath: binary, cwd: root, env, manageConfig: false });
       const runtime = createZellijRuntime({ homePath: root });
       let expected = "";
