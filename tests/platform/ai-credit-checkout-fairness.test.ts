@@ -120,6 +120,21 @@ describe("multi-model credit checkout readiness", () => {
     expect(await result).toBe(false);
   });
 
+  it("uses a fresh alternative when the first ready model expires during its funding reread", async () => {
+    const f = await fixture({ [glm]: { delayMs: 4_000, ready: true, priceTtlMs: 1_000 },
+      [sonnet]: { delayMs: 6_000, ready: true } });
+    let reads = 0;
+    const repository = { getCheckoutFundingSummary: async (...args: Parameters<typeof f.repository.getCheckoutFundingSummary>) => {
+      if (++reads === 2) await new Promise(resolve => setTimeout(resolve, 6_000));
+      return f.repository.getCheckoutFundingSummary(...args);
+    } };
+    const result = isAiCreditCheckoutRouteHealthy({ repository, identity, modelProbes: f.probes });
+    await vi.waitFor(() => expect(f.fetchFn).toHaveBeenCalledTimes(2), { interval: 1 });
+    await vi.advanceTimersByTimeAsync(12_000);
+    expect(await result).toBe(true);
+    await expectCountedUnspentProbes(2);
+  });
+
   it("rejects checkout when every eligible model is unavailable and retains both admissions", async () => {
     const f = await fixture({ [glm]: { delayMs: 1_000, ready: false },
       [sonnet]: { delayMs: 2_000, ready: false } });

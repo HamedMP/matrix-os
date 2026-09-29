@@ -16,9 +16,10 @@ site changes; this specification records the internal behavior and validation.
 
 - Probe only the owner's allowed members of the fixed two-model generic catalog
   concurrently, under the same total request deadline.
-- Accept the first fresh ready result, then re-read exact owner/computer funding
-  and policy. Require the original global/runtime revisions and selected model
-  authorization, and recheck model evidence freshness after the final read.
+- Each fresh ready candidate re-reads exact owner/computer funding and policy.
+  Accept the first candidate whose original global/runtime revisions, model
+  authorization and evidence freshness remain valid after its final read. An
+  early candidate expiring during its read must not discard a fresh alternative.
 - Reject unavailable, expired, future-dated or invalid model evidence. If all
   candidates fail, the total deadline expires or the HTTP request aborts, reject
   checkout and cancel this caller's outstanding work.
@@ -27,6 +28,7 @@ site changes; this specification records the internal behavior and validation.
   counted; another caller's coalesced probe stays alive.
 - Preserve the four-pending-funding-read cap. Cancellation does not pretend a
   pending database operation finished; its slot remains until settlement.
+- At most one initial and two candidate funding reads occur per checkout.
 - Parallel cold reads can admit up to two operator probes instead of one. No
   retry, quota reset, additional credit, policy relaxation or owner inference
   reservation is introduced.
@@ -59,7 +61,8 @@ Readiness probing does not debit the owner's ledger or grant credit.
 Use real checkout, native probe service and repository with the existing local
 Postgres-compatible fixture; simulate Relay and Stripe transport only. Preserve
 Red/Green evidence for model starvation, HTTP cancellation and model evidence
-expiring during the final funding read. Regressions cover unavailable models,
+expiring during the final funding read, including a still-fresh alternative.
+Regressions cover unavailable models,
 total timeout, policy revocation, cached health, independent coalesced callers
 and atomic budget exhaustion. Existing billing tests verify auth, price/package
 validation, claims, payment errors and reuse. Run typecheck, pattern checks and

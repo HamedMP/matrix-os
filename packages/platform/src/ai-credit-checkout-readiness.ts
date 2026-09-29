@@ -50,22 +50,24 @@ export async function isAiCreditCheckoutRouteHealthy(input: {
       // This fixed generic catalog bounds concurrency to two. A slow failed
       // model must not consume a healthy alternative's shared request window.
       const eligible = FUNDED_PROBE_MODELS.filter(model => first.policy.allowedModelIds.includes(model));
-      const { model, result } = await Promise.any(eligible.map(async model => {
+      return await Promise.any(eligible.map(async model => {
         const result = await input.modelProbes!.probe(model, { signal: controller.signal, deadlineAtMs });
         const afterProbe = (input.now ?? (() => new Date()))().getTime();
         if (!result.ready || expired || !(Date.parse(result.checkedAt) <= afterProbe)
           || !(Date.parse(result.staleAfter) > afterProbe)) throw new Error("Funded model unavailable");
-        return { model, result };
+        // Each ready candidate must complete its own final validation. An
+        // early result expiring during its read cannot discard a fresh peer.
+        const latest = await read();
+        const latestNow = (input.now ?? (() => new Date()))().getTime();
+        if (expired || !validFunding(latest, latestNow)
+          || latest.policy.globalRevision !== first.policy.globalRevision
+          || latest.policy.runtimeRevision !== first.policy.runtimeRevision) return false;
+        if (!latest.policy.allowedModelIds.includes(model)
+          || !(Date.parse(result.checkedAt) <= latestNow) || !(Date.parse(result.staleAfter) > latestNow)) {
+          throw new Error("Funded model unavailable");
+        }
+        return true;
       }));
-      // Policy or funding may change while the paid model probes are running.
-      // Re-read the owner/runtime without granting credit before checkout.
-      const latest = await read();
-      const latestNow = (input.now ?? (() => new Date()))().getTime();
-      return !expired && validFunding(latest, latestNow)
-        && latest.policy.globalRevision === first.policy.globalRevision
-        && latest.policy.runtimeRevision === first.policy.runtimeRevision
-        && latest.policy.allowedModelIds.includes(model)
-        && Date.parse(result.checkedAt) <= latestNow && Date.parse(result.staleAfter) > latestNow;
     };
     return await Promise.race([check(), deadline, cancelled]);
   } catch (error) {
