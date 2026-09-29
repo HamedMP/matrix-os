@@ -62,9 +62,12 @@ export async function loadChatResumeState(input: {
   } else {
     try {
       derived = await listUnheardDeliveryIds(input.repository.kysely, input.owner, input.chatId);
-    } catch {
+    } catch (error: unknown) {
       // Fail closed: a failed derivation cannot prove every checkpoint source was
       // heard, so this run gets no native checkpoint at all.
+      console.warn("[chat] unheard-delivery derivation failed; disabling native checkpoint", {
+        errorName: error instanceof Error ? error.name : "UnknownError",
+      });
       return undefined;
     }
   }

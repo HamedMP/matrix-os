@@ -96,7 +96,8 @@ function parseParam<T>(schema: { parse(value: unknown): T }, value: string): T {
 async function readJson(c: Context): Promise<unknown> {
   try {
     return await c.req.json();
-  } catch {
+  } catch (error: unknown) {
+    if (!(error instanceof SyntaxError) && !(error instanceof TypeError)) throw error;
     throw new VoiceSessionError("invalid_request", "Request body must be valid JSON", 400);
   }
 }
@@ -240,7 +241,10 @@ export function createVoiceSessionRoutes(deps: VoiceSessionRoutesDeps): Hono {
         const chatId = parseParam(VoiceCanonicalChatIdSchema, c.req.param("chatId"));
         const sessionId = parseParam(VoiceSessionIdSchema, c.req.param("sessionId"));
         // Reconnect body is optional; malformed JSON is still a 400, not a {}.
-        const raw = await c.req.text().catch(() => "");
+        const raw = await c.req.text().catch((error: unknown) => {
+          if (!(error instanceof Error)) throw error;
+          return "";
+        });
         const request = ReconnectVoiceSessionRequestSchema.parse(
           raw.trim().length === 0 ? {} : JSON.parse(raw),
         );

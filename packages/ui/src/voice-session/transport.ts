@@ -154,7 +154,8 @@ export class VoiceTransport {
     let parsed: URL;
     try {
       parsed = new URL(url);
-    } catch {
+    } catch (error: unknown) {
+      if (!(error instanceof TypeError)) throw error;
       throw new TypeError("transport url must be an absolute URL");
     }
     if (parsed.protocol === "http:") parsed.protocol = "ws:";
@@ -350,7 +351,8 @@ export class VoiceTransport {
       let value: unknown;
       try {
         value = JSON.parse(data);
-      } catch {
+      } catch (error: unknown) {
+        if (!(error instanceof SyntaxError)) throw error;
         this.rejectInbound();
         return;
       }
