@@ -47,6 +47,7 @@ export type VoiceSessionErrorCode =
   | "not_found"
   | "unauthorized"
   | "invalid_request"
+  | "payload_too_large"
   | "rate_limited"
   | "unavailable";
 
@@ -315,7 +316,11 @@ export class VoiceSessionEngine implements VoiceSessionHost {
         sessionId,
         error: error instanceof Error ? error.name : "UnknownError",
       });
-      throw new VoiceSessionError("internal_failure", "Voice session could not start", 500);
+      // Preserve honest codes (e.g. session_limit_reached from the subscriber
+      // cap) instead of masking them as internal_failure.
+      throw error instanceof VoiceSessionError
+        ? error
+        : new VoiceSessionError("internal_failure", "Voice session could not start", 500);
     }
     this.sessions.set(sessionId, record);
     this.requestIndex.set(this.requestKey(principal.userId, chatId, request.clientRequestId), sessionId);

@@ -335,8 +335,39 @@ export function createCanonicalVoicePorts(options: {
     },
   };
 
+  // Outbox sinks are a bounded process-wide resource (chat/outbox-delivery
+  // caps registrations), so voice sessions multiplex over ONE shared sink:
+  // each session subscribes into a bounded local set and receives only the
+  // events for its own chat+owner. Without this, the Nth concurrent session
+  // could exhaust the sink cap and fail with an untruthful internal_failure.
+  const MAX_VOICE_SUBSCRIBERS = 256;
+  const voiceSubscribers = new Set<{
+    owner: ChatOwner;
+    chatId: string;
+    emit: (event: VoiceCanonicalChatEvent) => void;
+  }>();
+  let sharedSink: { dispose(): void } | null = null;
+  const ensureSharedSink = () => {
+    if (sharedSink) return;
+    sharedSink = options.repository.registerOutboxSink((incoming) => {
+      for (const subscriber of [...voiceSubscribers]) {
+        if (incoming.event.chatId !== subscriber.chatId) continue;
+        if (
+          incoming.owner.type !== subscriber.owner.type
+          || incoming.owner.ownerId !== subscriber.owner.ownerId
+        ) {
+          continue;
+        }
+        projectOutboxEvent(incoming.event, subscriber.emit);
+      }
+    });
+  };
+
   const chatEvents: VoiceChatEventSource = {
     subscribe(input, listener) {
+      if (voiceSubscribers.size >= MAX_VOICE_SUBSCRIBERS) {
+        throw new VoiceSessionError("session_limit_reached", "Voice session limit reached", 429);
+      }
       const owner = ownerFor(input.principalId);
       const emit = (event: VoiceCanonicalChatEvent) => {
         try {
@@ -348,12 +379,21 @@ export function createCanonicalVoicePorts(options: {
           });
         }
       };
-      const sink = options.repository.registerOutboxSink((incoming) => {
-        if (incoming.event.chatId !== input.chatId) return;
-        if (incoming.owner.type !== owner.type || incoming.owner.ownerId !== owner.ownerId) return;
-        projectOutboxEvent(incoming.event, emit);
-      });
-      const subscription: VoiceChatEventSubscription = { close: () => sink.dispose() };
+      const subscriber = { owner, chatId: input.chatId, emit };
+      voiceSubscribers.add(subscriber);
+      ensureSharedSink();
+      let closed = false;
+      const subscription: VoiceChatEventSubscription = {
+        close: () => {
+          if (closed) return;
+          closed = true;
+          voiceSubscribers.delete(subscriber);
+          if (voiceSubscribers.size === 0) {
+            sharedSink?.dispose();
+            sharedSink = null;
+          }
+        },
+      };
       return subscription;
     },
   };

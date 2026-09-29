@@ -146,7 +146,9 @@ describe("createOpenAiVoiceMediaAdapter", () => {
       turnModes: ["hands_free", "push_to_talk"],
       supportsInterruption: true,
       resume: "rebuild_only",
-      sessionOnly: "enforced",
+      // No canonical memory suppression exists yet — the adapter must not
+      // claim an enforceable session-only route.
+      sessionOnly: "unsupported",
       actionMode: "conversation_only",
       actionCancellation: "run",
       supportsInputSelection: true,

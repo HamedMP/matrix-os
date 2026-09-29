@@ -185,10 +185,10 @@ export function createAdapterCapabilityPort(options: {
     for (const adapter of options.registry.list()) for (const value of pick(adapter.capabilities)) seen.add(value);
     return [...seen];
   };
-  const merge = (caps: VoiceAdapterCapabilities): VoiceCapability => ({
+  const merge = (caps: VoiceAdapterCapabilities, surface?: string): VoiceCapability => ({
     contractVersion: 1,
     status: options.status ?? "available",
-    surface: "web_desktop",
+    surface: (surface ?? "web_desktop") as VoiceCapability["surface"],
     transportModes: union((c) => c.transportModes),
     turnModes: union((c) => c.turnModes),
     supportsInterruption: caps.supportsInterruption,
@@ -207,7 +207,7 @@ export function createAdapterCapabilityPort(options: {
         return {
           contractVersion: 1,
           status: "unavailable",
-          surface: "web_desktop",
+          surface: (input.surface ?? "web_desktop") as VoiceCapability["surface"],
           transportModes: [],
           turnModes: [],
           supportsInterruption: false,
@@ -221,7 +221,7 @@ export function createAdapterCapabilityPort(options: {
           reason: options.unavailableReason ?? "not_configured",
         };
       }
-      return merge(adapter.capabilities);
+      return merge(adapter.capabilities, input.surface);
     },
   };
 }

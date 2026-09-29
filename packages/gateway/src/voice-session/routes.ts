@@ -97,6 +97,11 @@ async function readJson(c: Context): Promise<unknown> {
   try {
     return await c.req.json();
   } catch (error: unknown) {
+    // bodyLimit throws BodyLimitError mid-read when Content-Length is absent
+    // or understated; surface it as 413 rather than a generic parse failure.
+    if (error instanceof Error && error.name === "BodyLimitError") {
+      throw new VoiceSessionError("payload_too_large", "Request body too large", 413);
+    }
     if (!(error instanceof SyntaxError) && !(error instanceof TypeError)) throw error;
     throw new VoiceSessionError("invalid_request", "Request body must be valid JSON", 400);
   }
@@ -104,7 +109,7 @@ async function readJson(c: Context): Promise<unknown> {
 
 function routeError(c: Context, error: unknown, log: Logger): Response {
   if (error instanceof VoiceSessionError) {
-    return c.json({ error: error.code }, error.status as 400 | 401 | 404 | 409 | 422 | 429 | 500 | 503);
+    return c.json({ error: error.code }, error.status as 400 | 401 | 404 | 409 | 413 | 422 | 429 | 500 | 503);
   }
   if (error instanceof z.ZodError || error instanceof SyntaxError) {
     return c.json({ error: "invalid_request" }, 400);
@@ -294,6 +299,10 @@ export interface VoiceUpgradeDeps {
 function ticketFromQuery(c: Context): string {
   const params = new URL(c.req.url).searchParams;
   const keys = [...params.keys()];
+  // Exactly one `ticket` param: upstream proxy layers (packages/platform
+  // ws-upgrade stripWebSocketUpgradeToken) strip `token`/`runtime` before
+  // forwarding, so a rejected multi-param request means the strip layer is
+  // missing — fix the proxy path rather than relaxing this invariant.
   if (keys.length !== 1 || keys[0] !== "ticket") {
     throw new VoiceSessionError("invalid_request", "Upgrade requires exactly one ticket parameter", 400);
   }

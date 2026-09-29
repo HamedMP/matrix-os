@@ -1599,6 +1599,11 @@ export async function createGateway(config: GatewayConfig) {
       registry: voiceAdapters,
       limits: { maxSessionSeconds: 3_600, maxIdleSeconds: 300 },
     });
+    // MATRIX_AUTH_TOKEN also derives the ticket HMAC; without it the authority
+    // falls back to a per-process key and outstanding tickets die on restart.
+    if (!process.env.MATRIX_AUTH_TOKEN) {
+      voiceLog("voice.tickets.ephemeral_key", { note: "MATRIX_AUTH_TOKEN unset; voice transport tickets are not restart-stable" });
+    }
     const voiceTickets = new VoiceTicketAuthority({
       hmacKey: process.env.MATRIX_AUTH_TOKEN
         ? createHmac("sha256", process.env.MATRIX_AUTH_TOKEN)

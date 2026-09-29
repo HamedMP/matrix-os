@@ -714,7 +714,11 @@ export function createOpenAiVoiceMediaAdapter(options: OpenAiVoiceAdapterOptions
     turnModes: ["hands_free", "push_to_talk"],
     supportsInterruption: true,
     resume: "rebuild_only",
-    sessionOnly: "enforced",
+    // Canonical Chat has no per-run memory suppression yet, so no adapter may
+    // claim enforceable session-only sessions — the capability projection and
+    // the engine's admission gate must read the same truth. Flip to
+    // "enforced" only when canonical suppression lands.
+    sessionOnly: "unsupported",
     actionMode: "conversation_only",
     actionCancellation: "run",
     supportsInputSelection: true,
