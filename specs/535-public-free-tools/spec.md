@@ -46,6 +46,19 @@ These are 45 distinct tasks with different input contracts and outputs. Shared e
 
 No new mutating endpoint, database table, server fetch, shared file store, or AI inference is in scope. Browser operations must cap memory, terminate costly work, and avoid rendering input as trusted HTML. Security tests must cover XSS-like strings, malformed JSON/CSV, invalid URLs, large input, and regex timeouts. The route wiring test must verify that every catalog slug resolves to a rendered page and sitemap entry.
 
+### Enforceable resource limits
+
+| Operation | Limit | Failure behavior |
+|---|---:|---|
+| Any tool input and result | 100,000 UTF-16 code units each | Reject with a clear size error; never truncate an apparently complete result. |
+| CSV / JSON table conversion | 1,000 data rows and 100 columns | Reject larger or malformed tables. |
+| XML sitemap generation | 1,000 absolute HTTPS URLs | Reject larger lists and invalid URLs. |
+| Text diff | 200 lines on each side | Reject larger comparisons before allocating the comparison matrix. |
+| Regex tester | 200-character pattern, 10,000-character sample, 100 reported matches, 300 ms worker deadline | Terminate the worker on timeout; if workers are unavailable in a browser, show an unsupported error instead of evaluating an untrusted pattern on the UI thread. |
+| MCP configuration validator | 100 server entries | Reject larger configurations before iterating. |
+
+The client must run expensive operations only after the input cap check. Every Blob download URL must be revoked. No worker, timer, or object URL may remain after a completed or failed run.
+
 ## SEO and measurement
 
 - Publish the working tool and a short, original explanation together. No location or query-variant doorway pages. Use Google Search Console to check impressions, clicks, indexing, and query fit after launch.
