@@ -1,5 +1,5 @@
 import { createInternalIntegrationGuard } from './internal-integration-guard.js';
-import { canClerkUserAccessMachine, getActivePreviewMachineByHandle } from './customer-vps-preview.js';
+import { canClerkUserAccessMachine, getPersonalAccountRestrictedMachineByHandle } from './customer-vps-preview.js';
 import { Hono, type Context } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import {
@@ -681,9 +681,9 @@ export function createApp(deps: {
       c.set('internalContainerHandle', handle);
       return integrationGuard.middleware(c, async () => {
         // Preview and customer slots can share a handle, while their machine
-        // bearer is derived from that handle alone. Check both preview slots
+        // bearer is derived from that handle alone. Check restricted machines
         // before an unqualified lookup can select a customer primary row.
-        if (await getActivePreviewMachineByHandle(db, handle)) {
+        if (await getPersonalAccountRestrictedMachineByHandle(db, handle)) {
           c.res = c.json({ error: 'Forbidden' }, 403);
           return;
         }

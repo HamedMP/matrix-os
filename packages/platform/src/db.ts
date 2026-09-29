@@ -69,6 +69,7 @@ export interface UserMachinesTable {
   runtime_token_epoch: Generated<number>;
   provisioning_class: string;
   access_clerk_user_ids: string[];
+  source_pr: number | null;
   developer_tools: string;
   hetzner_server_id: number | null;
   public_ipv4: string | null;
@@ -892,6 +893,8 @@ export interface UserMachineRecord {
   runtimeTokenEpoch: number;
   provisioningClass: UserMachineProvisioningClass;
   accessClerkUserIds: string[];
+  /** PR whose bundle a Private Preview runs; null for every other class. */
+  sourcePr: number | null;
   developerTools: DeveloperToolId[];
   hetznerServerId: number | null;
   publicIPv4: string | null;
@@ -1184,6 +1187,7 @@ export interface NewUserMachine {
   runtimeTokenEpoch?: number;
   provisioningClass?: UserMachineProvisioningClass;
   accessClerkUserIds?: string[];
+  sourcePr?: number | null;
   developerTools?: DeveloperToolId[];
   hetznerServerId?: number | null;
   publicIPv4?: string | null;

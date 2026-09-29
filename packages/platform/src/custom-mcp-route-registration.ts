@@ -3,7 +3,7 @@ import { Hono, type Context, type Next } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { z } from 'zod/v4';
 import { getContainer, getRunningUserMachineByHandle, type PlatformDB, type UserMachineRecord } from './db.js';
-import { getActivePreviewMachineByHandle } from './customer-vps-preview.js';
+import { getActivePreviewMachineByHandle, getActivePrivatePreviewMachineByHandle } from './customer-vps-preview.js';
 import { buildPlatformVerificationToken, timingSafeTokenEquals } from './platform-token.js';
 import { HANDLE_PATTERN } from './platform-route-utils.js';
 
@@ -134,6 +134,9 @@ export function registerCustomMcpRoutes(app: Hono<any>, options: {
     // preview fixture is the only synthetic account allowed through.
     const isolatedFixture = isIsolatedPreviewFixture(preview, handle);
     if (preview && !isolatedFixture) return c.json({ error: 'Forbidden' }, 403);
+    if (!preview && await getActivePrivatePreviewMachineByHandle(options.db, handle)) {
+      return c.json({ error: 'Forbidden' }, 403);
+    }
     const record = preview ?? (await getRunningUserMachineByHandle(options.db, handle))
       ?? (await getContainer(options.db, handle));
     if (!record?.clerkUserId) return c.json({ error: 'Unknown handle' }, 404);

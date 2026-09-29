@@ -42,7 +42,8 @@ export async function getRuntimeEntitlementDecisionForUser(
   provisioningClass?: string,
   now = new Date(),
 ): Promise<EntitlementAccessDecision> {
-  if (provisioningClass === 'preview') {
+  // Preview and Private Preview machines are platform-funded and bounded by their own quotas.
+  if (provisioningClass === 'preview' || provisioningClass === 'private-preview') {
     return {
       status: 'active',
       runtimeProxyAllowed: true,
