@@ -20,6 +20,9 @@ site changes; this specification records the internal behavior and validation.
   Accept the first candidate whose original global/runtime revisions, model
   authorization and evidence freshness remain valid after its final read. An
   early candidate expiring during its read must not discard a fresh alternative.
+- A temporarily invalid funding snapshot disqualifies that candidate; another
+  may succeed after a fresh read within the same deadline. Disabled policy or
+  changed global/runtime revisions reject the entire checkout immediately.
 - Reject unavailable, expired, future-dated or invalid model evidence. If all
   candidates fail, the total deadline expires or the HTTP request aborts, reject
   checkout and cancel this caller's outstanding work.
@@ -61,7 +64,8 @@ Readiness probing does not debit the owner's ledger or grant credit.
 Use real checkout, native probe service and repository with the existing local
 Postgres-compatible fixture; simulate Relay and Stripe transport only. Preserve
 Red/Green evidence for model starvation, HTTP cancellation and model evidence
-expiring during the final funding read, including a still-fresh alternative.
+expiring during the final funding read, including a still-fresh alternative and
+an external reservation exhausting then releasing the local fixture budget.
 Regressions cover unavailable models,
 total timeout, policy revocation, cached health, independent coalesced callers
 and atomic budget exhaustion. Existing billing tests verify auth, price/package

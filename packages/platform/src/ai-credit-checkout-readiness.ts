@@ -59,10 +59,10 @@ export async function isAiCreditCheckoutRouteHealthy(input: {
         // early result expiring during its read cannot discard a fresh peer.
         const latest = await read();
         const latestNow = (input.now ?? (() => new Date()))().getTime();
-        if (expired || !validFunding(latest, latestNow)
+        if (expired || !latest.policy.enabled
           || latest.policy.globalRevision !== first.policy.globalRevision
           || latest.policy.runtimeRevision !== first.policy.runtimeRevision) return false;
-        if (!latest.policy.allowedModelIds.includes(model)
+        if (!validFunding(latest, latestNow) || !latest.policy.allowedModelIds.includes(model)
           || !(Date.parse(result.checkedAt) <= latestNow) || !(Date.parse(result.staleAfter) > latestNow)) {
           throw new Error("Funded model unavailable");
         }

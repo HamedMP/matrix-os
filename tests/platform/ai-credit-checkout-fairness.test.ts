@@ -135,6 +135,33 @@ describe("multi-model credit checkout readiness", () => {
     await expectCountedUnspentProbes(2);
   });
 
+  it("keeps the alternative viable after a temporary reservation exhausts the first candidate budget", async () => {
+    const f = await fixture({ [glm]: { delayMs: 4_000, ready: true },
+      [sonnet]: { delayMs: 6_000, ready: true } });
+    const { credential } = await f.repository.issueRuntimeCredential(identity);
+    const summaries: Awaited<ReturnType<typeof f.repository.getCheckoutFundingSummary>>[] = [];
+    const repository = { getCheckoutFundingSummary: async (...args: Parameters<typeof f.repository.getCheckoutFundingSummary>) => {
+      const summary = await f.repository.getCheckoutFundingSummary(...args);
+      summaries.push(summary);
+      return summary;
+    } };
+    const result = isAiCreditCheckoutRouteHealthy({ repository, identity, modelProbes: f.probes });
+    await vi.waitFor(() => expect(f.fetchFn).toHaveBeenCalledTimes(2), { interval: 1 });
+    await vi.advanceTimersByTimeAsync(1_000);
+    const reserved = await f.repository.authorize({ credential: credential.token,
+      requestId: "external_reservation", modelId: glm, maxCostMicrousd: 100_000 });
+    await vi.advanceTimersByTimeAsync(3_000);
+    await vi.waitFor(() => expect(summaries[1]?.funding.remainingBudgetMicrousd).toBe(0), { interval: 1 });
+    await f.repository.releaseReservation({ reservationId: reserved.reservation.reservationId,
+      tokenId: credential.tokenId, reason: "pre_upstream_failure" });
+    await vi.advanceTimersByTimeAsync(8_000);
+    expect(await result).toBe(true);
+    expect(await f.repository.getFundingSummary(identity)).toMatchObject({
+      creditBalanceMicrousd: 100_000, reservedMicrousd: 0, settledThisMonthMicrousd: 0 });
+    expect(await db.executor.selectFrom("ai_funded_usage_reservations").select("status").execute())
+      .toEqual([{ status: "released" }]);
+  });
+
   it("rejects checkout when every eligible model is unavailable and retains both admissions", async () => {
     const f = await fixture({ [glm]: { delayMs: 1_000, ready: false },
       [sonnet]: { delayMs: 2_000, ready: false } });
