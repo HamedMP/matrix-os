@@ -14,6 +14,7 @@ describe("account-only collaboration journey assertions", () => {
       "/api/billing/checkout", "/checkout", "/api/vps/provision",
       "/api/desktop/config", "/api/theme",
       "/vm/preview-owner/api/system/info", "/vm/preview-owner/files/private",
+      "/vm/preview-owner/~runtime/main/api/system/info", "/vm/preview-owner/~runtime/main/files/private",
     ];
     for (const path of forbidden) expect(classifyAccountOnlyRequest(path)).toBe("forbidden");
     for (const path of ["/api/collaboration/shared", "/api/organizations", "/api/journeying", "/fileshare", "/shared/chat/123"])

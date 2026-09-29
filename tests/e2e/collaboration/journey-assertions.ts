@@ -11,7 +11,8 @@ interface RequestSource {
 }
 
 export function classifyAccountOnlyRequest(path: string): "allowed" | "forbidden" {
-  const routedPath = path.replace(/^\/vm\/[^/]+(?=\/|$)/, "") || "/";
+  const routedPath = path.replace(/^\/vm\/[^/]+(?=\/|$)/, "")
+    .replace(/^\/~runtime\/[^/]+(?=\/|$)/, "") || "/";
   return FORBIDDEN_PREFIXES.some((prefix) => routedPath === prefix || routedPath.startsWith(`${prefix}/`))
     ? "forbidden" : "allowed";
 }
