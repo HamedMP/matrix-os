@@ -18,14 +18,18 @@ export function hermesNativeModelId(
   return bare.startsWith(prefix) ? null : bare;
 }
 
-/** Native runtime metadata qualifies its own selected route, never another CLI's login. */
+/** Native runtime metadata qualifies its own profile independently of the default provider. */
 export function projectHermesNativeCatalog(snapshot: AgentRuntimeSettingsSnapshot, now: Date): Catalog {
   const runtime = snapshot.runtime.options.find((candidate) => candidate.id === "hermes");
-  const observed = runtime?.nativeRouteObservation;
-  if (snapshot.messaging.runtime !== "hermes" || snapshot.messaging.provider !== "openai-codex") {
+  if (snapshot.messaging.runtime !== "hermes") {
     return { profiles: [], failures: [] };
   }
+  const selectedCodex = snapshot.messaging.provider === "openai-codex";
+  const profileObservations = snapshot.nativeProfileObservations?.filter((profile) => profile.providerId === "openai-codex") ?? [];
+  const observed = selectedCodex ? runtime?.nativeRouteObservation
+    : profileObservations.length === 1 ? profileObservations[0] : undefined;
   const providers = snapshot.providers.filter((provider) => provider.runtime === "hermes" && provider.id === "openai-codex");
+  if (!selectedCodex && providers.length === 0 && profileObservations.length === 0) return { profiles: [], failures: [] };
   const provider = providers.length === 1 ? providers[0] : undefined;
   const checked = Date.parse(observed?.localObservation.checkedAt ?? "");
   const expires = Date.parse(observed?.localObservation.staleAfter ?? "");
@@ -33,7 +37,8 @@ export function projectHermesNativeCatalog(snapshot: AgentRuntimeSettingsSnapsho
     || !snapshot.messaging.configured || !provider || !observed
     || provider.authStatus.state !== "ready" || provider.authStatus.authenticated !== true
     || observed.localObservation.state !== "present_unverified"
-    || observed.providerId !== "openai-codex" || observed.modelId !== snapshot.messaging.model
+    || observed.providerId !== "openai-codex"
+    || (selectedCodex && runtime?.nativeRouteObservation?.modelId !== snapshot.messaging.model)
     || provider.models.some((model) => model.id.startsWith("openai-codex:"))
     || observed.credentialKind !== "provider_profile" || !Number.isFinite(checked) || !Number.isFinite(expires)
     || checked > +now || expires <= +now || expires <= checked || expires - checked > 5_000) {
@@ -44,7 +49,7 @@ export function projectHermesNativeCatalog(snapshot: AgentRuntimeSettingsSnapsho
     models: provider.models.filter((model) => model.available).map((model) => ({
       id: `openai-codex:${model.id}`, displayName: model.displayName, enabled: true,
     })),
-    defaultModelId: `openai-codex:${observed.modelId}`,
+    defaultModelId: selectedCodex ? `openai-codex:${snapshot.messaging.model}` : null,
     localObservation: observed.localObservation,
   }], failures: [] });
   return result.success ? result.data : { profiles: [], failures: ["hermes"] };

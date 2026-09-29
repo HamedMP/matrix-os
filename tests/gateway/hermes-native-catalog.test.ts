@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -21,6 +21,90 @@ const native = () => normalizeHermesRuntimeSnapshot({
 });
 
 describe("Hermes-owned native subscription catalog", () => {
+  it("keeps an authenticated Codex profile selectable while Copilot is the native default", () => {
+    const snapshot = normalizeHermesRuntimeSnapshot({ observedAt: +now, status: { gateway_running: true },
+      options: { provider: "copilot", model: "gpt-5.6-sol", providers: [
+        { slug: "copilot", authenticated: true, is_user_defined: false, models: ["gpt-5.6-sol"] },
+        { slug: "openai-codex", authenticated: true, is_user_defined: false, models: ["gpt-5.6-sol", "gpt-5.6-luna"] },
+      ] } });
+    expect(projectHermesNativeCatalog(snapshot, now)).toMatchObject({ profiles: [{
+      harness: "hermes", providerId: "openai-codex", defaultModelId: null,
+      models: expect.arrayContaining([{ id: "openai-codex:gpt-5.6-sol", displayName: "gpt-5.6-sol", enabled: true },
+        { id: "openai-codex:gpt-5.6-luna", displayName: "gpt-5.6-luna", enabled: true }]),
+      localObservation: { state: "present_unverified" },
+    }], failures: [] });
+  });
+  it.each(["api_key", "custom", "duplicate", "stale", "absent"] as const)("rejects insufficient inactive Codex profile evidence (%s)", (reason) => {
+    const codex: Record<string, unknown> = { slug: "openai-codex", authenticated: true, is_user_defined: false, models: ["gpt-5.6-sol"] };
+    if (reason === "api_key") codex.auth_type = "api_key";
+    if (reason === "custom") codex.is_user_defined = true;
+    if (reason === "absent") codex.authenticated = false;
+    const snapshot = normalizeHermesRuntimeSnapshot({ observedAt: +now, status: { gateway_running: true }, options: {
+      provider: "copilot", model: "gpt-5.6-sol", providers: [
+        { slug: "copilot", authenticated: true, models: ["gpt-5.6-sol"] }, codex, ...(reason === "duplicate" ? [codex] : []),
+      ],
+    } });
+    expect(projectHermesNativeCatalog(snapshot, reason === "stale" ? new Date(+now + 5000) : now).profiles).toEqual([]);
+  });
+  it("offers inactive Codex as an explicit Settings choice without changing the native default", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "hermes-inactive-codex-"));
+    const snapshot = normalizeHermesRuntimeSnapshot({ observedAt: +now, status: { gateway_running: true }, options: {
+      provider: "copilot", model: "gpt-5.6-sol", providers: [
+        { slug: "copilot", authenticated: true, models: ["gpt-5.6-sol"] },
+        { slug: "openai-codex", authenticated: true, is_user_defined: false, models: ["gpt-5.6-sol"] },
+      ],
+    } });
+    const producer = new AiProviderService({ homePath, env: {}, now: () => now,
+      nativeHarnessCatalogReader: { getCatalog: async () => ({ providers: [], accessSources: [], failures: [] }) },
+      hermesRuntimeSource: async () => snapshot,
+      driverInventory: async () => [{ id: "hermes", displayName: "Hermes", kind: "cli", installState: "installed", health: "ready", capabilities: ["tools"], setupActions: [] }],
+    });
+    try {
+      const settings = await new ProviderSettingsStore({ homePath, now: () => now, providerSnapshotReader: producer }).getSnapshot();
+      expect(settings.accessSources.find(source => source.id === "harness_hermes_openai-codex")).toMatchObject({
+        kind: "harness_profile", eligibleModelIds: ["openai-codex:gpt-5.6-sol"], localObservation: { state: "present_unverified" },
+      });
+      expect(snapshot.messaging.provider).toBe("copilot");
+      expect(settings.harnesses.find(harness => harness.harness === "hermes")?.accessSourceId).not.toBe("harness_hermes_openai-codex");
+    } finally { producer.close(); await rm(homePath, { recursive: true, force: true }); }
+  });
+  it("lets an owner migrate a legacy unbound route to authenticated native Codex explicitly", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "hermes-legacy-codex-"));
+    const providers = [{ slug: "anthropic", authenticated: true, models: ["claude-fable-5"] },
+      { slug: "openai-codex", authenticated: true, is_user_defined: false, models: ["gpt-5.6-sol"] }];
+    let snapshot = normalizeHermesRuntimeSnapshot({ observedAt: +now, status: { gateway_running: true },
+      options: { provider: "anthropic", model: "claude-fable-5", providers } });
+    await mkdir(join(homePath, "system/ai-providers"), { recursive: true });
+    await writeFile(join(homePath, "system/ai-providers/settings.json"), JSON.stringify({ schemaVersion: 1, revision: 0,
+      harnesses: [{ id: "harness_hermes", driverId: "hermes", harness: "hermes", displayName: "Hermes", accentColor: null,
+        enabled: true, enablementOrigin: "owner_configuration", selectedAccountId: null, accessSourceId: null,
+        route: { kind: "configurable", providerId: "anthropic", modelId: "claude-fable-5" } }],
+      accountProfiles: [], gatewayPolicy: null, receipts: [],
+    }));
+    const producer = new AiProviderService({ homePath, env: {}, now: () => now,
+      nativeHarnessCatalogReader: { getCatalog: async () => ({ providers: [], accessSources: [], failures: [] }) },
+      hermesRuntimeSource: async () => snapshot,
+      driverInventory: async () => [{ id: "hermes", displayName: "Hermes", kind: "cli", installState: "installed", health: "ready", capabilities: ["tools"], setupActions: [] }],
+    });
+    const applyConfiguration = vi.fn(async () => {
+      snapshot = normalizeHermesRuntimeSnapshot({ observedAt: +now, status: { gateway_running: true },
+        options: { provider: "openai-codex", model: "gpt-5.6-sol", providers } });
+    });
+    try {
+      const store = new ProviderSettingsStore({ homePath, now: () => now, providerSnapshotReader: producer,
+        runtimeCoordinator: { supportedActions: ["set_route"], supportedHarnessKinds: ["hermes"], isRecoveryReady: () => true,
+          reconcilePending: async () => undefined, applyConfiguration, rollbackConfiguration: async () => undefined } });
+      const before = await store.getSnapshot();
+      expect(before.harnesses.find(h => h.harness === "hermes")?.accessSourceId).toBeNull();
+      expect(applyConfiguration).not.toHaveBeenCalled();
+      const result = await store.mutate({ type: "set_route", expectedRevision: before.revision, idempotencyKey: "legacy_codex_choice",
+        harnessInstanceId: "harness_hermes", accessSourceId: "harness_hermes_openai-codex", accountId: null, enableHarness: true,
+        route: { kind: "configurable", providerId: "openai-codex", modelId: "openai-codex:gpt-5.6-sol" } });
+      expect(result.snapshot.harnesses.find(h => h.harness === "hermes")).toMatchObject({ enabled: true,
+        accessSourceId: "harness_hermes_openai-codex", route: { providerId: "openai-codex", modelId: "openai-codex:gpt-5.6-sol" } });
+      expect(applyConfiguration).toHaveBeenCalledTimes(1);
+    } finally { producer.close(); await rm(homePath, { recursive: true, force: true }); }
+  });
   it("rejects non-Codex Hermes profiles at the V3 catalog boundary", () => {
     expect(AiNativeHarnessCatalogSchema.safeParse({ profiles: [{
       harness: "hermes", providerId: "anthropic", providerDisplayName: "Anthropic",

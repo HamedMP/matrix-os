@@ -3,8 +3,11 @@ import { createHermesChatProviderAdapter } from "../../packages/gateway/src/chat
 import { fakeGateway, baseInput } from "./hermes-test-gateway.js";
 
 describe("Hermes Codex subscription route integrity", () => {
-  it.each(["start", "resume"] as const)("fails closed before prompt submission when %s resolves to Anthropic", async method => {
-    const gateway = fakeGateway({ effectiveRoute: {provider: "anthropic",model: "claude-fable-5"} });
+  it.each([
+    ["start", "anthropic", "claude-fable-5"], ["resume", "anthropic", "claude-fable-5"],
+    ["start", "copilot", "gpt-5.6-luna"], ["resume", "copilot", "gpt-5.6-luna"],
+  ] as const)("fails closed before prompt submission when %s resolves to %s", async (method, provider, model) => {
+    const gateway = fakeGateway({ effectiveRoute: {provider, model} });
     const adapter = createHermesChatProviderAdapter({homePath:"/home/matrix/home",spawnFn:gateway.spawnFn,requestTimeoutMs:100});
     const events: any[]=[];
     const iterator = method === "resume" ? adapter.resume!({...baseInput,resumeState:{sessionId:"durable_session"}})

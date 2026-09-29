@@ -185,6 +185,15 @@ claim that a CLI can run concurrent profiles today; generic runtimes do not
 advertise standalone account/source selection until they own a real profile
 switch.
 
+Hermes exposes its own authenticated Codex subscription profile even when its
+native default uses another provider. Bounded inventory gives each provider model
+slots before filling larger catalogs, and Codex model IDs retain the
+`openai-codex:` namespace. This fresh local profile observation does not verify
+funding or change the selected route. A legacy instance with no access source
+requires the owner to select the Codex source explicitly. Execution checks the
+exact native provider and model before each new or resumed turn; this check does
+not disable fallback chains configured inside the native harness.
+
 More than one configured instance of a harness kind is allowed. The add flow
 therefore never disables Hermes, OpenClaw, Pi, OpenCode, Codex, or Claude merely
 because one instance already exists. Each instance keeps its own display name,

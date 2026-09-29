@@ -6,6 +6,18 @@ import {
 } from "../../packages/gateway/src/agent-config/hermes-source.js";
 
 describe("Hermes agent settings source", () => {
+  it("shares the native wire budget so a large Copilot default cannot erase Codex", () => {
+    const snapshot = normalizeHermesRuntimeSnapshot({ observedAt: 1000, status: { gateway_running: true }, options: {
+      provider: "copilot", model: "copilot-127", providers: [
+        { slug: "copilot", authenticated: true, models: Array.from({ length: 128 }, (_, i) => `copilot-${i}`) },
+        { slug: "anthropic", authenticated: true, models: Array.from({ length: 128 }, (_, i) => `claude-${i}`) },
+        { slug: "openai-codex", authenticated: true, is_user_defined: false, models: Array.from({ length: 10 }, (_, i) => `codex-${i}`) },
+      ],
+    } });
+    expect(snapshot.providers.reduce((count, provider) => count + provider.models.length, 0)).toBe(253);
+    expect(snapshot.providers.find(provider => provider.id === "openai-codex")?.models).toHaveLength(10);
+    expect(snapshot.messaging).toMatchObject({ provider: "copilot", model: "copilot-127", configured: true });
+  });
   it("normalizes the dashboard inventory into the shared provider contract", () => {
     const snapshot = normalizeHermesRuntimeSnapshot({
       status: {
