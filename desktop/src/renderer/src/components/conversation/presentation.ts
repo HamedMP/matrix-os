@@ -137,6 +137,9 @@ export interface ConversationTurnPresentation {
 export interface ConversationPresentationCallbacks {
   copyText: (text: string) => Promise<void>;
   loadImage?: (src: string) => Promise<Blob>;
+  loadFileImage?: (path: string, executionRoot?: CanonicalChatExecutionRootRef) => Promise<Blob>;
+  resolveApp?: (path: string) => { name: string } | null;
+  openApp?: (path: string) => boolean;
   submitInput?: (runId: string, requestId: string, input: Omit<CanonicalSubmitChatInputRequest, "clientRequestId">) => Promise<boolean>;
   performAction?: (action: ConversationActionPresentation, input?: string) => Promise<void>;
   canPerformAction?: (action: ConversationActionPresentation) => boolean;

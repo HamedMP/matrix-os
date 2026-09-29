@@ -1,4 +1,5 @@
 import { resolveChatMessageLink } from "@matrix-os/contracts";
+import { AttachmentImage } from "@matrix-os/ui";
 import { Check, Copy, FileText, Folder, WrapText } from "@renderer/lib/hugeicons";
 import * as React from "react";
 import ReactMarkdown from "react-markdown";
@@ -182,6 +183,7 @@ export function MessageMetadata({
 const FILE_EXTENSION_PATTERN = /(?:^|\/)[^/]+\.[A-Za-z0-9]{1,12}$/;
 const RELATIVE_PATH_PATTERN = /^(?:[A-Za-z0-9_.@+-]+\/)+[A-Za-z0-9_.@+-]+\/?$/;
 const BARE_FILE_PATTERN = /^[A-Za-z0-9_.@+-]+\.[A-Za-z0-9]{1,12}$/;
+const IMAGE_FILE_PATTERN = /\.(?:png|jpe?g|webp|gif|avif|svg)$/i;
 
 function pathPresentation(value: string): { kind: "file" | "folder"; label: string } | null {
   const normalized = value.trim();
@@ -292,6 +294,9 @@ export function MessageResponse({
   copyText,
   openFile,
   openWebLink,
+  loadFileImage,
+  resolveApp,
+  openApp,
   renderReferenceLink,
   className,
 }: {
@@ -299,25 +304,36 @@ export function MessageResponse({
   copyText: ConversationPresentationCallbacks["copyText"];
   openFile?: ConversationPresentationCallbacks["openFile"];
   openWebLink?: ConversationPresentationCallbacks["openWebLink"];
+  loadFileImage?: (path: string) => Promise<Blob>;
+  resolveApp?: ConversationPresentationCallbacks["resolveApp"];
+  openApp?: ConversationPresentationCallbacks["openApp"];
   renderReferenceLink?: (href: string) => React.ReactNode | undefined;
   className?: string;
 }) {
-  const callbacks = React.useRef({ copyText, openFile, openWebLink });
+  const callbacks = React.useRef({ copyText, openFile, openWebLink, loadFileImage, resolveApp, openApp });
   React.useLayoutEffect(() => {
-    callbacks.current = { copyText, openFile, openWebLink };
-  }, [copyText, openFile, openWebLink]);
+    callbacks.current = { copyText, openFile, openWebLink, loadFileImage, resolveApp, openApp };
+  }, [copyText, openFile, openWebLink, loadFileImage, resolveApp, openApp]);
   const copy = React.useCallback((text: string) => callbacks.current.copyText(text), []);
   const hasFileNavigation = Boolean(openFile);
   const hasWebNavigation = Boolean(openWebLink);
+  const loadLocalImage = React.useCallback((path: string) => callbacks.current.loadFileImage!(path), []);
+  const openLocalFile = React.useCallback((path: string) => callbacks.current.openFile?.(path), []);
+  const hasImageLoader = Boolean(loadFileImage);
   // Keep Markdown element types stable across focus and controller updates.
   const markdownComponents = React.useMemo(() => {
     function Anchor({ node: _node, href, ...props }: React.ComponentProps<"a"> & { node?: unknown }) {
       const currentReferenceLink = React.useContext(ReferenceLinkContext);
       const reference = typeof href === "string" ? currentReferenceLink?.(href) : undefined;
       if (reference !== undefined) return reference;
+      const app = href && resolveApp?.(href);
+      if (app && openApp) return <button type="button" title={href} aria-label={`Open app ${app.name}`} className="inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[var(--highlight)] hover:bg-[var(--bg-hover)]" onClick={() => callbacks.current.openApp?.(href!)}>{app.name}</button>;
       const target = typeof href === "string" ? resolveChatMessageLink(href) : null;
       const external = target?.kind === "web";
       const editorPath = target?.kind === "file" ? target.path : null;
+      if (editorPath && hasImageLoader && IMAGE_FILE_PATTERN.test(editorPath)) {
+        return <AttachmentImage src={href!} label={String(props.children ?? editorPath.split("/").at(-1))} path={href!} loadImage={loadLocalImage} open={hasFileNavigation ? openLocalFile : undefined} inline />;
+      }
       return <a {...props} href={href} {...(external ? { target: "_blank", rel: "noopener noreferrer" } : {})} {...(editorPath && hasFileNavigation ? { onClick: (event: React.MouseEvent<HTMLAnchorElement>) => {
         event.preventDefault();
         callbacks.current.openFile?.(href!);
@@ -332,6 +348,7 @@ export function MessageResponse({
       const target = typeof src === "string" ? resolveChatMessageLink(src) : null;
       const label = alt?.trim() || (target?.kind === "file" ? target.path.split("/").at(-1) : null) || "image";
       if (target?.kind === "file") {
+        if (hasImageLoader) return <AttachmentImage src={src!} label={label} path={src!} loadImage={loadLocalImage} open={hasFileNavigation ? openLocalFile : undefined} inline />;
         if (!hasFileNavigation) return <span aria-label={`Image file: ${label}`}>{label}</span>;
         return (
           <button
@@ -355,8 +372,13 @@ export function MessageResponse({
       if (blockLanguage || String(codeChildren).endsWith("\n")) {
         return <CodeBlock code={value} language={blockLanguage ?? "text"} copyText={copy} />;
       }
+      const app = resolveApp?.(value);
+      if (app && openApp) return <button type="button" title={value} aria-label={`Open app ${app.name}`} className="inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[var(--highlight)] hover:bg-[var(--bg-hover)]" onClick={() => callbacks.current.openApp?.(value)}>{app.name}</button>;
       const path = className || !/[\\/]/.test(value) ? null : pathPresentation(value);
       const editorPath = path?.kind === "file" ? normalizeDesktopEditorPath(value) : null;
+      if (editorPath && hasImageLoader && IMAGE_FILE_PATTERN.test(editorPath) && resolveChatMessageLink(value)?.kind === "file") {
+        return <AttachmentImage src={value} label={path!.label} path={value} loadImage={loadLocalImage} open={hasFileNavigation ? openLocalFile : undefined} inline />;
+      }
       if (path && editorPath && hasFileNavigation) {
         return (
           <button
@@ -402,7 +424,7 @@ export function MessageResponse({
       <MarkdownTable {...props} copyText={copy} />
     ),
     };
-  }, [copy, hasFileNavigation, hasWebNavigation]);
+  }, [copy, hasFileNavigation, hasWebNavigation, hasImageLoader, loadLocalImage, openLocalFile, resolveApp, openApp]);
 
   return (
     <div

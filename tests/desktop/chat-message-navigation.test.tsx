@@ -6,7 +6,11 @@ import { MessageResponse } from "@desktop/renderer/src/components/conversation/m
 import { ConversationTranscript } from "@desktop/renderer/src/components/conversation/transcript";
 import { resolveChatMessageLink } from "@matrix-os/contracts";
 
-beforeEach(() => vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} unobserve() {} }));
+beforeEach(() => {
+  vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} unobserve() {} });
+  HTMLDialogElement.prototype.showModal = function () { this.open = true; };
+  HTMLDialogElement.prototype.close = function () { this.open = false; };
+});
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 it("classifies links consistently and rejects unsafe file and protocol inputs", () => {
@@ -34,6 +38,40 @@ it("turns a local Markdown image into File Preview navigation instead of a broke
   expect(screen.queryByRole("img", { name: "Generated whale" })).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Preview image Generated whale" }));
   expect(openFile).toHaveBeenCalledWith("data/chat-artifacts/whale.png");
+});
+
+it("renders a local Markdown image using the authenticated loader", async () => {
+  vi.stubGlobal("URL", Object.assign(URL, { createObjectURL: vi.fn(() => "blob:chart"), revokeObjectURL: vi.fn() }));
+  const loadFileImage = vi.fn(async () => new Blob(["png"], { type: "image/png" }));
+  const openFile = vi.fn(() => true);
+  render(<MessageResponse copyText={vi.fn()} openFile={openFile} loadFileImage={loadFileImage}>{"![Chart](apps/ai-adoption/chart-light.png)"}</MessageResponse>);
+  expect(await screen.findByRole("img", { name: "Chart" })).toBeTruthy();
+  expect(loadFileImage).toHaveBeenCalledWith("apps/ai-adoption/chart-light.png");
+  fireEvent.click(screen.getByRole("button", { name: "Open image Chart" }));
+  fireEvent.click(screen.getByRole("button", { name: "Open Chart in File Preview" }));
+  expect(openFile).toHaveBeenCalledWith("apps/ai-adoption/chart-light.png");
+});
+
+it("launches a catalog-backed app directory rather than treating it as a passive folder", () => {
+  const openApp = vi.fn(() => true);
+  const openFile = vi.fn(() => true);
+  render(<MessageResponse copyText={vi.fn()} openFile={openFile} openApp={openApp}
+    resolveApp={(path) => resolveChatMessageLink(path)?.kind === "file" && path === "~/apps/ai-adoption" ? { name: "AI Adoption" } : null}>
+    {"Open `~/apps/ai-adoption`; inspect `apps/ai-adoption/src/App.tsx`."}
+  </MessageResponse>);
+  fireEvent.click(screen.getByRole("button", { name: "Open app AI Adoption" }));
+  expect(openApp).toHaveBeenCalledWith("~/apps/ai-adoption");
+  expect(openFile).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "Open App.tsx" }));
+  expect(openFile).toHaveBeenCalledWith("apps/ai-adoption/src/App.tsx");
+});
+
+it.each(["[Chart](apps/ai-adoption/chart.png)", "`apps/ai-adoption/chart.png`"])("shows an image reference inline: %s", async (markdown) => {
+  vi.stubGlobal("URL", Object.assign(URL, { createObjectURL: vi.fn(() => "blob:chart"), revokeObjectURL: vi.fn() }));
+  const loadFileImage = vi.fn(async () => new Blob(["png"], { type: "image/png" }));
+  render(<MessageResponse copyText={vi.fn()} openFile={vi.fn()} loadFileImage={loadFileImage}>{markdown}</MessageResponse>);
+  expect(await screen.findByRole("img")).toBeTruthy();
+  expect(loadFileImage).toHaveBeenCalledWith("apps/ai-adoption/chart.png");
 });
 
 it("shows a retryable image failure instead of loading forever", async () => {

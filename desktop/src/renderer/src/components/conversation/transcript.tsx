@@ -150,7 +150,7 @@ function ResponseMessage({
           ) : null}
           <Bubble variant="ghost">
             <BubbleContent className="w-full max-w-full overflow-visible">
-              <MessageResponse className="text-md leading-relaxed" copyText={callbacks.copyText} openFile={callbacks.openFile} openWebLink={callbacks.openWebLink}>{visibleMarkdown}</MessageResponse>
+              <MessageResponse className="text-md leading-relaxed" copyText={callbacks.copyText} openFile={callbacks.openFile} openWebLink={callbacks.openWebLink} loadFileImage={callbacks.loadFileImage} resolveApp={callbacks.resolveApp} openApp={callbacks.openApp}>{visibleMarkdown}</MessageResponse>
             </BubbleContent>
           </Bubble>
           {showMetadata ? (
@@ -401,7 +401,7 @@ function ConversationTurn({
 }) {
   const [expanded, setExpanded] = useState(turn.expandedByDefault ?? false);
   const scopedCallbacks: ConversationPresentationCallbacks = turn.executionRoot && callbacks.openFile
-    ? { ...callbacks, openFile: (path) => callbacks.openFile!(path, turn.executionRoot) }
+    ? { ...callbacks, openFile: (path) => callbacks.openFile!(path, turn.executionRoot), ...(callbacks.loadFileImage ? { loadFileImage: (path: string) => callbacks.loadFileImage!(path, turn.executionRoot) } : {}) }
     : callbacks;
   const showWork = turn.active || expanded;
   const hasWork = turn.work.length > 0;

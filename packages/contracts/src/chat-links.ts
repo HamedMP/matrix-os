@@ -1,6 +1,21 @@
 import { safeRelativePath } from "#legacy-contract-primitives";
 
 const PathSchema = safeRelativePath();
+
+/** Only catalog-backed app roots and entry points are launch references. */
+export function resolveChatAppReference<T extends { slug: string; path?: string }>(
+  input: string,
+  apps: readonly T[],
+): T | null {
+  const target = resolveChatMessageLink(input.replace(/\/+$/, ""));
+  if (target?.kind !== "file" || !target.path.startsWith("apps/")) return null;
+  for (const app of apps) {
+    if (!app.path?.startsWith("apps/") || !app.path.endsWith("/index.html")) continue;
+    const root = app.path.replace(/\/(?:dist\/)?index\.html$/, "");
+    if (target.path === root || target.path === `${root}/index.html` || target.path === `${root}/dist/index.html`) return app;
+  }
+  return null;
+}
 export function resolveChatMessageLink(input: string): { kind: "file"; path: string } | { kind: "web"; url: string } | null {
   if (input.length > 4096) return null;
   let value = input.trim();
