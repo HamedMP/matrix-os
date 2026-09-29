@@ -29,6 +29,16 @@ function fixture() {
   const batch = createJevInboxBatch({ store, read, process, authorize });
   return { batch, store, read, process, authorize, get: () => data };
 }
+it.each(["revision", "account"])("reports no current batch when only an older %s binding exists", async (changed) => {
+  const f = fixture();
+  const start = await f.batch.execute("owner_1", scope, { operation: "batch_start" });
+  const current = changed === "revision" ? { ...scope, revision: 2 }
+    : { ...scope, account: { ...scope.account, connectionId: "conn_2" } };
+  expect(await f.batch.execute("owner_1", current, { operation: "batch_status" })).toEqual({ kind: "batch_absent" });
+  await expect(f.batch.execute("owner_1", current, { operation: "batch_status", jobId: start.jobId })).rejects.toThrow();
+  expect(f.read).not.toHaveBeenCalled();
+  expect(f.process).not.toHaveBeenCalled();
+});
 async function next(f: ReturnType<typeof fixture>, jobId: string, currentScope = scope, engine = f.batch) {
   const status = await engine.execute("owner_1", currentScope, { operation: "batch_status", jobId });
   return engine.execute("owner_1", currentScope, { operation: "batch_next", jobId, revision: status.revision });

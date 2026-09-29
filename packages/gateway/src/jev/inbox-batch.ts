@@ -132,8 +132,12 @@ export function createJevInboxBatch(options: {
         }
         return remember(owner, scope, d);
       }
-      if (input.operation === "batch_status" && !input.jobId && !await options.store.get(owner, scope.agentId))
-        return cache(owner, scope, { kind: "batch_absent" });
+      if (input.operation === "batch_status" && !input.jobId) {
+        const current = await options.store.get(owner, scope.agentId);
+        if (!current || current.ownerId !== owner || current.agentId !== scope.agentId
+          || current.binding !== stamp(scope) || current.expiresAt <= now())
+          return cache(owner, scope, { kind: "batch_absent" });
+      }
       d = await load(owner, scope, input.jobId);
       if (input.operation === "batch_status")
         return remember(owner, scope, d);

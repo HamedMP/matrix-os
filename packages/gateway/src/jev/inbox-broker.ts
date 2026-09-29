@@ -73,6 +73,11 @@ export function createJevInboxBroker(options: {
     alive(owner, scope, record, signal);
     assertJevInboxProfile(value, scope);
   }
+  async function completed<T>(operation: Promise<T>, record: RecordState, batchVisible: boolean): Promise<T> {
+    const result = await operation;
+    record.batchVisible = batchVisible;
+    return result;
+  }
   return {
     presentation(ownerId: string, scope: HermesJevScope): Proposal | BatchPresentation | null {
       sweep();
@@ -107,10 +112,8 @@ export function createJevInboxBroker(options: {
           record = {fingerprint:fingerprint(scope),expiresAt:now()+TTL,discoveryReceipt:randomBytes(32).toString("hex")};
           records.set(runKey,record);
         }
-        record.batchVisible = true;
-        return options.batch.execute(ownerId, scope, input, signal);
+        return completed(options.batch.execute(ownerId, scope, input, signal), record, true);
       }
-      if (record) record.batchVisible = false;
       if (input.operation === "discover") {
         if (!record) {
           if (records.size >= MAX_RUNS) throw new InboxPreviewError("unavailable");
@@ -137,7 +140,7 @@ export function createJevInboxBroker(options: {
               && current.fingerprint === fingerprint(scope) && current.discovering === attempt) current.discovering = undefined;
           });
         }
-        return current.discovering;
+        return completed(current.discovering, current, false);
       }
       if (!record) throw new InboxPreviewError("denied");
       const current = record;
@@ -180,7 +183,7 @@ export function createJevInboxBroker(options: {
               && current.fingerprint === fingerprint(scope) && current.selecting === attempt) current.selecting = undefined;
           });
         }
-        return current.selecting;
+        return completed(current.selecting, current, false);
       }
       const selected = current.selection;
       if (!selected?.evidence || !selected.identity || input.receipt !== selected.receipt) throw new InboxPreviewError("denied");
@@ -246,7 +249,7 @@ export function createJevInboxBroker(options: {
         }
         return current.presentation;
       })();
-      return current.evaluating;
+      return completed(current.evaluating, current, false);
     },
   };
 }

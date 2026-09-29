@@ -322,3 +322,18 @@ it("a later targeted result is visible after a batch status was cached for the s
  await f.execute({operation:"evaluate",receipt:e.receipt});
  expect(f.broker.presentation(ownerId,{...scope,account:{...scope.account,labelingEnabled:true}})?.kind).toBe("labeled");
 });
+it("failed batch or targeted operations preserve the last successful receipt", async () => {
+  const progress={kind:"batch" as const,jobId:"jev_batch_"+"a".repeat(32),revision:1,status:"ready" as const,processed:0,labeled:0,noChange:0,review:0,preview:0,unconfirmed:0,messagesLabeled:0,remainingQueued:0,hasMore:true,maxThreads:10,last:null};
+  const execute = vi.fn(async () => progress);
+  const f = fixture("valid", true, { execute, presentation: () => progress });
+  const bound = { ...scope, account: { ...scope.account, labelingEnabled: true } };
+  const evidence = await selected(f);
+  if (evidence.kind !== "evidence") throw new Error("Missing evidence");
+  await f.execute({ operation: "evaluate", receipt: evidence.receipt });
+  execute.mockRejectedValueOnce(new Error("Unavailable"));
+  await expect(f.execute({ operation: "batch_status" })).rejects.toThrow();
+  expect(f.broker.presentation(ownerId, bound)?.kind).toBe("labeled");
+  await f.execute({ operation: "batch_status" });
+  await expect(f.execute({ operation: "evaluate", receipt: "b".repeat(64) })).rejects.toThrow();
+  expect(f.broker.presentation(ownerId, bound)?.kind).toBe("batch");
+});
