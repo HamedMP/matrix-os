@@ -80,7 +80,7 @@ do not recreate the preview or affect production machines to repair it.
 
 Add the **`preview-vps`** label to a same-repo PR. The `Preview VPS` workflow:
 
-1. Builds the host bundle as `0.0.0-pr<N>.<sha7>` (re-runs on every push while
+1. Builds the host bundle as `v<date>-pr<N>-<run>-<attempt>-<sha7>` (re-runs on every push while
    the label is present).
 2. Publishes it **register-only** (`publish-release.sh --channel none`): the
    release exists in R2 + platform DB but no channel pointer can ever select
@@ -418,5 +418,7 @@ dashboards.
   applied by restarting the respective containers.
 - Staging slot DNS (`staging-<1..4>`, `api-staging-<1..4>`, `logs`) was created
   once via `cloudflared tunnel route dns matrix-os <hostname>`.
-- Preview bundles in R2 (`system-bundles/0.0.0-pr*`) can be cleaned after PR
-  close; they are never referenced by channel pointers.
+- Preview bundles in R2 (`system-bundles/v<date>-pr<N>-*`) can be cleaned after PR
+  close; they are never referenced by channel pointers. Use
+  `scripts/host-bundle-prune.mjs` (see "Pruning Old Host Bundles" in
+  `docs/dev/releases.md`) rather than deleting prefixes by hand.

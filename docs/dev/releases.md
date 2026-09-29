@@ -201,6 +201,36 @@ du -sh dist/host-bundle/stage/app/shell/.next/* dist/host-bundle/stage/app/home/
 
 Expected large components today are the runtime Node distribution, code-server, and globally bundled coding CLIs. Unexpected large components are build caches, package manager stores copied into app templates, screenshots, test fixtures, or per-app `node_modules`.
 
+## Pruning Old Host Bundles
+
+Every `main` push, tag and preview publishes a full host bundle (about 1 GiB) under `system-bundles/<version>/` in the bundles bucket. Nothing expires them automatically. `scripts/host-bundle-prune.mjs` removes old versions in two reviewed steps. The platform database decides what stays, not object age, and release rows are never deleted.
+
+A version's objects are kept when any of these references it:
+
+- a current channel pointer (`host_bundle_channels`)
+- the last `KEEP_PER_CHANNEL` promotions per channel (`host_bundle_release_channels`, default 3), which are the channel rollback targets
+- a non-deleted machine's installed or target version (`user_machines`), or a live runtime version from `GET /vps/fleet` (the script refuses to run when that list is truncated)
+- an unfinished provisioning job, an active golden snapshot lease, or a golden snapshot in candidate, building, sanitizing, validating or ready state
+- a release newer than `KEEP_RECENT_DAYS` (default 14), or a version listed in `KEEP_VERSIONS`
+
+Shared `system-bundles/objects/sha256/*` objects are kept while any kept version's incremental manifest lists them. If a kept manifest cannot be read, all shared objects are kept. Paths outside `system-bundles/<version>/` and `system-bundles/objects/sha256/` are left alone.
+
+```bash
+# 1. Plan (read-only: one read-only database transaction, list/get only). Prints a table and writes a plan file.
+PLATFORM_DATABASE_URL=... R2_BUNDLES_ENDPOINT=... R2_BUNDLES_BUCKET=... \
+R2_BUNDLES_ACCESS_KEY_ID=... R2_BUNDLES_SECRET_ACCESS_KEY=... \
+PLATFORM_URL=... PLATFORM_SECRET=... KEEP_VERSIONS=<any versions you may roll back to> \
+node scripts/host-bundle-prune.mjs plan
+
+# 2. Review the table, then apply that exact plan within 24 hours.
+CONFIRM_DELETE_KEYS=<key count from the plan> <same env> \
+node scripts/host-bundle-prune.mjs apply host-bundle-prune-plan-<timestamp>.json
+```
+
+`apply` refuses a plan for another bucket, a plan older than 24 hours, keys outside `system-bundles/`, or a confirmation that does not match the key count. It then re-decides from live state with the plan's rules (including `KEEP_VERSIONS`, the recent-release window and shared-object protection) and deletes only keys both decisions mark, version directories before shared objects. Before each batch of 500 it re-reads references, skips versions that gained one, and stops deleting shared objects if such a version has an incremental manifest. It stops at the first failed batch and logs every deleted key next to the plan. A reference created in the seconds between a batch's check and its delete is not caught, so avoid pruning during promotions or fleet deploys.
+
+Pruned versions still appear in `GET /system-bundles/releases`, so downgrading to one fails with a download error. Before pruning, keep any version an operator may roll back or downgrade to with `KEEP_VERSIONS`.
+
 ## Checking Tags
 
 ```bash
