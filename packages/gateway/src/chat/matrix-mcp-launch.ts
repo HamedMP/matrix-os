@@ -1,5 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import { SAFE_PRINCIPAL_USER_ID } from "../request-principal.js";
+import { createIntegrationToolAuthority } from "./integration-tool-authority.js";
 
 const MAX_ACTIVE = 128;
 const LIFETIME_MS = 35 * 60_000;
@@ -20,23 +21,24 @@ export const MATRIX_CUSTOM_MCP_TOOLS = [
   "mcp__matrix-integrations__call_custom_mcp_tool",
 ] as const;
 
-export type MatrixMcpRunScope = "discovery" | "call" | "integration_read";
+export type MatrixMcpRunScope = "discovery" | "call" | "integration_read" | "chat_call" | "chat_discovery";
 
 export interface MatrixMcpRunContext {
   actorId: string;
   runId: string;
   scope: MatrixMcpRunScope;
+  consumeIntegrationRequest?: ReturnType<typeof createIntegrationToolAuthority>["consumeIntegrationRequest"];
 }
 
 /** The configured stdio server only exposes Matrix's stable broker contract. */
-export function matrixMcpConfig(scope: "call" | "discovery" = "call"): string {
+export function matrixMcpConfig(scope: "call" | "discovery" | "chat_call" | "chat_discovery" = "call"): string {
   return JSON.stringify({
     mcpServers: {
       "matrix-integrations": {
         command: "/opt/matrix/bin/matrix-integrations-mcp",
         // An argv flag survives MCP child environment sanitization and makes
         // the host launcher deny machine-bearer fallback for this Chat Run.
-        args: ["--require-scoped-capability", `--tool-surface=custom-mcp-${scope}`],
+        args: ["--require-scoped-capability", `--tool-surface=${scope.startsWith("chat_") ? scope.replace("_", "-") : `custom-mcp-${scope}`}`],
       },
     },
   });
@@ -45,10 +47,11 @@ export function matrixMcpConfig(scope: "call" | "discovery" = "call"): string {
 export interface MatrixMcpRunCapability {
   token: string;
   revoke(): void;
+  approveIntegrationTool?: ReturnType<typeof createIntegrationToolAuthority>["approveIntegrationTool"];
 }
 
 export interface MatrixMcpCapabilityIssuer {
-  issue(input: { owner: { type: string; ownerId: string }; runId: string; scope: MatrixMcpRunScope }): MatrixMcpRunCapability | null;
+  issue(input: { owner: { type: string; ownerId: string }; runId: string; scope: MatrixMcpRunScope; fullAccess?: boolean }): MatrixMcpRunCapability | null;
 }
 
 export interface MatrixMcpCapabilityRegistry extends MatrixMcpCapabilityIssuer {
@@ -62,21 +65,27 @@ function digest(token: string): string {
 }
 
 function permitted(method: string, path: string, scope: MatrixMcpRunScope): boolean {
+  if (scope === "chat_call" || scope === "chat_discovery") {
+    if (method === "GET" && (path === "/api/integrations" || path === "/api/integrations/agent-catalog")) return true;
+    if (scope === "chat_call" && ((method === "POST" && ["/api/integrations/call", "/api/integrations/connect", "/api/integrations/sync"].includes(path))
+      || (method === "DELETE" && new RegExp(`^/api/integrations/${SERVER_ID}$`).test(path)))) return true;
+  }
   if (scope === "integration_read") {
     return (method === "GET" && (path === "/api/integrations" || path === "/api/integrations/agent-catalog"))
       || (method === "POST" && path === "/api/integrations/read-call");
   }
   return (method === "GET" && (path === "/api/mcp-servers" || DETAIL_PATH.test(path)))
-    || (scope === "call" && method === "POST" && CALL_PATH.test(path));
+    || ((scope === "call" || scope === "chat_call") && method === "POST" && CALL_PATH.test(path));
 }
 
-/** A bounded, owner-bound, run-lifetime capability for Custom MCP only. */
+/** A bounded, owner-bound, run-lifetime capability with explicit tool authority. */
 export function createMatrixMcpCapabilityRegistry(options: {
   configuredOwnerId?: string;
   previewRuntime?: boolean;
   now?: () => number;
 }): MatrixMcpCapabilityRegistry {
-  const active = new Map<string, { actorId: string; runId: string; scope: MatrixMcpRunScope; expiresAt: number }>();
+  const active = new Map<string, { actorId: string; runId: string; scope: MatrixMcpRunScope; expiresAt: number;
+    authority?: ReturnType<typeof createIntegrationToolAuthority> }>();
   const now = options.now ?? Date.now;
   let closed = false;
 
@@ -92,7 +101,8 @@ export function createMatrixMcpCapabilityRegistry(options: {
     sweep();
     const grant = active.get(digest(token));
     return grant && permitted(method, path, grant.scope)
-      ? { actorId: grant.actorId, runId: grant.runId, scope: grant.scope }
+      ? { actorId: grant.actorId, runId: grant.runId, scope: grant.scope,
+        ...(grant.authority ? { consumeIntegrationRequest: grant.authority.consumeIntegrationRequest } : {}) }
       : null;
   }
 
@@ -102,14 +112,20 @@ export function createMatrixMcpCapabilityRegistry(options: {
         || !SAFE_PRINCIPAL_USER_ID.test(options.configuredOwnerId)
         || input.owner.type !== "personal"
         || input.owner.ownerId !== options.configuredOwnerId
-        || (input.scope !== "discovery" && input.scope !== "call" && input.scope !== "integration_read")
+        || !["discovery", "call", "integration_read", "chat_call", "chat_discovery"].includes(input.scope)
         || !input.runId || input.runId.length > 256) return null;
       sweep();
       if (active.size >= MAX_ACTIVE) return null;
       const token = randomBytes(32).toString("hex");
       const key = digest(token);
-      active.set(key, { actorId: input.owner.ownerId, runId: input.runId, scope: input.scope, expiresAt: now() + LIFETIME_MS });
-      return { token, revoke: () => { active.delete(key); } };
+      const expiresAt = now() + LIFETIME_MS;
+      const authority = input.scope === "chat_call" ? createIntegrationToolAuthority({
+        now, fullAccess: input.fullAccess === true,
+        live: () => !closed && active.has(key) && now() < expiresAt,
+      }) : undefined;
+      active.set(key, { actorId: input.owner.ownerId, runId: input.runId, scope: input.scope, expiresAt, authority });
+      return { token, revoke: () => { active.delete(key); },
+        ...(authority ? { approveIntegrationTool: authority.approveIntegrationTool } : {}) };
     },
     resolve(token, method, path) {
       return resolveRunContext(token, method, path)?.actorId ?? null;

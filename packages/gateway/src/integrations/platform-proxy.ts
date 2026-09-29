@@ -5,6 +5,7 @@ import { delegatedIntegrationHeaders } from "./delegated-identity.js";
 import { createIntegrationProxyResponse } from "./proxy-response.js";
 import { INTEGRATION_READ_SCOPE_HEADER } from "./scope-provenance.js";
 import { requireRequestPrincipal } from "../request-principal.js";
+import { authorizeChatIntegrationRequest } from "./chat-action-guard.js";
 
 function buildIntegrationProxyUrl(c: Context, targetBase: string, routePrefix: string): string {
   const targetUrl = new URL(targetBase);
@@ -32,6 +33,10 @@ export async function proxyIntegrationRequest(
   },
 ): Promise<Response> {
   const routePrefix = options.routePrefix ?? "/api/integrations";
+  if (routePrefix === "/api/integrations") {
+    const denied = await authorizeChatIntegrationRequest(c);
+    if (denied) return denied;
+  }
   let upstreamUrl: string;
   try {
     upstreamUrl = buildIntegrationProxyUrl(c, options.targetBase, routePrefix);

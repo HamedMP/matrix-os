@@ -1,4 +1,5 @@
 import { createInternalIntegrationGuard } from './internal-integration-guard.js';
+import { createIntegrationChatApprovalRoutes } from './integration-chat-approval.js';
 import { canClerkUserAccessMachine, getActivePreviewMachineByHandle } from './customer-vps-preview.js';
 import { Hono, type Context } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
@@ -724,6 +725,7 @@ export function createApp(deps: {
         await next();
       });
     });
+    internalIntegrationApp.route('/', createIntegrationChatApprovalRoutes(platformSecret));
     internalIntegrationApp.route('/', deps.internalIntegrationRoutes);
     app.route('/internal/containers/:handle/integrations', internalIntegrationApp);
   }

@@ -1,5 +1,6 @@
 import { createClaudeInputController } from "./claude-input-control.js";
 import { CALL_TOOL, createClaudeCustomMcpApprovalControl } from "./claude-custom-mcp-approval.js";
+import { createClaudeIntegrationApprovalControl } from "./claude-integration-approval.js";
 import type { CustomMcpApprovalClient } from "./custom-mcp-approval-client.js";
 import { z } from "zod/v4";
 import { classifyClaudeUsageFailure } from "./claude-usage-failure.js";
@@ -251,19 +252,20 @@ export function createClaudeChatProviderAdapter(options: {
     // Presentation is projected from the exact scope requested at issuance.
     // A presentation selector never authorizes a Gateway request.
     const mcpScope = approvalReady && input.interactionMode === "default" && selectedPermission !== "plan"
-      ? "call" : "discovery";
+      ? "chat_call" : "chat_discovery";
     const capability = options.matrixMcpCapabilityIssuer?.issue({
       owner: input.owner,
       runId: input.runId,
       // Review is read-only even if its saved permission choice says full access.
       // Unknown future interaction modes receive discovery only.
       scope: mcpScope,
+      fullAccess,
     }) ?? null;
     const recipeGuidance = input.context?.agent?.recipe
-      ? "Selected integration dependencies are unavailable through this route. "
-        + (capability
-          ? "Discover Custom MCP servers with list_custom_mcp_servers, then inspect enabled tools with describe_custom_mcp_server. "
-            + (mcpScope === "call"
+      ? (capability
+          ? "Discover built-in integrations with list_integration_inventory and describe_service. Preserve the exact account label for calls. "
+            + "Discover Custom MCP servers with list_custom_mcp_servers, then inspect enabled tools with describe_custom_mcp_server. "
+            + (mcpScope === "chat_call"
               ? "Use call_custom_mcp_tool only when the user needs an enabled tool; the broker owns tool policy and approval."
               : "This run supports discovery only; remote tool calls are unavailable.")
           : "No Matrix tools are available for this run.")
@@ -359,12 +361,18 @@ export function createClaudeChatProviderAdapter(options: {
       emit: event => queue.push(event),
       onError: error => console.warn("[chat-claude] Custom MCP approval failed", error instanceof Error ? error.name : "UnknownError"),
     }) : undefined;
+    const integrationApproval = capability ? createClaudeIntegrationApprovalControl({
+      runId: input.runId, homePath: options.homePath, capability,
+      verify: options.customMcpApprovalClient?.verifyIntegrationDecision?.bind(options.customMcpApprovalClient),
+      emit: event => queue.push(event), onError: () => processController.abort(),
+    }) : undefined;
     let approvalRevoked = false;
     let finalRevokePromise: Promise<void> | undefined;
     let clearApprovalPromise: Promise<boolean> | undefined;
     const revokeApproval = (reason: "final" | "steer" = "final") => {
       capability?.revoke();
       approvalControl?.close();
+      integrationApproval?.close();
       if (reason === "steer") {
         if (approvalClient && registeredGeneration && !clearApprovalPromise) {
           clearApprovalPromise = approvalClient.clearRunApprovals(input.runId, registeredGeneration)
@@ -387,7 +395,8 @@ export function createClaudeChatProviderAdapter(options: {
       write: frame => writeControl ? writeControl(frame) : Promise.reject(new Error("Input transport unavailable")),
       emit: event => queue.push(event),
       onError: () => processController.abort(),
-      onToolPermission: approvalControl?.onToolPermission ?? (approvalReady && capability && selectedPermission === "default"
+      onToolPermission: (request, respond) => integrationApproval?.onToolPermission(request, respond)
+        || (approvalControl?.onToolPermission ?? (approvalReady && capability && selectedPermission === "default"
         && input.interactionMode === "default" ? (request, respond) => {
           if (request.toolName !== CALL_TOOL) return false;
           // The broker remains the policy authority. An unavailable approval
@@ -399,8 +408,8 @@ export function createClaudeChatProviderAdapter(options: {
             processController.abort();
           });
           return true;
-        } : undefined),
-      onToolPermissionCancel: approvalControl?.onToolPermissionCancel,
+        } : undefined))?.(request, respond) || false,
+      onToolPermissionCancel: id => { integrationApproval?.onToolPermissionCancel(id); approvalControl?.onToolPermissionCancel(id); },
     });
     const activeRun = {
       ownerId: input.owner.ownerId,
@@ -408,7 +417,11 @@ export function createClaudeChatProviderAdapter(options: {
       chatId: input.chatId,
       abort: () => { cancellationRequested = true; revokeApproval(); processController.abort(); },
       submitInput: inputControl.submit,
-      submitApproval: approvalControl?.submit,
+      submitApproval: async (id: string, decision: Parameters<NonNullable<typeof approvalControl>["submit"]>[1], provenance?: Parameters<NonNullable<typeof approvalControl>["submit"]>[2]) => {
+        if (integrationApproval?.has(id)) return integrationApproval.submit(id, decision, provenance);
+        if (approvalControl) return approvalControl.submit(id, decision, provenance);
+        throw new Error("Approval unavailable");
+      },
       steer(prompt: string) {
         if (!emittedState) throw new Error("Claude Run state unavailable");
         steerPrompt = prompt;
@@ -877,7 +890,7 @@ export function createClaudeChatProviderAdapter(options: {
       }));
       queue.finish();
     }).finally(() => { if (steerPrompt && emittedState && !input.signal.aborted && !cancellationRequested) {
-      capability?.revoke(); approvalControl?.close();
+      capability?.revoke(); approvalControl?.close(); integrationApproval?.close();
     } else revokeApproval(); });
 
     let streamCompleted = false;
@@ -893,7 +906,7 @@ export function createClaudeChatProviderAdapter(options: {
         revokeApproval();
         await finalRevokePromise;
       } else if (steerPrompt && emittedState && !input.signal.aborted && !cancellationRequested) {
-        capability?.revoke(); approvalControl?.close();
+        capability?.revoke(); approvalControl?.close(); integrationApproval?.close();
       } else revokeApproval();
       capability?.revoke();
     }

@@ -12,6 +12,7 @@ import {
 import { CodexExecutableSchema } from "./coding-agents/codex-executable.js";
 import { codexExecContractStatus } from "./coding-agents/codex-version.js";
 import { MATRIX_CUSTOM_MCP_DISCOVERY_TOOLS, MATRIX_CUSTOM_MCP_TOOLS, matrixMcpConfig } from "./chat/matrix-mcp-launch.js";
+import { MATRIX_INTEGRATION_DISCOVERY_TOOLS, MATRIX_INTEGRATION_ACTION_TOOLS } from "./chat/integration-tool-authority.js";
 
 export const SupportedAgentSchema = z.enum(["claude", "codex", "opencode", "pi"]);
 export type SupportedAgent = z.infer<typeof SupportedAgentSchema>;
@@ -66,7 +67,7 @@ export interface AgentLaunchInput {
   claudeOutputFormat?: "stream-json";
   claudeIncludePartialMessages?: boolean;
   matrixCustomMcp?: boolean;
-  matrixCustomMcpScope?: "call" | "discovery";
+  matrixCustomMcpScope?: "call" | "discovery" | "chat_call" | "chat_discovery";
 }
 
 export interface AgentLaunchSpec {
@@ -208,12 +209,13 @@ const ClaudeEditPermissionRuleSchema = z.string()
 const ClaudeAllowRuleSchema = z.union([
   ClaudeEditPermissionRuleSchema,
   z.enum(MATRIX_CUSTOM_MCP_TOOLS),
+  z.enum(MATRIX_INTEGRATION_DISCOVERY_TOOLS),
 ]);
 const ClaudeLaunchSettingsSchema = z.object({
   permissions: z.object({
-    // The sandbox permits 20 writable roots; a scoped Claude Run adds only
-    // the three fixed Custom MCP broker wrappers to that existing ceiling.
-    allow: z.array(ClaudeAllowRuleSchema).max(23).optional(),
+    // Twenty writable roots plus fixed built-in/Custom MCP discovery wrappers.
+    allow: z.array(ClaudeAllowRuleSchema).max(26).optional(),
+    ask: z.array(z.enum(MATRIX_INTEGRATION_ACTION_TOOLS)).max(4).optional(),
     deny: z.array(z.enum(["Edit", "Write", "NotebookEdit"])).max(3).optional(),
   }).strict().optional(),
   sandbox: z.object({
@@ -280,8 +282,9 @@ function claudeLaunchSettings(input: AgentLaunchInput): z.infer<typeof ClaudeLau
     (input.approvalPolicy === "on-request" || input.approvalPolicy === "never") &&
     input.mode !== "plan" &&
     input.mode !== "review";
+  const chatIntegrations = input.matrixCustomMcpScope?.startsWith("chat_") === true;
   const mcpTools = input.matrixCustomMcp
-    ? [...(mode === "read-only" || claudePermissionMode(input) === "default"
+    ? [...(chatIntegrations ? MATRIX_INTEGRATION_DISCOVERY_TOOLS : []), ...(mode === "read-only" || claudePermissionMode(input) === "default"
       ? MATRIX_CUSTOM_MCP_DISCOVERY_TOOLS : MATRIX_CUSTOM_MCP_TOOLS)]
     : [];
   if (mode === "read-only") {
@@ -301,6 +304,7 @@ function claudeLaunchSettings(input: AgentLaunchInput): z.infer<typeof ClaudeLau
     permissions: scopedEdits
       ? {
           allow: [...(sandbox.writableRoots ?? []).map(claudeEditPermissionRule), ...mcpTools],
+          ...(chatIntegrations ? { ask: [...MATRIX_INTEGRATION_ACTION_TOOLS] } : {}),
         }
       : { ...(mcpTools.length ? { allow: mcpTools } : {}), deny: ["Edit", "Write", "NotebookEdit"] },
     sandbox: {
