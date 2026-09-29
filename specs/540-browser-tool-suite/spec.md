@@ -6,7 +6,7 @@
 
 ## Outcome
 
-Extend the 45 working public Matrix tools with the distinct TabTasker tasks. Keep each task usable on a phone without a Matrix account or provisioned computer. Publish a page in the sitemap only when the task works end to end. Retain Matrix site design, clear limits, and accurate descriptions. The catalog is a product inventory, not permission to publish placeholder pages.
+Extend the 45 working public Matrix tools with useful browser-first document, media, developer, and collaboration tasks. Keep each task usable on a phone without a Matrix account or provisioned computer. Publish a page in the sitemap only when the task works end to end. Retain Matrix site design, clear limits, and accurate descriptions. The catalog is a product inventory, not permission to publish placeholder pages.
 
 ## Inventory and acceptance
 
@@ -30,6 +30,7 @@ The PDF Workspace, Image Workspace, Audio Workspace, Text Workspace, Code Worksp
 - Collaboration uses WebRTC RTCPeerConnection and RTCDataChannel. The initial free version uses manual copy/paste of bounded offer and answer codes, so no Matrix signaling endpoint, database, or server startup wiring is required. Each peer gathers ICE candidates before sharing its code. Public STUN helps direct connections; there is no TURN relay, so some networks will not connect. Tell users when connection fails. Video tracks stop when leaving, and shared whiteboard operations are capped. A future one-link room experience needs a separate signaling service specification with explicit website-to-gateway routing, startup, Postgres configuration, abuse limits, and shutdown behavior before implementation.
 - Durable background workflows, cloud files, scheduled execution, and hosted AI belong to paid Matrix accounts and do not masquerade as browser tools. A free browser workflow must run only while the tab remains open.
 - Do not fetch user-provided URLs server side until a dedicated SSRF-safe endpoint is designed and tested. A local HTML upload satisfies the first SEO-audit expansion.
+- PostHog measures catalog discovery and tool outcomes with an explicit event allowlist: page open, card/related navigation, category selection, coarse search-length/result-count buckets, start, success, broad error class, copy, and download. Never include search phrases, filenames, file contents, peer codes, prompts, outputs, or full error messages. Tool routes block session replay, console recording, and automatic exception capture; strip query strings and attribution from pageviews. Apply the same filter when queued events flush after navigation.
 
 ## Security and resource policy
 
@@ -63,7 +64,7 @@ The site implementation is split into working vertical slices: (1) local structu
 
 ## Current delivery record (2026-09-29)
 
-The public website implementation is under review in `FinnaAI/matrix-os-site` PR #137, with separate user documentation in PR #138. Its current catalog contains 99 published slugs, including the prior 45. The deployed Vercel preview served all 99 tool pages with HTTP 200, unique titles, the expected canonical, one H1, visible task-specific FAQs and FAQ structured data. The sitemap includes all 99, and an unknown slug returns 404. The updated site suite passed 194 tests, TypeScript checking, and a production build.
+The public website implementation is under review in `FinnaAI/matrix-os-site` PR #137, with separate user documentation in PR #138. Its current catalog contains 99 published slugs, including the prior 45. The deployed Vercel preview served all 99 tool pages with HTTP 200, unique titles, the expected canonical, one H1, visible task-specific FAQs and FAQ structured data. The sitemap includes all 99, and an unknown slug returns 404. The updated site suite passed 202 tests, TypeScript checking, and a production build. PostHog now tracks bounded tool discovery and usage events, while tool routes disable replay, console recording, and automatic exception capture.
 
 Browser journeys confirmed blur faces, PDF-to-Word, PDF-to-image, merge PDFs, and single-area redaction. A two-page sample PDF uploaded and rendered the live redaction preview in the deployed preview; drawing and exporting several areas across pages still needs a full browser journey. The PDF redaction implementation validates up to 50 selected areas and rasterizes every page so original selectable text is removed. The updated local browser journey rendered a PDF Workspace page thumbnail and exported a rotated PDF; Audio Workspace rendered a waveform, exported a trimmed WAV, and restored original audio and edit settings after reload. The browser image tag model ranked `portrait` first on a portrait photo among four user labels. Original Matrix illustrations are used for eight tool categories, and the pages retain Matrix branding and icons.
 
