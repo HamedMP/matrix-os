@@ -291,6 +291,20 @@ describe("shared terminal controls", () => {
     expect(await screen.findByRole("button", { name: "Stop terminal" })).toBeEnabled();
   });
 
+  it("clears reconnecting after an HTTP Stop succeeds during a stream failure", async () => {
+    const { api, handlers } = apiFixture();
+    api.post.mockResolvedValueOnce({ terminal: { ...terminal, status: "exited", exitedAt: "2026-09-11T12:01:00.000Z" }, action: "stopped" });
+    render(<SharedTerminalControls api={api} scope={scope("owner")} actorId="user_owner" />);
+    await waitFor(() => expect(api.subscribeTerminal).toHaveBeenCalled());
+    act(() => handlers().onReady(readyFrame("connection_owner")));
+    act(() => handlers().onTemporarilyUnavailable());
+    expect(screen.getByRole("status")).toHaveTextContent("Reconnecting automatically");
+
+    fireEvent.click(screen.getByRole("button", { name: "Stop terminal" }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Stop terminal" })).not.toBeInTheDocument());
+    expect(screen.queryByText(/Reconnecting automatically/)).not.toBeInTheDocument();
+  });
+
   it("stops without a socket and clears local control when the socket disconnects", async () => {
     const { api, handlers } = apiFixture();
     render(<SharedTerminalControls api={api} scope={scope("owner")} actorId="user_owner" />);

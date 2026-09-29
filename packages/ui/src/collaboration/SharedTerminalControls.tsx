@@ -247,12 +247,15 @@ export function SharedTerminalControls({ api, scope, actorId, layers }: {
 function reduce(state: State, action: Action): State {
   if (action.type === "ready") return { ...state, terminal: action.terminal, connectionId: action.connectionId,
     controlConnectionId: null, controlLeaseEpoch: null, loading: false, unavailable: false, temporarilyUnavailable: false, error: false };
-  if (action.type === "state") return { ...state, terminal: action.terminal, pending: false, error: false };
+  if (action.type === "state") return { ...state, terminal: action.terminal, pending: false,
+    temporarilyUnavailable: action.terminal.status === "active" && state.temporarilyUnavailable, error: false };
   if (action.type === "accepted") return { ...state, terminal: action.terminal,
-    controlConnectionId: action.connectionId, controlLeaseEpoch: action.leaseEpoch, pending: false, error: false };
+    controlConnectionId: action.connectionId, controlLeaseEpoch: action.leaseEpoch, pending: false,
+    temporarilyUnavailable: action.terminal.status === "active" && state.temporarilyUnavailable, error: false };
   if (action.type === "disconnected") return { ...state, connectionId: null,
     controlConnectionId: null, controlLeaseEpoch: null, pending: false };
-  if (action.type === "refresh") return { ...state, terminal: action.terminal, loading: false, error: false };
+  if (action.type === "refresh") return { ...state, terminal: action.terminal, loading: false,
+    temporarilyUnavailable: action.terminal.status === "active" && state.temporarilyUnavailable, error: false };
   if (action.type === "resync") return { ...state, output: "" };
   if (action.type === "output") return { ...state, output: appendBounded(state.output, action.data) };
   if (action.type === "pending") return { ...state, pending: action.value, error: false };
