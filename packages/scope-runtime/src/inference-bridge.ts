@@ -52,7 +52,8 @@ export function brokerRequest(
       else resolve(value ?? {});
     };
     socket.setTimeout(timeout, () => finish(new ScopeRuntimeBrokerError("Broker timed out")));
-    socket.once("connect", () => socket.write(`${JSON.stringify(frame)}\n`));
+    // Half-close the request direction so the broker can validate the whole frame.
+    socket.once("connect", () => socket.end(`${JSON.stringify(frame)}\n`));
     socket.on("data", (chunk) => {
       const bytes = Buffer.from(chunk);
       response = Buffer.concat([response, bytes], response.length + bytes.length);
