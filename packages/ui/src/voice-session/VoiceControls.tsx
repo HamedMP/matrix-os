@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, type KeyboardEvent, type PointerEvent } from "react";
+import { useEffect, useRef, type KeyboardEvent, type PointerEvent } from "react";
 import { Button } from "../Button.js";
 import type {
   VoiceSessionController,
@@ -23,6 +23,23 @@ function PushToTalkButton({
 
   const start = () => controller.beginPushToTalk();
   const stop = () => controller.endPushToTalk();
+
+  // Capture must not outlive an engaged control: releasing focus, hiding the
+  // page, or unmounting the button all end the hold and emit capture.stop.
+  useEffect(() => {
+    if (!active) return undefined;
+    const release = () => controller.endPushToTalk();
+    const onVisibility = () => {
+      if (document.hidden) controller.endPushToTalk();
+    };
+    window.addEventListener("blur", release);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      window.removeEventListener("blur", release);
+      document.removeEventListener("visibilitychange", onVisibility);
+      release();
+    };
+  }, [active, controller]);
 
   const handlePointerDown = (event: PointerEvent<HTMLButtonElement>) => {
     if (event.button !== 0) return;
@@ -57,6 +74,12 @@ function PushToTalkButton({
       onPointerUp={handlePointerEnd}
       onPointerCancel={handlePointerEnd}
       onLostPointerCapture={handlePointerEnd}
+      onBlur={() => {
+        // Losing focus terminates the hold and the interaction itself, so any
+        // pending click suppression tied to that gesture is released too.
+        suppressClick.current = false;
+        stop();
+      }}
       onKeyDown={handleKeyDown}
       onKeyUp={handleKeyUp}
       onClick={() => {

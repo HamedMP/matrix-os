@@ -23,6 +23,19 @@ export const reorderedFinalsScenario = createVoiceSimulatorScenario("duplicate-r
   { atMs: 30, type: "end", reason: "user" },
 ]);
 
+export const usingToolScenario = createVoiceSimulatorScenario("using-tool", [
+  { atMs: 0, type: "permission", outcome: "granted" },
+  { atMs: 10, type: "capture", action: "start", turnId: "turn-1" },
+  { atMs: 20, type: "vad", action: "speech_start", turnId: "turn-1" },
+  { atMs: 30, type: "vad", action: "speech_end", turnId: "turn-1" },
+  { atMs: 40, type: "transcript.final", turnId: "turn-1", finalityId: "final-1", localOrder: 1, text: "Review the launch checklist" },
+  { atMs: 50, type: "generation", action: "start", responseId: "response-1" },
+  { atMs: 60, type: "operation", operationId: "op-1", runId: "run-1", label: "Reviewing project files", state: "running" },
+  { atMs: 70, type: "operation", operationId: "op-1", runId: "run-1", label: "Reviewing project files", state: "succeeded" },
+  { atMs: 80, type: "generation", action: "complete", responseId: "response-1" },
+  { atMs: 90, type: "end", reason: "user" },
+]);
+
 export const interruptionScenario = createVoiceSimulatorScenario("interruption", [
   { atMs: 0, type: "permission", outcome: "granted" },
   { atMs: 10, type: "generation", action: "start", responseId: "response-1" },

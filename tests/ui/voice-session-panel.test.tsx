@@ -155,6 +155,48 @@ describe("VoicePanel", () => {
     ]);
   });
 
+  it("releases push-to-talk on blur, window blur, visibility loss, and unmount", () => {
+    const { onCommand } = setup("listening", { turnMode: "push_to_talk" });
+    const button = screen.getByRole("button", { name: "Push to Talk" });
+    const commands = () => onCommand.mock.calls.map(([command]) => command);
+
+    // Focus leaving the engaged button ends the hold exactly once.
+    fireEvent.pointerDown(button);
+    fireEvent.blur(button);
+    fireEvent.blur(button);
+    expect(commands()).toEqual([
+      { type: "capture.start", mode: "push_to_talk" },
+      { type: "capture.stop" },
+    ]);
+    expect(button).toHaveAttribute("aria-pressed", "false");
+
+    onCommand.mockClear();
+    fireEvent.click(button);
+    fireEvent(window, new FocusEvent("blur"));
+    expect(commands()).toEqual([
+      { type: "capture.start", mode: "push_to_talk" },
+      { type: "capture.stop" },
+    ]);
+
+    onCommand.mockClear();
+    fireEvent.click(button);
+    const hiddenSpy = vi.spyOn(document, "hidden", "get").mockReturnValue(true);
+    fireEvent(document, new Event("visibilitychange"));
+    hiddenSpy.mockRestore();
+    expect(commands()).toEqual([
+      { type: "capture.start", mode: "push_to_talk" },
+      { type: "capture.stop" },
+    ]);
+
+    onCommand.mockClear();
+    fireEvent.click(button);
+    cleanup();
+    expect(commands()).toEqual([
+      { type: "capture.start", mode: "push_to_talk" },
+      { type: "capture.stop" },
+    ]);
+  });
+
   it("marks a bounded provisional transcript as Draft transcript", () => {
     const controller = new VoiceSessionController({ initialEpoch: 1, sessionId: SESSION_ID });
     controller.receive({

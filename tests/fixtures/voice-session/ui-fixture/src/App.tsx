@@ -1,25 +1,20 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { VoicePanel } from "../../../../../packages/ui/src/voice-session/VoicePanel";
 import {
-  VoiceSessionController,
   useVoiceSessionController,
   type VoiceSessionCommand,
   type VoiceSessionViewState,
 } from "../../../../../packages/ui/src/voice-session/controller";
+import type { VoiceSimulatorScenario } from "../../../../../packages/gateway/src/voice-session/simulator-adapter";
 import {
-  DeterministicVoiceSimulator,
-  type VoiceSimulatorScenario,
-} from "../../../../../packages/gateway/src/voice-session/simulator-adapter";
-import {
-  interruptionScenario,
+  backpressureScenario,
   normalScenario,
   permissionDeniedScenario,
   reconnectScenario,
-  sessionQuotaScenario,
+  terminalCleanupScenario,
+  usingToolScenario,
 } from "../../scenarios/index";
-import { FakeCanonicalChatHarness } from "../../canonical-chat-harness";
-
-const FIXTURE_SESSION_ID = "vs_ui";
+import { runFixtureSession } from "./session-runner";
 
 type ScenarioId =
   | "connecting"
@@ -37,52 +32,31 @@ type ScenarioId =
 type Scenario = {
   id: ScenarioId;
   label: string;
-  state: VoiceSessionViewState["state"];
+  media: VoiceSimulatorScenario;
+  displayUntilMs: number;
   turnMode?: VoiceSessionViewState["turnMode"];
-  toolLabel?: string;
-  transcript?: string;
-  error?: { code: string; recovery: string; retryable: boolean };
   reducedMotion?: boolean;
 };
 
 const SCENARIOS: readonly Scenario[] = [
-  { id: "connecting", label: "Connecting", state: "connecting" },
-  {
-    id: "listening",
-    label: "Listening",
-    state: "listening",
-    transcript: "Show me the launch checklist for this project…",
-  },
-  { id: "thinking", label: "Thinking", state: "thinking" },
-  {
-    id: "using-tool",
-    label: "Using tool",
-    state: "using_tool",
-    toolLabel: "Reviewing project files",
-  },
-  { id: "speaking", label: "Speaking", state: "speaking" },
-  { id: "paused", label: "Paused", state: "paused" },
-  { id: "reconnecting", label: "Reconnecting", state: "reconnecting" },
-  {
-    id: "failed",
-    label: "Failed",
-    state: "failed",
-    error: { code: "connection_failed", recovery: "retry_connection", retryable: true },
-  },
-  {
-    id: "permission-denied",
-    label: "Permission denied",
-    state: "failed",
-    error: { code: "permission_denied", recovery: "request_permission", retryable: true },
-  },
+  { id: "connecting", label: "Connecting", media: normalScenario, displayUntilMs: -1 },
+  { id: "listening", label: "Listening", media: normalScenario, displayUntilMs: 35 },
+  { id: "thinking", label: "Thinking", media: normalScenario, displayUntilMs: 65 },
+  { id: "using-tool", label: "Using tool", media: usingToolScenario, displayUntilMs: 65 },
+  { id: "speaking", label: "Speaking", media: normalScenario, displayUntilMs: 95 },
+  { id: "paused", label: "Paused", media: backpressureScenario, displayUntilMs: 25 },
+  { id: "reconnecting", label: "Reconnecting", media: reconnectScenario, displayUntilMs: 15 },
+  { id: "failed", label: "Failed", media: terminalCleanupScenario, displayUntilMs: Number.POSITIVE_INFINITY },
+  { id: "permission-denied", label: "Permission denied", media: permissionDeniedScenario, displayUntilMs: Number.POSITIVE_INFINITY },
   {
     id: "reduced-motion",
     label: "Reduced motion",
-    state: "listening",
+    media: normalScenario,
+    displayUntilMs: 35,
     turnMode: "push_to_talk",
     reducedMotion: true,
   },
-  { id: "ended", label: "Ended", state: "ended" },
+  { id: "ended", label: "Ended", media: normalScenario, displayUntilMs: Number.POSITIVE_INFINITY },
 ] as const;
 
 function scenarioFromUrl(): ScenarioId {
@@ -90,174 +64,89 @@ function scenarioFromUrl(): ScenarioId {
   return SCENARIOS.some(({ id }) => id === candidate) ? (candidate as ScenarioId) : "listening";
 }
 
-function mediaScenarioFor(scenario: Scenario): VoiceSimulatorScenario {
-  switch (scenario.id) {
-    case "permission-denied":
-      return permissionDeniedScenario;
-    case "reconnecting":
-      return reconnectScenario;
-    case "speaking":
-      return interruptionScenario;
-    case "failed":
-      return sessionQuotaScenario;
-    default:
-      return normalScenario;
-  }
-}
-
-interface QualificationEvidence {
-  mediaScenarioId: string;
-  mediaJournalEntries: number;
-  mediaTerminalState: string;
-  mediaResourcesClean: boolean;
-  canonicalRevision: number;
-  admissionOutcome: string;
-}
-
-export function buildQualificationEvidence(scenario: Scenario): QualificationEvidence {
-  const mediaScenario = mediaScenarioFor(scenario);
-  const media = new DeterministicVoiceSimulator().run(mediaScenario);
-  const harness = new FakeCanonicalChatHarness();
-  const admission = harness.admit({
-    requestId: "req_voice_fixture",
-    finalityId: "vfinal_voice_fixture",
-    source: "voice",
-    localOrder: 1,
-    baseRevision: 0,
-    routeId: "route_fixture",
-    interactionMode: "default",
-    permissionMode: "supervised",
-    memoryMode: "session_only",
-    choice: "send",
-    transcript: "fixture-only transcript",
-  });
-  const { resources } = media;
-  return {
-    mediaScenarioId: mediaScenario.scenarioId,
-    mediaJournalEntries: media.journal.length,
-    mediaTerminalState: media.terminalState,
-    mediaResourcesClean:
-      !resources.capture
-      && !resources.transport
-      && resources.playbackSegments === 0
-      && resources.timers === 0
-      && resources.queuedAudioMs === 0,
-    canonicalRevision: harness.snapshot().revision,
-    admissionOutcome: admission.outcome,
-  };
-}
-
-function createController(
-  scenario: Scenario,
-  onCommand: (command: VoiceSessionCommand) => void,
-): VoiceSessionController {
-  const controller = new VoiceSessionController({
-    initialEpoch: 7,
-    sessionId: FIXTURE_SESSION_ID,
-    initialTurnMode: scenario.turnMode,
-    onCommand,
-  });
-  let sequence = 1;
-  controller.receive({
-    contractVersion: 1,
-    sessionId: FIXTURE_SESSION_ID,
-    type: "session.state",
-    epoch: 7,
-    sequence: sequence++,
-    state: scenario.state,
-  });
-  if (scenario.transcript) {
-    controller.receive({
-      contractVersion: 1,
-      sessionId: FIXTURE_SESSION_ID,
-      type: "transcript.provisional",
-      epoch: 7,
-      sequence: sequence++,
-      turnId: "vturn_fixture",
-      revision: 1,
-      text: scenario.transcript,
-    });
-  }
-  if (scenario.toolLabel) {
-    controller.receive({
-      contractVersion: 1,
-      sessionId: FIXTURE_SESSION_ID,
-      type: "operation.status",
-      epoch: 7,
-      sequence: sequence++,
-      runId: "run_fixture",
-      label: scenario.toolLabel,
-      state: "running",
-    });
-  }
-  if (scenario.state === "speaking") {
-    controller.receive({
-      contractVersion: 1,
-      sessionId: FIXTURE_SESSION_ID,
-      type: "response.started",
-      epoch: 7,
-      sequence: sequence++,
-      runId: "run_fixture",
-      responseId: "vresp_fixture",
-    });
-  }
-  if (scenario.error) {
-    controller.receive({
-      contractVersion: 1,
-      sessionId: FIXTURE_SESSION_ID,
-      type: "session.error",
-      epoch: 7,
-      sequence: sequence++,
-      ...scenario.error,
-    });
-  }
-  return controller;
-}
-
 function VoiceFixture({ scenario }: { scenario: Scenario }) {
-  const [lastCommand, setLastCommand] = useState("No control selected");
-  const controller = useMemo(
-    () => createController(scenario, (command) => setLastCommand(command.type)),
+  // Replay-time commands arrive while useMemo runs the deterministic pipeline;
+  // interactive commands only reach React state through the post-mount sink.
+  const commandSink = useRef<(command: VoiceSessionCommand) => void>(() => undefined);
+  const [lastCommand, setLastCommand] = useState<string | null>(null);
+  const run = useMemo(
+    () => runFixtureSession(scenario.media, {
+      displayUntilMs: scenario.displayUntilMs,
+      turnMode: scenario.turnMode,
+      onCommand: (command: VoiceSessionCommand) => commandSink.current(command),
+    }),
     [scenario],
   );
-  const evidence = useMemo(() => buildQualificationEvidence(scenario), [scenario]);
-  const state = useVoiceSessionController(controller);
+  const state = useVoiceSessionController(run.controller);
 
-  useEffect(() => () => controller.dispose(), [controller]);
+  useEffect(() => {
+    commandSink.current = (command) => setLastCommand(command.type);
+    setLastCommand(null);
+    return () => {
+      commandSink.current = () => undefined;
+      run.controller.dispose();
+    };
+  }, [run]);
+
+  const shownCommand = lastCommand ?? run.evidence.commands.at(-1) ?? "No control selected";
 
   return (
     <div
       className={scenario.reducedMotion ? "fixture-voice fixture-reduced-motion" : "fixture-voice"}
     >
-      <VoicePanel state={state} controller={controller} />
+      <VoicePanel state={state} controller={run.controller} />
       <dl className="fixture-evidence" aria-label="Deterministic qualification evidence">
         <div>
           <dt>Media scenario</dt>
-          <dd>{evidence.mediaScenarioId}</dd>
+          <dd>{run.evidence.mediaScenarioId}</dd>
         </div>
         <div>
           <dt>Media journal</dt>
-          <dd>{evidence.mediaJournalEntries} entries</dd>
+          <dd>{run.evidence.mediaJournalEntries} entries</dd>
         </div>
         <div>
           <dt>Terminal state</dt>
-          <dd>{evidence.mediaTerminalState}</dd>
+          <dd>{run.evidence.mediaTerminalState}</dd>
+        </div>
+        <div>
+          <dt>Frames</dt>
+          <dd>{run.evidence.framesAccepted} accepted, {run.evidence.framesRejected} fenced</dd>
         </div>
         <div>
           <dt>Canonical revision</dt>
-          <dd>{evidence.canonicalRevision}</dd>
+          <dd>{run.evidence.canonicalRevision}</dd>
         </div>
         <div>
-          <dt>Admission</dt>
-          <dd>{evidence.admissionOutcome}</dd>
+          <dt>Admissions</dt>
+          <dd>
+            {run.evidence.admissions.length === 0
+              ? "none"
+              : run.evidence.admissions
+                .map((admission) => `${admission.requestId}: ${admission.outcome}`)
+                .join(", ")}
+          </dd>
+        </div>
+        <div>
+          <dt>Active run</dt>
+          <dd>{run.evidence.activeRunId ?? "none"}</dd>
+        </div>
+        <div>
+          <dt>Deliveries</dt>
+          <dd>
+            {run.evidence.deliveries.length === 0
+              ? "none"
+              : run.evidence.deliveries
+                .map((delivery) => `${delivery.responseId}=${delivery.state}`)
+                .join(", ")}
+          </dd>
         </div>
         <div>
           <dt>Cleanup</dt>
-          <dd>{evidence.mediaResourcesClean ? "clean" : "incomplete"}</dd>
+          <dd>{run.evidence.mediaResourcesClean ? "clean" : "incomplete"}</dd>
         </div>
       </dl>
       <p className="fixture-command" aria-live="polite">
-        Fixture command: {lastCommand}
+        Fixture command: {shownCommand}
       </p>
     </div>
   );

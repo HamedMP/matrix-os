@@ -42,6 +42,7 @@ const ERROR_COPY: Record<string, string> = {
   provider_unavailable: "Voice is temporarily unavailable. Retry or continue in Chat.",
   session_limit_reached: "This voice session reached its limit. Continue in Chat or start again.",
   usage_limit_reached: "Voice usage is currently unavailable. Continue in Chat.",
+  audio_backpressure: "Voice input paused because the audio queue filled up. Resume or continue in Chat.",
   chat_unavailable: "This Chat is not available for voice. Continue in Chat.",
   session_conflict: "Another voice session is active. End it before retrying.",
   unsupported_surface: "Voice is not supported here. Continue in Chat.",

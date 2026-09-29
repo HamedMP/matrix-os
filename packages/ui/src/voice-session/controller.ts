@@ -3,8 +3,8 @@
 import { useSyncExternalStore } from "react";
 import {
   VOICE_SESSION_LIMITS,
-  VoiceDurationMsSchema,
   VoiceEpochSchema,
+  VoicePlaybackAckSchema,
   VoiceServerFrameSchema,
   VoiceSessionIdSchema,
   VoiceTurnModeSchema,
@@ -36,6 +36,13 @@ export type VoiceSessionCommand =
   | { type: "response.interrupt"; responseId: string; playedThroughMs: number }
   | { type: "capture.start"; mode: "push_to_talk" }
   | { type: "capture.stop" }
+  | {
+      type: "playback.segment_played";
+      responseId: string;
+      segmentId: string;
+      deliveryRevision: number;
+      playedThroughMs: number;
+    }
   | { type: "session.end" }
   | { type: "session.retry" }
   | { type: "continue_in_chat" };
@@ -81,12 +88,19 @@ function clearEphemeral(state: VoiceSessionViewState): VoiceSessionViewState {
   };
 }
 
+interface ActiveResponsePlayback {
+  responseId: string;
+  pendingSegmentIds: Set<string>;
+  playedThroughMs: number;
+  generationEnded: boolean;
+}
+
 export class VoiceSessionController {
   private snapshot: VoiceSessionViewState;
   private readonly listeners = new Set<() => void>();
   private readonly sessionId: string;
   private readonly onCommand?: (command: VoiceSessionCommand) => void;
-  private responseId: string | null = null;
+  private activeResponse: ActiveResponsePlayback | null = null;
   private disposed = false;
 
   constructor(options: {
@@ -142,11 +156,16 @@ export class VoiceSessionController {
     const frame = parsed.data;
     if (frame.epoch < this.snapshot.epoch) return false;
     const advancesEpoch = frame.epoch > this.snapshot.epoch;
+    // Only the explicit resume transition may advance the epoch; any other
+    // higher-epoch frame is a forged or misrouted transport event.
+    if (advancesEpoch && frame.type !== "session.resumed") return false;
+    if (frame.type === "session.resumed" && !advancesEpoch) return false;
     const sequenceFloor = advancesEpoch ? -1 : this.snapshot.sequence;
     if (frame.sequence <= sequenceFloor) return false;
 
     let next: VoiceSessionViewState = this.snapshot;
     switch (frame.type) {
+      case "session.resumed":
       case "session.state": {
         const lifecycle = LIFECYCLE_PROJECTION[frame.state];
         next = {
@@ -157,11 +176,17 @@ export class VoiceSessionController {
         };
         if (lifecycle === "ended") {
           next = clearEphemeral(next);
-          this.responseId = null;
+          this.activeResponse = null;
         }
         break;
       }
       case "transcript.provisional": {
+        const provisional = this.snapshot.provisionalTranscript;
+        if (provisional !== null
+          && provisional.turnId === frame.turnId
+          && frame.revision <= provisional.revision) {
+          break;
+        }
         next = {
           ...this.snapshot,
           provisionalTranscript: {
@@ -192,15 +217,39 @@ export class VoiceSessionController {
         break;
       }
       case "response.started": {
-        this.responseId = frame.responseId;
+        this.activeResponse = {
+          responseId: frame.responseId,
+          pendingSegmentIds: new Set(),
+          playedThroughMs: 0,
+          generationEnded: false,
+        };
         break;
       }
-      case "response.interrupted":
+      case "response.audio": {
+        const active = this.activeResponse;
+        if (active !== null
+          && active.responseId === frame.responseId
+          && active.pendingSegmentIds.size < VOICE_SESSION_LIMITS.maxSegments) {
+          active.pendingSegmentIds.add(frame.segmentId);
+        }
+        break;
+      }
       case "response.audio_end": {
-        if (this.responseId === frame.responseId) this.responseId = null;
+        const active = this.activeResponse;
+        if (active !== null && active.responseId === frame.responseId) {
+          // Generation finished; buffered playback may still be heard. Keep the
+          // response identity until the queue drains or an interrupt lands.
+          active.generationEnded = true;
+          if (active.pendingSegmentIds.size === 0) this.activeResponse = null;
+        }
+        break;
+      }
+      case "response.interrupted": {
+        if (this.activeResponse?.responseId === frame.responseId) this.activeResponse = null;
         break;
       }
       case "session.error": {
+        this.activeResponse = null;
         next = {
           ...this.snapshot,
           state: "failed",
@@ -210,6 +259,7 @@ export class VoiceSessionController {
         break;
       }
       case "transport.going_away": {
+        this.activeResponse = null;
         next = {
           ...this.snapshot,
           state: frame.reconnectAllowed ? "reconnecting" : "failed",
@@ -236,7 +286,6 @@ export class VoiceSessionController {
         }
         break;
       }
-      case "response.audio":
       case "heartbeat.ack":
         break;
       default:
@@ -244,13 +293,14 @@ export class VoiceSessionController {
     }
 
     if (advancesEpoch) {
-      this.responseId = frame.type === "response.started" ? this.responseId : null;
+      // session.resumed is the only frame that can reach this branch: a fresh
+      // epoch invalidates every ephemeral playback and transcript projection.
+      this.activeResponse = null;
       next = {
         ...next,
         pushToTalkActive: false,
-        toolLabel: frame.type === "operation.status" ? next.toolLabel : null,
-        provisionalTranscript:
-          frame.type === "transcript.provisional" ? next.provisionalTranscript : null,
+        toolLabel: null,
+        provisionalTranscript: null,
       };
     }
     this.snapshot = { ...next, epoch: frame.epoch, sequence: frame.sequence };
@@ -270,11 +320,32 @@ export class VoiceSessionController {
     this.command({ type: "session.resume" });
   }
 
-  stopSpeaking(playedThroughMs = 0): void {
-    if (!this.canCommand() || this.responseId === null) return;
-    if (!VoiceDurationMsSchema.safeParse(playedThroughMs).success) return;
-    this.command({ type: "response.interrupt", responseId: this.responseId, playedThroughMs });
-    this.responseId = null;
+  acknowledgePlayback(ackValue: unknown): boolean {
+    if (!this.canCommand()) return false;
+    const active = this.activeResponse;
+    const parsed = VoicePlaybackAckSchema.safeParse(ackValue);
+    if (!parsed.success || active === null || parsed.data.responseId !== active.responseId) {
+      return false;
+    }
+    const ack = parsed.data;
+    this.command({ type: "playback.segment_played", ...ack });
+    active.pendingSegmentIds.delete(ack.segmentId);
+    active.playedThroughMs = Math.max(active.playedThroughMs, ack.playedThroughMs);
+    if (active.generationEnded && active.pendingSegmentIds.size === 0) {
+      this.activeResponse = null;
+    }
+    return true;
+  }
+
+  stopSpeaking(): void {
+    const active = this.activeResponse;
+    if (!this.canCommand() || active === null) return;
+    this.command({
+      type: "response.interrupt",
+      responseId: active.responseId,
+      playedThroughMs: active.playedThroughMs,
+    });
+    this.activeResponse = null;
   }
 
   beginPushToTalk(): void {
@@ -291,8 +362,9 @@ export class VoiceSessionController {
 
   end(): void {
     if (!this.canCommand()) return;
+    if (this.snapshot.pushToTalkActive) this.command({ type: "capture.stop" });
     this.command({ type: "session.end" });
-    this.responseId = null;
+    this.activeResponse = null;
     this.update(clearEphemeral({ ...this.snapshot, state: "ended", error: null }));
   }
 
@@ -309,8 +381,9 @@ export class VoiceSessionController {
 
   dispose(): void {
     if (this.disposed) return;
+    if (this.snapshot.pushToTalkActive) this.command({ type: "capture.stop" });
     this.disposed = true;
-    this.responseId = null;
+    this.activeResponse = null;
     this.snapshot = clearEphemeral({ ...this.snapshot, state: "ended", error: null });
     this.listeners.clear();
   }

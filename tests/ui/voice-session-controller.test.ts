@@ -25,9 +25,47 @@ describe("VoiceSessionController", () => {
     expect(controller.receive(frame(20, { type: "session.state", state: "failed" }, 3))).toBe(false);
     expect(controller.getState().state).toBe("listening");
 
-    expect(controller.receive(frame(1, { type: "session.state", state: "reconnecting" }, 5))).toBe(true);
-    expect(controller.getState()).toMatchObject({ epoch: 5, sequence: 1, state: "reconnecting" });
-    expect(controller.receive(frame(99, { type: "session.state", state: "speaking" }, 4))).toBe(false);
+    expect(controller.receive(frame(99, { type: "session.state", state: "speaking" }, 3))).toBe(false);
+  });
+
+  it("advances the epoch only through an explicit session.resumed transition", () => {
+    const controller = new VoiceSessionController({ initialEpoch: 4, sessionId: SESSION_ID });
+    controller.receive(frame(1, { type: "session.state", state: "listening" }));
+    controller.receive(frame(2, {
+      type: "transcript.provisional",
+      turnId: "vturn_1",
+      revision: 1,
+      text: "draft",
+    }));
+    controller.receive(frame(3, { type: "response.started", responseId: "vresp_1", runId: "run_1" }));
+
+    // A future-epoch frame without the resume transition is fenced and the
+    // current epoch keeps accepting legitimate frames.
+    expect(controller.receive(frame(1, { type: "session.state", state: "failed" }, 9))).toBe(false);
+    expect(controller.receive(frame(2, {
+      type: "transcript.provisional",
+      turnId: "vturn_1",
+      revision: 2,
+      text: "attacker draft",
+    }, 9))).toBe(false);
+    expect(controller.getState()).toMatchObject({ epoch: 4, state: "listening" });
+    expect(controller.getState().provisionalTranscript).toMatchObject({ revision: 1, text: "draft" });
+    expect(controller.receive(frame(4, { type: "session.state", state: "thinking" }))).toBe(true);
+
+    // The designated resume transition advances the epoch, restarts the
+    // sequence, changes lifecycle state, and clears ephemeral projections.
+    expect(controller.receive(frame(1, { type: "session.resumed", state: "listening", reason: "restored" }, 5))).toBe(true);
+    expect(controller.getState()).toMatchObject({
+      epoch: 5,
+      sequence: 1,
+      state: "listening",
+      provisionalTranscript: null,
+      toolLabel: null,
+    });
+    expect(controller.receive(frame(2, { type: "session.state", state: "thinking" }, 5))).toBe(true);
+    expect(controller.receive(frame(1, { type: "session.resumed", state: "listening" }, 5))).toBe(false);
+    expect(controller.receive(frame(3, { type: "session.state", state: "failed" }, 4))).toBe(false);
+    expect(controller.getState()).toMatchObject({ epoch: 5, state: "thinking" });
   });
 
   it("projects bounded provisional transcript, tool, response, and session state", () => {
@@ -147,7 +185,13 @@ describe("VoiceSessionController", () => {
     controller.endPushToTalk();
     controller.pause();
     controller.resume();
-    controller.stopSpeaking(120);
+    controller.acknowledgePlayback({
+      responseId: "vresp_1",
+      segmentId: "vseg_1",
+      deliveryRevision: 1,
+      playedThroughMs: 120,
+    });
+    controller.stopSpeaking();
     controller.end();
 
     expect(commands).toEqual([
@@ -155,6 +199,13 @@ describe("VoiceSessionController", () => {
       { type: "capture.stop" },
       { type: "session.pause" },
       { type: "session.resume" },
+      {
+        type: "playback.segment_played",
+        responseId: "vresp_1",
+        segmentId: "vseg_1",
+        deliveryRevision: 1,
+        playedThroughMs: 120,
+      },
       { type: "response.interrupt", responseId: "vresp_1", playedThroughMs: 120 },
       { type: "session.end" },
     ]);
@@ -275,7 +326,7 @@ describe("VoiceSessionController", () => {
     expect(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/u.test(text)).toBe(false);
   });
 
-  it("emits played-through position with stop and nothing for invalid values", () => {
+  it("reports the acknowledged playback boundary when speech is stopped", () => {
     const commands: VoiceSessionCommand[] = [];
     const controller = new VoiceSessionController({
       initialEpoch: 4,
@@ -283,15 +334,181 @@ describe("VoiceSessionController", () => {
       onCommand: (command) => commands.push(command),
     });
     controller.receive(frame(1, { type: "response.started", responseId: "vresp_1", runId: "run_1" }));
+    controller.receive(frame(2, {
+      type: "response.audio",
+      responseId: "vresp_1",
+      segmentId: "vseg_1",
+      startMs: 0,
+      data: Buffer.from("segment-1").toString("base64"),
+    }));
+    controller.receive(frame(3, {
+      type: "response.audio",
+      responseId: "vresp_1",
+      segmentId: "vseg_2",
+      startMs: 240,
+      data: Buffer.from("segment-2").toString("base64"),
+    }));
 
-    controller.stopSpeaking(-1);
-    controller.stopSpeaking(1.5);
-    controller.stopSpeaking(Number.NaN);
-    expect(commands).toEqual([]);
-
-    controller.stopSpeaking(640);
+    // No acknowledgement yet: nothing has been heard, and invalid or
+    // foreign-response acknowledgements do not move the boundary.
+    expect(controller.acknowledgePlayback({
+      responseId: "vresp_other",
+      segmentId: "vseg_1",
+      deliveryRevision: 1,
+      playedThroughMs: 240,
+    })).toBe(false);
+    expect(controller.acknowledgePlayback({
+      responseId: "vresp_1",
+      segmentId: "vseg_1",
+      deliveryRevision: 1,
+      playedThroughMs: -1,
+    })).toBe(false);
+    controller.stopSpeaking();
     expect(commands).toEqual([
-      { type: "response.interrupt", responseId: "vresp_1", playedThroughMs: 640 },
+      { type: "response.interrupt", responseId: "vresp_1", playedThroughMs: 0 },
+    ]);
+
+    controller.receive(frame(4, { type: "response.started", responseId: "vresp_2", runId: "run_1" }));
+    controller.receive(frame(5, {
+      type: "response.audio",
+      responseId: "vresp_2",
+      segmentId: "vseg_3",
+      startMs: 0,
+      data: Buffer.from("segment-3").toString("base64"),
+    }));
+    expect(controller.acknowledgePlayback({
+      responseId: "vresp_2",
+      segmentId: "vseg_3",
+      deliveryRevision: 1,
+      playedThroughMs: 640,
+    })).toBe(true);
+    controller.stopSpeaking();
+    expect(commands).toEqual([
+      { type: "response.interrupt", responseId: "vresp_1", playedThroughMs: 0 },
+      {
+        type: "playback.segment_played",
+        responseId: "vresp_2",
+        segmentId: "vseg_3",
+        deliveryRevision: 1,
+        playedThroughMs: 640,
+      },
+      { type: "response.interrupt", responseId: "vresp_2", playedThroughMs: 640 },
+    ]);
+  });
+
+  it("keeps response identity until buffered playback drains after audio_end", () => {
+    const commands: VoiceSessionCommand[] = [];
+    const controller = new VoiceSessionController({
+      initialEpoch: 4,
+      sessionId: SESSION_ID,
+      onCommand: (command) => commands.push(command),
+    });
+    controller.receive(frame(1, { type: "response.started", responseId: "vresp_1", runId: "run_1" }));
+    controller.receive(frame(2, {
+      type: "response.audio",
+      responseId: "vresp_1",
+      segmentId: "vseg_1",
+      startMs: 0,
+      data: Buffer.from("segment-1").toString("base64"),
+    }));
+    controller.receive(frame(3, {
+      type: "response.audio",
+      responseId: "vresp_1",
+      segmentId: "vseg_2",
+      startMs: 480,
+      data: Buffer.from("segment-2").toString("base64"),
+    }));
+    controller.receive(frame(4, {
+      type: "response.audio_end",
+      responseId: "vresp_1",
+      generatedDurationMs: 720,
+    }));
+
+    // Generation ended but a buffered segment is still audible: identity is
+    // retained, acknowledgement lands, and interruption reports the true
+    // heard boundary instead of zero.
+    expect(controller.acknowledgePlayback({
+      responseId: "vresp_1",
+      segmentId: "vseg_1",
+      deliveryRevision: 1,
+      playedThroughMs: 480,
+    })).toBe(true);
+    controller.stopSpeaking();
+    expect(commands).toEqual([
+      {
+        type: "playback.segment_played",
+        responseId: "vresp_1",
+        segmentId: "vseg_1",
+        deliveryRevision: 1,
+        playedThroughMs: 480,
+      },
+      { type: "response.interrupt", responseId: "vresp_1", playedThroughMs: 480 },
+    ]);
+  });
+
+  it("keeps the newer provisional revision when a replayed draft arrives", () => {
+    const controller = new VoiceSessionController({ initialEpoch: 4, sessionId: SESSION_ID });
+    controller.receive(frame(1, {
+      type: "transcript.provisional",
+      turnId: "vturn_1",
+      revision: 3,
+      text: "newer draft",
+    }));
+    controller.receive(frame(2, {
+      type: "transcript.provisional",
+      turnId: "vturn_1",
+      revision: 1,
+      text: "stale replay",
+    }));
+    controller.receive(frame(3, {
+      type: "transcript.provisional",
+      turnId: "vturn_1",
+      revision: 3,
+      text: "same revision replay",
+    }));
+    controller.receive(frame(4, {
+      type: "transcript.provisional",
+      turnId: "vturn_2",
+      revision: 0,
+      text: "next turn draft",
+    }));
+    expect(controller.getState().provisionalTranscript).toEqual({
+      turnId: "vturn_2",
+      revision: 0,
+      text: "next turn draft",
+    });
+  });
+
+  it("emits capture.stop when end or dispose follows an active hold", () => {
+    const commands: VoiceSessionCommand[] = [];
+    const controller = new VoiceSessionController({
+      initialEpoch: 4,
+      sessionId: SESSION_ID,
+      initialTurnMode: "push_to_talk",
+      onCommand: (command) => commands.push(command),
+    });
+    controller.receive(frame(1, { type: "session.state", state: "listening" }));
+    controller.beginPushToTalk();
+    controller.end();
+    expect(commands).toEqual([
+      { type: "capture.start", mode: "push_to_talk" },
+      { type: "capture.stop" },
+      { type: "session.end" },
+    ]);
+
+    const disposeCommands: VoiceSessionCommand[] = [];
+    const second = new VoiceSessionController({
+      initialEpoch: 4,
+      sessionId: SESSION_ID,
+      initialTurnMode: "push_to_talk",
+      onCommand: (command) => disposeCommands.push(command),
+    });
+    second.receive(frame(1, { type: "session.state", state: "listening" }));
+    second.beginPushToTalk();
+    second.dispose();
+    expect(disposeCommands).toEqual([
+      { type: "capture.start", mode: "push_to_talk" },
+      { type: "capture.stop" },
     ]);
   });
 });
