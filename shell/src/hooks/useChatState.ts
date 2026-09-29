@@ -40,7 +40,7 @@ export interface ChatState {
   sessionId: string | undefined;
   busy: boolean;
   /** Name of the currently-running tool, or null when the agent is just
-      generating text. Drives the global AgentStatusCard's stage label. */
+      generating text. Available for agent-busy indicators' stage label. */
   currentTool: string | null;
   connected: boolean;
   queue: QueuedMessage[];

@@ -111,10 +111,6 @@ vi.mock("../../shell/src/components/canvas/CanvasToolbar.js", () => ({
   ),
 }));
 
-vi.mock("../../shell/src/components/VocalPanel.js", () => ({
-  VocalPanel: () => null,
-}));
-
 vi.mock("../../shell/src/components/UserButton.js", () => ({
   UserButton: () => null,
 }));

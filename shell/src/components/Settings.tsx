@@ -231,7 +231,7 @@ function SettingsFrame({
   const [prevOpen, setPrevOpen] = useState(open);
   // Delayed unmount so the exit animation has time to play. `visible`
   // flips one frame after mount so the enter transition has a distinct
-  // "from" state to animate out of. Same pattern as VocalPanel.
+  // "from" state to animate out of.
   // react-doctor-disable-next-line react-doctor/no-derived-useState -- not a mirror of `open`: `mounted` stays true through the ~320ms exit window after `open` flips to false so the close animation can play, then unmounts via the timer below
   const [mounted, setMounted] = useState(open);
   const [visible, setVisible] = useState(false);

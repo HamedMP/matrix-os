@@ -1,10 +1,9 @@
-/** Register onboarding and vocal WebSocket routes with isolated lifecycles. */
+/** Register onboarding WebSocket routes with isolated lifecycles. */
 import type { Hono } from "hono";
 import { createNodeWebSocket } from "@hono/node-ws";
 import { createOnboardingHandler } from "../onboarding/ws-handler.js";
 import { createReadinessService } from "../onboarding/readiness-service.js";
 import type { GeminiLiveConnection } from "../onboarding/gemini-live.js";
-import { createVocalHandler } from "../vocal/ws-handler.js";
 
 export interface VoiceWebSocketRouteOptions {
   app: Hono;
@@ -90,54 +89,4 @@ export function registerVoiceWebSocketRoutes(options: VoiceWebSocketRouteOptions
       };
     }),
   );
-
-  // --- Vocal mode WebSocket ---
-  // Each connection gets its own isolated handler so multiple users (or
-  // reconnecting tabs) don't share a Gemini Live session.
-  app.get(
-    "/ws/vocal",
-    upgradeWebSocket(() => {
-      const vocalHandler = createVocalHandler({
-        homePath,
-        geminiConnection: geminiLiveConnection,
-        // VOCAL_GEMINI_MODEL keeps Aoede independently configurable from
-        // onboarding; fall back to ONBOARDING_GEMINI_MODEL so existing
-        // deployments don't regress until operators set the vocal-specific
-        // var.
-        geminiModel:
-          process.env.VOCAL_GEMINI_MODEL ??
-          process.env.ONBOARDING_GEMINI_MODEL ??
-          "gemini-3.1-flash-live-preview",
-      });
-      return {
-        onOpen(_evt, ws) {
-          vocalHandler.onOpen((msg) => {
-            ws.send(JSON.stringify(msg));
-          });
-        },
-        onMessage(evt, ws) {
-          const data = typeof evt.data === "string" ? evt.data : evt.data.toString();
-          void vocalHandler.onMessage(data).catch((err: unknown) => {
-            console.warn(
-              "[vocal] onMessage failed:",
-              err instanceof Error ? err.message : String(err),
-            );
-            try {
-              ws.send(JSON.stringify({ type: "error", message: "Voice message failed", retryable: true }));
-            } catch (sendErr) {
-              console.warn(
-                "[vocal] failed to send message error:",
-                sendErr instanceof Error ? sendErr.message : String(sendErr),
-              );
-            }
-            ws.close();
-          });
-        },
-        onClose() {
-          vocalHandler.onClose();
-        },
-      };
-    }),
-  );
-
 }
