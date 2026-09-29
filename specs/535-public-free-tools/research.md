@@ -8,6 +8,22 @@
 - [Ahrefs free SEO tools](https://ahrefs.com/free-seo-tools), [Semrush free tools](https://www.semrush.com/free-tools/seo/), [HubSpot business tools](https://www.hubspot.com/free-business-tools), and [Buffer free tools](https://buffer.com/free-tools) each use free task pages as a product entry point. Their catalog breadth is evidence of a distribution pattern, not proof that any one tool converts to a Matrix computer.
 - [Google Search Central](https://developers.google.com/search/docs/essentials/spam-policies) warns against near-identical doorway pages, scaled low-value pages, and misleading tool functionality. The tool must work before its page is indexed. Pages need original instructions and task-specific limitations.
 
+### TabTasker inventory and Matrix fit
+
+The [TabTasker home catalog](https://tabtasker.com/) exposes 74 list placements pointing to 73 distinct linked destinations; E-Sign appears again as PDF Sign. These are its advertised tools as of this check, not a claim that every mode was independently benchmarked.
+
+| Catalog section | Advertised tools | Matrix decision |
+|---|---|---|
+| Apps (6) | Video Call, File Share, Workflow, E-Sign, Whiteboard, SEO Audit | Ship a pasted-HTML SEO audit. The others require realtime coordination, file or signature processing, or a composable workflow model. |
+| PDF (20 placements) | PDF Workspace, Edit PDF, Merge PDFs, Split PDF, Compress PDF, PDF to Image, PDF to Word, PDF to Excel, Watermark, Rotate PDF, Edit PDF Metadata, Add Page Numbers, Unlock PDF, Protect PDF, Redact PDF, OCR PDF, Compare PDFs, PDF Sign, PDF Verify, PDF to Podcast | Later browser file-tool family. Prioritize merge, split, compress, and OCR only after file-size, memory, device, and format-fidelity testing. PDF Sign repeats the E-Sign destination. |
+| Image (13) | Image Workspace, Image Convert, Compress Image, Resize Image, Image Upscale, Remove Background, Metadata, Color Picker, Images to PDF, Blur Faces, Image Captioning, Zero-shot Image Tags, Image OCR | Compress and resize are the best next broad-demand candidates. AI and OCR tools need explicit browser model-size, latency, and device support budgets. |
+| Text (11) | Text Workspace, Text Cleaner, Case Converter, Word Counter & Readability, Markdown Editor, Find & Replace, CSV Editor, CSV to PDF, Text Summarizer, Sentiment Analysis, Text to Speech | The first Matrix release covers cleaning, case, counting, readability, Markdown conversion, replace, and CSV conversion as small focused tools. Editor and model-heavy modes remain later work. |
+| Audio (8) | Speech to Text, Audio Workspace, Audio Converter, Audio Trimmer, Transcription Player, Audio Compressor, Noise Reducer, Pitch & Speed | Defer pending large-file and browser performance tests; no audio capability is implied by the first release. |
+| Developer (15) | Base64 Encode/Decode, JSON Formatter, JWT Decoder, URL Encode/Decode, Hash Generator, UUID Generator, Regex Tester, Diff Checker, Code Workspace, Timestamp Converter, Color Converter, QR Code Generator, Cron Helper, Password Generator, Password Strength | Matrix covers Base64, JSON, URLs, SHA-256, UUID v4, regex, line diff, timestamp, color conversion, and cron explanation. JWT signature verification, code execution, QR, and password utilities need dedicated security and UX work. |
+| AI (1) | Local AI | Defer; browser LLM download and inference vary heavily by device and are a different product promise from free deterministic utilities. |
+
+This catalog shows the breadth of a browser-side utility strategy. Matrix's initial 45 combine overlapping developer and writing tasks with original SEO and agent-development tools. The free path stays on the public website; no trial, account, or provisioned computer is required.
+
 ## Ahrefs keyword check
 
 The connected Ahrefs API reported a zero-unit workspace limit and rejected an eight-keyword overview query (`Expected usage: 344, API units left: 0`). The public [Ahrefs Keyword Generator](https://ahrefs.com/keyword-generator/) remained usable. With United States selected, it showed these ranges and qualitative difficulty labels:
