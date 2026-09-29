@@ -4,13 +4,13 @@
 
 ## Competitive pattern
 
-- [TabTasker](https://tabtasker.com/) lists 73 browser tool/app entries across PDF, image, text, audio, developer, AI, and workflow categories. Its live SEO audit accepts pasted HTML, a local file, or a URL. The URL mode explicitly uses a server fetch before browser analysis, so privacy language must distinguish those paths.
+- A browser-tool reference catalog lists 73 tool/app entries across PDF, image, text, audio, developer, AI, and workflow categories. Its live SEO audit accepts pasted HTML, a local file, or a URL. The URL mode explicitly uses a server fetch before browser analysis, so privacy language must distinguish those paths.
 - [Ahrefs free SEO tools](https://ahrefs.com/free-seo-tools), [Semrush free tools](https://www.semrush.com/free-tools/seo/), [HubSpot business tools](https://www.hubspot.com/free-business-tools), and [Buffer free tools](https://buffer.com/free-tools) each use free task pages as a product entry point. Their catalog breadth is evidence of a distribution pattern, not proof that any one tool converts to a Matrix computer.
 - [Google Search Central](https://developers.google.com/search/docs/essentials/spam-policies) warns against near-identical doorway pages, scaled low-value pages, and misleading tool functionality. The tool must work before its page is indexed. Pages need original instructions and task-specific limitations.
 
-### TabTasker inventory and Matrix fit
+### Browser-tool inventory and Matrix fit
 
-The [TabTasker home catalog](https://tabtasker.com/) exposes 74 list placements pointing to 73 distinct linked destinations; E-Sign appears again as PDF Sign. These are its advertised tools as of this check, not a claim that every mode was independently benchmarked.
+The reference catalog exposes 74 list placements pointing to 73 distinct linked destinations; E-Sign appears again as PDF Sign. These are advertised tools as of this check, not a claim that every mode was independently benchmarked.
 
 | Catalog section | Advertised tools | Matrix decision |
 |---|---|---|
