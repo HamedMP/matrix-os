@@ -47,6 +47,7 @@
     "#collaboration": "./src/collaboration.ts",
     "#collaboration-capabilities": "./src/collaboration-capabilities.ts",
     "#collaboration-direct": "./src/collaboration-direct.ts",
+    "#collaboration-failure": "./src/collaboration-failure.ts",
     "#collaboration-execution": "./src/collaboration-execution.ts",
     "#collaboration-peer": "./src/collaboration-peer.ts",
     "#collaboration-resources": "./src/collaboration-resources.ts",
