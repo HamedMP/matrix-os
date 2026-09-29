@@ -16,7 +16,16 @@ export async function signInCollaborationIdentity(
   if (verified.emailAddress !== user.emailAddress) throw new Error("Collaboration test identity changed during setup");
   await page.goto(`${config.baseUrl}/sign-in`, { waitUntil: "domcontentloaded", timeout: 30_000 });
   await clerk.loaded({ page });
+  // Next 16's Clerk cache invalidation server action can return 200 while its
+  // onBeforeSetActive promise never resolves. The test browser reloads after
+  // activation, which refreshes the server-rendered auth state directly.
+  await page.evaluate(() => {
+    const browser = window as Window & { __unstable__onBeforeSetActive?: () => Promise<void> };
+    browser.__unstable__onBeforeSetActive = async () => {};
+  });
   await clerk.signIn({ page, emailAddress: verified.emailAddress });
+  await page.reload({ waitUntil: "domcontentloaded", timeout: 30_000 });
+  await clerk.loaded({ page });
   const activeUserId = await page.evaluate(() => window.Clerk.user?.id ?? null);
   if (activeUserId !== verified.id) throw new Error("Collaboration sign-in resolved to a different identity");
 }
