@@ -24,7 +24,7 @@ export function createBotCommandHandler(
     runId,
   }),
 ): ScopeRuntimeBotHandler {
-  const worker = createBotWorker({ bridgeOrigin: context.bridgeOrigin, brokerFor });
+  const worker = createBotWorker({ bridgeOrigin: context.bridgeOrigin, bridgeSocket: context.bridgeSocket, brokerFor });
   return {
     async handle(command) {
       try {

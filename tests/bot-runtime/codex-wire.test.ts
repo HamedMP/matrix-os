@@ -16,6 +16,7 @@ describe("actual Pi Responses subscription wire format", () => {
       tools: [{ name: "artifact_write", description: "Save a QA artifact", parameters: { type: "object", properties: { text: { type: "string" } }, required: ["text"] } }],
     }), { apiKey: BROKER_PLACEHOLDER_KEY, maxTokens: 8192, fetch: fetchImpl, maxRetries: 0 }).result();
     expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(String(fetchImpl.mock.calls[0]?.[0])).toBe("http://127.0.0.1:41000/v1/responses");
     expect(body).toMatchObject({ model: "gpt-5.6-luna", stream: true, store: false, instructions: "Write clearly.", tools: [{ name: "artifact_write" }] });
     expect(JSON.stringify(body)).toContain("READY");
     expect(body?.max_output_tokens).toBeUndefined();
