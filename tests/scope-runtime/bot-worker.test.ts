@@ -1,6 +1,6 @@
 import { createUnixSocketTempDir } from "../helpers/unix-socket-temp.js";
 import { execFile } from "node:child_process";
-import { rm } from "node:fs/promises";
+import { rm, stat } from "node:fs/promises";
 import { request as httpRequest } from "node:http";
 import { isBuiltin } from "node:module";
 import { connect, createServer, type Server, type Socket } from "node:net";
@@ -102,6 +102,25 @@ describe("bot workload worker", () => {
       .resolves.toBe(`${JSON.stringify({ version: 1, ok: false, error: "invalid_command" })}\n`);
     finishRun({ runId: "run_one", status: "completed" });
     await expect(run).resolves.toBe(`${JSON.stringify({ version: 1, ok: true, reply: { runId: "run_one", status: "completed" } })}\n`);
+  });
+
+  it("lets the capability-free supervisor reach a DynamicUser command socket", async () => {
+    const directory = await createUnixSocketTempDir();
+    cleanup.push(() => rm(directory, { recursive: true, force: true }));
+    const socketPath = join(directory, "worker.sock");
+    const handler = { handle: vi.fn(async () => ({ acknowledged: true })) };
+    const server = await startBotCommandServer({ socketPath, invocation, handler });
+    cleanup.push(() => server.close());
+
+    // The sandbox's 0077 umask otherwise leaves this socket owner-only. The
+    // supervisor has no CAP_DAC_OVERRIDE and does not share the dynamic UID.
+    expect((await stat(socketPath)).mode & 0o777).toBe(0o666);
+    await expect(send(socketPath, frame({ version: 1, kind: "bot.cancel", runId: "run_one" })))
+      .resolves.toContain('"acknowledged":true');
+    await expect(send(socketPath, JSON.stringify({ version: 1, type: "runtime.bot", runtimeHandle: RUNTIME,
+      executionGeneration: "999", command: { version: 1, kind: "bot.cancel", runId: "run_one" } }) + "\n"))
+      .resolves.toContain('"invalid_command"');
+    expect(handler.handle).toHaveBeenCalledTimes(1);
   });
 
   it("caps concurrent command connections", async () => {
