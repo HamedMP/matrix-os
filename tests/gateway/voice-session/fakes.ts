@@ -56,8 +56,11 @@ export class FakeClock implements VoiceClock {
   }
 
   set(ms: number): void {
+    if (ms >= this.t) {
+      this.advance(ms - this.t);
+      return;
+    }
     this.t = ms;
-    this.runDue();
   }
 
   advance(ms: number): void {
