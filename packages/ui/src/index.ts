@@ -171,3 +171,5 @@ export { createTerminalNativeHistory } from "./terminal/terminal-native-history.
 export { canonicalChatSafeFailureReason } from "./canonical-chat-error-copy.js";
 
 export { ConversationSubagentActivity } from "./chat/subagent-activity";
+
+export { useDirectBotChat } from "./chat-agents/bots/use-direct-bot-chat.js";

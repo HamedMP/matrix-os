@@ -8,3 +8,4 @@ export * from "#bots/authority";
 export * from "#bots/broker";
 export * from "#bots/worker";
 export * from "#bots/view-model";
+export * from "#bots/selection";

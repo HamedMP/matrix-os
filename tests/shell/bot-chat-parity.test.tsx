@@ -123,3 +123,19 @@ for (const surface of ["Web Canvas", "Web Desktop"] as const) {
     expect(await screen.findByText("Keep briefs concise")).toBeTruthy();
   });
 }
+
+it("sends a verified direct bot Chat without an ordinary harness selection", async () => {
+  const onSubmit = vi.fn(async () => true);
+  const client = { bots: {
+    directBot: vi.fn(async () => "bot_research1"), interactions: vi.fn(async () => []), tasks: vi.fn(async () => []),
+    authority: vi.fn(async () => ({ agentId: "bot_research1", revision: 1, grants: [], connections: [], routines: [], pendingInteractions: [], memory: { items: [] } })),
+  }, list: vi.fn(async () => ({ enabled: true, agents: [] })) } as unknown as ChatAgentClient;
+  render(<ChatApp messages={[]} sessionId="chat_research" busy={false} connected conversations={[]}
+    onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={onSubmit} agentClient={client} />);
+  await screen.findByText("Your bot's Chat");
+  fireEvent.change(screen.getByRole("textbox", { name: /message/i }), { target: { value: "Check the pages" } });
+  fireEvent.click(screen.getByRole("button", { name: /send/i }));
+  await waitFor(() => expect(onSubmit).toHaveBeenCalledWith("Check the pages", undefined, expect.objectContaining({
+    instanceId: "matrix_bot_default", model: "auto", interactionMode: "default", permissionMode: "default",
+  })));
+});

@@ -165,6 +165,7 @@ export function SharedChatComposer({
   selection,
   onSelectionChange,
   instanceLocked,
+  automaticRouting = false,
   resources = [],
   resourceSearch,
   onAttach,
@@ -200,6 +201,7 @@ export function SharedChatComposer({
   selection: CanonicalComposerSelection | null;
   onSelectionChange: (selection: CanonicalComposerSelection) => void;
   instanceLocked: boolean;
+  automaticRouting?: boolean;
   resources?: CanonicalChatResourceReference[];
   resourceSearch?: (query: string) => Promise<CanonicalChatResourceReference[]>;
   onAttach?: () => void;
@@ -535,7 +537,7 @@ export function SharedChatComposer({
               />
             ) : null}
             {runActions}
-            <ProviderModelPicker
+            {automaticRouting ? <span className="text-xs" style={{ color: "var(--text-secondary)" }}>Automatic</span> : <ProviderModelPicker
               catalog={catalog}
               selection={selection}
               instanceLocked={instanceLocked}
@@ -546,7 +548,7 @@ export function SharedChatComposer({
               onOpen={onProviderPickerOpen}
               onNewChat={onNewChat}
               onChange={onSelectionChange}
-            />
+            />}
             <div data-slot="composer-secondary-controls" className="contents @max-[42rem]/chat-composer:hidden">
               {selection ? composerOptions.map((option) => option.kind === "enum" ? (
                 <CompactSelect

@@ -77,7 +77,7 @@ export interface CodingModelCatalogProjection {
 }
 
 export interface ChatProviderCatalogService {
-  getCatalog(principal: RequestPrincipal): Promise<CanonicalProviderCatalog>;
+  getCatalog(principal: RequestPrincipal, selection?: CanonicalChatModelSelection): Promise<CanonicalProviderCatalog>;
   refresh(principal: RequestPrincipal): Promise<CanonicalProviderCatalog>;
 }
 
