@@ -1,7 +1,7 @@
 /**
  * Sandbox-side runner for `bot_agent` workloads (`scope-runtime-bot-v1`).
  *
- * It checks the fixed boundary, starts the loopback inference bridge, and
+ * It checks the fixed boundary, starts the private Unix inference bridge, and
  * serves the runtime's command socket. The bot runtime supplies the command
  * handler, so this module has no dependency on the agent loop. It imports
  * only side-effect-free modules and never the Chat worker entry, so the
@@ -33,6 +33,7 @@ import {
 
 const COMMAND_SOCKET = "/run/matrix-scope-command/worker.sock";
 const BROKER_SOCKET = "/run/matrix-scope/broker.sock";
+const INFERENCE_SOCKET = "/run/matrix-scope-command/inference.sock";
 /** Relay commands carry identifiers and at most 8 KiB of steering text. */
 const MAX_COMMAND_FRAME_BYTES = 16 * 1024;
 /** One active run plus its steer and cancel commands. */
@@ -88,6 +89,7 @@ export interface ScopeRuntimeBotHandlerContext {
   executionGeneration: string;
   brokerSocket: string;
   bridgeOrigin: string;
+  bridgeSocket?: string;
 }
 
 /** The relayed frame must name this runtime and generation exactly. */
@@ -228,8 +230,10 @@ export async function runScopeRuntimeBotWorker(options: {
   }
   const invocation = parseScopeRuntimeBotWorkerArguments(environment.invocationArguments ?? []);
   await verifyScopeRuntimeBoundary();
+  await removeScopeRuntimeCommandSocket(INFERENCE_SOCKET);
   const bridge = await startInferenceBridge({
     brokerSocket: BROKER_SOCKET,
+    socketPath: INFERENCE_SOCKET,
     runtimeHandle: invocation.runtimeHandle,
     executionGeneration: invocation.executionGeneration,
     actionFor: botInferenceAction,
@@ -242,7 +246,9 @@ export async function runScopeRuntimeBotWorker(options: {
       runtimeHandle: invocation.runtimeHandle,
       executionGeneration: invocation.executionGeneration,
       brokerSocket: BROKER_SOCKET,
-      bridgeOrigin: `http://127.0.0.1:${bridge.port}`,
+      // URL syntax for the SDK only. Its fetch adapter connects over AF_UNIX.
+      bridgeOrigin: "http://127.0.0.1",
+      bridgeSocket: INFERENCE_SOCKET,
     });
     commands = await startBotCommandServer({ socketPath: COMMAND_SOCKET, invocation, handler });
     try {

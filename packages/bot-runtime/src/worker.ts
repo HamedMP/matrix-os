@@ -97,6 +97,7 @@ interface ActiveRun {
 export function createBotWorker(deps: {
   brokerFor(runId: string): BotWorkerBrokerClient;
   bridgeOrigin: string;
+  bridgeSocket?: string;
   route?: RunBotTurnInput["route"];
   now?: () => number;
 }) {
@@ -119,6 +120,7 @@ export function createBotWorker(deps: {
       command,
       broker,
       bridgeOrigin: deps.bridgeOrigin,
+      ...(deps.bridgeSocket ? { bridgeSocket: deps.bridgeSocket } : {}),
       ...(deps.route ? { route: deps.route } : {}),
       signal: runState.controller.signal,
       now,
