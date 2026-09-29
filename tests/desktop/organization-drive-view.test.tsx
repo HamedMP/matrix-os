@@ -63,5 +63,6 @@ describe("Electron organization drive view", () => {
     await waitFor(() => expect(subscribe).toHaveBeenCalled());
     view.rerender(<DesktopOrganizationDrivesView isActive={false} />);
     await waitFor(() => expect(unsubscribe).toHaveBeenCalled());
+    expect(direct.close).not.toHaveBeenCalledWith(scopeId);
   });
 });

@@ -69,7 +69,7 @@ export function DesktopOrganizationDrivesView({ isActive = true }: { isActive?: 
     if (!isActive || !api || !selected) return;
     const unsubscribe = api.subscribe?.(selected, () => load(), () => setError("Organization drive is unavailable. Try again."));
     const timer = setInterval(() => { void load(); }, 30_000);
-    return () => { unsubscribe?.(); clearInterval(timer); api.direct.close(selected); };
+    return () => { unsubscribe?.(); clearInterval(timer); };
   }, [isActive, api, selected, load]);
 
   const active = options.find((item) => item.scopeId === selected);
