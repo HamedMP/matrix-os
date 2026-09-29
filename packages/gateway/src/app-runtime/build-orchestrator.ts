@@ -25,6 +25,10 @@ interface BuildOrchestratorOptions {
 
 const MAX_LOG_SIZE = 10 * 1024 * 1024; // 10 MB
 const BUILD_LOG_WRITE_TIMEOUT_MS = 5_000;
+// After a timeout SIGKILLs the build's process group, wait at most this long
+// for every member to disappear before reporting the timeout anyway.
+const BUILD_KILL_WAIT_MS = 5_000;
+const BUILD_KILL_POLL_MS = 20;
 
 export class BuildOrchestrator {
   private readonly concurrency: number;
@@ -158,8 +162,7 @@ export class BuildOrchestrator {
     const logPath = join(cwd, ".build.log");
 
     return new Promise<BuildResult>((resolve) => {
-      const ac = new AbortController();
-      const timer = setTimeout(() => ac.abort(), timeoutMs);
+      let timedOut = false;
       let settled = false;
 
       const env = safeBuildEnv({ storeDir: this.storeDir });
@@ -167,12 +170,14 @@ export class BuildOrchestrator {
       // Invoke the manifest command through `sh -c` so quoted/embedded args
       // (e.g. `pnpm run "build:prod"`) are parsed by the shell rather than
       // naively split on whitespace. Process-manager uses the same pattern
-      // for the serve command.
+      // for the serve command. `detached` puts the shell in its own process
+      // group so a timeout can kill everything it forked (pnpm, vite,
+      // postinstall scripts), not just the shell itself.
       const child = spawn("sh", ["-c", command], {
         cwd,
         env,
         stdio: ["ignore", "pipe", "pipe"],
-        signal: ac.signal,
+        detached: true,
       });
 
       // Ring-buffer output to cap memory. A verbose pnpm install / vite build
@@ -210,26 +215,12 @@ export class BuildOrchestrator {
         void writeBuildLog(output).finally(() => resolve(result));
       };
 
-      child.on("error", () => {
-        const isAbort = ac.signal.aborted;
-        const output = Buffer.concat(chunks).toString("utf8");
-        const stderrTail = output.slice(-2048);
-        finish({
-          ok: false,
-          error: new BuildError(
-            isAbort ? "timeout" : "install_failed",
-            stage,
-            null,
-            isAbort ? `Build timed out after ${timeoutMs}ms` : stderrTail,
-          ),
-        }, output);
-      });
-
-      child.on("close", (code) => {
-        const output = Buffer.concat(chunks).toString("utf8");
-        const stderrTail = output.slice(-2048);
-
-        if (ac.signal.aborted) {
+      // A timeout resolves only once the whole process group is gone, so no
+      // orphaned install/build step keeps writing into the app directory
+      // after the caller has released the slug mutex and semaphore slot.
+      const timer = setTimeout(() => {
+        timedOut = true;
+        void killBuildProcessGroup(child.pid).then(() => {
           finish({
             ok: false,
             error: new BuildError(
@@ -238,9 +229,23 @@ export class BuildOrchestrator {
               null,
               `Build timed out after ${timeoutMs}ms`,
             ),
-          }, output);
-          return;
-        }
+          }, Buffer.concat(chunks).toString("utf8"));
+        });
+      }, timeoutMs);
+
+      child.on("error", () => {
+        if (timedOut) return;
+        const output = Buffer.concat(chunks).toString("utf8");
+        finish({
+          ok: false,
+          error: new BuildError("install_failed", stage, null, output.slice(-2048)),
+        }, output);
+      });
+
+      child.on("close", (code) => {
+        if (timedOut) return;
+        const output = Buffer.concat(chunks).toString("utf8");
+        const stderrTail = output.slice(-2048);
 
         if (code !== 0) {
           finish({
@@ -282,5 +287,42 @@ export class BuildOrchestrator {
     if (next) {
       next();
     }
+  }
+}
+
+function processGroupAlive(pgid: number): boolean {
+  try {
+    process.kill(-pgid, 0);
+    return true;
+  } catch (err: unknown) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === "ESRCH") return false;
+    // EPERM means a member still exists but can no longer be signalled.
+    if (code === "EPERM") return true;
+    throw err;
+  }
+}
+
+async function killBuildProcessGroup(pgid: number | undefined): Promise<void> {
+  if (!pgid) return;
+  try {
+    process.kill(-pgid, "SIGKILL");
+  } catch (err: unknown) {
+    if ((err as NodeJS.ErrnoException).code === "ESRCH") return;
+    console.warn("[build-orchestrator] SIGKILL of build process group failed:", err);
+    return;
+  }
+
+  const deadline = Date.now() + BUILD_KILL_WAIT_MS;
+  try {
+    while (processGroupAlive(pgid)) {
+      if (Date.now() >= deadline) {
+        console.warn(`[build-orchestrator] build process group ${pgid} still alive ${BUILD_KILL_WAIT_MS}ms after SIGKILL`);
+        return;
+      }
+      await new Promise((r) => setTimeout(r, BUILD_KILL_POLL_MS));
+    }
+  } catch (err: unknown) {
+    console.warn("[build-orchestrator] probing build process group failed:", err);
   }
 }

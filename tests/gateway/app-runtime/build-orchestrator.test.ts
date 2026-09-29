@@ -21,6 +21,16 @@ beforeEach(async () => {
   orch = new BuildOrchestrator({ concurrency: 2, storeDir: join(tmpDir, ".pnpm-store") });
 });
 
+function isAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err: unknown) {
+    if ((err as NodeJS.ErrnoException).code === "ESRCH") return false;
+    throw err;
+  }
+}
+
 afterEach(async () => {
   await rm(tmpDir, { recursive: true, force: true });
 });
@@ -63,7 +73,7 @@ describe("BuildOrchestrator", () => {
     }
   }, 60_000);
 
-  it("enforces build timeout via AbortSignal", async () => {
+  it("enforces build timeout", async () => {
     const result = await orch.build("hello-vite", appDir, { timeoutMs: 100 });
     expect(result.ok).toBe(false);
     if (!result.ok) {
@@ -97,6 +107,37 @@ describe("BuildOrchestrator", () => {
       expect((result.error as BuildError).code).toBe("timeout");
     }
     expect(elapsed).toBeLessThan(1_000);
+  }, 10_000);
+
+  it("kills the whole build process tree before resolving a timeout", async () => {
+    // `sh -c` forks the background writer as a grandchild of the gateway.
+    // Signalling only the direct `sh` child would orphan it, leaving it to
+    // keep writing into the app directory after the build reported timeout.
+    await writeFile(join(appDir, "matrix.json"), JSON.stringify({
+      name: "Hello Vite",
+      slug: "hello-vite",
+      version: "1.0.0",
+      runtime: "vite",
+      runtimeVersion: "^1.0.0",
+      listingTrust: "first_party",
+      build: {
+        install: "sleep 30 & echo $! > grandchild.pid; wait",
+        command: "node -e \"process.exit(0)\"",
+        output: "dist",
+        timeout: 120,
+        sourceGlobs: ["matrix.json"],
+      },
+    }));
+
+    const result = await orch.build("hello-vite", appDir, { timeoutMs: 1_000 });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect((result.error as BuildError).code).toBe("timeout");
+    }
+    const grandchildPid = Number(await readFile(join(appDir, "grandchild.pid"), "utf8"));
+    expect(grandchildPid).toBeGreaterThan(0);
+    expect(isAlive(grandchildPid)).toBe(false);
   }, 10_000);
 
   it("serializes concurrent builds for same slug", async () => {

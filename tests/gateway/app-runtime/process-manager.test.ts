@@ -5,6 +5,7 @@ import { SpawnError } from "../../../packages/gateway/src/app-runtime/errors.js"
 import { mkdtemp, cp, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { TEST_PORT_RANGES } from "./test-ports.js";
 
 // Dynamically import to avoid issues when the module doesn't exist yet
 let ProcessManagerCtor: typeof ProcessManager;
@@ -21,7 +22,13 @@ describe("ProcessManager", () => {
   let pm: InstanceType<typeof ProcessManager>;
   let portPool: InstanceType<typeof PortPool>;
   let tmpHome: string;
-  let nextPortBase = 41000;
+  // Each test gets a fresh 51-port slice so a server from the previous test
+  // that is still closing its listener cannot collide with the next spawn.
+  const PORT_SLICE = 50;
+  const portSliceCount = Math.floor(
+    (TEST_PORT_RANGES.processManager.max - TEST_PORT_RANGES.processManager.min) / PORT_SLICE,
+  );
+  let nextPortSlice = 0;
   let portBase: number;
 
   beforeEach(async () => {
@@ -42,9 +49,9 @@ describe("ProcessManager", () => {
     await mkdir(join(tmpHome, "data", "hello-next"), { recursive: true });
     await mkdir(join(tmpHome, "data", "crash-on-request"), { recursive: true });
 
-    portBase = nextPortBase;
-    nextPortBase += 100;
-    portPool = new PortPoolCtor({ min: portBase, max: portBase + 50 });
+    portBase = TEST_PORT_RANGES.processManager.min + (nextPortSlice % portSliceCount) * PORT_SLICE;
+    nextPortSlice += 1;
+    portPool = new PortPoolCtor({ min: portBase, max: portBase + PORT_SLICE - 1 });
     pm = new ProcessManagerCtor({
       homeDir: tmpHome,
       portPool,
@@ -498,7 +505,7 @@ server.listen(Number(process.env.PORT), "127.0.0.1");
     }, 20_000);
 
     it("evicts LRU process when slot cap is reached", async () => {
-      const evictPool = new PortPoolCtor({ min: 45000, max: 45050 });
+      const evictPool = new PortPoolCtor(TEST_PORT_RANGES.processManagerEviction);
       const smallPm = new ProcessManagerCtor({
         homeDir: tmpHome,
         portPool: evictPool,
