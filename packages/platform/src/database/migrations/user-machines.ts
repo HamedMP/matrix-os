@@ -143,4 +143,24 @@ async function migratePrivatePreviewMachines(db: PlatformMigrationExecutor): Pro
     ON user_machines(clerk_user_id, source_pr)
     WHERE provisioning_class = 'private-preview' AND deleted_at IS NULL
   `.execute(db);
+  // The per-machine update base serves only this version, so the owner's
+  // explicit update is the only path that can change a Private Preview's code.
+  await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS confirmed_bundle_version TEXT`.execute(db);
+  await sql`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'user_machines'::regclass
+          AND conname = 'user_machines_private_preview_confirmed_check'
+      ) THEN
+        ALTER TABLE user_machines
+          ADD CONSTRAINT user_machines_private_preview_confirmed_check
+          CHECK (
+            provisioning_class <> 'private-preview'
+            OR (confirmed_bundle_version IS NOT NULL AND char_length(confirmed_bundle_version) BETWEEN 1 AND 128)
+          ) NOT VALID;
+      END IF;
+    END $$
+  `.execute(db);
 }
