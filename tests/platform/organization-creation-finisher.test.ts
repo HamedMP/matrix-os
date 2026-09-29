@@ -95,4 +95,16 @@ describe("organization creation finisher", () => {
     expect((await repository.getRequest(actorId, requestId))?.state).toBe("needs_review");
     await unavailable.shutdown();
   });
+
+  it("claims only the four requests it can process concurrently", async () => {
+    for (let index = 0; index < 5; index++) {
+      await repository.beginCreate(`${actorId}${index}`, requestId, `Team ${index}`);
+    }
+    clock = new Date(clock.getTime() + 2 * 60_000);
+    const claim = vi.spyOn(repository, "claimDue");
+    await finisher.runOnce();
+    expect(claim).toHaveBeenCalledWith(4);
+    expect(clerk.createOrganization).toHaveBeenCalledTimes(4);
+    expect((await repository.getRequest(`${actorId}4`, requestId))?.state).toBe("pending");
+  });
 });

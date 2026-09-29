@@ -59,7 +59,7 @@ describe("organization create routes", () => {
     expect(clerk.createOrganization).not.toHaveBeenCalled();
   });
 
-  it("creates once for an idempotency key and keeps the caller's setting-up row visible after reconciliation fails", async () => {
+  it("creates once for an idempotency key and lists setting-up rows only while membership is current", async () => {
     reconcileWorks = false;
     const first = await post(app, body);
     expect(first.status).toBe(201);
@@ -77,10 +77,26 @@ describe("organization create routes", () => {
       resolveActor: async () => actor,
       authenticateRuntime: async () => null,
     });
+    expect(await (await readRoutes.request("/api/organizations")).json()).toEqual({ organizations: [] });
+    reconcileWorks = true;
     expect(await (await readRoutes.request("/api/organizations")).json()).toEqual({
       organizations: [{ organizationId, name: "A team", state: "setting_up" }],
     });
+    reconcileWorks = false;
+    expect(await (await readRoutes.request("/api/organizations")).json()).toEqual({ organizations: [] });
     expect((await post(app, { ...body, name: "A different team" })).status).toBe(409);
+  });
+
+  it("does not charge an account for requests while Clerk creation is unconfigured", async () => {
+    const unavailable = createOrganizationAdminRoutes({ repository, projection, resolveActor: async () => actor });
+    for (let index = 0; index < 3; index++) {
+      const response = await post(unavailable, { ...body, clientRequestId: `a77b8e1c-6112-4250-93d8-650d6fca817${index}` });
+      expect(response.status).toBe(503);
+    }
+    expect(await repository.getRequest(actorId, "a77b8e1c-6112-4250-93d8-650d6fca8170")).toBeNull();
+    expect((await post(app, body)).status).toBe(201);
+    expect((await post(unavailable, body)).status).toBe(201);
+    expect((await post(unavailable, { ...body, name: "Different team" })).status).toBe(409);
   });
 
   it("atomically caps new creates at three per account per day and returns Retry-After", async () => {

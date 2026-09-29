@@ -84,7 +84,10 @@ export function createPlatformOrganizationRoutes(options: {
       if (options.adminRepository) {
         const listed = new Set(organizations.map((organization) => organization.organizationId));
         for (const pending of await options.adminRepository.listSettingUp(actorId)) {
-          if (!listed.has(pending.organizationId)) organizations.push(pending);
+          if (!listed.has(pending.organizationId)
+            && await options.projection.isCurrentMember({ organizationId: pending.organizationId, actorId })) {
+            organizations.push(pending);
+          }
         }
       }
       c.header("Cache-Control", "private, no-store");

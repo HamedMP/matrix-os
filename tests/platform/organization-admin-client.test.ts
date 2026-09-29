@@ -39,6 +39,24 @@ describe("Clerk organization administration", () => {
     expect(fetchImpl.mock.calls.some(([url]) => String(url).includes("offset=100"))).toBe(true);
   });
 
+  it("finds a matching marker after an older organization appears first in membership order", async () => {
+    const older = "org_older000000000000000000";
+    const matching = "org_match000000000000000000";
+    const fetchImpl = vi.fn(async (url: string) => {
+      const parsed = new URL(url);
+      if (parsed.pathname.endsWith("organization_memberships")) return json({ data: [
+        { organization: { id: older, created_at: 1_000 } },
+        { organization: { id: matching, created_at: 1_000_000 } },
+      ], total_count: 2 });
+      return json({ id: parsed.pathname.split("/").at(-1), private_metadata: {
+        matrixCreateRequestId: parsed.pathname.endsWith(matching) ? requestId : "elsewhere",
+      } });
+    });
+    const client = new ClerkOrganizationAdminClient({ secretKey: "sk_test", fetchImpl: fetchImpl as typeof fetch });
+    expect(await client.findCreatedOrganization({ actorId, requestId, createdAt: new Date(900_000) }))
+      .toEqual({ kind: "found", organizationId: matching });
+  });
+
   it("treats a failed page and a membership cap as inconclusive", async () => {
     const page = Array.from({ length: 100 }, (_, index) => ({ organization: { id: `org_${String(index).padStart(24, "0")}`, created_at: 1_000_000 } }));
     const failing = vi.fn(async (url: string) => {

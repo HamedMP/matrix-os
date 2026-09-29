@@ -55,9 +55,8 @@ export class ClerkOrganizationAdminClient implements ClerkOrganizationAdmin {
   async findCreatedOrganization(input: { actorId: string; requestId: string; createdAt: Date }): Promise<OrganizationMarkerLookup> {
     const actorId = ClerkActorIdSchema.parse(input.actorId);
     const requestId = RequestIdSchema.parse(input.requestId);
-    // The creator is a member of the newly created organization. Clerk lists
-    // memberships newest first; an older organization cannot carry this marker.
-    const oldestPossible = input.createdAt.getTime() - 5 * 60_000;
+    // Membership order can differ from organization creation order. Scan the
+    // bounded complete result before declaring the marker absent.
     // A complete negative lookup can be retried. Bound one pass so the durable
     // row lease cannot expire while this worker is still calling Clerk.
     const deadline = Date.now() + 90_000;
@@ -73,7 +72,6 @@ export class ClerkOrganizationAdminClient implements ClerkOrganizationAdmin {
         }
         for (const membership of page.data) {
           if (Date.now() >= deadline) return { kind: "inconclusive" };
-          if (membership.organization.created_at < oldestPossible) return { kind: "absent" };
           const organization = OrganizationSchema.parse(await this.request(`${BASE}/organizations/${encodeURIComponent(membership.organization.id)}`));
           if (organization.id !== membership.organization.id) return { kind: "inconclusive" };
           if (organization.private_metadata?.matrixCreateRequestId === requestId) {

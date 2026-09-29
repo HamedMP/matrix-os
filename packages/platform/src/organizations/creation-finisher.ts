@@ -36,17 +36,16 @@ export class OrganizationCreationFinisher {
     if (this.closed) return;
     if (this.running) return this.running;
     const work = async () => {
-      const requests = await this.options.repository.claimDue(50);
-      for (let index = 0; index < requests.length; index += MAX_CONCURRENT) {
-        await Promise.all(requests.slice(index, index + MAX_CONCURRENT).map(async (request) => {
-          try {
-            await this.finish(request);
-          } catch (error: unknown) {
-            console.warn("[organizations] creation request deferred", error instanceof Error ? error.name : "UnknownError");
-            await this.options.repository.defer(request, INTERVAL_MS);
-          }
-        }));
-      }
+      // Lease only work we can start now; a queued batch could outlive its lease.
+      const requests = await this.options.repository.claimDue(MAX_CONCURRENT);
+      await Promise.all(requests.map(async (request) => {
+        try {
+          await this.finish(request);
+        } catch (error: unknown) {
+          console.warn("[organizations] creation request deferred", error instanceof Error ? error.name : "UnknownError");
+          await this.options.repository.defer(request, INTERVAL_MS);
+        }
+      }));
     };
     this.running = work().finally(() => { this.running = undefined; });
     return this.running;

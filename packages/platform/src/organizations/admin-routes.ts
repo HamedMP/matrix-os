@@ -49,6 +49,19 @@ export function createOrganizationAdminRoutes(options: {
       return c.json({ error: "Invalid request" }, 422);
     }
     try {
+      if (!options.clerk) {
+        // Keep exact-key replays readable during a configuration outage, but
+        // never insert a new intent or charge the daily counter without a client.
+        const existing = await options.repository.getRequest(actorId, body.clientRequestId);
+        if (!existing) return c.json({ error: "Organizations unavailable" }, 503);
+        if (existing.name !== body.name) return c.json({ error: "Conflicting request" }, 409);
+        if (existing.state === "needs_review" || existing.state === "failed") return c.json({ error: "Organizations unavailable" }, 503);
+        c.header("Cache-Control", "private, no-store");
+        return c.json(OrganizationCreateResponseSchema.parse({
+          ...(existing.organizationId ? { organizationId: existing.organizationId } : {}),
+          name: existing.name, state: existing.state === "listed" ? "listed" : "setting_up",
+        }), 201);
+      }
       const { request, inserted } = await options.repository.beginCreate(actorId, body.clientRequestId, body.name);
       if (request.name !== body.name) return c.json({ error: "Conflicting request" }, 409);
       if (!inserted) {
@@ -59,7 +72,6 @@ export function createOrganizationAdminRoutes(options: {
           name: request.name, state: request.state === "listed" ? "listed" : "setting_up",
         }), 201);
       }
-      if (!options.clerk) return c.json({ error: "Organizations unavailable" }, 503);
       const created = await options.clerk.createOrganization({ actorId, name: request.name, requestId: request.clientRequestId });
       await options.repository.markCreated(request, created.organizationId);
       let verified = false;
