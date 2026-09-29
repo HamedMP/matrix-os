@@ -14,6 +14,7 @@
 import type { AiProviderSnapshotV3, BotModelRoute } from "@matrix-os/contracts";
 import { BotModelRouteSchema } from "@matrix-os/contracts";
 import type { KernelCredentialAccessSourceId } from "../kernel-credentials.js";
+import { MATRIX_DEFAULT_MODEL_ID } from "../ai-providers/model-catalog.js";
 
 /** Provider V3 access sources bots can use, in fallback order, and the credential each launches with. */
 const SOURCES_IN_ORDER: ReadonlyArray<{ id: string; credential: KernelCredentialAccessSourceId; anthropicOnly: boolean }> = [
@@ -70,6 +71,13 @@ export function resolveBotRoute(snapshot: AiProviderSnapshotV3, now = Date.now()
   const active = activeSource ? routeFor(snapshot, activeSource, snapshot.active.modelId, now) : undefined;
   if (active) return active;
   for (const entry of SOURCES_IN_ORDER) {
+    // Provider V3 exposes managed GLM as an access source, without an
+    // Anthropic kernel instance. Pi can use that source directly, subject
+    // to the same readiness, freshness, eligibility and tool checks.
+    if (entry.id === "matrix_cloudflare") {
+      const managed = routeFor(snapshot, entry, MATRIX_DEFAULT_MODEL_ID, now);
+      if (managed) return managed;
+    }
     const instances = snapshot.instances.filter((instance) => instance.accessSourceId === entry.id
       && instance.readiness.state === "ready" && fresh(instance.readiness.staleAfter, now));
     for (const instance of instances) {

@@ -9,6 +9,7 @@ Tracking: ENG-49. This fixes admission and navigation within the existing bot sp
 - The direct bot composer displays Automatic and can send with an empty or unavailable ordinary provider catalog. The browser does not expose the hidden matrix_bot instance in the normal picker.
 - Fresh and queued turns use the selection prepared by the server after owner and direct-bot checks. Retried turns use the persisted server-admitted selection. Bot admission must not read unrelated harness settings; concrete model readiness, owner grants, and funded admission remain enforced when the bot starts.
 - Ordinary Chat catalog failures remain failures. Requesting matrix_bot from an ordinary Chat must be rejected before execution.
+- Automatic routing can use the ready managed GLM access source without an Anthropic kernel instance. Source freshness, model eligibility, tool support, and funding remain required; a disabled source stays rejected.
 - Failed sends preserve the draft and display the existing safe error. A successful admission alone is not proof of a completed Pi model run.
 
 ## Verification
