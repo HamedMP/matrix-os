@@ -248,6 +248,7 @@ describe("voice session contracts", () => {
   it("parses representative server frames with bounded canonical operation status", () => {
     const frames = [
       { ...common, type: "session.state", state: "listening" },
+      { ...common, sequence: 0, epoch: 2, type: "session.resumed", state: "listening", reason: "restored" },
       { ...common, sequence: 1, type: "transcript.provisional", turnId: "vturn_demo", revision: 0, text: "hello" },
       {
         ...common,
@@ -274,11 +275,13 @@ describe("voice session contracts", () => {
     ];
     for (const frame of frames) expect(VoiceServerFrameSchema.parse(frame)).toEqual(frame);
     expectRejected(VoiceServerFrameSchema, {
-      ...frames[5],
+      ...frames[6],
       label: "x".repeat(VOICE_SESSION_LIMITS.maxOperationLabelChars + 1),
     });
-    expectRejected(VoiceServerFrameSchema, { ...frames[5], state: "provider_thinking" });
-    expectRejected(VoiceServerFrameSchema, { ...frames[4], providerItemId: "private" });
+    expectRejected(VoiceServerFrameSchema, { ...frames[6], state: "provider_thinking" });
+    expectRejected(VoiceServerFrameSchema, { ...frames[5], providerItemId: "private" });
+    expectRejected(VoiceServerFrameSchema, { ...frames[1], state: "provider_native_resume" });
+    expectRejected(VoiceServerFrameSchema, { ...frames[1], ticket: "one-time-secret" });
   });
 
   it("makes unsafe free-form client errors impossible", () => {
@@ -288,6 +291,16 @@ describe("voice session contracts", () => {
       recovery: "retry_connection",
     };
     expect(SafeVoiceErrorSchema.parse(safe)).toEqual(safe);
+    expect(SafeVoiceErrorSchema.parse({
+      code: "audio_backpressure",
+      retryable: true,
+      recovery: "continue_in_chat",
+    })).toEqual({
+      code: "audio_backpressure",
+      retryable: true,
+      recovery: "continue_in_chat",
+    });
+    expectRejected(SafeVoiceErrorSchema, { ...safe, code: "upstream_429" });
     for (const unsafe of [
       { message: "OpenAI key missing at /opt/matrix" },
       { rawError: { stack: "secret" } },

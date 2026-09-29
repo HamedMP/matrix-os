@@ -235,6 +235,7 @@ export const SafeVoiceErrorCodeSchema = z.enum([
   "provider_unavailable",
   "session_limit_reached",
   "usage_limit_reached",
+  "audio_backpressure",
   "chat_unavailable",
   "session_conflict",
   "unsupported_surface",
@@ -304,6 +305,7 @@ export const VoiceClientFrameSchema = z.discriminatedUnion("type", [
 
 export const VoiceServerFrameSchema = z.discriminatedUnion("type", [
   z.object({ ...commonFrameShape, type: z.literal("session.state"), state: VoiceSessionStateSchema, reason: VoiceSessionStateReasonSchema.optional() }).strict(),
+  z.object({ ...commonFrameShape, type: z.literal("session.resumed"), state: VoiceSessionStateSchema, reason: VoiceSessionStateReasonSchema.optional() }).strict(),
   z.object({ ...commonFrameShape, type: z.literal("transcript.provisional"), ...VoiceTranscriptProvisionalSchema.shape }).strict(),
   z.object({ ...commonFrameShape, type: z.literal("transcript.final"), ...VoiceTranscriptFinalSchema.shape }).strict(),
   z.object({ ...commonFrameShape, type: z.literal("transcript.correction"), ...VoiceTranscriptCorrectionSchema.shape }).strict(),
