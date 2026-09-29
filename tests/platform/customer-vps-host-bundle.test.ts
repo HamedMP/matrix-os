@@ -799,6 +799,7 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(workflow).toContain("R2_BUCKET: ${{ vars.R2_BUNDLES_BUCKET || vars.R2_BUCKET || 'matrixos-sync' }}");
     expect(workflow).toContain("R2_ENDPOINT: ${{ vars.R2_BUNDLES_ENDPOINT || vars.R2_ENDPOINT || format('https://{0}.r2.cloudflarestorage.com', secrets.R2_BUNDLES_ACCOUNT_ID || secrets.R2_ACCOUNT_ID) }}");
     expect(workflow).toContain('-X POST "${PLATFORM_PUBLIC_URL%/}/vps/deploy"');
+    expect(workflow).toContain('DEPLOY_RESPONSE="$(curl --fail --silent --show-error --max-time 60 \\');
     expect(workflow).toContain("MATRIX_PLATFORM_SPEECH_RUNTIME_ENABLED: ${{ vars.MATRIX_PLATFORM_SPEECH_RUNTIME_ENABLED || 'false' }}");
     expect(workflow).toContain('-X POST "${PLATFORM_PUBLIC_URL%/}/vps/speech/activate"');
     expect(workflow).toContain('for page_attempt in $(seq 1 20); do');

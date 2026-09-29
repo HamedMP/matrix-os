@@ -2342,6 +2342,7 @@ describe('platform/customer-vps', () => {
 
   it('sends channel deploy targets to the VPS system updater endpoint', async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response('{}', { status: 202 }));
+    const timeoutSpy = vi.spyOn(AbortSignal, 'timeout');
     vi.stubGlobal('fetch', fetchMock);
     const { service } = createService();
     const provisioned = await service.provision({ clerkUserId: 'user_123', handle: 'alice' });
@@ -2361,7 +2362,9 @@ describe('platform/customer-vps', () => {
           body: JSON.stringify({ channel: 'dev' }),
         }),
       );
+      expect(timeoutSpy).toHaveBeenCalledWith(30_000);
     } finally {
+      timeoutSpy.mockRestore();
       vi.unstubAllGlobals();
     }
   });

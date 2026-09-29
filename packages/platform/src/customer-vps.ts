@@ -2985,7 +2985,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
               'content-type': 'application/json',
             },
             body,
-            signal: AbortSignal.timeout(10_000),
+            signal: AbortSignal.timeout(30_000),
             ...(deps.fetchDispatcher ? { dispatcher: deps.fetchDispatcher } : {}),
           } as RequestInit & { dispatcher?: import('undici').Dispatcher });
           if (res.ok) {

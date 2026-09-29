@@ -400,7 +400,7 @@ jobs:
             exit 1
           fi
           echo "Triggering VPS deploy for $VERSION..."
-          DEPLOY_RESPONSE="$(curl --fail --silent --show-error --max-time 30 \
+          DEPLOY_RESPONSE="$(curl --fail --silent --show-error --max-time 60 \
             -X POST "${PLATFORM_PUBLIC_URL%/}/vps/deploy" \
             -H "Authorization: Bearer ${PLATFORM_SECRET}" \
             -H "Content-Type: application/json" \

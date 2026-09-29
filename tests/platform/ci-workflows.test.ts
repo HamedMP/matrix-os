@@ -1022,7 +1022,7 @@ describe('CI workflows', () => {
     expect(workflow).toContain('PUBLISH_VERSION: ${{ needs.build.outputs.version }}');
     expect(workflow).toContain('VERSION="$PUBLISH_VERSION"');
     expect(workflow).not.toContain('VERSION="${{ needs.build.outputs.version }}"');
-    expect(workflow).toContain('DEPLOY_RESPONSE="$(curl --fail --silent --show-error --max-time 30 \\');
+    expect(workflow).toContain('DEPLOY_RESPONSE="$(curl --fail --silent --show-error --max-time 60 \\');
     expect(workflow).toContain('failed="$(printf \'%s\' "$DEPLOY_RESPONSE" | jq -r \'.failed // 0\')"');
     expect(workflow).toContain('triggered="$(printf \'%s\' "$DEPLOY_RESPONSE" | jq -r \'.triggered // 0\')"');
     expect(workflow).toContain('if [ "$failed" -gt 0 ] || [ "$triggered" -eq 0 ]; then');
