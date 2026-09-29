@@ -64,7 +64,7 @@ export async function admitCanonicalTurn(
     try { prepared = await deps.agentContext?.prepare(owner, chatId, input); }
     catch (error: unknown) { return mapRepositoryError(error); }
     const effective = { ...input, ...prepared };
-    const catalog = await deps.catalog.getCatalog(principal);
+    const catalog = await deps.catalog.getCatalog(principal, prepared?.selection);
     const requirements = requirementsFor({ ...effective, parts: prepared ? input.parts.filter((part) =>
       part.type !== "resource_reference" || !["agent", "chat"].includes(part.resource.kind)) : input.parts });
     const validated = validateChatProviderSelection({

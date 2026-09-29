@@ -886,7 +886,11 @@ function WorkTabContent({
             ? "hidden"
             : "relative flex min-h-0 min-w-0 flex-1 overflow-hidden"}
         >
-          <ChatAgentsContent client={client?.agents} scopeKey={`${route}:${projectSlug ?? ""}:${initialChatView ?? ""}:${initialChatId ?? "draft"}`}>
+          <ChatAgentsContent client={client?.agents} scopeKey={`${route}:${projectSlug ?? ""}:${initialChatView ?? ""}:${initialChatId ?? "draft"}`}
+            onOpenBotChat={(chatId) => {
+              showChat(layout === "narrow");
+              useTabs.getState().openTab({ kind: "work", title: "Chat", workRoute: "chat", chatId, chatView: "conversation", closable: false });
+            }}>
             {content}
             {draftInspector}
           </ChatAgentsContent>

@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import React from "react";
+import { setSharedComposerText } from "./shared-chat-composer-test-utils";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { CanonicalChatWorkspace } from "@desktop/renderer/src/features/chat/CanonicalChatWorkspace";
@@ -102,4 +103,20 @@ describe("Electron Desktop bot Chat", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Revoke Work" }));
     await waitFor(() => expect(revoke).toHaveBeenCalledWith("bot_research1", "gr_abcdefgh"));
   });
+});
+
+it("admits a direct bot turn when the ordinary provider catalog is empty", async () => {
+  const client = createCanonicalChatWorkspaceClient();
+  client.agents = { bots: { directBot: vi.fn(async () => "bot_research1"), interactions: vi.fn(async () => []),
+    tasks: vi.fn(async () => []), authority: vi.fn(async () => ({ agentId: "bot_research1", revision: 1,
+      grants: [], connections: [], routines: [], pendingInteractions: [], memory: { items: [] } })) },
+    list: vi.fn(async () => ({ enabled: true, agents: [] })) } as unknown as ChatAgentClient;
+  render(<CanonicalChatWorkspace client={client} initialChatId={snapshot.chat.id} initialView="conversation"
+    active catalog={{ ...providerCatalog, instances: [] }} />);
+  await screen.findByText("Your bot's Chat");
+  const composer = screen.getByRole("textbox", { name: "Reply to chat" });
+  await setSharedComposerText(composer, "Check the pages");
+  fireEvent.click(screen.getByRole("button", { name: "Send" }));
+  await waitFor(() => expect(client.admitTurn).toHaveBeenCalledWith(snapshot.chat.id,
+    expect.objectContaining({ selection: { instanceId: "matrix_bot_default", model: "auto" }, interactionMode: "default", permissionMode: "default" }), expect.anything()));
 });
