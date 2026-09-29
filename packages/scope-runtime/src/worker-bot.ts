@@ -8,6 +8,7 @@
  * bundled bot worker cannot start a Chat worker by accident.
  */
 import type { IncomingMessage } from "node:http";
+import { chmod } from "node:fs/promises";
 import { createServer, type Server, type Socket } from "node:net";
 import { fileURLToPath } from "node:url";
 import { SCOPE_RUNTIME_BOT_ADAPTER_ID, SCOPE_RUNTIME_BOT_HARNESS_VERSION } from "./bot-profile.js";
@@ -179,6 +180,17 @@ export async function startBotCommandServer(options: {
     server.once("error", reject);
     server.listen(options.socketPath, resolve);
   });
+  // DynamicUser plus the fixed 0077 umask creates an owner-only socket. The
+  // capability-free supervisor cannot bypass that UID's permissions. Its
+  // private 0700 runtime directory limits host access; frames still require
+  // this runtime's unpredictable handle and exact execution generation.
+  try {
+    await chmod(options.socketPath, 0o666);
+  } catch (error: unknown) {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    await removeScopeRuntimeCommandSocket(options.socketPath);
+    throw error;
+  }
   return {
     server,
     async close() {
