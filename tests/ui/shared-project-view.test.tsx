@@ -39,7 +39,8 @@ function fixture() {
   let fileListError = false;
   let descriptorError: Error | null = null;
   let descriptorGate: Promise<void> | null = null;
-  const changed = new Set<() => void | Promise<void>>();
+  // The project and its open app can each subscribe; discard the oldest if a fixture re-subscribes.
+  const changed: Array<() => void | Promise<void>> = [];
   let unavailable: (() => void) | undefined;
   const api = {
     baseUrl: "https://app.matrix-os.com",
@@ -67,8 +68,9 @@ function fixture() {
     }),
     post: vi.fn(), delete: vi.fn(),
     subscribe: vi.fn((_scopeId: string, onEvent: () => void | Promise<void>, onUnavailable?: () => void) => {
-      changed.add(onEvent); unavailable = onUnavailable;
-      return () => { changed.delete(onEvent); if (unavailable === onUnavailable) unavailable = undefined; };
+      if (changed.length === 2) changed.shift();
+      changed.push(onEvent); unavailable = onUnavailable;
+      return () => { const index = changed.indexOf(onEvent); if (index >= 0) changed.splice(index, 1); if (unavailable === onUnavailable) unavailable = undefined; };
     }),
   };
   return { api, openChat: vi.fn(), openTerminal: vi.fn(),
@@ -79,8 +81,8 @@ function fixture() {
     setDescriptorError: (error: Error | null) => { descriptorError = error; },
     setDescriptorGate: (gate: Promise<void> | null) => { descriptorGate = gate; },
     setRole: (role: "viewer" | "editor") => { currentScope = { ...scope, role }; },
-    refresh: async () => { await act(async () => { await Promise.all([...changed].map((listener) => listener())); }); },
-    emit: () => Promise.all([...changed].map((listener) => listener())),
+    refresh: async () => { await act(async () => { await Promise.all(changed.map((listener) => listener())); }); },
+    emit: () => Promise.all(changed.map((listener) => listener())),
     disconnect: async () => { await act(async () => { unavailable?.(); }); },
   };
 }
