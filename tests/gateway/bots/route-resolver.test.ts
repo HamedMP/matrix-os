@@ -31,6 +31,19 @@ const GLM = "@cf/zai-org/glm-5.3-flash";
 const SONNET = "claude-sonnet-5";
 
 describe("bot route resolver", () => {
+  it("uses the ready managed GLM source without a kernel harness instance", () => {
+    const value = snapshot({
+      sources: [{ id: "matrix_cloudflare", models: [GLM] }],
+      models: [{ id: GLM, vendor: "cloudflare", sources: ["matrix_cloudflare"] }],
+      instances: [],
+    });
+    expect(resolveBotRoute(value, NOW)).toMatchObject({
+      accessSourceId: "matrix_included", route: { api: "openai-completions", modelId: GLM },
+    });
+    for (const source of value.accessSources) source.state = "disabled";
+    expect(() => resolveBotRoute(value, NOW)).toThrow(BotRouteError);
+  });
+
   it("uses the owner's active choice when bots can run on it", () => {
     const resolved = resolveBotRoute(snapshot({
       active: { accessSourceId: "owner_anthropic_key", modelId: SONNET },
