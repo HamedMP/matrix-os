@@ -6,7 +6,9 @@ const PathSchema = safeRelativePath();
 export function resolveChatAppReference<T extends { slug: string; path?: string }>(
   input: string,
   apps: readonly T[],
+  options: { allowRelative?: boolean } = {},
 ): T | null {
+  if (options.allowRelative === false && !/^(?:~\/|\/home\/matrix\/home\/|\/files\/|file:\/\/\/home\/matrix\/home\/)/i.test(input.trim())) return null;
   const target = resolveChatMessageLink(input.replace(/\/+$/, ""));
   if (target?.kind !== "file" || !target.path.startsWith("apps/")) return null;
   for (const app of apps) {

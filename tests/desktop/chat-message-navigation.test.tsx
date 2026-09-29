@@ -86,6 +86,22 @@ it("shows a retryable image failure instead of loading forever", async () => {
   expect(loadImage).toHaveBeenCalledTimes(2);
 });
 
+it("preserves the persisted run root for app resolution and launch without remounting on equivalent roots", () => {
+  const resolveApp = vi.fn(() => ({ name: "Chart" }));
+  const openApp = vi.fn(() => true);
+  const props = () => ({ callbacks: { copyText: vi.fn(), resolveApp, openApp }, turns: [{
+    id: "turn", startedAt: 1, endedAt: 2, active: false, work: [],
+    executionRoot: { kind: "worktree" as const, projectId: "project_1", worktreeId: "wt_1" },
+    final: { kind: "message" as const, id: "assistant", role: "assistant" as const, phase: "final" as const, markdown: "`~/apps/chart`", copyText: "", timestamp: 2 },
+  }] });
+  const { rerender } = render(<ConversationTranscript {...props()} />);
+  const button = screen.getByRole("button", { name: "Open app Chart" });
+  rerender(<ConversationTranscript {...props()} />);
+  expect(screen.getByRole("button", { name: "Open app Chart" })).toBe(button);
+  fireEvent.click(button);
+  expect(openApp).toHaveBeenCalledWith("~/apps/chart", { kind: "worktree", projectId: "project_1", worktreeId: "wt_1" });
+});
+
 it("opens an attached file using its owner reference instead of its display label", () => {
   const openAttachment = vi.fn(() => true);
   render(<ConversationTranscript callbacks={{ copyText: vi.fn(), openAttachment }} turns={[{

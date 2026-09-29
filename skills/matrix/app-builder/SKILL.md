@@ -86,13 +86,13 @@ Valid storage column types include `text`, `boolean`, `integer`, `float`, `times
 ## Presenting apps and charts in Chat
 
 After verifying the app, link its owner-relative directory, for example
-`[AI Adoption](~/apps/ai-adoption)`. Chat resolves installed app directories
+`[AI Adoption](~/apps/ai-adoption)`. Electron Desktop resolves installed app directories
 against the app catalog and opens them through the normal launcher behavior.
 Do not claim an arbitrary folder is an installed app.
 
 Display saved charts or screenshots with Markdown images and full owner-relative
 paths, for example `![AI adoption chart](~/apps/ai-adoption/chart-light.png)`.
-Chat can display these images and open them in File Preview; do not tell the
+Electron Desktop can display these images and open them in File Preview; do not tell the
 user images can only appear in the agent's terminal. Use Markdown links for
 other saved files. Static HTML previews are sandboxed without scripts; link
 the installed app for an interactive chart rather than promising active HTML

@@ -18,9 +18,10 @@ export function useChatArtifactActions(api: ApiClient | null | undefined, detail
       console.warn("[chat-apps] catalog refresh failed", error instanceof Error ? error.name : "UnknownError");
     });
   }, [settledRunId, refetch]);
-  const resolveApp = useCallback((path: string) => resolveChatAppReference(path, apps), [apps]);
-  const openApp = useCallback((path: string) => {
-    const app = resolveApp(path);
+  const allowRelative = detail ? resolveWorkFilesScope(detail, projects).kind === "home" : false;
+  const resolveApp = useCallback((path: string, executionRoot?: CanonicalChatExecutionRootRef) => resolveChatAppReference(path, apps, { allowRelative: !executionRoot && allowRelative }), [apps, allowRelative]);
+  const openApp = useCallback((path: string, executionRoot?: CanonicalChatExecutionRootRef) => {
+    const app = resolveApp(path, executionRoot);
     if (!app) return false;
     useTabs.getState().openTab({ kind: "app", slug: app.slug, title: app.name, ...(app.appIdentity ? { appIdentity: app.appIdentity } : {}) });
     return true;

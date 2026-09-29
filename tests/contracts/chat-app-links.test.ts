@@ -19,3 +19,10 @@ it("does not launch source files, unknown folders, or paths outside the owner ro
   }
   expect(resolveChatAppReference("apps/ai-adoption", [])).toBeNull();
 });
+
+it("does not reinterpret a project's relative apps directory as an installed home app", () => {
+  expect(resolveChatAppReference("apps/ai-adoption", apps, { allowRelative: false })).toBeNull();
+  expect(resolveChatAppReference("./apps/ai-adoption/index.html", apps, { allowRelative: false })).toBeNull();
+  expect(resolveChatAppReference("~/apps/ai-adoption", apps, { allowRelative: false })).toBe(apps[0]);
+  expect(resolveChatAppReference("/home/matrix/home/apps/ai-adoption", apps, { allowRelative: false })).toBe(apps[0]);
+});

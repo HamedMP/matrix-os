@@ -4,7 +4,7 @@ import {
   ChevronRight,
   CircleAlert,
 } from "@renderer/lib/hugeicons";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Conversation,
   ConversationContent,
@@ -400,9 +400,22 @@ function ConversationTurn({
   initialFinalIds: ReadonlySet<string>;
 }) {
   const [expanded, setExpanded] = useState(turn.expandedByDefault ?? false);
-  const scopedCallbacks: ConversationPresentationCallbacks = turn.executionRoot && callbacks.openFile
+  const rootKind = turn.executionRoot?.kind;
+  const rootProjectId = turn.executionRoot?.projectId;
+  const rootWorktreeId = turn.executionRoot?.kind === "worktree" ? turn.executionRoot.worktreeId : undefined;
+  const appRoot = useMemo(() => rootKind && rootProjectId
+    ? rootKind === "worktree" ? { kind: rootKind, projectId: rootProjectId, worktreeId: rootWorktreeId! } : { kind: rootKind, projectId: rootProjectId }
+    : undefined, [rootKind, rootProjectId, rootWorktreeId]);
+  const resolveRunApp = useCallback((path: string) => callbacks.resolveApp?.(path, appRoot) ?? null, [callbacks.resolveApp, appRoot]);
+  const openRunApp = useCallback((path: string) => callbacks.openApp?.(path, appRoot) ?? false, [callbacks.openApp, appRoot]);
+  const fileCallbacks: ConversationPresentationCallbacks = turn.executionRoot && callbacks.openFile
     ? { ...callbacks, openFile: (path) => callbacks.openFile!(path, turn.executionRoot), ...(callbacks.loadFileImage ? { loadFileImage: (path: string) => callbacks.loadFileImage!(path, turn.executionRoot) } : {}) }
     : callbacks;
+  const scopedCallbacks: ConversationPresentationCallbacks = {
+    ...fileCallbacks,
+    ...(callbacks.resolveApp ? { resolveApp: resolveRunApp } : {}),
+    ...(callbacks.openApp ? { openApp: openRunApp } : {}),
+  };
   const showWork = turn.active || expanded;
   const hasWork = turn.work.length > 0;
   const terminalPartial = !turn.active
