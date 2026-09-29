@@ -71,7 +71,7 @@ export type CollaborationDirectErrorCode =
 
 /** Safe, generic client error: never carries provider, host or path detail. */
 export class CollaborationDirectError extends Error {
-  constructor(public readonly code: CollaborationDirectErrorCode, message = "Collaboration unavailable") {
+  constructor(public readonly code: CollaborationDirectErrorCode, message = "Collaboration unavailable", public readonly retryAfterSeconds?: number) {
     super(message);
     this.name = "CollaborationDirectError";
   }
@@ -249,8 +249,8 @@ export function createCollaborationDirectClient(options: CollaborationDirectClie
       body: JSON.stringify({ clientRequestId: randomId(), runtimeId, organizationId, proofPublicKey: key.publicKeyRaw }),
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
-    // The platform's own route: a 401 here always means the actor must sign in again.
-    await throwForResponse(response, true);
+    // The platform's own route: an untyped 401 still requires sign-in.
+    await throwForResponse(response, true, true);
     const raw = await readJson(response);
     const advertised = (raw as { endpoint?: { protocolVersion?: unknown }; signedTicket?: { ticket?: { protocolVersion?: unknown } } } | null);
     if ([advertised?.endpoint?.protocolVersion, advertised?.signedTicket?.ticket?.protocolVersion]
@@ -586,12 +586,11 @@ async function throwForResponse(response: Response, platformChallenge = false, t
       throw new CollaborationDirectError(classified.state, classified.message, classified.retryAfterSeconds);
     }
   }
+  if (response.status === 401 && ticketEndpoint) throw new CollaborationDirectError("unauthorized", "Sign in again to continue");
   if (response.status === 401 && platformChallenge) throw new CollaborationDirectError("unauthenticated", "Sign in again to continue");
-  if (ticketEndpoint && response.status === 503) throw new CollaborationDirectError("host_offline", "Collaboration home is unavailable");
   if (response.status === 404) throw new CollaborationDirectError("unavailable");
   if (response.status === 426) throw new CollaborationDirectError("upgrade_required", "Collaboration client update required");
   if (response.status === 401) {
-    if (source === "platform") throw new CollaborationDirectError("unauthorized", "Sign in again to continue");
     // Older homes omit failure codes when a direct session expires. Renewal must
     // fall through to a fresh ticket; the home cannot diagnose the Clerk login.
     throw new CollaborationDirectError("unavailable");
@@ -603,7 +602,7 @@ async function throwForResponse(response: Response, platformChallenge = false, t
 
 function scopeStateFor(code: CollaborationDirectErrorCode): DirectScopeState {
   if (code === "host_offline") return "offline";
-  if (["upgrade_required", "unauthenticated", "denied", "unavailable", "access_removed", "relay_limit", "forbidden", "resource_missing", "paused"].includes(code)) {
+  if (["upgrade_required", "unauthenticated", "denied", "unavailable", "access_removed", "relay_limit", "forbidden", "unauthorized", "resource_missing", "paused"].includes(code)) {
     return code as DirectScopeState;
   }
   return "idle";
