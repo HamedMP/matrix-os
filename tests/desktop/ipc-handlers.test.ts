@@ -36,6 +36,8 @@ function makeHarness(overrides: Partial<HandlerContext> = {}) {
       retryAuth: vi.fn(),
     },
     openExternal: vi.fn(),
+    listBrowserImportSources: vi.fn(async () => [{ id: "arc:sidebar", browser: "Arc", profile: "Sidebar", pageCount: 1 }]),
+    importBrowserPages: vi.fn(async () => ({ pages: [{ title: "Page", url: "https://example.com/", folder: "Arc tabs" }] })),
     setBadgeCount: vi.fn(),
     notify: vi.fn(),
     onRuntimeChanged: vi.fn(),
@@ -91,6 +93,19 @@ function makeHarness(overrides: Partial<HandlerContext> = {}) {
 describe("registerIpcHandlers", () => {
   beforeEach(() => {
     vi.spyOn(console, "warn").mockImplementation(() => {});
+  });
+
+  it("imports only a validated local browser source through registered dependencies", async () => {
+    const harness = makeHarness();
+    expect(await harness.invoke("browser:list-import-sources")).toEqual({ sources: [
+      { id: "arc:sidebar", browser: "Arc", profile: "Sidebar", pageCount: 1 },
+    ] });
+    expect(await harness.invoke("browser:import-pages", { sourceId: "arc:sidebar" })).toEqual({
+      pages: [{ title: "Page", url: "https://example.com/", folder: "Arc tabs" }],
+    });
+    expect(harness.ctx.importBrowserPages).toHaveBeenCalledWith("arc:sidebar");
+    await expect(harness.invoke("browser:import-pages", { sourceId: "../../secret" }))
+      .rejects.toThrow("invalid request");
   });
 
   it("returns a generic error when handler implementations throw raw errors", async () => {

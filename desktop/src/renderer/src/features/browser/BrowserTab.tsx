@@ -4,6 +4,14 @@ import { resolveBrowserAddress } from "../../../../shared/runtime-browser-url";
 import { invoke } from "../../lib/operator";
 import { useBrowserNavigation } from "../../stores/browser-navigation";
 import EmbedHost from "../embeds/EmbedHost";
+import BrowserImportView from "./BrowserImportView";
+import BrowserSavedPagesView from "./BrowserSavedPagesView";
+import {
+  BROWSER_SAVED_PAGES_KEY,
+  mergeSavedPages,
+  parseSavedPages,
+  type SavedBrowserPage,
+} from "./saved-pages";
 
 const BROWSER_SESSION_KEY = "matrix.desktop.browser.session.v1";
 const BROWSER_SETTINGS_KEY = "matrix.desktop.browser.settings.v1";
@@ -86,6 +94,15 @@ function browserTabTitle(tab: BrowserPage): string {
   }
 }
 
+function readSavedPages(): SavedBrowserPage[] {
+  try {
+    return parseSavedPages(window.localStorage.getItem(BROWSER_SAVED_PAGES_KEY));
+  } catch (error: unknown) {
+    console.warn("[browser] Saved pages are unavailable:", error instanceof Error ? error.name : typeof error);
+    return [];
+  }
+}
+
 export default function BrowserTab({
   active,
   layoutRevision,
@@ -97,7 +114,9 @@ export default function BrowserTab({
 }) {
   const [session, setSession] = useState<BrowserSession>(readBrowserSession);
   const [restorePreviousTabs, setRestorePreviousTabs] = useState(restorePreviousTabsEnabled);
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [panel, setPanel] = useState<"browser" | "settings" | "saved" | "import">("browser");
+  const [savedPages, setSavedPages] = useState(readSavedPages);
+  const [savedNotice, setSavedNotice] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const pendingNavigation = useBrowserNavigation((state) => state.pending);
   const consumeNavigation = useBrowserNavigation((state) => state.consume);
@@ -117,7 +136,7 @@ export default function BrowserTab({
     if (!pendingNavigation || handledNavigationId.current === pendingNavigation.id) return;
     handledNavigationId.current = pendingNavigation.id;
     consumeNavigation(pendingNavigation.id);
-    setSettingsOpen(false);
+    setPanel("browser");
     setMessage(null);
     setSession((current) => {
       const activePage = current.tabs.find((tab) => tab.id === current.activeId);
@@ -172,7 +191,7 @@ export default function BrowserTab({
     }
     const tab = createBrowserPage();
     setMessage(null);
-    setSettingsOpen(false);
+    setPanel("browser");
     setSession((current) => ({ tabs: [...current.tabs, tab], activeId: tab.id }));
   };
 
@@ -193,11 +212,12 @@ export default function BrowserTab({
   const selectTabWithKeyboard = (event: KeyboardEvent<HTMLDivElement>, tabId: string) => {
     if (event.key !== "Enter" && event.key !== " ") return;
     event.preventDefault();
-    setSettingsOpen(false);
+    setPanel("browser");
     setSession((current) => ({ ...current, activeId: tabId }));
   };
 
   const activeResolution = activeTab.url ? resolveBrowserAddress(activeTab.url) : null;
+  const activePageSaved = activeTab.url !== null && savedPages.some((page) => page.url === activeTab.url);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col" style={{ background: "var(--bg-app)" }}>
@@ -208,7 +228,7 @@ export default function BrowserTab({
         style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)" }}
       >
         {session.tabs.map((tab, index) => {
-          const selected = !settingsOpen && tab.id === session.activeId;
+          const selected = panel === "browser" && tab.id === session.activeId;
           return (
             <div
               key={tab.id}
@@ -222,7 +242,7 @@ export default function BrowserTab({
                 background: selected ? "var(--bg-app)" : "transparent",
               }}
               onClick={() => {
-                setSettingsOpen(false);
+                setPanel("browser");
                 setSession((current) => ({ ...current, activeId: tab.id }));
               }}
               onKeyDown={(event) => selectTabWithKeyboard(event, tab.id)}
@@ -282,6 +302,33 @@ export default function BrowserTab({
         {activeResolution?.disposition === "public" ? (
           <button
             type="button"
+            aria-label="Save current page"
+            disabled={activePageSaved}
+            className="inline-flex h-8 shrink-0 items-center justify-center rounded-lg px-2 text-xs hover:bg-[var(--bg-hover)] disabled:opacity-60"
+            style={{ color: "var(--text-secondary)" }}
+            onClick={() => {
+              if (!activeTab.url) return;
+              const page = {
+                title: new URL(activeTab.url).hostname,
+                url: activeTab.url,
+                folder: "Saved in Matrix",
+              };
+              const merged = mergeSavedPages(savedPages, [page]);
+              try {
+                window.localStorage.setItem(BROWSER_SAVED_PAGES_KEY, JSON.stringify(merged));
+                setSavedPages(merged);
+              } catch (error: unknown) {
+                console.warn("[browser] Could not save page:", error instanceof Error ? error.name : typeof error);
+                setMessage("Couldn’t save this page.");
+              }
+            }}
+          >
+            {activePageSaved ? "Saved" : "Save"}
+          </button>
+        ) : null}
+        {activeResolution?.disposition === "public" ? (
+          <button
+            type="button"
             aria-label="Open current page in external browser"
             title="Open in external browser"
             className="inline-flex size-8 items-center justify-center rounded-lg hover:bg-[var(--bg-hover)]"
@@ -306,17 +353,30 @@ export default function BrowserTab({
         ) : null}
         <button
           type="button"
+          aria-label="Saved pages"
+          aria-pressed={panel === "saved"}
+          className="inline-flex h-8 shrink-0 items-center justify-center rounded-lg px-2 text-xs hover:bg-[var(--bg-hover)]"
+          style={{ color: "var(--text-secondary)" }}
+          onClick={() => setPanel((current) => current === "saved" ? "browser" : "saved")}
+        >
+          Saved
+        </button>
+        <button
+          type="button"
           aria-label="Browser settings"
-          aria-pressed={settingsOpen}
+          aria-pressed={panel === "settings"}
           className="inline-flex size-8 items-center justify-center rounded-lg hover:bg-[var(--bg-hover)]"
           style={{ color: "var(--text-secondary)" }}
-          onClick={() => setSettingsOpen((shown) => !shown)}
+          onClick={() => setPanel((current) => current === "settings" ? "browser" : "settings")}
         >
           <SlidersHorizontalIcon size={15} aria-hidden="true" />
         </button>
       </form>
+      {message && activeTab.url ? (
+        <p role="status" className="px-3 py-1 text-xs" style={{ color: "var(--text-secondary)" }}>{message}</p>
+      ) : null}
 
-      {settingsOpen ? (
+      {panel === "settings" ? (
         <section
           role="region"
           aria-label="Browser settings"
@@ -325,6 +385,13 @@ export default function BrowserTab({
         >
           <h2 className="text-base font-semibold">Browser settings</h2>
           <div className="mt-5 max-w-xl space-y-4 text-sm">
+            <div className="flex items-center justify-between gap-4 rounded-xl border p-4" style={{ borderColor: "var(--border-default)" }}>
+              <span>
+                <span className="block font-medium">Import browser data</span>
+                <span className="mt-1 block text-xs" style={{ color: "var(--text-secondary)" }}>Bring saved pages from Arc or another local browser.</span>
+              </span>
+              <button type="button" className="shrink-0 rounded-lg px-3 py-2 text-xs font-medium" style={{ background: "var(--accent)", color: "var(--text-on-accent)" }} onClick={() => setPanel("import")}>Import from another browser</button>
+            </div>
             <label className="flex items-center justify-between gap-4 rounded-xl border p-4" style={{ borderColor: "var(--border-default)" }}>
               <span>
                 <span className="block font-medium">Restore previous tabs</span>
@@ -350,6 +417,44 @@ export default function BrowserTab({
             </label>
           </div>
         </section>
+      ) : panel === "import" ? (
+        <BrowserImportView
+          onBack={() => setPanel("settings")}
+          onImported={(pages) => {
+            const merged = mergeSavedPages(savedPages, pages);
+            window.localStorage.setItem(BROWSER_SAVED_PAGES_KEY, JSON.stringify(merged));
+            const added = merged.length - savedPages.length;
+            setSavedNotice(added === 0
+              ? "These pages are already saved, or the Saved pages limit has been reached."
+              : `Imported ${added} ${added === 1 ? "page" : "pages"}.`);
+            setSavedPages(merged);
+            setPanel("saved");
+          }}
+        />
+      ) : panel === "saved" ? (
+        <BrowserSavedPagesView
+          pages={savedPages}
+          notice={savedNotice}
+          onImport={() => setPanel("import")}
+          onOpen={(url) => {
+            setPanel("browser");
+            setSession((current) => {
+              const activePage = current.tabs.find((tab) => tab.id === current.activeId);
+              const target = activePage?.url === null
+                ? activePage
+                : current.tabs.length < MAX_BROWSER_TABS
+                  ? createBrowserPage()
+                  : activePage ?? current.tabs[0]!;
+              const nextPage = { ...target, address: url, url, navigationRevision: target.navigationRevision + 1 };
+              return {
+                tabs: current.tabs.some((tab) => tab.id === target.id)
+                  ? current.tabs.map((tab) => tab.id === target.id ? nextPage : tab)
+                  : [...current.tabs, nextPage],
+                activeId: target.id,
+              };
+            });
+          }}
+        />
       ) : activeTab.url ? (
         <EmbedHost
           key={`${activeTab.id}:${activeTab.url}:${activeTab.navigationRevision}`}

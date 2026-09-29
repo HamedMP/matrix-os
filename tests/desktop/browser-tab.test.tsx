@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import React from "react";
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import BrowserTab from "@desktop/renderer/src/features/browser/BrowserTab";
 import { invoke } from "@desktop/renderer/src/lib/operator";
@@ -108,6 +108,42 @@ describe("BrowserTab", () => {
     expect((within(settings).getByRole("checkbox", { name: "Restore previous tabs" }) as HTMLInputElement).checked).toBe(true);
     expect(within(settings).getByText("Cookies and sign-ins persist in the browser profile.")).toBeTruthy();
     expect(within(settings).getByText(/Password saving requires an OS-encrypted browser vault/)).toBeTruthy();
+  });
+
+  it("imports selected local browser pages and opens them from Saved pages", async () => {
+    vi.mocked(invoke).mockImplementation(async (channel) => {
+      if (channel === "browser:list-import-sources") return {
+        sources: [{ id: "arc:sidebar", browser: "Arc", profile: "Sidebar", pageCount: 1 }],
+      } as never;
+      if (channel === "browser:import-pages") return {
+        pages: [{ title: "Project", url: "https://example.com/project", folder: "Arc tabs" }],
+      } as never;
+      return { ok: true } as never;
+    });
+    const first = render(<BrowserTab active />);
+    fireEvent.click(screen.getByRole("button", { name: "Browser settings" }));
+    fireEvent.click(screen.getByRole("button", { name: "Import from another browser" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Import 1 page from Arc Sidebar" })).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: "Import 1 page from Arc Sidebar" }));
+    await waitFor(() => expect(screen.getByText("Project")).toBeTruthy());
+    expect(window.localStorage.getItem("matrix.desktop.browser.saved-pages.v1")).toContain("https://example.com/project");
+
+    first.unmount();
+    render(<BrowserTab active />);
+    fireEvent.click(screen.getByRole("button", { name: "Saved pages" }));
+    fireEvent.click(screen.getByRole("button", { name: "Open Project" }));
+    expect(screen.getByTestId("embed").textContent).toBe("browser:https://example.com/project");
+  });
+
+  it("saves the current public page alongside imported pages", () => {
+    render(<BrowserTab active />);
+    fireEvent.change(screen.getByRole("textbox", { name: "Browser address" }), {
+      target: { value: "https://example.com/current" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Go" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save current page" }));
+    fireEvent.click(screen.getByRole("button", { name: "Saved pages" }));
+    expect(screen.getByRole("button", { name: "Open example.com" })).toBeTruthy();
   });
 
   it("opens requested Help pages in Matrix Browser with an external-browser option", () => {

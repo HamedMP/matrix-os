@@ -75,6 +75,23 @@ const CodingAgentCreateThreadResultSchema = z.discriminatedUnion("ok", [
 ]);
 const EmbedStateSchema = z.enum(["loading", "ready", "auth-required", "failed"]);
 const ReviewIdSchema = z.string().regex(/^rev_[A-Za-z0-9_-]{1,128}$/);
+const BrowserImportSourceIdSchema = z.string().regex(
+  /^(?:arc:sidebar|safari:bookmarks|opera:Default|firefox:[A-Za-z0-9]{8,16}\.[A-Za-z0-9_-]{1,64}|(?:chrome|brave|edge|vivaldi|chromium):(?:Default|Profile [1-9]\d{0,2}))$/,
+);
+const ImportedBrowserPageSchema = z.strictObject({
+  title: z.string().min(1).max(256),
+  url: z.url().max(2_048).refine((value) => {
+    const url = new URL(value);
+    return (url.protocol === "http:" || url.protocol === "https:") && !url.username && !url.password;
+  }),
+  folder: z.string().max(512),
+});
+const BrowserImportSourceSchema = z.strictObject({
+  id: BrowserImportSourceIdSchema,
+  browser: z.string().min(1).max(64),
+  profile: z.string().min(1).max(64),
+  pageCount: z.number().int().min(1).max(10_000),
+});
 
 // App-wide Chromium zoom factor (webContents.setZoomFactor). Bounded so a
 // renderer can never push the UI outside the supported 50%–200% range.
@@ -340,6 +357,14 @@ export const INVOKE_CHANNELS = {
       .object({ taskKey: z.string().min(1).max(256), layout: PanelLayoutSchema })
       .strict(),
     response: Ok,
+  },
+  "browser:list-import-sources": {
+    request: Empty,
+    response: z.strictObject({ sources: z.array(BrowserImportSourceSchema).max(256) }),
+  },
+  "browser:import-pages": {
+    request: z.strictObject({ sourceId: BrowserImportSourceIdSchema }),
+    response: z.strictObject({ pages: z.array(ImportedBrowserPageSchema).max(10_000) }),
   },
   "embed:open": {
     request: z.discriminatedUnion("kind", [

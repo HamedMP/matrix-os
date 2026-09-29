@@ -5,7 +5,13 @@ function harness() {
   const listeners: Record<string, (event: unknown, request: unknown) => Promise<unknown>> = {};
   const downloadFile = vi.fn(async () => ({ status: "saved" }));
   const cancelFileDownload = vi.fn(() => ({ ok: true }));
-  const ctx = { buildSource: null, downloadFile, cancelFileDownload } as unknown as HandlerContext;
+  const ctx = {
+    buildSource: null,
+    downloadFile,
+    cancelFileDownload,
+    listBrowserImportSources: vi.fn(async () => []),
+    importBrowserPages: vi.fn(async () => ({ pages: [] })),
+  } as unknown as HandlerContext;
   registerIpcHandlers({ handle(channel, listener) { listeners[channel] = listener as typeof listeners[string]; } }, ctx);
   return { listeners, downloadFile, cancelFileDownload };
 }
