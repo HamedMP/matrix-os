@@ -222,7 +222,7 @@ export class ChatSteeringRepository {
         typeof queued.parts === "string" ? JSON.parse(queued.parts) : queued.parts,
       );
       if (parts.some((part) => part.type === "resource_reference"
-        && (part.resource.kind === "agent" || part.resource.kind === "chat"))) {
+        && (["agent", "chat", "organization_drive"].includes(part.resource.kind)))) {
         throw new ChatConflictError(chatId, Number(chat.revision));
       }
       await trx.insertInto("chat_run_steers").values({

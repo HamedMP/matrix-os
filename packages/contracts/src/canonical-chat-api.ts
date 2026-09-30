@@ -171,8 +171,8 @@ export const CanonicalSteerChatRunRequestSchema = z.object({
   clientRequestId: CanonicalChatRequestIdSchema,
   expectedTurnId: CanonicalChatTurnSchema.shape.id,
   parts: z.array(CanonicalChatUserInputPartSchema).min(1).max(64).refine((parts) => !parts.some(
-    (part) => part.type === "resource_reference" && ["agent", "chat"].includes(part.resource.kind),
-  ), { message: "Queue Agent and Chat references as a new turn" }),
+    (part) => part.type === "resource_reference" && ["agent", "chat", "organization_drive"].includes(part.resource.kind),
+  ), { message: "Queue Agent, Chat and company drive references as a new turn" }),
 }).strict();
 
 export const CanonicalChatRunSteeringResponseSchema = z.object({

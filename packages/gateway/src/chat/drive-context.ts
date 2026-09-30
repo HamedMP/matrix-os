@@ -69,20 +69,26 @@ export function createChatDriveContext(options: {
         if (current.run.chatId !== initial.run.chatId || JSON.stringify(current.reference) !== JSON.stringify(initial.reference))
             throw new ChatDriveContextError();
     }
+    async function authorizeSources(ownerValue: ChatOwner, references: OrganizationDriveContextReference[]) {
+        if (ownerValue.type !== "personal") throw new ChatDriveContextError();
+        owner(ownerValue.ownerId);
+        const selected = z.array(OrganizationDriveContextReferenceSchema).min(1).max(3).parse(references);
+        const signal = AbortSignal.timeout(60000);
+        for (const reference of selected) {
+            if (reference.kind === "file") await options.client.read(reference, undefined, signal);
+            else await options.client.search(reference, { limit: 1 }, signal);
+        }
+    }
     return {
+        /** Source membership only: never reads Chat state or acquires its database connection. */
+        authorizeSources(ownerValue: ChatOwner, references: OrganizationDriveContextReference[]) {
+            return safe(() => authorizeSources(ownerValue, references));
+        },
         authorize(ownerValue: ChatOwner, chatId: string, references: OrganizationDriveContextReference[]) {
             return safe(async () => {
-                if (ownerValue.type !== "personal")
-                    throw new ChatDriveContextError();
+                if (ownerValue.type !== "personal") throw new ChatDriveContextError();
                 await privateChat(ownerValue.ownerId, chatId);
-                const selected = z.array(OrganizationDriveContextReferenceSchema).min(1).max(3).parse(references);
-                const signal = AbortSignal.timeout(60000);
-                for (const reference of selected) {
-                    if (reference.kind === "file")
-                        await options.client.read(reference, undefined, signal);
-                    else
-                        await options.client.search(reference, { limit: 1 }, signal);
-                }
+                await authorizeSources(ownerValue, references);
                 await privateChat(ownerValue.ownerId, chatId);
             });
         },

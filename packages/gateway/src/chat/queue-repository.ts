@@ -1,3 +1,5 @@
+import {associateAdmittedDriveChat} from "./drive-project-database.js";
+import {admittedContextReferenceParts} from "./context-reference-parts.js";
 import { chatContextRequestHash } from "./agent-context.js";
 import { queuedRunContext, validateQueuedAgentDriver } from "./queued-context.js";
 import { randomUUID } from "node:crypto";
@@ -754,8 +756,7 @@ export class ChatQueueRepository {
         .where("status", "=", "pending")
         .executeTakeFirst();
       const existingParts = CanonicalChatQueuedTurnSchema.shape.parts.parse(parseJson(queued.parts));
-      const mentions = (value: typeof parts) => value.filter((part) => part.type === "resource_reference"
-        && (part.resource.kind === "agent" || part.resource.kind === "chat"));
+      const mentions = admittedContextReferenceParts;
       if (JSON.stringify(mentions(existingParts)) !== JSON.stringify(mentions(parts))) {
         throw new ChatConflictError(chatId, Number(chat.revision));
       }
@@ -1109,6 +1110,7 @@ export class ChatQueueRepository {
         .returning("id")
         .executeTakeFirst();
       if (!updatedChat) throw new ChatConflictError(chatId, Number(chat.revision));
+      if (!row.collaboration_scope_id) await associateAdmittedDriveChat(trx, chatId, turn.clientRequestId, run.context);
       if (row.collaboration_scope_id && sharedScope) {
         await appendSharedEvent(trx as unknown as Transaction<OwnerCollaborationDatabase>, {
           scopeId: row.collaboration_scope_id,
