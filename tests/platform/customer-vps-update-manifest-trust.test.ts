@@ -93,7 +93,7 @@ apply_update other`;
   }
 }
 
-function probeRejectedExplicitRequest(marker: unknown, trusted: unknown, metadataAvailable = true, replaceRequestDuringValidation = false) {
+function probeRejectedExplicitRequest(marker: unknown, trusted: unknown, metadataAvailable = true, replaceRequestDuringValidation = false, triggerOnlyDuringCleanup = false) {
   const directory = mkdtempSync(join(tmpdir(), 'matrix-update-rejected-'));
   const markerPath = join(directory, '.update-available.json');
   const triggerPath = join(directory, '.update-now');
@@ -121,6 +121,7 @@ json_field() { python3 -c 'import json,sys; print(json.load(sys.stdin).get(sys.a
 release_url_for_version() { printf 'https://platform.example/system-bundles/releases/%s.json\\n' "$1"; }
 fetch_manifest() { ${replaceRequestDuringValidation ? 'printf v2026.09.28-2 > "$APP_DIR/.update-version"; : > "$APP_DIR/new-trigger"; mv -fT "$APP_DIR/new-trigger" "$UPDATE_TRIGGER";' : ''} ${metadataAvailable ? 'printf \'%s\' "$TRUSTED_JSON";' : 'return 1;'} }
 sudo() { "$@"; }
+${triggerOnlyDuringCleanup ? 'rm() { if [[ "$*" == *".update-rejected."* ]]; then : > "$UPDATE_TRIGGER"; fi; command rm "$@"; }' : ''}
 consume_update_trigger() { sudo rm -f -- "$UPDATE_TRIGGER"; }
 current_version() { printf 'v2026.09.27-1\\n'; }
 ensure_update_headroom() { :; }
@@ -136,6 +137,7 @@ apply_update explicit`;
     return {
       result,
       markerExists: existsSync(markerPath),
+      marker: existsSync(markerPath) ? JSON.parse(readFileSync(markerPath, 'utf8')) : null,
       triggerExists: existsSync(triggerPath),
       requestedVersion: existsSync(join(directory, '.update-version')) ? readFileSync(join(directory, '.update-version'), 'utf8') : null,
       error: existsSync(errorLog) ? readFileSync(errorLog, 'utf8') : '',
@@ -252,23 +254,23 @@ describe('VPS update manifest trust boundary', () => {
     expect(error).toBe('download_metadata_changed');
   });
 
-  it('discards a permanently malformed request so channel polling can resume', () => {
+  it('consumes a permanently malformed trigger so channel polling can resume', () => {
     const { result, markerExists, triggerExists, error, downloadReached } = probeRejectedExplicitRequest(
       { version: '../x', url: 'https://attacker.example/bundle', sha256: 'b'.repeat(64), size: 1 },
       { version: '../x', sha256, size: 100, url: 'https://storage.example/bundle' },
     );
     expect(result.status).toBe(1);
     expect(triggerExists).toBe(false);
-    expect(markerExists).toBe(false);
+    expect(markerExists).toBe(true);
     expect(error).toBe('update_request_rejected|');
     expect(downloadReached).toBe(false);
   });
 
-  it('discards permanently invalid immutable metadata without downloading', () => {
+  it('consumes an invalid metadata trigger without downloading', () => {
     const result = probeRejectedExplicitRequest({ version: 'v2026.09.28-1' },
       { version: 'v2026.09.28-1', size: 100, url: 'https://storage.example/bundle' });
     expect(result.triggerExists).toBe(false);
-    expect(result.markerExists).toBe(false);
+    expect(result.markerExists).toBe(true);
     expect(result.downloadReached).toBe(false);
   });
 
@@ -284,6 +286,17 @@ describe('VPS update manifest trust boundary', () => {
     expect(triggerExists).toBe(true);
     expect(requestedVersion).toBe('v2026.09.28-2');
     expect(downloadReached).toBe(false);
+  });
+
+  it('keeps the prepared target for a trigger-only apply arriving during rejected-request cleanup', () => {
+    const marker = { version: 'v2026.09.28-1' };
+    const result = probeRejectedExplicitRequest(marker,
+      { version: 'v2026.09.28-2', sha256, size: 100, url: 'https://storage.example/bundle' },
+      true, false, true);
+    expect(result.result.status).toBe(1);
+    expect(result.triggerExists).toBe(true);
+    expect(result.marker).toEqual(marker);
+    expect(result.downloadReached).toBe(false);
   });
 
   it('background polling leaves a pending explicit release unchanged', () => {

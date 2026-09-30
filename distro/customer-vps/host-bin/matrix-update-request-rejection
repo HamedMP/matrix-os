@@ -55,9 +55,9 @@ reject_unchanged_update_request() {
     sudo rm -f -- "$claimed"
     return 0
   fi
-  if [ ! -e "$UPDATE_TRIGGER" ] && [ ! -L "$UPDATE_TRIGGER" ]; then
-    rm -f -- "$UPDATE_MARKER"
-  fi
+  # Retain the prepared target: a trigger-only apply can arrive at any point
+  # in cleanup. Removing just the claimed trigger permits normal polling.
+  # Polling refreshes this marker only when no explicit trigger is pending.
   sudo rm -f -- "$claimed"
   log "Permanently rejected unchanged update request; channel polling can resume"
 }
