@@ -452,6 +452,63 @@ jobs:
       - run: bun run test -- --shard=${{ matrix.shard }}/4
         if: needs.changes.outputs.should_run == 'true'
 
+  # The unit shards run these suites without MATRIX_TEST_POSTGRES_URL, so their
+  # lock, race and transaction tests skip or fall back to PGlite. Run every
+  # suite that references the variable against a real server here. The
+  # selection is dealt round-robin across the shards; add a shard (and update
+  # the --shard count) before raising the timeout.
+  collaboration-postgres:
+    name: Collaboration PostgreSQL (${{ matrix.shard }}/2)
+    needs: changes
+    if: needs.changes.outputs.should_run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: matrix_collaboration_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      MATRIX_TEST_POSTGRES_URL: postgres://postgres:postgres@127.0.0.1:5432/matrix_collaboration_test
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Configure git for tests
+        run: |
+          git config --global user.name "CI"
+          git config --global user.email "ci@matrix-os.com"
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Build packages the test suites import
+        run: |
+          pnpm --filter @matrix-os/observability build
+          pnpm --filter @matrix-os/kernel build
+          pnpm --filter @matrix-os/integrations-mcp build
+
+      - name: Run real-PostgreSQL suites
+        run: bash scripts/test-collaboration-postgres.sh --shard ${{ matrix.shard }}/2
+
   docs-contract:
     name: Docs Contract Tests
     needs: changes
@@ -690,7 +747,7 @@ jobs:
 
   ci-results:
     name: CI Results
-    needs: [changes, typecheck, shell-production-build, patterns, react-doctor, sync-client, agent-sdk-compatibility, unit, docs-contract, os-view-parity, e2e]
+    needs: [changes, typecheck, shell-production-build, patterns, react-doctor, sync-client, agent-sdk-compatibility, unit, collaboration-postgres, docs-contract, os-view-parity, e2e]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 2
@@ -706,6 +763,7 @@ jobs:
           SYNC_CLIENT_RESULT: ${{ needs.sync-client.result }}
           AGENT_SDK_COMPATIBILITY_RESULT: ${{ needs.agent-sdk-compatibility.result }}
           UNIT_RESULT: ${{ needs.unit.result }}
+          COLLABORATION_POSTGRES_RESULT: ${{ needs.collaboration-postgres.result }}
           DOCS_CONTRACT_RESULT: ${{ needs.docs-contract.result }}
           OS_VIEW_PARITY_RESULT: ${{ needs.os-view-parity.result }}
           E2E_RESULT: ${{ needs.e2e.result }}
@@ -729,13 +787,14 @@ jobs:
             echo "| Sync Client Package (Node 20) | $SYNC_CLIENT_RESULT |"
             echo "| Agent SDK 0.3.251 Compatibility | $AGENT_SDK_COMPATIBILITY_RESULT |"
             echo "| Unit Tests | $UNIT_RESULT |"
+            echo "| Collaboration PostgreSQL | $COLLABORATION_POSTGRES_RESULT |"
             echo "| Docs Contract Tests | $DOCS_CONTRACT_RESULT |"
             echo "| OS View Parity | $OS_VIEW_PARITY_RESULT |"
             echo "| E2E Tests | $E2E_RESULT |"
           } >> "$GITHUB_STEP_SUMMARY"
 
           failed=false
-          for result in "$CHANGES_RESULT" "$TYPECHECK_RESULT" "$SHELL_PRODUCTION_BUILD_RESULT" "$PATTERNS_RESULT" "$REACT_DOCTOR_RESULT" "$SYNC_CLIENT_RESULT" "$AGENT_SDK_COMPATIBILITY_RESULT" "$UNIT_RESULT" "$DOCS_CONTRACT_RESULT" "$OS_VIEW_PARITY_RESULT" "$E2E_RESULT"; do
+          for result in "$CHANGES_RESULT" "$TYPECHECK_RESULT" "$SHELL_PRODUCTION_BUILD_RESULT" "$PATTERNS_RESULT" "$REACT_DOCTOR_RESULT" "$SYNC_CLIENT_RESULT" "$AGENT_SDK_COMPATIBILITY_RESULT" "$UNIT_RESULT" "$DOCS_CONTRACT_RESULT" "$OS_VIEW_PARITY_RESULT" "$E2E_RESULT" "$COLLABORATION_POSTGRES_RESULT"; do
             case "$result" in
               success|skipped)
                 ;;

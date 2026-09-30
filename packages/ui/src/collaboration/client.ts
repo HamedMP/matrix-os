@@ -4,6 +4,9 @@ import {
   COLLABORATION_EXPECTED_MEMBER_REVISION_HEADER,
   COLLABORATION_EXPECTED_REVISION_HEADER,
   CollaborationDeleteConditionSchema,
+  CollaborationOrganizationIdSchema,
+  CollaborationOrganizationMembersCursorSchema,
+  CollaborationFailureResponseSchema,
 } from "@matrix-os/contracts";
 import type { CollaborationApi } from "./ChatCollaboratorsDialog.js";
 
@@ -16,6 +19,14 @@ const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
  * through the direct transport (`direct-api.ts`), because the platform retired
  * its V1 connection tickets and non-direct collaboration sockets.
  */
+/** Stable status and code are safe to classify in shared recipient views. */
+export class CollaborationBrowserError extends Error {
+  constructor(public readonly status: number, public readonly code?: string) {
+    super("CollaborationUnavailable");
+    this.name = "CollaborationBrowserError";
+  }
+}
+
 export function createCollaborationBrowserApi(options: {
   baseUrl: string;
   fetchImpl?: typeof fetch;
@@ -23,7 +34,7 @@ export function createCollaborationBrowserApi(options: {
 }): CollaborationApi {
   const baseUrl = requireBaseUrl(options.baseUrl);
   const request = async (path: string, method: "GET" | "POST" | "PATCH" | "DELETE", body?: unknown) => {
-    const url = requireCollaborationPath(baseUrl, path);
+    const url = requirePlatformPath(baseUrl, path, method);
     const deleteConditions = method === "DELETE" ? CollaborationDeleteConditionSchema.parse(body) : undefined;
     const serialized = method === "DELETE" || body === undefined ? undefined : JSON.stringify(body);
     if (serialized !== undefined && new TextEncoder().encode(serialized).byteLength > COLLABORATION_HTTP_BODY_LIMIT) {
@@ -48,7 +59,22 @@ export function createCollaborationBrowserApi(options: {
         ...(serialized === undefined ? {} : { body: serialized }),
         signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       });
-      if (!response.ok || !response.headers.get("content-type")?.startsWith("application/json")) {
+      if (!response.ok) {
+        let code: string | undefined;
+        if (response.headers.get("content-type")?.startsWith("application/json")) {
+          const text = await readBoundedText(response, 1_024);
+          if (text !== null) {
+            try {
+              const parsed = CollaborationFailureResponseSchema.safeParse(JSON.parse(text) as unknown);
+              if (parsed.success) code = parsed.data.code;
+            } catch (error: unknown) {
+              if (!(error instanceof SyntaxError)) console.warn("[chat-collaboration] failure response rejected", error instanceof Error ? error.name : "UnknownError");
+            }
+          }
+        } else await response.body?.cancel();
+        throw new CollaborationBrowserError(response.status, code);
+      }
+      if (!response.headers.get("content-type")?.startsWith("application/json")) {
         await response.body?.cancel();
         throw new Error("CollaborationUnavailable");
       }
@@ -56,6 +82,7 @@ export function createCollaborationBrowserApi(options: {
       if (text === null) throw new Error("CollaborationUnavailable");
       return JSON.parse(text) as unknown;
     } catch (error: unknown) {
+      if (error instanceof CollaborationBrowserError) throw error;
       if (!(error instanceof Error && error.message === "CollaborationUnavailable")) {
         console.warn("[chat-collaboration] request failed", error instanceof Error ? error.name : "UnknownError");
       }
@@ -81,15 +108,41 @@ function requireBaseUrl(value: string): URL {
 /** The retired V1 ticket route is refused here too, so no caller can revive it through this client. */
 const RETIRED_CONNECTION_TICKET_PATH = /\/connection-tickets(?:[/?]|$)/;
 
-function requireCollaborationPath(baseUrl: URL, path: string): URL {
-  if (path.length > 1_024 || !path.startsWith("/api/collaboration/") || path.includes("..") || path.includes("//")
-    || RETIRED_CONNECTION_TICKET_PATH.test(path)) {
+function requirePlatformPath(baseUrl: URL, path: string, method: "GET" | "POST" | "PATCH" | "DELETE"): URL {
+  if (path.length > 1_024 || path.includes("..") || path.includes("//") || RETIRED_CONNECTION_TICKET_PATH.test(path)) {
     throw new Error("CollaborationUnavailable");
   }
-  const url = new URL(path, baseUrl);
-  if (url.origin !== baseUrl.origin || !url.pathname.startsWith("/api/collaboration/")) {
-    throw new Error("CollaborationUnavailable");
+  if (path.startsWith("/api/collaboration/")) {
+    const url = new URL(path, baseUrl);
+    if (url.origin === baseUrl.origin && url.pathname.startsWith("/api/collaboration/")) return url;
+  } else if (method === "GET") {
+    const url = organizationDirectoryUrl(baseUrl, path);
+    if (url) return url;
   }
+  throw new Error("CollaborationUnavailable");
+}
+
+const ORGANIZATION_MEMBERS_PATH = /^\/api\/organizations\/([^/]+)\/members$/;
+
+/**
+ * The two organization directory reads Share and organization drives make on
+ * the platform: the caller's organizations and one page of an organization's
+ * members. The URL is rebuilt from validated parts, so nothing else under
+ * `/api/organizations` is reachable through this client.
+ */
+function organizationDirectoryUrl(baseUrl: URL, path: string): URL | null {
+  if (!path.startsWith("/api/organizations")) return null;
+  const requested = new URL(path, baseUrl);
+  if (requested.origin !== baseUrl.origin || requested.hash) return null;
+  if (requested.pathname === "/api/organizations") return requested.search ? null : new URL("/api/organizations", baseUrl);
+  const organizationId = ORGANIZATION_MEMBERS_PATH.exec(requested.pathname)?.[1];
+  if (!organizationId || !CollaborationOrganizationIdSchema.safeParse(organizationId).success) return null;
+  const url = new URL(`/api/organizations/${organizationId}/members`, baseUrl);
+  const keys = [...requested.searchParams.keys()];
+  if (keys.length === 0) return url;
+  const cursor = CollaborationOrganizationMembersCursorSchema.safeParse(requested.searchParams.get("cursor"));
+  if (keys.length !== 1 || keys[0] !== "cursor" || !cursor.success) return null;
+  url.searchParams.set("cursor", cursor.data);
   return url;
 }
 

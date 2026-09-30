@@ -17,6 +17,7 @@ import {
 import { encodeBase64UrlJson, possessionPayload, signPayload, type ProofKeyPair } from "./direct-crypto.js";
 import type { DirectConnected } from "./direct-client.js";
 import { CollaborationDirectError } from "./direct-client.js";
+import { classifyCollaborationClientError, type ClassifiedCollaborationFailure } from "./failure-classification.js";
 
 const MAX_SOCKET_FRAME_CHARS = 512 * 1024;
 const MAX_RECONNECT_DELAY_MS = 10_000;
@@ -38,7 +39,7 @@ const STALE_SWEEP_INTERVAL_MS = 15_000;
 
 export interface DirectEventHandlers {
   onEvent(): void | Promise<void>;
-  onUnavailable(): void;
+  onUnavailable(failure?: ClassifiedCollaborationFailure): void;
   onConnectionChange?(state: "connected" | "reconnecting"): void;
 }
 
@@ -47,7 +48,10 @@ export interface DirectTerminalHandlers {
   onOutput(frame: Extract<CollaborationTerminalFrame, { type: "terminal.output" }>): void;
   onState(frame: Extract<CollaborationTerminalFrame, { type: "terminal.state" }>): void;
   onRefreshRequired(): void | Promise<void>;
-  onUnavailable(): void;
+  /** Access ended (revoked, expired, disabled) or the terminal exited: the stream stops. */
+  onUnavailable(failure?: ClassifiedCollaborationFailure): void;
+  /** The home cannot serve the terminal right now (missing dependency, shutdown): the stream keeps retrying. */
+  onTemporarilyUnavailable(): void;
   onDisconnected(): void;
 }
 
@@ -138,8 +142,12 @@ export function createDirectStreams(deps: {
     return remove;
   };
 
-  /** Opens one stream: purpose ticket → socket → first-frame possession proof. Reconnects always start over with a new ticket. */
-  const openStream = (scopeId: string, purpose: Purpose, after: () => string, bind: (socket: WebSocket, connected: DirectConnected, terminate: () => void) => void, onFailure: () => void): StreamHandle => {
+  /**
+   * Opens one stream: purpose ticket → socket → first-frame possession proof. Reconnects always start over with a new ticket.
+   * The reconnect backoff resets only once the home admits the stream (its ready frame), not on the upgrade: a home that
+   * upgrades and then refuses, such as one reporting a retryable unavailable, must not be re-dialed at the base delay.
+   */
+  const openStream = (scopeId: string, purpose: Purpose, after: () => string, bind: (socket: WebSocket, connected: DirectConnected, terminate: () => void, admitted: () => void) => void, onFailure: () => void, onTerminalFailure: (failure: ClassifiedCollaborationFailure) => void): StreamHandle => {
     let closed = false;
     let socket: WebSocket | null = null;
     let retryTimer: ReturnType<typeof setTimeout> | undefined;
@@ -189,7 +197,7 @@ export function createDirectStreams(deps: {
         touchedAt = Date.now();
         stalledSince = 0;
         lastBuffered = 0;
-        bind(next, connected, stop);
+        bind(next, connected, stop, () => { if (socket === next) attempt = 0; });
         const boundMessage = next.onmessage;
         next.onmessage = (event) => {
           touchedAt = Date.now();
@@ -197,7 +205,6 @@ export function createDirectStreams(deps: {
         };
         const previousOpen = next.onopen;
         next.onopen = (event) => {
-          attempt = 0;
           touchedAt = Date.now();
           void signPayload(connected.key, possessionPayload({ ticketNonce: signedTicket.ticket.nonce, purpose, sessionId: connected.session.id }), deps.subtle)
             .then((possession) => {
@@ -223,9 +230,9 @@ export function createDirectStreams(deps: {
         };
         next.onerror = () => next.close();
       } catch (error: unknown) {
-        if (error instanceof CollaborationDirectError && error.code === "upgrade_required") {
-          closed = true;
-          onFailure();
+        if (error instanceof CollaborationDirectError && ["upgrade_required", "access_removed", "not_found", "relay_limit", "forbidden", "unauthorized", "denied"].includes(error.code)) {
+          stop();
+          onTerminalFailure(classifyCollaborationClientError(error));
           return;
         }
         console.warn("[collaboration-direct] stream connection failed", error instanceof Error ? error.name : "UnknownError");
@@ -241,7 +248,7 @@ export function createDirectStreams(deps: {
     const parsedScopeId = CollaborationIdSchema.parse(scopeId);
     let sequence = "0";
     let stopped = false;
-    const stream = openStream(parsedScopeId, "events", () => sequence, (socket, _connected, terminate) => {
+    const stream = openStream(parsedScopeId, "events", () => sequence, (socket, _connected, terminate, admitted) => {
       let usable = true;
       let refreshQueue = Promise.resolve();
       const enqueue = (operation: () => void | Promise<void>) => {
@@ -260,8 +267,14 @@ export function createDirectStreams(deps: {
             socket.send(JSON.stringify({ version: 1, type: "heartbeat" }));
             enqueue(() => { sequence = frame.sequence; });
           } else if (frame.type === "ready") {
+            admitted();
             handlers.onConnectionChange?.("connected");
             enqueue(() => { sequence = frame.sequence; });
+          } else if (frame.type === "unavailable" && frame.code === "unavailable") {
+            // A server-side condition, not ended access: drop this socket and re-dial with a fresh ticket.
+            usable = false;
+            handlers.onConnectionChange?.("reconnecting");
+            socket.close(1000, "Unavailable");
           } else if (frame.type === "unavailable") {
             stopped = true;
             terminate();
@@ -275,7 +288,9 @@ export function createDirectStreams(deps: {
         }
       };
       socket.onclose = () => { usable = false; };
-    }, () => { if (!stopped) handlers.onConnectionChange?.("reconnecting"); });
+    }, () => { if (!stopped) handlers.onConnectionChange?.("reconnecting"); }, (failure) => {
+      if (!stopped) { stopped = true; handlers.onUnavailable(failure); }
+    });
     return register(parsedScopeId, { ...stream, stop: () => { stopped = true; stream.stop(); } });
   };
 
@@ -301,7 +316,7 @@ export function createDirectStreams(deps: {
       if (!refreshGate) { handlers.onOutput(frame); return; }
       chain(() => { if (!stopped) handlers.onOutput(frame); });
     };
-    const stream = openStream(parsedScopeId, "terminal", () => sequence.toString(), (socket, _connected, terminate) => {
+    const stream = openStream(parsedScopeId, "terminal", () => sequence.toString(), (socket, _connected, terminate, admitted) => {
       socket.onopen = () => {
         clearHeartbeat();
         heartbeatTimer = setInterval(() => { if (!stopped) socket.send(JSON.stringify({ version: 1, type: "heartbeat" })); }, TERMINAL_HEARTBEAT_INTERVAL_MS);
@@ -312,7 +327,7 @@ export function createDirectStreams(deps: {
         try {
           const frame = CollaborationTerminalFrameSchema.parse(JSON.parse(event.data) as unknown);
           if (frame.scopeId !== parsedScopeId) throw new Error("Scope mismatch");
-          if (frame.type === "terminal.ready") { sequence = maxSequence(sequence, frame.sequence); handlers.onReady(frame); }
+          if (frame.type === "terminal.ready") { admitted(); sequence = maxSequence(sequence, frame.sequence); handlers.onReady(frame); }
           else if (frame.type === "terminal.output") {
             const next = BigInt(frame.sequence);
             // A refresh replaces the transcript, so output that arrives while one is still
@@ -331,6 +346,11 @@ export function createDirectStreams(deps: {
                 socket.close(1011, "Refresh failed");
               }
             });
+          } else if (frame.code === "unavailable") {
+            // A server-side condition, not ended access: drop this socket and re-dial with a fresh ticket.
+            clearHeartbeat();
+            handlers.onTemporarilyUnavailable();
+            socket.close(1000, "Unavailable");
           } else { stopped = true; clearHeartbeat(); terminate(); handlers.onUnavailable(); }
         } catch (error: unknown) {
           console.warn("[collaboration-direct] terminal frame rejected", error instanceof Error ? error.name : "UnknownError");
@@ -338,7 +358,9 @@ export function createDirectStreams(deps: {
         }
       };
       socket.onclose = () => { clearHeartbeat(); };
-    }, () => { if (!stopped) handlers.onDisconnected(); });
+    }, () => { if (!stopped) handlers.onDisconnected(); }, (failure) => {
+      if (!stopped) { stopped = true; clearHeartbeat(); handlers.onUnavailable(failure); }
+    });
     return register(parsedScopeId, { ...stream, stop: () => { stopped = true; clearHeartbeat(); stream.stop(); } });
   };
 

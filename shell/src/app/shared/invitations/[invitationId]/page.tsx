@@ -3,7 +3,9 @@ import { headers } from "next/headers";
 import { notFound } from "next/navigation";
 import { OnboardingGate } from "@/components/OnboardingGate";
 import { ShellHome } from "@/components/ShellHome";
+import { CollaborationFrame } from "@/components/collaboration/CollaborationFrame";
 import { hasServerVerifiedMatrixSession } from "@/lib/platform-session";
+import { isPlatformShellSurface } from "@/lib/shell-surface";
 
 export default async function SharedInvitationPage({ params }: {
   params: Promise<{ invitationId: string }>;
@@ -11,6 +13,7 @@ export default async function SharedInvitationPage({ params }: {
   const result = CollaborationIdSchema.safeParse((await params).invitationId);
   if (!result.success) notFound();
   const invitationId = result.data;
+  if (await isPlatformShellSurface()) return <CollaborationFrame view={{ kind: "invitation", invitationId }} />;
   const selfHostedMode = process.env.MATRIX_SELF_HOSTED === "1";
   const platformSessionActive = selfHostedMode || hasServerVerifiedMatrixSession(await headers());
   return <OnboardingGate platformSessionActive={platformSessionActive}>

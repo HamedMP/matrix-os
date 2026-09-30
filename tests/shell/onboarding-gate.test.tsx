@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const billingGateRender = vi.hoisted(() => vi.fn());
 const bootSequenceRender = vi.hoisted(() => vi.fn());
+const accountOnlyLandingRender = vi.hoisted(() => vi.fn());
 const navigationState = vi.hoisted(() => ({ suspend: false }));
 const suspendedSearchParams = new Promise<never>(() => {});
 const onboardingNavigation = vi.hoisted(() => ({
@@ -53,6 +54,7 @@ vi.mock("@/components/BootSequence", () => ({
     completionRedirect,
     runtimeSlot,
     passivePostCheckout,
+    accountOnlyLanding,
   }: {
     children: React.ReactNode;
     platformSessionActive?: boolean;
@@ -60,7 +62,9 @@ vi.mock("@/components/BootSequence", () => ({
     completionRedirect?: string;
     runtimeSlot?: string | null;
     passivePostCheckout?: boolean;
+    accountOnlyLanding?: boolean;
   }) => {
+    accountOnlyLandingRender(accountOnlyLanding);
     bootSequenceRender({
       platformSessionActive,
       e2eBypass,
@@ -78,6 +82,7 @@ describe("OnboardingGate", () => {
   beforeEach(() => {
     billingGateRender.mockClear();
     bootSequenceRender.mockClear();
+    accountOnlyLandingRender.mockClear();
     navigationState.suspend = false;
     onboardingNavigation.navigate.mockClear();
     window.history.replaceState({}, "", "/");
@@ -103,6 +108,28 @@ describe("OnboardingGate", () => {
       runtimeSlot: undefined,
       passivePostCheckout: undefined,
     });
+  });
+
+  it("offers account-only landing only on the normal app-root entry", async () => {
+    render(
+      <OnboardingGate accountOnlyLanding>
+        <div>Matrix workspace</div>
+      </OnboardingGate>,
+    );
+    expect(await screen.findByTestId("boot-sequence")).toBeTruthy();
+    expect(accountOnlyLandingRender).toHaveBeenLastCalledWith(true);
+
+    cleanup();
+    accountOnlyLandingRender.mockClear();
+    window.history.replaceState({}, "", "/?billing=setup&handoff=signup");
+    render(
+      <OnboardingGate accountOnlyLanding>
+        <div>Matrix workspace</div>
+      </OnboardingGate>,
+    );
+    expect(await screen.findByTestId("billing-gate")).toBeTruthy();
+    expect(accountOnlyLandingRender).toHaveBeenCalled();
+    expect(accountOnlyLandingRender.mock.calls.every(([value]) => value === undefined)).toBe(true);
   });
 
   it.each([

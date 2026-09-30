@@ -93,6 +93,7 @@ const ClerkWebhookEnvelopeSchema = z.object({
 
 export type ParsedClerkWebhook =
   | { kind: "organization"; event: ClerkOrganizationSourceEvent }
+  | { kind: "invitation_terminal"; organizationId: string; invitationId: string; requestId?: string }
   | { kind: "ignored"; type: string }
   | { kind: "invalid" };
 
@@ -118,6 +119,13 @@ export function parseClerkOrganizationWebhook(eventId: string, body: unknown): P
   if (!envelope.success) return { kind: "invalid" };
   const type = envelope.data.type;
   const occurredAt = envelope.data.timestamp !== undefined ? new Date(envelope.data.timestamp) : new Date();
+  if (type === "organizationInvitation.accepted" || type === "organizationInvitation.revoked") {
+    const data = z.object({ id: z.string().regex(/^orginv_[A-Za-z0-9_]{1,120}$/), organization_id: ClerkOrganizationIdSchema }).passthrough().safeParse(envelope.data.data);
+    if (!data.success) return { kind: "invalid" };
+    const marker = z.uuid().safeParse((data.data.private_metadata as { matrixInviteRequestId?: unknown } | undefined)?.matrixInviteRequestId);
+    return { kind: "invitation_terminal", organizationId: data.data.organization_id, invitationId: data.data.id,
+      ...(marker.success ? { requestId: marker.data } : {}) };
+  }
   if (type === "organization.created" || type === "organization.updated" || type === "organization.deleted") {
     const data = ClerkOrganizationDataSchema.safeParse(envelope.data.data);
     if (!data.success) return { kind: "invalid" };

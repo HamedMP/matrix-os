@@ -90,7 +90,7 @@ export function fakeDirectWorld(options: { endpointOrigin?: string } = {}) {
     if (url.origin === PLATFORM && (endpointOrigin !== PLATFORM || PLATFORM_ROUTES.has(url.pathname))) {
       if (url.pathname === "/api/collaboration/connections" && method === "POST") {
         const parsed = JSON.parse(body) as Json;
-        if (platform.offlineScopes.has(parsed.scopeId as string)) return json({ error: "Collaboration unavailable" }, 503);
+        if (platform.offlineScopes.has(parsed.scopeId as string)) return json({ error: "host_offline", code: "host_offline" }, 503);
         return json(issue(parsed), 201);
       }
       if (url.pathname === "/api/collaboration/inbox") return json({ items: platform.inbox });
@@ -152,4 +152,3 @@ export function fakeDirectWorld(options: { endpointOrigin?: string } = {}) {
   };
   return { home, platform, fetchImpl, webSocketFactory, sockets, now, advance, verifyTicket, issue };
 }
-

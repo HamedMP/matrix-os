@@ -1,6 +1,7 @@
 import type { Kysely } from "kysely";
 import type { Agent } from "undici";
 import type { ClerkAuth } from "../clerk-auth.js";
+import { appOrigin } from "../origins.js";
 import {
   getPlatformUserByClerkId,
   getUserMachine,
@@ -20,6 +21,7 @@ import { PlatformCollaborationIdentifierResolver } from "./identifier-resolver.j
 import type { OrganizationPlatformDatabase } from "../organizations/database.js";
 import { createPlatformOrganizations } from "../organizations/wiring.js";
 import { createPlatformCollaborationDirect, loadCollaborationRelayOrigin } from "./direct-wiring.js";
+import { ownsActiveRelayComputer } from "./relay-usage.js";
 import { PlatformCollaborationRepository } from "./repository.js";
 import type { RuntimeEndpointPlatformDatabase } from "./runtime-endpoints.js";
 import { collaborationRelayHandle, collaborationRuntimeOrigin } from "./runtime-machine.js";
@@ -81,6 +83,8 @@ export async function bootstrapPlatformCollaboration(
   // assertion stays negative.
   const organizations = await createPlatformOrganizations({
     db: options.db.kysely as unknown as Kysely<OrganizationPlatformDatabase>,
+    platformSecret: options.platformSecret,
+    appOrigin: appOrigin(options.env),
     ...(options.env.CLERK_SECRET_KEY ? { clerkSecretKey: options.env.CLERK_SECRET_KEY } : {}),
     ...(options.env.CLERK_ORGANIZATION_WEBHOOK_SIGNING_SECRET
       ? { webhookSigningSecret: options.env.CLERK_ORGANIZATION_WEBHOOK_SIGNING_SECRET }
@@ -125,6 +129,9 @@ export async function bootstrapPlatformCollaboration(
     projection: organizations.projection,
     keyring: config.ticketKeyring,
     relayOrigin,
+    env: options.env,
+    startTimers: options.startTimers,
+    ownsActiveComputer: (actorId) => ownsActiveRelayComputer(options.db, actorId),
     resolveActor,
     authenticateRuntime,
     resolveRelayHandle: async (runtime) => {

@@ -3,6 +3,7 @@ import { headers } from "next/headers";
 import { OnboardingGate } from "@/components/OnboardingGate";
 import { ShellHome } from "@/components/ShellHome";
 import { hasServerVerifiedMatrixSession } from "@/lib/platform-session";
+import { isPlatformShellSurface } from "@/lib/shell-surface";
 import {
   isSignupBillingHandoffValues,
   type SignupBillingHandoffLoadingSurface,
@@ -33,6 +34,7 @@ export default async function Home({
     <OnboardingGate
       platformSessionActive={platformSessionActive}
       initialLoadingSurface={loadingSurface}
+      accountOnlyLanding={await isPlatformShellSurface()}
     >
       <ShellHome />
     </OnboardingGate>

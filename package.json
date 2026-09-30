@@ -49,6 +49,7 @@
     "test:integration": "vitest run --config vitest.integration.config.ts",
     "test:coverage": "sh -c 'pnpm --filter @matrix-os/observability build && pnpm --filter @matrix-os/kernel build && pnpm --filter @matrix-os/integrations-mcp build && vitest run --coverage \"$@\"' --",
     "test:e2e": "sh -c 'pnpm --filter @matrix-os/observability build && pnpm --filter @matrix-os/kernel build && vitest run --config vitest.e2e.config.ts \"$@\"' --",
+    "test:e2e:collaboration": "pnpm --dir shell exec playwright test --config ../tests/e2e/collaboration.playwright.config.ts",
     "typecheck:build-kernel": "pnpm --filter '@matrix-os/observability' build && pnpm --filter '@matrix-os/kernel' build && pnpm --filter '@matrix-os/integrations-mcp' build",
     "typecheck": "bun run typecheck:build-kernel && pnpm --filter '@matrix-os/observability' exec tsc --noEmit && pnpm --filter '@matrix-os/integrations-mcp' exec tsc --noEmit && pnpm --filter '@matrix-os/gateway' exec tsc --noEmit && pnpm --filter '@matrix-os/platform' exec tsc --noEmit -p tsconfig.typecheck.json && pnpm --filter '@matrix-os/proxy' exec tsc --noEmit && pnpm --filter '@matrix-os/edge-router' exec tsc --noEmit && pnpm --filter desktop run typecheck",
     "check:patterns": "./scripts/review/check-patterns.sh",
@@ -113,8 +114,10 @@
     }
   },
   "devDependencies": {
+    "@clerk/testing": "1.14.3",
     "@excalidraw/excalidraw": "^0.18.0",
     "@matrix-os/gateway": "workspace:*",
+    "@playwright/test": "1.58.2",
     "@testing-library/react": "^16.3.2",
     "@types/better-sqlite3": "^7.6.13",
     "@types/react": "^19.2.7",

@@ -5,6 +5,7 @@ import {
   CollaborationDiscoveryResponseSchema,
   CollaborationDirectoryEventSchema,
   CollaborationPageRequestSchema,
+  collaborationHttpFailureCode,
 } from "@matrix-os/contracts";
 import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
@@ -341,7 +342,7 @@ function repositoryFailure(c: RouteContext, operation: string, error: unknown) {
 
 function safeJson(c: RouteContext, error: string, status: 401 | 403 | 404 | 409 | 413 | 422 | 429 | 503) {
   c.header("Cache-Control", "no-store");
-  return c.json({ error }, status);
+  return c.json({ error, code: collaborationHttpFailureCode(status, error) }, status);
 }
 
 const ParticipantProjectionSchema = z.object({

@@ -8,10 +8,10 @@
  * preflight, and private-project confirmation use an exact owner-runtime
  * session while ordinary shared scopes use scope-bound direct sessions.
  */
-import { CollaborationDeleteConditionSchema, CollaborationDiscoveryResponseSchema, CollaborationIdSchema } from "@matrix-os/contracts";
+import { CollaborationDeleteConditionSchema, CollaborationDiscoveryResponseSchema, CollaborationFileListResponseSchema, CollaborationIdSchema } from "@matrix-os/contracts";
 import type { CollaborationApi } from "./ChatCollaboratorsDialog.js";
 import { createCollaborationBrowserApi } from "./client.js";
-import { CollaborationDirectError, createCollaborationDirectClient, type CollaborationDirectClient, type CollaborationDirectClientOptions } from "./direct-client.js";
+import { CollaborationDirectError, createCollaborationDirectClient, type CollaborationContent, type CollaborationDirectClient, type CollaborationDirectClientOptions } from "./direct-client.js";
 
 const MAX_HYDRATION_CONCURRENCY = 4;
 const MAX_REMEMBERED_INVITATIONS = 500;
@@ -24,6 +24,7 @@ const OWNER_PROJECT_PATH = /^\/api\/collaboration\/scopes\/([0-9a-f-]{36})(?:\/(
 
 export interface CollaborationDirectApi extends CollaborationApi {
   direct: CollaborationDirectClient;
+  getContent(path: string, options: { maxBytes: number }): Promise<CollaborationContent>;
   /** Associates an invitation with the scope whose home serves it (discovery does this automatically). */
   rememberInvitation(invitationId: string, scopeId: string): void;
 }
@@ -60,6 +61,18 @@ export function createCollaborationDirectApi(options: CollaborationDirectClientO
     return null;
   };
 
+  /** Files, folders and apps have no content summary route; the scope plus the root entry's display name is enough to list them. */
+  const hydrateResourceScope = async (scopeId: string, kind: "file" | "folder" | "app"): Promise<Record<string, unknown>> => {
+    const base = `/api/collaboration/scopes/${scopeId}`;
+    const [scope, page] = await Promise.all([
+      direct.request(scopeId, "GET", base),
+      kind === "app" ? Promise.resolve(null) : direct.request(scopeId, "GET", `${base}/files?limit=1`),
+    ]);
+    const root = CollaborationFileListResponseSchema.safeParse(page).data?.entries[0];
+    const name = root?.path.split("/").at(-1);
+    return name ? { scope, name: name.slice(0, 255) } : { scope };
+  };
+
   const hydrate = async (item: Record<string, unknown>): Promise<Record<string, unknown>> => {
     if (item.resource !== undefined) return item;
     const scopeId = typeof item.scopeId === "string" ? item.scopeId : null;
@@ -68,6 +81,9 @@ export function createCollaborationDirectApi(options: CollaborationDirectClientO
       if (item.status === "invited" && typeof item.invitationId === "string") {
         rememberInvitation(item.invitationId, scopeId);
         return { ...item, resource: await direct.request(scopeId, "GET", `/api/collaboration/invitations/${item.invitationId}`) };
+      }
+      if (item.status === "accepted" && (item.kind === "file" || item.kind === "folder" || item.kind === "app")) {
+        return { ...item, resource: await hydrateResourceScope(scopeId, item.kind) };
       }
       if (item.status === "accepted") {
         const base = `/api/collaboration/scopes/${scopeId}`;
@@ -81,7 +97,7 @@ export function createCollaborationDirectApi(options: CollaborationDirectClientO
     } catch (error: unknown) {
       const code = error instanceof CollaborationDirectError ? error.code : "unavailable";
       if (!(error instanceof CollaborationDirectError)) console.warn("[collaboration-direct] hydration failed", error instanceof Error ? error.name : "UnknownError");
-      return { ...item, home: code === "unauthenticated" ? "unauthenticated" : code === "host_offline" || code === "unavailable" ? "offline" : "denied" };
+      return { ...item, home: (code === "unauthenticated" || code === "unauthorized") ? "unauthenticated" : code === "host_offline" || code === "unavailable" ? "offline" : "denied" };
     }
   };
 
@@ -144,10 +160,22 @@ export function createCollaborationDirectApi(options: CollaborationDirectClientO
     }
   };
 
+  const getContent = async (path: string, options: { maxBytes: number }): Promise<CollaborationContent> => {
+    const scope = SCOPE_PATH.exec(path);
+    if (!scope) throw new Error("CollaborationUnavailable");
+    try {
+      return await direct.requestContent(scope[1]!, path, options);
+    } catch (error: unknown) {
+      if (error instanceof CollaborationDirectError) throw new Error("CollaborationUnavailable", { cause: error });
+      throw error;
+    }
+  };
+
   return {
     baseUrl: platform.baseUrl,
     direct,
     rememberInvitation,
+    getContent,
     get: (path) => send("GET", path),
     post: (path, body) => send("POST", path, body),
     patch: (path, body) => send("PATCH", path, body),

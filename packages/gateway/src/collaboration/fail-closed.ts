@@ -15,7 +15,7 @@ import type { UpgradeWebSocket } from "hono/ws";
 import type { GatewayCollaborationConfigurationFailure } from "./config.js";
 
 const DENIAL_LOG_INTERVAL_MS = 60_000;
-const DENIAL_BODY = { error: "Collaboration unavailable" } as const;
+const DENIAL_BODY = { error: "Collaboration unavailable", code: "unavailable" } as const;
 
 export function registerFailClosedCollaborationRoutes(input: {
   app: Hono;
@@ -42,7 +42,7 @@ export function registerFailClosedCollaborationRoutes(input: {
       maxSize: COLLABORATION_HTTP_BODY_LIMIT,
       onError: (c) => {
         c.header("Cache-Control", "no-store");
-        return c.json({ error: "Request too large" }, 413);
+        return c.json({ error: "Request too large", code: "invalid_request" }, 413);
       },
     }),
   );

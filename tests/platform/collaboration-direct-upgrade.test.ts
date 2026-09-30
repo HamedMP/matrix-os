@@ -11,7 +11,7 @@ import type { IncomingMessage, Server } from "node:http";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PlatformDB } from "../../packages/platform/src/db.js";
 import { insertUserMachine } from "../../packages/platform/src/db.js";
-import { CollaborationRelay } from "../../packages/platform/src/collaboration/relay.js";
+import { CollaborationRelay, RelayAccountLimitError } from "../../packages/platform/src/collaboration/relay.js";
 import { registerPlatformWebSocketUpgradeHandler } from "../../packages/platform/src/platform-websocket-upgrade.js";
 import { issueSyncJwt } from "../../packages/platform/src/sync-jwt.js";
 import { JWT_SECRET, setupProxyRoutingTest, cleanupProxyRoutingTest } from "./proxy-routing-test-utils.js";
@@ -46,6 +46,7 @@ class Transport extends EventEmitter {
   writes: string[] = [];
   destroyed = false;
   write(value: string) { this.writes.push(value); return true; }
+  end(value: string) { this.write(value); this.destroy(); return this; }
   pipe() { return this; }
   // A real socket emits `close`, never `error`, when it is destroyed deliberately.
   destroy() { if (!this.destroyed) { this.destroyed = true; this.emit("close"); } return this; }
@@ -69,7 +70,7 @@ function directRelay(now: () => number) {
 }
 
 /** Drives the real upgrade listener up to the upstream connect; the handshake may still be pending. */
-async function startDirectPair(relay: CollaborationRelay, hooks: { onEntitlementCheck?: () => void } = {}): Promise<Transport> {
+async function startDirectPair(relay: CollaborationRelay, hooks: { onEntitlementCheck?: () => void; head?: Buffer } = {}): Promise<Transport> {
   const server = new EventEmitter();
   const permitted = { runtimeProxyAllowed: true } as never;
   registerPlatformWebSocketUpgradeHandler({
@@ -88,7 +89,7 @@ async function startDirectPair(relay: CollaborationRelay, hooks: { onEntitlement
     headers: { host: "app.matrix-os.com", upgrade: "websocket", authorization: `Bearer ${token}` },
   };
   const listener = server.listeners("upgrade")[0] as (req: IncomingMessage, socket: Transport, head: Buffer) => Promise<void>;
-  await listener(req as unknown as IncomingMessage, socket, Buffer.alloc(0));
+  await listener(req as unknown as IncomingMessage, socket, hooks.head ?? Buffer.alloc(0));
   await vi.waitFor(() => { expect(tls.upstreams.length).toBeGreaterThan(0); });
   return socket;
 }
@@ -110,6 +111,43 @@ async function seedRunningHome(): Promise<void> {
 }
 
 describe("platform direct-socket upgrade failure handling", () => {
+  it("meters initial upgrade bytes as well as traffic in both directions", async () => {
+    await seedRunningHome();
+    const relay = directRelay(() => 1_000_000);
+    const original = relay.prepareSocket.bind(relay);
+    const record = vi.fn();
+    vi.spyOn(relay, "prepareSocket").mockImplementation(async (input) => {
+      const prepared = await original(input);
+      if (prepared) prepared.record = record;
+      return prepared;
+    });
+    const socket = await startDirectPair(relay, { head: Buffer.from("early") });
+    await vi.waitFor(() => expect(record).toHaveBeenCalledWith(5));
+    socket.emit("data", Buffer.from("client"));
+    (tls.upstreams.at(-1) as unknown as EventEmitter).emit("data", Buffer.from("server"));
+    expect(record).toHaveBeenCalledWith(6);
+    socket.destroy();
+    relay.close();
+  });
+  it("answers a daily-account-limit refusal with HTTP 429 before closing the upgrade", async () => {
+    const server = new EventEmitter();
+    const permitted = { runtimeProxyAllowed: true } as never;
+    registerPlatformWebSocketUpgradeHandler({
+      server: server as Server, app: { capturePlatformEvent: vi.fn() }, db,
+      env: {}, platformSecret: "platform-secret-direct-upgrade", platformJwtSecret: JWT_SECRET, legacyContainerRoutingEnabled: false,
+      codeServerPort: 8080, getRuntimeEntitlementDecision: () => permitted, getRuntimeEntitlementDecisionForUser: async () => permitted,
+      collaborationDirect: { handleUpgrade: async () => false, relay: { prepareSocket: async () => { throw new RelayAccountLimitError(60); } } },
+    });
+    const { token } = await issueSyncJwt({ secret: JWT_SECRET, clerkUserId: "user_member", handle: "member-handle", gatewayUrl: "https://app.matrix-os.com" });
+    const socket = new Transport();
+    const req = { url: `/ws/collaboration/direct/scopes/${scopeId}/events?ticket=abc`, method: "GET",
+      headers: { host: "app.matrix-os.com", upgrade: "websocket", authorization: `Bearer ${token}` } };
+    const listener = server.listeners("upgrade")[0] as (req: IncomingMessage, socket: Transport, head: Buffer) => Promise<void>;
+    await listener(req as unknown as IncomingMessage, socket, Buffer.alloc(0));
+    expect(socket.writes.join("")).toMatch(/^HTTP\/1\.1 429 /);
+    expect(socket.writes.join("")).toMatch(/Retry-After: [1-9][0-9]*/);
+    expect(socket.destroyed).toBe(true);
+  });
   it("destroys the client socket and settles when relay preparation rejects", async () => {
     const server = new EventEmitter();
     const permitted = { runtimeProxyAllowed: true } as never;

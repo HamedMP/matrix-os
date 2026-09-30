@@ -49,7 +49,9 @@ const sharedChat = {
   revision: "1",
   messageCount: "0",
 } as const;
-const collaborationMock = vi.hoisted(() => ({ pending: 0, failInbox: false }));
+const collaborationMock = vi.hoisted(() => ({ pending: 0, failInbox: false, withFile: false }));
+const fileScopeId = "10000000-0000-4000-8000-000000000002";
+const fileId = "20000000-0000-4000-8000-000000000001";
 
 vi.mock("../../desktop/src/renderer/src/lib/collaboration", () => ({
   createDesktopCollaborationApi: () => ({
@@ -80,8 +82,20 @@ vi.mock("../../desktop/src/renderer/src/lib/collaboration", () => ({
       if (path.endsWith("/chat/requests")) throw new Error("SharedAiUnavailable");
       if (path.endsWith("/chat")) return sharedChat;
       if (path.endsWith(`/scopes/${scopeId}`)) return sharedScope;
+      if (path.endsWith(`/scopes/${fileScopeId}`)) return { ...sharedScope, id: fileScopeId, kind: "file", resourceId: fileId };
+      if (path.endsWith(`/scopes/${fileScopeId}/files?limit=1`)) return { entries: [{
+        id: fileId, kind: "file", path: "brief.md", parentId: null, revision: "2", incarnation: "a".repeat(64), updatedAt: "2026-09-28T12:00:00.000Z",
+      }] };
       return {
-      items: [{
+      items: [...(collaborationMock.withFile ? [{
+        scopeId: fileScopeId,
+        runtimeId: "vps:11111111-1111-4111-8111-111111111111",
+        ownerId: "user_owner",
+        kind: "file",
+        authorityGeneration: 1,
+        status: "accepted",
+        resource: { scope: { ...sharedScope, id: fileScopeId, kind: "file", resourceId: fileId }, name: "brief.md" },
+      }] : []), {
         scopeId,
         runtimeId: "vps:11111111-1111-4111-8111-111111111111",
         ownerId: "user_owner",
@@ -95,6 +109,10 @@ vi.mock("../../desktop/src/renderer/src/lib/collaboration", () => ({
       }],
     };
     }),
+    getContent: vi.fn(async () => {
+      const bytes = new TextEncoder().encode("Launch brief");
+      return { status: "ok", bytes, contentType: "text/markdown", size: bytes.byteLength };
+    }),
     post: vi.fn(),
     patch: vi.fn(),
     delete: vi.fn(),
@@ -105,6 +123,7 @@ describe("Electron Shared with me navigation", () => {
   beforeEach(() => {
     collaborationMock.pending = 0;
     collaborationMock.failInbox = false;
+    collaborationMock.withFile = false;
     vi.stubGlobal("ResizeObserver", class {
       observe() {}
       unobserve() {}
@@ -152,6 +171,18 @@ describe("Electron Shared with me navigation", () => {
       sharedScopeId: scopeId,
     });
     expect(screen.queryByRole("heading", { name: "Launch plan" })).toBeNull();
+  });
+
+  it("opens an accepted shared file in its own view in place", async () => {
+    collaborationMock.withFile = true;
+    render(<DesktopChatCollaboration />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Open file" }));
+
+    expect(await screen.findByRole("heading", { name: "brief.md" })).toBeVisible();
+    expect(screen.getByLabelText("File preview")).toHaveTextContent("Launch brief");
+    expect(screen.getByRole("button", { name: "Back to Shared with me" })).toBeVisible();
+    expect(useTabs.getState().tabs).toEqual([]);
   });
 
   it("exposes Shared with me in the Chat rail and opens its native content", async () => {

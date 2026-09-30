@@ -108,6 +108,14 @@ export {
 } from "./collaboration/chat-projection.js";
 export { SharedChatControls } from "./collaboration/SharedChatControls.js";
 export { SharedTerminalControls } from "./collaboration/SharedTerminalControls.js";
+export {
+  MAX_DISCOVERY_PAGES,
+  MAX_RETAINED_DRIVE_PAGES,
+  createRefreshGuard,
+  driveBasePath,
+  loadDiscoveryItems,
+  loadDriveSnapshotPages,
+} from "./collaboration/shared-folder-paging.js";
 export { TerminalSharingButton } from "./collaboration/TerminalSharingButton.js";
 export { ProjectSharingDialog } from "./collaboration/ProjectSharingDialog.js";
 export { ProjectSharingButton } from "./collaboration/ProjectSharingButton.js";
@@ -123,12 +131,19 @@ export { collaborationDraftKey, collaborationDraftModeKey, createCollaborationDr
 export { deriveChatPermissions } from "./collaboration/permissions.js";
 export { createCollaborationBrowserApi } from "./collaboration/client.js";
 export { createCollaborationDirectClient, CollaborationDirectError, type CollaborationDirectClient, type CollaborationDirectClientOptions, type CollaborationDirectErrorCode, type DirectScopeState } from "./collaboration/direct-client.js";
+export { classifyCollaborationFailure, classifyCollaborationClientError, type ClassifiedCollaborationFailure, type CollaborationFailureState } from "./collaboration/failure-classification.js";
 export { createCollaborationDirectApi, type CollaborationDirectApi } from "./collaboration/direct-api.js";
 export {
   COLLABORATION_DISCOVERY_CHANGED_EVENT,
   notifyCollaborationDiscoveryChanged,
   subscribeCollaborationDiscoveryChanged,
 } from "./collaboration/discovery-events.js";
+export {
+  OrganizationListingSchema,
+  resolveActiveOrganizationId,
+  type OrganizationListing,
+  type OrganizationMemberships,
+} from "./organizations/active-organization.js";
 export { TerminalControls } from './terminal/TerminalControls.js';
 export { useTerminalControls } from './terminal/use-terminal-controls.js';
 export type { TerminalControlsState, TerminalControlsTransport, TerminalControlsOptions } from './terminal/use-terminal-controls.js';

@@ -54,10 +54,10 @@ function conversationMeta(record: CanonicalChatRecord) {
 
 function collaborationViewFromPathname(pathname: string): ChatCollaborationView | null {
   if (pathname === "/shared" || pathname === "/shared/") return { kind: "home" };
-  const match = /^\/shared\/chat\/([^/]+)\/?$/.exec(pathname);
+  const match = /^\/shared\/(chat|file|folder)\/([^/]+)\/?$/.exec(pathname);
   if (!match) return null;
-  const scopeId = CollaborationIdSchema.safeParse(match[1]);
-  return scopeId.success ? { kind: "chat", scopeId: scopeId.data } : null;
+  const scopeId = CollaborationIdSchema.safeParse(match[2]);
+  return scopeId.success ? { kind: match[1] === "file" ? "file" : match[1] === "folder" ? "folder" : "chat", scopeId: scopeId.data } : null;
 }
 
 function pushShellChatPath(pathname: string): void {

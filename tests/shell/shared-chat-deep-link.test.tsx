@@ -14,6 +14,7 @@ import {
 } from "../../shell/src/hooks/useWindowManager";
 
 vi.mock("next/headers", () => ({ headers: vi.fn(async () => new Headers()) }));
+vi.mock("next/server", () => ({ connection: vi.fn(async () => undefined) }));
 vi.mock("next/navigation", () => ({
   notFound: vi.fn(() => {
     throw new Error("NEXT_NOT_FOUND");

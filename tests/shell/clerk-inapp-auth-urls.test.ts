@@ -55,8 +55,12 @@ describe("Clerk in-app auth URLs are baked into shell builds", () => {
   it("forces shell Clerk completion back into the app shell", () => {
     const signIn = read("shell/src/app/sign-in/[[...sign-in]]/page.tsx");
     const signUp = read("shell/src/app/sign-up/[[...sign-up]]/page.tsx");
+    const auth = read("shell/src/components/auth/ShellClerkAuth.tsx");
 
-    expect(signIn).toContain('forceRedirectUrl="/"');
-    expect(signUp).toContain('forceRedirectUrl="/"');
+    expect(signIn).toContain('<ShellClerkAuth mode="sign-in"');
+    expect(signUp).toContain('<ShellClerkAuth mode="sign-up"');
+    // Completion is forced to "/" unless the destination is a validated same-origin /shared path.
+    expect(auth).toContain("normalizeSharedReturnPath(requestedReturn, browserOrigin)");
+    expect(auth.match(/forceRedirectUrl=\{destination\}/g)).toHaveLength(2);
   });
 });

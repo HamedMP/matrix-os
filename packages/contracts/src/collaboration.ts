@@ -32,6 +32,11 @@ export const CollaborationOrganizationIdSchema = z.string()
   .min(5)
   .max(128)
   .regex(/^org_[A-Za-z0-9_-]+$/, "Invalid organization identifier");
+/** Opaque `GET /api/organizations/:orgId/members` page cursor, as the platform issues it. */
+export const CollaborationOrganizationMembersCursorSchema = z.string()
+  .min(1)
+  .max(256)
+  .regex(/^[A-Za-z0-9_-]+$/, "Invalid organization member cursor");
 export const CollaborationInvitationIdentifierRequestSchema = z.object({
   identifier: CollaborationInvitationIdentifierSchema,
   organizationId: CollaborationOrganizationIdSchema,
@@ -326,10 +331,13 @@ export const CollaborationProjectTransitionSchema = z.object({
 export const CollaborationProjectSchema = z.object({
   id: CollaborationResourceIdSchema,
   scopeId: CollaborationIdSchema,
+  title: z.string().trim().min(1).max(200),
   status: z.enum(["active", "archived"]),
   resources: z.array(z.object({
     kind: z.enum(["file", "chat", "app", "layout", "terminal"]),
     id: z.string().min(1).max(4_096),
+    title: z.string().trim().min(1).max(200),
+    scopeId: CollaborationIdSchema.optional(),
     revision: CollaborationRevisionSchema,
     readiness: z.enum(["ready", "blocked"]),
     incarnation: z.string().min(1).max(256).regex(/^[A-Za-z0-9_-]+$/).optional(),
@@ -629,6 +637,11 @@ export const CollaborationDiscoveryItemSchema = z.discriminatedUnion("status", [
       z.object({
         scope: CollaborationScopeSchema.refine((scope) => scope.kind === "project"),
         project: CollaborationProjectSchema,
+      }).strict(),
+      // Spec 535 D6: files, folders and app instances hydrate their scope; `name` is the entry's display name.
+      z.object({
+        scope: CollaborationScopeSchema.refine((scope) => scope.kind === "file" || scope.kind === "folder" || scope.kind === "app"),
+        name: z.string().min(1).max(255).optional(),
       }).strict(),
     ]).optional(),
     home: CollaborationDiscoveryHomeStateSchema.optional(),

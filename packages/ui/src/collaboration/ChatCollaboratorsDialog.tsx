@@ -7,9 +7,11 @@ import {
 } from "@matrix-os/contracts";
 import { useEffect, useState } from "react";
 import type { z } from "zod/v4";
+import type { ClassifiedCollaborationFailure } from "./failure-classification.js";
 import { Dialog } from "../Dialog.js";
 import { AudienceGrantPicker } from "./AudienceGrantPicker.js";
 import { ReadinessSummary } from "./ReadinessSummary.js";
+import type { CollaborationContent } from "./direct-client.js";
 
 type Scope = z.infer<typeof CollaborationScopeSchema>;
 type Member = z.infer<typeof CollaborationMemberSchema>;
@@ -20,10 +22,12 @@ export interface CollaborationApi {
   post(path: string, body: unknown): Promise<unknown>;
   patch?(path: string, body: unknown): Promise<unknown>;
   delete(path: string, body?: unknown): Promise<unknown>;
+  /** Bounded file bytes from the resource's home; absent on surfaces that cannot read resource content. */
+  getContent?(path: string, options: { maxBytes: number }): Promise<CollaborationContent>;
   subscribe?(
     scopeId: string,
     onEvent: () => void | Promise<void>,
-    onUnavailable: () => void,
+    onUnavailable: (failure?: ClassifiedCollaborationFailure) => void,
     onConnectionChange?: (state: "connected" | "reconnecting") => void,
   ): () => void;
   subscribeTerminal?(scopeId: string, handlers: {
@@ -31,7 +35,8 @@ export interface CollaborationApi {
     onOutput(frame: Extract<CollaborationTerminalFrame, { type: "terminal.output" }>): void;
     onState(frame: Extract<CollaborationTerminalFrame, { type: "terminal.state" }>): void;
     onRefreshRequired(): void | Promise<void>;
-    onUnavailable(): void;
+    onUnavailable(failure?: ClassifiedCollaborationFailure): void;
+    onTemporarilyUnavailable(): void;
     onDisconnected(): void;
   }): () => void;
 }

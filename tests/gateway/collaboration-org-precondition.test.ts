@@ -123,7 +123,7 @@ describe("S20 organization precondition: fail-closed wiring", () => {
     for (const response of await Promise.all(requests)) {
       expect(response.status).toBe(503);
       expect(response.headers.get("cache-control")).toBe("no-store");
-      await expect(response.json()).resolves.toEqual({ error: "Collaboration unavailable" });
+      await expect(response.json()).resolves.toEqual({ error: "Collaboration unavailable", code: "unavailable" });
     }
   });
 
@@ -135,7 +135,7 @@ describe("S20 organization precondition: fail-closed wiring", () => {
         method, body: oversized, headers: { "content-type": "application/json" },
       });
       expect(response.status).toBe(413);
-      await expect(response.json()).resolves.toEqual({ error: "Request too large" });
+      await expect(response.json()).resolves.toEqual({ error: "Request too large", code: "invalid_request" });
     }
     const bounded = await app.request("/api/collaboration/scopes/10000000-0000-4000-8000-000000000001/lifecycle", {
       method: "DELETE", body: "{}",

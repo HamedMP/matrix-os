@@ -562,6 +562,7 @@ export async function createGatewayCollaboration(options: {
     async enableSharedProject(input: {
       homePath: string;
       inventorySource: ProjectInventoryResourceSource;
+      resolveProjectTitle(ownerId: string, projectId: string): Promise<string | null>;
     }): Promise<{ available: true }> {
       if (registered || closing || projectSharing) {
         throw new Error("Shared project must be initialized exactly once before route registration");
@@ -581,6 +582,7 @@ export async function createGatewayCollaboration(options: {
       await projectTransitionCoordinator.recover();
       projectSharing = createProjectSharingService({
         db: options.db,
+        resolveProjectTitle: input.resolveProjectTitle,
         inventory,
         transitions: projectTransitions,
         onPrepared: (transition) => projectTransitionCoordinator!.schedule(transition.id),
@@ -677,6 +679,11 @@ export async function createGatewayCollaboration(options: {
         registry: eventRegistry,
       });
       input.app.route("/", createDirectSessionRoutes({ sessions: directSessions, ownerRuntimeSessions }));
+      // The terminal sockets are mounted whether or not the shared terminal initialized:
+      // a missing dependency answers a retryable unavailable, never a not-found (FR-027).
+      const terminalSockets = terminalAdapter && terminalDispatcher && terminalEventRegistry && terminalControl
+        ? { terminal: { dispatcher: terminalDispatcher, registry: terminalEventRegistry, control: terminalControl } }
+        : {};
       registerCollaborationDirectWebSocketRoutes({
         app: input.app,
         upgradeWebSocket: input.upgradeWebSocket,
@@ -684,24 +691,18 @@ export async function createGatewayCollaboration(options: {
         sessions: directSessions,
         authority,
         events: eventRegistry,
-        ...(terminalDispatcher && terminalEventRegistry && terminalControl
-          ? { terminal: { dispatcher: terminalDispatcher, registry: terminalEventRegistry, control: terminalControl } }
-          : {}),
+        ...terminalSockets,
       });
       void controlClient?.start().catch((error: unknown) => {
         console.warn("[collaboration] control client start failed", error instanceof Error ? error.name : "UnknownError");
       });
-      if (terminalAdapter && terminalDispatcher && terminalControl && terminalEventRegistry) {
-        registerCollaborationTerminalWebSocketRoute({
-          app: input.app,
-          upgradeWebSocket: input.upgradeWebSocket,
-          verifier,
-          authority,
-          dispatcher: terminalDispatcher,
-          registry: terminalEventRegistry,
-          control: terminalControl,
-        });
-      }
+      registerCollaborationTerminalWebSocketRoute({
+        app: input.app,
+        upgradeWebSocket: input.upgradeWebSocket,
+        verifier,
+        authority,
+        ...terminalSockets,
+      });
     },
     /**
      * Synchronous fence for a startup fallback that cannot wait for a full

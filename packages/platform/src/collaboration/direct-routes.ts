@@ -8,9 +8,10 @@
  * to an authenticated organization member (U+O). Both apply `bodyLimit`
  * before buffering and answer with generic errors only.
  */
-import { COLLABORATION_DIRECT_LIMITS, COLLABORATION_DIRECT_PROTOCOL_VERSION, CollaborationActorIdSchema } from "@matrix-os/contracts";
+import { COLLABORATION_DIRECT_LIMITS, COLLABORATION_DIRECT_PROTOCOL_VERSION, CollaborationActorIdSchema, collaborationHttpFailureCode } from "@matrix-os/contracts";
 import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
+import { relayDailyRetryAfterSeconds } from "./relay-usage.js";
 import { z } from "zod/v4";
 import type { CollaborationControlStream } from "./control-stream.js";
 import { CollaborationRuntimeEndpointError, type CollaborationRuntimeEndpointRegistry } from "./runtime-endpoints.js";
@@ -35,6 +36,8 @@ export function createPlatformCollaborationDirectRoutes(options: {
   authenticateRuntime(input: { runtimeId: string; bearerToken: string }): Promise<AuthenticatedRuntime | null>;
   /** The relay handle existing customer-VPS enrollment already knows for this runtime. */
   resolveRelayHandle(runtime: AuthenticatedRuntime): Promise<string | null>;
+  /** Coarse per-account relay admission, before ticket signing; home authorization remains unchanged. */
+  admitAccount?(actorId: string): Promise<boolean>;
 }): Hono {
   const app = new Hono();
   const jsonLimit = bodyLimit({ maxSize: COLLABORATION_DIRECT_LIMITS.httpJsonBytes, onError: (c) => safeJson(c, "Request too large", 413) });
@@ -79,6 +82,7 @@ export function createPlatformCollaborationDirectRoutes(options: {
     const body = await readJson(c);
     if (body === undefined) return safeJson(c, "Invalid request", 422);
     try {
+      if (options.admitAccount && !await options.admitAccount(actorId)) return relayLimitJson(c);
       const issued = await options.issuer.issue({ actorId, request: body });
       c.header("Cache-Control", "no-store");
       return c.json(issued, 201);
@@ -101,6 +105,7 @@ export function createPlatformCollaborationDirectRoutes(options: {
     const body = await readJson(c);
     if (body === undefined) return safeJson(c, "Invalid request", 422);
     try {
+      if (options.admitAccount && !await options.admitAccount(actorId)) return relayLimitJson(c);
       const issued = await options.issuer.issueOwnerRuntime({ actorId, request: body });
       c.header("Cache-Control", "no-store");
       return c.json(issued, 201);
@@ -156,5 +161,12 @@ async function readJson(c: Context): Promise<unknown> {
 
 function safeJson(c: Context, error: string, status: ErrorStatus) {
   c.header("Cache-Control", "no-store");
-  return c.json({ error }, status);
+  return c.json({ error, code: collaborationHttpFailureCode(status, error) }, status);
+}
+
+function relayLimitJson(c: Context) {
+  c.header("Cache-Control", "no-store");
+  const retryAfterSeconds = relayDailyRetryAfterSeconds();
+  c.header("Retry-After", String(retryAfterSeconds));
+  return c.json({ error: "relay_limit", code: "relay_limit", retryAfterSeconds }, 429);
 }

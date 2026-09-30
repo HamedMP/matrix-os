@@ -13,7 +13,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { z } from "zod/v4";
 import { useBrowserOrigin } from "@/hooks/useBrowserOrigin";
 import { createShellCollaborationApi } from "@/lib/collaboration";
-import { createRefreshGuard, driveBasePath as base, loadDiscoveryItems, loadDriveSnapshotPages } from "./organization-drive-paging";
+import { createRefreshGuard, driveBasePath as base, loadDiscoveryItems, loadDriveSnapshotPages } from "@matrix-os/ui";
 
 const OrganizationsSchema = z.object({ organizations: z.array(z.object({
   organizationId: z.string(), name: z.string(),

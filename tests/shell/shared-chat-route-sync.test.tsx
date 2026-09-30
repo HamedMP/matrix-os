@@ -59,6 +59,18 @@ describe("shared Chat route synchronization", () => {
     expect(result.current.collaborationView).toEqual({ kind: "chat", scopeId });
 
     act(() => {
+      window.history.pushState(null, "", `/shared/file/${scopeId}`);
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    });
+    expect(result.current.collaborationView).toEqual({ kind: "file", scopeId });
+
+    act(() => {
+      window.history.pushState(null, "", `/shared/folder/${scopeId}`);
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    });
+    expect(result.current.collaborationView).toEqual({ kind: "folder", scopeId });
+
+    act(() => {
       window.history.pushState(null, "", "/");
       window.dispatchEvent(new PopStateEvent("popstate"));
     });
