@@ -6,7 +6,7 @@ import {
   OrganizationDriveUploadReservationSchema,
   type OrganizationDriveFile,
 } from "@matrix-os/contracts";
-import { OrganizationDriveBrowser, createRefreshGuard, driveBasePath as base, ensureOrganizationContributorGrant, loadOrganizationDriveOptions, type OrganizationDriveOption, type OrganizationDrivePageCounts } from "@matrix-os/ui";
+import { resolveOrganizationDriveNavigation, OrganizationDriveBrowser, createRefreshGuard, driveBasePath as base, ensureOrganizationContributorGrant, loadOrganizationDriveOptions, type OrganizationDriveOption, type OrganizationDrivePageCounts } from "@matrix-os/ui";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { z } from "zod/v4";
 import { useBrowserOrigin } from "@/hooks/useBrowserOrigin";
@@ -44,8 +44,7 @@ export function OrganizationDrivesView({ requestedScopeId, requestedIntentId }: 
       pageCounts.current = Object.fromEntries(next.filter((option) => option.pages)
         .map((option) => [option.scopeId, option.pages ?? 1]));
       setOptions(next);
-      setSelected((current) => current && next.some((option) => option.scopeId === current)
-        ? current : next[0]?.scopeId ?? null);
+      setSelected((current) => current ?? next[0]?.scopeId ?? null);
       setError(null);
     } catch (failure: unknown) {
       console.warn("[organization-drive] listing unavailable", failure instanceof Error ? failure.name : "UnknownError");
@@ -60,7 +59,9 @@ export function OrganizationDrivesView({ requestedScopeId, requestedIntentId }: 
     const timer = setInterval(() => { void load(); }, 30_000);
     return () => { unsubscribe?.(); clearInterval(timer); };
   }, [api, selected, load]);
-  const active = options.find((option) => option.scopeId === selected);
+  const navigation = resolveOrganizationDriveNavigation(options.map(option => option.scopeId), selected,
+    requestedScopeId ? {scopeId: requestedScopeId, intentId: requestedIntentId} : undefined, appliedRequest.current);
+  const active = options.find(option => option.scopeId === navigation.scopeId);
 
   const run = async (action: () => Promise<void>) => {
     if (busy) return;
@@ -157,14 +158,15 @@ export function OrganizationDrivesView({ requestedScopeId, requestedIntentId }: 
       <h2 className="text-base font-semibold">Organization drives</h2>
       <button type="button" onClick={() => void load()} disabled={busy} className="rounded border px-3 py-1.5">Refresh</button>
     </div>
+    {!loading && navigation.unavailable ? <p role="alert" className="mb-3 text-xs">This drive is unavailable. Choose another drive or refresh.</p> : null}
     {error && <p role="alert" className="mb-3 text-destructive">{error}</p>}
     {loading ? <p>Loading drives…</p> : options.length === 0
       ? <p className="text-muted-foreground">Share a folder with your organization to make a drive available here.</p>
       : <div className="flex min-h-0 flex-1 flex-col gap-4 sm:flex-row">
         <nav aria-label="Organization drives" className="w-full shrink-0 space-y-1 border-b pb-2 sm:w-48 sm:border-b-0 sm:border-r sm:pb-0 sm:pr-3">
           {options.map((option) => <button type="button" key={option.scopeId}
-            aria-current={selected === option.scopeId ? "page" : undefined}
-            disabled={busy} onClick={() => { setSelected(option.scopeId); setFolder(""); }}
+            aria-current={navigation.scopeId === option.scopeId ? "page" : undefined}
+            disabled={busy} onClick={() => { appliedRequest.current = requestedIntentId ?? requestedScopeId; setSelected(option.scopeId); setFolder(""); }}
             className="w-full rounded px-2 py-2 text-left hover:bg-accent aria-[current=page]:bg-accent">
             {option.name}
           </button>)}

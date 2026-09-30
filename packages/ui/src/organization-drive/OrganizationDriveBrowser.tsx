@@ -1,6 +1,6 @@
 "use client";
 import { useMemo, useState, type ReactNode } from "react";
-import type { OrganizationDriveFile } from "@matrix-os/contracts";
+import { OrganizationDrivePathSchema, type OrganizationDriveFile } from "@matrix-os/contracts";
 import { driveBrowserEntries, driveFileSize } from "./browser-model.js";
 
 const control = "min-h-9 rounded-md border px-3 py-1.5 text-xs hover:bg-[var(--bg-hover,var(--muted))] focus-visible:outline-2 focus-visible:outline-[var(--accent)] disabled:opacity-50";
@@ -20,16 +20,34 @@ export type OrganizationDriveBrowserProps = {
 /** Same browsing, copy and derivations for Web Canvas, Web Desktop, Web Mobile and Electron Desktop. */
 export function OrganizationDriveBrowser(props: OrganizationDriveBrowserProps) {
   const [query, setQuery] = useState("");
+  const [choosingFolder, setChoosingFolder] = useState(false);
+  const [uploadFolder, setUploadFolder] = useState(props.folder);
+  const [folderError, setFolderError] = useState(false);
   const [sort, setSort] = useState<"name" | "modified">("name");
   const entries = useMemo(() => driveBrowserEntries(props.files, props.folder, query, sort), [props.files, props.folder, query, sort]);
   const folders = props.folder ? props.folder.split("/") : [];
   const usedPercent = Math.min(100, Math.max(0, (props.usedBytes + props.reservedBytes) / props.quotaBytes * 100));
   const navigate = (path: string) => {setQuery(""); props.onFolderChange(path);};
+  function chooseFolder() {
+    const value = uploadFolder.trim();
+    const parsed = value ? OrganizationDrivePathSchema.safeParse(value) : null;
+    if (value && (!parsed?.success || value.length > 700)) {setFolderError(true); return;}
+    navigate(value); setChoosingFolder(false); setFolderError(false);
+  }
   return <section className="flex min-w-0 flex-1 flex-col gap-4" aria-label={`${props.name} drive`}>
     <header className="flex flex-wrap items-start justify-between gap-3">
       <div><h3 className="text-base font-semibold">{props.name}</h3><p className="mt-1 text-xs" style={muted}>Shared with your organization · {props.canUpload ? "Can upload" : "View access"}</p></div>
-      {props.canUpload ? props.uploadControl : null}
+      {props.canUpload ? <div className="flex flex-wrap gap-2">
+        <button type="button" disabled={props.busy} className={control} style={border} onClick={() => {setUploadFolder(props.folder); setChoosingFolder(true); setFolderError(false);}}>Choose upload folder</button>
+        {props.uploadControl}
+      </div> : null}
     </header>
+    {choosingFolder && props.canUpload ? <form onSubmit={event => {event.preventDefault(); chooseFolder();}} className="space-y-2 rounded-md border p-3" style={border}>
+      <label className="block text-xs">Upload folder path<input type="text" value={uploadFolder} maxLength={700} disabled={props.busy} placeholder="reports/2027" onChange={event => setUploadFolder(event.target.value)} className={`${control} mt-1 w-full bg-transparent`} style={border}/></label>
+      <p className="text-xs" style={muted}>New folders appear in the drive after their first file is uploaded. Leave blank for the drive root.</p>
+      {folderError ? <p role="alert" className="text-xs">Enter a relative folder path without empty segments, backslashes or parent traversal.</p> : null}
+      <div className="flex gap-2"><button type="submit" disabled={props.busy} className={control} style={border}>Use folder</button><button type="button" className={control} style={border} onClick={() => setChoosingFolder(false)}>Cancel</button></div>
+    </form> : null}
     <div className="space-y-2"><div className="flex flex-wrap justify-between gap-2 text-xs" style={muted}>
       <span>{driveFileSize(props.usedBytes)} of {driveFileSize(props.quotaBytes)} used</span>
       {props.reservedBytes > 0 ? <span>{driveFileSize(props.reservedBytes)} uploading</span> : null}
@@ -45,9 +63,9 @@ export function OrganizationDriveBrowser(props: OrganizationDriveBrowserProps) {
       <select aria-label="Sort drive files" value={sort} onChange={event => setSort(event.target.value as "name" | "modified")} className={`${control} bg-[var(--bg-surface,var(--background))]`} style={border}><option value="name">Name</option><option value="modified">Recently modified</option></select>
     </div>
     {props.canUpload ? <p className="text-xs" style={muted}>{props.folder ? `Uploads go to ${props.folder}.` : "Uploads go to the drive root."}</p> : null}
-    {props.hasMore ? <p className="text-xs" style={muted}>Search covers loaded files. Load more to include additional files.</p> : null}
+    {props.hasMore ? <p className="text-xs" style={muted}>{props.pageLimitReached ? "Search covers loaded files. This view has reached its browsing limit." : "Search covers loaded files. Load more to include additional files."}</p> : null}
     <ul className="min-w-0 divide-y rounded-lg border px-3" style={border} aria-label="Drive files">
-      {entries.map(entry => <li key={entry.path} className="flex min-w-0 items-center gap-3 py-3" style={border}>
+      {entries.map(entry => <li key={`${entry.kind}:${entry.path}`} className="flex min-w-0 items-center gap-3 py-3" style={border}>
         <EntryIcon folder={entry.kind === "folder"}/>
         <div className="min-w-0 flex-1">
           {entry.kind === "folder" ? <button type="button" aria-label={`Open folder ${entry.name}`} disabled={props.busy} onClick={() => navigate(entry.path)} className="min-h-9 w-full truncate text-left text-sm hover:underline focus-visible:outline-2 focus-visible:outline-[var(--accent)]">{entry.name}</button> : <p className="truncate text-sm" title={entry.path}>{entry.name}</p>}

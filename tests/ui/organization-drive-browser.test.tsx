@@ -45,4 +45,34 @@ describe("shared organization drive browser", () => {
   expect(screen.getByText("No files in this folder yet.")).toBeTruthy();
   expect(screen.getByText("Uploads go to reports.")).toBeTruthy();
  });
+ it("lets a contributor choose a new virtual upload folder with a validated relative path", () => {
+  const change=vi.fn();render(<OrganizationDriveBrowser {...props} onFolderChange={change}/>);
+  fireEvent.click(screen.getByRole("button",{name:"Choose upload folder"}));
+  fireEvent.change(screen.getByLabelText("Upload folder path"),{target:{value:"reports/2027"}});
+  fireEvent.click(screen.getByRole("button",{name:"Use folder"}));expect(change).toHaveBeenCalledWith("reports/2027");
+  expect(screen.queryByRole("button",{name:"Use folder"})).toBeNull();
+ });
+ it("rejects traversal in an upload folder instead of applying it", () => {
+  const change=vi.fn();render(<OrganizationDriveBrowser {...props} onFolderChange={change}/>);
+  fireEvent.click(screen.getByRole("button",{name:"Choose upload folder"}));
+  fireEvent.change(screen.getByLabelText("Upload folder path"),{target:{value:"../private"}});
+  fireEvent.click(screen.getByRole("button",{name:"Use folder"}));expect(change).not.toHaveBeenCalled();
+  expect(screen.getByRole("alert")).toBeTruthy();
+ });
+ it("uses distinct row keys for a file and virtual folder at the same path", () => {
+  const errors=vi.spyOn(console,"error").mockImplementation(()=>undefined);
+  const view=render(<OrganizationDriveBrowser {...props} folder="a" files={[file("a/b"),file("a/b/c")]}/>);
+  expect(screen.getByRole("button",{name:"Open folder b"})).toBeTruthy();
+  expect(screen.getByRole("button",{name:"Download b"})).toBeTruthy();
+  view.rerender(<OrganizationDriveBrowser {...props} folder="a" files={[file("a/b/c")]}/>);
+  expect(screen.queryByRole("button",{name:"Download b"})).toBeNull();
+  expect(errors.mock.calls.some(call=>call.some(value=>typeof value==="string"&&value.includes("same key")))).toBe(false);
+  errors.mockRestore();
+ });
+ it("does not suggest a disabled Load more action after reaching the page limit", () => {
+  render(<OrganizationDriveBrowser {...props} hasMore pageLimitReached onLoadMore={vi.fn()}/>);
+  expect(screen.queryByText("Search covers loaded files. Load more to include additional files.")).toBeNull();
+  expect(screen.getByText("Search covers loaded files. This view has reached its browsing limit.")).toBeTruthy();
+ });
+
 });

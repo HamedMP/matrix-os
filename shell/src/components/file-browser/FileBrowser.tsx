@@ -35,8 +35,17 @@ export function FileBrowser({ windowId, mobile = false }: FileBrowserProps) {
   const {userId, sessionId} = useAuth();
   const identity = organizationDriveNavigationIdentity(userId, sessionId, getGatewayUrl());
   const driveRequest = useOrganizationDriveNavigation(state => state.request);
-  const activeDriveRequest = driveRequest?.identity === identity ? driveRequest : null;
-  useEffect(() => { if (activeDriveRequest) setShowingOrganizationDrives(true); }, [activeDriveRequest]);
+  const [openedDriveRequest, setOpenedDriveRequest] = useState<typeof driveRequest>(null);
+  const activeDriveRequest = openedDriveRequest?.identity === identity ? openedDriveRequest : null;
+  useEffect(() => {
+    setOpenedDriveRequest(null); setShowingOrganizationDrives(false);
+  }, [identity]);
+  useEffect(() => {
+    if (!driveRequest) return;
+    useOrganizationDriveNavigation.getState().consume(driveRequest);
+    if (driveRequest.identity !== identity) return;
+    setOpenedDriveRequest(driveRequest); setShowingOrganizationDrives(true);
+  }, [driveRequest, identity]);
   const [renamingPath, setRenamingPath] = useState<string | null>(null);
 
   const currentPath = useFileBrowser((s) => s.currentPath);

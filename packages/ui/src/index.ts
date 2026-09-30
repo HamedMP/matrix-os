@@ -130,7 +130,7 @@ export { deriveChatPermissions } from "./collaboration/permissions.js";
 export { createCollaborationBrowserApi } from "./collaboration/client.js";
 export { createCollaborationDirectClient, CollaborationDirectError, type CollaborationDirectClient, type CollaborationDirectClientOptions, type CollaborationDirectErrorCode, type DirectScopeState } from "./collaboration/direct-client.js";
 export { createCollaborationDirectApi, type CollaborationDirectApi } from "./collaboration/direct-api.js";
-export { createRefreshGuard, driveBasePath, loadDiscoveryItems, loadDriveSnapshotPages } from "./organization-drive/paging.js";
+export { resolveOrganizationDriveNavigation, createRefreshGuard, driveBasePath, loadDiscoveryItems, loadDriveSnapshotPages } from "./organization-drive/paging.js";
 export { ensureOrganizationContributorGrant, loadOrganizationDriveOptions, type OrganizationDriveOption, type OrganizationDrivePageCounts } from "./organization-drive/discovery.js";
 export {
   COLLABORATION_DISCOVERY_CHANGED_EVENT,

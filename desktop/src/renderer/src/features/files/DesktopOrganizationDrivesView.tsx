@@ -1,6 +1,6 @@
 import { OrganizationDriveSnapshotSchema } from "@matrix-os/contracts";
 import {
-  OrganizationDriveBrowser, createRefreshGuard,
+  resolveOrganizationDriveNavigation, OrganizationDriveBrowser, createRefreshGuard,
   driveBasePath,
   ensureOrganizationContributorGrant,
   loadOrganizationDriveOptions,
@@ -58,8 +58,7 @@ export function DesktopOrganizationDrivesView({ isActive = true, requestedScopeI
       pageCounts.current = Object.fromEntries(next.filter((item) => item.pages)
         .map((item) => [item.scopeId, item.pages ?? 1]));
       setOptions(next);
-      setSelected((current) => current && next.some((item) => item.scopeId === current)
-        ? current : next[0]?.scopeId ?? null);
+      setSelected((current) => current ?? next[0]?.scopeId ?? null);
       setError(null);
     } catch (failure: unknown) {
       if (guard.isCurrent(token)) setError(message(failure));
@@ -78,7 +77,9 @@ export function DesktopOrganizationDrivesView({ isActive = true, requestedScopeI
     return () => { unsubscribe?.(); clearInterval(timer); };
   }, [isActive, api, selected, load]);
 
-  const active = options.find((item) => item.scopeId === selected);
+  const navigation = resolveOrganizationDriveNavigation(options.map(option => option.scopeId), selected,
+    requestedScopeId ? {scopeId: requestedScopeId, intentId: requestedIntentId} : undefined, appliedRequest.current);
+  const active = options.find(option => option.scopeId === navigation.scopeId);
   const run = async (action: () => Promise<void>) => {
     if (busy) return;
     setBusy(true); setError(null);
@@ -142,14 +143,15 @@ export function DesktopOrganizationDrivesView({ isActive = true, requestedScopeI
         <button type="button" className={button} style={buttonStyle} disabled={busy} onClick={() => void load()}>Refresh</button>
       </div>
     </div>
+    {!loading && navigation.unavailable ? <p role="alert" className="mb-3 text-xs">This drive is unavailable. Choose another drive or refresh.</p> : null}
     {error && <p role="alert" className="mb-3 text-xs" style={{ color: "var(--danger)" }}>{error}</p>}
     {loading ? <p style={{ color: "var(--text-tertiary)" }}>Loading drives…</p> : options.length === 0
       ? <p style={{ color: "var(--text-tertiary)" }}>Share a folder with your organization to make a drive available here.</p>
       : <div className="flex min-h-0 flex-1 gap-5">
         <nav aria-label="Organization drives" className="w-48 shrink-0 space-y-1 border-r pr-3" style={{ borderColor: "var(--border-subtle)" }}>
-          {options.map((option) => <button key={option.scopeId} type="button" aria-current={selected === option.scopeId ? "page" : undefined}
-            disabled={busy} onClick={() => { setSelected(option.scopeId); setFolder(""); }} className="w-full rounded-md px-3 py-2 text-left text-xs hover:bg-[var(--bg-hover)]"
-            style={{ background: selected === option.scopeId ? "var(--bg-hover)" : undefined }}>{option.name}</button>)}
+          {options.map((option) => <button key={option.scopeId} type="button" aria-current={navigation.scopeId === option.scopeId ? "page" : undefined}
+            disabled={busy} onClick={() => { appliedRequest.current = requestedIntentId ?? requestedScopeId; setSelected(option.scopeId); setFolder(""); }} className="w-full rounded-md px-3 py-2 text-left text-xs hover:bg-[var(--bg-hover)]"
+            style={{ background: navigation.scopeId === option.scopeId ? "var(--bg-hover)" : undefined }}>{option.name}</button>)}
         </nav>
         {active && <div className="min-w-0 flex-1 overflow-auto">
 
