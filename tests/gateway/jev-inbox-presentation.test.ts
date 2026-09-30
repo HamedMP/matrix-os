@@ -4,11 +4,25 @@ import { EMAIL_TRIAGE_LABELS } from "@matrix-os/contracts";
 const proposal = { kind: "proposal", verified: true, readonly: true, threadId: "thread_fixture", messageCount: 4,
   labels: [EMAIL_TRIAGE_LABELS.coldOutreach], archiveProposal: { removeLabelIds: ["INBOX"] },
   observedAt: "2026-09-26T00:00:00.000Z", requestId: "jev_req_fixture_result" };
+it("distinguishes confirmed labels from an unknown write outcome without claiming no changes", () => {
+  const { archiveProposal: _archive, ...base } = proposal;
+  expect(formatJevInboxPresentation({ ...base, kind: "labeled", readonly: false })).toContain("Confirmed in Gmail");
+  const unknown = formatJevInboxPresentation({ ...base, kind: "labeling_unconfirmed", readonly: false });
+  expect(unknown).toContain("could not be confirmed"); expect(unknown).not.toContain("No mailbox changes");
+});
 it("formats bounded server proposal with explicit snapshot and no applied-email claim", () => {
   const text = formatJevInboxPresentation(proposal);
   expect(text).toContain("Read-only Inbox triage proposal"); expect(text).toContain("4 messages");
   expect(text).toContain(EMAIL_TRIAGE_LABELS.coldOutreach); expect(text).toContain("Remove INBOX only");
   expect(text).toContain("No mailbox changes have been made."); expect(text).toContain(proposal.observedAt);
+});
+it("explains a review skip without incorrectly claiming the owner's labeling permission is disabled", () => {
+  const text = formatJevInboxPresentation({ ...proposal, labels: [EMAIL_TRIAGE_LABELS.newsletter, EMAIL_TRIAGE_LABELS.review],
+    archiveProposal: null, labelingSkipped: "review_required" });
+  expect(text).toContain("Review required");
+  expect(text).toContain("Labeling permission is enabled");
+  expect(text).toContain("No mailbox changes");
+  expect(text).not.toContain("permission is disabled");
 });
 it("retains a broker-valid maximum-length thread identifier", () => {
   expect(formatJevInboxPresentation({ ...proposal, threadId: "t".repeat(160) })).toContain("t".repeat(160));

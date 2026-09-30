@@ -28,7 +28,7 @@ export async function createJevHermesProfile(credentials: JevHermesCredentials, 
       auxiliary: { background_review: { enabled: false }, title_generation: { enabled: false } },
       memory: { memory_enabled: false, user_profile_enabled: false }, tools: { tool_search: false },
       mcp_servers: { matrix_jev_recipe: { command: "/opt/matrix/bin/matrix-integrations-mcp",
-        args: ["--require-scoped-capability", "--tool-surface=jev-inbox-preview"], enabled: true,
+        args: ["--require-scoped-capability", "--tool-surface=jev-inbox-preview"], enabled: true, timeout: 570,
         tools: { resources: false, prompts: false } } } };
     await writeFile(join(hermesHome, "config.yaml"), JSON.stringify(config), { flag: "wx", mode: 0o600 });
     const ownedHome = homePath;

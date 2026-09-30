@@ -7,7 +7,7 @@ import { createJevInboxBroker, InboxPreviewError, assertJevInboxProfile } from "
 import type { JevService } from "./service.js";
 import { formatJevInboxPresentation } from "./inbox-presentation.js";
 
-const TTL = 10 * 60_000;
+const TTL = 15 * 60_000;
 const MAX_RUNS = 128;
 type Active = { scope: string; expiresAt: number; signal: AbortSignal; onAbort: () => void; ready: boolean };
 
@@ -21,6 +21,7 @@ export function createJevInboxRuntime(options: {
   fundedReady: (signal: AbortSignal) => Promise<boolean>;
   read: Parameters<typeof createJevInboxBroker>[0]["read"];
   evaluate: JevService["evaluate"];
+  label?: Parameters<typeof createJevInboxBroker>[0]["label"];
   now?: () => number;
 }) {
   const now = options.now ?? Date.now;
@@ -49,6 +50,7 @@ export function createJevInboxRuntime(options: {
   async function bound(owner: string, scope: HermesJevScope): Promise<ChatAgent> {
     const value = await saved(owner, scope.agentId, scope.revision);
     const binding = value.recipe!.jevInboxTriage!;
+    if (binding.labelingEnabled === true && value.recipe!.jevInboxLabeling !== true) throw new InboxPreviewError("denied");
     const { version: _version, ownerId: _ownerId, ...account } = binding;
     if (JSON.stringify(account) !== JSON.stringify(scope.account)
       || !value.recipe!.integrations.some(entry => entry.service === "gmail" && entry.accountLabel === account.accountLabel)) {
@@ -61,7 +63,7 @@ export function createJevInboxRuntime(options: {
     const entry = active.get(id(owner, scope.runId));
     if (!entry || entry.scope !== stamp(scope) || entry.signal.aborted || (!provisional && !entry.ready)) throw new InboxPreviewError("denied");
   }
-  const broker = createJevInboxBroker({ read: options.read, evaluate: options.evaluate, now,
+  const broker = createJevInboxBroker({ read: options.read, evaluate: options.evaluate, label: options.label, now,
     authorize: async (owner, scope) => {
       admitted(owner, scope); await bound(owner, scope); admitted(owner, scope);
     } });

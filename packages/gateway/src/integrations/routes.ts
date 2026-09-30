@@ -12,6 +12,8 @@ import type { PipedreamConnectClient } from "./pipedream.js";
 import type { PlatformDb } from "../platform-db.js";
 import { isScopedReadCatalogRequest, projectIntegrationCatalog } from "./catalog-projection.js";
 import { createIntegrationReadCallRoutes } from "./read-call.js";
+import { createJevLabelCallRoutes } from "./jev-label-call.js";
+export { authorizeInternalJevLabels } from "./jev-label-call.js";
 
 // ---------------------------------------------------------------------------
 // Zod schemas
@@ -167,6 +169,7 @@ export interface IntegrationRoutesOpts {
   pipedream: PipedreamConnectClient;
   webhookSecret: string;
   resolveUserId: (c: Context) => Promise<string | null>;
+  authorizeJevLabelCall?: (c: Context) => Promise<boolean>;
   broadcast?: IntegrationBroadcast;
   mcpPresetBroker?: {
     listConnections(userId: string): Promise<Array<{
@@ -197,6 +200,7 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
   const emit = broadcast ?? (() => {});
   const app = new Hono();
   app.route("/", createIntegrationReadCallRoutes({ db, pipedream, resolveUserId }));
+  app.route("/", createJevLabelCallRoutes({ db, pipedream, resolveUserId, authorizeInternal: opts.authorizeJevLabelCall }));
 
   // Pending labels from /connect that need to survive the OAuth round-trip.
   // Queued per "externalUserId:appSlug", TTL 10 minutes, capped at 1000 entries.
