@@ -71,9 +71,10 @@ Identity comprises runtime/account generation on Electron Desktop and gateway or
 | Authenticated account/harness or ready access source with authoritative observation | Existing new-Chat content |
 | Connected provider disabled or configured Matrix source awaiting credits | Existing readiness/funding recovery, no login guide |
 | Confirmed no connected provider | Claude Code and Codex connection rows |
-| No snapshot | Checking state |
-| Unknown/stale/unverified local login evidence | Recoverable unknown state, no authentication claim |
-| Read/mutation/action failure | Safe generic error and bounded retry/continue controls |
+| No snapshot | Normal Chat content while connection evidence loads; existing catalog/loading controls remain authoritative |
+| Unknown/stale/unverified local login evidence | Normal Chat content and existing model recovery; no onboarding replacement or authentication claim |
+| Snapshot read failure | Normal Chat content and existing recovery; no replacement onboarding status gate |
+| Login mutation/action failure in confirmed disconnected flow | Safe generic error and bounded retry/continue controls |
 | Old runtime response | Discarded; no terminal/browser action |
 
 ### Good, base, and bad cases
@@ -100,3 +101,6 @@ Companion documentation: https://github.com/FinnaAI/matrix-os-site/pull/143 (pre
 - Shared provider rail: dim only truly disabled buttons, never infer visual disabling from `data-availability`. Availability controls model admission and recovery copy; provider browsing with a supported setup action stays discoverable.
 - Setup: preserve server-advertised labels and callbacks. Connection actions are content-width, left aligned, about 32px high with 12px text; cap width at the pane and allow long labels to wrap. Use `--model-choice-action: var(--primary, var(--accent))` for filled connection buttons, paired `--text-on-accent` / `--primary-foreground` foreground, and a separate focus token. Web accent is an interaction surface; it must not be used as the primary fill when a primary token exists. Validate real computed contrast across native/hosted themes.
 - Tests: built Electron Desktop uses a wide window with a 320px actual composer, long Hermes label, toolbar bounds/no wrap, preview/draft preservation, expanded restoration, normal Claude/Codex icon opacity, and connection through the existing foreground Terminal. Another connected provider suppresses the onboarding guide in the same scenario. No real provider login is claimed by fixture evidence.
+
+### Real VPS correction: connection inspection must not gate Chat
+Render the connection guide only for `deriveChatProviderConnectionState(...) === "disconnected"`. Other states retain the supplied normal Chat content. Keep evidence classification truthful and canonical catalog/send admission unchanged. Tests assert no connection-status replacement for checking/unknown/read failure and preserve supported disconnected login wiring. Live primary VPS evidence and built-client provenance are independent; a successful fixture is not proof of live provider availability.

@@ -76,12 +76,18 @@ describe("hosted empty Chat connections", () => {
     await waitFor(() => expect(check).toBeEnabled()); fireEvent.click(check);
     await waitFor(() => expect(screen.getByRole("button", { name: "Connect Claude Code" })).toBeEnabled());
   });
-  it("shows safe retry after a settings failure without replacing the editable draft", async () => {
+  it("retains normal Chat and the editable draft after a settings read failure, recovering on focus", async () => {
     let failed = true;
     vi.stubGlobal("fetch", vi.fn(async (url) => String(url).includes("provider-settings") ? failed ? new Response("unavailable", { status: 503 }) : Response.json(disconnectedSnapshot()) : Response.json(catalog)));
-    renderChat(); expect(await screen.findByText("Connection status unavailable")).toBeVisible();
+    const fetch = globalThis.fetch as ReturnType<typeof vi.fn>;
+    renderChat(); expect(await screen.findByText("What should Matrix do?")).toBeVisible();
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith(expect.stringContaining("provider-settings"), expect.any(Object)));
+    expect(screen.queryByText("Connection status unavailable")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Connect Claude Code" })).not.toBeInTheDocument();
-    failed = false; fireEvent.click(screen.getByRole("button", { name: "Check connection" }));
+    const draft = screen.getByPlaceholderText("Write or dictate a draft — connect a harness to send");
+    fireEvent.change(draft, { target: { value: "Retain this prompt" } });
+    failed = false; fireEvent(window, new Event("focus"));
     expect(await screen.findByRole("button", { name: "Connect Codex" })).toBeEnabled();
+    expect(draft).toHaveValue("Retain this prompt");
   });
 });

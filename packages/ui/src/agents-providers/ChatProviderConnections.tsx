@@ -48,11 +48,26 @@ export function ChatProviderConnections({ snapshot, busy = false, error, attempt
   const state = deriveChatProviderConnectionState(snapshot, Boolean(error));
   if (state === "connected") return <>{children}</>;
   const disconnected = state === "disconnected";
+  // Settings reads are advisory to this empty-state presentation. Unknown or
+  // failed evidence must not replace normal Chat or change catalog admission.
+  const recovery = <>
+    {attempt ? <div role="status" className="matrix-chat-provider-attempt">
+      <span>{attempt.state === "pending" || attempt.state === "authorized" ? "Finish signing in" : "Sign-in needs attention"}</span>
+      {attempt.action.kind === "open_terminal" || attempt.action.kind === "open_browser" ? <button type="button" disabled={busy}
+        onClick={() => onOpenAction(attempt.action)}>Continue in {attempt.action.kind === "open_terminal" ? "Terminal" : "browser"}</button> : null}
+    </div> : null}
+    {error ? <p role="alert">The connection could not be checked or updated. Try again.</p> : null}
+    <button type="button" disabled={busy} onClick={onRefresh}>Check connection</button>
+  </>;
+  if (!disconnected) {
+    const retainRecovery = Boolean(attempt || error) && deriveChatProviderConnectionState(snapshot) === "disconnected";
+    return <>{children}{retainRecovery ? <section aria-label="Chat connection recovery" className="matrix-chat-provider-connections" aria-busy={busy || undefined}>{recovery}</section> : null}</>;
+  }
   const canLogin = snapshot?.access.mode === "writable" && snapshot.supportedActions.includes("start_login");
   return <section aria-label="Chat provider connection" className="matrix-chat-provider-connections" aria-busy={busy || undefined}>
-    <h2>{disconnected ? "Connect a coding agent" : state === "checking" ? "Checking connections…" : "Connection status unavailable"}</h2>
-    <p>{disconnected ? "Sign in to Claude Code or Codex to start chatting." : "Check this computer’s connections to continue."}</p>
-    {disconnected ? <div className="matrix-chat-provider-rows">{(["claude", "codex"] as const).map((kind) => {
+    <h2>Connect a coding agent</h2>
+    <p>Sign in to Claude Code or Codex to start chatting.</p>
+    <div className="matrix-chat-provider-rows">{(["claude", "codex"] as const).map((kind) => {
       const label = kind === "claude" ? "Claude Code" : "Codex";
       const harness = snapshot?.harnesses.find((candidate) => candidate.harness === kind
         && candidate.loginMethods.length > 0) ?? snapshot?.harnesses.find((candidate) => candidate.harness === kind);
@@ -68,14 +83,8 @@ export function ChatProviderConnections({ snapshot, busy = false, error, attempt
           Connect {label}
         </button>
       </div>;
-    })}</div> : null}
-    {attempt ? <div role="status" className="matrix-chat-provider-attempt">
-      <span>{attempt.state === "pending" || attempt.state === "authorized" ? "Finish signing in" : "Sign-in needs attention"}</span>
-      {attempt.action.kind === "open_terminal" || attempt.action.kind === "open_browser" ? <button type="button" disabled={busy}
-        onClick={() => onOpenAction(attempt.action)}>Continue in {attempt.action.kind === "open_terminal" ? "Terminal" : "browser"}</button> : null}
-    </div> : null}
-    {error ? <p role="alert">The connection could not be checked or updated. Try again.</p> : null}
-    <button type="button" disabled={busy} onClick={onRefresh}>Check connection</button>
+    })}</div>
+    {recovery}
   </section>;
 }
 

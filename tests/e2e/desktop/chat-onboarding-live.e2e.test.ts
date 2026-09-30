@@ -47,6 +47,7 @@ suite("Electron Desktop Chat against an authenticated runtime", () => {
         return { snapshot, runtimeSlot: identity.runtimeSlot, clientCommit: client.source?.commit,
           runtimeVersion: system.runtimeVersion ?? system.version, runtimeCommit: system.build?.sha };
       });
+      if (process.env.MATRIX_EXPECTED_CLIENT_COMMIT) expect(evidence.clientCommit).toBe(process.env.MATRIX_EXPECTED_CLIENT_COMMIT);
       const snapshot = ProviderSettingsSnapshotSchema.parse(evidence.snapshot);
       const connectionState = deriveChatProviderConnectionState(snapshot);
       const provenance = {
@@ -64,13 +65,15 @@ suite("Electron Desktop Chat against an authenticated runtime", () => {
       expect(await page.getByRole("button", { name: "Connect Claude Code", exact: true }).count()).toBe(0);
       expect(await page.getByRole("button", { name: "Connect Codex", exact: true }).count()).toBe(0);
       if (connectionState === "unknown") {
-        // A runtime that cannot load canonical Chat keeps its existing recovery
-        // instead of converting the failure to a misleading provider login guide.
+        // Unknown Settings evidence retains normal Chat or its existing canonical
+        // recovery; the new onboarding must not install a connection-status gate.
         const status = chat.getByRole("heading", { name: "Connection status unavailable", exact: true });
+        const starter = chat.getByRole("button", { name: "Explore and understand code", exact: true });
         const recovery = chat.getByText("Chat unavailable", { exact: true });
-        await status.or(recovery).first().waitFor();
+        await starter.or(recovery).first().waitFor();
+        expect(await status.count()).toBe(0);
         writeFileSync(join(output, "live-provenance.json"), JSON.stringify({ ...provenance,
-          chatPresentation: await recovery.isVisible() ? "canonical_chat_unavailable" : "connection_status_unknown",
+          chatPresentation: await recovery.isVisible() ? "canonical_chat_unavailable" : "normal_chat_with_unknown_connection",
         }, null, 2));
       }
       expect(await chat.count()).toBe(1);

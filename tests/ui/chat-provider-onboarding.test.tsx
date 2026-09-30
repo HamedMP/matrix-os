@@ -42,6 +42,54 @@ describe("Chat connection state", () => {
   });
 });
 describe("Chat provider connection rows", () => {
+  it("retains normal Chat after a failed refresh of previously connected settings", async () => {
+    const snapshot = disconnectedSnapshot(); snapshot.harnesses[0]!.authState = "authenticated";
+    const getSnapshot = vi.fn().mockResolvedValueOnce(snapshot).mockRejectedValue(new Error("private read failure"));
+    render(<ChatProviderOnboarding identityKey="connected" transport={{ getSnapshot, mutate: vi.fn() }}
+      isIdentityCurrent={() => true} openAction={() => true}><div>Normal Chat suggestions</div></ChatProviderOnboarding>);
+    await waitFor(() => expect(getSnapshot).toHaveBeenCalledOnce());
+    fireEvent(window, new Event("focus"));
+    await waitFor(() => expect(getSnapshot).toHaveBeenCalledTimes(2));
+    expect(screen.getByText("Normal Chat suggestions")).toBeVisible();
+    expect(screen.queryByRole("region", { name: "Chat provider connection" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Connection status unavailable")).not.toBeInTheDocument();
+  });
+  it("retains a disconnected login handoff and safe recovery alongside normal Chat after an action failure", () => {
+    const open = vi.fn(); const refresh = vi.fn();
+    const attempt = { id: "attempt", harnessInstanceId: "claude_default", accountId: null, method: "terminal" as const, state: "pending" as const,
+      expiresAt: new Date(Date.now() + 60_000).toISOString(), action: { kind: "open_terminal" as const, terminalSessionId: "claude-login" }, safeFailure: null };
+    render(<ChatProviderConnections snapshot={disconnectedSnapshot()} attempt={attempt} error="unsafe action failure"
+      onMutate={vi.fn()} onRefresh={refresh} onOpenAction={open}><div>Normal Chat suggestions</div></ChatProviderConnections>);
+    expect(screen.getByText("Normal Chat suggestions")).toBeVisible();
+    expect(screen.getByRole("region", { name: "Chat connection recovery" })).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Continue in Terminal" }));
+    expect(open).toHaveBeenCalledWith(attempt.action);
+    fireEvent.click(screen.getByRole("button", { name: "Check connection" })); expect(refresh).toHaveBeenCalledOnce();
+    expect(screen.queryByText("unsafe action failure")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Connect Claude Code" })).not.toBeInTheDocument();
+  });
+  it.each(["checking", "unknown", "unavailable", "connected", "connected_refresh_failed"])("preserves normal Chat for %s without a connection overlay", (state) => {
+    const snapshot = state === "checking" || state === "unavailable" ? null : disconnectedSnapshot();
+    if (snapshot) snapshot.harnesses[0]!.authState = state.startsWith("connected") ? "authenticated" : "unknown";
+    const failed = state === "unavailable" || state === "connected_refresh_failed";
+    render(<ChatProviderConnections snapshot={snapshot} error={failed ? "unsafe provider secret" : null}
+      onMutate={vi.fn()} onRefresh={vi.fn()} onOpenAction={vi.fn()}><div>Normal Chat suggestions</div></ChatProviderConnections>);
+    expect(screen.getByText("Normal Chat suggestions")).toBeVisible();
+    expect(screen.queryByRole("region", { name: "Chat provider connection" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Connect Claude Code" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Connection status unavailable")).not.toBeInTheDocument();
+    expect(screen.queryByText("Checking connections…")).not.toBeInTheDocument();
+    expect(screen.queryByText("unsafe provider secret")).not.toBeInTheDocument();
+  });
+  it("preserves normal Chat for unverified local login without changing connection evidence", () => {
+    const snapshot = disconnectedSnapshot();
+    snapshot.harnesses[0]!.authState = "authenticated";
+    snapshot.harnesses[0]!.localObservation = { state: "present_unverified", checkedAt: new Date().toISOString(), staleAfter: new Date(Date.now() + 60_000).toISOString() };
+    render(<ChatProviderConnections snapshot={snapshot} onMutate={vi.fn()} onRefresh={vi.fn()} onOpenAction={vi.fn()}><div>Normal Chat suggestions</div></ChatProviderConnections>);
+    expect(deriveChatProviderConnectionState(snapshot)).toBe("unknown");
+    expect(screen.getByText("Normal Chat suggestions")).toBeVisible();
+    expect(screen.queryByRole("region", { name: "Chat provider connection" })).not.toBeInTheDocument();
+  });
   it("does not echo external invalidation between two mounted Chat panels", async () => {
     const event = "test-provider-settings-changed";
     const snapshot = disconnectedSnapshot();
@@ -80,8 +128,11 @@ describe("Chat provider connection rows", () => {
     expect(mutate).toHaveBeenCalledWith(expect.objectContaining({ accountId: "existing_account" }));
     expect(screen.getByRole("button", { name: "Connect Codex" })).toBeDisabled();
   });
-  it("keeps unknown state truthful with manual recovery", () => {
-    const refresh = vi.fn(); render(<ChatProviderConnections snapshot={null} error="unsafe provider secret" onMutate={vi.fn()} onRefresh={refresh} onOpenAction={vi.fn()} />);
+  it("keeps failed disconnected actions recoverable alongside normal Chat", () => {
+    const refresh = vi.fn(); render(<ChatProviderConnections snapshot={disconnectedSnapshot()} error="unsafe provider secret" onMutate={vi.fn()} onRefresh={refresh} onOpenAction={vi.fn()}><div>Normal Chat suggestions</div></ChatProviderConnections>);
+    expect(screen.getByText("Normal Chat suggestions")).toBeVisible();
+    expect(screen.getByRole("alert")).toHaveTextContent("The connection could not be checked or updated");
+    expect(screen.queryByRole("heading", { name: "Connection status unavailable" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Connect Claude Code" })).not.toBeInTheDocument();
     expect(screen.queryByText("unsafe provider secret")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Check connection" })); expect(refresh).toHaveBeenCalledOnce();
