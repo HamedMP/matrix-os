@@ -70,16 +70,17 @@ export function DesktopOrganizationDrivesView({ isActive = true, requestedScopeI
     void load();
     return () => { guard.invalidate(); };
   }, [isActive, api, guard, load]);
-  useEffect(() => {
-    if (!isActive || !api || !selected) return;
-    const unsubscribe = api.subscribe?.(selected, () => load(), () => setError("Organization drive is unavailable. Try again."));
-    const timer = setInterval(() => { void load(); }, 30_000);
-    return () => { unsubscribe?.(); clearInterval(timer); };
-  }, [isActive, api, selected, load]);
-
   const navigation = resolveOrganizationDriveNavigation(options.map(option => option.scopeId), selected,
     requestedScopeId ? {scopeId: requestedScopeId, intentId: requestedIntentId} : undefined, appliedRequest.current);
   const active = options.find(option => option.scopeId === navigation.scopeId);
+  useEffect(() => {
+    if (!isActive || !api || !navigation.scopeId) return;
+    let live = true;
+    const unsubscribe = api.subscribe?.(navigation.scopeId, () => {if (live) return load();}, () => {if (live) setError("Organization drive is unavailable. Try again.");});
+    const timer = setInterval(() => { void load(); }, 30_000);
+    return () => { live = false; unsubscribe?.(); clearInterval(timer); };
+  }, [isActive, api, navigation.scopeId, load]);
+
   const run = async (action: () => Promise<void>) => {
     if (busy) return;
     setBusy(true); setError(null);

@@ -31,7 +31,7 @@ export function OrganizationDriveBrowser(props: OrganizationDriveBrowserProps) {
   function chooseFolder() {
     const value = uploadFolder.trim();
     const parsed = value ? OrganizationDrivePathSchema.safeParse(value) : null;
-    if (value && (!parsed?.success || value.length > 700)) {setFolderError(true); return;}
+    if (value && (!parsed?.success || new TextEncoder().encode(value).byteLength > 544)) {setFolderError(true); return;}
     navigate(value); setChoosingFolder(false); setFolderError(false);
   }
   return <section className="flex min-w-0 flex-1 flex-col gap-4" aria-label={`${props.name} drive`}>
@@ -43,9 +43,9 @@ export function OrganizationDriveBrowser(props: OrganizationDriveBrowserProps) {
       </div> : null}
     </header>
     {choosingFolder && props.canUpload ? <form onSubmit={event => {event.preventDefault(); chooseFolder();}} className="space-y-2 rounded-md border p-3" style={border}>
-      <label className="block text-xs">Upload folder path<input type="text" value={uploadFolder} maxLength={700} disabled={props.busy} placeholder="reports/2027" onChange={event => setUploadFolder(event.target.value)} className={`${control} mt-1 w-full bg-transparent`} style={border}/></label>
-      <p className="text-xs" style={muted}>New folders appear in the drive after their first file is uploaded. Leave blank for the drive root.</p>
-      {folderError ? <p role="alert" className="text-xs">Enter a relative folder path without empty segments, backslashes or parent traversal.</p> : null}
+      <label className="block text-xs">Upload folder path<input type="text" value={uploadFolder} maxLength={544} disabled={props.busy} placeholder="reports/2027" onChange={event => setUploadFolder(event.target.value)} className={`${control} mt-1 w-full bg-transparent`} style={border}/></label>
+      <p className="text-xs" style={muted}>New folders appear after their first upload. Use up to 544 bytes for the folder path to leave room for file names. Leave blank for the drive root.</p>
+      {folderError ? <p role="alert" className="text-xs">Enter a relative folder path of at most 544 bytes, without empty segments, backslashes or parent traversal.</p> : null}
       <div className="flex gap-2"><button type="submit" disabled={props.busy} className={control} style={border}>Use folder</button><button type="button" className={control} style={border} onClick={() => setChoosingFolder(false)}>Cancel</button></div>
     </form> : null}
     <div className="space-y-2"><div className="flex flex-wrap justify-between gap-2 text-xs" style={muted}>
