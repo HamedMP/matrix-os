@@ -1,4 +1,11 @@
 import type { HonoRequest } from "hono";
+import { appOrigin } from "./origins.js";
+
+/** The route host has already passed the platform app-domain allowlist. */
+export function resolveAuthShellBrowserHost(env: NodeJS.ProcessEnv, trustedRouteHost: string): string {
+  const configuredOrigin = appOrigin(env);
+  return configuredOrigin ? new URL(configuredOrigin).host : trustedRouteHost;
+}
 
 /**
  * Called only after the platform's bodyLimit middleware (10 MiB).

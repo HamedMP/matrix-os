@@ -57,6 +57,20 @@ describe("platform forwarding to the local auth shell", () => {
     expect(headers.get("x-forwarded-proto")).toBe("http");
   });
 
+  it.each(["GET", "POST"])("keeps local %s sign-in working with Compose's empty app URL", async (method) => {
+    vi.stubEnv("MATRIX_APP_ORIGIN", undefined);
+    vi.stubEnv("NEXT_PUBLIC_MATRIX_APP_URL", "");
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("local-sign-in"));
+    const response = await app().request("http://app.localhost:4000/sign-in", {
+      method,
+      headers: { host: "app.localhost:4000", "x-forwarded-host": "untrusted.example", origin: "http://app.localhost:4000" },
+      ...(method === "POST" ? { body: "[]" } : {}),
+    });
+    expect(response.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(new Headers(fetchMock.mock.calls[0][1]?.headers).get("x-forwarded-host")).toBe("app.localhost:4000");
+  });
+
   it("does not attach a body to GET", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("sign-in"));
     expect((await app().request("https://app.matrix-os.com/sign-in", { headers: { host: "app.matrix-os.com" } })).status).toBe(200);

@@ -1,4 +1,4 @@
-import { readAuthShellRequestBody } from "./auth-shell-request.js";
+import { readAuthShellRequestBody, resolveAuthShellBrowserHost } from "./auth-shell-request.js";
 import {
   buildPreviewTerminalAccess,
   PREVIEW_TERMINAL_ACCESS_HEADER,
@@ -314,7 +314,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
     headers.set('host', new URL(getAuthShellOrigin(appEnv)).host);
     // The public browser host is operator configuration; the incoming host
     // can be the trusted Cloud Run service behind the browser proxy.
-    headers.set('x-forwarded-host', new URL(appOrigin(appEnv)).host);
+    headers.set('x-forwarded-host', resolveAuthShellBrowserHost(appEnv, host));
     // The auth shell is a local plain-HTTP Next server. Forwarding "https" here
     // makes Next 16 attempt internal self-proxy requests to https://localhost:3200.
     headers.set('x-forwarded-proto', 'http');
