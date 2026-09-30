@@ -52,6 +52,16 @@ describe("Slack repository lease, capacity and persistence boundaries",()=>{
     await company.replyStatus(send.outbox.event_id,send.outbox.lease,"pending");expect(await company.claimReply()).toBeNull();advance(30_001);const second=(await company.claimReply())!;
     await company.replyStatus(second.outbox.event_id,second.outbox.lease,"sent","1790766001.000001");expect(await company.claimReply()).toBeNull();
   });
+  it("reaps exhausted expired company claims without changing another owner's active receipt",async()=>{
+    await company.receive(envelope);const own=(await company.claim())!;
+    const otherEnvelope={...envelope,ownerId:"user_other",actorId:"user_other",event:{...envelope.event,eventId:"EvForeign"}};
+    const foreign=new SlackCompanyRepository(companyDb,"user_other",()=>now);await foreign.receive(otherEnvelope);const other=(await foreign.claim())!;
+    await db.updateTable("slack_company_inbox").set({attempts:8}).execute();advance(61_000);
+    expect(await company.claim()).toBeNull();
+    expect(await db.selectFrom("slack_company_inbox").select(["state","lease","lease_until"]).where("id","=",own.id).executeTakeFirstOrThrow()).toEqual({state:"failed",lease:null,lease_until:null});
+    expect(await db.selectFrom("slack_company_inbox").select(["state","lease"]).where("id","=",other.id).executeTakeFirstOrThrow()).toEqual({state:"processing",lease:other.lease});
+    expect(await foreign.claim()).toBeNull();expect((await db.selectFrom("slack_company_inbox").select("state").where("id","=",other.id).executeTakeFirstOrThrow()).state).toBe("failed");
+  });
   it("caps pending and retained company events without deleting accepted work",async()=>{
     await company.receive(envelope);
     await sql`INSERT INTO slack_company_inbox(id,owner_id,envelope,payload_hash,state,attempts,lease,lease_until,chat_id,scope_id,request_text,expected_revision,queued_turn_id,source_proofs,ingestion_status,created_at,updated_at) SELECT md5(i::text)::uuid,owner_id,envelope,payload_hash,state,attempts,lease,lease_until,chat_id,scope_id,request_text,expected_revision,queued_turn_id,source_proofs,ingestion_status,created_at,updated_at FROM slack_company_inbox CROSS JOIN generate_series(1,999) AS i`.execute(db);
@@ -83,6 +93,21 @@ describe("Slack repository lease, capacity and persistence boundaries",()=>{
     expect(await company.publicationReceipt("A123","T123","Ev123")).not.toBeNull();advance(31_000);expect(await company.publicationReceipt("A123","T123","Ev123")).toBeNull();
     expect(await company.claimReply()).toBeNull();expect((await db.selectFrom("slack_company_outbox").select("state").executeTakeFirstOrThrow()).state).toBe("uncertain");
     expect(await company.publicationReceipt("A123","T123","EvMissing")).toBeNull();
+  });
+  it("recovers only this owner's expired company sends without altering another owner's lease",async()=>{
+    const own=await companyBound();await company.accepted(own,"qturn_actual");
+    await company.finish((await company.waiting())[0],{runId:"run_actual",text:"Owner answer"});await company.claimReply();
+    const otherEnvelope={...envelope,ownerId:"user_other",actorId:"user_other",event:{...envelope.event,eventId:"EvOther",channelId:"C999"}};
+    const other=new SlackCompanyRepository(companyDb,otherEnvelope.ownerId,()=>now);
+    await other.receive(otherEnvelope);const claimed=(await other.claim())!;
+    const bound=await other.bind(claimed,otherEnvelope,{...thread,chatId:"chat_other",scopeId:"10000000-0000-4000-8000-000000000003"},"Other input","0",[],"not_requested");
+    await other.accepted(bound,"qturn_other");await other.finish((await other.waiting())[0],{runId:"run_other",text:"Other answer"});
+    const foreign=(await other.claimReply())!;advance(31_000);
+    expect(await company.claimReply()).toBeNull();
+    expect((await db.selectFrom("slack_company_outbox").select("state").where("event_id","=",own.id).executeTakeFirstOrThrow()).state).toBe("uncertain");
+    expect(await db.selectFrom("slack_company_outbox").selectAll().where("event_id","=",foreign.outbox.event_id).executeTakeFirstOrThrow()).toEqual(foreign.outbox);
+    expect(await other.claimReply()).toBeNull();
+    expect((await db.selectFrom("slack_company_outbox").select("state").where("event_id","=",foreign.outbox.event_id).executeTakeFirstOrThrow()).state).toBe("uncertain");
   });
   it("expires abandoned company work and drops inactive mappings after retention",async()=>{
     await companyBound();advance(2*86400_000);await company.cleanup();expect((await db.selectFrom("slack_company_inbox").select("state").executeTakeFirstOrThrow()).state).toBe("failed");
@@ -160,4 +185,3 @@ describe("Slack repository lease, capacity and persistence boundaries",()=>{
     const row=await companyBound();expect(company.envelope({...row,envelope:JSON.stringify(envelope)})).toEqual(envelope);expect(threadKey({...envelope,event:{...envelope.event,threadTs:envelope.event.ts}})).toBe(threadKey(envelope));
   });
 });
-
