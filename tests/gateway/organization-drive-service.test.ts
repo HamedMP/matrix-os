@@ -24,6 +24,7 @@ async function fixture(quotaBytes = 100) {
   let object = new Uint8Array();
   const stored = new Map<string, Uint8Array>();
   let nativeStream = false;
+  let omitObjectLength = false;
   const r2 = {
     getPresignedPutUrl: async () => "https://storage.example/put",
     getPresignedGetUrl: async () => "https://storage.example/get",
@@ -31,7 +32,7 @@ async function fixture(quotaBytes = 100) {
       const bytes = stored.get(key) ?? object;
       return { body: nativeStream ? Readable.from([bytes]) : new ReadableStream<Uint8Array>({
         start(controller) { controller.enqueue(bytes); controller.close(); },
-      }), contentLength: bytes.byteLength };
+      }), ...(omitObjectLength ? {} : { contentLength: bytes.byteLength }) };
     },
     putObject: async (key: string, bytes: Uint8Array) => { stored.set(key, new Uint8Array(bytes)); },
     deleteObject: async (key: string) => { stored.delete(key); },
@@ -39,7 +40,8 @@ async function fixture(quotaBytes = 100) {
   const service = new OrganizationDriveService({ db, r2, ownerId: "user_owner", runtimeSlot: "primary" });
   await service.enable({ organizationId: org, scopeId: scope, runtimeId: "vps:owner", generation: 1, quotaBytes });
   return { db, service, stored, setObject(value: Uint8Array) { object = value; },
-    setNativeObject(value: Uint8Array) { object = value; nativeStream = true; }, close: () => db.destroy() };
+    setNativeObject(value: Uint8Array) { object = value; nativeStream = true; },
+    setStreamedObject(value: Uint8Array) { object = value; omitObjectLength = true; }, close: () => db.destroy() };
 }
 
 describe("organization drive service", () => {
@@ -91,6 +93,32 @@ describe("organization drive service", () => {
       f.setNativeObject(new TextEncoder().encode("hello"));
       await expect(f.service.commit({ organizationId: org, scopeId: scope, actorId: actor,
         uploadId: reserved.uploadId })).resolves.toMatchObject({ path: "node.txt" });
+    } finally { await f.close(); }
+  });
+
+  it.each([
+    { name: "valid streamed bytes", content: "hello", accepted: true },
+    { name: "a short stream", content: "hell", accepted: false },
+    { name: "an oversized stream", content: "helloo", accepted: false },
+    { name: "a mismatched digest", content: "world", accepted: false },
+  ])("verifies $name when the broker omits Content-Length", async ({ content, accepted }) => {
+    const f = await fixture(5);
+    try {
+      const reserved = await f.service.reserve({ organizationId: org, scopeId: scope, actorId: actor,
+        request: { path: "streamed.txt", size: 5,
+          sha256: "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+          requestId: "streamed", baseVersion: 0 } });
+      f.setStreamedObject(new TextEncoder().encode(content));
+      const commit = f.service.commit({ organizationId: org, scopeId: scope, actorId: actor,
+        uploadId: reserved.uploadId });
+      if (accepted) {
+        await expect(commit).resolves.toMatchObject({ path: "streamed.txt", size: 5 });
+        expect((await f.service.list({ organizationId: org, scopeId: scope })).files).toHaveLength(1);
+      } else {
+        await expect(commit).rejects.toMatchObject({ code: "checksum" });
+        expect((await f.service.list({ organizationId: org, scopeId: scope })).files).toEqual([]);
+      }
+      expect(await f.service.usage({ organizationId: org, scopeId: scope })).toMatchObject({ reservedBytes: 0 });
     } finally { await f.close(); }
   });
 
