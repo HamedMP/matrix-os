@@ -10,6 +10,7 @@ import type { ChatAgentClient } from "../../packages/ui/src/chat-agents/client";
 vi.mock("@clerk/nextjs", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@clerk/nextjs")>()),
   useOrganization: () => ({ organization: null }),
+  useAuth: () => ({userId:null,sessionId:null}),
 }));
 
 const agent = { kind: "agent" as const, id: "bot_meeting01", label: "Meeting helper" };
