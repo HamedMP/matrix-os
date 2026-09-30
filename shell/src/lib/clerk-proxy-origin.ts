@@ -7,7 +7,7 @@ import { getConfiguredAppOrigin } from "./public-origin";
  * headers; neither the caller nor the subsequent Next hop keeps them.
  */
 export async function withClerkPublicOrigin<T>(
-  request: { headers: Headers },
+  request: { headers: Headers; url: string },
   authenticate: () => T | Promise<T>,
 ): Promise<T> {
   const origin = getConfiguredAppOrigin();
@@ -25,6 +25,15 @@ export async function withClerkPublicOrigin<T>(
     // its signed auth metadata, but restore transport headers for Next's own
     // internal self-proxy so it never tries TLS against localhost:3200.
     if (response instanceof Response) {
+      // Clerk decorates next() as a same-URL rewrite. Next normalizes loopback
+      // addresses to localhost, which makes that rewrite external to the local
+      // server. Resume the same route with its signed Clerk header overrides:
+      // this also retains Next's ordinary React navigation handling.
+      if (response.headers.get("x-middleware-rewrite") === request.url
+        && response.headers.has("x-middleware-request-x-clerk-auth-status")) {
+        response.headers.delete("x-middleware-rewrite");
+        response.headers.set("x-middleware-next", "1");
+      }
       for (const [name, value] of saved) {
         const override = `x-middleware-request-${name}`;
         if (!response.headers.has(override)) continue;
