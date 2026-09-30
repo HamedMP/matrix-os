@@ -1,6 +1,6 @@
 import { OrganizationDriveSnapshotSchema } from "@matrix-os/contracts";
 import {
-  createRefreshGuard,
+  OrganizationDriveBrowser, createRefreshGuard,
   driveBasePath,
   ensureOrganizationContributorGrant,
   loadOrganizationDriveOptions,
@@ -22,7 +22,7 @@ function message(error: unknown): string {
   return "Organization drive is unavailable. Try again.";
 }
 
-export function DesktopOrganizationDrivesView({ isActive = true }: { isActive?: boolean }) {
+export function DesktopOrganizationDrivesView({ isActive = true, requestedScopeId, requestedIntentId }: { isActive?: boolean; requestedScopeId?: string; requestedIntentId?: string }) {
   const platformHost = useConnection((state) => state.platformHost);
   const runtimeSlot = useConnection((state) => state.runtimeSlot);
   const authGeneration = useConnection((state) => state.authGeneration);
@@ -33,6 +33,12 @@ export function DesktopOrganizationDrivesView({ isActive = true }: { isActive?: 
   const [busy, setBusy] = useState(false);
   const [transferBusy, setTransferBusy] = useState(false);
   const [folder, setFolder] = useState("");
+  const appliedRequest = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    if ((requestedIntentId ?? requestedScopeId) !== appliedRequest.current && requestedScopeId && options.some(option => option.scopeId === requestedScopeId)) {
+      appliedRequest.current = requestedIntentId ?? requestedScopeId; setSelected(requestedScopeId); setFolder("");
+    }
+  }, [requestedScopeId, requestedIntentId, options]);
   const [error, setError] = useState<string | null>(null);
   const pageCounts = useRef<OrganizationDrivePageCounts>({});
   const [guard] = useState(createRefreshGuard);
@@ -111,7 +117,7 @@ export function DesktopOrganizationDrivesView({ isActive = true }: { isActive?: 
   });
   const loadMore = async (option: OrganizationDriveOption) => {
     const cursor = option.snapshot?.nextCursor;
-    if (!api || !cursor || busy) return;
+    if (!api || !cursor || busy || (option.pages ?? 1) >= 20) return;
     setBusy(true); setError(null);
     try {
       const page = OrganizationDriveSnapshotSchema.parse(await api.direct.request(option.scopeId, "GET",
@@ -142,38 +148,25 @@ export function DesktopOrganizationDrivesView({ isActive = true }: { isActive?: 
       : <div className="flex min-h-0 flex-1 gap-5">
         <nav aria-label="Organization drives" className="w-48 shrink-0 space-y-1 border-r pr-3" style={{ borderColor: "var(--border-subtle)" }}>
           {options.map((option) => <button key={option.scopeId} type="button" aria-current={selected === option.scopeId ? "page" : undefined}
-            onClick={() => setSelected(option.scopeId)} className="w-full rounded-md px-3 py-2 text-left text-xs hover:bg-[var(--bg-hover)]"
+            disabled={busy} onClick={() => { setSelected(option.scopeId); setFolder(""); }} className="w-full rounded-md px-3 py-2 text-left text-xs hover:bg-[var(--bg-hover)]"
             style={{ background: selected === option.scopeId ? "var(--bg-hover)" : undefined }}>{option.name}</button>)}
         </nav>
         {active && <div className="min-w-0 flex-1 overflow-auto">
-          <h3 className="mb-3 font-medium">{active.name}</h3>
+
           {active.state === "pending" && <button type="button" className={button} style={buttonStyle} disabled={busy}
             onClick={() => void activate(active)}>Open organization share</button>}
           {active.state === "enable" && <button type="button" className={button} style={buttonStyle} disabled={busy}
             onClick={() => void enable(active)}>Enable drive for organization</button>}
           {active.snapshot && <>
             {active.canManage && <button type="button" className={`${button} mb-3`} style={buttonStyle} disabled={busy}
-              onClick={() => void share(active)}>Ensure organization can upload</button>}
-            <p className="mb-3 text-xs" style={{ color: "var(--text-tertiary)" }}>
-              {(active.snapshot.usedBytes / 1_000_000_000).toFixed(2)} GB of {(active.snapshot.quotaBytes / 1_000_000_000_000).toFixed(1)} TB used
-            </p>
-            <label className="mb-3 block text-xs">Folder path (optional)
-              <input type="text" value={folder} maxLength={700} disabled={busy} placeholder="reports/2026"
-                onChange={(event) => setFolder(event.target.value)} className="mt-1 block w-full max-w-xs rounded-md border px-2 py-1.5"
-                style={{ borderColor: "var(--border-default)", background: "var(--bg-surface)" }} />
-            </label>
-            {active.canUpload && <button type="button" className={`${button} mb-4`} style={buttonStyle} disabled={busy}
-              onClick={() => void upload(active)}>{busy ? "Transferring…" : "Upload file"}</button>}
-            <ul className="divide-y" style={{ borderColor: "var(--border-subtle)" }}>
-              {active.snapshot.files.map((file) => <li key={file.id} className="flex items-center justify-between gap-3 py-2">
-                <span className="min-w-0 truncate text-xs">{file.path}</span>
-                <button type="button" className={button} style={buttonStyle} disabled={busy}
-                  onClick={() => void download(active, file.id)}>Download</button>
-              </li>)}
-            </ul>
-            {active.snapshot.nextCursor && <button type="button" className={`${button} mt-3`} style={buttonStyle} disabled={busy}
-              onClick={() => void loadMore(active)}>Load more files</button>}
-            {active.snapshot.files.length === 0 && <p className="text-xs" style={{ color: "var(--text-tertiary)" }}>No files yet.</p>}
+              onClick={() => void share(active)}>Allow organization uploads</button>}
+            <OrganizationDriveBrowser key={active.scopeId} name={active.name} files={active.snapshot.files}
+              usedBytes={active.snapshot.usedBytes} reservedBytes={active.snapshot.reservedBytes} quotaBytes={active.snapshot.quotaBytes}
+              busy={busy} canUpload={Boolean(active.canUpload)} folder={folder} onFolderChange={setFolder}
+              onDownload={file => void download(active, file.id)} hasMore={Boolean(active.snapshot.nextCursor)}
+              pageLimitReached={(active.pages ?? 1) >= 20} onLoadMore={() => void loadMore(active)}
+              uploadControl={<button type="button" className={button} style={buttonStyle} disabled={busy}
+                onClick={() => void upload(active)}>{busy ? "Transferring…" : "Upload file"}</button>} />
           </>}
         </div>}
       </div>}
