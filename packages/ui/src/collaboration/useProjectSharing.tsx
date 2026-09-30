@@ -1,0 +1,177 @@
+import {
+  CollaborationMemberSchema,
+  CollaborationProjectInventorySchema,
+  CollaborationScopePreflightResponseSchema,
+  CollaborationScopeSchema,
+  type CollaborationProjectInventory,
+  type CollaborationScope,
+} from "@matrix-os/contracts";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { z } from "zod/v4";
+import { ChatCollaboratorsDialog, type CollaborationApi } from "./ChatCollaboratorsDialog.js";
+import { ProjectSharingDialog } from "./ProjectSharingDialog.js";
+
+// react-doctor-disable-next-line react-doctor/zod-v4-no-deprecated-schema-apis -- imported from zod/v4; array max is the current bounded-array API and is verified by the package typecheck.
+const MembersSchema = z.object({ members: z.array(CollaborationMemberSchema).max(8) }).strict();
+
+export const PROJECT_SHARING_UNAVAILABLE_MESSAGE = "Project sharing is unavailable. The project remains private and unchanged.";
+
+export interface ProjectSharingController {
+  /** A preflight, scope creation or refresh is in progress. */
+  pending: boolean;
+  /** The inventory or members surface is showing. */
+  open: boolean;
+  /** The last attempt failed; the project stays private and unchanged. */
+  error: boolean;
+  start(): void;
+  close(): void;
+  /** Inventory and member dialogs; render once wherever the trigger lives. */
+  dialogs: ReactNode;
+}
+
+/**
+ * Whole-project sharing flow shared by every owner Share trigger: the web and
+ * Electron button, and the Electron Work rail project menu. It keeps the
+ * preflight, scope and inventory state, so a trigger that unmounts (a menu
+ * item) can start the flow while its owner renders the dialogs.
+ */
+export function useProjectSharing({ api, runtimeId, organizationId, projectId, projectName }: {
+  api: CollaborationApi;
+  runtimeId: string | null;
+  /** The Clerk organization this share is scoped to; without one there is nothing to share with. */
+  organizationId: string | null;
+  projectId: string;
+  projectName: string;
+}): ProjectSharingController {
+  const [surface, setSurface] = useState<"inventory" | "members" | null>(null);
+  const [scope, setScope] = useState<CollaborationScope | null>(null);
+  const [inventory, setInventory] = useState<CollaborationProjectInventory | null>(null);
+  const [members, setMembers] = useState<z.infer<typeof CollaborationMemberSchema>[]>([]);
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState(false);
+  const alive = useRef(true);
+  // A menu can start the flow again while it is preparing; that is not a failure.
+  const starting = useRef(false);
+  useEffect(() => {
+    alive.current = true;
+    return () => { alive.current = false; };
+  }, []);
+
+  const refreshScope = async (scopeId: string) => {
+    const [scopeValue, membersValue] = await Promise.all([
+      api.get(`/api/collaboration/scopes/${scopeId}`),
+      api.get(`/api/collaboration/scopes/${scopeId}/members`),
+    ]);
+    const nextScope = CollaborationScopeSchema.parse(scopeValue);
+    if (nextScope.kind !== "project" || nextScope.resourceId !== projectId) {
+      throw new Error("Project scope mismatch");
+    }
+    const nextMembers = MembersSchema.parse(membersValue).members;
+    if (alive.current) {
+      setScope(nextScope);
+      setMembers(nextMembers);
+    }
+    return { scope: nextScope, members: nextMembers };
+  };
+
+  const refreshInventory = async (scopeId: string) => {
+    const next = CollaborationProjectInventorySchema.parse(await api.get(
+      `/api/collaboration/scopes/${scopeId}/project/inventory`,
+    ));
+    if (next.projectId !== projectId || next.scopeId !== scopeId) {
+      throw new Error("Project inventory mismatch");
+    }
+    if (alive.current) setInventory(next);
+    return next;
+  };
+
+  const begin = async () => {
+    if (starting.current) return;
+    if (!runtimeId || !organizationId) {
+      setError(true);
+      return;
+    }
+    starting.current = true;
+    setPending(true);
+    setError(false);
+    try {
+      const preflight = CollaborationScopePreflightResponseSchema.parse(await api.post(
+        `/api/collaboration/runtimes/${encodeURIComponent(runtimeId)}/scopes/preflight`,
+        { kind: "project", resourceId: projectId, organizationId },
+      ));
+      if (!preflight.eligible || !preflight.confirmationToken) throw new Error("Project unavailable");
+      if (preflight.existingScopeId) {
+        const refreshed = await refreshScope(preflight.existingScopeId);
+        if (refreshed.scope.lifecycle === "shared" || refreshed.scope.lifecycle === "archived") {
+          if (alive.current) setSurface("members");
+        } else {
+          await refreshInventory(refreshed.scope.id);
+          if (alive.current) setSurface("inventory");
+        }
+        return;
+      }
+      const created = CollaborationScopeSchema.parse(await api.post(
+        `/api/collaboration/runtimes/${encodeURIComponent(runtimeId)}/scopes`,
+        {
+          kind: "project",
+          resourceId: projectId, organizationId,
+          clientRequestId: crypto.randomUUID(),
+          expectedRevision: preflight.resourceRevision,
+          confirmationToken: preflight.confirmationToken,
+        },
+      ));
+      const refreshed = await refreshScope(created.id);
+      if (refreshed.scope.lifecycle === "shared") {
+        if (alive.current) setSurface("members");
+      } else {
+        await refreshInventory(created.id);
+        if (alive.current) setSurface("inventory");
+      }
+    } catch (failure: unknown) {
+      console.warn("[project-collaboration] setup failed", failure instanceof Error ? failure.name : "UnknownError");
+      if (alive.current) setError(true);
+    } finally {
+      starting.current = false;
+      if (alive.current) setPending(false);
+    }
+  };
+
+  const close = () => {
+    if (pending) return;
+    setSurface(null);
+    setInventory(null);
+    setScope(null);
+    setError(false);
+  };
+
+  const dialogs = <>
+    {surface === "inventory" && scope && inventory ? <ProjectSharingDialog
+      api={api}
+      scope={scope}
+      projectName={projectName}
+      inventory={inventory}
+      refreshInventory={() => refreshInventory(scope.id)}
+      onManageMembers={() => setSurface("members")}
+      onClose={close}
+    /> : null}
+    {surface === "members" && scope ? <ChatCollaboratorsDialog
+      api={api}
+      scope={scope}
+      members={members}
+      onRefresh={() => refreshScope(scope.id)}
+      onClose={() => {
+        if (scope.lifecycle === "shared") close();
+        else {
+          void refreshInventory(scope.id).then(() => {
+            if (alive.current) setSurface("inventory");
+          }).catch((failure: unknown) => {
+            console.warn("[project-collaboration] inventory refresh failed", failure instanceof Error ? failure.name : "UnknownError");
+            if (alive.current) setError(true);
+          });
+        }
+      }}
+    /> : null}
+  </>;
+
+  return { pending, open: surface !== null, error, start: () => { void begin(); }, close, dialogs };
+}

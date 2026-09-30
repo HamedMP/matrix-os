@@ -17,6 +17,7 @@ import {
 } from "@/lib/hugeicons";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 import { ProjectSharing } from "@/components/projects/ProjectSharing";
+import { groupShellSessionsByProject, MAIN_TERMINAL_PROJECT } from "./terminal-project-groups";
 import { sessionAccent } from "./terminal-session-names";
 import { NewSessionMenu } from "./NewSessionMenu";
 import { TerminalAgentLogo } from "./TerminalAgentLogo";
@@ -643,6 +644,8 @@ function CollapsedRailButton({
   );
 }
 
+const projectIdAsName = (projectId: string) => projectId;
+
 export function ShellSessionGroup({
   label,
   shells,
@@ -664,6 +667,7 @@ export function ShellSessionGroup({
   onDragOver,
   onDrop,
   onDragEnd,
+  projectName = projectIdAsName,
 }: {
   label: "Active" | "Background";
   shells: ShellSessionSummary[];
@@ -685,10 +689,12 @@ export function ShellSessionGroup({
   onDragOver: (shell: ShellSessionSummary) => void;
   onDrop: (shell: ShellSessionSummary) => void;
   onDragEnd: () => void;
+  /** Display name for a canonical project id; defaults to the id. */
+  projectName?: (projectId: string) => string;
 }) {
   const collapsible = label === "Background";
   const contentId = `terminal-session-group-${label.toLowerCase()}-content`;
-  const projectGroups = Object.entries(Object.groupBy(shells, (shell) => shell.project || "main"));
+  const projectGroups = groupShellSessionsByProject(shells);
   return (
     <section data-testid={`terminal-session-group-${label.toLowerCase()}`} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
       <div className="flex items-center justify-between" style={{ color: "var(--terminal-drawer-muted)", minHeight: 22 }}>
@@ -744,10 +750,10 @@ export function ShellSessionGroup({
               <div key={`${label}-${project}`} data-terminal-project-group={project} style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 <div className="flex items-center justify-between gap-2"
                   style={{ color: "var(--terminal-drawer-subtle)", fontSize: 11, fontWeight: 700, letterSpacing: "0.04em" }}>
-                  <span>{project === "main" ? "Main" : project}</span>
-                  {project !== "main" ? <ProjectSharing projectId={project} projectName={project} /> : null}
+                  <span>{project === MAIN_TERMINAL_PROJECT ? "Main" : projectName(project)}</span>
+                  {project !== MAIN_TERMINAL_PROJECT ? <ProjectSharing projectId={project} projectName={projectName(project)} /> : null}
                 </div>
-                {(projectShells ?? []).map((shell) => (
+                {projectShells.map((shell) => (
                   <ShellCard
                     key={`${label}-${shell.name}`}
                     shell={shell}
