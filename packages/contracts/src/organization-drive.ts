@@ -63,3 +63,21 @@ export const OrganizationDriveDownloadSchema = z.object({
 export type OrganizationDriveAuthority = z.infer<typeof OrganizationDriveAuthoritySchema>;
 export type OrganizationDriveFile = z.infer<typeof OrganizationDriveFileSchema>;
 export type OrganizationDriveUploadRequest = z.infer<typeof OrganizationDriveUploadRequestSchema>;
+
+/** Metadata search is bounded and scope-relative. Content search/indexing is a separate capability. */
+export const OrganizationDriveContextSearchSchema = z.object({
+  prefix: OrganizationDrivePathSchema.optional(),
+  query: z.string().trim().max(200).refine(value => utf8.encode(value).byteLength <= 800 && !/[\u0000-\u001f\u007f]/.test(value)).default(""),
+  after: OrganizationDrivePathSchema.optional(),
+  limit: z.coerce.number().int().min(1).max(50).default(30),
+}).strict();
+export const OrganizationDriveTextContextSchema = z.discriminatedUnion("status", [
+  z.object({status: z.literal("text"), file: OrganizationDriveFileSchema,
+    text: z.string().max(32 * 1024).refine(value => utf8.encode(value).byteLength <= 32 * 1024), truncated: z.boolean(), readOnly: z.literal(true)}).strict(),
+  z.object({status: z.literal("unsupported"), file: OrganizationDriveFileSchema, readOnly: z.literal(true)}).strict(),
+]);
+
+export const OrganizationDriveContextSearchResponseSchema = z.object({
+  organizationId: CollaborationOrganizationIdSchema, scopeId: z.uuid(),
+  files: z.array(OrganizationDriveFileSchema).max(50), nextCursor: OrganizationDrivePathSchema.optional(),
+}).strict();
