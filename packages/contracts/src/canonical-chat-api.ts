@@ -129,12 +129,14 @@ function validMentionCounts(parts: z.infer<typeof CanonicalChatUserInputPartSche
   const references = parts.flatMap((part) => part.type === "resource_reference" ? [part.resource] : []);
   const agents = references.filter((reference) => reference.kind === "agent");
   const chats = references.filter((reference) => reference.kind === "chat");
-  return agents.length <= 1 && chats.length <= 3
+  const drives = references.filter((reference) => reference.kind === "organization_drive");
+  return agents.length <= 1 && chats.length <= 3 && drives.length <= 3
+    && new Set(drives.map((entry) => JSON.stringify(entry.drive))).size === drives.length
     && new Set(chats.map((chat) => chat.id)).size === chats.length;
 }
 
 const MentionAwareInputPartsSchema = z.array(CanonicalChatUserInputPartSchema).min(1).max(64)
-  .refine(validMentionCounts, { message: "Use one Agent and up to three distinct Chats" });
+  .refine(validMentionCounts, { message: "Use one Agent and up to three distinct Chats and drive references" });
 
 export const CanonicalCreateChatTurnRequestSchema = z.object({
   clientRequestId: CanonicalChatRequestIdSchema,

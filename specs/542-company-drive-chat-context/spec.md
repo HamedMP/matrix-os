@@ -124,3 +124,48 @@ redirects, and aborts outstanding work when closed. Unknown or malformed respons
 become a safe unavailable error. Chat composition must inject this dependency and
 close it during shutdown before context controls become available. The transport
 increment alone does not enable Chat context or persist a Chat association.
+
+## Canonical Chat runtime increment
+
+The gateway resolves the drive client during registration, before constructing the
+provider catalog. The catalog advertises `organization_drive` only for an available
+Claude Code harness when that read dependency exists. Other harnesses show the
+capability as unavailable until their own scoped run tools are implemented. This
+is an explicit temporary harness limitation, shared by every OS view.
+
+Typed message references persist only organization/scope identity, folder paths,
+and selected file versions. They are authorized before turn or queue admission,
+before queued dispatch/retry, and again around every tool read. No drive content
+is copied into admission context. The model selects a reference index; it cannot
+choose an actor, run, organization or arbitrary source URL.
+
+| Route | Authentication and authorization | Data and limits |
+| --- | --- | --- |
+| `POST /api/chat-drive-context/search` | Exact per-run Matrix MCP capability with the drive grant; active personal owner-bound run; live source authority before and after I/O | Strict JSON, 4 KiB pre-buffer body limit, admitted reference index, 50 rows, private/no-store |
+| `POST /api/chat-drive-context/read` | Same scoped capability and active-run checks; pinned file or file within the admitted drive/folder | Strict JSON, 4 KiB request, 128 KiB verified source response; no write tools |
+
+Ordinary machine or user bearer tokens do not grant these model endpoints. The
+Claude launcher exposes only the two fixed read tools alongside the existing
+scoped MCP surface, and revokes the run capability during cleanup. Gateway
+shutdown cancels the source client before its capability registry is closed.
+
+Until an audience policy can preserve provenance transitively, sharing a Chat
+containing drive material is disabled. The check is repeated under the existing
+Chat row lock, so a previously issued share confirmation cannot bypass it.
+Project resource staging checks the same restriction, and final project publication
+locks each inherited Chat and rechecks drive material in the publication transaction.
+Mentioning such a Chat as context in another Chat is also disabled, including
+queued/retried referenced history. Personal stored Chat history stays readable.
+This increment does not claim organization sharing of drive excerpts.
+
+Large-file extraction plan: new authorization, tools, production configuration
+and audience checks live in focused modules. `server.ts` supplies dependencies and
+shutdown hooks only. `orchestrator.ts` receives one retry capability requirement;
+its existing admission and queue helpers continue to own the extracted workflows.
+
+Evidence requires real owner-Postgres admission/run lookup, queue and retry
+revocation checks, scoped HTTP denial/revocation, exact MCP tool advertisement,
+production dependency failure and shutdown checks, and locked share conversion.
+Public docs must describe the harness and sharing limitation before UI actions
+ship. Persisted drive-to-Chat association and visible context controls follow in
+separate increments; this runtime PR alone does not enable them.
