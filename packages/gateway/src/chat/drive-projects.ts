@@ -41,7 +41,7 @@ const failure = (c: Context, error: unknown) => {
 export async function createChatDriveProjectRoutes(options: {
     repository: ChatRepository | null;
     drives: {
-        authorize(owner: ChatOwner, chatId: string, references: OrganizationDriveContextReference[]): Promise<void>;
+        authorize(owner: ChatOwner, chatId: string, references: OrganizationDriveContextReference[], repository: Pick<ChatRepository, "get">): Promise<void>;
     } | null;
     resolveOwner(c: Context): ChatOwner;
 }): Promise<Hono> {
@@ -76,19 +76,19 @@ export async function createChatDriveProjectRoutes(options: {
             const input = UpdateChatDriveProjectSchema.parse(await c.req.json());
             if (!repository)
                 throw new ProjectError(503);
-            const current = await repository.kysely.selectFrom("chats").select(["revision", "collaboration", "lifecycle"]).where("id", "=", chatId).where("owner_type", "=", owner.type).where("owner_id", "=", owner.ownerId).executeTakeFirst();
-            if (!current)
-                throw new ProjectError(404);
-            if (owner.type !== 'personal' || current.collaboration || current.lifecycle !== 'active')
-                throw new ProjectError(409);
-            if (input.reference) {
-                if (!options.drives)
-                    throw new ProjectError(503);
-                await options.drives.authorize(owner, chatId, [input.reference]);
-            }
             const result = await repository.withTransaction(async (scoped) => {
                 const db = scoped.kysely.withTables<AssociationDatabase>();
-                await sql `SET LOCAL statement_timeout = '5s'`.execute(db);
+                await sql`SET LOCAL statement_timeout = '5s'`.execute(db);
+                await sql`SET LOCAL lock_timeout = '5s'`.execute(db);
+                await sql`SET LOCAL idle_in_transaction_session_timeout = '70s'`.execute(db);
+                // Read authorization state in this transaction without holding a row lock over remote I/O.
+                const current = await db.selectFrom("chats").select(["collaboration", "lifecycle"]).where("id", "=", chatId).where("owner_type", "=", owner.type).where("owner_id", "=", owner.ownerId).executeTakeFirst();
+                if (!current) throw new ProjectError(404);
+                if (owner.type !== 'personal' || current.collaboration || current.lifecycle !== 'active') throw new ProjectError(409);
+                if (input.reference) {
+                    if (!options.drives) throw new ProjectError(503);
+                    await options.drives.authorize(owner, chatId, [input.reference], scoped);
+                }
                 const chat = await db.selectFrom('chats').select(['revision', 'collaboration', 'lifecycle']).where('id', '=', chatId).where('owner_type', '=', owner.type).where('owner_id', '=', owner.ownerId).forUpdate().executeTakeFirst();
                 if (!chat)
                     throw new ProjectError(404);

@@ -19,7 +19,7 @@ describe("owner-persisted company drive Chat projects", () => {
         const first = await app.request('/api/chats/chat_project/drive-project', json(request));
         expect(first.status).toBe(200);
         expect(await first.json()).toMatchObject({ chatId: "chat_project", reference, revision: 1 });
-        expect(authorize).toHaveBeenCalledWith(owner, "chat_project", [reference]);
+        expect(authorize).toHaveBeenCalledWith(owner, "chat_project", [reference], expect.anything());
         expect((await repository.get(owner, "chat_project"))?.chat.collaboration).toBeUndefined();
         expect((await repository.get(owner, "chat_project"))?.projectId).toBeUndefined();
         expect(events).toHaveLength(1);
@@ -29,6 +29,14 @@ describe("owner-persisted company drive Chat projects", () => {
         const lookup = await app.request('/api/chat-drive-projects/lookup', { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ chatIds: ["chat_project"] }) });
         expect(await lookup.json()).toMatchObject({ associations: [{ chatId: "chat_project", reference }] });
         sink.dispose();
+    });
+    it("keeps authorization reads and the association write in one scoped transaction", async()=>{
+        authorize.mockImplementationOnce(async (_owner,_chatId,_references,scoped)=>{
+          expect(scoped).toBeDefined();
+          expect(scoped.kysely.isTransaction).toBe(true);
+          expect((await scoped.get(owner,"chat_project"))?.chat.id).toBe("chat_project");
+        });
+        expect((await app.request('/api/chats/chat_project/drive-project',json(request))).status).toBe(200);
     });
     it("rejects stale writes, other owners, shared Chats and ungranted sources", async () => {
         actor = "user_other";
@@ -46,7 +54,7 @@ describe("owner-persisted company drive Chat projects", () => {
         expect((await app.request('/api/chats/chat_project/drive-project?actor=other', json(request))).status).toBe(422);
         expect((await app.request('/api/chats/chat_project/drive-project', json({ ...request, actorId: "other" }))).status).toBe(422);
         expect((await app.request('/api/chats/chat_project/drive-project', json({ padding: "x".repeat(5000) }))).status).toBe(413);
-        authorize.mockImplementationOnce(async () => { await repository.kysely.updateTable("chats").set({ collaboration: { scopeId: reference.scopeId, mode: "discussion_only", executionFenced: true } }).where("id", "=", "chat_project").execute(); });
+        authorize.mockImplementationOnce(async (_owner,_chatId,_references,scoped) => { await scoped.kysely.updateTable("chats").set({ collaboration: { scopeId: reference.scopeId, mode: "discussion_only", executionFenced: true } }).where("id", "=", "chat_project").execute(); });
         expect((await app.request('/api/chats/chat_project/drive-project', json(request))).status).toBe(409);
         const result = await app.request('/api/chat-drive-projects/lookup', { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ chatIds: ["chat_project"] }) });
         expect(await result.json()).toEqual({ associations: [] });

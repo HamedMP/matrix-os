@@ -46,9 +46,9 @@ export function createChatDriveContext(options: {
     }
     function owner(actor: string) { if (actor !== options.ownerId)
         throw new ChatDriveContextError(); }
-    async function privateChat(actor: string, chatId: string) {
+    async function privateChat(actor: string, chatId: string, repository: Pick<ChatRepository, "get"> = options.repository) {
         owner(actor);
-        const record = await options.repository.get({ type: "personal", ownerId: actor }, chatId);
+        const record = await repository.get({ type: "personal", ownerId: actor }, chatId);
         if (!record || record.chat.lifecycle !== "active" || record.chat.collaboration)
             throw new ChatDriveContextError();
     }
@@ -70,11 +70,11 @@ export function createChatDriveContext(options: {
             throw new ChatDriveContextError();
     }
     return {
-        authorize(ownerValue: ChatOwner, chatId: string, references: OrganizationDriveContextReference[]) {
+        authorize(ownerValue: ChatOwner, chatId: string, references: OrganizationDriveContextReference[], repository: Pick<ChatRepository, "get"> = options.repository) {
             return safe(async () => {
                 if (ownerValue.type !== "personal")
                     throw new ChatDriveContextError();
-                await privateChat(ownerValue.ownerId, chatId);
+                await privateChat(ownerValue.ownerId, chatId, repository);
                 const selected = z.array(OrganizationDriveContextReferenceSchema).min(1).max(3).parse(references);
                 const signal = AbortSignal.timeout(60000);
                 for (const reference of selected) {
@@ -83,7 +83,7 @@ export function createChatDriveContext(options: {
                     else
                         await options.client.search(reference, { limit: 1 }, signal);
                 }
-                await privateChat(ownerValue.ownerId, chatId);
+                await privateChat(ownerValue.ownerId, chatId, repository);
             });
         },
         search(actor: string, runId: string, raw: z.input<typeof ChatDriveSearchInputSchema>, callerSignal?: AbortSignal) {
