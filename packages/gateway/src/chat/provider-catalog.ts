@@ -671,7 +671,7 @@ export function createChatProviderCatalogService(options: {
   return service;
 }
 
-interface ProviderSelectionRequirements {
+export interface ProviderSelectionRequirements {
   attachments?: CanonicalChatAttachmentKind[];
   resources?: CanonicalChatResourceKind[];
   interactionMode?: string;

@@ -86,16 +86,17 @@ export async function enqueueCanonicalQueuedTurn(options: {
   const prepared = await options.agentContext?.prepare(options.owner, options.chatId, input);
   const effective = { ...input, ...prepared };
   const catalog = await options.catalog.getCatalog(options.principal);
+  const requirements = chatProviderRequirements({ ...effective, parts: prepared ? input.parts.filter((part) =>
+    part.type !== "resource_reference" || !["agent", "chat"].includes(part.resource.kind)) : input.parts });
   const validated = validateChatProviderSelection({
     catalog,
     selection: effective.selection,
     ...(!prepared?.context?.agent && record.providerBinding ? { boundInstanceId: record.providerBinding.instanceId } : {}),
-    requirements: chatProviderRequirements({ ...effective, parts: prepared ? input.parts.filter((part) =>
-      part.type !== "resource_reference" || !["agent", "chat"].includes(part.resource.kind)) : input.parts }),
+    requirements,
   });
   if (!validated.ok) {
     const agentModeError = validated.error.code === "capability_mismatch"
-      ? unsupportedAgentPermissionMode(catalog, effective.selection, effective.permissionMode, Boolean(prepared?.context?.agent))
+      ? unsupportedAgentPermissionMode(catalog, effective.selection, requirements, Boolean(prepared?.context?.agent))
       : null;
     throw new CanonicalQueueAdmissionError(
       agentModeError ?? validated.error,
