@@ -330,6 +330,7 @@ export function createCanonicalChatService(
       owner: ChatOwner,
       chatId: string,
       input: CanonicalCreateChatTurnRequest,
+      provenance?: { previewTurnProof?: string },
     ): Promise<CanonicalChatTurnAdmissionResponse> {
       await assertPersonalExecutionAllowed(owner, chatId);
       if (!options.orchestrator) throw new Error("Canonical Chat orchestration unavailable");
@@ -338,6 +339,7 @@ export function createCanonicalChatService(
         owner,
         CanonicalChatIdSchema.parse(chatId),
         CanonicalCreateChatTurnRequestSchema.parse(input),
+        provenance,
       ));
     },
 

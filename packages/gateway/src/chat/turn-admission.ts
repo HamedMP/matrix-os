@@ -31,6 +31,8 @@ export interface TurnAdmissionOptions {
   releasePendingDispatch(runId: string): void;
   atCapacity(owner: ChatOwner): boolean;
   hasStoppingExecution(owner: ChatOwner, chatId: string, admissionKey?: string): boolean;
+  beforePreviewDispatch?: (input: { actorId: string; chatId: string; turnId: string; runId: string;
+    clientRequestId: string; body: CanonicalCreateChatTurnRequest; proof: string }) => Promise<void>;
   startDispatch(owner: ChatOwner, message: CanonicalChatMessage, run: CanonicalChatRun,
     adapter: CanonicalChatProviderAdapter, root?: ResolvedChatExecutionRoot, resumeState?: unknown,
     promptOverride?: string, admissionKey?: string): void;
@@ -41,6 +43,7 @@ const id = (prefix: string) => `${prefix}${randomUUID().replaceAll("-", "")}`;
 export async function admitCanonicalTurn(
   deps: TurnAdmissionOptions, principal: RequestPrincipal, owner: ChatOwner,
   chatId: string, inputValue: CanonicalCreateChatTurnRequest,
+  provenance?: { previewTurnProof?: string },
 ): Promise<CanonicalChatTurnAdmissionResponse> {
     deps.assertOpen();
     await deps.assertPersonalExecutionAllowed(owner, chatId);
@@ -219,6 +222,18 @@ export async function admitCanonicalTurn(
             safeError("run_unavailable", "Chat execution is temporarily busy.", true, ["retry"]),
             503,
           );
+        }
+        if (adapter.driverKind === "claude_code" && input.permissionMode === "supervised"
+          && input.interactionMode === "default" && provenance?.previewTurnProof
+          && deps.beforePreviewDispatch) {
+          try {
+            await deps.beforePreviewDispatch({ actorId: principal.userId, chatId, turnId: admitted.turn.id,
+              runId: admitted.run.id, clientRequestId: input.clientRequestId, body: input,
+              proof: provenance.previewTurnProof });
+          } catch (error: unknown) {
+            // The Chat turn remains valid, but the personal integration stays unavailable.
+            console.warn("[chat] Preview Drive turn redemption failed", error instanceof Error ? error.name : "UnknownError");
+          }
         }
         deps.startDispatch(
           owner,

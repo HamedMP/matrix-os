@@ -47,9 +47,22 @@ bearers and their upgrade/code-proxy aliases are removed from the agent's
 environment; its selected Claude model credential remains available to the CLI.
 
 Platform proof verification reuses the existing authenticated customer integration
-boundary, body limits and preview denial. The new route handler is extracted into
+boundary, body limits and default preview denial. The new route handler is extracted into
 a focused module rather than adding behavior to the large startup composition.
 Gateway approval projection is likewise extracted from the large Claude adapter.
+
+## Shared Preview Google Drive acceptance extension
+
+Shared Preview machine credentials are accessible from Terminal and never grant
+personal integration authority. Only an authenticated browser turn can establish
+an actor/handle/run scoped Preview Drive lease. The canonical Chat approval
+must bind the exact `google_drive.list_files` request digest; Platform issues
+and atomically consumes a short-lived one-use grant for an explicit account
+label and `maxResults` from 1 to 3. Preview discovery exposes only the Google
+Drive connection and schema. Connect, sync, disconnect, file content, other
+services, full-access bypass and Custom MCP remain denied. Provider credentials
+stay with Platform. Returned metadata may be visible to other shared Terminal
+users; this is an explicit acceptance risk, not a confidentiality guarantee.
 
 ## Validation and delivery
 
@@ -59,11 +72,19 @@ Gateway approval projection is likewise extracted from the large Claude adapter.
 3. Native Claude control-protocol tests for pending, approve, decline, cancel,
    proof failures and fresh/resumed runs; preserve Custom MCP receipts.
 4. Platform route tests reject invalid proofs, unauthenticated identities and
-   Preview personal-account access. No new persistence or credential exposure.
-5. Publish an exact-head PR Preview VPS; check immutable release/health and run
-   synthetic acceptance. Shared Preview cannot proxy personal Drive accounts.
-6. Hand off personal-runtime acceptance: inventory, schema, approved bounded Drive
-   metadata read in fresh/resumed Claude Chat. Record versions and actual outcome.
+   ordinary Preview personal-account access. Preview one-use grants are stored
+   as expiring hashes in Platform Postgres; no provider credential is exposed.
+5. Publish an exact-head PR Preview VPS; check immutable release/health, synthetic
+   acceptance and machine-only denial. The narrow browser-bound Drive path is
+   the only Preview exception to personal integration denial.
+6. With the account owner's explicit acceptance of shared-Terminal result
+   visibility, verify inventory, schema and one approved bounded Drive metadata
+   read in fresh Claude Chat. Record the serving Platform revision, host bundle
+   and actual Chat outcome; repeat in a new run only with a fresh browser grant.
+
+The tagged Platform Preview uses staging data and cannot validate a production
+Drive connection. A real owner-account test requires a separately reviewed
+production Platform rollout of the narrow route before the Preview Chat run.
 
 The gateway contract is shared by Electron Desktop, Web Desktop and Web Canvas.
 No shell business logic is duplicated. Record live surface coverage separately.

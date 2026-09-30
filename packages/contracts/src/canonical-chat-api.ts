@@ -4,6 +4,7 @@ import {
   CanonicalChatMessagePartSchema,
   CanonicalChatMessageSchema,
   CanonicalChatApprovalDecisionSchema,
+  CanonicalChatActionDigestSchema,
   CanonicalChatModelSelectionSchema,
   CanonicalChatRequestIdSchema,
   CanonicalChatRunActivitySchema,
@@ -256,7 +257,28 @@ export type CanonicalChatInputSubmissionResponse = z.infer<typeof CanonicalChatI
 export const CanonicalSubmitChatApprovalRequestSchema = z.object({
   clientRequestId: CanonicalChatRequestIdSchema,
   decision: CanonicalChatApprovalDecisionSchema,
+  actionDigest: CanonicalChatActionDigestSchema.optional(),
 }).strict();
+
+const PreviewDriveActionSchema = z.object({
+  service: z.literal("google_drive"),
+  action: z.literal("list_files"),
+  label: z.string().min(1).max(100).refine(value => value.trim() === value && value.trim().length > 0),
+  params: z.object({ maxResults: z.number().int().min(1).max(3) }).strict(),
+}).strict();
+
+/** Pure canonical preimage; callers hash this with SHA-256 in their own runtime. */
+export function previewDriveActionCanonical(input: unknown): string | null {
+  const parsed = PreviewDriveActionSchema.safeParse(input);
+  if (!parsed.success) return null;
+  const { service, action, label, params } = parsed.data;
+  return `matrix-preview-drive-action:v1\0${JSON.stringify([service, action, label, params.maxResults])}`;
+}
+
+/** Match Platform and Gateway turn-intent body hashes after strict API parsing. */
+export function canonicalPreviewDriveTurnBody(input: unknown): string {
+  return JSON.stringify(CanonicalCreateChatTurnRequestSchema.parse(input));
+}
 
 export const CanonicalRetryChatTurnRequestSchema = z.object({
   clientRequestId: CanonicalChatRequestIdSchema,

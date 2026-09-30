@@ -1,5 +1,6 @@
 import { createInternalIntegrationGuard } from './internal-integration-guard.js';
 import { createIntegrationChatApprovalRoutes } from './integration-chat-approval.js';
+import { createPreviewDriveRoutes, type PreviewDriveIntegration } from './preview-drive-routes.js';
 import { canClerkUserAccessMachine, getActivePreviewMachineByHandle } from './customer-vps-preview.js';
 import { Hono, type Context } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
@@ -251,6 +252,7 @@ export function createApp(deps: {
   platformSecret?: string;
   integrationRoutes?: Hono<any>;
   internalIntegrationRoutes?: Hono<any>;
+  previewDriveIntegration?: PreviewDriveIntegration;
   customMcpRoutes?: Hono<any>;
   internalCustomMcpRoutes?: Hono<any>;
   internalCustomMcpApprovalRoutes?: Hono<any>;
@@ -649,6 +651,9 @@ export function createApp(deps: {
   }));
 
   app.route('/api/integrations', deps.integrationRoutes ?? createUnavailableIntegrationRoutes());
+  app.route('/internal/containers/:handle/preview-drive', createPreviewDriveRoutes({
+    db, platformSecret, integration: deps.previewDriveIntegration,
+  }));
   registerCustomMcpRoutes(app, {
     db,
     platformSecret,

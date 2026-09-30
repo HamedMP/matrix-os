@@ -108,15 +108,21 @@ blocks subsequent HTTP requests and new WebSocket handshakes after that deploy.
 An already-established WebSocket remains connected until it disconnects or is
 closed; active connection draining is intentionally deferred.
 
-Preview VPSes cannot use machine-proxied personal Integrations or Custom MCP
-accounts. A collaborator with a shared Terminal can read the machine credential,
+Preview VPSes cannot use machine credentials alone for personal Integrations or
+Custom MCP accounts. A collaborator with a shared Terminal can read the machine credential,
 so the platform rejects personal-account requests on both internal routes,
 including requests claiming the owner or another collaborator. An isolated
 platform-preview Custom MCP fixture uses a synthetic owner and remains available.
-Personal integrations remain
-available through the platform's Clerk-authenticated routes under each actor's own
-account. Use synthetic fixtures for in-VPS integration acceptance tests until a
-user-bound capability is available that the shared machine cannot mint.
+Personal integrations remain available through the platform's
+Clerk-authenticated routes under each actor's own account. A narrowly scoped
+Preview Google Drive acceptance flow can list at most three file metadata
+records only after an authenticated browser Chat turn and one exact browser
+approval. Platform binds the actor, Preview handle, run, account label and
+arguments, then atomically consumes the short-lived grant. The machine bearer
+alone still cannot access the account; all other personal integration and
+Custom MCP paths remain denied. Shared Terminal users may inspect returned
+metadata, so the owner must accept that visibility before a real-account test.
+Use synthetic fixtures for broader integration acceptance.
 
 ### Shared preview Terminal authorization
 

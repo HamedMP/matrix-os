@@ -6,6 +6,7 @@ import {
   CanonicalChatInvocationSchema,
   CanonicalChatResourceReferenceSchema,
   CanonicalChatRunActivitySchema,
+  CanonicalSubmitChatApprovalRequestSchema,
   CanonicalChatSafeErrorSchema,
   CanonicalChatRunSchema,
   CanonicalChatSchema,
@@ -19,6 +20,30 @@ import {
 const now = "2026-08-25T00:00:00.000Z";
 
 describe("canonical Chat contracts", () => {
+  it("accepts only a strict optional approval action digest", () => {
+    const actionDigest = "a".repeat(64);
+    const request = { clientRequestId: "req_digest", decision: "approve" as const };
+    expect(CanonicalSubmitChatApprovalRequestSchema.parse(request)).not.toHaveProperty("actionDigest");
+    expect(CanonicalSubmitChatApprovalRequestSchema.parse({ ...request, actionDigest })).toMatchObject({ actionDigest });
+    for (const invalid of ["A".repeat(64), "a".repeat(63), "a".repeat(65), "g".repeat(64)]) {
+      expect(CanonicalSubmitChatApprovalRequestSchema.safeParse({ ...request, actionDigest: invalid }).success).toBe(false);
+    }
+    const activity = {
+      id: "activity_digest", chatId: "chat_demo", runId: "run_demo", occurredAt: now,
+      type: "approval.requested", approvalId: "approval_digest", title: "List files",
+      risk: "low", allowedDecisions: ["approve", "decline"],
+    };
+    expect(CanonicalChatRunActivitySchema.parse({ ...activity, actionDigest })).toMatchObject({ actionDigest });
+    expect(CanonicalChatRunActivitySchema.parse(activity)).not.toHaveProperty("actionDigest");
+    expect(CanonicalChatRunActivitySchema.safeParse({ ...activity, actionDigest: "0".repeat(63) }).success).toBe(false);
+    const message = {
+      id: "msg_digest", chatId: "chat_demo", seq: 1, role: "system", state: "committed",
+      parts: [{ type: "approval_request", approvalId: "approval_digest", title: "List files", description: "Allow list?",
+        risk: "low", allowedDecisions: ["approve", "decline"], actionDigest }], createdAt: now,
+    };
+    expect(CanonicalChatMessageSchema.parse(message).parts[0]).toMatchObject({ actionDigest });
+    expect(CanonicalChatMessageSchema.safeParse({ ...message, parts: [{ ...message.parts[0], actionDigest: "bad" }] }).success).toBe(false);
+  });
   it("keeps enriched attachment resources optional for older text/file projections", () => {
     const base = {
       id: "msg_artifact",

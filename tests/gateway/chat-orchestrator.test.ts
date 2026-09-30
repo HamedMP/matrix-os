@@ -92,6 +92,34 @@ describe("CanonicalChatOrchestrator", () => {
     await repository.kysely.destroy();
   });
 
+  it("redeems a Preview browser turn proof after admission but before Claude starts", async () => {
+    await repository.create(owner, { id: "chat_preview", clientRequestId: "req_preview_create", title: "Preview" });
+    const claudeCatalog = catalog();
+    const instance = claudeCatalog.instances[0]!;
+    const previewCatalog = CanonicalProviderCatalogSchema.parse({ ...claudeCatalog,
+      drivers: [{ ...claudeCatalog.drivers[0], kind: "claude_code" }],
+      instances: [{ ...instance, id: "claude_code_default", driverKind: "claude_code" }],
+    });
+    const order: string[] = [];
+    const beforeDispatch = vi.fn(async (input: { runId: string; proof: string }) => {
+      order.push("redeem"); expect(input.runId).toMatch(/^run_/); expect(input.proof).toBe("browser-proof");
+    });
+    const provider = { ...adapter(async function* () { order.push("start");
+      yield { type: "run.completed", outcome: "completed" }; }), driverKind: "claude_code" as const };
+    const orchestrator = new CanonicalChatOrchestrator({ repository,
+      catalog: { getCatalog: async () => previewCatalog },
+      adapters: new CanonicalChatProviderRegistry([provider]), beforePreviewDispatch: beforeDispatch });
+    const request = { clientRequestId: "req_preview_turn", baseRevision: 0,
+      parts: [{ type: "text" as const, text: "List three Drive files" }],
+      selection: { instanceId: "claude_code_default", model: "gpt-5.6-sol" },
+      interactionMode: "default" as const, permissionMode: "supervised" as const };
+    await orchestrator.admitTurn(principal, owner, "chat_preview", request, { previewTurnProof: "browser-proof" });
+    await orchestrator.drain();
+    expect(order).toEqual(["redeem", "start"]);
+    expect(beforeDispatch).toHaveBeenCalledWith(expect.objectContaining({ actorId: owner.ownerId,
+      chatId: "chat_preview", clientRequestId: "req_preview_turn", body: request }));
+  });
+
   it("commits admission before Provider work, revalidates the root, and replays normalized output", async () => {
     await repository.create(owner, {
       id: "chat_orchestrated",

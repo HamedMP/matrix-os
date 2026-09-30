@@ -1,7 +1,10 @@
 import { randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
+import { previewDriveActionCanonical } from "@matrix-os/contracts";
 import type { CanonicalChatApprovalDecision } from "@matrix-os/contracts";
 import type { CustomMcpApprovalClient } from "./custom-mcp-approval-client.js";
 import type { MatrixMcpRunCapability } from "./matrix-mcp-launch.js";
+import type { PreviewDrivePlatformClient } from "./preview-drive-platform-client.js";
 import { integrationToolRequest, MATRIX_INTEGRATION_ACTION_TOOLS } from "./integration-tool-authority.js";
 import { CanonicalProviderRunEventSchema, type CanonicalProviderRunEvent } from "./provider-adapter.js";
 import { sanitizeAssistantText } from "./safe-activity-projection.js";
@@ -9,6 +12,7 @@ import { sanitizeAssistantText } from "./safe-activity-projection.js";
 type Respond = (value: unknown) => Promise<void>;
 interface Pending {
   nativeId: string; tool: string; input: Record<string, unknown>; respond: Respond;
+  actionDigest?: string;
   timer: ReturnType<typeof setTimeout>; deciding?: Promise<void>;
   resolved?: boolean; revokeGrant?: () => void;
 }
@@ -16,6 +20,7 @@ interface Pending {
 export function createClaudeIntegrationApprovalControl(options: {
   runId: string; homePath: string; capability: MatrixMcpRunCapability;
   verify?: CustomMcpApprovalClient["verifyIntegrationDecision"];
+  previewDriveClient?: Pick<PreviewDrivePlatformClient, "grantAction">;
   emit(event: CanonicalProviderRunEvent): void; onError(error: unknown): void;
 }) {
   const pending = new Map<string, Pending>(); // max 16; resolved/closed/timed-out entries removed
@@ -62,25 +67,32 @@ export function createClaudeIntegrationApprovalControl(options: {
     onToolPermission(request: { nativeRequestId: string; toolName: string; input: Record<string, unknown> }, respond: Respond): boolean {
       if (!(MATRIX_INTEGRATION_ACTION_TOOLS as readonly string[]).includes(request.toolName)) return false;
       const action = integrationToolRequest(request.toolName, request.input);
+      const previewCanonical = options.capability.previewDrive
+        ? previewDriveActionCanonical(request.input) : null;
+      const actionDigest = previewCanonical
+        ? createHash("sha256").update(previewCanonical).digest("hex") : undefined;
       sweepIssued();
       const duplicate = issued.has(request.nativeRequestId)
         || [...pending.values()].some(value => value.nativeId === request.nativeRequestId);
       if (duplicate) return true;
       const description = JSON.stringify(request.input);
-      if (closed || !action || !options.verify || !options.capability.grantIntegrationTool || pending.size >= 16 || description.length > 4000) {
+      if (closed || !action || !(options.verify || (options.capability.previewDrive && options.previewDriveClient))
+        || (options.capability.previewDrive && !actionDigest)
+        || !options.capability.grantIntegrationTool || pending.size >= 16 || description.length > 4000) {
         void deny(respond).catch(options.onError);
         return true;
       }
       const id = `integration_${randomUUID()}`;
       const current: Pending = { nativeId: request.nativeRequestId, tool: request.toolName,
-        input: structuredClone(request.input), respond,
+        input: structuredClone(request.input), respond, ...(actionDigest ? { actionDigest } : {}),
         timer: setTimeout(() => cancel(id, current), 5 * 60_000) };
       current.timer.unref?.();
       pending.set(id, current);
       options.emit(CanonicalProviderRunEventSchema.parse({ type: "approval.requested", approvalId: id,
         title: sanitizeAssistantText(action.title, { homePath: options.homePath }).slice(0, 160),
         safeDescription: sanitizeAssistantText(description, { homePath: options.homePath }),
-        risk: "high", allowedDecisions: ["approve", "decline", "cancel"] }));
+        risk: "high", allowedDecisions: ["approve", "decline", "cancel"],
+        ...(actionDigest ? { actionDigest } : {}) }));
       return true;
     },
     onToolPermissionCancel(nativeId: string) {
@@ -97,10 +109,17 @@ export function createClaudeIntegrationApprovalControl(options: {
         let responseStarted = false;
         let responseWritten = false;
         try {
-          if (!provenance?.platformApprovalProof || !options.verify || !await options.verify({
-            runId: options.runId, approvalId: id, decision, chatId: provenance.chatId,
-            clientRequestId: provenance.clientRequestId, platformApprovalProof: provenance.platformApprovalProof,
-          })) throw new Error("Authenticated integration approval unavailable");
+          if (decision === "approve" && options.capability.previewDrive) {
+            if (!provenance?.platformApprovalProof || !options.previewDriveClient || !current.actionDigest
+              || provenance.chatId !== options.capability.previewDrive.chatId) {
+              throw new Error("Authenticated integration approval unavailable");
+            }
+          } else if (!options.capability.previewDrive && (!provenance?.platformApprovalProof || !options.verify
+            || !await options.verify({ runId: options.runId, approvalId: id, decision,
+              chatId: provenance.chatId, clientRequestId: provenance.clientRequestId,
+              platformApprovalProof: provenance.platformApprovalProof }))) {
+            throw new Error("Authenticated integration approval unavailable");
+          }
           if (closed || pending.get(id) !== current) throw new Error("Integration approval cancelled");
           let approvedInput = current.input;
           if (decision === "approve") {
@@ -109,6 +128,17 @@ export function createClaudeIntegrationApprovalControl(options: {
             const grant = options.capability.grantIntegrationTool?.(current.tool, current.input);
             if (!grant) throw new Error("Integration authority unavailable");
             current.revokeGrant = retainGrant(current.nativeId, grant);
+            if (options.capability.previewDrive) {
+              const platformGrant = await options.previewDriveClient!.grantAction({
+                ...options.capability.previewDrive, approvalId: id,
+                clientRequestId: provenance!.clientRequestId, actionDigest: current.actionDigest!,
+                action: current.input as Parameters<PreviewDrivePlatformClient["grantAction"]>[0]["action"],
+                proof: provenance!.platformApprovalProof!,
+              });
+              if (!options.capability.bindPreviewActionGrant?.(grant.receipt, platformGrant)) {
+                throw new Error("Integration authority unavailable");
+              }
+            }
             approvedInput = { ...current.input, matrix_approval_receipt: grant.receipt };
           }
           responseStarted = true;

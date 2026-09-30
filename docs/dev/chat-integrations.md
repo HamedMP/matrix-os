@@ -63,7 +63,18 @@ Do not perform writes or disconnect accounts as part of a read-connectivity test
 Verify write/account-management approval with synthetic fixtures unless that
 specific mutation has been authorized.
 
-Shared PR Preview VPSes intentionally reject machine-proxied personal integrations.
-Use them for exact-bundle health, packaged MCP discovery and synthetic authorization
-acceptance. Real-account Drive acceptance requires an owner-only personal runtime;
-do not relax Preview isolation to make the test work.
+Shared PR Preview VPSes reject ordinary machine-proxied personal integrations.
+The narrow Preview Drive acceptance path requires a fresh Platform-authenticated
+Chat turn and a separate browser approval for one exact `google_drive.list_files`
+request with an explicit account label and `maxResults` from 1 to 3. Platform
+consumes a short-lived grant once and returns at most three metadata records;
+the machine bearer alone cannot select a personal account. Connect, sync,
+disconnect, file-content access, other services and Custom MCP remain denied.
+Do not copy OAuth or model subscription credentials onto a shared VPS.
+
+The Preview host is shared. Terminal users may inspect Chat output or runtime
+state, including returned metadata. Only use the narrow real-account path when
+the account owner accepts that visibility. A tagged Platform Preview backed by
+staging data cannot validate an owner's production Drive connection. Record the
+serving Platform revision and exact host bundle separately, then verify the
+machine-only negative case before a real provider read.

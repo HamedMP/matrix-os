@@ -160,6 +160,7 @@ export interface CanonicalChatRouteService {
     owner: ChatOwner,
     chatId: string,
     input: CanonicalCreateChatTurnRequest,
+    provenance?: { previewTurnProof?: string },
   ): Promise<CanonicalChatTurnAdmissionResponse>;
   enqueueQueuedTurn(
     principal: RequestPrincipal,
@@ -530,6 +531,7 @@ export function createCanonicalChatRoutes(options: {
         ownerFromPrincipal(principal),
         chatId,
         parsed.data,
+        { previewTurnProof: context.req.header("x-matrix-preview-drive-turn-proof") },
       );
       return chatJson(context, projectChatMessageResponse(
         CanonicalChatTurnAdmissionResponseSchema.parse(result),

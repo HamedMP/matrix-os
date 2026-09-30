@@ -7,6 +7,7 @@ import { APP_SESSION_COOKIE } from "../../packages/platform/src/session-cookies.
 import { resolveAppDomainIdentity } from "../../packages/platform/src/session-routing-identity.js";
 import { issueSyncJwt } from "../../packages/platform/src/sync-jwt.js";
 import { CUSTOM_MCP_APPROVAL_PROOF_HEADER, verifyCustomMcpApprovalProof } from "../../packages/platform/src/custom-mcp-approval-proof.js";
+import { PREVIEW_DRIVE_TURN_PROOF_HEADER, previewDriveTurnBodyDigest, verifyPreviewDriveTurnProof } from '../../packages/platform/src/preview-drive-turn-proof.js';
 import {
   JWT_SECRET,
   cleanupProxyRoutingTest,
@@ -238,5 +239,38 @@ describe("browser app-session runtime routing", () => {
       [CUSTOM_MCP_APPROVAL_PROOF_HEADER]: "forged" }, body });
     expect(unauthenticated.status).toBe(401);
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('mints a body-bound turn proof only for an authenticated direct Preview Claude turn', async () => {
+    await insertMachine(db, { handle: 'alice-primary', runtimeSlot: 'primary', publicIPv4: '203.0.113.20' });
+    await insertUserMachine(db, { machineId: '00000000-0000-4000-8000-000000002045',
+      clerkUserId: 'user_preview_owner', handle: 'pr-1234', runtimeSlot: 'pr-1234', provisioningClass: 'preview',
+      accessClerkUserIds: ['user_alice'], status: 'running', publicIPv4: '203.0.113.45',
+      provisionedAt: '2026-09-30T00:00:00.000Z' });
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('accepted', { status: 200 }));
+    const app = createApp({ db, orchestrator: stubOrchestrator(), platformSecret: 'platform-secret-123',
+      clerkAuth: createClerkAuth({ verifyToken: vi.fn().mockResolvedValue(null) }) });
+    const body = { clientRequestId: 'req_one', baseRevision: 0, parts: [{ type: 'text', text: 'List my files' }],
+      selection: { instanceId: 'claude_code_default', model: 'claude-sonnet-4-5' },
+      interactionMode: 'default', permissionMode: 'supervised' };
+    const path = '/vm/pr-1234/api/chats/chat_one/turns';
+    const headers = { host: 'app.matrix-os.com', cookie: await primarySessionCookie(), 'content-type': 'application/json',
+      [PREVIEW_DRIVE_TURN_PROOF_HEADER]: 'forged' };
+    expect(await resolveAppDomainIdentity({ authHeader: undefined, cookieHeader: headers.cookie,
+      clerkAuth: createClerkAuth({ verifyToken: vi.fn().mockResolvedValue(null) }), db, platformJwtSecret: JWT_SECRET,
+      requestedHandle: 'pr-1234', runtimeSlot: 'primary' })).toMatchObject({ userId: 'user_alice', handle: 'pr-1234' });
+    expect((await app.request(path, { method: 'POST', headers, body: JSON.stringify(body) })).status).toBe(200);
+    const forwarded = new Headers((fetchMock.mock.calls[0]?.[1] as RequestInit).headers);
+    const proof = forwarded.get(PREVIEW_DRIVE_TURN_PROOF_HEADER);
+    expect(proof).toBeTruthy();
+    expect(proof).not.toBe('forged');
+    expect(verifyPreviewDriveTurnProof(proof, { handle: 'pr-1234', actorId: 'user_alice', chatId: 'chat_one',
+      clientRequestId: 'req_one', bodyDigest: previewDriveTurnBodyDigest(body), secret: 'platform-secret-123' })).toBeTruthy();
+    expect(forwarded.get('cookie')).toBeNull();
+    fetchMock.mockClear();
+    expect((await app.request(path.replace('/turns', '/queued-turns'), { method: 'POST', headers,
+      body: JSON.stringify(body) })).status).toBe(200);
+    const queuedHeaders = new Headers((fetchMock.mock.calls[0]?.[1] as RequestInit).headers);
+    expect(queuedHeaders.get(PREVIEW_DRIVE_TURN_PROOF_HEADER)).toBeNull();
   });
 });

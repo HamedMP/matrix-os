@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+import { previewDriveActionCanonical } from "@matrix-os/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createClaudeIntegrationApprovalControl } from "../../packages/gateway/src/chat/claude-integration-approval.js";
 import { createMatrixMcpCapabilityRegistry } from "../../packages/gateway/src/chat/matrix-mcp-launch.js";
@@ -23,6 +25,64 @@ function fixture(verified = true) {
 const proof = { chatId: "chat_1", clientRequestId: "req_1", platformApprovalProof: "signed-decision" };
 
 describe("built-in integration human decisions", () => {
+  it("binds a Preview Drive decision digest to the one-use Platform action grant", async () => {
+    const registry = createMatrixMcpCapabilityRegistry({ previewRuntime: true });
+    registry.authorizePreviewDriveRun({ actorId: "owner_claude", chatId: "chat_1", runId: "run_1", runGrant: "a".repeat(64) });
+    const capability = registry.issue({ owner: { type: "personal", ownerId: "owner_claude" },
+      runId: "run_1", scope: "chat_call" })!;
+    const grantAction = vi.fn(async () => "b".repeat(64));
+    const events: CanonicalProviderRunEvent[] = [];
+    const respond = vi.fn(async (_value: unknown) => {});
+    const control = createClaudeIntegrationApprovalControl({ runId: "run_1", homePath: "/safe/home",
+      capability, previewDriveClient: { grantAction } as never,
+      emit: event => events.push(event), onError: vi.fn() });
+    const exact = { service: "google_drive", action: "list_files", label: "work", params: { maxResults: 3 } };
+    expect(control.onToolPermission({ nativeRequestId: "native_drive", toolName, input: exact }, respond)).toBe(true);
+    const request = events[0] as Extract<CanonicalProviderRunEvent, { type: "approval.requested" }>;
+    const canonical = previewDriveActionCanonical(exact)!;
+    expect(request.actionDigest).toBe(createHash("sha256").update(canonical).digest("hex"));
+    expect(grantAction).not.toHaveBeenCalled();
+    const context = registry.resolveRunContext(capability.token, "POST", "/api/integrations/call")!;
+    expect(context.previewDrive!.consumeActionGrant(exact, "c".repeat(64))).toBeNull();
+    await expect(control.submit(request.approvalId, "approve_for_session", { chatId: "chat_1",
+      clientRequestId: "req_1", platformApprovalProof: "browser-proof" })).rejects.toThrow();
+    expect(grantAction).not.toHaveBeenCalled();
+    await control.submit(request.approvalId, "approve", { chatId: "chat_1", clientRequestId: "req_1",
+      platformApprovalProof: "browser-proof" });
+    expect(grantAction).toHaveBeenCalledWith({ runGrant: "a".repeat(64), chatId: "chat_1", runId: "run_1",
+      approvalId: request.approvalId, clientRequestId: "req_1", actionDigest: request.actionDigest,
+      action: exact, proof: "browser-proof" });
+    const receipt = (respond.mock.calls[0]![0] as { updatedInput: { matrix_approval_receipt: string } })
+      .updatedInput.matrix_approval_receipt;
+    expect(context.previewDrive!.consumeActionGrant({ ...exact, params: { maxResults: 2 } }, receipt)).toBeNull();
+    expect(context.previewDrive!.consumeActionGrant(exact, receipt)).toBe("b".repeat(64));
+    expect(context.previewDrive!.consumeActionGrant(exact, receipt)).toBeNull();
+    await expect(control.submit(request.approvalId, "approve", { chatId: "chat_1",
+      clientRequestId: "req_1", platformApprovalProof: "browser-proof" })).rejects.toThrow();
+    expect(grantAction).toHaveBeenCalledOnce();
+    control.close(); registry.close();
+  });
+
+  it("does not request a Platform grant for a stale native Preview approval", async () => {
+    const registry = createMatrixMcpCapabilityRegistry({ previewRuntime: true });
+    registry.authorizePreviewDriveRun({ actorId: "owner_claude", chatId: "chat_1", runId: "run_1", runGrant: "a".repeat(64) });
+    const capability = registry.issue({ owner: { type: "personal", ownerId: "owner_claude" },
+      runId: "run_1", scope: "chat_call" })!;
+    const grantAction = vi.fn(async () => "b".repeat(64));
+    const events: CanonicalProviderRunEvent[] = [];
+    const control = createClaudeIntegrationApprovalControl({ runId: "run_1", homePath: "/safe/home",
+      capability, previewDriveClient: { grantAction } as never,
+      emit: event => events.push(event), onError: vi.fn() });
+    control.onToolPermission({ nativeRequestId: "native_drive", toolName,
+      input: { service: "google_drive", action: "list_files", label: "work", params: { maxResults: 3 } } },
+    vi.fn(async () => {}));
+    const request = events[0] as Extract<CanonicalProviderRunEvent, { type: "approval.requested" }>;
+    control.onToolPermissionCancel("native_drive");
+    await expect(control.submit(request.approvalId, "approve", { chatId: "chat_1", clientRequestId: "req_1",
+      platformApprovalProof: "browser-proof" })).rejects.toThrow();
+    expect(grantAction).not.toHaveBeenCalled();
+    control.close(); registry.close();
+  });
   it("retracts a completed native allow when cancellation arrives before execution", async () => {
     const f = fixture();
     await f.control.submit(f.requested.approvalId, "approve", proof);

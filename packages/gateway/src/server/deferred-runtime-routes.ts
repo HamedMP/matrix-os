@@ -52,7 +52,7 @@ export function registerDeferredRuntimeRoutes(options: DeferredRuntimeRouteOptio
   // Deferred route mounts -- must come AFTER auth middleware
   if (integrationRoutes) {
     app.use("/api/integrations/*", bodyLimit({ maxSize: INTEGRATION_PROXY_BODY_LIMIT }), async (c, next) => {
-      const denied = await authorizeChatIntegrationRequest(c);
+      const denied = await authorizeChatIntegrationRequest(c, { localRoutes: true });
       if (denied) return denied;
       await next();
     });

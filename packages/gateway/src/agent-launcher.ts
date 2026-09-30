@@ -67,7 +67,7 @@ export interface AgentLaunchInput {
   claudeOutputFormat?: "stream-json";
   claudeIncludePartialMessages?: boolean;
   matrixCustomMcp?: boolean;
-  matrixCustomMcpScope?: "call" | "discovery" | "chat_call" | "chat_discovery";
+  matrixCustomMcpScope?: "call" | "discovery" | "chat_call" | "chat_discovery" | "preview_drive_call";
 }
 
 export interface AgentLaunchSpec {
@@ -282,9 +282,11 @@ function claudeLaunchSettings(input: AgentLaunchInput): z.infer<typeof ClaudeLau
     (input.approvalPolicy === "on-request" || input.approvalPolicy === "never") &&
     input.mode !== "plan" &&
     input.mode !== "review";
-  const chatIntegrations = input.matrixCustomMcpScope?.startsWith("chat_") === true;
+  const previewDrive = input.matrixCustomMcpScope === "preview_drive_call";
+  const chatIntegrations = input.matrixCustomMcpScope?.startsWith("chat_") === true || previewDrive;
   const mcpTools = input.matrixCustomMcp
-    ? [...(chatIntegrations ? MATRIX_INTEGRATION_DISCOVERY_TOOLS : []), ...(mode === "read-only" || claudePermissionMode(input) === "default"
+    ? [...(previewDrive ? [MATRIX_INTEGRATION_DISCOVERY_TOOLS[0], MATRIX_INTEGRATION_DISCOVERY_TOOLS[2]]
+      : chatIntegrations ? MATRIX_INTEGRATION_DISCOVERY_TOOLS : []), ...(previewDrive ? [] : mode === "read-only" || claudePermissionMode(input) === "default"
       ? MATRIX_CUSTOM_MCP_DISCOVERY_TOOLS : MATRIX_CUSTOM_MCP_TOOLS)]
     : [];
   if (mode === "read-only") {
@@ -304,7 +306,7 @@ function claudeLaunchSettings(input: AgentLaunchInput): z.infer<typeof ClaudeLau
     permissions: scopedEdits
       ? {
           allow: [...(sandbox.writableRoots ?? []).map(claudeEditPermissionRule), ...mcpTools],
-          ...(chatIntegrations ? { ask: [...MATRIX_INTEGRATION_ACTION_TOOLS] } : {}),
+          ...(chatIntegrations ? { ask: previewDrive ? [MATRIX_INTEGRATION_ACTION_TOOLS[0]] : [...MATRIX_INTEGRATION_ACTION_TOOLS] } : {}),
         }
       : { ...(mcpTools.length ? { allow: mcpTools } : {}), deny: ["Edit", "Write", "NotebookEdit"] },
     sandbox: {
