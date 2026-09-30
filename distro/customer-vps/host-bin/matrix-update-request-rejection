@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+# Fingerprint fixed request files without following symlinks or unbounded reads.
+update_request_identity() {
+  python3 - "${UPDATE_MARKER}" "${1:-${UPDATE_TRIGGER:-$APP_DIR/.update-now}}" \
+    "${UPDATE_VERSION_FILE:-$APP_DIR/.update-version}" \
+    "${UPDATE_CHANNEL_FILE:-$APP_DIR/.update-channel}" <<'PY'
+import hashlib
+import os
+import stat
+import sys
+
+digest = hashlib.sha256()
+for path in sys.argv[1:]:
+    try:
+        info = os.lstat(path)
+    except FileNotFoundError:
+        digest.update(b"absent\0")
+        continue
+    digest.update(str((info.st_dev, info.st_ino, info.st_mode, info.st_size, info.st_mtime_ns)).encode())
+    if stat.S_ISREG(info.st_mode) and info.st_size <= 65536:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+        try:
+            digest.update(os.read(fd, 65537))
+        finally:
+            os.close(fd)
+    digest.update(b"\0")
+print(digest.hexdigest())
+PY
+}
+
+# Claim the trigger by rename before comparing. A concurrently replaced trigger
+# is restored with an exclusive hard link; an even newer trigger is never overwritten.
+reject_unchanged_update_request() {
+  local expected="$1" claimed actual restore_failed=false
+  [ -n "$expected" ] || return 1
+  if [ ! -e "$UPDATE_TRIGGER" ] && [ ! -L "$UPDATE_TRIGGER" ]; then return 0; fi
+  claimed="$(mktemp "$APP_DIR/.update-rejected.XXXXXX")" || return 1
+  if ! sudo mv -Tf -- "$UPDATE_TRIGGER" "$claimed"; then
+    rm -f -- "$claimed"
+    log "WARN: rejected update trigger could not be claimed"
+    return 1
+  fi
+  if ! actual="$(update_request_identity "$claimed")" || [ "$actual" != "$expected" ]; then
+    if ! sudo ln -- "$claimed" "$UPDATE_TRIGGER" 2>/dev/null; then
+      if [ ! -e "$UPDATE_TRIGGER" ] && [ ! -L "$UPDATE_TRIGGER" ]; then
+        log "ERROR: newer update trigger could not be restored"
+        restore_failed=true
+      fi
+    fi
+    if [ "$restore_failed" = true ]; then
+      # Retain the claimed trigger for the operator; future cleanup is explicit.
+      log "ERROR: retained claimed update trigger requires recovery"
+      return 1
+    fi
+    sudo rm -f -- "$claimed"
+    return 0
+  fi
+  if [ ! -e "$UPDATE_TRIGGER" ] && [ ! -L "$UPDATE_TRIGGER" ]; then
+    rm -f -- "$UPDATE_MARKER"
+  fi
+  sudo rm -f -- "$claimed"
+  log "Permanently rejected unchanged update request; channel polling can resume"
+}

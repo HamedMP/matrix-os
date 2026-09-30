@@ -7,13 +7,20 @@ import { describe, expect, it } from 'vitest';
 const updaterPath = 'distro/customer-vps/host-bin/matrix-sync-agent';
 const sha256 = 'a'.repeat(64);
 
+function expandedUpdater(): string {
+  return readFileSync(updaterPath, 'utf8')
+    .replace(/# BEGIN update manifest library loader[\s\S]*?# END update manifest library loader/,
+      () => readFileSync('distro/customer-vps/host-bin/matrix-update-manifest', 'utf8'))
+    .replace(/# BEGIN update request rejection library loader[\s\S]*?# END update request rejection library loader/, '');
+}
+
 function verifyMarker(marker: unknown, trusted: unknown) {
   const directory = mkdtempSync(join(tmpdir(), 'matrix-update-manifest-'));
   const markerPath = join(directory, 'marker.json');
   const fetchLog = join(directory, 'fetch.log');
   writeFileSync(markerPath, JSON.stringify(marker));
   writeFileSync(fetchLog, '');
-  const updater = readFileSync(updaterPath, 'utf8');
+  const updater = expandedUpdater();
   const start = updater.indexOf('load_trusted_apply_manifest() {');
   const end = updater.indexOf('write_prepared_update_marker() {', start);
   const functionSource = start < 0 ? '' : updater.slice(start, end);
@@ -43,7 +50,8 @@ function probeApply(marker: unknown, trusted: unknown, badDigest = false) {
   const installLog = join(directory, 'install.log');
   mkdirSync(join(directory, 'staging'));
   writeFileSync(markerPath, JSON.stringify(marker));
-  const updater = readFileSync(updaterPath, 'utf8');
+  const updater = expandedUpdater();
+  const rejectionLibrary = readFileSync('distro/customer-vps/host-bin/matrix-update-request-rejection', 'utf8');
   const trustedStart = updater.indexOf('load_trusted_apply_manifest() {');
   const trustedEnd = updater.indexOf('write_prepared_update_marker() {', trustedStart);
   const applyStart = updater.indexOf('apply_update() {');
@@ -68,6 +76,7 @@ write_update_phase() { :; }
 write_update_error() { printf '%s' "$1" > "$ERROR_LOG"; }
 tar() { printf 'reached' > "$INSTALL_LOG"; return 1; }
 download_bundle() { printf '%s\\n' "$@" > "$DOWNLOAD_LOG"; ${badDigest ? 'printf corrupt > "$5"; return 0;' : 'return 1;'} }
+${rejectionLibrary}
 ${updater.slice(trustedStart, trustedEnd)}
 ${updater.slice(applyStart, applyEnd)}
 apply_update other`;
@@ -92,7 +101,8 @@ function probeRejectedExplicitRequest(marker: unknown, trusted: unknown, metadat
   const downloadLog = join(directory, 'download.log');
   writeFileSync(markerPath, JSON.stringify(marker));
   writeFileSync(triggerPath, '');
-  const updater = readFileSync(updaterPath, 'utf8');
+  const updater = expandedUpdater();
+  const rejectionLibrary = readFileSync('distro/customer-vps/host-bin/matrix-update-request-rejection', 'utf8');
   const trustedStart = updater.indexOf('load_trusted_apply_manifest() {');
   const trustedEnd = updater.indexOf('write_prepared_update_marker() {', trustedStart);
   const applyStart = updater.indexOf('apply_update() {');
@@ -117,6 +127,7 @@ ensure_update_headroom() { :; }
 write_update_phase() { :; }
 write_update_error() { printf '%s|%s' "$1" "\${3:-}" > "$ERROR_LOG"; }
 download_bundle() { printf reached > "$DOWNLOAD_LOG"; return 1; }
+${rejectionLibrary}
 ${updater.slice(trustedStart, trustedEnd)}
 ${updater.slice(applyStart, applyEnd)}
 apply_update explicit`;
@@ -145,7 +156,7 @@ function probeRetryUrl(refreshedUrl: string) {
   writeFileSync(fakeCurl, '#!/bin/sh\nprintf "%s\\n" "$*" >> "$CURL_LOG"\nexit 1\n');
   chmodSync(fakeCurl, 0o755);
   writeFileSync(curlLog, '');
-  const updater = readFileSync(updaterPath, 'utf8');
+  const updater = expandedUpdater();
   const start = updater.indexOf('bundle_url_is_https() {');
   const end = updater.indexOf('prepare_triggered_update_action=apply', start);
   const script = `set -euo pipefail
@@ -241,16 +252,24 @@ describe('VPS update manifest trust boundary', () => {
     expect(error).toBe('download_metadata_changed');
   });
 
-  it('preserves a rejected request until it can be verified or replaced', () => {
+  it('discards a permanently malformed request so channel polling can resume', () => {
     const { result, markerExists, triggerExists, error, downloadReached } = probeRejectedExplicitRequest(
       { version: '../x', url: 'https://attacker.example/bundle', sha256: 'b'.repeat(64), size: 1 },
       { version: '../x', sha256, size: 100, url: 'https://storage.example/bundle' },
     );
     expect(result.status).toBe(1);
-    expect(triggerExists).toBe(true);
-    expect(markerExists).toBe(true);
+    expect(triggerExists).toBe(false);
+    expect(markerExists).toBe(false);
     expect(error).toBe('update_request_rejected|');
     expect(downloadReached).toBe(false);
+  });
+
+  it('discards permanently invalid immutable metadata without downloading', () => {
+    const result = probeRejectedExplicitRequest({ version: 'v2026.09.28-1' },
+      { version: 'v2026.09.28-1', size: 100, url: 'https://storage.example/bundle' });
+    expect(result.triggerExists).toBe(false);
+    expect(result.markerExists).toBe(false);
+    expect(result.downloadReached).toBe(false);
   });
 
   it('preserves a newer trigger and target written during failed validation', () => {
@@ -275,7 +294,7 @@ describe('VPS update manifest trust boundary', () => {
     const marker = JSON.stringify({ version: 'v2026.09.28-1' });
     writeFileSync(markerPath, marker);
     writeFileSync(triggerPath, '');
-    const updater = readFileSync(updaterPath, 'utf8');
+    const updater = expandedUpdater();
     const start = updater.indexOf('check_for_update() {');
     const end = updater.indexOf('# ── Apply update', start);
     try {

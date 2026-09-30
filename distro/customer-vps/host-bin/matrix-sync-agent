@@ -1057,81 +1057,21 @@ consume_update_trigger() {
   sudo rm -f -- "$UPDATE_TRIGGER"
 }
 
-fetch_manifest() {
-  local url="$1" manifest
-  if ! manifest="$(curl --fail --silent --show-error --max-time 15 --max-filesize 65536 "$url" 2>&1)"; then
-    log "WARN: failed to fetch release metadata from $url"; return 1
-  fi
-  printf '%s' "$manifest"
+# BEGIN update manifest library loader
+[ -f "$BIN_DIR/matrix-update-manifest" ] && [ ! -L "$BIN_DIR/matrix-update-manifest" ] || {
+  log "ERROR: update manifest library is unavailable"
+  exit 1
 }
+source "$BIN_DIR/matrix-update-manifest"
+# END update manifest library loader
 
-# Extraction plan for this long orchestration script: before moving updates to
-# a root-owned service, move version parsing, platform release validation,
-# HTTPS download retries, and checksum verification into one protected helper
-# under /usr/local/libexec. Keep only typed requests and service sequencing
-# here. The manifest trust and apply-path tests become its contract tests.
-load_trusted_apply_manifest() {
-  local version manifest
-  # The marker is owner-writable. Its only authority is the requested version;
-  # even that is read without following a symlink and bounded before URL use.
-  if ! version="$(python3 - "$UPDATE_MARKER" <<'PY'
-import json
-import os
-import re
-import stat
-import sys
-
-fd = os.open(sys.argv[1], os.O_RDONLY | os.O_NOFOLLOW)
-try:
-    metadata = os.fstat(fd)
-    if not stat.S_ISREG(metadata.st_mode) or metadata.st_size < 2 or metadata.st_size > 65536:
-        raise ValueError("invalid update marker")
-    payload = os.read(fd, 65537)
-    if len(payload) > 65536:
-        raise ValueError("oversized update marker")
-    version = json.loads(payload).get("version")
-    if not isinstance(version, str) or not re.fullmatch(r"[A-Za-z0-9._-]{1,128}", version):
-        raise ValueError("invalid update version")
-    print(version)
-finally:
-    os.close(fd)
-PY
-  )"; then
-    log "ERROR: prepared update marker is invalid"
-    return 1
-  fi
-  if ! manifest="$(fetch_manifest "$(release_url_for_version "$version")")"; then
-    log "ERROR: immutable release metadata is unavailable"
-    return 1
-  fi
-  if ! printf '%s' "$manifest" | python3 -c '
-import json
-import re
-import sys
-from urllib.parse import urlsplit
-
-expected_version = sys.argv[1]
-payload = json.load(sys.stdin)
-if not isinstance(payload, dict) or payload.get("version") != expected_version:
-    raise ValueError("immutable release version mismatch")
-sha256 = payload.get("sha256")
-size = payload.get("size")
-url = payload.get("url")
-if not isinstance(sha256, str) or not re.fullmatch(r"[0-9a-fA-F]{64}", sha256):
-    raise ValueError("immutable release digest missing")
-if not isinstance(size, int) or isinstance(size, bool) or not 0 < size <= 20 * 1024**3:
-    raise ValueError("invalid release size")
-if not isinstance(url, str) or len(url) > 8192:
-    raise ValueError("invalid release URL")
-parts = urlsplit(url)
-if parts.scheme != "https" or not parts.hostname or parts.username or parts.password or parts.fragment:
-    raise ValueError("invalid release URL")
-print(json.dumps(payload, separators=(",", ":")))
-' "$version"; then
-    log "ERROR: immutable release metadata is invalid"
-    return 1
-  fi
+# BEGIN update request rejection library loader
+[ -f "$BIN_DIR/matrix-update-request-rejection" ] && [ ! -L "$BIN_DIR/matrix-update-request-rejection" ] || {
+  log "ERROR: update request rejection library is unavailable"
+  exit 1
 }
+source "$BIN_DIR/matrix-update-request-rejection"
+# END update request rejection library loader
 
 write_prepared_update_marker() {
   local manifest="$1" temp
@@ -1265,6 +1205,7 @@ prepare_triggered_update() {
   if [ -f "$UPDATE_VERSION_FILE" ]; then
     target="$(cat "$UPDATE_VERSION_FILE" 2>/dev/null || true)"
     [ -n "$target" ] || { log "WARN: update version file is empty"; return 1; }
+    [[ "$target" =~ ^[A-Za-z0-9._-]{1,128}$ ]] || return 2
     requested_version="$target"
     url="$(release_url_for_version "$target")"
   elif [ -f "$UPDATE_CHANNEL_FILE" ]; then
@@ -1287,7 +1228,8 @@ prepare_triggered_update() {
   fi
 
   local manifest remote_version
-  manifest="$(fetch_manifest "$url")" || return 1
+  if manifest="$(fetch_manifest "$url")"; then :;
+  else return "$?"; fi
   remote_version="$(json_field "$manifest" version)"
   if [ -z "$remote_version" ]; then
     log "WARN: release metadata missing 'version' field"; return 1
@@ -1367,10 +1309,16 @@ apply_update() {
     log "No update available — nothing to apply"; return 1
   fi
   local manifest version sha256 bundle_url cur bundle_file extract_dir
-  if ! manifest="$(load_trusted_apply_manifest)"; then
-    # Keep the prepared target and explicit trigger on validation failure.
-    # Metadata outages must be retryable, and a newer request may have arrived
-    # while validation was in flight. Background polling cannot repurpose it.
+  local request_identity validation_status
+  request_identity="$(update_request_identity)" || return 1
+  if manifest="$(load_trusted_apply_manifest)"; then :;
+  else
+    validation_status=$?
+    # Transient failures retain the request; permanent failures claim only the
+    # unchanged trigger. Concurrent replacements survive that atomic claim.
+    if [ "$validation_status" -eq 2 ]; then
+      reject_unchanged_update_request "$request_identity" || return 1
+    fi
     write_update_error "update_request_rejected" \
       "The requested update could not be verified against platform release metadata." || true
     return 1
@@ -1897,6 +1845,7 @@ while true; do
   # React to trigger files and signals
   if [ -f "$UPDATE_TRIGGER" ]; then
     rm -f "$AUTO_APPLY_FAILED_MARKER"
+    request_identity="$(update_request_identity)" || request_identity=""
     if prepare_triggered_update; then
       if [ "$prepare_triggered_update_action" = already-current ]; then
         consume_idempotent_update_request
@@ -1906,7 +1855,11 @@ while true; do
         log "Update failed — will retry on next trigger"
       fi
     else
-      log "Requested release metadata fetch failed — preserving request for retry"
+      preparation_status=$?
+      if [ "$preparation_status" -eq 2 ]; then
+        reject_unchanged_update_request "$request_identity" || log "WARN: rejected request cleanup deferred"
+      fi
+      log "Requested update could not be prepared"
     fi
   fi
   if [ -f "$ROLLBACK_TRIGGER" ]; then
