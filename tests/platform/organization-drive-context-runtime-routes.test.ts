@@ -41,4 +41,7 @@ describe("headless owner-runtime drive context routes", () => {
         expect((await f.app.request(`${base}/relay/api/collaboration/direct-sessions`, { method: "POST", headers, body: " ".repeat(100 * 1024) })).status).toBe(413);
         expect(f.forward).not.toHaveBeenCalled();
     });
+ it.each(["version=0","version=-1","version=2147483648","version=2&version=3","other=2"])("rejects an invalid signed read query %s before relay",async query=>{const f=fixture();const response=await f.app.request(`${base}/relay/api/collaboration/scopes/${scopeId}/drive/files/${scopeId}/context?${query}`,{headers});expect(response.status).toBe(422);expect(f.forward).not.toHaveBeenCalled();});
+ it("preserves the original validated read query bytes",async()=>{const f=fixture();const response=await f.app.request(`${base}/relay/api/collaboration/scopes/${scopeId}/drive/files/${scopeId}/context?version=2`,{headers});expect(response.status).toBe(200);expect(f.forward.mock.calls[0][0]).toMatchObject({query:"version=2"});});
+
 });
