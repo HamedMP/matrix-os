@@ -145,3 +145,7 @@ Good: fresh canonical source survives optional Pi catalog failure as negative au
 
 ### Wrong versus correct
 Wrong: derive disconnection from unavailable models or replace an expired timestamp with response time. Correct: retain matching canonical missing-credential evidence, collect short-lived observations after slow catalogs, and suppress the guide on configured or positive local evidence.
+
+### Short-window recovery reachability
+
+Native global/project Chat and hosted empty-state content must own bounded vertical scrolling at both narrow and wide widths. At short heights, initial connection-read recovery remains reachable without clipping or moving the composer. A real Electron window-size regression must scroll to and invoke the retry action while retaining the composer.

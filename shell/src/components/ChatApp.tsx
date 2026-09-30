@@ -756,8 +756,8 @@ function EmptyState({
   attachmentsEnabled: boolean;
 }) {
   return (
-    <div className="flex flex-1 flex-col items-center justify-center px-4">
-      <div className="w-full max-w-[600px] space-y-8">
+    <div data-slot="chat-empty-state-scroll" className="flex min-h-0 flex-1 flex-col items-center overflow-y-auto px-4 py-4">
+      <div data-slot="chat-empty-state-stack" className="my-auto w-full max-w-[600px] shrink-0 space-y-8">
         {/* Greeting */}
         <ChatProviderOnboarding><div className="text-center space-y-2">
           <h1 className="text-2xl font-medium tracking-tight text-foreground/90">

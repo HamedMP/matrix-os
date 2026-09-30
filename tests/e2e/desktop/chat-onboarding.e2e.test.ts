@@ -18,11 +18,12 @@ let gateway: Awaited<ReturnType<typeof startProviderAuthGateway>>;
 let app: ElectronApplication;
 let page: Page;
 let profile: string;
+let settingsReadFailed = true;
 
 suite("Electron Desktop Chat onboarding", () => {
   beforeAll(async () => {
     mkdirSync(output, { recursive: true });
-    gateway = await startProviderAuthGateway();
+    gateway = await startProviderAuthGateway({ failSettingsRead: () => settingsReadFailed });
     profile = mkdtempSync(join(tmpdir(), "matrix-eng60-"));
     app = await _electron.launch({
       executablePath, args: [join(root, "desktop/out/main/index.js")],
@@ -41,6 +42,51 @@ suite("Electron Desktop Chat onboarding", () => {
     await gateway?.close();
     if (profile) rmSync(profile, { recursive: true, force: true });
   });
+
+  it("keeps the retry reachable in a short wide Chat and retains the composer", async () => {
+    const chat = page.getByRole("dialog", { name: "Chat window", exact: true });
+    const retry = chat.getByRole("button", { name: "Check connection", exact: true });
+    await retry.waitFor();
+    const original = await chat.boundingBox();
+    expect(original).not.toBeNull();
+    const resize = chat.locator('[data-window-resize="se"]');
+    const handle = await resize.boundingBox();
+    expect(handle).not.toBeNull();
+    await page.mouse.move(handle!.x + handle!.width / 2, handle!.y + handle!.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(original!.x + 1_050, original!.y + 360, { steps: 12 });
+    await page.mouse.up();
+    const scroll = chat.locator('[data-slot="chat-starter-scroll"]');
+    await scroll.waitFor();
+    const geometry = await scroll.evaluate((element) => ({
+      overflowY: getComputedStyle(element).overflowY,
+      clientHeight: element.clientHeight, scrollHeight: element.scrollHeight,
+    }));
+    expect(geometry.overflowY).toBe("auto");
+    expect(geometry.scrollHeight).toBeGreaterThan(geometry.clientHeight);
+    const composer = chat.getByRole("textbox", { name: "Start a chat", exact: true });
+    await composer.fill("Keep this recovery draft");
+    await scroll.hover();
+    await page.mouse.wheel(0, 1_000);
+    await retry.scrollIntoViewIfNeeded();
+    const retryBounds = await retry.boundingBox();
+    const composerBounds = await composer.boundingBox();
+    const scrollBounds = await scroll.boundingBox();
+    expect(retryBounds!.y).toBeGreaterThanOrEqual(scrollBounds!.y);
+    expect(retryBounds!.y + retryBounds!.height).toBeLessThanOrEqual(scrollBounds!.y + scrollBounds!.height + 1);
+    expect(retryBounds!.y + retryBounds!.height).toBeLessThanOrEqual(composerBounds!.y);
+    await page.screenshot({ path: join(output, "electron-short-wide-recovery.png") });
+    settingsReadFailed = false;
+    await retry.click();
+    await chat.getByRole("button", { name: "Connect Claude Code", exact: true }).waitFor();
+    expect(await composer.innerText()).toBe("Keep this recovery draft");
+    await composer.fill("");
+    const shortenedHandle = await resize.boundingBox();
+    await page.mouse.move(shortenedHandle!.x + shortenedHandle!.width / 2, shortenedHandle!.y + shortenedHandle!.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(original!.x + original!.width, original!.y + original!.height, { steps: 12 });
+    await page.mouse.up();
+  }, 60_000);
 
   it("opens one Chat, connects through its server Terminal, preserves the draft, and honors close", async () => {
     const chat = page.getByRole("dialog", { name: "Chat window", exact: true });

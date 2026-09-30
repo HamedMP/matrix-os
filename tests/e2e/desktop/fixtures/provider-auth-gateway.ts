@@ -87,6 +87,7 @@ export function providerAuthSettingsSnapshot(authenticated: boolean): ProviderSe
 export async function startProviderAuthGateway(options: {
   catalog?: CanonicalProviderCatalog;
   settings?: (authenticated: boolean) => ProviderSettingsSnapshot;
+  failSettingsRead?: () => boolean;
 } = {}) {
   const upstream = await startStubGateway();
   let authenticated = false;
@@ -100,6 +101,11 @@ export async function startProviderAuthGateway(options: {
       return;
     }
     if (req.method === "GET" && path === "/api/ai/provider-settings") {
+      if (options.failSettingsRead?.()) {
+        res.writeHead(503, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "settings unavailable" }));
+        return;
+      }
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify(settings()));
       return;

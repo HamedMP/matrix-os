@@ -40,6 +40,24 @@ describe("canonical native empty Chat connection wiring", () => {
     expect(screen.queryByText("Connection status unavailable")).not.toBeInTheDocument();
     expect(screen.queryByText("private settings failure")).not.toBeInTheDocument();
   });
+  it.each([null, "matrix-os"])("keeps failed-read recovery in a top-safe scroll area for wide Chat project=%s", async (projectId) => {
+    const api = { forRuntime: () => api, get: vi.fn(async () => { throw new Error("settings unavailable"); }) };
+    useConnection.setState({ status: "signed-in", handle: "owner", api: api as unknown as ApiClient });
+    render(<CanonicalChatWorkspace client={createCanonicalChatWorkspaceClient()} projectId={projectId} initialView="draft" active catalog={providerCatalog} />);
+    const retry = await screen.findByRole("button", { name: "Check connection" });
+    await waitFor(() => expect(retry).toBeEnabled());
+    const scroll = retry.closest<HTMLElement>('[data-slot="chat-starter-scroll"], [data-slot="chat-project-draft-scroll"]');
+    expect(scroll).not.toBeNull();
+    expect(scroll).toHaveClass("min-h-0", "overflow-y-auto");
+    if (projectId === null) {
+      expect(scroll).toHaveClass("items-start");
+      expect(scroll?.querySelector('[data-slot="chat-starter-stack"]')).toHaveClass("my-auto");
+      expect(scroll?.contains(screen.getByRole("textbox", { name: "Start a chat" }))).toBe(false);
+    } else {
+      expect(scroll).toHaveClass("justify-center-safe");
+    }
+    expect(screen.queryByRole("region", { name: "Chat provider connection" })).not.toBeInTheDocument();
+  });
   it("opens the server-issued Settings login in Terminal on the selected runtime", async () => {
     const snapshot = disconnectedSnapshot();
     const api = { forRuntime: vi.fn(() => api), get: vi.fn(async (path: string) => path.includes("provider-settings") ? snapshot : providerCatalog), post: vi.fn(async () => ({ kind: "login_attempt", snapshot: { ...snapshot, revision: 2, projectionOf: { ...snapshot.projectionOf, revision: 2 } }, attempt: { id: "native_attempt", harnessInstanceId: "claude_default", accountId: null, method: "terminal", state: "pending", expiresAt: new Date(Date.now() + 60_000).toISOString(), action: { kind: "open_terminal", terminalSessionId: "claude-login" }, safeFailure: null } })) };

@@ -19,12 +19,12 @@ export function CanonicalNewChatContent({ projectId, workspaceLayout, composer, 
     >
       <div
         data-slot="chat-starter-scroll"
-        className={`flex min-h-0 flex-1 justify-center ${workspaceLayout === "narrow" ? "items-start overflow-y-auto px-3 py-3" : "items-center px-5 py-8"}`}
-        style={workspaceLayout === "narrow" ? { scrollbarGutter: "stable" } : undefined}
+        className={`flex min-h-0 flex-1 items-start justify-center overflow-y-auto ${workspaceLayout === "narrow" ? "px-3 py-3" : "px-5 py-8"}`}
+        style={{ scrollbarGutter: "stable" }}
       >
         <div
           data-slot="chat-starter-stack"
-          className={`w-full max-w-[480px] ${workspaceLayout === "narrow" ? "my-auto" : ""}`}
+          className="my-auto w-full max-w-[480px]"
         >
           <ChatProviderOnboarding><ChatStarterCards
             layout="two-by-two"
@@ -38,7 +38,7 @@ export function CanonicalNewChatContent({ projectId, workspaceLayout, composer, 
       </div>
     </div>
   ) : (
-    <div className={cn("mx-auto flex min-h-0 w-full flex-1 flex-col justify-center", CHAT_CONTENT_WIDTH_CLASS, workspaceLayout === "narrow" ? "gap-3 overflow-y-auto px-3 py-3" : "gap-[26px] px-5 py-8")}>
+    <div data-slot="chat-project-draft-scroll" className={cn("mx-auto flex min-h-0 w-full flex-1 flex-col justify-center-safe overflow-y-auto", CHAT_CONTENT_WIDTH_CLASS, workspaceLayout === "narrow" ? "gap-3 px-3 py-3" : "gap-[26px] px-5 py-8")}>
       <ChatProviderOnboarding><div className="flex flex-col items-center gap-3 text-center">
         <MessageSquare size={28} aria-hidden style={{ color: "var(--text-tertiary)" }} />
         <h1 className="text-[24px] font-medium leading-[32px]" style={{ color: "var(--text-primary)" }}>
