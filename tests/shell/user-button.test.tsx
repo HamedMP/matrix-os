@@ -15,6 +15,10 @@ const clerkState = vi.hoisted(() => ({
   },
   signOut: vi.fn(async () => undefined),
   openUserProfile: vi.fn(),
+  organization: null as { id: string } | null,
+  organizationsLoaded: true,
+  memberships: [] as Array<{ organization: { id: string; name: string } }>,
+  setActive: vi.fn(async (_params: { organization: string }) => undefined),
 }));
 
 const replaceMock = vi.hoisted(() => vi.fn());
@@ -31,6 +35,12 @@ vi.mock("@clerk/nextjs", () => ({
   useClerk: () => ({
     signOut: clerkState.signOut,
     openUserProfile: clerkState.openUserProfile,
+  }),
+  useOrganization: () => ({ organization: clerkState.organization }),
+  useOrganizationList: () => ({
+    isLoaded: clerkState.organizationsLoaded,
+    setActive: clerkState.setActive,
+    userMemberships: { data: clerkState.memberships },
   }),
 }));
 
@@ -50,6 +60,11 @@ describe("UserButton", () => {
     clerkState.user.username = "kongfupanda13";
     clerkState.user.fullName = null;
     clerkState.signOut.mockResolvedValue(undefined);
+    clerkState.organization = null;
+    clerkState.organizationsLoaded = true;
+    clerkState.memberships = [];
+    clerkState.setActive.mockReset();
+    clerkState.setActive.mockResolvedValue(undefined);
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(JSON.stringify({ cleared: true }), {
         status: 200,
@@ -101,6 +116,79 @@ describe("UserButton", () => {
 
     expect(menu).toBeTruthy();
     expect((menu as HTMLElement).style.zIndex).toBe(String(SHELL_Z_INDEX.popover));
+  });
+
+  it("shows no organization section to a user who belongs to none", async () => {
+    const { UserButton } = await import("../../shell/src/components/UserButton.js");
+
+    render(<UserButton variant="settings" />);
+    await openAccountMenu();
+
+    expect(screen.queryByText("Organization")).toBeNull();
+  });
+
+  it("shows no organization section until Clerk has loaded memberships", async () => {
+    clerkState.organizationsLoaded = false;
+    clerkState.memberships = [{ organization: { id: "org_a", name: "Finna" } }];
+    const { UserButton } = await import("../../shell/src/components/UserButton.js");
+
+    render(<UserButton variant="settings" />);
+    await openAccountMenu();
+
+    expect(screen.queryByText("Organization")).toBeNull();
+    expect(screen.queryByRole("menuitem", { name: "Finna" })).toBeNull();
+  });
+
+  it("lists the member's organizations and activates the one they choose", async () => {
+    // Sharing reads the *active* organization, and nothing else in the shell sets
+    // one -- without this the share control stays "Join an organization to share"
+    // for a user who already belongs to an organization.
+    clerkState.memberships = [
+      { organization: { id: "org_a", name: "Finna" } },
+      { organization: { id: "org_b", name: "Matrix" } },
+    ];
+    const { UserButton } = await import("../../shell/src/components/UserButton.js");
+
+    render(<UserButton variant="settings" />);
+    await openAccountMenu();
+
+    expect(screen.getByText("Organization")).toBeTruthy();
+    fireEvent.click(screen.getByRole("menuitem", { name: "Matrix" }));
+    expect(clerkState.setActive).toHaveBeenCalledWith({ organization: "org_b" });
+  });
+
+  it("marks only the active organization", async () => {
+    clerkState.organization = { id: "org_b" };
+    clerkState.memberships = [
+      { organization: { id: "org_a", name: "Finna" } },
+      { organization: { id: "org_b", name: "Matrix" } },
+    ];
+    const { UserButton } = await import("../../shell/src/components/UserButton.js");
+
+    render(<UserButton variant="settings" />);
+    await openAccountMenu();
+
+    const inactive = screen.getByRole("menuitem", { name: "Finna" });
+    const active = screen.getByRole("menuitem", { name: "Matrix" });
+    expect(inactive.querySelector("svg:last-child")).not.toBe(active.querySelector("svg:last-child"));
+    expect(active.querySelectorAll("svg")).toHaveLength(2);
+    expect(inactive.querySelectorAll("svg")).toHaveLength(1);
+  });
+
+  it("logs a failed activation instead of rejecting unhandled", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    clerkState.setActive.mockRejectedValue(new TypeError("network"));
+    clerkState.memberships = [{ organization: { id: "org_a", name: "Finna" } }];
+    const { UserButton } = await import("../../shell/src/components/UserButton.js");
+
+    render(<UserButton variant="settings" />);
+    await openAccountMenu();
+    fireEvent.click(screen.getByRole("menuitem", { name: "Finna" }));
+
+    await waitFor(() => expect(warn).toHaveBeenCalledWith(
+      "[collaboration-organization] activation failed",
+      "TypeError",
+    ));
   });
 
   it("offers hosted users both computer-management actions", async () => {
