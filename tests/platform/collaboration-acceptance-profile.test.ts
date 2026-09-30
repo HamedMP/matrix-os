@@ -56,8 +56,8 @@ describe("S19 synthetic relay traffic profile", () => {
       request("/resources/file/content", chunks(8_192)),
     ])));
 
-    const scopeReads = metadata.filter((entry) => entry.path === base);
-    const resource = metadata.filter((entry) => entry.path !== base);
+    const scopeReads = metadata.filter((entry) => entry.routeClass === "scope");
+    const resource = metadata.filter((entry) => entry.routeClass !== "scope");
     const sum = (rows: RelayMetadata[], field: "requestBytes" | "responseBytes") => rows.reduce((total, row) => total + row[field], 0);
     const profile = {
       requests: metadata.length,
@@ -73,6 +73,7 @@ describe("S19 synthetic relay traffic profile", () => {
     });
     expect(metadata).toHaveLength(40);
     expect(metadata.every((entry) => entry.outcome === "forwarded" && entry.runtimeId === runtimeId)).toBe(true);
+    expect(metadata.every((entry) => !("path" in entry))).toBe(true);
     expect(JSON.stringify(metadata)).not.toContain("cccccccc");
     expect(JSON.stringify(metadata)).not.toContain("pppppppp");
     console.info("[S19 synthetic relay profile]", JSON.stringify(profile));

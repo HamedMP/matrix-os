@@ -20,6 +20,7 @@ import { PlatformCollaborationIdentifierResolver } from "./identifier-resolver.j
 import type { OrganizationPlatformDatabase } from "../organizations/database.js";
 import { createPlatformOrganizations } from "../organizations/wiring.js";
 import { createPlatformCollaborationDirect, loadCollaborationRelayOrigin } from "./direct-wiring.js";
+import { ownsActiveRelayComputer } from "./relay-usage.js";
 import { PlatformCollaborationRepository } from "./repository.js";
 import type { RuntimeEndpointPlatformDatabase } from "./runtime-endpoints.js";
 import { collaborationRelayHandle, collaborationRuntimeOrigin } from "./runtime-machine.js";
@@ -125,6 +126,9 @@ export async function bootstrapPlatformCollaboration(
     projection: organizations.projection,
     keyring: config.ticketKeyring,
     relayOrigin,
+    env: options.env,
+    startTimers: options.startTimers,
+    ownsActiveComputer: (actorId) => ownsActiveRelayComputer(options.db, actorId),
     resolveActor,
     authenticateRuntime,
     resolveRelayHandle: async (runtime) => {

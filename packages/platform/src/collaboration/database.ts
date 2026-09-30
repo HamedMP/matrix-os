@@ -99,6 +99,18 @@ export interface CollaborationPlatformDatabase {
   collaboration_connection_tickets: CollaborationConnectionTicketsTable;
   collaboration_cutover_journal: CollaborationCutoverJournalTable;
   collaboration_cutover_dispositions: CollaborationCutoverDispositionTable;
+  collaboration_relay_usage_daily: CollaborationRelayUsageDailyTable;
+}
+
+/** Metadata totals only; no route path, payload or WebSocket frame is stored. */
+export interface CollaborationRelayUsageDailyTable {
+  actor_id: string;
+  usage_day: string;
+  account_class: "machine_free" | "computer_owner";
+  requests: string;
+  bytes: string;
+  socket_opens: string;
+  refusals: string;
 }
 
 export async function bootstrapPlatformCollaborationDatabase(
@@ -110,6 +122,18 @@ export async function bootstrapPlatformCollaborationDatabase(
 }
 
 async function applyCollaborationSchema(trx: Transaction<CollaborationPlatformDatabase>): Promise<void> {
+  await sql`
+    CREATE TABLE IF NOT EXISTS collaboration_relay_usage_daily (
+      actor_id TEXT NOT NULL,
+      usage_day DATE NOT NULL,
+      account_class TEXT NOT NULL CHECK (account_class IN ('machine_free', 'computer_owner')),
+      requests BIGINT NOT NULL DEFAULT 0 CHECK (requests >= 0),
+      bytes BIGINT NOT NULL DEFAULT 0 CHECK (bytes >= 0),
+      socket_opens BIGINT NOT NULL DEFAULT 0 CHECK (socket_opens >= 0),
+      refusals BIGINT NOT NULL DEFAULT 0 CHECK (refusals >= 0),
+      PRIMARY KEY (actor_id, usage_day)
+    )
+  `.execute(trx);
   await sql`
     CREATE TABLE IF NOT EXISTS collaboration_directory (
       scope_id UUID PRIMARY KEY,
