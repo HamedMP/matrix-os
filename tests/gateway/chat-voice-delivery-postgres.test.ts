@@ -98,6 +98,35 @@ describe.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)("chat voice delivery on r
     expect(after.record!.state).toBe(final!.state);
   });
 
+  it("serializes epoch adoption against a fenced write on the row lock", async () => {
+    await repository.recordPending(owner, pending());
+    const [ack, adoption] = await Promise.all([
+      repository.acknowledge(owner, {
+        chatId, responseId: "resp_race", segmentId: "seg_1",
+        playedThroughMs: 1000, revision: 1, transportEpoch: 1,
+      }),
+      repository.adoptTransportEpoch(owner, { chatId, transportEpoch: 2 }),
+    ]);
+    // Row locks order the two transactions: either the ack commits first and
+    // is then adopted forward, or adoption commits first and the ack loses
+    // its fence. The committed epoch always ends at 2 — never rolled back.
+    expect(["acknowledged", "stale"]).toContain(ack.outcome);
+    const final = await repository.get(owner, chatId, "resp_race");
+    expect(final).toMatchObject({ transportEpoch: 2 });
+    if (ack.outcome === "acknowledged") {
+      expect(final).toMatchObject({ state: "playing", revision: 3 });
+      expect(adoption).toEqual({ outcome: "adopted", adopted: 1 });
+    } else {
+      expect(final).toMatchObject({ state: "pending", revision: 2 });
+    }
+    // Writes carrying the dead epoch remain fenced out afterwards.
+    const deadEpoch = await repository.acknowledge(owner, {
+      chatId, responseId: "resp_race", segmentId: "seg_2",
+      playedThroughMs: 2500, revision: 1, transportEpoch: 1,
+    });
+    expect(deadEpoch.outcome).toBe("stale");
+  });
+
   it("re-read after a transport break yields conservative state recoverable as unknown", async () => {
     await repository.recordPending(owner, pending());
     await repository.recordDelivered(owner, {

@@ -13,7 +13,10 @@ import {
   type CanonicalChatProviderAdapter,
 } from "../../packages/gateway/src/chat/provider-adapter.js";
 import { ChatRepository } from "../../packages/gateway/src/chat/repository.js";
-import { loadChatResumeState } from "../../packages/gateway/src/chat/resume-checkpoint.js";
+import {
+  loadChatResumeDecision,
+  loadChatResumeState,
+} from "../../packages/gateway/src/chat/resume-checkpoint.js";
 
 const owner = { type: "personal" as const, ownerId: "owner_voice_policy" };
 const principal = { userId: owner.ownerId, source: "jwt" as const };
@@ -387,8 +390,7 @@ describe("voice run policy through queue and steering", () => {
   });
 });
 
-describe("voice resume checkpoint eligibility", () => {
-  async function completedCheckpoint(suffix: string, policy?: CanonicalChatRunPolicy) {
+async function completedCheckpoint(suffix: string, policy?: CanonicalChatRunPolicy) {
     const record = (await repository.get(owner, "chat_voice"))!.chat;
     const seq = record.messageCount + 1;
     const timestamp = new Date(Date.UTC(2026, 8, 9, 0, 0, seq)).toISOString();
@@ -427,17 +429,18 @@ describe("voice resume checkpoint eligibility", () => {
     return run.id;
   }
 
-  function checkpointQuery(options: Parameters<ChatRepository["getLatestAdapterStateForChat"]>[1]) {
-    return repository.getLatestAdapterStateForChat(owner, {
-      chatId: "chat_voice",
-      driverKind: "codex",
-      instanceId: "codex_default",
-      schemaVersion: 1,
-      executionRootFingerprint: null,
-      ...options,
-    });
-  }
+function checkpointQuery(options: Parameters<ChatRepository["getLatestAdapterStateForChat"]>[1]) {
+  return repository.getLatestAdapterStateForChat(owner, {
+    chatId: "chat_voice",
+    driverKind: "codex",
+    instanceId: "codex_default",
+    schemaVersion: 1,
+    executionRootFingerprint: null,
+    ...options,
+  });
+}
 
+describe("voice resume checkpoint eligibility", () => {
   it("reuses a reusable checkpoint for ordinary follow-ups", async () => {
     await createChat();
     await completedCheckpoint("a");
@@ -506,5 +509,194 @@ describe("voice resume checkpoint eligibility", () => {
       adapter: fake, executionRootFingerprint: null, mode: "follow_up",
     });
     expect(ordinary).toMatchObject({ sessionId: "native_cp_eligible" });
+  });
+
+  it("excludes checkpoints bound to unresolved deliveries without caller hints", async () => {
+    await createChat();
+    const heardRun = await completedCheckpoint("durable_heard");
+    const unheardRun = await completedCheckpoint("durable_unheard");
+    // A durable non-complete delivery row bound to the newest run excludes it
+    // database-side — no caller-supplied unheardResponses list required.
+    await repository.kysely.insertInto("chat_voice_deliveries").values({
+      chat_id: "chat_voice",
+      response_id: "resp_durable_unheard",
+      run_id: unheardRun,
+      message_id: "msg_durable_unheard",
+      state: "interrupted",
+      revision: 1,
+      segments: sql`${JSON.stringify([
+        { segmentId: "seg_1", textStart: 0, textEnd: 12, durationMs: 100 },
+      ])}` as never,
+      acknowledged_segment: null,
+      delivered_through_ms: 0,
+      played_through_ms: 0,
+      effective_text_end: 0,
+      transport_epoch: 1,
+      terminal_reason: "interrupted",
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    }).execute();
+    // The newest checkpoint is delivery-ineligible, so the older heard run
+    // wins — durable NOT EXISTS semantics, no caller hints involved.
+    const state = await checkpointQuery({});
+    expect(state?.state).toMatchObject({ sessionId: "native_cp_durable_heard" });
+    expect(state?.checkpoint?.runId).toBe(heardRun);
+    expect(state?.checkpoint?.runId).not.toBe(unheardRun);
+  });
+});
+
+describe("checkpoint provenance and retained history", () => {
+  const fake = adapter(completing("native_unused"));
+
+  async function commitMessage(id: string, seq: number, text: string, runId?: string) {
+    await repository.kysely.insertInto("chat_messages").values({
+      id,
+      chat_id: "chat_voice",
+      seq,
+      role: runId ? "assistant" : "user",
+      state: "committed",
+      turn_id: null,
+      run_id: runId ?? null,
+      actor_id: null,
+      purpose: "ai_request",
+      parts: sql`${JSON.stringify([{ type: "text", text }])}` as never,
+      byte_count: Buffer.byteLength(text),
+      search_text: text,
+      created_at: new Date().toISOString(),
+    }).execute();
+  }
+
+  async function insertDelivery(input: {
+    responseId: string; runId: string; messageId: string;
+    state: "pending" | "playing" | "complete" | "interrupted" | "unknown";
+    effectiveTextEnd?: number;
+  }) {
+    await repository.kysely.insertInto("chat_voice_deliveries").values({
+      chat_id: "chat_voice",
+      response_id: input.responseId,
+      run_id: input.runId,
+      message_id: input.messageId,
+      state: input.state,
+      revision: 1,
+      segments: sql`${JSON.stringify([
+        { segmentId: "seg_1", textStart: 0, textEnd: 12, durationMs: 100 },
+      ])}` as never,
+      acknowledged_segment: null,
+      delivered_through_ms: 0,
+      played_through_ms: 0,
+      effective_text_end: input.effectiveTextEnd ?? 0,
+      transport_epoch: 1,
+      terminal_reason: input.state === "complete" ? null : "interrupted",
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    }).execute();
+  }
+
+  function decision(overrides: Record<string, unknown> = {}) {
+    return loadChatResumeDecision({
+      repository, owner, chatId: "chat_voice", instanceId: "codex_default",
+      adapter: fake, executionRootFingerprint: null, mode: "follow_up",
+      ...overrides,
+    });
+  }
+
+  it("reports provenance for a checkpoint that covers committed history", async () => {
+    await createChat();
+    const runId = await completedCheckpoint("covered");
+    const result = await decision({ retainedHistorySupported: true, historyBoundarySeq: 1 });
+    expect(result.mode).toBe("resume");
+    expect(result.resumeState).toMatchObject({ sessionId: "native_cp_covered" });
+    expect(result.checkpoint).toMatchObject({
+      runId,
+      historyBoundarySeq: 0,
+      coveredThroughSeq: 1,
+    });
+    expect(result.retainedHistory).toBeUndefined();
+  });
+
+  it("resumes with retained canonical history when the checkpoint predates it", async () => {
+    await createChat();
+    const runId = await completedCheckpoint("retained");
+    await commitMessage("msg_gap_user", 2, "typed after the checkpoint");
+    const result = await decision({ retainedHistorySupported: true, historyBoundarySeq: 2 });
+    expect(result.mode).toBe("resume_retained");
+    expect(result.resumeState).toMatchObject({ sessionId: "native_cp_retained" });
+    expect(result.checkpoint?.runId).toBe(runId);
+    expect(result.checkpoint?.coveredThroughSeq).toBe(1);
+    // The retained slice is the heard-safe gap — the committed message the
+    // native session cannot contain.
+    expect(result.retainedHistory?.throughSeq).toBe(2);
+    expect(result.retainedHistory?.text).toContain("typed after the checkpoint");
+  });
+
+  it("trims unheard suffixes out of retained history", async () => {
+    await createChat();
+    await completedCheckpoint("heard_trim");
+    await commitMessage("msg_gap_unheard", 2, "played and then some", "run_gap_src");
+    await insertDelivery({
+      responseId: "resp_trim", runId: "run_gap_src", messageId: "msg_gap_unheard",
+      state: "interrupted", effectiveTextEnd: 6,
+    });
+    const result = await decision({ retainedHistorySupported: true, historyBoundarySeq: 2 });
+    expect(result.mode).toBe("resume_retained");
+    expect(result.retainedHistory?.text).toContain("played");
+    expect(result.retainedHistory?.text).not.toContain("then some");
+  });
+
+  it("declines native resume when the caller cannot retain canonical history", async () => {
+    await createChat();
+    await completedCheckpoint("unsupported");
+    await commitMessage("msg_gap_no_retain", 2, "cannot be dropped");
+    const result = await decision({ historyBoundarySeq: 2 });
+    expect(result.mode).toBe("rebuild");
+    expect(result.reason).toBe("retention_unsupported");
+    expect(result.resumeState).toBeUndefined();
+    expect(result.checkpoint?.coveredThroughSeq).toBe(1);
+    // The rebuild decision still carries heard-safe canonical history.
+    expect(result.retainedHistory?.text).toContain("remember");
+  });
+
+  it("declines native resume when the retained gap exceeds the bounded window", async () => {
+    await createChat();
+    await completedCheckpoint("truncated");
+    await commitMessage("msg_gap_huge", 2, `x`.repeat(14_000));
+    const result = await decision({ retainedHistorySupported: true, historyBoundarySeq: 2 });
+    expect(result.mode).toBe("rebuild");
+    expect(result.reason).toBe("retention_truncated");
+    expect(result.resumeState).toBeUndefined();
+  });
+
+  it("fails closed when checkpoint eligibility evaluation throws", async () => {
+    await createChat();
+    await completedCheckpoint("eligibility");
+    const failing = {
+      getLatestAdapterStateForChat: async () => {
+        throw new Error("eligibility store unavailable");
+      },
+      kysely: repository.kysely,
+    };
+    const result = await loadChatResumeDecision({
+      repository: failing, owner, chatId: "chat_voice", instanceId: "codex_default",
+      adapter: fake, executionRootFingerprint: null, mode: "follow_up",
+      retainedHistorySupported: true, historyBoundarySeq: 1,
+    });
+    expect(result.mode).toBe("rebuild");
+    expect(result.reason).toBe("eligibility_unavailable");
+    expect(result.resumeState).toBeUndefined();
+    // Native resume is disabled — the run rebuilds from canonical history.
+    expect(result.retainedHistory?.text).toContain("remember");
+  });
+
+  it("legacy loadChatResumeState never rewinds past a committed-history gap", async () => {
+    await createChat();
+    await completedCheckpoint("legacy_gap");
+    await commitMessage("msg_gap_legacy", 2, "must not be dropped silently");
+    // The wrapper cannot express retained history, so any real gap disables
+    // native resume entirely rather than silently rewinding canonical history.
+    const state = await loadChatResumeState({
+      repository, owner, chatId: "chat_voice", instanceId: "codex_default",
+      adapter: fake, executionRootFingerprint: null, mode: "follow_up",
+    });
+    expect(state).toBeUndefined();
   });
 });

@@ -18,6 +18,7 @@ import {
 import type { CanonicalChatProviderRegistry } from "./provider-adapter.js";
 import type { ChatOwner } from "./records.js";
 import type { ChatRepository } from "./repository.js";
+import { admissionPolicyForTurn, type VoiceSessionPolicyLookup } from "./voice-session-policy.js";
 
 export class CanonicalQueueAdmissionError extends Error {
   constructor(readonly safeError: CanonicalChatSafeError, readonly status: 400 | 404 | 409 | 503) {
@@ -64,9 +65,30 @@ export async function enqueueCanonicalQueuedTurn(options: {
   adapters: Pick<CanonicalChatProviderRegistry, "get">;
   executionRoots?: ChatExecutionRootResolver;
   agentContext?: ChatAgentContext;
+  /**
+   * Optional live voice-session policy source. A session that owns the Chat
+   * stamps its frozen memory/checkpoint/permission policy onto the queued
+   * row — the policy survives claim, steer, and promotion verbatim.
+   */
+  voiceSessionPolicy?: VoiceSessionPolicyLookup;
   now: () => Date;
 }): Promise<CanonicalChatQueueAdmissionResponse> {
   const input = CanonicalQueueChatTurnRequestSchema.parse(options.input);
+  // A live voice session owns this Chat's execution policy: fold it in
+  // before hashing so dedup and the persisted queued row match the policy
+  // that will actually run.
+  let sessionPolicy;
+  try {
+    sessionPolicy = options.voiceSessionPolicy?.policyForChat(options.chatId);
+  } catch (error: unknown) {
+    // Fail closed — a lookup failure must not silently skip live policy.
+    console.warn("[chat/queue] voice session policy lookup failed:", error instanceof Error ? error.name : "UnknownError");
+    throw new CanonicalQueueAdmissionError(
+      safeError("service_unavailable", "Chat admission is temporarily unavailable.", true, ["retry"]),
+      503,
+    );
+  }
+  const admissionPolicy = admissionPolicyForTurn(input, sessionPolicy);
   const record = await options.repository.get(options.owner, options.chatId);
   if (!record) {
     throw new CanonicalQueueAdmissionError(
@@ -75,7 +97,7 @@ export async function enqueueCanonicalQueuedTurn(options: {
     );
   }
   const duplicate = await options.repository.findQueuedAdmission(options.owner, options.chatId, input.clientRequestId,
-    chatRequestHash(input, input.runPolicy));
+    chatRequestHash({ ...input, permissionMode: admissionPolicy.permissionMode }, admissionPolicy.runPolicy));
   if (duplicate) return CanonicalChatQueueAdmissionResponseSchema.parse({ queuedTurn: duplicate.queuedTurn, queueDepth: duplicate.queueDepth, ...(duplicate.alreadyClaimed ? { alreadyClaimed: true } : {}) });
   if (!record.activeRun) {
     throw new CanonicalQueueAdmissionError(
@@ -84,7 +106,7 @@ export async function enqueueCanonicalQueuedTurn(options: {
     );
   }
   const prepared = await options.agentContext?.prepare(options.owner, options.chatId, input);
-  const effective = { ...input, ...prepared };
+  const effective = { ...input, ...prepared, permissionMode: admissionPolicy.permissionMode };
   const catalog = await options.catalog.getCatalog(options.principal);
   const validated = validateChatProviderSelection({
     catalog,
@@ -146,13 +168,16 @@ export async function enqueueCanonicalQueuedTurn(options: {
     baseRevision: input.baseRevision,
     queuedTurnId: `qturn_${randomUUID().replaceAll("-", "")}`,
     clientRequestId: input.clientRequestId,
-    requestHash: chatRequestHash(input, input.runPolicy),
+    requestHash: chatRequestHash(
+      { ...input, permissionMode: admissionPolicy.permissionMode },
+      admissionPolicy.runPolicy,
+    ),
     parts: input.parts,
     driverKind: validated.instance.driverKind,
     selection: validated.selection,
     interactionMode: effective.interactionMode,
-    permissionMode: input.permissionMode,
-    ...(input.runPolicy ? { runPolicy: input.runPolicy } : {}),
+    permissionMode: admissionPolicy.permissionMode,
+    ...(admissionPolicy.runPolicy ? { runPolicy: admissionPolicy.runPolicy } : {}),
     ...(prepared?.context ? { context: prepared.context } : {}),
     ...(resolvedRoot ? {
       executionRoot: resolvedRoot.ref,

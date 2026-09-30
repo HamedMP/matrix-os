@@ -69,6 +69,7 @@ import { recoverOrphanedRun } from "./orphaned-run-recovery.js";
 import { retryAvailability } from "./retry-preflight.js";
 import { dispatchAdmissionKey, hasStoppingChatExecution } from "./dispatch-ownership.js";
 import { loadChatResumeState } from "./resume-checkpoint.js";
+import type { VoiceSessionPolicyLookup } from "./voice-session-policy.js";
 import { boundedOperation } from "../bounded-operation.js";
 import { CHAT_RUN_CLEANUP_UNCONFIRMED_MESSAGE, diagnoseChatRunFailure, type ChatRunFailureDiagnostic } from "./failure-diagnostic.js";
 import {
@@ -191,6 +192,7 @@ export class CanonicalChatOrchestrator {
       | "updateAdapterState"
       | "finishRun"
       | "getAdapterState"
+      | "kysely"
       | "getInputState"
       | "reopenInputSubmission"
       | "getPendingApproval"
@@ -204,6 +206,12 @@ export class CanonicalChatOrchestrator {
     adapters: CanonicalChatProviderRegistry;
     executionRoots?: ChatExecutionRootResolver;
     agentContext?: ChatAgentContext;
+    /**
+     * Optional live voice-session policy lookup. When present, a session
+     * owning a Chat stamps its frozen memory/checkpoint/permission policy
+     * onto every admitted or queued turn for that Chat.
+     */
+    voiceSessionPolicy?: VoiceSessionPolicyLookup;
     collaborationGuard?: {
       assertPersonalExecutionAllowed(owner: ChatOwner, chatId: string): Promise<void>;
     };
@@ -338,6 +346,7 @@ export class CanonicalChatOrchestrator {
         catalog: this.options.catalog,
         adapters: this.options.adapters,
         ...(this.options.executionRoots ? { executionRoots: this.options.executionRoots } : {}),
+        ...(this.options.voiceSessionPolicy ? { voiceSessionPolicy: this.options.voiceSessionPolicy } : {}),
         now: this.options.now ?? (() => new Date()),
       });
     } catch (error: unknown) {

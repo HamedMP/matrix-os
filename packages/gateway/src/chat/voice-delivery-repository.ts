@@ -9,8 +9,20 @@
  * - Acknowledgements are conditional writes fenced by (chat_id, response_id,
  *   revision, transport_epoch) and only ever advance: `effective_text_end`
  *   moves to the acknowledged segment's `textEnd` and never beyond it,
- *   `played_through_ms` stays `<= delivered_through_ms`, and re-acking the
- *   same or an earlier segment is a no-op success.
+ *   `played_through_ms` stays `<= delivered_through_ms`, re-acking the
+ *   same or an earlier segment is a no-op success, and acks must be
+ *   contiguous in manifest order — acking past an unacknowledged
+ *   predecessor returns `out_of_order` so unheard text can never be
+ *   skipped into a `complete` record.
+ * - The manifest grows through `extendManifest`: later assistant clauses
+ *   append whole segments to the tail under the same revision/epoch fence;
+ *   the merged manifest must stay schema-valid (unique ids, non-decreasing
+ *   offsets) or the write is rejected as a conflict, never partially stored.
+ * - `adoptTransportEpoch` moves every non-terminal row of a chat to a freshly
+ *   minted epoch in one statement (forward-only, revision bumped). Reconnects
+ *   re-fence open deliveries so writes holding the dead epoch lose; a
+ *   mid-flight fenced write serializes on the same row locks and goes stale
+ *   if adoption commits first — no extra coordination is needed.
  * - Terminal states are absorbing: once complete/interrupted/unknown the
  *   record can never return to pending/playing or be overwritten by a
  *   different terminal value; late writes return the existing record with an
@@ -26,7 +38,7 @@
  *   epoch forward while non-terminal — how a reconnect keeps acknowledging an
  *   in-flight response. Identity mismatch throws ChatConflictError.
  */
-import { Kysely, type Selectable, type Transaction, type Updateable } from "kysely";
+import { Kysely, sql, type Selectable, type Transaction, type Updateable } from "kysely";
 import { z } from "zod/v4";
 import { CanonicalChatIdSchema, CanonicalOwnerScopeSchema } from "@matrix-os/contracts";
 import type { ChatDatabase, ChatVoiceDeliveriesTable } from "./database.js";
@@ -119,6 +131,20 @@ export interface VoiceDeliveryAcknowledgeInput {
   transportEpoch: number;
 }
 
+export interface VoiceDeliveryExtendInput {
+  chatId: string;
+  responseId: string;
+  /** Segments appended to the tail; ids unique, offsets non-decreasing. */
+  appendSegments: VoiceDeliverySegment[];
+  revision: number;
+  transportEpoch: number;
+}
+
+export interface VoiceDeliveryAdoptEpochInput {
+  chatId: string;
+  transportEpoch: number;
+}
+
 export interface VoiceDeliveryDeliveredInput {
   chatId: string;
   responseId: string;
@@ -145,10 +171,16 @@ export interface VoiceDeliveryClassifyInput {
 /** Outcome discriminators; every result carries the record as last committed. */
 export type VoiceDeliveryPendingOutcome = "created" | "existing";
 export type VoiceDeliveryAcknowledgeOutcome =
-  | "acknowledged" // advanced to a later segment
+  | "acknowledged" // advanced to the next contiguous segment
   | "duplicate" // same/earlier segment replay — idempotent no-op success
+  | "out_of_order" // segment skips unacknowledged predecessors — no mutation
   | "stale" // revision/epoch fence mismatch — no mutation
   | "unknown_segment" // segment not in the manifest — no mutation
+  | "ignored" // terminal record — no mutation
+  | "not_found";
+export type VoiceDeliveryExtendOutcome =
+  | "extended" // segments appended and revision bumped
+  | "stale" // revision/epoch fence mismatch — no mutation
   | "ignored" // terminal record — no mutation
   | "not_found";
 export type VoiceDeliveryDeliveredOutcome =
@@ -176,10 +208,18 @@ export interface VoiceDeliveryPort {
     owner: ChatOwner,
     input: VoiceDeliveryPendingInput,
   ): Promise<VoiceDeliveryResult<VoiceDeliveryPendingOutcome>>;
+  extendManifest(
+    owner: ChatOwner,
+    input: VoiceDeliveryExtendInput,
+  ): Promise<VoiceDeliveryResult<VoiceDeliveryExtendOutcome>>;
   acknowledge(
     owner: ChatOwner,
     input: VoiceDeliveryAcknowledgeInput,
   ): Promise<VoiceDeliveryResult<VoiceDeliveryAcknowledgeOutcome>>;
+  adoptTransportEpoch(
+    owner: ChatOwner,
+    input: VoiceDeliveryAdoptEpochInput,
+  ): Promise<{ outcome: "adopted" | "none"; adopted: number }>;
   recordDelivered(
     owner: ChatOwner,
     input: VoiceDeliveryDeliveredInput,
@@ -211,6 +251,19 @@ const AcknowledgeInputSchema = z.object({
   segmentId: SAFE_REF,
   playedThroughMs: STREAM_MS,
   revision: FENCED_COUNTER,
+  transportEpoch: FENCED_COUNTER,
+}).strict();
+
+const ExtendInputSchema = z.object({
+  chatId: CanonicalChatIdSchema,
+  responseId: SAFE_REF,
+  appendSegments: VoiceDeliverySegmentsSchema,
+  revision: FENCED_COUNTER,
+  transportEpoch: FENCED_COUNTER,
+}).strict();
+
+const AdoptEpochInputSchema = z.object({
+  chatId: CanonicalChatIdSchema,
   transportEpoch: FENCED_COUNTER,
 }).strict();
 
@@ -384,6 +437,50 @@ export class ChatVoiceDeliveryRepository implements VoiceDeliveryPort {
     });
   }
 
+  /**
+   * Append later-synthesized segments to a live manifest. The merge happens
+   * inside one transaction under the row lock: the combined manifest must stay
+   * schema-valid (unique segment ids, non-decreasing canonical text offsets
+   * against the existing tail) or the whole write is rejected — a malformed
+   * append is a caller bug and throws ChatConflictError rather than persisting
+   * a partial manifest. Terminal records absorb the write as `ignored`; a
+   * revision/epoch mismatch is `stale`.
+   */
+  async extendManifest(
+    ownerInput: ChatOwner,
+    rawInput: VoiceDeliveryExtendInput,
+  ): Promise<VoiceDeliveryResult<VoiceDeliveryExtendOutcome>> {
+    const owner = CanonicalOwnerScopeSchema.parse(ownerInput);
+    const input = ExtendInputSchema.parse(rawInput);
+    return this.kysely.transaction().execute(async (trx) => {
+      await this.requireOwnedChat(trx, owner, input.chatId);
+      const row = await this.selectDelivery(trx, input.chatId, input.responseId, true);
+      if (!row) return { outcome: "not_found", record: null };
+      const record = toVoiceDeliveryRecord(row);
+      if (TERMINAL_STATES.has(record.state)) return { outcome: "ignored", record };
+      if (record.revision !== input.revision || record.transportEpoch !== input.transportEpoch) {
+        return { outcome: "stale", record };
+      }
+      const stored = readSegments(row);
+      const merged = stored === null
+        ? null
+        : VoiceDeliverySegmentsSchema.safeParse([...stored, ...input.appendSegments]);
+      if (stored === null || merged === null || !merged.success) {
+        // A merge that breaks uniqueness/ordering is a conflict, not an
+        // outcome: the record must never hold a manifest that violates the
+        // invariants acknowledgements rely on.
+        throw new ChatConflictError(input.chatId, record.revision);
+      }
+      const updated = await this.fencedUpdate(trx, input, {
+        segments: jsonb(merged.data),
+        revision: record.revision + 1,
+        updated_at: new Date(),
+      });
+      if (updated) return { outcome: "extended", record: toVoiceDeliveryRecord(updated) };
+      return { outcome: "stale", record: await this.currentRecord(trx, input.chatId, input.responseId) };
+    });
+  }
+
   async acknowledge(
     ownerInput: ChatOwner,
     rawInput: VoiceDeliveryAcknowledgeInput,
@@ -406,6 +503,10 @@ export class ChatVoiceDeliveryRepository implements VoiceDeliveryPort {
         ? segments!.findIndex((segment) => segment.segmentId === record.acknowledgedSegment)
         : -1;
       if (index <= acknowledgedIndex) return { outcome: "duplicate", record };
+      // Acks must be strictly contiguous: the next acceptable index is
+      // acknowledgedIndex + 1. Skipping ahead would let a `complete` claim
+      // mark unheard intermediate segments as heard.
+      if (index !== acknowledgedIndex + 1) return { outcome: "out_of_order", record };
       // The stored position is the client's claim bounded by the acknowledged
       // segment's cumulative boundary and by delivered audio — it can never
       // credit more than the last whole segment or undelivered playback.
@@ -512,6 +613,39 @@ export class ChatVoiceDeliveryRepository implements VoiceDeliveryPort {
       });
       if (updated) return { outcome: "classified", record: toVoiceDeliveryRecord(updated) };
       return { outcome: "ignored", record: await this.currentRecord(trx, input.chatId, input.responseId) };
+    });
+  }
+
+  /**
+   * Re-fence every open delivery of a chat onto a freshly minted transport
+   * epoch after reconnect. One UPDATE moves all non-terminal rows forward
+   * (`transport_epoch < :epoch` makes adoption forward-only — a row that
+   * already adopted a newer epoch is never rolled back) and bumps each
+   * revision so callers re-read the fence (`get`) before their next write.
+   * Terminal rows are absorbing and left untouched. Row locks serialize
+   * adoption against in-flight fenced writes, so no extra coordination is
+   * needed: a stale-epoch writer either commits first (its row is then
+   * adopted like the rest) or loses to the adoption fence.
+   */
+  async adoptTransportEpoch(
+    ownerInput: ChatOwner,
+    rawInput: VoiceDeliveryAdoptEpochInput,
+  ): Promise<{ outcome: "adopted" | "none"; adopted: number }> {
+    const owner = CanonicalOwnerScopeSchema.parse(ownerInput);
+    const input = AdoptEpochInputSchema.parse(rawInput);
+    return this.kysely.transaction().execute(async (trx) => {
+      await this.requireOwnedChat(trx, owner, input.chatId);
+      const adoptedRows = await trx.updateTable("chat_voice_deliveries").set({
+        transport_epoch: input.transportEpoch,
+        revision: sql<number>`revision + 1`,
+        updated_at: new Date(),
+      }).where("chat_id", "=", input.chatId)
+        .where("state", "in", [...NON_TERMINAL_STATES])
+        .where("transport_epoch", "<", input.transportEpoch)
+        .returning("response_id")
+        .execute();
+      const adopted = adoptedRows.length;
+      return adopted > 0 ? { outcome: "adopted", adopted } : { outcome: "none", adopted: 0 };
     });
   }
 

@@ -1,9 +1,10 @@
-import { type ChatAgentContext } from "./agent-context.js";
+import { type ChatAgentContext, chatContextRequestHash } from "./agent-context.js";
 import { chatRequestHash, truthfulCancellationGranularity } from "./argument-digest.js";
 import { randomUUID } from "node:crypto";
 import {
   CanonicalCreateChatTurnRequestSchema, CanonicalChatMessageSchema, CanonicalChatTurnSchema,
   CanonicalChatRunSchema, CanonicalChatTurnAdmissionResponseSchema,
+  ChatRunContextSchema,
   type CanonicalCreateChatTurnRequest, type CanonicalChatMessage, type CanonicalChatRun,
   type CanonicalChatTurnAdmissionResponse,
 } from "@matrix-os/contracts";
@@ -16,14 +17,25 @@ import { validateChatProviderSelection, type ChatProviderCatalogService } from "
 import type { CanonicalChatProviderRegistry, CanonicalChatProviderAdapter } from "./provider-adapter.js";
 import type { ChatExecutionRootResolver, ResolvedChatExecutionRoot } from "./execution-root.js";
 import { CanonicalChatOrchestrationError, mapRepositoryError, safeError, requirementsFor } from "./orchestration-input.js";
-import { loadChatResumeState } from "./resume-checkpoint.js";
+import { loadChatResumeDecision } from "./resume-checkpoint.js";
+import {
+  admissionPolicyForTurn,
+  type ActiveVoiceSessionPolicy,
+  type VoiceSessionPolicyLookup,
+} from "./voice-session-policy.js";
 
 export interface TurnAdmissionOptions {
-  repository: Pick<ChatRepository, "get" | "findTurnAdmission" | "getLatestAdapterStateForChat" | "admitTurn" | "finishRun">;
+  repository: Pick<ChatRepository, "get" | "findTurnAdmission" | "getLatestAdapterStateForChat" | "admitTurn" | "finishRun" | "kysely">;
   catalog: Pick<ChatProviderCatalogService, "getCatalog">;
   adapters: CanonicalChatProviderRegistry;
   executionRoots?: ChatExecutionRootResolver;
   agentContext?: ChatAgentContext;
+  /**
+   * Optional live voice-session policy source. When a session owns the Chat
+   * its memory/checkpoint/permission policy is stamped onto the admitted run
+   * — spoken and typed turns alike — so canonical policy is never bypassed.
+   */
+  voiceSessionPolicy?: VoiceSessionPolicyLookup;
   now?: () => Date;
   assertOpen(): void;
   assertPersonalExecutionAllowed(owner: ChatOwner, chatId: string): Promise<void>;
@@ -46,6 +58,12 @@ export interface TurnAdmissionExecutionHints {
    * responses are ineligible for reuse.
    */
   deliveryContext?: { unheardResponses?: readonly string[] };
+  /**
+   * The admitting voice session's own frozen policy, supplied by the engine
+   * for its spoken finals. Falls back to the ambient lookup for typed turns
+   * on a session-owned Chat.
+   */
+  sessionPolicy?: ActiveVoiceSessionPolicy;
 }
 
 export async function admitCanonicalTurn(
@@ -57,7 +75,26 @@ export async function admitCanonicalTurn(
     await deps.assertPersonalExecutionAllowed(owner, chatId);
     await deps.reconcileActiveRuns(owner);
     const input = CanonicalCreateChatTurnRequestSchema.parse(inputValue);
-    const requestHash = chatRequestHash(input, input.runPolicy);
+    // A live voice session owns this Chat's execution policy: its frozen
+    // memory/checkpoint/permission mode applies before hashing so dedup and
+    // the persisted record reflect exactly what will run.
+    let sessionPolicy: ActiveVoiceSessionPolicy | undefined;
+    try {
+      sessionPolicy = admissionHints.sessionPolicy
+        ?? deps.voiceSessionPolicy?.policyForChat(chatId);
+    } catch (error: unknown) {
+      // Fail closed — a lookup failure must not silently skip live policy.
+      console.warn("[chat] voice session policy lookup failed:", error instanceof Error ? error.name : "UnknownError");
+      throw new CanonicalChatOrchestrationError(
+        safeError("service_unavailable", "Chat admission is temporarily unavailable.", true, ["retry"]),
+        503,
+      );
+    }
+    const admissionPolicy = admissionPolicyForTurn(input, sessionPolicy);
+    const requestHash = chatRequestHash(
+      { ...input, permissionMode: admissionPolicy.permissionMode },
+      admissionPolicy.runPolicy,
+    );
     try {
       const duplicate = await deps.repository.findTurnAdmission(owner, chatId, input.clientRequestId, requestHash);
       if (duplicate) return CanonicalChatTurnAdmissionResponseSchema.parse({ record: duplicate.chat,
@@ -72,7 +109,7 @@ export async function admitCanonicalTurn(
     let prepared;
     try { prepared = await deps.agentContext?.prepare(owner, chatId, input); }
     catch (error: unknown) { return mapRepositoryError(error); }
-    const effective = { ...input, ...prepared };
+    const effective = { ...input, ...prepared, permissionMode: admissionPolicy.permissionMode };
     const catalog = await deps.catalog.getCatalog(principal);
     const validated = validateChatProviderSelection({
       catalog,
@@ -123,15 +160,32 @@ export async function admitCanonicalTurn(
         );
       }
     }
-    const resumeState = prepared?.context?.agent ? undefined : await loadChatResumeState({
+    const resumeDecision = prepared?.context?.agent ? undefined : await loadChatResumeDecision({
       repository: deps.repository, owner, chatId, adapter,
       instanceId: validated.instance.id,
       executionRootFingerprint: resolvedRoot?.fingerprint ?? null,
       mode: "follow_up",
-      ...(input.runPolicy ? { runPolicy: input.runPolicy } : {}),
+      retainedHistorySupported: true,
+      historyBoundarySeq: record.chat.messageCount,
+      ...(admissionPolicy.runPolicy ? { runPolicy: admissionPolicy.runPolicy } : {}),
       ...(admissionHints.deliveryContext ? { deliveryContext: admissionHints.deliveryContext } : {}),
     });
-    if (resumeState !== undefined && prepared?.context?.history) {
+    const resumeState = resumeDecision?.resumeState;
+    if (resumeDecision?.retainedHistory && !prepared?.context?.history) {
+      // Retain canonical history the resumed session does not contain — or,
+      // on a rebuild decision, give the provider the heard-safe projection.
+      prepared = {
+        ...prepared,
+        context: ChatRunContextSchema.parse({
+          version: 1,
+          requestHash: chatContextRequestHash(input),
+          chats: prepared?.context?.chats ?? [],
+          history: resumeDecision.retainedHistory,
+        }),
+      };
+    } else if (resumeState !== undefined && prepared?.context?.history
+      && resumeDecision?.mode === "resume") {
+      // A clean-resume checkpoint already covers the prepared snapshot.
       const { history: _history, ...context } = prepared.context;
       prepared.context = context;
     }
@@ -174,8 +228,8 @@ export async function admitCanonicalTurn(
       selection: validated.selection,
       interactionMode: effective.interactionMode,
       ...(prepared?.context ? { context: prepared.context } : {}),
-      permissionMode: input.permissionMode,
-      ...(input.runPolicy ? { runPolicy: input.runPolicy } : {}),
+      permissionMode: admissionPolicy.permissionMode,
+      ...(admissionPolicy.runPolicy ? { runPolicy: admissionPolicy.runPolicy } : {}),
       ...(resolvedRoot ? {
         executionRoot: resolvedRoot.ref,
         executionRootFingerprint: resolvedRoot.fingerprint,

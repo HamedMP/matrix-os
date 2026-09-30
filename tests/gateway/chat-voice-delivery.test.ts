@@ -113,9 +113,13 @@ describe("chat voice delivery repository", () => {
     await repository.recordDelivered(owner, {
       chatId, responseId: "resp_1", deliveredThroughMs: 5000, revision: 1, transportEpoch: 1,
     });
+    await repository.acknowledge(owner, {
+      chatId, responseId: "resp_1", segmentId: "seg_1",
+      playedThroughMs: 1000, revision: 2, transportEpoch: 1,
+    });
     const acked = await repository.acknowledge(owner, {
       chatId, responseId: "resp_1", segmentId: "seg_2",
-      playedThroughMs: 2500, revision: 2, transportEpoch: 1,
+      playedThroughMs: 2500, revision: 3, transportEpoch: 1,
     });
     expect(acked.outcome).toBe("acknowledged");
     expect(acked.record).toMatchObject({
@@ -123,7 +127,7 @@ describe("chat voice delivery repository", () => {
       acknowledgedSegment: "seg_2",
       playedThroughMs: 2500,
       effectiveTextEnd: 250, // never beyond the acknowledged segment's textEnd
-      revision: 3,
+      revision: 4,
     });
   });
 
@@ -132,10 +136,14 @@ describe("chat voice delivery repository", () => {
     await repository.recordDelivered(owner, {
       chatId, responseId: "resp_1", deliveredThroughMs: 2000, revision: 1, transportEpoch: 1,
     });
+    await repository.acknowledge(owner, {
+      chatId, responseId: "resp_1", segmentId: "seg_1",
+      playedThroughMs: 1000, revision: 2, transportEpoch: 1,
+    });
     // seg_2 cumulative boundary is 2500ms but only 2000ms were delivered.
     const clampedByDelivered = await repository.acknowledge(owner, {
       chatId, responseId: "resp_1", segmentId: "seg_2",
-      playedThroughMs: 99_999, revision: 2, transportEpoch: 1,
+      playedThroughMs: 99_999, revision: 3, transportEpoch: 1,
     });
     expect(clampedByDelivered.outcome).toBe("acknowledged");
     expect(clampedByDelivered.record!.playedThroughMs).toBe(2000);
@@ -145,7 +153,7 @@ describe("chat voice delivery repository", () => {
     // A conservative client claim below the segment boundary is kept as-is.
     const modest = await repository.acknowledge(owner, {
       chatId, responseId: "resp_1", segmentId: "seg_3",
-      playedThroughMs: 1800, revision: 3, transportEpoch: 1,
+      playedThroughMs: 1800, revision: 4, transportEpoch: 1,
     });
     expect(modest.outcome).toBe("acknowledged");
     expect(modest.record!.playedThroughMs).toBe(2000); // never regresses
@@ -181,27 +189,31 @@ describe("chat voice delivery repository", () => {
   it("treats replayed acks of the same or an earlier segment as no-op success", async () => {
     await repository.recordPending(owner, pendingInput());
     await repository.acknowledge(owner, {
-      chatId, responseId: "resp_1", segmentId: "seg_2",
-      playedThroughMs: 2500, revision: 1, transportEpoch: 1,
+      chatId, responseId: "resp_1", segmentId: "seg_1",
+      playedThroughMs: 1000, revision: 1, transportEpoch: 1,
     });
-    const replay = await repository.acknowledge(owner, {
+    await repository.acknowledge(owner, {
       chatId, responseId: "resp_1", segmentId: "seg_2",
       playedThroughMs: 2500, revision: 2, transportEpoch: 1,
     });
+    const replay = await repository.acknowledge(owner, {
+      chatId, responseId: "resp_1", segmentId: "seg_2",
+      playedThroughMs: 2500, revision: 3, transportEpoch: 1,
+    });
     expect(replay.outcome).toBe("duplicate");
-    expect(replay.record!.revision).toBe(2);
+    expect(replay.record!.revision).toBe(3);
 
     const earlier = await repository.acknowledge(owner, {
       chatId, responseId: "resp_1", segmentId: "seg_1",
-      playedThroughMs: 1000, revision: 2, transportEpoch: 1,
+      playedThroughMs: 1000, revision: 3, transportEpoch: 1,
     });
     expect(earlier.outcome).toBe("duplicate");
     expect(earlier.record).toMatchObject({
-      acknowledgedSegment: "seg_2", effectiveTextEnd: 250, revision: 2,
+      acknowledgedSegment: "seg_2", effectiveTextEnd: 250, revision: 3,
     });
   });
 
-  it("lets an ack skip ahead to a later ordered segment", async () => {
+  it("rejects an ack that skips unacknowledged predecessors as out_of_order", async () => {
     await repository.recordPending(owner, pendingInput());
     await repository.recordDelivered(owner, {
       chatId, responseId: "resp_1", deliveredThroughMs: 4000, revision: 1, transportEpoch: 1,
@@ -210,9 +222,35 @@ describe("chat voice delivery repository", () => {
       chatId, responseId: "resp_1", segmentId: "seg_3",
       playedThroughMs: 4000, revision: 2, transportEpoch: 1,
     });
-    expect(skipped.outcome).toBe("acknowledged");
+    expect(skipped.outcome).toBe("out_of_order");
     expect(skipped.record).toMatchObject({
-      acknowledgedSegment: "seg_3", effectiveTextEnd: 400, playedThroughMs: 4000,
+      acknowledgedSegment: null, effectiveTextEnd: 0, playedThroughMs: 0, revision: 2,
+    });
+
+    // Even after acknowledging seg_1, jumping straight to seg_3 is rejected.
+    await repository.acknowledge(owner, {
+      chatId, responseId: "resp_1", segmentId: "seg_1",
+      playedThroughMs: 1000, revision: 2, transportEpoch: 1,
+    });
+    const stillSkipped = await repository.acknowledge(owner, {
+      chatId, responseId: "resp_1", segmentId: "seg_3",
+      playedThroughMs: 4000, revision: 3, transportEpoch: 1,
+    });
+    expect(stillSkipped.outcome).toBe("out_of_order");
+
+    // The contiguous sequence then completes normally.
+    const next = await repository.acknowledge(owner, {
+      chatId, responseId: "resp_1", segmentId: "seg_2",
+      playedThroughMs: 2500, revision: 3, transportEpoch: 1,
+    });
+    expect(next.outcome).toBe("acknowledged");
+    const last = await repository.acknowledge(owner, {
+      chatId, responseId: "resp_1", segmentId: "seg_3",
+      playedThroughMs: 4000, revision: 4, transportEpoch: 1,
+    });
+    expect(last.outcome).toBe("acknowledged");
+    expect(last.record).toMatchObject({
+      acknowledgedSegment: "seg_3", effectiveTextEnd: 400,
     });
   });
 
@@ -336,8 +374,12 @@ describe("chat voice delivery repository", () => {
     await repository.recordPending(owner, pendingInput());
     await repository.recordPending(owner, pendingInput({ responseId: "resp_2" }));
     await repository.acknowledge(owner, {
+      chatId, responseId: "resp_2", segmentId: "seg_1",
+      playedThroughMs: 1000, revision: 1, transportEpoch: 1,
+    });
+    await repository.acknowledge(owner, {
       chatId, responseId: "resp_2", segmentId: "seg_2",
-      playedThroughMs: 2500, revision: 1, transportEpoch: 1,
+      playedThroughMs: 2500, revision: 2, transportEpoch: 1,
     });
 
     expect(await repository.get(outsider, chatId, "resp_1")).toBeNull();
@@ -383,5 +425,144 @@ describe("chat voice delivery repository", () => {
     await expect(repository.recordTerminal(owner, {
       chatId, responseId: "resp_1", state: "playing" as never, revision: 1, transportEpoch: 1,
     })).rejects.toThrow();
+  });
+
+  it("extends the manifest with later segments under the same fences", async () => {
+    await repository.recordPending(owner, pendingInput({
+      segments: [{ segmentId: "seg_1", textStart: 0, textEnd: 100, durationMs: 1000 }],
+    }));
+    const extended = await repository.extendManifest(owner, {
+      chatId, responseId: "resp_1",
+      appendSegments: [
+        { segmentId: "seg_2", textStart: 100, textEnd: 250, durationMs: 1500 },
+        { segmentId: "seg_3", textStart: 250, textEnd: 400, durationMs: 1500 },
+      ],
+      revision: 1, transportEpoch: 1,
+    });
+    expect(extended.outcome).toBe("extended");
+    expect(extended.record).toMatchObject({ revision: 2 });
+    expect(extended.record!.segments.map((segment) => segment.segmentId))
+      .toEqual(["seg_1", "seg_2", "seg_3"]);
+
+    // The merged manifest is acknowledged contiguously and completes.
+    for (const [segmentId, revision, playedThroughMs] of [
+      ["seg_1", 2, 1000],
+      ["seg_2", 3, 2500],
+      ["seg_3", 4, 4000],
+    ] as const) {
+      const acked = await repository.acknowledge(owner, {
+        chatId, responseId: "resp_1", segmentId, playedThroughMs, revision, transportEpoch: 1,
+      });
+      expect(acked.outcome).toBe("acknowledged");
+    }
+    const completed = await repository.recordTerminal(owner, {
+      chatId, responseId: "resp_1", state: "complete", revision: 5, transportEpoch: 1,
+    });
+    expect(completed.outcome).toBe("terminal");
+  });
+
+  it("rejects manifest extension that breaks ordering or id uniqueness", async () => {
+    await repository.recordPending(owner, pendingInput());
+    // Offsets must not regress below the existing tail's textStart ordering.
+    await expect(repository.extendManifest(owner, {
+      chatId, responseId: "resp_1",
+      appendSegments: [{ segmentId: "seg_9", textStart: 10, textEnd: 500, durationMs: 500 }],
+      revision: 1, transportEpoch: 1,
+    })).rejects.toThrow(ChatConflictError);
+    // Duplicate segment id against the stored manifest.
+    await expect(repository.extendManifest(owner, {
+      chatId, responseId: "resp_1",
+      appendSegments: [{ segmentId: "seg_1", textStart: 400, textEnd: 500, durationMs: 500 }],
+      revision: 1, transportEpoch: 1,
+    })).rejects.toThrow(ChatConflictError);
+    // Empty append lists are rejected at input validation.
+    await expect(repository.extendManifest(owner, {
+      chatId, responseId: "resp_1",
+      appendSegments: [], revision: 1, transportEpoch: 1,
+    })).rejects.toThrow();
+    const record = await repository.get(owner, chatId, "resp_1");
+    expect(record).toMatchObject({ revision: 1 });
+    expect(record!.segments).toHaveLength(3);
+  });
+
+  it("fences manifest extension by revision and transport epoch", async () => {
+    await repository.recordPending(owner, pendingInput());
+    const staleRevision = await repository.extendManifest(owner, {
+      chatId, responseId: "resp_1",
+      appendSegments: [{ segmentId: "seg_4", textStart: 400, textEnd: 500, durationMs: 400 }],
+      revision: 9, transportEpoch: 1,
+    });
+    expect(staleRevision.outcome).toBe("stale");
+    const staleEpoch = await repository.extendManifest(owner, {
+      chatId, responseId: "resp_1",
+      appendSegments: [{ segmentId: "seg_4", textStart: 400, textEnd: 500, durationMs: 400 }],
+      revision: 1, transportEpoch: 9,
+    });
+    expect(staleEpoch.outcome).toBe("stale");
+    const missing = await repository.extendManifest(owner, {
+      chatId, responseId: "resp_missing",
+      appendSegments: [{ segmentId: "seg_4", textStart: 400, textEnd: 500, durationMs: 400 }],
+      revision: 1, transportEpoch: 1,
+    });
+    expect(missing).toMatchObject({ outcome: "not_found", record: null });
+  });
+
+  it("absorbs manifest extension on terminal records", async () => {
+    await repository.recordPending(owner, pendingInput());
+    await repository.recordTerminal(owner, {
+      chatId, responseId: "resp_1", state: "interrupted", revision: 1, transportEpoch: 1,
+    });
+    const extended = await repository.extendManifest(owner, {
+      chatId, responseId: "resp_1",
+      appendSegments: [{ segmentId: "seg_4", textStart: 400, textEnd: 500, durationMs: 400 }],
+      revision: 2, transportEpoch: 1,
+    });
+    expect(extended.outcome).toBe("ignored");
+    expect(extended.record).toMatchObject({ state: "interrupted", revision: 2 });
+    expect(extended.record!.segments).toHaveLength(3);
+  });
+
+  it("adopts a new transport epoch across every open row and bumps revisions", async () => {
+    await repository.recordPending(owner, pendingInput());
+    await repository.recordPending(owner, pendingInput({ responseId: "resp_2" }));
+    // A terminal row must never be touched by adoption.
+    await repository.recordPending(owner, pendingInput({ responseId: "resp_3" }));
+    await repository.recordTerminal(owner, {
+      chatId, responseId: "resp_3", state: "interrupted", revision: 1, transportEpoch: 1,
+    });
+
+    const adopted = await repository.adoptTransportEpoch(owner, { chatId, transportEpoch: 7 });
+    expect(adopted).toEqual({ outcome: "adopted", adopted: 2 });
+
+    const first = await repository.get(owner, chatId, "resp_1");
+    const second = await repository.get(owner, chatId, "resp_2");
+    const terminal = await repository.get(owner, chatId, "resp_3");
+    expect(first).toMatchObject({ transportEpoch: 7, revision: 2, state: "pending" });
+    expect(second).toMatchObject({ transportEpoch: 7, revision: 2 });
+    expect(terminal).toMatchObject({ transportEpoch: 1, revision: 2, state: "interrupted" });
+
+    // Old-epoch writes lose the fence after adoption.
+    const staleWrite = await repository.acknowledge(owner, {
+      chatId, responseId: "resp_1", segmentId: "seg_1",
+      playedThroughMs: 1000, revision: 1, transportEpoch: 1,
+    });
+    expect(staleWrite.outcome).toBe("stale");
+    const newEpoch = await repository.acknowledge(owner, {
+      chatId, responseId: "resp_1", segmentId: "seg_1",
+      playedThroughMs: 1000, revision: 2, transportEpoch: 7,
+    });
+    expect(newEpoch.outcome).toBe("acknowledged");
+
+    // Re-adopting the same or an older epoch is a no-op; adoption is forward-only.
+    const again = await repository.adoptTransportEpoch(owner, { chatId, transportEpoch: 7 });
+    expect(again).toEqual({ outcome: "none", adopted: 0 });
+  });
+
+  it("adopts epochs only for the owning chat and owner", async () => {
+    await repository.recordPending(owner, pendingInput());
+    await expect(repository.adoptTransportEpoch(outsider, { chatId, transportEpoch: 2 }))
+      .rejects.toThrow("Chat not found");
+    const record = await repository.get(owner, chatId, "resp_1");
+    expect(record).toMatchObject({ transportEpoch: 1, revision: 1 });
   });
 });
