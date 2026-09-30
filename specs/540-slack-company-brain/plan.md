@@ -41,4 +41,5 @@ Verification: full HTTP ingress → home enqueue → canonical Pi → source cit
 Goal: reviewable PR stack and truthful availability.
 Files: feature setup/evidence docs; separate site repository docs PR.
 Approach: focused/full relevant tests and type checks, independent security/code review, Greptile 5/5 on current heads, ready-for-ci label, selected pilot workspace/host live evidence.
+Execution note: implementation, independent review, automated compatibility/coverage and public documentation PR are complete; current-head Greptile/CI and selected live pilot remain external gates. See validation.md.
 Verification: record exact revisions, test outcomes, upstream dependencies and any remaining external setup/qualification. Merge only after review gates; clean completed worktrees only after verified merge and no unfinished work/processes.
