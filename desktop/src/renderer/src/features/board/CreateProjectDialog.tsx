@@ -19,6 +19,11 @@ import {
   parseGitHubHttpsUrl,
   slugifyProjectName,
 } from "./add-project-model";
+import {
+  DesktopProjectSharingHost,
+  useDesktopProjectSharingContext,
+} from "../project/DesktopProjectSharing";
+import type { Project } from "../../stores/board";
 
 type Mode = "folder" | "github" | "scratch";
 type Step = "pick" | Mode;
@@ -69,7 +74,11 @@ function ModeCard({
 
 // Inner form mounts only while open, so its state is fresh per open (no
 // reset-on-prop effect). autoFocus replaces a focus setTimeout.
-function CreateProjectForm({ onClose }: { onClose: () => void }) {
+function CreateProjectForm({ onClose, canShareAfterCreate, onCreatedProject }: {
+  onClose: () => void;
+  canShareAfterCreate: boolean;
+  onCreatedProject: (project: Project) => void;
+}) {
   const api = useConnection((s) => s.api);
   const createProject = useBoard((s) => s.createProject);
   const selectProject = useBoard((s) => s.selectProject);
@@ -98,6 +107,7 @@ function CreateProjectForm({ onClose }: { onClose: () => void }) {
     authGeneration: number;
   } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [shareAfterCreating, setShareAfterCreating] = useState(false);
   const [cloneRequestId] = useState(() => `req_${crypto.randomUUID()}`);
   const folderRequestRef = useRef<{ payload: string; id: string } | null>(null);
   const dialogClosedRef = useRef(false);
@@ -225,6 +235,7 @@ function CreateProjectForm({ onClose }: { onClose: () => void }) {
         isCurrent,
         setError,
         close: closeFromUser,
+        ...(shareAfterCreating ? { onCreatedProject } : {}),
       },
     };
   };
@@ -459,6 +470,21 @@ function CreateProjectForm({ onClose }: { onClose: () => void }) {
 
       {error ? <span className="text-xs" style={{ color: "var(--danger)" }}>{error}</span> : null}
 
+      {canShareAfterCreate ? <label className="flex items-start gap-2 rounded-lg border px-3 py-2" style={{ borderColor: "var(--border-subtle)" }}>
+        <input
+          type="checkbox"
+          aria-label="Share project after creating"
+          checked={shareAfterCreating}
+          disabled={submitting}
+          onChange={(event) => setShareAfterCreating(event.target.checked)}
+          className="mt-0.5"
+        />
+        <span className="flex flex-col gap-0.5">
+          <span className="text-sm font-medium" style={{ color: "var(--text-primary)" }}>Share project after creating</span>
+          <span className="text-xs" style={{ color: "var(--text-tertiary)" }}>Choose organization members after creation. The entire project is shared.</span>
+        </span>
+      </label> : null}
+
       <div className="flex justify-end gap-2 pt-1">
         <Button variant="subtle" onClick={closeFromUser}>Cancel</Button>
         <Button variant="primary" disabled={!canSubmit || submitting} onClick={() => void submit()}>
@@ -470,9 +496,32 @@ function CreateProjectForm({ onClose }: { onClose: () => void }) {
 }
 
 export default function CreateProjectDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
-  return (
+  const organizationId = useConnection((state) => state.organizationId);
+  const sharing = useDesktopProjectSharingContext(open && organizationId !== null);
+  const [shareTarget, setShareTarget] = useState<{ id: string; name: string; requestId: string } | null>(null);
+
+  const handleCreatedProject = useCallback((project: Project) => {
+    if (!project.id) {
+      console.warn("[project-collaboration] created project has no canonical id");
+      return;
+    }
+    setShareTarget({ id: project.id, name: project.name || project.slug, requestId: crypto.randomUUID() });
+  }, []);
+
+  return <>
     <Dialog open={open} onClose={onClose} width={480} title="Create a project" placement="center">
-      <CreateProjectForm onClose={onClose} />
+      <CreateProjectForm
+        onClose={onClose}
+        canShareAfterCreate={Boolean(sharing?.organizationId)}
+        onCreatedProject={handleCreatedProject}
+      />
     </Dialog>
-  );
+    {shareTarget && sharing ? <DesktopProjectSharingHost
+      key={shareTarget.requestId}
+      sharing={sharing}
+      projectId={shareTarget.id}
+      projectName={shareTarget.name}
+      startOnMount
+    /> : null}
+  </>;
 }

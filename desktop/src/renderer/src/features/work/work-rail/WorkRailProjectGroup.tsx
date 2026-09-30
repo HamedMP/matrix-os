@@ -7,6 +7,8 @@ import { useProjectActions } from "./use-project-actions";
 import type { Project } from "../../../stores/board";
 import type { WorkRailProjectGroup as WorkRailProjectGroupModel } from "../work-rail-model";
 import { WorkRailChatRow } from "./WorkRailChatRow";
+import type { DesktopProjectSharingContext } from "../../project/DesktopProjectSharing";
+import { useProjectShareAction } from "./use-project-share-action";
 
 export function WorkRailProjectGroup({
   group,
@@ -27,6 +29,7 @@ export function WorkRailProjectGroup({
   onRenameCancel,
   onPinChat,
   onDeleteChat,
+  sharing = null,
 }: {
   group: WorkRailProjectGroupModel;
   expanded: boolean;
@@ -46,13 +49,16 @@ export function WorkRailProjectGroup({
   onRenameCancel: () => void;
   onPinChat: (record: CanonicalChatRecord) => void;
   onDeleteChat: (record: CanonicalChatRecord) => void;
+  sharing?: DesktopProjectSharingContext | null;
 }) {
   const actionButtonRef = useRef<HTMLButtonElement>(null);
+  const share = useProjectShareAction(group, sharing);
   const actions = useProjectActions(group.project);
   const items: ProjectMenuAction[] = [
     { label: group.project.pinned ? "Unpin" : "Pin", icon: group.project.pinned ? <PinOffIcon size={16} aria-hidden /> : <PinIcon size={16} aria-hidden />, disabled: !actions.available || actions.pending, onSelect: () => { void actions.update({ pinned: !group.project.pinned }); } },
     { label: "Edit", icon: <Settings size={16} aria-hidden />, disabled: !actions.available || actions.pending, onSelect: () => actions.setDialog("edit") },
     { label: "Show in Files", icon: <FolderOpen size={16} aria-hidden />, disabled: !actions.available || actions.pending, onSelect: () => { void actions.showInFiles(); } },
+    ...share.items,
     { label: "Delete project", icon: <Trash2 size={16} aria-hidden />, danger: true, disabled: actions.pending, onSelect: () => onDeleteProject(group.project) },
   ];
   return (
@@ -87,6 +93,7 @@ export function WorkRailProjectGroup({
         </div>
       </ProjectActionsMenu>
       {actions.error && actions.dialog !== "edit" ? <p role="alert" className="px-2 text-xs" style={{ color: "var(--danger)" }}>{actions.error}</p> : null}
+      {share.host}
       {actions.dialog === "edit" ? <ProjectEditDialog returnFocusRef={actionButtonRef} project={group.project} pending={actions.pending} error={actions.error} onClose={() => actions.setDialog(null)} onSave={actions.update} /> : null}
       {expanded ? (
         <div className="flex flex-col gap-0.5 pl-5">

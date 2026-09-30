@@ -31,6 +31,7 @@ import { WorkRailSearchDialog } from "./WorkRailSearchDialog";
 import type { CanonicalChatTitleProjection } from "./WorkSurfaceRuntime";
 import { createDesktopCollaborationApi } from "../../lib/collaboration";
 import { useConnection } from "../../stores/connection";
+import { useDesktopProjectSharingContext } from "../project/DesktopProjectSharing";
 
 type SectionKey = "pinned" | "projects" | "recents";
 const MAX_CHAT_PAGES = 10;
@@ -180,6 +181,7 @@ export function WorkRail({
     () => [...model.pinnedProjects, ...model.projects],
     [model],
   );
+  const projectSharing = useDesktopProjectSharingContext(active);
 
   useEffect(() => {
     if (!active || !client) setSearchOpen(false);
@@ -403,6 +405,7 @@ export function WorkRail({
           setDeleteChatError(null);
           setDeleteChatTarget(record);
         }}
+        sharing={projectSharing}
       />
     );
   };

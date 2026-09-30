@@ -1,0 +1,89 @@
+// @vitest-environment jsdom
+
+import React from "react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+
+const controller = vi.hoisted(() => ({
+  start: vi.fn(),
+  close: vi.fn(),
+  error: false,
+  lastOptions: null as null | Record<string, unknown>,
+}));
+
+vi.mock("@matrix-os/ui", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@matrix-os/ui")>();
+  return {
+    ...actual,
+    useProjectSharing: (options: Record<string, unknown>) => {
+      controller.lastOptions = options;
+      return {
+        pending: false,
+        open: false,
+        error: controller.error,
+        start: controller.start,
+        close: controller.close,
+        dialogs: <div data-testid="project-sharing-dialogs" />,
+      };
+    },
+  };
+});
+
+import { WorkRailProjectGroup } from "@desktop/renderer/src/features/work/work-rail/WorkRailProjectGroup";
+import { useConnection } from "@desktop/renderer/src/stores/connection";
+
+const alpha = { id: "proj_alpha", slug: "alpha", name: "Alpha", kind: "folder" as const };
+const api = { baseUrl: "https://app.matrix-os.com", get: vi.fn(), post: vi.fn(), delete: vi.fn() };
+
+function setup(sharing: { organizationId: string | null } | null) {
+  useConnection.setState({ api: { patch: vi.fn() } as never });
+  render(<WorkRailProjectGroup group={{ id: alpha.id, slug: alpha.slug, name: alpha.name, project: alpha, chats: [] }}
+    expanded={false} pinning={{}} onToggle={vi.fn()} onNewChat={vi.fn()} onDeleteProject={vi.fn()}
+    onSelectChat={vi.fn()} renamingChatId={null} renamePending={false} onRenameChat={vi.fn()}
+    onRenameCommit={vi.fn()} onRenameCancel={vi.fn()} onPinChat={vi.fn()} onDeleteChat={vi.fn()}
+    sharing={sharing ? { api: api as never, runtimeId: "vps:10000000-0000-4000-8000-000000000001", organizationId: sharing.organizationId } : null} />);
+}
+
+function openMenu() {
+  fireEvent.contextMenu(screen.getByRole("button", { name: "Alpha" }));
+}
+
+afterEach(() => {
+  cleanup();
+  controller.start.mockReset();
+  controller.error = false;
+  controller.lastOptions = null;
+  useConnection.setState({ api: null });
+});
+
+describe("Chats project sharing", () => {
+  it("starts whole-project sharing from the project right-click menu", () => {
+    setup({ organizationId: "org_matrix_team" });
+    openMenu();
+    fireEvent.click(screen.getByRole("menuitem", { name: "Share project" }));
+
+    expect(controller.start).toHaveBeenCalledTimes(1);
+    expect(controller.lastOptions).toMatchObject({
+      runtimeId: "vps:10000000-0000-4000-8000-000000000001",
+      organizationId: "org_matrix_team",
+      projectId: "proj_alpha",
+      projectName: "Alpha",
+    });
+    expect(screen.getByTestId("project-sharing-dialogs")).toBeTruthy();
+  });
+
+  it("explains the organization requirement in the project menu", () => {
+    setup({ organizationId: null });
+    openMenu();
+    const item = screen.getByRole("menuitem", { name: "Join an organization to share" });
+    expect(item.getAttribute("aria-disabled")).toBe("true");
+    fireEvent.click(item);
+    expect(controller.start).not.toHaveBeenCalled();
+  });
+
+  it("does not show a dead Share action without collaboration support", () => {
+    setup(null);
+    openMenu();
+    expect(screen.queryByRole("menuitem", { name: /share/i })).toBeNull();
+  });
+});
