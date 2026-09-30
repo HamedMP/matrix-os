@@ -25,6 +25,7 @@ describe("platform/internal-sync-routes", () => {
     deleteObject: vi.fn(),
     completeMultipartUpload: vi.fn(),
     abortMultipartUpload: vi.fn(),
+    listMultipartUploads: vi.fn(),
     destroy: vi.fn(),
   };
 
@@ -73,6 +74,24 @@ describe("platform/internal-sync-routes", () => {
       }),
     });
   }
+
+  it("recovers only exact-key owner uploads and returns coarse object existence", async () => {
+    const app = createTestApp(); const key = "matrixos-sync/user_alice/files/.chat-imports/job/original.jsonl";
+    const headers = { authorization: `Bearer ${bearerFor("alice", "platform-secret-123")}`, "content-type": "application/json" };
+    r2.listMultipartUploads.mockResolvedValue([{ key, uploadId: "upload" }]);
+    r2.headObject.mockResolvedValue({ exists: true, etag: "private-etag" });
+    const list = await app.request("/internal/containers/alice/sync/multipart/list", { method: "POST", headers, body: JSON.stringify({ key }) });
+    expect(list.status).toBe(200); expect(await list.json()).toEqual({ uploads: [{ key, uploadId: "upload" }] });
+    const head = await app.request("/internal/containers/alice/sync/object/head", { method: "POST", headers, body: JSON.stringify({ key }) });
+    expect(head.status).toBe(200); expect(await head.json()).toEqual({ exists: true });
+    const denied = await app.request("/internal/containers/alice/sync/multipart/list", { method: "POST", headers, body: JSON.stringify({ key: "matrixos-sync/user_bob/files/private.jsonl" }) });
+    expect(denied.status).toBe(403); expect(r2.listMultipartUploads).toHaveBeenCalledTimes(1);
+    const unauthenticated = await app.request("/internal/containers/alice/sync/object/head", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ key }) });
+    expect(unauthenticated.status).toBe(401);
+    r2.listMultipartUploads.mockResolvedValue([{ key: key + ".other", uploadId: "wrong" }]);
+    const unsafe = await app.request("/internal/containers/alice/sync/multipart/list", { method: "POST", headers, body: JSON.stringify({ key }) });
+    expect(unsafe.status).toBe(500); expect(await unsafe.json()).toEqual({ error: "Storage recovery unavailable" });
+  });
 
   it("rejects requests without the per-container bearer token", async () => {
     const app = createTestApp();

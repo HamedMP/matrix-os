@@ -126,3 +126,20 @@ describe("platform R2 client", () => {
     expect((init as RequestInit & { duplex?: string }).duplex).toBe("half");
   });
 });
+
+
+it("brokers exact-key recovery and coarse existence under machine authentication", async () => {
+  vi.restoreAllMocks();
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(new Response(JSON.stringify({ uploads: [{ key: "matrixos-sync/user_test/files/private.jsonl", uploadId: "upload" }] })))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ exists: true })));
+  const client = createPlatformR2Client({ baseUrl: "https://platform.example.test", handle: "test", token: "test-token", machineId: "machine-test", runtimeSlot: "primary" });
+  expect(await client.listMultipartUploads("matrixos-sync/user_test/files/private.jsonl")).toHaveLength(1);
+  expect(await client.headObject("matrixos-sync/user_test/files/private.jsonl")).toEqual({ exists: true });
+  expect(fetchMock.mock.calls[0]?.[0]).toContain("/multipart/list");
+  expect(fetchMock.mock.calls[1]?.[0]).toContain("/object/head");
+  for (const [, request] of fetchMock.mock.calls) {
+    expect(new Headers(request?.headers).get("x-matrix-machine-id")).toBe("machine-test");
+    expect(request?.signal).toBeInstanceOf(AbortSignal);
+  }
+  vi.restoreAllMocks();
+});
