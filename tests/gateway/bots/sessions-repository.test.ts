@@ -35,6 +35,20 @@ describe("bot sessions repository", () => {
     await expect(repo.load({ ...key, ownerId: OTHER_OWNER })).resolves.toMatchObject({ revision: 0, messages: [] });
   });
 
+  it("resets shared transcripts on policy/root context change and fences stale saves", async () => {
+    const repo = createBotSessionsRepository(db);
+    const old = { ...key, contextGeneration: "a".repeat(64) };
+    await repo.save({ ...old, baseRevision: 0, messages: [{ role: "user", content: "OLD POLICY EVIDENCE" }], tokenEstimate: 10, runtimeVersions: versions, now: NOW });
+    expect((await repo.load(old)).messages).toHaveLength(1);
+    await expect(repo.load(key)).rejects.toMatchObject({ code: "not_found" });
+    const next = { ...key, contextGeneration: "b".repeat(64) };
+    const snapshot = await repo.load(next);
+    expect(snapshot).toMatchObject({ revision: 2, messages: [], compactedThroughSeq: null });
+    await expect(repo.save({ ...old, baseRevision: 2, messages: [{ role: "assistant", content: "STALE" }], tokenEstimate: 1, runtimeVersions: versions, now: NOW })).rejects.toMatchObject({ code: "revision_conflict" });
+    await repo.save({ ...next, baseRevision: 2, messages: [{ role: "user", content: "NEW POLICY" }], tokenEstimate: 1, runtimeVersions: versions, now: NOW });
+    expect((await repo.load(next)).messages[0]?.content).toBe("NEW POLICY");
+  });
+
   it("refuses oversized transcripts and unsafe runtime version records", async () => {
     const repo = createBotSessionsRepository(db);
     const huge = [{ role: "user", content: "x".repeat(BOT_SESSION_MAX_BYTES), timestamp: 1 }];
