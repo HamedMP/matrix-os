@@ -169,3 +169,23 @@ production dependency failure and shutdown checks, and locked share conversion.
 Public docs must describe the harness and sharing limitation before UI actions
 ship. Persisted drive-to-Chat association and visible context controls follow in
 separate increments; this runtime PR alone does not enable them.
+
+
+## Drive projects and composer controls
+
+- Persist the first admitted drive as a private Chat organization entry in owner Postgres. Immediate and queued admission write it inside their existing Chat lock/transaction. `ON CONFLICT DO NOTHING` preserves an explicit prior association. A null association is an intentional tombstone and never silently auto-reassigned.
+- The Chat sidebar expands a company drive into Browse files, New Chat and loaded associated private Chats. It distinguishes association loading/error from an empty group. A drive entry is not a filesystem project and grants no Chat audience rights.
+- Add context and `@` offer the authorized drive, a logical folder, or a version-pinned file. Limit each message to three distinct drive references, retaining complete authority paths while bounding labels. Only current catalog capability enables submission; unsupported routes preserve the draft and show how to choose Claude Code.
+- Files exposes Ask in Chat for the current drive/folder and Add to Chat for an entry. Both open an editable new private draft without sending. Existing Chat context is added through its composer. Web draft intent is one identity-bound request with a ten-minute validity check and one-shot consumption. Web Mobile uses a focus signal and leaves persisted desktop layout unchanged. Electron uses the existing client-bound Work draft handoff.
+- Picker listings are lazy, bounded metadata previews, not exhaustive search or prompt content. Once admitted, run tools search the live authorized source and read current files as needed. A selected file stays pinned to its recorded version.
+
+| Route | Authentication and authorization | Limits |
+| --- | --- | --- |
+| `POST /api/chat-drive-projects/lookup` | Authenticated personal principal; owned active private Chats only; drive UI shows only current authorized drive discovery | Strict JSON, 16 KiB pre-buffer body limit, 100 Chat IDs, 5s SQL deadline, private/no-store |
+| `PATCH /api/chats/:chatId/drive-project` | Same owned private Chat, fresh drive authorization, then repeat Chat privacy check under row lock | Strict path/query/body, 4 KiB body limit, revision CAS and idempotent request ID, transaction with revision/outbox and association, 5s SQL deadline |
+
+An association remains safe private metadata when membership is revoked; source discovery hides inaccessible drives and every read still checks current authority. Unknown failures use generic errors. No new pool or local persistence format is introduced. Schema bootstrap is additive and serialized by an advisory transaction lock.
+
+Extraction plan for existing large composition modules: `ChatApp.tsx` wires the shared navigation and composer only; Files draft state and context controls live in focused modules. `SharedChatComposer.tsx` wires a focused surface adapter and derives capability from the catalog. `queue-repository.ts` replaces its context-part filter with `context-reference-parts.ts` and calls `drive-project-database.ts` inside the existing claim transaction; it adds no inline drive workflow. Mobile shell adds one extracted focus hook.
+
+Public documentation deliverable: update the private site drive and Chat context docs with root/folder/file selection, privacy, editable Files draft handoff, supported harnesses, bounds and release availability. Validate Web Canvas, Web Desktop and Electron Desktop; Web Mobile adapts only navigation. Native Mobile has no company drive capability in this increment.

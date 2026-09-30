@@ -9,6 +9,12 @@ const files = [file("README.md"), file("reports/2026/annual.md"), file("reports/
 const props = { name: "Authority", files, usedBytes: 8192, reservedBytes: 0, quotaBytes: 1_000_000_000_000, busy: false, canUpload: true, folder: "", onFolderChange: vi.fn(), onDownload: vi.fn() };
 afterEach(cleanup);
 describe("shared organization drive browser", () => {
+ it("hands off root, folder and pinned file selections as unsent Chat context",()=>{
+  const context=vi.fn();render(<OrganizationDriveBrowser {...props} onChatContext={context}/>);
+  fireEvent.click(screen.getByRole("button",{name:"Ask about this drive"}));expect(context).toHaveBeenLastCalledWith({kind:"drive"});
+  fireEvent.click(screen.getByRole("button",{name:"Add reports folder to Chat"}));expect(context).toHaveBeenLastCalledWith({kind:"folder",path:"reports"});
+  fireEvent.click(screen.getByRole("button",{name:"Add README.md to Chat"}));expect(context).toHaveBeenLastCalledWith({kind:"file",file:files[0]});
+ });
  it("shows navigable folders, file metadata and scope-aware breadcrumbs", () => {
   const change = vi.fn(); const view = render(<OrganizationDriveBrowser {...props} onFolderChange={change}/>);
   expect(screen.getByRole("button", { name: "Open folder reports" })).toBeTruthy();

@@ -18,6 +18,7 @@
  *   apps they've installed.
  */
 
+import {useCompanyDriveChatLaunch} from "./useCompanyDriveChatLaunch";
 import type { CSSProperties } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useFileWatcher } from "@/hooks/useFileWatcher";
@@ -347,6 +348,8 @@ export function MobileShell({ launchAppPath, sharedTerminalScopeId, onOpenComman
     setView("app");
     enqueueExistingProviderTerminal(sessionId, id);
   }, []);
+
+  useCompanyDriveChatLaunch(()=>{const app=apps.find(item=>item.path==="__chat__");if(app)openApp(app);});
 
   const terminalInstanceCount = openStack.reduce((count, entry) => (
     entry.app.path.startsWith("__terminal__") ? count + 1 : count

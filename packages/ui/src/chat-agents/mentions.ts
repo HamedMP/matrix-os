@@ -1,15 +1,23 @@
 import type { CanonicalChatResourceReference, CanonicalChatRun, CanonicalChatMessagePart } from "@matrix-os/contracts";
 
+/** Identity is independent of mutable labels and includes the selected drive subresource. */
+export function chatResourceKey(resource: CanonicalChatResourceReference): string {
+  const ref = resource.drive;
+  return resource.kind === "organization_drive" && ref
+    ? `${resource.kind}:${ref.organizationId}:${ref.scopeId}:${ref.kind}:${ref.kind === "folder" ? ref.path : ref.kind === "file" ? `${ref.fileId}:${ref.version}` : ""}`
+    : `${resource.kind}:${resource.id}`;
+}
 export function isChatMention(resource: CanonicalChatResourceReference): boolean {
-  return resource.kind === "agent" || resource.kind === "chat";
+  return resource.kind === "agent" || resource.kind === "chat" || resource.kind === "organization_drive";
 }
 export function hasChatMentionParts(parts: CanonicalChatMessagePart[]): boolean {
   return parts.some((part) => part.type === "resource_reference" && isChatMention(part.resource));
 }
 export function canAddChatMention(resources: CanonicalChatResourceReference[], next: CanonicalChatResourceReference): boolean {
-  if (resources.some((resource) => resource.kind === next.kind && resource.id === next.id)) return false;
+  if (resources.some((resource) => chatResourceKey(resource) === chatResourceKey(next))) return false;
   if (next.kind === "agent") return !resources.some((resource) => resource.kind === "agent");
   if (next.kind === "chat") return resources.filter((resource) => resource.kind === "chat").length < 3;
+  if (next.kind === "organization_drive") return resources.filter(resource => resource.kind === "organization_drive").length < 3;
   return true;
 }
 export function orderChatResources(resources: CanonicalChatResourceReference[]): CanonicalChatResourceReference[] {
