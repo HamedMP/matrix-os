@@ -805,6 +805,7 @@ reconcile_legacy_r2_credentials() {
   log "Removed legacy R2 credentials after broker and release health verification"
 }
 
+# Extraction boundary: specs/538-support-access-resilience/spec.md (Sync-agent extraction plan).
 # An older updater installs the root PostgreSQL unit and bundle helper without
 # the protected copy its ExecStart needs, so the unit would be skipped.
 reconcile_postgres_root_service() {
