@@ -41,8 +41,10 @@ export function useNativeOsViewPersistence(input: {
   const [loadedEntry, setLoadedEntry] = useState<string | ApiClient | null>(null);
   const entry = input.entryKey ?? input.api;
   const loadingEntryRef = useRef<string | ApiClient | null>(null);
-  const initialTabIdsRef = useRef(new Set<string>());
-  const preservedTabIdsRef = useRef(new Set<string>());
+  // Borrow immutable owner snapshots for this entry; do not clone growing ID caches.
+  // Keep them through both presentation restores, then release on entry change/unmount.
+  const initialTabsRef = useRef<readonly Tab[]>([]);
+  const initialSurfacesRef = useRef<Readonly<Record<string, DesktopSurface>>>({});
   const appliedRef = useRef<Record<string, true>>({});
   const canonicalGeometryRef = useRef<Record<OsViewMode, Record<string, DesktopSurfaceBounds>>>({
     desktop: {},
@@ -95,6 +97,11 @@ export function useNativeOsViewPersistence(input: {
     if (path) canonicalGeometryRef.current[mode][path] = { ...bounds };
   }, []);
 
+  useEffect(() => () => {
+    initialTabsRef.current = [];
+    initialSurfacesRef.current = {};
+  }, []);
+
   useEffect(() => {
     activeApiRef.current = input.api;
     return () => {
@@ -111,9 +118,8 @@ export function useNativeOsViewPersistence(input: {
     // Auth refresh may replace ApiClient without creating a new runtime entry.
     if (entry !== null && loadedEntry === entry) return;
     loadingEntryRef.current = entry;
-    initialTabIdsRef.current = new Set(useTabs.getState().tabs.map((tab) => tab.id));
-    preservedTabIdsRef.current = new Set(Object.values(useDesktopSurfaces.getState().surfaces)
-      .filter((surface) => surface.mode !== "closed").map((surface) => surface.tabId));
+    initialTabsRef.current = useTabs.getState().tabs;
+    initialSurfacesRef.current = useDesktopSurfaces.getState().surfaces;
     setLoadedEntry(null);
     setDurableState(null);
     loadedRef.current = false;
@@ -159,7 +165,8 @@ export function useNativeOsViewPersistence(input: {
       if (!path || !surface) continue;
       appliedRef.current[appliedKey] = true;
       applied = true;
-      if (preservedTabIdsRef.current.has(tab.id)) {
+      const initialSurface = initialSurfacesRef.current[tab.id];
+      if (initialSurface && initialSurface.mode !== "closed") {
         canonicalGeometryRef.current[input.mode][path] = { ...surface.bounds };
         continue;
       }
@@ -171,7 +178,7 @@ export function useNativeOsViewPersistence(input: {
           bounds: input.mode === "desktop" ? desktopSurfaceBounds(canonical, input.viewport) : canonical,
         } : {}),
         ...(app?.state === "minimized" ? { mode: "minimized" as const }
-          : app?.state === "closed" && initialTabIdsRef.current.has(tab.id) ? { mode: "closed" as const }
+          : app?.state === "closed" && initialTabsRef.current.some((initialTab) => initialTab.id === tab.id) ? { mode: "closed" as const }
             : {}),
       };
       changed = true;

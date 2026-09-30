@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
 import React from "react";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, renderHook, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createDefaultOsViewDocument } from "@matrix-os/contracts";
+import { useNativeChatStartup } from "@desktop/renderer/src/features/desktop-shell/use-native-chat-startup";
 import NativeDesktopShell from "@desktop/renderer/src/features/desktop-shell/NativeDesktopShell";
 import { useConnection } from "@desktop/renderer/src/stores/connection";
 import { useDesktopSurfaces } from "@desktop/renderer/src/stores/desktop-surfaces";
@@ -57,6 +58,43 @@ describe("canonical Chat runtime startup", () => {
       patch: vi.fn(async () => state),
     };
   }
+
+  it("restores all 512 valid app paths once and releases duplicate bookkeeping between entries", () => {
+    const document = createDefaultOsViewDocument();
+    document.apps = Array.from({ length: 512 }, (_, index) => ({ path: `apps/item-${index}/dist/index.html`, title: `Item ${index}`, state: "open" as const }));
+    const openers = document.apps.map((app, index) => ({
+      path: app.path,
+      open: vi.fn(() => useTabs.getState().openTab({ kind: "app", slug: `item-${index}`, title: app.title })),
+    }));
+    const input = {
+      entryKey: "first-entry", loadSettled: true, surfacesRestored: true, modeHydrated: true, catalogSettled: true,
+      durableState: { revision: 1, document, updatedAt: "2026-10-01T00:00:00.000Z" },
+      installedApps: [], destinations: openers, navigationChangedRef: { current: false }, restoringRef: { current: false }, openChat: vi.fn(),
+    };
+    const { rerender } = renderHook((entryKey) => useNativeChatStartup({ ...input, entryKey }), { initialProps: input.entryKey });
+    expect(openers.every((destination) => destination.open.mock.calls.length === 1)).toBe(true);
+    rerender("first-entry");
+    expect(openers.every((destination) => destination.open.mock.calls.length === 1)).toBe(true);
+    act(() => useTabs.setState(useTabs.getInitialState(), true));
+    rerender("second-entry");
+    expect(openers.every((destination) => destination.open.mock.calls.length === 2)).toBe(true);
+  });
+
+  it("restores duplicate nonclosed durable paths at most once", () => {
+    const document = createDefaultOsViewDocument();
+    document.apps = [
+      { path: "__terminal__", title: "Closed", state: "closed" },
+      { path: "__terminal__", title: "Terminal", state: "open" },
+      { path: "__terminal__", title: "Duplicate", state: "open" },
+    ];
+    const open = vi.fn(() => useTabs.getState().openTab({ kind: "terminals", title: "Terminal", closable: false }));
+    renderHook(() => useNativeChatStartup({
+      entryKey: "duplicates", loadSettled: true, surfacesRestored: true, modeHydrated: true, catalogSettled: true,
+      durableState: { revision: 1, document, updatedAt: "2026-10-01T00:00:00.000Z" },
+      installedApps: [], destinations: [{ path: "__terminal__", open }], navigationChangedRef: { current: false }, restoringRef: { current: false }, openChat: vi.fn(),
+    }));
+    expect(open).toHaveBeenCalledOnce();
+  });
 
   it("opens a missing canonical Chat once after runtime restoration, including a closed saved Chat", async () => {
     const document = createDefaultOsViewDocument();

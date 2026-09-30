@@ -149,3 +149,17 @@ Wrong: derive disconnection from unavailable models or replace an expired timest
 ### Short-window recovery reachability
 
 Native global/project Chat and hosted empty-state content must own bounded vertical scrolling at both narrow and wide widths. At short heights, initial connection-read recovery remains reachable without clipping or moving the composer. A real Electron window-size regression must scroll to and invoke the retry action while retaining the composer.
+
+### Startup restore collection lifetime
+
+Startup must not accumulate duplicate path or tab-id indexes. Electron consumes
+its validated OS-view document (maximum 512 apps) once and deduplicates against
+the source snapshot. Entry-specific tabs/surfaces borrow immutable owner snapshots
+through both presentation restores, then release on entry change or unmount.
+Web bootstrap borrows the initial windows snapshot until settling/unmount and
+uses local layout arrays bounded by a validated maximum of 512 entries. Reject
+malformed oversized legacy batches before normalization; never truncate a valid
+owner layout. Preserve last-write-wins installed-app layout lookup, duplicate
+path suppression, existing/minimized Chat geometry, initial focus and explicit
+navigation. Regression tests cover the full valid limit, invalid overflow,
+duplicate paths and preservation through Web Desktop/Web Canvas restoration.

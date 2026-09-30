@@ -36,7 +36,7 @@ export function useNativeStartupNavigation(entryKey: string) {
 function createStartupEntry(entryKey: string) {
   const tabs = useTabs.getState().tabs;
   return {
-    entryKey, consumed: false, restored: false, openedPaths: new Set<string>(),
+    entryKey, consumed: false, restored: false,
     // Preserve entry intent before any restoration pass adds other apps.
     explicitLaunch: tabs.length > 0 && !tabs.some((tab) => tab.kind === "work"),
   };
@@ -69,16 +69,16 @@ export function useNativeChatStartup(input: {
     input.restoringRef.current = true;
     try {
       if (!startup.restored) {
-        const currentPaths = new Set(initialTabs.tabs.flatMap((tab) => {
-          const path = nativeTabOsViewPath(tab, input.installedApps);
-          return path ? [path] : [];
-        }));
-        for (const app of input.durableState?.document.apps ?? []) {
-          if (app.state === "closed" || startup.openedPaths.has(app.path) || currentPaths.has(app.path)) continue;
+        // The validated durable document is capped at 512 apps. Consume this snapshot
+        // once, deduplicating against its first open path without a persistent cache.
+        const apps = input.durableState?.document.apps ?? [];
+        for (const [index, app] of apps.entries()) {
+          if (app.state === "closed"
+            || apps.findIndex((candidate) => candidate.path === app.path && candidate.state !== "closed") !== index
+            || initialTabs.tabs.some((tab) => nativeTabOsViewPath(tab, input.installedApps) === app.path)) continue;
           const destinationPath = app.path.startsWith("__terminal__:") ? "__terminal__" : app.path;
           const destination = input.destinations.find((candidate) => candidate.path === destinationPath);
           if (!destination) continue;
-          startup.openedPaths.add(app.path);
           destination.open();
           opened = true;
           if (app.path.startsWith("__terminal__:") && app.path.length > "__terminal__:".length) {
