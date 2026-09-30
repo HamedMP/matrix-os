@@ -221,6 +221,24 @@ describe("shared entry routing", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("keeps signed-in preview shared pages on the preview platform even when the account owns a computer", async () => {
+    await insertUserMachine(db, runningMachine);
+    process.env.MATRIX_APP_DOMAIN_HOSTS = "preview.matrix-os.com,preview-service.run.app";
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) =>
+      String(input).startsWith(AUTH_SHELL)
+        ? new Response("<main>preview shared frame</main>", { status: 200 })
+        : new Response("Internal Server Error", { status: 500 }));
+    const app = buildApp(db, { PLATFORM_PREVIEW: "true" });
+    for (const host of ["preview.matrix-os.com", "preview-service.run.app"]) {
+      fetchMock.mockClear();
+      const response = await app.request("/shared", signedIn(host));
+      expect(response.status).toBe(200);
+      expect(await response.text()).toBe("<main>preview shared frame</main>");
+      expect(fetchTargets(fetchMock)).toEqual([`${AUTH_SHELL}/shared`]);
+      expect(response.headers.get("set-cookie")).toBeNull();
+    }
+  });
+
   it("keeps an account with a running entitled computer on its own VPS shell", async () => {
     await insertUserMachine(db, runningMachine);
     const fetchMock = mockUpstreams();
