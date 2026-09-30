@@ -5,6 +5,10 @@ import { buildFileKey } from "../sync/r2-keys.js";
 import { resolveSyncScope } from "../sync/runtime-scope.js";
 import type { OrganizationDriveDatabase, OrganizationDriveUploadsTable } from "./database.js";
 
+import { OrganizationDriveError, } from "./errors.js";
+import { cancelDriveObjectBody, MAX_DRIVE_CONTEXT_FILE_BYTES, readVerifiedDriveText } from "./context-reader.js";
+export { OrganizationDriveError, type OrganizationDriveErrorCode } from "./errors.js";
+
 const MAX_FILE_BYTES = 100 * 1024 * 1024;
 const UPLOAD_TTL_MS = 30 * 60_000;
 const PUT_URL_TTL_SECONDS = 900;
@@ -17,11 +21,6 @@ type DriveR2 = {
   deleteObject(key: string): Promise<void>;
 };
 
-export type OrganizationDriveErrorCode = "not_found" | "conflict" | "quota" | "checksum" | "unavailable";
-export class OrganizationDriveError extends Error {
-  constructor(readonly code: OrganizationDriveErrorCode) { super(code); }
-}
-
 type DriveIdentity = { organizationId: string; scopeId: string; authorityRuntimeId?: string; authorityGeneration?: number };
 type UploadIdentity = DriveIdentity & { actorId: string };
 type UploadRow = Selectable<OrganizationDriveUploadsTable>;
@@ -29,6 +28,7 @@ type UploadRow = Selectable<OrganizationDriveUploadsTable>;
 /** One selected owner home owns the index. Every route must authorize its scope before calling this service. */
 export class OrganizationDriveService {
   private activePublications = 0;
+  private activeContextReads = 0;
   constructor(private readonly options: {
     db: Kysely<OrganizationDriveDatabase>;
     r2: DriveR2;
@@ -72,16 +72,19 @@ export class OrganizationDriveService {
     return { usedBytes: Number(row.used_bytes), reservedBytes: Number(row.reserved_bytes), quotaBytes: Number(row.quota_bytes) };
   }
 
-  async list(input: DriveIdentity & { after?: string; limit?: number }): Promise<{ files: OrganizationDriveFile[]; nextCursor?: string }> {
+  async list(input: DriveIdentity & { after?: string; limit?: number; prefix?: string; query?: string }): Promise<{ files: OrganizationDriveFile[]; nextCursor?: string }> {
     await this.drive(input);
     const limit = input.limit ?? 100;
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) throw new OrganizationDriveError("conflict");
     const after = input.after === undefined ? undefined : OrganizationDrivePathSchema.parse(input.after);
-    const query = this.options.db.selectFrom("organization_drive_files as f")
+    let query = this.options.db.selectFrom("organization_drive_files as f")
       .innerJoin("organization_drive_versions as v", (join) => join.onRef("v.file_id", "=", "f.id")
         .onRef("v.version", "=", "f.current_version"))
       .select(["f.id", "f.organization_id", "f.path", "f.current_version", "v.size_bytes", "v.sha256", "v.created_by", "f.updated_at"])
       .where("f.organization_id", "=", input.organizationId).where("f.deleted_at", "is", null);
+    const escapeLike = (value: string) => value.replace(/[\\%_]/g, "\\$&");
+    if (input.prefix) query = query.where("f.path", "like", `${escapeLike(OrganizationDrivePathSchema.parse(input.prefix))}/%`);
+    if (input.query) query = query.where("f.path", "ilike", `%${escapeLike(input.query)}%`);
     const rows = await (after ? query.where("f.path", ">", after) : query)
       .orderBy("f.path", "asc").limit(limit + 1).execute();
     const files = rows.slice(0, limit).map((row) => OrganizationDriveFileSchema.parse({
@@ -270,6 +273,38 @@ export class OrganizationDriveService {
       .select("v.object_key").where("f.id", "=", input.fileId)
       .whereRef("v.version", "=", "f.current_version").executeTakeFirstOrThrow();
     return { file, getUrl: await this.options.r2.getPresignedGetUrl(version.object_key, 60) };
+  }
+
+  async readContext(input: DriveIdentity & {fileId: string; version?: number; revalidate(): Promise<void>}) {
+    if (this.activeContextReads >= 4) throw new OrganizationDriveError("unavailable");
+    this.activeContextReads += 1;
+    try {
+      await this.drive(input);
+      let query = this.options.db.selectFrom("organization_drive_files as f")
+        .innerJoin("organization_drive_versions as v", "v.file_id", "f.id")
+        .select(["f.id", "f.organization_id", "f.path", "v.version", "v.size_bytes", "v.sha256", "v.created_by", "v.created_at", "v.object_key"])
+        .where("f.id", "=", input.fileId).where("f.organization_id", "=", input.organizationId).where("f.deleted_at", "is", null);
+      query = input.version ? query.where("v.version", "=", input.version) : query.whereRef("v.version", "=", "f.current_version");
+      const row = await query.executeTakeFirst();
+      if (!row) throw new OrganizationDriveError("not_found");
+      const file = OrganizationDriveFileSchema.parse({id: row.id, organizationId: row.organization_id, path: row.path,
+        version: row.version, size: Number(row.size_bytes), sha256: row.sha256, updatedBy: row.created_by, updatedAt: new Date(row.created_at).toISOString()});
+      const revalidate = async () => {await input.revalidate(); await this.drive(input); await this.fileById(input.organizationId, input.fileId);};
+      if (file.size > MAX_DRIVE_CONTEXT_FILE_BYTES) {await revalidate(); return {status: "unsupported" as const, file, readOnly: true as const};}
+      const signal = AbortSignal.timeout(30_000);
+      let object: Awaited<ReturnType<DriveR2["getObject"]>>;
+      try {object = await this.options.r2.getObject(row.object_key, {signal});}
+      catch (error: unknown) {console.warn("[organization-drive] context object unavailable", error instanceof Error ? error.name : "UnknownError"); throw new OrganizationDriveError("unavailable");}
+      if (object.contentLength !== undefined && object.contentLength !== file.size) {cancelDriveObjectBody(object.body); throw new OrganizationDriveError("checksum");}
+      let text;
+      try {text = await readVerifiedDriveText({body: object.body, size: file.size, sha256: file.sha256, signal});}
+      catch (error: unknown) {
+        if (!(error instanceof OrganizationDriveError) || error.code !== "unsupported") throw error;
+        await revalidate(); return {status: "unsupported" as const, file, readOnly: true as const};
+      }
+      await revalidate();
+      return {status: "text" as const, file, ...text, readOnly: true as const};
+    } finally {this.activeContextReads -= 1;}
   }
 
   async abort(input: UploadIdentity & { uploadId: string }): Promise<void> {

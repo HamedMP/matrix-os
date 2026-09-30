@@ -454,6 +454,8 @@ export const COLLABORATION_DIRECT_ROUTES: readonly CollaborationDirectRoute[] = 
   home("POST", `${SCOPE}/files/actions`),
   home("PUT", `${SCOPE}/drive`),
   home("GET", `${SCOPE}/drive`, { response: "OrganizationDriveSnapshotSchema" }),
+  home("GET", `${SCOPE}/drive/context/search`),
+  home("GET", `${SCOPE}/drive/files/:fileId/context`, {response: "OrganizationDriveTextContextSchema"}),
   home("POST", `${SCOPE}/drive/uploads`, { request: "OrganizationDriveUploadRequestSchema", response: "OrganizationDriveUploadReservationSchema" }),
   home("POST", `${SCOPE}/drive/uploads/:uploadId/commit`, { response: "OrganizationDriveFileSchema" }),
   home("DELETE", `${SCOPE}/drive/uploads/:uploadId`),

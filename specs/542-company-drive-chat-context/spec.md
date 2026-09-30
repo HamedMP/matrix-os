@@ -29,7 +29,7 @@ is not invented and copying another member's home is not required.
 
 ## Context behavior
 
-Default design pending product feedback: the selected drive/folder authorizes
+Confirmed product behavior: the selected drive/folder authorizes
 bounded live search/read for the current user request; individual files pin their
 selected version. Selection never loads a 1 TB drive into a prompt or grants write
 permission. The agent cites logical paths and versions for the files it actually
