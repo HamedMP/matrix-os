@@ -83,6 +83,7 @@ describe("shared Agents entry", () => {
     render(<ChatAgentsWorkspace><ChatAgentsRailSection client={client} onStartChat={vi.fn()} />
       <ChatAgentsContent client={client} scopeKey="chat_one"><p>Current Chat</p></ChatAgentsContent></ChatAgentsWorkspace>);
     fireEvent.click(await screen.findByRole("button", { name: "Manage agents" }));
+    expect(await screen.findByText("Pi · own Chat")).toBeTruthy();
     fireEvent.click(await screen.findByRole("button", { name: `Edit ${saved.name}` }));
     expect(screen.getByText("Pi")).toBeTruthy();
     expect(screen.getByText("Automatic · managed by this computer")).toBeTruthy();
@@ -362,7 +363,7 @@ describe("shared Agents entry", () => {
     expect(content.style.background).toBe("var(--bg-surface, var(--matrix-card, var(--card)))");
     expect(content.style.color).toBe("var(--text-primary, var(--matrix-card-fg, var(--foreground)))");
     expect(content.style.border).toBe("1px solid var(--border-default, var(--matrix-border, var(--border)))");
-    expect((await screen.findByText(/Create specialists/)).getAttribute("style")).toContain("var(--muted-foreground)");
+    expect((await screen.findByText(/Open recipe bots in their own Chat/)).getAttribute("style")).toContain("var(--muted-foreground)");
     const newAgent = await screen.findByRole("button", { name: "New Agent" });
     expect(newAgent.className).toContain("hover:enabled:bg-[var(--bg-hover,var(--matrix-secondary,var(--secondary)))]");
     expect(newAgent.className).toContain("focus-visible:ring-[var(--ring,var(--accent,var(--matrix-accent,var(--matrix-ring))))]");
