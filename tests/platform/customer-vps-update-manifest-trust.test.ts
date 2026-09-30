@@ -84,7 +84,7 @@ apply_update other`;
   }
 }
 
-function probeRejectedExplicitRequest(marker: unknown, trusted: unknown, metadataAvailable = true) {
+function probeRejectedExplicitRequest(marker: unknown, trusted: unknown, metadataAvailable = true, replaceRequestDuringValidation = false) {
   const directory = mkdtempSync(join(tmpdir(), 'matrix-update-rejected-'));
   const markerPath = join(directory, '.update-available.json');
   const triggerPath = join(directory, '.update-now');
@@ -109,7 +109,7 @@ DOWNLOAD_LOG="$6"
 log() { :; }
 json_field() { python3 -c 'import json,sys; print(json.load(sys.stdin).get(sys.argv[1], ""))' "$2" <<< "$1"; }
 release_url_for_version() { printf 'https://platform.example/system-bundles/releases/%s.json\\n' "$1"; }
-fetch_manifest() { ${metadataAvailable ? 'printf \'%s\' "$TRUSTED_JSON";' : 'return 1;'} }
+fetch_manifest() { ${replaceRequestDuringValidation ? 'printf v2026.09.28-2 > "$APP_DIR/.update-version"; : > "$APP_DIR/new-trigger"; mv -fT "$APP_DIR/new-trigger" "$UPDATE_TRIGGER";' : ''} ${metadataAvailable ? 'printf \'%s\' "$TRUSTED_JSON";' : 'return 1;'} }
 sudo() { "$@"; }
 consume_update_trigger() { sudo rm -f -- "$UPDATE_TRIGGER"; }
 current_version() { printf 'v2026.09.27-1\\n'; }
@@ -126,6 +126,7 @@ apply_update explicit`;
       result,
       markerExists: existsSync(markerPath),
       triggerExists: existsSync(triggerPath),
+      requestedVersion: existsSync(join(directory, '.update-version')) ? readFileSync(join(directory, '.update-version'), 'utf8') : null,
       error: existsSync(errorLog) ? readFileSync(errorLog, 'utf8') : '',
       downloadReached: existsSync(downloadLog),
     };
@@ -240,27 +241,70 @@ describe('VPS update manifest trust boundary', () => {
     expect(error).toBe('download_metadata_changed');
   });
 
-  it('consumes a rejected explicit request so a later poll cannot repurpose the trigger', () => {
+  it('preserves a rejected request until it can be verified or replaced', () => {
     const { result, markerExists, triggerExists, error, downloadReached } = probeRejectedExplicitRequest(
       { version: '../x', url: 'https://attacker.example/bundle', sha256: 'b'.repeat(64), size: 1 },
       { version: '../x', sha256, size: 100, url: 'https://storage.example/bundle' },
     );
     expect(result.status).toBe(1);
-    expect(triggerExists).toBe(false);
-    expect(markerExists).toBe(false);
+    expect(triggerExists).toBe(true);
+    expect(markerExists).toBe(true);
     expect(error).toBe('update_request_rejected|');
     expect(downloadReached).toBe(false);
   });
 
-  it('consumes an explicit request whose release metadata is unavailable', () => {
+  it('preserves a newer trigger and target written during failed validation', () => {
+    const { result, markerExists, triggerExists, requestedVersion, downloadReached } = probeRejectedExplicitRequest(
+      { version: 'v2026.09.28-1' },
+      { version: 'v2026.09.28-2', sha256, size: 100, url: 'https://storage.example/bundle' },
+      true,
+      true,
+    );
+    expect(result.status).toBe(1);
+    expect(markerExists).toBe(true);
+    expect(triggerExists).toBe(true);
+    expect(requestedVersion).toBe('v2026.09.28-2');
+    expect(downloadReached).toBe(false);
+  });
+
+  it('background polling leaves a pending explicit release unchanged', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'matrix-update-pending-'));
+    const markerPath = join(directory, 'marker.json');
+    const triggerPath = join(directory, 'trigger');
+    const pollLog = join(directory, 'poll.log');
+    const marker = JSON.stringify({ version: 'v2026.09.28-1' });
+    writeFileSync(markerPath, marker);
+    writeFileSync(triggerPath, '');
+    const updater = readFileSync(updaterPath, 'utf8');
+    const start = updater.indexOf('check_for_update() {');
+    const end = updater.indexOf('# ── Apply update', start);
+    try {
+      const result = spawnSync('bash', ['-c', `set -euo pipefail
+UPDATE_TRIGGER="$1"
+UPDATE_MARKER="$2"
+POLL_LOG="$3"
+log() { :; }
+manifest_url() { printf 'https://platform.example/channel.json'; }
+curl() { printf reached > "$POLL_LOG"; return 1; }
+${updater.slice(start, end)}
+check_for_update`, 'test', triggerPath, markerPath, pollLog], { encoding: 'utf8' });
+      expect(result.status, result.stderr).toBe(0);
+      expect(existsSync(pollLog)).toBe(false);
+      expect(readFileSync(markerPath, 'utf8')).toBe(marker);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('preserves an explicit request through a temporary metadata outage', () => {
     const { result, markerExists, triggerExists, error, downloadReached } = probeRejectedExplicitRequest(
       { version: 'v2026.09.28-1' },
       {},
       false,
     );
     expect(result.status).toBe(1);
-    expect(triggerExists).toBe(false);
-    expect(markerExists).toBe(false);
+    expect(triggerExists).toBe(true);
+    expect(markerExists).toBe(true);
     expect(error).toBe('update_request_rejected|');
     expect(downloadReached).toBe(false);
   });

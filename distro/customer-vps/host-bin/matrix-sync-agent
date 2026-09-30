@@ -1290,6 +1290,8 @@ prepare_triggered_update() {
 
 # ── Poll for updates ─────────────────────────────────────────────────
 check_for_update() {
+  # Explicit requests take priority until verified, applied, or replaced.
+  if [ -e "$UPDATE_TRIGGER" ] || [ -L "$UPDATE_TRIGGER" ]; then return 0; fi
   local url manifest remote_version cur
   url="$(manifest_url)"
   if ! manifest="$(curl --fail --silent --show-error --max-time 15 "$url" 2>&1)"; then
@@ -1343,12 +1345,9 @@ apply_update() {
   fi
   local manifest version sha256 bundle_url cur bundle_file extract_dir
   if ! manifest="$(load_trusted_apply_manifest)"; then
-    # A rejected request is final. Keeping the trigger would let the next poll
-    # replace the marker and apply a release the owner never requested.
-    rm -f -- "$UPDATE_MARKER"
-    if [ "$trigger_source" = explicit ]; then
-      consume_update_trigger || log "WARN: failed to consume update trigger"
-    fi
+    # Keep the prepared target and explicit trigger on validation failure.
+    # Metadata outages must be retryable, and a newer request may have arrived
+    # while validation was in flight. Background polling cannot repurpose it.
     write_update_error "update_request_rejected" \
       "The requested update could not be verified against platform release metadata." || true
     return 1
@@ -1884,9 +1883,7 @@ while true; do
         log "Update failed — will retry on next trigger"
       fi
     else
-      log "Requested release metadata fetch failed — skipping apply"
-      rm -f "$UPDATE_MARKER"
-      consume_update_trigger || log "WARN: failed to consume update trigger"
+      log "Requested release metadata fetch failed — preserving request for retry"
     fi
   fi
   if [ -f "$ROLLBACK_TRIGGER" ]; then
