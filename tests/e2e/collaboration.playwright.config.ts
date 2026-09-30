@@ -1,8 +1,9 @@
 import { defineConfig, devices } from "@playwright/test";
 
 export default defineConfig({
-  testDir: ".",
-  testMatch: /collaboration-project\.spec\.ts/,
+  testDir: "./collaboration",
+  testMatch: /.*\.spec\.ts/,
+  globalSetup: "./fixtures/collaboration-global-setup.ts",
   fullyParallel: false,
   forbidOnly: true,
   retries: 0,
@@ -12,7 +13,12 @@ export default defineConfig({
   expect: { timeout: 15_000 },
   use: {
     screenshot: "only-on-failure",
-    trace: "retain-on-failure",
+    // Direct API probes carry bearer tokens. Playwright network traces would retain them.
+    trace: "off",
     ...devices["Desktop Chrome"],
   },
+  projects: [
+    { name: "phone", use: { viewport: { width: 390, height: 844 } } },
+    { name: "desktop", use: { viewport: { width: 1440, height: 900 } } },
+  ],
 });

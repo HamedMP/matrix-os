@@ -34,12 +34,18 @@ importers:
         specifier: ^2.8.2
         version: 2.8.2
     devDependencies:
+      '@clerk/testing':
+        specifier: 1.14.3
+        version: 1.14.3(@playwright/test@1.58.2)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
       '@excalidraw/excalidraw':
         specifier: ^0.18.0
         version: 0.18.1(@types/react-dom@19.2.3(@types/react@19.2.14))(@types/react@19.2.14)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
       '@matrix-os/gateway':
         specifier: workspace:*
         version: link:packages/gateway
+      '@playwright/test':
+        specifier: 1.58.2
+        version: 1.58.2
       '@testing-library/react':
         specifier: ^16.3.2
         version: 16.3.2(@testing-library/dom@10.4.1)(@types/react-dom@19.2.3(@types/react@19.2.14))(@types/react@19.2.14)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
