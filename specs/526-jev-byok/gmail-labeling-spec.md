@@ -39,6 +39,8 @@ Gmail API contracts: [create labels](https://developers.google.com/workspace/gma
 
 ## Resumable Inbox batching
 
+The sole Inbox MCP tool publishes an object parameter schema with a required operation and visible bounded receipt, thread, job, revision and thread-limit fields. Keep the strict per-operation union as server-side validation before contacting Gateway; exposing optional fields in the catalog does not authorize unrelated fields or missing required action arguments. Acceptance checks the schema returned by a real MCP `tools/list` exchange, not only direct tool calls.
+
 An Inbox-wide request creates or resumes a server-owned job for the saved bot/account/revision. Gmail listing follows validated `nextPageToken` values across pages, always constrained to INBOX. The model never provides the page token, target list, scores or label plan. Each tool step processes one thread with the existing complete-evidence and additive-labeling pipeline; the recipe automatically continues steps rather than requiring one user prompt per email.
 
 The owner Postgres stores a revisioned checkpoint: discovered IDs, bounded current page queue/cursor, counters, per-thread outcomes and an in-flight marker written before inference or mutation. One unfinished job per bot/account/revision is admitted atomically. Concurrent steps use a conditional update to claim one attempt; stale callbacks recheck its claim before every later mutation. Completed threads are not replayed. Duplicate IDs across pages are skipped. Every step has a finite deadline, and listing errors do not mean the job completed. No full mail bodies, tokens or classification state are persisted in the batch checkpoint.

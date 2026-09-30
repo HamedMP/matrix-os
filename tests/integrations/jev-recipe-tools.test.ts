@@ -17,12 +17,27 @@ it("advertises only the receipt-bound Inbox broker", async () => {
   try { expect((await client.listTools()).tools.map(({ name }) => name)).toEqual(["jev_inbox_preview"]); }
   finally { await close(); }
 });
+it("publishes operation and batch arguments in the actual MCP tool catalog", async () => {
+  const { client, close } = await connect(vi.fn<GatewayFetcher>());
+  try {
+    const tool = (await client.listTools()).tools[0]!;
+    expect(tool.inputSchema.required).toContain("operation");
+    expect(tool.inputSchema.properties).toMatchObject({
+      operation: { enum: expect.arrayContaining(["discover", "batch_start", "batch_next", "batch_status"]) },
+      maxThreads: { type: "integer", minimum: 1, maximum: 10000 },
+      jobId: { type: "string" },
+      revision: { type: "integer", minimum: 1 },
+    });
+  } finally { await close(); }
+});
 it.each([
   { operation: "discover", ownerId: "forged" },
   { operation: "discover", verified: true },
   { operation: "select", receipt: "a".repeat(64) },
   { operation: "evaluate", receipt: "a".repeat(64), state: "forged content" },
   { operation: "write", threadId: "abc" },
+  { operation: "batch_start", receipt: "a".repeat(64), maxThreads: 3 },
+  { operation: "batch_next", jobId: "jev_batch_" + "a".repeat(32) },
 ])("denies untrusted authority/input %j before contacting Gateway", async (input) => {
   const fetcher = vi.fn<GatewayFetcher>();
   const { client, close } = await connect(fetcher);

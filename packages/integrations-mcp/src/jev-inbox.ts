@@ -17,6 +17,17 @@ const inputSchema = z.union([
     z.strictObject({ operation: z.literal("batch_status"), jobId: jobId.optional() }),
   ])
 ]);
+// MCP's tool catalog requires an object schema. A top-level union is
+// advertised as an empty parameter object by the SDK. Keep the operation
+// union below as the authoritative per-action validation before any fetch.
+const catalogSchema = z.strictObject({
+  operation: z.enum(["discover", "select", "evaluate", "batch_start", "batch_next", "batch_resume", "batch_status"]),
+  receipt: receipt.optional(),
+  threadId: JevInboxGmailIdSchema.optional(),
+  maxThreads: z.number().int().min(1).max(10000).optional(),
+  jobId: jobId.optional(),
+  revision: z.number().int().min(1).optional(),
+});
 const MAX_BYTES = 64 * 1024;
 const failure = () => ({ isError: true, content: [{ type: "text" as const,
       text: "Inbox result is unavailable. If labeling is enabled, changes may be unconfirmed; check Gmail before retrying." }] });
@@ -30,7 +41,7 @@ function cancelBody(body: ReadableStream<Uint8Array> | ReadableStreamDefaultRead
 export function registerJevInboxTool(server: McpServer, fetcher: GatewayFetcher = fetch): void {
   server.registerTool("jev_inbox_preview", {
     description: "For Inbox-wide triage, batch_start then repeat batch_next with the latest returned jobId and revision until terminal/paused, report server progress; batch_status locates saved work and batch_resume continues it. For a targeted thread, discover, select with receipt, then evaluate. The server returns proposals or, when the owner saved labeling permission for this bot, adds verified Jev labels and confirms Gmail readback. Never archives, sends or deletes email.",
-    inputSchema, annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+    inputSchema: catalogSchema, annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
   }, async (rawInput) => {
     let response: Response | undefined;
     let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
