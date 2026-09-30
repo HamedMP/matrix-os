@@ -71,12 +71,18 @@ context and thinking remain private under Spec 541.
 
 ## Auth matrix
 
-The implemented browser increment adds no network endpoints. Existing discovery
-uses authenticated platform identity; listing, grant activation, upload, commit,
-and download retain direct proof-of-possession scope sessions and fresh home-side
-organization authority. Electron transfers retain trusted-main IPC. Proposed
-context endpoints remain unavailable until their concrete auth schemas, wiring,
-limits, rejection tests and shutdown path land together in the context increment.
+The browser increment retains existing discovery and signed scope sessions. The
+source API increment adds these endpoints; none is public:
+
+| Route | Authentication and authorization | Data and limits |
+| --- | --- | --- |
+| `GET /api/collaboration/scopes/:scopeId/drive/context/search` | Signed scope request; exact organization/folder scope; fresh member, role, epoch and authority checks before return | Literal metadata path search; 50 rows maximum; bounded query/prefix/cursor; private, no-store |
+| `GET /api/collaboration/scopes/:scopeId/drive/files/:fileId/context` | Signed scope request; exact organization file; fresh authorization and live-file checks after I/O | Current/pinned immutable version; 4 MiB verified source, 32 KiB UTF-8 excerpt; four concurrent reads; private, no-store |
+
+The source endpoints add no writes, copied objects or database ownership. Failed
+reads cancel their bodies. Renderer and owner-runtime delegation remain separate
+from this source API; context controls stay unavailable until delegation, Chat
+admission, queue/retry checks and harness wiring pass together.
 
 ## Delivery and evidence
 

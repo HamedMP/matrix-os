@@ -75,6 +75,7 @@ export function registerOrganizationDriveRoutes(routes: Hono, options: RouteOpti
   }));
 
   routes.get(`${base}/context/search`, async (c) => driveHandle(c, async () => {
+    c.header("Cache-Control", "private, no-store");
     const query = OrganizationDriveContextSearchSchema.parse(exactQuery(c, ["prefix", "query", "after", "limit"]));
     const context = await driveContext(options, c, new Uint8Array(), "read");
     const result = await required(options).list({...identity(context), ...query});
@@ -82,6 +83,7 @@ export function registerOrganizationDriveRoutes(routes: Hono, options: RouteOpti
     return c.json(OrganizationDriveContextSearchResponseSchema.parse({organizationId: context.organizationId, scopeId: context.scopeId, ...result}));
   }));
   routes.get(`${base}/files/:fileId/context`, async (c) => driveHandle(c, async () => {
+    c.header("Cache-Control", "private, no-store");
     const fileId = IdSchema.parse(c.req.param("fileId"));
     const query = z.object({version: z.coerce.number().int().positive().max(2_147_483_647).optional()}).strict().parse(exactQuery(c, ["version"]));
     const context = await driveContext(options, c, new Uint8Array(), "read");

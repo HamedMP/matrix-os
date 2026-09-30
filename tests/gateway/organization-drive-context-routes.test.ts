@@ -15,7 +15,7 @@ function fixture(){
 describe("company drive context HTTP authorization",()=>{
  it("searches metadata only in the freshly authorized organization",async()=>{
   const f=fixture();const response=await f.app.request(`${base}/context/search?prefix=reports&query=Plan&limit=2`,{headers});
-  expect(response.status).toBe(200);expect(await response.json()).toMatchObject({organizationId:"org_example",scopeId,files:[]});
+  expect(response.status).toBe(200);expect(response.headers.get("Cache-Control")).toBe("private, no-store");expect(await response.json()).toMatchObject({organizationId:"org_example",scopeId,files:[]});
   expect(f.list).toHaveBeenCalledWith({organizationId:"org_example",scopeId,authorityRuntimeId:"vps:owner",authorityGeneration:1,prefix:"reports",query:"Plan",limit:2});expect(f.authorize).toHaveBeenCalled();
  });
  it("fails closed when search membership changes before return",async()=>{
