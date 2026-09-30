@@ -24,11 +24,11 @@ export async function createJevHermesProfile(credentials: JevHermesCredentials, 
     const hermesHome = join(homePath, "hermes");
     await mkdir(hermesHome, { mode: 0o700 });
     const config = { model: { default: credentials.model, provider: credentials.provider, base_url: credentials.baseUrl,
-      api_mode: credentials.apiMode, context_length: 128000 }, agent: { max_turns: 12 }, fallback_providers: [],
+      api_mode: credentials.apiMode, context_length: 128000 }, agent: { max_turns: 64 }, fallback_providers: [],
       auxiliary: { background_review: { enabled: false }, title_generation: { enabled: false } },
       memory: { memory_enabled: false, user_profile_enabled: false }, tools: { tool_search: false },
       mcp_servers: { matrix_jev_recipe: { command: "/opt/matrix/bin/matrix-integrations-mcp",
-        args: ["--require-scoped-capability", "--tool-surface=jev-inbox-preview"], enabled: true,
+        args: ["--require-scoped-capability", "--tool-surface=jev-inbox-preview"], enabled: true, timeout: 600,
         tools: { resources: false, prompts: false } } } };
     await writeFile(join(hermesHome, "config.yaml"), JSON.stringify(config), { flag: "wx", mode: 0o600 });
     const ownedHome = homePath;

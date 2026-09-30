@@ -65,3 +65,26 @@ it.each([503, 200])("withholds raw errors and oversized broker responses (status
     expect(JSON.stringify(result)).not.toContain("private-payload");
   } finally { await close(); }
 });
+
+it("gives evaluate a bounded labeling budget while retaining the shorter discovery deadline", async () => {
+  const timeout = vi.spyOn(AbortSignal,"timeout");
+  const {client,close} = await connect(async()=>Response.json({kind:"review",verified:false,readonly:true}));
+  try {
+    await client.callTool({name:"jev_inbox_preview",arguments:{operation:"discover"}});
+    expect(timeout).toHaveBeenLastCalledWith(60_000);
+    await client.callTool({name:"jev_inbox_preview",arguments:{operation:"evaluate",receipt:"a".repeat(64)}});
+    expect(timeout).toHaveBeenLastCalledWith(540_000);
+  } finally { timeout.mockRestore(); await close(); }
+});
+it("exposes resumable batching on the sole restricted tool without accepting raw target lists",async()=>{
+ const fetcher=vi.fn<GatewayFetcher>(async()=>Response.json({kind:"batch",jobId:"jev_batch_"+"a".repeat(32),status:"ready"}));
+ const {client,close}=await connect(fetcher);const timeout=vi.spyOn(AbortSignal,"timeout");
+ try{
+  expect((await client.callTool({name:"jev_inbox_preview",arguments:{operation:"batch_start",maxThreads:2}})).isError).not.toBe(true);
+  expect((await client.callTool({name:"jev_inbox_preview",arguments:{operation:"batch_next",revision:1,jobId:"jev_batch_"+"a".repeat(32)}})).isError).not.toBe(true);
+  expect(timeout).toHaveBeenLastCalledWith(570_000);
+  const count=fetcher.mock.calls.length;
+  expect((await client.callTool({name:"jev_inbox_preview",arguments:{operation:"batch_start",threadIds:["forged"]}})).isError).toBe(true);
+  expect(fetcher).toHaveBeenCalledTimes(count);
+ }finally{timeout.mockRestore();await close();}
+});

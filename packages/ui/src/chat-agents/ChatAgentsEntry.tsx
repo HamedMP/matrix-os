@@ -144,7 +144,7 @@ export function ChatAgentsPanel({ client, view = "library", onClose, onSetup, on
     : !state.recipeCatalog?.enabled || !["matrix-jev-email-triage", "matrix-integrations"].every((id) =>
       state.recipeCatalog?.skills.some((skill) => skill.id === id)) ? "Jev Agent skills are unavailable on this computer."
     : "";
-  const createJev = async (accountLabel: string) => {
+  const createJev = async (accountLabel: string, labeling = false) => {
     if (jevPending || jevUnavailable || !onStartChat) return;
     const matchingAccounts = activeConnections("gmail", state.connections).filter((account) => account.account_label === accountLabel);
     if (matchingAccounts.length !== 1 || !matchingAccounts[0]?.account_email) {
@@ -152,10 +152,10 @@ export function ChatAgentsPanel({ client, view = "library", onClose, onSetup, on
       return;
     }
     const hermes = jevSelection ? models.find((choice) => choice.instanceId === jevSelection.instanceId && choice.modelId === jevSelection.model) : undefined;
-    const recipe = jevAgentRecipe(accountLabel);
+    const recipe = jevAgentRecipe(accountLabel, labeling);
     if (!hermes || !ChatAgentRecipeSchema.safeParse(recipe).success
       || !recipeSkillsFit(recipe.skills, state.recipeCatalog?.skills ?? [])) return;
-    const selectionKey = `${hermes.instanceId}:${hermes.modelId}`;
+    const selectionKey = `${hermes.instanceId}:${hermes.modelId}:${labeling}`;
     if (jevCreateAttempt.current?.accountLabel !== accountLabel || jevCreateAttempt.current.selectionKey !== selectionKey) {
       jevCreateAttempt.current = { accountLabel, selectionKey, requestId: requestId() };
     }
@@ -180,6 +180,11 @@ export function ChatAgentsPanel({ client, view = "library", onClose, onSetup, on
         || binding.data.connectionId !== savedBinding.data.connectionId
         || binding.data.expectedEmail !== savedBinding.data.expectedEmail) {
         setJevError("Agent creation could not be verified in your library. Please check Agents before trying again.");
+        return;
+      }
+      if ((binding.data.labelingEnabled === true) !== labeling || (savedBinding.data.labelingEnabled === true) !== labeling
+        || (verified.recipe?.jevInboxLabeling === true) !== labeling) {
+        setJevError("Agent labeling permission could not be verified. Check Agents before trying again.");
         return;
       }
       jevCreateAttempt.current = null;
@@ -227,7 +232,8 @@ export function ChatAgentsPanel({ client, view = "library", onClose, onSetup, on
       selection,
     } : { name: agent.name, description: agent.description, instructions: agent.instructions, selection: agent.selection,
       requestId: requestId(), ...(agent.recipe ? { recipe: { skills: [...agent.recipe.skills],
-        integrations: agent.recipe.integrations.map((integration) => ({ ...integration })), output: agent.recipe.output } } : {}) } });
+        integrations: agent.recipe.integrations.map((integration) => ({ ...integration })), output: agent.recipe.output,
+        ...(agent.recipe.jevInboxLabeling !== undefined ? { jevInboxLabeling: agent.recipe.jevInboxLabeling } : {}) } } : {}) } });
   };
   const change = (value: Partial<Draft>) => {
     const nextRequestId = requestId();

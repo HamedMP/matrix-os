@@ -28,6 +28,7 @@ export const ChatAgentRecipeSchema = z.object({
   skills: z.array(ChatAgentRecipeSkillIdSchema).max(CHAT_AGENT_RECIPE_MAX_SKILLS),
   integrations: z.array(RecipeIntegrationSchema).max(8),
   output: RecipeOutputSchema,
+  jevInboxLabeling: z.boolean().optional(),
 }).strict()
   .refine(hasUniqueSkills, { message: "Recipe skills must be unique", path: ["skills"] })
   .refine(hasUniqueIntegrations, { message: "Recipe integrations must be unique", path: ["integrations"] });
@@ -40,6 +41,7 @@ export const JevInboxTriageBindingSchema = z.object({
   accountLabel: AccountLabelSchema,
   connectionId: z.string().min(1).max(160),
   expectedEmail: z.email().max(320),
+  labelingEnabled: z.boolean().optional(),
 }).strict();
 export const StoredChatAgentRecipeSchema = ChatAgentRecipeSchema.safeExtend({
   jevInboxTriage: JevInboxTriageBindingSchema.optional(),
