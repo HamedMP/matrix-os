@@ -94,8 +94,8 @@ write_files:
       ExecStart=/opt/matrix/bin/matrix-gateway
       Restart=on-failure
       RestartSec=5
-      MemoryHigh=1G
-      MemoryMax=1536M
+      MemoryHigh=40%
+      MemoryMax=50%
 
       [Install]
       WantedBy=multi-user.target
@@ -397,6 +397,8 @@ write_files:
       MATRIX_UPDATE_CHANNEL={{updateChannel}}
       MATRIX_PLATFORM_REGISTER_URL={{platformRegisterUrl}}
       PLATFORM_INTERNAL_URL={{platformInternalUrl}}
+      {{updateManifestBaseUrlEnv}}
+      {{collaborationDisabledEnv}}
       UPGRADE_TOKEN={{platformVerificationToken}}
       MATRIX_AUTH_TOKEN={{platformVerificationToken}}
       MATRIX_SYNC_RUNTIME_TOKEN={{syncRuntimeToken}}
@@ -456,9 +458,7 @@ runcmd:
       printf 'matrix-host-timing phase=%s elapsed_seconds=%s image_source=%s\n' \
         "$1" "$((phase_now - bootstrap_started_at))" "${MATRIX_IMAGE_SOURCE:-clean_image}"
     }
-    # Swap first so nothing later in provisioning (or after) can OOM the box.
-    # Fleet default 8GiB, shrunk to keep >=10GiB free on /; skipped below 2GiB.
-    # matrix-ensure-swap (host bundle) reconciles the same policy on updates.
+    # Provision swap before setup; matrix-ensure-swap reconciles it on updates.
     (
       SWAP_GB=8
       free_gb=$(( $(df -k --output=avail / | tail -1) / 1024 / 1024 ))
@@ -622,10 +622,7 @@ runcmd:
     ln -sfn /home/matrix/home /home/matrixos/home
     chown root:matrix /opt/matrix/postgres-compose.yml /opt/matrix/env/host.env /opt/matrix/env/postgres.env /opt/matrix/env/registration.env
 
-    # The builder performs this recursive normalization before writing the
-    # exact-bundle readiness proof. A certified immutable clone preserves that
-    # tree, so walking it again only delays first boot. Clean images, legacy
-    # snapshots, and mismatched snapshots retain the full repair path.
+    # Certified clones already have normalized immutable release permissions.
     if [ "$exact_snapshot_fast_path" != true ]; then
       chown -R root:matrix /opt/matrix/bin /opt/matrix/app /opt/matrix/runtime
       if [ -d /opt/matrix/terminal-runtime ]; then
@@ -667,6 +664,11 @@ runcmd:
     for required_bin in matrixctl matrix-r2-broker.mjs matrix-db-backup.sh matrix-restore.sh matrix-owner-env matrix-gateway matrix-shell matrix-code matrix-sync-agent matrix-install-hermes; do
       chmod 0750 "/opt/matrix/bin/${required_bin}"
     done
+    if [ -f /opt/matrix/bin/matrix-support-access ] && [ ! -L /opt/matrix/bin/matrix-support-access ]; then
+      install -d -o root -g root -m 0755 /usr/local/libexec
+      install -o root -g root -m 0755 /opt/matrix/bin/matrix-support-access /usr/local/libexec/matrix-support-access
+      chmod 0644 /opt/matrix/bin/matrix-support-access
+    fi
     for optional_bin in matrix-register-vps matrix-integrations matrix-integrations-mcp matrix-register-integrations-mcp matrix-hermes-dashboard matrix-install-openclaw matrix-openclaw-gateway matrix-agent-runtime-control matrix-install-linux-tools matrix-install-developer-tools matrix-messaging-health matrix-messaging-backup matrix-messaging-restore; do
       if [ -e "/opt/matrix/bin/${optional_bin}" ]; then
         chmod 0750 "/opt/matrix/bin/${optional_bin}"

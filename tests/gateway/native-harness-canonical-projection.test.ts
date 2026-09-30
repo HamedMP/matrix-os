@@ -18,6 +18,24 @@ async function isolatedHome(prefix: string) {
   return homePath;
 }
 describe("canonical native model scope", () => {
+  it("keeps a valid Pi observation when Hermes metadata times out without spawning another unfinished read", async () => {
+    vi.useFakeTimers();
+    const hermesRuntimeSource = vi.fn(() => new Promise<never>(() => undefined));
+    const read = createCanonicalNativeHarnessCatalogReader({ getCatalog: async () => ({
+      providers: [{ id: "native", displayName: "Native", models: [{ id: "native:pi", displayName: "Pi", enabled: true }] }],
+      accessSources: [{ id: "harness_pi_native", kind: "harness_profile", harness: "pi", fundingKind: "owner_account",
+        providerId: "native", accountId: null, displayName: "Pi", eligibleModelIds: ["native:pi"],
+        readiness: { state: "unknown", checkedAt: null, staleAfter: null, action: "retry", safeReason: "unknown" },
+        usage: { kind: "unavailable", authority: "unavailable", state: "not_applicable", scope: "access_source", reason: "provider_does_not_report", asOf: null } }],
+      failures: [],
+    }) }, { hermesRuntimeSource, now: () => now });
+    const first = read(false);
+    await vi.advanceTimersByTimeAsync(6501);
+    expect(await first).toMatchObject({ profiles: [{ harness: "pi" }], failures: ["hermes"] });
+    const second = read(true);
+    await vi.advanceTimersByTimeAsync(6501); await second;
+    expect(hermesRuntimeSource).toHaveBeenCalledTimes(1);
+  });
   it("isolates an invalid OpenCode profile instead of poisoning valid Pi", async () => {
     const source = (harness: "pi" | "opencode", model: string) => ({ id: `harness_${harness}_native`, kind: "harness_profile" as const,
       harness, fundingKind: "owner_account" as const, providerId: "native", accountId: null, displayName: harness,

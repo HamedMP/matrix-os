@@ -24,6 +24,6 @@ describe("Desktop Chat provider artwork", () => {
     const { container } = render(<><ProviderDriverGlyph kind="hermes" size={20} /><ProviderDriverGlyph kind="openclaw" size={20} /><ProviderDriverGlyph kind="kernel" size={20} /></>);
     expect(container.querySelector('[data-provider-glyph="hermes"]')).toHaveAttribute("src", expect.stringContaining("hermes-provider.png"));
     expect(container.querySelector('[data-provider-glyph="openclaw"]')).toHaveTextContent("🦞");
-    expect(container.querySelector('svg[data-provider-glyph="kernel"]')).toBeInTheDocument();
+    expect(container.querySelector('[data-provider-glyph="kernel"] svg')).toHaveAttribute("viewBox", "0 0 510 660");
   });
 });

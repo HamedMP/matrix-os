@@ -1,4 +1,3 @@
-import { SYMPHONY_LINEAR_ACTIONS } from "./symphony-linear.js";
 import { executeIntegrationAction } from "./action-execution.js";
 import { getErrorStatusCode, integrationActionFailure, integrationActionSuccess, isConnectionError, isTimeoutError } from "./call-outcome.js";
 import { formatActionParamValidationError, validateActionParams } from "./parameter-validation.js";
@@ -13,6 +12,8 @@ import type { PipedreamConnectClient } from "./pipedream.js";
 import type { PlatformDb } from "../platform-db.js";
 import { isScopedReadCatalogRequest, projectIntegrationCatalog } from "./catalog-projection.js";
 import { createIntegrationReadCallRoutes } from "./read-call.js";
+import { createJevLabelCallRoutes } from "./jev-label-call.js";
+export { authorizeInternalJevLabels } from "./jev-label-call.js";
 
 // ---------------------------------------------------------------------------
 // Zod schemas
@@ -168,6 +169,7 @@ export interface IntegrationRoutesOpts {
   pipedream: PipedreamConnectClient;
   webhookSecret: string;
   resolveUserId: (c: Context) => Promise<string | null>;
+  authorizeJevLabelCall?: (c: Context) => Promise<boolean>;
   broadcast?: IntegrationBroadcast;
   mcpPresetBroker?: {
     listConnections(userId: string): Promise<Array<{
@@ -198,6 +200,7 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
   const emit = broadcast ?? (() => {});
   const app = new Hono();
   app.route("/", createIntegrationReadCallRoutes({ db, pipedream, resolveUserId }));
+  app.route("/", createJevLabelCallRoutes({ db, pipedream, resolveUserId, authorizeInternal: opts.authorizeJevLabelCall }));
 
   // Pending labels from /connect that need to survive the OAuth round-trip.
   // Queued per "externalUserId:appSlug", TTL 10 minutes, capped at 1000 entries.
@@ -744,10 +747,6 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
     let selection = resolveIntegrationConnection(connections, service, label);
     if (selection.kind === "ambiguous") return c.json({ error: AMBIGUOUS_CONNECTION_ERROR }, 409);
     let connection = selection.kind === "found" ? selection.connection : undefined;
-
-    if (!connection && service === "linear" && Object.hasOwn(SYMPHONY_LINEAR_ACTIONS, action)) {
-      return c.json({ error: "Integration setup required", code: "not_connected" }, 404);
-    }
 
     if (!connection) {
       try {

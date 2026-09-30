@@ -92,6 +92,15 @@ export class OrganizationDriveService {
     return { files, ...(rows.length > limit && files.length > 0 ? { nextCursor: files.at(-1)!.path } : {}) };
   }
 
+  async versionForPath(input: DriveIdentity & { path: string }): Promise<number> {
+    const path = OrganizationDrivePathSchema.parse(input.path);
+    await this.drive(input);
+    const file = await this.options.db.selectFrom("organization_drive_files")
+      .select("current_version").where("organization_id", "=", input.organizationId)
+      .where("path", "=", path).where("deleted_at", "is", null).executeTakeFirst();
+    return Number(file?.current_version ?? 0);
+  }
+
   async reserve(input: UploadIdentity & { request: OrganizationDriveUploadRequest }): Promise<{ uploadId: string; putUrl: string; expiresAt: string }> {
     const request = OrganizationDriveUploadRequestSchema.parse(input.request);
     if (request.size > MAX_FILE_BYTES) throw new OrganizationDriveError("quota");

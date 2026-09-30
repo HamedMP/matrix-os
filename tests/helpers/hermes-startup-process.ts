@@ -36,6 +36,9 @@ export function hermesStartupProcesses(options: {
             : request.method === "config.set" ? { key: "yolo", value: "1", scope: "session" }
             : { status: "streaming" };
           send({ jsonrpc: "2.0", id: request.id, result });
+          if (request.method === "session.create") {
+            event("session.info", { provider: request.params.provider, model: request.params.model });
+          }
         });
         return true;
       }) }),

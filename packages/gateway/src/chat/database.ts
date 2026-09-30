@@ -233,6 +233,29 @@ export interface ChatLegacyImportsTable {
   updated_at: Timestamp;
 }
 
+export interface ChatImportJobsTable {
+  owner_type: "personal";
+  owner_id: string;
+  source_id: string;
+  source_hash: string;
+  title: string;
+  status: "uploading" | "verified";
+  chat_id: string | null;
+  next_seq: number;
+  total_bytes: number;
+  created_at: Timestamp;
+  updated_at: Timestamp;
+}
+
+export interface ChatImportMessagesTable {
+  owner_id: string;
+  source_id: string;
+  seq: number;
+  role: "user" | "assistant";
+  text: string;
+  created_at: Timestamp;
+}
+
 export interface ChatMigrationsTable {
   owner_type: "personal" | "organization";
   owner_id: string;
@@ -272,6 +295,8 @@ export interface ChatDatabase {
   chat_outbox: ChatOutboxTable;
   chat_deletions: ChatDeletionsTable;
   chat_legacy_imports: ChatLegacyImportsTable;
+  chat_import_jobs: ChatImportJobsTable;
+  chat_import_messages: ChatImportMessagesTable;
   chat_migrations: ChatMigrationsTable;
 }
 
@@ -666,6 +691,34 @@ export async function bootstrapChatDatabase<Database extends ChatDatabase>(
       verification_status TEXT NOT NULL CHECK (verification_status IN ('pending', 'verified', 'failed')),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       PRIMARY KEY (owner_type, owner_id, source_kind, source_id)
+    )
+  `.execute(db);
+  await sql`
+    CREATE TABLE IF NOT EXISTS chat_import_jobs (
+      owner_type TEXT NOT NULL CHECK (owner_type = 'personal'),
+      owner_id TEXT NOT NULL,
+      source_id TEXT NOT NULL,
+      source_hash TEXT NOT NULL,
+      title TEXT NOT NULL,
+      status TEXT NOT NULL CHECK (status IN ('uploading', 'verified')),
+      chat_id TEXT REFERENCES chats(id) ON DELETE SET NULL,
+      next_seq BIGINT NOT NULL DEFAULT 1,
+      total_bytes BIGINT NOT NULL DEFAULT 0,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      PRIMARY KEY (owner_id, source_id)
+    )
+  `.execute(db);
+  await sql`
+    CREATE TABLE IF NOT EXISTS chat_import_messages (
+      owner_id TEXT NOT NULL,
+      source_id TEXT NOT NULL,
+      seq BIGINT NOT NULL,
+      role TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
+      text TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL,
+      PRIMARY KEY (owner_id, source_id, seq),
+      FOREIGN KEY (owner_id, source_id) REFERENCES chat_import_jobs(owner_id, source_id) ON DELETE CASCADE
     )
   `.execute(db);
   await sql`

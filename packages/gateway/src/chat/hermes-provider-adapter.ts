@@ -8,6 +8,7 @@ import { createHash } from "node:crypto";
 import { z } from "zod/v4";
 import { CanonicalChatModelReferenceSchema } from "@matrix-os/contracts";
 import { buildAgentRuntimeEnvironment } from "../agent-launcher.js";
+import { createHermesSelectedRouteGate } from "./hermes-selected-route.js";
 import { issueHermesIntegrationCapability, resolveHermesIntegrationCapability } from "./hermes-integration-capability.js";
 import { jevScopeForRun } from "./jev-run-scope.js";
 import { createJevHermesProfile, createJevHermesCatalogGate } from "./jev-hermes-profile.js";
@@ -300,6 +301,7 @@ export function createHermesChatProviderAdapter(options: {
     preflight(ownerId: string, scope: HermesJevScope, signal: AbortSignal): Promise<void>;
     clearRun(ownerId: string, runId: string): void;
     summary(ownerId: string, scope: HermesJevScope): string | null;
+    activitySummary?(ownerId: string, scope: HermesJevScope): string | null;
   };
 }): CanonicalChatProviderAdapter<HermesChatState> {
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
@@ -322,7 +324,9 @@ export function createHermesChatProviderAdapter(options: {
     if (input.interactionMode !== "default") throw new Error("Unsupported Hermes interaction mode");
     const selected = selection(input.selection.model);
     const jevScope = jevScopeForRun(input.owner.ownerId, input.runId, input.context);
-    const catalogGate = jevScope ? createJevHermesCatalogGate() : undefined;
+    const catalogGate = jevScope ? createJevHermesCatalogGate(selected) : undefined;
+    const selectedRouteGate = !jevScope && selected.provider === "openai-codex"
+      ? createHermesSelectedRouteGate(selected) : undefined;
     if (jevScope && !options.jev) throw new Error("Restricted Inbox setup required");
     // Isolated recipe runs never resume an owner-profile native checkpoint.
     if (jevScope) resumeState = undefined;
@@ -439,6 +443,7 @@ export function createHermesChatProviderAdapter(options: {
 
     const handleEvent = (event: HermesGatewayEvent) => {
       catalogGate?.observe(event);
+      selectedRouteGate?.observe(event);
       if (completionSettled || !liveSessionId || event.session_id !== liveSessionId) return;
       if (event.type === "message.delta") {
         const parsed = HermesDeltaSchema.parse(event.payload);
@@ -569,20 +574,24 @@ export function createHermesChatProviderAdapter(options: {
           }
           collectUnsafeToolFragments(parsed.data.result, unsafeToolFragments);
         }
+        if (jevScope) {
+          const validTool = (stored?.name ?? hermesToolName(parsed.data.name)) === "mcp__matrix_jev_recipe__jev_inbox_preview";
+          const active = resolveHermesIntegrationCapability(integrationCapability.token, "POST", "/api/jev/inbox/preview") === input.owner.ownerId;
+          const summary = validTool && active && !failed ? options.jev!.summary(input.owner.ownerId, jevScope) : null;
+          emitAgentActivity({activityId,...activity,status:failed?"failed":"completed",
+            summary: summary ? options.jev!.activitySummary?.(input.owner.ownerId,jevScope) ?? hermesActivitySummary(activity.kind,failed) : hermesActivitySummary(activity.kind,failed)});
+          queue.push({ type: "tool.output", toolCallId: activityId,
+            text: summary ?? (jevScope.account.labelingEnabled === true
+              ? "Inbox result is unavailable. Labeling may be unconfirmed; check Gmail before retrying."
+              : "Inbox review has no verified proposal. No mailbox changes have been made."), truncated: false });
+          return;
+        }
         emitAgentActivity({
           activityId,
           ...activity,
           status: failed ? "failed" : "completed",
           summary: hermesActivitySummary(activity.kind, failed),
         });
-        if (jevScope) {
-          const validTool = (stored?.name ?? hermesToolName(parsed.data.name)) === "mcp__matrix_jev_recipe__jev_inbox_preview";
-          const active = resolveHermesIntegrationCapability(integrationCapability.token, "POST", "/api/jev/inbox/preview") === input.owner.ownerId;
-          const summary = validTool && active && !failed ? options.jev!.summary(input.owner.ownerId, jevScope) : null;
-          queue.push({ type: "tool.output", toolCallId: activityId,
-            text: summary ?? "Inbox review has no verified proposal. No mailbox changes have been made.", truncated: false });
-          return;
-        }
         const output = hermesToolOutput(stored?.name ?? hermesToolName(parsed.data.name), parsed.data.result,
           (stored?.privateContext ?? true) || hermesToolHasPrivateContext(parsed.data.args),
           options.toolOutputKey ? { key: options.toolOutputKey, toolCallId: activityId } : undefined);
@@ -614,6 +623,7 @@ export function createHermesChatProviderAdapter(options: {
         // Hermes may publish this untyped advisory after a failed activity while the turn continues.
         // Only its terminal completion frame or process failure can end such a recovered turn.
         if (recoverableActivityFailureObserved) return;
+        selectedRouteGate?.fail();
         completionSettled = true;
         completion.resolve({ ok: false, error: new Error("Hermes Run failed") });
       }
@@ -651,6 +661,7 @@ export function createHermesChatProviderAdapter(options: {
       requestTimeoutMs: options.requestTimeoutMs,
       onEvent: handleEvent,
       onFailure(error: Error) {
+        selectedRouteGate?.fail();
         if (!completionSettled) {
           completionSettled = true;
           completion.resolve({ ok: false, error });
@@ -728,6 +739,7 @@ export function createHermesChatProviderAdapter(options: {
         const session = HermesSessionSchema.parse(rawSession);
         liveSessionId = session.session_id;
         catalogGate?.setSession(liveSessionId);
+        selectedRouteGate?.setSession(liveSessionId, Boolean(resumeState));
         durableSessionId = session.stored_session_id ?? session.session_key ?? resumeState?.sessionId;
         if (!durableSessionId) throw new Error("Hermes did not return a durable session");
         if (durableSessionId !== resumeState?.sessionId) {
@@ -785,6 +797,7 @@ export function createHermesChatProviderAdapter(options: {
           await withinRun(catalogGate!.ready(startupSignal));
           await withinRun(options.jev!.preflight(input.owner.ownerId, jevScope, startupSignal));
         }
+        await selectedRouteGate?.ready(startupSignal, Math.min(options.requestTimeoutMs ?? 30_000, 30_000));
         startupSignal.throwIfAborted();
         HermesPromptResponseSchema.parse(await withinRun(client.request("prompt.submit", {
           session_id: liveSessionId,

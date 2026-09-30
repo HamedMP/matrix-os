@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Dialog } from "../Dialog.js";
 
 export interface ChatMessageAttachment {
@@ -27,18 +28,20 @@ export function ChatAttachments({ attachments, open, loadImage, align = "end" }:
   </div>;
 }
 
-function AttachmentImage({
+export function AttachmentImage({
   src,
   label,
   path,
   open,
   loadImage,
+  inline = false,
 }: {
   src: string;
   label: string;
   path?: string;
   open?: (path: string) => boolean | void;
   loadImage?: (src: string) => Promise<Blob>;
+  inline?: boolean;
 }) {
   const [enlarged, setEnlarged] = useState(false);
   const thumbnailRef = useRef<HTMLButtonElement>(null);
@@ -80,11 +83,11 @@ function AttachmentImage({
     <>
       <button ref={thumbnailRef} type="button" onClick={() => setEnlarged(true)} aria-label={`Open image ${label}`} title={label}
         className="block shrink-0 overflow-hidden rounded-xl border cursor-zoom-in focus-visible:outline-2 focus-visible:outline-offset-2"
-        style={{ width: 96, height: 96, borderColor: "var(--border-default, var(--border))", background: "var(--bg-surface, var(--background))" }}>
-        <img src={resolvedSrc} alt={label} onError={() => setResult({ src, url: "", failed: true })} className="block h-full w-full object-cover" />
+        style={{ width: inline ? "min(100%, 480px)" : 96, height: inline ? "auto" : 96, maxWidth: "100%", borderColor: "var(--border-default, var(--border))", background: "var(--bg-surface, var(--background))" }}>
+        <img src={resolvedSrc} alt={label} onError={() => setResult({ src, url: "", failed: true })} className={inline ? "block max-h-96 max-w-full object-contain" : "block h-full w-full object-cover"} />
         <span className="sr-only">{label}</span>
       </button>
-      {enlarged ? <Dialog open onClose={() => setEnlarged(false)} aria-label={`Image preview: ${label}`}
+      {enlarged ? createPortal(<Dialog open onClose={() => setEnlarged(false)} aria-label={`Image preview: ${label}`}
         style={{ width: "fit-content", maxWidth: "92vw", maxHeight: "90vh", padding: 12, background: "var(--bg-surface, var(--matrix-card))", color: "var(--text-primary, var(--matrix-card-fg))" }}>
         <div className="mb-3 flex items-center justify-between gap-4">
           <span className="min-w-0 truncate text-sm">{label}</span>
@@ -100,7 +103,7 @@ function AttachmentImage({
           </div>
         </div>
         <img src={resolvedSrc} alt={`Full size ${label}`} style={{ display: "block", maxWidth: "calc(92vw - 24px)", maxHeight: "calc(90vh - 76px)", objectFit: "contain" }} />
-      </Dialog> : null}
+      </Dialog>, document.body) : null}
     </>
   ) : (
     <span role="status" aria-label={`Loading ${label}`} className="block px-3 py-6 text-center text-xs" style={{ color: "var(--text-tertiary)" }}>

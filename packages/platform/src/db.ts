@@ -69,6 +69,8 @@ export interface UserMachinesTable {
   runtime_token_epoch: Generated<number>;
   provisioning_class: string;
   access_clerk_user_ids: string[];
+  source_pr: number | null;
+  confirmed_bundle_version: string | null;
   developer_tools: string;
   hetzner_server_id: number | null;
   public_ipv4: string | null;
@@ -240,6 +242,20 @@ export interface SpeechOperationsTable {
   expires_at: string;
 }
 
+export interface SpeechRuntimeAllowancesTable {
+  machine_id: string;
+  owner_id: string;
+  runtime_slot: string;
+  enabled: boolean;
+  monthly_budget_microusd: number;
+  monthly_promotional_credit_microusd: number;
+  period_start: string;
+  period_spent_microusd: number;
+  period_reserved_microusd: number;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface AiCreditCheckoutClaimsTable {
   request_id: string;
   owner_id: string;
@@ -320,6 +336,8 @@ export interface HostBundleReleasesTable {
   update_type: string;
   changelog: string | null;
   created_at: string;
+  source_pr: number | null;
+  source_author: string | null;
 }
 
 export interface HostBundleChannelsTable {
@@ -768,6 +786,7 @@ export interface PlatformDatabase {
   ai_funded_promotional_grant_balances: AiFundedPromotionalGrantBalancesTable;
   ai_funded_runtime_balances: AiFundedRuntimeBalancesTable;
   speech_operations: SpeechOperationsTable;
+  speech_runtime_allowances: SpeechRuntimeAllowancesTable;
   ai_credit_checkout_claims: AiCreditCheckoutClaimsTable;
   ai_funded_credit_restrictions: AiFundedCreditRestrictionsTable;
   provisioning_jobs: ProvisioningJobsTable;
@@ -877,6 +896,10 @@ export interface UserMachineRecord {
   runtimeTokenEpoch: number;
   provisioningClass: UserMachineProvisioningClass;
   accessClerkUserIds: string[];
+  /** PR whose bundle a Private Preview runs; null for every other class. */
+  sourcePr: number | null;
+  /** The only release a Private Preview's update base serves; null for every other class. */
+  confirmedBundleVersion: string | null;
   developerTools: DeveloperToolId[];
   hetznerServerId: number | null;
   publicIPv4: string | null;
@@ -968,6 +991,9 @@ export interface HostBundleReleaseRecord {
   updateType: string;
   changelog: string | null;
   createdAt: string;
+  /** Same-repository PR that produced this bundle (spec 537); null for other releases. */
+  sourcePr: number | null;
+  sourceAuthor: string | null;
 }
 
 export interface NewHostBundleRelease {
@@ -987,6 +1013,8 @@ export interface NewHostBundleRelease {
   updateType?: string;
   changelog?: string | null;
   createdAt?: string;
+  sourcePr?: number | null;
+  sourceAuthor?: string | null;
 }
 
 export interface HostBundleChannelRecord {
@@ -1169,6 +1197,8 @@ export interface NewUserMachine {
   runtimeTokenEpoch?: number;
   provisioningClass?: UserMachineProvisioningClass;
   accessClerkUserIds?: string[];
+  sourcePr?: number | null;
+  confirmedBundleVersion?: string | null;
   developerTools?: DeveloperToolId[];
   hetznerServerId?: number | null;
   publicIPv4?: string | null;
@@ -1759,6 +1789,7 @@ export {
   listNonDeletedUserMachinesByClerkId,
   updateUserMachine,
   listRunningUserMachines,
+  iterateRunningUserMachinePages,
   listAllUserMachines,
   listStaleUserMachines,
 } from './database/user-machines.js';
@@ -1784,6 +1815,7 @@ export {
   HostBundleReleaseConflictError,
   upsertHostBundleRelease,
   getHostBundleRelease,
+  getLatestHostBundleReleaseForPr,
   listHostBundleReleases,
   promoteHostBundleChannel,
   promoteHostBundleChannelInTransaction,

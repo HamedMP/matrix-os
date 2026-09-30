@@ -2,14 +2,23 @@
 #
 # Label a same-repo PR with `preview-vps` to get a disposable Hetzner VPS
 # running that PR's host bundle, reachable at app.matrix-os.com/vm/pr-<N>.
+# Adding `preview-collaboration` as well provisions pr-<N> under the
+# collaboration-only owner from the protected collaboration-e2e environment,
+# with an empty preview access list (spec 535 A0b).
 #
 # Flow:
 #   deploy   — on label / push while labeled: build a unique exact-head bundle,
 #              publish register-only (--channel none, never promoted),
 #              provision pr-<N> if absent, deploy the exact version, comment.
+#   bundle   — on `preview-bundle` label / push while labeled (spec 537): build
+#              and register the exact-head bundle with PR provenance, so team
+#              members can run it on their own Private Preview
+#              (`matrix preview start <N>`). Provisions nothing.
 #   teardown — on PR close or explicit manual dispatch: delete the pr-<N> VPS.
+#              PR close also destroys every Private Preview of the PR.
 #   reaper   — daily: delete any pr-* VPS whose PR is closed or older than 72h,
-#              so orphans cannot accumulate Hetzner cost.
+#              and any Private Preview whose PR is closed, so orphans cannot
+#              accumulate Hetzner cost.
 #
 # Centralized logs: enroll once from the ops box with
 #   ./scripts/enable-vps-logship.sh pr-<N> preview
@@ -48,7 +57,7 @@ permissions:
   pull-requests: write
 
 concurrency:
-  group: preview-vps-${{ github.event.pull_request.number || inputs.pr || 'reaper' }}-${{ github.event.action == 'labeled' && github.event.label.name != 'preview-vps' && github.run_id || 'active' }}
+  group: preview-vps-${{ github.event.pull_request.number || inputs.pr || 'reaper' }}-${{ github.event.action == 'labeled' && github.event.label.name != 'preview-vps' && github.event.label.name != 'preview-collaboration' && github.run_id || 'active' }}
   cancel-in-progress: ${{ github.event.action != 'closed' && github.event_name != 'schedule' }}
 
 env:
@@ -66,6 +75,9 @@ jobs:
       head_sha: ${{ steps.decide.outputs.head_sha }}
       head_ref: ${{ steps.decide.outputs.head_ref }}
       requested_version: ${{ steps.decide.outputs.requested_version }}
+      collaboration: ${{ steps.decide.outputs.collaboration }}
+      author: ${{ steps.decide.outputs.author }}
+      teardown_private: ${{ steps.decide.outputs.teardown_private }}
     steps:
       - name: Decide action
         id: decide
@@ -75,9 +87,12 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number || inputs.pr }}
           LABELED_NAME: ${{ github.event.label.name }}
           HAS_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'preview-vps') }}
+          HAS_COLLABORATION_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'preview-collaboration') }}
+          HAS_BUNDLE_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'preview-bundle') }}
           EVENT_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           EVENT_HEAD_REF: ${{ github.event.pull_request.head.ref }}
           EVENT_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          EVENT_AUTHOR: ${{ github.event.pull_request.user.login }}
           REQUESTED_VERSION: ${{ inputs.version }}
           VERIFY_INVENTORY: ${{ inputs.verify_inventory }}
           TEARDOWN_PREVIEW: ${{ inputs.teardown_preview }}
@@ -85,6 +100,7 @@ jobs:
         run: |
           set -euo pipefail
           action="skip"
+          teardown_private="false"
           if ! printf '%s' "$PR_NUMBER" | grep -Eq '^[0-9]+$'; then
             echo "Invalid PR number" >&2
             exit 1
@@ -93,11 +109,26 @@ jobs:
           head_sha="$EVENT_HEAD_SHA"
           head_ref="$EVENT_HEAD_REF"
           head_repo="$EVENT_HEAD_REPO"
+          has_preview_label="$HAS_LABEL"
+          has_collaboration_label="$HAS_COLLABORATION_LABEL"
+          author="$EVENT_AUTHOR"
           if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
             pr_json="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
             head_sha="$(jq -r .head.sha <<< "$pr_json")"
             head_ref="$(jq -r .head.ref <<< "$pr_json")"
             head_repo="$(jq -r .head.repo.full_name <<< "$pr_json")"
+            has_preview_label="$(jq -r 'any(.labels[]?; .name == "preview-vps")' <<< "$pr_json")"
+            has_collaboration_label="$(jq -r 'any(.labels[]?; .name == "preview-collaboration")' <<< "$pr_json")"
+            author="$(jq -r '.user.login // ""' <<< "$pr_json")"
+          fi
+          # Registered as bundle provenance; the platform accepts plain GitHub logins only.
+          if ! printf '%s' "$author" | grep -Eq '^[A-Za-z0-9-]{1,39}$'; then
+            author=""
+          fi
+          # Collaboration ownership needs both labels, whatever started the run.
+          collaboration=false
+          if [ "$has_preview_label" = "true" ] && [ "$has_collaboration_label" = "true" ]; then
+            collaboration=true
           fi
           if [ "$head_repo" != "$GITHUB_REPOSITORY" ]; then
             echo "Fork PRs never get preview VPSes (secrets are not exposed to them anyway)."
@@ -114,11 +145,33 @@ jobs:
               fi
             fi
           elif [ "$EVENT_ACTION" = "closed" ]; then
-            if [ "$HAS_LABEL" = "true" ]; then action="teardown"; fi
+            if [ "$HAS_LABEL" = "true" ] || [ "$HAS_BUNDLE_LABEL" = "true" ]; then
+              action="teardown"
+              teardown_private="true"
+            else
+              # Labels can be removed before close; a bundle comment from this
+              # workflow shows the PR may still have previews to destroy.
+              bundle_comments="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" \
+                --jq '.[] | select(.user.login == "github-actions[bot]"
+                  and ((.body | startswith("**Private Preview bundle ready**"))
+                    or (.body | startswith("**Preview VPS deployed**")))) | .id')"
+              if [ -n "$bundle_comments" ]; then
+                action="teardown"
+                teardown_private="true"
+              fi
+            fi
           elif [ "$EVENT_ACTION" = "labeled" ]; then
-            if [ "$LABELED_NAME" = "preview-vps" ]; then action="deploy"; fi
+            if [ "$LABELED_NAME" = "preview-vps" ]; then
+              action="deploy"
+            elif [ "$LABELED_NAME" = "preview-bundle" ]; then
+              action="bundle"
+            fi
+            # Adding preview-collaboration to a preview-vps PR redeploys it under the collaboration owner.
+            if [ "$LABELED_NAME" = "preview-collaboration" ] && [ "$HAS_LABEL" = "true" ]; then action="deploy"; fi
           elif [ "$HAS_LABEL" = "true" ]; then
             action="deploy"
+          elif [ "$HAS_BUNDLE_LABEL" = "true" ]; then
+            action="bundle"
           fi
           if [ "$action" != "skip" ] && ! printf '%s' "$head_sha" | grep -Eq '^[0-9a-f]{40}$'; then
             echo "Invalid PR head SHA" >&2
@@ -143,13 +196,16 @@ jobs:
             echo "head_sha=$head_sha"
             echo "head_ref=$head_ref"
             echo "requested_version=$REQUESTED_VERSION"
+            echo "collaboration=$collaboration"
+            echo "author=$author"
+            echo "teardown_private=$teardown_private"
           } >> "$GITHUB_OUTPUT"
-          echo "action=$action pr=$PR_NUMBER"
+          echo "action=$action pr=$PR_NUMBER collaboration=$collaboration"
 
   build:
     name: Build preview bundle
     needs: gate
-    if: needs.gate.outputs.action == 'deploy'
+    if: needs.gate.outputs.action == 'deploy' || needs.gate.outputs.action == 'bundle'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
@@ -233,6 +289,10 @@ jobs:
     if: always() && ((needs.gate.outputs.action == 'deploy' && needs.build.result == 'success') || needs.gate.outputs.action == 'deploy_existing')
     runs-on: ubuntu-latest
     timeout-minutes: 105
+    # A preview-collaboration PR provisions under the collaboration-only owner, which only the
+    # protected collaboration-e2e environment (required reviewer) releases. Other previews run
+    # without an environment, exactly as before.
+    environment: ${{ needs.gate.outputs.collaboration == 'true' && 'collaboration-e2e' || '' }}
     env:
       R2_ACCOUNT_ID: ${{ secrets.R2_BUNDLES_ACCOUNT_ID || secrets.R2_ACCOUNT_ID }}
       AWS_ACCESS_KEY_ID: ${{ secrets.R2_BUNDLES_ACCESS_KEY_ID || secrets.R2_ACCESS_KEY_ID }}
@@ -243,6 +303,8 @@ jobs:
       PLATFORM_SECRET: ${{ secrets.PLATFORM_SECRET }}
       PREVIEW_CLERK_USER_ID: ${{ secrets.PREVIEW_CLERK_USER_ID }}
       PREVIEW_CLERK_ACCESS_USER_IDS: ${{ secrets.PREVIEW_CLERK_ACCESS_USER_IDS }}
+      PREVIEW_COLLABORATION: ${{ needs.gate.outputs.collaboration }}
+      PREVIEW_COLLABORATION_OWNER_USER_ID: ${{ needs.gate.outputs.collaboration == 'true' && secrets.PREVIEW_COLLABORATION_OWNER_USER_ID || '' }}
       PREVIEW_PROVISION_TIMEOUT_SECONDS: 3900
       PREVIEW_INSTALL_TIMEOUT_SECONDS: 600
       HANDLE: ${{ needs.gate.outputs.handle }}
@@ -269,10 +331,20 @@ jobs:
 
       - name: Publish release (register-only, no channel)
         if: needs.gate.outputs.action == 'deploy'
+        env:
+          PR: ${{ needs.gate.outputs.pr }}
+          PR_AUTHOR: ${{ needs.gate.outputs.author }}
         run: |
           set -euo pipefail
+          # Spec 537 provenance lets team members run this bundle on a Private
+          # Preview. Branches older than the flags publish without it.
+          provenance=()
+          if grep -q -- '--source-pr' scripts/publish-release.sh; then
+            provenance=(--source-pr "$PR")
+            if [ -n "$PR_AUTHOR" ]; then provenance+=(--source-author "$PR_AUTHOR"); fi
+          fi
           ./scripts/publish-release.sh "$VERSION" --channel none \
-            --changelog "Preview bundle for PR #${{ needs.gate.outputs.pr }}"
+            --changelog "Preview bundle for PR #${PR}" "${provenance[@]}"
 
       - name: Provision or resume preview VPS
         run: |
@@ -281,8 +353,28 @@ jobs:
             echo "PREVIEW_CLERK_USER_ID secret is not configured." >&2
             exit 1
           fi
+          preview_owner="$PREVIEW_CLERK_USER_ID"
           access_user_ids="${PREVIEW_CLERK_ACCESS_USER_IDS:-[]}"
-          if ! jq -e --arg owner "$PREVIEW_CLERK_USER_ID" '
+          if [ "${PREVIEW_COLLABORATION:-false}" = "true" ]; then
+            if ! [[ "${PREVIEW_COLLABORATION_OWNER_USER_ID:-}" =~ ^user_[A-Za-z0-9]+$ ]]; then
+              echo "PREVIEW_COLLABORATION_OWNER_USER_ID is not available from the collaboration-e2e environment." >&2
+              exit 1
+            fi
+            if [ "$PREVIEW_COLLABORATION_OWNER_USER_ID" = "$PREVIEW_CLERK_USER_ID" ]; then
+              echo "The collaboration preview owner must differ from PREVIEW_CLERK_USER_ID." >&2
+              exit 1
+            fi
+            # The job runs in collaboration-e2e; an environment override must never send the
+            # production operator secret to the preview platform.
+            if [ "${PLATFORM_PUBLIC_URL%/}" = "https://preview.matrix-os.com" ]; then
+              echo "The collaboration-e2e environment must not override PLATFORM_PUBLIC_URL; previews provision through the production platform." >&2
+              exit 1
+            fi
+            # No preview access list: access proofs must not mask organization checks.
+            preview_owner="$PREVIEW_COLLABORATION_OWNER_USER_ID"
+            access_user_ids='[]'
+          fi
+          if ! jq -e --arg owner "$preview_owner" '
             type == "array" and length <= 8
             and all(.[]; type == "string" and test("^user_[A-Za-z0-9]+$"))
             and (unique | length) == length
@@ -309,6 +401,11 @@ jobs:
           status="$(jq -r '.status' <<< "$fleet_machine")"
           runtime_slot="$(jq -r '.runtimeSlot // ""' <<< "$fleet_machine")"
           echo "Fleet status for ${HANDLE}: ${status}"
+          # Ownership is never reassigned: a preview provisioned for another owner must be torn down first.
+          if [ "$status" != "absent" ] && [ "$(jq -r '.clerkUserId // ""' <<< "$fleet_machine")" != "$preview_owner" ]; then
+            echo "Preview ${HANDLE} belongs to a different owner. Tear it down (workflow_dispatch with teardown_preview=true), then re-run." >&2
+            exit 1
+          fi
 
           case "$status" in
             provisioning|running)
@@ -330,7 +427,7 @@ jobs:
           # The idempotent provision call also reconciles the complete access
           # allowlist on already-running previews.
           provision_body="$(jq -cn \
-            --arg owner "$PREVIEW_CLERK_USER_ID" \
+            --arg owner "$preview_owner" \
             --arg handle "$HANDLE" \
             --arg bundle_version "$VERSION" \
             --argjson access "$access_user_ids" \
@@ -629,7 +726,12 @@ jobs:
 
           - Shell: https://app.matrix-os.com/vm/${HANDLE}
           - Bundle: \`${VERSION}\`
-          - Logs (from the ops box): \`./scripts/preview-logs.sh --handle ${HANDLE}\` (enroll first with \`./scripts/enable-vps-logship.sh ${HANDLE} preview\`)
+          - Logs (from the ops box): \`./scripts/preview-logs.sh --handle ${HANDLE}\` (enroll first with \`./scripts/enable-vps-logship.sh ${HANDLE} preview\`)"
+          if [ "${PREVIEW_COLLABORATION:-false}" = "true" ]; then
+            body="${body}
+          - Collaboration preview: owned by the collaboration test owner with no preview access list. Connect it to the preview platform with \`gh workflow run preview-platform.yml -f pr=${PR} -f connect_share_preview=true -f connect_collaboration_preview=true\`"
+          fi
+          body="${body}
 
           The VPS is deleted when this PR closes, or by the daily reaper after ${PREVIEW_TTL_HOURS}h."
           existing="$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR}/comments" \
@@ -639,6 +741,65 @@ jobs:
           else
              gh api "repos/${GITHUB_REPOSITORY}/issues/${PR}/comments" -f body="$body" > /dev/null
            fi
+
+  publish_bundle:
+    name: Publish Private Preview bundle
+    needs: [gate, build]
+    if: needs.gate.outputs.action == 'bundle' && needs.build.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      R2_ACCOUNT_ID: ${{ secrets.R2_BUNDLES_ACCOUNT_ID || secrets.R2_ACCOUNT_ID }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_BUNDLES_ACCESS_KEY_ID || secrets.R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_BUNDLES_SECRET_ACCESS_KEY || secrets.R2_SECRET_ACCESS_KEY }}
+      R2_BUCKET: ${{ vars.R2_BUNDLES_BUCKET || vars.R2_BUCKET || 'matrixos-sync' }}
+      R2_ENDPOINT: ${{ vars.R2_BUNDLES_ENDPOINT || vars.R2_ENDPOINT || format('https://{0}.r2.cloudflarestorage.com', secrets.R2_BUNDLES_ACCOUNT_ID || secrets.R2_ACCOUNT_ID) }}
+      PLATFORM_PUBLIC_URL: ${{ vars.PLATFORM_PUBLIC_URL || 'https://app.matrix-os.com' }}
+      PLATFORM_SECRET: ${{ secrets.PLATFORM_SECRET }}
+      VERSION: ${{ needs.build.outputs.version }}
+      PR: ${{ needs.gate.outputs.pr }}
+      PR_AUTHOR: ${{ needs.gate.outputs.author }}
+    steps:
+      # The release scripts come from main, so a PR branch cannot change how its
+      # own provenance is registered and older branches still get provenance.
+      - name: Checkout trusted release scripts
+        uses: actions/checkout@v6
+        with:
+          ref: main
+
+      - name: Download bundle artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: preview-bundle-${{ needs.gate.outputs.pr }}
+          path: dist/host-bundle
+
+      - name: Publish release with PR provenance (register-only, no channel)
+        run: |
+          set -euo pipefail
+          provenance=(--source-pr "$PR")
+          if [ -n "$PR_AUTHOR" ]; then provenance+=(--source-author "$PR_AUTHOR"); fi
+          ./scripts/publish-release.sh "$VERSION" --channel none \
+            --changelog "Private Preview bundle for PR #${PR}" "${provenance[@]}"
+
+      - name: Comment bundle on PR
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          body="**Private Preview bundle ready**
+
+          - Bundle: \`${VERSION}\`
+          - Team members can run it with their own accounts: \`matrix preview start ${PR}\`, or \`matrix preview update ${PR}\` for an existing Private Preview.
+
+          Private Previews of this PR are destroyed when it closes, or after ${PREVIEW_TTL_HOURS}h."
+          existing="$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR}/comments" \
+            --jq '[.[] | select(.body | startswith("**Private Preview bundle ready**"))] | .[0].id // ""')"
+          if [ -n "$existing" ]; then
+            gh api -X PATCH "repos/${GITHUB_REPOSITORY}/issues/comments/${existing}" -f body="$body" > /dev/null
+          else
+            gh api "repos/${GITHUB_REPOSITORY}/issues/${PR}/comments" -f body="$body" > /dev/null
+          fi
 
   verify_inventory:
     name: Verify preview computer inventory
@@ -734,6 +895,7 @@ jobs:
       PLATFORM_PUBLIC_URL: ${{ vars.PLATFORM_PUBLIC_URL || 'https://app.matrix-os.com' }}
       PLATFORM_SECRET: ${{ secrets.PLATFORM_SECRET }}
       HANDLE: ${{ needs.gate.outputs.handle }}
+      PR: ${{ needs.gate.outputs.pr }}
     steps:
       - name: Delete preview VPS
         run: |
@@ -756,6 +918,23 @@ jobs:
             exit 1
           fi
           echo "Deleted ${HANDLE} (${machine_id})"
+
+      # Private Previews belong to individual team members, so only PR close
+      # destroys them, never a manual teardown of the shared preview.
+      - name: Delete Private Previews for this PR
+        if: ${{ !cancelled() && needs.gate.outputs.teardown_private == 'true' }}
+        run: |
+          set -euo pipefail
+          response="$(mktemp)"
+          trap 'rm -f "$response"' EXIT
+          code="$(curl -sS --max-time 300 -o "$response" -w '%{http_code}' \
+            -X DELETE "${PLATFORM_PUBLIC_URL}/vps/private-previews?pr=${PR}" \
+            -H "authorization: Bearer ${PLATFORM_SECRET}")"
+          if [ "$code" != "200" ]; then
+            echo "Private Preview teardown failed with HTTP ${code}" >&2
+            exit 1
+          fi
+          echo "Private Previews for PR #${PR}: $(jq -c . "$response")"
 
   reaper:
     name: Reap stale preview VPSes
@@ -832,3 +1011,27 @@ jobs:
             echo "Failing the job so skips/failed deletes are visible instead of silently accumulating cost." >&2
             exit 1
           fi
+
+      # The platform's own sweep enforces the Private Preview lifetime; this
+      # backstop covers PR closes whose teardown run failed or never happened.
+      # It walks PRs closed within that lifetime plus a day, not the fleet
+      # listing, which is capped, so every Private Preview of a closed PR that
+      # can still be alive is reached. Deleting none is a no-op on the platform.
+      - name: Delete Private Previews for closed PRs
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          since="$(date -u -d "-$((PREVIEW_TTL_HOURS + 24)) hours" +%Y-%m-%d)"
+          prs="$(gh pr list --repo "$GITHUB_REPOSITORY" --state closed --search "closed:>=${since}" \
+            --limit 1000 --json number --jq '.[].number')"
+          failed=0
+          for pr in $prs; do
+            code="$(curl -sS --max-time 300 -o /dev/null -w '%{http_code}' \
+              -X DELETE "${PLATFORM_PUBLIC_URL}/vps/private-previews?pr=${pr}" \
+              -H "authorization: Bearer ${PLATFORM_SECRET}" || true)"
+            if [ "$code" != "200" ]; then
+              echo "Failed to reap Private Previews for PR #${pr} (HTTP ${code})" >&2
+              failed=1
+            fi
+          done
+          exit "$failed"

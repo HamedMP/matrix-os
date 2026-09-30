@@ -32,6 +32,11 @@ export const CollaborationOrganizationIdSchema = z.string()
   .min(5)
   .max(128)
   .regex(/^org_[A-Za-z0-9_-]+$/, "Invalid organization identifier");
+/** Opaque `GET /api/organizations/:orgId/members` page cursor, as the platform issues it. */
+export const CollaborationOrganizationMembersCursorSchema = z.string()
+  .min(1)
+  .max(256)
+  .regex(/^[A-Za-z0-9_-]+$/, "Invalid organization member cursor");
 export const CollaborationInvitationIdentifierRequestSchema = z.object({
   identifier: CollaborationInvitationIdentifierSchema,
   organizationId: CollaborationOrganizationIdSchema,
@@ -600,10 +605,11 @@ const CollaborationDirectoryBaseSchema = z.object({
 /**
  * S06 / T032: discovery is a platform metadata projection. `resource` is filled by
  * the client from the resource's home; when that home is unreachable or denies the
- * caller, the client marks the item with `home` instead. Organization-wide shares that
+ * caller, or the platform no longer recognizes the caller (`unauthenticated`), the
+ * client marks the item with `home` instead. Organization-wide shares that
  * this member has not opened yet appear as `organization_pending` (S04 activation).
  */
-export const CollaborationDiscoveryHomeStateSchema = z.enum(["offline", "denied"]);
+export const CollaborationDiscoveryHomeStateSchema = z.enum(["offline", "denied", "unauthenticated"]);
 
 export const CollaborationDiscoveryItemSchema = z.discriminatedUnion("status", [
   CollaborationDirectoryBaseSchema.extend({

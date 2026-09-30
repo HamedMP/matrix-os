@@ -1,6 +1,6 @@
 import { getActiveUserMachineByHandle, type PlatformDB, type UserMachineRecord } from './db.js';
 import { CustomerVpsError } from './customer-vps-errors.js';
-import { PREVIEW_RUNTIME_SLOT_PATTERN } from './customer-vps-schema.js';
+import { PREVIEW_RUNTIME_SLOT_PATTERN, PRIVATE_PREVIEW_HANDLE_PATTERN } from './customer-vps-schema.js';
 
 const PR_PREVIEW_HOST_PATTERN = /^pr-([1-9][0-9]{0,8})\.preview\.matrix-os\.com$/;
 
@@ -41,6 +41,39 @@ export async function getActivePreviewMachineByHandle(
     if (machine && isPreviewMachine(machine)) return machine;
   }
   return undefined;
+}
+
+/** Spec 537: an owner-only machine that runs one PR's bundle under its owner's account. */
+export function isPrivatePreviewMachine(
+  machine: Pick<UserMachineRecord, 'handle' | 'runtimeSlot' | 'provisioningClass' | 'accessClerkUserIds'>,
+): boolean {
+  return machine.provisioningClass === 'private-preview'
+    && PRIVATE_PREVIEW_HANDLE_PATTERN.test(machine.handle)
+    && machine.runtimeSlot === machine.handle
+    && machine.accessClerkUserIds.length === 0;
+}
+
+export async function getActivePrivatePreviewMachineByHandle(
+  db: PlatformDB,
+  handle: string,
+): Promise<UserMachineRecord | undefined> {
+  if (!PRIVATE_PREVIEW_HANDLE_PATTERN.test(handle)) return undefined;
+  const machine = await getActiveUserMachineByHandle(db, handle, handle);
+  // The reserved namespace belongs to Private Previews alone, so a malformed
+  // row in it is still treated as one and stays restricted.
+  return machine?.provisioningClass === 'private-preview' ? machine : undefined;
+}
+
+/**
+ * Machines whose handle-derived bearer must not select a personal account:
+ * shared previews, and Private Previews until owner eligibility is checked.
+ */
+export async function getPersonalAccountRestrictedMachineByHandle(
+  db: PlatformDB,
+  handle: string,
+): Promise<UserMachineRecord | undefined> {
+  return (await getActivePreviewMachineByHandle(db, handle))
+    ?? getActivePrivatePreviewMachineByHandle(db, handle);
 }
 
 export function canClerkUserAccessMachine(

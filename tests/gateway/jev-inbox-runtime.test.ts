@@ -1,6 +1,8 @@
 import { expect, it, vi } from "vitest";
 import { createJevInboxRuntime } from "../../packages/gateway/src/jev/inbox-runtime.js";
 import { saved } from "../desktop/chat-agents-fixture";
+import type { BatchDocument, JevInboxBatchStore } from "../../packages/gateway/src/jev/inbox-batch-store.js";
+import { JEV_EMAIL_TRIAGE_ANSWER_IDS } from "@matrix-os/contracts";
 import type { ChatAgent } from "@matrix-os/contracts";
 import type { HermesJevScope } from "../../packages/gateway/src/chat/hermes-integration-capability.js";
 const owner = "owner_fixture";
@@ -73,4 +75,44 @@ it("revocation blocks later calls while ordinary owner cannot use another run", 
   await expect(f.runtime.broker.execute("wrong_owner", scope, { operation: "discover" })).rejects.toThrow();
   f.runtime.launch.clearRun(owner, scope.runId);
   await expect(f.runtime.broker.execute(owner, scope, { operation: "discover" })).rejects.toThrow();
+});
+
+it("wires a paginated batch through admitted scope, evidence, Jev and exact labeling, then denies revoked grant", async () => {
+  let checkpoint: BatchDocument | null = null;
+  const store: JevInboxBatchStore = {
+    async get() {return checkpoint ? structuredClone(checkpoint) : null;},
+    async open(d) {checkpoint = structuredClone(d); return structuredClone(d);},
+    async save(d,rev) {if(checkpoint?.revision!==rev)throw new Error("Conflict");checkpoint=structuredClone(d);return structuredClone(d);},
+  };
+  const boundScope = {...scope,account:{...scope.account,labelingEnabled:true}};
+  let current: ChatAgent = {...agent,recipe:{...agent.recipe!,jevInboxLabeling:true,
+    jevInboxTriage:{version:1,ownerId:owner,...boundScope.account}}};
+  const label=vi.fn(async (_o:string,_s:HermesJevScope,input:{messageIds:string[]},_signal?:AbortSignal,check?:()=>Promise<void>)=>{
+    await check?.();return {confirmed:true as const,messageIds:input.messageIds,labelIds:["Label_Cold"]};
+  });
+  const read=vi.fn(async (_o:string,_s:HermesJevScope,action:string,params?:Record<string,unknown>)=>{
+    if(action==="get_profile")return {emailAddress:"me@example.test"};
+    if(action==="list_threads")return {threads:[{id:"thread_a"},{id:"thread_b"}]};
+    if(action==="get_thread_ids")return {id:params?.threadId,historyId:"snapshot",messages:[{id:params?.threadId+"_message",internalDate:"1000"}]};
+    if(action==="get_message")return {id:params?.messageId,threadId:String(params?.messageId).replace("_message",""),internalDate:"1000",
+      payload:{mimeType:"text/plain",body:{data:Buffer.from("Complete synthetic email.").toString("base64url")}}};
+    throw new Error("Unexpected read");
+  });
+  const evaluate=vi.fn(async()=>({requestId:"jev_req_batch_fixture",recipe:"email-triage-v1" as const,model:"typesafe/jev" as const,latencyMs:1,
+    answers:JEV_EMAIL_TRIAGE_ANSWER_IDS.map(id=>({id,type:"boolean" as const,probability:id==="cold_outreach"?0.94:0.1}))}));
+  const f=fixture();const runtime=createJevInboxRuntime({ownerId:owner,getAgent:async()=>current,resolveCredentials:f.credentials,
+    verifyRuntime:async()=>undefined,fundedPolicyReady:async()=>true,fundedReady:async()=>true,read,evaluate,label,batchStore:store});
+  const controller=new AbortController();await runtime.launch.preflight(owner,boundScope,controller.signal);
+  const start=await runtime.broker.execute(owner,boundScope,{operation:"batch_start"});
+  if(start.kind!=="batch")throw new Error("Batch missing");
+  const first=await runtime.broker.execute(owner,boundScope,{operation:"batch_next",jobId:start.jobId,revision:start.revision});
+  expect(first).toMatchObject({kind:"batch",status:"ready",labeled:1});
+  expect(label.mock.calls[0]?.[1].runId).toBe(scope.runId);
+  expect(label.mock.calls[0]?.[2]).toEqual({threadId:"thread_a",messageIds:["thread_a_message"],labels:["00 • Jev/9 Cold outreach"]});
+  if(first.kind!=="batch")throw new Error("Batch missing");
+  current={...current,revision:2};
+  await expect(runtime.broker.execute(owner,boundScope,{operation:"batch_next",jobId:start.jobId,revision:first.revision})).rejects.toThrow();
+  expect(label).toHaveBeenCalledOnce();expect(evaluate).toHaveBeenCalledOnce();
+  controller.abort();await runtime.close();
+  expect(checkpoint).toMatchObject({status:"paused",items:[{id:"thread_a",status:"labeled"}]});
 });

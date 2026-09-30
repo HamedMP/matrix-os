@@ -38,10 +38,15 @@ const SESSION_HEADER = "x-matrix-collaboration-session";
 const REQUEST_HEADER = "x-matrix-collaboration-request";
 /** Session lifecycle routes carry the ticket's logical runtime id here so the relay can route without reading the ticket. */
 export const RELAY_RUNTIME_HEADER = "x-matrix-collaboration-runtime";
+/**
+ * Marks a private project owner's setup request so the home verifies an owner-runtime session
+ * instead of a scope session. It grants nothing by itself: the home still requires that session.
+ */
+const OWNER_RUNTIME_HEADER = "x-matrix-collaboration-owner-runtime";
 const LOGICAL_RUNTIME_ID = /^[A-Za-z0-9_-]{1,128}$/;
 const FORWARDED_REQUEST_HEADERS = new Set([
   "content-type", "accept", "content-length",
-  SESSION_HEADER, REQUEST_HEADER, RELAY_RUNTIME_HEADER,
+  SESSION_HEADER, REQUEST_HEADER, RELAY_RUNTIME_HEADER, OWNER_RUNTIME_HEADER,
   COLLABORATION_CLIENT_REQUEST_ID_HEADER, COLLABORATION_EXPECTED_REVISION_HEADER, COLLABORATION_EXPECTED_MEMBER_REVISION_HEADER,
 ]);
 const FORWARDED_RESPONSE_HEADERS = new Set(["content-type", "content-length", "cache-control"]);

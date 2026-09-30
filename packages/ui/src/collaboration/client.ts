@@ -4,30 +4,28 @@ import {
   COLLABORATION_EXPECTED_MEMBER_REVISION_HEADER,
   COLLABORATION_EXPECTED_REVISION_HEADER,
   CollaborationDeleteConditionSchema,
-  CollaborationConnectionTicketResponseSchema,
-  CollaborationEventFrameSchema,
-  CollaborationIdSchema,
-  CollaborationTerminalFrameSchema,
+  CollaborationOrganizationIdSchema,
+  CollaborationOrganizationMembersCursorSchema,
 } from "@matrix-os/contracts";
 import type { CollaborationApi } from "./ChatCollaboratorsDialog.js";
 
 const REQUEST_TIMEOUT_MS = 10_000;
 const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
-// A valid 64 KiB terminal payload can expand substantially when JSON escapes
-// control characters. The contract still enforces the decoded 64 KiB bound.
-const MAX_SOCKET_FRAME_CHARS = 512 * 1024;
-const MAX_RECONNECT_DELAY_MS = 10_000;
-const TERMINAL_HEARTBEAT_INTERVAL_MS = 10_000;
 
+/**
+ * Platform REST client for discovery and other scope-free collaboration routes.
+ * It carries no realtime streams: scope content and event/terminal sockets go
+ * through the direct transport (`direct-api.ts`), because the platform retired
+ * its V1 connection tickets and non-direct collaboration sockets.
+ */
 export function createCollaborationBrowserApi(options: {
   baseUrl: string;
   fetchImpl?: typeof fetch;
   getHeaders?: () => Promise<Record<string, string>>;
-  webSocketFactory?: (url: string) => WebSocket;
 }): CollaborationApi {
   const baseUrl = requireBaseUrl(options.baseUrl);
   const request = async (path: string, method: "GET" | "POST" | "PATCH" | "DELETE", body?: unknown) => {
-    const url = requireCollaborationPath(baseUrl, path);
+    const url = requirePlatformPath(baseUrl, path, method);
     const deleteConditions = method === "DELETE" ? CollaborationDeleteConditionSchema.parse(body) : undefined;
     const serialized = method === "DELETE" || body === undefined ? undefined : JSON.stringify(body);
     if (serialized !== undefined && new TextEncoder().encode(serialized).byteLength > COLLABORATION_HTTP_BODY_LIMIT) {
@@ -66,211 +64,13 @@ export function createCollaborationBrowserApi(options: {
       throw new Error("CollaborationUnavailable");
     }
   };
-  const api: CollaborationApi = {
+  return {
     baseUrl: baseUrl.origin,
     get: (path) => request(path, "GET"),
     post: (path, body) => request(path, "POST", body),
     patch: (path, body) => request(path, "PATCH", body),
     delete: (path, body) => request(path, "DELETE", body),
   };
-  if (options.webSocketFactory || typeof WebSocket !== "undefined") {
-    api.subscribe = (scopeId, onEvent, onUnavailable, onConnectionChange) => {
-      const parsedScopeId = CollaborationIdSchema.parse(scopeId);
-      let closed = false;
-      let socket: WebSocket | null = null;
-      let retryTimer: ReturnType<typeof setTimeout> | undefined;
-      let attempt = 0;
-      let sequence = "0";
-      const connect = async () => {
-        if (closed) return;
-        try {
-          const ticket = CollaborationConnectionTicketResponseSchema.parse(await api.post(
-            `/api/collaboration/scopes/${parsedScopeId}/connection-tickets`,
-            { clientRequestId: crypto.randomUUID(), purpose: "events" },
-          ));
-          if (closed) return;
-          const wsUrl = new URL(`/ws/collaboration/scopes/${parsedScopeId}/events`, baseUrl);
-          wsUrl.protocol = baseUrl.protocol === "https:" ? "wss:" : "ws:";
-          wsUrl.searchParams.set("ticket", ticket.ticket);
-          wsUrl.searchParams.set("after", sequence.toString());
-          wsUrl.searchParams.set("after", sequence);
-          const next = (options.webSocketFactory ?? ((url: string) => new WebSocket(url)))(wsUrl.href);
-          socket = next;
-          let usable = true;
-          let refreshQueue = Promise.resolve();
-          const enqueueAfterRecovery = (operation: () => void | Promise<void>) => {
-            refreshQueue = refreshQueue.then(async () => {
-              if (!usable || closed) return;
-              await operation();
-            }).catch((error: unknown) => {
-              console.warn("[chat-collaboration] canonical refresh failed", error instanceof Error ? error.name : "UnknownError");
-              if (usable && !closed) {
-                usable = false;
-                next.close(1011, "Refresh failed");
-              }
-            });
-          };
-          next.onopen = () => {
-            attempt = 0;
-          };
-          next.onmessage = (event) => {
-            if (!usable) return;
-            if (typeof event.data !== "string" || event.data.length > MAX_SOCKET_FRAME_CHARS) {
-              next.close(1008, "Invalid frame");
-              return;
-            }
-            try {
-              const frame = CollaborationEventFrameSchema.parse(JSON.parse(event.data) as unknown);
-              if (frame.scopeId !== parsedScopeId) throw new Error("Scope mismatch");
-              if (frame.type === "heartbeat") {
-                next.send(JSON.stringify({ version: 1, type: "heartbeat" }));
-                enqueueAfterRecovery(() => { sequence = frame.sequence; });
-              } else if (frame.type === "ready") {
-                onConnectionChange?.("connected");
-                enqueueAfterRecovery(() => { sequence = frame.sequence; });
-              } else if (frame.type === "unavailable") {
-                closed = true;
-                onUnavailable();
-                next.close(1008, "Unavailable");
-              } else if (frame.type === "changed" || frame.type === "capabilities_changed" || frame.type === "refresh_required") {
-                enqueueAfterRecovery(async () => {
-                  await onEvent();
-                  if (usable && !closed) sequence = frame.sequence;
-                });
-              }
-            } catch (error: unknown) {
-              console.warn("[chat-collaboration] event frame rejected", error instanceof Error ? error.name : "UnknownError");
-              next.close(1008, "Invalid frame");
-            }
-          };
-          next.onerror = () => next.close();
-          next.onclose = () => {
-            usable = false;
-            if (socket === next) socket = null;
-            if (closed) return;
-            onConnectionChange?.("reconnecting");
-            const delay = Math.min(MAX_RECONNECT_DELAY_MS, 500 * (2 ** Math.min(attempt++, 5)));
-            retryTimer = setTimeout(() => { void connect(); }, delay);
-          };
-        } catch (error: unknown) {
-          console.warn("[chat-collaboration] event connection failed", error instanceof Error ? error.name : "UnknownError");
-          if (closed) return;
-          onConnectionChange?.("reconnecting");
-          const delay = Math.min(MAX_RECONNECT_DELAY_MS, 500 * (2 ** Math.min(attempt++, 5)));
-          retryTimer = setTimeout(() => { void connect(); }, delay);
-        }
-      };
-      void connect();
-      return () => {
-        closed = true;
-        if (retryTimer) clearTimeout(retryTimer);
-        retryTimer = undefined;
-        socket?.close(1000, "Closed");
-        socket = null;
-      };
-    };
-    api.subscribeTerminal = (scopeId, handlers) => {
-      const parsedScopeId = CollaborationIdSchema.parse(scopeId);
-      let closed = false;
-      let socket: WebSocket | null = null;
-      let retryTimer: ReturnType<typeof setTimeout> | undefined;
-      let heartbeatTimer: ReturnType<typeof setInterval> | undefined;
-      let attempt = 0;
-      let sequence = BigInt(0);
-      const clearHeartbeat = () => {
-        if (heartbeatTimer) clearInterval(heartbeatTimer);
-        heartbeatTimer = undefined;
-      };
-      const connect = async () => {
-        if (closed) return;
-        try {
-          const ticket = CollaborationConnectionTicketResponseSchema.parse(await api.post(
-            `/api/collaboration/scopes/${parsedScopeId}/connection-tickets`,
-            { clientRequestId: crypto.randomUUID(), purpose: "terminal" },
-          ));
-          if (closed) return;
-          const wsUrl = new URL(`/ws/collaboration/scopes/${parsedScopeId}/terminal`, baseUrl);
-          wsUrl.protocol = baseUrl.protocol === "https:" ? "wss:" : "ws:";
-          wsUrl.searchParams.set("ticket", ticket.ticket);
-          const next = (options.webSocketFactory ?? ((url: string) => new WebSocket(url)))(wsUrl.href);
-          socket = next;
-          next.onopen = () => {
-            attempt = 0;
-            clearHeartbeat();
-            heartbeatTimer = setInterval(() => {
-              if (!closed && socket === next) next.send(JSON.stringify({ version: 1, type: "heartbeat" }));
-            }, TERMINAL_HEARTBEAT_INTERVAL_MS);
-          };
-          next.onmessage = (event) => {
-            if (typeof event.data !== "string" || event.data.length > MAX_SOCKET_FRAME_CHARS) {
-              next.close(1008, "Invalid frame");
-              return;
-            }
-            try {
-              const frame = CollaborationTerminalFrameSchema.parse(JSON.parse(event.data) as unknown);
-              if (frame.scopeId !== parsedScopeId) throw new Error("Scope mismatch");
-              if (frame.type === "terminal.ready") {
-                sequence = maxSequence(sequence, frame.sequence);
-                handlers.onReady(frame);
-              } else if (frame.type === "terminal.output") {
-                const nextSequence = BigInt(frame.sequence);
-                if (nextSequence > sequence) {
-                  sequence = nextSequence;
-                  handlers.onOutput(frame);
-                }
-              } else if (frame.type === "terminal.state") {
-                sequence = maxSequence(sequence, frame.sequence);
-                handlers.onState(frame);
-              } else if (frame.type === "terminal.refresh_required") {
-                sequence = maxSequence(sequence, frame.sequence);
-                void Promise.resolve(handlers.onRefreshRequired()).catch((error: unknown) => {
-                  console.warn("[terminal-collaboration] canonical refresh failed", error instanceof Error ? error.name : "UnknownError");
-                  next.close(1011, "Refresh failed");
-                });
-              } else {
-                closed = true;
-                clearHeartbeat();
-                handlers.onUnavailable();
-                next.close(1008, "Unavailable");
-              }
-            } catch (error: unknown) {
-              console.warn("[terminal-collaboration] event frame rejected", error instanceof Error ? error.name : "UnknownError");
-              next.close(1008, "Invalid frame");
-            }
-          };
-          next.onerror = () => next.close();
-          next.onclose = () => {
-            clearHeartbeat();
-            if (socket === next) socket = null;
-            if (closed) return;
-            handlers.onDisconnected();
-            const delay = Math.min(MAX_RECONNECT_DELAY_MS, 500 * (2 ** Math.min(attempt++, 5)));
-            retryTimer = setTimeout(() => { void connect(); }, delay);
-          };
-        } catch (error: unknown) {
-          console.warn("[terminal-collaboration] event connection failed", error instanceof Error ? error.name : "UnknownError");
-          if (closed) return;
-          const delay = Math.min(MAX_RECONNECT_DELAY_MS, 500 * (2 ** Math.min(attempt++, 5)));
-          retryTimer = setTimeout(() => { void connect(); }, delay);
-        }
-      };
-      void connect();
-      return () => {
-        closed = true;
-        if (retryTimer) clearTimeout(retryTimer);
-        retryTimer = undefined;
-        clearHeartbeat();
-        socket?.close(1000, "Closed");
-        socket = null;
-      };
-    };
-  }
-  return api;
-}
-
-function maxSequence(current: bigint, next: string): bigint {
-  const parsed = BigInt(next);
-  return parsed > current ? parsed : current;
 }
 
 function requireBaseUrl(value: string): URL {
@@ -280,14 +80,44 @@ function requireBaseUrl(value: string): URL {
   return url;
 }
 
-function requireCollaborationPath(baseUrl: URL, path: string): URL {
-  if (path.length > 1_024 || !path.startsWith("/api/collaboration/") || path.includes("..") || path.includes("//")) {
+/** The retired V1 ticket route is refused here too, so no caller can revive it through this client. */
+const RETIRED_CONNECTION_TICKET_PATH = /\/connection-tickets(?:[/?]|$)/;
+
+function requirePlatformPath(baseUrl: URL, path: string, method: "GET" | "POST" | "PATCH" | "DELETE"): URL {
+  if (path.length > 1_024 || path.includes("..") || path.includes("//") || RETIRED_CONNECTION_TICKET_PATH.test(path)) {
     throw new Error("CollaborationUnavailable");
   }
-  const url = new URL(path, baseUrl);
-  if (url.origin !== baseUrl.origin || !url.pathname.startsWith("/api/collaboration/")) {
-    throw new Error("CollaborationUnavailable");
+  if (path.startsWith("/api/collaboration/")) {
+    const url = new URL(path, baseUrl);
+    if (url.origin === baseUrl.origin && url.pathname.startsWith("/api/collaboration/")) return url;
+  } else if (method === "GET") {
+    const url = organizationDirectoryUrl(baseUrl, path);
+    if (url) return url;
   }
+  throw new Error("CollaborationUnavailable");
+}
+
+const ORGANIZATION_MEMBERS_PATH = /^\/api\/organizations\/([^/]+)\/members$/;
+
+/**
+ * The two organization directory reads Share and organization drives make on
+ * the platform: the caller's organizations and one page of an organization's
+ * members. The URL is rebuilt from validated parts, so nothing else under
+ * `/api/organizations` is reachable through this client.
+ */
+function organizationDirectoryUrl(baseUrl: URL, path: string): URL | null {
+  if (!path.startsWith("/api/organizations")) return null;
+  const requested = new URL(path, baseUrl);
+  if (requested.origin !== baseUrl.origin || requested.hash) return null;
+  if (requested.pathname === "/api/organizations") return requested.search ? null : new URL("/api/organizations", baseUrl);
+  const organizationId = ORGANIZATION_MEMBERS_PATH.exec(requested.pathname)?.[1];
+  if (!organizationId || !CollaborationOrganizationIdSchema.safeParse(organizationId).success) return null;
+  const url = new URL(`/api/organizations/${organizationId}/members`, baseUrl);
+  const keys = [...requested.searchParams.keys()];
+  if (keys.length === 0) return url;
+  const cursor = CollaborationOrganizationMembersCursorSchema.safeParse(requested.searchParams.get("cursor"));
+  if (keys.length !== 1 || keys[0] !== "cursor" || !cursor.success) return null;
+  url.searchParams.set("cursor", cursor.data);
   return url;
 }
 

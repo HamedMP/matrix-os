@@ -17,6 +17,8 @@ describe("platform speech configuration", () => {
       PLATFORM_SPEECH_POLICY_REVISION: "speech-2026-09-10",
       PLATFORM_SPEECH_MICROUSD_PER_MINUTE: "25000",
       PLATFORM_SPEECH_FUNDING_SOURCES: "promotional,addon",
+      PLATFORM_SPEECH_MONTHLY_BUDGET_MICROUSD: "1000000",
+      PLATFORM_SPEECH_MONTHLY_PROMOTIONAL_CREDIT_MICROUSD: "1000000",
       PLATFORM_SPEECH_SECRET: secret,
       PLATFORM_SPEECH_GLOBAL_CONCURRENCY: "12",
       PLATFORM_SPEECH_OWNER_CONCURRENCY: "2",
@@ -30,6 +32,8 @@ describe("platform speech configuration", () => {
       policyRevision: "speech-2026-09-10",
       microusdPerMinute: 25_000,
       allowedFundingSources: ["promotional", "addon"],
+      monthlyBudgetMicrousd: 1_000_000,
+      monthlyPromotionalCreditMicrousd: 1_000_000,
       speechSecret: secret,
       admission: {
         maximumActiveOperations: 12,
@@ -45,6 +49,8 @@ describe("platform speech configuration", () => {
     ["missing platform key", { PLATFORM_SPEECH_OPENAI_API_KEY: undefined }],
     ["missing operator price", { PLATFORM_SPEECH_MICROUSD_PER_MINUTE: undefined }],
     ["implicit funding source", { PLATFORM_SPEECH_FUNDING_SOURCES: undefined }],
+    ["missing monthly budget", { PLATFORM_SPEECH_MONTHLY_BUDGET_MICROUSD: undefined }],
+    ["missing monthly promotional credit", { PLATFORM_SPEECH_MONTHLY_PROMOTIONAL_CREDIT_MICROUSD: undefined }],
     ["zero real price", { PLATFORM_SPEECH_MICROUSD_PER_MINUTE: "0" }],
     ["route-incompatible upload size", { PLATFORM_SPEECH_MAX_BYTES: String(10 * 1024 * 1024 + 1) }],
   ])("rejects enabled OpenAI mode with %s", (_label, changed) => {
@@ -56,9 +62,31 @@ describe("platform speech configuration", () => {
       PLATFORM_SPEECH_POLICY_REVISION: "speech-2026-09-10",
       PLATFORM_SPEECH_MICROUSD_PER_MINUTE: "25000",
       PLATFORM_SPEECH_FUNDING_SOURCES: "addon",
+      PLATFORM_SPEECH_MONTHLY_BUDGET_MICROUSD: "1000000",
+      PLATFORM_SPEECH_MONTHLY_PROMOTIONAL_CREDIT_MICROUSD: "1000000",
       PLATFORM_SPEECH_SECRET: secret,
       ...changed,
     })).toThrow("Platform speech configuration is invalid");
+  });
+
+  it("allows promotional credit to be disabled for a later add-on-backed allowance", () => {
+    expect(loadPlatformSpeechConfig({
+      PLATFORM_SPEECH_ENABLED: "true",
+      PLATFORM_SPEECH_PROVIDER: "openai",
+      PLATFORM_SPEECH_OPENAI_API_KEY: "provider-key-long-enough",
+      PLATFORM_SPEECH_MODEL: "gpt-4o-mini-transcribe",
+      PLATFORM_SPEECH_POLICY_REVISION: "speech-v2",
+      PLATFORM_SPEECH_MICROUSD_PER_MINUTE: "3000",
+      PLATFORM_SPEECH_FUNDING_SOURCES: "addon",
+      PLATFORM_SPEECH_MONTHLY_BUDGET_MICROUSD: "1000000",
+      PLATFORM_SPEECH_MONTHLY_PROMOTIONAL_CREDIT_MICROUSD: "0",
+      PLATFORM_SPEECH_SECRET: secret,
+    })).toMatchObject({
+      fundingMode: "existing_wallet",
+      allowedFundingSources: ["addon"],
+      monthlyBudgetMicrousd: 1_000_000,
+      monthlyPromotionalCreditMicrousd: 0,
+    });
   });
 
   it("allows a labeled no-charge fixture only outside production", () => {

@@ -16,6 +16,7 @@ import {
   RecoverRequestSchema,
   ResizeMachineRequestSchema,
   DeployRequestSchema,
+  SpeechActivationRequestSchema,
 } from './customer-vps-schema.js';
 import type { CustomerVpsService } from './customer-vps.js';
 import { buildFleetSummary, type FleetMachineView } from './customer-vps-fleet.js';
@@ -364,6 +365,24 @@ export function createCustomerVpsRoutes(deps: CustomerVpsRoutesDeps): Hono {
       return c.json(await deps.service.deploy(parsed.data), 200);
     } catch (err: unknown) {
       return jsonError(c, err, '/vps/deploy');
+    }
+  });
+
+  app.post('/speech/activate', bodyLimit({ maxSize: VPS_BODY_LIMIT }), async (c) => {
+    const authError = requirePlatformAuth(c);
+    if (authError) return authError;
+    try {
+      const parsed = SpeechActivationRequestSchema.safeParse(await readJson(c));
+      if (!parsed.success) return c.json({ error: 'Invalid request' }, 400);
+      const result = await deps.service.activateSpeech(parsed.data);
+      return c.json({
+        activated: result.activated,
+        failed: result.failed,
+        complete: result.complete,
+        nextCursor: result.nextCursor,
+      }, 200);
+    } catch (err: unknown) {
+      return jsonError(c, err, '/vps/speech/activate');
     }
   });
 

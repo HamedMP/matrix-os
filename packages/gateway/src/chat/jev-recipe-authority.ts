@@ -135,6 +135,7 @@ export async function bindJevInboxRecipe(options: {
   const binding = JevInboxTriageBindingSchema.safeParse({
     version: 1, ownerId: options.ownerId, service: "gmail", accountLabel: gmail[0].accountLabel,
     connectionId: selected.connection.id, expectedEmail: selected.connection.account_email,
+    ...(options.recipe.jevInboxLabeling !== undefined ? { labelingEnabled: options.recipe.jevInboxLabeling } : {}),
   });
   if (!binding.success) throw new JevRecipeBindingError("account_unavailable");
   return StoredChatAgentRecipeSchema.parse({ ...options.recipe, jevInboxTriage: binding.data });

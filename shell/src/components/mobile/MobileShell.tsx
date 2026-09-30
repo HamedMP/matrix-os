@@ -578,6 +578,13 @@ export function MobileShell({ launchAppPath, sharedTerminalScopeId, onOpenComman
         defaultSection={settingsDefaultSection}
         onOpenAgentTerminal={openAgentSetupTerminal}
         onOpenProviderTerminalSession={openExistingProviderTerminal}
+        onOpenImportedChat={(chatId) => {
+          const chatApp = apps.find((app) => app.path === "__chat__");
+          if (!chatApp) return;
+          chat?.switchConversation(chatId);
+          setSettingsOpen(false);
+          openApp(chatApp);
+        }}
       />
     </div>
     </MotionConfig>

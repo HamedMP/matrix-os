@@ -10,10 +10,11 @@ const input = chatAgentInputClass;
 const muted = chatAgentMutedStyle;
 export type AgentDraft = { name: string; description: string; instructions: string; selection: CanonicalChatModelSelection | null; requestId: string; recipe?: ChatAgentRecipe | null };
 
-function AgentModelField({ id, selected, pending, models, change, onSetup }: {
+function AgentModelField({ id, selected, pending, models, change, onSetup, hermesOnly }: {
   id: string; selected: CanonicalChatModelSelection | null; pending: boolean;
   models: ReturnType<typeof deriveCanonicalProviderChoices>;
   change(value: Partial<AgentDraft>): void; onSetup?: () => void;
+  hermesOnly: boolean;
 }) {
   const modelKey = selected ? JSON.stringify([selected.instanceId, selected.model]) : "";
   const available = models.some((choice) => choice.instanceId === selected?.instanceId && choice.modelId === selected?.model);
@@ -26,7 +27,9 @@ function AgentModelField({ id, selected, pending, models, change, onSetup }: {
       {!available ? <option value={modelKey}>{selected ? `${selected.model} · unavailable` : "No Agent model available"}</option> : null}
       {models.map((choice) => <option key={`${choice.instanceId}:${choice.modelId}`} value={JSON.stringify([choice.instanceId, choice.modelId])}>{choice.modelLabel} · {choice.harnessLabel}</option>)}
     </select></label>
-    {!available ? <p className="text-sm" style={muted}>Set up Codex or Hermes in Agents &amp; providers to use this Agent. {onSetup ? <button type="button" className="underline" disabled={pending} onClick={onSetup}>Open setup</button> : null}</p> : null}
+    {!available ? <p className="text-sm" style={muted}>{hermesOnly
+      ? "Configure a supported Hermes model in Agents & providers to use this Inbox workflow."
+      : "Set up Codex or Hermes in Agents & providers to use this Agent."} {onSetup ? <button type="button" className="underline" disabled={pending} onClick={onSetup}>Open setup</button> : null}</p> : null}
   </>;
 }
 
@@ -58,7 +61,8 @@ export function AgentEditor({ draft, editing, pending, models, recipeCatalog, co
       <label className="grid gap-1.5 text-sm" htmlFor={`${ids}-name`}>Name<input id={`${ids}-name`} className={input} value={draft.name} maxLength={80} required disabled={pending} onChange={(event) => change({ name: event.target.value })} /></label>
       <label className="grid gap-1.5 text-sm" htmlFor={`${ids}-description`}>Description <span className="text-xs" style={muted}>Optional</span><input id={`${ids}-description`} className={input} value={draft.description} maxLength={400} disabled={pending} onChange={(event) => change({ description: event.target.value })} /></label>
       <label className="grid gap-1.5 text-sm" htmlFor={`${ids}-instructions`}>Instructions<textarea id={`${ids}-instructions`} className={`${input} min-h-32 resize-y`} value={draft.instructions} maxLength={8000} required disabled={pending} placeholder="What should this Agent do? How should it work?" onChange={(event) => change({ instructions: event.target.value })} /></label>
-      <AgentModelField id={`${ids}-model`} selected={draft.selection} pending={pending} models={models} change={change} onSetup={onSetup} />
+      <AgentModelField id={`${ids}-model`} selected={draft.selection} pending={pending} models={models} change={change} onSetup={onSetup}
+        hermesOnly={draft.recipe?.skills.includes("matrix-jev-email-triage") === true} />
       <AgentRecipeEditor recipe={draft.recipe} hadRecipe={editing !== "new" && Boolean(editing.recipe)} catalog={recipeCatalog}
         connections={connections} loading={recipeLoading} error={recipeError} connectionError={connectionError} pending={pending}
         onChange={(recipe) => change({ recipe })} onRetry={onRetryRecipe} />

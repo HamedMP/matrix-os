@@ -57,6 +57,7 @@ import {
   DesktopUpdateVersionSchema,
 } from "./desktop-update";
 import { DesktopAnalyticsDetailSchema } from "./desktop-analytics";
+import { TerminalClipboardResultSchema } from "./terminal-clipboard";
 
 const Empty = z.object({}).strict();
 
@@ -136,6 +137,7 @@ const BoundedJsonValue = z.unknown().refine(
 );
 
 export const INVOKE_CHANNELS = {
+  "terminal:read-clipboard-files": { request: Empty, response: TerminalClipboardResultSchema },
   "analytics:flush-complete": { request: Empty, response: Ok },
   "auth:start-device-flow": {
     request: z.strictObject({ intent: z.enum(["sign-up", "sign-in"]).optional() }),
@@ -253,6 +255,30 @@ export const INVOKE_CHANNELS = {
   "runtime:download-file": {
     request: FileDownloadRequestSchema,
     response: FileDownloadResultSchema,
+  },
+  "runtime:organization-drive-upload": {
+    request: z.object({ scopeId: z.uuid(), organizationId: z.string().regex(/^org_[A-Za-z0-9_-]+$/),
+      folder: z.string().max(700), runtimeSlot: z.string().min(1).max(128),
+      authGeneration: z.number().int().nonnegative() }).strict(),
+    response: z.discriminatedUnion("status", [
+      z.object({ status: z.literal("cancelled") }).strict(),
+      z.object({ status: z.literal("uploaded"), fileId: z.uuid() }).strict(),
+      z.object({ status: z.literal("error"), code: z.enum(["unavailable", "invalid_file", "conflict"]) }).strict(),
+    ]),
+  },
+  "runtime:organization-drive-download": {
+    request: z.object({ scopeId: z.uuid(), organizationId: z.string().regex(/^org_[A-Za-z0-9_-]+$/),
+      fileId: z.uuid(), runtimeSlot: z.string().min(1).max(128),
+      authGeneration: z.number().int().nonnegative() }).strict(),
+    response: z.discriminatedUnion("status", [
+      z.object({ status: z.literal("cancelled") }).strict(),
+      z.object({ status: z.literal("downloaded") }).strict(),
+      z.object({ status: z.literal("error"), code: z.enum(["unavailable", "invalid_file", "conflict"]) }).strict(),
+    ]),
+  },
+  "runtime:organization-drive-cancel": {
+    request: Empty,
+    response: Ok,
   },
   "runtime:cancel-file-download": {
     request: z.object({ requestId: z.uuid() }).strict(),

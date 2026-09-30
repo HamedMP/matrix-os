@@ -3,6 +3,7 @@ import { Hono } from "hono";
 import type { Agent } from "undici";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { PlatformDB } from "../../packages/platform/src/db.js";
+import { createClerkAuth } from "../../packages/platform/src/clerk-auth.js";
 import { bootstrapPlatformCollaboration } from "../../packages/platform/src/collaboration/bootstrap.js";
 import {
   createPlatformCollaborationTestDatabase,
@@ -163,6 +164,34 @@ describe("platform collaboration bootstrap", () => {
       expect("cutover" in runtime && runtime.cutover).toMatchObject({
         run: expect.any(Function), resume: expect.any(Function), rollback: expect.any(Function),
       });
+      await runtime.shutdown();
+    } finally {
+      await destroyPlatformCollaborationTestDatabase(fixture);
+    }
+  });
+
+  it("holds cookie-authenticated relay mutations to the configured collaboration origins", async () => {
+    const fixture = await createPlatformCollaborationTestDatabase();
+    try {
+      const runtime = await bootstrapPlatformCollaboration({
+        env: validEnvironment,
+        db: { kysely: fixture.collaborationDb } as unknown as PlatformDB,
+        platformSecret: "platform-secret",
+        platformJwtSecret: "platform-jwt-secret",
+        clerkAuth: createClerkAuth({ verifyToken: async () => ({ sub: "user_member" }) }),
+        customerVpsProxyDispatcher: {} as Agent,
+        startTimers: false,
+      });
+      const app = new Hono();
+      runtime.register(app);
+      const exchange = (origin: string) => app.request("/api/collaboration/direct-sessions", {
+        method: "POST",
+        headers: { cookie: "__session=clerk-session", origin, "content-type": "application/json", "x-matrix-collaboration-runtime": "vps-unknown" },
+        body: "{}",
+      });
+      expect((await exchange("https://attacker.example")).status).toBe(403);
+      // The configured origin passes the gate; no enrolled home is registered, so the relay cannot route it.
+      expect((await exchange("https://app.matrix-os.com")).status).toBe(404);
       await runtime.shutdown();
     } finally {
       await destroyPlatformCollaborationTestDatabase(fixture);

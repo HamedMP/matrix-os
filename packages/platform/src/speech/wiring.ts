@@ -4,6 +4,7 @@ import { createOpenAiFileTranscriptionAdapter, type FileTranscriptionAdapter } f
 import type { PlatformSpeechConfig } from "./config.js";
 import { createAiFundedSpeechFundingPort } from "./funding.js";
 import { createSpeechOperationsRepository } from "./operations.js";
+import { reconcileSpeechMonthlyAllowances } from "./allowance.js";
 import {
   createPlatformSpeechService,
   createUnavailablePlatformSpeechService,
@@ -103,7 +104,7 @@ export function createConfiguredPlatformSpeechService(options: {
       policy: policy(config),
     });
   }
-  return createPlatformSpeechService({
+  const service = createPlatformSpeechService({
     operations,
     funding: config.fundingMode === "preview_no_charge"
       ? fixtureFunding(deriveSecret(config.speechSecret, "funding"))
@@ -112,6 +113,10 @@ export function createConfiguredPlatformSpeechService(options: {
         credentialHashSecret: deriveSecret(config.speechSecret, "funding"),
         reservationIdFactory: () => `speech_${randomUUID().replaceAll("-", "")}`,
         now: options.now,
+        monthlyAllowance: {
+          monthlyBudgetMicrousd: config.monthlyBudgetMicrousd,
+          monthlyPromotionalCreditMicrousd: config.monthlyPromotionalCreditMicrousd,
+        },
       }),
     adapter: createOpenAiFileTranscriptionAdapter({
       apiKey: config.apiKey,
@@ -121,4 +126,30 @@ export function createConfiguredPlatformSpeechService(options: {
     fingerprintSecret,
     policy: policy(config),
   });
+  if (config.fundingMode !== "existing_wallet") return service;
+  let reconciliation: Promise<void> | undefined;
+  const reconcile = () => {
+    if (reconciliation) return;
+    reconciliation = reconcileSpeechMonthlyAllowances({
+      db: options.db,
+      monthlyBudgetMicrousd: config.monthlyBudgetMicrousd,
+      monthlyPromotionalCreditMicrousd: config.monthlyPromotionalCreditMicrousd,
+      now: options.now,
+    }).then(() => undefined).catch((error: unknown) => {
+      console.warn("[platform-speech] monthly allowance sweep failed", error instanceof Error ? error.name : "UnknownError");
+    }).finally(() => {
+      reconciliation = undefined;
+    });
+  };
+  reconcile();
+  const timer = setInterval(reconcile, 6 * 60 * 60_000);
+  timer.unref?.();
+  return {
+    ...service,
+    async shutdown() {
+      clearInterval(timer);
+      await reconciliation;
+      await service.shutdown();
+    },
+  };
 }

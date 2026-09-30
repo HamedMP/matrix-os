@@ -5,6 +5,7 @@ import { JEV_AGENT_DESCRIPTION, JEV_AGENT_NAME } from "./jev-agent-template.js";
 import { useMemo, useState } from "react";
 import { agentInspirations, type AgentInspiration } from "./agent-inspirations.generated.js";
 import { RecipeRabbit } from "./RecipeRabbit.js";
+import { JevLabelPermission } from "./JevLabelPermission.js";
 import { chatAgentButtonClass, chatAgentInputClass, chatAgentMutedStyle } from "./theme.js";
 
 
@@ -16,11 +17,12 @@ const jevRecipe = {
 export const AGENT_RECIPE_COUNT = agentInspirations.length + 1;
 
 export function AgentRecipesPanel({ onStartChat, onCreateJev, connections = [], jevUnavailable = "", jevPending = false, jevError = "" }: {
-  onStartChat?: StartAgentChat; onCreateJev?: (accountLabel: string) => Promise<void>;
+  onStartChat?: StartAgentChat; onCreateJev?: (accountLabel: string, labeling: boolean) => Promise<void>;
   connections?: ChatAgentIntegrationConnection[]; jevUnavailable?: string; jevPending?: boolean; jevError?: string;
 }) {
   const [query, setQuery] = useState("");
   const [selectedGmail, setSelectedGmail] = useState("");
+  const [labeling, setLabeling] = useState(false);
   const gmailAccounts = activeConnections("gmail", connections);
   const accountLabel = gmailAccounts.length === 1 ? gmailAccounts[0]!.account_label
     : gmailAccounts.some((account) => account.account_label === selectedGmail) ? selectedGmail : "";
@@ -60,7 +62,7 @@ export function AgentRecipesPanel({ onStartChat, onCreateJev, connections = [], 
         {gmailAccounts.length === 1 ? <p className="text-xs" style={chatAgentMutedStyle}>Gmail: {gmailAccounts[0]!.account_email ?? gmailAccounts[0]!.account_label}</p> :
           gmailAccounts.length > 1 ? <label className="grid gap-1.5 text-xs">Gmail account for Jev
             <select className={chatAgentInputClass} aria-label="Gmail account for Jev" value={accountLabel} disabled={jevPending}
-              onChange={(event) => setSelectedGmail(event.currentTarget.value)}>
+              onChange={(event) => { setSelectedGmail(event.currentTarget.value); setLabeling(false); }}>
               <option value="">Choose an account</option>
               {gmailAccounts.map((account) => <option key={account.account_label} value={account.account_label}>
                 {account.account_email ?? account.account_label}</option>)}
@@ -68,8 +70,9 @@ export function AgentRecipesPanel({ onStartChat, onCreateJev, connections = [], 
         {jevUnavailable || (gmailAccounts.length === 0 ? "Connect Gmail in Services to use this recipe." : "") ?
           <p className="text-xs" role="status" style={chatAgentMutedStyle}>{jevUnavailable || "Connect Gmail in Services to use this recipe."}</p> : null}
         {jevError ? <p role="alert" className="text-xs">{jevError}</p> : null}
+        <JevLabelPermission enabled={labeling} disabled={jevPending || !accountLabel} onChange={setLabeling} />
         <button type="button" aria-label="Use Jev Inbox Triage" disabled={!onCreateJev || !accountLabel || !!jevUnavailable || jevPending}
-          className={`${chatAgentButtonClass} justify-self-start`} onClick={() => { if (accountLabel) void onCreateJev?.(accountLabel); }}>
+          className={`${chatAgentButtonClass} justify-self-start`} onClick={() => { if (accountLabel) void onCreateJev?.(accountLabel, labeling); }}>
           {jevPending ? "Creating…" : "Build in Chat"}</button>
       </article> : null}
       {matches.map((recipe) => {
