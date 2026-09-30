@@ -31,6 +31,20 @@ it("creates a bounded text snapshot, keeps it immutable, and revokes access", as
   expect(await shares.read(result.token)).toBeNull();
 });
 
+it("removes private assistant paths from public share previews and snapshots", async () => {
+  await repository.kysely.insertInto("chat_messages").values({
+    id: "assistant_share", chat_id: "chat_share", seq: 2, role: "assistant", state: "committed",
+    turn_id: null, run_id: null,
+    parts: JSON.stringify([{ type: "text", text: "Open /home/ma" },
+      { type: "text", text: "trix/home/private/report.txt." }]),
+    byte_count: 48, search_text: "Open", created_at: new Date(),
+  }).execute();
+  const preview = await shares.preview(owner, "chat_share");
+  expect(preview.messages[1]?.text).toBe("Open [redacted path]");
+  const created = await shares.create(owner, "chat_share", preview.revision, preview.fingerprint);
+  expect((await shares.read(created.token))?.messages[1]?.text).toBe("Open [redacted path]");
+});
+
 it("rejects another owner and stale revision without minting a token", async () => {
   await expect(shares.create({ type: "personal", ownerId: "other" }, "chat_share", 1)).rejects.toThrow();
   await expect(shares.create(owner, "chat_share", 999)).rejects.toThrow();

@@ -7,6 +7,8 @@ import { admitChatTurn } from "./turn-admission-repository.js";
 import { randomUUID } from "node:crypto";
 import { captureChatContent } from "./content-projection.js";
 import { captureChatFailureMetadata } from "./failure-telemetry.js";
+import { redactAssistantPaths } from "./safe-activity-projection.js";
+import { createOwnerToolOutputProjection } from "./owner-tool-output.js";
 import type { ChatRunFailureDiagnostic } from "./failure-diagnostic.js";
 import {
   CanonicalChatRunActivitySchema,
@@ -333,7 +335,12 @@ async function toPrincipalRecord(
     latestSuccessfulCompletion,
     userState?.attention_acknowledged_at,
   );
-  return { ...record, readState: await projectChatReadState(executor, owner, row.id) };
+  return { ...record,
+    ...(effectiveProjection?.mode === "shared" && record.chat.lastMessagePreview
+      ? { chat: { ...record.chat, lastMessagePreview: redactAssistantPaths(record.chat.lastMessagePreview) } }
+      : {}),
+    readState: await projectChatReadState(executor, owner, row.id),
+  };
 }
 
 /**
@@ -1632,12 +1639,16 @@ export class ChatRepository {
         .orderBy("occurred_at").orderBy("run_id").orderBy("run_seq").orderBy("id").execute(),
       this.kysely.selectFrom("chat_attachments").selectAll().where("chat_id", "=", chatId).orderBy("created_at").execute(),
     ]);
+    const content = { record: chat, messages: messages.map(toMessage), activities: toActivities(activities) };
+    const projected = chat.chat.collaboration?.mode === "shared"
+      ? createOwnerToolOutputProjection(undefined, [])(owner, content)
+      : content;
     return {
-      chat,
-      messages: messages.map(toMessage),
+      chat: projected.record,
+      messages: projected.messages,
       turns: turns.map(toTurn),
       runs: runs.map(toRun),
-      activities: toActivities(activities),
+      activities: projected.activities,
       attachments: attachments.map((row) => ({
         id: row.id,
         messageId: row.message_id,

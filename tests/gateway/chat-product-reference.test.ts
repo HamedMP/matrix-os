@@ -28,3 +28,17 @@ it("preserves punctuation after exact routes without exempting route suffixes", 
     expect(sanitizeAssistantText(`/api/apps${suffix}`, options)).toBe("[redacted path]");
   }
 });
+
+it("shows complete paths in a private Chat while keeping credentials hidden", () => {
+  const options = { homePath: "/home/matrix/home", showPrivatePaths: true };
+  const input = "Open /home/matrix/home/apps/chart/index.html and /opt/matrix/app/log.txt.";
+  expect(sanitizeAssistantText(input, options)).toBe(input);
+  expect(safePublishedText(input, options)).toBe(input);
+  for (let split = 0; split <= input.length; split++) {
+    const stream = createAssistantTextStreamProjector(options);
+    expect(stream.push(input.slice(0, split)) + stream.push(input.slice(split)) + stream.flush()).toBe(input);
+  }
+  expect(sanitizeAssistantText("Bearer private-token", options)).toBe("Bearer [redacted]");
+  expect(sanitizeAssistantText("ACCESS_TOKEN=private-token", options)).toBe("[redacted credential]");
+  expect(sanitizeAssistantText("Open /api/apps?token=private-token", options)).toBe("Open [redacted path]");
+});

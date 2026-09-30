@@ -1,8 +1,10 @@
 import { isAbsolute, relative, sep } from "node:path";
+import type { CanonicalChatMessagePart } from "@matrix-os/contracts";
 
 const SECRET_TEXT = /(?:authorization\s*[:=]|bearer\s+|(?:api[_-]?(?:key|token)|access[_-]?token|secret|password|credential)\s*[:=]|\bprivate\s+raw\b|ghp_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9_-]+)/i;
 const SECRET_ASSIGNMENT = /\b(?:API[_-]?KEY|API[_-]?TOKEN|ACCESS[_-]?TOKEN|SECRET|PASSWORD|CREDENTIAL)\s*=\s*[^\s,;]+/gi;
 const ABSOLUTE_PATH = /(^|[\s"'`(=:<>|;&])\/(?=[A-Za-z0-9._~-])(?!\/)[^\s"'`<>)]*/g;
+const SENSITIVE_PATH_VALUE = /[?&](?:token|key|api[_-]?key|access[_-]?token|password|secret|credential)=/i;
 // Fixed public collection names are product references, not host locations.
 // No descendants, query strings, or arbitrary /api paths are exempted.
 const PUBLIC_PRODUCT_ROUTES = new Set(["/api/integrations", "/api/apps"]);
@@ -10,6 +12,37 @@ function redactAbsolutePath(match: string, prefix: string): string {
   const path = match.slice(prefix.length).replace(/[.,;!]+$/, "");
   return PUBLIC_PRODUCT_ROUTES.has(path) ? match : `${prefix}[redacted path]`;
 }
+export function redactAssistantPaths(value: string): string {
+  return value.replace(ABSOLUTE_PATH, redactAbsolutePath);
+}
+/** Redact a complete assistant text run before splitting it back into parts. */
+export function redactAssistantParts(parts: CanonicalChatMessagePart[]): CanonicalChatMessagePart[] {
+  const projected: CanonicalChatMessagePart[] = [];
+  let text = "";
+  const flush = () => {
+    if (!text) return;
+    const safe = redactAssistantPaths(text);
+    for (let offset = 0; offset < safe.length;) {
+      let end = Math.min(offset + 32_000, safe.length);
+      if (end < safe.length && /[\uD800-\uDBFF]/u.test(safe[end - 1]!)) end -= 1;
+      projected.push({ type: "text", text: safe.slice(offset, end) });
+      offset = end;
+    }
+    text = "";
+  };
+  for (const part of parts) {
+    if (part.type === "text") text += part.text;
+    else { flush(); projected.push(part); }
+  }
+  flush();
+  return projected;
+}
+function preservePrivatePath(match: string, prefix: string): string {
+  const path = match.slice(prefix.length);
+  return SECRET_TEXT.test(path) || /[?#]/.test(path)
+    ? redactAbsolutePath(match, prefix) : match;
+}
+type PathProjectionOptions = { homePath: string; executionRoot?: string; showPrivatePaths?: boolean };
 const DANGLING_BEARER = /(?:^|[^A-Za-z0-9_])Bearer\s+$/i;
 const ACTIVE_BEARER = /(?:^|[^A-Za-z0-9_])Bearer\s+/i;
 const DANGLING_SECRET_ASSIGNMENT = /(?:^|[^A-Za-z0-9_])(?:API[_-]?(?:KEY|TOKEN)|ACCESS[_-]?TOKEN|SECRET|PASSWORD|CREDENTIAL)\s*(?:=\s*)?$/i;
@@ -47,11 +80,12 @@ function normalizedRoot(value: string): string {
 
 export function safeDisplayPath(
   value: unknown,
-  options: { homePath: string; executionRoot?: string },
+  options: PathProjectionOptions,
 ): string | undefined {
   if (typeof value !== "string") return undefined;
   const path = value.trim();
-  if (!path || path.includes("\0") || SECRET_TEXT.test(path)) return undefined;
+  if (!path || path.includes("\0") || SECRET_TEXT.test(path) || /[?#]/.test(path)) return undefined;
+  if (options.showPrivatePaths && isAbsolute(path)) return path.replaceAll("\\", "/");
   const homePath = normalizedRoot(options.homePath);
   const executionRoot = options.executionRoot ? normalizedRoot(options.executionRoot) : undefined;
   if (path === homePath) return "~";
@@ -70,11 +104,15 @@ export function safeDisplayPath(
 
 export function safePublishedText(
   value: unknown,
-  options: { homePath: string; executionRoot?: string; maxChars?: number },
+  options: PathProjectionOptions & { maxChars?: number },
 ): string | undefined {
   if (typeof value !== "string") return undefined;
   const trimmed = value.trim();
-  if (!trimmed || SECRET_TEXT.test(trimmed)) return undefined;
+  if (!trimmed || SECRET_TEXT.test(trimmed) || SENSITIVE_PATH_VALUE.test(trimmed)) return undefined;
+  if (options.showPrivatePaths) {
+    const maxChars = options.maxChars ?? 2_000;
+    return Array.from(trimmed.replace(ABSOLUTE_PATH, preservePrivatePath)).slice(0, maxChars).join("");
+  }
   const homePath = normalizedRoot(options.homePath);
   const executionRoot = options.executionRoot ? normalizedRoot(options.executionRoot) : undefined;
   let projected = trimmed.replaceAll(`${homePath}/`, "~/").replaceAll(homePath, "~");
@@ -88,8 +126,14 @@ export function safePublishedText(
 
 export function sanitizeAssistantText(
   value: string,
-  options: { homePath: string; executionRoot?: string },
+  options: PathProjectionOptions,
 ): string {
+  if (options.showPrivatePaths) {
+    return value
+      .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]+/gi, "Bearer [redacted]")
+      .replace(SECRET_ASSIGNMENT, "[redacted credential]")
+      .replace(ABSOLUTE_PATH, preservePrivatePath);
+  }
   const homePath = normalizedRoot(options.homePath);
   const executionRoot = options.executionRoot ? normalizedRoot(options.executionRoot) : undefined;
   let projected = value.replaceAll(`${homePath}/`, "~/").replaceAll(homePath, "~");
@@ -103,7 +147,7 @@ export function sanitizeAssistantText(
 }
 
 /** Project streamed text only after its path or credential token is complete. */
-export function createAssistantTextStreamProjector(options: { homePath: string; executionRoot?: string }) {
+export function createAssistantTextStreamProjector(options: PathProjectionOptions) {
   let pending = "";
   let droppingOversizedToken = false;
   const spacedRoots = [options.homePath, options.executionRoot]
@@ -208,7 +252,7 @@ export function createAssistantTextStreamProjector(options: { homePath: string; 
 export function safeToolPreview(
   name: string,
   args: unknown,
-  options: { homePath: string; executionRoot?: string },
+  options: PathProjectionOptions,
 ): { preview?: string; previewKind?: "command" | "path" | "text"; detail?: string } {
   if (typeof args !== "object" || args === null || Array.isArray(args)) return {};
   const values = args as Record<string, unknown>;
@@ -251,7 +295,7 @@ export function safeToolPreview(
 export function safeToolActivity(
   name: string,
   args: unknown,
-  options: { homePath: string; executionRoot?: string },
+  options: PathProjectionOptions,
 ): {
   displayName: string;
   kind: "command" | "file_change" | "dynamic_tool" | "web_search";

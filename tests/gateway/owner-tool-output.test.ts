@@ -39,6 +39,33 @@ describe("owner-only output response projection", () => {
     const wrongKey = createOwnerToolOutputProjection(Buffer.alloc(32, 8), ["alice"]);
     expect(JSON.stringify(wrongKey(owner, content()))).not.toContain("OPAQUE_PRIVATE_RESULT");
   });
+  it("hides historical assistant paths after a private Chat becomes shared", () => {
+    const value = content();
+    value.record.chat.collaboration = { mode: "shared", membership: { role: "owner", memberCount: 2 } };
+    value.messages = [{ id: "msg_test", chatId: "chat_test", seq: 1, role: "assistant", state: "committed",
+      parts: [{ type: "text", text: "Open /home/ma" }, { type: "text", text: "trix/home/private/report.txt" }],
+      createdAt: "2026-09-20T00:00:00.000Z" }];
+    const before = JSON.stringify(value);
+    const projected = createOwnerToolOutputProjection(key, ["alice"])(owner, value);
+    expect(projected.messages?.[0]?.parts.map((part) => part.type === "text" ? part.text : "").join(""))
+      .toBe("Open [redacted path]");
+    expect(JSON.stringify(projected)).not.toContain("/home/matrix/home/private/report.txt");
+    expect(JSON.stringify(value)).toBe(before);
+  });
+  it("does not replay a partial private path through shared live content", () => {
+    const value = content();
+    value.record.chat.collaboration = { mode: "shared", membership: { role: "owner", memberCount: 2 } };
+    value.record.chat.lastMessagePreview = "Open /home/matrix/home/private/report.txt";
+    value.activities!.push({ id: "evt_delta", runId: "run_test", chatId: "chat_test", sequence: 2,
+      occurredAt: "2026-09-20T00:00:00.000Z", type: "assistant.delta", delta: "Open /home/ma" });
+    value.messageDelta = { message: { id: "msg_delta", chatId: "chat_test", seq: 1, role: "assistant",
+      state: "committed", parts: [{ type: "text", text: "Open /home/ma" }],
+      createdAt: "2026-09-20T00:00:00.000Z" }, partIndex: 0, offset: 0 };
+    const projected = createOwnerToolOutputProjection(key, ["alice"])(owner, value);
+    expect(projected.record.chat.lastMessagePreview).toBe("Open [redacted path]");
+    expect(projected.activities?.some((activity) => activity.type === "assistant.delta")).toBe(false);
+    expect(projected.messageDelta).toBeUndefined();
+  });
 });
 
 import { createCanonicalChatService } from "../../packages/gateway/src/chat/service.js";

@@ -4,7 +4,9 @@ import { describe, expect, it, vi } from "vitest";
 import { createHermesChatProviderAdapter } from "../../packages/gateway/src/chat/hermes-provider-adapter.js";
 import { ChatRunContextSchema } from "@matrix-os/contracts";
 
-import { fakeGateway, baseInput } from "./hermes-test-gateway.js";
+import { fakeGateway, baseInput as privateBaseInput } from "./hermes-test-gateway.js";
+
+const baseInput = { ...privateBaseInput, sharedScopeId: "scope_hermes_fixture" };
 
 async function collect(iterable: AsyncIterable<unknown>): Promise<unknown[]> {
   const events = [];
@@ -39,6 +41,35 @@ async function collectRaw(iterable: AsyncIterable<unknown>): Promise<unknown[]> 
 }
 
 describe("Hermes canonical Chat Provider adapter", () => {
+  it("shows complete paths in a private Chat but keeps shared paths projected", async () => {
+    for (const [input, expected] of [
+      [privateBaseInput, "Open /home/matrix/home/apps/chart/index.html."],
+      [baseInput, "Open ~/apps/chart/index.html."],
+    ] as const) {
+      const gateway = fakeGateway();
+      const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn: gateway.spawnFn });
+      const eventsPromise = collect(adapter.start(input));
+      await vi.waitFor(() => expect(gateway.requests.some(({ method }) => method === "prompt.submit")).toBe(true));
+      gateway.event("message.complete", { text: "Open /home/matrix/home/apps/chart/index.html.", status: "complete" });
+      const events = await eventsPromise;
+      expect(events.filter((event) => typeof event === "object" && event !== null && "type" in event && event.type === "assistant.delta")
+        .map((event) => (event as { delta: string }).delta).join("")).toBe(expected);
+    }
+  });
+  it("does not reveal a query credential split across Hermes path deltas", async () => {
+    const gateway = fakeGateway();
+    const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn: gateway.spawnFn });
+    const eventsPromise = collect(adapter.start(privateBaseInput));
+    await vi.waitFor(() => expect(gateway.requests.some(({ method }) => method === "prompt.submit")).toBe(true));
+    gateway.event("message.delta", { text: "Open /api/apps?to" });
+    gateway.event("message.delta", { text: "ken=fixture-private now." });
+    gateway.event("message.complete", { text: "Open /api/apps?token=fixture-private now.", status: "complete" });
+    const deltas = (await eventsPromise).filter((event): event is { type: "assistant.delta"; delta: string } =>
+      typeof event === "object" && event !== null && "type" in event && event.type === "assistant.delta")
+      .map((event) => event.delta);
+    expect(deltas.join("")).toBe("Open [redacted path] now.");
+    expect(deltas.join("")).not.toContain("fixture-private");
+  });
   it("forwards an explicit Codex subscription model to native session creation without a configured Anthropic override", async () => {
     const gateway = fakeGateway();
     const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn: gateway.spawnFn });

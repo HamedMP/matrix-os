@@ -341,6 +341,8 @@ export function createHermesChatProviderAdapter(options: {
     let emittedDeltaEvents = 0;
     let pendingVisibleText = "";
     let pendingStreamBoundaryText = "";
+    let deferredPathStream = false;
+    let publishedRawPrefixLength = 0;
     let deltaFlushTimer: NodeJS.Timeout | undefined;
     let separatorPending = false;
     let completionSettled = false;
@@ -350,6 +352,11 @@ export function createHermesChatProviderAdapter(options: {
     const unsafeToolFragments = new Set<string>();
     const toolActivities = new Map<string, { activity: Pick<HermesActivity, "kind" | "label" | "preview" | "previewKind" | "detail">; privateContext: boolean; name: string }>();
     const statusActivities = new Map<string, Pick<HermesActivity, "activityId" | "kind" | "label" | "summary">>();
+    const pathProjection = {
+      homePath: options.homePath,
+      executionRoot: input.executionRoot,
+      showPrivatePaths: !input.sharedScopeId,
+    };
     const projectSubagent = createHermesSubagentActivity(input.runId);
     let releaseInputRun: (() => void) | undefined;
     let releaseApprovalRun: (() => void) | undefined;
@@ -422,10 +429,7 @@ export function createHermesChatProviderAdapter(options: {
     };
 
     const emitStreamText = (text: string) => {
-      const projected = pendingStreamBoundaryText + sanitizeAssistantText(text, {
-        homePath: options.homePath,
-        executionRoot: input.executionRoot,
-      });
+      const projected = pendingStreamBoundaryText + sanitizeAssistantText(text, pathProjection);
       if (emittedOutputBytes + Buffer.byteLength(projected, "utf8") > MAX_OUTPUT_BYTES) {
         throw new HermesRunFailure("run", "Hermes output exceeded limit");
       }
@@ -449,8 +453,17 @@ export function createHermesChatProviderAdapter(options: {
         const parsed = HermesDeltaSchema.parse(event.payload);
         const text = currentSegment ? parsed.text : parsed.text.replace(/^\n\n/, "");
         if (!text) return;
+        if (Buffer.byteLength(currentSegment + text, "utf8") > MAX_OUTPUT_BYTES) {
+          throw new HermesRunFailure("run", "Hermes output exceeded limit");
+        }
         if (!currentSegment && isRawProviderFailureText(text)) currentSegmentSuppressed = true;
-        if (!currentSegmentSuppressed && !deferAssistantAfterToolFailure) {
+        // A slash token can become a credential-bearing path in a later delta.
+        // Seal the remaining segment as one value before publishing it.
+        if (!deferredPathStream && /(^|[\s"'`(=:<>|;&])\//u.test(currentSegment.slice(-1) + text)) {
+          deferredPathStream = true;
+          publishedRawPrefixLength = currentSegment.length - pendingStreamBoundaryText.length;
+        }
+        if (!currentSegmentSuppressed && !deferAssistantAfterToolFailure && !deferredPathStream) {
           emitStreamText(text);
         }
         currentSegment += text;
@@ -460,25 +473,21 @@ export function createHermesChatProviderAdapter(options: {
           if (remainingHermesInterimText(currentSegment, interim.text) === undefined) {
             throw new Error("Hermes interim response did not match streamed output");
           }
-          const publishedSegment = pendingStreamBoundaryText
+          const publishedSegment = deferredPathStream
+            ? currentSegment.slice(0, publishedRawPrefixLength)
+            : pendingStreamBoundaryText
             ? currentSegment.slice(0, -pendingStreamBoundaryText.length)
             : currentSegment;
           pendingStreamBoundaryText = "";
           const remainingText = remainingHermesInterimText(publishedSegment, interim.text);
           if (remainingText === undefined) throw new Error("Hermes interim response did not match published output");
           if (remainingText && !currentSegmentSuppressed && !deferAssistantAfterToolFailure) {
-            emitVisibleText(sanitizeAssistantText(remainingText, {
-              homePath: options.homePath,
-              executionRoot: input.executionRoot,
-            }));
+            emitVisibleText(sanitizeAssistantText(remainingText, pathProjection));
           }
         } else if (!deferAssistantAfterToolFailure) {
           flushStreamBoundary();
           if (currentSegment) separatorPending = true;
-          emitVisibleText(sanitizeAssistantText(interim.text, {
-            homePath: options.homePath,
-            executionRoot: input.executionRoot,
-          }));
+          emitVisibleText(sanitizeAssistantText(interim.text, pathProjection));
         } else {
           pendingStreamBoundaryText = "";
         }
@@ -486,12 +495,14 @@ export function createHermesChatProviderAdapter(options: {
           emitVisibleText(sanitizeAssistantText(redactFailedToolOutput(
             interim.text.slice(deferredSegmentPrefixLength),
             unsafeToolFragments,
-          ), { homePath: options.homePath, executionRoot: input.executionRoot }));
+          ), pathProjection));
         }
         flushVisibleText(true);
         lastSealedSegment = interim.text;
         currentSegment = "";
         pendingStreamBoundaryText = "";
+        deferredPathStream = false;
+        publishedRawPrefixLength = 0;
         currentSegmentSuppressed = false;
         deferAssistantAfterToolFailure = false;
         deferredSegmentPrefixLength = 0;
@@ -511,8 +522,7 @@ export function createHermesChatProviderAdapter(options: {
         const publishesRawProcessNotification = ["process", "loop", "lifecycle"].includes(normalizedKind)
           && !safeModelStatus;
         const summary = publishesRawProcessNotification ? undefined : safePublishedText(parsed.data.text, {
-          homePath: options.homePath,
-          executionRoot: input.executionRoot,
+          ...pathProjection,
           maxChars: 1_000,
         });
         const candidate = { ...activity, ...(summary ? { summary } : {}) };
@@ -527,8 +537,7 @@ export function createHermesChatProviderAdapter(options: {
       } else if (event.type === "reasoning.available") {
         const parsed = HermesReasoningAvailableSchema.parse(event.payload);
         const summary = parsed.verbose ? undefined : safePublishedText(parsed.text, {
-          homePath: options.homePath,
-          executionRoot: input.executionRoot,
+          ...pathProjection,
           maxChars: 1_000,
         });
         emitAgentActivity({
@@ -546,10 +555,7 @@ export function createHermesChatProviderAdapter(options: {
         const toolName = hermesToolName(parsed.data.name);
         const activity = {
           ...hermesToolActivity(toolName),
-          ...safeToolPreview(toolName, parsed.data.args, {
-            homePath: options.homePath,
-            executionRoot: input.executionRoot,
-          }),
+          ...safeToolPreview(toolName, parsed.data.args, pathProjection),
         };
         setBounded(toolActivities, activityId, { activity, name: toolName, privateContext: hermesToolHasPrivateContext(parsed.data.args) }, MAX_ACTIVE_TOOL_ACTIVITIES);
         emitAgentActivity({
@@ -819,17 +825,16 @@ export function createHermesChatProviderAdapter(options: {
           if (!final.text.startsWith(currentSegment)) {
             throw new HermesRunFailure("run", "Hermes final response did not match streamed output");
           }
-          const publishedSegmentLength = pendingStreamBoundaryText
+          const publishedSegmentLength = deferredPathStream
+            ? publishedRawPrefixLength
+            : pendingStreamBoundaryText
             ? currentSegment.length - pendingStreamBoundaryText.length
             : currentSegment.length;
           pendingStreamBoundaryText = "";
           const finalTail = deferAssistantAfterToolFailure
             ? redactFailedToolOutput(final.text.slice(deferredSegmentPrefixLength), unsafeToolFragments)
             : final.text.slice(publishedSegmentLength);
-          emitVisibleText(sanitizeAssistantText(finalTail, {
-            homePath: options.homePath,
-            executionRoot: input.executionRoot,
-          }));
+          emitVisibleText(sanitizeAssistantText(finalTail, pathProjection));
         }
         flushVisibleText(true);
         if (final.status === "error") throw new HermesRunFailure("run", "Hermes Run failed");

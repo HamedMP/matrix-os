@@ -49,6 +49,27 @@ describe("CollaborationChatAdapter discussion", () => {
     await fixture.destroy();
   });
 
+  it("hides private assistant paths when a collaborator reads shared history", async () => {
+    await fixture.db.insertInto("chat_messages").values({
+      id: "msg_private_path", chat_id: collaborationIds.chat, seq: 1,
+      role: "assistant", state: "committed", turn_id: null, run_id: null,
+      parts: JSON.stringify([{ type: "text", text: "Open /home/ma" },
+        { type: "text", text: "trix/home/private/report.txt" }]),
+      byte_count: 60, search_text: "Open", created_at: new Date(now),
+    }).execute();
+    const context = await authority.authorize({
+      scopeId: collaborationIds.scope,
+      actorId: collaborationActors.editor,
+      action: "read",
+    });
+    const messages = await adapter.listMessages(context, { afterSequence: "0", limit: 10 });
+    expect(messages[0]?.parts.map((part) => part.type === "text" ? part.text : "").join(""))
+      .toBe("Open [redacted path]");
+    const stored = await fixture.db.selectFrom("chat_messages").select("parts")
+      .where("id", "=", "msg_private_path").executeTakeFirstOrThrow();
+    expect(JSON.stringify(stored.parts)).toContain("trix/home/private/report.txt");
+  });
+
   it("appends an attributed human discussion atomically without creating AI work", async () => {
     const context = await authority.authorize({
       scopeId: collaborationIds.scope,
