@@ -18,8 +18,9 @@ const checkedAt = "2026-08-30T10:00:00.000Z";
 const providerWorkspaceId = "tws_11111111111111111111111111111111";
 const providerTabId = "tt_22222222222222222222222222222222";
 const providerTerminalRef = `${providerWorkspaceId}:${providerTabId}`;
+const providerAuthSessionName = `provider-auth-${"0".repeat(50)}`;
 
-function providerTerminalWorkspaces(status: "running" | "exited" = "running") {
+function providerTerminalWorkspaces(status: "running" | "exited" = "running", name = "provider-login") {
   return {
     workspaces: [{
       id: providerWorkspaceId,
@@ -27,7 +28,7 @@ function providerTerminalWorkspaces(status: "running" | "exited" = "running") {
       tabs: [{
         id: providerTabId,
         revision: 1,
-        name: "provider-login",
+        name,
         cwd: "projects",
         status,
       }],
@@ -338,6 +339,25 @@ describe("desktop provider connection actions", () => {
     expect(post).not.toHaveBeenCalled();
     expect(useTabs.getState().tabs).toEqual([expect.objectContaining({ kind: "terminals", title: "Terminal" })]);
     expect(useTabs.getState().terminalSessionRequest?.sessionName).toBe(providerTerminalRef);
+  });
+
+  it("resolves a server-issued provider auth name to its unique existing Terminal ref", async () => {
+    const get = vi.fn().mockResolvedValue(providerTerminalWorkspaces("running", providerAuthSessionName));
+    await expect(openExistingProviderTerminalSession(
+      api({ get }), providerAuthSessionName,
+    )).resolves.toBe(true);
+    expect(useTabs.getState().terminalSessionRequest?.sessionName).toBe(providerTerminalRef);
+  });
+
+  it("rejects an ambiguous provider auth name without opening either Terminal", async () => {
+    const listing = providerTerminalWorkspaces("running", providerAuthSessionName);
+    listing.workspaces[0]!.tabs.push({
+      ...listing.workspaces[0]!.tabs[0]!, id: "tt_33333333333333333333333333333333",
+    });
+    await expect(openExistingProviderTerminalSession(
+      api({ get: vi.fn().mockResolvedValue(listing) }), providerAuthSessionName,
+    )).resolves.toBe(false);
+    expect(useTabs.getState().terminalSessionRequest).toBeNull();
   });
 
   it("rejects invalid or exited terminal refs without opening Terminal", async () => {
