@@ -6,7 +6,8 @@
  * recent upstream verification of that organization. Evidence expires at a
  * fixed deadline anchored to the upstream request start, never to receipt
  * time. Reconciliations are coalesced per organization, run on a recurring
- * timer for recently active organizations (bounded, LRU), and an upstream
+ * timer for recently active organizations (bounded, LRU). A stale read for a
+ * known active membership awaits fresh coalesced verification, and an upstream
  * failure simply lets the verification age out, so outages fail closed.
  */
 import type { EndedMembership, PlatformOrganizationRepository } from "./repository.js";
@@ -133,10 +134,21 @@ export function createOrganizationMembershipProjection(options: {
 
   const evaluate = async (organizationId: string, actorId: string): Promise<{ member: boolean; membershipEpoch: number; aiSubmission: "members" | "owner_only" }> => {
     touch(organizationId);
-    const [organization, membership] = await Promise.all([
+    let [organization, membership] = await Promise.all([
       options.repository.getOrganization(organizationId),
       options.repository.getMembership({ organizationId, actorId }),
     ]);
+    // Idle Cloud Run instances cannot rely on timers to refresh positive evidence.
+    // Only a previously known active membership may request this bounded,
+    // coalesced upstream verification; unknown actors never trigger a lookup.
+    if (options.upstream && organization?.lifecycle === "active" && membership?.state === "active"
+      && (!organization.verifiedAt || now().getTime() - organization.verifiedAt.getTime() > maxAgeMs)) {
+      await reconcile(organizationId);
+      [organization, membership] = await Promise.all([
+        options.repository.getOrganization(organizationId),
+        options.repository.getMembership({ organizationId, actorId }),
+      ]);
+    }
     const epoch = membership?.membershipEpoch ?? organization?.membershipEpoch ?? 0;
     const aiSubmission = organization?.aiSubmission ?? "owner_only";
     if (!organization || organization.lifecycle !== "active" || !organization.verifiedAt) return { member: false, membershipEpoch: epoch, aiSubmission };
