@@ -931,7 +931,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
           requestedActiveMachine.provisioningClass,
         )
         : getRuntimeEntitlementDecision(appEnv);
-    if (sharedEntry && resolveSharedEntryTarget({ host, machine: runningMachine, entitlement }) === 'platform') {
+    if (sharedEntry && resolveSharedEntryTarget({ host, machine: runningMachine, entitlement, platformPreview: appEnv.PLATFORM_PREVIEW === 'true' }) === 'platform') {
       return proxyAuthShell(c, host, { redirectToBillingOnFailure: false, sharedEntry: true });
     }
     if (runningMachine) {
