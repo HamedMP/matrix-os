@@ -107,6 +107,16 @@ export interface VoiceTurnAdmissionResult {
  */
 export interface VoiceAdmissionPort {
   admitFinalTranscript(request: VoiceTurnAdmissionRequest): Promise<VoiceTurnAdmissionResult>;
+  /**
+   * Canonical-truth read of the owning Chat's current revision. The engine
+   * calls this lazily before the first admission so a frozen baseRevision of
+   * 0 cannot reject the first voice turn on a chat that already has history.
+   * Returns null when the Chat record is unreadable; admission revalidates.
+   */
+  loadChatRevision?(input: {
+    chatId: string;
+    principalId: string;
+  }): Promise<number | null>;
 }
 
 export type VoiceDeliveryState =
@@ -123,6 +133,15 @@ export type VoiceDeliveryTerminalReason =
   | "ack_lost"
   | "unknown";
 
+/** Engine-side view of one manifest segment (ordered, canonical offsets). */
+export interface VoiceDeliverySegmentInput {
+  segmentId: string;
+  segmentIndex: number;
+  textStart: number;
+  textEnd: number;
+  durationMs: number;
+}
+
 /**
  * Idempotent post-run delivery ledger. The canonical implementation owns its
  * own repository transaction; it never reopens run execution state, and a
@@ -134,7 +153,9 @@ export interface VoiceDeliveryPort {
   /**
    * Create the `pending` record before the first playback-eligible segment.
    * `segments` is the engine's current ledger snapshot (ordered segment ids
-   * with canonical text offsets); later acks carry exact boundaries.
+   * with canonical text offsets) and always contains at least the first
+   * segment — a pending row with an empty manifest is never written.
+   * Later acks carry exact boundaries.
    */
   recordPending(input: {
     sessionId: string;
@@ -143,14 +164,24 @@ export interface VoiceDeliveryPort {
     responseId: string;
     runId: string;
     transportEpoch: number;
-    segments: readonly {
-      segmentId: string;
-      segmentIndex: number;
-      textStart: number;
-      textEnd: number;
-      durationMs: number;
-    }[];
+    segments: readonly VoiceDeliverySegmentInput[];
   }): Promise<{ revision: number }>;
+
+  /**
+   * Append newly synthesized segments to an existing pending/playing record.
+   * The durable manifest must cover every segment before the engine asks the
+   * adapter to synthesize it. Returns `"ignored"` for stale epochs/revisions,
+   * terminal records, or unknown responseIds.
+   */
+  extendManifest(input: {
+    sessionId: string;
+    chatId: string;
+    principalId: string;
+    responseId: string;
+    transportEpoch: number;
+    deliveryRevision: number;
+    appendSegments: readonly VoiceDeliverySegmentInput[];
+  }): Promise<{ revision: number } | "ignored">;
 
   /**
    * Report audio actually emitted to the transport. The stored boundary caps
@@ -169,9 +200,11 @@ export interface VoiceDeliveryPort {
 
   /**
    * Advance delivery to the end of exactly one acknowledged segment.
-   * Returns `"ignored"` for stale epochs/revisions or unknown records.
-   * `effectiveTextEnd` is the canonical text offset of that segment's end;
-   * `playedThroughMs` never exceeds delivered audio.
+   * Returns `"ignored"` for stale epochs/revisions or unknown records and
+   * `"out_of_order"` when the segment skips over unacknowledged predecessors
+   * (acks must be contiguous in manifest order). `effectiveTextEnd` is the
+   * canonical text offset of that segment's end; `playedThroughMs` never
+   * exceeds delivered audio.
    */
   acknowledge(input: {
     sessionId: string;
@@ -183,7 +216,31 @@ export interface VoiceDeliveryPort {
     playedThroughMs: number;
     deliveryRevision: number;
     effectiveTextEnd: number;
-  }): Promise<{ revision: number } | "ignored">;
+  }): Promise<{ revision: number } | "ignored" | "out_of_order">;
+
+  /**
+   * Adopt a freshly committed transport epoch for every still-open delivery
+   * of this Chat after a reconnect. Without adoption the durable rows keep
+   * the dead epoch and every subsequent fenced write goes stale. Returns the
+   * count of rows moved forward; `"none"` means nothing needed adopting.
+   */
+  adoptTransportEpoch(input: {
+    sessionId: string;
+    chatId: string;
+    principalId: string;
+    transportEpoch: number;
+  }): Promise<{ outcome: "adopted" | "none"; adopted: number }>;
+
+  /**
+   * Re-read one delivery record's fence inputs (used to resync
+   * `deliveryRevision` after an epoch adoption bumped the row revision).
+   */
+  getDelivery(input: {
+    sessionId: string;
+    chatId: string;
+    principalId: string;
+    responseId: string;
+  }): Promise<{ revision: number; transportEpoch: number } | null>;
 
   /**
    * Write the terminal delivery state once. Returns `"ignored"` when a
@@ -203,13 +260,7 @@ export interface VoiceDeliveryPort {
     /** Last ledger revision this session observed; absent when pending never committed. */
     deliveryRevision?: number;
     /** Ledger segments for conservative backfill when no pending row exists. */
-    segments?: readonly {
-      segmentId: string;
-      segmentIndex: number;
-      textStart: number;
-      textEnd: number;
-      durationMs: number;
-    }[];
+    segments?: readonly VoiceDeliverySegmentInput[];
   }): Promise<{ revision: number } | "ignored">;
 }
 
@@ -269,7 +320,7 @@ export interface VoiceRunControlPort {
     chatId: string;
     actionId: string;
     principalId: string;
-  }): Promise<"cancelled" | "unavailable">;
+  }): Promise<"cancelled" | "unavailable" | "unknown">;
 }
 
 /**

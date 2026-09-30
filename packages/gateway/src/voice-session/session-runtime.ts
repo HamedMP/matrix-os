@@ -79,11 +79,20 @@ export interface VoiceTurnRecord {
   canonicalTurnId: string | null;
   canonicalQueuedTurnId: string | null;
   runId: string | null;
+  /** True once the bound canonical run reached a terminal state. */
+  runTerminal: boolean;
   startedAtMs: number;
 }
 
 export interface VoiceLedgerSegment extends VoiceResponseSegment {
   played: boolean;
+}
+
+/** A provider final held back so canonical admission stays in localOrder. */
+export interface VoiceStagedFinal {
+  turnId: string;
+  finalityId: string;
+  text: string;
 }
 
 export interface VoiceResponseLedger {
@@ -143,14 +152,24 @@ export interface VoiceSessionRecord {
   outputDeviceId?: string;
   turns: Map<string, VoiceTurnRecord>;
   finalityToTurn: Map<string, string>;
+  /**
+   * Finals held back because an earlier-captured turn still owns the
+   * admission head (`nextAdmissionOrder`). Keyed by turnId; naturally bounded
+   * by `maxTurns` since staged turns stay non-terminal and never evict.
+   */
+  stagedFinals: Map<string, VoiceStagedFinal>;
+  /** Lowest capture order not yet admitted or terminalized without a final. */
+  nextAdmissionOrder: number;
   responses: Map<string, VoiceResponseLedger>;
   runIds: Set<string>;
   terminalRunIds: Set<string>;
   turnOrderCounter: number;
   lastKnownChatRevision: number;
+  /** True once the lazy canonical revision hydration ran for this session. */
+  chatRevisionLoaded: boolean;
   transport: VoiceTransportBinding | null;
   chatSubscription: VoiceChatEventSubscription | null;
-  timers: { idle: VoiceTimer | null; duration: VoiceTimer | null };
+  timers: { idle: VoiceTimer | null; duration: VoiceTimer | null; staging: VoiceTimer | null };
   queuedAudioMs: number;
   activeCaptureTurnId: string | null;
   createdAtMs: number;
@@ -269,15 +288,71 @@ export class VoiceSessionRuntime {
     s.transport = binding;
     if (s.state === "connecting") {
       this.emit({ type: "session.state", state: "connecting" });
-      return;
-    }
-    if (s.state === "reconnecting") {
+    } else if (s.state === "reconnecting") {
       const restored = s.restorableState;
       s.state = restored;
       this.emit({ type: "session.resumed", state: restored, reason: "restored" });
+    } else {
+      this.emit({ type: "session.state", state: s.state });
+    }
+    // A rotated epoch strands durable delivery rows on the dead epoch: every
+    // later fenced write goes stale. Open ledgers adopt the fresh epoch on
+    // the serialized queue so the adoption lands before adapter events that
+    // arrive behind this attach.
+    if (this.needsEpochAdoption()) {
+      void enqueueSessionTask(s, () => this.adoptTransportEpoch());
+    }
+  }
+
+  /** True when any open ledger has a durable row still fenced to an old epoch. */
+  private needsEpochAdoption(): boolean {
+    for (const ledger of this.session.responses.values()) {
+      if (ledger.state === "open" && ledger.pendingRecorded) return true;
+    }
+    return false;
+  }
+
+  /**
+   * Move every still-open delivery row of this Chat onto the freshly
+   * committed transport epoch, then resync each open ledger's
+   * `deliveryRevision` (adoption bumps row revisions). Best-effort: failures
+   * are logged and the next attach retries; the port is idempotent.
+   */
+  async adoptTransportEpoch(): Promise<void> {
+    const s = this.session;
+    if (s.state === "ending" || s.state === "ended") return;
+    try {
+      await this.host.delivery.adoptTransportEpoch({
+        sessionId: s.sessionId,
+        chatId: s.chatId,
+        principalId: s.principalId,
+        transportEpoch: s.epoch,
+      });
+    } catch (error: unknown) {
+      this.host.log("voice.delivery.epoch_adopt_failed", {
+        sessionId: s.sessionId,
+        error: error instanceof Error ? error.name : "UnknownError",
+      });
       return;
     }
-    this.emit({ type: "session.state", state: s.state });
+    for (const ledger of s.responses.values()) {
+      if (ledger.state !== "open" || !ledger.pendingRecorded) continue;
+      try {
+        const record = await this.host.delivery.getDelivery({
+          sessionId: s.sessionId,
+          chatId: s.chatId,
+          principalId: s.principalId,
+          responseId: ledger.responseId,
+        });
+        if (record) ledger.deliveryRevision = record.revision;
+      } catch (error: unknown) {
+        this.host.log("voice.delivery.resync_failed", {
+          sessionId: s.sessionId,
+          responseId: ledger.responseId,
+          error: error instanceof Error ? error.name : "UnknownError",
+        });
+      }
+    }
   }
 
   detachTransport(binding: VoiceTransportBinding): void {
@@ -423,9 +498,45 @@ export class VoiceSessionRuntime {
     return end;
   }
 
-  async recordPendingDelivery(ledger: VoiceResponseLedger): Promise<void> {
+  /**
+   * Hydrate `lastKnownChatRevision` from canonical truth, once per session.
+   * A baseRevision frozen at 0 would otherwise reject the first voice turn on
+   * any Chat that already has history. Returns the freshest known revision.
+   */
+  async hydrateChatRevision(): Promise<number> {
     const s = this.session;
-    if (ledger.pendingRecorded) return;
+    if (!s.chatRevisionLoaded) {
+      s.chatRevisionLoaded = true;
+      if (this.host.admission.loadChatRevision) {
+        try {
+          const revision = await this.host.admission.loadChatRevision({
+            chatId: s.chatId,
+            principalId: s.principalId,
+          });
+          if (revision !== null) {
+            s.lastKnownChatRevision = Math.max(s.lastKnownChatRevision, revision);
+          }
+        } catch (error: unknown) {
+          // Unreadable canonical record — admission itself revalidates.
+          this.host.log("voice.admission.revision_load_failed", {
+            sessionId: s.sessionId,
+            error: error instanceof Error ? error.name : "UnknownError",
+          });
+        }
+      }
+    }
+    return s.lastKnownChatRevision;
+  }
+
+  /**
+   * Persist the pending record (manifest = current ledger snapshot, which by
+   * construction already holds the first segment). Returns false when the
+   * write did not land — a row that cannot be written can never be acked, so
+   * callers must fail the response rather than track phantom playback.
+   */
+  async recordPendingDelivery(ledger: VoiceResponseLedger): Promise<boolean> {
+    const s = this.session;
+    if (ledger.pendingRecorded) return true;
     try {
       const result = await this.host.delivery.recordPending({
         sessionId: s.sessionId,
@@ -438,18 +549,71 @@ export class VoiceSessionRuntime {
       });
       ledger.pendingRecorded = true;
       ledger.deliveryRevision = result.revision;
+      return true;
     } catch (error: unknown) {
       // Missing pending leaves delivery unknown — never "fully heard".
       this.host.log("voice.delivery.pending_failed", {
         sessionId: s.sessionId,
         error: error instanceof Error ? error.name : "UnknownError",
       });
+      return false;
     }
   }
 
-  async recordDeliveredProgress(ledger: VoiceResponseLedger): Promise<void> {
+  /**
+   * Append one new segment to the durable manifest before its synthesis.
+   * Returns false when the extension did not land (stale fence, terminal or
+   * missing row, store failure) — playback must not continue untracked.
+   */
+  async extendDeliveryManifest(
+    ledger: VoiceResponseLedger,
+    segment: VoiceLedgerSegment,
+  ): Promise<boolean> {
     const s = this.session;
-    if (!ledger.pendingRecorded || ledger.state !== "open") return;
+    if (!ledger.pendingRecorded || ledger.state !== "open") return false;
+    try {
+      const result = await this.host.delivery.extendManifest({
+        sessionId: s.sessionId,
+        chatId: s.chatId,
+        principalId: s.principalId,
+        responseId: ledger.responseId,
+        transportEpoch: s.epoch,
+        deliveryRevision: ledger.deliveryRevision,
+        appendSegments: [{
+          segmentId: segment.segmentId,
+          segmentIndex: segment.segmentIndex,
+          textStart: segment.textStart,
+          textEnd: segment.textEnd,
+          durationMs: segment.durationMs,
+        }],
+      });
+      if (result === "ignored") {
+        this.host.log("voice.delivery.extend_ignored", {
+          sessionId: s.sessionId,
+          responseId: ledger.responseId,
+        });
+        return false;
+      }
+      ledger.deliveryRevision = result.revision;
+      return true;
+    } catch (error: unknown) {
+      this.host.log("voice.delivery.extend_failed", {
+        sessionId: s.sessionId,
+        responseId: ledger.responseId,
+        error: error instanceof Error ? error.name : "UnknownError",
+      });
+      return false;
+    }
+  }
+
+  /**
+   * Persist the delivered-audio boundary. Returns false when the boundary
+   * did not land — audio the durable record cannot bound must not be relayed
+   * to the client, so callers fail the response instead.
+   */
+  async recordDeliveredProgress(ledger: VoiceResponseLedger): Promise<boolean> {
+    const s = this.session;
+    if (!ledger.pendingRecorded || ledger.state !== "open") return false;
     try {
       const result = await this.host.delivery.recordDelivered({
         sessionId: s.sessionId,
@@ -460,12 +624,21 @@ export class VoiceSessionRuntime {
         deliveredThroughMs: ledger.deliveredThroughMs,
         deliveryRevision: ledger.deliveryRevision,
       });
-      if (result !== "ignored") ledger.deliveryRevision = result.revision;
+      if (result === "ignored") {
+        this.host.log("voice.delivery.delivered_ignored", {
+          sessionId: s.sessionId,
+          responseId: ledger.responseId,
+        });
+        return false;
+      }
+      ledger.deliveryRevision = result.revision;
+      return true;
     } catch (error: unknown) {
       this.host.log("voice.delivery.delivered_failed", {
         sessionId: s.sessionId,
         error: error instanceof Error ? error.name : "UnknownError",
       });
+      return false;
     }
   }
 
@@ -497,6 +670,8 @@ export class VoiceSessionRuntime {
         error: error instanceof Error ? error.name : "UnknownError",
       });
     }
+    // A terminal ledger is the last thing needing its run's correlation.
+    this.releaseTerminalRun(ledger.runId);
   }
 
   async maybeCompleteDelivery(ledger: VoiceResponseLedger): Promise<void> {
@@ -505,7 +680,47 @@ export class VoiceSessionRuntime {
     if (!ledger.segments.every((segment) => segment.played)) return;
     ledger.state = "complete";
     await this.recordTerminalDelivery(ledger, "complete", ledger.playedThroughMs);
+    this.releaseTerminalRun(ledger.runId);
     if (s.state === "speaking") this.setState("listening");
+  }
+
+  /**
+   * Correlate one canonical run with this session. Bounded by `maxRunIds`:
+   * under pressure, terminal runs are released first (their ledger writes no
+   * longer consult the set); terminal runs with open ledgers drop last —
+   * their fenced delivery IO does not read `runIds` either. Returns false
+   * when the cap still binds (the event is then dropped, never correlated).
+   */
+  trackRun(runId: string): boolean {
+    const s = this.session;
+    if (s.runIds.has(runId)) return true;
+    if (s.runIds.size >= this.host.maxRunIds) {
+      for (const terminal of [...s.terminalRunIds]) this.releaseTerminalRun(terminal);
+    }
+    if (s.runIds.size >= this.host.maxRunIds) {
+      for (const terminal of s.terminalRunIds) {
+        s.terminalRunIds.delete(terminal);
+        s.runIds.delete(terminal);
+      }
+    }
+    if (s.runIds.size >= this.host.maxRunIds) return false;
+    s.runIds.add(runId);
+    return true;
+  }
+
+  /**
+   * Release run correlation once the run is terminal AND no open ledger
+   * still references it. Terminal runs emit no further canonical events, so
+   * the set entries are dead weight once their delivery pipeline finished.
+   */
+  releaseTerminalRun(runId: string): void {
+    const s = this.session;
+    if (!s.terminalRunIds.has(runId)) return;
+    for (const ledger of s.responses.values()) {
+      if (ledger.runId === runId && ledger.state === "open") return;
+    }
+    s.runIds.delete(runId);
+    s.terminalRunIds.delete(runId);
   }
 
   // -------------------------------------------------------------- lifecycle

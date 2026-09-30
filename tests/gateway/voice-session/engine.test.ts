@@ -285,7 +285,7 @@ describe("synthesis, delivery, and interruption", () => {
   async function speaking(rig: VoiceTestRig) {
     const s = await listeningSession(rig);
     await admitTurn(rig, s, "speak");
-    const runId = rig.admission.calls[0]?.runId ?? "run_1";
+    const runId = rig.admission.results[0]?.runId ?? "run_1";
     rig.events.emit({ type: "assistant.text", runId, text: "spoken text", textStart: 0, textEnd: 11 });
     await flush(rig, s.sessionId);
     return s;

@@ -32,6 +32,7 @@ import type {
   VoiceChatEventSource,
   VoiceChatEventSubscription,
   VoiceDeliveryPort,
+  VoiceDeliverySegmentInput,
   VoiceRunControlPort,
   VoiceTurnAdmissionRequest,
   VoiceTurnAdmissionResult,
@@ -40,6 +41,47 @@ import { VoiceSessionError } from "./engine.js";
 
 const MAX_UNHEARD_HINT_IDS = 200;
 const FENCED_WRITE_ATTEMPTS = 3;
+
+/**
+ * The durable manifest stores canonical text offsets only — the engine's
+ * ephemeral `segmentIndex` is dropped before repository writes (the strict
+ * repo schema rejects unknown keys).
+ */
+function toRepoSegment(segment: VoiceDeliverySegmentInput) {
+  return {
+    segmentId: segment.segmentId,
+    textStart: segment.textStart,
+    textEnd: segment.textEnd,
+    durationMs: segment.durationMs,
+  };
+}
+
+/**
+ * Repo-side delivery surface landing with the manifest-extension change.
+ * Probed structurally so this adapter compiles before and after the
+ * canonical repository gains the members; absent members degrade to the
+ * failure shape the engine already treats as "delivery could not persist".
+ */
+interface VoiceDeliveryRepoExtension {
+  extendManifest?(
+    owner: ChatOwner,
+    input: {
+      chatId: string;
+      responseId: string;
+      appendSegments: ReturnType<typeof toRepoSegment>[];
+      revision: number;
+      transportEpoch: number;
+    },
+  ): Promise<"extended" | "stale" | "ignored" | "not_found" | { outcome?: string; record?: { revision: number } | null }>;
+  adoptTransportEpoch?(
+    owner: ChatOwner,
+    input: { chatId: string; transportEpoch: number },
+  ): Promise<{ outcome: "adopted" | "none"; adopted: number } | "adopted" | "none">;
+}
+
+function repoExtension(deliveries: ChatVoiceDeliveryRepository): VoiceDeliveryRepoExtension {
+  return deliveries as ChatVoiceDeliveryRepository & VoiceDeliveryRepoExtension;
+}
 
 function ownerFor(principalId: string): ChatOwner {
   return { type: "personal", ownerId: principalId };
@@ -153,6 +195,22 @@ export function createCanonicalVoicePorts(options: {
 } {
   const log = options.log ?? (() => undefined);
 
+  /** Canonical-truth read of a Chat's current revision. */
+  const loadChatRevision = async (
+    owner: ChatOwner, chatId: string,
+  ): Promise<number | null> => {
+    try {
+      const record = await options.repository.get(owner, chatId);
+      return record ? Number(record.chat.revision) : null;
+    } catch (error: unknown) {
+      log("voice.admission.revision_load_failed", {
+        chatId,
+        error: error instanceof Error ? error.name : "UnknownError",
+      });
+      return null;
+    }
+  };
+
   const resolveAssistantMessageId = async (
     chatId: string, runId: string,
   ): Promise<string | undefined> => {
@@ -168,10 +226,13 @@ export function createCanonicalVoicePorts(options: {
   };
 
   const admission: VoiceAdmissionPort = {
+    async loadChatRevision(input) {
+      return loadChatRevision(ownerFor(input.principalId), input.chatId);
+    },
+
     async admitFinalTranscript(request) {
       const owner = ownerFor(request.principalId);
       const principal = principalFor(request);
-      const input = turnInputFor(request);
       let unheardResponses: string[] = [];
       try {
         unheardResponses = await listUnheardDeliveryIds(options.deliveries, owner, request.chatId);
@@ -186,21 +247,54 @@ export function createCanonicalVoicePorts(options: {
       const hints = unheardResponses.length > 0
         ? { deliveryContext: { unheardResponses } }
         : undefined;
-      try {
-        const admitted = await options.orchestrator.admitTurn(
-          principal, owner, request.chatId, input,
-          hints ? { deliveryContext: hints.deliveryContext } : undefined,
-        );
+      // Admission fences on the freshest revision we can prove. A stale
+      // baseRevision self-heals once: re-read canonical truth, retry once.
+      let baseRevision = request.baseRevision;
+      let input = turnInputFor(request);
+      type AdmitOutcome = Awaited<ReturnType<CanonicalChatOrchestrator["admitTurn"]>>;
+      const attemptAdmit = async (): Promise<{ admitted: AdmitOutcome | null; error: unknown }> => {
+        try {
+          const admitted = await options.orchestrator.admitTurn(
+            principal, owner, request.chatId, input,
+            hints ? { deliveryContext: hints.deliveryContext } : undefined,
+          );
+          return { admitted, error: null };
+        } catch (error: unknown) {
+          return { admitted: null, error };
+        }
+      };
+      let attempt = await attemptAdmit();
+      let refreshedRevision: number | null = null;
+      const conflicts = (error: unknown) =>
+        error instanceof CanonicalChatOrchestrationError
+        && error.safeError.code === "chat_conflict";
+      if (attempt.error && conflicts(attempt.error)) {
+        refreshedRevision = await loadChatRevision(owner, request.chatId);
+        if (refreshedRevision !== null && refreshedRevision !== baseRevision) {
+          baseRevision = refreshedRevision;
+          input = { ...input, baseRevision };
+          attempt = await attemptAdmit();
+        }
+      }
+      if (attempt.admitted) {
+        const admitted = attempt.admitted;
         return {
           outcome: admitted.admission === "already_accepted" ? "already_accepted" : "sent",
           canonicalTurnId: admitted.turn.id,
           runId: admitted.run.id,
           revision: Number(admitted.record.chat.revision),
         };
-      } catch (error: unknown) {
-        const busy = error instanceof CanonicalChatOrchestrationError
-          && error.safeError.code === "chat_busy";
-        if (!busy) return mapAdmissionError(error);
+      }
+      const busy = attempt.error instanceof CanonicalChatOrchestrationError
+        && attempt.error.safeError.code === "chat_busy";
+      if (!busy) {
+        const mapped = mapAdmissionError(attempt.error);
+        // A refreshed revision is durable truth — surface it even on a
+        // rejected admission so the engine's revision cache self-heals.
+        if (refreshedRevision !== null && refreshedRevision > mapped.revision) {
+          mapped.revision = refreshedRevision;
+        }
+        return mapped;
       }
       // Chat busy → canonical queue admission with the same immutable policy.
       try {
@@ -233,9 +327,67 @@ export function createCanonicalVoicePorts(options: {
         runId: input.runId,
         messageId,
         transportEpoch: input.transportEpoch,
-        segments: input.segments.map((segment) => ({ ...segment })),
+        segments: input.segments.map(toRepoSegment),
       });
       return { revision: result.record?.revision ?? 1 };
+    },
+
+    async extendManifest(input) {
+      const owner = ownerFor(input.principalId);
+      const repo = repoExtension(options.deliveries);
+      if (typeof repo.extendManifest !== "function") {
+        // Manifest extension has not landed repo-side; the segment cannot be
+        // made durable, so report the write as not landed.
+        log("voice.delivery.extend_unsupported", { sessionId: input.sessionId });
+        return "ignored";
+      }
+      for (let attempt = 0; attempt < FENCED_WRITE_ATTEMPTS; attempt += 1) {
+        const record = await options.deliveries.get(owner, input.chatId, input.responseId);
+        if (!record) return "ignored";
+        const result = await repo.extendManifest(owner, {
+          chatId: input.chatId,
+          responseId: input.responseId,
+          appendSegments: input.appendSegments.map(toRepoSegment),
+          revision: record.revision,
+          transportEpoch: input.transportEpoch,
+        });
+        const outcome = typeof result === "string" ? result : result?.outcome;
+        if (outcome === "extended") {
+          const committed = typeof result === "object" ? result.record : null;
+          return { revision: Number(committed?.revision ?? record.revision + 1) };
+        }
+        if (outcome !== "stale") return "ignored";
+        // "stale" — re-read the fence inputs and retry within the bound.
+      }
+      return "ignored";
+    },
+
+    async adoptTransportEpoch(input) {
+      const owner = ownerFor(input.principalId);
+      const repo = repoExtension(options.deliveries);
+      if (typeof repo.adoptTransportEpoch !== "function") {
+        log("voice.delivery.adopt_unsupported", { sessionId: input.sessionId });
+        return { outcome: "none" as const, adopted: 0 };
+      }
+      const result = await repo.adoptTransportEpoch(owner, {
+        chatId: input.chatId,
+        transportEpoch: input.transportEpoch,
+      });
+      if (typeof result === "string") {
+        return { outcome: result === "adopted" ? "adopted" as const : "none" as const, adopted: 0 };
+      }
+      return {
+        outcome: result.outcome === "adopted" ? "adopted" as const : "none" as const,
+        adopted: Number(result.adopted ?? 0),
+      };
+    },
+
+    async getDelivery(input) {
+      const owner = ownerFor(input.principalId);
+      const record = await options.deliveries.get(owner, input.chatId, input.responseId);
+      return record
+        ? { revision: Number(record.revision), transportEpoch: Number(record.transportEpoch) }
+        : null;
     },
 
     async recordDelivered(input) {
@@ -271,10 +423,12 @@ export function createCanonicalVoicePorts(options: {
           revision: record.revision,
           transportEpoch: input.transportEpoch,
         });
-        if (result.outcome === "acknowledged" || result.outcome === "duplicate") {
+        const outcome: string = result.outcome;
+        if (outcome === "acknowledged" || outcome === "duplicate") {
           return { revision: result.record?.revision ?? record.revision };
         }
-        if (result.outcome !== "stale") return "ignored";
+        if (outcome === "out_of_order") return "out_of_order";
+        if (outcome !== "stale") return "ignored";
       }
       return "ignored";
     },
@@ -293,7 +447,7 @@ export function createCanonicalVoicePorts(options: {
             runId: input.runId,
             messageId,
             transportEpoch: input.transportEpoch,
-            segments: input.segments.map((segment) => ({ ...segment })),
+            segments: input.segments.map(toRepoSegment),
           }).catch((error: unknown) => {
             log("voice.delivery.backfill_failed", {
               sessionId: input.sessionId,

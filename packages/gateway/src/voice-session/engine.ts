@@ -33,6 +33,7 @@ import type {
 } from "./ports.js";
 import { createSystemVoiceClock } from "./ports.js";
 import {
+  ACTIVE_SESSION_STATES,
   enqueueSessionTask,
   VoiceSessionRuntime,
   type VoiceSessionEndKind,
@@ -41,6 +42,10 @@ import {
   type VoiceTransportBinding,
 } from "./session-runtime.js";
 import type { VoiceTicketAuthority } from "./ticket-auth.js";
+import type {
+  ActiveVoiceSessionPolicy,
+  VoiceSessionPolicyLookup,
+} from "../chat/voice-session-policy.js";
 
 export type VoiceSessionErrorCode =
   | SafeVoiceErrorCode
@@ -183,6 +188,28 @@ export class VoiceSessionEngine implements VoiceSessionHost {
   private readonly maxSessions: number;
   private closed = false;
 
+  /**
+   * Canonical admission hook: exposes the immutable policy of whichever live
+   * session currently owns a Chat, so typed/queued/steered/retried turns
+   * cannot bypass the session's run policy while it is active. The server
+   * registers this provider with `createVoiceSessionPolicyLookup`.
+   */
+  readonly sessionPolicyLookup: VoiceSessionPolicyLookup = {
+    policyForChat: (chatId) => {
+      for (const session of this.sessions.values()) {
+        if (session.chatId === chatId && ACTIVE_SESSION_STATES.has(session.state)) {
+          const policy: ActiveVoiceSessionPolicy = {
+            sessionId: session.sessionId,
+            memoryMode: session.memoryMode,
+            permissionMode: session.permissionMode,
+          };
+          return policy;
+        }
+      }
+      return undefined;
+    },
+  };
+
   constructor(deps: VoiceSessionEngineDeps) {
     this.deps = deps;
     this.limits = { ...VOICE_SESSION_LIMITS, ...deps.limits };
@@ -285,14 +312,17 @@ export class VoiceSessionEngine implements VoiceSessionHost {
       adapter: null,
       turns: new Map(),
       finalityToTurn: new Map(),
+      stagedFinals: new Map(),
+      nextAdmissionOrder: 1,
       responses: new Map(),
       runIds: new Set(),
       terminalRunIds: new Set(),
       turnOrderCounter: 0,
       lastKnownChatRevision: 0,
+      chatRevisionLoaded: false,
       transport: null,
       chatSubscription: null,
-      timers: { idle: null, duration: null },
+      timers: { idle: null, duration: null, staging: null },
       queuedAudioMs: 0,
       activeCaptureTurnId: null,
       createdAtMs: now,
@@ -519,8 +549,10 @@ export class VoiceSessionEngine implements VoiceSessionHost {
   private afterTerminal(session: VoiceSessionRecord): void {
     session.timers.idle?.cancel();
     session.timers.duration?.cancel();
+    session.timers.staging?.cancel();
     session.timers.idle = null;
     session.timers.duration = null;
+    session.timers.staging = null;
     this.deps.tickets.revokeSession(session.sessionId);
   }
 
@@ -528,8 +560,19 @@ export class VoiceSessionEngine implements VoiceSessionHost {
 
   private armTimers(session: VoiceSessionRecord): void {
     this.armIdleTimer(session);
+    this.armDurationTimer(session);
+  }
+
+  /**
+   * The duration limit is an absolute deadline (`createdAt + maxSessionSeconds`).
+   * Re-arming after a failed→retry reconnect computes only the
+   * remaining time — retries must never extend the session's lifespan.
+   */
+  private armDurationTimer(session: VoiceSessionRecord): void {
     session.timers.duration?.cancel();
-    session.timers.duration = this.clock.after(this.limits.maxSessionSeconds * 1_000, () => {
+    const deadlineMs = session.createdAtMs + this.limits.maxSessionSeconds * 1_000;
+    const remainingMs = Math.max(0, deadlineMs - this.clock.now());
+    session.timers.duration = this.clock.after(remainingMs, () => {
       this.limitReached(session, "duration_limit");
     });
   }
@@ -584,6 +627,8 @@ export class VoiceSessionEngine implements VoiceSessionHost {
       sink,
     };
     session.runtime.attachTransport(binding);
+    // A fresh transport counts as activity — the idle clock restarts here.
+    this.touch(session);
     const runtime = session.runtime;
     return {
       sessionId: session.sessionId,

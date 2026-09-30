@@ -84,56 +84,233 @@ export class FakeClock implements VoiceClock {
 
 export class FakeAdmission implements VoiceAdmissionPort {
   readonly calls: VoiceTurnAdmissionRequest[] = [];
+  /** Issued admission results, in order — where runId/cturn identities live. */
+  readonly results: VoiceTurnAdmissionResult[] = [];
+  readonly revisionLoads: { chatId: string; principalId: string }[] = [];
   private queue: VoiceTurnAdmissionResult[] = [];
   private counter = 0;
   /** When set, admission rejects (simulating canonical failure). */
   failWith: Error | null = null;
+  /** Canonical chat revision the lazy load returns; null = record missing. */
+  chatRevision: number | null = null;
+  /** Optional guard mirroring canonical exact-baseRevision validation. */
+  requireExactRevision = false;
 
   push(result: VoiceTurnAdmissionResult): void {
     this.queue.push(result);
   }
 
+  async loadChatRevision(input: { chatId: string; principalId: string }): Promise<number | null> {
+    this.revisionLoads.push(input);
+    return this.chatRevision;
+  }
+
   async admitFinalTranscript(request: VoiceTurnAdmissionRequest): Promise<VoiceTurnAdmissionResult> {
     this.calls.push(request);
     if (this.failWith) throw this.failWith;
+    if (this.requireExactRevision && this.chatRevision !== null
+      && request.baseRevision !== this.chatRevision) {
+      const rejected: VoiceTurnAdmissionResult = {
+        outcome: "rejected",
+        revision: this.chatRevision,
+        error: { code: "session_conflict", retryable: true, recovery: "retry_connection" },
+      };
+      this.results.push(rejected);
+      return rejected;
+    }
     this.counter += 1;
-    return this.queue.shift() ?? {
-      outcome: "sent",
+    const result = this.queue.shift() ?? {
+      outcome: "sent" as const,
       canonicalTurnId: `cturn_${this.counter}`,
       runId: `run_${this.counter}`,
       revision: this.counter,
     };
+    this.results.push(result);
+    return result;
   }
 }
 
+/** One durable delivery row inside `FakeDelivery` (mirrors the repository). */
+export interface FakeDeliveryRow {
+  responseId: string;
+  runId: string;
+  chatId: string;
+  principalId: string;
+  transportEpoch: number;
+  revision: number;
+  segments: {
+    segmentId: string;
+    segmentIndex: number;
+    textStart: number;
+    textEnd: number;
+    durationMs: number;
+  }[];
+  acknowledgedIndex: number;
+  deliveredThroughMs: number;
+  playedThroughMs: number;
+  effectiveTextEnd: number;
+  state: "pending" | "playing" | "complete" | "interrupted" | "unknown";
+  terminalReason: string | null;
+}
+
+const FAKE_TERMINAL_STATES = new Set(["complete", "interrupted", "unknown"]);
+
+/**
+ * Stateful delivery store: enforces the same fences as the canonical
+ * repository (epoch + revision on every write, contiguous segment acks,
+ * absorbing terminal states, forward-only epoch adoption) so tests observe
+ * real seam behavior instead of scripted returns.
+ */
 export class FakeDelivery implements VoiceDeliveryPort {
+  readonly rows = new Map<string, FakeDeliveryRow>();
   readonly pendings: Parameters<VoiceDeliveryPort["recordPending"]>[0][] = [];
+  readonly extensions: Parameters<VoiceDeliveryPort["extendManifest"]>[0][] = [];
   readonly delivered: Parameters<VoiceDeliveryPort["recordDelivered"]>[0][] = [];
   readonly acks: Parameters<VoiceDeliveryPort["acknowledge"]>[0][] = [];
   readonly terminals: Parameters<VoiceDeliveryPort["recordTerminal"]>[0][] = [];
-  ackResult: { revision: number } | "ignored" | Error = { revision: 0 };
-  private revision = 0;
+  readonly adoptions: Parameters<VoiceDeliveryPort["adoptTransportEpoch"]>[0][] = [];
+  pendingError: Error | null = null;
+  extendError: Error | null = null;
+  deliveredError: Error | null = null;
+  acknowledgeError: Error | null = null;
+  terminalError: Error | null = null;
+  adoptError: Error | null = null;
+
+  row(responseId: string): FakeDeliveryRow | undefined {
+    return this.rows.get(responseId);
+  }
 
   async recordPending(input: Parameters<VoiceDeliveryPort["recordPending"]>[0]) {
     this.pendings.push(input);
-    return { revision: ++this.revision };
+    if (this.pendingError) throw this.pendingError;
+    const existing = this.rows.get(input.responseId);
+    if (existing) return { revision: existing.revision };
+    this.rows.set(input.responseId, {
+      responseId: input.responseId,
+      runId: input.runId,
+      chatId: input.chatId,
+      principalId: input.principalId,
+      transportEpoch: input.transportEpoch,
+      revision: 1,
+      segments: input.segments.map((segment) => ({ ...segment })),
+      acknowledgedIndex: -1,
+      deliveredThroughMs: 0,
+      playedThroughMs: 0,
+      effectiveTextEnd: 0,
+      state: "pending",
+      terminalReason: null,
+    });
+    return { revision: 1 };
+  }
+
+  async extendManifest(input: Parameters<VoiceDeliveryPort["extendManifest"]>[0]) {
+    this.extensions.push(input);
+    if (this.extendError) throw this.extendError;
+    const row = this.rows.get(input.responseId);
+    if (!row || FAKE_TERMINAL_STATES.has(row.state)) return "ignored" as const;
+    if (row.transportEpoch !== input.transportEpoch || row.revision !== input.deliveryRevision) {
+      return "ignored" as const;
+    }
+    row.segments.push(...input.appendSegments.map((segment) => ({ ...segment })));
+    row.revision += 1;
+    return { revision: row.revision };
   }
 
   async recordDelivered(input: Parameters<VoiceDeliveryPort["recordDelivered"]>[0]) {
     this.delivered.push(input);
-    return { revision: ++this.revision };
+    if (this.deliveredError) throw this.deliveredError;
+    const row = this.rows.get(input.responseId);
+    if (!row || FAKE_TERMINAL_STATES.has(row.state)) return "ignored" as const;
+    if (row.transportEpoch !== input.transportEpoch || row.revision !== input.deliveryRevision) {
+      return "ignored" as const;
+    }
+    if (input.deliveredThroughMs > row.deliveredThroughMs) {
+      row.deliveredThroughMs = input.deliveredThroughMs;
+      row.revision += 1;
+    }
+    return { revision: row.revision };
   }
 
   async acknowledge(input: Parameters<VoiceDeliveryPort["acknowledge"]>[0]) {
     this.acks.push(input);
-    if (this.ackResult instanceof Error) throw this.ackResult;
-    if (this.ackResult === "ignored") return "ignored" as const;
-    return { revision: ++this.revision };
+    if (this.acknowledgeError) throw this.acknowledgeError;
+    const row = this.rows.get(input.responseId);
+    if (!row || FAKE_TERMINAL_STATES.has(row.state)) return "ignored" as const;
+    if (row.transportEpoch !== input.transportEpoch) return "ignored" as const;
+    const index = row.segments.findIndex((segment) => segment.segmentId === input.segmentId);
+    if (index < 0) return "ignored" as const;
+    if (index <= row.acknowledgedIndex) return { revision: row.revision };
+    if (index !== row.acknowledgedIndex + 1) return "out_of_order" as const;
+    row.acknowledgedIndex = index;
+    row.state = "playing";
+    row.playedThroughMs = Math.max(
+      row.playedThroughMs,
+      Math.min(input.playedThroughMs, row.deliveredThroughMs),
+    );
+    row.effectiveTextEnd = Math.max(row.effectiveTextEnd, input.effectiveTextEnd);
+    row.revision += 1;
+    return { revision: row.revision };
+  }
+
+  async adoptTransportEpoch(input: Parameters<VoiceDeliveryPort["adoptTransportEpoch"]>[0]) {
+    this.adoptions.push(input);
+    if (this.adoptError) throw this.adoptError;
+    let adopted = 0;
+    for (const row of this.rows.values()) {
+      if (row.chatId !== input.chatId || FAKE_TERMINAL_STATES.has(row.state)) continue;
+      if (row.transportEpoch >= input.transportEpoch) continue;
+      row.transportEpoch = input.transportEpoch;
+      row.revision += 1;
+      adopted += 1;
+    }
+    return adopted > 0
+      ? { outcome: "adopted" as const, adopted }
+      : { outcome: "none" as const, adopted: 0 };
+  }
+
+  async getDelivery(input: Parameters<VoiceDeliveryPort["getDelivery"]>[0]) {
+    const row = this.rows.get(input.responseId);
+    return row ? { revision: row.revision, transportEpoch: row.transportEpoch } : null;
   }
 
   async recordTerminal(input: Parameters<VoiceDeliveryPort["recordTerminal"]>[0]) {
     this.terminals.push(input);
-    return { revision: ++this.revision };
+    if (this.terminalError) throw this.terminalError;
+    const conservative = input.reason === "ended" || input.reason === "ack_lost" || input.reason === "unknown";
+    let row = this.rows.get(input.responseId);
+    if (!row) {
+      // Crash-window backfill: seed the row from the ledger snapshot.
+      if (!input.segments || input.segments.length === 0) return "ignored" as const;
+      await this.recordPending({
+        sessionId: input.sessionId,
+        chatId: input.chatId,
+        principalId: input.principalId,
+        responseId: input.responseId,
+        runId: input.runId,
+        transportEpoch: input.transportEpoch,
+        segments: input.segments,
+      });
+      row = this.rows.get(input.responseId)!;
+    }
+    if (FAKE_TERMINAL_STATES.has(row.state)) return "ignored" as const;
+    if (conservative) {
+      row.state = "unknown";
+      row.terminalReason = input.reason;
+      row.revision += 1;
+      return { revision: row.revision };
+    }
+    if (row.transportEpoch !== input.transportEpoch) return "ignored" as const;
+    if (input.deliveryRevision !== undefined && row.revision !== input.deliveryRevision) {
+      return "ignored" as const;
+    }
+    if (input.reason === "complete" && row.acknowledgedIndex !== row.segments.length - 1) {
+      // `complete` requires every manifest segment acknowledged.
+      return "ignored" as const;
+    }
+    row.state = input.reason === "complete" ? "complete" : "interrupted";
+    row.terminalReason = input.reason;
+    row.revision += 1;
+    return { revision: row.revision };
   }
 }
 
@@ -162,15 +339,21 @@ export class FakeChatEvents implements VoiceChatEventSource {
 export class FakeRunControl implements VoiceRunControlPort {
   readonly cancelledRuns: { chatId: string; runId: string; principalId: string; reason: string }[] = [];
   readonly cancelledActions: { chatId: string; actionId: string; principalId: string }[] = [];
+  runResult: "cancelled" | "already_terminal" | "unavailable" = "cancelled";
+  actionResult: "cancelled" | "unavailable" | "unknown" = "cancelled";
+  runError: Error | null = null;
+  actionError: Error | null = null;
 
   async cancelRun(input: { chatId: string; runId: string; principalId: string; reason: "user" | "interruption" }) {
     this.cancelledRuns.push(input);
-    return "cancelled" as const;
+    if (this.runError) throw this.runError;
+    return this.runResult;
   }
 
   async cancelAction(input: { chatId: string; actionId: string; principalId: string }) {
     this.cancelledActions.push(input);
-    return "cancelled" as const;
+    if (this.actionError) throw this.actionError;
+    return this.actionResult;
   }
 }
 

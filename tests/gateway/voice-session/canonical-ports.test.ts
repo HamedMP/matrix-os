@@ -55,6 +55,8 @@ function orchestratorRig() {
     admission: "accepted",
   };
   let admitError: unknown;
+  /** Per-call admit script: thrown Error or result object; falls back to admitError/admitResult. */
+  let admitScript: unknown[] | null = null;
   let queueResult: unknown = { queuedTurn: { id: "qturn_9" } };
   let queueError: unknown;
   let cancelResult: unknown = { cancellation: "aborted" };
@@ -65,6 +67,11 @@ function orchestratorRig() {
       chatId: string, input: CanonicalCreateChatTurnRequest, hints?: unknown,
     ) {
       admitCalls.push({ principal, owner, chatId, input, hints });
+      if (admitScript && admitScript.length > 0) {
+        const step = admitScript.shift();
+        if (step instanceof Error) throw step;
+        return step;
+      }
       if (admitError) throw admitError;
       return admitResult;
     },
@@ -84,6 +91,7 @@ function orchestratorRig() {
     admitCalls, queuedCalls, cancelled,
     set admitResult(value: unknown) { admitResult = value; },
     set admitError(value: unknown) { admitError = value; },
+    set admitScript(value: unknown[] | null) { admitScript = value; },
     set queueResult(value: unknown) { queueResult = value; },
     set queueError(value: unknown) { queueError = value; },
     set cancelResult(value: unknown) { cancelResult = value; },
@@ -144,7 +152,12 @@ function deliveriesRig() {
   const acks: Record<string, unknown>[] = [];
   const terminals: Record<string, unknown>[] = [];
   const unknowns: Record<string, unknown>[] = [];
+  const extensions: Record<string, unknown>[] = [];
+  const adoptions: Record<string, unknown>[] = [];
   let record: Record<string, unknown> | null = null;
+  let extensionResults: unknown[] = [];
+  let adoptionResult: unknown = { outcome: "adopted", adopted: 2 };
+  let acknowledgeResult: unknown = { outcome: "acknowledged", record: { revision: 3 } };
   const kysely = fakeKysely({ messages: { id: "msg_assistant_1" }, unheard: [] });
   const deliveries = {
     kysely,
@@ -161,7 +174,7 @@ function deliveriesRig() {
     },
     async acknowledge(_owner: ChatOwner, input: Record<string, unknown>) {
       acks.push(input);
-      return { outcome: "acknowledged", record: { revision: 3 } };
+      return acknowledgeResult;
     },
     async recordTerminal(_owner: ChatOwner, input: Record<string, unknown>) {
       terminals.push(input);
@@ -171,12 +184,30 @@ function deliveriesRig() {
       unknowns.push(input);
       return { outcome: "classified", record: { revision: 5 } };
     },
+    async extendManifest(_owner: ChatOwner, input: Record<string, unknown>) {
+      extensions.push(input);
+      const next = extensionResults.shift() ?? "extended";
+      if (next === "extended") return "extended";
+      return next;
+    },
+    async adoptTransportEpoch(_owner: ChatOwner, input: Record<string, unknown>) {
+      adoptions.push(input);
+      return adoptionResult;
+    },
   };
   return {
     deliveries: deliveries as never,
-    pending, delivered, acks, terminals, unknowns,
+    pending, delivered, acks, terminals, unknowns, extensions, adoptions,
     set record(value: Record<string, unknown> | null) { record = value; },
     get record() { return record; },
+    set extensionResults(value: unknown[]) { extensionResults = value; },
+    set adoptionResult(value: unknown) { adoptionResult = value; },
+    set acknowledgeResult(value: unknown) { acknowledgeResult = value; },
+    /** Simulate a canonical repo that has not landed manifest extension yet. */
+    removeExtensionSurface() {
+      (deliveries as Record<string, unknown>).extendManifest = undefined;
+      (deliveries as Record<string, unknown>).adoptTransportEpoch = undefined;
+    },
   };
 }
 
@@ -281,12 +312,19 @@ describe("createCanonicalVoicePorts", () => {
     const result = await ports.delivery.recordPending({
       sessionId: "vs_test", chatId: CHAT_ID, principalId: OWNER.ownerId,
       responseId: "vresp_1", runId: "run_1", transportEpoch: 1,
-      segments: [{ segmentId: "vseg_1", textStart: 0, textEnd: 5, cumulativeEndMs: 100 }],
+      segments: [{
+        segmentId: "vseg_1", segmentIndex: 0, textStart: 0, textEnd: 5, durationMs: 100,
+      }],
     });
     expect(result).toEqual({ revision: 1 });
     expect(deliveries.pending[0]).toMatchObject({
       chatId: CHAT_ID, responseId: "vresp_1", runId: "run_1",
       messageId: "msg_assistant_1", transportEpoch: 1,
+    });
+    // The repo manifest stores canonical offsets only — the engine's
+    // ephemeral segmentIndex is stripped (strict schema rejects unknown keys).
+    expect((deliveries.pending[0].segments as Record<string, unknown>[])[0]).toEqual({
+      segmentId: "vseg_1", textStart: 0, textEnd: 5, durationMs: 100,
     });
   });
 
@@ -441,5 +479,159 @@ describe("createCanonicalVoicePorts", () => {
     expect(await ports.runControl.cancelAction({
       chatId: CHAT_ID, principalId: OWNER.ownerId, actionId: "act_1",
     })).toBe("unavailable");
+  });
+
+  it("loads the canonical chat revision for lazy admission hydration", async () => {
+    const { ports, repository } = rig();
+    expect(await ports.admission.loadChatRevision?.({
+      chatId: CHAT_ID, principalId: OWNER.ownerId,
+    })).toBe(9);
+
+    repository.chatRecord = null;
+    expect(await ports.admission.loadChatRevision?.({
+      chatId: CHAT_ID, principalId: OWNER.ownerId,
+    })).toBeNull();
+  });
+
+  it("self-heals a stale baseRevision once on a revision conflict", async () => {
+    const { ports, orchestrator } = rig();
+    // First admit: stale fence. The adapter re-reads canonical truth (9) and
+    // retries once — the retry rides revision 9, not the stale 3.
+    orchestrator.admitScript = [
+      new CanonicalChatOrchestrationError(
+        canonicalChatSafeError("chat_conflict", "stale", true, ["retry"]), 409,
+      ),
+      {
+        record: { chat: { id: CHAT_ID, revision: 9 } },
+        turn: { id: "cturn_1" },
+        run: { id: "run_1" },
+        admission: "accepted",
+      },
+    ];
+    const result = await ports.admission.admitFinalTranscript(
+      admissionRequest({ baseRevision: 3 }),
+    );
+    expect(result).toMatchObject({ outcome: "sent", canonicalTurnId: "cturn_1" });
+    expect(orchestrator.admitCalls).toHaveLength(2);
+    expect(orchestrator.admitCalls[0].input.baseRevision).toBe(3);
+    expect(orchestrator.admitCalls[1].input.baseRevision).toBe(9);
+
+    // A persistent conflict after the refresh surfaces as a rejection —
+    // it never retries a third time.
+    orchestrator.admitScript = [
+      new CanonicalChatOrchestrationError(
+        canonicalChatSafeError("chat_conflict", "stale", true, ["retry"]), 409,
+      ),
+      new CanonicalChatOrchestrationError(
+        canonicalChatSafeError("chat_conflict", "stale", true, ["retry"]), 409,
+      ),
+    ];
+    const rejected = await ports.admission.admitFinalTranscript(
+      admissionRequest({ baseRevision: 3 }),
+    );
+    expect(rejected.outcome).not.toBe("sent");
+    // The refreshed revision is durable truth — it rides the rejection so the
+    // engine's revision cache self-heals even though nothing was admitted.
+    expect(rejected.revision).toBe(9);
+    expect(orchestrator.admitCalls).toHaveLength(4);
+  });
+
+  it("extends the durable manifest through the fenced repository write", async () => {
+    const { ports, deliveries } = rig();
+    deliveries.record = { revision: 5, transportEpoch: 1 };
+    const result = await ports.delivery.extendManifest({
+      sessionId: "vs_test", chatId: CHAT_ID, principalId: OWNER.ownerId,
+      responseId: "vresp_1", transportEpoch: 1, deliveryRevision: 5,
+      appendSegments: [{
+        segmentId: "vseg_2", segmentIndex: 1, textStart: 5, textEnd: 9, durationMs: 40,
+      }],
+    });
+    expect(result).toEqual({ revision: 6 });
+    expect(deliveries.extensions[0]).toMatchObject({
+      chatId: CHAT_ID, responseId: "vresp_1", revision: 5, transportEpoch: 1,
+    });
+    // segmentIndex is stripped — the repo schema stores canonical offsets only.
+    expect((deliveries.extensions[0].appendSegments as Record<string, unknown>[])[0]).toEqual({
+      segmentId: "vseg_2", textStart: 5, textEnd: 9, durationMs: 40,
+    });
+  });
+
+  it("retries manifest extension on stale fences and gives up within the bound", async () => {
+    const { ports, deliveries } = rig();
+    deliveries.record = { revision: 5, transportEpoch: 1 };
+    deliveries.extensionResults = ["stale", "extended"];
+    const result = await ports.delivery.extendManifest({
+      sessionId: "vs_test", chatId: CHAT_ID, principalId: OWNER.ownerId,
+      responseId: "vresp_1", transportEpoch: 1, deliveryRevision: 5,
+      appendSegments: [{ segmentId: "vseg_2", segmentIndex: 1, textStart: 5, textEnd: 9, durationMs: 40 }],
+    });
+    expect(result).toEqual({ revision: 6 });
+    expect(deliveries.extensions).toHaveLength(2);
+
+    deliveries.extensionResults = ["stale", "stale", "stale", "stale"];
+    const exhausted = await ports.delivery.extendManifest({
+      sessionId: "vs_test", chatId: CHAT_ID, principalId: OWNER.ownerId,
+      responseId: "vresp_1", transportEpoch: 1, deliveryRevision: 5,
+      appendSegments: [{ segmentId: "vseg_3", segmentIndex: 2, textStart: 9, textEnd: 12, durationMs: 30 }],
+    });
+    expect(exhausted).toBe("ignored");
+  });
+
+  it("reports ignored when the canonical repo lacks manifest extension", async () => {
+    const { ports, deliveries } = rig();
+    deliveries.record = { revision: 5, transportEpoch: 1 };
+    deliveries.removeExtensionSurface();
+    const result = await ports.delivery.extendManifest({
+      sessionId: "vs_test", chatId: CHAT_ID, principalId: OWNER.ownerId,
+      responseId: "vresp_1", transportEpoch: 1, deliveryRevision: 5,
+      appendSegments: [{ segmentId: "vseg_2", segmentIndex: 1, textStart: 5, textEnd: 9, durationMs: 40 }],
+    });
+    expect(result).toBe("ignored");
+  });
+
+  it("adopts the fresh transport epoch and degrades honestly when unsupported", async () => {
+    const { ports, deliveries } = rig();
+    const adopted = await ports.delivery.adoptTransportEpoch({
+      sessionId: "vs_test", chatId: CHAT_ID, principalId: OWNER.ownerId, transportEpoch: 2,
+    });
+    expect(adopted).toEqual({ outcome: "adopted", adopted: 2 });
+    expect(deliveries.adoptions[0]).toMatchObject({ chatId: CHAT_ID, transportEpoch: 2 });
+
+    deliveries.adoptionResult = { outcome: "none", adopted: 0 };
+    expect(await ports.delivery.adoptTransportEpoch({
+      sessionId: "vs_test", chatId: CHAT_ID, principalId: OWNER.ownerId, transportEpoch: 2,
+    })).toEqual({ outcome: "none", adopted: 0 });
+
+    deliveries.removeExtensionSurface();
+    expect(await ports.delivery.adoptTransportEpoch({
+      sessionId: "vs_test", chatId: CHAT_ID, principalId: OWNER.ownerId, transportEpoch: 3,
+    })).toEqual({ outcome: "none", adopted: 0 });
+  });
+
+  it("re-reads fence inputs through getDelivery", async () => {
+    const { ports, deliveries } = rig();
+    deliveries.record = { revision: 7, transportEpoch: 2 };
+    expect(await ports.delivery.getDelivery({
+      sessionId: "vs_test", chatId: CHAT_ID, principalId: OWNER.ownerId,
+      responseId: "vresp_1",
+    })).toEqual({ revision: 7, transportEpoch: 2 });
+
+    deliveries.record = null;
+    expect(await ports.delivery.getDelivery({
+      sessionId: "vs_test", chatId: CHAT_ID, principalId: OWNER.ownerId,
+      responseId: "vresp_missing",
+    })).toBeNull();
+  });
+
+  it("surfaces out_of_order acknowledgements without marking them landed", async () => {
+    const { ports, deliveries } = rig();
+    deliveries.record = { revision: 4, transportEpoch: 1 };
+    deliveries.acknowledgeResult = { outcome: "out_of_order", record: null };
+    const result = await ports.delivery.acknowledge({
+      sessionId: "vs_test", chatId: CHAT_ID, principalId: OWNER.ownerId,
+      responseId: "vresp_1", segmentId: "vseg_2", transportEpoch: 1,
+      playedThroughMs: 100, deliveryRevision: 4, effectiveTextEnd: 9,
+    });
+    expect(result).toBe("out_of_order");
   });
 });
