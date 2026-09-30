@@ -7,7 +7,7 @@
  * holds. Every mutating route applies `bodyLimit` before buffering. Errors
  * are generic and never distinguish unknown from unauthorized.
  */
-import { COLLABORATION_DIRECT_LIMITS, CollaborationIdSchema } from "@matrix-os/contracts";
+import { COLLABORATION_DIRECT_LIMITS, CollaborationIdSchema, collaborationHttpFailureCode } from "@matrix-os/contracts";
 import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { DirectAuthError } from "./direct-auth.js";
@@ -145,5 +145,5 @@ function unexpected(c: Context, operation: string, error: unknown): Response {
 
 function safeJson(c: Context, error: string, status: ErrorStatus): Response {
   c.header("Cache-Control", "no-store");
-  return c.json({ error }, status);
+  return c.json({ error, code: collaborationHttpFailureCode(status, error) }, status);
 }

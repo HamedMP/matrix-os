@@ -22,6 +22,7 @@ import {
   CollaborationAppAssetPathSchema,
   CollaborationAppInstanceIdSchema,
   CollaborationDirectSessionSchema,
+  CollaborationFailureResponseSchema,
   CollaborationOwnerRuntimeSessionSchema,
   CollaborationSignedOwnerRuntimeTicketSchema,
   CollaborationOrganizationIdSchema,
@@ -44,6 +45,7 @@ import {
   type ProofKeyPair,
 } from "./direct-crypto.js";
 import { createDirectStreams, type DirectEventHandlers, type DirectTerminalHandlers } from "./direct-streams.js";
+import { classifyCollaborationFailure } from "./failure-classification.js";
 
 const REQUEST_TIMEOUT_MS = COLLABORATION_DIRECT_LIMITS.externalApiTimeoutMs;
 const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
@@ -66,17 +68,19 @@ const IssuedOwnerRuntimeTicketSchema = z.object({
 
 /** `unauthenticated`: the platform no longer recognizes the actor (sign in again); `denied`: the home ended or refused access. */
 export type CollaborationDirectErrorCode =
-  | "upgrade_required" | "host_offline" | "unauthenticated" | "denied" | "unavailable" | "not_found" | "invalid_request" | "invalid_response";
+  | "upgrade_required" | "host_offline" | "unauthenticated" | "denied" | "unavailable" | "not_found" | "invalid_request" | "invalid_response"
+  | "access_removed" | "relay_limit" | "forbidden" | "unauthorized" | "resource_missing" | "paused";
 
 /** Safe, generic client error: never carries provider, host or path detail. */
 export class CollaborationDirectError extends Error {
-  constructor(public readonly code: CollaborationDirectErrorCode, message = "Collaboration unavailable") {
+  constructor(public readonly code: CollaborationDirectErrorCode, message = "Collaboration unavailable", public readonly retryAfterSeconds?: number) {
     super(message);
     this.name = "CollaborationDirectError";
   }
 }
 
-export type DirectScopeState = "idle" | "connecting" | "connected" | "offline" | "upgrade_required" | "unauthenticated" | "denied";
+export type DirectScopeState = "idle" | "connecting" | "connected" | "offline" | "upgrade_required" | "unauthenticated" | "denied"
+  | "unavailable" | "access_removed" | "relay_limit" | "forbidden" | "unauthorized" | "resource_missing" | "paused";
 export type DirectMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 export interface DirectDeleteConditions { clientRequestId: string; expectedRevision: string; expectedMemberRevision: string }
 
@@ -193,6 +197,8 @@ export function createCollaborationDirectClient(options: CollaborationDirectClie
 
   /** Platform: `POST /api/collaboration/connections`. A 404/503 means the home is unreachable or the scope is unknown. */
   const issueTicket = async (scopeId: string, purpose: "direct_session" | "events" | "terminal", key: ProofKeyPair) => {
+    const current = purpose === "direct_session" ? scopes.get(scopeId) : null;
+    const generation = current?.generation;
     const response = await guardedFetch(fetchImpl, new URL("/api/collaboration/connections", platform).href, {
       method: "POST",
       headers: await platformHeaders(),
@@ -201,13 +207,12 @@ export function createCollaborationDirectClient(options: CollaborationDirectClie
       body: JSON.stringify({ clientRequestId: randomId(), scopeId, purpose, proofPublicKey: key.publicKeyRaw }),
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
-    if (response.status === 404 || response.status === 503) {
-      await response.body?.cancel();
-      throw new CollaborationDirectError("host_offline", "Collaboration home is unavailable");
-    }
-    if (response.status === 401 || response.status === 403) {
-      await response.body?.cancel();
-      throwForStatus(response.status, true);
+    try {
+      await throwForResponse(response, isPlatformChallenge(response, platform.origin), true);
+    } catch (error: unknown) {
+      if (current && scopes.get(scopeId) === current && current.generation === generation && current.key === key
+        && error instanceof CollaborationDirectError) current.state = scopeStateFor(error.code);
+      throw error;
     }
     const raw = await readJson(response);
     // A newer platform protocol is an upgrade signal before any strict parsing rejects it.
@@ -234,7 +239,7 @@ export function createCollaborationDirectClient(options: CollaborationDirectClie
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
-    throwForStatus(response.status, isPlatformChallenge(response, origin));
+    await throwForResponse(response, isPlatformChallenge(response, origin));
     return readJson(response);
   };
 
@@ -256,8 +261,7 @@ export function createCollaborationDirectClient(options: CollaborationDirectClie
       body: JSON.stringify({ clientRequestId: randomId(), runtimeId, organizationId, proofPublicKey: key.publicKeyRaw }),
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
-    // The platform's own route: a 401 here always means the actor must sign in again.
-    throwForStatus(response.status, true);
+    await throwForResponse(response, isPlatformChallenge(response, platform.origin), true);
     const raw = await readJson(response);
     const advertised = (raw as { endpoint?: { protocolVersion?: unknown }; signedTicket?: { ticket?: { protocolVersion?: unknown } } } | null);
     if ([advertised?.endpoint?.protocolVersion, advertised?.signedTicket?.ticket?.protocolVersion]
@@ -331,7 +335,7 @@ export function createCollaborationDirectClient(options: CollaborationDirectClie
           } catch (error: unknown) {
             if (!active()) throw closedError();
             if (error instanceof CollaborationDirectError
-              && (error.code === "upgrade_required" || error.code === "host_offline" || error.code === "unauthenticated")) throw error;
+              && ["upgrade_required", "host_offline", "unauthenticated", "access_removed", "relay_limit", "forbidden", "unauthorized", "resource_missing", "paused"].includes(error.code)) throw error;
           }
         }
         if (!active()) throw closedError();
@@ -441,7 +445,7 @@ export function createCollaborationDirectClient(options: CollaborationDirectClie
     const challenged = isPlatformChallenge(response, connected.origin);
     if (challenged) initial.state = "unauthenticated";
     else if (initial.state === "unauthenticated") initial.state = "connected";
-    throwForStatus(response.status, challenged);
+    await throwForResponse(response, challenged);
     if (response.status === 204) {
       await response.body?.cancel();
       return null;
@@ -469,7 +473,7 @@ export function createCollaborationDirectClient(options: CollaborationDirectClie
       connected = await ensureOwnerRuntime(runtimeId, organizationId, true);
       response = await signedFetch(runtimeId, connected, "POST", path, "", serialized);
     }
-    throwForStatus(response.status, isPlatformChallenge(response, connected.origin));
+    await throwForResponse(response, isPlatformChallenge(response, connected.origin));
     if (response.status === 204) { await response.body?.cancel(); return null; }
     return readJson(response);
   };
@@ -494,7 +498,7 @@ export function createCollaborationDirectClient(options: CollaborationDirectClie
       connected = await ensureOwnerRuntime(runtimeId, organizationId, true);
       response = await signedFetch(runtimeId, connected, method, path, "", serialized, undefined, true);
     }
-    throwForStatus(response.status, isPlatformChallenge(response, connected.origin));
+    await throwForResponse(response, isPlatformChallenge(response, connected.origin));
     return readJson(response);
   };
 
@@ -609,20 +613,41 @@ async function guardedFetch(fetchImpl: typeof fetch, url: string, init: RequestI
   }
 }
 
-/** `platformChallenge`: the 401 came from the platform itself, so the actor must sign in again. */
-function throwForStatus(status: number, platformChallenge = false): void {
-  if (status >= 200 && status < 300) return;
-  if (status === 426) throw new CollaborationDirectError("upgrade_required", "Collaboration client update required");
-  if (status === 401 && platformChallenge) throw new CollaborationDirectError("unauthenticated", "Sign in again to continue");
-  if (status === 401 || status === 403) throw new CollaborationDirectError("denied", "Collaboration request denied");
-  if (status === 404) throw new CollaborationDirectError("not_found", "Collaboration resource not found");
-  if (status === 409 || status === 413 || status === 422) throw new CollaborationDirectError("invalid_request", "Collaboration state changed");
+/** A platform challenge is distinct from a home session denial. */
+async function throwForResponse(response: Response, platformChallenge = false, ticketEndpoint = false): Promise<void> {
+  if (response.ok) return;
+  let body: unknown;
+  try {
+    body = await readJson(response);
+  } catch (error: unknown) {
+    if (!(error instanceof CollaborationDirectError)) console.warn("[collaboration-direct] failure body rejected", error instanceof Error ? error.name : "UnknownError");
+  }
+  // A relay challenge requires a fresh platform login. A home's 401 means its
+  // own direct session was rejected, even if it sends the same wire code.
+  if (response.status === 401 && platformChallenge) {
+    throw new CollaborationDirectError("unauthenticated", "Sign in again to continue");
+  }
+  if (response.status === 401 && !ticketEndpoint) throw new CollaborationDirectError("denied", "Collaboration action denied");
+  const parsed = CollaborationFailureResponseSchema.safeParse(body);
+  if (parsed.success) {
+    const classified = classifyCollaborationFailure({ status: response.status, ...parsed.data });
+    if (classified.state !== "unavailable" || response.status === 503) {
+      throw new CollaborationDirectError(classified.state, classified.message, classified.retryAfterSeconds);
+    }
+  }
+  if (response.status === 404) throw new CollaborationDirectError("unavailable");
+  if (response.status === 426) throw new CollaborationDirectError("upgrade_required", "Collaboration client update required");
+  if (response.status === 401) throw new CollaborationDirectError("unauthorized", "Sign in again to continue");
+  if (response.status === 403) throw new CollaborationDirectError("forbidden", "Collaboration action denied");
+  if (response.status === 409 || response.status === 413 || response.status === 422) throw new CollaborationDirectError("invalid_request", "Collaboration state changed");
   throw new CollaborationDirectError("unavailable");
 }
 
 function scopeStateFor(code: CollaborationDirectErrorCode): DirectScopeState {
   if (code === "host_offline") return "offline";
-  if (code === "upgrade_required" || code === "unauthenticated" || code === "denied") return code;
+  if (["upgrade_required", "unauthenticated", "denied", "unavailable", "access_removed", "relay_limit", "forbidden", "unauthorized", "resource_missing", "paused"].includes(code)) {
+    return code as DirectScopeState;
+  }
   return "idle";
 }
 
@@ -686,8 +711,26 @@ async function readJson(response: Response): Promise<unknown> {
     await response.body?.cancel();
     throw new CollaborationDirectError("invalid_response");
   }
-  const text = await response.text();
-  if (new TextEncoder().encode(text).byteLength > MAX_RESPONSE_BYTES) throw new CollaborationDirectError("invalid_response");
+  if (!response.body) throw new CollaborationDirectError("invalid_response");
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  try {
+    for (;;) {
+      const next = await reader.read();
+      if (next.done) break;
+      size += next.value.byteLength;
+      if (size > MAX_RESPONSE_BYTES) {
+        await reader.cancel();
+        throw new CollaborationDirectError("invalid_response");
+      }
+      chunks.push(next.value);
+    }
+  } finally { reader.releaseLock(); }
+  const bytes = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
+  const text = new TextDecoder().decode(bytes);
   try {
     return JSON.parse(text) as unknown;
   } catch (error: unknown) {

@@ -45,7 +45,8 @@ type TerminalHandlers = {
   onOutput(frame: unknown): void;
   onState(frame: unknown): void;
   onRefreshRequired(): void | Promise<void>;
-  onUnavailable(): void;
+  onUnavailable(failure?: { state: "relay_limit"; reconnect: false; message: string }): void;
+  onTemporarilyUnavailable(): void;
   onDisconnected(): void;
 };
 
@@ -65,6 +66,17 @@ function apiFixture() {
   };
   return { api, handlers: () => handlers! };
 }
+
+describe("shared terminal transport limits", () => {
+  it("shows the limit state when a direct socket stops at the account limit", async () => {
+    const { api, handlers } = apiFixture();
+    render(<SharedTerminalControls api={api} scope={scope("viewer")} actorId="user_viewer" />);
+    await waitFor(() => expect(api.subscribeTerminal).toHaveBeenCalled());
+    act(() => handlers().onUnavailable({ state: "relay_limit", reconnect: false,
+      message: "Today's collaboration limit is reached. Try again after reset." }));
+    expect(screen.getByRole("alert")).toHaveTextContent("Today's collaboration limit is reached. Try again after reset.");
+  });
+});
 
 function readyFrame(connectionId: string, current = terminal) {
   return {
@@ -244,6 +256,64 @@ describe("shared terminal controls", () => {
     act(() => handlers().onUnavailable());
     expect(await screen.findByRole("alert")).toHaveTextContent("terminal is no longer available");
     expect(screen.getByLabelText("Terminal input")).toBeDisabled();
+  });
+
+  it("shows a retryable unavailable, not ended access, when the home cannot serve the terminal", async () => {
+    // Spec 535 FR-027: a missing server dependency must never read as "access removed".
+    const { api, handlers } = apiFixture();
+    render(<SharedTerminalControls api={api} scope={scope("editor")} actorId="user_editor" />);
+    await waitFor(() => expect(api.subscribeTerminal).toHaveBeenCalled());
+    act(() => handlers().onReady(readyFrame("connection_editor")));
+    expect(await screen.findByRole("button", { name: "Request control" })).toBeEnabled();
+
+    act(() => handlers().onTemporarilyUnavailable());
+    expect(await screen.findByRole("status")).toHaveTextContent("temporarily unavailable");
+    expect(screen.queryByText(/no longer available/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/check your access/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Request control" })).not.toBeInTheDocument();
+    act(() => handlers().onDisconnected());
+    expect(screen.getByRole("status")).toHaveTextContent("temporarily unavailable");
+
+    // The stream keeps retrying; once the home admits it again the surface recovers.
+    act(() => handlers().onReady(readyFrame("connection_editor_2")));
+    await waitFor(() => expect(screen.queryByText(/temporarily unavailable/)).not.toBeInTheDocument());
+    expect(screen.getByRole("button", { name: "Request control" })).toBeEnabled();
+  });
+
+  it("keeps Stop available during stream failure and reports a failed HTTP stop action", async () => {
+    const { api, handlers } = apiFixture();
+    render(<SharedTerminalControls api={api} scope={scope("owner")} actorId="user_owner" />);
+    await waitFor(() => expect(api.subscribeTerminal).toHaveBeenCalled());
+    act(() => handlers().onReady(readyFrame("connection_owner")));
+    expect(await screen.findByRole("button", { name: "Stop terminal" })).toBeEnabled();
+
+    act(() => handlers().onTemporarilyUnavailable());
+    expect(await screen.findByRole("status")).toHaveTextContent("temporarily unavailable");
+    expect(screen.getByRole("button", { name: "Stop terminal" })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: "Request control" })).not.toBeInTheDocument();
+    api.post.mockRejectedValueOnce(new Error("offline"));
+    fireEvent.click(screen.getByRole("button", { name: "Stop terminal" }));
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith(
+      `/api/collaboration/scopes/${scopeId}/terminal/actions`, expect.objectContaining({ type: "stop" }),
+    ));
+    expect(await screen.findByRole("alert")).toHaveTextContent("The terminal action could not be completed");
+
+    act(() => handlers().onReady(readyFrame("connection_owner_2")));
+    expect(await screen.findByRole("button", { name: "Stop terminal" })).toBeEnabled();
+  });
+
+  it("clears reconnecting after an HTTP Stop succeeds during a stream failure", async () => {
+    const { api, handlers } = apiFixture();
+    api.post.mockResolvedValueOnce({ terminal: { ...terminal, status: "exited", exitedAt: "2026-09-11T12:01:00.000Z" }, action: "stopped" });
+    render(<SharedTerminalControls api={api} scope={scope("owner")} actorId="user_owner" />);
+    await waitFor(() => expect(api.subscribeTerminal).toHaveBeenCalled());
+    act(() => handlers().onReady(readyFrame("connection_owner")));
+    act(() => handlers().onTemporarilyUnavailable());
+    expect(screen.getByRole("status")).toHaveTextContent("Reconnecting automatically");
+
+    fireEvent.click(screen.getByRole("button", { name: "Stop terminal" }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Stop terminal" })).not.toBeInTheDocument());
+    expect(screen.queryByText(/Reconnecting automatically/)).not.toBeInTheDocument();
   });
 
   it("stops without a socket and clears local control when the socket disconnects", async () => {

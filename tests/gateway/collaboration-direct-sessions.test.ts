@@ -268,6 +268,25 @@ describe("S05 direct sessions on the home", () => {
     expect(service.describe(session.id)).toBeNull();
   });
 
+  it("does not extend a removed machine-free member's lease by renewal or a backgrounded request", async () => {
+    const key = clientKey();
+    const session = await service.create(sessionRequest(collaborationActors.editor, key).body);
+    members.delete(collaborationActors.editor);
+    clock = new Date(clock.getTime() + 21_000);
+    const fresh = sessionRequest(collaborationActors.editor, key, { issuedAt: clock });
+    await expect(service.renew(session.id, { clientRequestId: randomUUID(), signedTicket: fresh.body.signedTicket }))
+      .rejects.toMatchObject({ code: "denied" });
+
+    clock = new Date(clock.getTime() + 40_000);
+    const signature = { protocolVersion: 2, sessionId: session.id, method: "GET", path: `/api/collaboration/scopes/${scopeId}`,
+      query: "", bodyDigest: sha256Hex(new Uint8Array()), conditionalHeadersDigest: sha256Hex(new Uint8Array()),
+      nonce: randomUUID().replaceAll("-", ""), issuedAt: clock.toISOString() };
+    await expect(service.authorize({ sessionId: session.id, signature, proof: key.sign(requestSigningPayload(signature)),
+      method: "GET", path: signature.path, query: "", body: new Uint8Array(), action: "read" }))
+      .rejects.toMatchObject({ code: "denied" });
+    expect(service.describe(session.id)).toBeNull();
+  });
+
   it("ends sessions on a platform denial and renews only with a fresh ticket", async () => {
     const editor = await service.create(sessionRequest(collaborationActors.editor).body);
     const ownerKey = clientKey();

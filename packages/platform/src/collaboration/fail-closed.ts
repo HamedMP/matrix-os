@@ -54,7 +54,7 @@ export function createFailClosedPlatformCollaboration(input: {
             maxSize: COLLABORATION_HTTP_BODY_LIMIT,
             onError: (c) => {
               c.header("Cache-Control", "no-store");
-              return c.json({ error: "Request too large" }, 413);
+              return c.json({ error: "Request too large", code: "invalid_request" }, 413);
             },
           }),
         );
@@ -62,7 +62,7 @@ export function createFailClosedPlatformCollaboration(input: {
           await drainBody(c);
           logDenial();
           c.header("Cache-Control", "no-store");
-          return c.json({ error: "Collaboration unavailable" }, 503);
+          return c.json({ error: "Collaboration unavailable", code: "unavailable" }, 503);
         });
       }
     },

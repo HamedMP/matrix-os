@@ -61,6 +61,7 @@ export * from "#collaboration";
 export * from "#collaboration-capabilities";
 export * from "#collaboration-entry";
 export * from "#collaboration-direct";
+export * from "#collaboration-failure";
 export * from "#collaboration-execution";
 export * from "#collaboration-peer";
 export * from "#collaboration-resources";

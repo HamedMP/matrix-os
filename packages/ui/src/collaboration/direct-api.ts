@@ -97,7 +97,7 @@ export function createCollaborationDirectApi(options: CollaborationDirectClientO
     } catch (error: unknown) {
       const code = error instanceof CollaborationDirectError ? error.code : "unavailable";
       if (!(error instanceof CollaborationDirectError)) console.warn("[collaboration-direct] hydration failed", error instanceof Error ? error.name : "UnknownError");
-      return { ...item, home: code === "unauthenticated" ? "unauthenticated" : code === "host_offline" || code === "unavailable" ? "offline" : "denied" };
+      return { ...item, home: (code === "unauthenticated" || code === "unauthorized") ? "unauthenticated" : code === "host_offline" || code === "unavailable" ? "offline" : "denied" };
     }
   };
 

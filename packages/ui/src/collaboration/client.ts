@@ -6,6 +6,7 @@ import {
   CollaborationDeleteConditionSchema,
   CollaborationOrganizationIdSchema,
   CollaborationOrganizationMembersCursorSchema,
+  CollaborationFailureResponseSchema,
 } from "@matrix-os/contracts";
 import type { CollaborationApi } from "./ChatCollaboratorsDialog.js";
 
@@ -18,6 +19,14 @@ const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
  * through the direct transport (`direct-api.ts`), because the platform retired
  * its V1 connection tickets and non-direct collaboration sockets.
  */
+/** Stable status and code are safe to classify in shared recipient views. */
+export class CollaborationBrowserError extends Error {
+  constructor(public readonly status: number, public readonly code?: string) {
+    super("CollaborationUnavailable");
+    this.name = "CollaborationBrowserError";
+  }
+}
+
 export function createCollaborationBrowserApi(options: {
   baseUrl: string;
   fetchImpl?: typeof fetch;
@@ -50,7 +59,22 @@ export function createCollaborationBrowserApi(options: {
         ...(serialized === undefined ? {} : { body: serialized }),
         signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       });
-      if (!response.ok || !response.headers.get("content-type")?.startsWith("application/json")) {
+      if (!response.ok) {
+        let code: string | undefined;
+        if (response.headers.get("content-type")?.startsWith("application/json")) {
+          const text = await readBoundedText(response, 1_024);
+          if (text !== null) {
+            try {
+              const parsed = CollaborationFailureResponseSchema.safeParse(JSON.parse(text) as unknown);
+              if (parsed.success) code = parsed.data.code;
+            } catch (error: unknown) {
+              if (!(error instanceof SyntaxError)) console.warn("[chat-collaboration] failure response rejected", error instanceof Error ? error.name : "UnknownError");
+            }
+          }
+        } else await response.body?.cancel();
+        throw new CollaborationBrowserError(response.status, code);
+      }
+      if (!response.headers.get("content-type")?.startsWith("application/json")) {
         await response.body?.cancel();
         throw new Error("CollaborationUnavailable");
       }
@@ -58,6 +82,7 @@ export function createCollaborationBrowserApi(options: {
       if (text === null) throw new Error("CollaborationUnavailable");
       return JSON.parse(text) as unknown;
     } catch (error: unknown) {
+      if (error instanceof CollaborationBrowserError) throw error;
       if (!(error instanceof Error && error.message === "CollaborationUnavailable")) {
         console.warn("[chat-collaboration] request failed", error instanceof Error ? error.name : "UnknownError");
       }

@@ -44,7 +44,7 @@ describe("platform collaboration bootstrap", () => {
     composition.register(app);
     const response = await app.request("/api/collaboration/inbox");
     expect(response.status).toBe(503);
-    await expect(response.json()).resolves.toEqual({ error: "Collaboration unavailable" });
+    await expect(response.json()).resolves.toEqual({ error: "Collaboration unavailable", code: "unavailable" });
     await composition.shutdown();
   });
 

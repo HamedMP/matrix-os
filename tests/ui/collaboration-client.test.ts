@@ -1,7 +1,19 @@
 import { describe, expect, it, vi } from "vitest";
 import { createCollaborationBrowserApi } from "../../packages/ui/src/collaboration/client.js";
+import { classifyCollaborationClientError } from "../../packages/ui/src/collaboration/failure-classification.js";
 
 describe("collaboration browser client", () => {
+  it("preserves only a bounded stable platform failure code for recipient copy", async () => {
+    const api = createCollaborationBrowserApi({
+      baseUrl: "https://app.matrix-os.com",
+      fetchImpl: async () => new Response(JSON.stringify({ error: "postgres://secret", code: "host_offline" }),
+        { status: 503, headers: { "content-type": "application/json" } }),
+    });
+    const error = await api.get("/api/collaboration/shared").catch((failure: unknown) => failure);
+    expect(classifyCollaborationClientError(error)).toMatchObject({ state: "host_offline", reconnect: true });
+    expect(String(error)).not.toContain("postgres://secret");
+  });
+
   it("uses exact bounded requests and caller-provided actor authentication", async () => {
     const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ ok: true }), {
       headers: { "content-type": "application/json", "content-length": "11" },

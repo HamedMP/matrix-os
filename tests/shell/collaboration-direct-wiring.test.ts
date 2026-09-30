@@ -25,7 +25,7 @@ describe("shell direct collaboration wiring", () => {
     expect(String(url)).toBe("https://app.matrix-os.com/api/collaboration/connections");
     expect(init?.credentials).toBe("same-origin");
     expect(new Headers(init?.headers).get("x-runtime-slot")).toBeNull();
-    expect(api.direct.describe(scopeId).state).toBe("offline");
+    expect(api.direct.describe(scopeId).state).toBe("unavailable");
   });
 
   it("ends every direct session when the Matrix app session is cleared", async () => {

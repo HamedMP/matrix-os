@@ -44,7 +44,7 @@ describe("S19 direct admission boundary", () => {
       "x-matrix-collaboration-proof": "e30",
     } });
     expect(response.status).toBe(401);
-    expect(await response.json()).toEqual({ error: "Collaboration request denied" });
+    expect(await response.json()).toEqual({ error: "Collaboration request denied", code: "unauthorized" });
     expect(direct).not.toHaveBeenCalled();
     expect(legacy).not.toHaveBeenCalled();
   });

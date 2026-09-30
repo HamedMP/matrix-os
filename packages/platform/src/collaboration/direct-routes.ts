@@ -8,7 +8,7 @@
  * to an authenticated organization member (U+O). Both apply `bodyLimit`
  * before buffering and answer with generic errors only.
  */
-import { COLLABORATION_DIRECT_LIMITS, COLLABORATION_DIRECT_PROTOCOL_VERSION, CollaborationActorIdSchema } from "@matrix-os/contracts";
+import { COLLABORATION_DIRECT_LIMITS, COLLABORATION_DIRECT_PROTOCOL_VERSION, CollaborationActorIdSchema, collaborationHttpFailureCode } from "@matrix-os/contracts";
 import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod/v4";
@@ -156,5 +156,5 @@ async function readJson(c: Context): Promise<unknown> {
 
 function safeJson(c: Context, error: string, status: ErrorStatus) {
   c.header("Cache-Control", "no-store");
-  return c.json({ error }, status);
+  return c.json({ error, code: collaborationHttpFailureCode(status, error) }, status);
 }
