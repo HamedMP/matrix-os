@@ -273,6 +273,7 @@ export function createApp(deps: {
   fundedModelProbes?: import('./ai-funded-model-probes.js').FundedModelProbeService;
   collaboration?: PlatformCollaborationComposition;
   accountDeletion?: AccountDeletionRuntime;
+  slackRoutes?: Hono<any>;
   customerVpsService?: CustomerVpsService;
   /** Overrides the collaboration organization projection for Private Preview membership. */
   privatePreviewMembership?: PrivatePreviewMembershipCheck;
@@ -397,6 +398,10 @@ export function createApp(deps: {
 
   // Health check (unauthenticated)
   app.get('/health', (c) => c.json({ status: 'ok' }));
+
+  // Slack owns signature/runtime/account authentication. Employees may link
+  // without a personal computer, so these routes precede tenant routing.
+  if (deps.slackRoutes) app.route('/', deps.slackRoutes);
 
   const platformMetricsRoutes = createPlatformMetricsRoutes({
     db,
