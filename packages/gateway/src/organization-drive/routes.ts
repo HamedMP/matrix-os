@@ -1,5 +1,6 @@
-import { OrganizationDriveContextSearchResponseSchema, OrganizationDriveContextSearchSchema, OrganizationDriveTextContextSchema, CollaborationIdSchema, OrganizationDrivePathSchema, OrganizationDriveUploadRequestSchema } from "@matrix-os/contracts";
+import { COLLABORATION_DIRECT_LIMITS, OrganizationDriveContextSearchResponseSchema, OrganizationDriveContextSearchSchema, OrganizationDriveTextContextSchema, CollaborationIdSchema, OrganizationDrivePathSchema, OrganizationDriveUploadRequestSchema } from "@matrix-os/contracts";
 import type { Context, Hono } from "hono";
+import { bodyLimit } from "hono/body-limit";
 import { z } from "zod/v4";
 import { CollaborationAuthorizationError, type AuthorizedCollaborationContext } from "../collaboration/authority.js";
 import { authorize, exactQuery, handle, readJson, type CollaborationRouteOptions } from "../collaboration/route-support.js";
@@ -74,10 +75,13 @@ export function registerOrganizationDriveRoutes(routes: Hono, options: RouteOpti
       ...(await service.usage(identity(context))), ...(await service.list({ ...identity(context), ...query })) });
   }));
 
-  routes.get(`${base}/context/search`, async (c) => driveHandle(c, async () => {
+  routes.post(`${base}/context/search`, bodyLimit({maxSize: COLLABORATION_DIRECT_LIMITS.httpJsonBytes,
+    onError: c => c.json({error: "Request too large"}, 413)}), async (c, next) => {await c.req.arrayBuffer(); await next();}, async (c) => driveHandle(c, async () => {
     c.header("Cache-Control", "private, no-store");
-    const query = OrganizationDriveContextSearchSchema.parse(exactQuery(c, ["prefix", "query", "after", "limit"]));
-    const context = await driveContext(options, c, new Uint8Array(), "read");
+    const {value, bytes} = await readJson(c);
+    z.object({}).strict().parse(exactQuery(c, []));
+    const query = OrganizationDriveContextSearchSchema.parse(value);
+    const context = await driveContext(options, c, bytes, "read");
     const result = await required(options).list({...identity(context), ...query});
     await revalidateRead(options, context);
     return c.json(OrganizationDriveContextSearchResponseSchema.parse({organizationId: context.organizationId, scopeId: context.scopeId, ...result}));

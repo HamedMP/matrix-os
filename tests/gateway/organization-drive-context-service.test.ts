@@ -7,7 +7,7 @@ import {OrganizationDriveService} from "../../packages/gateway/src/organization-
 const scopeId="00000000-0000-4000-8000-000000000001";
 const identity={organizationId:"org_example",scopeId,authorityRuntimeId:"vps:owner",authorityGeneration:1};
 async function fixture(){
- const instance=await KyselyPGlite.create();const db=new Kysely<OrganizationDriveDatabase>({dialect:instance.dialect});
+ const instance=await KyselyPGlite.create();const statements:string[]=[];const db=new Kysely<OrganizationDriveDatabase>({dialect:instance.dialect,log:event=>{if(event.level==="query"){if(statements.length===200)statements.shift();statements.push(event.query.sql);}}});
  await bootstrapOrganizationDriveDatabase(db);
  await sql`CREATE TABLE collaboration_scopes (id UUID PRIMARY KEY,resource_id TEXT NOT NULL,revision BIGINT NOT NULL,deleted_at TIMESTAMPTZ)`.execute(db);
  await sql`CREATE TABLE collaboration_events (scope_id UUID NOT NULL,scope_seq BIGINT NOT NULL,event_id UUID NOT NULL,resource_kind TEXT NOT NULL,resource_id TEXT NOT NULL,revision BIGINT NOT NULL,authority_generation BIGINT NOT NULL,event_type TEXT NOT NULL,payload JSONB NOT NULL,created_at TIMESTAMPTZ NOT NULL,PRIMARY KEY(scope_id,scope_seq))`.execute(db);
@@ -17,7 +17,7 @@ async function fixture(){
  const service=new OrganizationDriveService({db,ownerId:"user_owner",runtimeSlot:"primary",r2:{getObject,getPresignedPutUrl:async()=>"https://storage.example/put",getPresignedGetUrl:async()=>"https://storage.example/get",putObject:async(key,bytes)=>{objects.set(key,new Uint8Array(bytes));},deleteObject:async key=>{objects.delete(key);}}});
  await service.enable({...identity,runtimeId:"vps:owner",generation:1,quotaBytes:10_000_000});
  async function upload(path:string,text:string,baseVersion=0){staged=new TextEncoder().encode(text);const reserved=await service.reserve({...identity,actorId:"user_owner",request:{path,size:staged.length,sha256:createHash("sha256").update(staged).digest("hex"),requestId:randomUUID(),baseVersion}});return service.commit({...identity,actorId:"user_owner",uploadId:reserved.uploadId});}
- return {db,service,objects,getObject,cancel,upload,wrongLength(){wrongLength=true;},close:()=>db.destroy()};
+ return {db,service,objects,getObject,cancel,upload,statements,wrongLength(){wrongLength=true;},close:()=>db.destroy()};
 }
 describe("organization drive context authority persistence",()=>{
  it("reads current or pinned immutable versions without storage keys",async()=>{
@@ -31,6 +31,7 @@ describe("organization drive context authority persistence",()=>{
  it("searches literal scoped paths with case-insensitive terms and a bounded cursor",async()=>{
   const f=await fixture();try{await f.upload("reports/a_plan.md","a");await f.upload("reports/aXplan.md","b");await f.upload("reports-old/a_plan.md","c");
    expect((await f.service.list({...identity,prefix:"reports",query:"A_PLAN"})).files.map(x=>x.path)).toEqual(["reports/a_plan.md"]);
+   expect(f.statements).toContain("SET LOCAL statement_timeout = '5s'");
    const first=await f.service.list({...identity,prefix:"reports",limit:1});expect(first.nextCursor).toBe("reports/aXplan.md");
    expect((await f.service.list({...identity,prefix:"reports",limit:1,after:first.nextCursor})).files.map(x=>x.path)).toEqual(["reports/a_plan.md"]);
   }finally{await f.close();}

@@ -74,10 +74,12 @@ export class OrganizationDriveService {
 
   async list(input: DriveIdentity & { after?: string; limit?: number; prefix?: string; query?: string }): Promise<{ files: OrganizationDriveFile[]; nextCursor?: string }> {
     await this.drive(input);
+    return this.options.db.transaction().execute(async trx => {
+      await sql`SET LOCAL statement_timeout = '5s'`.execute(trx);
     const limit = input.limit ?? 100;
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) throw new OrganizationDriveError("conflict");
     const after = input.after === undefined ? undefined : OrganizationDrivePathSchema.parse(input.after);
-    let query = this.options.db.selectFrom("organization_drive_files as f")
+    let query = trx.selectFrom("organization_drive_files as f")
       .innerJoin("organization_drive_versions as v", (join) => join.onRef("v.file_id", "=", "f.id")
         .onRef("v.version", "=", "f.current_version"))
       .select(["f.id", "f.organization_id", "f.path", "f.current_version", "v.size_bytes", "v.sha256", "v.created_by", "f.updated_at"])
@@ -93,6 +95,7 @@ export class OrganizationDriveService {
       updatedBy: row.created_by, updatedAt: new Date(row.updated_at).toISOString(),
     }));
     return { files, ...(rows.length > limit && files.length > 0 ? { nextCursor: files.at(-1)!.path } : {}) };
+    });
   }
 
   async versionForPath(input: DriveIdentity & { path: string }): Promise<number> {

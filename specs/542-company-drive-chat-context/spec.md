@@ -76,7 +76,7 @@ source API increment adds these endpoints; none is public:
 
 | Route | Authentication and authorization | Data and limits |
 | --- | --- | --- |
-| `GET /api/collaboration/scopes/:scopeId/drive/context/search` | Signed scope request; exact organization/folder scope; fresh member, role, epoch and authority checks before return | Literal metadata path search; 50 rows maximum; bounded query/prefix/cursor; private, no-store |
+| `POST /api/collaboration/scopes/:scopeId/drive/context/search` | Signed scope request; exact organization/folder scope; fresh member, role, epoch and authority checks before return | Read-only operation with a signed, bounded request body; 50 rows maximum; literal metadata path search with a 5 second SQL deadline; private, no-store |
 | `GET /api/collaboration/scopes/:scopeId/drive/files/:fileId/context` | Signed scope request; exact organization file; fresh authorization and live-file checks after I/O | Current/pinned immutable version; 4 MiB verified source, 32 KiB UTF-8 excerpt; four concurrent reads; private, no-store |
 
 The source endpoints add no writes, copied objects or database ownership. Failed
@@ -88,7 +88,8 @@ admission, queue/retry checks and harness wiring pass together.
 
 - [ ] Shared browser and exact-scope Chat sidebar shortcut PR; current-head review,
       full CI, synthetic visual evidence and a separate public site docs PR.
-- [ ] Context delegation/search/read contract, auth matrix and failing boundary tests.
+- [x] Source search/read contract, auth matrix and failing boundary tests (PR #2084).
+- [ ] Owner-runtime delegation and live acceptance.
 - [ ] Canonical association, run tools/excerpts and queue/retry revalidation.
 - [ ] Shared Add context/mention/File actions, scope-associated Chat grouping,
       empty/disabled/error states and keyboard parity.

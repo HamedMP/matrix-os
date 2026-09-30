@@ -27,9 +27,9 @@ describe("organization drive read-only text context", () => {
   const pending=readVerifiedDriveText({body,size:1,sha256:"0".repeat(64),signal:controller.signal});controller.abort();
   await expect(pending).rejects.toBeTruthy();expect(cancelled).toBe(true);
  });
- it("does not wait for an unresponsive stream cleanup after rejecting binary content", async () => {
+ it("does not wait for an unresponsive stream cleanup after rejecting oversized content", async () => {
   const data=new Uint8Array([0]);const body=new ReadableStream<Uint8Array>({start(c){c.enqueue(data);},cancel(){return new Promise<void>(()=>undefined);}});
-  const pending=readVerifiedDriveText({body,size:1,sha256:sha(data),signal:AbortSignal.timeout(10_000)});
+  const pending=readVerifiedDriveText({body,size:0,sha256:sha(data),signal:AbortSignal.timeout(10_000)});
   const outcome=await Promise.race([pending.then(()=>"resolved",()=>"rejected"),new Promise(resolve=>setTimeout(()=>resolve("stalled"),100))]);
   expect(outcome).toBe("rejected");
  });
@@ -37,4 +37,13 @@ describe("organization drive read-only text context", () => {
   const data=bytes("a".repeat(32767)+"🌳"+"z");const result=await readVerifiedDriveText({body:stream(data),size:data.byteLength,sha256:sha(data),signal:AbortSignal.timeout(1000)});
   expect(result.text).not.toContain("�");expect(result.truncated).toBe(true);
  });
+ it("verifies a 4 MiB file fragmented into 8192 small chunks", async () => {
+  const data=bytes("a".repeat(4*1024*1024));let offset=0;
+  const body=new ReadableStream<Uint8Array>({pull(c){if(offset===data.length){c.close();return;}c.enqueue(data.subarray(offset,offset+512));offset+=512;}});
+  expect(await readVerifiedDriveText({body,size:data.length,sha256:sha(data),signal:AbortSignal.timeout(5000)})).toMatchObject({truncated:true});
+ });
+ it("reports integrity failure before classifying corrupted binary content", async () => {
+  const data=bytes("bad\0");await expect(readVerifiedDriveText({body:stream(data),size:data.length,sha256:sha(bytes("good")),signal:AbortSignal.timeout(1000)})).rejects.toMatchObject({code:"checksum"});
+ });
+
 });

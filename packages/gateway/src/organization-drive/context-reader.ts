@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { setImmediate as yieldRead } from "node:timers/promises";
 import { OrganizationDriveError } from "./errors.js";
 export const MAX_DRIVE_CONTEXT_FILE_BYTES = 4 * 1024 * 1024;
 export const MAX_DRIVE_CONTEXT_TEXT_BYTES = 32 * 1024;
@@ -8,22 +9,24 @@ export async function readVerifiedDriveText(input: {body: unknown; size: number;
   const prefix = new Uint8Array(Math.min(input.size, MAX_DRIVE_CONTEXT_TEXT_BYTES));
   const hash = createHash("sha256");
   const decoder = new TextDecoder("utf-8", {fatal: true});
-  let size = 0; let chunks = 0;
+  let size = 0; let chunks = 0; let unsupported = false;
   for await (const chunk of bodyChunks(input.body, input.signal)) {
     input.signal.throwIfAborted();
-    if (++chunks > 4096 || size + chunk.byteLength > input.size) throw new OrganizationDriveError("checksum");
+    if (++chunks % 256 === 0) {await yieldRead(); input.signal.throwIfAborted();}
+    if (size + chunk.byteLength > input.size) throw new OrganizationDriveError("checksum");
     const take = Math.max(0, Math.min(chunk.byteLength, prefix.byteLength - size));
     if (take) prefix.set(chunk.subarray(0,take), size);
     hash.update(chunk); size += chunk.byteLength;
-    let text: string;
-    try {text = decoder.decode(chunk, {stream: true});}
-    catch (error: unknown) {if (error instanceof TypeError) throw new OrganizationDriveError("unsupported"); throw error;}
-    if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u.test(text)) throw new OrganizationDriveError("unsupported");
+    if (!unsupported) {
+      try {if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u.test(decoder.decode(chunk, {stream: true}))) unsupported = true;}
+      catch (error: unknown) {if (error instanceof TypeError) unsupported = true; else throw error;}
+    }
   }
   input.signal.throwIfAborted();
   if (size !== input.size || hash.digest("hex") !== input.sha256) throw new OrganizationDriveError("checksum");
-  try {decoder.decode();}
-  catch (error: unknown) {if (error instanceof TypeError) throw new OrganizationDriveError("unsupported"); throw error;}
+  if (!unsupported) try {decoder.decode();}
+  catch (error: unknown) {if (error instanceof TypeError) unsupported = true; else throw error;}
+  if (unsupported) throw new OrganizationDriveError("unsupported");
   // stream:true intentionally withholds a partial character at the truncated boundary.
   const text = new TextDecoder("utf-8", {fatal: true}).decode(prefix, {stream: size > prefix.byteLength});
   return {text, truncated: size > prefix.byteLength};

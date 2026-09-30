@@ -14,13 +14,13 @@ function fixture(){
 }
 describe("company drive context HTTP authorization",()=>{
  it("searches metadata only in the freshly authorized organization",async()=>{
-  const f=fixture();const response=await f.app.request(`${base}/context/search?prefix=reports&query=Plan&limit=2`,{headers});
+  const f=fixture();const response=await f.app.request(`${base}/context/search`,{method:"POST",headers:{...headers,"Content-Type":"application/json"},body:JSON.stringify({prefix:"reports",query:"Plan",limit:2})});
   expect(response.status).toBe(200);expect(response.headers.get("Cache-Control")).toBe("private, no-store");expect(await response.json()).toMatchObject({organizationId:"org_example",scopeId,files:[]});
   expect(f.list).toHaveBeenCalledWith({organizationId:"org_example",scopeId,authorityRuntimeId:"vps:owner",authorityGeneration:1,prefix:"reports",query:"Plan",limit:2});expect(f.authorize).toHaveBeenCalled();
  });
  it("fails closed when search membership changes before return",async()=>{
   const f=fixture();f.authorize.mockRejectedValue(new CollaborationAuthorizationError("forbidden","revoked"));
-  expect((await f.app.request(`${base}/context/search`,{headers})).status).toBe(403);
+  expect((await f.app.request(`${base}/context/search`,{method:"POST",headers:{...headers,"Content-Type":"application/json"},body:"{}"})).status).toBe(403);
  });
  it("binds a read to a pinned version and requires revalidation",async()=>{
   const f=fixture();const response=await f.app.request(`${base}/files/${fileId}/context?version=2`,{headers});expect(response.status).toBe(200);
@@ -33,7 +33,15 @@ describe("company drive context HTTP authorization",()=>{
  it.each(["version=2147483648","version=1&version=2","unexpected=yes"])("rejects unsafe read query %s before persistence",async query=>{
   const f=fixture();expect((await f.app.request(`${base}/files/${fileId}/context?${query}`,{headers})).status).toBe(400);expect(f.readContext).not.toHaveBeenCalled();
  });
- it.each(["prefix=..%2Fprivate","limit=51","query=%00","actorId=user_other"])("rejects unsafe search query %s",async query=>{
-  const f=fixture();expect((await f.app.request(`${base}/context/search?${query}`,{headers})).status).toBe(400);expect(f.list).not.toHaveBeenCalled();
+ it.each([{prefix:"../private"},{limit:51},{query:"\0"},{actorId:"user_other"}])("rejects unsafe search body %j",async body=>{
+  const f=fixture();expect((await f.app.request(`${base}/context/search`,{method:"POST",headers:{...headers,"Content-Type":"application/json"},body:JSON.stringify(body)})).status).toBe(400);expect(f.list).not.toHaveBeenCalled();
  });
+ it("supports long logical paths without signed URL limits",async()=>{
+  const f=fixture();const prefix="p/"+"é".repeat(350);const response=await f.app.request(`${base}/context/search`,{method:"POST",headers:{...headers,"Content-Type":"application/json"},body:JSON.stringify({prefix,query:"plan"})});expect(response.status).toBe(200);expect(f.list.mock.calls[0][0]).toMatchObject({prefix});
+ });
+
+ it("rejects oversized search bodies before authorization or persistence",async()=>{
+  const f=fixture();expect((await f.app.request(`${base}/context/search`,{method:"POST",headers:{...headers,"Content-Type":"application/json"},body:" ".repeat(100*1024)})).status).toBe(413);expect(f.verifyAndAuthorize).not.toHaveBeenCalled();expect(f.list).not.toHaveBeenCalled();
+ });
+
 });
