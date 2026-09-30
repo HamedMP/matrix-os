@@ -98,6 +98,37 @@ describe("platform organization routes (T018)", () => {
     expect((await app.request("/api/organizations")).status).toBe(401);
   });
 
+  it("lists refreshed role, policy, name and epoch after stale membership verification", async () => {
+    await projection.reconcile(org);
+    clock = new Date(clock.getTime() + 60_001);
+    const check = vi.spyOn(projection, "isCurrentMember").mockImplementation(async () => {
+      await repository.reconcileOrganization({
+        organization: { organizationId: org, name: "Updated org", slug: "updated-org", aiSubmission: "owner_only", sourceUpdatedAt: new Date(2_000) },
+        members: [{ membershipId: `orgmem_${member}`, actorId: member, role: "org:admin", sourceUpdatedAt: new Date(2_000) }],
+      }, clock);
+      return true;
+    });
+    try {
+      const response = await app.request("/api/organizations");
+      const current = await repository.getOrganization(org);
+      expect(await response.json()).toEqual({ organizations: [{ organizationId: org, name: "Updated org", slug: "updated-org", role: "org:admin", aiSubmission: "owner_only", membershipEpoch: current!.membershipEpoch }] });
+    } finally { check.mockRestore(); }
+  });
+
+  it("checks organization listings concurrently instead of accumulating upstream delays", async () => {
+    const ids = [org, "org_2rout00000000000000000002", "org_2rout00000000000000000003"];
+    for (const organizationId of ids) await repository.reconcileOrganization({
+      organization: { organizationId, name: organizationId, slug: organizationId, aiSubmission: "members", sourceUpdatedAt: new Date(1_000) },
+      members: [{ membershipId: `orgmem_${organizationId}`, actorId: member, role: "org:member", sourceUpdatedAt: new Date(1_000) }],
+    }, clock);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const check = vi.spyOn(projection, "isCurrentMember").mockImplementation(async () => { await gate; return true; });
+    const request = app.request("/api/organizations");
+    try { await vi.waitFor(() => expect(check).toHaveBeenCalledTimes(3), { timeout: 500 }); }
+    finally { release(); await request; check.mockRestore(); }
+  });
+
   it("serves paginated members only to current members and validates the page request", async () => {
     await projection.reconcile(org);
     const first = await app.request(`/api/organizations/${org}/members?limit=1`);

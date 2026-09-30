@@ -43,7 +43,10 @@ export class ClerkOrganizationUpstreamClient implements ClerkOrganizationUpstrea
   async listMembers(organizationId: string): ReturnType<ClerkOrganizationUpstream["listMembers"]> {
     const id = ClerkOrganizationIdSchema.parse(organizationId);
     const now = this.options.now?.() ?? new Date();
-    const organization = ClerkOrganizationSchema.parse(await this.getJson(`${CLERK_API_BASE}/organizations/${encodeURIComponent(id)}`));
+    // Stale reads wait for reconciliation, so pagination shares one request
+    // deadline rather than granting every page another ten seconds.
+    const signal = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
+    const organization = ClerkOrganizationSchema.parse(await this.getJson(`${CLERK_API_BASE}/organizations/${encodeURIComponent(id)}`, signal));
     const members: Awaited<ReturnType<ClerkOrganizationUpstream["listMembers"]>>["members"] = [];
     // One extra page beyond the cap is fetched only to prove the organization is not larger
     // than the cap; an organization with exactly MAX_MEMBERS members is accepted.
@@ -51,7 +54,7 @@ export class ClerkOrganizationUpstreamClient implements ClerkOrganizationUpstrea
       const url = new URL(`${CLERK_API_BASE}/organizations/${encodeURIComponent(id)}/memberships`);
       url.searchParams.set("limit", String(PAGE_SIZE));
       url.searchParams.set("offset", String(offset));
-      const page = ClerkMembershipPageSchema.parse(await this.getJson(url.toString()));
+      const page = ClerkMembershipPageSchema.parse(await this.getJson(url.toString(), signal));
       for (const entry of page.data) {
         members.push({
           membershipId: entry.id,
@@ -79,11 +82,12 @@ export class ClerkOrganizationUpstreamClient implements ClerkOrganizationUpstrea
     };
   }
 
-  private async getJson(url: string): Promise<unknown> {
+  private async getJson(url: string, signal: AbortSignal): Promise<unknown> {
+    signal.throwIfAborted();
     const response = await this.fetchImpl(url, {
       method: "GET",
       headers: { authorization: `Bearer ${this.options.secretKey}`, accept: "application/json" },
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      signal,
       redirect: "error",
     });
     if (!response.ok) {

@@ -60,9 +60,19 @@ export function createPlatformOrganizationRoutes(options: {
     if (!actorId) return safeJson(c, "Unauthorized", 401);
     try {
       const memberships = await options.repository.listOrganizationsForActor(actorId);
+      // The repository caps the list at 100 and the projection caps upstream
+      // concurrency. Independent stale organizations must not wait serially.
+      const decisions = await Promise.all(memberships.map(async (entry) => ({
+        organizationId: entry.organization.organizationId,
+        member: await options.projection.isCurrentMember({ organizationId: entry.organization.organizationId, actorId }),
+      })));
+      const permitted = new Set(decisions.filter((decision) => decision.member).map((decision) => decision.organizationId));
+      // Request-local set is bounded by the repository's 100-entry limit.
+      // Refresh may change role, policy, epoch or remove membership entirely.
+      const refreshed = await options.repository.listOrganizationsForActor(actorId);
       const organizations = [];
-      for (const entry of memberships) {
-        if (!(await options.projection.isCurrentMember({ organizationId: entry.organization.organizationId, actorId }))) continue;
+      for (const entry of refreshed) {
+        if (!permitted.has(entry.organization.organizationId)) continue;
         organizations.push({
           organizationId: entry.organization.organizationId,
           name: entry.organization.name,

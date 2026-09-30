@@ -42,6 +42,7 @@ const CLOCK_SKEW_MS = 5_000;
 const ACTIVE_WINDOW_MS = 5 * 60_000;
 const MAX_REFRESH_CONCURRENCY = 4;
 const MAX_INFLIGHT_RECONCILIATIONS = 64;
+const FAILED_REFRESH_RETRY_MS = 10_000;
 
 export function createOrganizationMembershipProjection(options: {
   repository: PlatformOrganizationRepository;
@@ -60,6 +61,8 @@ export function createOrganizationMembershipProjection(options: {
   const maxTracked = options.maxTrackedOrganizations ?? 1_000;
   const tracked = new Map<string, number>();
   const inflight = new Map<string, Promise<{ verified: boolean; endedMemberships: EndedMembership[] }>>();
+  // TTL plus LRU eviction bounds negative retry state without renewing evidence.
+  const retryAfter = new Map<string, number>();
   let closed = false;
   let timer: ReturnType<typeof setInterval> | undefined;
   let sweeping: Promise<void> | undefined;
@@ -103,12 +106,25 @@ export function createOrganizationMembershipProjection(options: {
     if (closed) return { verified: false, endedMemberships: [] };
     const existing = inflight.get(organizationId);
     if (existing) return existing;
+    const current = now().getTime();
+    for (const [id, deadline] of retryAfter) {
+      if (deadline <= current) retryAfter.delete(id);
+    }
+    if ((retryAfter.get(organizationId) ?? 0) > current) return { verified: false, endedMemberships: [] };
     if (inflight.size >= MAX_INFLIGHT_RECONCILIATIONS) {
       // Bounded: the organization simply stays unverified (fail closed) until a later attempt.
       console.warn("[organizations] reconciliation deferred: too many in flight");
       return { verified: false, endedMemberships: [] };
     }
-    const promise = reconcileNow(organizationId).finally(() => { inflight.delete(organizationId); });
+    const promise = reconcileNow(organizationId).then((result) => {
+      if (result.verified) retryAfter.delete(organizationId);
+      else {
+        retryAfter.delete(organizationId);
+        retryAfter.set(organizationId, now().getTime() + FAILED_REFRESH_RETRY_MS);
+        while (retryAfter.size > maxTracked) retryAfter.delete(retryAfter.keys().next().value!);
+      }
+      return result;
+    }).finally(() => { inflight.delete(organizationId); });
     inflight.set(organizationId, promise);
     return promise;
   };
@@ -181,6 +197,7 @@ export function createOrganizationMembershipProjection(options: {
       timer = undefined;
       await Promise.allSettled([...inflight.values(), sweeping ?? Promise.resolve()]);
       tracked.clear();
+      retryAfter.clear();
     },
   };
 }

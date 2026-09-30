@@ -115,6 +115,28 @@ describe("organization membership projection (T016/T019)", () => {
     } finally { await projection.shutdown(); }
   });
 
+  it("backs off sequential failed stale reads without extending evidence, then retries", async () => {
+    let unavailable = false;
+    const listMembers = vi.fn(async () => {
+      if (unavailable) throw new Error("upstream unavailable");
+      return snapshot(org, [member], unavailable ? 2_000 : 1_000);
+    });
+    const projection = createOrganizationMembershipProjection({ repository, upstream: { listMembers }, now: () => clock });
+    try {
+      await projection.reconcile(org);
+      const verifiedAt = (await repository.getOrganization(org))!.verifiedAt!.getTime();
+      unavailable = true;
+      clock = new Date(clock.getTime() + 60_001);
+      for (let index = 0; index < 3; index++) expect(await projection.isCurrentMember({ organizationId: org, actorId: member })).toBe(false);
+      expect(listMembers).toHaveBeenCalledTimes(2);
+      expect((await repository.getOrganization(org))!.verifiedAt!.getTime()).toBe(verifiedAt);
+      unavailable = false;
+      clock = new Date(clock.getTime() + 10_001);
+      expect(await projection.isCurrentMember({ organizationId: org, actorId: member })).toBe(true);
+      expect(listMembers).toHaveBeenCalledTimes(3);
+    } finally { await projection.shutdown(); }
+  });
+
   it("does not perform upstream lookups for unknown organizations or unrelated actors", async () => {
     const listMembers = vi.fn(async () => snapshot(org, [member]));
     const projection = createOrganizationMembershipProjection({ repository, upstream: { listMembers }, now: () => clock });

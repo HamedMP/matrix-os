@@ -23,6 +23,19 @@ function fakeClerk(memberCount: number, totalCount: number | null = memberCount)
 }
 
 describe("Clerk organization upstream pagination boundary", () => {
+  it("uses one timeout budget across organization metadata and every membership page", async () => {
+    const clerk = fakeClerk(150);
+    const signals: AbortSignal[] = [];
+    const fetchImpl: typeof fetch = async (input, init) => {
+      signals.push(init!.signal!);
+      return clerk.fetchImpl(input, init);
+    };
+    const client = new ClerkOrganizationUpstreamClient({ secretKey: "sk_test_x", fetchImpl });
+    expect((await client.listMembers(org)).members).toHaveLength(150);
+    expect(signals).toHaveLength(3);
+    expect(signals.every((signal) => signal === signals[0])).toBe(true);
+  });
+
   it("accepts an organization with exactly 2,000 members when total_count confirms it", async () => {
     const clerk = fakeClerk(2_000);
     const client = new ClerkOrganizationUpstreamClient({ secretKey: "sk_test_x", fetchImpl: clerk.fetchImpl });
