@@ -17,6 +17,7 @@ import {
   SAFE_SLUG,
   ProcessManager,
   PortPool,
+  APP_PORT_RANGE,
 } from "../app-runtime/index.js";
 
 const APP_SESSION_BODY_LIMIT_BYTES = 4096;
@@ -253,7 +254,7 @@ export function registerAppRuntimeRoutes(app: Hono, deps: AppRuntimeRouteDeps): 
     );
   }
 
-  const portPool = new PortPool({ min: 40000, max: 49999, cap: 100 });
+  const portPool = new PortPool({ ...APP_PORT_RANGE, cap: 100 });
   const processManager = new ProcessManager({
     homeDir: homePath,
     portPool,

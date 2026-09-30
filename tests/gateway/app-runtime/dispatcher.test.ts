@@ -8,6 +8,7 @@ import { SpawnError } from "../../../packages/gateway/src/app-runtime/errors.js"
 import { invalidateManifestCache } from "../../../packages/gateway/src/app-runtime/manifest-loader.js";
 import { ProcessManager } from "../../../packages/gateway/src/app-runtime/process-manager.js";
 import { PortPool } from "../../../packages/gateway/src/app-runtime/port-pool.js";
+import { TEST_PORT_RANGES } from "./test-ports.js";
 
 let tmpDir: string;
 let homeDir: string;
@@ -228,7 +229,7 @@ describe("App Runtime Dispatcher", () => {
     let nodeApp: Hono;
 
     beforeEach(async () => {
-      portPool = new PortPool({ min: 44000, max: 44100 });
+      portPool = new PortPool(TEST_PORT_RANGES.dispatcher);
       pm = new ProcessManager({
         homeDir,
         portPool,
