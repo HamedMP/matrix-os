@@ -140,20 +140,24 @@
 
 .matrix-chat-provider-setup button {
   display: flex;
-  width: 100%;
-  min-height: 2.25rem;
+  width: fit-content;
+  max-width: 100%;
+  min-height: 2rem;
   align-items: center;
   justify-content: center;
   margin-top: 0.5rem;
   border: 1px solid;
   border-color: var(--model-choice-action);
   border-radius: 0.5rem;
-  padding: 0.5rem 0.75rem;
+  padding: 0.375rem 0.625rem;
   background-color: var(--model-choice-action);
   color: var(--text-on-accent, var(--primary-foreground));
-  font-size: 0.875rem;
+  font-size: 0.75rem;
   font-weight: 600;
+  line-height: 1rem;
   text-align: center;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .matrix-chat-model-option:hover:not(:disabled) {
