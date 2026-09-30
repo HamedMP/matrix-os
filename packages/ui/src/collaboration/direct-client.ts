@@ -520,16 +520,21 @@ export function createCollaborationDirectClient(options: CollaborationDirectClie
     if (disposed || initial.generation !== generation) throw closedError();
     let response = await signedFetch(scopeId, connected, "GET", path, "", undefined);
     if (disposed || initial.generation !== generation) { await response.body?.cancel(); throw closedError(); }
-    if (response.status === 401) {
+    if (response.status === 401 && !isPlatformChallenge(response, connected.origin)) {
       await response.body?.cancel();
       record(scopeId).connected = null;
       connected = await ensure(scopeId, true);
       response = await signedFetch(scopeId, connected, "GET", path, "", undefined);
       if (disposed || initial.generation !== generation) { await response.body?.cancel(); throw closedError(); }
     }
-    if (response.status === 503 && await isRelayTooLarge(response)) return { status: "too_large", size: null };
-    if (response.status < 200 || response.status >= 300) await response.body?.cancel();
-    throwForStatus(response.status);
+    if (response.status === 503 && await isRelayTooLarge(response)) {
+      await response.body?.cancel();
+      return { status: "too_large", size: null };
+    }
+    const challenged = isPlatformChallenge(response, connected.origin);
+    if (challenged) initial.state = "unauthenticated";
+    else if (initial.state === "unauthenticated") initial.state = "connected";
+    await throwForResponse(response, challenged);
     return readBoundedContent(response, maxBytes);
   };
 

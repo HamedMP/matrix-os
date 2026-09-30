@@ -7,6 +7,7 @@ import type { z } from "zod/v4";
 import type { CollaborationApi } from "./ChatCollaboratorsDialog.js";
 import { SharedFileView } from "./SharedFileView.js";
 import { SharedAppView } from "./SharedAppView.js";
+import { classifyCollaborationClientError, type ClassifiedCollaborationFailure } from "./failure-classification.js";
 import { sharedFileFailureCode } from "./recipient-views.js";
 
 type Scope = z.infer<typeof CollaborationScopeSchema>;
@@ -33,7 +34,7 @@ export function SharedProjectView({ api, scopeId, openChat, openTerminal }: {
   const [selection, setSelection] = useState<Selection | null>(null);
   const [removedSelection, setRemovedSelection] = useState(false);
   const [preservedDraft, setPreservedDraft] = useState<string | null>(null);
-  const [failed, setFailed] = useState(false);
+  const [failed, setFailed] = useState<ClassifiedCollaborationFailure | null>(null);
   const generation = useRef(0);
   const selectionRef = useRef<Selection | null>(null);
   const draftRef = useRef<string | null>(null);
@@ -94,10 +95,10 @@ export function SharedProjectView({ api, scopeId, openChat, openTerminal }: {
       setFiles(nextFiles);
       setCursor(nextCursor);
       setFileError(nextFileError);
-      setFailed(false);
+      setFailed(null);
     } catch (error: unknown) {
       console.warn("[project-collaboration] project load failed", error instanceof Error ? error.name : "UnknownError");
-      if (current === generation.current) { closeSelection(); setValue(null); setFailed(true); }
+      if (current === generation.current) { closeSelection(); setValue(null); setFailed(classifyCollaborationClientError(error)); }
     }
   }, [api, base, closeSelection]);
 
@@ -110,15 +111,15 @@ export function SharedProjectView({ api, scopeId, openChat, openTerminal }: {
     draftRef.current = null;
     setRemovedSelection(false);
     setPreservedDraft(null);
-    setFailed(false);
+    setFailed(null);
     void load();
     return () => { generation.current += 1; };
   }, [load]);
-  useEffect(() => api.subscribe?.(scopeId, load, () => {
+  useEffect(() => api.subscribe?.(scopeId, load, (failure) => {
     generation.current += 1;
     closeSelection();
     setValue(null);
-    setFailed(true);
+    setFailed(failure ?? classifyCollaborationClientError(null));
   }), [api, closeSelection, load, scopeId]);
 
   const loadMoreFiles = async () => {
@@ -138,7 +139,7 @@ export function SharedProjectView({ api, scopeId, openChat, openTerminal }: {
     } finally { setLoadingMore(false); }
   };
 
-  if (failed) return <div role="alert" className="p-8">Shared project unavailable. Refresh to try again.
+  if (failed) return <div role="alert" className="p-8">Shared project unavailable. <p>{failed.message}</p>
     {preservedDraft !== null ? <PreservedDraft text={preservedDraft} /> : null}
   </div>;
   if (!value) return <p role="status" className="p-8">Loading shared project…</p>;

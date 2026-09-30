@@ -227,4 +227,11 @@ describe("shared project navigation", () => {
     await act(async () => { await pending; });
     expect(screen.getByTitle("Shared app")).toBeVisible();
   });
+  it.each([["host_offline", "The owner's computer is offline. Trying again."], ["access_removed", "This item is no longer shared with you."]] as const)("classifies project load failure %s", async (code, message) => {
+    const f = fixture();
+    f.api.get.mockRejectedValue(new Error("CollaborationUnavailable", { cause: new CollaborationDirectError(code) }));
+    render(<ChatCollaboration view={{ kind: "project", scopeId }} api={f.api} actorId="user_viewer" />);
+    expect(await screen.findByText(message)).toBeVisible();
+  });
+
 });

@@ -26,7 +26,7 @@ describe("collaboration direct content", () => {
 
   const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
     const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
-    if (url.origin === RELAY && (url.pathname === contentPath || url.pathname === appAssetPath)) {
+    if ((url.origin === RELAY || url.origin === PLATFORM) && (url.pathname === contentPath || url.pathname === appAssetPath)) {
       const headers = new Headers(init?.headers);
       contentRequests.push({ headers, url: url.href });
       const sessionId = headers.get("x-matrix-collaboration-session");
@@ -105,11 +105,25 @@ describe("collaboration direct content", () => {
   });
 
   it("maps home failures to safe typed errors", async () => {
-    respond = () => new Response(JSON.stringify({ error: "Collaboration resource not found" }), { status: 404, headers: { "content-type": "application/json" } });
-    await expect(client().requestContent(scopeId, contentPath, { maxBytes: 1024 })).rejects.toMatchObject({ code: "not_found" });
+    respond = () => new Response(JSON.stringify({ error: "Collaboration resource not found", code: "not_found" }), { status: 404, headers: { "content-type": "application/json" } });
+    await expect(client().requestContent(scopeId, contentPath, { maxBytes: 1024 })).rejects.toMatchObject({ code: "access_removed" });
     world.platform.offlineScopes.add(scopeId);
     const offline = client();
     await expect(offline.requestContent(scopeId, contentPath, { maxBytes: 1024 })).rejects.toMatchObject({ code: "host_offline" });
+  });
+
+  it.each([[503, "host_offline", "host_offline"], [423, "paused", "paused"], [429, "relay_limit", "relay_limit"]] as const)("classifies typed %s content failures", async (status, code, expected) => {
+    respond = () => new Response(JSON.stringify({ error: "Collaboration unavailable", code }), { status, headers: { "content-type": "application/json" } });
+    await expect(client().requestContent(scopeId, contentPath, { maxBytes: 1024 })).rejects.toMatchObject({ code: expected });
+  });
+
+  it("keeps the home session when the platform challenges a content request", async () => {
+    world = fakeDirectWorld({ endpointOrigin: PLATFORM });
+    respond = () => new Response(JSON.stringify({ error: "Sign in required", code: "unauthorized" }), { status: 401, headers: { "content-type": "application/json", "www-authenticate": "Bearer realm=\"matrix-platform\"" } });
+    const direct = client();
+    await expect(direct.requestContent(scopeId, contentPath, { maxBytes: 1024 })).rejects.toMatchObject({ code: "unauthenticated" });
+    expect(contentRequests).toHaveLength(1);
+    expect(direct.describe(scopeId).state).toBe("unauthenticated");
   });
 
   it("refuses content paths outside the scope and invalid limits", async () => {
@@ -134,10 +148,10 @@ describe("collaboration direct content", () => {
 
     await expect(api.getContent(contentPath, { maxBytes: 1024 })).resolves.toMatchObject({ status: "ok", size: 10 });
     await expect(api.getContent("/api/collaboration/inbox", { maxBytes: 1024 })).rejects.toThrow("CollaborationUnavailable");
-    respond = () => new Response(null, { status: 404 });
+    respond = () => new Response(JSON.stringify({ error: "Not found", code: "not_found" }), { status: 404, headers: { "content-type": "application/json" } });
     const failure = await api.getContent(contentPath, { maxBytes: 1024 }).catch((error: unknown) => error);
     expect(failure).toBeInstanceOf(Error);
     expect((failure as Error).message).toBe("CollaborationUnavailable");
-    expect((failure as Error & { cause: unknown }).cause).toMatchObject({ code: "not_found" });
+    expect((failure as Error & { cause: unknown }).cause).toMatchObject({ code: "access_removed" });
   });
 });
