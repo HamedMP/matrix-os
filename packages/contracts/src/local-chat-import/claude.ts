@@ -17,6 +17,8 @@ export function projectClaude(record: Record<string, unknown>, source: ImportSou
   const messageKey = `${conversation.sessionId ?? "unknown"}:${conversation.agentId ?? "main"}:${type === "assistant" ? string(message.id) ?? source.recordId ?? source.offset : source.recordId ?? source.offset}`;
   const result: ImportProjection[] = [];
   const values = typeof content === "string" ? [{ type: "text", text: content }] : Array.isArray(content) ? content : [];
+  // Validate the complete record before projecting individual blocks in source order.
+  importBlocks(values);
   for (let blockIndex = 0; blockIndex < values.length; blockIndex++) {
     const block = object(values[blockIndex]);
     const at = { ...base, source: { ...source, blockIndex } };

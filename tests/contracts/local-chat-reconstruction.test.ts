@@ -30,6 +30,11 @@ function counts(events: Awaited<ReturnType<typeof project>>) {
   };
 }
 describe("local Codex and Claude history reconstruction", () => {
+  it("enforces the whole Claude record block budget before per-block projection", async () => {
+    const content = Array.from({ length: 10_001 }, () => text("text", "synthetic"));
+    await expect(project("claude", [{ type: "assistant", sessionId: session, message: { id: "many", content } }])).rejects.toThrow("block count");
+    await expect(project("claude", [{ type: "user", sessionId: session, message: { content: [{ type: "tool_result", content: content.slice(0, 6000) }, { type: "tool_result", content: content.slice(0, 6000) }] } }])).rejects.toThrow("block count");
+  });
   it("reconciles different-ID Codex user mirrors and same-ID commentary mirrors locally", async () => {
     const events = await project("codex", [
       wrapped("session_meta", { id: session, cwd: "/synthetic/repo" }),
