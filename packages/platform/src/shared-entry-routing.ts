@@ -37,7 +37,10 @@ export function resolveSharedEntryTarget(input: {
   host: string;
   machine: UserMachineRecord | undefined;
   entitlement: EntitlementAccessDecision;
+  /** Operator-controlled preview services keep shared documents on that authority. */
+  platformPreview?: boolean;
 }): SharedEntryTarget {
+  if (input.platformPreview) return 'platform';
   const { machine } = input;
   if (
     machine
