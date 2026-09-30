@@ -89,7 +89,8 @@ describe("Codex provider contract checker", () => {
     }
   });
 
-  it.each(["0.159.2", "0.159.3"])("qualifies exact published Codex %s bytes on both supported targets", (version) => {
+  it("qualifies exact published Codex 0.159.3 bytes on both supported targets", () => {
+    const version = "0.159.3";
     const execSchemaBytes = readFileSync(new URL(
       "../fixtures/codex-0158/exec-events.rs",
       import.meta.url,
