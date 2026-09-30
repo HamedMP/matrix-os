@@ -51,13 +51,16 @@ describe("production isolated Hermes recipe launch", () => {
     const resolveCredentials = createJevHermesCredentialResolver({ homePath: home, ownerId: input.owner.ownerId,
       settings: { getSnapshot: async () => jevReadySettingsSnapshot(Date.now()) }, runtimeSource });
     const gateway = fakeGateway(); const preflight = vi.fn(async () => undefined);
+    const verifyRuntime = vi.fn(async () => undefined);
     const adapter = createHermesChatProviderAdapter({ homePath: home, spawnFn: gateway.spawnFn,
-      jev: { resolveCredentials, verifyRuntime: async () => undefined, preflight, clearRun: vi.fn(), summary: () => null } });
+      jev: { resolveCredentials, verifyRuntime, preflight, clearRun: vi.fn(), summary: () => null } });
     try {
       const result = collect(adapter.start({ ...input, selection: { instanceId: "hermes_default", model: `${provider}:${model}` } }));
       await vi.waitFor(() => expect(gateway.requests.some(request => request.method === "session.create")).toBe(true));
       expect(gateway.requests.find(request => request.method === "session.create")?.params).toMatchObject({ provider, model });
       const launch = gateway.spawnFn.mock.calls[0]![2];
+      expect(verifyRuntime).toHaveBeenCalledWith(join(home, ".hermes/hermes-agent"), expect.any(AbortSignal),
+        provider === "openrouter" ? "chat_completions" : "codex_responses");
       expect(launch.env.MATRIX_JEV_PRIMARY_KEY).toBe(key);
       expect(launch.env.MATRIX_JEV_PRIMARY_PROVIDER).toBe(provider);
       expect(launch.env.MATRIX_JEV_PRIMARY_MODEL).toBe(model);
