@@ -16,6 +16,10 @@ import { bootstrapPlatformOrganizationDatabase, type OrganizationPlatformDatabas
 import { createOrganizationMembershipProjection, type ClerkOrganizationUpstream, type OrganizationMembershipProjection } from "./projection.js";
 import { PlatformOrganizationRepository } from "./repository.js";
 import { createPlatformOrganizationRoutes } from "./routes.js";
+import { OrganizationAdminRepository } from "./admin-repository.js";
+import { ClerkOrganizationAdminClient, type ClerkOrganizationAdmin } from "./clerk-admin-client.js";
+import { OrganizationCreationFinisher } from "./creation-finisher.js";
+import { createOrganizationAdminRoutes } from "./admin-routes.js";
 
 const MAX_AFFECTED_RUNTIMES = 256;
 const INBOX_RETENTION_MS = 7 * 24 * 60 * 60_000;
@@ -37,8 +41,11 @@ export async function createPlatformOrganizations(options: {
   db: Kysely<OrganizationPlatformDatabase>;
   directory?: DirectoryReader;
   clerkSecretKey?: string;
+  platformSecret?: string;
+  appOrigin?: string;
   webhookSigningSecret?: string;
   upstream?: ClerkOrganizationUpstream;
+  adminClient?: ClerkOrganizationAdmin;
   resolveActor(c: Context): Promise<string | null>;
   authenticateRuntime(input: { runtimeId: string; bearerToken: string }): Promise<{ runtimeId: string; ownerId: string } | null>;
   fetchImpl?: typeof fetch;
@@ -48,6 +55,10 @@ export async function createPlatformOrganizations(options: {
   await bootstrapPlatformOrganizationDatabase(options.db);
   const now = options.now ?? (() => new Date());
   const repository = new PlatformOrganizationRepository(options.db, { now });
+  const adminRepository = new OrganizationAdminRepository(options.db, { now });
+  const adminClient = options.adminClient ?? (options.clerkSecretKey
+    ? new ClerkOrganizationAdminClient({ secretKey: options.clerkSecretKey, ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}) })
+    : undefined);
   const upstream = options.upstream ?? (options.clerkSecretKey
     ? new ClerkOrganizationUpstreamClient({ secretKey: options.clerkSecretKey, ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}), now })
     : undefined);
@@ -78,6 +89,7 @@ export async function createPlatformOrganizations(options: {
   });
   const routes = createPlatformOrganizationRoutes({
     repository,
+    adminRepository,
     projection,
     controlAuthority,
     ...(options.webhookSigningSecret ? { webhookSigningSecret: options.webhookSigningSecret } : {}),
@@ -85,10 +97,20 @@ export async function createPlatformOrganizations(options: {
     authenticateRuntime: options.authenticateRuntime,
     now,
   });
+  const adminRoutes = createOrganizationAdminRoutes({
+    repository: adminRepository, ...(adminClient ? { clerk: adminClient } : {}), projection,
+    membershipRepository: repository,
+    resolveActor: options.resolveActor, ...(options.platformSecret ? { platformSecret: options.platformSecret } : {}),
+    ...(options.appOrigin ? { appOrigin: options.appOrigin } : {}), now,
+  });
+  const creationFinisher = new OrganizationCreationFinisher({
+    repository: adminRepository, ...(adminClient ? { clerk: adminClient } : {}), projection,
+    now, startTimers: options.startTimers ?? false,
+  });
   let pruneTimer: ReturnType<typeof setInterval> | undefined;
   if (options.startTimers) {
     pruneTimer = setInterval(() => {
-      repository.pruneInbox(new Date(now().getTime() - INBOX_RETENTION_MS)).catch((error: unknown) => {
+      Promise.all([repository.pruneInbox(new Date(now().getTime() - INBOX_RETENTION_MS)), adminRepository.prune()]).catch((error: unknown) => {
         console.warn("[organizations] inbox prune failed", error instanceof Error ? error.name : "UnknownError");
       });
     }, INBOX_PRUNE_INTERVAL_MS);
@@ -104,12 +126,13 @@ export async function createPlatformOrganizations(options: {
       if (registered || closing) throw new Error("Platform organization routes are already registered or shutting down");
       registered = true;
       app.route("/", routes);
+      app.route("/", adminRoutes);
     },
     async shutdown() {
       if (closing) return;
       closing = true;
       if (pruneTimer) clearInterval(pruneTimer);
-      await Promise.allSettled([controlAuthority!.shutdown(), projection.shutdown()]);
+      await Promise.allSettled([creationFinisher.shutdown(), controlAuthority!.shutdown(), projection.shutdown()]);
     },
   };
 }

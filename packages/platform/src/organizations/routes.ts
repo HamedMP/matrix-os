@@ -24,6 +24,7 @@ import type { OrganizationMembershipProjection } from "./projection.js";
 import { MEMBERSHIP_PAGE_LIMIT, type PlatformOrganizationRepository } from "./repository.js";
 import { parseClerkOrganizationWebhook } from "./roles.js";
 import { verifyClerkWebhookSignature } from "./webhook-signature.js";
+import type { OrganizationAdminRepository } from "./admin-repository.js";
 
 const RuntimeIdSchema = z.string().min(1).max(128).regex(/^[A-Za-z0-9:_-]+$/);
 const BearerTokenSchema = z.string().min(32).max(4_096).regex(/^[A-Za-z0-9._~-]+$/);
@@ -43,6 +44,7 @@ type ErrorStatus = 400 | 401 | 403 | 404 | 409 | 413 | 422 | 503;
 
 export function createPlatformOrganizationRoutes(options: {
   repository: PlatformOrganizationRepository;
+  adminRepository?: OrganizationAdminRepository;
   projection: OrganizationMembershipProjection;
   controlAuthority: CollaborationControlAuthority;
   webhookSigningSecret?: string;
@@ -60,7 +62,15 @@ export function createPlatformOrganizationRoutes(options: {
     if (!actorId) return safeJson(c, "Unauthorized", 401);
     try {
       const memberships = await options.repository.listOrganizationsForActor(actorId);
-      const organizations = [];
+      const organizations: Array<{
+        organizationId: string;
+        name: string;
+        slug?: string;
+        role?: string;
+        aiSubmission?: "members" | "owner_only";
+        membershipEpoch?: number;
+        state?: "setting_up";
+      }> = [];
       for (const entry of memberships) {
         if (!(await options.projection.isCurrentMember({ organizationId: entry.organization.organizationId, actorId }))) continue;
         organizations.push({
@@ -71,6 +81,15 @@ export function createPlatformOrganizationRoutes(options: {
           aiSubmission: entry.organization.aiSubmission,
           membershipEpoch: entry.organization.membershipEpoch,
         });
+      }
+      if (options.adminRepository) {
+        const listed = new Set(organizations.map((organization) => organization.organizationId));
+        for (const pending of await options.adminRepository.listSettingUp(actorId)) {
+          // The creator's durable request is the source of truth while Clerk
+          // membership is still being projected. This row grants no access;
+          // normal listed organizations above still require current membership.
+          if (!listed.has(pending.organizationId)) organizations.push(pending);
+        }
       }
       c.header("Cache-Control", "private, no-store");
       return c.json({ organizations });
@@ -133,6 +152,16 @@ export function createPlatformOrganizationRoutes(options: {
     if (parsed.kind === "invalid") return safeJson(c, "Invalid request", 400);
     c.header("Cache-Control", "no-store");
     if (parsed.kind === "ignored") return c.json({ received: true, outcome: "ignored" });
+    if (parsed.kind === "invitation_terminal") {
+      if (!options.adminRepository) return safeJson(c, "Webhook unavailable", 503);
+      try {
+        await options.adminRepository.deleteInvitationTerminal(parsed.organizationId, parsed.invitationId, parsed.requestId);
+        return c.json({ received: true, outcome: "applied" });
+      } catch (error: unknown) {
+        console.warn("[organizations] invitation webhook failed", error instanceof Error ? error.name : "UnknownError");
+        return safeJson(c, "Webhook unavailable", 503);
+      }
+    }
     try {
       const result = await applyClerkOrganizationEvent(options.repository, parsed.event, {
         payloadHash: createHash("sha256").update(body).digest("hex"),

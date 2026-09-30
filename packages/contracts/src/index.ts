@@ -65,6 +65,7 @@ export * from "#collaboration-failure";
 export * from "#collaboration-execution";
 export * from "#collaboration-peer";
 export * from "#collaboration-resources";
+export * from "#organizations";
 export * from "#organization-billing";
 export * from "#organization-drive";
 export * from "#custom-mcp-policy";

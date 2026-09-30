@@ -95,6 +95,42 @@ export interface OrganizationPlatformDatabase {
   organization_revocation_outbox: OrganizationRevocationOutboxTable;
   collaboration_denials: CollaborationDenialsTable;
   collaboration_denial_runtimes: CollaborationDenialRuntimesTable;
+  organization_admin_requests: OrganizationAdminRequestsTable;
+  organization_admin_counters: OrganizationAdminCountersTable;
+  organization_invitation_records: OrganizationInvitationRecordsTable;
+}
+
+export type OrganizationAdminRequestState = "pending" | "created" | "listed" | "needs_review" | "failed";
+
+export interface OrganizationAdminRequestsTable {
+  actor_id: string;
+  client_request_id: string;
+  name: string;
+  state: OrganizationAdminRequestState;
+  organization_id: string | null;
+  created_at: Timestamp;
+  updated_at: Timestamp;
+  lease_until: NullableTimestamp;
+}
+
+export interface OrganizationAdminCountersTable {
+  scope_id: string;
+  action: string;
+  window_start: Timestamp;
+  count: number;
+}
+
+export interface OrganizationInvitationRecordsTable {
+  organization_id: string;
+  address_digest: string;
+  client_request_id: string;
+  attempt_request_id: string;
+  role: "org:admin" | "org:member";
+  invitation_id: string | null;
+  inviter_id: string;
+  expires_at: Timestamp;
+  lease_until: Timestamp;
+  created_at: Timestamp;
 }
 
 /**
@@ -109,6 +145,58 @@ export async function bootstrapPlatformOrganizationDatabase(
 }
 
 async function createOrganizationTables(db: Transaction<OrganizationPlatformDatabase>): Promise<void> {
+  await sql`
+    CREATE TABLE IF NOT EXISTS organization_invitation_records (
+      organization_id TEXT NOT NULL CHECK (organization_id ~ '^org_[A-Za-z0-9]{1,124}$'),
+      address_digest CHAR(64) NOT NULL,
+      client_request_id UUID NOT NULL,
+      attempt_request_id UUID NOT NULL,
+      role TEXT NOT NULL CHECK (role IN ('org:admin', 'org:member')),
+      invitation_id TEXT CHECK (invitation_id IS NULL OR char_length(invitation_id) BETWEEN 1 AND 128),
+      inviter_id TEXT NOT NULL CHECK (char_length(inviter_id) BETWEEN 1 AND 128),
+      expires_at TIMESTAMPTZ NOT NULL,
+      lease_until TIMESTAMPTZ NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL,
+      PRIMARY KEY (organization_id, address_digest),
+      UNIQUE (organization_id, client_request_id)
+    )
+  `.execute(db);
+  // Preview databases may already have the invitation table from an earlier
+  // branch bundle. Preserve its rows and fence old webhooks with their marker.
+  await sql`ALTER TABLE organization_invitation_records ADD COLUMN IF NOT EXISTS attempt_request_id UUID`.execute(db);
+  await sql`UPDATE organization_invitation_records SET attempt_request_id = client_request_id WHERE attempt_request_id IS NULL`.execute(db);
+  await sql`ALTER TABLE organization_invitation_records ALTER COLUMN attempt_request_id SET NOT NULL`.execute(db);
+  await sql`CREATE INDEX IF NOT EXISTS idx_organization_invitation_records_expiry ON organization_invitation_records(expires_at)`.execute(db);
+  await sql`
+    CREATE TABLE IF NOT EXISTS organization_admin_requests (
+      actor_id TEXT NOT NULL CHECK (char_length(actor_id) BETWEEN 1 AND 128),
+      client_request_id UUID NOT NULL,
+      name TEXT NOT NULL CHECK (char_length(name) BETWEEN 1 AND 100),
+      state TEXT NOT NULL CHECK (state IN ('pending', 'created', 'listed', 'needs_review', 'failed')),
+      organization_id TEXT CHECK (organization_id IS NULL OR char_length(organization_id) BETWEEN 1 AND 128),
+      created_at TIMESTAMPTZ NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL,
+      lease_until TIMESTAMPTZ,
+      PRIMARY KEY (actor_id, client_request_id),
+      CHECK ((state = 'pending' AND organization_id IS NULL)
+        OR (state IN ('created', 'listed') AND organization_id IS NOT NULL)
+        OR state IN ('needs_review', 'failed'))
+    )
+  `.execute(db);
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_organization_admin_requests_due
+      ON organization_admin_requests(lease_until, created_at)
+      WHERE state IN ('pending', 'created')
+  `.execute(db);
+  await sql`
+    CREATE TABLE IF NOT EXISTS organization_admin_counters (
+      scope_id TEXT NOT NULL CHECK (char_length(scope_id) BETWEEN 1 AND 128),
+      action TEXT NOT NULL CHECK (char_length(action) BETWEEN 1 AND 64),
+      window_start TIMESTAMPTZ NOT NULL,
+      count INTEGER NOT NULL CHECK (count >= 0),
+      PRIMARY KEY (scope_id, action, window_start)
+    )
+  `.execute(db);
   await sql`
     CREATE TABLE IF NOT EXISTS organizations (
       organization_id TEXT PRIMARY KEY CHECK (char_length(organization_id) BETWEEN 1 AND 128),
