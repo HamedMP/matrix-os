@@ -109,6 +109,14 @@ export {
 } from "./collaboration/chat-projection.js";
 export { SharedChatControls } from "./collaboration/SharedChatControls.js";
 export { SharedTerminalControls } from "./collaboration/SharedTerminalControls.js";
+export {
+  MAX_DISCOVERY_PAGES,
+  MAX_RETAINED_DRIVE_PAGES,
+  createRefreshGuard,
+  driveBasePath,
+  loadDiscoveryItems,
+  loadDriveSnapshotPages,
+} from "./collaboration/shared-folder-paging.js";
 export { TerminalSharingButton } from "./collaboration/TerminalSharingButton.js";
 export { ProjectSharingDialog } from "./collaboration/ProjectSharingDialog.js";
 export { ProjectSharingButton } from "./collaboration/ProjectSharingButton.js";
@@ -130,7 +138,6 @@ export { deriveChatPermissions } from "./collaboration/permissions.js";
 export { createCollaborationBrowserApi } from "./collaboration/client.js";
 export { createCollaborationDirectClient, CollaborationDirectError, type CollaborationDirectClient, type CollaborationDirectClientOptions, type CollaborationDirectErrorCode, type DirectScopeState } from "./collaboration/direct-client.js";
 export { createCollaborationDirectApi, type CollaborationDirectApi } from "./collaboration/direct-api.js";
-export { createRefreshGuard, driveBasePath, loadDiscoveryItems, loadDriveSnapshotPages } from "./organization-drive/paging.js";
 export { ensureOrganizationContributorGrant, loadOrganizationDriveOptions, type OrganizationDriveOption, type OrganizationDrivePageCounts } from "./organization-drive/discovery.js";
 export {
   COLLABORATION_DISCOVERY_CHANGED_EVENT,
