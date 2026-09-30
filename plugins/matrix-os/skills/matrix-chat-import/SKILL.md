@@ -13,6 +13,9 @@ Use the authenticated Matrix CLI to preview one local Codex session, then
 import that same file into the user's private canonical Chat. This is a Chat
 import, not a raw Files upload or a continuation of the old Codex runtime.
 
+Requires Matrix CLI 0.3.20 or newer. Check `matrix --version` first; if the
+installed CLI is older, upgrade it before running the import command.
+
 1. Identify the exact `rollout-*.jsonl` file the owner selected. If choosing
    from a project, inspect Codex `session_meta` repository URL and recorded
    working directory; do not choose by file modification time alone. Do not
