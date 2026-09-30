@@ -439,17 +439,22 @@ describe("S04 capability grants and effective access", () => {
         audience: { kind: "member", actorId: collaborationActors.editor }, preset: "viewer", policyVersion: "v1",
       });
       const beforeMemberAccept = await epoch();
+      const beforeMemberAcceptRevision = await revision();
       await evaluator.acceptGrant({ grantId: memberGrant.grantId, actorId: collaborationActors.editor });
       expect(await epoch()).toBe(beforeMemberAccept + 1);
+      expect(await revision()).toBe(beforeMemberAcceptRevision + 1);
       await evaluator.acceptGrant({ grantId: memberGrant.grantId, actorId: collaborationActors.editor });
       expect(await epoch()).toBe(beforeMemberAccept + 1);
+      expect(await revision()).toBe(beforeMemberAcceptRevision + 1);
       const declinedMember = await grants.createGrant({
         scopeId: collaborationIds.scope, actorId: collaborationActors.owner, ...await currentRequest(),
         audience: { kind: "member", actorId: collaborationActors.viewer }, preset: "viewer", policyVersion: "v1",
       });
       const beforeMemberDecline = await epoch();
+      const beforeMemberDeclineRevision = await revision();
       await evaluator.declineGrant({ grantId: declinedMember.grantId, actorId: collaborationActors.viewer });
       expect(await epoch()).toBe(beforeMemberDecline + 1);
+      expect(await revision()).toBe(beforeMemberDeclineRevision + 1);
     });
 
     it("advances the scope authorization epoch once per changed departure scope", async () => {
