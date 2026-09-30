@@ -173,9 +173,9 @@ it("keeps settings in a separate sheet and preserves the question draft across s
   expect(screen.getByText("Keep briefs concise")).toBeTruthy();
   expect(screen.queryByText("Gmail")).toBeNull();
   fireEvent.press(screen.getByRole("tab", { name: "Routines (0)" }));
-  expect(screen.getByText("No routines yet. Ask your bot to set one up.")).toBeTruthy();
+  expect(screen.getByText("No routines yet")).toBeTruthy();
   fireEvent.press(screen.getByRole("button", { name: "Close bot settings" }));
-  expect(screen.queryByText("No routines yet. Ask your bot to set one up.")).toBeNull();
+  expect(screen.queryByText("No routines yet")).toBeNull();
   expect(screen.getByLabelText("Answer Target").props.value).toBe("Acme draft");
   fireEvent.press(screen.getByRole("button", { name: "Bot settings" }));
   view.rerender(<BotChatControls scopeKey="owner:gateway:chat" snapshot={{ ...snapshot, agentId: "bot_other", name: "Other bot" } as never}
@@ -271,7 +271,7 @@ it("shows connection and memory empty states from the saved snapshot", () => {
   fireEvent.press(screen.getByRole("button", { name: "Bot settings" }));
   expect(screen.getByText("No connections yet")).toBeTruthy();
   fireEvent.press(screen.getByRole("tab", { name: "Memory (0)" }));
-  expect(screen.getByText("Nothing remembered yet.")).toBeTruthy();
+  expect(screen.getByText("Nothing remembered yet")).toBeTruthy();
 });
 
 it("only removes a memory after a successful revisioned forget and retains that result on failed refresh", async () => {
@@ -285,7 +285,7 @@ it("only removes a memory after a successful revisioned forget and retains that 
   expect(screen.getByText("Keep briefs concise")).toBeTruthy();
   await act(async () => finish());
   expect(screen.queryByText("Keep briefs concise")).toBeNull();
-  expect(screen.getByText("Nothing remembered yet.")).toBeTruthy();
+  expect(screen.getByText("Nothing remembered yet")).toBeTruthy();
   fireEvent.press(screen.getByRole("button", { name: "Close bot settings" }));
   fireEvent.press(screen.getByRole("button", { name: "Bot settings" }));
   expect(screen.queryByText("Keep briefs concise")).toBeNull();
@@ -341,4 +341,18 @@ it("does not carry confirmed removals to another same-ID owner or Chat scope", a
     onResolve={jest.fn()} onRevoke={jest.fn()} onMemory={jest.fn()} onRefresh={jest.fn()} />);
   fireEvent.press(screen.getByRole("button", { name: "Bot settings" }));
   expect(screen.getByRole("button", { name: "Revoke Work" })).toBeTruthy();
+});
+
+it("guides the owner through empty connections, memory and routines", () => {
+  render(<BotChatControls scopeKey="owner:gateway:chat" snapshot={{ ...snapshot, authority: { ...snapshot.authority, grants: [], connections: [], memory: { items: [] }, routines: [] } } as never}
+    onResolve={jest.fn()} onRevoke={jest.fn()} onMemory={jest.fn()} onRefresh={jest.fn()} />);
+  fireEvent.press(screen.getByRole("button", { name: "Bot settings" }));
+  expect(screen.getByRole("header", { name: "No connections yet" })).toBeTruthy();
+  expect(screen.getByText("Ask your bot to use a service. It will request access when needed.")).toBeTruthy();
+  fireEvent.press(screen.getByRole("tab", { name: "Memory (0)" }));
+  expect(screen.getByRole("header", { name: "Nothing remembered yet" })).toBeTruthy();
+  expect(screen.getByText('Try saying "Remember that I prefer short summaries."')).toBeTruthy();
+  fireEvent.press(screen.getByRole("tab", { name: "Routines (0)" }));
+  expect(screen.getByRole("header", { name: "No routines yet" })).toBeTruthy();
+  expect(screen.getByText("Ask your bot to schedule a recurring task.")).toBeTruthy();
 });

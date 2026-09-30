@@ -68,3 +68,15 @@ it("keeps cached settings read-only after the latest authority read fails", () =
   fireEvent.click(screen.getByRole("button", { name: /Memory/ }));
   expect((screen.getByRole("button", { name: "Forget memory" }) as HTMLButtonElement).disabled).toBe(true);
 });
+
+it("explains how to populate each empty section without implying automatic access", () => {
+  render(<BotAuthorityPanel view={{ ...view, grants: [], connections: [], routines: [], memory: { items: [] } }} onRevoke={vi.fn()} onMemory={vi.fn()} />);
+  expect(screen.getByRole("heading", { name: "No connections yet" })).toBeTruthy();
+  expect(screen.getByText("Ask your bot to use a service. It will request access when needed.")).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: /Memory/ }));
+  expect(screen.getByRole("heading", { name: "Nothing remembered yet" })).toBeTruthy();
+  expect(screen.getByText('Try saying "Remember that I prefer short summaries."')).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: /Routines/ }));
+  expect(screen.getByRole("heading", { name: "No routines yet" })).toBeTruthy();
+  expect(screen.getByText("Ask your bot to schedule a recurring task.")).toBeTruthy();
+});

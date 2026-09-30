@@ -31,6 +31,22 @@ export function BotSettingsLayout({ children, settings, open, onClose, triggerRe
   useEffect(() => {
     if (open && narrow && !panel.current?.contains(document.activeElement)) closeButton.current?.focus();
   }, [open, narrow]);
+  useEffect(() => {
+    if (!open || narrow) return;
+    const dismiss = (event: PointerEvent) => {
+      const target = event.target;
+      if (target instanceof Node && !panel.current?.contains(target) && !triggerRef.current?.contains(target)) onClose();
+    };
+    const escape = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !event.defaultPrevented) onClose();
+    };
+    document.addEventListener("pointerdown", dismiss);
+    document.addEventListener("keydown", escape);
+    return () => {
+      document.removeEventListener("pointerdown", dismiss);
+      document.removeEventListener("keydown", escape);
+    };
+  }, [open, narrow, onClose, triggerRef]);
   return <div ref={root} className="matrix-bot-workspace" data-settings-open={open}>
     <div className="matrix-bot-conversation" inert={open && narrow || undefined} aria-hidden={open && narrow || undefined}>
       {children}

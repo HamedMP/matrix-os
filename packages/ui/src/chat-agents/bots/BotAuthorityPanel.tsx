@@ -1,6 +1,7 @@
 import { groupBotAuthority, botServiceLabel, botConnectionStateLabel, botAccessLabel, type BotAuthorityView, type BotMemoryMutationRequest } from "@matrix-os/contracts";
 import { useEffect, useState } from "react";
 import { RememberedItemPart } from "./RememberedItemPart.js";
+import { BotSettingsEmptyState } from "./BotSettingsEmptyState.js";
 import { chatAgentButtonClass, chatAgentMutedStyle } from "../theme.js";
 
 export function BotAuthorityPanel({ view, onRevoke, onMemory, onChanged, onConfirmedChange, actionsAvailable = true }: {
@@ -60,7 +61,7 @@ export function BotAuthorityPanel({ view, onRevoke, onMemory, onChanged, onConfi
                 )) };
               }); }}>Revoke</button>
         </div>)}
-      </div>) : <p className="text-sm" style={chatAgentMutedStyle}>No connections yet</p>}
+      </div>) : <BotSettingsEmptyState section="connections" />}
     </div> : null}
     {section === "memory" ? <div className="grid gap-4"><div><h3 className="text-sm font-semibold">What your bot remembers</h3><p className="mt-1 text-xs leading-relaxed" style={chatAgentMutedStyle}>Preferences and context saved for this bot. You can forget them anytime.</p></div>
       {current.memory.items.length ? current.memory.items.map((item) => <div key={item.itemId} className="matrix-bot-settings-card grid gap-3">
@@ -74,13 +75,13 @@ export function BotAuthorityPanel({ view, onRevoke, onMemory, onChanged, onConfi
             onClick={() => { void change(item.itemId, () => onMemory(item.itemId, "forget", { baseRevision: item.revision }),
               (value) => ({ ...value, memory: { ...value.memory, items: value.memory.items.filter((entry) => entry.itemId !== item.itemId) } })); }}>Forget</button>
         </div>
-      </div>) : <p className="text-sm" style={chatAgentMutedStyle}>Nothing remembered yet.</p>}
+      </div>) : <BotSettingsEmptyState section="memory" />}
     </div> : null}
     {section === "routines" ? <div className="grid gap-4"><div><h3 className="text-sm font-semibold">Routines</h3><p className="mt-1 text-xs leading-relaxed" style={chatAgentMutedStyle}>Scheduled work for this bot.</p></div>
       {current.routines.length ? current.routines.map((routine) => <div key={routine.routineId} className="matrix-bot-settings-card grid gap-2">
         <p className="text-sm font-medium">{routine.summary}</p>
         <p className="text-xs" style={chatAgentMutedStyle}>{routine.status === "active" ? "Active" : "Paused"}{routine.nextFireAt ? ` · Next: ${new Date(routine.nextFireAt).toLocaleString()}` : ""}</p>
-      </div>) : <p className="text-sm" style={chatAgentMutedStyle}>No routines yet. Ask your bot to set one up.</p>}
+      </div>) : <BotSettingsEmptyState section="routines" />}
     </div> : null}
     </div>
   </section>;

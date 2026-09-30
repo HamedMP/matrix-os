@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Modal, Pressable, ScrollView, Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
+import { BotSettingsEmptyState } from "./BotSettingsEmptyState";
 import {
   botAccessLabel, botConnectionStateLabel, botServiceLabel, groupBotAuthority,
   type BotAuthorityView, type BotMemoryMutationRequest,
@@ -135,7 +136,7 @@ export function BotSettingsSheet({ open, name, authority, actionsAvailable, onCl
         <ScrollView key={section} style={styles.content} contentContainerStyle={styles.group}>
           {section === "Connections" ? <>
             <Text style={styles.muted}>Only the access you&apos;ve allowed for this bot.</Text>
-            {!groups.length ? <Text style={styles.text}>No connections yet</Text> : null}
+            {!groups.length ? <BotSettingsEmptyState section="connections" /> : null}
             {groups.map((group) => <View key={group.service} style={styles.card}>
               <Text style={styles.heading}>{botServiceLabel(group.service)}</Text>
               <Text style={styles.muted}>{botConnectionStateLabel(group.state)}</Text>
@@ -153,7 +154,7 @@ export function BotSettingsSheet({ open, name, authority, actionsAvailable, onCl
           {section === "Memory" ? <>
             <Text accessibilityRole="header" style={styles.heading}>What your bot remembers</Text>
             <Text style={styles.muted}>Preferences and context saved for this bot. You can forget them anytime.</Text>
-            {!currentAuthority.memory.items.length ? <Text style={styles.text}>Nothing remembered yet.</Text> : null}
+            {!currentAuthority.memory.items.length ? <BotSettingsEmptyState section="memory" /> : null}
             {currentAuthority.memory.items.map((item) => <View key={item.itemId} style={styles.card}>
               <Text style={styles.text}>{item.content}</Text>
               <Text style={styles.muted}>{item.source.messageId ? "From Chat" : item.source.url ? "From a web source" : "Remembered"} · {item.source.at.slice(0, 10)}</Text>
@@ -176,7 +177,7 @@ export function BotSettingsSheet({ open, name, authority, actionsAvailable, onCl
           </> : null}
           {section === "Routines" ? <>
             <Text style={styles.muted}>Scheduled work for this bot.</Text>
-            {!authority.routines.length ? <Text style={styles.text}>No routines yet. Ask your bot to set one up.</Text> : null}
+            {!authority.routines.length ? <BotSettingsEmptyState section="routines" /> : null}
             {authority.routines.map((routine) => <View key={routine.routineId} style={styles.card}>
               <Text style={styles.text}>{routine.summary}</Text>
               <Text style={styles.muted}>{routine.status === "active" ? "Active" : "Paused"}</Text>

@@ -352,11 +352,16 @@
 }
 .matrix-bot-conversation { display: flex; flex: 1; flex-direction: column; min-width: 0; min-height: 0; }
 .matrix-bot-settings {
+  position: absolute;
+  inset: 52px 0 0 auto;
+  z-index: 2;
+  width: 320px;
+  max-width: 100%;
   display: flex;
   flex-direction: column;
-  flex: 0 0 320px;
   min-height: 0;
   border-width: 0 0 0 1px !important;
+  box-shadow: -12px 0 32px color-mix(in srgb, var(--text-primary, var(--foreground)) 8%, transparent);
 }
 .matrix-bot-settings-nav { display: flex; gap: 4px; padding: 0 16px 14px; border-bottom: 1px solid var(--border-default, var(--matrix-border, var(--border))); }
 .matrix-bot-settings-tab { display: flex; align-items: center; justify-content: center; gap: 4px; flex: 1; min-width: 0; white-space: nowrap; border-radius: 8px; padding: 8px 3px; font-size: 12px; color: var(--text-secondary, var(--matrix-muted-fg, var(--muted-foreground))); }

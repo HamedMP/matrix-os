@@ -77,3 +77,15 @@ export function botConnectionStateLabel(state: BotConnectionState["state"]): str
 export function botAccessLabel(effects: readonly string[]): string {
   return effects.map((effect) => effect.charAt(0).toUpperCase() + effect.slice(1).replaceAll("_", " ")).join(", ");
 }
+
+export type BotSettingsSection = "connections" | "memory" | "routines";
+
+/** The same onboarding guidance in every settings renderer; it grants no access. */
+export const botSettingsEmptyStates = {
+  connections: { title: "No connections yet", description: "Connections let this bot work with your services.",
+    hint: "Ask your bot to use a service. It will request access when needed." },
+  memory: { title: "Nothing remembered yet", description: "Save preferences so this bot can tailor its replies.",
+    hint: 'Try saying "Remember that I prefer short summaries."' },
+  routines: { title: "No routines yet", description: "Routines help this bot repeat work on a schedule.",
+    hint: "Ask your bot to schedule a recurring task." },
+} as const;

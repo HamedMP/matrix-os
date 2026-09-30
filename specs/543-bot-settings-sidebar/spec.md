@@ -1,5 +1,5 @@
 ---
-status: completed
+status: awaiting-device-validation
 ---
 # Bot settings beside Chat
 
@@ -8,7 +8,7 @@ The existing bot permissions and memory block expands above the transcript, cons
 ## Requirements
 
 - R1: Chat, its draft, pending questions, and scroll position survive opening, closing, switching settings sections, and bot status refreshes.
-- R2: Settings open on the right of a sufficiently wide Chat workspace. Narrow Web windows use an accessible overlay drawer; Native Mobile uses a separate modal sheet. Close and Escape return focus to the opener. Width follows the Chat window, not the screen.
+- R2: Settings overlay the right of a sufficiently wide Chat workspace without resizing the conversation or moving the opener. Wide panels support outside-click, trigger, and Escape dismissal. Narrow Web windows use an accessible overlay drawer; Native Mobile uses a separate modal sheet. Close and Escape return focus to the opener. Width follows the Chat window, not the screen.
 - R3: Connections, Memory, and Routines have clear labels, counts, empty states, loading/retry states, and independently scrollable content. Connection names and access use shared human-readable derivation. Runtime details do not occupy the conversation toolbar.
 - R4: Revoke, confirm, and forget use the existing authenticated, revisioned mutations. No optimistic deletion before success. Failed/stale reads show safe errors and disable mutation actions until a successful retry. An in-flight mutation cannot overwrite a different bot's settings.
 - R5: Web Canvas, Web Desktop, Electron Desktop, Web Mobile, and Native Mobile expose equivalent settings and actions. Shared web/Electron presentation owns layout and state; Native Mobile adapts platform chrome.
@@ -27,3 +27,5 @@ No new endpoints, schemas, persistence, grants, model routes, org sharing, or OA
 ## Acceptance
 
 Test section switching, keyboard close/focus return, resize into drawer, failed authority reads/retry, mutation success/failure, draft persistence, non-bot and shared Chat isolation, and settings reset when Chat changes. Capture real renderers rather than mock HTML. Fixture screenshots demonstrate UI only; they do not qualify live Pi, Slack, or integrations.
+
+Implementation and review UX fixes are complete. PR remains a draft pending real-device Native Mobile validation; see `docs/pr-evidence/543-bot-settings-sidebar/README.md` for the surface matrix and failed full native gates.

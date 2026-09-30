@@ -111,3 +111,19 @@ it("moves focus into the drawer when an open wide inspector becomes narrow", asy
   act(() => resize([{ contentRect: { width: 500 } } as ResizeObserverEntry], {} as ResizeObserver));
   expect(document.activeElement).toBe(screen.getByRole("button", { name: "Close bot settings" }));
 });
+
+it("dismisses wide settings outside the panel while preserving the reply and trigger toggle", async () => {
+  render(<BotChatPanel chatId="chat_research" client={client() as never}><textarea aria-label="Reply" defaultValue="Keep my draft" /></BotChatPanel>);
+  const trigger = await screen.findByRole("button", { name: "Bot settings" });
+  fireEvent.click(trigger);
+  fireEvent.pointerDown(screen.getByRole("button", { name: /Memory/ }));
+  expect(screen.getByRole("complementary", { name: "Bot settings" })).toBeTruthy();
+  const reply = screen.getByRole("textbox", { name: "Reply" });
+  fireEvent.pointerDown(reply);
+  expect(screen.queryByRole("complementary", { name: "Bot settings" })).toBeNull();
+  expect((reply as HTMLTextAreaElement).value).toBe("Keep my draft");
+  fireEvent.pointerDown(trigger); fireEvent.click(trigger);
+  expect(screen.getByRole("complementary", { name: "Bot settings" })).toBeTruthy();
+  fireEvent.pointerDown(trigger); fireEvent.click(trigger);
+  expect(screen.queryByRole("complementary", { name: "Bot settings" })).toBeNull();
+});
