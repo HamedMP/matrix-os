@@ -44,6 +44,18 @@ export const COLLABORATION_DIRECT_LIMITS = Object.freeze({
   maxTicketActions: 1_000,
 });
 
+/** Platform relay defaults for an account that owns no active computer. */
+export const COLLABORATION_RELAY_ACCOUNT_LIMITS = Object.freeze({
+  sockets: 8,
+  dailyBytes: 1024 ** 3,
+  minSockets: 1,
+  maxSockets: 32,
+  minDailyBytes: 1024 ** 2,
+  maxDailyBytes: 16 * 1024 ** 3,
+  classifierCacheEntries: 10_000,
+  classifierTtlMs: 60_000,
+});
+
 const HEX_DIGEST = /^[a-f0-9]{64}$/;
 const HEX_NONCE = /^[a-f0-9]{32,128}$/;
 const BASE64URL_THUMBPRINT = /^[A-Za-z0-9_-]{43}$/;
