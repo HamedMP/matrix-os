@@ -56,6 +56,8 @@ function probeApply(marker: unknown, trusted: unknown, badDigest = false) {
   const trustedEnd = updater.indexOf('write_prepared_update_marker() {', trustedStart);
   const applyStart = updater.indexOf('apply_update() {');
   const applyEnd = updater.indexOf('run_apply_update() {', applyStart);
+  const prepareStart = updater.indexOf('prepare_triggered_update() {');
+  const prepareEnd = updater.indexOf('# ── Poll for updates', prepareStart);
   const script = `set -euo pipefail
 UPDATE_MARKER="$1"
 UPDATE_ERROR_MARKER="$2/error.json"
@@ -93,7 +95,7 @@ apply_update other`;
   }
 }
 
-function probeRejectedExplicitRequest(marker: unknown, trusted: unknown, metadataAvailable = true, replaceRequestDuringValidation = false, triggerOnlyDuringCleanup = false) {
+function probeRejectedExplicitRequest(marker: unknown, trusted: unknown, metadataAvailable = true, replaceRequestDuringValidation = false, triggerOnlyDuringCleanup = false, prepareAfterRejection: false | "plain" | "replacement" = false, initialTarget: "marker" | "version" | "channel" = "marker") {
   const directory = mkdtempSync(join(tmpdir(), 'matrix-update-rejected-'));
   const markerPath = join(directory, '.update-available.json');
   const triggerPath = join(directory, '.update-now');
@@ -101,25 +103,32 @@ function probeRejectedExplicitRequest(marker: unknown, trusted: unknown, metadat
   const downloadLog = join(directory, 'download.log');
   writeFileSync(markerPath, JSON.stringify(marker));
   writeFileSync(triggerPath, '');
+  if (initialTarget === 'version') writeFileSync(join(directory, '.update-version'), 'v2026.09.28-1');
+  if (initialTarget === 'channel') writeFileSync(join(directory, '.update-channel'), 'beta');
   const updater = expandedUpdater();
   const rejectionLibrary = readFileSync('distro/customer-vps/host-bin/matrix-update-request-rejection', 'utf8');
   const trustedStart = updater.indexOf('load_trusted_apply_manifest() {');
   const trustedEnd = updater.indexOf('write_prepared_update_marker() {', trustedStart);
   const applyStart = updater.indexOf('apply_update() {');
   const applyEnd = updater.indexOf('run_apply_update() {', applyStart);
+  const prepareStart = updater.indexOf('prepare_triggered_update() {');
+  const prepareEnd = updater.indexOf('# ── Poll for updates', prepareStart);
   const script = `set -euo pipefail
 UPDATE_MARKER="$1"
 UPDATE_TRIGGER="$2"
+UPDATE_VERSION_FILE="$3/.update-version"
+UPDATE_CHANNEL_FILE="$3/.update-channel"
 UPDATE_ERROR_MARKER="$3/error.json"
 STAGING_DIR="$3/staging"
 APP_DIR="$3"
+FETCH_LOG="$APP_DIR/fetch.log"
 TRUSTED_JSON="$4"
 ERROR_LOG="$5"
 DOWNLOAD_LOG="$6"
 log() { :; }
 json_field() { python3 -c 'import json,sys; print(json.load(sys.stdin).get(sys.argv[1], ""))' "$2" <<< "$1"; }
 release_url_for_version() { printf 'https://platform.example/system-bundles/releases/%s.json\\n' "$1"; }
-fetch_manifest() { ${replaceRequestDuringValidation ? 'printf v2026.09.28-2 > "$APP_DIR/.update-version"; : > "$APP_DIR/new-trigger"; mv -fT "$APP_DIR/new-trigger" "$UPDATE_TRIGGER";' : ''} ${metadataAvailable ? 'printf \'%s\' "$TRUSTED_JSON";' : 'return 1;'} }
+fetch_manifest() { printf '%s\\n' \"$1\" >> \"$FETCH_LOG\"; ${replaceRequestDuringValidation ? 'printf v2026.09.28-2 > "$APP_DIR/.update-version"; : > "$APP_DIR/new-trigger"; mv -fT "$APP_DIR/new-trigger" "$UPDATE_TRIGGER";' : ''} ${metadataAvailable ? 'printf \'%s\' "$TRUSTED_JSON";' : 'return 1;'} }
 sudo() { "$@"; }
 ${triggerOnlyDuringCleanup ? 'rm() { if [[ "$*" == *".update-rejected."* ]]; then : > "$UPDATE_TRIGGER"; fi; command rm "$@"; }' : ''}
 consume_update_trigger() { sudo rm -f -- "$UPDATE_TRIGGER"; }
@@ -131,7 +140,19 @@ download_bundle() { printf reached > "$DOWNLOAD_LOG"; return 1; }
 ${rejectionLibrary}
 ${updater.slice(trustedStart, trustedEnd)}
 ${updater.slice(applyStart, applyEnd)}
-apply_update explicit`;
+${updater.slice(prepareStart, prepareEnd)}
+apply_update explicit || result=$?
+${prepareAfterRejection ? `
+${prepareAfterRejection === "replacement" ? `printf '%s' '{"version":"v2026.09.28-3"}' > "$UPDATE_MARKER"` : ''}
+: > "$UPDATE_TRIGGER"
+default_update_channel() { printf stable; }
+manifest_url() { printf 'https://platform.example/channel.json'; }
+release_url_for_channel() { printf 'https://platform.example/channels/%s.json' "$1"; }
+requested_update_is_already_current() { return 1; }
+write_prepared_update_marker() { printf '%s' "$1" > "$UPDATE_MARKER"; }
+prepare_triggered_update || exit 9
+` : ''}
+exit "\${result:-0}"`;
   try {
     const result = spawnSync('bash', ['-c', script, 'test', markerPath, triggerPath, directory, JSON.stringify(trusted), errorLog, downloadLog], { encoding: 'utf8' });
     return {
@@ -139,6 +160,7 @@ apply_update explicit`;
       markerExists: existsSync(markerPath),
       marker: existsSync(markerPath) ? JSON.parse(readFileSync(markerPath, 'utf8')) : null,
       triggerExists: existsSync(triggerPath),
+      fetched: existsSync(join(directory, 'fetch.log')) ? readFileSync(join(directory, 'fetch.log'), 'utf8').trim().split('\n') : [],
       requestedVersion: existsSync(join(directory, '.update-version')) ? readFileSync(join(directory, '.update-version'), 'utf8') : null,
       error: existsSync(errorLog) ? readFileSync(errorLog, 'utf8') : '',
       downloadReached: existsSync(downloadLog),
@@ -293,9 +315,39 @@ describe('VPS update manifest trust boundary', () => {
     const result = probeRejectedExplicitRequest(marker,
       { version: 'v2026.09.28-2', sha256, size: 100, url: 'https://storage.example/bundle' },
       true, false, true);
-    expect(result.result.status).toBe(1);
+    expect(result.result.status, result.result.stderr).toBe(1);
     expect(result.triggerExists).toBe(true);
     expect(result.marker).toEqual(marker);
+    expect(result.downloadReached).toBe(false);
+  });
+
+  it('refreshes the channel for a later plain apply after permanent rejection', () => {
+    const result = probeRejectedExplicitRequest({ version: 'v2026.09.28-1' },
+      { version: 'v2026.09.28-2', sha256, size: 100, url: 'https://storage.example/bundle' },
+      true, false, false, 'plain');
+    expect(result.result.status, result.result.stderr).toBe(1);
+    expect(result.triggerExists).toBe(true);
+    expect(result.marker.version).toBe('v2026.09.28-2');
+    expect(result.downloadReached).toBe(false);
+  });
+
+  it.each(['version', 'channel'] as const)('skips the unchanged rejected %s target for a later plain apply', (initialTarget) => {
+    const result = probeRejectedExplicitRequest({ version: 'v2026.09.28-1' },
+      { version: 'v2026.09.28-2', sha256, size: 100, url: 'https://storage.example/bundle' },
+      true, false, false, 'plain', initialTarget);
+    expect(result.result.status, result.result.stderr).toBe(1);
+    expect(result.marker.version).toBe('v2026.09.28-2');
+    expect(result.fetched.at(-1)).toBe('https://platform.example/channel.json');
+    expect(result.triggerExists).toBe(true);
+    expect(result.downloadReached).toBe(false);
+  });
+
+  it('preserves a replacement prepared target after permanent rejection', () => {
+    const result = probeRejectedExplicitRequest({ version: 'v2026.09.28-1' },
+      { version: 'v2026.09.28-2', sha256, size: 100, url: 'https://storage.example/bundle' },
+      true, false, false, 'replacement');
+    expect(result.result.status, result.result.stderr).toBe(1);
+    expect(result.marker.version).toBe('v2026.09.28-3');
     expect(result.downloadReached).toBe(false);
   });
 

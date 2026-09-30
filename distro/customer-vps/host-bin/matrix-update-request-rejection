@@ -1,9 +1,7 @@
 #!/usr/bin/env bash
 # Fingerprint fixed request files without following symlinks or unbounded reads.
-update_request_identity() {
-  python3 - "${UPDATE_MARKER}" "${1:-${UPDATE_TRIGGER:-$APP_DIR/.update-now}}" \
-    "${UPDATE_VERSION_FILE:-$APP_DIR/.update-version}" \
-    "${UPDATE_CHANNEL_FILE:-$APP_DIR/.update-channel}" <<'PY'
+update_file_identity() {
+  python3 - "$@" <<'PY'
 import hashlib
 import os
 import stat
@@ -18,7 +16,7 @@ for path in sys.argv[1:]:
         continue
     digest.update(str((info.st_dev, info.st_ino, info.st_mode, info.st_size, info.st_mtime_ns)).encode())
     if stat.S_ISREG(info.st_mode) and info.st_size <= 65536:
-        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
         try:
             digest.update(os.read(fd, 65537))
         finally:
@@ -28,12 +26,55 @@ print(digest.hexdigest())
 PY
 }
 
+update_request_identity() {
+  update_file_identity "$UPDATE_MARKER" "${1:-${UPDATE_TRIGGER:-$APP_DIR/.update-now}}" \
+    "${UPDATE_VERSION_FILE:-$APP_DIR/.update-version}" "${UPDATE_CHANNEL_FILE:-$APP_DIR/.update-channel}"
+}
+
+# One fixed 195-byte record; fingerprints never contain transcript/credential data.
+# Different/replaced target files remain eligible for fresh verification.
+update_target_was_rejected() {
+  local path="$1" index actual rejected
+  case "$path" in
+    "$UPDATE_MARKER") index=0 ;;
+    "${UPDATE_VERSION_FILE:-$APP_DIR/.update-version}") index=1 ;;
+    "${UPDATE_CHANNEL_FILE:-$APP_DIR/.update-channel}") index=2 ;;
+    *) return 1 ;;
+  esac
+  actual="$(update_file_identity "$path")" || return 1
+  rejected="$(python3 - "$APP_DIR/.update-rejected-targets" "$index" <<'PY_RECORD'
+import os
+import re
+import stat
+import sys
+try:
+    fd = os.open(sys.argv[1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+except FileNotFoundError:
+    sys.exit(1)
+try:
+    info = os.fstat(fd)
+    if not stat.S_ISREG(info.st_mode) or info.st_size != 195:
+        sys.exit(1)
+    data = os.read(fd, 196)
+    if not re.fullmatch(rb"(?:[0-9a-f]{64}\n){3}", data):
+        sys.exit(1)
+    print(data.splitlines()[int(sys.argv[2])].decode())
+finally:
+    os.close(fd)
+PY_RECORD
+)" || return 1
+  [ "$actual" = "$rejected" ]
+}
+
 # Claim the trigger by rename before comparing. A concurrently replaced trigger
 # is restored with an exclusive hard link; an even newer trigger is never overwritten.
 reject_unchanged_update_request() {
-  local expected="$1" claimed actual restore_failed=false
+  local expected="$1" claimed actual marker_identity version_identity channel_identity record_temp restore_failed=false
   [ -n "$expected" ] || return 1
   if [ ! -e "$UPDATE_TRIGGER" ] && [ ! -L "$UPDATE_TRIGGER" ]; then return 0; fi
+  marker_identity="$(update_file_identity "$UPDATE_MARKER")" || return 1
+  version_identity="$(update_file_identity "${UPDATE_VERSION_FILE:-$APP_DIR/.update-version}")" || return 1
+  channel_identity="$(update_file_identity "${UPDATE_CHANNEL_FILE:-$APP_DIR/.update-channel}")" || return 1
   claimed="$(mktemp "$APP_DIR/.update-rejected.XXXXXX")" || return 1
   if ! sudo mv -Tf -- "$UPDATE_TRIGGER" "$claimed"; then
     rm -f -- "$claimed"
@@ -54,6 +95,17 @@ reject_unchanged_update_request() {
     fi
     sudo rm -f -- "$claimed"
     return 0
+  fi
+  record_temp="$(mktemp "$APP_DIR/.update-rejected-targets.XXXXXX")" || {
+    sudo ln -- "$claimed" "$UPDATE_TRIGGER" 2>/dev/null || log "WARN: rejected trigger restoration deferred"
+    return 1
+  }
+  if ! printf '%s\n%s\n%s\n' "$marker_identity" "$version_identity" "$channel_identity" > "$record_temp" \
+    || ! mv -Tf -- "$record_temp" "$APP_DIR/.update-rejected-targets"; then
+    rm -f -- "$record_temp"
+    sudo ln -- "$claimed" "$UPDATE_TRIGGER" 2>/dev/null || log "WARN: rejected trigger restoration deferred"
+    log "ERROR: rejected target record could not be stored"
+    return 1
   fi
   # Retain the prepared target: a trigger-only apply can arrive at any point
   # in cleanup. Removing just the claimed trigger permits normal polling.

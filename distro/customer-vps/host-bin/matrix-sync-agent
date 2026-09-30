@@ -1250,17 +1250,17 @@ consume_idempotent_update_request() {
 prepare_triggered_update() {
   local url="" target="" requested_version=""
   prepare_triggered_update_action=apply
-  if [ -f "$UPDATE_VERSION_FILE" ]; then
+  if [ -f "$UPDATE_VERSION_FILE" ] && ! update_target_was_rejected "$UPDATE_VERSION_FILE"; then
     target="$(cat "$UPDATE_VERSION_FILE" 2>/dev/null || true)"
     [ -n "$target" ] || { log "WARN: update version file is empty"; return 1; }
     [[ "$target" =~ ^[A-Za-z0-9._-]{1,128}$ ]] || return 2
     requested_version="$target"
     url="$(release_url_for_version "$target")"
-  elif [ -f "$UPDATE_CHANNEL_FILE" ]; then
+  elif [ -f "$UPDATE_CHANNEL_FILE" ] && ! update_target_was_rejected "$UPDATE_CHANNEL_FILE"; then
     target="$(cat "$UPDATE_CHANNEL_FILE" 2>/dev/null || true)"
     [ -n "$target" ] || { log "WARN: update channel file is empty"; return 1; }
     url="$(release_url_for_channel "$target")"
-  elif [ -f "$UPDATE_MARKER" ]; then
+  elif [ -f "$UPDATE_MARKER" ] && ! update_target_was_rejected "$UPDATE_MARKER"; then
     local manifest remote_version marker_channel
     manifest="$(cat "$UPDATE_MARKER")"
     remote_version="$(json_field "$manifest" version)"
