@@ -155,6 +155,7 @@ describe("funded relay Cloud Run service", () => {
       "context-management-2025-06-27",
       "prompt-caching-scope-2026-01-05",
       "mid-conversation-system-2026-04-07",
+      "advisor-tool-2026-03-01",
       "effort-2025-11-24",
     ]) expect(workflow).toContain(beta);
     expect(workflow).toContain("CLOUDFLARE_AI_GATEWAY_TOKEN=cloudflare-ai-gateway-token:latest");

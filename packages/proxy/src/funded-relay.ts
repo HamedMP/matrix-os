@@ -27,6 +27,7 @@ import {
   type FundedPlatformClient,
 } from "./funded-relay-platform-client.js";
 import {
+  assertFundedSystemMessageBeta,
   resolveRequestedBetas,
   serializeCountTokensRequest,
   serializeFundedRequest,
@@ -305,6 +306,7 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
       parsedBody = serialized.request;
       requestBody = serialized.body;
       anthropicBeta = resolveRequestedBetas(c.req.header("anthropic-beta"), config.allowedBetas);
+      if (!isOpenAi) assertFundedSystemMessageBeta(parsedBody as FundedRequest, anthropicBeta);
       model = mapFundedModel(parsedBody.model);
       if ((model.nativeModelId === FUNDED_GLM_FLASH) !== isOpenAi) throw new Error("Unsupported funded AI model");
     } catch (error) {

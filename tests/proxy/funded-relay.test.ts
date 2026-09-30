@@ -22,6 +22,7 @@ const CLAUDE_CODE_BETAS = [
   "context-management-2025-06-27",
   "prompt-caching-scope-2026-01-05",
   "mid-conversation-system-2026-04-07",
+  "advisor-tool-2026-03-01",
   "effort-2025-11-24",
 ] as const;
 const RESERVED_MICROUSD = 6_000;
@@ -249,6 +250,7 @@ describe("Cloudflare funded relay control-plane ordering", () => {
       expect(JSON.stringify(metadata)).not.toContain("machine_123");
       const forwarded = JSON.parse(String(init?.body));
       expect(forwarded).not.toHaveProperty("metadata");
+      expect(forwarded.messages.map((message: { role: string }) => message.role)).toEqual(["user", "system"]);
       if (url.endsWith("/v1/messages/count_tokens")) {
         expect(forwarded).not.toHaveProperty("max_tokens");
         expect(forwarded).not.toHaveProperty("stream");
@@ -279,6 +281,10 @@ describe("Cloudflare funded relay control-plane ordering", () => {
     relay.register(app);
     const bodyWithCallerMetadata = JSON.stringify({
       ...JSON.parse(requestBody()),
+      messages: [
+        { role: "user", content: "hello" },
+        { role: "system", content: "SDK mid-conversation instruction" },
+      ],
       metadata: { user_id: "raw-caller-id" },
       tools: [{
         name: "read",
@@ -408,6 +414,25 @@ describe("Cloudflare funded relay control-plane ordering", () => {
     relay.register(app);
     const response = await app.request("/v1/messages", fundedRequest(requestBody({ model: "claude-opus-5" })));
     expect(response.status).toBe(403);
+    expect(fetchMock).not.toHaveBeenCalled();
+    await relay.close();
+  });
+
+  it("requires the reviewed beta before forwarding an SDK mid-conversation system message", async () => {
+    const fetchMock = vi.fn();
+    const relay = configuredRelay(fetchMock as typeof fetch, {
+      allowedBetas: new Set(CLAUDE_CODE_BETAS),
+    });
+    const app = new Hono();
+    relay.register(app);
+    const body = JSON.stringify({
+      ...JSON.parse(requestBody()),
+      messages: [{ role: "user", content: "hello" }, { role: "system", content: "SDK instruction" }],
+    });
+    expect((await app.request("/v1/messages?beta=true", fundedRequest(body))).status).toBe(400);
+    expect((await app.request("/v1/messages?beta=true", fundedRequest(body, {
+      "anthropic-beta": "claude-code-20250219",
+    }))).status).toBe(400);
     expect(fetchMock).not.toHaveBeenCalled();
     await relay.close();
   });
