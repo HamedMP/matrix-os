@@ -10,11 +10,11 @@ The implementation must cover Electron Desktop's native Chat and the shared Web 
 
 ## Required behavior
 
-1. On a normal runtime entry, wait for persisted OS-view restoration, then open/focus the canonical Chat once. Explicit launch links retain precedence. Reuse an existing Chat surface without resetting its selected conversation or draft. Refreshes, switching presentations, ordinary renders, and a manual close must not trigger repeated reopening.
-2. When fresh authoritative provider state confirms no usable Chat route, show Claude Code and Codex connection controls in the empty Chat state. Reuse supported Settings connection actions, progress, and errors. Do not infer connection from installation or saved selection.
+1. On a normal runtime entry, wait for persisted OS-view restoration, then open the canonical Chat once only if it is not already open. An existing open Chat, including a minimized surface, is left untouched: no reopen, focus change, route reset, or draft loss. Explicit launch links retain precedence. Refreshes, switching presentations, ordinary renders, and a manual close must not trigger repeated reopening.
+2. When fresh authoritative provider state confirms no provider is connected, show Claude Code and Codex connection controls in the empty Chat state. Reuse supported Settings connection actions, progress, and errors. Do not infer connection from installation or saved selection. Connected status and send readiness remain separate: a connected but disabled, unfunded, or unavailable route must not be mislabeled as disconnected.
 3. Unknown, loading, and failed reads remain distinct from confirmed disconnected state. Keep draft composition available while sending remains governed by existing readiness/admission rules.
 4. Refresh readiness after a connection action completes or the user returns from authentication. Provide bounded manual refresh recovery without restarting the application. Preserve drafts and immutable existing Chat bindings.
-5. A usable Matrix AI, Hermes, Pi, or other supported route must retain normal Chat behavior even when Claude Code and Codex are disconnected. Existing conversations must not be replaced by onboarding.
+5. Any connected provider, including Matrix AI, Hermes, Pi, or another supported provider, suppresses connection onboarding even when Claude Code and Codex are disconnected. Preserve normal Chat behavior and its existing availability/recovery UI. Existing conversations must not be replaced by onboarding.
 
 ## Invariants
 
