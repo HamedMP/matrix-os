@@ -81,6 +81,7 @@ export async function bootstrapPlatformCollaboration(
   // assertion stays negative.
   const organizations = await createPlatformOrganizations({
     db: options.db.kysely as unknown as Kysely<OrganizationPlatformDatabase>,
+    platformSecret: options.platformSecret,
     ...(options.env.CLERK_SECRET_KEY ? { clerkSecretKey: options.env.CLERK_SECRET_KEY } : {}),
     ...(options.env.CLERK_ORGANIZATION_WEBHOOK_SIGNING_SECRET
       ? { webhookSigningSecret: options.env.CLERK_ORGANIZATION_WEBHOOK_SIGNING_SECRET }
