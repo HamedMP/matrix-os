@@ -1,6 +1,6 @@
 # Feature specification: Jev email triage
 
-Updated: 2026-09-26. Status: implementation approved; owner-matched runtime acceptance pending.
+Updated: 2026-09-29. Status: implementation approved; owner-matched runtime acceptance pending.
 Tracking: [ENG-11](https://linear.app/matrix-os/issue/ENG-11), [OM-286](https://linear.app/matrix-os/issue/OM-286), [GitHub #1800](https://github.com/HamedMP/matrix-os/issues/1800), [spec PR #1812](https://github.com/HamedMP/matrix-os/pull/1812).
 
 The team narrowed the first milestone from ENG-11's earlier three-recipe and generic `use-jevs` proposal to this one Gmail workflow. [ENG-11's current scope](https://linear.app/matrix-os/issue/ENG-11/jev-inbox-triage-recipe-via-matrix-ai-gateway) explicitly supersedes that 2026-09-21 proposal; the research and routing recipes and generic skill remain follow-up scope. The initial demo and release acceptance are read-only: no unattended label or archive mutation is accepted. The implementation may offer a separately requested, action-specific Gmail write after explicit user authorization or an existing automation grant, but neither creating the bot nor receiving a Jev result grants that authority.
@@ -66,6 +66,26 @@ After a successful run, Matrix can process only new or changed Gmail threads and
 3. **Given** an expired Gmail history cursor, **when** incremental discovery fails, **then** Matrix falls back to a bounded inbox rescan without treating every thread as automatically actionable.
 
 ## Functional requirements
+
+### Configured Hermes primary models (ENG-40)
+
+The Inbox bot remains a Hermes bot. Its isolated execution mode protects the mailbox and broker authority; it does not require an additional Anthropic account. The first expansion supports the existing owner Anthropic API-key route, Hermes's configured OpenAI API or OpenRouter API-key route, and Hermes's own OpenAI Codex subscription login. OpenRouter model IDs retain their provider prefix and slash. This is Codex as a model provider within Hermes, not a Codex harness bot.
+
+Creation and editing expose only the current supported Hermes selection. The server validates the same route family when saving, and revalidates the exact configured provider/model, fresh native authentication observation, owner, and saved enablement before starting a run. Existing unsupported saved bots remain readable and can be repaired by selecting a supported Hermes route; their old choice never authorizes execution.
+
+For native routes the server reads bounded, non-symlink default-profile config and the exact selected credential only. It does not execute owner config, hooks, key commands, Python startup files, or copy the profile. Custom endpoints, named profiles, ambiguous credential pools, other OAuth providers, and managed primary-model routes require separate verified adapters and are not advertised by this expansion. These limitations do not change Gateway-funded Jev access.
+
+A normal `hermes auth add openai-codex` device login may store its access grant only in the default profile's credential pool. Admit a single explicit OAuth device-login entry or the legacy provider singleton with matching pool aliases; multiple pool-only accounts, mismatched aliases, custom endpoints and expiring grants fail closed. The server reads the selected grant without changing the owner's auth store or importing its refresh grant into the child.
+
+Fresh native login/configuration can initialize an untouched generated Hermes default and expose its current supported model in Settings. It must not borrow a shared Anthropic/Codex account, promote local observation to verified provider access, or override a saved owner configuration (including an explicit Off switch). Stale or absent native evidence cannot establish a runnable default. The exact credential and native route are still checked again before each restricted run.
+
+The pinned Hermes model-options contract omits `auth_type` on built-in rows. A unique, explicitly non-user-defined `openai-api`, `openrouter`, or `openai-codex` row can identify the expected credential kind; absent custom-provider evidence must not become a generic OAuth default. Native readiness remains an observation, and admission still requires the exact bounded owner credential files and configured route. The public contracts entrypoint must also load under native Node without a TypeScript loader, because the sole-broker MCP launcher uses that runtime.
+
+The child uses an exclusive private HOME/HERMES_HOME, fixed official endpoint and protocol, no fallback providers, no auxiliary inference, and the sole native `jev_inbox_preview` broker tool. It uses the pinned SDK's explicit-credential path and validates native session provider, model, and nonlazy sole tool catalog before prompt submission. A Codex subscription projects only a fresh access token, with at least 120 seconds remaining at admission. It never copies or rotates the owner's refresh token or imports another CLI's login; expired/revoked credentials stop and require owner reauthentication through Hermes. Primary-model failure cannot select another account, provider, or payer.
+
+No new endpoint or authorization method is introduced. The existing authenticated Agent API owns saved selection; the run-scoped broker capability owns Inbox operations; the executing owner's Matrix funded policy and ledger own Jev charges. Primary-model inference uses the selected personal account independently of Jev funding. No Gmail write is enabled.
+
+Validation must record failing-first route regressions, legacy Anthropic coverage, native credential isolation, expiry/account/model/provider mismatch failures, zero alternate dispatch after failure, the real pinned SDK explicit-key behavior, and actual Electron Desktop connectivity against an exact-head Preview VPS or isolated local Linux runtime. A broker or SDK fixture pass is not live provider or mailbox acceptance. Attach privacy-safe screenshots and exact runtime/build provenance to [ENG-40](https://linear.app/matrix-os/issue/ENG-40).
 
 - **FR-001**: All Jev inference MUST use the Matrix Jev Gateway and the authenticated executing owner's Matrix AI authority. Agent inputs MUST NOT select a payer, API key or upstream endpoint.
 - **FR-002**: Jev access MUST remain independent of the primary model's selected provider or account.

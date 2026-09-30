@@ -1,13 +1,15 @@
 import type { ChatAgentRecipe, CanonicalProviderCatalog, CanonicalChatModelSelection } from "@matrix-os/contracts";
+import { jevHermesRoute } from "@matrix-os/contracts";
 
 export const JEV_AGENT_NAME = "Jev Inbox Triage";
-export const JEV_AGENT_DESCRIPTION = "Review up to the latest four messages of a selected Gmail thread and propose labels or archiving. Requires the selected Hermes owner API-key route and funded Jev readiness. Never changes email.";
+export const JEV_AGENT_DESCRIPTION = "Review up to the latest four messages of a selected Gmail thread and propose labels or archiving. Uses your configured Hermes account and Matrix AI credits for Jev. Never changes email.";
 export function jevAgentSelection(catalog?: CanonicalProviderCatalog): CanonicalChatModelSelection | null {
   const instances = catalog?.instances.filter(instance => instance.id === "hermes_default" && instance.driverKind === "hermes") ?? [];
   const instance = instances[0];
   if (instances.length !== 1 || !instance || instance.availability !== "available"
     || !instance.supports.interactionModes.includes("default") || !instance.supports.permissionModes.includes("full_access")
     || instance.defaultSelection?.instanceId !== instance.id
+    || !jevHermesRoute(instance.defaultSelection)
     || !instance.models.some(model => model.id === instance.defaultSelection?.model && model.availability === "available")) return null;
   return { ...instance.defaultSelection };
 }

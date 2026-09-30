@@ -1156,6 +1156,8 @@ export async function createGateway(config: GatewayConfig) {
       if (!providerSettingsStore) throw new Error("Provider settings are unavailable");
       return providerSettingsStore.getSnapshot(options);
     } },
+    runtimeSource: Object.assign((signal: AbortSignal) => agentRuntimeServices.systemRuntimeSources.hermes(signal),
+      { invalidate: () => agentRuntimeServices.systemRuntimeSources.hermes.invalidate?.() }),
     getAgent: (ownerId, agentId) => canonicalChatRuntime?.agents.get({ type: "personal", ownerId }, agentId) ?? Promise.resolve(null),
     service: jevService, summary: fundedAiFundingSummaryReader,
     routes: fundedAiRuntimeConfig ? createFundedAiRouteReadinessClient(fundedAiRuntimeConfig) : undefined,

@@ -1,4 +1,5 @@
 import type { ProviderSnapshotReadOptions } from "../ai-providers/snapshot-read-options.js";
+import type { AgentRuntimeSource } from "../agent-config/service.js";
 import { JEV_MODEL_ID, FundedAiRuntimeFundingSummaryResponseSchema, type ChatAgent, type ProviderSettingsSnapshot } from "@matrix-os/contracts";
 import { createJevHermesCredentialResolver } from "../chat/jev-hermes-credentials.js";
 import { verifyJevHermesRuntimePin, verifyJevHermesDependencies } from "../chat/jev-hermes-runtime-pin.js";
@@ -19,6 +20,7 @@ import { createJevRoutes } from "./routes.js";
 /** One production authority composition; no credential inheritance, transport fallback after failure, or alternate funding path. */
 export function createProductionJevInboxRuntime(options: {
   homePath: string; ownerId: string; fundedOwnerId?: string;
+  runtimeSource?: AgentRuntimeSource;
   settings: { getSnapshot(options?: ProviderSnapshotReadOptions): Promise<ProviderSettingsSnapshot> };
   getAgent: (ownerId: string, agentId: string) => Promise<ChatAgent | null>;
   service: JevService | null;

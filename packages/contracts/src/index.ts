@@ -67,6 +67,7 @@ export * from "#organization-billing";
 export * from "#organization-drive";
 export * from "#custom-mcp-policy";
 export * from "#hermes-configuration";
+export * from "#jev-hermes-route";
 export * from "#kernel-result";
 export * from "#kernel-conversations";
 export * from "#provider-settings";

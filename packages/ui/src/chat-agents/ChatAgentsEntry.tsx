@@ -281,7 +281,9 @@ export function ChatAgentsPanel({ client, view = "library", onClose, onSetup, on
     {recipes ? <AgentRecipesPanel onStartChat={onStartChat ? (text) => { onClose(); onStartChat(text); } : undefined}
       onCreateJev={onStartChat ? createJev : undefined} connections={state.connections}
       jevUnavailable={jevUnavailable} jevPending={jevPending} jevError={jevError} /> : <div className="mx-auto w-full max-w-3xl">
-    <AgentLibraryBody state={state} models={models} edit={edit} change={change} save={save} archive={archive}
+    <AgentLibraryBody state={state} models={state.draft?.recipe?.skills.includes("matrix-jev-email-triage")
+      ? models.filter(choice => choice.instanceId === jevSelection?.instanceId && choice.modelId === jevSelection?.model) : models}
+      edit={edit} change={change} save={save} archive={archive}
       back={() => patch({ editing: null, draft: null, error: "" })} retryRecipes={retryRecipes}
       setup={onSetup ? () => { onClose(); onSetup(); } : undefined} />
     {state.error ? <p role="alert" className="mt-4 text-sm">{state.error}</p> : state.notice ? <p role="status" className="mt-4 min-w-0 truncate text-sm" title={state.notice}>{state.notice}</p> : null}
