@@ -278,6 +278,26 @@ describe("Desktop launcher dock button by mode", () => {
     await waitFor(() => expect(windowManagerStore.getState().windows.find((w) => w.id === windowManagerStore.getState().focusedWindowId)?.path).toBe("__terminal__"));
   });
 
+  it.each([undefined, "shared_scope"])("completes an explicit Terminal launch after early navigation while restoring (shared=%s)", async (sharedTerminalScopeId) => {
+    resetShellMode("desktop", true);
+    const bootstrap = deferredResponse();
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => String(input).includes("/api/shell/bootstrap")
+      ? bootstrap.promise : jsonResponse({})));
+    renderDesktop({ launchAppPath: "__terminal__", sharedTerminalScopeId });
+    act(() => windowManagerStore.getState().openWindow("Files", "__file-browser__", 70));
+    const files = windowManagerStore.getState().windows[0]!;
+    await act(async () => bootstrap.resolve(new Response(JSON.stringify({ layout: { windows: [] } }), { status: 200 })));
+    await waitFor(() => expect(windowManagerStore.getState().windows.some((w) => w.path === "__terminal__"
+      && w.sharedTerminalScopeId === sharedTerminalScopeId)).toBe(true));
+    const terminal = windowManagerStore.getState().windows.find((w) => w.path === "__terminal__")!;
+    expect(windowManagerStore.getState().focusedWindowId).toBe(terminal.id);
+    expect(windowManagerStore.getState().windows.some((w) => w.path === "__chat__")).toBe(false);
+    act(() => windowManagerStore.getState().closeWindow(terminal.id));
+    act(() => desktopModeStore.setState({ mode: "canvas" }));
+    await act(async () => { await Promise.resolve(); });
+    expect(windowManagerStore.getState().windows).toEqual([files]);
+  });
+
   it.each([false, true])("does not refocus or rewrite an existing Chat (minimized=%s)", async (minimized) => {
     resetShellMode("desktop", true);
     windowManagerStore.getState().openWindow("Chat", "__chat__", 70);

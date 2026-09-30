@@ -352,3 +352,7 @@
 .matrix-chat-provider-connections button { min-height: 36px; border-radius: 8px; border: 1px solid var(--border-default, var(--border)); background: var(--bg-elevated, var(--background)); color: inherit; padding: 6px 12px; cursor: pointer; }
 .matrix-chat-provider-connections button:disabled { opacity: .5; cursor: default; }
 .matrix-chat-provider-attempt { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin: 12px 0; }
+.matrix-chat-connection-recovery { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 12px; font-size: 12px; }
+.matrix-chat-connection-recovery p { margin: 0; }
+.matrix-chat-connection-recovery button { min-height: 32px; padding: 4px 10px; font-size: 12px; }
+.matrix-chat-connection-recovery .matrix-chat-provider-attempt { gap: 8px; margin: 0; }

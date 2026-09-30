@@ -31,7 +31,9 @@ export function useDesktopChatStartup({
   const wmOpenWindow = useWindowManager((s) => s.openWindow);
   const wmRestoreAndFocusWindow = useWindowManager((s) => s.restoreAndFocusWindow);
   useEffect(() => {
-    if (!settled || !modeHydrated || navigationChangedRef.current || !launchAppPath) return;
+    // Explicit entry requests remain authoritative after early navigation;
+    // the navigation guard applies only to the automatic Chat launch below.
+    if (!settled || !modeHydrated || !launchAppPath) return;
     const launchRequestKey = sharedTerminalScopeId
       ? `${launchAppPath}?sharedScope=${encodeURIComponent(sharedTerminalScopeId)}`
       : launchAppPath;

@@ -33,6 +33,15 @@ export function useNativeStartupNavigation(entryKey: string) {
   return { navigationChangedRef, restoringRef };
 }
 
+function createStartupEntry(entryKey: string) {
+  const tabs = useTabs.getState().tabs;
+  return {
+    entryKey, consumed: false, restored: false, openedPaths: new Set<string>(),
+    // Preserve entry intent before any restoration pass adds other apps.
+    explicitLaunch: tabs.length > 0 && !tabs.some((tab) => tab.kind === "work"),
+  };
+}
+
 export function useNativeChatStartup(input: {
   entryKey: string;
   loadSettled: boolean;
@@ -46,10 +55,10 @@ export function useNativeChatStartup(input: {
   restoringRef: { current: boolean };
   openChat: () => void;
 }) {
-  const stateRef = useRef({ entryKey: input.entryKey, consumed: false, restored: false, openedPaths: new Set<string>() });
+  const stateRef = useRef(createStartupEntry(input.entryKey));
   useEffect(() => {
     if (stateRef.current.entryKey === input.entryKey) return;
-    stateRef.current = { entryKey: input.entryKey, consumed: false, restored: false, openedPaths: new Set<string>() };
+    stateRef.current = createStartupEntry(input.entryKey);
   }, [input.entryKey]);
   useEffect(() => {
     const startup = stateRef.current;
@@ -86,7 +95,7 @@ export function useNativeChatStartup(input: {
       const open = shouldOpenChatOnStartup({
         settled: true, consumed: startup.consumed,
         // A native destination already present before restoration is an explicit entry.
-        explicitLaunch: initialTabs.tabs.length > 0 && !chat && startup.openedPaths.size === 0,
+        explicitLaunch: startup.explicitLaunch,
         navigationChanged: input.navigationChangedRef.current, chatOpen,
       });
       startup.consumed = true;

@@ -42,6 +42,43 @@ describe("Chat connection state", () => {
   });
 });
 describe("Chat provider connection rows", () => {
+  it("offers a compact manual retry after an initial read failure without replacing normal Chat", async () => {
+    let release!: (value: ReturnType<typeof disconnectedSnapshot>) => void;
+    const getSnapshot = vi.fn().mockRejectedValueOnce(new Error("private read failure"))
+      .mockImplementationOnce(() => new Promise((resolve) => { release = resolve; }));
+    render(<ChatProviderOnboarding identityKey="initial-failure" transport={{ getSnapshot, mutate: vi.fn() }}
+      isIdentityCurrent={() => true} openAction={() => true}>
+      <div>Normal Chat suggestions<textarea aria-label="Draft" /></div>
+    </ChatProviderOnboarding>);
+    const retry = await screen.findByRole("button", { name: "Check connection" });
+    await waitFor(() => expect(retry).toBeEnabled());
+    expect(screen.getByText("Normal Chat suggestions")).toBeVisible();
+    expect(screen.getByRole("region", { name: "Chat connection recovery" })).toHaveClass("matrix-chat-connection-recovery");
+    expect(screen.queryByRole("region", { name: "Chat provider connection" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Connection status unavailable")).not.toBeInTheDocument();
+    expect(screen.queryByText("private read failure")).not.toBeInTheDocument();
+    const draft = screen.getByRole("textbox", { name: "Draft" });
+    fireEvent.change(draft, { target: { value: "Retain this prompt" } });
+    fireEvent.click(retry);
+    await waitFor(() => expect(getSnapshot).toHaveBeenCalledTimes(2));
+    expect(retry).toBeDisabled();
+    fireEvent.click(retry); expect(getSnapshot).toHaveBeenCalledTimes(2);
+    const snapshot = disconnectedSnapshot(); snapshot.harnesses[0]!.authState = "authenticated";
+    await act(async () => release(snapshot));
+    expect(screen.queryByRole("region", { name: "Chat connection recovery" })).not.toBeInTheDocument();
+    expect(screen.getByText("Normal Chat suggestions")).toBeVisible();
+    expect(draft).toHaveValue("Retain this prompt");
+  });
+  it("never shows recovery or login controls for connected evidence even after an error", () => {
+    const snapshot = disconnectedSnapshot(); snapshot.harnesses[0]!.authState = "authenticated";
+    render(<ChatProviderConnections snapshot={snapshot} error="unsafe error" onMutate={vi.fn()} onRefresh={vi.fn()} onOpenAction={vi.fn()}>
+      <div>Normal Chat suggestions</div>
+    </ChatProviderConnections>);
+    expect(screen.getByText("Normal Chat suggestions")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Check connection" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Chat provider connection" })).not.toBeInTheDocument();
+  });
   it("retains normal Chat after a failed refresh of previously connected settings", async () => {
     const snapshot = disconnectedSnapshot(); snapshot.harnesses[0]!.authState = "authenticated";
     const getSnapshot = vi.fn().mockResolvedValueOnce(snapshot).mockRejectedValue(new Error("private read failure"));

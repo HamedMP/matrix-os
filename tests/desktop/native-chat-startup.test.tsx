@@ -134,6 +134,20 @@ describe("canonical Chat runtime startup", () => {
     expect(useTabs.getState().tabs.find((tab) => tab.id === useTabs.getState().activeTabId)?.kind).toBe("work");
   });
 
+  it("preserves an explicit non-Chat entry across another app's restoration passes", async () => {
+    const terminalId = useTabs.getState().openTab({ kind: "terminals", title: "Terminal", closable: false });
+    useDesktopSurfaces.getState().reconcileTabs([terminalId], { width: 1200, height: 720 });
+    const document = createDefaultOsViewDocument();
+    document.apps = [{ path: "__file-browser__", title: "Files", state: "open" }];
+    useConnection.setState({ status: "signed-in", api: startupApi(document) as never });
+    render(<NativeDesktopShell overlayOpen={false} />);
+    await waitFor(() => expect(useTabs.getState().tabs.some((tab) => tab.kind === "files")).toBe(true));
+    // Allow the second startup pass, after restored surfaces have settled.
+    await act(async () => { await Promise.resolve(); });
+    expect(useTabs.getState().tabs.some((tab) => tab.kind === "work")).toBe(false);
+    expect(useTabs.getState().activeTabId).toBe(terminalId);
+  });
+
   it("rejects a delayed restoration from the previously selected runtime", async () => {
     let resolve!: (state: unknown) => void;
     const pending = new Promise((next) => { resolve = next; });

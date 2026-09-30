@@ -63,8 +63,8 @@ export function ChatProviderConnections({ snapshot, busy = false, error, attempt
     <button type="button" disabled={busy} onClick={onRefresh}>Check connection</button>
   </>;
   if (!disconnected) {
-    const retainRecovery = Boolean(attempt || error) && deriveChatProviderConnectionState(snapshot) === "disconnected";
-    return <>{children}{retainRecovery ? <section aria-label="Chat connection recovery" className="matrix-chat-provider-connections" aria-busy={busy || undefined}>{recovery}</section> : null}</>;
+    const retainRecovery = Boolean(attempt || error);
+    return <>{children}{retainRecovery ? <section aria-label="Chat connection recovery" className="matrix-chat-provider-connections matrix-chat-connection-recovery" aria-busy={busy || undefined}>{recovery}</section> : null}</>;
   }
   const canLogin = snapshot?.access.mode === "writable" && snapshot.supportedActions.includes("start_login");
   return <section aria-label="Chat provider connection" className="matrix-chat-provider-connections" aria-busy={busy || undefined}>

@@ -48,6 +48,8 @@ Web Desktop/Web Canvas bootstrap and Electron Desktop restoration consume one st
 
 `shouldOpenChatOnStartup({ settled, consumed, explicitLaunch, navigationChanged, chatOpen }): boolean` is shared by both renderers. Open/minimized Chat counts as present. Restore/catalog/mode settlement precedes the decision. A manual navigation or explicit launch consumes the automatic entry decision.
 
+Electron captures an explicit non-Chat entry before restoration adds other tabs, preserving its focus. Web explicit ordinary/shared launches execute once even if navigation changes while loading; the navigation guard applies to automatic Chat only.
+
 `deriveChatProviderConnectionState(snapshot, failed): connected | disconnected | checking | unknown | unavailable` uses the Settings snapshot, separately from the existing send admission logic.
 
 | Existing route | Auth | Purpose |
@@ -73,7 +75,7 @@ Identity comprises runtime/account generation on Electron Desktop and gateway or
 | Confirmed no connected provider | Claude Code and Codex connection rows |
 | No snapshot | Normal Chat content while connection evidence loads; existing catalog/loading controls remain authoritative |
 | Unknown/stale/unverified local login evidence | Normal Chat content and existing model recovery; no onboarding replacement or authentication claim |
-| Snapshot read failure | Normal Chat content and existing recovery; no replacement onboarding status gate |
+| Snapshot read failure | Normal Chat content with a compact manual retry; no replacement onboarding status gate; positive connected evidence suppresses the retry |
 | Login mutation/action failure in confirmed disconnected flow | Safe generic error and bounded retry/continue controls |
 | Old runtime response | Discarded; no terminal/browser action |
 
