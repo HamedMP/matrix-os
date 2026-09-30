@@ -19,6 +19,7 @@ import {
   type GrantRow,
 } from "./capability-records.js";
 import type { OwnerCollaborationDatabase } from "./database.js";
+import { actorRetainsGrantAccess } from "./capability-directory-access.js";
 
 export { toActivationRecord, toGrantRecord, type ActivationRecord, type GrantRecord, type GrantRow };
 import {
@@ -367,12 +368,14 @@ export class CollaborationCapabilityRepository {
       const changed = await apply(trx, grant, now);
       if (!changed) return;
       const advancedScope = await advanceScopeAccessRevision(trx, scope, now);
+      const accepted = auditAction === "grant.accepted"
+        || await actorRetainsGrantAccess(trx, advancedScope, input, now);
       await appendMutationRecords(trx, {
         scope: advancedScope,
         actorId: input.actorId,
         action: auditAction,
         recipients: [{ actorId: input.actorId }],
-        discoveryState: auditAction === "grant.accepted" ? "accepted" : "revoked",
+        discoveryState: accepted ? "accepted" : "revoked",
         now,
       });
     });

@@ -9,7 +9,7 @@ import { PlatformCollaborationRepository } from "../../packages/platform/src/col
 import { createCollaborationTestDatabase, collaborationActors, collaborationIds } from "./collaboration-test-support.js";
 import { createPlatformCollaborationTestDatabase, destroyPlatformCollaborationTestDatabase } from "../platform/collaboration-test-support.js";
 
-it("projects organization grant acceptance and departure with increasing directory revisions", async () => {
+it.each(["organization acceptance", "decline with active member", "decline with pending member", "decline with expired member", "decline with active organization", "decline with stale organization"])("projects %s using current grant access", async (scenario) => {
   const home = await createCollaborationTestDatabase();
   const platform = await createPlatformCollaborationTestDatabase();
   const now = new Date("2026-09-30T12:00:00Z");
@@ -46,6 +46,30 @@ it("projects organization grant acceptance and departure with increasing directo
       audience: { kind: "organization" }, preset: "contributor", policyVersion: "v1" });
     expect(await worker.runOnce()).toBe(1);
     expect(await directory.getScopeActorStatus(collaborationIds.scope, collaborationActors.editor)).toBeNull();
+    if (scenario !== "organization acceptance") {
+      const organizationAccess = scenario.endsWith("organization");
+      if (organizationAccess) {
+        await grants.acceptGrant({ grantId: grant.grantId, actorId: collaborationActors.editor, membershipEvidenceEpoch: "1" });
+        expect(await worker.runOnce()).toBe(1);
+      }
+      const current = await grants.resolveActorGrants(collaborationIds.scope, collaborationActors.editor);
+      const memberGrant = await grants.createGrant({ scopeId: collaborationIds.scope, actorId: collaborationActors.owner,
+        clientRequestId: randomUUID(), expectedRevision: Number(current!.scope.revision), payloadHash: "b".repeat(64),
+        audience: { kind: "member", actorId: collaborationActors.editor }, preset: "viewer", policyVersion: "v1",
+        ...(scenario === "decline with expired member" ? { expiresAt: new Date(now.getTime() + 1_000).toISOString() } : {}) });
+      expect(await worker.runOnce()).toBe(1);
+      if (!organizationAccess && scenario !== "decline with pending member") {
+        await grants.acceptGrant({ grantId: memberGrant.grantId, actorId: collaborationActors.editor, membershipEvidenceEpoch: "1" });
+        expect(await worker.runOnce()).toBe(1);
+      }
+      if (scenario === "decline with expired member") now.setTime(now.getTime() + 2_000);
+      await grants.declineGrant({ grantId: organizationAccess ? memberGrant.grantId : grant.grantId,
+        actorId: collaborationActors.editor, membershipEvidenceEpoch: scenario === "decline with stale organization" ? "2" : "1" });
+      expect(await worker.runOnce()).toBe(1);
+      expect(await directory.getScopeActorStatus(collaborationIds.scope, collaborationActors.editor))
+        .toBe(["decline with active member", "decline with active organization"].includes(scenario) ? "accepted" : "revoked");
+      return;
+    }
     const decision = { grantId: grant.grantId, actorId: collaborationActors.editor, membershipEvidenceEpoch: "1" };
     await grants.acceptGrant(decision);
     expect(await worker.runOnce()).toBe(1);
