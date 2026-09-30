@@ -356,7 +356,7 @@ restore_rollback_release_metadata() {
 }
 
 install_host_bin_payload() {
-  local source_dir="$1" source name incoming destination
+  local source_dir="$1" source name incoming destination protected_helper
   [ -d "$source_dir" ] && [ ! -L "$source_dir" ] || return 1
   sudo install -d -o root -g root -m 0755 "$BIN_DIR" || return 1
   while IFS= read -r -d '' source; do
@@ -375,6 +375,23 @@ install_host_bin_payload() {
       return 1
     fi
   done < <(find "$source_dir" -mindepth 1 -maxdepth 1 -type f -print0)
+  protected_helper="$source_dir/matrix-support-access"
+  if [ -f "$protected_helper" ] && [ ! -L "$protected_helper" ]; then
+    sudo install -d -o root -g root -m 0755 /usr/local/libexec || return 1
+    incoming="/usr/local/libexec/.matrix-support-access.incoming.$$"
+    destination=/usr/local/libexec/matrix-support-access
+    if [ -L "$destination" ] || { [ -e "$destination" ] && [ ! -f "$destination" ]; }; then
+      log "ERROR: invalid protected support helper destination"
+      return 1
+    fi
+    sudo rm -f -- "$incoming" || return 1
+    if ! sudo install -o root -g root -m 0755 "$source_dir/matrix-support-access" "$incoming" \
+      || ! sudo mv -Tf "$incoming" "$destination"; then
+      sudo rm -f -- "$incoming"
+      return 1
+    fi
+    sudo chmod 0644 "$BIN_DIR/matrix-support-access" || return 1
+  fi
 }
 
 record_update_payload_directory() {
@@ -521,6 +538,7 @@ prepare_update_transaction() {
   record_update_payload_directory "$extract_dir/user-systemd" /etc/systemd/user user-systemd || return 1
   record_update_file "$RELEASE_FILE" release-metadata || return 1
   record_update_file "$RELEASE_ROLLBACK_FILE" rollback-release-metadata || return 1
+  record_update_file /usr/local/libexec/matrix-support-access support-helper || return 1
 
   if [ -L "$TERMINAL_RUNTIME_ROOT/current" ]; then
     current_target="$(readlink "$TERMINAL_RUNTIME_ROOT/current")" || return 1
@@ -622,6 +640,9 @@ restore_update_transaction() {
   restore_update_payload_directory /etc/systemd/user user-systemd || return 1
   restore_update_file "$RELEASE_FILE" release-metadata || return 1
   restore_update_file "$RELEASE_ROLLBACK_FILE" rollback-release-metadata || return 1
+  if [ -f "$UPDATE_TRANSACTION_DIR/support-helper.present" ] || [ -f "$UPDATE_TRANSACTION_DIR/support-helper.missing" ]; then
+    restore_update_file /usr/local/libexec/matrix-support-access support-helper || return 1
+  fi
 
   if [ -f "$UPDATE_TRANSACTION_DIR/terminal-current" ]; then
     IFS= read -r current_target <"$UPDATE_TRANSACTION_DIR/terminal-current" || return 1
@@ -673,11 +694,13 @@ cleanup_update_transaction() {
 
 # Keep the one-level rollback snapshot while the previous app bundle can still
 # be restored. The next update replaces both its rollback app and transaction.
-preserve_symphony_rollback_transaction() {
+preserve_host_rollback_transaction() {
   if { [ -f "$UPDATE_TRANSACTION_DIR/systemd.present" ] &&
       grep -Fxq 'matrix-symphony.service' "$UPDATE_TRANSACTION_DIR/systemd.present"; } ||
-    [ -f "$UPDATE_TRANSACTION_DIR/symphony.masked" ]; then
-    log "Preserved legacy Symphony unit and service state for rollback"
+    [ -f "$UPDATE_TRANSACTION_DIR/symphony.masked" ] ||
+    [ -f "$UPDATE_TRANSACTION_DIR/support-helper.present" ] ||
+    [ -f "$UPDATE_TRANSACTION_DIR/support-helper.missing" ]; then
+    log "Preserved host artifacts for manual rollback"
   else
     cleanup_update_transaction
   fi
@@ -1528,7 +1551,7 @@ apply_update() {
       fi
       log "Health check passed — update to $version complete"
       clear_consumed_update_markers
-      preserve_symphony_rollback_transaction
+      preserve_host_rollback_transaction
     else
       log "ERROR: release metadata commit failed — rolling back"
       if do_rollback false; then
