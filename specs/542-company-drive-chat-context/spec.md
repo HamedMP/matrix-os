@@ -78,10 +78,16 @@ source API increment adds these endpoints; none is public:
 | --- | --- | --- |
 | `POST /api/collaboration/scopes/:scopeId/drive/context/search` | Signed scope request; exact organization/folder scope; fresh member, role, epoch and authority checks before return | Read-only operation with a signed, bounded request body; 50 rows maximum; literal metadata path search with a 5 second SQL deadline; private, no-store |
 | `GET /api/collaboration/scopes/:scopeId/drive/files/:fileId/context` | Signed scope request; exact organization file; fresh authorization and live-file checks after I/O | Current/pinned immutable version; 4 MiB verified source, 32 KiB UTF-8 excerpt; four concurrent reads; private, no-store |
+| `POST /internal/collaboration/drive-context/connections` | Enrolled runtime credential; actor derived from enrollment owner; folder ticket fixed to direct-session purpose and four actions | Strict bounded JSON; no client actor override; no file content stored by platform |
+| `POST /internal/collaboration/drive-context/relay/api/collaboration/direct-sessions` | Enrolled runtime plus owner-bound ticket, possession proof and exact scope/runtime/origin | Creates an ephemeral proof-bound session; no general relay or drive write access |
+| `POST /internal/collaboration/drive-context/relay/api/collaboration/scopes/:scopeId/drive/context/search` | Enrolled runtime and signed owner session; source home checks current membership/authority | Original signed body bytes retained; 96 KiB request cap; bounded source metadata response |
+| `GET /internal/collaboration/drive-context/relay/api/collaboration/scopes/:scopeId/drive/files/:fileId/context` | Enrolled runtime and signed owner session; source home checks exact file, version and authority | 128 KiB response cap at owner client; no enrollment token forwarded to home |
+| `DELETE /internal/collaboration/drive-context/relay/api/collaboration/direct-sessions/:sessionId` | Enrolled runtime and signed exact session | Cleanup after every operation; three second cleanup deadline; source TTL covers lost acknowledgments |
+
 
 The source endpoints add no writes, copied objects or database ownership. Failed
-reads cancel their bodies. Renderer and owner-runtime delegation remain separate
-from this source API; context controls stay unavailable until delegation, Chat
+reads cancel their bodies. Renderer and Chat admission remain separate
+from these read-only transport APIs; context controls stay unavailable until delegation, Chat
 admission, queue/retry checks and harness wiring pass together.
 
 ## Delivery and evidence
@@ -89,7 +95,9 @@ admission, queue/retry checks and harness wiring pass together.
 - [ ] Shared browser and exact-scope Chat sidebar shortcut PR; current-head review,
       full CI, synthetic visual evidence and a separate public site docs PR.
 - [x] Source search/read contract, auth matrix and failing boundary tests (PR #2084).
-- [ ] Owner-runtime delegation and live acceptance.
+- [x] Owner-runtime delegation with signed cross-runtime integration, long UTF-8
+      folder searches, membership revocation, caps and shutdown cancellation tests.
+- [ ] Deployed runtime delegation and live acceptance.
 - [ ] Canonical association, run tools/excerpts and queue/retry revalidation.
 - [ ] Shared Add context/mention/File actions, scope-associated Chat grouping,
       empty/disabled/error states and keyboard parity.
@@ -100,3 +108,19 @@ admission, queue/retry checks and harness wiring pass together.
 Native Mobile: drive transfer is already excluded by Spec 530. When drive context
 is made available there, it must use the same business semantics and typed API;
 no unsupported native picker is implied by the Web Mobile browser increment.
+
+## Delegation runtime wiring
+
+Platform composition registers a narrow enrolled-runtime endpoint beside existing
+collaboration delegation, reusing the current runtime enrollment verifier, ticket
+issuer and transparent home relay. The requesting gateway client is bound to the
+configured owner, runtime and platform origin; each operation creates a fresh
+proof key, exchanges a folder ticket, sends one signed search/read, then closes
+that session. The platform never forwards enrollment credentials to a home.
+
+The client permits four concurrent operations, bounds JSON responses to 128 KiB,
+uses ten second HTTP deadlines and a sixty second operation deadline, rejects
+redirects, and aborts outstanding work when closed. Unknown or malformed responses
+become a safe unavailable error. Chat composition must inject this dependency and
+close it during shutdown before context controls become available. The transport
+increment alone does not enable Chat context or persist a Chat association.

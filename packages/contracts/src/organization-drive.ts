@@ -81,3 +81,12 @@ export const OrganizationDriveContextSearchResponseSchema = z.object({
   organizationId: CollaborationOrganizationIdSchema, scopeId: z.uuid(),
   files: z.array(OrganizationDriveFileSchema).max(50), nextCursor: OrganizationDrivePathSchema.optional(),
 }).strict();
+
+const DriveContextIdentity = {organizationId: CollaborationOrganizationIdSchema, scopeId: z.uuid()};
+/** Stable authority references; names and renderer labels never grant access. */
+export const OrganizationDriveContextReferenceSchema = z.discriminatedUnion("kind", [
+  z.object({...DriveContextIdentity,kind:z.literal("drive")}).strict(),
+  z.object({...DriveContextIdentity,kind:z.literal("folder"),path:OrganizationDrivePathSchema}).strict(),
+  z.object({...DriveContextIdentity,kind:z.literal("file"),fileId:z.uuid(),version:z.number().int().positive().max(2_147_483_647)}).strict(),
+]);
+export type OrganizationDriveContextReference = z.infer<typeof OrganizationDriveContextReferenceSchema>;
