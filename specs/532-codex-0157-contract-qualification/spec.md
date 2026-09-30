@@ -25,3 +25,7 @@ The next scheduled check downloaded exact 0.157.1 and stopped at the same intent
 ## Exact qualification: 0.159.0
 
 [ENG-53](https://linear.app/matrix-os/issue/ENG-53/fixcodex-qualify-provider-contracts-for-01590) qualifies published 0.159.0 after the shared workflow rejects it as unverified. Preserve every previous record, installer/runtime pins and all approval/auth/sandbox boundaries. Review the complete 0.158.0-to-0.159.0 schema and qualify the one changed required notification with adapter regression coverage. Exact-head Greptile, full Linux CI and both native target verifiers remain landing gates. [Evidence](evidence/qualification-01590.md).
+
+## Exact patch qualification: 0.159.2
+
+[ENG-54](https://linear.app/matrix-os/issue/ENG-54/fixcodex-qualify-provider-contracts-for-01592) qualifies the published 0.159.2 patch after the shared workflow rejects it at the intentional unknown-version guard. Its tagged exec source is byte-identical to the previously qualified source, and both published target schemas are byte-identical to the previously qualified 0.159.0 schema. Preserve all prior records, the 0.156.1 installer pin and fail-closed rejection of unreviewed versions. Exact-head Greptile, full CI and both native target verifiers remain landing gates. [Evidence](evidence/qualification-01592.md).

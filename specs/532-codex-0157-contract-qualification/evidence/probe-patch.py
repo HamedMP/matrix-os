@@ -20,7 +20,7 @@ SCRATCH = tempfile.TemporaryDirectory(prefix="eng26-codex-spike-")
 BASE = Path(SCRATCH.name)
 CODEX = Path(os.environ["CODEX_SPIKE_BINARY"])
 VERSION = os.environ.get("CODEX_SPIKE_VERSION", "0.157.1")
-assert VERSION in {"0.157.1", "0.159.0"}, "Fixture version must be explicitly qualified"
+assert VERSION in {"0.157.1", "0.159.0", "0.159.2"}, "Fixture version must be explicitly qualified"
 assert subprocess.check_output([str(CODEX), "--version"], text=True).strip() == f"codex-cli {VERSION}"
 MCP = Path(__file__).parent / "fake_mcp.py"
 CODEX_HOME = BASE / "isolated-codex-home"
