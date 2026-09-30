@@ -1,10 +1,11 @@
 import { createHash, createHmac } from "node:crypto";
 import { Kysely } from "kysely";
 import { KyselyPGlite } from "kysely-pglite";
+import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { bootstrapSlackDatabase, type SlackDatabase } from "../../packages/platform/src/slack/database.js";
-import { SlackRepository } from "../../packages/platform/src/slack/repository.js";
-import { createSlackAppRoutes } from "../../packages/platform/src/slack/routes.js";
+import { SlackRepository, SlackRepositoryError } from "../../packages/platform/src/slack/repository.js";
+import { createSlackAppRoutes, type SlackAppRouteOptions } from "../../packages/platform/src/slack/routes.js";
 import { encryptSlackToken } from "../../packages/platform/src/slack/security.js";
 
 const clock = new Date("2026-09-30T10:00:00Z");
@@ -21,13 +22,19 @@ const authorizeChannelBinding = vi.fn();
 const authorizeReply = vi.fn();
 const api = { exchangeCode: vi.fn(), postMessage: vi.fn(), replies: vi.fn(), history: vi.fn(), addReaction: vi.fn(), conversationInfo: vi.fn() };
 function signed(payload: unknown) {
-  const body = JSON.stringify(payload);
-  const timestamp = String(clock.getTime() / 1000);
+  return signedBody(JSON.stringify(payload));
+}
+function signedBody(body:string,timestamp=String(clock.getTime()/1000)) {
   return { method: "POST", body, headers: { "content-type": "application/json", "x-slack-request-timestamp": timestamp,
     "x-slack-signature": `v0=${createHmac("sha256", config.signingSecret).update(`v0:${timestamp}:${body}`).digest("hex")}` } };
 }
 function envelope(event: object, eventId = "Ev123") { return { type: "event_callback", api_app_id: config.appId, team_id: "T123", event_id: eventId, event }; }
 const mention = { type: "app_mention", user: "U123", channel: "C123", text: "<@UBOT> summarize", ts: "123.456" };
+function makeApp(overrides:Partial<SlackAppRouteOptions>={}) { return createSlackAppRoutes({ config, repository:repo, api, resolveActor:async()=>actor,
+  requireOrgAdmin:async()=>admin,isCurrentMember:async()=>member,authorizeChannelBinding,authenticateRuntime:async()=>({ownerId:actor!}),authorizeReply,dispatch,now:()=>clock,...overrides }); }
+const mutation=(path:string,method="POST",body:unknown={})=>app.request(path,{method,headers:{"content-type":"application/json",origin:config.publicBaseUrl},body:JSON.stringify(body)});
+async function startOAuth(){const response=await mutation("/api/slack/install","POST",{organizationId:org});const url=new URL((await response.json()).url);return `/api/slack/oauth/callback?state=${url.searchParams.get("state")}&code=code`;}
+async function linkEmployee(){await repo.createChallenge({hash:"f".repeat(64),appId:"A123",teamId:"T123",slackUserId:"U123"});await repo.completeLink({hash:"f".repeat(64),actorId:"user_employee",organizationId:org});}
 
 beforeEach(async () => {
   const instance = await KyselyPGlite.create();
@@ -48,12 +55,91 @@ beforeEach(async () => {
   api.exchangeCode.mockResolvedValue({ appId: "A123", teamId: "T123", botUserId: "UBOT", botToken: "xoxb-secret" });
   dispatch.mockImplementation(async (input) => ({ ownerId: input.event.kind === "direct_message" ? "user_employee" : "user_admin" }));
   await repo.saveInstallation({ appId: "A123", teamId: "T123", organizationId: org, installedBy: "user_admin", botUserId: "UBOT", encryptedBotToken: encryptSlackToken("xoxb-secret", config.tokenEncryptionKey, "A123:T123") });
-  app = createSlackAppRoutes({ config, repository: repo, api, resolveActor: async () => actor, requireOrgAdmin: async () => admin,
-    isCurrentMember: async () => member, authorizeChannelBinding, authenticateRuntime: async () => ({ ownerId: actor! }), authorizeReply, dispatch, now: () => clock });
+  app = makeApp();
 });
 afterEach(async () => { await app.shutdownSlack(); await db.destroy(); });
 
 describe("Slack app ingress", () => {
+  it("rejects unsafe callback origins and authenticates events using the live default clock",async()=>{
+    for(const publicBaseUrl of ["http://app.matrix-os.com","https://user@app.matrix-os.com","https://app.matrix-os.com/path","https://app.matrix-os.com?bad=1","https://app.matrix-os.com#bad"])
+      expect(()=>makeApp({config:{...config,publicBaseUrl}})).toThrow("Slack public origin unavailable");
+    app=makeApp({now:undefined});expect((await app.request("/webhooks/slack/events",signedBody(JSON.stringify({type:"url_verification",challenge:"live"}),String(Math.floor(Date.now()/1000))))).status).toBe(200);
+  });
+  it("requires an account on every public management action and rejects malformed parameters",async()=>{
+    const actions=[["/api/slack/install","POST"],["/api/slack/oauth/callback","GET"],["/api/slack/link/complete","POST"],["/api/slack/workspaces/T123/link","DELETE"],["/api/slack/workspaces/T123","DELETE"],["/api/slack/workspaces/T123/channels/C123","PUT"]];
+    actor=null;for(const [path,method] of actions) expect((await (method==="GET"?app.request(path):mutation(path,method))).status).toBe(401);
+    actor="user_employee";for(const [path,method] of [["/api/slack/install","POST"],["/api/slack/link/complete","POST"],["/api/slack/workspaces/invalid/link","DELETE"],["/api/slack/workspaces/invalid","DELETE"],["/api/slack/workspaces/T123/channels/D123","PUT"]]) expect((await mutation(path,method)).status).toBe(422);
+    expect((await app.request("/api/slack/oauth/callback?state=bad&code=bad")).status).toBe(422);
+    expect((await app.request("/api/slack/install",{method:"POST",headers:{origin:config.publicBaseUrl},body:"{"})).status).toBe(422);
+  });
+  it("checks fresh administrator and scope management authority before public mutations",async()=>{
+    admin=false;expect((await mutation("/api/slack/install","POST",{organizationId:org})).status).toBe(403);
+    expect((await mutation("/api/slack/workspaces/T123","DELETE")).status).toBe(403);
+    const configure=()=>mutation("/api/slack/workspaces/T123/channels/C123","PUT",{scopeId:"11111111-1111-4111-8111-111111111111",approvedOutput:true});
+    expect((await configure()).status).toBe(403);admin=true;authorizeChannelBinding.mockResolvedValueOnce(false);expect((await configure()).status).toBe(403);
+    expect((await mutation("/api/slack/workspaces/T999","DELETE")).status).toBe(403);
+    await repo.revokeInstallation("A123","T123");expect((await configure()).status).toBe(403);
+  });
+  it("removes only the authenticated employee link",async()=>{
+    await linkEmployee();actor="user_other";expect((await mutation("/api/slack/workspaces/T123/link","DELETE")).status).toBe(204);
+    expect(await repo.getLink("A123","T123","U123")).not.toBeNull();actor="user_employee";expect((await mutation("/api/slack/workspaces/T123/link","DELETE")).status).toBe(204);expect(await repo.getLink("A123","T123","U123")).toBeNull();
+  });
+  it("rejects OAuth app substitution and privilege revocation while the provider responds",async()=>{
+    let callback=await startOAuth();api.exchangeCode.mockResolvedValueOnce({appId:"A999",teamId:"T123",botUserId:"UBOT",botToken:"secret"});expect((await app.request(callback)).status).toBe(403);
+    callback=await startOAuth();api.exchangeCode.mockImplementationOnce(async()=>{admin=false;return {appId:"A123",teamId:"T123",botUserId:"UBOT",botToken:"secret"};});expect((await app.request(callback)).status).toBe(403);
+    expect((await repo.getInstallation("A123","T123"))?.generation).toBe(1);
+  });
+  it("returns bounded generic errors for raced OAuth consumption and database failures",async()=>{
+    for(const error of [new SlackRepositoryError("capacity"),new SlackRepositoryError("forbidden"),new Error("private-database-path"),"private-database-path"]){
+      const callback=await startOAuth();const spy=vi.spyOn(repo,"consumeOAuthState").mockRejectedValueOnce(error);const response=await app.request(callback);spy.mockRestore();
+      expect(response.status).toBe(error instanceof SlackRepositoryError?(error.code==="capacity"?429:403):503);expect(await response.text()).not.toContain("private-database-path");
+    }
+  });
+  it("denies expired installation links and handles consumption failures without linking",async()=>{
+    const token="a".repeat(43),hash=createHash("sha256").update(token).digest("hex");await repo.createChallenge({hash,appId:"A123",teamId:"T123",slackUserId:"U123"});
+    const finish=()=>mutation("/api/slack/link/complete","POST",{token});
+    const spy=vi.spyOn(repo,"completeLink").mockRejectedValueOnce(new SlackRepositoryError("conflict"));expect((await finish()).status).toBe(409);spy.mockRestore();
+    await repo.revokeInstallation("A123","T123");
+    await db.insertInto("slack_link_challenges").values({hash,app_id:"A123",team_id:"T123",slack_user_id:"U123",expires_at:new Date(clock.getTime()+1000),consumed_at:null}).execute();
+    expect((await finish()).status).toBe(403);
+  });
+  it("rejects malformed signed events and ignores external, bot and unsupported messages",async()=>{
+    expect((await app.request("/webhooks/slack/events",signedBody("{"))).status).toBe(422);
+    expect((await app.request("/webhooks/slack/events",signed({type:"invalid"}))).status).toBe(422);
+    expect((await app.request("/webhooks/slack/events",signed({type:"url_verification",challenge:"c",api_app_id:"A999"}))).status).toBe(403);
+    for(const event of [{...mention,is_ext_shared:true},{...mention,user_team:"T999"},{...mention,user_team:"T123",subtype:"message_changed"},{...mention,user:"UBOT"},{type:"reaction_added"}]) expect((await app.request("/webhooks/slack/events",signed(envelope(event)))).status).toBe(200);
+    expect((await app.request("/webhooks/slack/events",signed({...envelope(mention),is_ext_shared_channel:true}))).status).toBe(200);
+    for(const event of [{...mention,user:undefined},{...mention,channel:undefined},{...mention,ts:undefined},{...mention,channel:"D123"},{...mention,type:"message",channel_type:"im"}]) expect((await app.request("/webhooks/slack/events",signed(envelope(event)))).status).toBe(422);
+    await repo.revokeInstallation("A123","T123");expect((await app.request("/webhooks/slack/events",signed(envelope(mention)))).status).toBe(403);expect(dispatch).not.toHaveBeenCalled();
+  });
+  it("normalizes an unexpected parser failure without revealing diagnostics",async()=>{
+    for(const route of ["/api/slack/install","/webhooks/slack/events"])for(const error of [new Error("private-parser-path"),"private-parser-path"]){
+      const spy=vi.spyOn(JSON,"parse").mockImplementationOnce(()=>{throw error;});
+      const response=await app.request(route,route.startsWith("/api")?{method:"POST",headers:{origin:config.publicBaseUrl},body:"{}"}:signed({type:"invalid"}));spy.mockRestore();
+      expect(response.status).toBe(422);expect(await response.text()).not.toContain("private-parser-path");
+    }
+  });
+  it("contains body-reader failures at both public ingress boundaries",async()=>{
+    for(const route of ["/api/slack/install","/webhooks/slack/events"]){
+      const target=makeApp(),wrapper=new Hono();wrapper.use("*",async(c,next)=>{const fail=async()=>{throw Object.assign(new Error("reader unavailable"),{name:"BodyLimitError"});};if(route.startsWith("/api"))c.req.json=fail;else c.req.text=fail;await next();});wrapper.route("/",target);
+      expect((await wrapper.request(route,route.startsWith("/api")?{method:"POST",headers:{origin:config.publicBaseUrl},body:"{}"}:signed(mention))).status).toBe(503);await target.shutdownSlack();
+    }
+    const spy=vi.spyOn(repo,"getInstallation").mockRejectedValueOnce("private-storage-path");const result=await app.request("/webhooks/slack/events",signed(envelope(mention)));spy.mockRestore();expect(result.status).toBe(503);expect(await result.text()).not.toContain("private-storage-path");
+  });
+  it("bounds simultaneous ingress while draining every retained operation",async()=>{
+    let release!:()=>void;const gate=new Promise<null>(resolve=>{release=()=>resolve(null);});const spy=vi.spyOn(repo,"getInstallation").mockImplementation(()=>gate);
+    const pending=Array.from({length:256},(_,index)=>app.request("/webhooks/slack/events",signed(envelope(mention,`EvCAP${index}`))));
+    try {await vi.waitFor(()=>expect(spy).toHaveBeenCalledTimes(256),{timeout:1000});expect((await app.request("/webhooks/slack/events",signed(envelope(mention,"EvOverflow")))).status).toBe(503);}
+    finally{release();await Promise.all(pending);spy.mockRestore();}
+  });
+  it("returns retryable status on an active receipt, changed personal destination and unknown enqueue failure",async()=>{
+    const request=signed(envelope(mention));await repo.claimEvent({appId:"A123",teamId:"T123",eventId:"Ev123"},createHash("sha256").update(request.body).digest("hex"));
+    expect((await app.request("/webhooks/slack/events",request)).status).toBe(503);
+    await linkEmployee();expect((await app.request("/webhooks/slack/events",signed(envelope(mention,"EvUnbound")))).status).toBe(200);const dm={...mention,type:"message",channel_type:"im",channel:"D123"};
+    dispatch.mockResolvedValueOnce({ownerId:"user_other"});expect((await app.request("/webhooks/slack/events",signed(envelope(dm,"EvOther")))).status).toBe(503);
+    dispatch.mockRejectedValueOnce("private-home-path");const failed=await app.request("/webhooks/slack/events",signed(envelope(dm,"EvUnknown")));expect(failed.status).toBe(503);expect(await failed.text()).not.toContain("private-home-path");
+    await app.shutdownSlack();expect((await app.request("/webhooks/slack/events",request)).status).toBe(503);
+  });
   it("requires signature even for url verification and validates app/workspace", async () => {
     const payload = { type: "url_verification", challenge: "challenge", api_app_id: "A123" };
     expect((await app.request("/webhooks/slack/events", { method: "POST", body: JSON.stringify(payload) })).status).toBe(401);
@@ -113,6 +199,47 @@ describe("Slack app ingress", () => {
     admin = true; expect((await app.request(callback)).status).toBe(200);
     expect((await app.request(callback)).status).toBe(409);
     expect((await repo.getInstallation("A123", "T123"))?.encryptedBotToken).not.toContain("xoxb-secret");
+  });
+  it.each([undefined,""," \n\t "])("acknowledges unsupported textless signed messages without home dispatch (%s)",async(text)=>{
+    await repo.createChallenge({hash:"e".repeat(64),appId:"A123",teamId:"T123",slackUserId:"U123"});
+    await repo.completeLink({hash:"e".repeat(64),actorId:"user_employee",organizationId:org});
+    const request=signed(envelope({type:"message",channel_type:"im",user:"U123",channel:"D123",ts:"123.456",...(text===undefined?{}:{text})}));
+    expect((await app.request("/webhooks/slack/events",request)).status).toBe(200);
+    expect((await app.request("/webhooks/slack/events",request)).status).toBe(200);
+    expect(dispatch).not.toHaveBeenCalled();expect(api.postMessage).not.toHaveBeenCalled();
+  });
+  it.each(["pending","exchanging"])("revokes %s OAuth installation permits and permits a new explicit reinstall",async(phase)=>{
+    const begin=async()=>{
+      const response=await app.request("/api/slack/install",{method:"POST",headers:{"content-type":"application/json",origin:config.publicBaseUrl},body:JSON.stringify({organizationId:org})});
+      const url=new URL((await response.json()).url);return `/api/slack/oauth/callback?state=${url.searchParams.get("state")}&code=code`;
+    };
+    const callback=await begin();
+    if(phase==="pending") expect((await app.request("/api/slack/workspaces/T123",{method:"DELETE",headers:{origin:config.publicBaseUrl}})).status).toBe(204);
+    else api.exchangeCode.mockImplementationOnce(async()=>{
+      expect((await app.request("/webhooks/slack/events",signed(envelope({type:"app_uninstalled"},"EvUninstall")))).status).toBe(200);
+      return {appId:"A123",teamId:"T123",botUserId:"UBOT",botToken:"xoxb-stale"};
+    });
+    expect((await app.request(callback)).status).toBe(409);
+    expect((await repo.getInstallation("A123","T123"))?.state).toBe("revoked");
+    expect(api.exchangeCode).toHaveBeenCalledTimes(phase==="pending"?0:1);
+    expect((await app.request(await begin())).status).toBe(200);
+    expect((await repo.getInstallation("A123","T123"))?.state).toBe("active");
+    expect((await app.request(callback)).status).toBe(409);
+  });
+  it("cancels an in-flight first installation on signed uninstall and deduplicates cancellation before a fresh retry",async()=>{
+    await db.deleteFrom("slack_installations").execute();
+    const begin=async()=>{
+      const response=await app.request("/api/slack/install",{method:"POST",headers:{"content-type":"application/json",origin:config.publicBaseUrl},body:JSON.stringify({organizationId:org})});
+      const url=new URL((await response.json()).url);return `/api/slack/oauth/callback?state=${url.searchParams.get("state")}&code=code`;
+    };
+    const uninstall=()=>app.request("/webhooks/slack/events",signed(envelope({type:"app_uninstalled"},"EvFirstUninstall")));
+    const callback=await begin();
+    api.exchangeCode.mockImplementationOnce(async()=>{
+      expect((await uninstall()).status).toBe(200);return {appId:"A123",teamId:"T123",botUserId:"UBOT",botToken:"xoxb-stale"};
+    });
+    expect((await app.request(callback)).status).toBe(409);expect(await repo.getInstallation("A123","T123")).toBeNull();
+    const fresh=await begin();expect((await uninstall()).status).toBe(200);
+    expect((await app.request(fresh)).status).toBe(200);expect((await repo.getInstallation("A123","T123"))?.state).toBe("active");
   });
 });
 
