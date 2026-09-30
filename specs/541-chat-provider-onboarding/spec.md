@@ -123,6 +123,8 @@ A fresh VPS can omit unconfigured account-backed sources from Settings while can
 ### Contracts
 Only an omitted configured canonical owner source with matching vendor/model eligibility and explicit `setup_required` or `auth_required` qualifies. Any source/driver local observation must be `absent` and satisfy `checkedAt <= now < staleAfter`; preserve original timestamps and five-second observation lifetime. The helper provides no account/source execution binding. Shared connection derivation ignores discovery metadata only when a `harness_profile` source has unknown readiness/unknown observation and no harness selects or configures it.
 
+For presentation, validate absence against the authoritative snapshot's `refreshedAt` on the same server clock as its observation. Do not compare server timestamps with the client wall clock: real Preview acceptance reproduced a 0.6-second offset that incorrectly rejected fresh absence. Render the coherent snapshot until a new read replaces it; refresh on existing focus, visibility, catalog and explicit retry paths. A new snapshot whose observation was expired, future or missing at generation remains unknown. This presentation does not change authentication, TTLs or send admission.
+
 ### Validation / error matrix
 - Explicit matching missing credentials, no contradictory observations: unauthenticated projection.
 - Present, unknown, stale, future, or timestamp-free local observation: no negative override.

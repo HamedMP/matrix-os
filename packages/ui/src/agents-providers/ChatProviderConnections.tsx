@@ -20,9 +20,16 @@ export function deriveChatProviderConnectionState(snapshot: ProviderSettingsSnap
       || (source.kind === "matrix_gateway" && source.readiness.safeReason === "credit_required"))) return "connected";
   if (failed) return "unavailable";
   if (!snapshot) return "checking";
-  const freshAbsent = (observation: { state: string; checkedAt: string | null; staleAfter: string | null } | undefined) =>
-    observation?.state === "absent" && Date.parse(observation.checkedAt ?? "") <= Date.now()
-      && Date.parse(observation.staleAfter ?? "") > Date.now();
+  // Compare observations within one server snapshot: renderer clock skew and
+  // later rerenders cannot reclassify evidence before a replacement read.
+  const refreshedAt = Date.parse(snapshot.refreshedAt);
+  const freshAbsent = (observation: { state: string; checkedAt: string | null; staleAfter: string | null } | undefined) => {
+    const checkedAt = Date.parse(observation?.checkedAt ?? "");
+    const staleAfter = Date.parse(observation?.staleAfter ?? "");
+    return observation?.state === "absent" && Number.isFinite(refreshedAt)
+      && Number.isFinite(checkedAt) && Number.isFinite(staleAfter)
+      && checkedAt <= refreshedAt && refreshedAt < staleAfter;
+  };
   const unselectedDiscovery = (source: NonNullable<typeof snapshot>["accessSources"][number]) =>
     source.kind === "harness_profile" && source.readiness.state === "unknown" && source.localObservation?.state === "unknown"
       && !snapshot.harnesses.some((harness) => harness.accessSourceId === source.id || harness.configuredAccessSourceId === source.id);

@@ -25,8 +25,34 @@ describe("Chat connection state", () => {
   });
   it("shows login for authoritative explicit local absence", () => {
     const snapshot = disconnectedSnapshot(); snapshot.harnesses[0]!.authState = "unknown";
-    snapshot.harnesses[0]!.localObservation = { state: "absent", checkedAt: new Date().toISOString(), staleAfter: new Date(Date.now() + 60_000).toISOString() };
+    snapshot.harnesses[0]!.localObservation = { state: "absent", checkedAt: snapshot.refreshedAt, staleAfter: new Date(Date.parse(snapshot.refreshedAt) + 60_000).toISOString() };
     expect(deriveChatProviderConnectionState(snapshot)).toBe("disconnected");
+  });
+  it.each([-581, 2_000, 60_000])("uses the authoritative server observation despite renderer clock offset %sms", (offset) => {
+    const snapshot = disconnectedSnapshot();
+    snapshot.refreshedAt = "2026-09-30T21:06:32.368Z";
+    snapshot.harnesses[1]!.authState = "unknown";
+    snapshot.harnesses[1]!.localObservation = {
+      state: "absent", checkedAt: "2026-09-30T21:06:32.363Z", staleAfter: "2026-09-30T21:06:37.363Z",
+    };
+    const clock = vi.spyOn(Date, "now").mockReturnValue(Date.parse(snapshot.refreshedAt) + offset);
+    try { expect(deriveChatProviderConnectionState(snapshot)).toBe("disconnected"); }
+    finally { clock.mockRestore(); }
+  });
+  it.each([
+    { checkedAt: null, staleAfter: "2026-09-30T21:06:37.363Z", refreshedAt: "2026-09-30T21:06:32.368Z" },
+    { checkedAt: "invalid", staleAfter: "2026-09-30T21:06:37.363Z", refreshedAt: "2026-09-30T21:06:32.368Z" },
+    { checkedAt: "2026-09-30T21:06:32.363Z", staleAfter: null, refreshedAt: "2026-09-30T21:06:32.368Z" },
+    { checkedAt: "2026-09-30T21:06:32.363Z", staleAfter: "invalid", refreshedAt: "2026-09-30T21:06:32.368Z" },
+    { checkedAt: "2026-09-30T21:06:33.000Z", staleAfter: "2026-09-30T21:06:37.363Z", refreshedAt: "2026-09-30T21:06:32.368Z" },
+    { checkedAt: "2026-09-30T21:06:32.363Z", staleAfter: "2026-09-30T21:06:37.363Z", refreshedAt: "2026-09-30T21:06:37.363Z" },
+    { checkedAt: "2026-09-30T21:06:32.363Z", staleAfter: "2026-09-30T21:06:32.363Z", refreshedAt: "2026-09-30T21:06:32.368Z" },
+    { checkedAt: "2026-09-30T21:06:32.363Z", staleAfter: "2026-09-30T21:06:37.363Z", refreshedAt: "invalid" },
+  ])("keeps incoherent or expired server observation unknown: %j", (timing) => {
+    const snapshot = disconnectedSnapshot(); snapshot.refreshedAt = timing.refreshedAt;
+    snapshot.harnesses[1]!.authState = "unknown";
+    snapshot.harnesses[1]!.localObservation = { state: "absent", checkedAt: timing.checkedAt, staleAfter: timing.staleAfter };
+    expect(deriveChatProviderConnectionState(snapshot)).toBe("unknown");
   });
   it("does not call locally observed login remote authentication", () => {
     const snapshot = disconnectedSnapshot(); snapshot.harnesses[0]!.authState = "authenticated";
@@ -42,6 +68,29 @@ describe("Chat connection state", () => {
   });
 });
 describe("Chat provider connection rows", () => {
+  it("keeps a coherent observation stable across rerenders until a replacement snapshot arrives", () => {
+    const snapshot = disconnectedSnapshot(); snapshot.refreshedAt = "2026-09-30T21:06:32.368Z";
+    snapshot.harnesses[1]!.authState = "unknown";
+    snapshot.harnesses[1]!.localObservation = { state: "absent", checkedAt: "2026-09-30T21:06:32.363Z", staleAfter: "2026-09-30T21:06:37.363Z" };
+    const props = { onMutate: vi.fn(), onRefresh: vi.fn(), onOpenAction: vi.fn() };
+    const clock = vi.spyOn(Date, "now").mockReturnValue(Date.parse(snapshot.refreshedAt));
+    try {
+      const { rerender } = render(<ChatProviderConnections snapshot={snapshot} {...props}><div>Normal Chat suggestions</div></ChatProviderConnections>);
+      expect(screen.getByRole("button", { name: "Connect Codex" })).toBeEnabled();
+      clock.mockReturnValue(Date.parse("2026-10-02T00:00:00Z"));
+      rerender(<ChatProviderConnections snapshot={snapshot} busy {...props}><div>Normal Chat suggestions</div></ChatProviderConnections>);
+      expect(screen.getByRole("button", { name: "Connect Codex" })).toBeDisabled();
+      expect(screen.queryByText("Normal Chat suggestions")).not.toBeInTheDocument();
+      const staleSnapshot = { ...snapshot, revision: 2, refreshedAt: "2026-09-30T21:06:37.363Z" };
+      rerender(<ChatProviderConnections snapshot={staleSnapshot} {...props}><div>Normal Chat suggestions</div></ChatProviderConnections>);
+      expect(screen.getByText("Normal Chat suggestions")).toBeVisible();
+      expect(screen.queryByRole("button", { name: "Connect Codex" })).not.toBeInTheDocument();
+      const connectedSnapshot = { ...staleSnapshot, revision: 3, harnesses: staleSnapshot.harnesses.map((harness, index) => index === 0 ? { ...harness, authState: "authenticated" as const } : harness) };
+      rerender(<ChatProviderConnections snapshot={connectedSnapshot} {...props}><div>Normal Chat suggestions</div></ChatProviderConnections>);
+      expect(deriveChatProviderConnectionState(connectedSnapshot)).toBe("connected");
+      expect(screen.queryByRole("region", { name: "Chat provider connection" })).not.toBeInTheDocument();
+    } finally { clock.mockRestore(); }
+  });
   it("offers a compact manual retry after an initial read failure without replacing normal Chat", async () => {
     let release!: (value: ReturnType<typeof disconnectedSnapshot>) => void;
     const getSnapshot = vi.fn().mockRejectedValueOnce(new Error("private read failure"))
