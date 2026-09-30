@@ -399,6 +399,7 @@ export function createCanonicalVoicePorts(options: {
           chatId: input.chatId,
           responseId: input.responseId,
           deliveredThroughMs: input.deliveredThroughMs,
+          ...(input.segments ? { segments: input.segments.map(toRepoSegment) } : {}),
           revision: record.revision,
           transportEpoch: input.transportEpoch,
         });

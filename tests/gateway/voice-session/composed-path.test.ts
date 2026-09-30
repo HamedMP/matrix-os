@@ -80,7 +80,7 @@ const catalog: CanonicalProviderCatalog = CanonicalProviderCatalogSchema.parse({
     kind: "codex",
     displayName: "Codex",
     adapterVersion: "1.0.0",
-    capabilityClass: "coding_agent",
+    capabilityClass: "system_agent",
   }],
   instances: [{
     id: "codex_default",
@@ -93,9 +93,9 @@ const catalog: CanonicalProviderCatalog = CanonicalProviderCatalogSchema.parse({
       id: "gpt-5.6-sol",
       displayName: "GPT-5.6-Sol",
       availability: "available",
-      capabilities: ["reasoning", "tools"],
+      capabilities: ["reasoning"],
       supportsVision: false,
-      supportsToolUse: true,
+      supportsToolUse: false,
     }],
     options: [],
     skills: [],
@@ -369,69 +369,42 @@ describe("voice session composed path", () => {
 
       // ---- Step 7: synthesis + durable delivery --------------------------
       await vi.waitFor(() => {
-        expect(frames().filter((f) => f.type === "response.audio").length).toBe(2);
-        expect(frames().filter((f) => f.type === "response.audio_end").length).toBe(2);
+        expect(frames().filter((f) => f.type === "response.audio").length).toBe(1);
+        expect(frames().filter((f) => f.type === "response.audio_end").length).toBe(1);
       }, { timeout: 10_000, interval: 15 });
       const started = frames().find((f): f is Extract<VoiceServerFrame, { type: "response.started" }> => f.type === "response.started")!;
       const responseId = started.responseId;
       expect(responseId).toMatch(/^vresp_/);
       expect(started.runId).toBe(providerCalls[0]!.runId);
       const audioFrames = frames().filter((f): f is Extract<VoiceServerFrame, { type: "response.audio" }> => f.type === "response.audio");
-      expect(audioFrames.map((f) => f.responseId)).toEqual([responseId, responseId]);
+      expect(audioFrames.map((f) => f.responseId)).toEqual([responseId]);
       expect(frames().some((f) => f.type === "session.error")).toBe(false);
       expect(frames().some((f) => f.type === "response.interrupted")).toBe(false);
 
       const pendingRecord = await deliveries.get(OWNER, CHAT_ID, responseId);
       expect(pendingRecord).not.toBeNull();
       expect(pendingRecord!.state).toBe("pending");
-      expect(pendingRecord!.segments).toHaveLength(2);
-      const [seg0, seg1] = pendingRecord!.segments;
-      expect(seg0).toMatchObject({ textStart: 0, textEnd: ASSISTANT_D1.length });
-      expect(seg1).toMatchObject({ textStart: ASSISTANT_D1.length, textEnd: ASSISTANT_TEXT.length });
-      expect(audioFrames.map((f) => f.segmentId)).toEqual([seg0!.segmentId, seg1!.segmentId]);
-      expect(pendingRecord!.deliveredThroughMs).toBe(200);
+      expect(pendingRecord!.segments).toHaveLength(1);
+      const [segment] = pendingRecord!.segments;
+      expect(segment).toMatchObject({ textStart: 0, textEnd: ASSISTANT_TEXT.length });
+      expect(audioFrames.map((f) => f.segmentId)).toEqual([segment!.segmentId]);
+      expect(pendingRecord!.deliveredThroughMs).toBe(100);
       expect(pendingRecord!.acknowledgedSegment).toBeNull();
 
-      // ---- Step 8: out-of-order ack is tracked, not completed ------------
+      // ---- Step 8: final phrase acknowledgement completes delivery -------
       sendFrame({
         type: "playback.segment_played",
         responseId,
-        segmentId: seg1!.segmentId,
+        segmentId: segment!.segmentId,
         deliveryRevision: pendingRecord!.revision,
-        playedThroughMs: 200,
-      });
-      await engine.drain(sessionId);
-      let record = await deliveries.get(OWNER, CHAT_ID, responseId);
-      expect(record!.state).toBe("pending");
-      expect(record!.acknowledgedSegment).toBeNull();
-
-      // ---- Step 9: ordered acks complete the delivery --------------------
-      sendFrame({
-        type: "playback.segment_played",
-        responseId,
-        segmentId: seg0!.segmentId,
-        deliveryRevision: record!.revision,
         playedThroughMs: 100,
-      });
-      await engine.drain(sessionId);
-      record = await deliveries.get(OWNER, CHAT_ID, responseId);
-      expect(record!.state).toBe("playing");
-      expect(record!.acknowledgedSegment).toBe(seg0!.segmentId);
-      expect(record!.effectiveTextEnd).toBe(ASSISTANT_D1.length);
-
-      sendFrame({
-        type: "playback.segment_played",
-        responseId,
-        segmentId: seg1!.segmentId,
-        deliveryRevision: record!.revision,
-        playedThroughMs: 200,
       });
       await vi.waitFor(async () => {
         const current = await deliveries.get(OWNER, CHAT_ID, responseId);
         expect(current!.state).toBe("complete");
       }, { timeout: 5_000, interval: 15 });
-      record = await deliveries.get(OWNER, CHAT_ID, responseId);
-      expect(record!.acknowledgedSegment).toBe(seg1!.segmentId);
+      const record = await deliveries.get(OWNER, CHAT_ID, responseId);
+      expect(record!.acknowledgedSegment).toBe(segment!.segmentId);
       expect(record!.terminalReason).toBe("complete");
       expect(record!.effectiveTextEnd).toBe(ASSISTANT_TEXT.length);
 

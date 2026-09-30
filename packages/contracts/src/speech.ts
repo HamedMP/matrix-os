@@ -3,6 +3,8 @@ import { IsoTimestampSchema } from "#contract-primitives";
 
 export const SPEECH_CONTRACT_VERSION = 1 as const;
 export const SPEECH_MAX_TRANSCRIPT_CHARS = 32_000;
+export const SPEECH_MAX_SYNTHESIS_CHARS = 4_096;
+export const SPEECH_MAX_SYNTHESIS_AUDIO_BYTES = 8 * 1024 * 1024;
 export const SpeechRequestIdSchema = z.string()
   .min(33)
   .max(100)
@@ -71,6 +73,35 @@ export const SpeechCapabilitiesResponseSchema = z.object({
     SpeechFileTranscriptionPolicySchema,
     SpeechFileTranscriptionUnavailableSchema,
   ]),
+  synthesis: z.discriminatedUnion("status", [
+    z.object({
+      status: z.literal("ready"),
+      maxInputChars: z.number().int().positive().max(SPEECH_MAX_SYNTHESIS_CHARS),
+      format: z.literal("pcm_s16le_24000_mono"),
+    }).strict(),
+    z.object({
+      status: z.literal("unavailable"),
+      reason: z.enum(["disabled", "misconfigured", "funding_unavailable", "temporarily_unavailable"]),
+    }).strict(),
+  ]).optional(),
+}).strict();
+
+export const SpeechSynthesisRequestSchema = z.object({
+  requestId: SpeechRequestIdSchema,
+  text: z.string().trim().min(1).max(SPEECH_MAX_SYNTHESIS_CHARS).refine(
+    (value) => new TextEncoder().encode(value).byteLength <= 16 * 1024,
+    "Synthesis input exceeds byte limit",
+  ),
+}).strict();
+
+export const SpeechSynthesisResponseSchema = z.object({
+  contractVersion: z.literal(SPEECH_CONTRACT_VERSION),
+  requestId: SpeechRequestIdSchema,
+  status: z.literal("succeeded"),
+  format: z.literal("pcm_s16le_24000_mono"),
+  durationMs: z.number().int().positive().max(10 * 60_000),
+  audio: z.string().min(4).max(Math.ceil(SPEECH_MAX_SYNTHESIS_AUDIO_BYTES / 3) * 4)
+    .regex(/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/),
 }).strict();
 
 const TranscriptTextSchema = z.string().min(1).max(SPEECH_MAX_TRANSCRIPT_CHARS).refine(
@@ -203,12 +234,15 @@ export const SpeechSafeErrorResponseSchema = z.object({
     z.object({ code: z.literal("allowance_exhausted"), message: z.literal("Speech allowance is unavailable") }).strict(),
     z.object({ code: z.literal("timeout"), message: z.literal("Transcription timed out") }).strict(),
     z.object({ code: z.literal("transcription_failed"), message: z.literal("Transcription failed") }).strict(),
+    z.object({ code: z.literal("synthesis_failed"), message: z.literal("Speech synthesis failed") }).strict(),
     z.object({ code: z.literal("cancelled"), message: z.literal("Transcription was cancelled") }).strict(),
   ]),
 }).strict();
 
 export type SpeechCapabilitiesResponse = z.infer<typeof SpeechCapabilitiesResponseSchema>;
 export type SpeechTranscriptionResponse = z.infer<typeof SpeechTranscriptionResponseSchema>;
+export type SpeechSynthesisRequest = z.infer<typeof SpeechSynthesisRequestSchema>;
+export type SpeechSynthesisResponse = z.infer<typeof SpeechSynthesisResponseSchema>;
 export type SpeechStatusResponse = z.infer<typeof SpeechStatusResponseSchema>;
 export type SpeechCancellationResponse = z.infer<typeof SpeechCancellationResponseSchema>;
 export type SpeechExecutionState = z.infer<typeof SpeechExecutionStateSchema>;

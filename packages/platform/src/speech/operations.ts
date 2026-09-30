@@ -34,6 +34,15 @@ const FundingReservationSchema = z.object({
   reservationId: ReferenceSchema,
   reservedMicrousd: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
 }).strict();
+const SynthesisAdmissionSchema = z.object({
+  identity: IdentitySchema,
+  requestId: SpeechRequestIdSchema,
+  contentFingerprint: HashSchema,
+  policyRevision: ReferenceSchema,
+  adapterId: ReferenceSchema,
+  modelId: z.string().min(1).max(160).regex(/^[A-Za-z0-9][A-Za-z0-9._:/-]*$/),
+  maximumCostMicrousd: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+}).strict();
 const CompletionCostShape = {
   actualCostMicrousd: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
 };
@@ -280,7 +289,7 @@ export function createSpeechOperationsRepository(options: {
       const ownerAdmissions = await trx.executor.selectFrom("speech_operations")
         .select(({ fn }) => fn.countAll<number>().as("count"))
         .where("owner_id", "=", admission.identity.ownerId)
-        .where("source_kind", "is not", null)
+        .where("policy_revision", "is not", null)
         .where("created_at", ">=", new Date(checked.getTime() - admissionWindowMs).toISOString())
         .executeTakeFirstOrThrow();
       const runtimeAdmissions = maximumAdmissionsPerRuntimeLifetime === undefined
@@ -290,7 +299,7 @@ export function createSpeechOperationsRepository(options: {
           .where("owner_id", "=", admission.identity.ownerId)
           .where("machine_id", "=", admission.identity.machineId)
           .where("runtime_slot", "=", admission.identity.runtimeSlot)
-          .where("source_kind", "is not", null)
+          .where("policy_revision", "is not", null)
           .executeTakeFirstOrThrow();
       if (Number(active.count) >= maximumActiveOperations
         || Number(ownerActive.count) >= maximumActiveOperationsPerOwner
@@ -347,6 +356,119 @@ export function createSpeechOperationsRepository(options: {
         .where("machine_id", "=", admission.identity.machineId)
         .where("runtime_slot", "=", admission.identity.runtimeSlot)
         .where("operation_id", "=", admission.requestId)
+        .where("execution_state", "=", "received").returningAll().executeTakeFirst();
+      if (!updated) throw new SpeechOperationStateError();
+      return operationRecord(updated);
+    });
+  }
+
+  async function admitSynthesis(
+    input: z.input<typeof SynthesisAdmissionSchema>,
+    reserveFunding: (trx: Transaction<PlatformDatabase>) => Promise<z.input<typeof FundingReservationSchema>>,
+  ): Promise<SpeechOperationRecord> {
+    const admission = SynthesisAdmissionSchema.parse(input);
+    const checked = now();
+    validateRequestAge(admission.requestId, checked);
+    const checkedAt = checked.toISOString();
+    await options.db.ready;
+    return options.db.transaction(async (trx) => {
+      const existingBeforeLock = await scopedRow(trx.executor, admission.identity, admission.requestId);
+      if (existingBeforeLock) {
+        const matches = !existingBeforeLock.tombstone
+          && existingBeforeLock.source_kind === null
+          && existingBeforeLock.content_fingerprint === admission.contentFingerprint
+          && existingBeforeLock.policy_revision === admission.policyRevision
+          && existingBeforeLock.adapter_id === admission.adapterId
+          && existingBeforeLock.model_id === admission.modelId;
+        if (!matches && !existingBeforeLock.tombstone) throw new SpeechOperationConflictError();
+        return operationRecord(existingBeforeLock);
+      }
+      await sql`SELECT pg_advisory_xact_lock(hashtext('matrix-speech-admission'))`.execute(trx.executor);
+      if (admissionsNotAfter && checked.getTime() >= admissionsNotAfter.getTime()) {
+        throw new SpeechOperationRateLimitError();
+      }
+      const existing = await scopedRow(trx.executor, admission.identity, admission.requestId);
+      if (existing) {
+        const matches = !existing.tombstone
+          && existing.source_kind === null
+          && existing.content_fingerprint === admission.contentFingerprint
+          && existing.policy_revision === admission.policyRevision
+          && existing.adapter_id === admission.adapterId
+          && existing.model_id === admission.modelId;
+        if (!matches && !existing.tombstone) throw new SpeechOperationConflictError();
+        return operationRecord(existing);
+      }
+      const activeStates: SpeechExecutionState[] = ["received", "reserved", "dispatching"];
+      const activeCutoff = new Date(checked.getTime() - activeOperationTtlMs).toISOString();
+      const active = await trx.executor.selectFrom("speech_operations")
+        .select(({ fn }) => fn.countAll<number>().as("count"))
+        .where("execution_state", "in", activeStates)
+        .where("updated_at", ">", activeCutoff).executeTakeFirstOrThrow();
+      const ownerActive = await trx.executor.selectFrom("speech_operations")
+        .select(({ fn }) => fn.countAll<number>().as("count"))
+        .where("owner_id", "=", admission.identity.ownerId)
+        .where("execution_state", "in", activeStates)
+        .where("updated_at", ">", activeCutoff).executeTakeFirstOrThrow();
+      const ownerAdmissions = await trx.executor.selectFrom("speech_operations")
+        .select(({ fn }) => fn.countAll<number>().as("count"))
+        .where("owner_id", "=", admission.identity.ownerId)
+        .where("policy_revision", "is not", null)
+        .where("created_at", ">=", new Date(checked.getTime() - admissionWindowMs).toISOString())
+        .executeTakeFirstOrThrow();
+      const runtimeAdmissions = maximumAdmissionsPerRuntimeLifetime === undefined
+        ? undefined
+        : await trx.executor.selectFrom("speech_operations")
+          .select(({ fn }) => fn.countAll<number>().as("count"))
+          .where("owner_id", "=", admission.identity.ownerId)
+          .where("machine_id", "=", admission.identity.machineId)
+          .where("runtime_slot", "=", admission.identity.runtimeSlot)
+          .where("policy_revision", "is not", null)
+          .executeTakeFirstOrThrow();
+      if (Number(active.count) >= maximumActiveOperations
+        || Number(ownerActive.count) >= maximumActiveOperationsPerOwner
+        || Number(ownerAdmissions.count) >= maximumAdmissionsPerOwner
+        || (runtimeAdmissions !== undefined
+          && Number(runtimeAdmissions.count) >= maximumAdmissionsPerRuntimeLifetime!)) {
+        throw new SpeechOperationRateLimitError();
+      }
+      const inserted = await trx.executor.insertInto("speech_operations").values({
+        owner_id: admission.identity.ownerId,
+        machine_id: admission.identity.machineId,
+        runtime_slot: admission.identity.runtimeSlot,
+        operation_id: admission.requestId,
+        source_kind: null,
+        content_fingerprint: admission.contentFingerprint,
+        policy_revision: admission.policyRevision,
+        adapter_id: admission.adapterId,
+        model_id: admission.modelId,
+        funding_reservation_id: null,
+        execution_state: "received",
+        cancellation_requested: false,
+        tombstone: false,
+        dispatch_claimed_at: null,
+        safe_outcome_code: null,
+        audio_duration_ms: null,
+        reserved_microusd: null,
+        actual_microusd: null,
+        created_at: checkedAt,
+        updated_at: checkedAt,
+        expires_at: new Date(checked.getTime() + metadataRetentionMs).toISOString(),
+      }).returningAll().executeTakeFirstOrThrow();
+      const reservation = FundingReservationSchema.parse(await reserveFunding(
+        trx.executor as Transaction<PlatformDatabase>,
+      ));
+      if (reservation.reservedMicrousd > admission.maximumCostMicrousd) {
+        throw new Error("Speech funding reservation exceeded its admission maximum");
+      }
+      const updated = await trx.executor.updateTable("speech_operations").set({
+        funding_reservation_id: reservation.reservationId,
+        reserved_microusd: reservation.reservedMicrousd,
+        execution_state: "reserved",
+        updated_at: checkedAt,
+      }).where("owner_id", "=", inserted.owner_id)
+        .where("machine_id", "=", inserted.machine_id)
+        .where("runtime_slot", "=", inserted.runtime_slot)
+        .where("operation_id", "=", inserted.operation_id)
         .where("execution_state", "=", "received").returningAll().executeTakeFirst();
       if (!updated) throw new SpeechOperationStateError();
       return operationRecord(updated);
@@ -523,8 +645,21 @@ export function createSpeechOperationsRepository(options: {
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1_000) {
       throw new Error("Speech operation sweep limit is invalid");
     }
-    const checkedAt = now().toISOString();
+    const checked = now();
+    const checkedAt = checked.toISOString();
+    const staleActiveCutoff = new Date(checked.getTime() - activeOperationTtlMs).toISOString();
     await options.db.ready;
+    // A process may die after claiming dispatch but before persisting a
+    // terminal outcome. Make that uncertainty durable once no conforming
+    // adapter call can still be live. Funding reservations have their own
+    // expiry reconciler, which conservatively settles any in-flight hold.
+    await options.db.executor.updateTable("speech_operations").set({
+      execution_state: "uncertain",
+      safe_outcome_code: "provider_failure",
+      updated_at: checkedAt,
+    }).where("execution_state", "in", ["received", "reserved", "dispatching"])
+      .where("updated_at", "<=", staleActiveCutoff)
+      .execute();
     const candidates = await options.db.executor.selectFrom("speech_operations")
       .select(["owner_id", "machine_id", "runtime_slot", "operation_id"])
       .where("expires_at", "<=", checkedAt)
@@ -551,7 +686,7 @@ export function createSpeechOperationsRepository(options: {
     });
   }
 
-  return { admit, cancel, claimDispatch, complete, get, sweepExpired };
+  return { admit, admitSynthesis, cancel, claimDispatch, complete, get, sweepExpired };
 }
 
 export type SpeechOperationsRepository = ReturnType<typeof createSpeechOperationsRepository>;

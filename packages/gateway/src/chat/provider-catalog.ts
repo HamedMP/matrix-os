@@ -676,6 +676,8 @@ interface ProviderSelectionRequirements {
   approvals?: boolean;
   userInput?: boolean;
   worktree?: boolean;
+  /** Voice conversation-only runs cannot enter coding or tool-capable harnesses. */
+  voiceConversationOnly?: boolean;
 }
 
 type ProviderSelectionValidation =
@@ -755,6 +757,18 @@ export function validateChatProviderSelection(input: {
   const model = instance.models.find((candidate) => candidate.id === selection.data.model);
   if (model?.availability !== "available") {
     return selectionError("model_unavailable", "The selected model is not available.", ["select_provider"]);
+  }
+  if (input.requirements?.voiceConversationOnly) {
+    const driver = input.catalog.drivers.find((candidate) => candidate.kind === instance.driverKind);
+    if (driver?.capabilityClass !== "system_agent"
+      || model.supportsToolUse
+      || instance.supports.tools.length > 0) {
+      return selectionError(
+        "capability_mismatch",
+        "The selected Provider is not eligible for a voice conversation.",
+        ["select_provider"],
+      );
+    }
   }
   if (!optionsMatch(selection.data, instance)
     || !supportsRequirements(instance.supports, input.requirements ?? {})) {

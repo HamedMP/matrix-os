@@ -111,12 +111,19 @@ export async function admitCanonicalTurn(
     catch (error: unknown) { return mapRepositoryError(error); }
     const effective = { ...input, ...prepared, permissionMode: admissionPolicy.permissionMode };
     const catalog = await deps.catalog.getCatalog(principal);
+    const requirements = requirementsFor({
+      ...effective,
+      parts: prepared ? input.parts.filter((part) =>
+        part.type !== "resource_reference" || !["agent", "chat"].includes(part.resource.kind)) : input.parts,
+    });
     const validated = validateChatProviderSelection({
       catalog,
       selection: effective.selection,
       ...(!prepared?.context?.agent && record.providerBinding ? { boundInstanceId: record.providerBinding.instanceId } : {}),
-      requirements: requirementsFor({ ...effective, parts: prepared ? input.parts.filter((part) =>
-        part.type !== "resource_reference" || !["agent", "chat"].includes(part.resource.kind)) : input.parts }),
+      requirements: {
+        ...requirements,
+        ...(admissionPolicy.runPolicy?.source === "voice" ? { voiceConversationOnly: true } : {}),
+      },
     });
     if (!validated.ok) {
       throw new CanonicalChatOrchestrationError(validated.error, validated.error.code === "provider_instance_locked" ? 409 : 400);
@@ -171,12 +178,13 @@ export async function admitCanonicalTurn(
       ...(admissionHints.deliveryContext ? { deliveryContext: admissionHints.deliveryContext } : {}),
     });
     const resumeState = resumeDecision?.resumeState;
-    if (resumeDecision?.retainedHistory && !prepared?.context?.history) {
+    if (resumeDecision?.retainedHistory) {
       // Retain canonical history the resumed session does not contain — or,
       // on a rebuild decision, give the provider the heard-safe projection.
       prepared = {
         ...prepared,
         context: ChatRunContextSchema.parse({
+          ...prepared?.context,
           version: 1,
           requestHash: chatContextRequestHash(input),
           chats: prepared?.context?.chats ?? [],

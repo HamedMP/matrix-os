@@ -39,7 +39,7 @@ interface Rig {
   directPorts: VoiceSpeechPorts;
 }
 
-function run(env: NodeJS.ProcessEnv, options: { managed?: boolean } = {}): Rig {
+function run(env: NodeJS.ProcessEnv, options: { managed?: boolean; managedSynthesis?: boolean } = {}): Rig {
   const registry = new VoiceMediaAdapterRegistry();
   const logs: Rig["logs"] = [];
   const directCalls: DirectOpenAiSpeechPortOptions[] = [];
@@ -60,6 +60,7 @@ function run(env: NodeJS.ProcessEnv, options: { managed?: boolean } = {}): Rig {
     env,
     clock: new FakeClock(),
     ...(options.managed ? { managedTranscribe } : {}),
+    ...(options.managedSynthesis ? { managedSynthesize: directPorts.synthesize } : {}),
     createDirectPorts: (input) => {
       directCalls.push(input);
       return directPorts;
@@ -154,7 +155,7 @@ describe("registerVoiceSessionMediaAdapters", () => {
     expect(events).toContainEqual({
       type: "transcript.final",
       turnId: "vturn_1",
-      finalityId: "trn_vturn_1",
+      finalityId: "vfinal_vturn_1",
       text: "managed transcript",
     });
     const audio = events.filter((event) => event.type === "synthesis.audio");
@@ -192,6 +193,13 @@ describe("registerVoiceSessionMediaAdapters", () => {
     expect(rig.registry.size).toBe(0);
     expect(rig.directCalls).toHaveLength(0);
     expect(rig.logs.some((entry) => entry.event === "voice.adapter.direct_openai_ignored")).toBe(true);
+  });
+
+  it("production registers a fully managed adapter without constructing direct ports", () => {
+    const rig = run({ NODE_ENV: "production" }, { managed: true, managedSynthesis: true });
+    expect(rig.outcome).toEqual({ adapterId: "managed", reason: "managed_platform_speech" });
+    expect(rig.registry.get("managed")).toBeDefined();
+    expect(rig.directCalls).toHaveLength(0);
   });
 
   it("direct mode: flag+key registers the openai adapter outside production", async () => {

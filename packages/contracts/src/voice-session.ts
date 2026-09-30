@@ -341,6 +341,12 @@ export const VoiceServerFrameSchema = z.discriminatedUnion("type", [
   z.object({ ...commonFrameShape, type: z.literal("transcript.provisional"), ...VoiceTranscriptProvisionalSchema.shape }).strict(),
   z.object({ ...commonFrameShape, type: z.literal("transcript.final"), ...VoiceTranscriptFinalSchema.shape }).strict(),
   z.object({ ...commonFrameShape, type: z.literal("transcript.correction"), ...VoiceTranscriptCorrectionSchema.shape }).strict(),
+  z.object({
+    ...commonFrameShape,
+    type: z.literal("capture.completed"),
+    turnId: VoiceTurnIdSchema,
+    outcome: z.enum(["empty", "failed"]),
+  }).strict(),
   z.object({ ...commonFrameShape, type: z.literal("response.started"), responseId: VoiceResponseIdSchema, runId: VoiceCanonicalRunIdSchema }).strict(),
   z.object({ ...commonFrameShape, type: z.literal("response.audio"), responseId: VoiceResponseIdSchema, segmentId: VoiceSegmentIdSchema, startMs: VoiceDurationMsSchema, data: VoiceAudioFrameDataSchema, format: VoiceOutputAudioFormatSchema.optional() }).strict(),
   z.object({ ...commonFrameShape, type: z.literal("response.audio_end"), responseId: VoiceResponseIdSchema, generatedDurationMs: VoiceDurationMsSchema, segmentId: VoiceSegmentIdSchema.optional() }).strict(),

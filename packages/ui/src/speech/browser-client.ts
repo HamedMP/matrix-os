@@ -141,7 +141,9 @@ export function createBrowserSpeechClient(options: {
     }
     const parsed = SpeechSafeErrorResponseSchema.safeParse(payload);
     if (!parsed.success) throw new BrowserSpeechClientError("unavailable");
-    throw new BrowserSpeechClientError(parsed.data.error.code);
+    throw new BrowserSpeechClientError(
+      parsed.data.error.code === "synthesis_failed" ? "unavailable" : parsed.data.error.code,
+    );
   }
 
   return {

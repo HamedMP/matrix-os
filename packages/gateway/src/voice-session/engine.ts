@@ -137,6 +137,8 @@ export interface VoiceSessionEngineDeps {
   maxTurns?: number;
   maxResponses?: number;
   maxRunIds?: number;
+  maxPendingMutationTasks?: number;
+  maxPendingMutationBytes?: number;
   /** Adapter selection is server policy; defaults to the registry default. */
   selectAdapter?: (input: { principalId: string; chatId: string }) => string;
   /** Exact WS path a ticket binds to; must match the mounted route. */
@@ -181,6 +183,8 @@ export class VoiceSessionEngine implements VoiceSessionHost {
   readonly maxTurns: number;
   readonly maxResponses: number;
   readonly maxRunIds: number;
+  readonly maxPendingMutationTasks: number;
+  readonly maxPendingMutationBytes: number;
 
   private readonly deps: VoiceSessionEngineDeps;
   private readonly sessions = new Map<string, VoiceSessionRecord>();
@@ -221,6 +225,8 @@ export class VoiceSessionEngine implements VoiceSessionHost {
     this.maxTurns = deps.maxTurns ?? 256;
     this.maxResponses = deps.maxResponses ?? 64;
     this.maxRunIds = deps.maxRunIds ?? 128;
+    this.maxPendingMutationTasks = deps.maxPendingMutationTasks ?? 256;
+    this.maxPendingMutationBytes = deps.maxPendingMutationBytes ?? 1_048_576;
     if (deps.runControl) this.runControl = deps.runControl;
   }
 
@@ -331,7 +337,9 @@ export class VoiceSessionEngine implements VoiceSessionHost {
       endKind: null,
       ending: null,
       mutation: Promise.resolve(),
-      inTask: false,
+      pendingMutationTasks: 0,
+      pendingMutationBytes: 0,
+      mutationOverflowed: false,
       staleFrameCount: 0,
       runtime: undefined as unknown as VoiceSessionRuntime,
     };
@@ -518,23 +526,41 @@ export class VoiceSessionEngine implements VoiceSessionHost {
   }
 
   /**
-   * Idempotent ending: serialized on the session mutation queue so DELETE,
-   * provider shutdown, and transport close can race safely. When called from
-   * inside the queue (adapter fatal, limit timers, `session.end`) the end
-   * runs inline — re-enqueueing behind the running task would deadlock.
+   * Public ending always serializes behind prior mutation work. Internal
+   * callers that already own the queue use `finishInternal` explicitly.
    */
   finish(session: VoiceSessionRecord, kind: VoiceSessionEndKind): Promise<void> {
     if (this.isTerminal(session)) return Promise.resolve();
-    session.ending ??= (
-      session.inTask
-        ? session.runtime.end(kind)
-        : enqueueSessionTask(session, () => session.runtime.end(kind))
+    session.ending ??= enqueueSessionTask(
+      session,
+      () => session.runtime.end(kind),
+      { bypassLimit: true },
     ).then(
       () => {
         this.afterTerminal(session);
       },
       (error: unknown) => {
         // Terminal cleanup failures are logged; a later finish may retry.
+        this.log("voice.session.end_failed", {
+          sessionId: session.sessionId,
+          error: error instanceof Error ? error.name : "UnknownError",
+        });
+        session.ending = null;
+        this.afterTerminal(session);
+      },
+    );
+    return session.ending;
+  }
+
+  finishInternal(session: VoiceSessionRecord, kind: VoiceSessionEndKind): Promise<void> {
+    if (this.isTerminal(session)) return Promise.resolve();
+    // An external finish may already be queued behind this task. Never await
+    // that promise from inside its predecessor; perform teardown now and let
+    // the queued idempotent call observe the terminal state later.
+    if (session.ending) return session.runtime.end(kind);
+    session.ending ??= session.runtime.end(kind).then(
+      () => this.afterTerminal(session),
+      (error: unknown) => {
         this.log("voice.session.end_failed", {
           sessionId: session.sessionId,
           error: error instanceof Error ? error.name : "UnknownError",
@@ -589,7 +615,7 @@ export class VoiceSessionEngine implements VoiceSessionHost {
     this.log("voice.session.limit", { sessionId: session.sessionId, kind });
     void enqueueSessionTask(session, async () => {
       session.runtime.emitError("session_limit_reached", false);
-      await this.finish(session, kind);
+      await this.finishInternal(session, kind);
     });
   }
 

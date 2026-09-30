@@ -196,6 +196,8 @@ export interface VoiceDeliveryPort {
     transportEpoch: number;
     deliveredThroughMs: number;
     deliveryRevision: number;
+    /** Current full manifest with measured durations for synthesized audio. */
+    segments: readonly VoiceDeliverySegmentInput[];
   }): Promise<{ revision: number } | "ignored">;
 
   /**

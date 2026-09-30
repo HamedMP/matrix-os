@@ -1,7 +1,12 @@
 import { z } from "zod/v4";
-import { SPEECH_MAX_TRANSCRIPT_CHARS, type SpeechMediaType } from "@matrix-os/contracts";
+import {
+  SPEECH_MAX_SYNTHESIS_AUDIO_BYTES,
+  SPEECH_MAX_TRANSCRIPT_CHARS,
+  type SpeechMediaType,
+} from "@matrix-os/contracts";
 
 const TRANSCRIPTIONS_ENDPOINT = "https://api.openai.com/v1/audio/transcriptions";
+const SPEECH_ENDPOINT = "https://api.openai.com/v1/audio/speech";
 const DEFAULT_TIMEOUT_MS = 55_000;
 const DEFAULT_MAX_RESPONSE_BYTES = 128 * 1024;
 const ModelSchema = z.string().min(1).max(120).regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/);
@@ -32,6 +37,91 @@ export interface FileTranscriptionInput {
 export interface FileTranscriptionAdapter {
   readonly id: string;
   transcribe(input: FileTranscriptionInput): Promise<{ text: string }>;
+}
+
+export interface SpeechSynthesisAdapter {
+  readonly id: string;
+  synthesize(input: { text: string; signal: AbortSignal }): Promise<Uint8Array>;
+}
+
+async function readBoundedBytes(response: Response, maxBytes: number): Promise<Uint8Array> {
+  if (!response.body) throw new SpeechAdapterError("invalid_response", "Synthesis response was invalid");
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    for (;;) {
+      const next = await reader.read();
+      if (next.done) break;
+      total += next.value.byteLength;
+      if (total > maxBytes) {
+        startBestEffortCleanup(() => reader.cancel());
+        throw new SpeechAdapterError("invalid_response", "Synthesis response exceeded its limit");
+      }
+      chunks.push(next.value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const output = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    output.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return output;
+}
+
+export function createOpenAiSpeechSynthesisAdapter(options: {
+  apiKey: string;
+  model: string;
+  voice: string;
+  fetchImpl?: typeof fetch;
+  timeoutMs?: number;
+}): SpeechSynthesisAdapter {
+  if (options.apiKey.trim().length < 16 || !ModelSchema.safeParse(options.model).success
+    || !/^[A-Za-z0-9_-]{1,64}$/.test(options.voice)) {
+    throw new SpeechAdapterError("misconfigured", "Speech synthesis adapter is misconfigured");
+  }
+  const fetchImpl = options.fetchImpl ?? fetch;
+  const timeoutMs = options.timeoutMs ?? 60_000;
+  return {
+    id: "openai-speech",
+    async synthesize(input) {
+      const timeout = AbortSignal.timeout(timeoutMs);
+      let response: Response;
+      try {
+        response = await fetchImpl(SPEECH_ENDPOINT, {
+          method: "POST",
+          redirect: "error",
+          headers: {
+            authorization: `Bearer ${options.apiKey}`,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            model: options.model,
+            voice: options.voice,
+            input: input.text,
+            response_format: "pcm",
+          }),
+          signal: AbortSignal.any([input.signal, timeout]),
+        });
+      } catch (_error: unknown) {
+        if (input.signal.aborted) throw new SpeechAdapterError("cancelled", "Synthesis was cancelled");
+        if (timeout.aborted) throw new SpeechAdapterError("timeout", "Synthesis timed out");
+        throw new SpeechAdapterError("request_failed", "Synthesis request failed");
+      }
+      if (!response.ok) {
+        if (response.body) startBestEffortCleanup(() => response.body!.cancel());
+        throw new SpeechAdapterError("request_failed", "Synthesis request failed");
+      }
+      const audio = await readBoundedBytes(response, SPEECH_MAX_SYNTHESIS_AUDIO_BYTES);
+      if (audio.byteLength < 2 || audio.byteLength % 2 !== 0) {
+        throw new SpeechAdapterError("invalid_response", "Synthesis response was invalid");
+      }
+      return audio;
+    },
+  };
 }
 
 function startBestEffortCleanup(cleanup: () => Promise<void>): void {

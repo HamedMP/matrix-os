@@ -59,6 +59,7 @@ import {
   CanonicalChatProviderRegistry,
   type CanonicalChatProviderAdapter,
 } from "./chat/provider-adapter.js";
+import { validateChatProviderSelection } from "./chat/provider-catalog.js";
 import { closeCanonicalChatEventLifecycle } from "./chat/routes.js";
 import { createGatewayChatProviderCatalog } from "./chat/runtime-provider-catalog.js";
 import { createCanonicalChatRuntime } from "./chat/runtime.js";
@@ -73,6 +74,7 @@ import { createCanonicalVoicePorts } from "./voice-session/canonical-ports.js";
 import { VoiceSessionEngine } from "./voice-session/engine.js";
 import {
   createManagedVoiceTranscriptionPort,
+  createManagedVoiceSynthesisPort,
   createVoiceSessionPlatformSpeechClient,
 } from "./speech/voice-session-ports.js";
 import {
@@ -1582,9 +1584,8 @@ export async function createGateway(config: GatewayConfig) {
     // One registration policy owns adapter authority
     // (`registerVoiceSessionMediaAdapters`): the simulator stays an explicit
     // dev seam; Platform Speech is the only production speech path — the
-    // managed adapter transcribes through the provisioned runtime client and
-    // may only speak through a development-gated synthesizer until a platform
-    // TTS endpoint exists. A direct provider key is a non-production escape
+    // managed adapter transcribes and speaks through the provisioned runtime
+    // client. A direct provider key is a non-production escape
     // hatch — never a second key authority on a production gateway.
     const voicePlatformSpeechClient = createVoiceSessionPlatformSpeechClient(process.env);
     registerVoiceSessionMediaAdapters({
@@ -1592,6 +1593,9 @@ export async function createGateway(config: GatewayConfig) {
       env: process.env,
       managedTranscribe: voicePlatformSpeechClient
         ? createManagedVoiceTranscriptionPort({ client: voicePlatformSpeechClient })
+        : undefined,
+      managedSynthesize: voicePlatformSpeechClient
+        ? createManagedVoiceSynthesisPort({ client: voicePlatformSpeechClient })
         : undefined,
       log: voiceLog,
     });
@@ -1641,6 +1645,17 @@ export async function createGateway(config: GatewayConfig) {
             ? { ...capability, sessionOnly: "unsupported" as const }
             : capability;
         },
+      },
+      routeEligibility: async ({ principal, chatId, selection }) => {
+        const owner = { type: "personal" as const, ownerId: principal.userId };
+        const selected = selection ?? (await chatRepository!.get(owner, chatId))?.chat.currentSelection;
+        if (!selected) return false;
+        const catalog = await canonicalChatProviderCatalog.getCatalog(principal);
+        return validateChatProviderSelection({
+          catalog,
+          selection: selected,
+          requirements: { voiceConversationOnly: true },
+        }).ok;
       },
       checkRateLimit: ({ principal }) => voiceSessionRateLimiter.check(principal.userId),
     }));

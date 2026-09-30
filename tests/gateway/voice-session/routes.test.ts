@@ -1,7 +1,11 @@
 import { Hono, type Context } from "hono";
 import type { UpgradeWebSocket, WSEvents } from "hono/ws";
 import { beforeEach, describe, expect, it } from "vitest";
+import { CanonicalProviderCatalogSchema } from "@matrix-os/contracts";
 import type { VoiceCapability } from "@matrix-os/contracts/voice-session";
+import { managedChatInstances } from "../../../packages/gateway/src/chat/managed-chat-catalog.js";
+import { validateChatProviderSelection } from "../../../packages/gateway/src/chat/provider-catalog.js";
+import { makeAiProviderSnapshot } from "../../fixtures/ai-provider-snapshot.js";
 import {
   MissingRequestPrincipalError,
   type RequestPrincipal,
@@ -56,6 +60,7 @@ function makeRoutes(options: {
   principal?: RequestPrincipal | null | (() => RequestPrincipal);
   denied?: boolean;
   rateLimited?: boolean;
+  routeEligibility?: Parameters<typeof createVoiceSessionRoutes>[0]["routeEligibility"];
 } = {}): RouteRig {
   const rig = options.rig ?? makeRig();
   const access = new FakeChatAccess();
@@ -69,6 +74,7 @@ function makeRoutes(options: {
     },
     chatAccess: access,
     capabilities: { capabilities: () => CAPABILITY },
+    ...(options.routeEligibility ? { routeEligibility: options.routeEligibility } : {}),
     ...(options.rateLimited ? { checkRateLimit: () => false } : {}),
   });
   return { app, rig, access };
@@ -91,6 +97,45 @@ describe("voice capabilities route", () => {
     const body = await res.json();
     expect(body.status).toBe("available");
     expect(access.calls).toEqual([{ principalId: "user_1", chatId: CHAT_ID, level: "read" }]);
+  });
+
+  it("does not advertise or create voice for the real tool-capable built-in Matrix AI route", async () => {
+    const revision = "catalog_matrix_builtin";
+    const instances = managedChatInstances(makeAiProviderSnapshot(), []).map((instance) => ({
+      ...instance,
+      catalogRevision: revision,
+    }));
+    const catalog = CanonicalProviderCatalogSchema.parse({
+      revision,
+      drivers: [{
+        kind: "kernel",
+        displayName: "Claude SDK",
+        adapterVersion: "1.0.0",
+        capabilityClass: "system_agent",
+      }],
+      instances,
+    });
+    const selection = instances[0]!.defaultSelection!;
+    const routeEligibility: NonNullable<Parameters<typeof createVoiceSessionRoutes>[0]["routeEligibility"]> =
+      ({ selection: requested }) => validateChatProviderSelection({
+        catalog,
+        selection: requested ?? selection,
+        requirements: { voiceConversationOnly: true },
+      }).ok;
+    const { app, rig } = makeRoutes({ routeEligibility });
+
+    const advertised = await app.request(`http://test/api/chats/${CHAT_ID}/voice/capabilities`);
+    expect(advertised.status).toBe(200);
+    expect(await advertised.json()).toMatchObject({
+      status: "unavailable",
+      transportModes: [],
+      turnModes: [],
+      reason: "provider_unavailable",
+    });
+    const created = await createViaHttp(app, { selection });
+    expect(created.res.status).toBe(422);
+    expect(created.body).toEqual({ error: "unsupported_surface" });
+    expect(rig.engine.size).toBe(0);
   });
 
   it("rejects malformed chat ids with 400", async () => {

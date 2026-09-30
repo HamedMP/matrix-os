@@ -133,7 +133,6 @@ export function createReconnectLoop(deps: VoiceReconnectLoopDeps): VoiceReconnec
       // A second caller (manual retry, scheduled timer, controller retry)
       // joins the in-flight attempt instead of minting a competing epoch.
       if (inFlight !== null) {
-        if (resetAttempts) attempts = 0;
         return inFlight;
       }
       const pending = run(resetAttempts).finally(() => {

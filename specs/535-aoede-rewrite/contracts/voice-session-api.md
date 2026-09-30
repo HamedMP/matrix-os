@@ -139,6 +139,7 @@ type VoiceServerFrame =
   | { type: "session.state"; state: VoiceSessionState; reason?: SafeVoiceReason }
   | { type: "transcript.provisional"; turnId: string; revision: number; text: string }
   | { type: "transcript.final"; turnId: string; canonicalTurnId: string; text: string }
+  | { type: "capture.completed"; turnId: string; outcome: "empty" | "failed" }
   | { type: "response.started"; responseId: string; runId: string }
   | { type: "response.audio"; responseId: string; segmentId: string; startMs: number; data: string }
   | { type: "response.audio_end"; responseId: string; generatedDurationMs: number }

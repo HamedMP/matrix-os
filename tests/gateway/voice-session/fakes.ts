@@ -224,6 +224,7 @@ export class FakeDelivery implements VoiceDeliveryPort {
     if (row.transportEpoch !== input.transportEpoch || row.revision !== input.deliveryRevision) {
       return "ignored" as const;
     }
+    row.segments = input.segments.map((segment) => ({ ...segment }));
     if (input.deliveredThroughMs > row.deliveredThroughMs) {
       row.deliveredThroughMs = input.deliveredThroughMs;
       row.revision += 1;

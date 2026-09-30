@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import type { VoiceClientFrame, VoiceServerFrame } from "@matrix-os/contracts/voice-session";
 import { VoiceSessionEngine, VoiceSessionError } from "../../../packages/gateway/src/voice-session/engine.js";
 import { VoiceMediaAdapterRegistry } from "../../../packages/gateway/src/voice-session/adapter.js";
+import type { VoiceAdapterSessionContext, VoiceMediaSession } from "../../../packages/gateway/src/voice-session/adapter.js";
 import {
   CHAT_ID,
   FakeAdapter,
@@ -26,6 +27,26 @@ function frame(
   fields: { type: string } & Record<string, unknown>,
 ): VoiceClientFrame {
   return { contractVersion: 1, sessionId, epoch, sequence, ...fields } as VoiceClientFrame;
+}
+
+class DeferredStartAdapter extends FakeAdapter {
+  private releaseStart: (() => void) | null = null;
+
+  override async start(context: VoiceAdapterSessionContext): Promise<VoiceMediaSession> {
+    await new Promise<void>((resolve) => { this.releaseStart = resolve; });
+    return super.start(context);
+  }
+
+  release(): void {
+    this.releaseStart?.();
+  }
+}
+
+function makeDeferredRig(options: { maxPendingMutationTasks?: number; maxPendingMutationBytes?: number } = {}) {
+  const adapter = new DeferredStartAdapter("deferred");
+  const registry = new VoiceMediaAdapterRegistry();
+  registry.register(adapter);
+  return { rig: makeRig({ engine: { adapters: registry, ...options } }), adapter };
 }
 
 /** Run one full admission through the adapter event port. */
@@ -238,7 +259,7 @@ describe("frames, turns, and admission", () => {
     // `qturn_` the voice turn recorded at admission.
     rig.events.emit({ type: "run.started", runId: "run_q", canonicalTurnId: "cturn_q", canonicalQueuedTurnId: "qturn_q" });
     await flush(rig, s.sessionId);
-    rig.events.emit({ type: "assistant.text", runId: "run_q", text: "hi", textStart: 0, textEnd: 2 });
+    rig.events.emit({ type: "assistant.text", runId: "run_q", text: "hi.", textStart: 0, textEnd: 3 });
     await flush(rig, s.sessionId);
     expect(rig.delivery.pendings).toHaveLength(1);
     expect(rig.delivery.pendings[0]?.runId).toBe("run_q");
@@ -286,7 +307,7 @@ describe("synthesis, delivery, and interruption", () => {
     const s = await listeningSession(rig);
     await admitTurn(rig, s, "speak");
     const runId = rig.admission.results[0]?.runId ?? "run_1";
-    rig.events.emit({ type: "assistant.text", runId, text: "spoken text", textStart: 0, textEnd: 11 });
+    rig.events.emit({ type: "assistant.text", runId, text: "spoken text.", textStart: 0, textEnd: 12 });
     await flush(rig, s.sessionId);
     return s;
   }
@@ -298,7 +319,7 @@ describe("synthesis, delivery, and interruption", () => {
     const started = lastFrame(s.sink, "response.started") as Extract<VoiceServerFrame, { type: "response.started" }> | undefined;
     expect(started?.runId).toBe("run_1");
     expect(rig.adapter.sessions[0]?.synths).toHaveLength(1);
-    expect(rig.adapter.sessions[0]?.synths[0]?.text).toBe("spoken text");
+    expect(rig.adapter.sessions[0]?.synths[0]?.text).toBe("spoken text.");
   });
 
   it("relays synthesis audio and completes delivery on full playback", async () => {
@@ -306,7 +327,8 @@ describe("synthesis, delivery, and interruption", () => {
     const started = lastFrame(s.sink, "response.started") as Extract<VoiceServerFrame, { type: "response.started" }>;
     const segmentId = rig.adapter.sessions[0]!.synths[0]!.segmentId;
     rig.adapter.emit({ type: "synthesis.audio", responseId: started.responseId, segmentId, startMs: 0, durationMs: 100, data: "AAAA" });
-    rig.adapter.emit({ type: "synthesis.end", responseId: started.responseId, generatedDurationMs: 100 });
+    rig.adapter.emit({ type: "synthesis.end", responseId: started.responseId, segmentId, generatedDurationMs: 100 });
+    rig.events.emit({ type: "run.terminal", runId: "run_1", state: "succeeded" });
     await flush(rig, s.sessionId);
     expect(lastFrame(s.sink, "response.audio")).toMatchObject({ segmentId, startMs: 0 });
     expect(lastFrame(s.sink, "response.audio_end")).toMatchObject({ generatedDurationMs: 100 });
@@ -423,6 +445,37 @@ describe("reconnect and epochs", () => {
     const summary = rig.engine.describeSession({ principal: PRINCIPAL, chatId: CHAT_ID, sessionId: s.sessionId });
     expect(summary?.status).toBe("reconnecting");
   });
+
+  it("revalidates a queued frame against the captured binding before dispatch", async () => {
+    const { rig, adapter } = makeDeferredRig();
+    const first = createAttached(rig);
+    const ready = first.handle.receive(clientFrame(first.sessionId, first.epoch, {
+      type: "client.ready",
+      audio: { codec: "pcm_s16le", sampleRateHz: 16_000, channels: 1, frameDurationMs: 20 },
+      capabilities: { formats: [{ codec: "pcm_s16le", sampleRateHz: 16_000, channels: 1, frameDurationMs: 20 }], binaryAudio: false, maxAudioFrameBytes: 65_536, deviceChangeEvents: false },
+    }));
+    await Promise.resolve();
+    const queued = first.handle.receive(clientFrame(first.sessionId, first.epoch, {
+      type: "heartbeat", timestampMs: 42,
+    }));
+    const reconnect = rig.engine.reconnectSession({ principal: PRINCIPAL, chatId: CHAT_ID, sessionId: first.sessionId });
+    const consumed = rig.tickets.consume(reconnect.lease.ticket, {
+      path: reconnect.lease.path, sessionId: first.sessionId, chatId: CHAT_ID,
+    });
+    const replacementSink = makeSink();
+    rig.engine.attachTransport({
+      sessionId: first.sessionId, chatId: CHAT_ID, principalId: PRINCIPAL.userId,
+      generation: consumed.binding.generation,
+    }, replacementSink);
+    adapter.release();
+    await Promise.all([ready, queued]);
+
+    expect(framesOfType(replacementSink, "heartbeat.ack")).toHaveLength(0);
+    expect(rig.logs).toContainEqual(expect.objectContaining({
+      event: "voice.session.frame_ignored",
+      fields: expect.objectContaining({ kind: "binding_changed_before_dispatch" }),
+    }));
+  });
 });
 
 describe("timeouts and shutdown", () => {
@@ -485,6 +538,49 @@ describe("timeouts and shutdown", () => {
     expect(rig.engine.isClosed()).toBe(true);
     expect(() => rig.engine.createSession({ principal: PRINCIPAL, chatId: CHAT_ID, request: makeCreateRequest({ clientRequestId: "post-close" }) }))
       .toThrowError(VoiceSessionError);
+  });
+
+  it("serializes an external end behind an in-flight mutation", async () => {
+    const { rig, adapter } = makeDeferredRig();
+    const s = createAttached(rig);
+    const ready = s.handle.receive(clientFrame(s.sessionId, s.epoch, {
+      type: "client.ready",
+      audio: { codec: "pcm_s16le", sampleRateHz: 16_000, channels: 1, frameDurationMs: 20 },
+      capabilities: { formats: [{ codec: "pcm_s16le", sampleRateHz: 16_000, channels: 1, frameDurationMs: 20 }], binaryAudio: false, maxAudioFrameBytes: 65_536, deviceChangeEvents: false },
+    }));
+    await Promise.resolve();
+    const ending = rig.engine.endSession({
+      principal: PRINCIPAL, chatId: CHAT_ID, sessionId: s.sessionId, kind: "user",
+    });
+    await Promise.resolve();
+    expect(s.sink.closes).toHaveLength(0);
+    expect(rig.engine.describeSession({ principal: PRINCIPAL, chatId: CHAT_ID, sessionId: s.sessionId })?.status)
+      .toBe("connecting");
+
+    adapter.release();
+    await Promise.all([ready, ending]);
+    expect(rig.engine.describeSession({ principal: PRINCIPAL, chatId: CHAT_ID, sessionId: s.sessionId })?.status)
+      .toBe("ended");
+  });
+
+  it("terminates a session when the mutation task backlog overflows", async () => {
+    const { rig, adapter } = makeDeferredRig({ maxPendingMutationTasks: 2 });
+    const s = createAttached(rig);
+    const ready = s.handle.receive(clientFrame(s.sessionId, s.epoch, {
+      type: "client.ready",
+      audio: { codec: "pcm_s16le", sampleRateHz: 16_000, channels: 1, frameDurationMs: 20 },
+      capabilities: { formats: [{ codec: "pcm_s16le", sampleRateHz: 16_000, channels: 1, frameDurationMs: 20 }], binaryAudio: false, maxAudioFrameBytes: 65_536, deviceChangeEvents: false },
+    }));
+    await Promise.resolve();
+    const queued = s.handle.receive(clientFrame(s.sessionId, s.epoch, { type: "heartbeat", timestampMs: 1 }));
+    const overflow = s.handle.receive(clientFrame(s.sessionId, s.epoch, { type: "heartbeat", timestampMs: 2 }));
+    expect(s.sink.closes.at(-1)?.reason).toBe("Session backlog exceeded");
+    expect(rig.logs.filter((entry) => entry.event === "voice.session.mutation_overflow")).toHaveLength(1);
+
+    adapter.release();
+    await Promise.all([ready, queued, overflow]);
+    expect(rig.engine.describeSession({ principal: PRINCIPAL, chatId: CHAT_ID, sessionId: s.sessionId })?.status)
+      .toBe("failed");
   });
 });
 

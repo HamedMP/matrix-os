@@ -86,6 +86,57 @@ describe("canonical revision truth", () => {
   });
 });
 
+describe("non-admitted capture terminalization", () => {
+  beforeEach(() => resetFrameSeq());
+
+  it("emits exactly one failed completion for a canonical rejection", async () => {
+    const rig = makeRig();
+    rig.admission.push({
+      outcome: "rejected",
+      revision: 1,
+      error: { code: "chat_unavailable", retryable: true, recovery: "continue_in_chat" },
+    });
+    const s = await listeningSession(rig);
+    await admitTurn(rig, s, "vturn_rejected", "reject this");
+
+    expect(framesOfType(s.sink, "capture.completed")).toEqual([
+      expect.objectContaining({ turnId: "vturn_rejected", outcome: "failed" }),
+    ]);
+  });
+
+  it("emits exactly one failed completion when canonical admission throws", async () => {
+    const rig = makeRig();
+    rig.admission.failWith = new Error("canonical unavailable");
+    const s = await listeningSession(rig);
+    await admitTurn(rig, s, "vturn_exception", "try this");
+
+    expect(framesOfType(s.sink, "capture.completed")).toEqual([
+      expect.objectContaining({ turnId: "vturn_exception", outcome: "failed" }),
+    ]);
+  });
+
+  it("does not duplicate completion when the adapter already terminalized the capture", async () => {
+    const rig = makeRig();
+    const s = await listeningSession(rig);
+    await s.handle.receive(clientFrame(s.sessionId, s.epoch, {
+      type: "capture.start", turnId: "vturn_terminal", mode: "hands_free",
+    }));
+    rig.adapter.emit({ type: "capture.completed", turnId: "vturn_terminal", outcome: "failed" });
+    rig.adapter.emit({
+      type: "transcript.final",
+      turnId: "vturn_terminal",
+      finalityId: "vfinal_terminal",
+      text: "late final",
+    });
+    await flush(rig, s.sessionId);
+
+    expect(framesOfType(s.sink, "capture.completed")).toEqual([
+      expect.objectContaining({ turnId: "vturn_terminal", outcome: "failed" }),
+    ]);
+    expect(rig.admission.calls).toHaveLength(0);
+  });
+});
+
 describe("delivery manifest durability", () => {
   let rig: VoiceTestRig;
   beforeEach(() => {
@@ -110,6 +161,31 @@ describe("delivery manifest durability", () => {
     expect(rig.adapter.sessions[0]?.synths).toHaveLength(2);
   });
 
+  it("assembles model deltas into one natural synthesis phrase", async () => {
+    const s = await listeningSession(rig);
+    await admitTurn(rig, s, "vturn_1", "speak");
+    const runId = rig.admission.results[0]?.runId ?? "run_1";
+    rig.events.emit({ type: "assistant.text", runId, text: "Hello ", textStart: 0, textEnd: 6 });
+    rig.events.emit({ type: "assistant.text", runId, text: "from the model.", textStart: 6, textEnd: 21 });
+    await flush(rig, s.sessionId);
+    expect(rig.adapter.sessions[0]?.synths).toHaveLength(1);
+    expect(rig.adapter.sessions[0]?.synths[0]?.text).toBe("Hello from the model.");
+  });
+
+  it("splits an oversized model delta into bounded synthesis phrases", async () => {
+    const s = await listeningSession(rig);
+    await admitTurn(rig, s, "vturn_1", "speak");
+    const runId = rig.admission.results[0]?.runId ?? "run_1";
+    const text = `${"word ".repeat(70)}done.`;
+    rig.events.emit({ type: "assistant.text", runId, text, textStart: 0, textEnd: text.length });
+    await flush(rig, s.sessionId);
+
+    const synths = rig.adapter.sessions[0]?.synths ?? [];
+    expect(synths.length).toBeGreaterThan(1);
+    expect(synths.every((command) => [...command.text].length <= 240)).toBe(true);
+    expect(synths.map((command) => command.text).join("")).toBe(text);
+  });
+
   it("orders every durable manifest write before the matching synthesize call", async () => {
     const s = await listeningSession(rig);
     const order: string[] = [];
@@ -132,8 +208,8 @@ describe("delivery manifest durability", () => {
 
     await admitTurn(rig, s, "vturn_1", "speak");
     const runId = rig.admission.results[0]?.runId ?? "run_1";
-    rig.events.emit({ type: "assistant.text", runId, text: "one ", textStart: 0, textEnd: 4 });
-    rig.events.emit({ type: "assistant.text", runId, text: "two", textStart: 4, textEnd: 7 });
+    rig.events.emit({ type: "assistant.text", runId, text: "one. ", textStart: 0, textEnd: 5 });
+    rig.events.emit({ type: "assistant.text", runId, text: "two.", textStart: 5, textEnd: 9 });
     await flush(rig, s.sessionId);
 
     expect(order[0]).toBe("recordPending");
@@ -147,7 +223,7 @@ describe("delivery manifest durability", () => {
     rig.delivery.pendingError = new Error("delivery store down");
     await admitTurn(rig, s, "vturn_1", "speak");
     const runId = rig.admission.results[0]?.runId ?? "run_1";
-    rig.events.emit({ type: "assistant.text", runId, text: "one", textStart: 0, textEnd: 3 });
+    rig.events.emit({ type: "assistant.text", runId, text: "one.", textStart: 0, textEnd: 4 });
     await flush(rig, s.sessionId);
 
     expect(framesOfType(s.sink, "response.started")).toHaveLength(0);
@@ -160,7 +236,7 @@ describe("delivery manifest durability", () => {
   it("stops synthesis and reports when a later manifest extension fails", async () => {
     const { s, runId, responseId } = await speaking(rig);
     rig.delivery.extendError = new Error("manifest write lost");
-    rig.events.emit({ type: "assistant.text", runId, text: "two", textStart: 14, textEnd: 17 });
+    rig.events.emit({ type: "assistant.text", runId, text: "two.", textStart: 14, textEnd: 18 });
     await flush(rig, s.sessionId);
 
     // The segment is NOT synthesized; the client sees the response end.
@@ -272,7 +348,7 @@ describe("contiguous acknowledgement", () => {
 
   it("rejects a skip-ack and still completes on contiguous acks", async () => {
     const { s, runId, responseId } = await speaking(rig);
-    rig.events.emit({ type: "assistant.text", runId, text: "two", textStart: 14, textEnd: 17 });
+    rig.events.emit({ type: "assistant.text", runId, text: "two.", textStart: 14, textEnd: 18 });
     await flush(rig, s.sessionId);
     const [seg0, seg1] = rig.delivery.row(responseId)!.segments;
 
@@ -287,7 +363,9 @@ describe("contiguous acknowledgement", () => {
     // Contiguous acks reach `complete`.
     rig.adapter.emit({ type: "synthesis.audio", responseId, segmentId: seg0!.segmentId, startMs: 0, durationMs: 50, data: "AAAA" });
     rig.adapter.emit({ type: "synthesis.audio", responseId, segmentId: seg1!.segmentId, startMs: 50, durationMs: 50, data: "AAAA" });
-    rig.adapter.emit({ type: "synthesis.end", responseId, generatedDurationMs: 100 });
+    rig.adapter.emit({ type: "synthesis.end", responseId, segmentId: seg0!.segmentId, generatedDurationMs: 50 });
+    rig.adapter.emit({ type: "synthesis.end", responseId, segmentId: seg1!.segmentId, generatedDurationMs: 100 });
+    rig.events.emit({ type: "run.terminal", runId, state: "succeeded" });
     await flush(rig, s.sessionId);
     for (const segmentId of [seg0!.segmentId, seg1!.segmentId]) {
       await s.handle.receive(clientFrame(s.sessionId, s.epoch, {
@@ -298,6 +376,45 @@ describe("contiguous acknowledgement", () => {
     expect(rig.delivery.row(responseId)?.acknowledgedIndex).toBe(1);
     expect(rig.delivery.terminals.at(-1)?.reason).toBe("complete");
     expect(rig.delivery.row(responseId)?.state).toBe("complete");
+  });
+
+  it("keeps a response open when segment one plays before later canonical text arrives", async () => {
+    const { s, runId, responseId } = await speaking(rig);
+    const first = rig.delivery.row(responseId)!.segments[0]!;
+    rig.adapter.emit({
+      type: "synthesis.audio", responseId, segmentId: first.segmentId,
+      startMs: 0, durationMs: 50, data: "AAAA",
+    });
+    rig.adapter.emit({
+      type: "synthesis.end", responseId, segmentId: first.segmentId, generatedDurationMs: 50,
+    });
+    await flush(rig, s.sessionId);
+    await s.handle.receive(clientFrame(s.sessionId, s.epoch, {
+      type: "playback.segment_played", responseId, segmentId: first.segmentId,
+      deliveryRevision: 0, playedThroughMs: 50,
+    }));
+    await flush(rig, s.sessionId);
+    expect(rig.delivery.terminals).toHaveLength(0);
+    expect(rig.delivery.row(responseId)?.segments[0]?.durationMs).toBe(50);
+
+    rig.events.emit({ type: "assistant.text", runId, text: "second clause.", textStart: 14, textEnd: 28 });
+    await flush(rig, s.sessionId);
+    const second = rig.delivery.row(responseId)!.segments[1]!;
+    rig.adapter.emit({
+      type: "synthesis.audio", responseId, segmentId: second.segmentId,
+      startMs: 50, durationMs: 50, data: "AAAA",
+    });
+    rig.adapter.emit({
+      type: "synthesis.end", responseId, segmentId: second.segmentId, generatedDurationMs: 100,
+    });
+    rig.events.emit({ type: "run.terminal", runId, state: "succeeded" });
+    await flush(rig, s.sessionId);
+    await s.handle.receive(clientFrame(s.sessionId, s.epoch, {
+      type: "playback.segment_played", responseId, segmentId: second.segmentId,
+      deliveryRevision: 0, playedThroughMs: 100,
+    }));
+    await flush(rig, s.sessionId);
+    expect(rig.delivery.terminals.at(-1)?.reason).toBe("complete");
   });
 });
 
@@ -456,7 +573,7 @@ describe("bounded session tracking", () => {
     await flush(limited, s.sessionId);
     // Runs 1+2 terminalized and released; a third admission correlates again.
     await admitTurn(limited, s, "vturn_c", "c");
-    limited.events.emit({ type: "assistant.text", runId: "run_3", text: "hi", textStart: 0, textEnd: 2 });
+    limited.events.emit({ type: "assistant.text", runId: "run_3", text: "hi.", textStart: 0, textEnd: 3 });
     await flush(limited, s.sessionId);
     expect(limited.delivery.pendings.at(-1)?.runId).toBe("run_3");
   });

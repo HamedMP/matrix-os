@@ -40,7 +40,7 @@ function catalog(): CanonicalProviderCatalog {
       kind: "codex",
       displayName: "Codex",
       adapterVersion: "1.0.0",
-      capabilityClass: "coding_agent",
+      capabilityClass: "system_agent",
     }],
     instances: [{
       id: "codex_default",
@@ -53,9 +53,9 @@ function catalog(): CanonicalProviderCatalog {
         id: selection.model,
         displayName: "GPT-5.6-Sol",
         availability: "available",
-        capabilities: ["tools"],
+        capabilities: [],
         supportsVision: false,
-        supportsToolUse: true,
+        supportsToolUse: false,
       }],
       options: [],
       skills: [],
@@ -151,6 +151,32 @@ async function waitForActive(runId: string) {
 }
 
 describe("live voice session policy at admission", () => {
+  it("rejects a voice-source run when the selected harness exposes tool capability", async () => {
+    const unsafeCatalog = catalog();
+    unsafeCatalog.drivers[0]!.capabilityClass = "coding_agent";
+    unsafeCatalog.instances[0]!.models[0]!.capabilities = ["tools"];
+    unsafeCatalog.instances[0]!.models[0]!.supportsToolUse = true;
+    const orchestrator = new CanonicalChatOrchestrator({
+      repository,
+      catalog: { getCatalog: async () => unsafeCatalog },
+      adapters: new CanonicalChatProviderRegistry([adapter(completing("must_not_start"))]),
+    });
+    try {
+      await expect(orchestrator.admitTurn(principal, owner, "chat_voice", turnRequest({
+        runPolicy: {
+          memoryMode: "session_only",
+          nativeCheckpointPolicy: "disposable",
+          source: "voice",
+          voiceSessionId: "vsession_live",
+        },
+      }))).rejects.toMatchObject({ status: 400, safeError: { code: "capability_mismatch" } });
+      const runs = await repository.kysely.selectFrom("chat_runs").select("id").execute();
+      expect(runs).toHaveLength(0);
+    } finally {
+      await orchestrator.close();
+    }
+  });
+
   it("stamps session policy onto a typed turn admitted while the session owns the chat", async () => {
     const { lookup, set } = createVoiceSessionPolicyLookup();
     set({ policyForChat: (chatId) => chatId === "chat_voice" ? liveSession : undefined });

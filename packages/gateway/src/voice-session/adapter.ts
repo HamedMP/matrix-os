@@ -79,6 +79,8 @@ export type VoiceAdapterEvent =
   | {
       type: "synthesis.audio";
       responseId: string;
+      /** Durable text segment; differs from segmentId for non-final transport chunks. */
+      durableSegmentId?: string;
       segmentId: string;
       startMs: number;
       durationMs: number;
@@ -103,6 +105,15 @@ export type VoiceAdapterEvent =
        */
       segmentId?: string;
     }
+  | {
+      /** A synthesis command was explicitly rejected before it could drain. */
+      type: "synthesis.rejected";
+      responseId: string;
+      segmentId: string;
+      code: Extract<SafeVoiceErrorCode, "audio_backpressure" | "provider_unavailable">;
+      retryable: boolean;
+    }
+  | { type: "capture.completed"; turnId: string; outcome: "empty" | "failed" }
   | { type: "error"; code: SafeVoiceErrorCode; retryable: boolean; fatal: boolean };
 
 export interface VoiceSynthesisCommand {

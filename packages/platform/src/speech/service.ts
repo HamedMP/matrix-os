@@ -2,6 +2,8 @@ import { createHmac } from "node:crypto";
 import type { Transaction } from "kysely";
 import {
   SPEECH_CONTRACT_VERSION,
+  SPEECH_MAX_SYNTHESIS_AUDIO_BYTES,
+  SpeechSynthesisRequestSchema,
   SPEECH_MAX_TRANSCRIPT_CHARS,
   SpeechCancellationResponseSchema,
   SpeechLanguageHintsSchema,
@@ -12,10 +14,15 @@ import {
   type SpeechCapabilitiesResponse,
   type SpeechCancellationResponse,
   type SpeechStatusResponse,
+  type SpeechSynthesisResponse,
   type SpeechTranscriptionResponse,
 } from "@matrix-os/contracts";
 import type { PlatformDatabase } from "../db.js";
-import { SpeechAdapterError, type FileTranscriptionAdapter } from "./adapters/openai.js";
+import {
+  SpeechAdapterError,
+  type FileTranscriptionAdapter,
+  type SpeechSynthesisAdapter,
+} from "./adapters/openai.js";
 import { inspectSpeechWav, SpeechMediaError } from "./media.js";
 import { SpeechFundingError } from "./funding.js";
 import {
@@ -39,6 +46,7 @@ export type SpeechServiceErrorCode =
   | "allowance_exhausted"
   | "timeout"
   | "transcription_failed"
+  | "synthesis_failed"
   | "cancelled"
   | "result_not_replayable";
 
@@ -58,6 +66,7 @@ export interface SpeechFundingPort {
       policyRevision: string;
       modelId: string;
       maximumCostMicrousd: number;
+      capability?: "transcription" | "synthesis";
     },
   ): Promise<{ reservationId: string; reservedMicrousd: number }>;
   start(trx: Transaction<PlatformDatabase>, reservationId: string): Promise<void>;
@@ -89,6 +98,13 @@ export interface PlatformSpeechPolicy {
   microusdPerMinute: number;
   dictation: EnabledSourcePolicy;
   ownerAudio: EnabledSourcePolicy | DisabledSourcePolicy;
+  synthesis?: {
+    enabled: true;
+    modelId: string;
+    microusdPerMinute: number;
+    maxInputChars: number;
+    maxDurationMs: number;
+  };
 }
 
 export interface SpeechTranscriptionInput {
@@ -104,6 +120,12 @@ export interface SpeechTranscriptionInput {
 export interface PlatformSpeechService {
   capabilities(): SpeechCapabilitiesResponse;
   transcribe(input: SpeechTranscriptionInput): Promise<SpeechTranscriptionResponse>;
+  synthesize(input: {
+    identity: SpeechOperationIdentity;
+    requestId: string;
+    text: string;
+    signal: AbortSignal;
+  }): Promise<SpeechSynthesisResponse>;
   status(identity: SpeechOperationIdentity, requestId: string): Promise<SpeechStatusResponse | undefined>;
   cancel(identity: SpeechOperationIdentity, requestId: string): Promise<SpeechCancellationResponse>;
   shutdown(): Promise<void>;
@@ -190,6 +212,7 @@ export function createPlatformSpeechService(options: {
   operations: SpeechOperationsRepository;
   funding: SpeechFundingPort;
   adapter: FileTranscriptionAdapter;
+  synthesisAdapter?: SpeechSynthesisAdapter;
   fingerprintSecret: string;
   policy: PlatformSpeechPolicy;
   cleanupIntervalMs?: number;
@@ -233,12 +256,160 @@ export function createPlatformSpeechService(options: {
       ? { ...options.policy.ownerAudio, supportedMediaTypes: [...options.policy.ownerAudio.supportedMediaTypes] }
       : options.policy.ownerAudio;
     if (options.policy.enabled) {
-      return { contractVersion: SPEECH_CONTRACT_VERSION, fileTranscription: { status: "ready", dictation, ownerAudio } };
+      return {
+        contractVersion: SPEECH_CONTRACT_VERSION,
+        fileTranscription: { status: "ready", dictation, ownerAudio },
+        synthesis: options.policy.synthesis?.enabled && options.synthesisAdapter
+          ? { status: "ready", maxInputChars: options.policy.synthesis.maxInputChars, format: "pcm_s16le_24000_mono" }
+          : { status: "unavailable", reason: "disabled" },
+      };
     }
     return {
       contractVersion: SPEECH_CONTRACT_VERSION,
       fileTranscription: { status: "unavailable", reason: "disabled", dictation, ownerAudio },
     };
+  }
+
+  async function synthesize(input: {
+    identity: SpeechOperationIdentity;
+    requestId: string;
+    text: string;
+    signal: AbortSignal;
+  }): Promise<SpeechSynthesisResponse> {
+    const synthesis = options.policy.synthesis;
+    if (shuttingDown || !options.policy.enabled || !synthesis?.enabled
+      || !options.synthesisAdapter) {
+      throw new SpeechServiceError("unavailable");
+    }
+    const parsed = SpeechSynthesisRequestSchema.safeParse({ requestId: input.requestId, text: input.text });
+    if (!parsed.success || [...parsed.data.text].length > synthesis.maxInputChars) {
+      throw new SpeechServiceError("invalid_request");
+    }
+    if (input.signal.aborted || shutdownController.signal.aborted) throw new SpeechServiceError("cancelled");
+    if (activeSlots >= MAX_ACTIVE_TRANSCRIPTIONS) throw new SpeechServiceError("rate_limited");
+    activeSlots += 1;
+    const operationKey = `${input.identity.ownerId}\0${input.identity.machineId}\0${input.identity.runtimeSlot}\0${parsed.data.requestId}`;
+    const controller = new AbortController();
+    const signal = AbortSignal.any([input.signal, controller.signal, shutdownController.signal]);
+    const operationControllers = active.get(operationKey) ?? [];
+    operationControllers.push(controller);
+    active.set(operationKey, operationControllers);
+    const taskCompletion = Promise.withResolvers<void>();
+    activeTasks.add(taskCompletion.promise);
+    const maximumCostMicrousd = microusdForDuration(synthesis.maxDurationMs, synthesis.microusdPerMinute);
+    let admitted: SpeechOperationRecord | undefined;
+    let ownsDispatch = false;
+    try {
+      try {
+        admitted = await options.operations.admitSynthesis({
+          identity: input.identity,
+          requestId: parsed.data.requestId,
+          contentFingerprint: createHmac("sha256", options.fingerprintSecret)
+            .update(`synthesis\0${options.policy.revision}\0${parsed.data.text}`, "utf8").digest("hex"),
+          policyRevision: options.policy.revision,
+          adapterId: options.synthesisAdapter.id,
+          modelId: synthesis.modelId,
+          maximumCostMicrousd,
+        }, (trx) => options.funding.reserve(trx, {
+          identity: input.identity,
+          requestId: parsed.data.requestId,
+          policyRevision: options.policy.revision,
+          modelId: synthesis.modelId,
+          maximumCostMicrousd,
+          capability: "synthesis",
+        }));
+      } catch (error: unknown) {
+        if (error instanceof SpeechOperationRateLimitError) throw new SpeechServiceError("rate_limited");
+        if (error instanceof SpeechOperationConflictError) throw new SpeechServiceError("request_conflict");
+        if (error instanceof SpeechFundingError) throw new SpeechServiceError(error.code);
+        throw error;
+      }
+      if (admitted.cancellationRequested) throw new SpeechServiceError("cancelled");
+      if (signal.aborted) {
+        await options.operations.cancel(input.identity, parsed.data.requestId, (trx, reservationId) => (
+          options.funding.release(trx, reservationId)
+        ));
+        throw new SpeechServiceError("cancelled");
+      }
+      const claim = await options.operations.claimDispatch(
+        input.identity,
+        parsed.data.requestId,
+        (trx, reservationId) => options.funding.start(trx, reservationId),
+      );
+      if (!claim.claimed) {
+        throw new SpeechServiceError(claim.operation.cancellationRequested ? "cancelled" : "result_not_replayable");
+      }
+      ownsDispatch = true;
+      const beforeDispatch = await options.operations.get(input.identity, parsed.data.requestId);
+      if (!beforeDispatch || beforeDispatch.cancellationRequested || signal.aborted) {
+        controller.abort();
+        throw new SpeechServiceError("cancelled");
+      }
+      const audio = await options.synthesisAdapter.synthesize({ text: parsed.data.text, signal });
+      if (audio.byteLength > SPEECH_MAX_SYNTHESIS_AUDIO_BYTES || audio.byteLength < 2 || audio.byteLength % 2 !== 0) {
+        throw new SpeechAdapterError("invalid_response", "Synthesis response was invalid");
+      }
+      const durationMs = Math.ceil(audio.byteLength / 48);
+      if (durationMs > synthesis.maxDurationMs) throw new SpeechAdapterError("invalid_response", "Synthesis response was too long");
+      const beforeCompletion = await options.operations.get(input.identity, parsed.data.requestId);
+      if (!beforeCompletion || beforeCompletion.cancellationRequested || signal.aborted) {
+        controller.abort();
+        throw new SpeechServiceError("cancelled");
+      }
+      const actualCostMicrousd = microusdForDuration(durationMs, synthesis.microusdPerMinute);
+      await options.operations.complete(input.identity, parsed.data.requestId, {
+        executionState: "succeeded",
+        outcomeCode: "transcript",
+        actualCostMicrousd,
+      }, (trx, reservationId) => options.funding.settle(trx, reservationId, {
+        mode: "exact",
+        actualCostMicrousd,
+      }));
+      return {
+        contractVersion: SPEECH_CONTRACT_VERSION,
+        requestId: parsed.data.requestId,
+        status: "succeeded",
+        format: "pcm_s16le_24000_mono",
+        durationMs,
+        audio: Buffer.from(audio).toString("base64"),
+      };
+    } catch (error: unknown) {
+      const current = admitted
+        ? await options.operations.get(input.identity, parsed.data.requestId).catch(() => undefined)
+        : undefined;
+      // Only the atomic dispatch-claim winner owns the provider call and its
+      // terminal write. A duplicate caller that observes `dispatching` must
+      // not mark the winner uncertain while that call is still in flight.
+      if (ownsDispatch && current?.executionState === "dispatching") {
+        const cancelled = current.cancellationRequested || signal.aborted
+          || (error instanceof SpeechAdapterError && error.code === "cancelled");
+        if (cancelled && !current.cancellationRequested) {
+          await options.operations.cancel(input.identity, parsed.data.requestId, (trx, reservationId) => (
+            options.funding.release(trx, reservationId)
+          ));
+        }
+        await options.operations.complete(input.identity, parsed.data.requestId, {
+          executionState: "uncertain",
+          outcomeCode: cancelled ? "cancelled" : error instanceof SpeechAdapterError && error.code === "timeout"
+            ? "timeout" : "provider_failure",
+          actualCostMicrousd: current.reservedMicrousd ?? maximumCostMicrousd,
+        }, (trx, reservationId) => options.funding.settle(trx, reservationId, { mode: "conservative" }));
+      }
+      if (current?.cancellationRequested || signal.aborted
+        || (error instanceof SpeechAdapterError && error.code === "cancelled")) {
+        throw new SpeechServiceError("cancelled");
+      }
+      if (error instanceof SpeechAdapterError && error.code === "timeout") throw new SpeechServiceError("timeout");
+      if (error instanceof SpeechServiceError) throw error;
+      throw new SpeechServiceError("synthesis_failed");
+    } finally {
+      const remainingControllers = (active.get(operationKey) ?? []).filter((entry) => entry !== controller);
+      if (remainingControllers.length > 0) active.set(operationKey, remainingControllers);
+      else active.delete(operationKey);
+      activeSlots -= 1;
+      activeTasks.delete(taskCompletion.promise);
+      taskCompletion.resolve();
+    }
   }
 
   async function transcribe(input: SpeechTranscriptionInput): Promise<SpeechTranscriptionResponse> {
@@ -499,7 +670,7 @@ export function createPlatformSpeechService(options: {
     return shutdownPromise;
   }
 
-  return { capabilities, transcribe, status, cancel, shutdown };
+  return { capabilities, transcribe, synthesize, status, cancel, shutdown };
 }
 
 export function createUnavailablePlatformSpeechService(
@@ -521,6 +692,7 @@ export function createUnavailablePlatformSpeechService(
       },
     }),
     transcribe: unavailable,
+    synthesize: unavailable,
     status: async () => undefined,
     cancel: unavailable,
     shutdown: async () => undefined,

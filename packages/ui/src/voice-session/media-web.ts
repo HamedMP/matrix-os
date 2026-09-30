@@ -18,6 +18,8 @@ export class VoiceMediaError extends Error {
 export interface VoiceMediaStreamTrackLike {
   stop(): void;
   getSettings?(): { deviceId?: string };
+  addEventListener?(type: "ended", listener: () => void): void;
+  removeEventListener?(type: "ended", listener: () => void): void;
 }
 
 export interface VoiceMediaStreamLike {

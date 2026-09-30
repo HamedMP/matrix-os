@@ -1,6 +1,11 @@
 import { createHmac, randomUUID } from "node:crypto";
 import type { PlatformDB } from "../db.js";
-import { createOpenAiFileTranscriptionAdapter, type FileTranscriptionAdapter } from "./adapters/openai.js";
+import {
+  createOpenAiFileTranscriptionAdapter,
+  createOpenAiSpeechSynthesisAdapter,
+  type FileTranscriptionAdapter,
+  type SpeechSynthesisAdapter,
+} from "./adapters/openai.js";
 import type { PlatformSpeechConfig } from "./config.js";
 import { createAiFundedSpeechFundingPort } from "./funding.js";
 import { createSpeechOperationsRepository } from "./operations.js";
@@ -40,6 +45,13 @@ function policy(config: Exclude<PlatformSpeechConfig, { enabled: false }>): Plat
     microusdPerMinute: config.microusdPerMinute,
     dictation: source,
     ownerAudio: config.ownerAudioEnabled ? { ...source } : { enabled: false },
+    synthesis: {
+      enabled: true,
+      modelId: config.synthesisModel,
+      microusdPerMinute: config.synthesisMicrousdPerMinute,
+      maxInputChars: 4_096,
+      maxDurationMs: 10 * 60_000,
+    },
   };
 }
 
@@ -72,6 +84,16 @@ function fixtureAdapter(transcript: string): FileTranscriptionAdapter {
   };
 }
 
+function fixtureSynthesisAdapter(): SpeechSynthesisAdapter {
+  return {
+    id: "fixture-speech",
+    async synthesize(input) {
+      if (input.signal.aborted) throw new DOMException("Aborted", "AbortError");
+      return new Uint8Array(4_800);
+    },
+  };
+}
+
 export function createConfiguredPlatformSpeechService(options: {
   db: PlatformDB;
   config: PlatformSpeechConfig;
@@ -96,31 +118,40 @@ export function createConfiguredPlatformSpeechService(options: {
   });
   const fingerprintSecret = deriveSecret(config.speechSecret, "fingerprint");
   if (config.provider === "fixture") {
+    const funding = fixtureFunding(deriveSecret(config.speechSecret, "funding"));
     return createPlatformSpeechService({
       operations,
-      funding: fixtureFunding(deriveSecret(config.speechSecret, "funding")),
+      funding,
       adapter: fixtureAdapter(config.fixtureTranscript),
+      synthesisAdapter: fixtureSynthesisAdapter(),
       fingerprintSecret,
       policy: policy(config),
     });
   }
+  const funding = config.fundingMode === "preview_no_charge"
+    ? fixtureFunding(deriveSecret(config.speechSecret, "funding"))
+    : createAiFundedSpeechFundingPort({
+      allowedSources: config.allowedFundingSources,
+      credentialHashSecret: deriveSecret(config.speechSecret, "funding"),
+      reservationIdFactory: () => `speech_${randomUUID().replaceAll("-", "")}`,
+      now: options.now,
+      monthlyAllowance: {
+        monthlyBudgetMicrousd: config.monthlyBudgetMicrousd,
+        monthlyPromotionalCreditMicrousd: config.monthlyPromotionalCreditMicrousd,
+      },
+    });
   const service = createPlatformSpeechService({
     operations,
-    funding: config.fundingMode === "preview_no_charge"
-      ? fixtureFunding(deriveSecret(config.speechSecret, "funding"))
-      : createAiFundedSpeechFundingPort({
-        allowedSources: config.allowedFundingSources,
-        credentialHashSecret: deriveSecret(config.speechSecret, "funding"),
-        reservationIdFactory: () => `speech_${randomUUID().replaceAll("-", "")}`,
-        now: options.now,
-        monthlyAllowance: {
-          monthlyBudgetMicrousd: config.monthlyBudgetMicrousd,
-          monthlyPromotionalCreditMicrousd: config.monthlyPromotionalCreditMicrousd,
-        },
-      }),
+    funding,
     adapter: createOpenAiFileTranscriptionAdapter({
       apiKey: config.apiKey,
       model: config.model,
+      fetchImpl: options.fetchImpl,
+    }),
+    synthesisAdapter: createOpenAiSpeechSynthesisAdapter({
+      apiKey: config.apiKey,
+      model: config.synthesisModel,
+      voice: config.synthesisVoice,
       fetchImpl: options.fetchImpl,
     }),
     fingerprintSecret,

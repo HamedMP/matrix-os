@@ -6,6 +6,8 @@ import {
   SpeechSafeErrorResponseSchema,
   SpeechSourceKindSchema,
   SpeechStatusResponseSchema,
+  SpeechSynthesisRequestSchema,
+  SpeechSynthesisResponseSchema,
   SpeechTranscriptionResponseSchema,
 } from "@matrix-os/contracts";
 import { Hono, type Context } from "hono";
@@ -18,6 +20,7 @@ import { SpeechServiceError, type PlatformSpeechService } from "./service.js";
 
 const MAX_DICTATION_BODY_BYTES = 10 * 1024 * 1024 + 64 * 1024;
 const CANCELLATION_BODY_BYTES = 1_024;
+const SYNTHESIS_BODY_BYTES = 20 * 1024;
 const HandleSchema = z.string().min(1).max(63).regex(/^[a-z0-9][a-z0-9-]*$/);
 const RuntimeQuerySchema = z.object({ runtimeSlot: RuntimeSlotSchema }).strict();
 
@@ -32,6 +35,7 @@ type SafeErrorCode =
   | "allowance_exhausted"
   | "timeout"
   | "transcription_failed"
+  | "synthesis_failed"
   | "cancelled";
 
 function noStore(c: Context): void {
@@ -52,6 +56,7 @@ function safeError(code: SafeErrorCode) {
     allowance_exhausted: "Speech allowance is unavailable",
     timeout: "Transcription timed out",
     transcription_failed: "Transcription failed",
+    synthesis_failed: "Speech synthesis failed",
     cancelled: "Transcription was cancelled",
   }[code];
   return SpeechSafeErrorResponseSchema.parse({ error: { code, message } });
@@ -96,6 +101,7 @@ function serviceErrorResponse(c: Context, error: unknown) {
     if (error.code === "allowance_exhausted") return c.json(safeError("allowance_exhausted"), 402);
     if (error.code === "timeout") return c.json(safeError("timeout"), 504);
     if (error.code === "transcription_failed") return c.json(safeError("transcription_failed"), 502);
+    if (error.code === "synthesis_failed") return c.json(safeError("synthesis_failed"), 502);
     if (error.code === "cancelled") return c.json(safeError("cancelled"), 409);
     return c.json(safeError("unavailable"), 503);
   }
@@ -192,6 +198,32 @@ export function createSpeechRuntimeRoutes(options: {
         signal: c.req.raw.signal,
       });
       return c.json(SpeechTranscriptionResponseSchema.parse(result), 200);
+    } catch (error: unknown) {
+      return serviceErrorResponse(c, error);
+    }
+  });
+
+  app.post("/syntheses", bodyLimit({
+    maxSize: SYNTHESIS_BODY_BYTES,
+    onError: (c) => c.json(safeError("invalid_request"), 413),
+  }), async (c) => {
+    const runtime = await authenticate(c, options);
+    if ("response" in runtime) return runtime.response;
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch (_error: unknown) {
+      return c.json(safeError("invalid_request"), 400);
+    }
+    const parsed = SpeechSynthesisRequestSchema.safeParse(body);
+    if (!parsed.success) return c.json(safeError("invalid_request"), 400);
+    try {
+      const result = await options.service.synthesize({
+        identity: runtime.identity,
+        ...parsed.data,
+        signal: c.req.raw.signal,
+      });
+      return c.json(SpeechSynthesisResponseSchema.parse(result), 200);
     } catch (error: unknown) {
       return serviceErrorResponse(c, error);
     }

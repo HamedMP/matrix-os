@@ -153,6 +153,111 @@ describe("speech operation repository", () => {
       .rejects.toBeInstanceOf(SpeechOperationRateLimitError);
   });
 
+  it("counts synthesis toward the shared preview runtime lifetime cap", async () => {
+    const repo = createSpeechOperationsRepository({
+      db,
+      now: () => now,
+      maximumAdmissionsPerRuntimeLifetime: 1,
+      admissionsNotAfter: new Date("2026-09-11T00:00:00.000Z"),
+    });
+    await repo.admitSynthesis({
+      identity,
+      requestId,
+      contentFingerprint: "c".repeat(64),
+      policyRevision: "speech-1",
+      adapterId: "openai-speech",
+      modelId: "gpt-4o-mini-tts",
+      maximumCostMicrousd: 20,
+    }, async () => ({ reservationId: "funding_synthesis", reservedMicrousd: 20 }));
+
+    await expect(repo.admit({
+      ...admission,
+      requestId: `sp_${now.getTime()}_qrstuvwxyzabcdef`,
+      contentFingerprint: "b".repeat(64),
+    }, async () => ({ reservationId: "funding_2", reservedMicrousd: 0 })))
+      .rejects.toBeInstanceOf(SpeechOperationRateLimitError);
+  });
+
+  it("does not count completed synthesis as owner-active while preserving its lifetime admission", async () => {
+    const repo = createSpeechOperationsRepository({
+      db,
+      now: () => now,
+      maximumActiveOperations: 1,
+      maximumActiveOperationsPerOwner: 1,
+      maximumAdmissionsPerRuntimeLifetime: 2,
+      admissionsNotAfter: new Date("2026-09-11T00:00:00.000Z"),
+    });
+    await repo.admitSynthesis({
+      identity,
+      requestId,
+      contentFingerprint: "c".repeat(64),
+      policyRevision: "speech-1",
+      adapterId: "openai-speech",
+      modelId: "gpt-4o-mini-tts",
+      maximumCostMicrousd: 20,
+    }, async () => ({ reservationId: "funding_synthesis", reservedMicrousd: 20 }));
+    await repo.claimDispatch(identity, requestId);
+    await repo.complete(identity, requestId, {
+      executionState: "succeeded",
+      outcomeCode: "transcript",
+      actualCostMicrousd: 1,
+    }, async () => undefined);
+
+    await expect(repo.admit({
+      ...admission,
+      requestId: `sp_${now.getTime()}_qrstuvwxyzabcdef`,
+      contentFingerprint: "b".repeat(64),
+    }, async () => ({ reservationId: "funding_transcription", reservedMicrousd: 20 })))
+      .resolves.toMatchObject({ executionState: "reserved" });
+  });
+
+  it("never reclaims a stale dispatch but expires it from active capacity", async () => {
+    let checked = now;
+    const repo = createSpeechOperationsRepository({
+      db,
+      now: () => checked,
+      maximumActiveOperations: 1,
+      activeOperationTtlMs: 60_000,
+    });
+    await repo.admit(admission, async () => ({ reservationId: "funding_1", reservedMicrousd: 20 }));
+    await repo.claimDispatch(identity, requestId);
+    checked = new Date(now.getTime() + 60_001);
+    await expect(repo.claimDispatch(identity, requestId)).resolves.toMatchObject({ claimed: false });
+    await expect(repo.admit({
+      ...admission,
+      requestId: `sp_${checked.getTime()}_qrstuvwxyzabcdef`,
+      contentFingerprint: "b".repeat(64),
+    }, async () => ({ reservationId: "funding_2", reservedMicrousd: 20 })))
+      .resolves.toMatchObject({ executionState: "reserved" });
+  });
+
+  it("reconciles a crashed stale dispatch to a durable uncertain outcome", async () => {
+    let checked = now;
+    const repo = createSpeechOperationsRepository({
+      db,
+      now: () => checked,
+      activeOperationTtlMs: 60_000,
+    });
+    await repo.admitSynthesis({
+      identity,
+      requestId,
+      contentFingerprint: "c".repeat(64),
+      policyRevision: "speech-1",
+      adapterId: "openai-speech",
+      modelId: "gpt-4o-mini-tts",
+      maximumCostMicrousd: 20,
+    }, async () => ({ reservationId: "funding_synthesis", reservedMicrousd: 20 }));
+    await repo.claimDispatch(identity, requestId);
+
+    checked = new Date(now.getTime() + 60_001);
+    expect(await repo.sweepExpired()).toBe(0);
+    await expect(repo.get(identity, requestId)).resolves.toMatchObject({
+      executionState: "uncertain",
+      outcomeCode: "provider_failure",
+    });
+    await expect(repo.claimDispatch(identity, requestId)).resolves.toMatchObject({ claimed: false });
+  });
+
   it("evicts crashed active work from admission capacity before metadata expires", async () => {
     let checked = now;
     const repo = createSpeechOperationsRepository({

@@ -6,8 +6,9 @@
  * | MATRIX_VOICE_SIMULATOR | Platform Speech client | MATRIX_VOICE_DIRECT_OPENAI=1 + MATRIX_VOICE_OPENAI_API_KEY | NODE_ENV | adapter |
  * |---|---|---|---|---|
  * | `1` | any | any | any | `simulator` (explicit dev/integration seam — ONLY adapter) |
- * | unset | provisioned | complete gate | ≠production | `managed`: platform STT + dev-gated synthesizer |
- * | unset | provisioned | incomplete or ignored | any | none — managed STT exists but no synthesis port |
+ * | unset | provisioned STT+TTS | any | any | `managed`: platform speech |
+ * | unset | provisioned STT only | complete gate | ≠production | `managed`: platform STT + dev synthesizer |
+ * | unset | provisioned STT only | incomplete or ignored | any | none — no synthesis port |
  * | unset | absent | complete gate | ≠production | `openai` direct (development escape hatch) |
  * | unset | absent | flag+key present | production | none — key authority denied, warning logged |
  * | unset | absent | flag XOR key | any | none — incomplete gate, logged |
@@ -17,11 +18,9 @@
  * - A production gateway NEVER holds provider keys: `MATRIX_VOICE_DIRECT_OPENAI`
  *   + `MATRIX_VOICE_OPENAI_API_KEY` are ignored with a warning when
  *   `NODE_ENV === "production"` — funding/policy/metering live platform-side.
- * - No platform TTS/synthesis endpoint exists (contracts model file
- *   transcription only), so a managed adapter registers ONLY when a
- *   dev-scoped synthesizer port is also available; otherwise nothing
- *   registers and capability truthfully reports `not_configured` rather
- *   than admitting a session that hears but never speaks.
+ * - A managed adapter registers only when both STT and TTS exist. Development
+ *   may supply its explicitly gated synthesizer as a fallback; production
+ *   never does.
  * - The simulator flag always wins and stays the ONLY adapter, so a stray
  *   provider key can never silently route dev sessions to paid calls.
  */
@@ -38,7 +37,7 @@ import {
   createSystemVoiceClock,
   type VoiceClock,
 } from "./ports.js";
-import type { VoiceSpeechPorts, VoiceTranscriptionPort } from "./speech-ports.js";
+import type { VoiceSpeechPorts, VoiceSynthesisPort, VoiceTranscriptionPort } from "./speech-ports.js";
 
 export type VoiceAdapterRegistrationReason =
   | "simulator"
@@ -65,6 +64,7 @@ export function registerVoiceSessionMediaAdapters(options: {
   registry: VoiceMediaAdapterRegistry;
   env?: NodeJS.ProcessEnv;
   managedTranscribe?: VoiceTranscriptionPort;
+  managedSynthesize?: VoiceSynthesisPort;
   createDirectPorts?: (input: DirectOpenAiSpeechPortOptions) => VoiceSpeechPorts;
   clock?: VoiceClock;
   log?: (event: string, fields: Record<string, unknown>) => void;
@@ -114,18 +114,21 @@ export function registerVoiceSessionMediaAdapters(options: {
     : undefined;
 
   if (options.managedTranscribe) {
-    if (directPorts) {
+    const synthesis = options.managedSynthesize ?? directPorts?.synthesize;
+    if (synthesis) {
       const adapter = createOpenAiVoiceMediaAdapter({
         id: "managed",
         speech: {
           transcribe: options.managedTranscribe,
-          synthesize: directPorts.synthesize,
-          ...(directPorts.outputAudio ? { outputAudio: directPorts.outputAudio } : {}),
+          synthesize: synthesis,
+          outputAudio: { codec: "pcm_s16le", sampleRateHz: 24_000, channels: 1 },
         },
         clock,
       });
       options.registry.register(adapter);
-      return done(adapter.id, "managed_platform_speech", "platform-managed transcription with a development-gated synthesis port");
+      return done(adapter.id, "managed_platform_speech", options.managedSynthesize
+        ? "platform-managed transcription and synthesis"
+        : "platform-managed transcription with a development-gated synthesis port");
     }
     return done(null, "managed_no_synthesis_port", "platform speech is provisioned but no synthesis port exists (no platform TTS endpoint; dev synthesis gate unset or denied)");
   }

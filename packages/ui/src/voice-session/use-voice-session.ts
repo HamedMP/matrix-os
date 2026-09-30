@@ -64,6 +64,7 @@ export {
 } from "./client-types.js";
 
 const MAX_STATE_LISTENERS = 16;
+const MAX_CREATE_ATTEMPTS = 2;
 
 export function createVoiceSessionClient(options: VoiceSessionClientOptions): VoiceSessionClient {
   const api = createVoiceSessionApi({
@@ -122,6 +123,9 @@ export function createVoiceSessionClient(options: VoiceSessionClientOptions): Vo
   let disposed = false;
   let generation = 0;
   let startPromise: Promise<void> | null = null;
+  // A transport failure leaves create outcome unknown. Keep the exact request
+  // across the user's Retry so the server can reconcile the logical create.
+  let unresolvedCreate: { chatId: string; request: CreateVoiceSessionRequest } | null = null;
   /** Output format declared by the capability response for playback fallback. */
   let declaredOutputAudio: VoiceOutputAudioFormat | undefined;
   let snapshot: VoiceSessionClientSnapshot = {
@@ -289,6 +293,15 @@ export function createVoiceSessionClient(options: VoiceSessionClientOptions): Vo
       notice = safeError;
       emit();
     },
+    onTurnFinal: (turnId) => {
+      if (options.request.turnMode !== "hands_free" || activeTurnId !== turnId || !media) return;
+      media.stopCapture();
+      activeTurnId = null;
+      transport.current()?.send({ type: "capture.stop", turnId });
+      // The final transcript is the server's authoritative completion event.
+      // Re-enter capture while the lifecycle remains live, minting a fresh id.
+      syncCapture();
+    },
     onRemoteEnd: () => {
       // Server-side `session.state` -> ended is authoritative: tear down
       // without a DELETE and surface the terminal phase to the shell.
@@ -372,8 +385,8 @@ export function createVoiceSessionClient(options: VoiceSessionClientOptions): Vo
     }, command);
   };
 
-  const buildRequest = (): CreateVoiceSessionRequest => ({
-    clientRequestId: makeId("req_"),
+  const buildRequest = (clientRequestId: string): CreateVoiceSessionRequest => ({
+    clientRequestId,
     turnMode: options.request.turnMode,
     memoryMode: options.request.memoryMode ?? "ordinary",
     ...(options.request.requestedTransport === undefined
@@ -444,16 +457,32 @@ export function createVoiceSessionClient(options: VoiceSessionClientOptions): Vo
     if (stale()) return;
 
     let created;
-    try {
-      created = await api.createSession(parsedChatId, buildRequest());
-    } catch (createError: unknown) {
-      if (!stale()) {
-        failSession(createError instanceof VoiceSessionApiError
+    const createAttempt = unresolvedCreate?.chatId === parsedChatId
+      ? unresolvedCreate
+      : { chatId: parsedChatId, request: buildRequest(makeId("req_")) };
+    unresolvedCreate = createAttempt;
+    for (let attempt = 1; attempt <= MAX_CREATE_ATTEMPTS; attempt += 1) {
+      try {
+        created = await api.createSession(parsedChatId, createAttempt.request);
+        if (unresolvedCreate === createAttempt) unresolvedCreate = null;
+        break;
+      } catch (createError: unknown) {
+        if (stale()) return;
+        const safeError = createError instanceof VoiceSessionApiError
           ? createError.safeError
-          : voiceErrorForCode("connection_failed"));
+          : voiceErrorForCode("connection_failed");
+        // Only transport ambiguity can mean the server created a session but
+        // its response was lost. Retry that ambiguity with the SAME idempotency
+        // key; all definitive HTTP failures settle immediately.
+        if (safeError.code === "connection_failed" && attempt < MAX_CREATE_ATTEMPTS) continue;
+        if (safeError.code !== "connection_failed" && unresolvedCreate === createAttempt) {
+          unresolvedCreate = null;
+        }
+        failSession(safeError);
+        return;
       }
-      return;
     }
+    if (!created) return;
     if (stale()) {
       // The request already minted a remote session before the caller
       // cancelled (end/continueInChat/dispose): delete it best-effort so no
@@ -502,6 +531,21 @@ export function createVoiceSessionClient(options: VoiceSessionClientOptions): Vo
     transport.connect(created.transport);
   };
 
+  const startVoice = (rawChatId: string): Promise<void> => {
+    if (disposed) return Promise.reject(new VoiceSessionApiError("internal_failure"));
+    if (startPromise) return startPromise;
+    // Live sessions are not silently re-created; end() or reconnect() first.
+    if (phase === "starting" || phase === "active" || phase === "reconnecting" || phase === "awaiting_reconnect") {
+      return Promise.resolve();
+    }
+    const parsedChatId = VoiceCanonicalChatIdSchema.parse(rawChatId);
+    const run = startFlow(parsedChatId);
+    startPromise = run;
+    return run.finally(() => {
+      if (startPromise === run) startPromise = null;
+    });
+  };
+
   return {
     subscribe(listener) {
       if (disposed) return () => undefined;
@@ -515,20 +559,7 @@ export function createVoiceSessionClient(options: VoiceSessionClientOptions): Vo
     },
     getSnapshot: () => snapshot,
     controller: () => controller,
-    startVoice(rawChatId) {
-      if (disposed) return Promise.reject(new VoiceSessionApiError("internal_failure"));
-      if (startPromise) return startPromise;
-      // Live sessions are not silently re-created; end() or reconnect() first.
-      if (phase === "starting" || phase === "active" || phase === "reconnecting" || phase === "awaiting_reconnect") {
-        return Promise.resolve();
-      }
-      const parsedChatId = VoiceCanonicalChatIdSchema.parse(rawChatId);
-      const run = startFlow(parsedChatId);
-      startPromise = run;
-      return run.finally(() => {
-        if (startPromise === run) startPromise = null;
-      });
-    },
+    startVoice,
     async reconnect() {
       await reconnectLoop.perform(true);
     },
@@ -536,6 +567,8 @@ export function createVoiceSessionClient(options: VoiceSessionClientOptions): Vo
       const active = controller;
       if (active) {
         active.retry();
+      } else if (unresolvedCreate) {
+        void startVoice(unresolvedCreate.chatId);
       } else {
         void reconnectLoop.perform(true);
       }
@@ -547,6 +580,7 @@ export function createVoiceSessionClient(options: VoiceSessionClientOptions): Vo
       } else {
         // No live controller: tear down locally, fence any in-flight start,
         // and mark the phase terminal before the host surface takes over.
+        unresolvedCreate = null;
         void teardown(false);
         phase = "ended";
         emit();
@@ -556,6 +590,7 @@ export function createVoiceSessionClient(options: VoiceSessionClientOptions): Vo
     async end() {
       if (disposed || ending || phase === "ended") return;
       ending = true;
+      unresolvedCreate = null;
       // Fence an in-flight start BEFORE tearing down: every stale() gate in
       // startFlow must see a newer generation, and a late-resolved create
       // deletes the minted remote session rather than attaching it.
@@ -576,6 +611,7 @@ export function createVoiceSessionClient(options: VoiceSessionClientOptions): Vo
     dispose() {
       if (disposed) return;
       disposed = true;
+      unresolvedCreate = null;
       generation += 1;
       startPromise = null;
       reconnectLoop.cancel();

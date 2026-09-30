@@ -24,6 +24,7 @@ import {
   type CanonicalChatRunActivity,
   type CanonicalChatRunAdmissionResponse,
   type CanonicalChatQueueAdmissionResponse,
+  type ChatContextSnapshot,
   type CanonicalChatRunCancellationResponse,
   type CanonicalChatRunSteeringResponse,
   type CanonicalChatTurnAdmissionResponse,
@@ -68,8 +69,8 @@ import {
 import { recoverOrphanedRun } from "./orphaned-run-recovery.js";
 import { retryAvailability } from "./retry-preflight.js";
 import { dispatchAdmissionKey, hasStoppingChatExecution } from "./dispatch-ownership.js";
-import { loadChatResumeState } from "./resume-checkpoint.js";
-import type { VoiceSessionPolicyLookup } from "./voice-session-policy.js";
+import { ChatResumeHistoryUnavailableError, loadChatResumeDecision } from "./resume-checkpoint.js";
+import { admissionPolicyForTurn, type VoiceSessionPolicyLookup } from "./voice-session-policy.js";
 import { boundedOperation } from "../bounded-operation.js";
 import { CHAT_RUN_CLEANUP_UNCONFIRMED_MESSAGE, diagnoseChatRunFailure, type ChatRunFailureDiagnostic } from "./failure-diagnostic.js";
 import {
@@ -383,6 +384,20 @@ export class CanonicalChatOrchestrator {
     }
     try { await this.options.agentContext?.revalidate(owner, chatId, context.latestRun.context); }
     catch (error: unknown) { return mapRepositoryError(error); }
+    let sessionPolicy;
+    try {
+      sessionPolicy = this.options.voiceSessionPolicy?.policyForChat(chatId);
+    } catch (error: unknown) {
+      console.warn("[chat/orchestrator] Voice session policy lookup failed during retry:", error instanceof Error ? error.name : "UnknownError");
+      throw new CanonicalChatOrchestrationError(
+        safeError("service_unavailable", "Chat admission is temporarily unavailable.", true, ["retry"]),
+        503,
+      );
+    }
+    const retryPolicy = admissionPolicyForTurn({
+      permissionMode: context.latestRun.permissionMode,
+      ...(context.latestRun.runPolicy ? { runPolicy: context.latestRun.runPolicy } : {}),
+    }, sessionPolicy);
     const catalog = await this.options.catalog.getCatalog(principal);
     const validated = validateChatProviderSelection({
       catalog,
@@ -390,8 +405,9 @@ export class CanonicalChatOrchestrator {
       boundInstanceId: context.latestRun.instanceId,
       requirements: {
         interactionMode: context.latestRun.interactionMode,
-        permissionMode: context.latestRun.permissionMode,
+        permissionMode: retryPolicy.permissionMode,
         worktree: context.latestRun.executionRoot?.kind === "worktree",
+        ...(retryPolicy.runPolicy?.source === "voice" ? { voiceConversationOnly: true } : {}),
       },
     });
     if (!validated.ok) throw new CanonicalChatOrchestrationError(validated.error, 400);
@@ -420,13 +436,25 @@ export class CanonicalChatOrchestrator {
         );
       }
     }
-    const resumeState = context.latestRun.context?.history ? undefined : await loadChatResumeState({
+    const resumeDecision = await loadChatResumeDecision({
       repository: this.options.repository, owner, chatId, adapter,
       instanceId: context.latestRun.instanceId,
       executionRootFingerprint: resolvedRoot?.fingerprint ?? null,
       mode: "retry",
-      ...(context.latestRun.runPolicy ? { runPolicy: context.latestRun.runPolicy } : {}),
+      retainedHistorySupported: true,
+      historyBoundarySeq: context.turn.baseMessageSeq,
+      ...(retryPolicy.runPolicy ? { runPolicy: retryPolicy.runPolicy } : {}),
     });
+    if (resumeDecision?.mode === "rebuild" && context.turn.baseMessageSeq > 0
+      && !resumeDecision.retainedHistory) {
+      throw new ChatResumeHistoryUnavailableError();
+    }
+    const resumeState = resumeDecision?.resumeState;
+    // A prior run may carry only the gap beyond a native checkpoint. Preserve
+    // that gap when the same checkpoint remains eligible; a rebuild decision
+    // supplies a full heard-safe projection and replaces it.
+    const retainedHistory = resumeDecision?.retainedHistory
+      ?? context.latestRun.context?.history;
     const availability = await retryAvailability(adapter, owner, resumeState, () => this.options.repository.getAdapterState(owner, {
       runId: context.latestRun.id, driverKind: context.latestRun.driverKind, instanceId: context.latestRun.instanceId,
     }), () => this.options.repository.hasRetryRequest(owner, { chatId, turnId, clientRequestId: input.clientRequestId }));
@@ -450,10 +478,10 @@ export class CanonicalChatOrchestrator {
       instanceId: validated.instance.id,
       selection: validated.selection,
       interactionMode: context.latestRun.interactionMode,
-      permissionMode: context.latestRun.permissionMode,
-      // Immutable policy retries verbatim; admitRetry re-checks it against the
-      // persisted previous attempt before writing.
-      ...(context.latestRun.runPolicy ? { runPolicy: context.latestRun.runPolicy } : {}),
+      permissionMode: retryPolicy.permissionMode,
+      // A live voice session may tighten the previous policy for this retry;
+      // the repository allows only that provenance-bound transition.
+      ...(retryPolicy.runPolicy ? { runPolicy: retryPolicy.runPolicy } : {}),
       ...(context.latestRun.context ? { context: context.latestRun.context } : {}),
       ...(resolvedRoot ? {
         executionRoot: resolvedRoot.ref,
@@ -523,6 +551,9 @@ export class CanonicalChatOrchestrator {
           resumeState,
           retryPromptFor(context.userMessages),
           admissionKey,
+          undefined,
+          undefined,
+          retainedHistory,
         );
       }
       return CanonicalChatRunAdmissionResponseSchema.parse({
@@ -547,10 +578,12 @@ export class CanonicalChatOrchestrator {
     admissionKey?: string,
     sharedScopeId?: string,
     onComplete?: () => Promise<void>,
+    retainedHistory?: ChatContextSnapshot,
   ): void {
     const controller = new AbortController();
     const completion = this.dispatch(
       owner, message, run, adapter, controller, resolvedRoot, resumeState, promptOverride, sharedScopeId,
+      retainedHistory,
     )
       .catch((error: unknown) => {
         console.error("[chat/orchestrator] Run dispatch failed:", error instanceof Error ? error.name : "UnknownError");
@@ -620,6 +653,7 @@ export class CanonicalChatOrchestrator {
         const adapter = this.options.adapters.get(claimed.run.driverKind);
         let resolvedRoot: ResolvedChatExecutionRoot | undefined;
         let resumeState: unknown;
+        let retainedHistory: ChatContextSnapshot | undefined;
         try {
           if (!adapter) throw new Error("Queued Provider adapter unavailable");
           if (claimed.run.executionRoot) {
@@ -629,13 +663,21 @@ export class CanonicalChatOrchestrator {
               throw new Error("Queued execution root provenance changed");
             }
           }
-          resumeState = claimed.run.context?.agent ? undefined : await loadChatResumeState({
+          const resumeDecision = claimed.run.context?.agent ? undefined : await loadChatResumeDecision({
             repository: this.options.repository, owner, chatId, adapter,
             instanceId: claimed.run.instanceId,
             executionRootFingerprint: resolvedRoot?.fingerprint ?? null,
             mode: "follow_up",
+            retainedHistorySupported: true,
+            historyBoundarySeq: claimed.run.historyBoundarySeq,
             ...(claimed.run.runPolicy ? { runPolicy: claimed.run.runPolicy } : {}),
           });
+          if (resumeDecision?.mode === "rebuild" && claimed.run.historyBoundarySeq > 0
+            && !resumeDecision.retainedHistory) {
+            throw new ChatResumeHistoryUnavailableError();
+          }
+          resumeState = resumeDecision?.resumeState;
+          retainedHistory = resumeDecision?.retainedHistory;
         } catch (error: unknown) {
           console.warn(
             "[chat/orchestrator] Queued Run preparation failed:",
@@ -657,6 +699,11 @@ export class CanonicalChatOrchestrator {
           adapter,
           resolvedRoot,
           resumeState,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          retainedHistory,
         );
         return;
       }
@@ -675,6 +722,7 @@ export class CanonicalChatOrchestrator {
     resumeState?: unknown,
     promptOverride?: string,
     sharedScopeId?: string,
+    retainedHistory?: ChatContextSnapshot,
   ): Promise<void> {
     const startedAt = (this.options.now ?? (() => new Date()))().toISOString();
     let cleanupUnconfirmed = false;
@@ -700,13 +748,23 @@ export class CanonicalChatOrchestrator {
       }], startedAt);
       await this.sharedExecution.notify(sharedScopeId);
 
+      const dispatchContext = retainedHistory
+        ? {
+            ...(run.context ?? {
+              version: 1 as const,
+              requestHash: createHash("sha256").update(run.id).digest("hex"),
+              chats: [],
+            }),
+            history: retainedHistory,
+          }
+        : run.context;
       const input: CanonicalProviderRunInput = {
         owner,
         chatId: run.chatId,
         turnId: run.turnId,
         runId: run.id,
-        ...(run.context ? { context: run.context } : {}),
-        prompt: contextPrompt(promptOverride ?? promptFor(message.parts), run.context, {
+        ...(dispatchContext ? { context: dispatchContext } : {}),
+        prompt: contextPrompt(promptOverride ?? promptFor(message.parts), dispatchContext, {
           deferIntegrationGuidance: run.driverKind === "claude_code",
         }),
         parts: message.parts,

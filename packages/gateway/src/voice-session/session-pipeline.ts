@@ -38,6 +38,13 @@ const TERMINAL_OPERATION_STATES: ReadonlySet<string> = new Set([
 ]);
 
 const MAX_FINALITY_ENTRIES = 512;
+const MAX_SYNTHESIS_PHRASE_CHARS = 240;
+
+interface PendingSynthesisPhrase {
+  text: string;
+  textStart: number;
+  textEnd: number;
+}
 
 /** States where the client may open a capture turn (conversation is live). */
 const CAPTURE_STATES: ReadonlySet<VoiceSessionState> = new Set([
@@ -56,6 +63,8 @@ const CAPTURE_STATES: ReadonlySet<VoiceSessionState> = new Set([
 export const STAGED_FINAL_MAX_WAIT_MS = 15_000;
 
 export class VoiceSessionPipeline {
+  private readonly pendingPhrases = new Map<string, PendingSynthesisPhrase>();
+
   constructor(
     private readonly session: VoiceSessionRecord,
     private readonly host: VoiceSessionHost,
@@ -388,6 +397,22 @@ export class VoiceSessionPipeline {
       case "transcript.final":
         await this.onAdapterFinal(event);
         return;
+      case "capture.completed": {
+        const turn = s.turns.get(event.turnId);
+        if (!turn || turn.phase === "admitted" || turn.phase === "rejected" || turn.phase === "empty") {
+          this.runtime.countStale("completion_for_terminal_turn");
+          return;
+        }
+        turn.phase = event.outcome === "empty" ? "empty" : "rejected";
+        if (s.activeCaptureTurnId === turn.turnId) {
+          s.activeCaptureTurnId = null;
+          s.queuedAudioMs = 0;
+          s.adapter?.setCapture(null);
+        }
+        this.runtime.emit({ type: "capture.completed", turnId: turn.turnId, outcome: event.outcome });
+        await this.drainAdmissionQueue();
+        return;
+      }
       case "transcript.correction": {
         const turn = s.turns.get(event.turnId);
         // Corrections annotate an admitted final only; they never re-execute.
@@ -410,12 +435,13 @@ export class VoiceSessionPipeline {
           this.runtime.countStale("audio_for_terminal_response");
           return;
         }
-        const segment = ledger.segments.find((entry) => entry.segmentId === event.segmentId);
+        const durableSegmentId = event.durableSegmentId ?? event.segmentId;
+        const segment = ledger.segments.find((entry) => entry.segmentId === durableSegmentId);
         if (!segment) {
           this.runtime.countStale("audio_for_unknown_segment");
           return;
         }
-        segment.durationMs = event.durationMs;
+        segment.durationMs += event.durationMs;
         ledger.deliveredThroughMs += event.durationMs;
         // The durable delivered boundary caps every later ack. If it cannot
         // be persisted, this audio must not be relayed as durable output.
@@ -430,6 +456,7 @@ export class VoiceSessionPipeline {
           segmentId: event.segmentId,
           startMs: event.startMs,
           data: event.data,
+          ...(event.format ? { format: event.format } : {}),
         });
         if (s.state === "thinking" || s.state === "using_tool") this.runtime.setState("speaking");
         return;
@@ -440,13 +467,32 @@ export class VoiceSessionPipeline {
           this.runtime.countStale("synthesis_end_for_terminal_response");
           return;
         }
-        ledger.generationEnded = true;
+        if (event.segmentId) {
+          const segment = ledger.segments.find((entry) => entry.segmentId === event.segmentId);
+          if (!segment) {
+            this.runtime.countStale("synthesis_end_for_unknown_segment");
+            return;
+          }
+          segment.synthesisEnded = true;
+        } else {
+          for (const segment of ledger.segments) segment.synthesisEnded = true;
+        }
         this.runtime.emit({
           type: "response.audio_end",
           responseId: ledger.responseId,
           generatedDurationMs: event.generatedDurationMs,
         });
         await this.runtime.maybeCompleteDelivery(ledger);
+        return;
+      }
+      case "synthesis.rejected": {
+        const ledger = s.responses.get(event.responseId);
+        if (!ledger || ledger.state !== "open") {
+          this.runtime.countStale("synthesis_rejected_for_terminal_response");
+          return;
+        }
+        this.runtime.emitError(event.code, event.retryable);
+        await this.failRejectedSynthesis(ledger);
         return;
       }
       case "error":
@@ -612,6 +658,19 @@ export class VoiceSessionPipeline {
     s.timers.staging = null;
   }
 
+  /** Terminalize a non-admitted capture once so hands-free clients can rotate turn ids. */
+  private completeFailedCapture(turn: VoiceTurnRecord): void {
+    if (turn.phase === "admitted" || turn.phase === "rejected" || turn.phase === "empty") return;
+    turn.phase = "rejected";
+    const s = this.session;
+    if (s.activeCaptureTurnId === turn.turnId) {
+      s.activeCaptureTurnId = null;
+      s.queuedAudioMs = 0;
+      s.adapter?.setCapture(null);
+    }
+    this.runtime.emit({ type: "capture.completed", turnId: turn.turnId, outcome: "failed" });
+  }
+
   /**
    * One ordered canonical admission for a resolved final. Hydrates the chat
    * revision lazily (once per session) so a stale frozen baseRevision cannot
@@ -646,7 +705,7 @@ export class VoiceSessionPipeline {
     });
     if (s.state === "ending" || s.state === "ended") return;
     if (!result) {
-      turn.phase = "rejected";
+      this.completeFailedCapture(turn);
       this.runtime.emitError("chat_unavailable", true);
       return;
     }
@@ -658,7 +717,7 @@ export class VoiceSessionPipeline {
       || result.outcome === "already_accepted" || result.outcome === "queued")
       && !carriesIdentity) {
       // Port contract violation: admitted outcomes must carry canonical identity.
-      turn.phase = "rejected";
+      this.completeFailedCapture(turn);
       this.runtime.emitError("internal_failure", true);
       return;
     }
@@ -695,7 +754,7 @@ export class VoiceSessionPipeline {
         return;
       }
       default: {
-        turn.phase = "rejected";
+        this.completeFailedCapture(turn);
         const error = result.error ?? {
           code: "chat_unavailable" as SafeVoiceErrorCode,
           retryable: true,
@@ -760,9 +819,15 @@ export class VoiceSessionPipeline {
         await this.onAssistantText(event);
         return;
       case "run.terminal": {
+        await this.flushPendingPhrase(event.runId);
         s.terminalRunIds.add(event.runId);
         for (const turn of s.turns.values()) {
           if (turn.runId === event.runId) turn.runTerminal = true;
+        }
+        for (const ledger of s.responses.values()) {
+          if (ledger.runId !== event.runId || ledger.state !== "open") continue;
+          ledger.runTerminal = true;
+          await this.runtime.maybeCompleteDelivery(ledger);
         }
         // Terminal runs that no open ledger still needs are released so
         // correlation tracking stays bounded across a long session.
@@ -804,9 +869,61 @@ export class VoiceSessionPipeline {
     if (s.state === "speaking") this.runtime.setState("listening");
   }
 
+  private async failRejectedSynthesis(ledger: VoiceResponseLedger): Promise<void> {
+    const s = this.session;
+    ledger.state = "interrupted";
+    s.adapter?.cancelResponse(ledger.responseId);
+    if (ledger.pendingRecorded) {
+      this.runtime.emit({
+        type: "response.interrupted",
+        responseId: ledger.responseId,
+        effectiveThroughMs: ledger.playedThroughMs,
+      });
+    }
+    await this.runtime.recordTerminalDelivery(ledger, "unknown", ledger.playedThroughMs);
+    if (s.state === "speaking") this.runtime.setState("listening");
+  }
+
   private async onAssistantText(
     event: Extract<VoiceCanonicalChatEvent, { type: "assistant.text" }>,
   ): Promise<void> {
+    const pending = this.pendingPhrases.get(event.runId);
+    if (pending && pending.textEnd !== event.textStart) {
+      await this.flushPendingPhrase(event.runId);
+    }
+    const current = this.pendingPhrases.get(event.runId);
+    this.pendingPhrases.set(event.runId, current
+      ? { text: current.text + event.text, textStart: current.textStart, textEnd: event.textEnd }
+      : { text: event.text, textStart: event.textStart, textEnd: event.textEnd });
+    const phrase = this.pendingPhrases.get(event.runId)!;
+    while ([...phrase.text].length >= MAX_SYNTHESIS_PHRASE_CHARS) {
+      const bounded = [...phrase.text].slice(0, MAX_SYNTHESIS_PHRASE_CHARS).join("");
+      const candidate = Math.max(bounded.lastIndexOf(" "), bounded.lastIndexOf("\n"), bounded.lastIndexOf(","));
+      const cut = candidate >= Math.floor(bounded.length / 2) ? candidate + 1 : bounded.length;
+      const text = phrase.text.slice(0, cut);
+      const textEnd = phrase.textStart + text.length;
+      await this.synthesizePhrase(event.runId, { text, textStart: phrase.textStart, textEnd });
+      phrase.text = phrase.text.slice(cut);
+      phrase.textStart = textEnd;
+      if (phrase.text.length === 0) {
+        this.pendingPhrases.delete(event.runId);
+        return;
+      }
+    }
+    if (/[.!?;:]\s*$/u.test(phrase.text)) {
+      await this.flushPendingPhrase(event.runId);
+    }
+  }
+
+  private async flushPendingPhrase(runId: string): Promise<void> {
+    const phrase = this.pendingPhrases.get(runId);
+    if (!phrase) return;
+    this.pendingPhrases.delete(runId);
+    await this.synthesizePhrase(runId, phrase);
+  }
+
+  private async synthesizePhrase(runId: string, phrase: PendingSynthesisPhrase): Promise<void> {
+    const event = { type: "assistant.text" as const, runId, ...phrase };
     const s = this.session;
     let ledger = this.findLedgerForRun(event.runId);
     let firstSegment = false;
@@ -825,7 +942,7 @@ export class VoiceSessionPipeline {
         playedThroughMs: 0,
         deliveryRevision: 0,
         pendingRecorded: false,
-        generationEnded: false,
+        runTerminal: s.terminalRunIds.has(event.runId),
         terminalRecorded: false,
       };
       s.responses.set(ledger.responseId, ledger);
@@ -842,6 +959,7 @@ export class VoiceSessionPipeline {
       textEnd: event.textEnd,
       durationMs: 0,
       played: false,
+      synthesisEnded: false,
     };
     ledger.segments.push(segment);
     // The durable manifest must cover every segment BEFORE the adapter is

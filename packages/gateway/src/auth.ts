@@ -342,9 +342,9 @@ function getClientIp(c: ClientIpContext): string {
     const normalized = normalizePeerAddress(peer);
     if (isTrustedProxyPeer(normalized)) {
       const forwarded =
-        c.req.header("cf-connecting-ip")?.trim() ||
         c.req.header("x-real-ip")?.trim() ||
-        c.req.header("x-forwarded-for")?.split(",")[0]?.trim();
+        c.req.header("x-forwarded-for")?.split(",")[0]?.trim() ||
+        c.req.header("cf-connecting-ip")?.trim();
       return forwarded !== undefined && isIP(forwarded) !== 0 ? forwarded : normalized;
     }
     return normalized;

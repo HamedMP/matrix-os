@@ -66,6 +66,13 @@ export interface ChatResumeDecision {
   reason?: ChatResumeDeclineReason;
 }
 
+export class ChatResumeHistoryUnavailableError extends Error {
+  constructor() {
+    super("Heard-safe canonical history is unavailable");
+    this.name = "ChatResumeHistoryUnavailableError";
+  }
+}
+
 /** The eligibility selection, including mandatory checkpoint provenance. */
 export interface ChatAdapterStateSelection {
   schemaVersion: number;
@@ -234,12 +241,6 @@ function rebuild(
  * it provably covers.
  */
 export async function loadChatResumeDecision(input: ChatResumeDecisionInput): Promise<ChatResumeDecision> {
-  // A disposable checkpoint policy never resumes native provider state. The
-  // session-only schema guarantees disposable, so both gates are checked.
-  if (input.runPolicy?.nativeCheckpointPolicy === "disposable"
-    || input.runPolicy?.memoryMode === "session_only") {
-    return { mode: "none", reason: "disposable_policy" };
-  }
   const kysely = input.repository.kysely ?? null;
   const chatId = CanonicalChatIdSchema.parse(input.chatId);
 
@@ -258,6 +259,19 @@ export async function loadChatResumeDecision(input: ChatResumeDecisionInput): Pr
       return undefined;
     }
   };
+
+  // A disposable checkpoint policy never resumes native provider state, but
+  // it still needs Matrix-owned heard-safe history. Otherwise every
+  // session-only follow-up would behave like a first turn.
+  if (input.runPolicy?.nativeCheckpointPolicy === "disposable"
+    || input.runPolicy?.memoryMode === "session_only") {
+    if ((input.historyBoundarySeq ?? 0) === 0) {
+      return { mode: "none", reason: "disposable_policy" };
+    }
+    const retainedHistory = await rebuildContext();
+    if (!retainedHistory) throw new ChatResumeHistoryUnavailableError();
+    return rebuild("disposable_policy", retainedHistory);
+  }
 
   const unheardResponses = (input.deliveryContext?.unheardResponses ?? [])
     .slice(0, MAX_UNHEARD_HINTS);
@@ -281,7 +295,14 @@ export async function loadChatResumeDecision(input: ChatResumeDecisionInput): Pr
     });
     return rebuild("eligibility_unavailable", await rebuildContext());
   }
-  if (!previous) return { mode: "none", reason: "no_checkpoint" };
+  if (!previous) {
+    if ((input.historyBoundarySeq ?? 0) === 0) {
+      return { mode: "none", reason: "no_checkpoint" };
+    }
+    const retainedHistory = await rebuildContext();
+    if (!retainedHistory) throw new ChatResumeHistoryUnavailableError();
+    return rebuild("no_checkpoint", retainedHistory);
+  }
 
   // Provenance is mandatory: a selection that cannot name its checkpoint and
   // coverage boundary cannot be trusted not to rewind canonical history.

@@ -81,6 +81,12 @@ export interface VoiceSessionRoutesDeps {
   resolvePrincipal(c: Context): RequestPrincipal;
   chatAccess: VoiceChatAccessPort;
   capabilities: VoiceCapabilityPort;
+  /** Canonical provider-catalog voice eligibility; shared by advertise and create. */
+  routeEligibility?: (input: {
+    principal: RequestPrincipal;
+    chatId: string;
+    selection?: z.infer<typeof CanonicalChatModelSelectionSchema>;
+  }) => boolean | Promise<boolean>;
   /** Runs before expensive session/provider work. False → 429. */
   checkRateLimit?: (input: {
     principal: RequestPrincipal;
@@ -159,6 +165,20 @@ export function createVoiceSessionRoutes(deps: VoiceSessionRoutesDeps): Hono {
       const principal = requirePrincipal(c, deps);
       await rateLimited(principal, "capabilities");
       await deps.chatAccess.requireAccess({ principalId: principal.userId, chatId, level: "read" });
+      if (deps.routeEligibility && !await deps.routeEligibility({ principal, chatId })) {
+        const capability = await deps.capabilities.capabilities({
+          principalId: principal.userId,
+          chatId,
+          ...(parsedSurface !== undefined ? { surface: parsedSurface } : {}),
+        });
+        return c.json(VoiceCapabilitySchema.parse({
+          ...capability,
+          status: "unavailable",
+          transportModes: [],
+          turnModes: [],
+          reason: "provider_unavailable",
+        }));
+      }
       const capability = await deps.capabilities.capabilities({
         principalId: principal.userId,
         chatId,
@@ -181,6 +201,17 @@ export function createVoiceSessionRoutes(deps: VoiceSessionRoutesDeps): Hono {
         const principal = requirePrincipal(c, deps);
         await rateLimited(principal, "create");
         await deps.chatAccess.requireAccess({ principalId: principal.userId, chatId, level: "write" });
+        if (deps.routeEligibility && !await deps.routeEligibility({
+          principal,
+          chatId,
+          selection: request.selection,
+        })) {
+          throw new VoiceSessionError(
+            "unsupported_surface",
+            "The selected Provider is not eligible for a voice conversation",
+            422,
+          );
+        }
         const result = deps.engine.createSession({ principal, chatId, request });
         if (result.outcome === "existing_consumed") {
           // Credential-less branch: transport/ticket/ephemeralCredential can

@@ -20,7 +20,10 @@ import {
   PlatformSpeechClientError,
   type PlatformSpeechClient,
 } from "../../../packages/gateway/src/speech/platform-client.js";
-import { createManagedVoiceTranscriptionPort } from "../../../packages/gateway/src/speech/voice-session-ports.js";
+import {
+  createManagedVoiceSynthesisPort,
+  createManagedVoiceTranscriptionPort,
+} from "../../../packages/gateway/src/speech/voice-session-ports.js";
 import { FakeClock } from "./fakes.js";
 
 type TranscribeInput = Parameters<PlatformSpeechClient["transcribe"]>[0];
@@ -158,6 +161,58 @@ describe("createManagedVoiceTranscriptionPort", () => {
   });
 });
 
+describe("createManagedVoiceSynthesisPort", () => {
+  it("returns decoded managed PCM and forwards cancellation", async () => {
+    const calls: Parameters<PlatformSpeechClient["synthesize"]>[0][] = [];
+    const pcm = Buffer.from([1, 0, 2, 0]);
+    const client: Pick<PlatformSpeechClient, "synthesize"> = {
+      synthesize: async (input) => {
+        calls.push(input);
+        return {
+          contractVersion: 1,
+          requestId: input.requestId,
+          status: "succeeded",
+          format: "pcm_s16le_24000_mono",
+          durationMs: 1,
+          audio: pcm.toString("base64"),
+        };
+      },
+    };
+    const controller = new AbortController();
+    const chunks: Buffer[] = [];
+    for await (const chunk of createManagedVoiceSynthesisPort({ client, now: () => 1_700_000_000_000 })({
+      text: "hello",
+      signal: controller.signal,
+    })) {
+      chunks.push(chunk);
+    }
+
+    expect(Buffer.concat(chunks)).toEqual(pcm);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.text).toBe("hello");
+    expect(calls[0]!.signal).toBe(controller.signal);
+    expect(() => SpeechRequestIdSchema.parse(calls[0]!.requestId)).not.toThrow();
+  });
+
+  it("maps managed failures to provider-neutral voice errors", async () => {
+    const client: Pick<PlatformSpeechClient, "synthesize"> = {
+      synthesize: async () => {
+        throw new PlatformSpeechClientError("allowance_exhausted", "Speech is unavailable", 402);
+      },
+    };
+    const port = createManagedVoiceSynthesisPort({ client });
+    const failure = await (async () => {
+      for await (const _chunk of port({ text: "hello", signal: new AbortController().signal })) {
+        // The failing client does not yield audio.
+      }
+    })().catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(VoiceSpeechPortError);
+    expect((failure as VoiceSpeechPortError).kind).toBe("unavailable");
+    expect(JSON.stringify(failure)).not.toMatch(/allowance|platform/i);
+  });
+});
+
 describe("managed adapter end-to-end (managed STT + injected synthesizer)", () => {
   function pcmS16Frame(amplitude: number, ms = 20): string {
     const samples = Math.round((16_000 * ms) / 1_000);
@@ -215,7 +270,7 @@ describe("managed adapter end-to-end (managed STT + injected synthesizer)", () =
     expect(events).toContainEqual({
       type: "transcript.final",
       turnId: "vturn_9",
-      finalityId: "trn_vturn_9",
+      finalityId: "vfinal_vturn_9",
       text: "hello managed",
     });
     expect(events).toContainEqual({

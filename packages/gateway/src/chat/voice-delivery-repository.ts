@@ -149,6 +149,8 @@ export interface VoiceDeliveryDeliveredInput {
   chatId: string;
   responseId: string;
   deliveredThroughMs: number;
+  /** When supplied, replaces placeholder durations with measured durations. */
+  segments?: VoiceDeliverySegment[];
   revision: number;
   transportEpoch: number;
 }
@@ -271,6 +273,7 @@ const DeliveredInputSchema = z.object({
   chatId: CanonicalChatIdSchema,
   responseId: SAFE_REF,
   deliveredThroughMs: STREAM_MS,
+  segments: VoiceDeliverySegmentsSchema.optional(),
   revision: FENCED_COUNTER,
   transportEpoch: FENCED_COUNTER,
 }).strict();
@@ -541,11 +544,28 @@ export class ChatVoiceDeliveryRepository implements VoiceDeliveryPort {
       if (record.revision !== input.revision || record.transportEpoch !== input.transportEpoch) {
         return { outcome: "stale", record };
       }
-      if (input.deliveredThroughMs <= record.deliveredThroughMs) {
+      const storedSegments = readSegments(row);
+      if (input.segments && (storedSegments === null
+        || input.segments.length !== storedSegments.length
+        || input.segments.some((segment, index) => {
+          const stored = storedSegments[index];
+          return !stored
+            || segment.segmentId !== stored.segmentId
+            || segment.textStart !== stored.textStart
+            || segment.textEnd !== stored.textEnd
+            || segment.durationMs < stored.durationMs;
+        }))) {
+        throw new ChatConflictError(input.chatId, record.revision);
+      }
+      const durationsChanged = input.segments?.some(
+        (segment, index) => segment.durationMs !== storedSegments?.[index]?.durationMs,
+      ) ?? false;
+      if (input.deliveredThroughMs <= record.deliveredThroughMs && !durationsChanged) {
         return { outcome: "duplicate", record };
       }
       const updated = await this.fencedUpdate(trx, input, {
-        delivered_through_ms: input.deliveredThroughMs,
+        delivered_through_ms: Math.max(input.deliveredThroughMs, record.deliveredThroughMs),
+        ...(input.segments ? { segments: jsonb(input.segments) } : {}),
         revision: record.revision + 1,
         updated_at: new Date(),
       });

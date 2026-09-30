@@ -207,6 +207,16 @@ export class VoiceSessionController {
         };
         break;
       }
+      case "capture.completed": {
+        next = {
+          ...this.snapshot,
+          provisionalTranscript:
+            this.snapshot.provisionalTranscript?.turnId === frame.turnId
+              ? null
+              : this.snapshot.provisionalTranscript,
+        };
+        break;
+      }
       case "operation.status": {
         next = {
           ...this.snapshot,

@@ -169,6 +169,7 @@ export function createWebVoiceMediaSession(options: {
   let activeTurnId: string | null = null;
   let droppedChunks = 0;
   let invalidSegments = 0;
+  const trackedInputTracks = new Set<VoiceMediaStreamLike["getTracks"] extends () => (infer T)[] ? T : never>();
 
   let pendingSamples = new Float32Array(0);
   const pendingChunks: PendingChunk[] = [];
@@ -182,6 +183,13 @@ export function createWebVoiceMediaSession(options: {
    */
   const inFlightSegments = new Set<string>();
   const playedSegments = new Map<string, VoicePlaybackAck>();
+
+  const releaseInFlightResponse = (responseId: string) => {
+    const prefix = `${responseId}:`;
+    for (const key of inFlightSegments) {
+      if (key.startsWith(prefix)) inFlightSegments.delete(key);
+    }
+  };
 
   const emitError = (error: SafeVoiceError) => {
     try {
@@ -275,6 +283,22 @@ export function createWebVoiceMediaSession(options: {
     } catch (error: unknown) {
       console.warn("[voice-session] device-change listener failed:", error instanceof Error ? error.name : "UnknownError");
     }
+  };
+
+  const onInputTrackEnded = () => {
+    if (released) return;
+    // Revocation and physical removal both end the live MediaStreamTrack.
+    // Stop accepting samples before surfacing a recoverable device error.
+    capturing = false;
+    activeTurnId = null;
+    pendingSamples = new Float32Array(0);
+    pendingChunks.length = 0;
+    const endedCapture = capture;
+    capture = null;
+    void Promise.resolve(endedCapture?.stop()).catch((error: unknown) => {
+      console.warn("[voice-session] ended capture stop failed:", error instanceof Error ? error.name : "UnknownError");
+    });
+    emitError(voiceErrorForCode("input_unavailable"));
   };
 
   const playbackCtx = (): VoiceAudioContextLike | null => {
@@ -389,6 +413,10 @@ export function createWebVoiceMediaSession(options: {
         throw new VoiceMediaError(voiceErrorForCode("input_unavailable"));
       }
       prepared = true;
+      for (const track of stream.getTracks()) {
+        trackedInputTracks.add(track);
+        track.addEventListener?.("ended", onInputTrackEnded);
+      }
       mediaDevices.addEventListener?.("devicechange", onDeviceChange);
     },
     startCapture({ turnId }) {
@@ -454,6 +482,7 @@ export function createWebVoiceMediaSession(options: {
           if (stale) {
             stale.stopping = true;
             stale.current?.source.stop();
+            releaseInFlightResponse(oldest);
           }
         }
         playback = { queue: [], queuedMs: 0, current: null, nextStartSeconds: 0, playedMs: 0, ackRevision: 0, stopping: false };
@@ -501,6 +530,7 @@ export function createWebVoiceMediaSession(options: {
       }
       playback.current = null;
       responses.delete(responseId);
+      releaseInFlightResponse(responseId);
       return boundary;
     },
     playedThroughMs(responseId) {
@@ -518,6 +548,10 @@ export function createWebVoiceMediaSession(options: {
       pendingSamples = new Float32Array(0);
       pendingChunks.length = 0;
       mediaDevices?.removeEventListener?.("devicechange", onDeviceChange);
+      for (const track of trackedInputTracks) {
+        track.removeEventListener?.("ended", onInputTrackEnded);
+      }
+      trackedInputTracks.clear();
       const heldCapture = capture;
       const heldStream = stream;
       const heldContext = playbackContext;

@@ -529,6 +529,166 @@ describe("failure paths release the microphone and remote session", () => {
   });
 });
 
+describe("turn and create lifecycle", () => {
+  it("rotates a hands-free capture id when the server finalizes the active turn", async () => {
+    const world = makeWorld({ turnMode: "hands_free" });
+    const client = createVoiceSessionClient(world.options);
+    await client.startVoice(CHAT_ID);
+    const socket = world.sockets[0]!;
+    socket.emitOpen();
+    listen(world);
+    expect(world.media.startedTurns).toEqual(["vturn_tid-2"]);
+
+    socket.emitFrame(2, {
+      type: "transcript.final",
+      turnId: "vturn_tid-2",
+      finalityId: "vfinal_1",
+      canonicalTurnId: "cturn_1",
+      localOrder: 1,
+      text: "hello",
+    });
+
+    expect(world.media.startedTurns).toEqual(["vturn_tid-2", "vturn_tid-3"]);
+    expect(socket.sent.slice(-2)).toEqual([
+      expect.objectContaining({ type: "capture.stop", turnId: "vturn_tid-2" }),
+      expect.objectContaining({ type: "capture.start", turnId: "vturn_tid-3", mode: "hands_free" }),
+    ]);
+    client.dispose();
+  });
+
+  it("rotates a hands-free capture id when speech completes empty", async () => {
+    const world = makeWorld({ turnMode: "hands_free" });
+    const client = createVoiceSessionClient(world.options);
+    await client.startVoice(CHAT_ID);
+    const socket = world.sockets[0]!;
+    socket.emitOpen();
+    listen(world);
+
+    socket.emitFrame(2, {
+      type: "capture.completed",
+      turnId: "vturn_tid-2",
+      outcome: "empty",
+    });
+
+    expect(world.media.startedTurns).toEqual(["vturn_tid-2", "vturn_tid-3"]);
+    client.dispose();
+  });
+
+  it("reuses one create request id across two lost responses and a user retry", async () => {
+    let attempts = 0;
+    const world = makeWorld({
+      create: () => {
+        attempts += 1;
+        if (attempts <= 2) throw new TypeError("network response lost");
+        return {
+          ...createdBody("ticket-recovered", 3),
+          outcome: "rotated_unconsumed",
+        };
+      },
+    });
+    const client = createVoiceSessionClient(world.options);
+    await client.startVoice(CHAT_ID);
+    expect(client.getSnapshot().phase).toBe("failed");
+
+    client.retry();
+    await vi.waitFor(() => expect(world.sockets).toHaveLength(1));
+
+    const creates = world.calls.filter((call) => call.method === "POST" && call.path.endsWith("/voice/sessions"));
+    expect(creates).toHaveLength(3);
+    expect(new Set(creates.map((call) => (call.body as { clientRequestId: string }).clientRequestId)).size).toBe(1);
+    expect(new URL(world.urls[0]!).searchParams.get("ticket")).toBe("ticket-recovered");
+    expect(client.getSnapshot().phase).toBe("active");
+    client.dispose();
+  });
+
+  it("replaces the unresolved create id after a definitive failure", async () => {
+    let attempts = 0;
+    const world = makeWorld({
+      create: () => {
+        attempts += 1;
+        if (attempts <= 2) throw new TypeError("network response lost");
+        if (attempts === 3) return new Response(JSON.stringify({
+          error: voiceErrorForCode("chat_unavailable"),
+        }), { status: 404, headers: { "content-type": "application/json" } });
+        return createdBody("ticket-new", 1);
+      },
+    });
+    const client = createVoiceSessionClient(world.options);
+    await client.startVoice(CHAT_ID);
+    client.retry();
+    await vi.waitFor(() => expect(attempts).toBe(3));
+    await vi.waitFor(() => expect(client.getSnapshot().phase).toBe("failed"));
+
+    const firstCreates = world.calls.filter((call) => call.method === "POST" && call.path.endsWith("/voice/sessions"));
+    const unresolvedId = (firstCreates[0]!.body as { clientRequestId: string }).clientRequestId;
+    expect(firstCreates.every((call) => (call.body as { clientRequestId: string }).clientRequestId === unresolvedId)).toBe(true);
+
+    await client.startVoice(CHAT_ID);
+    const creates = world.calls.filter((call) => call.method === "POST" && call.path.endsWith("/voice/sessions"));
+    expect((creates[3]!.body as { clientRequestId: string }).clientRequestId).not.toBe(unresolvedId);
+    expect(client.getSnapshot().phase).toBe("active");
+    client.dispose();
+  });
+
+  it("replaces an unresolved create id after an explicit end reset", async () => {
+    let attempts = 0;
+    const world = makeWorld({
+      create: () => {
+        attempts += 1;
+        if (attempts <= 2) throw new TypeError("network response lost");
+        return createdBody("ticket-after-reset", 1);
+      },
+    });
+    const client = createVoiceSessionClient(world.options);
+    await client.startVoice(CHAT_ID);
+    const unresolvedId = (world.calls.find((call) => call.method === "POST")!.body as { clientRequestId: string }).clientRequestId;
+
+    await client.end();
+    await client.startVoice(CHAT_ID);
+
+    const creates = world.calls.filter((call) => call.method === "POST" && call.path.endsWith("/voice/sessions"));
+    expect(creates).toHaveLength(3);
+    expect((creates[2]!.body as { clientRequestId: string }).clientRequestId).not.toBe(unresolvedId);
+    expect(client.getSnapshot().phase).toBe("active");
+    client.dispose();
+  });
+});
+
+describe("active microphone loss", () => {
+  it("stops capture, reports a recoverable input failure, and removes the ended listener", async () => {
+    let endedListener: (() => void) | null = null;
+    const track = {
+      stop: vi.fn(),
+      getSettings: () => ({ deviceId: "mic_default" }),
+      addEventListener: vi.fn((_type: "ended", listener: () => void) => { endedListener = listener; }),
+      removeEventListener: vi.fn(),
+    };
+    const captureStop = vi.fn(async () => undefined);
+    const onError = vi.fn();
+    const session = createWebVoiceMediaSession({
+      audio: MONO,
+      callbacks: { onAudioChunk: () => true, onSegmentPlayed: () => undefined, onError },
+      mediaDevices: { getUserMedia: vi.fn(async () => ({ getTracks: () => [track] })) },
+      captureFactory: () => ({ sampleRateHz: 16_000, stop: captureStop }),
+      createAudioContext: () => null,
+    });
+    await session.prepare();
+    session.startCapture({ turnId: "vturn_1" });
+
+    endedListener!();
+    await vi.waitFor(() => expect(captureStop).toHaveBeenCalledOnce());
+    expect(onError).toHaveBeenCalledWith(expect.objectContaining({
+      code: "input_unavailable",
+      retryable: true,
+      recovery: "choose_input",
+    }));
+
+    await session.release();
+    expect(track.removeEventListener).toHaveBeenCalledWith("ended", endedListener);
+    expect(captureStop).toHaveBeenCalledOnce();
+  });
+});
+
 describe("remote session termination drives the public phase", () => {
   it("session.state ended moves the client to ended, releases media, and skips DELETE", async () => {
     const world = makeWorld();
@@ -870,6 +1030,16 @@ describe("replayed audio dedupe", () => {
     expect(w.sources).toHaveLength(1);
     expect(w.acks).toHaveLength(2);
     expect(w.acks[1]).toEqual(w.acks[0]);
+  });
+
+  it("an interrupted unplayed segment can be delivered again", async () => {
+    const w = mediaWorld();
+    await w.session.prepare();
+    w.session.enqueueSegment({ responseId: "vresp_1", segmentId: "vseg_1", data: pcmSegment(3_200) });
+    expect(w.sources).toHaveLength(1);
+    w.session.interruptResponse("vresp_1");
+    w.session.enqueueSegment({ responseId: "vresp_1", segmentId: "vseg_1", data: pcmSegment(3_200) });
+    expect(w.sources).toHaveLength(2);
   });
 
   it("different segments of one response still play and ack normally", async () => {

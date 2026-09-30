@@ -9,7 +9,10 @@
  * runs on a fake clock — no real provider/network calls are made.
  */
 import { describe, expect, it } from "vitest";
-import type { VoiceResponseSegment } from "@matrix-os/contracts/voice-session";
+import {
+  VoiceServerFrameSchema,
+  type VoiceResponseSegment,
+} from "@matrix-os/contracts/voice-session";
 import {
   VoiceAdapterCapabilitiesSchema,
   VoiceMediaAdapterRegistry,
@@ -220,11 +223,20 @@ describe("createOpenAiVoiceMediaAdapter", () => {
     expect(wav.length).toBe(44 + 2 * 640);
 
     expect(h.events).toEqual([
-      { type: "transcript.final", turnId: "vturn_1", finalityId: "trn_vturn_1", text: "hello there" },
+      { type: "transcript.final", turnId: "vturn_1", finalityId: "vfinal_vturn_1", text: "hello there" },
     ]);
+    expect(() => VoiceServerFrameSchema.parse({
+      contractVersion: 1,
+      sessionId: "vs_schema",
+      epoch: 1,
+      sequence: 0,
+      ...h.events[0],
+      localOrder: 1,
+      canonicalTurnId: "cturn_schema",
+    })).not.toThrow();
   });
 
-  it("emits no transcript event for an empty transcription", async () => {
+  it("completes the capture without a transcript for empty speech", async () => {
     const h = await startSession({ handler: () => jsonResponse({ text: "   " }) });
     h.session.setCapture({ turnId: "vturn_1", mode: "push_to_talk" });
     h.session.pushAudio({ turnId: "vturn_1", timestampMs: 0, data: pcmS16Frame(8_000) });
@@ -232,7 +244,9 @@ describe("createOpenAiVoiceMediaAdapter", () => {
     await flushAsync();
     expect(h.calls).toHaveLength(1);
     expect(eventsOfType(h.events, "transcript.final")).toHaveLength(0);
-    expect(h.events).toHaveLength(0);
+    expect(h.events).toEqual([
+      { type: "capture.completed", turnId: "vturn_1", outcome: "empty" },
+    ]);
   });
 
   it("auto-finalizes a hands_free turn on the silence hangover after min speech", async () => {
@@ -258,7 +272,7 @@ describe("createOpenAiVoiceMediaAdapter", () => {
     await flushAsync();
     expect(h.calls).toHaveLength(1);
     expect(eventsOfType(h.events, "transcript.final")).toEqual([
-      { type: "transcript.final", turnId: "vturn_2", finalityId: "trn_vturn_2", text: "hands free" },
+      { type: "transcript.final", turnId: "vturn_2", finalityId: "vfinal_vturn_2", text: "hands free" },
     ]);
   });
 
@@ -272,6 +286,7 @@ describe("createOpenAiVoiceMediaAdapter", () => {
     await flushAsync();
     expect(failing.events).toEqual([
       { type: "error", code: "provider_unavailable", retryable: true, fatal: false },
+      { type: "capture.completed", turnId: "vturn_1", outcome: "failed" },
     ]);
     // No provider names, endpoints, or raw error text may leak upstream.
     expect(JSON.stringify(failing.events)).not.toMatch(/openai|exploded|api\.openai/i);
@@ -287,6 +302,7 @@ describe("createOpenAiVoiceMediaAdapter", () => {
     await flushAsync();
     expect(timingOut.events).toEqual([
       { type: "error", code: "connection_failed", retryable: true, fatal: false },
+      { type: "capture.completed", turnId: "vturn_1", outcome: "failed" },
     ]);
   });
 
@@ -313,7 +329,7 @@ describe("createOpenAiVoiceMediaAdapter", () => {
 
     const audio = eventsOfType(h.events, "synthesis.audio");
     expect(audio).toHaveLength(2);
-    expect(audio[0]).toMatchObject({ responseId: "vresp_1", segmentId: "vseg_1", startMs: 0, durationMs: 512 });
+    expect(audio[0]).toMatchObject({ responseId: "vresp_1", segmentId: "vseg_chunk_0", durableSegmentId: "vseg_1", startMs: 0, durationMs: 512 });
     expect(audio[1]).toMatchObject({ responseId: "vresp_1", segmentId: "vseg_1", startMs: 512, durationMs: 100 });
     expect(Buffer.from(audio[0]!.data, "base64")).toHaveLength(24_576);
     expect(Buffer.from(audio[1]!.data, "base64")).toHaveLength(4_800);
@@ -337,9 +353,10 @@ describe("createOpenAiVoiceMediaAdapter", () => {
     await flushAsync();
     expect(h.calls).toHaveLength(1);
     expect(h.calls[0]!.input).toBe(SPEECH_URL);
-    expect(h.events).toEqual([
-      { type: "error", code: "provider_unavailable", retryable: true, fatal: false },
-    ]);
+    expect(h.events).toEqual([{
+      type: "synthesis.rejected", responseId: "vresp_1", segmentId: "vseg_1",
+      code: "provider_unavailable", retryable: true,
+    }]);
     expect(JSON.stringify(h.events)).not.toMatch(/openai|exploded|api\.openai/i);
   });
 
@@ -377,6 +394,28 @@ describe("createOpenAiVoiceMediaAdapter", () => {
       ["vseg_1", 100],
       ["vseg_2", 200],
     ]);
+  });
+
+  it("rejects synthesis explicitly when the bounded command queue is full", async () => {
+    const h = await startSession({
+      handler: () => new Promise<Response>(() => undefined),
+    });
+    for (let index = 0; index < 18; index += 1) {
+      h.session.synthesize({
+        responseId: "vresp_1",
+        segment: segment(`vseg_${index}`, index),
+        text: `phrase ${index}`,
+      });
+    }
+    await flushAsync();
+    expect(eventsOfType(h.events, "synthesis.rejected")).toEqual([{
+      type: "synthesis.rejected",
+      responseId: "vresp_1",
+      segmentId: "vseg_17",
+      code: "audio_backpressure",
+      retryable: true,
+    }]);
+    h.session.close();
   });
 
   it("cancelResponse and interrupt abort in-flight synthesis without further events", async () => {

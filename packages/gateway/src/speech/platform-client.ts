@@ -4,18 +4,22 @@ import {
   SpeechRequestIdSchema,
   SpeechSafeErrorResponseSchema,
   SpeechStatusResponseSchema,
+  SpeechSynthesisRequestSchema,
+  SpeechSynthesisResponseSchema,
   SpeechTranscriptionResponseSchema,
   type SpeechCancellationResponse,
   type SpeechCapabilitiesResponse,
   type SpeechMediaType,
   type SpeechSourceKind,
   type SpeechStatusResponse,
+  type SpeechSynthesisResponse,
   type SpeechTranscriptionResponse,
 } from "@matrix-os/contracts";
 import { z } from "zod/v4";
 
 const DEFAULT_TIMEOUT_MS = 65_000;
 const MAX_RESPONSE_BYTES = 256 * 1024;
+const MAX_SYNTHESIS_RESPONSE_BYTES = 12 * 1024 * 1024;
 const HandleSchema = z.string().min(1).max(63).regex(/^[a-z0-9][a-z0-9-]*$/);
 const IdentitySchema = z.object({
   ownerId: z.string().min(1).max(160).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]*$/),
@@ -45,6 +49,11 @@ export interface PlatformSpeechClient {
     languageHints?: readonly string[];
     signal: AbortSignal;
   }): Promise<SpeechTranscriptionResponse>;
+  synthesize(input: {
+    requestId: string;
+    text: string;
+    signal: AbortSignal;
+  }): Promise<SpeechSynthesisResponse>;
   status(requestId: string, signal?: AbortSignal): Promise<SpeechStatusResponse | undefined>;
   cancel(requestId: string, signal?: AbortSignal): Promise<SpeechCancellationResponse>;
 }
@@ -143,21 +152,21 @@ export function loadPlatformSpeechRuntimeConfig(
   };
 }
 
-async function readBoundedJson(response: Response): Promise<unknown> {
+async function readBoundedJson(response: Response, maxBytes = MAX_RESPONSE_BYTES): Promise<unknown> {
   const declared = Number(response.headers.get("content-length"));
-  if (Number.isFinite(declared) && declared > MAX_RESPONSE_BYTES) {
+  if (Number.isFinite(declared) && declared > maxBytes) {
     await response.body?.cancel();
     throw new PlatformSpeechClientError("invalid_response", "Speech is unavailable", 503);
   }
   if (!response.body) throw new PlatformSpeechClientError("invalid_response", "Speech is unavailable", 503);
   const reader = response.body.getReader();
-  const bytes = new Uint8Array(MAX_RESPONSE_BYTES);
+  const bytes = new Uint8Array(maxBytes);
   let size = 0;
   try {
     while (true) {
       const next = await reader.read();
       if (next.done) break;
-      if (size + next.value.byteLength > MAX_RESPONSE_BYTES) {
+      if (size + next.value.byteLength > maxBytes) {
         await reader.cancel();
         throw new PlatformSpeechClientError("invalid_response", "Speech is unavailable", 503);
       }
@@ -195,6 +204,8 @@ export function createPlatformSpeechClient(
     signal?: AbortSignal;
     schema: z.ZodType<T>;
     notFound?: boolean;
+    contentType?: string;
+    maxResponseBytes?: number;
   }): Promise<T | undefined> {
     const timeout = makeTimeoutSignal(config.requestTimeoutMs);
     const signal = options.signal ? AbortSignal.any([options.signal, timeout]) : timeout;
@@ -207,6 +218,7 @@ export function createPlatformSpeechClient(
         headers: {
           authorization: `Bearer ${config.runtimeAuthToken}`,
           accept: "application/json",
+          ...(options.contentType ? { "content-type": options.contentType } : {}),
         },
         body: options.body,
       });
@@ -214,7 +226,7 @@ export function createPlatformSpeechClient(
       if (error instanceof PlatformSpeechClientError) throw error;
       throw new PlatformSpeechClientError("unavailable", "Speech is unavailable", 503);
     }
-    const payload = await readBoundedJson(response);
+    const payload = await readBoundedJson(response, options.maxResponseBytes);
     if (response.ok) {
       const parsed = options.schema.safeParse(payload);
       if (!parsed.success) {
@@ -260,6 +272,18 @@ export function createPlatformSpeechClient(
         body: form,
         signal: input.signal,
         schema: SpeechTranscriptionResponseSchema,
+      }))!;
+    },
+    async synthesize(input) {
+      const body = SpeechSynthesisRequestSchema.parse({ requestId: input.requestId, text: input.text });
+      return (await request({
+        path: "/syntheses",
+        method: "POST",
+        body: JSON.stringify(body),
+        contentType: "application/json",
+        signal: input.signal,
+        schema: SpeechSynthesisResponseSchema,
+        maxResponseBytes: MAX_SYNTHESIS_RESPONSE_BYTES,
       }))!;
     },
     async status(requestId, signal) {

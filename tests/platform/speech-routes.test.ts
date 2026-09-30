@@ -64,6 +64,7 @@ describe("speech runtime routes", () => {
     return {
       capabilities: vi.fn(() => capabilities),
       transcribe: vi.fn(),
+      synthesize: vi.fn(),
       status: vi.fn(async () => undefined),
       cancel: vi.fn(async () => undefined),
       shutdown: vi.fn(),
@@ -139,6 +140,38 @@ describe("speech runtime routes", () => {
       },
     );
     expect(response.status).toBe(413);
+  });
+
+  it("authenticates and validates managed synthesis requests", async () => {
+    const speech = service();
+    speech.synthesize.mockResolvedValue({
+      contractVersion: 1,
+      requestId: "sp_1788998400000_abcdefghijklmnop",
+      status: "succeeded",
+      format: "pcm_s16le_24000_mono",
+      durationMs: 100,
+      audio: Buffer.alloc(4_800).toString("base64"),
+    });
+    const response = await app(speech).request(
+      "/internal/containers/alice/speech/syntheses?runtimeSlot=primary",
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${runtimeBearer()}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          requestId: "sp_1788998400000_abcdefghijklmnop",
+          text: "Speak this response.",
+        }),
+      },
+    );
+    expect(response.status).toBe(200);
+    expect(speech.synthesize).toHaveBeenCalledWith(expect.objectContaining({
+      identity,
+      text: "Speak this response.",
+    }));
+    expect(await response.json()).toMatchObject({ format: "pcm_s16le_24000_mono", durationMs: 100 });
   });
 
   it("mounts the runtime speech router before personal session routing", async () => {

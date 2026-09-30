@@ -22,6 +22,9 @@ interface EnabledSpeechConfigBase {
   policyRevision: string;
   speechSecret: string;
   microusdPerMinute: number;
+  synthesisModel: string;
+  synthesisVoice: string;
+  synthesisMicrousdPerMinute: number;
   ownerAudioEnabled: boolean;
   admission: SpeechAdmissionConfig;
   limits: SpeechLimitsConfig;
@@ -71,7 +74,10 @@ function integer(raw: string | undefined, fallback: number | undefined, minimum:
   return parsed;
 }
 
-function commonConfig(env: NodeJS.ProcessEnv): Omit<EnabledSpeechConfigBase, "microusdPerMinute"> {
+function commonConfig(env: NodeJS.ProcessEnv): Omit<
+  EnabledSpeechConfigBase,
+  "microusdPerMinute" | "synthesisModel" | "synthesisVoice" | "synthesisMicrousdPerMinute"
+> {
   const policyRevision = IdentifierSchema.safeParse(env.PLATFORM_SPEECH_POLICY_REVISION);
   const speechSecret = env.PLATFORM_SPEECH_SECRET?.trim() ?? "";
   if (!policyRevision.success || new TextEncoder().encode(speechSecret).byteLength < 32) return invalid();
@@ -117,14 +123,20 @@ export function loadPlatformSpeechConfig(env: NodeJS.ProcessEnv = process.env): 
       provider,
       fundingMode: "fixture_no_charge",
       model: "fixture-transcribe",
+      synthesisModel: "fixture-speech",
+      synthesisVoice: "fixture",
       fixtureTranscript: fixtureTranscript.data,
       microusdPerMinute: 0,
+      synthesisMicrousdPerMinute: 0,
     };
   }
   if (provider !== "openai") return invalid();
   const apiKey = env.PLATFORM_SPEECH_OPENAI_API_KEY?.trim() ?? "";
   const model = ModelSchema.safeParse(env.PLATFORM_SPEECH_MODEL);
-  if (apiKey.length < 16 || !model.success) return invalid();
+  const synthesisModel = ModelSchema.safeParse(env.PLATFORM_SPEECH_SYNTHESIS_MODEL ?? "gpt-4o-mini-tts");
+  const synthesisVoice = z.string().min(1).max(64).regex(/^[A-Za-z0-9_-]+$/)
+    .safeParse(env.PLATFORM_SPEECH_SYNTHESIS_VOICE ?? "alloy");
+  if (apiKey.length < 16 || !model.success || !synthesisModel.success || !synthesisVoice.success) return invalid();
   const previewNoCharge = env.PLATFORM_PREVIEW === "true"
     && env.PLATFORM_SPEECH_PREVIEW_NO_CHARGE === "true";
   if (env.PLATFORM_SPEECH_PREVIEW_NO_CHARGE === "true" && !previewNoCharge) return invalid();
@@ -138,7 +150,10 @@ export function loadPlatformSpeechConfig(env: NodeJS.ProcessEnv = process.env): 
       fundingMode: "preview_no_charge",
       apiKey,
       model: model.data,
+      synthesisModel: synthesisModel.data,
+      synthesisVoice: synthesisVoice.data,
       microusdPerMinute: 0,
+      synthesisMicrousdPerMinute: 0,
       allowedFundingSources: [],
       previewMaximumOperationsPerRuntime: integer(
         env.PLATFORM_SPEECH_PREVIEW_MAX_OPERATIONS_PER_RUNTIME,
@@ -172,7 +187,15 @@ export function loadPlatformSpeechConfig(env: NodeJS.ProcessEnv = process.env): 
     fundingMode: "existing_wallet",
     apiKey,
     model: model.data,
+    synthesisModel: synthesisModel.data,
+    synthesisVoice: synthesisVoice.data,
     microusdPerMinute: integer(env.PLATFORM_SPEECH_MICROUSD_PER_MINUTE, undefined, 1, 1_000_000_000),
+    synthesisMicrousdPerMinute: integer(
+      env.PLATFORM_SPEECH_SYNTHESIS_MICROUSD_PER_MINUTE,
+      Number(env.PLATFORM_SPEECH_MICROUSD_PER_MINUTE),
+      1,
+      1_000_000_000,
+    ),
     allowedFundingSources,
     monthlyBudgetMicrousd,
     monthlyPromotionalCreditMicrousd,

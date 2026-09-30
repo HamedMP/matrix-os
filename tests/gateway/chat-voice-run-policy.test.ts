@@ -36,7 +36,7 @@ function catalog(): CanonicalProviderCatalog {
       kind: "codex",
       displayName: "Codex",
       adapterVersion: "1.0.0",
-      capabilityClass: "coding_agent",
+      capabilityClass: "system_agent",
     }],
     instances: [{
       id: "codex_default",
@@ -49,9 +49,9 @@ function catalog(): CanonicalProviderCatalog {
         id: selection.model,
         displayName: "GPT-5.6-Sol",
         availability: "available",
-        capabilities: ["tools"],
+        capabilities: [],
         supportsVision: false,
-        supportsToolUse: true,
+        supportsToolUse: false,
       }],
       options: [],
       skills: [],
@@ -543,6 +543,7 @@ describe("voice resume checkpoint eligibility", () => {
     expect(state?.checkpoint?.runId).toBe(heardRun);
     expect(state?.checkpoint?.runId).not.toBe(unheardRun);
   });
+
 });
 
 describe("checkpoint provenance and retained history", () => {
@@ -599,6 +600,45 @@ describe("checkpoint provenance and retained history", () => {
       ...overrides,
     });
   }
+
+  it("rebuilds from a heard-safe projection when an interrupted first response leaves no eligible checkpoint", async () => {
+    await createChat();
+    const interruptedRun = await completedCheckpoint("first_interrupted");
+    await commitMessage("msg_first_response", 2, "this was never heard", interruptedRun);
+    await insertDelivery({
+      responseId: "resp_first_interrupted",
+      runId: interruptedRun,
+      messageId: "msg_first_response",
+      state: "interrupted",
+      effectiveTextEnd: 0,
+    });
+
+    const result = await decision({ retainedHistorySupported: true, historyBoundarySeq: 2 });
+
+    expect(result.mode).toBe("rebuild");
+    expect(result.reason).toBe("no_checkpoint");
+    expect(result.resumeState).toBeUndefined();
+    expect(result.retainedHistory?.text).toContain("remember");
+    expect(result.retainedHistory?.text).not.toContain("this was never heard");
+  });
+
+  it("rebuilds heard-safe history for disposable session-only follow-ups", async () => {
+    await createChat();
+    await completedCheckpoint("before_disposable");
+
+    const result = await decision({
+      retainedHistorySupported: true,
+      historyBoundarySeq: 1,
+      runPolicy: sessionOnlyPolicy,
+    });
+
+    expect(result).toMatchObject({
+      mode: "rebuild",
+      reason: "disposable_policy",
+    });
+    expect(result.resumeState).toBeUndefined();
+    expect(result.retainedHistory?.text).toContain("remember");
+  });
 
   it("reports provenance for a checkpoint that covers committed history", async () => {
     await createChat();

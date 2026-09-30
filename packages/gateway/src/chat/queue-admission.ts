@@ -112,8 +112,11 @@ export async function enqueueCanonicalQueuedTurn(options: {
     catalog,
     selection: effective.selection,
     ...(!prepared?.context?.agent && record.providerBinding ? { boundInstanceId: record.providerBinding.instanceId } : {}),
-    requirements: chatProviderRequirements({ ...effective, parts: prepared ? input.parts.filter((part) =>
-      part.type !== "resource_reference" || !["agent", "chat"].includes(part.resource.kind)) : input.parts }),
+    requirements: {
+      ...chatProviderRequirements({ ...effective, parts: prepared ? input.parts.filter((part) =>
+        part.type !== "resource_reference" || !["agent", "chat"].includes(part.resource.kind)) : input.parts }),
+      ...(admissionPolicy.runPolicy?.source === "voice" ? { voiceConversationOnly: true } : {}),
+    },
   });
   if (!validated.ok) {
     throw new CanonicalQueueAdmissionError(

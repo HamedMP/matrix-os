@@ -5,14 +5,8 @@
  * production speech authority (speech/DOMAIN.md): transcription is funded,
  * metered, and policy-gated platform-side, and the gateway never holds a
  * provider key. This module re-derives that client from the same validated
- * runtime config as `gateway-runtime.ts` (the runtime's client is internal
- * to its routes/transcribers) and wraps `client.transcribe` as a
- * `VoiceTranscriptionPort` for the chunked voice adapter.
- *
- * No platform TTS endpoint exists in the speech contract — synthesis is not
- * expressible here, so a managed adapter pairs this port with a
- * development-gated synthesizer at registration (see
- * `voice-session/adapter-registration.ts`).
+ * runtime config as `gateway-runtime.ts` and wraps managed transcription and
+ * synthesis as provider-neutral ports for the chunked voice adapter.
  */
 import { randomUUID } from "node:crypto";
 import { VOICE_SESSION_LIMITS } from "@matrix-os/contracts/voice-session";
@@ -20,6 +14,7 @@ import {
   VoiceSpeechPortError,
   sanitizeLanguageHints,
   type VoiceTranscriptionPort,
+  type VoiceSynthesisPort,
 } from "../voice-session/speech-ports.js";
 import {
   PlatformSpeechClientError,
@@ -84,5 +79,29 @@ export function createManagedVoiceTranscriptionPort(options: {
       text = [...text].slice(0, VOICE_SESSION_LIMITS.maxTranscriptChars).join("");
     }
     return { text };
+  };
+}
+
+export function createManagedVoiceSynthesisPort(options: {
+  client: Pick<PlatformSpeechClient, "synthesize">;
+  now?: () => number;
+}): VoiceSynthesisPort {
+  const now = options.now ?? Date.now;
+  return async function* (request) {
+    let result;
+    try {
+      result = await options.client.synthesize({
+        requestId: speechRequestId(now),
+        text: request.text,
+        signal: request.signal,
+      });
+    } catch (error: unknown) {
+      if (request.signal.aborted) throw new VoiceSpeechPortError("aborted");
+      if (error instanceof PlatformSpeechClientError) {
+        throw new VoiceSpeechPortError(error.code === "timeout" ? "timeout" : "unavailable");
+      }
+      throw new VoiceSpeechPortError("connection");
+    }
+    yield Buffer.from(result.audio, "base64");
   };
 }

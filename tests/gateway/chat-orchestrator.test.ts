@@ -263,7 +263,9 @@ describe("CanonicalChatOrchestrator", () => {
 
     releaseProvider();
     await orchestrator.drain();
-    expect(prompts).toEqual(["keep running", "run this next"]);
+    expect(prompts[0]).toBe("keep running");
+    expect(prompts[1]).toContain("User: keep running");
+    expect(prompts[1]).toContain("Current user request:\nrun this next");
     expect((await repository.getDetailPage(owner, "chat_queue_orchestrated", { limit: 200 }))?.queuedTurns)
       .toEqual([]);
     const snapshot = await repository.exportChat(owner, "chat_queue_orchestrated");
@@ -1807,7 +1809,9 @@ describe("CanonicalChatOrchestrator", () => {
     expect(await restarted.reconcileActiveRuns(owner)).toBe(0);
     await restarted.drain();
 
-    expect(prompts).toEqual(["resume queued work"]);
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]).toContain("User: initial");
+    expect(prompts[0]).toContain("Current user request:\nresume queued work");
     expect((await repository.getDetailPage(owner, "chat_queue_restarted", { limit: 200 }))?.queuedTurns)
       .toEqual([]);
   });

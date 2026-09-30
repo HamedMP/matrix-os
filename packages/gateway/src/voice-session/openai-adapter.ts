@@ -24,6 +24,7 @@
  * cumulative (monotonic across the response).
  */
 import type { VoiceTurnMode } from "@matrix-os/contracts/voice-session";
+import { VoiceFinalityIdSchema, VoiceSegmentIdSchema } from "@matrix-os/contracts/voice-session";
 import {
   VoiceAdapterCapabilitiesSchema,
   type VoiceAdapterCapabilities,
@@ -157,6 +158,7 @@ interface ResponseSynthesis {
   abort: AbortController | null;
   /** Total PCM bytes emitted for the response — drives monotonic startMs. */
   bytesEmitted: number;
+  chunkSequence: number;
 }
 
 interface AdapterConfig {
@@ -234,12 +236,19 @@ class ChunkedVoiceMediaSession implements VoiceMediaSession {
           if (!entry.running && entry.queue.length === 0) this.responses.delete(id);
           if (this.responses.size < MAX_SYNTH_RESPONSES) break;
         }
-        if (this.responses.size >= MAX_SYNTH_RESPONSES) return;
+        if (this.responses.size >= MAX_SYNTH_RESPONSES) {
+          this.rejectSynthesis(command, "audio_backpressure");
+          return;
+        }
       }
-      resp = { queue: [], running: false, muted: false, abort: null, bytesEmitted: 0 };
+      resp = { queue: [], running: false, muted: false, abort: null, bytesEmitted: 0, chunkSequence: 0 };
       this.responses.set(command.responseId, resp);
     }
-    if (resp.muted || resp.queue.length >= MAX_QUEUED_SEGMENTS) return;
+    if (resp.muted) return;
+    if (resp.queue.length >= MAX_QUEUED_SEGMENTS) {
+      this.rejectSynthesis(command, "audio_backpressure");
+      return;
+    }
     resp.queue.push(command);
     void this.drainSynthesis(resp);
   }
@@ -367,6 +376,19 @@ class ChunkedVoiceMediaSession implements VoiceMediaSession {
     }
   }
 
+  private rejectSynthesis(
+    command: VoiceSynthesisCommand,
+    code: "audio_backpressure" | "provider_unavailable",
+  ): void {
+    this.emit({
+      type: "synthesis.rejected",
+      responseId: command.responseId,
+      segmentId: command.segment.segmentId,
+      code,
+      retryable: true,
+    });
+  }
+
   /**
    * Normalize a port failure: an unclassified throw mid-abort is still an
    * abort (close/supersede stay silent); anything else without a kind is a
@@ -406,10 +428,17 @@ class ChunkedVoiceMediaSession implements VoiceMediaSession {
       if ([...text].length > MAX_TRANSCRIPT_CHARS) {
         text = [...text].slice(0, MAX_TRANSCRIPT_CHARS).join("");
       }
-      if (text.length === 0) return; // empty transcript: no event
-      this.emit({ type: "transcript.final", turnId, finalityId: `trn_${turnId}`, text });
+      if (text.length === 0) {
+        this.emit({ type: "capture.completed", turnId, outcome: "empty" });
+        return;
+      }
+      const finalityId = VoiceFinalityIdSchema.parse(`vfinal_${turnId}`);
+      this.emit({ type: "transcript.final", turnId, finalityId, text });
     } catch (error: unknown) {
       this.emitCallFailure(this.classifySpeechError(error, op));
+      if (!this.closed && !op.signal.aborted) {
+        this.emit({ type: "capture.completed", turnId, outcome: "failed" });
+      }
     } finally {
       this.transcriptions.delete(op);
     }
@@ -456,6 +485,7 @@ class ChunkedVoiceMediaSession implements VoiceMediaSession {
       const pending: Buffer[] = [];
       let pendingBytes = 0;
       let totalBytes = 0;
+      let heldChunk: Buffer | null = null;
       for await (const part of stream) {
         pending.push(part);
         pendingBytes += part.length;
@@ -466,32 +496,49 @@ class ChunkedVoiceMediaSession implements VoiceMediaSession {
         while (pendingBytes >= SYNTH_CHUNK_BYTES) {
           const piece = takeBytes(pending, SYNTH_CHUNK_BYTES);
           pendingBytes -= piece.length;
-          this.emitSynthesisChunk(resp, command, piece);
+          if (heldChunk) this.emitSynthesisChunk(resp, command, heldChunk, false);
+          heldChunk = piece;
         }
       }
       if (pendingBytes > 0) {
         const piece = takeBytes(pending, pendingBytes);
-        this.emitSynthesisChunk(resp, command, piece);
+        if (heldChunk) this.emitSynthesisChunk(resp, command, heldChunk, false);
+        heldChunk = piece;
       }
+      if (heldChunk) this.emitSynthesisChunk(resp, command, heldChunk, true);
       this.emitSynthesisEnd(resp, command);
     } catch (error: unknown) {
-      if (!resp.muted) this.emitCallFailure(this.classifySpeechError(error, op));
+      if (!resp.muted) {
+        const classified = this.classifySpeechError(error, op);
+        if (classified.kind !== "aborted") {
+          this.rejectSynthesis(command, "provider_unavailable");
+        }
+      }
     } finally {
       if (resp.abort === op) resp.abort = null;
     }
   }
 
-  private emitSynthesisChunk(resp: ResponseSynthesis, command: VoiceSynthesisCommand, chunk: Buffer): void {
+  private emitSynthesisChunk(
+    resp: ResponseSynthesis,
+    command: VoiceSynthesisCommand,
+    chunk: Buffer,
+    finalChunk: boolean,
+  ): void {
     if (this.closed || resp.muted || chunk.length === 0) return;
     const bytesPerMs = this.synthBytesPerMs;
     const startMs = Math.round(resp.bytesEmitted / bytesPerMs);
     resp.bytesEmitted += chunk.length;
     const endMs = Math.round(resp.bytesEmitted / bytesPerMs);
     const outputAudio = this.config.speech.outputAudio;
+    const segmentId = finalChunk
+      ? command.segment.segmentId
+      : VoiceSegmentIdSchema.parse(`vseg_chunk_${resp.chunkSequence++}`);
     this.emit({
       type: "synthesis.audio",
       responseId: command.responseId,
-      segmentId: command.segment.segmentId,
+      segmentId,
+      durableSegmentId: command.segment.segmentId,
       startMs,
       durationMs: Math.max(1, endMs - startMs),
       data: chunk.toString("base64"),

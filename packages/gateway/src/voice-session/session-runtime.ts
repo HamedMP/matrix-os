@@ -86,6 +86,7 @@ export interface VoiceTurnRecord {
 
 export interface VoiceLedgerSegment extends VoiceResponseSegment {
   played: boolean;
+  synthesisEnded: boolean;
 }
 
 /** A provider final held back so canonical admission stays in localOrder. */
@@ -106,7 +107,7 @@ export interface VoiceResponseLedger {
   playedThroughMs: number;
   deliveryRevision: number;
   pendingRecorded: boolean;
-  generationEnded: boolean;
+  runTerminal: boolean;
   terminalRecorded: boolean;
 }
 
@@ -178,8 +179,9 @@ export interface VoiceSessionRecord {
   endKind: VoiceSessionEndKind | null;
   ending: Promise<void> | null;
   mutation: Promise<void>;
-  /** True while a queued mutation task owns the session (re-entrancy guard). */
-  inTask: boolean;
+  pendingMutationTasks: number;
+  pendingMutationBytes: number;
+  mutationOverflowed: boolean;
   staleFrameCount: number;
   runtime: VoiceSessionRuntime;
 }
@@ -194,30 +196,42 @@ export interface VoiceSessionHost {
   readonly maxTurns: number;
   readonly maxResponses: number;
   readonly maxRunIds: number;
+  readonly maxPendingMutationTasks: number;
+  readonly maxPendingMutationBytes: number;
   createId(prefix: string): string;
   log(event: string, fields: Record<string, unknown>): void;
   touch(session: VoiceSessionRecord): void;
   finish(session: VoiceSessionRecord, kind: VoiceSessionEndKind): Promise<void>;
+  finishInternal(session: VoiceSessionRecord, kind: VoiceSessionEndKind): Promise<void>;
 }
 
 export type DistributiveOmit<T, K extends keyof T> = T extends unknown ? Omit<T, K> : never;
 export type ServerFramePayload = DistributiveOmit<VoiceServerFrame, keyof VoiceFrameCommon>;
 
 /**
- * Serialize asynchronous session work: tasks run in arrival order. `inTask`
- * marks re-entrant sections so lifecycle teardown requested from inside the
- * queue executes inline instead of deadlocking behind itself.
+ * Serialize asynchronous session work with an explicit bounded backlog.
+ * Lifecycle tasks may bypass admission so overflow can always enqueue one
+ * terminal cleanup behind the mutation currently in flight.
  */
 export function enqueueSessionTask(
   session: VoiceSessionRecord,
   task: () => Promise<void> | void,
+  options: { bytes?: number; bypassLimit?: boolean } = {},
 ): Promise<void> {
+  const bytes = options.bytes ?? 0;
+  if (!options.bypassLimit
+    && (session.pendingMutationTasks >= session.runtime.host.maxPendingMutationTasks
+      || session.pendingMutationBytes + bytes > session.runtime.host.maxPendingMutationBytes)) {
+    return session.runtime.handleMutationOverflow();
+  }
+  session.pendingMutationTasks += 1;
+  session.pendingMutationBytes += bytes;
   const invoke = async (): Promise<void> => {
-    session.inTask = true;
     try {
       await task();
     } finally {
-      session.inTask = false;
+      session.pendingMutationTasks -= 1;
+      session.pendingMutationBytes -= bytes;
     }
   };
   const run = session.mutation.then(invoke, invoke);
@@ -406,7 +420,33 @@ export class VoiceSessionRuntime {
       return Promise.resolve();
     }
     binding.lastInboundSequence = frame.sequence;
-    return enqueueSessionTask(s, () => this.dispatch(frame));
+    const bytes = new TextEncoder().encode(JSON.stringify(frame)).byteLength;
+    return enqueueSessionTask(s, () => {
+      // Admission-time checks are insufficient: a reconnect/end can replace
+      // this binding while the frame waits behind an asynchronous mutation.
+      if (binding.closed || s.transport !== binding || frame.epoch !== s.epoch
+        || frame.epoch !== binding.epoch || s.state === "ending"
+        || s.state === "ended" || s.state === "failed") {
+        this.countStale("binding_changed_before_dispatch");
+        return;
+      }
+      return this.dispatch(frame);
+    }, { bytes });
+  }
+
+  /** Close admission immediately, then terminate in queue order exactly once. */
+  handleMutationOverflow(): Promise<void> {
+    const s = this.session;
+    if (s.mutationOverflowed) return s.ending ?? s.mutation;
+    s.mutationOverflowed = true;
+    this.host.log("voice.session.mutation_overflow", {
+      sessionId: s.sessionId,
+      pendingTasks: s.pendingMutationTasks,
+      pendingBytes: s.pendingMutationBytes,
+    });
+    this.emitError("session_limit_reached", false);
+    this.closeTransportGracefully("Session backlog exceeded", false);
+    return this.host.finish(s, "failed");
   }
 
   /** Current-state a replacement connection resumes into. */
@@ -458,9 +498,7 @@ export class VoiceSessionRuntime {
         else this.countStale("resume_in_state");
         return;
       case "session.end":
-        // Fire-and-forget inside the queue: engine.finish re-enters the
-        // serialized mutation chain after this dispatch completes.
-        void this.host.finish(s, frame.reason);
+        await this.host.finishInternal(s, frame.reason);
         return;
       case "response.interrupt":
         await this.pipeline.onInterrupt(frame);
@@ -545,7 +583,7 @@ export class VoiceSessionRuntime {
         responseId: ledger.responseId,
         runId: ledger.runId,
         transportEpoch: s.epoch,
-        segments: ledger.segments.map(({ played: _played, ...segment }) => segment),
+        segments: ledger.segments.map(({ played: _played, synthesisEnded: _synthesisEnded, ...segment }) => segment),
       });
       ledger.pendingRecorded = true;
       ledger.deliveryRevision = result.revision;
@@ -623,6 +661,7 @@ export class VoiceSessionRuntime {
         transportEpoch: s.epoch,
         deliveredThroughMs: ledger.deliveredThroughMs,
         deliveryRevision: ledger.deliveryRevision,
+        segments: ledger.segments.map(({ played: _played, synthesisEnded: _synthesisEnded, ...segment }) => segment),
       });
       if (result === "ignored") {
         this.host.log("voice.delivery.delivered_ignored", {
@@ -662,7 +701,7 @@ export class VoiceSessionRuntime {
         effectiveThroughMs,
         effectiveTextEnd: this.heardTextEnd(ledger),
         ...(ledger.pendingRecorded ? { deliveryRevision: ledger.deliveryRevision } : {}),
-        segments: ledger.segments.map(({ played: _played, ...segment }) => segment),
+        segments: ledger.segments.map(({ played: _played, synthesisEnded: _synthesisEnded, ...segment }) => segment),
       });
     } catch (error: unknown) {
       this.host.log("voice.delivery.terminal_failed", {
@@ -676,7 +715,8 @@ export class VoiceSessionRuntime {
 
   async maybeCompleteDelivery(ledger: VoiceResponseLedger): Promise<void> {
     const s = this.session;
-    if (ledger.state !== "open" || !ledger.generationEnded) return;
+    if (ledger.state !== "open" || !ledger.runTerminal) return;
+    if (!ledger.segments.every((segment) => segment.synthesisEnded)) return;
     if (!ledger.segments.every((segment) => segment.played)) return;
     ledger.state = "complete";
     await this.recordTerminalDelivery(ledger, "complete", ledger.playedThroughMs);
@@ -781,7 +821,7 @@ export class VoiceSessionRuntime {
   /** Fail the session safely: safe error frame first, then terminal cleanup. */
   async fail(code: SafeVoiceErrorCode, retryable: boolean): Promise<void> {
     this.emitError(code, retryable);
-    await this.host.finish(this.session, "failed");
+    await this.host.finishInternal(this.session, "failed");
   }
 
   /**

@@ -766,7 +766,7 @@ describe("trusted-proxy client IP gating", () => {
     });
   });
 
-  it("matches trusted proxies by CIDR and prefers CF-Connecting-IP", async () => {
+  it("matches trusted proxies by CIDR and prefers nginx-sanitized X-Real-IP", async () => {
     await withTrustedProxies("10.8.0.0/16", async () => {
       const mw = authMiddleware("secret-token");
       for (let i = 0; i < 10; i++) {
@@ -778,11 +778,12 @@ describe("trusted-proxy client IP gating", () => {
           async () => {},
         );
       }
-      // cf-connecting-ip keyed bucket is exhausted; a different cf value is not.
+      // x-real-ip keyed bucket is exhausted; rotating the attacker-controlled
+      // Cloudflare header cannot escape it.
       const blocked = await mw(
         mockContext("/api/message", "Bearer wrong", undefined, "10.8.3.9", {
-          "cf-connecting-ip": "192.0.2.44",
-          "x-real-ip": "192.0.2.200",
+          "cf-connecting-ip": "192.0.2.200",
+          "x-real-ip": "192.0.2.99",
         }),
         async () => {},
       );
@@ -790,6 +791,7 @@ describe("trusted-proxy client IP gating", () => {
       const other = await mw(
         mockContext("/api/message", "Bearer wrong", undefined, "10.8.3.9", {
           "cf-connecting-ip": "192.0.2.45",
+          "x-real-ip": "192.0.2.100",
         }),
         async () => {},
       );

@@ -62,6 +62,8 @@ export interface VoiceTransportAttachmentDeps {
   failSession(error: SafeVoiceError): void;
   scheduleReconnect(): void;
   setNotice(error: SafeVoiceError): void;
+  /** A final transcript closes the matching client capture turn. */
+  onTurnFinal(turnId: string): void;
   /** Server ended the session via `session.state` -> ended. */
   onRemoteEnd(): void;
   /**
@@ -134,6 +136,10 @@ export function createTransportAttachment(deps: VoiceTransportAttachmentDeps): V
                 });
               } else if (frame.type === "response.interrupted") {
                 deps.media()?.interruptResponse(frame.responseId);
+              } else if (frame.type === "transcript.final") {
+                deps.onTurnFinal(frame.turnId);
+              } else if (frame.type === "capture.completed") {
+                deps.onTurnFinal(frame.turnId);
               } else if (frame.type === "session.state" && frame.state === "ended") {
                 deps.onRemoteEnd();
               } else if (frame.type === "session.state" && frame.state === "failed") {

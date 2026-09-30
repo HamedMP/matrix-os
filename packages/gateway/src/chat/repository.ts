@@ -1303,12 +1303,27 @@ export class ChatRepository {
         || run.driverKind !== latest.driver_kind || run.instanceId !== latest.instance_id) {
         throw new ChatConflictError(chatId, Number(current.revision));
       }
-      // The immutable run policy survives retries verbatim; a retry cannot
-      // silently weaken or change the admitted execution policy.
+      // Retries preserve policy verbatim except when a live voice session
+      // stamps provenance and keeps or tightens memory/checkpoint behavior.
       const previousPolicy = latest.run_policy === null
         ? null
         : CanonicalChatRunPolicySchema.parse(parseJson(latest.run_policy));
-      if (canonicalJsonStringify(previousPolicy) !== canonicalJsonStringify(run.runPolicy ?? null)) {
+      const nextPolicy = run.runPolicy ?? null;
+      const voiceSessionTransition = nextPolicy?.voiceSessionId !== undefined
+        && previousPolicy?.memoryMode !== "session_only"
+        && (() => {
+          const expected = {
+            ...(previousPolicy ?? {}),
+            memoryMode: nextPolicy.memoryMode,
+            nativeCheckpointPolicy: nextPolicy.nativeCheckpointPolicy,
+            source: previousPolicy?.source ?? nextPolicy.source,
+            voiceSessionId: nextPolicy.voiceSessionId,
+          };
+          if (nextPolicy.memoryMode === "session_only") delete expected.memoryTools;
+          return canonicalJsonStringify(expected) === canonicalJsonStringify(nextPolicy);
+        })();
+      if (canonicalJsonStringify(previousPolicy) !== canonicalJsonStringify(nextPolicy)
+        && !voiceSessionTransition) {
         throw new ChatConflictError(chatId, Number(current.revision));
       }
       if (!run.context?.agent && (current.bound_driver_kind !== run.driverKind || current.bound_instance_id !== run.instanceId)) {

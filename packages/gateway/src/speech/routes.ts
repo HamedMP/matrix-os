@@ -42,6 +42,7 @@ type SafeErrorCode =
   | "allowance_exhausted"
   | "timeout"
   | "transcription_failed"
+  | "synthesis_failed"
   | "cancelled";
 
 function noStore(c: Context): void {
@@ -62,6 +63,7 @@ function safeError(code: SafeErrorCode) {
     allowance_exhausted: "Speech allowance is unavailable",
     timeout: "Transcription timed out",
     transcription_failed: "Transcription failed",
+    synthesis_failed: "Speech synthesis failed",
     cancelled: "Transcription was cancelled",
   }[code];
   return SpeechSafeErrorResponseSchema.parse({ error: { code, message } });
