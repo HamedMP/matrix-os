@@ -32,6 +32,11 @@ export const CollaborationOrganizationIdSchema = z.string()
   .min(5)
   .max(128)
   .regex(/^org_[A-Za-z0-9_-]+$/, "Invalid organization identifier");
+/** Opaque `GET /api/organizations/:orgId/members` page cursor, as the platform issues it. */
+export const CollaborationOrganizationMembersCursorSchema = z.string()
+  .min(1)
+  .max(256)
+  .regex(/^[A-Za-z0-9_-]+$/, "Invalid organization member cursor");
 export const CollaborationInvitationIdentifierRequestSchema = z.object({
   identifier: CollaborationInvitationIdentifierSchema,
   organizationId: CollaborationOrganizationIdSchema,
