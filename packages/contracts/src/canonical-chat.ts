@@ -1,5 +1,6 @@
 import { ImportedChatProvenancePartSchema, ImportedChatReferencePartSchema } from "#canonical-chat-import-parts";
 import { z } from "zod/v4";
+import { OrganizationDriveContextReferenceSchema } from "#organization-drive-context";
 import { ChatSubagentSchema } from "#chat-subagent";
 import { ChatRunContextSchema, isChatAgentDriver } from "#chat-agent-context";
 import { IsoTimestampSchema, ProviderModelReferenceSchema } from "#contract-primitives";
@@ -90,15 +91,20 @@ export const CanonicalChatResourceKindSchema = z.enum([
   "terminal_session",
   "agent",
   "chat",
+  "organization_drive",
 ]);
 
 export const CanonicalChatResourceReferenceSchema = z.object({
   kind: CanonicalChatResourceKindSchema,
+  drive: OrganizationDriveContextReferenceSchema.optional(),
   id: canonicalReferenceId(160),
   label: canonicalSafeLabel(280, 1_120),
   path: CanonicalChatRelativePathSchema.optional(),
   revision: canonicalReferenceId(160).optional(),
 }).strict().superRefine((resource, context) => {
+  if ((resource.kind === "organization_drive") !== (resource.drive !== undefined) || (resource.drive && resource.id !== resource.drive.scopeId)) {
+    context.addIssue({ code: "custom", path: ["drive"], message: "Drive references require matching organization scope identity" });
+  }
   if (resource.path && resource.kind !== "file" && resource.kind !== "folder") {
     context.addIssue({ code: "custom", path: ["path"], message: "Only file and folder resources may include a path" });
   }
@@ -193,7 +199,7 @@ export const CanonicalChatRunSchema = z.object({
     revision: canonicalReferenceId(160),
     rootChat: z.boolean(),
     attachments: z.array(CanonicalChatAttachmentKindSchema).max(8),
-    resources: z.array(CanonicalChatResourceKindSchema).max(6),
+    resources: z.array(CanonicalChatResourceKindSchema).max(7),
     tools: z.array(canonicalReferenceId(80)).max(128),
     approvals: z.boolean(),
     userInput: z.boolean(),

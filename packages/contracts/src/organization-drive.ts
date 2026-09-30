@@ -1,19 +1,10 @@
+import { OrganizationDrivePathSchema } from "#organization-drive-context";
+export { OrganizationDrivePathSchema, OrganizationDriveUploadFolderSchema, OrganizationDriveContextReferenceSchema, OrganizationDriveContextSearchSchema, ChatDriveSearchInputSchema, ChatDriveReadInputSchema, type OrganizationDriveContextReference } from "#organization-drive-context";
 import { z } from "zod/v4";
 import { CollaborationActorIdSchema, CollaborationOrganizationIdSchema, CollaborationRuntimeIdSchema } from "#collaboration";
 
 const utf8 = new TextEncoder();
 const Sha256Schema = z.string().regex(/^[a-f0-9]{64}$/);
-
-/** Logical path inside one organization drive; never an R2 key or host path. */
-export const OrganizationDrivePathSchema = z.string().min(1).max(800).refine((path) =>
-  utf8.encode(path).byteLength <= 800 && !path.startsWith("/") && !path.includes("\\")
-    && !/[\u0000-\u001f\u007f]/.test(path)
-    && path.split("/").every((segment) => segment.length > 0 && segment !== "." && segment !== ".."),
-  { message: "Invalid drive path" },
-);
-
-/** Reserve the slash and at least one UTF-8 filename byte; the full file path is validated at upload. */
-export const OrganizationDriveUploadFolderSchema = z.union([z.literal(""), OrganizationDrivePathSchema.refine(path => utf8.encode(path).byteLength <= 798)]);
 
 /** Organization-selected authority generation changes whenever the serving home moves. */
 export const OrganizationDriveAuthoritySchema = z.object({
@@ -64,13 +55,6 @@ export type OrganizationDriveAuthority = z.infer<typeof OrganizationDriveAuthori
 export type OrganizationDriveFile = z.infer<typeof OrganizationDriveFileSchema>;
 export type OrganizationDriveUploadRequest = z.infer<typeof OrganizationDriveUploadRequestSchema>;
 
-/** Metadata search is bounded and scope-relative. Content search/indexing is a separate capability. */
-export const OrganizationDriveContextSearchSchema = z.object({
-  prefix: OrganizationDrivePathSchema.optional(),
-  query: z.string().trim().max(200).refine(value => utf8.encode(value).byteLength <= 800 && !/[\u0000-\u001f\u007f]/.test(value)).default(""),
-  after: OrganizationDrivePathSchema.optional(),
-  limit: z.coerce.number().int().min(1).max(50).default(30),
-}).strict();
 export const OrganizationDriveTextContextSchema = z.discriminatedUnion("status", [
   z.object({status: z.literal("text"), file: OrganizationDriveFileSchema,
     text: z.string().max(32 * 1024).refine(value => utf8.encode(value).byteLength <= 32 * 1024), truncated: z.boolean(), readOnly: z.literal(true)}).strict(),
@@ -81,12 +65,3 @@ export const OrganizationDriveContextSearchResponseSchema = z.object({
   organizationId: CollaborationOrganizationIdSchema, scopeId: z.uuid(),
   files: z.array(OrganizationDriveFileSchema).max(50), nextCursor: OrganizationDrivePathSchema.optional(),
 }).strict();
-
-const DriveContextIdentity = {organizationId: CollaborationOrganizationIdSchema, scopeId: z.uuid()};
-/** Stable authority references; names and renderer labels never grant access. */
-export const OrganizationDriveContextReferenceSchema = z.discriminatedUnion("kind", [
-  z.object({...DriveContextIdentity,kind:z.literal("drive")}).strict(),
-  z.object({...DriveContextIdentity,kind:z.literal("folder"),path:OrganizationDrivePathSchema}).strict(),
-  z.object({...DriveContextIdentity,kind:z.literal("file"),fileId:z.uuid(),version:z.number().int().positive().max(2_147_483_647)}).strict(),
-]);
-export type OrganizationDriveContextReference = z.infer<typeof OrganizationDriveContextReferenceSchema>;
