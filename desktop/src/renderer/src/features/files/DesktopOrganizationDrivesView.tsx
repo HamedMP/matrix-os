@@ -150,8 +150,8 @@ export function DesktopOrganizationDrivesView({ isActive = true, requestedScopeI
     {error && <p role="alert" className="mb-3 text-xs" style={{ color: "var(--danger)" }}>{error}</p>}
     {loading ? <p style={{ color: "var(--text-tertiary)" }}>Loading drives…</p> : options.length === 0
       ? <p style={{ color: "var(--text-tertiary)" }}>Share a folder with your organization to make a drive available here.</p>
-      : <div className="flex min-h-0 flex-1 gap-5">
-        <nav aria-label="Organization drives" className="w-48 shrink-0 space-y-1 border-r pr-3" style={{ borderColor: "var(--border-subtle)" }}>
+      : <div className="flex min-h-0 flex-1 flex-col gap-4 sm:flex-row">
+        <nav aria-label="Organization drives" className="w-full shrink-0 space-y-1 border-b pb-2 sm:w-48 sm:border-b-0 sm:border-r sm:pb-0 sm:pr-3" style={{ borderColor: "var(--border-subtle)" }}>
           {options.map((option) => <button key={option.scopeId} type="button" aria-current={navigation.scopeId === option.scopeId ? "page" : undefined}
             disabled={busy} onClick={() => { appliedRequest.current = requestedIntentId ?? requestedScopeId; setSelected(option.scopeId); setFolder(""); }} className="w-full rounded-md px-3 py-2 text-left text-xs hover:bg-[var(--bg-hover)]"
             style={{ background: navigation.scopeId === option.scopeId ? "var(--bg-hover)" : undefined }}>{option.name}</button>)}
