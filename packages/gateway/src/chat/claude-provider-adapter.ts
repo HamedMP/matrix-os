@@ -225,7 +225,7 @@ export function createClaudeChatProviderAdapter(options: {
   spawnFn?: CanonicalCliSpawn;
   timeoutMs?: number;
   resolveCredentialEnv?: () => Promise<Record<string, string | undefined> | undefined>;
-  resolveCredentialLaunch?: () => Promise<KernelCredentialLaunch>;
+  resolveCredentialLaunch?: (instanceId: string) => Promise<KernelCredentialLaunch>;
   matrixMcpCapabilityIssuer?: MatrixMcpCapabilityIssuer;
   previewDriveClient?: Pick<PreviewDrivePlatformClient, "grantAction">;
   customMcpApprovalClient?: CustomMcpApprovalClient;
@@ -308,7 +308,7 @@ export function createClaudeChatProviderAdapter(options: {
       if (promptSeparator >= 0) launch.args.splice(promptSeparator);
       launch.args.push("--input-format", "stream-json", "--permission-prompt-tool", "stdio");
       credentialLaunch = options.resolveCredentialLaunch
-        ? await options.resolveCredentialLaunch()
+        ? await options.resolveCredentialLaunch(input.selection.instanceId)
         : {
             env: await (
               options.resolveCredentialEnv

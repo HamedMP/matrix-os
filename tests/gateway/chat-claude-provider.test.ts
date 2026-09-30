@@ -48,6 +48,22 @@ const baseInput = {
 };
 
 describe("Claude canonical Chat Provider adapter", () => {
+  it("passes the selected instance to credential resolution on funded and personal runs", async () => {
+    const resolveCredentialLaunch = vi.fn(async () => ({ env: {} }));
+    const adapter = createClaudeChatProviderAdapter({
+      homePath: "/home/matrix/home",
+      spawnFn: vi.fn<CanonicalCliSpawn>(() => child([
+        JSON.stringify({ type: "result", subtype: "success", is_error: false, result: "done", session_id: "funded_session" }),
+      ])),
+      resolveCredentialLaunch,
+    });
+    for await (const _event of adapter.start({
+      ...baseInput, selection: { ...baseInput.selection,
+        instanceId: "claude_code_matrix_included", model: "claude-sonnet-5" },
+    })) { /* Drain the Run. */ }
+    expect(resolveCredentialLaunch).toHaveBeenCalledWith("claude_code_matrix_included");
+  });
+
   it("registers scoped built-in and Custom MCP tools on fresh and resumed supervised Runs", async () => {
     vi.stubEnv("MATRIX_CLERK_USER_ID", "owner_claude");
     const spawnFn = vi.fn<CanonicalCliSpawn>(() => child([

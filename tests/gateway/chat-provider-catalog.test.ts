@@ -1239,6 +1239,23 @@ describe("canonical Chat Provider catalog", () => {
       .toMatchObject({ displayName: "Claude SDK", capabilityClass: "system_agent" });
   });
 
+  it("exposes a funded Claude Chat instance despite missing personal Claude login when the CLI is installed", async () => {
+    const service = createChatProviderCatalogService({
+      codingProviders: codingRegistry([codingProvider({
+        id: "claude", kind: "claude", displayName: "Claude",
+        availability: "auth_required", authStatus: "unauthenticated",
+      })]),
+      agentRuntimeSource: runtimeSource(),
+      aiProviderSource: { getSnapshot: async () => makeAiProviderSnapshot() },
+      executableDriverKinds: ["claude_code"],
+    });
+    const catalog = await service.getCatalog(principal);
+    expect(catalog.instances.find((instance) => instance.id === "claude_code_default")?.availability)
+      .toBe("auth_required");
+    expect(catalog.instances.find((instance) => instance.id === "claude_code_matrix_included"))
+      .toMatchObject({ availability: "available", connectionState: "ready" });
+  });
+
   it("retains unavailable Matrix AI without exposing models or acquiring credentials", async () => {
     const homePath = mkdtempSync(join(tmpdir(), "chat-provider-kernel-"));
     mkdirSync(join(homePath, "system"), { recursive: true });

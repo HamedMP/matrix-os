@@ -64,6 +64,14 @@ services, full-access bypass and Custom MCP remain denied. Provider credentials
 stay with Platform. Returned metadata may be visible to other shared Terminal
 users; this is an explicit acceptance risk, not a confidentiality guarantee.
 
+For shared Preview acceptance without a personal Claude subscription, Chat
+projects a separate Claude Code instance only when the CLI is installed and the
+Matrix-funded source and exact model are ready. Selecting that instance always
+requests a short-lived `matrix_included` credential for the run, even when an
+owner Claude credential exists; it never falls back to that owner credential.
+The standard Claude Code instance retains its independent authentication state.
+Funding limits and model policy remain enforced by Platform and the relay.
+
 ## Validation and delivery
 
 1. Red/green public MCP transport tests for inventory/schema/action discovery.
