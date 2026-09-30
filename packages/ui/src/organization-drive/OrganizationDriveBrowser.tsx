@@ -1,6 +1,6 @@
 "use client";
 import { useMemo, useState, type ReactNode } from "react";
-import { OrganizationDrivePathSchema, type OrganizationDriveFile } from "@matrix-os/contracts";
+import { OrganizationDriveUploadFolderSchema, type OrganizationDriveFile } from "@matrix-os/contracts";
 import { driveBrowserEntries, driveFileSize } from "./browser-model.js";
 
 const control = "min-h-9 rounded-md border px-3 py-1.5 text-xs hover:bg-[var(--bg-hover,var(--muted))] focus-visible:outline-2 focus-visible:outline-[var(--accent)] disabled:opacity-50";
@@ -30,8 +30,8 @@ export function OrganizationDriveBrowser(props: OrganizationDriveBrowserProps) {
   const navigate = (path: string) => {setQuery(""); props.onFolderChange(path);};
   function chooseFolder() {
     const value = uploadFolder.trim();
-    const parsed = value ? OrganizationDrivePathSchema.safeParse(value) : null;
-    if (value && (!parsed?.success || new TextEncoder().encode(value).byteLength > 798)) {setFolderError(true); return;}
+    const parsed = OrganizationDriveUploadFolderSchema.safeParse(value);
+    if (!parsed.success) {setFolderError(true); return;}
     navigate(value); setChoosingFolder(false); setFolderError(false);
   }
   return <section className="flex min-w-0 flex-1 flex-col gap-4" aria-label={`${props.name} drive`}>

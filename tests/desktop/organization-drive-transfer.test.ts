@@ -43,6 +43,17 @@ function fixture() {
 }
 
 describe("Electron organization drive transfer", () => {
+  it("accepts a long valid upload folder through the native picker",async()=>{
+    const fx=fixture();fx.chooseUpload.mockResolvedValue({name:"a",bytes});
+    const original=fx.request.getMockImplementation()!;
+    fx.request.mockImplementation(async (...args: unknown[])=>{
+      const result=await original(...args);
+      return typeof args[2]==="string"&&args[2].endsWith("/commit") ? {...result,path:`${"f".repeat(798)}/a`} : result;
+    });
+    expect(await fx.service.upload({scopeId,organizationId,folder:"f".repeat(798),runtimeSlot:"primary",authGeneration:3})).toMatchObject({status:"uploaded"});
+    expect(fx.chooseUpload).toHaveBeenCalledOnce();
+  });
+
   it("uses trusted auth to reserve and commit an uploaded file", async () => {
     const fx = fixture();
     const result = await fx.service.upload({ scopeId, organizationId, folder: "", runtimeSlot: "primary", authGeneration: 3 });
