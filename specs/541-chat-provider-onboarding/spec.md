@@ -1,10 +1,10 @@
 # Chat startup and provider onboarding (ENG-60)
 
-Status: implemented; Human Review pending. Validation and runtime provenance are recorded in PR #2061 and ENG-60.
+Status: implemented startup/onboarding and responsive picker; Human Review pending. Validation and runtime provenance are recorded in PR #2061 and ENG-60.
 
 ## Goal and scope
 
-New users should enter an open Chat and connect Claude Code or Codex directly from its empty state. The immediate request is startup and provider connection. Further integration onboarding and a broader visual redesign are deferred until their design is available.
+New users should enter an open Chat and connect Claude Code or Codex directly from its empty state. The request includes startup, provider connection, compact composer behavior, and model-picker connection discoverability. Further integration onboarding and a broader visual redesign are deferred until their design is available.
 
 The implementation must cover Electron Desktop's native Chat and the shared Web Desktop / Web Canvas Chat paths. Shared responsive Chat retains the same state semantics. Native Mobile startup redesign is outside this desktop request.
 
@@ -15,6 +15,10 @@ The implementation must cover Electron Desktop's native Chat and the shared Web 
 3. Unknown, loading, and failed reads remain distinct from confirmed disconnected state. Keep draft composition available while sending remains governed by existing readiness/admission rules.
 4. Refresh readiness after a connection action completes or the user returns from authentication. Provide bounded manual refresh recovery without restarting the application. Preserve drafts and immutable existing Chat bindings.
 5. Any connected provider, including Matrix AI, Hermes, Pi, or another supported provider, suppresses connection onboarding even when Claude Code and Codex are disconnected. Preserve normal Chat behavior and its existing availability/recovery UI. Existing conversations must not be replaced by onboarding.
+
+6. A narrow Chat middle column compacts the model-picker label according to the composer container width, even within a wide Electron Desktop window. Keep the full route in the accessible label/title, retain model/Settings/preview/file/send actions, and restore the expanded label when the composer has space. Draft text survives resize and preview toggles.
+7. Clickable provider rail entries keep normal color/opacity regardless of authentication status. Selected highlighting and genuinely disabled or locked controls remain distinct. Unsupported model routes remain unavailable for sending.
+8. Advertised Connect Claude/Codex actions inside the picker render as prominent filled buttons and retain the existing server-owned action path. Another connected provider suppresses the empty-state guide but does not hide setup for the disconnected provider.
 
 ## Invariants
 
@@ -30,7 +34,7 @@ The implementation must cover Electron Desktop's native Chat and the shared Web 
 - Tests first for one-shot startup, restore ordering, explicit launch precedence, duplicate prevention, preserving active Chat/drafts, provider-state classification, and actual connection controls.
 - Component integration tests must exercise native and hosted Chat empty states plus successful, pending, cancelled, failed, and stale-runtime authentication outcomes.
 - Regression tests retain Settings connection behavior and usable alternate providers.
-- Build and inspect the exact-head Electron Desktop with a fresh profile and restored state. Fixture evidence and live selected-runtime evidence must be recorded separately. Any backend change additionally requires matching Preview VPS validation.
+- Build and inspect the exact-head Electron Desktop with a fresh profile and restored state. Fixture evidence and live selected-runtime evidence must be recorded separately. This frontend-only change does not require a new Preview VPS. Any future backend change additionally requires matching Preview VPS validation.
 - Deliver one primary implementation PR for ENG-60 and a companion public documentation PR in the private `FinnaAI/matrix-os-site` repository under `content/docs/`.
 - Present an exact-head runnable Human Review flow. User Human Review approval precedes requested Greptile/final CI and landing gates; no automatic merge or production rollout is authorized.
 
@@ -89,3 +93,10 @@ Wrong: unconditionally call `openChat()` from a provider/presentation effect, or
 Correct: consume the shared startup predicate after restoration; submit the existing Settings mutation and open only the server-returned session while the initiating runtime remains current.
 
 Companion documentation: https://github.com/FinnaAI/matrix-os-site/pull/143 (preview wording until release).
+
+## Responsive picker presentation contract
+
+- Container: `shared-chat-composer` establishes `chat-composer`; the native selected-model trigger collapses its visual route label at the same constrained-width boundary as secondary composer controls. Its unchanged accessible name and complete route title remain available while compact.
+- Shared provider rail: dim only truly disabled buttons, never infer visual disabling from `data-availability`. Availability controls model admission and recovery copy; provider browsing with a supported setup action stays discoverable.
+- Setup: preserve server-advertised labels and callbacks. Use `--model-choice-action: var(--primary, var(--accent))` for filled connection buttons, paired `--text-on-accent` / `--primary-foreground` foreground, and a separate focus token. Web accent is an interaction surface; it must not be used as the primary fill when a primary token exists. Validate real computed contrast across native/hosted themes.
+- Tests: built Electron Desktop uses a wide window with a 320px actual composer, long Hermes label, toolbar bounds/no wrap, preview/draft preservation, expanded restoration, normal Claude/Codex icon opacity, and connection through the existing foreground Terminal. Another connected provider suppresses the onboarding guide in the same scenario. No real provider login is claimed by fixture evidence.
