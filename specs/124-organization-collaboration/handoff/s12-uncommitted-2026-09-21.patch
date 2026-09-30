@@ -1,0 +1,1533 @@
+diff --git a/packages/contracts/package.json b/packages/contracts/package.json
+index f77e7158b..19cbfcfdc 100644
+--- a/packages/contracts/package.json
++++ b/packages/contracts/package.json
+@@ -42,6 +42,7 @@
+     "#collaboration-direct": "./src/collaboration-direct.ts",
+     "#collaboration-execution": "./src/collaboration-execution.ts",
+     "#collaboration-peer": "./src/collaboration-peer.ts",
++    "#collaboration-resources": "./src/collaboration-resources.ts",
+     "#organization-billing": "./src/organization-billing.ts",
+     "#contract-primitives": "./src/primitives.ts",
+     "#custom-mcp-availability": "./src/custom-mcp-availability.ts",
+diff --git a/packages/contracts/src/collaboration.ts b/packages/contracts/src/collaboration.ts
+index b7ff32426..8102ba3c1 100644
+--- a/packages/contracts/src/collaboration.ts
++++ b/packages/contracts/src/collaboration.ts
+@@ -41,7 +41,8 @@ export const CollaborationRevisionSchema = z.string()
+   .regex(/^(?:0|[1-9][0-9]{0,18})$/, "Invalid decimal revision");
+ export const CollaborationRoleSchema = z.enum(["owner", "editor", "viewer"]);
+ export const CollaborationInviteRoleSchema = z.enum(["editor", "viewer"]);
+-export const CollaborationScopeKindSchema = z.enum(["chat", "terminal", "project"]);
++/** S12: file, folder and app instances are shareable standalone with the same two presets. */
++export const CollaborationScopeKindSchema = z.enum(["chat", "terminal", "project", "file", "folder", "app"]);
+ export const CollaborationMembershipModeSchema = z.enum(["direct", "inherited"]);
+ export const CollaborationLifecycleSchema = z.enum([
+   "private",
+diff --git a/packages/contracts/src/index.ts b/packages/contracts/src/index.ts
+index 117bd71df..c0ae6efab 100644
+--- a/packages/contracts/src/index.ts
++++ b/packages/contracts/src/index.ts
+@@ -59,6 +59,7 @@ export * from "#collaboration-capabilities";
+ export * from "#collaboration-direct";
+ export * from "#collaboration-execution";
+ export * from "#collaboration-peer";
++export * from "#collaboration-resources";
+ export * from "#organization-billing";
+ export * from "#custom-mcp-policy";
+ export * from "#hermes-configuration";
+diff --git a/packages/gateway/src/collaboration/authority.ts b/packages/gateway/src/collaboration/authority.ts
+index f642233b5..8aa6c2791 100644
+--- a/packages/gateway/src/collaboration/authority.ts
++++ b/packages/gateway/src/collaboration/authority.ts
+@@ -18,7 +18,9 @@ export type CollaborationAction =
+   | "export_project"
+   | "request_ai"
+   | "control_execution"
+-  | "recover";
++  | "recover"
++  /** S12: write to a shared file, folder or app instance (Contributor); the project variant stays `mutate_project`. */
++  | "mutate_resource";
+ 
+ export interface AuthorizedCollaborationContext {
+   actorId: string;
+@@ -26,7 +28,7 @@ export interface AuthorizedCollaborationContext {
+   organizationId: string;
+   scopeId: string;
+   membershipScopeId: string;
+-  resourceKind: "chat" | "terminal" | "project";
++  resourceKind: "chat" | "terminal" | "project" | "file" | "folder" | "app";
+   resourceId: string;
+   role: CollaborationRole;
+   authEpoch: number;
+@@ -206,9 +208,9 @@ function requireRoleCapability(role: CollaborationRole, action: CollaborationAct
+     return;
+   }
+   const allowed = role === "owner"
+-    ? ["read", "discuss", "manage_members", "publish_snapshot", "mutate_project", "export_project", "recover"]
++    ? ["read", "discuss", "manage_members", "publish_snapshot", "mutate_project", "mutate_resource", "export_project", "recover"]
+     : role === "editor"
+-      ? ["read", "discuss", "mutate_project"]
++      ? ["read", "discuss", "mutate_project", "mutate_resource"]
+       : ["read"];
+   if (!allowed.includes(action)) {
+     throw new CollaborationAuthorizationError("forbidden", "Role does not allow this action");
+diff --git a/packages/gateway/src/collaboration/database-migrations.ts b/packages/gateway/src/collaboration/database-migrations.ts
+index 8de4d1d6f..26916f209 100644
+--- a/packages/gateway/src/collaboration/database-migrations.ts
++++ b/packages/gateway/src/collaboration/database-migrations.ts
+@@ -1,4 +1,5 @@
+ import { migrateExecutionPoliciesV10 } from "./execution-policy.js";
++import { migrateResourceCatalogV12 } from "./resource-catalog.js";
+ import { migrateCapabilityGrantsV8 } from "./policy-migrations.js";
+ import { migrateRuntimeIdentityV9 } from "./runtime-identity.js";
+ import { sql, type Kysely, type Transaction } from "kysely";
+@@ -462,4 +463,6 @@ export const COLLABORATION_VERSIONED_MIGRATIONS: readonly CollaborationVersioned
+   { version: 8, run: migrateCapabilityGrantsV8 },
+   { version: 9, run: migrateRuntimeIdentityV9 },
+   { version: 10, run: migrateExecutionPoliciesV10 },
++  // Version 11 is reserved for S09 (shared execution); S12 appends at 12.
++  { version: 12, run: migrateResourceCatalogV12 },
+ ];
+diff --git a/packages/gateway/src/collaboration/database.ts b/packages/gateway/src/collaboration/database.ts
+index 327bd620e..854140015 100644
+--- a/packages/gateway/src/collaboration/database.ts
++++ b/packages/gateway/src/collaboration/database.ts
+@@ -13,7 +13,8 @@ export interface CollaborationScopesTable {
+   owner_id: string;
+   /** Owning organization (Clerk org ID). Null only on pre-S20 rows, which the precondition denies. */
+   organization_id: string | null;
+-  kind: "chat" | "terminal" | "project";
++  /** S12: file, folder and app scopes are standalone shares whose resource_id is a catalog id. */
++  kind: "chat" | "terminal" | "project" | "file" | "folder" | "app";
+   resource_id: string;
+   parent_scope_id: string | null;
+   membership_mode: "direct" | "inherited";
+@@ -65,7 +66,7 @@ export interface CollaborationEventsTable {
+   scope_id: string;
+   scope_seq: number;
+   event_id: string;
+-  resource_kind: "chat" | "terminal" | "project";
++  resource_kind: "chat" | "terminal" | "project" | "file" | "folder" | "app";
+   resource_id: string;
+   revision: number;
+   authority_generation: number;
+@@ -100,7 +101,7 @@ export interface CollaborationDirectoryOutboxTable {
+   recipient_actor_ids: JsonValue;
+   authority_runtime_id: string;
+   authority_generation: number;
+-  resource_kind: "chat" | "terminal" | "project";
++  resource_kind: "chat" | "terminal" | "project" | "file" | "folder" | "app";
+   discovery_state: "invited" | "accepted" | "revoked" | "deleted";
+   retry_after: Timestamp;
+   attempts: ColumnType<number, number | undefined, number>;
+@@ -274,7 +275,43 @@ export interface CollaborationRunBindingsTable {
+   admitted_at: Timestamp;
+ }
+ 
++/** S12 / T061: stable resource identities for files, folders and app instances. */
++export interface CollaborationResourceCatalogTable {
++  id: string;
++  owner_id: string;
++  project_id: string | null;
++  kind: "file" | "folder" | "app";
++  path: string;
++  parent_id: string | null;
++  incarnation: string;
++  revision: ColumnType<number, number | undefined, number>;
++  created_at: Timestamp;
++  updated_at: Timestamp;
++  deleted_at: NullableTimestamp;
++}
++
++/** S12 / T062: staged uploads with immutable checksums and a TTL. */
++export interface CollaborationUploadStagesTable {
++  id: string;
++  scope_id: string;
++  actor_id: string;
++  catalog_id: string | null;
++  parent_id: string | null;
++  path: string;
++  size: number;
++  sha256: string;
++  received_bytes: ColumnType<number, number | undefined, number>;
++  next_index: ColumnType<number, number | undefined, number>;
++  state: "staging" | "committed" | "cancelled" | "expired";
++  staging_ref: string;
++  created_at: Timestamp;
++  updated_at: Timestamp;
++  expires_at: Timestamp;
++}
++
+ export interface CollaborationDatabase {
++  collaboration_resource_catalog: CollaborationResourceCatalogTable;
++  collaboration_upload_stages: CollaborationUploadStagesTable;
+   collaboration_grants: CollaborationGrantsTable;
+   collaboration_grant_activations: CollaborationGrantActivationsTable;
+   collaboration_execution_policies: CollaborationExecutionPoliciesTable;
+diff --git a/packages/gateway/src/collaboration/directory-outbox.ts b/packages/gateway/src/collaboration/directory-outbox.ts
+index 39fd8b57e..bcdd17f76 100644
+--- a/packages/gateway/src/collaboration/directory-outbox.ts
++++ b/packages/gateway/src/collaboration/directory-outbox.ts
+@@ -13,7 +13,7 @@ interface ClaimedDirectoryEvent {
+   eventId: string;
+   scopeId: string;
+   ownerId: string;
+-  kind: "chat" | "terminal" | "project";
++  kind: "chat" | "terminal" | "project" | "file" | "folder" | "app";
+   authorityGeneration: number;
+   metadataRevision: number;
+   recipientEntries: Array<{ actorId: string; invitationId?: string }>;
+diff --git a/packages/gateway/src/collaboration/events.ts b/packages/gateway/src/collaboration/events.ts
+index 2caca5be3..7817fe599 100644
+--- a/packages/gateway/src/collaboration/events.ts
++++ b/packages/gateway/src/collaboration/events.ts
+@@ -28,7 +28,7 @@ interface Connection {
+   scopeId: string;
+   actorId: string;
+   resourceId: string;
+-  resourceKind: "chat" | "terminal" | "project";
++  resourceKind: "chat" | "terminal" | "project" | "file" | "folder" | "app";
+   authorityGeneration: number;
+   lastSequence: number;
+   lastTouchedAt: number;
+diff --git a/packages/gateway/src/collaboration/repository-types.ts b/packages/gateway/src/collaboration/repository-types.ts
+index 1622f06b1..983f69622 100644
+--- a/packages/gateway/src/collaboration/repository-types.ts
++++ b/packages/gateway/src/collaboration/repository-types.ts
+@@ -12,7 +12,7 @@ export interface CollaborationScopeRecord {
+   ownerId: string;
+   /** Owning organization; absent only on pre-organization rows that the precondition denies. */
+   organizationId?: string;
+-  kind: "chat" | "terminal" | "project";
++  kind: "chat" | "terminal" | "project" | "file" | "folder" | "app";
+   resourceId: string;
+   parentScopeId?: string;
+   membershipMode: "direct" | "inherited";
+@@ -45,7 +45,7 @@ export interface CreateDirectScopeInput {
+   scopeId: string;
+   ownerId: string;
+   organizationId: string;
+-  kind: "chat" | "terminal" | "project";
++  kind: "chat" | "terminal" | "project" | "file" | "folder" | "app";
+   resourceId: string;
+   authorityRuntimeId: string;
+ }
+diff --git a/packages/gateway/src/collaboration/route-support.ts b/packages/gateway/src/collaboration/route-support.ts
+index 4e76ed3cf..63c740e43 100644
+--- a/packages/gateway/src/collaboration/route-support.ts
++++ b/packages/gateway/src/collaboration/route-support.ts
+@@ -84,6 +84,10 @@ import {
+   type CollaborationTerminalDispatcher,
+ } from "./terminal-dispatcher.js";
+ import type { CollaborationExecutionPolicyRepository } from "./execution-policy.js";
++import { ProjectAppAdapterError } from "./project-app-adapter.js";
++import { ProjectResourceAdapterError } from "./project-adapters.js";
++import { ResourceCatalogError } from "./resource-catalog.js";
++import type { CollaborationResourceServices } from "./resource-routes.js";
+ import {
+   CollaborationRepositoryError,
+   type CollaborationMemberRecord,
+@@ -120,6 +124,8 @@ export interface CollaborationRouteOptions {
+   projectSharing?: ProjectSharingService;
+   /** S08: owner-selected execution policy repository; routes report unavailable when absent. */
+   executionPolicies?: CollaborationExecutionPolicyRepository;
++  /** S12: catalog, file driver and app instances; file/app routes report unavailable when absent. */
++  resources?: CollaborationResourceServices;
+   resolveParticipant(actorId: string): Promise<Participant>;
+   resolveInvitationIdentifier(identifier: string, organizationId: string): Promise<Participant>;
+   invitationResolutionRateLimiter?: RateLimiter;
+@@ -508,6 +514,16 @@ export async function handle(c: Context, operation: () => Promise<Response>): Pr
+               || error.code === "held" || error.code === "stale_lease" ? 409 : 503;
+       return c.json({ error: "Collaboration state changed", code: error.code }, status);
+     }
++    if (error instanceof ResourceCatalogError || error instanceof ProjectResourceAdapterError) {
++      const status = error.code === "invalid" ? 400 : error.code === "not_found" ? 404
++        : error.code === "forbidden" ? 403 : error.code === "conflict" ? 409 : 503;
++      return c.json({ error: status === 400 ? "Invalid collaboration request" : "Collaboration state changed", code: error.code }, status);
++    }
++    if (error instanceof ProjectAppAdapterError) {
++      const status = error.code === "invalid_action" ? 400 : error.code === "not_found" ? 404
++        : error.code === "forbidden" ? 403 : error.code === "conflict" ? 409 : 503;
++      return c.json({ error: status === 400 ? "Invalid collaboration request" : "Collaboration state changed", code: error.code }, status);
++    }
+     if (error instanceof CollaborationRepositoryError) {
+       const status = error.code === "not_found" ? 404
+         : error.code === "forbidden" ? 403
+diff --git a/packages/gateway/src/collaboration/routes.ts b/packages/gateway/src/collaboration/routes.ts
+index 262320fd5..d0f4268ff 100644
+--- a/packages/gateway/src/collaboration/routes.ts
++++ b/packages/gateway/src/collaboration/routes.ts
+@@ -5,6 +5,7 @@ import { registerChatRoutes } from "./chat-routes.js";
+ import { registerExecutionPolicyRoutes } from "./execution-policy-routes.js";
+ import { registerLifecycleRoutes } from "./lifecycle-routes.js";
+ import { registerProjectRoutes } from "./project-routes.js";
++import { registerResourceRoutes } from "./resource-routes.js";
+ import type { CollaborationRouteOptions } from "./route-support.js";
+ import { registerScopeRoutes } from "./scope-routes.js";
+ import { registerTerminalRoutes } from "./terminal-routes.js";
+@@ -35,6 +36,8 @@ export function createCollaborationRoutes(options: CollaborationRouteOptions): H
+   registerLifecycleRoutes(routes, options);
+   // S08: owner-selected execution policy (GET/PUT) registers after the baseline routes.
+   registerExecutionPolicyRoutes(routes, options);
++  // S12: files, folders and app instances (project-bound and standalone) after the baseline routes.
++  registerResourceRoutes(routes, options);
+ 
+   return routes;
+ }
+diff --git a/packages/gateway/src/collaboration/terminal-adapter.ts b/packages/gateway/src/collaboration/terminal-adapter.ts
+index 34437c6bd..10f02eb7b 100644
+--- a/packages/gateway/src/collaboration/terminal-adapter.ts
++++ b/packages/gateway/src/collaboration/terminal-adapter.ts
+@@ -469,7 +469,7 @@ function rowToScope(row: {
+   id: string;
+   owner_id: string;
+   organization_id?: string | null;
+-  kind: "chat" | "terminal" | "project";
++  kind: "chat" | "terminal" | "project" | "file" | "folder" | "app";
+   resource_id: string;
+   parent_scope_id: string | null;
+   membership_mode: "direct" | "inherited";
+diff --git a/tests/gateway/direct-resource-policy-postgres.test.ts b/tests/gateway/direct-resource-policy-postgres.test.ts
+index 0b54f19ee..5291d5515 100644
+--- a/tests/gateway/direct-resource-policy-postgres.test.ts
++++ b/tests/gateway/direct-resource-policy-postgres.test.ts
+@@ -152,10 +152,10 @@ describe("S12 direct resource policy", () => {
+         organization_id: ORG,
+         invitation_id: null,
+         invited_by: collaborationActors.owner,
++        accepted_at: NOW,
+         revision: 1,
+         expires_at: null,
+         joined_at: NOW,
+-        created_at: NOW,
+         updated_at: NOW,
+       }).execute();
+     }
+@@ -433,17 +433,17 @@ describe("S12 direct resource policy", () => {
+       const asset = await signed({ actorId: collaborationActors.viewer, scopeId: APP_SCOPE, method: "GET", path: `/api/collaboration/scopes/${APP_SCOPE}/apps/${APP_ID}/assets/main.js` });
+       expect(asset.status).toBe(200);
+       expect(asset.headers.get("content-type")).toContain("text/javascript");
+-      const view = await signed({ actorId: collaborationActors.viewer, scopeId: APP_SCOPE, method: "POST", path: `/api/collaboration/scopes/${APP_SCOPE}/apps/${APP_ID}/view`, body: { action: { action: "find", app: "board", collection: "cards" } } });
++      const view = await signed({ actorId: collaborationActors.viewer, scopeId: APP_SCOPE, method: "POST", path: `/api/collaboration/scopes/${APP_SCOPE}/apps/${APP_ID}/view`, body: { action: { action: "find", app: "board", table: "cards" } } });
+       expect(view.status).toBe(200);
+       expect(bridgeCalls).toHaveLength(1);
+       expect(bridgeCalls[0]!.namespace).not.toContain(APP_ID);
+-      const viewerMutation = await signed({ actorId: collaborationActors.viewer, scopeId: APP_SCOPE, method: "POST", path: `/api/collaboration/scopes/${APP_SCOPE}/apps/${APP_ID}/actions`, body: { clientRequestId: requestId(), expectedRevision: "0", action: { action: "insert", app: "board", collection: "cards", data: { title: "x" } } } });
++      const viewerMutation = await signed({ actorId: collaborationActors.viewer, scopeId: APP_SCOPE, method: "POST", path: `/api/collaboration/scopes/${APP_SCOPE}/apps/${APP_ID}/actions`, body: { clientRequestId: requestId(), expectedRevision: "0", action: { action: "insert", app: "board", table: "cards", data: { title: "x" } } } });
+       expect(viewerMutation.status).toBe(403);
+       expect(bridgeCalls).toHaveLength(1);
+-      const viaView = await signed({ actorId: collaborationActors.viewer, scopeId: APP_SCOPE, method: "POST", path: `/api/collaboration/scopes/${APP_SCOPE}/apps/${APP_ID}/view`, body: { action: { action: "insert", app: "board", collection: "cards", data: { title: "x" } } } });
++      const viaView = await signed({ actorId: collaborationActors.viewer, scopeId: APP_SCOPE, method: "POST", path: `/api/collaboration/scopes/${APP_SCOPE}/apps/${APP_ID}/view`, body: { action: { action: "insert", app: "board", table: "cards", data: { title: "x" } } } });
+       expect(viaView.status).toBe(400);
+       expect(bridgeCalls).toHaveLength(1);
+-      const editorMutation = await signed({ actorId: collaborationActors.editor, scopeId: APP_SCOPE, method: "POST", path: `/api/collaboration/scopes/${APP_SCOPE}/apps/${APP_ID}/actions`, body: { clientRequestId: requestId(), expectedRevision: "0", action: { action: "insert", app: "board", collection: "cards", data: { title: "x" } } } });
++      const editorMutation = await signed({ actorId: collaborationActors.editor, scopeId: APP_SCOPE, method: "POST", path: `/api/collaboration/scopes/${APP_SCOPE}/apps/${APP_ID}/actions`, body: { clientRequestId: requestId(), expectedRevision: "0", action: { action: "insert", app: "board", table: "cards", data: { title: "x" } } } });
+       expect(editorMutation.status).toBe(200);
+       expect(await editorMutation.json()).toMatchObject({ revision: 1, replayed: false });
+       expect(bridgeCalls).toHaveLength(2);
+@@ -452,9 +452,9 @@ describe("S12 direct resource policy", () => {
+     });
+ 
+     it("serves the project-bound app through the project scope with the same preset rules", async () => {
+-      const view = await signed({ actorId: collaborationActors.viewer, scopeId: PROJECT_SCOPE, method: "POST", path: `/api/collaboration/scopes/${PROJECT_SCOPE}/apps/${APP_ID}/view`, body: { action: { action: "count", app: "board", collection: "cards" } } });
++      const view = await signed({ actorId: collaborationActors.viewer, scopeId: PROJECT_SCOPE, method: "POST", path: `/api/collaboration/scopes/${PROJECT_SCOPE}/apps/${APP_ID}/view`, body: { action: { action: "count", app: "board", table: "cards" } } });
+       expect(view.status).toBe(200);
+-      const mutation = await signed({ actorId: collaborationActors.viewer, scopeId: PROJECT_SCOPE, method: "POST", path: `/api/collaboration/scopes/${PROJECT_SCOPE}/apps/${APP_ID}/actions`, body: { clientRequestId: requestId(), expectedRevision: "0", action: { action: "delete", app: "board", collection: "cards", where: {} } } });
++      const mutation = await signed({ actorId: collaborationActors.viewer, scopeId: PROJECT_SCOPE, method: "POST", path: `/api/collaboration/scopes/${PROJECT_SCOPE}/apps/${APP_ID}/actions`, body: { clientRequestId: requestId(), expectedRevision: "0", action: { action: "delete", app: "board", table: "cards", id: "card_1" } } });
+       expect(mutation.status).toBe(403);
+     });
+   });
+diff --git a/packages/contracts/src/collaboration-resources.ts b/packages/contracts/src/collaboration-resources.ts
+new file mode 100644
+index 000000000..1e5839785
+--- /dev/null
++++ b/packages/contracts/src/collaboration-resources.ts
+@@ -0,0 +1,154 @@
++/**
++ * S12 / T061–T062: direct resource contracts for files, folders and app
++ * instances on the home computer. Every resource is addressed by its catalog
++ * id; a path is a display property that may change under a stable id.
++ */
++import { z } from "zod/v4";
++import { CollaborationRevisionSchema } from "#collaboration";
++
++const RequestIdSchema = z.uuid();
++const Sha256Schema = z.string().regex(/^[a-f0-9]{64}$/);
++/** 64 KiB of UTF-8 keeps a JSON action body under the 96 KiB HTTP limit. */
++export const COLLABORATION_INLINE_CONTENT_BYTES = 64 * 1024;
++/** Base64 upload parts stay under the HTTP body limit with headroom for the envelope. */
++export const COLLABORATION_UPLOAD_PART_BYTES = 48 * 1024;
++export const COLLABORATION_UPLOAD_MAX_BYTES = 256 * 1024 * 1024;
++
++export function isSafeCollaborationRelativePath(value: string): boolean {
++  if (value.length === 0 || value.length > 4_096 || value.startsWith("/") || value.includes("\\") || value.includes("\0")) {
++    return false;
++  }
++  return value.split("/").every((segment) => segment.length > 0 && segment !== "." && segment !== "..");
++}
++
++export const CollaborationCatalogIdSchema = z.uuid();
++export const CollaborationCatalogKindSchema = z.enum(["file", "folder", "app"]);
++export const CollaborationResourcePathSchema = z.string().min(1).max(4_096).refine(isSafeCollaborationRelativePath);
++export const CollaborationAppInstanceIdSchema = z.string().min(1).max(256).regex(/^[A-Za-z0-9_-]+$/);
++export const CollaborationAppAssetPathSchema = z.string().min(1).max(1_024)
++  .refine((value) => isSafeCollaborationRelativePath(value) && !value.split("/").some((segment) => segment.startsWith(".")));
++
++export const CollaborationCatalogEntrySchema = z.object({
++  id: CollaborationCatalogIdSchema,
++  kind: CollaborationCatalogKindSchema,
++  path: CollaborationResourcePathSchema,
++  parentId: CollaborationCatalogIdSchema.nullable(),
++  revision: CollaborationRevisionSchema,
++  incarnation: z.string().min(1).max(256),
++  updatedAt: z.iso.datetime(),
++}).strict();
++
++export const CollaborationFileListQuerySchema = z.object({
++  cursor: z.string().min(1).max(4_096).optional(),
++  limit: z.coerce.number().int().min(1).max(100).default(50),
++  query: z.string().trim().min(1).max(512).optional(),
++}).strict();
++
++export const CollaborationFileListResponseSchema = z.object({
++  entries: z.array(CollaborationCatalogEntrySchema).max(100),
++  nextCursor: z.string().min(1).max(4_096).optional(),
++}).strict();
++
++const InlineContentSchema = z.string().refine((value) => Buffer.byteLength(value, "utf8") <= COLLABORATION_INLINE_CONTENT_BYTES);
++
++export const CollaborationFileActionRequestSchema = z.discriminatedUnion("type", [
++  z.object({
++    type: z.literal("write"),
++    fileId: CollaborationCatalogIdSchema,
++    content: InlineContentSchema,
++    expectedRevision: CollaborationRevisionSchema,
++    clientRequestId: RequestIdSchema,
++  }).strict(),
++  z.object({
++    type: z.literal("create"),
++    kind: z.enum(["file", "folder"]),
++    parentId: CollaborationCatalogIdSchema.nullable(),
++    path: CollaborationResourcePathSchema,
++    content: InlineContentSchema.optional(),
++    clientRequestId: RequestIdSchema,
++  }).strict(),
++  z.object({
++    type: z.literal("rename"),
++    fileId: CollaborationCatalogIdSchema,
++    path: CollaborationResourcePathSchema,
++    expectedRevision: CollaborationRevisionSchema,
++    clientRequestId: RequestIdSchema,
++  }).strict(),
++  z.object({
++    type: z.literal("delete"),
++    fileId: CollaborationCatalogIdSchema,
++    expectedRevision: CollaborationRevisionSchema,
++    clientRequestId: RequestIdSchema,
++  }).strict(),
++  z.object({
++    type: z.literal("upload_stage"),
++    fileId: CollaborationCatalogIdSchema.optional(),
++    parentId: CollaborationCatalogIdSchema.nullable().optional(),
++    path: CollaborationResourcePathSchema.optional(),
++    size: z.number().int().min(0).max(COLLABORATION_UPLOAD_MAX_BYTES),
++    sha256: Sha256Schema,
++    clientRequestId: RequestIdSchema,
++  }).strict().refine((value) => (value.fileId !== undefined) !== (value.path !== undefined)),
++  z.object({
++    type: z.literal("upload_part"),
++    uploadId: RequestIdSchema,
++    index: z.number().int().min(0).max(1_000_000),
++    sha256: Sha256Schema,
++    chunk: z.string().regex(/^[A-Za-z0-9+/]*={0,2}$/).max(Math.ceil(COLLABORATION_UPLOAD_PART_BYTES / 3) * 4),
++  }).strict(),
++  z.object({
++    type: z.literal("upload_commit"),
++    uploadId: RequestIdSchema,
++    expectedRevision: CollaborationRevisionSchema,
++    clientRequestId: RequestIdSchema,
++  }).strict(),
++  z.object({
++    type: z.literal("upload_cancel"),
++    uploadId: RequestIdSchema,
++  }).strict(),
++]);
++
++export const CollaborationUploadStateSchema = z.enum(["staging", "committed", "cancelled", "expired"]);
++export const CollaborationUploadSchema = z.object({
++  uploadId: RequestIdSchema,
++  state: CollaborationUploadStateSchema,
++  receivedBytes: z.number().int().min(0),
++  size: z.number().int().min(0),
++  expiresAt: z.iso.datetime(),
++}).strict();
++
++export const CollaborationFileActionResponseSchema = z.object({
++  entry: CollaborationCatalogEntrySchema.optional(),
++  upload: CollaborationUploadSchema.optional(),
++  replayed: z.boolean(),
++}).strict();
++
++export const CollaborationAppInstanceSchema = z.object({
++  appId: CollaborationAppInstanceIdSchema,
++  catalogId: CollaborationCatalogIdSchema.optional(),
++  revision: CollaborationRevisionSchema,
++  readiness: z.enum(["ready", "blocked", "unavailable"]),
++  collaborationMode: z.enum(["scoped", "unavailable"]),
++}).strict();
++
++/** The bridge query is validated on the home against the app's read actions; the wire carries it opaquely. */
++export const CollaborationAppViewRequestSchema = z.object({ action: z.unknown() }).strict();
++export const CollaborationAppActionRequestSchema = z.object({
++  clientRequestId: RequestIdSchema,
++  expectedRevision: CollaborationRevisionSchema,
++  action: z.unknown(),
++}).strict();
++export const CollaborationAppActionResponseSchema = z.object({
++  result: z.unknown(),
++  revision: z.number().int().nonnegative(),
++  replayed: z.boolean(),
++}).strict();
++
++export type CollaborationCatalogKind = z.infer<typeof CollaborationCatalogKindSchema>;
++export type CollaborationCatalogEntry = z.infer<typeof CollaborationCatalogEntrySchema>;
++export type CollaborationFileListQuery = z.infer<typeof CollaborationFileListQuerySchema>;
++export type CollaborationFileActionRequest = z.infer<typeof CollaborationFileActionRequestSchema>;
++export type CollaborationFileActionResponse = z.infer<typeof CollaborationFileActionResponseSchema>;
++export type CollaborationUpload = z.infer<typeof CollaborationUploadSchema>;
++export type CollaborationAppInstance = z.infer<typeof CollaborationAppInstanceSchema>;
++export type CollaborationAppActionRequest = z.infer<typeof CollaborationAppActionRequestSchema>;
+diff --git a/packages/gateway/src/collaboration/app-instance-adapter.ts b/packages/gateway/src/collaboration/app-instance-adapter.ts
+new file mode 100644
+index 000000000..72c2e3512
+--- /dev/null
++++ b/packages/gateway/src/collaboration/app-instance-adapter.ts
+@@ -0,0 +1,271 @@
++/**
++ * S12 / T061, T064: app instances behind a collaboration scope. A project
++ * scope reaches its bound apps through the existing project app adapter; a
++ * standalone app scope reaches exactly the catalog entry it was created for.
++ * Reads and mutations go through the owner's app bridge under a namespace
++ * derived from the scope, never the app's own storage slug, so a viewer
++ * cannot reach the owner's data through any other bridge path.
++ */
++import { createHash, randomUUID } from "node:crypto";
++import type { Kysely, Transaction } from "kysely";
++import { z } from "zod/v4";
++import { BridgeQueryBodySchema, type BridgeQueryBody } from "../app-db-contracts.js";
++import { normalizeAppStorageSlug } from "../app-db-types.js";
++import { CollaborationAuthorizationError, type AuthorizedCollaborationContext, type CollaborationAuthority } from "./authority.js";
++import type { OwnerCollaborationDatabase } from "./database.js";
++import {
++  ProjectAppAdapterError,
++  createProjectAppAdapter,
++  type ProjectAppBridge,
++} from "./project-app-adapter.js";
++import { CollaborationResourceCatalog, ResourceCatalogError, type CatalogEntryRecord } from "./resource-catalog.js";
++
++const OPERATION_RETENTION_MS = 7 * 24 * 60 * 60 * 1_000;
++const MAX_RESULT_BYTES = 1024 * 1024;
++const AppIdSchema = z.string().min(1).max(256).regex(/^[A-Za-z0-9_-]+$/);
++const AppRecordSchema = z.object({
++  projectId: z.string().min(1).max(256).regex(/^[A-Za-z0-9_-]+$/).nullable(),
++  appId: AppIdSchema,
++  bridgeAppId: z.string().min(1).max(256),
++  collaborationMode: z.enum(["scoped", "unavailable"]),
++}).strict();
++const EnvelopeSchema = z.object({
++  clientRequestId: z.uuid(),
++  expectedRevision: z.number().int().nonnegative(),
++  action: z.unknown(),
++}).strict();
++const READ_ACTIONS: readonly BridgeQueryBody["action"][] = ["find", "findOne", "count", "schema", "appInfo"];
++const MUTATION_ACTIONS: readonly BridgeQueryBody["action"][] = ["insert", "bulkInsert", "update", "bulkUpdate", "delete"];
++
++export interface AppInstanceDescription {
++  appId: string;
++  catalogId?: string;
++  revision: number;
++  readiness: "ready" | "blocked" | "unavailable";
++  collaborationMode: "scoped" | "unavailable";
++  /** Where the app's static assets live for the asset route. */
++  assetNamespace: { ownerId: string; projectId: string | null };
++}
++
++export interface AppInstanceAdapter {
++  describe(context: AuthorizedCollaborationContext, appId: string): Promise<AppInstanceDescription>;
++  query(context: AuthorizedCollaborationContext, appId: string, action: unknown): Promise<unknown>;
++  mutate(context: AuthorizedCollaborationContext, appId: string, envelope: unknown): Promise<{ result: unknown; revision: number; replayed: boolean }>;
++}
++
++function standaloneNamespace(scopeId: string, appId: string): string {
++  return `s${createHash("sha256").update(scopeId).update("\0").update(appId).digest("hex").slice(0, 32)}`;
++}
++
++function jsonValue(value: unknown): unknown {
++  const parsed = z.json().safeParse(value);
++  if (!parsed.success || Buffer.byteLength(JSON.stringify(parsed.data), "utf8") > MAX_RESULT_BYTES) {
++    throw new ProjectAppAdapterError("unavailable");
++  }
++  return parsed.data;
++}
++
++function jsonb(value: unknown) {
++  return JSON.stringify(value) as unknown as object;
++}
++
++function parseAction(raw: unknown, expectedApp: string, allowed: readonly BridgeQueryBody["action"][]): BridgeQueryBody {
++  const parsed = BridgeQueryBodySchema.safeParse(raw);
++  if (!parsed.success || !allowed.includes(parsed.data.action) || parsed.data.action === "listApps"
++    || !("app" in parsed.data) || parsed.data.app !== expectedApp) {
++    throw new ProjectAppAdapterError("invalid_action");
++  }
++  return parsed.data;
++}
++
++function mapError(error: unknown): ProjectAppAdapterError {
++  if (error instanceof ProjectAppAdapterError) return error;
++  if (error instanceof ResourceCatalogError) {
++    return new ProjectAppAdapterError(error.code === "invalid" ? "invalid_action" : error.code);
++  }
++  if (error instanceof CollaborationAuthorizationError) {
++    return new ProjectAppAdapterError(error.code === "forbidden" ? "forbidden" : error.code === "not_found" ? "not_found" : "unavailable");
++  }
++  console.warn("[collaboration-app-instance] operation failed", error instanceof Error ? error.name : "UnknownError");
++  return new ProjectAppAdapterError("unavailable");
++}
++
++export function createAppInstanceAdapter(options: {
++  db: Kysely<OwnerCollaborationDatabase>;
++  authority: Pick<CollaborationAuthority, "authorize">;
++  bridge: ProjectAppBridge;
++  catalog: CollaborationResourceCatalog;
++  apps: { resolve(projectId: string | null, appId: string): Promise<unknown> };
++  now?: () => Date;
++  createEventId?: () => string;
++  onCommitted?(scopeId: string): Promise<void>;
++}): AppInstanceAdapter {
++  const now = options.now ?? (() => new Date());
++  const createEventId = options.createEventId ?? randomUUID;
++  const project = createProjectAppAdapter({
++    db: options.db,
++    authority: options.authority,
++    apps: { resolve: (projectId, appId) => options.apps.resolve(projectId, appId) },
++    bridge: options.bridge,
++    now,
++    createEventId,
++    ...(options.onCommitted ? { onCommitted: options.onCommitted } : {}),
++  });
++
++  async function resolveApp(projectId: string | null, appId: string) {
++    const record = AppRecordSchema.safeParse(await options.apps.resolve(projectId, appId));
++    if (!record.success || record.data.appId !== appId || record.data.projectId !== projectId) {
++      throw new ProjectAppAdapterError("not_found");
++    }
++    const bridgeAppId = normalizeAppStorageSlug(record.data.bridgeAppId);
++    if (!/^[a-z][a-z0-9_-]{0,62}$/.test(bridgeAppId)) throw new ProjectAppAdapterError("app_unavailable");
++    return { record: record.data, bridgeAppId };
++  }
++
++  async function standaloneRoot(context: AuthorizedCollaborationContext, appId: string): Promise<CatalogEntryRecord> {
++    const namespace = await options.catalog.namespaceForScope(context);
++    if (!namespace.root || namespace.root.kind !== "app" || namespace.root.path !== appId) {
++      throw new ProjectAppAdapterError("not_found");
++    }
++    return namespace.root;
++  }
++
++  /** The scope row must still be the one the context was authorized against; the row lock serializes writers. */
++  async function requireLiveScope(trx: Transaction<OwnerCollaborationDatabase>, context: AuthorizedCollaborationContext, forWrite: boolean) {
++    let query = trx.selectFrom("collaboration_scopes").selectAll().where("id", "=", context.scopeId).where("deleted_at", "is", null);
++    query = forWrite ? query.forUpdate() : query.forShare();
++    const scope = await query.executeTakeFirst();
++    if (!scope || scope.kind !== "app" || scope.lifecycle !== "shared" || scope.resource_id !== context.resourceId
++      || scope.owner_id !== context.ownerId || scope.authority_runtime_id !== context.authorityRuntimeId
++      || Number(scope.authority_generation) !== context.authorityGeneration) {
++      throw new ProjectAppAdapterError("not_found");
++    }
++  }
++
++  async function describe(context: AuthorizedCollaborationContext, rawAppId: string): Promise<AppInstanceDescription> {
++    const appId = AppIdSchema.safeParse(rawAppId);
++    if (!appId.success) throw new ProjectAppAdapterError("invalid_action");
++    try {
++      const current = await options.authority.authorize({ scopeId: context.scopeId, actorId: context.actorId, action: "read" });
++      if (current.resourceKind === "project") {
++        const binding = await options.db.selectFrom("collaboration_resource_bindings").selectAll()
++          .where("project_scope_id", "=", current.scopeId).where("resource_kind", "=", "app").where("resource_id", "=", appId.data)
++          .executeTakeFirst();
++        if (!binding) throw new ProjectAppAdapterError("not_found");
++        const { record } = await resolveApp(current.resourceId, appId.data);
++        const stale = binding.authority_runtime_id !== current.authorityRuntimeId || Number(binding.authority_generation) !== current.authorityGeneration;
++        return {
++          appId: appId.data,
++          revision: Number(binding.revision),
++          readiness: stale ? "unavailable" : binding.readiness,
++          collaborationMode: record.collaborationMode,
++          assetNamespace: { ownerId: current.ownerId, projectId: current.resourceId },
++        };
++      }
++      const root = await standaloneRoot(current, appId.data);
++      const { record } = await resolveApp(root.projectId, appId.data);
++      return {
++        appId: appId.data,
++        catalogId: root.id,
++        revision: root.revision,
++        readiness: "ready",
++        collaborationMode: record.collaborationMode,
++        assetNamespace: { ownerId: root.ownerId, projectId: root.projectId },
++      };
++    } catch (error: unknown) {
++      throw mapError(error);
++    }
++  }
++
++  async function query(context: AuthorizedCollaborationContext, rawAppId: string, action: unknown): Promise<unknown> {
++    if (context.resourceKind === "project") return project.query(context, { appId: rawAppId, action });
++    const appId = AppIdSchema.safeParse(rawAppId);
++    if (!appId.success) throw new ProjectAppAdapterError("invalid_action");
++    try {
++      const current = await options.authority.authorize({ scopeId: context.scopeId, actorId: context.actorId, action: "read" });
++      const root = await standaloneRoot(current, appId.data);
++      const { record, bridgeAppId } = await resolveApp(root.projectId, appId.data);
++      if (record.collaborationMode !== "scoped") throw new ProjectAppAdapterError("app_unavailable");
++      const parsed = parseAction(action, bridgeAppId, READ_ACTIONS);
++      const namespace = standaloneNamespace(current.scopeId, appId.data);
++      return await options.db.transaction().execute(async (trx) => {
++        await requireLiveScope(trx, current, false);
++        if (!await options.catalog.get(root.id, trx)) throw new ProjectAppAdapterError("not_found");
++        return jsonValue(await options.bridge.execute({
++          namespace, scopeId: current.scopeId, actorId: current.actorId,
++          action: { ...parsed, app: namespace } as BridgeQueryBody, transaction: trx,
++        }));
++      });
++    } catch (error: unknown) {
++      throw mapError(error);
++    }
++  }
++
++  async function mutate(context: AuthorizedCollaborationContext, rawAppId: string, raw: unknown) {
++    if (context.resourceKind === "project") return project.mutate(context, { ...(typeof raw === "object" && raw ? raw : {}), appId: rawAppId });
++    const appId = AppIdSchema.safeParse(rawAppId);
++    const envelope = EnvelopeSchema.safeParse(raw);
++    if (!appId.success || !envelope.success) throw new ProjectAppAdapterError("invalid_action");
++    try {
++      const current = await options.authority.authorize({ scopeId: context.scopeId, actorId: context.actorId, action: "mutate_resource" });
++      const root = await standaloneRoot(current, appId.data);
++      const { record, bridgeAppId } = await resolveApp(root.projectId, appId.data);
++      if (record.collaborationMode !== "scoped") throw new ProjectAppAdapterError("app_unavailable");
++      const parsed = parseAction(envelope.data.action, bridgeAppId, MUTATION_ACTIONS);
++      const namespace = standaloneNamespace(current.scopeId, appId.data);
++      const operationKind = `resource.app.${parsed.action}`;
++      const payloadHash = createHash("sha256").update(JSON.stringify({ appId: appId.data, ...envelope.data })).digest("hex");
++      const committed = await options.db.transaction().execute(async (trx) => {
++        await requireLiveScope(trx, current, true);
++        const existing = await trx.selectFrom("collaboration_operations").select(["payload_hash", "status", "result_ref"])
++          .where("scope_id", "=", current.scopeId).where("actor_id", "=", current.actorId)
++          .where("client_request_id", "=", envelope.data.clientRequestId).where("operation_kind", "=", operationKind).executeTakeFirst();
++        if (existing) {
++          const stored = z.object({ result: z.json(), revision: z.number().int().nonnegative() }).strict()
++            .safeParse(typeof existing.result_ref === "string" ? JSON.parse(existing.result_ref) : existing.result_ref);
++          if (existing.payload_hash !== payloadHash || existing.status !== "completed" || !stored.success) throw new ProjectAppAdapterError("conflict");
++          return { ...stored.data, replayed: true };
++        }
++        const locked = await options.catalog.lock(trx, root.id);
++        if (locked.revision !== envelope.data.expectedRevision) throw new ProjectAppAdapterError("conflict");
++        const result = jsonValue(await options.bridge.execute({
++          namespace, scopeId: current.scopeId, actorId: current.actorId,
++          action: { ...parsed, app: namespace } as BridgeQueryBody, transaction: trx,
++        }));
++        const bumped = await options.catalog.bump(trx, { id: root.id, expectedRevision: locked.revision });
++        const timestamp = now();
++        const replay = { result, revision: bumped.revision };
++        await trx.insertInto("collaboration_operations").values({
++          scope_id: current.scopeId, actor_id: current.actorId, client_request_id: envelope.data.clientRequestId,
++          operation_kind: operationKind, payload_hash: payloadHash, status: "completed", result_ref: jsonb(replay),
++          expected_revision: envelope.data.expectedRevision, accepted_auth_epoch: current.authEpoch,
++          created_at: timestamp, expires_at: new Date(timestamp.getTime() + OPERATION_RETENTION_MS),
++        }).execute();
++        const latest = await trx.selectFrom("collaboration_events").select("scope_seq").where("scope_id", "=", current.scopeId)
++          .orderBy("scope_seq", "desc").limit(1).executeTakeFirst();
++        await trx.insertInto("collaboration_events").values({
++          scope_id: current.scopeId, scope_seq: Number(latest?.scope_seq ?? 0) + 1, event_id: z.uuid().parse(createEventId()),
++          resource_kind: "app", resource_id: root.id, revision: bumped.revision, authority_generation: current.authorityGeneration,
++          event_type: "resource.app.changed", payload: jsonb({ appId: appId.data, action: parsed.action }), created_at: timestamp,
++        }).execute();
++        await trx.insertInto("collaboration_audit").values({
++          scope_id: current.scopeId, actor_id: current.actorId, action: operationKind, outcome: "completed",
++          revision: bumped.revision, reason_code: null, created_at: timestamp,
++        }).execute();
++        return { ...replay, replayed: false };
++      });
++      if (!committed.replayed && options.onCommitted) {
++        try {
++          await options.onCommitted(current.scopeId);
++        } catch (error: unknown) {
++          console.warn("[collaboration-app-instance] event delivery failed", error instanceof Error ? error.name : "UnknownError");
++        }
++      }
++      return committed;
++    } catch (error: unknown) {
++      throw mapError(error);
++    }
++  }
++
++  return { describe, query, mutate };
++}
+diff --git a/packages/gateway/src/collaboration/resource-actions.ts b/packages/gateway/src/collaboration/resource-actions.ts
+new file mode 100644
+index 000000000..ffb35fdf3
+--- /dev/null
++++ b/packages/gateway/src/collaboration/resource-actions.ts
+@@ -0,0 +1,154 @@
++/**
++ * S12 / T061: file and folder mutations on the home. Every action runs in one
++ * transaction: replay by client request id, catalog row lock, conditional
++ * revision bump, then the operation, event and audit rows. The filesystem
++ * side effect happens after the locks and checks and before commit; a failed
++ * commit after a successful driver write leaves a file ahead of its catalog
++ * revision, which the next write reconciles through the incarnation.
++ */
++import { createHash, randomUUID } from "node:crypto";
++import type { Kysely, Transaction } from "kysely";
++import { z } from "zod/v4";
++import type { CollaborationFileActionRequest } from "@matrix-os/contracts";
++import type { AuthorizedCollaborationContext } from "./authority.js";
++import type { OwnerCollaborationDatabase } from "./database.js";
++import { CollaborationResourceCatalog, ResourceCatalogError, type CatalogEntryRecord } from "./resource-catalog.js";
++
++const OPERATION_RETENTION_MS = 7 * 24 * 60 * 60 * 1_000;
++type Namespace = { ownerId: string; projectId: string | null };
++type FileAction = Extract<CollaborationFileActionRequest, { type: "write" | "create" | "rename" | "delete" }>;
++
++export interface CollaborationResourceDriver {
++  read(input: Namespace & { path: string }): Promise<{ stream: ReadableStream<Uint8Array>; size: number; contentType?: string }>;
++  write(input: Namespace & { path: string; content: Uint8Array }): Promise<void>;
++  remove(input: Namespace & { path: string; kind: "file" | "folder" }): Promise<void>;
++  rename(input: Namespace & { from: string; to: string }): Promise<void>;
++  mkdir(input: Namespace & { path: string }): Promise<void>;
++  /** Opaque incarnation fingerprint of the current bytes; changes on every write. */
++  fingerprint(input: Namespace & { path: string }): Promise<string>;
++  readAppAsset(input: Namespace & { appId: string; assetPath: string }): Promise<{ stream: ReadableStream<Uint8Array>; size: number; contentType?: string }>;
++}
++
++export interface FileActionResult {
++  entry: CatalogEntryRecord;
++  replayed: boolean;
++}
++
++function jsonb(value: unknown) {
++  return JSON.stringify(value) as unknown as object;
++}
++
++const StoredResultSchema = z.object({ entryId: z.uuid(), revision: z.number().int().nonnegative() }).strict();
++
++export function createFileActionExecutor(options: {
++  db: Kysely<OwnerCollaborationDatabase>;
++  catalog: CollaborationResourceCatalog;
++  driver: CollaborationResourceDriver;
++  now?: () => Date;
++  createEventId?: () => string;
++}) {
++  const now = options.now ?? (() => new Date());
++  const createEventId = options.createEventId ?? randomUUID;
++
++  async function lockScope(trx: Transaction<OwnerCollaborationDatabase>, context: AuthorizedCollaborationContext) {
++    const scope = await trx.selectFrom("collaboration_scopes").selectAll().where("id", "=", context.scopeId)
++      .where("deleted_at", "is", null).forUpdate().executeTakeFirst();
++    if (!scope || scope.lifecycle !== "shared" || scope.resource_id !== context.resourceId || scope.owner_id !== context.ownerId
++      || scope.authority_runtime_id !== context.authorityRuntimeId || Number(scope.authority_generation) !== context.authorityGeneration) {
++      throw new ResourceCatalogError("not_found");
++    }
++    return scope;
++  }
++
++  async function record(
++    trx: Transaction<OwnerCollaborationDatabase>,
++    context: AuthorizedCollaborationContext,
++    input: { operationKind: string; clientRequestId: string; payloadHash: string; expectedRevision: number; entry: CatalogEntryRecord; action: string },
++  ): Promise<void> {
++    const timestamp = now();
++    await trx.insertInto("collaboration_operations").values({
++      scope_id: context.scopeId, actor_id: context.actorId, client_request_id: input.clientRequestId,
++      operation_kind: input.operationKind, payload_hash: input.payloadHash, status: "completed",
++      result_ref: jsonb({ entryId: input.entry.id, revision: input.entry.revision }),
++      expected_revision: input.expectedRevision, accepted_auth_epoch: context.authEpoch,
++      created_at: timestamp, expires_at: new Date(timestamp.getTime() + OPERATION_RETENTION_MS),
++    }).execute();
++    const latest = await trx.selectFrom("collaboration_events").select("scope_seq").where("scope_id", "=", context.scopeId)
++      .orderBy("scope_seq", "desc").limit(1).executeTakeFirst();
++    const projectScope = context.resourceKind === "project";
++    await trx.insertInto("collaboration_events").values({
++      scope_id: context.scopeId, scope_seq: Number(latest?.scope_seq ?? 0) + 1, event_id: z.uuid().parse(createEventId()),
++      resource_kind: projectScope ? "project" : context.resourceKind, resource_id: projectScope ? context.resourceId : input.entry.id,
++      revision: input.entry.revision, authority_generation: context.authorityGeneration, event_type: "resource.changed",
++      payload: jsonb({ catalogId: input.entry.id, kind: input.entry.kind, action: input.action }), created_at: timestamp,
++    }).execute();
++    await trx.insertInto("collaboration_audit").values({
++      scope_id: context.scopeId, actor_id: context.actorId, action: input.operationKind, outcome: "completed",
++      revision: input.entry.revision, reason_code: null, created_at: timestamp,
++    }).execute();
++  }
++
++  async function replay(
++    trx: Transaction<OwnerCollaborationDatabase>,
++    context: AuthorizedCollaborationContext,
++    operationKind: string,
++    clientRequestId: string,
++    payloadHash: string,
++  ): Promise<FileActionResult | null> {
++    const existing = await trx.selectFrom("collaboration_operations").select(["payload_hash", "status", "result_ref"])
++      .where("scope_id", "=", context.scopeId).where("actor_id", "=", context.actorId)
++      .where("client_request_id", "=", clientRequestId).where("operation_kind", "=", operationKind).executeTakeFirst();
++    if (!existing) return null;
++    const stored = StoredResultSchema.safeParse(typeof existing.result_ref === "string" ? JSON.parse(existing.result_ref) : existing.result_ref);
++    if (existing.payload_hash !== payloadHash || existing.status !== "completed" || !stored.success) throw new ResourceCatalogError("conflict");
++    const entry = await options.catalog.getAny(stored.data.entryId, trx);
++    if (!entry) throw new ResourceCatalogError("conflict");
++    return { entry, replayed: true };
++  }
++
++  /** Runs one mutation; the caller has already authorized `mutate_resource`/`mutate_project` on the context. */
++  async function execute(context: AuthorizedCollaborationContext, action: FileAction): Promise<FileActionResult> {
++    const operationKind = `resource.${action.type}`;
++    const payloadHash = createHash("sha256").update(JSON.stringify(action)).digest("hex");
++    const expectedRevision = action.type === "create" ? 0 : Number(action.expectedRevision);
++    return options.db.transaction().execute(async (trx) => {
++      await lockScope(trx, context);
++      const replayed = await replay(trx, context, operationKind, action.clientRequestId, payloadHash);
++      if (replayed) return replayed;
++      const namespace = await options.catalog.namespaceForScope(context, trx);
++      const ns: Namespace = { ownerId: namespace.ownerId, projectId: namespace.projectId };
++      let entry: CatalogEntryRecord;
++      if (action.type === "create") {
++        const created = await options.catalog.createWithin(context, {
++          kind: action.kind, parentId: action.parentId, path: action.path, incarnation: "pending",
++        }, trx);
++        if (action.kind === "folder") await options.driver.mkdir({ ...ns, path: action.path });
++        else await options.driver.write({ ...ns, path: action.path, content: new TextEncoder().encode(action.content ?? "") });
++        // A created entry commits at revision 1: revision 0 is the catalog row before the bytes exist.
++        entry = await options.catalog.bump(trx, { id: created.id, expectedRevision: 0, incarnation: await options.driver.fingerprint({ ...ns, path: action.path }) });
++      } else {
++        const resolved = await options.catalog.resolveForScope(context, action.fileId, trx);
++        const locked = await options.catalog.lock(trx, resolved.id);
++        if (locked.revision !== expectedRevision) throw new ResourceCatalogError("conflict");
++        if (action.type === "write") {
++          if (locked.kind !== "file") throw new ResourceCatalogError("invalid");
++          await options.driver.write({ ...ns, path: locked.path, content: new TextEncoder().encode(action.content) });
++          entry = await options.catalog.bump(trx, { id: locked.id, expectedRevision, incarnation: await options.driver.fingerprint({ ...ns, path: locked.path }) });
++        } else if (action.type === "rename") {
++          if (namespace.root && namespace.root.id === locked.id) throw new ResourceCatalogError("forbidden");
++          if (namespace.root && !action.path.startsWith(`${namespace.root.path}/`)) throw new ResourceCatalogError("not_found");
++          await options.driver.rename({ ...ns, from: locked.path, to: action.path });
++          entry = await options.catalog.rename({ id: locked.id, path: action.path, expectedRevision, incarnation: locked.incarnation, executor: trx });
++        } else {
++          if (namespace.root && namespace.root.id === locked.id) throw new ResourceCatalogError("forbidden");
++          await options.driver.remove({ ...ns, path: locked.path, kind: locked.kind === "folder" ? "folder" : "file" });
++          entry = await options.catalog.remove({ id: locked.id, expectedRevision, executor: trx });
++        }
++      }
++      await record(trx, context, { operationKind, clientRequestId: action.clientRequestId, payloadHash, expectedRevision, entry, action: action.type });
++      return { entry, replayed: false };
++    });
++  }
++
++  return { execute };
++}
+diff --git a/packages/gateway/src/collaboration/resource-catalog.ts b/packages/gateway/src/collaboration/resource-catalog.ts
+new file mode 100644
+index 000000000..d3926336a
+--- /dev/null
++++ b/packages/gateway/src/collaboration/resource-catalog.ts
+@@ -0,0 +1,357 @@
++/**
++ * S12 / T061: the resource catalog. Files, folders and app instances get a
++ * stable id in one owner namespace (owner + optional project); paths change
++ * under the id, deleted incarnations are tombstoned and a later file at the
++ * same path is a new identity. Standalone scopes reference a catalog id and
++ * grant exactly that resource (a folder includes its contents).
++ */
++import { randomUUID } from "node:crypto";
++import { sql, type Kysely, type Transaction } from "kysely";
++import type { OwnerCollaborationDatabase } from "./database.js";
++import { isSafeCollaborationRelativePath } from "@matrix-os/contracts";
++
++export type CatalogKind = "file" | "folder" | "app";
++const MAX_LIST = 100;
++const MAX_FOLDER_DELETE = 10_000;
++const MAX_UPLOAD_TTL_MS = 24 * 60 * 60 * 1_000;
++
++export class ResourceCatalogError extends Error {
++  constructor(public readonly code: "invalid" | "not_found" | "forbidden" | "conflict" | "unavailable") {
++    super("Shared resource is unavailable");
++    this.name = "ResourceCatalogError";
++  }
++}
++
++export interface CatalogEntryRecord {
++  id: string;
++  ownerId: string;
++  projectId: string | null;
++  kind: CatalogKind;
++  path: string;
++  parentId: string | null;
++  incarnation: string;
++  revision: number;
++  updatedAt: string;
++  deletedAt: string | null;
++}
++
++/** The part of an authorized context the catalog needs to bound a lookup. */
++export interface CatalogScopeRef {
++  resourceKind: "chat" | "terminal" | "project" | "file" | "folder" | "app";
++  resourceId: string;
++  ownerId: string;
++}
++
++export interface CatalogNamespace {
++  ownerId: string;
++  projectId: string | null;
++  /** The standalone root entry; null for a project scope. */
++  root: CatalogEntryRecord | null;
++}
++
++type Executor = Kysely<OwnerCollaborationDatabase> | Transaction<OwnerCollaborationDatabase>;
++
++function toRecord(row: {
++  id: string; owner_id: string; project_id: string | null; kind: CatalogKind; path: string; parent_id: string | null;
++  incarnation: string; revision: number | string; updated_at: Date | string; deleted_at: Date | string | null;
++}): CatalogEntryRecord {
++  return {
++    id: row.id,
++    ownerId: row.owner_id,
++    projectId: row.project_id,
++    kind: row.kind,
++    path: row.path,
++    parentId: row.parent_id,
++    incarnation: row.incarnation,
++    revision: Number(row.revision),
++    updatedAt: new Date(row.updated_at).toISOString(),
++    deletedAt: row.deleted_at === null ? null : new Date(row.deleted_at).toISOString(),
++  };
++}
++
++function parentPath(path: string): string | null {
++  const index = path.lastIndexOf("/");
++  return index === -1 ? null : path.slice(0, index);
++}
++
++function within(entry: { path: string }, root: CatalogEntryRecord): boolean {
++  return entry.path === root.path || entry.path.startsWith(`${root.path}/`);
++}
++
++export class CollaborationResourceCatalog {
++  private readonly now: () => Date;
++  private readonly createId: () => string;
++
++  constructor(
++    readonly db: Kysely<OwnerCollaborationDatabase>,
++    options: { now?: () => Date; createId?: () => string } = {},
++  ) {
++    this.now = options.now ?? (() => new Date());
++    this.createId = options.createId ?? randomUUID;
++  }
++
++  /** Idempotent by live (owner, project, kind, path); a tombstoned path yields a fresh id. */
++  async register(input: {
++    ownerId: string;
++    projectId: string | null;
++    kind: CatalogKind;
++    path: string;
++    incarnation: string;
++    executor?: Executor;
++  }): Promise<CatalogEntryRecord> {
++    if (!isSafeCollaborationRelativePath(input.path)) throw new ResourceCatalogError("invalid");
++    const executor = input.executor ?? this.db;
++    const existing = await this.findLive(executor, input.ownerId, input.projectId, input.kind, input.path);
++    if (existing) return existing;
++    const parent = input.kind === "app" ? null : await this.parentFor(executor, input.ownerId, input.projectId, input.path);
++    const timestamp = this.now();
++    await sql`
++      INSERT INTO collaboration_resource_catalog
++        (id, owner_id, project_id, kind, path, parent_id, incarnation, revision, created_at, updated_at, deleted_at)
++      VALUES (${this.createId()}, ${input.ownerId}, ${input.projectId}, ${input.kind}, ${input.path},
++        ${parent?.id ?? null}, ${input.incarnation}, 0, ${timestamp}, ${timestamp}, NULL)
++      ON CONFLICT (owner_id, COALESCE(project_id, ''), kind, path) WHERE deleted_at IS NULL DO NOTHING
++    `.execute(executor);
++    const created = await this.findLive(executor, input.ownerId, input.projectId, input.kind, input.path);
++    if (!created) throw new ResourceCatalogError("unavailable");
++    return created;
++  }
++
++  /** Any incarnation, including tombstones; used only to replay a recorded operation. */
++  async getAny(id: string, executor: Executor = this.db): Promise<CatalogEntryRecord | null> {
++    const row = await executor.selectFrom("collaboration_resource_catalog").selectAll().where("id", "=", id).executeTakeFirst();
++    return row ? toRecord(row) : null;
++  }
++
++  async get(id: string, executor: Executor = this.db): Promise<CatalogEntryRecord | null> {
++    const row = await executor.selectFrom("collaboration_resource_catalog").selectAll()
++      .where("id", "=", id).where("deleted_at", "is", null).executeTakeFirst();
++    return row ? toRecord(row) : null;
++  }
++
++  /** Locks the live row for a write; the caller compares the revision inside the same transaction. */
++  async lock(trx: Transaction<OwnerCollaborationDatabase>, id: string): Promise<CatalogEntryRecord> {
++    const row = await trx.selectFrom("collaboration_resource_catalog").selectAll()
++      .where("id", "=", id).where("deleted_at", "is", null).forUpdate().executeTakeFirst();
++    if (!row) throw new ResourceCatalogError("not_found");
++    return toRecord(row);
++  }
++
++  /** Conditional bump: `WHERE revision = expected` is the optimistic concurrency check. */
++  async bump(
++    executor: Executor,
++    input: { id: string; expectedRevision: number; incarnation?: string; path?: string; parentId?: string | null },
++  ): Promise<CatalogEntryRecord> {
++    const timestamp = this.now();
++    const row = await executor.updateTable("collaboration_resource_catalog").set({
++      revision: input.expectedRevision + 1,
++      updated_at: timestamp,
++      ...(input.incarnation !== undefined ? { incarnation: input.incarnation } : {}),
++      ...(input.path !== undefined ? { path: input.path } : {}),
++      ...(input.parentId !== undefined ? { parent_id: input.parentId } : {}),
++    }).where("id", "=", input.id).where("revision", "=", input.expectedRevision).where("deleted_at", "is", null)
++      .returningAll().executeTakeFirst();
++    if (!row) throw new ResourceCatalogError("conflict");
++    return toRecord(row);
++  }
++
++  async rename(input: { id: string; path: string; expectedRevision: number; incarnation: string; executor?: Executor }): Promise<CatalogEntryRecord> {
++    if (!isSafeCollaborationRelativePath(input.path)) throw new ResourceCatalogError("invalid");
++    const executor = input.executor ?? this.db;
++    const entry = await this.get(input.id, executor);
++    if (!entry) throw new ResourceCatalogError("not_found");
++    if (entry.kind === "app") throw new ResourceCatalogError("invalid");
++    const clash = await this.findLive(executor, entry.ownerId, entry.projectId, entry.kind, input.path);
++    if (clash && clash.id !== entry.id) throw new ResourceCatalogError("conflict");
++    const parent = await this.parentFor(executor, entry.ownerId, entry.projectId, input.path);
++    const renamed = await this.bump(executor, {
++      id: entry.id, expectedRevision: input.expectedRevision, incarnation: input.incarnation, path: input.path, parentId: parent?.id ?? null,
++    });
++    if (entry.kind === "folder") await this.moveDescendants(executor, entry, input.path);
++    return renamed;
++  }
++
++  /** Tombstones the entry (and a folder's live descendants); the id never resolves again. */
++  async remove(input: { id: string; expectedRevision: number; executor?: Executor }): Promise<CatalogEntryRecord> {
++    const executor = input.executor ?? this.db;
++    const entry = await this.get(input.id, executor);
++    if (!entry) throw new ResourceCatalogError("not_found");
++    const timestamp = this.now();
++    const row = await executor.updateTable("collaboration_resource_catalog")
++      .set({ revision: input.expectedRevision + 1, updated_at: timestamp, deleted_at: timestamp })
++      .where("id", "=", entry.id).where("revision", "=", input.expectedRevision).where("deleted_at", "is", null)
++      .returningAll().executeTakeFirst();
++    if (!row) throw new ResourceCatalogError("conflict");
++    if (entry.kind === "folder") {
++      const descendants = await this.liveWhere(executor, entry.ownerId, entry.projectId)
++        .where("path", "like", `${escapeLike(entry.path)}/%`).select("id").limit(MAX_FOLDER_DELETE + 1).execute();
++      if (descendants.length > MAX_FOLDER_DELETE) throw new ResourceCatalogError("conflict");
++      if (descendants.length > 0) {
++        await executor.updateTable("collaboration_resource_catalog").set({ updated_at: timestamp, deleted_at: timestamp })
++          .where("id", "in", descendants.map((row) => row.id)).where("deleted_at", "is", null).execute();
++      }
++    }
++    return toRecord(row);
++  }
++
++  /** The namespace a scope reaches: the whole project, or exactly the standalone root. */
++  async namespaceForScope(scope: CatalogScopeRef, executor: Executor = this.db): Promise<CatalogNamespace> {
++    if (scope.resourceKind === "project") return { ownerId: scope.ownerId, projectId: scope.resourceId, root: null };
++    if (scope.resourceKind !== "file" && scope.resourceKind !== "folder" && scope.resourceKind !== "app") {
++      throw new ResourceCatalogError("not_found");
++    }
++    const root = await this.get(scope.resourceId, executor);
++    if (!root || root.ownerId !== scope.ownerId || root.kind !== scope.resourceKind) throw new ResourceCatalogError("not_found");
++    return { ownerId: root.ownerId, projectId: root.projectId, root };
++  }
++
++  /** Resolves an id inside the scope's namespace; anything outside is not found, never forbidden. */
++  async resolveForScope(scope: CatalogScopeRef, id: string, executor: Executor = this.db): Promise<CatalogEntryRecord> {
++    const namespace = await this.namespaceForScope(scope, executor);
++    const entry = await this.get(id, executor);
++    if (!entry || !this.contains(namespace, entry)) throw new ResourceCatalogError("not_found");
++    return entry;
++  }
++
++  contains(namespace: CatalogNamespace, entry: CatalogEntryRecord): boolean {
++    if (entry.ownerId !== namespace.ownerId || entry.projectId !== namespace.projectId) return false;
++    if (!namespace.root) return true;
++    if (namespace.root.kind === "folder") return entry.kind !== "app" && within(entry, namespace.root);
++    return entry.id === namespace.root.id;
++  }
++
++  async listForScope(
++    scope: CatalogScopeRef,
++    input: { cursor?: string; limit?: number; query?: string },
++    executor: Executor = this.db,
++  ): Promise<{ entries: CatalogEntryRecord[]; nextCursor?: string }> {
++    const namespace = await this.namespaceForScope(scope, executor);
++    const limit = Math.min(Math.max(input.limit ?? 50, 1), MAX_LIST);
++    let query = this.liveWhere(executor, namespace.ownerId, namespace.projectId).selectAll()
++      .where("kind", "!=", "app").orderBy("path", "asc").limit(limit + 1);
++    if (namespace.root) {
++      query = namespace.root.kind === "folder"
++        ? query.where((eb) => eb.or([eb("path", "=", namespace.root!.path), eb("path", "like", `${escapeLike(namespace.root!.path)}/%`)]))
++        : query.where("id", "=", namespace.root.id);
++    }
++    if (input.cursor !== undefined) query = query.where("path", ">", input.cursor);
++    if (input.query !== undefined) query = query.where("path", "ilike", `%${escapeLike(input.query)}%`);
++    const rows = await query.execute();
++    const entries = rows.slice(0, limit).map(toRecord);
++    return rows.length > limit ? { entries, nextCursor: entries[entries.length - 1]!.path } : { entries };
++  }
++
++  /** A new child inside the scope: the parent must be reachable and the path must be its direct child. */
++  async createWithin(
++    scope: CatalogScopeRef,
++    input: { kind: "file" | "folder"; parentId: string | null; path: string; incarnation: string },
++    executor: Executor = this.db,
++  ): Promise<CatalogEntryRecord> {
++    if (!isSafeCollaborationRelativePath(input.path)) throw new ResourceCatalogError("invalid");
++    const namespace = await this.namespaceForScope(scope, executor);
++    if (namespace.root && namespace.root.kind !== "folder") throw new ResourceCatalogError("forbidden");
++    const parent = input.parentId === null ? null : await this.get(input.parentId, executor);
++    if (input.parentId !== null && (!parent || parent.kind !== "folder" || !this.contains(namespace, parent))) {
++      throw new ResourceCatalogError("not_found");
++    }
++    if (namespace.root && !parent) throw new ResourceCatalogError("not_found");
++    if (parentPath(input.path) !== (parent?.path ?? null)) throw new ResourceCatalogError("invalid");
++    const clash = await this.findLive(executor, namespace.ownerId, namespace.projectId, input.kind, input.path);
++    if (clash) throw new ResourceCatalogError("conflict");
++    return this.register({ ownerId: namespace.ownerId, projectId: namespace.projectId, kind: input.kind, path: input.path, incarnation: input.incarnation, executor });
++  }
++
++  private liveWhere(executor: Executor, ownerId: string, projectId: string | null) {
++    const base = executor.selectFrom("collaboration_resource_catalog").where("owner_id", "=", ownerId).where("deleted_at", "is", null);
++    return projectId === null ? base.where("project_id", "is", null) : base.where("project_id", "=", projectId);
++  }
++
++  private async findLive(executor: Executor, ownerId: string, projectId: string | null, kind: CatalogKind, path: string) {
++    const row = await this.liveWhere(executor, ownerId, projectId).selectAll().where("kind", "=", kind).where("path", "=", path).executeTakeFirst();
++    return row ? toRecord(row) : null;
++  }
++
++  private async parentFor(executor: Executor, ownerId: string, projectId: string | null, path: string) {
++    const parent = parentPath(path);
++    return parent === null ? null : this.findLive(executor, ownerId, projectId, "folder", parent);
++  }
++
++  private async moveDescendants(executor: Executor, folder: CatalogEntryRecord, newPath: string): Promise<void> {
++    const timestamp = this.now();
++    await sql`
++      UPDATE collaboration_resource_catalog
++      SET path = ${newPath} || substr(path, ${folder.path.length + 1}), updated_at = ${timestamp}
++      WHERE owner_id = ${folder.ownerId} AND project_id IS NOT DISTINCT FROM ${folder.projectId}
++        AND deleted_at IS NULL AND path LIKE ${`${escapeLike(folder.path)}/%`}
++    `.execute(executor);
++  }
++}
++
++export function uploadExpiry(now: Date): Date {
++  return new Date(now.getTime() + MAX_UPLOAD_TTL_MS);
++}
++
++function escapeLike(value: string): string {
++  return value.replaceAll("\\", "\\\\").replaceAll("%", "\\%").replaceAll("_", "\\_");
++}
++
++/** Gateway migration 12: catalog, upload staging, and the widened scope/event kinds. */
++export async function migrateResourceCatalogV12(trx: Transaction<OwnerCollaborationDatabase>): Promise<void> {
++  for (const table of ["collaboration_scopes"]) {
++    await sql`ALTER TABLE ${sql.table(table)} DROP CONSTRAINT IF EXISTS ${sql.id(`${table}_kind_check`)}`.execute(trx);
++    await sql`ALTER TABLE ${sql.table(table)} ADD CONSTRAINT ${sql.id(`${table}_kind_check`)}
++      CHECK (kind IN ('chat', 'terminal', 'project', 'file', 'folder', 'app'))`.execute(trx);
++  }
++  for (const table of ["collaboration_events", "collaboration_directory_outbox"]) {
++    await sql`ALTER TABLE ${sql.table(table)} DROP CONSTRAINT IF EXISTS ${sql.id(`${table}_resource_kind_check`)}`.execute(trx);
++    await sql`ALTER TABLE ${sql.table(table)} ADD CONSTRAINT ${sql.id(`${table}_resource_kind_check`)}
++      CHECK (resource_kind IN ('chat', 'terminal', 'project', 'file', 'folder', 'app'))`.execute(trx);
++  }
++  await sql`
++    CREATE TABLE IF NOT EXISTS collaboration_resource_catalog (
++      id UUID PRIMARY KEY,
++      owner_id TEXT NOT NULL CHECK (char_length(owner_id) BETWEEN 1 AND 128),
++      project_id TEXT CHECK (project_id IS NULL OR (char_length(project_id) BETWEEN 1 AND 256 AND project_id ~ '^[A-Za-z0-9_-]+$')),
++      kind TEXT NOT NULL CHECK (kind IN ('file', 'folder', 'app')),
++      path TEXT NOT NULL CHECK (char_length(path) BETWEEN 1 AND 4096),
++      parent_id UUID REFERENCES collaboration_resource_catalog(id),
++      incarnation TEXT NOT NULL CHECK (char_length(incarnation) BETWEEN 1 AND 256),
++      revision BIGINT NOT NULL DEFAULT 0 CHECK (revision >= 0),
++      created_at TIMESTAMPTZ NOT NULL,
++      updated_at TIMESTAMPTZ NOT NULL,
++      deleted_at TIMESTAMPTZ
++    )
++  `.execute(trx);
++  await sql`
++    CREATE UNIQUE INDEX IF NOT EXISTS idx_collaboration_resource_catalog_live
++      ON collaboration_resource_catalog(owner_id, COALESCE(project_id, ''), kind, path) WHERE deleted_at IS NULL
++  `.execute(trx);
++  await sql`
++    CREATE INDEX IF NOT EXISTS idx_collaboration_resource_catalog_namespace
++      ON collaboration_resource_catalog(owner_id, project_id, path) WHERE deleted_at IS NULL
++  `.execute(trx);
++  await sql`
++    CREATE TABLE IF NOT EXISTS collaboration_upload_stages (
++      id UUID PRIMARY KEY,
++      scope_id UUID NOT NULL REFERENCES collaboration_scopes(id) ON DELETE CASCADE,
++      actor_id TEXT NOT NULL CHECK (char_length(actor_id) BETWEEN 1 AND 128),
++      catalog_id UUID REFERENCES collaboration_resource_catalog(id),
++      parent_id UUID REFERENCES collaboration_resource_catalog(id),
++      path TEXT NOT NULL CHECK (char_length(path) BETWEEN 1 AND 4096),
++      size BIGINT NOT NULL CHECK (size >= 0),
++      sha256 TEXT NOT NULL CHECK (sha256 ~ '^[a-f0-9]{64}$'),
++      received_bytes BIGINT NOT NULL DEFAULT 0 CHECK (received_bytes >= 0),
++      next_index INTEGER NOT NULL DEFAULT 0 CHECK (next_index >= 0),
++      state TEXT NOT NULL CHECK (state IN ('staging', 'committed', 'cancelled', 'expired')),
++      staging_ref TEXT NOT NULL CHECK (char_length(staging_ref) BETWEEN 1 AND 512),
++      created_at TIMESTAMPTZ NOT NULL,
++      updated_at TIMESTAMPTZ NOT NULL,
++      expires_at TIMESTAMPTZ NOT NULL
++    )
++  `.execute(trx);
++  await sql`
++    CREATE INDEX IF NOT EXISTS idx_collaboration_upload_stages_scope
++      ON collaboration_upload_stages(scope_id, state, expires_at)
++  `.execute(trx);
++  await sql`INSERT INTO collaboration_schema_migrations (version) VALUES (12) ON CONFLICT DO NOTHING`.execute(trx);
++}
+diff --git a/packages/gateway/src/collaboration/resource-routes.ts b/packages/gateway/src/collaboration/resource-routes.ts
+new file mode 100644
+index 000000000..b6bdbb07f
+--- /dev/null
++++ b/packages/gateway/src/collaboration/resource-routes.ts
+@@ -0,0 +1,198 @@
++/**
++ * S12 / T061, T062, T064: files, folders and app instances behind the frozen
++ * direct routes. Project scopes and standalone shares use the same handlers;
++ * the catalog decides what a scope can reach and the authority decides what
++ * the preset allows. Bytes stream straight from the home; no storage URL is
++ * ever issued.
++ */
++import {
++  CollaborationAppActionRequestSchema,
++  CollaborationAppActionResponseSchema,
++  CollaborationAppAssetPathSchema,
++  CollaborationAppInstanceIdSchema,
++  CollaborationAppInstanceSchema,
++  CollaborationAppViewRequestSchema,
++  CollaborationCatalogEntrySchema,
++  CollaborationCatalogIdSchema,
++  CollaborationFileActionRequestSchema,
++  CollaborationFileActionResponseSchema,
++  CollaborationFileListQuerySchema,
++  CollaborationFileListResponseSchema,
++  CollaborationIdSchema,
++} from "@matrix-os/contracts";
++import type { Context, Hono } from "hono";
++import { CollaborationAuthorizationError, type AuthorizedCollaborationContext } from "./authority.js";
++import type { AppInstanceAdapter } from "./app-instance-adapter.js";
++import { authorize, exactQuery, handle, readJson, type CollaborationRouteOptions } from "./route-support.js";
++import { createFileActionExecutor, type CollaborationResourceDriver } from "./resource-actions.js";
++import { CollaborationResourceCatalog, ResourceCatalogError, type CatalogEntryRecord } from "./resource-catalog.js";
++import type { CollaborationUploadStager } from "./upload-stages.js";
++
++export type { CollaborationResourceDriver } from "./resource-actions.js";
++
++export interface CollaborationResourceServices {
++  catalog: CollaborationResourceCatalog;
++  driver: CollaborationResourceDriver;
++  apps?: AppInstanceAdapter;
++  uploads?: CollaborationUploadStager;
++  createEventId?: () => string;
++}
++
++const MAX_STREAM_BYTES = 256 * 1024 * 1024;
++
++function entryProjection(entry: CatalogEntryRecord) {
++  return CollaborationCatalogEntrySchema.parse({
++    id: entry.id,
++    kind: entry.kind,
++    path: entry.path,
++    parentId: entry.parentId,
++    revision: String(entry.revision),
++    incarnation: entry.incarnation,
++    updatedAt: entry.updatedAt,
++  });
++}
++
++function requireResources(options: CollaborationRouteOptions): CollaborationResourceServices {
++  if (!options.resources) throw new CollaborationAuthorizationError("unavailable", "Shared resources are unavailable");
++  return options.resources;
++}
++
++function requireApps(resources: CollaborationResourceServices): AppInstanceAdapter {
++  if (!resources.apps) throw new CollaborationAuthorizationError("unavailable", "Shared apps are unavailable");
++  return resources.apps;
++}
++
++/** The mutation action for the scope kind: projects keep their historical name. */
++function mutationAction(context: Pick<AuthorizedCollaborationContext, "resourceKind">): "mutate_project" | "mutate_resource" {
++  return context.resourceKind === "project" ? "mutate_project" : "mutate_resource";
++}
++
++function streamResponse(c: Context, input: { stream: ReadableStream<Uint8Array>; size: number; contentType?: string }, fileName: string): Response {
++  if (input.size > MAX_STREAM_BYTES) throw new ResourceCatalogError("unavailable");
++  c.header("Content-Type", input.contentType && /^[a-z0-9.+-]+\/[a-z0-9.+-]+$/i.test(input.contentType) ? input.contentType : "application/octet-stream");
++  c.header("Content-Length", String(input.size));
++  c.header("Content-Disposition", `attachment; filename="${encodeURIComponent(fileName)}"`);
++  c.header("X-Content-Type-Options", "nosniff");
++  c.header("Cache-Control", "private, no-store");
++  return c.body(input.stream);
++}
++
++export function registerResourceRoutes(routes: Hono, options: CollaborationRouteOptions): void {
++  routes.get("/api/collaboration/scopes/:scopeId/files", async (c) => handle(c, async () => {
++    const scopeId = CollaborationIdSchema.parse(c.req.param("scopeId"));
++    const resources = requireResources(options);
++    const query = CollaborationFileListQuerySchema.parse(exactQuery(c, ["cursor", "limit", "query"]));
++    const context = await authorize(options, c, new Uint8Array(), "read", scopeId);
++    const page = await resources.catalog.listForScope(context, query);
++    return c.json(CollaborationFileListResponseSchema.parse({
++      entries: page.entries.map(entryProjection),
++      ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}),
++    }));
++  }));
++
++  routes.get("/api/collaboration/scopes/:scopeId/files/:fileId/content", async (c) => handle(c, async () => {
++    const scopeId = CollaborationIdSchema.parse(c.req.param("scopeId"));
++    const fileId = CollaborationCatalogIdSchema.parse(c.req.param("fileId"));
++    const resources = requireResources(options);
++    const context = await authorize(options, c, new Uint8Array(), "read", scopeId);
++    const entry = await resources.catalog.resolveForScope(context, fileId);
++    if (entry.kind !== "file") throw new ResourceCatalogError("not_found");
++    const namespace = await resources.catalog.namespaceForScope(context);
++    const content = await resources.driver.read({ ownerId: namespace.ownerId, projectId: namespace.projectId, path: entry.path });
++    return streamResponse(c, content, entry.path.split("/").at(-1) ?? "file");
++  }));
++
++  routes.post("/api/collaboration/scopes/:scopeId/files/actions", async (c) => handle(c, async () => {
++    const scopeId = CollaborationIdSchema.parse(c.req.param("scopeId"));
++    const resources = requireResources(options);
++    const { value, bytes } = await readJson(c);
++    const action = CollaborationFileActionRequestSchema.parse(value);
++    // Authorize with the scope's mutation action before any lookup; a viewer never learns whether the id exists.
++    const probe = await authorize(options, c, bytes, "read", scopeId);
++    const context = action.type === "upload_cancel"
++      ? probe
++      : await options.authority.authorize({ scopeId, actorId: probe.actorId, action: mutationAction(probe) });
++    if (action.type === "upload_stage" || action.type === "upload_part" || action.type === "upload_commit" || action.type === "upload_cancel") {
++      if (!resources.uploads) throw new CollaborationAuthorizationError("unavailable", "Uploads are unavailable");
++      const result = await resources.uploads.handle(context, action);
++      return c.json(CollaborationFileActionResponseSchema.parse({
++        ...(result.entry ? { entry: entryProjection(result.entry) } : {}),
++        ...(result.upload ? { upload: result.upload } : {}),
++        replayed: result.replayed,
++      }), result.entry && !result.replayed ? 201 : 200);
++    }
++    const executor = createFileActionExecutor({
++      db: resources.catalog.db, catalog: resources.catalog, driver: resources.driver,
++      ...(options.now ? { now: options.now } : {}),
++      ...(resources.createEventId ? { createEventId: resources.createEventId } : {}),
++    });
++    const result = await executor.execute(context, action);
++    await notify(options, scopeId, result.replayed);
++    return c.json(CollaborationFileActionResponseSchema.parse({ entry: entryProjection(result.entry), replayed: result.replayed }),
++      action.type === "create" && !result.replayed ? 201 : 200);
++  }));
++
++  routes.get("/api/collaboration/scopes/:scopeId/apps/:appId", async (c) => handle(c, async () => {
++    const scopeId = CollaborationIdSchema.parse(c.req.param("scopeId"));
++    const appId = CollaborationAppInstanceIdSchema.parse(c.req.param("appId"));
++    const apps = requireApps(requireResources(options));
++    const context = await authorize(options, c, new Uint8Array(), "read", scopeId);
++    const instance = await apps.describe(context, appId);
++    return c.json(CollaborationAppInstanceSchema.parse({
++      appId: instance.appId,
++      ...(instance.catalogId ? { catalogId: instance.catalogId } : {}),
++      revision: String(instance.revision),
++      readiness: instance.readiness,
++      collaborationMode: instance.collaborationMode,
++    }));
++  }));
++
++  routes.post("/api/collaboration/scopes/:scopeId/apps/:appId/view", async (c) => handle(c, async () => {
++    const scopeId = CollaborationIdSchema.parse(c.req.param("scopeId"));
++    const appId = CollaborationAppInstanceIdSchema.parse(c.req.param("appId"));
++    const apps = requireApps(requireResources(options));
++    const { value, bytes } = await readJson(c);
++    const input = CollaborationAppViewRequestSchema.parse(value);
++    const context = await authorize(options, c, bytes, "read", scopeId);
++    return c.json({ result: await apps.query(context, appId, input.action) });
++  }));
++
++  routes.get("/api/collaboration/scopes/:scopeId/apps/:appId/assets/:assetPath{.+}", async (c) => handle(c, async () => {
++    const scopeId = CollaborationIdSchema.parse(c.req.param("scopeId"));
++    const appId = CollaborationAppInstanceIdSchema.parse(c.req.param("appId"));
++    const assetPath = CollaborationAppAssetPathSchema.parse(c.req.param("assetPath"));
++    const resources = requireResources(options);
++    const apps = requireApps(resources);
++    const context = await authorize(options, c, new Uint8Array(), "read", scopeId);
++    const instance = await apps.describe(context, appId);
++    if (instance.readiness !== "ready" || instance.collaborationMode !== "scoped") throw new ResourceCatalogError("unavailable");
++    const asset = await resources.driver.readAppAsset({ ...instance.assetNamespace, appId, assetPath });
++    return streamResponse(c, asset, assetPath.split("/").at(-1) ?? "asset");
++  }));
++
++  routes.post("/api/collaboration/scopes/:scopeId/apps/:appId/actions", async (c) => handle(c, async () => {
++    const scopeId = CollaborationIdSchema.parse(c.req.param("scopeId"));
++    const appId = CollaborationAppInstanceIdSchema.parse(c.req.param("appId"));
++    const apps = requireApps(requireResources(options));
++    const { value, bytes } = await readJson(c);
++    const input = CollaborationAppActionRequestSchema.parse(value);
++    const probe = await authorize(options, c, bytes, "read", scopeId);
++    const context = await options.authority.authorize({ scopeId, actorId: probe.actorId, action: mutationAction(probe) });
++    const result = await apps.mutate(context, appId, {
++      clientRequestId: input.clientRequestId,
++      expectedRevision: Number(input.expectedRevision),
++      action: input.action,
++    });
++    await notify(options, scopeId, result.replayed);
++    return c.json(CollaborationAppActionResponseSchema.parse(result));
++  }));
++}
++
++async function notify(options: CollaborationRouteOptions, scopeId: string, replayed: boolean): Promise<void> {
++  if (replayed || !options.onScopeCommitted) return;
++  try {
++    await options.onScopeCommitted(scopeId);
++  } catch (error: unknown) {
++    console.warn("[collaboration-resources] committed event delivery failed", error instanceof Error ? error.name : "UnknownError");
++  }
++}
+diff --git a/packages/gateway/src/collaboration/upload-stages.ts b/packages/gateway/src/collaboration/upload-stages.ts
+new file mode 100644
+index 000000000..523ab9806
+--- /dev/null
++++ b/packages/gateway/src/collaboration/upload-stages.ts
+@@ -0,0 +1,23 @@
++/**
++ * S12 / T062: staged uploads. Layer 1 freezes the seam the file action route
++ * calls; the stager itself (multipart parts, checksum verification, TTL sweep,
++ * revocation cancel) lands in the transfer layer.
++ */
++import type { CollaborationFileActionRequest, CollaborationUpload } from "@matrix-os/contracts";
++import type { AuthorizedCollaborationContext } from "./authority.js";
++import type { CatalogEntryRecord } from "./resource-catalog.js";
++
++export type CollaborationUploadAction = Extract<
++  CollaborationFileActionRequest,
++  { type: "upload_stage" | "upload_part" | "upload_commit" | "upload_cancel" }
++>;
++
++export interface CollaborationUploadResult {
++  entry?: CatalogEntryRecord;
++  upload?: CollaborationUpload;
++  replayed: boolean;
++}
++
++export interface CollaborationUploadStager {
++  handle(context: AuthorizedCollaborationContext, action: CollaborationUploadAction): Promise<CollaborationUploadResult>;
++}
