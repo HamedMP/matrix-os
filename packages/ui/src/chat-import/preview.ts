@@ -1,5 +1,5 @@
-import { sha256 } from "@noble/hashes/sha256";
-import { bytesToHex } from "@noble/hashes/utils";
+import { sha256 } from "@noble/hashes/sha2.js";
+import { bytesToHex } from "@noble/hashes/utils.js";
 import { decodeCodexJsonl, parseCodexTranscript, type CodexImportMessage } from "@matrix-os/contracts/codex-chat-import";
 
 const MAX_RAW_BYTES = 20 * 1024 ** 3;
