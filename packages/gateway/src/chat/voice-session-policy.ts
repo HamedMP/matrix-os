@@ -12,6 +12,7 @@ export interface ActiveVoiceSessionPolicy {
   sessionId: string;
   memoryMode: "ordinary" | "session_only";
   permissionMode: string;
+  executionPolicy?: NonNullable<CanonicalChatRunPolicy["executionPolicy"]>;
 }
 
 /**
@@ -67,7 +68,13 @@ export function admissionPolicyForTurn(
   requested: { permissionMode: string; runPolicy?: CanonicalChatRunPolicy },
   session: ActiveVoiceSessionPolicy | undefined,
 ): { permissionMode: string; runPolicy?: CanonicalChatRunPolicy } {
-  if (!session) return requested;
+  if (!session) {
+    // Public runPolicy is descriptive, never a grant. Frozen policies on internal
+    // retry/dispatch paths are validated separately against their persisted run.
+    if (!requested.runPolicy?.executionPolicy) return requested;
+    const { executionPolicy: _untrusted, ...runPolicy } = requested.runPolicy;
+    return { permissionMode: requested.permissionMode, runPolicy };
+  }
   const runPolicy: CanonicalChatRunPolicy = {
     ...requested.runPolicy,
     memoryMode: session.memoryMode,
@@ -75,6 +82,9 @@ export function admissionPolicyForTurn(
     source: requested.runPolicy?.source ?? "typed",
     voiceSessionId: session.sessionId,
   };
+  // Clone the frozen server inventory; a caller cannot mutate the owning session.
+  delete runPolicy.executionPolicy;
+  if (session.executionPolicy) runPolicy.executionPolicy = { ...session.executionPolicy, tools: [...session.executionPolicy.tools] };
   // Session-only structurally forbids memory-capable tools.
   if (session.memoryMode === "session_only") delete runPolicy.memoryTools;
   return { permissionMode: session.permissionMode, runPolicy };

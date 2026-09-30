@@ -10,16 +10,25 @@ import {
   AgentModeSchema,
   CanonicalChatSafeErrorSchema,
   CanonicalChatToolOutputTextSchema,
+  CanonicalExecutionPolicySchema,
   type CanonicalChatAgentActivityKind,
+  type CanonicalExecutionPolicy,
   type AgentThreadEvent,
   type AgentThreadSnapshot,
   type CreateAgentThreadRequest,
 } from "@matrix-os/contracts";
 import {
+  CodingAgentCanonicalExecutionSchema,
+  type CodingAgentCanonicalExecution,
+} from "../coding-agents/provider-adapter.js";
+import {
   CodingAgentTurnError,
   type CodingAgentThreadStore,
   type CodingAgentTurnStore,
 } from "../coding-agents/thread-store.js";
+import { canonicalJsonStringify } from "./argument-digest.js";
+import type { ActionQualificationInput } from "./action-policy.js";
+import type { QualifiedActionTool } from "./action-tools.js";
 import type { AiTokenUsage } from "../ai-analytics.js";
 import { projectCodingActivity } from "./coding-activity-projection.js";
 import { CodingChatStateSchema, recoveryState, recoverCodingRun, type CodingChatState } from "./coding-run-recovery.js";
@@ -364,23 +373,134 @@ function eventsForAcceptedRun(snapshot: AgentThreadSnapshot, requestId: string):
   return snapshot.events.items.slice(index);
 }
 
+/**
+ * Server-composed attestation that the constrained Codex path is live: the
+ * event bridge carries a bound grant into `invokeCodexCanonicalAction`, the
+ * control client returns results, and the session launch chain transports
+ * `canonicalExecution`. Composition must only pass this when every hop is
+ * wired — the adapter treats its presence as proof and fails closed on any
+ * missing piece at dispatch time.
+ */
+export interface CanonicalCodingExecutionCapability {
+  /** Frozen server tool descriptors the isolated runner may advertise. */
+  inventory: readonly QualifiedActionTool[];
+  /** Owner CLI `auth.json` bound into the isolated home when provisioned. */
+  authFile?: string;
+  /** Live check that the bridge dispatch and authority are still wired. */
+  isDispatchLive(): boolean;
+}
+
+const CANONICAL_CODEX_POLICY_REVISION = "codex_canonical_v1";
+const CANONICAL_CODEX_PERMISSION_MODES = new Set(["full_access", "auto", "auto_accept_edits", "supervised"]);
+const CANONICAL_WORKSPACE_SCOPE = /^apps(?::[a-z0-9][a-z0-9-]{0,63})?$/;
+
+/**
+ * The single policy shape the constrained Codex runner can enforce for a
+ * qualification request. Admission compares the frozen run policy byte-for-byte
+ * against this — the voice/session decision must carry it verbatim, so the
+ * derivation is deterministic per (driver, permissionMode, workspaceScope).
+ */
+function qualifiedCanonicalCodexPolicy(
+  capability: CanonicalCodingExecutionCapability,
+  permissionMode: string,
+  workspaceScope: string,
+): CanonicalExecutionPolicy | undefined {
+  if (!capability.isDispatchLive()) return undefined;
+  if (!CANONICAL_CODEX_PERMISSION_MODES.has(permissionMode)) return undefined;
+  if (!CANONICAL_WORKSPACE_SCOPE.test(workspaceScope)) return undefined;
+  return CanonicalExecutionPolicySchema.parse({
+    revision: CANONICAL_CODEX_POLICY_REVISION,
+    actionMode: "canonical_actions",
+    workspaceScope,
+    tools: capability.inventory.map((tool) => tool.toolId),
+    delegation: false,
+  });
+}
+
+const RUNNER_SCHEMA_DIALECT = new Set([
+  "type", "description", "enum", "properties", "required", "additionalProperties",
+  "minLength", "maxLength", "minimum", "maximum", "items", "minItems", "maxItems", "anyOf",
+]);
+
+/**
+ * The constrained runner advertises a deliberately small JSON-schema dialect:
+ * no regex (`pattern`), no `$schema`/`format` metadata. Dropping those keys
+ * only widens the dispatch pre-filter — the authority normalizer still parses
+ * the exact Zod schema before any effect, so nothing loosens server-side.
+ */
+function runnerSafeJsonSchema(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(runnerSafeJsonSchema);
+  if (!value || typeof value !== "object") return value;
+  const safe: Record<string, unknown> = {};
+  for (const [key, child] of Object.entries(value)) {
+    if (!RUNNER_SCHEMA_DIALECT.has(key)) continue;
+    safe[key] = runnerSafeJsonSchema(child);
+  }
+  // The runner dialect requires every string to carry a bounded maxLength;
+  // regex-stripped strings get the transport bound, normalization still wins.
+  if (safe.type === "string" && !Number.isSafeInteger(safe.maxLength)) {
+    safe.maxLength = 65_536;
+  }
+  return safe;
+}
+
+function canonicalGrantDescriptors(
+  capability: CanonicalCodingExecutionCapability,
+): CodingAgentCanonicalExecution["inventory"] {
+  const toolIdSchema = CodingAgentCanonicalExecutionSchema.shape.inventory.element.shape.toolId;
+  return capability.inventory.map(({ toolId, schemaRevision, description, effect, inputSchema }) => (
+    { toolId: toolIdSchema.parse(toolId), schemaRevision, description, effect, inputSchema: runnerSafeJsonSchema(inputSchema) }
+  ));
+}
+
 export function createCanonicalCodingChatProviderAdapter(options: {
   providerId: "codex" | "claude" | "opencode" | "pi";
   threads: CodingThreads;
   toolOutputKey?: Buffer;
   nativeInputProvider?: Pick<CodingAgentProviderAdapter, "deferInput">;
+  /**
+   * Present only when composition wired the isolated Codex app-server path
+   * end-to-end. Other drivers never receive it: they cannot transport the
+   * grant, so any canonical run policy on them fails closed.
+   */
+  canonical?: CanonicalCodingExecutionCapability;
 }): CanonicalChatProviderAdapter<CodingState> {
   const kind = driverKind(options.providerId);
+  const capability = kind === "codex" ? options.canonical : undefined;
   const activeSteerRuns = new Map<string, {
     ownerId: string;
     chatId: string;
     threadId: string;
     legacyTurnId?: string;
+    canonical?: boolean;
   }>();
+
+  /**
+   * A frozen run policy is only dispatchable when it is byte-for-byte the
+   * policy this adapter can currently enforce. Anything else fails closed —
+   * a sandbox alone never transports a canonical grant.
+   */
+  function canonicalGrantFor(
+    input: CanonicalProviderRunInput<CodingState>,
+  ): CodingAgentCanonicalExecution | undefined {
+    const frozen = input.runPolicy?.executionPolicy;
+    if (!frozen) return undefined;
+    if (!capability) throw new Error("Provider requires qualified canonical execution");
+    const qualified = qualifiedCanonicalCodexPolicy(capability, input.permissionMode, frozen.workspaceScope);
+    if (!qualified || canonicalJsonStringify(qualified) !== canonicalJsonStringify(frozen)) {
+      throw new Error("Provider requires qualified canonical execution");
+    }
+    return CodingAgentCanonicalExecutionSchema.parse({
+      executionPolicy: frozen,
+      inventory: canonicalGrantDescriptors(capability),
+      identity: { owner: input.owner, chatId: input.chatId, runId: input.runId },
+      ...(capability.authFile ? { authFile: capability.authFile } : {}),
+    });
+  }
 
   function registerSteerRun(
     runId: string,
-    value: { ownerId: string; chatId: string; threadId: string; legacyTurnId?: string },
+    value: { ownerId: string; chatId: string; threadId: string; legacyTurnId?: string; canonical?: boolean },
   ): () => void {
     if (!activeSteerRuns.has(runId) && activeSteerRuns.size >= MAX_ACTIVE_STEER_RUNS) {
       throw new Error("Canonical coding steering registry exceeded");
@@ -393,6 +513,12 @@ export function createCanonicalCodingChatProviderAdapter(options: {
 
   function validate(inputValue: CanonicalProviderRunInput<CodingState>) {
     const input = parseCanonicalProviderRunInput(inputValue);
+    // Drivers that cannot transport the server-only canonical grant to a
+    // constrained runner never execute a frozen policy. A sandbox is not a
+    // tool allowlist.
+    if (input.runPolicy?.executionPolicy && !capability) {
+      throw new Error("Provider requires qualified canonical execution");
+    }
     const mode = AgentModeSchema.safeParse(input.interactionMode);
     if (!mode.success) throw new Error("Unsupported canonical coding Provider mode");
     return { input, mode: mode.data };
@@ -412,6 +538,10 @@ export function createCanonicalCodingChatProviderAdapter(options: {
   const adapter: CanonicalChatProviderAdapter<CodingState> = {
     driverKind: kind,
     stateSchemaVersion: 1,
+    ...(capability ? {
+      qualifyPolicy: async (input: ActionQualificationInput) =>
+        qualifiedCanonicalCodexPolicy(capability, input.permissionMode, input.workspaceScope),
+    } : {}),
     parseState: (value) => CodingChatStateSchema.parse(value),
     serializeState: (value) => CodingChatStateSchema.parse(value),
     ...(options.providerId === "codex" ? {
@@ -461,6 +591,9 @@ export function createCanonicalCodingChatProviderAdapter(options: {
       });
       try {
         const requestId = legacyRequestId(input.continuationId ?? input.runId);
+        // The grant leaves this process only through the internal createThread
+        // argument — never inside the client-shaped thread request.
+        const canonicalExecution = canonicalGrantFor(input);
         const created = await options.threads.createThread(principal(input.owner.ownerId), {
           providerId: options.providerId,
           prompt: input.prompt,
@@ -472,17 +605,18 @@ export function createCanonicalCodingChatProviderAdapter(options: {
           ...permissions(input.permissionMode, options.providerId),
           attachments: attachments(input),
           clientRequestId: requestId,
-        });
+        }, canonicalExecution ? { canonicalExecution } : undefined);
         targetThreadId = created.snapshot.thread.id;
         releaseSteerRun = registerSteerRun(input.runId, {
           ownerId: input.owner.ownerId,
           chatId: input.chatId,
           threadId: targetThreadId,
+          ...(canonicalExecution ? { canonical: true } : {}),
         });
         for (const published of buffered) {
           if (published.threadId === targetThreadId) inbox.push(published.events, published.tokenUsage);
         }
-        yield { type: "state.updated", state: recoveryState(targetThreadId, input.runId, created.snapshot.events.items) };
+        yield { type: "state.updated", state: recoveryState(targetThreadId, input.runId, created.snapshot.events.items, canonicalExecution !== undefined) };
         inbox.reconcileWith(async () => {
           const recovered = await options.threads.getThread(principal(input.owner.ownerId), targetThreadId!, inbox.lastEventId);
           return recovered.events.items;
@@ -504,6 +638,10 @@ export function createCanonicalCodingChatProviderAdapter(options: {
     async *resume(inputValue) {
       const { input } = validate(inputValue);
       const state = CodingChatStateSchema.parse(input.resumeState);
+      // A canonical thread is one immutable isolated turn. Native continuation
+      // is structurally absent, so resume must fail closed rather than attach
+      // a turn the runner is forbidden to accept.
+      if (state.canonical) throw new Error("Provider requires qualified canonical execution");
       const targetThreadId = state.conversationId;
       const inbox = new ThreadEventInbox(input.signal);
       let releaseSteerRun: (() => void) | undefined;
@@ -563,7 +701,7 @@ export function createCanonicalCodingChatProviderAdapter(options: {
     },
     async steer(input) {
       const active = activeSteerRuns.get(input.runId);
-      if (!active || active.ownerId !== input.owner.ownerId) {
+      if (!active || active.ownerId !== input.owner.ownerId || active.canonical) {
         throw new Error("Canonical coding Provider steering Run unavailable");
       }
       await options.threads.steerTurn(
@@ -588,7 +726,7 @@ export function createCanonicalCodingChatProviderAdapter(options: {
     },
     ...(options.nativeInputProvider?.deferInput ? { deferInput: async (input: { owner: CanonicalProviderRunInput["owner"]; chatId: string; runId: string; requestId: string }) => {
       const active = activeSteerRuns.get(input.runId);
-      if (!active || active.ownerId !== input.owner.ownerId || active.chatId !== input.chatId) throw new Error("Input Run unavailable");
+      if (!active || active.ownerId !== input.owner.ownerId || active.chatId !== input.chatId || active.canonical) throw new Error("Input Run unavailable");
       const snapshot = await options.threads.getThread(principal(input.owner.ownerId), active.threadId);
       const requested = snapshot.events.items.some(event => event.type === "user_input.requested" && event.request.requestId === input.requestId);
       const resolved = snapshot.events.items.some(event => event.type === "user_input.answered" && event.requestId === input.requestId);
@@ -597,7 +735,7 @@ export function createCanonicalCodingChatProviderAdapter(options: {
     } } : {}),
     async submitInput(input) {
       const active = activeSteerRuns.get(input.runId);
-      if (!active || active.ownerId !== input.owner.ownerId || active.chatId !== input.chatId) {
+      if (!active || active.ownerId !== input.owner.ownerId || active.chatId !== input.chatId || active.canonical) {
         throw new ChatInputNotDeliveredError();
       }
       const current = await options.threads.getThread(principal(input.owner.ownerId), active.threadId);
@@ -616,6 +754,9 @@ export function createCanonicalCodingChatProviderAdapter(options: {
     async submitApproval(input) {
       if (!input.state) throw new Error("Canonical coding Provider approval state unavailable");
       const state = CodingChatStateSchema.parse(input.state);
+      // Canonical runs only carry authority-bound `action_` approvals handled
+      // by the orchestrator; the native provider approval path is absent.
+      if (state.canonical) throw new Error("Canonical coding Provider approval request unavailable");
       const current = await options.threads.getThread(
         principal(input.owner.ownerId),
         state.conversationId,

@@ -139,6 +139,9 @@ export interface CanonicalProviderRunInput<State = unknown> {
    * session-only/disposable policies structurally — never as a prompt hint.
    */
   runPolicy?: CanonicalChatRunPolicy;
+  /** Server-injected canonical authority. Never serialized in provider state or accepted from clients. */
+  actions?: import("./action-authority.js").CanonicalActionAuthority;
+  onActionEvent?: (event: CanonicalProviderRunEvent) => Promise<void>;
   executionRoot?: string;
   projectSlug?: string;
   worktreeId?: string;
@@ -155,6 +158,8 @@ export interface CanonicalProviderRunInput<State = unknown> {
 export interface CanonicalChatProviderAdapter<State = unknown> {
   readonly driverKind: CanonicalProviderDriverKind;
   readonly stateSchemaVersion: number;
+  /** Server-owned structural tool/config isolation attestation; native arbitrary commands never qualify. */
+  qualifyPolicy?(input: import("./action-policy.js").ActionQualificationInput): Promise<import("@matrix-os/contracts").CanonicalExecutionPolicy | undefined>;
   /** Native execution survives a gateway restart; detach only after identity is durable. */
   readonly detachOnShutdown?: boolean;
   parseState(value: unknown): State;

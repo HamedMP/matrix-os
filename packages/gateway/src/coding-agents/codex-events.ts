@@ -17,6 +17,7 @@ import {
 } from "@matrix-os/contracts";
 import { safePublishedText } from "../chat/safe-activity-projection.js";
 import { AiTokenUsageSchema, type AiTokenUsage } from "../ai-analytics.js";
+import { CodingAgentCanonicalActionRequestSchema, type CodingAgentCanonicalActionRequest } from "./provider-adapter.js";
 
 const MAX_CODEX_JSON_LINE_BYTES = 64 * 1024;
 const MAX_ASSISTANT_DELTA_CHARS = 4_000;
@@ -163,7 +164,7 @@ const MatrixCodexRecordSchema = z.discriminatedUnion("type", [
     type: z.literal("matrix.codex.tool.started"),
     toolCallId: CodexItemIdSchema,
     displayName: SafeDisplayStringSchema,
-    kind: z.enum(["command", "file_change", "tool", "agent", "search", "plan", "reasoning", "phase", "image_generation"]),
+    kind: z.enum(["command", "file_change", "tool", "dynamic_tool", "agent", "search", "plan", "reasoning", "phase", "image_generation"]),
     // Display metadata is optional evidence. A rejected field must not erase
     // the tool identity and leave an orphan completion in Chat.
     preview: AgentToolPreviewSchema.optional().catch(undefined),
@@ -192,6 +193,8 @@ export interface CodexEventContext {
 
 export interface CodexEventParseResult {
   events: AgentThreadEvent[];
+  /** Live qualified authority channel only. Journal recovery must never invoke this request. */
+  canonicalActionRequest?: CodingAgentCanonicalActionRequest;
   providerThreadId?: string;
   outcome?: "completed" | "failed" | "aborted";
   tokenUsage?: AiTokenUsage;
@@ -475,6 +478,8 @@ export function parseCodexExecJsonLine(
     }
     return { events: [] };
   }
+  const canonicalRequest = CodingAgentCanonicalActionRequestSchema.safeParse(raw);
+  if (canonicalRequest.success) return { events: [], canonicalActionRequest: canonicalRequest.data };
   const appServerRecord = MatrixCodexRecordSchema.safeParse(raw);
   if (appServerRecord.success) {
     return { events: appServerRecordEvents(context, appServerRecord.data) };

@@ -1,6 +1,7 @@
 import { type ChatAgentContext } from "./agent-context.js";
 import { chatRequestHash, truthfulCancellationGranularity } from "./argument-digest.js";
 import { randomUUID } from "node:crypto";
+import { revalidateActionPolicy } from "./action-policy.js";
 import {
   CanonicalChatQueueAdmissionResponseSchema,
   CanonicalChatSafeErrorSchema,
@@ -13,6 +14,7 @@ import type { RequestPrincipal } from "../request-principal.js";
 import type { ChatExecutionRootResolver } from "./execution-root.js";
 import {
   validateChatProviderSelection,
+  voiceProviderSelectionRequirements,
   type ChatProviderCatalogService,
 } from "./provider-catalog.js";
 import type { CanonicalChatProviderRegistry } from "./provider-adapter.js";
@@ -115,7 +117,8 @@ export async function enqueueCanonicalQueuedTurn(options: {
     requirements: {
       ...chatProviderRequirements({ ...effective, parts: prepared ? input.parts.filter((part) =>
         part.type !== "resource_reference" || !["agent", "chat"].includes(part.resource.kind)) : input.parts }),
-      ...(admissionPolicy.runPolicy?.source === "voice" ? { voiceConversationOnly: true } : {}),
+      ...(admissionPolicy.runPolicy?.source === "voice" || admissionPolicy.runPolicy?.voiceSessionId ? voiceProviderSelectionRequirements() : {}),
+      ...(admissionPolicy.runPolicy?.executionPolicy ? { qualifiedPolicy: admissionPolicy.runPolicy.executionPolicy } : {}),
     },
   });
   if (!validated.ok) {
@@ -130,6 +133,12 @@ export async function enqueueCanonicalQueuedTurn(options: {
       safeError("provider_unavailable", "The selected Provider cannot run yet.", false, ["select_provider"]),
       503,
     );
+  }
+  try {
+    await revalidateActionPolicy(adapter, { driverKind: validated.instance.driverKind, selection: validated.selection, permissionMode: admissionPolicy.permissionMode }, admissionPolicy.runPolicy);
+  } catch (error: unknown) {
+    console.warn("[chat/queue] action policy qualification failed", error instanceof Error ? error.name : "UnknownError");
+    throw new CanonicalQueueAdmissionError(safeError("capability_mismatch", "The selected Provider cannot enforce this execution policy."), 400);
   }
   const rootRef = input.executionRoot
     ?? (record.projectId ? { kind: "project" as const, projectId: record.projectId } : undefined);

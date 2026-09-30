@@ -5,7 +5,7 @@
  * chat_queued_turns for spoken and typed turns alike — never bypassable by a
  * request-supplied policy.
  */
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { KyselyPGlite } from "kysely-pglite";
 import {
   CanonicalChatRunPolicySchema,
@@ -29,8 +29,9 @@ const selection = { instanceId: "codex_default", model: "gpt-5.6-sol" };
 
 const liveSession = {
   sessionId: "vsession_live",
-  memoryMode: "session_only" as const,
+  memoryMode: "ordinary" as const,
   permissionMode: "supervised",
+  executionPolicy: { revision: "actions_v1", actionMode: "safe_reads" as const, workspaceScope: "apps", tools: ["matrix_list_apps"], delegation: false },
 };
 
 function catalog(): CanonicalProviderCatalog {
@@ -79,6 +80,14 @@ function catalog(): CanonicalProviderCatalog {
   });
 }
 
+function toolCapableCatalog(): CanonicalProviderCatalog {
+  const value = catalog();
+  value.drivers[0]!.capabilityClass = "coding_agent";
+  value.instances[0]!.models[0]!.capabilities = ["tools"];
+  value.instances[0]!.models[0]!.supportsToolUse = true;
+  return value;
+}
+
 function completing(sessionId: string): CanonicalChatProviderAdapter["start"] {
   return async function* () {
     yield { type: "state.updated" as const, state: { sessionId } };
@@ -101,6 +110,7 @@ function adapter(start: CanonicalChatProviderAdapter["start"]): CanonicalChatPro
   return {
     driverKind: "codex",
     stateSchemaVersion: 1,
+    qualifyPolicy: async () => liveSession.executionPolicy,
     parseState: (value) => value,
     serializeState: (value) => value,
     start,
@@ -120,6 +130,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  vi.unstubAllEnvs();
   await repository.kysely.destroy();
 });
 
@@ -152,20 +163,16 @@ async function waitForActive(runId: string) {
 
 describe("live voice session policy at admission", () => {
   it("rejects a voice-source run when the selected harness exposes tool capability", async () => {
-    const unsafeCatalog = catalog();
-    unsafeCatalog.drivers[0]!.capabilityClass = "coding_agent";
-    unsafeCatalog.instances[0]!.models[0]!.capabilities = ["tools"];
-    unsafeCatalog.instances[0]!.models[0]!.supportsToolUse = true;
     const orchestrator = new CanonicalChatOrchestrator({
       repository,
-      catalog: { getCatalog: async () => unsafeCatalog },
+      catalog: { getCatalog: async () => toolCapableCatalog() },
       adapters: new CanonicalChatProviderRegistry([adapter(completing("must_not_start"))]),
     });
     try {
       await expect(orchestrator.admitTurn(principal, owner, "chat_voice", turnRequest({
         runPolicy: {
-          memoryMode: "session_only",
-          nativeCheckpointPolicy: "disposable",
+          memoryMode: "ordinary",
+          nativeCheckpointPolicy: "reusable",
           source: "voice",
           voiceSessionId: "vsession_live",
         },
@@ -173,6 +180,53 @@ describe("live voice session policy at admission", () => {
       const runs = await repository.kysely.selectFrom("chat_runs").select("id").execute();
       expect(runs).toHaveLength(0);
     } finally {
+      await orchestrator.close();
+    }
+  });
+
+  it("rejects simulator voice flags but admits/retries server-qualified policies", async () => {
+    vi.stubEnv("MATRIX_VOICE_SIMULATOR", "1");
+    let attempt = 0;
+    const orchestrator = new CanonicalChatOrchestrator({
+      repository, catalog: { getCatalog: async () => toolCapableCatalog() },
+      adapters: new CanonicalChatProviderRegistry([adapter(async function* () {
+        attempt += 1;
+        yield { type: "run.completed", outcome: attempt === 1 ? "failed" : "completed" };
+      })]),
+    });
+    try {
+      const request = turnRequest({ runPolicy: { memoryMode: "ordinary", nativeCheckpointPolicy: "reusable", source: "voice" } });
+      await expect(orchestrator.admitTurn(principal, owner, "chat_voice", request)).rejects.toMatchObject({ status: 400 });
+      const admitted = await orchestrator.admitTurn(principal, owner, "chat_voice", request, { sessionPolicy: liveSession });
+      await orchestrator.drain();
+      const failed = await repository.get(owner, "chat_voice");
+      const retried = await orchestrator.retryTurn(principal, owner, "chat_voice", admitted.turn.id, { clientRequestId: "req_session_retry", baseRevision: failed!.chat.revision });
+      expect(retried.run.runPolicy?.executionPolicy).toEqual(liveSession.executionPolicy);
+      await orchestrator.drain(); expect(attempt).toBe(2);
+    } finally { await orchestrator.close(); }
+  });
+
+  it("rejects an unqualified queued voice turn even in simulator mode", async () => {
+    vi.stubEnv("MATRIX_VOICE_SIMULATOR", "1");
+    const { start, release } = gated();
+    const orchestrator = new CanonicalChatOrchestrator({
+      repository,
+      catalog: { getCatalog: async () => toolCapableCatalog() },
+      adapters: new CanonicalChatProviderRegistry([adapter(start)]),
+    });
+    try {
+      const active = await orchestrator.admitTurn(principal, owner, "chat_voice", turnRequest({
+        clientRequestId: "req_active_for_simulator_queue",
+      }));
+      await waitForActive(active.run.id);
+      await expect(orchestrator.enqueueQueuedTurn(principal, owner, "chat_voice", turnRequest({
+        clientRequestId: "req_simulator_voice_queue", baseRevision: await currentRevision(),
+        runPolicy: { memoryMode: "ordinary", nativeCheckpointPolicy: "reusable", source: "voice", voiceSessionId: "vsession_live" },
+      }))).rejects.toMatchObject({ status: 400 });
+      expect(await repository.kysely.selectFrom("chat_queued_turns").select("id").execute()).toHaveLength(0);
+    } finally {
+      release();
+      await orchestrator.drain();
       await orchestrator.close();
     }
   });
@@ -193,8 +247,8 @@ describe("live voice session policy at admission", () => {
       expect(admitted.admission).toBe("accepted");
       expect(admitted.run.permissionMode).toBe("supervised");
       expect(admitted.run.runPolicy).toMatchObject({
-        memoryMode: "session_only",
-        nativeCheckpointPolicy: "disposable",
+        memoryMode: "ordinary",
+        nativeCheckpointPolicy: "reusable",
         source: "typed",
         voiceSessionId: "vsession_live",
       });
@@ -202,7 +256,7 @@ describe("live voice session policy at admission", () => {
         .where("id", "=", admitted.run.id).executeTakeFirstOrThrow();
       expect(stored.permission_mode).toBe("supervised");
       expect(CanonicalChatRunPolicySchema.parse(stored.run_policy)).toMatchObject({
-        memoryMode: "session_only",
+        memoryMode: "ordinary",
         voiceSessionId: "vsession_live",
       });
     } finally {
@@ -220,14 +274,14 @@ describe("live voice session policy at admission", () => {
       const admitted = await orchestrator.admitTurn(principal, owner, "chat_voice", turnRequest({
         clientRequestId: "req_spoken_hint",
         runPolicy: {
-          memoryMode: "session_only",
-          nativeCheckpointPolicy: "disposable",
+          memoryMode: "ordinary",
+          nativeCheckpointPolicy: "reusable",
           source: "voice",
           voiceSessionId: "vsession_live",
         },
       }), { sessionPolicy: liveSession });
       expect(admitted.run.runPolicy).toMatchObject({
-        memoryMode: "session_only",
+        memoryMode: "ordinary",
         source: "voice", // caller channel preserved
         voiceSessionId: "vsession_live",
       });
@@ -261,8 +315,8 @@ describe("live voice session policy at admission", () => {
         .where("id", "=", queued.queuedTurn.id).executeTakeFirstOrThrow();
       expect(queuedRow.permission_mode).toBe("supervised");
       expect(CanonicalChatRunPolicySchema.parse(queuedRow.run_policy)).toMatchObject({
-        memoryMode: "session_only",
-        nativeCheckpointPolicy: "disposable",
+        memoryMode: "ordinary",
+        nativeCheckpointPolicy: "reusable",
         voiceSessionId: "vsession_live",
       });
       release();
@@ -278,7 +332,7 @@ describe("live voice session policy at admission", () => {
         .executeTakeFirstOrThrow();
       // The claimed run inherits the queued policy verbatim.
       expect(CanonicalChatRunPolicySchema.parse(claimedRun.run_policy)).toMatchObject({
-        memoryMode: "session_only",
+        memoryMode: "ordinary",
         voiceSessionId: "vsession_live",
       });
       expect(claimedRun.permission_mode).toBe("supervised");
@@ -286,6 +340,32 @@ describe("live voice session policy at admission", () => {
       release();
       await orchestrator.close();
     }
+  });
+
+  it("revalidates frozen inventory on typed queue claim, retry and both steering paths", async () => {
+    let release!: () => void; const gate = new Promise<void>((resolve) => { release = resolve; });
+    let starts = 0;
+    const loaded = adapter(async function* () { starts++; await gate; yield { type: "run.completed", outcome: "failed" }; });
+    loaded.steer = vi.fn(async () => undefined);
+    let qualified = liveSession.executionPolicy;
+    const qualify = vi.fn(async () => qualified);
+    loaded.qualifyPolicy = qualify;
+    const orchestrator = new CanonicalChatOrchestrator({ repository, catalog: { getCatalog: async () => toolCapableCatalog() }, adapters: new CanonicalChatProviderRegistry([loaded]), voiceSessionPolicy: { policyForChat: () => liveSession } });
+    try {
+      const active = await orchestrator.admitTurn(principal, owner, "chat_voice", turnRequest({ clientRequestId: "req_policy_active" }));
+      await waitForActive(active.run.id);
+      const queued = await orchestrator.enqueueQueuedTurn(principal, owner, "chat_voice", turnRequest({ clientRequestId: "req_policy_queue", baseRevision: await currentRevision() }));
+      qualified = { ...liveSession.executionPolicy, revision: "actions_v2" };
+      await expect(orchestrator.steerRun(owner, "chat_voice", active.run.id, { clientRequestId: "req_policy_steer", expectedTurnId: active.turn.id, parts: [{ type: "text", text: "escape" }] })).rejects.toThrow();
+      await expect(orchestrator.steerQueuedTurn(owner, "chat_voice", active.run.id, queued.queuedTurn.id, { clientRequestId: "req_policy_queue_steer", expectedTurnId: active.turn.id, baseRevision: await currentRevision() })).rejects.toThrow();
+      expect(loaded.steer).not.toHaveBeenCalled();
+      release(); await orchestrator.drain();
+      await expect.poll(async () => (await repository.kysely.selectFrom("chat_queued_turns").select("status").where("id", "=", queued.queuedTurn.id).executeTakeFirst())?.status, { timeout: 5_000 }).toBe("claimed");
+      await orchestrator.drain(); expect(starts).toBe(1);
+      const qualificationsBeforeRetry = qualify.mock.calls.length;
+      await expect(orchestrator.retryTurn(principal, owner, "chat_voice", active.turn.id, { clientRequestId: "req_policy_retry", baseRevision: await currentRevision() })).rejects.toThrow();
+      expect(qualify).toHaveBeenCalledTimes(qualificationsBeforeRetry + 1);
+    } finally { release(); await orchestrator.close(); }
   });
 
   it("does not stamp session policy after the provider is cleared", async () => {
@@ -352,7 +432,7 @@ describe("admissionPolicyForTurn", () => {
         voiceSessionId: "vsession_stale",
         memoryTools: ["memory_profile"],
       },
-    }, liveSession);
+    }, { ...liveSession, memoryMode: "session_only" });
     expect(result.permissionMode).toBe("supervised");
     expect(result.runPolicy).toMatchObject({
       memoryMode: "session_only",

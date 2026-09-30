@@ -735,6 +735,48 @@ export async function bootstrapChatDatabase<Database extends ChatDatabase>(
       PRIMARY KEY (chat_id, response_id)
     )
   `.execute(db);
+  // Canonical action effects and standalone Aoede bindings share Chat's
+  // lifecycle. They are therefore bootstrapped by this one schema authority,
+  // before any route or runtime can observe a partially initialized database.
+  await sql`
+    CREATE TABLE IF NOT EXISTS chat_action_operations (
+      id VARCHAR(128) PRIMARY KEY,
+      chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+      run_id TEXT NOT NULL REFERENCES chat_runs(id) ON DELETE CASCADE,
+      owner_type TEXT NOT NULL,
+      owner_id TEXT NOT NULL,
+      state TEXT NOT NULL,
+      revision INTEGER NOT NULL,
+      operation JSONB NOT NULL,
+      decision_request_id TEXT,
+      decision TEXT
+    )
+  `.execute(db);
+  await sql`
+    CREATE INDEX IF NOT EXISTS chat_actions_run_index
+    ON chat_action_operations(chat_id, run_id)
+  `.execute(db);
+  await sql`
+    CREATE TABLE IF NOT EXISTS aoede_bindings (
+      owner_type TEXT NOT NULL CHECK (owner_type IN ('personal', 'organization')),
+      owner_id TEXT NOT NULL,
+      runtime_scope TEXT NOT NULL,
+      project_scope TEXT NOT NULL,
+      chat_id TEXT REFERENCES chats(id) ON DELETE SET NULL,
+      PRIMARY KEY (owner_type, owner_id, runtime_scope, project_scope)
+    )
+  `.execute(db);
+  await sql`
+    CREATE TABLE IF NOT EXISTS aoede_bootstrap_requests (
+      owner_type TEXT NOT NULL CHECK (owner_type IN ('personal', 'organization')),
+      owner_id TEXT NOT NULL,
+      runtime_scope TEXT NOT NULL,
+      request_id TEXT NOT NULL,
+      semantic_hash TEXT NOT NULL,
+      created_chat_id TEXT NOT NULL,
+      PRIMARY KEY (owner_type, owner_id, runtime_scope, request_id)
+    )
+  `.execute(db);
 
   await bootstrapChatMetadata(db);
   await bootstrapChatAttribution(db);

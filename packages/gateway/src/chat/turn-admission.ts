@@ -1,6 +1,7 @@
 import { type ChatAgentContext, chatContextRequestHash } from "./agent-context.js";
 import { chatRequestHash, truthfulCancellationGranularity } from "./argument-digest.js";
 import { randomUUID } from "node:crypto";
+import { revalidateActionPolicy } from "./action-policy.js";
 import {
   CanonicalCreateChatTurnRequestSchema, CanonicalChatMessageSchema, CanonicalChatTurnSchema,
   CanonicalChatRunSchema, CanonicalChatTurnAdmissionResponseSchema,
@@ -13,7 +14,11 @@ import type { ChatOwner } from "./records.js";
 import type { ChatRepository } from "./repository.js";
 import { ChatBusyError, ChatNotFoundError } from "./errors.js";
 import { dispatchAdmissionKey } from "./dispatch-ownership.js";
-import { validateChatProviderSelection, type ChatProviderCatalogService } from "./provider-catalog.js";
+import {
+  validateChatProviderSelection,
+  voiceProviderSelectionRequirements,
+  type ChatProviderCatalogService,
+} from "./provider-catalog.js";
 import type { CanonicalChatProviderRegistry, CanonicalChatProviderAdapter } from "./provider-adapter.js";
 import type { ChatExecutionRootResolver, ResolvedChatExecutionRoot } from "./execution-root.js";
 import { CanonicalChatOrchestrationError, mapRepositoryError, safeError, requirementsFor } from "./orchestration-input.js";
@@ -122,7 +127,8 @@ export async function admitCanonicalTurn(
       ...(!prepared?.context?.agent && record.providerBinding ? { boundInstanceId: record.providerBinding.instanceId } : {}),
       requirements: {
         ...requirements,
-        ...(admissionPolicy.runPolicy?.source === "voice" ? { voiceConversationOnly: true } : {}),
+        ...(admissionPolicy.runPolicy?.source === "voice" || admissionPolicy.runPolicy?.voiceSessionId ? voiceProviderSelectionRequirements() : {}),
+        ...(admissionPolicy.runPolicy?.executionPolicy ? { qualifiedPolicy: admissionPolicy.runPolicy.executionPolicy } : {}),
       },
     });
     if (!validated.ok) {
@@ -134,6 +140,12 @@ export async function admitCanonicalTurn(
         safeError("provider_unavailable", "The selected Provider cannot run yet.", false, ["select_provider"]),
         503,
       );
+    }
+    try {
+      await revalidateActionPolicy(adapter, { driverKind: validated.instance.driverKind, selection: validated.selection, permissionMode: admissionPolicy.permissionMode }, admissionPolicy.runPolicy);
+    } catch (error: unknown) {
+      console.warn("[chat] action policy qualification failed", error instanceof Error ? error.name : "UnknownError");
+      throw new CanonicalChatOrchestrationError(safeError("capability_mismatch", "The selected Provider cannot enforce this execution policy."), 400);
     }
     const rootRef = input.executionRoot
       ?? (record.projectId ? { kind: "project" as const, projectId: record.projectId } : undefined);

@@ -43,8 +43,11 @@ import type {
   ChatExecutionRootResolver,
   ResolvedChatExecutionRoot,
 } from "./execution-root.js";
+import { revalidateActionPolicy, revalidateFrozenRunPolicy, revalidateQueuedSteerPolicy } from "./action-policy.js";
+import { CanonicalActionError } from "./action-repository.js";
 import {
   validateChatProviderSelection,
+  voiceProviderSelectionRequirements,
   type ChatProviderCatalogService,
 } from "./provider-catalog.js";
 import {
@@ -171,6 +174,7 @@ export class CanonicalChatOrchestrator {
   private readonly orderedControls = createOrderedRunControls();
 
   constructor(private readonly options: {
+    actions?: import("./action-authority.js").CanonicalActionAuthority;
     repository: Pick<ChatRepository,
       | "get"
       | "admitTurn"
@@ -394,10 +398,8 @@ export class CanonicalChatOrchestrator {
         503,
       );
     }
-    const retryPolicy = admissionPolicyForTurn({
-      permissionMode: context.latestRun.permissionMode,
-      ...(context.latestRun.runPolicy ? { runPolicy: context.latestRun.runPolicy } : {}),
-    }, sessionPolicy);
+    const persistedPolicy = { permissionMode: context.latestRun.permissionMode, ...(context.latestRun.runPolicy ? { runPolicy: context.latestRun.runPolicy } : {}) };
+    const retryPolicy = sessionPolicy ? admissionPolicyForTurn(persistedPolicy, sessionPolicy) : persistedPolicy;
     const catalog = await this.options.catalog.getCatalog(principal);
     const validated = validateChatProviderSelection({
       catalog,
@@ -407,7 +409,8 @@ export class CanonicalChatOrchestrator {
         interactionMode: context.latestRun.interactionMode,
         permissionMode: retryPolicy.permissionMode,
         worktree: context.latestRun.executionRoot?.kind === "worktree",
-        ...(retryPolicy.runPolicy?.source === "voice" ? { voiceConversationOnly: true } : {}),
+        ...(retryPolicy.runPolicy?.source === "voice" || retryPolicy.runPolicy?.voiceSessionId ? voiceProviderSelectionRequirements() : {}),
+        ...(retryPolicy.runPolicy?.executionPolicy ? { qualifiedPolicy: retryPolicy.runPolicy.executionPolicy } : {}),
       },
     });
     if (!validated.ok) throw new CanonicalChatOrchestrationError(validated.error, 400);
@@ -418,6 +421,7 @@ export class CanonicalChatOrchestrator {
         503,
       );
     }
+    await revalidateActionPolicy(adapter, { driverKind: context.latestRun.driverKind, selection: validated.selection, permissionMode: retryPolicy.permissionMode }, retryPolicy.runPolicy);
     let resolvedRoot: ResolvedChatExecutionRoot | undefined;
     if (context.latestRun.executionRoot) {
       if (!this.options.executionRoots) {
@@ -740,6 +744,7 @@ export class CanonicalChatOrchestrator {
         };
         resolvedRoot = await this.options.executionRoots.revalidate(owner, provenance);
       }
+      await revalidateFrozenRunPolicy(adapter, run, this.options.voiceSessionPolicy);
       await this.options.repository.markRunRunning(owner, { chatId: run.chatId, runId: run.id, startedAt });
       await this.persistActivities(owner, run, [{ type: "run.status", status: "running" }, {
         type: "turn.status",
@@ -777,6 +782,8 @@ export class CanonicalChatOrchestrator {
         ...(resolvedRoot?.ref.kind === "worktree" ? { worktreeId: resolvedRoot.ref.worktreeId } : {}),
         ...(resumeState === undefined ? {} : { resumeState }),
         signal: controller.signal,
+        ...(this.options.actions ? { actions: this.options.actions } : {}),
+        onActionEvent: async (event) => { await this.persistActivities(owner, run, [event]); },
         onCleanupUnconfirmed: () => { cleanupUnconfirmed = true; },
         onCleanupConfirmed: () => { cleanupUnconfirmed = false; },
       };
@@ -953,6 +960,16 @@ export class CanonicalChatOrchestrator {
     }
   }
 
+  /** Composition callback for the canonical authority; never a new approval service. */
+  async projectActionEvent(identity: import("./action-repository.js").ActionIdentity, event: CanonicalProviderRunEvent): Promise<void> {
+    if (!["approval.requested", "approval.resolved", "tool.progress", "tool.output", "resource.changed"].includes(event.type)) throw new Error("Invalid canonical action projection");
+    const row = await this.options.repository.kysely.selectFrom("chat_runs").select("turn_id").where("id", "=", identity.runId).where("chat_id", "=", identity.chatId).executeTakeFirst();
+    if (!row) throw new CanonicalChatOrchestrationError(safeError("run_not_found", "Run not found."), 404);
+    const context = await this.options.repository.getTurnRunContext(identity.owner, identity.chatId, row.turn_id);
+    if (!context || context.latestRun.id !== identity.runId) throw new CanonicalChatOrchestrationError(safeError("run_not_found", "Run not found."), 404);
+    await this.persistActivities(identity.owner, context.latestRun, [event]);
+  }
+
   private async persistActivities(
     owner: ChatOwner,
     run: CanonicalChatRun,
@@ -1064,6 +1081,9 @@ export class CanonicalChatOrchestrator {
         409,
       );
     }
+    const context = await this.options.repository.getTurnRunContext(owner, chatId, input.expectedTurnId);
+    if (!context || context.latestRun.id !== runId) throw new CanonicalChatOrchestrationError(safeError("capability_mismatch", "This Run cannot be steered."), 409);
+    await revalidateFrozenRunPolicy(active.adapter, context.latestRun, this.options.voiceSessionPolicy);
     const timestamp = (this.options.now ?? (() => new Date()))().toISOString();
     let begun;
     try {
@@ -1170,6 +1190,10 @@ export class CanonicalChatOrchestrator {
         409,
       );
     }
+    const context = await this.options.repository.getTurnRunContext(owner, chatId, input.expectedTurnId);
+    if (!context || context.latestRun.id !== runId) throw new CanonicalChatOrchestrationError(safeError("capability_mismatch", "This Run cannot be steered."), 409);
+    await revalidateFrozenRunPolicy(active.adapter, context.latestRun, this.options.voiceSessionPolicy);
+    await revalidateQueuedSteerPolicy(this.options.repository.kysely, chatId, queuedTurnId, context.latestRun.runPolicy);
     const timestamp = (this.options.now ?? (() => new Date()))().toISOString();
     let begun;
     try {
@@ -1276,6 +1300,20 @@ export class CanonicalChatOrchestrator {
   ): Promise<CanonicalChatApprovalSubmissionResponse> {
     await this.assertPersonalExecutionAllowed(owner, chatId);
     const input = CanonicalSubmitChatApprovalRequestSchema.parse(inputValue);
+    if (approvalId.startsWith("action_") && this.options.actions) {
+      if (!input.argumentDigest) throw new CanonicalChatOrchestrationError(safeError("capability_mismatch", "This approval is no longer available."), 409);
+      try {
+        await this.options.actions.decide({ owner, chatId, runId, actionId: approvalId, argumentDigest: input.argumentDigest, decision: input.decision, clientRequestId: input.clientRequestId });
+      } catch (error: unknown) {
+        // A rejected canonical decision is a deterministic conflict — stale
+        // digest, already-decided, or dead run — never a transient 503.
+        if (error instanceof CanonicalActionError) {
+          throw new CanonicalChatOrchestrationError(safeError("capability_mismatch", "This approval is no longer available."), 409);
+        }
+        throw error;
+      }
+      return { approvalId, decision: input.decision, submission: "accepted" };
+    }
     const active = this.active.get(runId) ?? await recoverBackgroundRunControl({ owner, chatId, runId, repository: this.options.repository, adapters: this.options.adapters });
     if (!active || active.chatId !== chatId || active.owner.type !== owner.type
       || active.owner.ownerId !== owner.ownerId || !active.adapter.submitApproval) {

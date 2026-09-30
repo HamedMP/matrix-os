@@ -2,6 +2,8 @@ import { BackgroundAgentRefSchema } from "../background-agent-runtime.js";
 import { z } from "zod/v4";
 import {
   AgentThreadEventSchema,
+  CanonicalChatRunPolicySchema,
+  CanonicalOwnerScopeSchema,
   type AgentProviderSummary,
   type AgentThreadEvent,
   type AgentThreadSummary,
@@ -15,6 +17,46 @@ import type { RequestPrincipal } from "../request-principal.js";
 import { AiTokenUsageSchema } from "../ai-analytics.js";
 
 const MAX_PROVIDER_EVENTS = 500;
+
+/** Internal launch grant. Never add this schema to an HTTP/WS request contract. */
+export const CodingAgentCanonicalExecutionSchema = z.object({
+  executionPolicy: CanonicalChatRunPolicySchema.shape.executionPolicy.unwrap().refine(policy => !policy.delegation
+    && (policy.actionMode !== "conversation_only" || policy.tools.length === 0)),
+  inventory: z.array(z.object({
+    toolId: z.enum(["matrix_list_apps", "matrix_inspect_app", "matrix_search_workspace", "matrix_open_app", "matrix_apply_app_files"]),
+    schemaRevision: z.string().min(1).max(160), description: z.string().min(1).max(1600),
+    effect: z.enum(["read", "navigation", "files"]), inputSchema: z.unknown(),
+  }).strict()).max(32),
+  identity: z.object({ owner: CanonicalOwnerScopeSchema, chatId: z.string().min(1).max(128), runId: z.string().min(1).max(128) }).strict(),
+  authFile: z.string().max(4096).optional(),
+}).strict();
+export type CodingAgentCanonicalExecution = z.infer<typeof CodingAgentCanonicalExecutionSchema>;
+
+/** Native continuation result, not approval/authorization; exact request binding is enforced in the child. */
+export const CodingAgentCanonicalToolResultSchema = z.object({
+  type: z.literal("canonical_tool_result"),
+  actionId: z.string().regex(/^action_[a-f0-9]{32}$/),
+  argumentDigest: z.string().regex(/^[a-f0-9]{64}$/),
+  inventoryDigest: z.string().regex(/^[a-f0-9]{64}$/),
+  result: z.object({ success: z.boolean(), contentItems: z.array(z.object({
+    type: z.literal("inputText"), text: z.string().max(16_000),
+  }).strict()).max(8) }).strict().refine(result => Buffer.byteLength(JSON.stringify(result)) <= 65_536),
+}).strict();
+export type CodingAgentCanonicalToolResult = z.infer<typeof CodingAgentCanonicalToolResultSchema>;
+
+/** Internal live request, excluded from ordinary provider/user event projections. */
+export const CodingAgentCanonicalActionRequestSchema = CodingAgentCanonicalExecutionSchema.shape.identity.extend({
+  type: z.literal("matrix.codex.action.requested"),
+  executionPolicy: CodingAgentCanonicalExecutionSchema.shape.executionPolicy,
+  actionId: CodingAgentCanonicalToolResultSchema.shape.actionId,
+  argumentDigest: CodingAgentCanonicalToolResultSchema.shape.argumentDigest,
+  inventoryDigest: CodingAgentCanonicalToolResultSchema.shape.inventoryDigest,
+  toolCallId: z.string().regex(/^codex_item_[a-f0-9]{32}$/),
+  nativeThreadId: z.string().min(1).max(512), nativeTurnId: z.string().min(1).max(512), nativeCallId: z.string().min(1).max(512),
+  toolId: CodingAgentCanonicalExecutionSchema.shape.inventory.element.shape.toolId,
+  schemaRevision: z.string().min(1).max(160), arguments: z.unknown(),
+}).strict();
+export type CodingAgentCanonicalActionRequest = z.infer<typeof CodingAgentCanonicalActionRequestSchema>;
 
 export const CodingAgentProviderResumeStateSchema = z.object({
   conversationId: z.string().trim().min(1).max(512),
@@ -80,6 +122,8 @@ export interface CodingAgentProviderAdapter {
     principal: RequestPrincipal;
     thread: AgentThreadSummary;
     request: CreateAgentThreadRequest;
+    /** Internal canonical grant bound to this thread's isolated launch. Never client data. */
+    canonicalExecution?: CodingAgentCanonicalExecution;
     signal?: AbortSignal;
     now: () => Date;
     nextEventId: () => string;

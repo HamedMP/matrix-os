@@ -27,6 +27,7 @@ import type { createAgentLauncher } from "./agent-launcher.js";
 import type { createWorktreeManager, WorktreeRecord } from "./worktree-manager.js";
 import type { TerminalRuntimeSocketClient } from "@matrix-os/terminal-runtime";
 import { codexProviderEventPath } from "./coding-agents/codex-event-bridge.js";
+import { CodingAgentCanonicalExecutionSchema } from "./coding-agents/provider-adapter.js";
 import { agentTerminalCwd } from "./agent-terminal-cwd.js";
 import { logSessionStartupFailure } from "./session-startup-diagnostics.js";
 
@@ -126,6 +127,14 @@ const StartSessionSchema = z.object({
   sandboxMode: z.enum(["read_only", "workspace_write", "full_access"]).optional(),
   runtimePreference: z.enum(["zellij", "background"]).optional(),
   sandbox: AgentSandboxSchema.optional(),
+  /**
+   * Server-internal canonical execution grant. Never part of a client-facing
+   * schema — HTTP callers cannot reach this field because the route body
+   * schema strips unknown keys and the orchestrator builds this object
+   * explicitly. buildAgentLaunch still enforces the codex/event-path/
+   * no-resume invariants.
+   */
+  canonicalExecution: CodingAgentCanonicalExecutionSchema.optional(),
 });
 const ListSessionsSchema = z.object({
   projectSlug: SlugSchema.optional(),
@@ -453,6 +462,7 @@ export function createAgentSessionManager(options: {
             ...(request.agent === "codex"
               ? { providerEventPath: codexProviderEventPath(homePath, sessionId) }
               : {}),
+            ...(request.canonicalExecution ? { canonicalExecution: request.canonicalExecution } : {}),
           })
           : { command: "bash", args: [], cwd, env: {} };
       } catch (err: unknown) {

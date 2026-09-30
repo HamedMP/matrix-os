@@ -678,6 +678,12 @@ interface ProviderSelectionRequirements {
   worktree?: boolean;
   /** Voice conversation-only runs cannot enter coding or tool-capable harnesses. */
   voiceConversationOnly?: boolean;
+  /** Server-owned qualification, not a client grant. Admission also verifies the loaded adapter. */
+  qualifiedPolicy?: import("@matrix-os/contracts").CanonicalExecutionPolicy;
+}
+
+export function voiceProviderSelectionRequirements(): ProviderSelectionRequirements {
+  return { voiceConversationOnly: true };
 }
 
 type ProviderSelectionValidation =
@@ -758,7 +764,7 @@ export function validateChatProviderSelection(input: {
   if (model?.availability !== "available") {
     return selectionError("model_unavailable", "The selected model is not available.", ["select_provider"]);
   }
-  if (input.requirements?.voiceConversationOnly) {
+  if (input.requirements?.voiceConversationOnly && !input.requirements.qualifiedPolicy) {
     const driver = input.catalog.drivers.find((candidate) => candidate.kind === instance.driverKind);
     if (driver?.capabilityClass !== "system_agent"
       || model.supportsToolUse

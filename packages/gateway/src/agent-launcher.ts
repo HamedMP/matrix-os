@@ -11,6 +11,7 @@ import {
 } from "@matrix-os/contracts";
 import { CodexExecutableSchema } from "./coding-agents/codex-executable.js";
 import { codexExecContractStatus } from "./coding-agents/codex-version.js";
+import { CodingAgentCanonicalExecutionSchema, type CodingAgentCanonicalExecution } from "./coding-agents/provider-adapter.js";
 import { MATRIX_CUSTOM_MCP_DISCOVERY_TOOLS, MATRIX_CUSTOM_MCP_TOOLS, matrixMcpConfig } from "./chat/matrix-mcp-launch.js";
 
 export const SupportedAgentSchema = z.enum(["claude", "codex", "opencode", "pi"]);
@@ -61,6 +62,8 @@ export interface AgentLaunchInput {
   runtimeHome?: string;
   providerEventPath?: string;
   providerThreadId?: string;
+  /** Server-only authority grant; constrained executions never use native exec/resume. */
+  canonicalExecution?: CodingAgentCanonicalExecution;
   codexExecutable?: string;
   claudePermissionMode?: "default" | "acceptEdits" | "plan" | "auto" | "dontAsk" | "bypassPermissions";
   claudeOutputFormat?: "stream-json";
@@ -103,6 +106,7 @@ const CodexAppServerConfigSchema = z.object({
   model: ProviderModelReferenceSchema.optional(),
   effort: z.enum(["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"]).optional(),
   serviceTier: z.string().min(1).max(160).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$/).optional(),
+  canonical: CodingAgentCanonicalExecutionSchema.optional(),
 }).strict();
 
 function modelOption(input: AgentLaunchInput, id: string): string | undefined {
@@ -419,6 +423,7 @@ function codexAppServerConfig(input: AgentLaunchInput): z.infer<typeof CodexAppS
     sandbox: mode,
     writableRoots: mode === "workspace-write" ? sandbox?.writableRoots ?? [] : [],
     ...(input.model ? { model: input.model } : {}),
+    ...(input.canonicalExecution ? { canonical: CodingAgentCanonicalExecutionSchema.parse(input.canonicalExecution) } : {}),
     ...(modelOption(input, "effort") ? { effort: modelOption(input, "effort") } : {}),
     ...(modelOption(input, "service_tier") ? { serviceTier: modelOption(input, "service_tier") } : {}),
   });
@@ -426,6 +431,9 @@ function codexAppServerConfig(input: AgentLaunchInput): z.infer<typeof CodexAppS
 
 export function buildAgentLaunch(input: AgentLaunchInput): AgentLaunchSpec {
   const parsed = SupportedAgentSchema.parse(input.agent);
+  if (input.canonicalExecution && (parsed !== "codex" || !input.providerEventPath || input.providerThreadId)) {
+    throw new Error("Constrained execution requires an isolated Codex app-server thread");
+  }
   const command = parsed === "codex" && input.codexExecutable
     ? CodexExecutableSchema.parse(input.codexExecutable)
     : AGENTS[parsed].command;

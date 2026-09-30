@@ -18,6 +18,8 @@ import { CodexDeferredInputControlSchema, deferCodexNativeInput } from "./codex-
 import { createCodexMcpElicitations, rejectCodexServerRequest } from "./codex-mcp-elicitations.mjs";
 import { initializeCodexProvider, ProviderStartupCleanupUnconfirmed, signalCodexProviderChild } from "./codex-provider-startup.mjs";
 import { MATRIX_INTEGRATIONS_INSTRUCTIONS } from "./codex-matrix-integration-instructions.mjs";
+import { CodexExecutionPolicySchema, CodexCanonicalToolResultControlSchema, createCodexCanonicalTools } from "./codex-canonical-tools.mjs";
+import { createCodexQualifiedConfig, assertCodexCanonicalConfigLayers } from "./codex-qualified-config.mjs";
 
 process.on("uncaughtException", () => {
   process.stderr.write("Codex app-server runner stopped unexpectedly.\n");
@@ -95,6 +97,13 @@ const RunnerConfigSchema = z.object({
   model: ProviderModelReferenceSchema.optional(),
   effort: z.enum(["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"]).optional(),
   serviceTier: z.string().min(1).max(160).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$/).optional(),
+  canonical: z.object({
+    executionPolicy: CodexExecutionPolicySchema,
+    inventory: z.array(z.unknown()).max(32),
+    identity: z.object({ owner: z.object({ type: z.enum(["personal", "organization"]), ownerId: NativeReferenceSchema }).strict(),
+      chatId: NativeReferenceSchema, runId: NativeReferenceSchema }).strict(),
+    authFile: z.string().max(4096).refine(isAbsolute).optional(),
+  }).strict().optional(),
 }).strict();
 const ModelOptionSchema = z.object({
   id: z.string().min(1).max(80).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,79}$/),
@@ -308,6 +317,7 @@ const ControlSchema = z.discriminatedUnion("type", [
   ApprovalControlSchema,
   InputControlSchema,
   CodexDeferredInputControlSchema,
+  CodexCanonicalToolResultControlSchema,
 ]);
 
 function fail(message) {
@@ -338,10 +348,15 @@ try {
   fail("Codex app-server runner configuration is invalid.");
 }
 
+let canonicalRuntime;
 try {
-  await assertCodexProviderVersion({ command, expectedVersion, cwd: process.cwd() });
+  if (config.canonical) canonicalRuntime = await createCodexQualifiedConfig({
+    ...config.canonical, expectedVersion, providerThreadId: config.providerThreadId,
+  });
+  await assertCodexProviderVersion({ command, expectedVersion, cwd: canonicalRuntime?.cwd ?? process.cwd() });
 } catch (_error) {
-  fail("Codex provider version is not verified.");
+  await canonicalRuntime?.close();
+  fail(config.canonical ? "Codex provider configuration or version is not verified." : "Codex provider version is not verified.");
 }
 
 const toolOutputKey = process.env.MATRIX_HOME ? await tryLoadToolOutputKey(process.env.MATRIX_HOME) : undefined;
@@ -385,6 +400,10 @@ let activeTurn = false;
 let activeTurnOutcome;
 let nativeThreadId;
 let activeNativeTurnId;
+const canonicalTools = config.canonical ? createCodexCanonicalTools({ ...config.canonical,
+  send: sendProvider, persist,
+  current: () => ({ threadId: nativeThreadId, turnId: activeNativeTurnId, active: activeTurn && !executionExpired }),
+}) : undefined;
 let activeTurnTokenUsage;
 let terminalEventCount = 0;
 let stdinClosed = false;
@@ -991,10 +1010,18 @@ async function handleProviderMessage(raw) {
     rejectCodexServerRequest(raw, sendProvider, -32000);
     return;
   }
-  await subagentRuntime.project(raw, nativeThreadId, activeNativeTurnId);
+  if (canonicalTools && await canonicalTools.handle(raw)) return;
+  // All constrained subagent requests are denied above. Native notifications
+  // are not a policy-enforcement boundary and cannot authorize any effect.
+  if (!canonicalTools) await subagentRuntime.project(raw, nativeThreadId, activeNativeTurnId);
   // Send without awaiting: replies must pass through this same serial consumer.
   // Handle their display projection above, preserving event-write ordering.
-  dispatchSubagentMetadata();
+  if (!canonicalTools) dispatchSubagentMetadata();
+  if (canonicalTools && ["commandExecution", "fileChange", "mcpToolCall", "collabAgentToolCall", "webSearch", "imageGeneration", "plan"].includes(raw?.params?.item?.type)) {
+    // Detection is containment evidence only: an item event is post-dispatch.
+    // Stop rather than presenting such an execution as qualified/successful.
+    throw new Error("canonical_native_surface_violation");
+  }
   // Child output is evidence for its own row, never the parent assistant response.
   if (subagentRuntime.isChildMessage(raw, nativeThreadId)) {
     rejectCodexServerRequest(raw, sendProvider, -32000);
@@ -1109,6 +1136,11 @@ async function steerActiveTurn(control) {
 }
 
 async function applyControl(control) {
+  if (control.type === "canonical_tool_result") return { ok: await canonicalTools?.respond(control) ?? false };
+  // Constrained executions run exactly one immutable turn: native approvals,
+  // hibernation, extra turns, steering and deferred-input continuation are all
+  // off-path controls. Interrupt still works so cancellation can stop the run.
+  if (canonicalTools && ["approval", "hibernate", "turn", "steer", "defer_input"].includes(control.type)) return { ok: false };
   if (control.type === "hibernate") return { ok: idleHibernation.prepare(control.providerThreadId) };
   if (idleHibernation.closing) return { ok: false };
   const replay = completedControls.get(control.clientRequestId);
@@ -1256,6 +1288,7 @@ function decodeTurnFrame(line) {
 }
 
 function enqueueTurn(line) {
+  if (canonicalTools) return; // One immutable canonical run per isolated process.
   const turn = decodeTurnFrame(line);
   if (turn) enqueuePendingTurn(turn);
 }
@@ -1290,6 +1323,7 @@ function turnStartParams(threadId, turn) {
     model: turn.model,
     effort,
     serviceTier,
+    ...(canonicalTools ? { environments: [] } : {}),
   };
 }
 
@@ -1412,10 +1446,18 @@ async function runTurn(threadId, turn) {
 process.once("SIGTERM", () => { userStopped = true; stop(); });
 process.once("SIGINT", () => { userStopped = true; stop(); });
 
+// Constrained homes have a one-hour sweep TTL; an owned process can never
+// outlive it, regardless of ordinary owner CLI watchdog overrides.
+const canonicalLifetimeTimer = canonicalRuntime ? setTimeout(() => {
+  executionExpired = true;
+  rejectExecution?.(new Error("canonical_execution_expired"));
+  stop();
+}, 10 * 60_000) : undefined;
+canonicalLifetimeTimer?.unref();
 let exitCode = 0;
 try {
-  const initialized = await initializeCodexProvider({ command, args: commandArgs,
-    cwd: process.cwd(), env: process.env, signal: startupController.signal,
+  const initialized = await initializeCodexProvider({ command, args: [...commandArgs, ...(canonicalRuntime?.args ?? [])],
+    cwd: canonicalRuntime?.cwd ?? process.cwd(), env: canonicalRuntime?.env ?? process.env, signal: startupController.signal,
     onRetry: async ({ label }) => {
       startupReconnecting = true;
       await persist({ type: "matrix.codex.tool.started", toolCallId: "startup_reconnect",
@@ -1454,18 +1496,20 @@ try {
   }
   startupController.signal.throwIfAborted();
   sendProvider({ method: "initialized", params: {} });
+  if (canonicalRuntime) assertCodexCanonicalConfigLayers(await request("config/read", { includeLayers: true }), canonicalRuntime.env.CODEX_HOME);
   const threadMethod = config.providerThreadId ? "thread/resume" : "thread/start";
   const started = await request(threadMethod, {
     // Matrix only needs the identity; Codex retains the complete model context.
     ...(config.providerThreadId ? { threadId: config.providerThreadId, excludeTurns: true } : {}),
     model: config.model,
-    developerInstructions: MATRIX_INTEGRATIONS_INSTRUCTIONS,
+    ...(!canonicalRuntime ? { developerInstructions: MATRIX_INTEGRATIONS_INSTRUCTIONS } : {}),
     serviceTier: config.serviceTier,
     cwd: process.cwd(),
     approvalPolicy: config.approvalPolicy,
     sandbox: config.sandbox,
     runtimeWorkspaceRoots: config.writableRoots,
     experimentalRawEvents: false,
+    ...(canonicalRuntime?.threadParams ?? {}),
   });
   nativeThreadId = z.object({ thread: z.object({ id: NativeReferenceSchema }).passthrough() })
     .passthrough().parse(started).thread.id;
@@ -1483,7 +1527,9 @@ try {
   });
   while (turn && !stopping) {
     const outcome = await runTurn(nativeThreadId, turn);
+    canonicalTools?.cancelTurn();
     if (outcome === "failed") exitCode = 1;
+    if (canonicalTools) { stop(); break; }
     const next = await Promise.race([
       nextTurn().then((value) => ({ type: "turn", value })),
       childExit.then((exit) => ({ type: "exit", exit })),
@@ -1533,6 +1579,9 @@ try {
   stop();
   await Promise.allSettled([childExit, providerOutput, providerErrors]);
 } finally {
+  clearTimeout(canonicalLifetimeTimer);
+  canonicalTools?.close();
+  await canonicalRuntime?.close();
   executionWatchdog.stop();
   input.close();
   clearInterval(cleanupTimer);

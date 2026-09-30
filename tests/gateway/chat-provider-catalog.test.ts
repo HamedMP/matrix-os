@@ -20,6 +20,7 @@ import {
   ProviderCatalogUnavailableError,
   createChatProviderCatalogService,
   validateChatProviderSelection,
+  voiceProviderSelectionRequirements,
 } from "../../packages/gateway/src/chat/provider-catalog.js";
 import { createChatProviderRoutes } from "../../packages/gateway/src/chat/provider-routes.js";
 import { createNativeCodingModelCatalogSource } from "../../packages/gateway/src/chat/native-coding-model-catalog.js";
@@ -2057,6 +2058,32 @@ describe("canonical Provider selection policy", () => {
     });
 
     expect(result.ok).toBe(true);
+  });
+
+  it("does not grant tool-capable voice eligibility from an environment simulator flag", () => {
+    const input = {
+      catalog: selectionCatalog(),
+      selection: { instanceId: "codex_default", model: "gpt-5.4" },
+    };
+
+    expect(validateChatProviderSelection({
+      ...input,
+      requirements: voiceProviderSelectionRequirements(),
+    })).toMatchObject({ ok: false, error: { code: "capability_mismatch" } });
+    vi.stubEnv("MATRIX_VOICE_SIMULATOR", "1");
+    expect(validateChatProviderSelection({
+      ...input,
+      requirements: voiceProviderSelectionRequirements(),
+    })).toMatchObject({ ok: false, error: { code: "capability_mismatch" } });
+
+    const otherHarness = selectionCatalog();
+    otherHarness.drivers[0]!.kind = "opencode";
+    otherHarness.instances[0]!.driverKind = "opencode";
+    expect(validateChatProviderSelection({
+      catalog: otherHarness,
+      selection: input.selection,
+      requirements: voiceProviderSelectionRequirements(),
+    })).toMatchObject({ ok: false, error: { code: "capability_mismatch" } });
   });
 
   it("returns the canonical locked error for a cross-Instance change", () => {
