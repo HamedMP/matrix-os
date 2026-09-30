@@ -15,7 +15,7 @@ import type { CollaborationAuthority } from "./authority.js";
 import type { OwnerCollaborationDatabase } from "./database.js";
 import { createOwnerAppIncarnationResolver } from "./owner-app-incarnation.js";
 import { createOwnerResourceDriver } from "./owner-resource-driver.js";
-import type { CollaborationResourceCatalog } from "./resource-catalog.js";
+import { ResourceCatalogError, type CollaborationResourceCatalog } from "./resource-catalog.js";
 import { createScopedAppBridge } from "./scoped-app-bridge.js";
 
 export type OwnerResourceDriverHandle = ReturnType<typeof createOwnerResourceDriver>;
@@ -90,17 +90,21 @@ export function enableGatewaySharedResources<Project>(input: {
       if (!result.ok) return null;
       return input.projects.resolveProjectWorkingDirectory(result.project);
     },
-    resolveProjectBoundaryWorkingDirectory: async (ownerId, projectId) => {
-      // Archived checkouts still define protected project boundaries. The ordinary
-      // active-project lookup intentionally returns 404 for them, so resolve the
-      // same owner-scoped inventory used by listOwnedProjectIds instead.
+    listOwnedProjectBoundaries: async (ownerId) => {
+      // One request-scoped inventory includes archived checkout boundaries only.
+      // Active-only resolution above remains authoritative for reads and writes.
       const { projects } = await input.projects.listManagedProjects({
         visibility: "all", ownerScope: { type: "user", id: ownerId },
       });
-      if (projects.length > 1_000) return null;
-      const matches = projects.filter((project) => project.id === projectId);
-      if (matches.length !== 1) return null;
-      return input.projects.resolveProjectWorkingDirectory(matches[0]!);
+      if (projects.length > 1_000 || new Set(projects.map((project) => project.id)).size !== projects.length) {
+        throw new ResourceCatalogError("unavailable");
+      }
+      const boundaries = [];
+      for (const project of projects) {
+        boundaries.push({ projectId: project.id,
+          workingDirectory: await input.projects.resolveProjectWorkingDirectory(project) });
+      }
+      return boundaries;
     },
     resolveAppAssetRoot: async (_ownerId, _projectId, appId) => {
       if (!await registeredApp(appId)) return null;

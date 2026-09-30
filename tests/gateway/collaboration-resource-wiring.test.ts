@@ -65,10 +65,12 @@ describe("gateway shared resource wiring", () => {
       if (!created.ok) throw new Error("Fixture project creation failed");
       await manager.setProjectLifecycleState({ slug: "old", ownerScope, archivedAt: "2026-09-30T00:00:00.000Z" });
       await mkdir(join(homePath, "shared", "team"), { recursive: true });
+      const inventory = vi.spyOn(manager, "listManagedProjects");
       driver = enableGatewaySharedResources({ runtime: { enableSharedResources: () => {} }, homePath,
         projects: manager, apps: registry([]), ownerId: ownerScope.id });
       await expect(driver.resolveOwnerNamespace!({ ownerId: ownerScope.id, kind: "folder", path: "shared/team" }))
         .resolves.toEqual({ projectId: null, path: "shared/team" });
+      expect(inventory).toHaveBeenCalledTimes(1);
       await expect(driver.resolveOwnerNamespace!({ ownerId: ownerScope.id, kind: "folder", path: "projects" }))
         .rejects.toMatchObject({ code: "forbidden" });
       await writeFile(join(created.project.localPath, "notes.txt"), "private archived project");
@@ -109,7 +111,7 @@ describe("gateway shared resource wiring", () => {
 
   it("refuses ambiguous or oversized project boundary inventories", async () => {
     for (const count of [2, 1_001]) {
-      let boundary: ((ownerId: string, projectId: string) => Promise<string | null>) | undefined;
+      let boundary: ((ownerId: string) => Promise<unknown>) | undefined;
       const resolve = vi.fn(async () => "/home/matrix/home/projects/old/repo");
       const source = {
         ...projects({}),
@@ -118,10 +120,10 @@ describe("gateway shared resource wiring", () => {
       };
       enableGatewaySharedResources({ runtime: { enableSharedResources: () => {} }, homePath: "/home/matrix/home",
         projects: source, apps: registry([]), ownerId: "owner_1", createDriver: (options) => {
-          boundary = options.resolveProjectBoundaryWorkingDirectory;
+          boundary = options.listOwnedProjectBoundaries;
           return fakeDriver({ count: 0 });
         } });
-      expect(await boundary?.("owner_1", "proj_old")).toBeNull();
+      await expect(boundary?.("owner_1")).rejects.toMatchObject({ code: "unavailable" });
       expect(resolve).not.toHaveBeenCalled();
     }
   });

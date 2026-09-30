@@ -75,7 +75,7 @@ export function createOwnerResourceDriver(options: {
   listOwnedProjectIds(ownerId: string): Promise<string[]>;
   resolveProjectWorkingDirectory(ownerId: string, projectId: string): Promise<string | null>;
   /** Includes archived checkouts for namespace protection only, never read/write authority. */
-  resolveProjectBoundaryWorkingDirectory?(ownerId: string, projectId: string): Promise<string | null>;
+  listOwnedProjectBoundaries?(ownerId: string): Promise<readonly { projectId: string; workingDirectory: string | null }[]>;
   resolveAppAssetRoot(ownerId: string, projectId: string | null, appId: string): Promise<string | null>;
   /** Registry identity of an installed app; null when no app is registered under that id. */
   resolveAppIncarnation(ownerId: string, projectId: string | null, appId: string): Promise<string | null>;
@@ -116,12 +116,23 @@ export function createOwnerResourceDriver(options: {
   const timer = setInterval(() => { void sweepTemp(); }, TEMP_SWEEP_INTERVAL_MS);
   timer.unref();
 
-  async function root(input: Namespace, boundaryOnly = false): Promise<string> {
+  async function legacyProjectBoundaries(ownerId: string) {
+    const ids = await options.listOwnedProjectIds(ownerId);
+    if (ids.length > 1_000 || new Set(ids).size !== ids.length) throw new ResourceCatalogError("unavailable");
+    const boundaries = [];
+    for (const projectId of ids) {
+      boundaries.push({ projectId, workingDirectory: await options.resolveProjectWorkingDirectory(ownerId, projectId) });
+    }
+    return boundaries;
+  }
+
+  async function root(input: Namespace): Promise<string> {
     const candidate = input.projectId === null
-      ? homeRoot
-      : await (boundaryOnly && options.resolveProjectBoundaryWorkingDirectory
-        ? options.resolveProjectBoundaryWorkingDirectory
-        : options.resolveProjectWorkingDirectory)(input.ownerId, input.projectId);
+      ? homeRoot : await options.resolveProjectWorkingDirectory(input.ownerId, input.projectId);
+    return physicalRoot(candidate);
+  }
+
+  async function physicalRoot(candidate: string | null): Promise<string> {
     if (!candidate || !isAbsolute(candidate)) throw new ResourceCatalogError("unavailable");
     try {
       const entry = await lstat(candidate);
@@ -267,13 +278,15 @@ export function createOwnerResourceDriver(options: {
       }
       const ownerRoot = await root({ ownerId: input.ownerId, projectId: null });
       const selected = resolve(ownerRoot, input.path);
-      const projectIds = await options.listOwnedProjectIds(input.ownerId);
-      if (projectIds.length > 1_000 || new Set(projectIds).size !== projectIds.length) {
+      const boundaries = options.listOwnedProjectBoundaries
+        ? await options.listOwnedProjectBoundaries(input.ownerId)
+        : await legacyProjectBoundaries(input.ownerId);
+      if (boundaries.length > 1_000 || new Set(boundaries.map((entry) => entry.projectId)).size !== boundaries.length) {
         throw new ResourceCatalogError("unavailable");
       }
       let matched: { projectId: string; path: string; rootLength: number } | null = null;
-      for (const projectId of projectIds) {
-        const projectRoot = await root({ ownerId: input.ownerId, projectId }, true);
+      for (const { projectId, workingDirectory } of boundaries) {
+        const projectRoot = await physicalRoot(workingDirectory);
         if (!inside(ownerRoot, projectRoot)) continue;
         // A standalone folder grant must never encompass a registered project.
         if (inside(selected, projectRoot)) throw new ResourceCatalogError("forbidden");
