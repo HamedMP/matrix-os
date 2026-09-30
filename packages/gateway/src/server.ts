@@ -65,13 +65,15 @@ import { createCanonicalChatRuntime } from "./chat/runtime.js";
 import { ChatVoiceDeliveryRepository } from "./chat/voice-delivery-repository.js";
 import {
   createAdapterCapabilityPort,
-  SimulatorVoiceMediaAdapter,
   VoiceMediaAdapterRegistry,
 } from "./voice-session/adapter.js";
+import { registerVoiceSessionMediaAdapters } from "./voice-session/adapter-registration.js";
 import { createCanonicalVoicePorts } from "./voice-session/canonical-ports.js";
 import { VoiceSessionEngine } from "./voice-session/engine.js";
-import { createOpenAiVoiceMediaAdapter } from "./voice-session/openai-adapter.js";
-import { createSystemVoiceClock } from "./voice-session/ports.js";
+import {
+  createManagedVoiceTranscriptionPort,
+  createVoiceSessionPlatformSpeechClient,
+} from "./speech/voice-session-ports.js";
 import {
   createVoiceSessionRoutes,
   registerVoiceSessionWebSocketRoute,
@@ -1570,31 +1572,22 @@ export async function createGateway(config: GatewayConfig) {
       log: voiceLog,
     });
     const voiceAdapters = new VoiceMediaAdapterRegistry();
-    // The deterministic simulator is an explicit dev/integration seam only —
-    // it never registers implicitly, and when set it is the ONLY adapter so a
-    // stray provider key cannot silently route dev sessions to paid calls.
-    // Production registers the OpenAI adapter solely when its key is present;
-    // otherwise capability reports `not_configured`.
-    const voiceOpenAiKey = process.env.MATRIX_VOICE_OPENAI_API_KEY?.trim();
-    if (process.env.MATRIX_VOICE_SIMULATOR === "1") {
-      voiceAdapters.register(new SimulatorVoiceMediaAdapter({
-        scenario: {
-          scenarioId: "matrix-voice-sim",
-          version: 1,
-          initialEpoch: 1,
-          limits: { maxQueuedAudioMs: 10_000, maxDurationMs: 3_600_000 },
-          timeline: [],
-        },
-        clock: createSystemVoiceClock(),
-      }));
-    } else if (voiceOpenAiKey) {
-      voiceAdapters.register(createOpenAiVoiceMediaAdapter({
-        apiKey: voiceOpenAiKey,
-        transcriptionModel: process.env.MATRIX_VOICE_TRANSCRIPTION_MODEL ?? "gpt-4o-mini-transcribe",
-        speechModel: process.env.MATRIX_VOICE_SPEECH_MODEL ?? "gpt-4o-mini-tts",
-        voice: process.env.MATRIX_VOICE_SPEECH_VOICE ?? "alloy",
-      }));
-    }
+    // One registration policy owns adapter authority
+    // (`registerVoiceSessionMediaAdapters`): the simulator stays an explicit
+    // dev seam; Platform Speech is the only production speech path — the
+    // managed adapter transcribes through the provisioned runtime client and
+    // may only speak through a development-gated synthesizer until a platform
+    // TTS endpoint exists. A direct provider key is a non-production escape
+    // hatch — never a second key authority on a production gateway.
+    const voicePlatformSpeechClient = createVoiceSessionPlatformSpeechClient(process.env);
+    registerVoiceSessionMediaAdapters({
+      registry: voiceAdapters,
+      env: process.env,
+      managedTranscribe: voicePlatformSpeechClient
+        ? createManagedVoiceTranscriptionPort({ client: voicePlatformSpeechClient })
+        : undefined,
+      log: voiceLog,
+    });
     const voiceCapabilities = createAdapterCapabilityPort({
       registry: voiceAdapters,
       limits: { maxSessionSeconds: 3_600, maxIdleSeconds: 300 },

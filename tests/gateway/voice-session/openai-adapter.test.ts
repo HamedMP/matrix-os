@@ -1,11 +1,12 @@
 /**
- * OpenAI provider voice adapter tests.
+ * Chunked voice media adapter tests over the direct OpenAI speech ports.
  *
- * `createOpenAiVoiceMediaAdapter` is the chunked provider-neutral path:
- * buffered capture -> WAV -> file transcription -> `transcript.final`, and
- * canonical segment text -> streamed TTS -> `synthesis.audio`/`synthesis.end`.
- * Every provider call is stubbed through `fetchImpl` and the VAD hangover runs
- * on a fake clock — no real provider/network calls are made.
+ * `createOpenAiVoiceMediaAdapter` is the provider-neutral path driven by an
+ * injected `VoiceSpeechPorts` pair: buffered capture -> WAV -> port
+ * transcription -> `transcript.final`, and canonical segment text -> port
+ * synthesis stream -> `synthesis.audio`/`synthesis.end`. The direct-OpenAI
+ * ports are exercised through a stubbed `fetchImpl` and the VAD hangover
+ * runs on a fake clock — no real provider/network calls are made.
  */
 import { describe, expect, it } from "vitest";
 import type { VoiceResponseSegment } from "@matrix-os/contracts/voice-session";
@@ -17,6 +18,7 @@ import {
   type VoiceMediaAdapter,
   type VoiceMediaSession,
 } from "../../../packages/gateway/src/voice-session/adapter.js";
+import { createDirectOpenAiSpeechPorts } from "../../../packages/gateway/src/voice-session/direct-openai-ports.js";
 import {
   createOpenAiVoiceMediaAdapter,
   type OpenAiVoiceAdapterOptions,
@@ -57,11 +59,13 @@ async function startSession(options: {
     return options.handler(call);
   }) as typeof fetch;
   const adapter = createOpenAiVoiceMediaAdapter({
-    apiKey: API_KEY,
-    transcriptionModel: "gpt-4o-mini-transcribe",
-    speechModel: "gpt-4o-mini-tts",
-    voice: "alloy",
-    fetchImpl,
+    speech: createDirectOpenAiSpeechPorts({
+      apiKey: API_KEY,
+      transcriptionModel: "gpt-4o-mini-transcribe",
+      speechModel: "gpt-4o-mini-tts",
+      voice: "alloy",
+      fetchImpl,
+    }),
     clock,
     ...options.adapter,
   });
@@ -134,10 +138,12 @@ function eventsOfType<T extends VoiceAdapterEvent["type"]>(
 describe("createOpenAiVoiceMediaAdapter", () => {
   it("registers in the adapter registry with schema-valid capabilities", () => {
     const adapter = createOpenAiVoiceMediaAdapter({
-      apiKey: API_KEY,
-      transcriptionModel: "gpt-4o-mini-transcribe",
-      speechModel: "gpt-4o-mini-tts",
-      voice: "alloy",
+      speech: createDirectOpenAiSpeechPorts({
+        apiKey: API_KEY,
+        transcriptionModel: "gpt-4o-mini-transcribe",
+        speechModel: "gpt-4o-mini-tts",
+        voice: "alloy",
+      }),
     });
     expect(adapter.id).toBe("openai");
     expect(() => VoiceAdapterCapabilitiesSchema.parse(adapter.capabilities)).not.toThrow();
@@ -153,11 +159,28 @@ describe("createOpenAiVoiceMediaAdapter", () => {
       actionCancellation: "run",
       supportsInputSelection: true,
       supportsOutputSelection: true,
+      // Output format is declared separately from the 16kHz capture format.
+      outputAudio: { codec: "pcm_s16le", sampleRateHz: 24_000, channels: 1 },
     });
     const registry = new VoiceMediaAdapterRegistry();
     expect(() => registry.register(adapter)).not.toThrow();
     expect(registry.get("openai")).toBe(adapter);
     expect(registry.default()).toBe(adapter);
+  });
+
+  it("requires a complete speech port pair — a hear-but-mute adapter is a construction error", () => {
+    const speech = createDirectOpenAiSpeechPorts({
+      apiKey: API_KEY,
+      transcriptionModel: "gpt-4o-mini-transcribe",
+      speechModel: "gpt-4o-mini-tts",
+      voice: "alloy",
+    });
+    // @ts-expect-error — synthesize is required, not optional
+    expect(() => createOpenAiVoiceMediaAdapter({ speech: { transcribe: speech.transcribe } }))
+      .toThrow(TypeError);
+    // @ts-expect-error — speech must be an object with both ports
+    expect(() => createOpenAiVoiceMediaAdapter({ speech: undefined }))
+      .toThrow(TypeError);
   });
 
   it("transcribes a push_to_talk turn and emits transcript.final with a stable finalityId", async () => {
@@ -294,8 +317,30 @@ describe("createOpenAiVoiceMediaAdapter", () => {
     expect(audio[1]).toMatchObject({ responseId: "vresp_1", segmentId: "vseg_1", startMs: 512, durationMs: 100 });
     expect(Buffer.from(audio[0]!.data, "base64")).toHaveLength(24_576);
     expect(Buffer.from(audio[1]!.data, "base64")).toHaveLength(4_800);
+    // Every frame is stamped with the real 24kHz output format — never the
+    // negotiated 16kHz capture format.
+    for (const frame of audio) {
+      expect(frame.format).toEqual({ codec: "pcm_s16le", sampleRateHz: 24_000, channels: 1 });
+    }
     const ends = eventsOfType(h.events, "synthesis.end");
-    expect(ends).toEqual([{ type: "synthesis.end", responseId: "vresp_1", generatedDurationMs: 612 }]);
+    // Per-command end: scoped to the drained segment, cumulative duration.
+    expect(ends).toEqual([
+      { type: "synthesis.end", responseId: "vresp_1", generatedDurationMs: 612, segmentId: "vseg_1" },
+    ]);
+  });
+
+  it("maps synthesis HTTP failures to provider_unavailable without provider detail", async () => {
+    const h = await startSession({
+      handler: () => new Response("provider exploded", { status: 503 }),
+    });
+    h.session.synthesize({ responseId: "vresp_1", segment: segment("vseg_1"), text: "Hello." });
+    await flushAsync();
+    expect(h.calls).toHaveLength(1);
+    expect(h.calls[0]!.input).toBe(SPEECH_URL);
+    expect(h.events).toEqual([
+      { type: "error", code: "provider_unavailable", retryable: true, fatal: false },
+    ]);
+    expect(JSON.stringify(h.events)).not.toMatch(/openai|exploded|api\.openai/i);
   });
 
   it("serializes queued segments for one response in order", async () => {
@@ -325,9 +370,12 @@ describe("createOpenAiVoiceMediaAdapter", () => {
       ["vseg_1", 0],
       ["vseg_2", 100],
     ]);
-    expect(eventsOfType(h.events, "synthesis.end").map((event) => event.generatedDurationMs)).toEqual([
-      100,
-      200,
+    const ends = eventsOfType(h.events, "synthesis.end");
+    // Each queued segment drains with its own scoped end; the cumulative
+    // generatedDurationMs keeps climbing across the response.
+    expect(ends.map((event) => [event.segmentId, event.generatedDurationMs])).toEqual([
+      ["vseg_1", 100],
+      ["vseg_2", 200],
     ]);
   });
 

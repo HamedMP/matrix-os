@@ -9,16 +9,18 @@
  * from the shared contract vocabulary.
  */
 import { z } from "zod/v4";
-import type {
-  AudioFormat,
-  ClientMediaCapabilities,
-  SafeVoiceErrorCode,
-  VoiceCapability,
-  VoiceCapabilityLimits,
-  VoiceRecoveryAction,
-  VoiceResponseSegment,
-  VoiceSessionLimits,
-  VoiceTurnMode,
+import {
+  VoiceOutputAudioFormatSchema,
+  type AudioFormat,
+  type ClientMediaCapabilities,
+  type SafeVoiceErrorCode,
+  type VoiceCapability,
+  type VoiceCapabilityLimits,
+  type VoiceOutputAudioFormat,
+  type VoiceRecoveryAction,
+  type VoiceResponseSegment,
+  type VoiceSessionLimits,
+  type VoiceTurnMode,
 } from "@matrix-os/contracts/voice-session";
 import type {
   VoiceCapabilityPort,
@@ -41,6 +43,13 @@ export const VoiceAdapterCapabilitiesSchema = z.object({
   actionCancellation: z.enum(["none", "run", "tool"]),
   supportsInputSelection: z.boolean(),
   supportsOutputSelection: z.boolean(),
+  /**
+   * Declared decode format of emitted `synthesis.audio` payloads when the
+   * provider's output differs from the negotiated capture format (e.g. TTS at
+   * 24kHz while capture runs at 16kHz). Absent = the client decodes with the
+   * session capture format. Projected to `VoiceCapability.outputAudio`.
+   */
+  outputAudio: VoiceOutputAudioFormatSchema.optional(),
 }).strict();
 export type VoiceAdapterCapabilities = z.infer<typeof VoiceAdapterCapabilitiesSchema>;
 
@@ -75,8 +84,25 @@ export type VoiceAdapterEvent =
       durationMs: number;
       /** Base64 audio bounded like `capture.audio` payloads. */
       data: string;
+      /**
+       * Decode format of `data` when it differs from the session capture
+       * format. Absent = session capture format. Engine forwards to
+       * `response.audio.format`.
+       */
+      format?: VoiceOutputAudioFormat;
     }
-  | { type: "synthesis.end"; responseId: string; generatedDurationMs: number }
+  | {
+      type: "synthesis.end";
+      responseId: string;
+      /** Cumulative generated audio for the response so far (ms). */
+      generatedDurationMs: number;
+      /**
+       * Present when the terminal scopes to one drained segment — the engine
+       * treats it as segment-drained, not response-drained; response
+       * finalization stays with the engine. Absent = response-wide end.
+       */
+      segmentId?: string;
+    }
   | { type: "error"; code: SafeVoiceErrorCode; retryable: boolean; fatal: boolean };
 
 export interface VoiceSynthesisCommand {
@@ -198,6 +224,7 @@ export function createAdapterCapabilityPort(options: {
     actionCancellation: caps.actionCancellation,
     supportsInputSelection: caps.supportsInputSelection,
     supportsOutputSelection: caps.supportsOutputSelection,
+    ...(caps.outputAudio ? { outputAudio: caps.outputAudio } : {}),
     limits: options.limits,
   });
   return {
@@ -333,6 +360,8 @@ export class SimulatorVoiceMediaAdapter implements VoiceMediaAdapter {
             type: "synthesis.end",
             responseId: command.responseId,
             generatedDurationMs: command.segment.durationMs || 100,
+            // Per-command end: the simulator drains exactly one segment.
+            segmentId: command.segment.segmentId,
           });
         });
       },

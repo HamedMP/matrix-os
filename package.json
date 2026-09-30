@@ -58,6 +58,7 @@
     "test:watch": "sh -c 'pnpm --filter @matrix-os/observability build && pnpm --filter @matrix-os/kernel build && vitest \"$@\"' --",
     "test:integration": "vitest run --config vitest.integration.config.ts",
     "test:voice:postgres": "vitest run tests/gateway/chat-voice tests/gateway/voice-session",
+    "test:voice:conformance": "vitest run tests/gateway/voice-session/openai-conformance.test.ts",
     "test:coverage": "sh -c 'pnpm --filter @matrix-os/observability build && pnpm --filter @matrix-os/kernel build && pnpm --filter @matrix-os/integrations-mcp build && vitest run --coverage \"$@\"' --",
     "test:e2e": "sh -c 'pnpm --filter @matrix-os/observability build && pnpm --filter @matrix-os/kernel build && vitest run --config vitest.e2e.config.ts \"$@\"' --",
     "typecheck:build-kernel": "pnpm --filter '@matrix-os/observability' build && pnpm --filter '@matrix-os/kernel' build && pnpm --filter '@matrix-os/integrations-mcp' build",

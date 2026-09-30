@@ -1,19 +1,29 @@
 /**
- * OpenAI provider voice media adapter (Layer 4 seam).
+ * Chunked provider-neutral voice media adapter (Layer 4 seam).
  *
- * Chunked provider-neutral path behind the `VoiceMediaAdapter` port:
- * capture frames are buffered per turn, encoded as canonical WAV, and posted
- * to the file-transcription endpoint; canonical segment text is synthesized
- * with the speech endpoint and streamed back as bounded `synthesis.audio`
- * chunks. Provider frames never cross the port — only the shared contract
- * vocabulary (`transcript.final`, `vad`, `synthesis.*`, safe `error` codes).
+ * Capture frames are buffered per turn, encoded as canonical WAV, and handed
+ * to an injected `VoiceSpeechPorts.transcribe`; canonical segment text goes
+ * to `VoiceSpeechPorts.synthesize` and the yielded PCM chunks stream back as
+ * bounded `synthesis.audio` frames. Provider frames never cross the adapter
+ * port — only the shared contract vocabulary (`transcript.final`, `vad`,
+ * `synthesis.*`, safe `error` codes).
  *
- * Safety posture mirrors `packages/platform/src/speech/adapters/openai.ts`:
- * bounded reads, `redirect: "error"`, timeout + per-operation abort signals,
- * and no provider names/endpoints/error text in emitted events.
+ * The adapter holds NO credentials and NO provider URLs. Speech ports are
+ * injected: `createDirectOpenAiSpeechPorts` (development escape hatch) or a
+ * managed pair (Platform Speech transcription + a dev-gated synthesizer)
+ * composed by `adapter-registration.ts`. Output format is declared
+ * separately from input: `speech.outputAudio` advertises the synthesis
+ * decode format (OpenAI emits 24kHz s16le mono while capture negotiates
+ * 16kHz) — it projects to `VoiceCapability.outputAudio` and stamps each
+ * `synthesis.audio` frame so playback never decodes at the capture rate.
+ *
+ * `synthesis.end` is emitted once per drained segment command and carries
+ * `segmentId`: the engine treats each one as segment-drained and keeps
+ * response finalization for itself, so multi-segment responses no longer
+ * terminate on the first clause's end. `generatedDurationMs` stays
+ * cumulative (monotonic across the response).
  */
 import type { VoiceTurnMode } from "@matrix-os/contracts/voice-session";
-import { z } from "zod/v4";
 import {
   VoiceAdapterCapabilitiesSchema,
   type VoiceAdapterCapabilities,
@@ -28,15 +38,15 @@ import {
   type VoiceClock,
   type VoiceTimer,
 } from "./ports.js";
+import {
+  VoiceSpeechPortError,
+  parseVoiceOutputAudio,
+  sanitizeLanguageHints,
+  voiceOutputBytesPerMs,
+  type VoiceSpeechPorts,
+} from "./speech-ports.js";
 
-const TRANSCRIPTIONS_URL = "https://api.openai.com/v1/audio/transcriptions";
-const SPEECH_URL = "https://api.openai.com/v1/audio/speech";
-const TRANSCRIPTION_TIMEOUT_MS = 55_000;
-const SPEECH_TIMEOUT_MS = 60_000;
-const MAX_TRANSCRIPTION_RESPONSE_BYTES = 128 * 1024;
 const SYNTH_CHUNK_BYTES = 24 * 1024;
-/** 24kHz s16le mono output audio: 24_000 * 2 / 1_000. */
-const SYNTH_BYTES_PER_MS = 48;
 const MAX_QUEUED_SEGMENTS = 16;
 const MAX_SYNTH_RESPONSES = 64;
 const MAX_INFLIGHT_TRANSCRIPTIONS = 4;
@@ -44,24 +54,14 @@ const DEFAULT_MAX_CAPTURE_BYTES = 8 * 1024 * 1024;
 const DEFAULT_MAX_SYNTHESIS_BYTES = 16 * 1024 * 1024;
 const DEFAULT_VAD = { silenceThresholdRms: 500, silenceHangoverMs: 900, minSpeechMs: 250 } as const;
 
-const MODEL_SLUG = /^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$/;
-const VOICE_SLUG = /^[A-Za-z0-9_-]{1,64}$/;
 const MAX_TRANSCRIPT_CHARS = 8_000;
 
-const TranscriptionResponseSchema = z
-  .object({ text: z.string().max(MAX_TRANSCRIPT_CHARS) })
-  .passthrough();
-
 export interface OpenAiVoiceAdapterOptions {
-  apiKey: string;
-  /** File-transcription model, e.g. "gpt-4o-mini-transcribe" or "whisper-1". */
-  transcriptionModel: string;
-  /** Speech model, e.g. "gpt-4o-mini-tts". */
-  speechModel: string;
-  /** Speech voice, e.g. "alloy". */
-  voice: string;
-  /** Injected for tests; defaults to global fetch. */
-  fetchImpl?: typeof fetch;
+  /**
+   * Injected speech pair. `synthesize` is REQUIRED — an adapter that hears
+   * but never speaks is a registration defect, not a degraded session.
+   */
+  speech: VoiceSpeechPorts;
   /** Schedules VAD hangover; tests inject a fake clock. */
   clock?: VoiceClock;
   id?: string;
@@ -81,29 +81,10 @@ export interface OpenAiVoiceAdapterOptions {
   };
 }
 
-type ProviderFailureKind = "timeout" | "connection" | "unavailable" | "aborted";
-
-/** Internal only — never emitted; kinds map to safe error codes. */
-class ProviderCallError extends Error {
-  constructor(readonly kind: ProviderFailureKind) {
-    super(kind);
-    this.name = "ProviderCallError";
-  }
-}
-
 function logWarn(event: string, error: unknown): void {
   console.warn(`[voice-openai-adapter] ${event}`, {
     error: error instanceof Error ? error.name : "UnknownError",
   });
-}
-
-/** Best-effort body cleanup — never awaited, never throws. */
-function cancelBodyQuietly(cancel: () => Promise<void>): void {
-  try {
-    void cancel().catch((error: unknown) => logWarn("response_cleanup_failed", error));
-  } catch (error: unknown) {
-    logWarn("response_cleanup_failed", error);
-  }
 }
 
 /** Canonical 44-byte PCM WAV header + s16le body. */
@@ -179,18 +160,14 @@ interface ResponseSynthesis {
 }
 
 interface AdapterConfig {
-  apiKey: string;
-  transcriptionModel: string;
-  speechModel: string;
-  voice: string;
-  fetchImpl: typeof fetch;
+  speech: VoiceSpeechPorts;
   clock: VoiceClock;
   maxCaptureBytes: number;
   maxSynthesisBytes: number;
   vad: { silenceThresholdRms: number; silenceHangoverMs: number; minSpeechMs: number };
 }
 
-class OpenAiVoiceMediaSession implements VoiceMediaSession {
+class ChunkedVoiceMediaSession implements VoiceMediaSession {
   private readonly context: VoiceAdapterSessionContext;
   private readonly config: AdapterConfig;
   private closed = false;
@@ -391,78 +368,21 @@ class OpenAiVoiceMediaSession implements VoiceMediaSession {
   }
 
   /**
-   * One bounded POST: deadline + per-operation abort combined into the fetch
-   * signal, redirect rejection, auth header, and a classifier distinguishing
-   * our own aborts from timeouts and network failures.
+   * Normalize a port failure: an unclassified throw mid-abort is still an
+   * abort (close/supersede stay silent); anything else without a kind is a
+   * transport-level failure — never provider detail.
    */
-  private async post(
-    url: string,
-    init: { body: BodyInit; extraHeaders?: Record<string, string> },
-    timeoutMs: number,
-    op: AbortController,
-  ): Promise<{ response: Response; classify: () => ProviderCallError }> {
-    const deadline = AbortSignal.timeout(timeoutMs);
-    let abortedBy: "op" | "deadline" | undefined;
-    const markOp = () => {
-      abortedBy ??= "op";
-    };
-    const markDeadline = () => {
-      abortedBy ??= "deadline";
-    };
-    op.signal.addEventListener("abort", markOp, { once: true });
-    deadline.addEventListener("abort", markDeadline, { once: true });
-    const classify = (): ProviderCallError => {
-      if (abortedBy === "op" || op.signal.aborted || this.closed) {
-        return new ProviderCallError("aborted");
-      }
-      if (abortedBy === "deadline" || deadline.aborted) {
-        return new ProviderCallError("timeout");
-      }
-      return new ProviderCallError("connection");
-    };
-    try {
-      const response = await this.config.fetchImpl(url, {
-        method: "POST",
-        redirect: "error",
-        headers: {
-          authorization: `Bearer ${this.config.apiKey}`,
-          ...init.extraHeaders,
-        },
-        body: init.body,
-        signal: AbortSignal.any([deadline, op.signal]),
-      });
-      if (!response.ok) {
-        if (response.body) {
-          const body = response.body;
-          cancelBodyQuietly(() => body.cancel());
-        }
-        throw new ProviderCallError("unavailable");
-      }
-      return { response, classify };
-    } catch (error: unknown) {
-      if (error instanceof ProviderCallError) throw error;
-      if (abortedBy === "op" || op.signal.aborted || this.closed) {
-        throw new ProviderCallError("aborted");
-      }
-      if (abortedBy === "deadline" || deadline.aborted) {
-        throw new ProviderCallError("timeout");
-      }
-      if (error instanceof DOMException && error.name === "TimeoutError") {
-        throw new ProviderCallError("timeout");
-      }
-      throw classify();
-    } finally {
-      op.signal.removeEventListener("abort", markOp);
-      deadline.removeEventListener("abort", markDeadline);
-    }
+  private classifySpeechError(error: unknown, op: AbortController): VoiceSpeechPortError {
+    if (error instanceof VoiceSpeechPortError) return error;
+    if (op.signal.aborted || this.closed) return new VoiceSpeechPortError("aborted");
+    return new VoiceSpeechPortError("connection");
   }
 
-  /** Maps internal failure kinds to the safe event vocabulary. */
-  private emitCallFailure(error: unknown): void {
-    const kind = error instanceof ProviderCallError ? error.kind : "connection";
-    if (kind === "aborted") return; // close()/supersede are silent
+  /** Maps classified port failures to the safe event vocabulary. */
+  private emitCallFailure(error: VoiceSpeechPortError): void {
+    if (error.kind === "aborted") return; // close()/supersede are silent
     this.emit(
-      kind === "unavailable"
+      error.kind === "unavailable"
         ? { type: "error", code: "provider_unavailable", retryable: true, fatal: false }
         : { type: "error", code: "connection_failed", retryable: true, fatal: false },
     );
@@ -472,70 +392,35 @@ class OpenAiVoiceMediaSession implements VoiceMediaSession {
     const op = new AbortController();
     this.transcriptions.add(op);
     try {
-      const form = new FormData();
-      form.set("model", this.config.transcriptionModel);
-      form.set("file", new Blob([new Uint8Array(wav)], { type: "audio/wav" }), "capture.wav");
-      form.set("response_format", "json");
-      const { response, classify } = await this.post(
-        TRANSCRIPTIONS_URL,
-        { body: form },
-        TRANSCRIPTION_TIMEOUT_MS,
-        op,
+      const languageHints = sanitizeLanguageHints(
+        this.context.locale ? [this.context.locale] : undefined,
       );
-      const body = await this.readBoundedText(response, MAX_TRANSCRIPTION_RESPONSE_BYTES, classify);
-      let text: string;
-      try {
-        const parsed = TranscriptionResponseSchema.safeParse(JSON.parse(body));
-        if (!parsed.success) throw new Error("invalid transcription body");
-        text = parsed.data.text.trim();
-      } catch (error: unknown) {
-        if (error instanceof ProviderCallError) throw error;
-        throw new ProviderCallError("unavailable");
+      const result = await this.config.speech.transcribe({
+        wav,
+        ...(languageHints ? { languageHints } : {}),
+        signal: op.signal,
+      });
+      if (this.closed || op.signal.aborted) return; // late result: stay silent
+      let text = result.text.trim();
+      // Ports are trusted to bound; the adapter still enforces the wire cap.
+      if ([...text].length > MAX_TRANSCRIPT_CHARS) {
+        text = [...text].slice(0, MAX_TRANSCRIPT_CHARS).join("");
       }
       if (text.length === 0) return; // empty transcript: no event
       this.emit({ type: "transcript.final", turnId, finalityId: `trn_${turnId}`, text });
     } catch (error: unknown) {
-      this.emitCallFailure(error);
+      this.emitCallFailure(this.classifySpeechError(error, op));
     } finally {
       this.transcriptions.delete(op);
     }
   }
 
-  private async readBoundedText(
-    response: Response,
-    maxBytes: number,
-    classify: () => ProviderCallError,
-  ): Promise<string> {
-    if (!response.body) return "";
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder("utf-8", { fatal: true });
-    let total = 0;
-    let value = "";
-    try {
-      for (;;) {
-        const next = await reader.read();
-        if (next.done) break;
-        total += next.value.byteLength;
-        if (total > maxBytes) {
-          cancelBodyQuietly(() => reader.cancel());
-          throw new ProviderCallError("unavailable");
-        }
-        value += decoder.decode(next.value, { stream: true });
-      }
-      value += decoder.decode();
-      return value;
-    } catch (error: unknown) {
-      if (error instanceof ProviderCallError) throw error;
-      const failure = classify();
-      // Mid-body aborts keep their classification; truncated/undecodable
-      // bodies are provider-side failures, not connection losses.
-      throw failure.kind === "connection" ? new ProviderCallError("unavailable") : failure;
-    } finally {
-      reader.releaseLock();
-    }
-  }
-
   // --------------------------------------------------------------- synthesis
+
+  /** Byte-derived ms base of the DECLARED output stream (not the capture rate). */
+  private get synthBytesPerMs(): number {
+    return voiceOutputBytesPerMs(this.config.speech.outputAudio);
+  }
 
   private muteResponse(responseId: string): void {
     const resp = this.responses.get(responseId);
@@ -567,55 +452,30 @@ class OpenAiVoiceMediaSession implements VoiceMediaSession {
         this.emitSynthesisEnd(resp, command);
         return;
       }
-      const { response, classify } = await this.post(
-        SPEECH_URL,
-        {
-          body: JSON.stringify({
-            model: this.config.speechModel,
-            voice: this.config.voice,
-            input: command.text,
-            response_format: "pcm",
-          }),
-          extraHeaders: { "content-type": "application/json" },
-        },
-        SPEECH_TIMEOUT_MS,
-        op,
-      );
-      if (!response.body) throw new ProviderCallError("unavailable");
-      const reader = response.body.getReader();
+      const stream = this.config.speech.synthesize({ text: command.text, signal: op.signal });
       const pending: Buffer[] = [];
       let pendingBytes = 0;
       let totalBytes = 0;
-      try {
-        for (;;) {
-          const next = await reader.read();
-          if (next.done) break;
-          pending.push(Buffer.from(next.value));
-          pendingBytes += next.value.byteLength;
-          totalBytes += next.value.byteLength;
-          if (totalBytes > this.config.maxSynthesisBytes) {
-            cancelBodyQuietly(() => reader.cancel());
-            throw new ProviderCallError("unavailable");
-          }
-          while (pendingBytes >= SYNTH_CHUNK_BYTES) {
-            const chunk = takeBytes(pending, SYNTH_CHUNK_BYTES);
-            pendingBytes -= chunk.length;
-            this.emitSynthesisChunk(resp, command, chunk);
-          }
+      for await (const part of stream) {
+        pending.push(part);
+        pendingBytes += part.length;
+        totalBytes += part.length;
+        if (totalBytes > this.config.maxSynthesisBytes) {
+          throw new VoiceSpeechPortError("unavailable");
         }
-        if (pendingBytes > 0) {
-          const chunk = takeBytes(pending, pendingBytes);
-          this.emitSynthesisChunk(resp, command, chunk);
+        while (pendingBytes >= SYNTH_CHUNK_BYTES) {
+          const piece = takeBytes(pending, SYNTH_CHUNK_BYTES);
+          pendingBytes -= piece.length;
+          this.emitSynthesisChunk(resp, command, piece);
         }
-      } catch (error: unknown) {
-        if (error instanceof ProviderCallError) throw error;
-        throw classify();
-      } finally {
-        reader.releaseLock();
+      }
+      if (pendingBytes > 0) {
+        const piece = takeBytes(pending, pendingBytes);
+        this.emitSynthesisChunk(resp, command, piece);
       }
       this.emitSynthesisEnd(resp, command);
     } catch (error: unknown) {
-      if (!resp.muted) this.emitCallFailure(error);
+      if (!resp.muted) this.emitCallFailure(this.classifySpeechError(error, op));
     } finally {
       if (resp.abort === op) resp.abort = null;
     }
@@ -623,9 +483,11 @@ class OpenAiVoiceMediaSession implements VoiceMediaSession {
 
   private emitSynthesisChunk(resp: ResponseSynthesis, command: VoiceSynthesisCommand, chunk: Buffer): void {
     if (this.closed || resp.muted || chunk.length === 0) return;
-    const startMs = Math.round(resp.bytesEmitted / SYNTH_BYTES_PER_MS);
+    const bytesPerMs = this.synthBytesPerMs;
+    const startMs = Math.round(resp.bytesEmitted / bytesPerMs);
     resp.bytesEmitted += chunk.length;
-    const endMs = Math.round(resp.bytesEmitted / SYNTH_BYTES_PER_MS);
+    const endMs = Math.round(resp.bytesEmitted / bytesPerMs);
+    const outputAudio = this.config.speech.outputAudio;
     this.emit({
       type: "synthesis.audio",
       responseId: command.responseId,
@@ -633,6 +495,9 @@ class OpenAiVoiceMediaSession implements VoiceMediaSession {
       startMs,
       durationMs: Math.max(1, endMs - startMs),
       data: chunk.toString("base64"),
+      // Declare the real decode rate on every frame — capture format ≠ output
+      // format (16kHz negotiated vs 24kHz synthesized).
+      ...(outputAudio ? { format: outputAudio } : {}),
     });
   }
 
@@ -641,7 +506,10 @@ class OpenAiVoiceMediaSession implements VoiceMediaSession {
     this.emit({
       type: "synthesis.end",
       responseId: command.responseId,
-      generatedDurationMs: Math.round(resp.bytesEmitted / SYNTH_BYTES_PER_MS),
+      generatedDurationMs: Math.round(resp.bytesEmitted / this.synthBytesPerMs),
+      // Per-command terminal: exactly this segment drained. The engine owns
+      // response finalization; generatedDurationMs stays cumulative.
+      segmentId: command.segment.segmentId,
     });
   }
 }
@@ -667,19 +535,21 @@ function takeBytes(pending: Buffer[], size: number): Buffer {
 }
 
 /**
- * Build the adapter. Option validation happens up front (bounded slugs, byte
- * caps, VAD tuning) — a misconfigured adapter never reaches `start()`.
+ * Build the adapter. Option validation happens up front (speech port pair,
+ * declared output format, byte caps, VAD tuning) — a misconfigured adapter
+ * never reaches `start()`.
  */
 export function createOpenAiVoiceMediaAdapter(options: OpenAiVoiceAdapterOptions): VoiceMediaAdapter {
-  if (!options || typeof options.apiKey !== "string" || options.apiKey.trim().length === 0) {
-    throw new TypeError("Voice adapter requires an API key");
+  if (
+    !options
+    || typeof options.speech !== "object"
+    || options.speech === null
+    || typeof options.speech.transcribe !== "function"
+    || typeof options.speech.synthesize !== "function"
+  ) {
+    throw new TypeError("Voice adapter requires transcription and synthesis speech ports");
   }
-  if (!MODEL_SLUG.test(options.transcriptionModel) || !MODEL_SLUG.test(options.speechModel)) {
-    throw new TypeError("Voice adapter model identifiers are invalid");
-  }
-  if (!VOICE_SLUG.test(options.voice)) {
-    throw new TypeError("Voice adapter voice identifier is invalid");
-  }
+  const outputAudio = parseVoiceOutputAudio(options.speech.outputAudio);
   const maxCaptureBytes = options.maxCaptureBytes ?? DEFAULT_MAX_CAPTURE_BYTES;
   const maxSynthesisBytes = options.maxSynthesisBytes ?? DEFAULT_MAX_SYNTHESIS_BYTES;
   if (
@@ -723,14 +593,11 @@ export function createOpenAiVoiceMediaAdapter(options: OpenAiVoiceAdapterOptions
     actionCancellation: "run",
     supportsInputSelection: true,
     supportsOutputSelection: true,
+    ...(outputAudio ? { outputAudio } : {}),
     ...options.capabilities,
   });
   const config: AdapterConfig = {
-    apiKey: options.apiKey,
-    transcriptionModel: options.transcriptionModel,
-    speechModel: options.speechModel,
-    voice: options.voice,
-    fetchImpl: options.fetchImpl ?? fetch,
+    speech: options.speech,
     clock: options.clock ?? createSystemVoiceClock(),
     maxCaptureBytes,
     maxSynthesisBytes,
@@ -739,6 +606,6 @@ export function createOpenAiVoiceMediaAdapter(options: OpenAiVoiceAdapterOptions
   return {
     id: options.id ?? "openai",
     capabilities,
-    start: (context) => new OpenAiVoiceMediaSession(context, config),
+    start: (context) => new ChunkedVoiceMediaSession(context, config),
   };
 }

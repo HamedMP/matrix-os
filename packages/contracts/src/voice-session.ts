@@ -112,6 +112,31 @@ export const VoiceCapabilityLimitsSchema = z.object({
   maxIdleSeconds: z.number().int().positive().max(VOICE_SESSION_LIMITS.maxIdleSeconds),
 }).strict();
 
+const VOICE_AUDIO_CODEC = z.enum(["pcm_s16le", "pcm_f32le", "opus"]);
+const VOICE_AUDIO_SAMPLE_RATE_HZ = z.union([
+  z.literal(8_000),
+  z.literal(16_000),
+  z.literal(24_000),
+  z.literal(32_000),
+  z.literal(44_100),
+  z.literal(48_000),
+]);
+const VOICE_AUDIO_CHANNELS = z.union([z.literal(1), z.literal(2)]);
+
+/**
+ * Declared decode format of a provider OUTPUT audio stream. Unlike
+ * `AudioFormat` (client capture negotiation), output streams carry no frame
+ * cadence — adapters chunk them arbitrarily. INVARIANT: `startMs`/
+ * `durationMs`/`generatedDurationMs` are byte-derived and only meaningful for
+ * PCM codecs; an adapter must not declare a compressed output codec unless
+ * the provider supplies real durations.
+ */
+export const VoiceOutputAudioFormatSchema = z.object({
+  codec: VOICE_AUDIO_CODEC,
+  sampleRateHz: VOICE_AUDIO_SAMPLE_RATE_HZ,
+  channels: VOICE_AUDIO_CHANNELS,
+}).strict();
+
 export const VoiceCapabilitySchema = z.object({
   contractVersion: z.literal(VOICE_SESSION_CONTRACT_VERSION),
   status: z.enum(["available", "degraded", "unavailable"]),
@@ -125,6 +150,12 @@ export const VoiceCapabilitySchema = z.object({
   actionCancellation: z.enum(["none", "run", "tool"]),
   supportsInputSelection: z.boolean(),
   supportsOutputSelection: z.boolean(),
+  /**
+   * Decode format of `response.audio` payloads when the provider's output
+   * differs from the negotiated capture format (e.g. synthesis at 24kHz while
+   * capture runs at 16kHz). Absent = decode with the session capture format.
+   */
+  outputAudio: VoiceOutputAudioFormatSchema.optional(),
   limits: VoiceCapabilityLimitsSchema.optional(),
   reason: z.enum([
     "not_configured",
@@ -136,16 +167,9 @@ export const VoiceCapabilitySchema = z.object({
 }).strict();
 
 export const AudioFormatSchema = z.object({
-  codec: z.enum(["pcm_s16le", "pcm_f32le", "opus"]),
-  sampleRateHz: z.union([
-    z.literal(8_000),
-    z.literal(16_000),
-    z.literal(24_000),
-    z.literal(32_000),
-    z.literal(44_100),
-    z.literal(48_000),
-  ]),
-  channels: z.union([z.literal(1), z.literal(2)]),
+  codec: VOICE_AUDIO_CODEC,
+  sampleRateHz: VOICE_AUDIO_SAMPLE_RATE_HZ,
+  channels: VOICE_AUDIO_CHANNELS,
   frameDurationMs: z.number().int().min(5).max(120),
 }).strict();
 
@@ -318,8 +342,8 @@ export const VoiceServerFrameSchema = z.discriminatedUnion("type", [
   z.object({ ...commonFrameShape, type: z.literal("transcript.final"), ...VoiceTranscriptFinalSchema.shape }).strict(),
   z.object({ ...commonFrameShape, type: z.literal("transcript.correction"), ...VoiceTranscriptCorrectionSchema.shape }).strict(),
   z.object({ ...commonFrameShape, type: z.literal("response.started"), responseId: VoiceResponseIdSchema, runId: VoiceCanonicalRunIdSchema }).strict(),
-  z.object({ ...commonFrameShape, type: z.literal("response.audio"), responseId: VoiceResponseIdSchema, segmentId: VoiceSegmentIdSchema, startMs: VoiceDurationMsSchema, data: VoiceAudioFrameDataSchema }).strict(),
-  z.object({ ...commonFrameShape, type: z.literal("response.audio_end"), responseId: VoiceResponseIdSchema, generatedDurationMs: VoiceDurationMsSchema }).strict(),
+  z.object({ ...commonFrameShape, type: z.literal("response.audio"), responseId: VoiceResponseIdSchema, segmentId: VoiceSegmentIdSchema, startMs: VoiceDurationMsSchema, data: VoiceAudioFrameDataSchema, format: VoiceOutputAudioFormatSchema.optional() }).strict(),
+  z.object({ ...commonFrameShape, type: z.literal("response.audio_end"), responseId: VoiceResponseIdSchema, generatedDurationMs: VoiceDurationMsSchema, segmentId: VoiceSegmentIdSchema.optional() }).strict(),
   z.object({ ...commonFrameShape, type: z.literal("response.interrupted"), responseId: VoiceResponseIdSchema, effectiveThroughMs: VoiceDurationMsSchema }).strict(),
   z.object({ ...commonFrameShape, type: z.literal("operation.status"), runId: VoiceCanonicalRunIdSchema, label: boundedText(VOICE_SESSION_LIMITS.maxOperationLabelChars, VOICE_SESSION_LIMITS.maxOperationLabelChars * 4), state: CanonicalOperationStateSchema }).strict(),
   z.object({ ...commonFrameShape, type: z.literal("transport.going_away"), retryAfterMs: z.number().int().nonnegative().max(60_000), reconnectAllowed: z.boolean() }).strict(),
@@ -349,6 +373,7 @@ export type VoiceAudioFrameData = z.infer<typeof VoiceAudioFrameDataSchema>;
 export type VoiceSessionLimits = z.infer<typeof VoiceSessionLimitsSchema>;
 export type VoiceCapabilityLimits = z.infer<typeof VoiceCapabilityLimitsSchema>;
 export type VoiceCapability = z.infer<typeof VoiceCapabilitySchema>;
+export type VoiceOutputAudioFormat = z.infer<typeof VoiceOutputAudioFormatSchema>;
 export type AudioFormat = z.infer<typeof AudioFormatSchema>;
 export type ClientMediaCapabilities = z.infer<typeof ClientMediaCapabilitiesSchema>;
 export type VoicePlaybackAck = z.infer<typeof VoicePlaybackAckSchema>;

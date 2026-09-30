@@ -1,0 +1,88 @@
+/**
+ * Narrow Platform-Speech-facing ports for canonical voice sessions.
+ *
+ * The provisioned runtime-bound Platform Speech client is the ONLY
+ * production speech authority (speech/DOMAIN.md): transcription is funded,
+ * metered, and policy-gated platform-side, and the gateway never holds a
+ * provider key. This module re-derives that client from the same validated
+ * runtime config as `gateway-runtime.ts` (the runtime's client is internal
+ * to its routes/transcribers) and wraps `client.transcribe` as a
+ * `VoiceTranscriptionPort` for the chunked voice adapter.
+ *
+ * No platform TTS endpoint exists in the speech contract — synthesis is not
+ * expressible here, so a managed adapter pairs this port with a
+ * development-gated synthesizer at registration (see
+ * `voice-session/adapter-registration.ts`).
+ */
+import { randomUUID } from "node:crypto";
+import { VOICE_SESSION_LIMITS } from "@matrix-os/contracts/voice-session";
+import {
+  VoiceSpeechPortError,
+  sanitizeLanguageHints,
+  type VoiceTranscriptionPort,
+} from "../voice-session/speech-ports.js";
+import {
+  PlatformSpeechClientError,
+  createPlatformSpeechClient,
+  loadPlatformSpeechRuntimeConfig,
+  type PlatformSpeechClient,
+} from "./platform-client.js";
+
+/**
+ * Re-derive the provisioned Platform Speech client for voice sessions.
+ * Returns undefined when `MATRIX_PLATFORM_SPEECH_ENABLED` is off; throws the
+ * same `PlatformSpeechRuntimeConfigError` as the speech runtime on partial
+ * misconfiguration (deterministic — the runtime parses the same env first).
+ */
+export function createVoiceSessionPlatformSpeechClient(
+  env: NodeJS.ProcessEnv,
+): PlatformSpeechClient | undefined {
+  const config = loadPlatformSpeechRuntimeConfig(env);
+  return config ? createPlatformSpeechClient(config) : undefined;
+}
+
+/** `SpeechRequestIdSchema`-conforming id: sp_<13-digit-ts>_<16-64 safe>. */
+function speechRequestId(now: () => number): string {
+  return `sp_${now()}_${randomUUID().replaceAll("-", "")}`;
+}
+
+/**
+ * Managed transcription port: canonical WAV → platform `transcribe` with
+ * `sourceKind: "dictation"` and a conforming per-call request id. Failures
+ * collapse to classified `VoiceSpeechPortError` kinds — platform codes and
+ * messages never propagate to voice adapter events.
+ */
+export function createManagedVoiceTranscriptionPort(options: {
+  client: Pick<PlatformSpeechClient, "transcribe">;
+  /** Test seam for deterministic request ids. */
+  now?: () => number;
+}): VoiceTranscriptionPort {
+  const now = options.now ?? Date.now;
+  return async (request) => {
+    const languageHints = sanitizeLanguageHints(request.languageHints);
+    let result;
+    try {
+      result = await options.client.transcribe({
+        requestId: speechRequestId(now),
+        sourceKind: "dictation",
+        audio: Uint8Array.from(request.wav),
+        mediaType: "audio/wav",
+        ...(languageHints ? { languageHints } : {}),
+        signal: request.signal,
+      });
+    } catch (error: unknown) {
+      if (error instanceof VoiceSpeechPortError) throw error;
+      if (request.signal.aborted) throw new VoiceSpeechPortError("aborted");
+      if (error instanceof PlatformSpeechClientError) {
+        throw new VoiceSpeechPortError(error.code === "timeout" ? "timeout" : "unavailable");
+      }
+      throw new VoiceSpeechPortError("connection");
+    }
+    if (result.outcome !== "transcript") return { text: "" };
+    let text = result.text.trim();
+    if ([...text].length > VOICE_SESSION_LIMITS.maxTranscriptChars) {
+      text = [...text].slice(0, VOICE_SESSION_LIMITS.maxTranscriptChars).join("");
+    }
+    return { text };
+  };
+}
