@@ -137,6 +137,12 @@ export {
   notifyCollaborationDiscoveryChanged,
   subscribeCollaborationDiscoveryChanged,
 } from "./collaboration/discovery-events.js";
+export {
+  OrganizationListingSchema,
+  resolveActiveOrganizationId,
+  type OrganizationListing,
+  type OrganizationMemberships,
+} from "./organizations/active-organization.js";
 export { TerminalControls } from './terminal/TerminalControls.js';
 export { useTerminalControls } from './terminal/use-terminal-controls.js';
 export type { TerminalControlsState, TerminalControlsTransport, TerminalControlsOptions } from './terminal/use-terminal-controls.js';
