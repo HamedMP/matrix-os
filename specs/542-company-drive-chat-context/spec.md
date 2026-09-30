@@ -152,6 +152,8 @@ shutdown cancels the source client before its capability registry is closed.
 Until an audience policy can preserve provenance transitively, sharing a Chat
 containing drive material is disabled. The check is repeated under the existing
 Chat row lock, so a previously issued share confirmation cannot bypass it.
+Project resource staging checks the same restriction, and final project publication
+locks each inherited Chat and rechecks drive material in the publication transaction.
 Mentioning such a Chat as context in another Chat is also disabled, including
 queued/retried referenced history. Personal stored Chat history stays readable.
 This increment does not claim organization sharing of drive excerpts.
