@@ -8,13 +8,14 @@ describe("Pi memory instructions", () => {
     const remember = createBotTools({ capabilities: ["memory.propose"], broker: {} as never,
       state: { waitingForPerson: false, effectUnknown: false } }).find((tool) => tool.name === "remember");
     expect(remember).toBeDefined();
-    expect(remember!.parameters.required).not.toContain("sourceUrl");
-    expect(remember!.description).toMatch(/optional.*sourceUrl|sourceUrl.*optional/i);
-    expect(remember!.description).toMatch(/owner.*omit|omit.*owner/i);
+    expect(Object.keys(remember!.parameters.properties)).toEqual(["kind", "content"]);
+    expect(remember!.description).toMatch(/owner-stated/i);
+    expect(remember!.description).not.toMatch(/sourceUrl|source URL/i);
 
     const recipe = createBotRecipeCatalog().resolve({ recipeId: "writing-bot", version: "2026-09-27.1" });
     const prompt = buildBotSystemPrompt({ botName: recipe.name, instructions: recipe.instructions, recipe,
       now: new Date("2026-09-29T00:00:00Z") });
     expect(prompt).toMatch(/pending confirmation.*not.*remembered/i);
+    expect(prompt).not.toMatch(/sourceUrl|source URL/i);
   });
 });

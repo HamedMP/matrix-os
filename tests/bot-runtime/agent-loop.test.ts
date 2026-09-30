@@ -268,7 +268,7 @@ describe("bot agent loop", () => {
     expect(saves[0]!.messages.at(-1)).toMatchObject({ role: "user", content: "Acme, please" });
   });
 
-  it("advertises the broker's argument rules and names fields the broker would still refuse", async () => {
+  it("strips an invented memory source URL and names fields the broker would still refuse", async () => {
     const { route } = scripted([
       fauxAssistantMessage(fauxToolCall("remember", { kind: "fact", content: "Acme uses Stripe", sourceUrl: "http://acme.test/pricing" }, { id: "call_mem" }), { stopReason: "toolUse" }),
       fauxAssistantMessage(fauxToolCall("integration_call", { service: "gmail", action: "send..draft", connectionId: "conn_1", params: {} }, { id: "call_int" }), { stopReason: "toolUse" }),
@@ -276,10 +276,11 @@ describe("bot agent loop", () => {
     ]);
     const { broker, tools, saves } = memoryBroker();
     await run({ broker, route, command: command({ capabilities: ["memory.propose", "integration.call"] }) });
-    expect(tools).toEqual([]);
+    expect(tools).toHaveLength(1);
+    expect(tools[0]).toMatchObject({ capability: "memory.propose", args: { kind: "fact", content: "Acme uses Stripe", scope: "bot" } });
+    expect((tools[0]!.args as { source: { url?: string } }).source.url).toBeUndefined();
     const results = saves[0]!.messages.filter((message) => message.role === "toolResult").map((message) => JSON.stringify(message));
-    // The advertised schema already rejects a non-HTTPS source.
-    expect(results[0]).toContain("sourceUrl");
+    expect(results[0]).toContain("ok");
     // Rules the tool schema cannot express are checked locally with a field-only hint.
     expect(results[1]).toContain("Fix: action.");
   });
