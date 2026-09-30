@@ -51,3 +51,21 @@ claim ownership and complete restoration.
 Live acceptance requires both preview and original-controller owner API
 success, a connected owner Web Desktop, denied non-owner computer access, and
 the separate sharing journey. Source tests alone do not establish readiness.
+
+## Exact build selection
+
+The connector resolves the open same-repository PR head before choosing a
+successful Preview VPS deployment. An exact-head pull-request run remains the
+first choice. A trusted `workflow_dispatch` from `main` may also build a PR
+head after the gate resolves it; its workflow SHA describes `main` and is not
+runtime provenance.
+
+For that fallback, the connector requires a successful completed deployment
+from the same repository and unexpired uniquely named runtime and bundle
+artifacts for the requested PR. It downloads at most one bundle archive
+(2 GiB cap, 180-second deadline), reads only a unique regular `release.json`
+(64 KiB cap), and requires its full `gitCommit`, preview kind/channel, PR number
+and version suffix to match the requested head. The archive is removed on
+success or failure. A stale latest matching deployment fails closed. Existing
+route validation, connection-time PR recheck, platform image provenance,
+protected environment approval and exact owner/machine checks still apply.
