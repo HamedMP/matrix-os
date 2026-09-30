@@ -9,6 +9,7 @@ import { CLIENT_ORIGIN, PLATFORM, RELAY, fakeDirectWorld, scopeId } from "../hel
 
 const fileId = "20000000-0000-4000-8000-000000000001";
 const contentPath = `/api/collaboration/scopes/${scopeId}/files/${fileId}/content`;
+const appAssetPath = `/api/collaboration/scopes/${scopeId}/apps/notes/assets/index.html`;
 
 describe("collaboration direct content", () => {
   let world: ReturnType<typeof fakeDirectWorld>;
@@ -25,7 +26,7 @@ describe("collaboration direct content", () => {
 
   const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
     const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
-    if (url.origin === RELAY && url.pathname === contentPath) {
+    if (url.origin === RELAY && (url.pathname === contentPath || url.pathname === appAssetPath)) {
       const headers = new Headers(init?.headers);
       contentRequests.push({ headers, url: url.href });
       const sessionId = headers.get("x-matrix-collaboration-session");
@@ -68,6 +69,18 @@ describe("collaboration direct content", () => {
     expect(contentRequests).toHaveLength(1);
     expect(world.home.sessions.size).toBe(1);
     expect(direct.describe(scopeId).state).toBe("unauthenticated");
+  });
+
+  it("reads only bounded assets of the exact scoped app", async () => {
+    const direct = client();
+    await expect(direct.requestContent(scopeId, appAssetPath, { maxBytes: 1024 })).resolves.toMatchObject({ status: "ok", size: 10 });
+    expect(contentRequests.at(-1)?.url).toBe(`${RELAY}${appAssetPath}`);
+    for (const path of [
+      `/api/collaboration/scopes/${scopeId}/apps/notes/assets/../private`,
+      `/api/collaboration/scopes/${scopeId}/apps/notes/assets/.env`,
+      `/api/collaboration/scopes/${scopeId}/apps/notes/assets/`,
+      `/api/collaboration/scopes/${scopeId}/apps/notes/assets/main.js?x=1`,
+    ]) await expect(direct.requestContent(scopeId, path, { maxBytes: 1024 })).rejects.toMatchObject({ code: "invalid_request" });
   });
 
   it("stops at the declared size without reading the body", async () => {

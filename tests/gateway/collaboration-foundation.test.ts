@@ -89,6 +89,7 @@ const ROUTE_BASELINE: ReadonlyArray<readonly [string, string]> = [
   ["GET", "/api/collaboration/scopes/:scopeId/execution-policy"],
   ["PUT", "/api/collaboration/scopes/:scopeId/execution-policy"],
   // S12 shared files, folders and app instances register after the execution policy routes.
+  ["GET", "/api/collaboration/scopes/:scopeId/apps"],
   ["GET", "/api/collaboration/scopes/:scopeId/files"],
   ["GET", "/api/collaboration/scopes/:scopeId/files/:fileId/content"],
   ["POST", "/api/collaboration/scopes/:scopeId/files/actions"],

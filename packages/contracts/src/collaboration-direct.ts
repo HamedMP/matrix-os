@@ -452,6 +452,7 @@ export const COLLABORATION_DIRECT_ROUTES: readonly CollaborationDirectRoute[] = 
   home("GET", `${SCOPE}/files`),
   home("GET", `${SCOPE}/files/:fileId/content`),
   home("POST", `${SCOPE}/files/actions`),
+  home("GET", `${SCOPE}/apps`, { response: "CollaborationAppRootSchema" }),
   home("PUT", `${SCOPE}/drive`),
   home("GET", `${SCOPE}/drive`, { response: "OrganizationDriveSnapshotSchema" }),
   home("POST", `${SCOPE}/drive/uploads`, { request: "OrganizationDriveUploadRequestSchema", response: "OrganizationDriveUploadReservationSchema" }),

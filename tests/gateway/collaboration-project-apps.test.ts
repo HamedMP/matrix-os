@@ -178,6 +178,30 @@ describe("project collaboration app adapter", () => {
     expect(rows).toEqual([]);
   });
 
+  it("routes key-value data through the guarded project namespace", async () => {
+    let stored: string | null = null;
+    bridge.execute = vi.fn(async (input) => {
+      bridgeCalls.push({ namespace: input.namespace, action: input.action });
+      if (input.action.action === "writeData") { stored = input.action.value; return { ok: true }; }
+      if (input.action.action === "readData") return stored;
+      throw new Error("unexpected action");
+    });
+    const projectApps = adapter();
+    const editor = await authority.authorize({ scopeId: PROJECT_SCOPE_ID, actorId: EDITOR_ID, action: "mutate_project" });
+    const viewer = await authority.authorize({ scopeId: PROJECT_SCOPE_ID, actorId: VIEWER_ID, action: "read" });
+    await expect(projectApps.mutate(editor, { appId: APP_ID, clientRequestId: "50000000-0000-4000-8000-00000000009a",
+      expectedRevision: 2, action: { app: "board", action: "writeData", key: "win-sticky-notes/notes", value: "note" } }))
+      .resolves.toMatchObject({ revision: 3 });
+    await expect(projectApps.query(viewer, { appId: APP_ID,
+      action: { app: "board", action: "readData", key: "win-sticky-notes/notes" } })).resolves.toBe("note");
+    await expect(projectApps.mutate(viewer, { appId: APP_ID, clientRequestId: "50000000-0000-4000-8000-00000000009b",
+      expectedRevision: 3, action: { app: "board", action: "writeData", key: "win-sticky-notes/notes", value: "denied" } }))
+      .rejects.toMatchObject({ code: "forbidden" });
+    expect(bridgeCalls).toHaveLength(2);
+    expect(bridgeCalls[0]?.namespace).toBe(bridgeCalls[1]?.namespace);
+    expect(bridgeCalls[0]?.namespace).toMatch(/^p[a-f0-9]{32}$/);
+  });
+
   it("allows concurrent read queries without exclusive collaboration locks", async () => {
     let entered = 0;
     let release!: () => void;
