@@ -38,9 +38,11 @@ vi.mock("@desktop/renderer/src/features/work/WorkRail", () => ({
     onChatRenamed?: (record: CanonicalChatRecord) => void;
     projectedChatTitles?: CanonicalChatTitleProjection[];
     onStartAgentChat?: StartAgentChat;
+    onOpenBotChat?: (chatId: string) => void;
     onNewGlobalChat?: () => void;
   }) => (<>
     <button onClick={() => props.onNewGlobalChat?.()}>New chat</button>
+    <button onClick={() => props.onOpenBotChat?.("chat_bound_bot")}>Open recipe bot</button>
     <button onClick={() => props.onStartAgentChat?.("", [{ kind: "agent", id: "bot_review", label: "Review agent", revision: "3" }])}>Start saved agent</button>
     <button onClick={() => props.onStartAgentChat?.("Create a research agent")}>Start recipe draft</button>
     <button type="button" onClick={() => props.onChatRenamed?.(renamedRecord)}>
@@ -137,6 +139,21 @@ describe("HostedWorkSidebar", () => {
     expect(JSON.parse(screen.getByTestId("hosted-agent-draft").textContent!)).toEqual(request);
     act(()=>useConnection.setState({authGeneration:1}));
     expect(screen.getByTestId("hosted-agent-draft").textContent).toBe("null");
+  });
+  it("opens a recipe bot's bound conversation instead of an Agent draft", () => {
+    useTabs.getState().openTab({ kind: "work", title: "Chat", workRoute: "chat", chatView: "draft", closable: false });
+    const tab = useTabs.getState().tabs[0]!;
+    render(<WorkSurfaceRuntimeProvider active={false}><HostedWorkSidebar tab={tab} active /><HostedDraftReceipt /></WorkSurfaceRuntimeProvider>);
+    fireEvent.click(screen.getByRole("button", { name: "Open recipe bot" }));
+    expect(useTabs.getState().tabs[0]).toMatchObject({
+      workRoute: "chat", chatId: "chat_bound_bot", chatView: "conversation",
+    });
+    expect(screen.getByTestId("hosted-agent-draft").textContent).toBe("null");
+    fireEvent.click(screen.getByRole("button", { name: "Start saved agent" }));
+    expect(useTabs.getState().tabs[0]).toMatchObject({ chatView: "draft", chatId: undefined });
+    expect(JSON.parse(screen.getByTestId("hosted-agent-draft").textContent!)).toMatchObject({
+      resources: [{ kind: "agent", id: "bot_review", label: "Review agent", revision: "3" }],
+    });
   });
 
   it("synchronizes a rail rename into the active center-title projection", () => {
