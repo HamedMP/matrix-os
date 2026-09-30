@@ -19,6 +19,14 @@ function mockContext(path: string, authHeader?: string, queryToken?: string, ip?
     ? `http://localhost:4000${path}?token=${queryToken}`
     : `http://localhost:4000${path}`;
   return {
+    // `ip` models the verified transport peer (what @hono/node-server's
+    // conninfo reports as the socket remote address). Forwarded headers are
+    // honored only when the peer is listed in MATRIX_TRUSTED_PROXIES, so a
+    // test asserting a caller-supplied client IP behind a proxy must pass it
+    // explicitly via `headers`.
+    env: ip === undefined
+      ? {}
+      : { incoming: { socket: { remoteAddress: ip, remotePort: 45_000, remoteFamily: "IPv4" } } },
     req: {
       path,
       url,
@@ -26,8 +34,9 @@ function mockContext(path: string, authHeader?: string, queryToken?: string, ip?
       header: (name: string) => {
         const lower = name.toLowerCase();
         if (name === "Authorization") return authHeader;
-        if ((name === "X-Forwarded-For" || lower === "x-forwarded-for") && ip) return ip;
-        return headers[name] ?? headers[lower];
+        if (headers[name] !== undefined) return headers[name];
+        if (headers[lower] !== undefined) return headers[lower];
+        if (lower === "x-forwarded-for" && ip) return ip;
         return undefined;
       },
     },
@@ -646,7 +655,7 @@ describe("T133: Auth token middleware", () => {
     expect(nextCalled).toBe(true);
   });
 
-  it("falls back to x-forwarded-for when proxy IP headers are absent", async () => {
+  it("isolates limiter buckets by transport peer, not by claimed header IP", async () => {
     const mw = authMiddleware("secret-token");
     const noisyIp = "198.51.100.10";
     for (let i = 0; i < 120; i++) {
@@ -674,6 +683,207 @@ describe("T133: Auth token middleware", () => {
     );
 
     expect(nextCalled).toBe(false);
+  });
+});
+
+describe("trusted-proxy client IP gating", () => {
+  const ENV = "MATRIX_TRUSTED_PROXIES";
+
+  function withTrustedProxies(value: string | undefined, run: () => Promise<void>): Promise<void> {
+    const original = process.env[ENV];
+    if (value === undefined) delete process.env[ENV];
+    else process.env[ENV] = value;
+    return Promise.resolve()
+      .then(run)
+      .finally(() => {
+        if (original === undefined) delete process.env[ENV];
+        else process.env[ENV] = original;
+      });
+  }
+
+  it("ignores spoofed forwarding headers from a peer that is not trusted", async () => {
+    await withTrustedProxies(undefined, async () => {
+      const mw = authMiddleware("secret-token");
+      const peer = "198.51.100.40";
+      // 10 failed-auth attempts from one peer, each claiming a different
+      // client via forwarded headers — all must share the peer's bucket.
+      for (let i = 0; i < 10; i++) {
+        let nextCalled = false;
+        const result = await mw(
+          mockContext("/api/message", "Bearer wrong", undefined, peer, {
+            "x-forwarded-for": `203.0.113.${i + 1}`,
+            "cf-connecting-ip": `203.0.113.${i + 1}`,
+          }),
+          async () => { nextCalled = true; },
+        );
+        expect(result?.status).toBe(401);
+        expect(nextCalled).toBe(false);
+      }
+      // 11th attempt with yet another claimed IP: still locked to the peer.
+      const blocked = await mw(
+        mockContext("/api/message", "Bearer wrong", undefined, peer, {
+          "x-forwarded-for": "203.0.113.250",
+        }),
+        async () => {},
+      );
+      expect(blocked?.status).toBe(429);
+      // A different peer keeps its own bucket.
+      const other = await mw(
+        mockContext("/api/message", "Bearer wrong", undefined, "198.51.100.41"),
+        async () => {},
+      );
+      expect(other?.status).toBe(401);
+    });
+  });
+
+  it("honors forwarding headers when the peer is a configured trusted proxy", async () => {
+    await withTrustedProxies("127.0.0.1, ::1", async () => {
+      const mw = authMiddleware("secret-token");
+      // Same claimed client through the trusted proxy: buckets by header IP.
+      for (let i = 0; i < 10; i++) {
+        await mw(
+          mockContext("/api/message", "Bearer wrong", undefined, "127.0.0.1", {
+            "x-real-ip": "203.0.113.10",
+          }),
+          async () => {},
+        );
+      }
+      const blocked = await mw(
+        mockContext("/api/message", "Bearer wrong", undefined, "127.0.0.1", {
+          "x-real-ip": "203.0.113.10",
+        }),
+        async () => {},
+      );
+      expect(blocked?.status).toBe(429);
+      // A different claimed client through the same proxy: fresh bucket.
+      const other = await mw(
+        mockContext("/api/message", "Bearer wrong", undefined, "127.0.0.1", {
+          "x-real-ip": "203.0.113.11",
+        }),
+        async () => {},
+      );
+      expect(other?.status).toBe(401);
+    });
+  });
+
+  it("matches trusted proxies by CIDR and prefers CF-Connecting-IP", async () => {
+    await withTrustedProxies("10.8.0.0/16", async () => {
+      const mw = authMiddleware("secret-token");
+      for (let i = 0; i < 10; i++) {
+        await mw(
+          mockContext("/api/message", "Bearer wrong", undefined, "10.8.3.9", {
+            "cf-connecting-ip": "192.0.2.44",
+            "x-real-ip": "192.0.2.99",
+          }),
+          async () => {},
+        );
+      }
+      // cf-connecting-ip keyed bucket is exhausted; a different cf value is not.
+      const blocked = await mw(
+        mockContext("/api/message", "Bearer wrong", undefined, "10.8.3.9", {
+          "cf-connecting-ip": "192.0.2.44",
+          "x-real-ip": "192.0.2.200",
+        }),
+        async () => {},
+      );
+      expect(blocked?.status).toBe(429);
+      const other = await mw(
+        mockContext("/api/message", "Bearer wrong", undefined, "10.8.3.9", {
+          "cf-connecting-ip": "192.0.2.45",
+        }),
+        async () => {},
+      );
+      expect(other?.status).toBe(401);
+      // Peer just outside the CIDR is not trusted: header spoofing collapses
+      // to the peer bucket.
+      for (let i = 0; i < 10; i++) {
+        await mw(
+          mockContext("/api/message", "Bearer wrong", undefined, "10.9.0.1", {
+            "x-forwarded-for": `203.0.113.${i + 40}`,
+          }),
+          async () => {},
+        );
+      }
+      const untrustedBlocked = await mw(
+        mockContext("/api/message", "Bearer wrong", undefined, "10.9.0.1", {
+          "x-forwarded-for": "203.0.113.254",
+        }),
+        async () => {},
+      );
+      expect(untrustedBlocked?.status).toBe(429);
+    });
+  });
+
+  it("treats requests without a resolvable transport peer as one shared bucket per path", async () => {
+    await withTrustedProxies(undefined, async () => {
+      const mw = authMiddleware("secret-token");
+      // No conninfo binding at all: headers can never mint limiter keys.
+      for (let i = 0; i < 10; i++) {
+        await mw(
+          mockContext("/api/unresolved-peer-probe", "Bearer wrong", undefined, undefined, {
+            "x-forwarded-for": `203.0.113.${i + 1}`,
+            "cf-connecting-ip": `198.51.100.${i + 1}`,
+          }),
+          async () => {},
+        );
+      }
+      const blocked = await mw(
+        mockContext("/api/unresolved-peer-probe", "Bearer wrong"),
+        async () => {},
+      );
+      expect(blocked?.status).toBe(429);
+      // A different path still gets its own sentinel bucket.
+      const otherPath = await mw(
+        mockContext("/api/unresolved-peer-probe-2", "Bearer wrong"),
+        async () => {},
+      );
+      expect(otherPath?.status).toBe(401);
+    });
+  });
+
+  it("matches IPv4-mapped IPv6 peers against IPv4 trusted entries", async () => {
+    await withTrustedProxies("127.0.0.1", async () => {
+      const mw = authMiddleware("secret-token");
+      // Dual-stack node servers report loopback peers as ::ffff:127.0.0.1.
+      for (let i = 0; i < 10; i++) {
+        await mw(
+          mockContext("/api/message", "Bearer wrong", undefined, "::ffff:127.0.0.1", {
+            "x-real-ip": "203.0.113.60",
+          }),
+          async () => {},
+        );
+      }
+      const blocked = await mw(
+        mockContext("/api/message", "Bearer wrong", undefined, "::ffff:127.0.0.1", {
+          "x-real-ip": "203.0.113.60",
+        }),
+        async () => {},
+      );
+      expect(blocked?.status).toBe(429);
+    });
+  });
+
+  it("ignores malformed trusted-proxy entries and non-IP header values", async () => {
+    await withTrustedProxies("garbage, 999.1.2.3, 10.0.0.0/999, 127.0.0.1", async () => {
+      const mw = authMiddleware("secret-token");
+      for (let i = 0; i < 10; i++) {
+        await mw(
+          mockContext("/api/message", "Bearer wrong", undefined, "127.0.0.1", {
+            "x-real-ip": "not-an-ip",
+          }),
+          async () => {},
+        );
+      }
+      // Garbage header from a trusted proxy falls back to the peer key, so
+      // ten attempts on that bucket exhaust it.
+      const blocked = await mw(
+        mockContext("/api/message", "Bearer wrong", undefined, "127.0.0.1", {
+          "x-real-ip": "still-not-an-ip",
+        }),
+        async () => {},
+      );
+      expect(blocked?.status).toBe(429);
+    });
   });
 });
 

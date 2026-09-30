@@ -12,10 +12,16 @@
  *
  * Rotation semantics follow the TransportLease model: minting for a session
  * supersedes every predecessor credential, the latest committed generation
- * wins, and consumption is atomic single-use. The in-process serialized
- * consume path below is correct for a single gateway instance; multi-instance
- * deployments MUST bind `VoiceTicketStore` to the DB-backed variant so
- * verify+consume stays atomic across replicas.
+ * wins, and consumption is atomic single-use.
+ *
+ * `VoiceTicketAuthority` is a SINGLE-PROCESS authority: its in-memory record
+ * map IS the replay state, so a ticket must be minted and consumed inside the
+ * same gateway process. This matches production — one gateway systemd unit
+ * per customer VPS, VM = user boundary (docs/dev/vps-deployment.md,
+ * specs/070-vps-per-user). If the gateway is ever replicated, verify+consume
+ * MUST move to a shared atomic store (e.g. Postgres `UPDATE ... WHERE
+ * state='minted'`) before the second replica ships — otherwise a consumed
+ * ticket could replay against a peer instance.
  *
  * Modelled on `collaboration/direct-auth.ts` (DirectTicketVerifier /
  * DirectReplayCache).

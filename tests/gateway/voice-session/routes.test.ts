@@ -395,6 +395,33 @@ describe("voice websocket upgrade", () => {
     expect(closed?.code).toBe(1008);
   });
 
+  it("rejects an upgrade with no ticket parameter at all", async () => {
+    const created = await createViaHttp(app);
+    const transport = created.body.transport as Record<string, unknown>;
+    await app.request(`http://test${String(transport.url)}`, { headers: { origin: "https://app.example.com" } });
+    upgradeEvents[0]!.onOpen?.({} as never, fakeWs as never);
+    expect(closed?.code).toBe(1008);
+    // The unclaimed ticket stays minted — rejection precedes consumption.
+    expect(rig.tickets.describeSession(String(created.body.sessionId))?.state).toBe("minted");
+  });
+
+  it("rejects an upgrade whose ticket parameter exceeds the bound", async () => {
+    const { events } = await planUpgrade(`?ticket=vt_${"a".repeat(300)}`);
+    events.onOpen?.({} as never, fakeWs as never);
+    expect(closed?.code).toBe(1008);
+  });
+
+  it("rejects duplicate ticket parameters — exactly one is required", async () => {
+    const created = await createViaHttp(app);
+    const transport = created.body.transport as Record<string, unknown>;
+    const url = `${String(transport.url)}?ticket=${String(transport.ticket)}&ticket=${String(transport.ticket)}`;
+    await app.request(`http://test${url}`, { headers: { origin: "https://app.example.com" } });
+    upgradeEvents[0]!.onOpen?.({} as never, fakeWs as never);
+    expect(closed?.code).toBe(1008);
+    // Rejection precedes consumption: the ticket survives for a clean retry.
+    expect(rig.tickets.describeSession(String(created.body.sessionId))?.state).toBe("minted");
+  });
+
   it("accepts a validated client frame and rejects malformed frames", async () => {
     const { events, sessionId } = await planUpgrade();
     events.onOpen?.({} as never, fakeWs as never);

@@ -1,4 +1,6 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
+import { isIP } from "node:net";
+import { getConnInfo } from "@hono/node-server/conninfo";
 import type { Context, MiddlewareHandler } from "hono";
 import {
   PREVIEW_TERMINAL_ACCESS_HEADER,
@@ -198,14 +200,159 @@ const acceptanceSignatureRateLimiter = createRateLimiter({
   lockoutMs: 30_000,
 });
 
-function getClientIp(c: { req: { header: (name: string) => string | undefined } }): string {
-  const forwardedFor = c.req.header("x-forwarded-for")?.split(",")[0]?.trim();
-  return (
-    c.req.header("cf-connecting-ip")?.trim() ||
-    c.req.header("x-real-ip")?.trim() ||
-    forwardedFor ||
-    "127.0.0.1"
-  );
+// ---------------------------------------------------------------------------
+// Trusted-proxy client-IP resolution
+//
+// Rate limiters below key on the caller's IP. Forwarded headers
+// (CF-Connecting-IP, X-Real-IP, X-Forwarded-For) are client-controlled unless
+// a reverse proxy overwrites them, so they are honored ONLY when the direct
+// transport peer is listed in MATRIX_TRUSTED_PROXIES (comma-separated
+// IPs/CIDRs — e.g. "127.0.0.1,::1" for the on-host nginx hop that fronts
+// every customer-VPS gateway). With no proxies configured, or when the peer
+// is not listed, every forwarded header is ignored and the socket peer is the
+// limiter key.
+// ---------------------------------------------------------------------------
+
+/** Narrow shape so tests can drive the resolver without a full Context. */
+interface ClientIpContext {
+  env?: unknown;
+  req: {
+    path: string;
+    header: (name: string) => string | undefined;
+  };
+}
+
+function ipv4ToLong(ip: string): number | null {
+  const parts = ip.split(".");
+  if (parts.length !== 4) return null;
+  let value = 0;
+  for (const part of parts) {
+    if (!/^\d{1,3}$/.test(part)) return null;
+    const octet = Number.parseInt(part, 10);
+    if (octet > 255) return null;
+    value = value * 256 + octet;
+  }
+  return value >>> 0;
+}
+
+/** Parse IPv6 (incl. `::` compression and a dotted-quad tail) to a bigint. */
+function ipv6ToBigInt(ip: string): bigint | null {
+  let input = ip.toLowerCase();
+  const lastColon = input.lastIndexOf(":");
+  const tail = lastColon >= 0 ? input.slice(lastColon + 1) : "";
+  if (tail.includes(".")) {
+    const mapped = ipv4ToLong(tail);
+    if (mapped === null) return null;
+    input = `${input.slice(0, lastColon)}:${(mapped >>> 16).toString(16)}:${(mapped & 0xffff).toString(16)}`;
+  }
+  const halves = input.split("::");
+  if (halves.length > 2) return null;
+  const parseHalf = (text: string): number[] | null => {
+    if (text.length === 0) return [];
+    const out: number[] = [];
+    for (const piece of text.split(":")) {
+      if (!/^[0-9a-f]{1,4}$/.test(piece)) return null;
+      out.push(Number.parseInt(piece, 16));
+    }
+    return out;
+  };
+  const left = parseHalf(halves[0] ?? "");
+  const right = halves.length === 2 ? parseHalf(halves[1] ?? "") : [];
+  if (left === null || right === null) return null;
+  let hextets: number[];
+  if (halves.length === 2) {
+    const missing = 8 - left.length - right.length;
+    if (missing < 1) return null;
+    hextets = [...left, ...new Array<number>(missing).fill(0), ...right];
+  } else {
+    if (left.length !== 8) return null;
+    hextets = left;
+  }
+  let value = 0n;
+  for (const hextet of hextets) value = (value << 16n) | BigInt(hextet);
+  return value;
+}
+
+/** Collapse IPv4-mapped IPv6 forms so v4 proxy entries match dual-stack peers. */
+function normalizePeerAddress(peer: string): string {
+  const lower = peer.toLowerCase();
+  if (!lower.startsWith("::ffff:")) return peer;
+  const tail = lower.slice(7);
+  if (ipv4ToLong(tail) !== null) return tail;
+  const parsed = ipv6ToBigInt(lower);
+  if (parsed === null || parsed < 0xffff00000000n || parsed > 0xffffffffffffn) return peer;
+  const value = Number(parsed & 0xffffffffn);
+  return `${(value >>> 24) & 0xff}.${(value >>> 16) & 0xff}.${(value >>> 8) & 0xff}.${value & 0xff}`;
+}
+
+function proxyEntryMatches(entry: string, peer: string): boolean {
+  const slash = entry.indexOf("/");
+  const base = (slash >= 0 ? entry.slice(0, slash) : entry).trim();
+  const bits = slash >= 0 ? Number.parseInt(entry.slice(slash + 1).trim(), 10) : null;
+  const peerV4 = ipv4ToLong(peer);
+  const baseV4 = ipv4ToLong(base);
+  if (peerV4 !== null && baseV4 !== null) {
+    const prefix = bits ?? 32;
+    if (!Number.isInteger(prefix) || prefix < 0 || prefix > 32) return false;
+    const mask = prefix === 0 ? 0 : (0xffffffff << (32 - prefix)) >>> 0;
+    return (peerV4 & mask) === (baseV4 & mask);
+  }
+  const peerV6 = ipv6ToBigInt(peer);
+  const baseV6 = ipv6ToBigInt(base);
+  if (peerV6 === null || baseV6 === null) return false;
+  const prefix = bits ?? 128;
+  if (!Number.isInteger(prefix) || prefix < 0 || prefix > 128) return false;
+  const mask = prefix === 0 ? 0n : ((1n << 128n) - 1n) & ~((1n << BigInt(128 - prefix)) - 1n);
+  return (peerV6 & mask) === (baseV6 & mask);
+}
+
+/** Read per call so env changes take effect without recreating middleware. */
+function isTrustedProxyPeer(peer: string): boolean {
+  const configured = process.env.MATRIX_TRUSTED_PROXIES;
+  if (!configured) return false;
+  for (const raw of configured.split(",")) {
+    const entry = raw.trim();
+    if (entry.length === 0 || entry.length > 64) continue;
+    if (proxyEntryMatches(entry, peer)) return true;
+  }
+  return false;
+}
+
+let warnedPeerResolutionFailure = false;
+
+function transportPeerAddress(c: ClientIpContext): string | undefined {
+  try {
+    const remote = getConnInfo(c as Context).remote.address;
+    return typeof remote === "string" && isIP(remote) !== 0 ? remote : undefined;
+  } catch (error: unknown) {
+    if (!(error instanceof TypeError) && !warnedPeerResolutionFailure) {
+      warnedPeerResolutionFailure = true;
+      console.warn(
+        "[auth] transport peer resolution failed:",
+        error instanceof Error ? error.name : "UnknownError",
+      );
+    }
+    return undefined;
+  }
+}
+
+function getClientIp(c: ClientIpContext): string {
+  const peer = transportPeerAddress(c);
+  if (peer !== undefined) {
+    const normalized = normalizePeerAddress(peer);
+    if (isTrustedProxyPeer(normalized)) {
+      const forwarded =
+        c.req.header("cf-connecting-ip")?.trim() ||
+        c.req.header("x-real-ip")?.trim() ||
+        c.req.header("x-forwarded-for")?.split(",")[0]?.trim();
+      return forwarded !== undefined && isIP(forwarded) !== 0 ? forwarded : normalized;
+    }
+    return normalized;
+  }
+  // Fail closed: when the transport peer is unresolvable (e.g. a non-node
+  // adapter or a test harness), requests share a per-path sentinel bucket —
+  // never an attacker-chosen header value.
+  return `unresolved-transport-peer:${c.req.path}`;
 }
 
 function getTrustedProxyClientIp(c: { req: { header: (name: string) => string | undefined } }): string {
@@ -340,7 +487,10 @@ export function authMiddleware(
     // path-bound ticket — not a bearer token. The route verifier performs
     // Origin allowlist, constant-time digest check, atomic consume, and
     // chat/session/principal/epoch binding before any session mutation, so
-    // bearer auth must not run first. Still IP rate-limited here.
+    // bearer auth must not run first. Still IP rate-limited here on the
+    // trusted-proxy-gated source key (socket peer unless MATRIX_TRUSTED_PROXIES
+    // lists it), so callers cannot rotate spoofed forwarding headers to dodge
+    // the limiter.
     if (VOICE_TRANSPORT_WS_PATH.test(normalizedPath)) {
       const ip = getClientIp(c);
       if (!rateLimiter.check(ip)) {

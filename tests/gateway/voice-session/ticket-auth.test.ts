@@ -165,6 +165,20 @@ describe("VoiceTicketAuthority", () => {
     );
   });
 
+  it("is a single-process authority: a second instance with the SAME key cannot consume", () => {
+    // Replica-isolation proof for the documented invariant: verify+consume is
+    // scoped to one process. Even sharing the HMAC key, instance B holds no
+    // record of A's mint, so a ticket consumed on A cannot replay on B.
+    const sharedKey = new Uint8Array(32).fill(9);
+    const authorityA = new VoiceTicketAuthority({ hmacKey: sharedKey });
+    const authorityB = new VoiceTicketAuthority({ hmacKey: sharedKey });
+    const minted = authorityA.mint(BINDING);
+    expectTicketError(
+      () => authorityB.consume(minted.ticket, { path: PATH, sessionId: "vs_a", chatId: "chat_main" }),
+      "invalid_ticket",
+    );
+  });
+
   it("rejects unsafe bindings at mint time", () => {
     const { authority } = makeAuthority();
     expect(() => authority.mint({ ...BINDING, path: "relative" })).toThrow(TypeError);
