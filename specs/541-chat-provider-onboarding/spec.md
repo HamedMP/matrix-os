@@ -1,6 +1,6 @@
 # Chat startup and provider onboarding (ENG-60)
 
-Status: implemented; exact-head Electron Desktop acceptance and Human Review pending.
+Status: implemented; Human Review pending. Validation and runtime provenance are recorded in PR #2061 and ENG-60.
 
 ## Goal and scope
 
