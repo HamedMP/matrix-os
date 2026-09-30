@@ -35,4 +35,22 @@ describe("immutable recipe-only Hermes inputs", () => {
     gate.observe({ type: "session.info", session_id: "live_fixture", payload: { lazy: false, tools: { matrix_jev_recipe: ["mcp__matrix_jev_recipe__jev_inbox_preview"] } } });
     gate.setSession("live_fixture"); await expect(gate.ready(new AbortController().signal)).resolves.toBeUndefined();
   });
+  it("waits through the native lazy cwd snapshot without tool fields", async () => {
+    const expected = { provider: "openai-codex", model: "gpt-5.6-sol" };
+    const gate = createJevHermesCatalogGate(expected); gate.setSession("live_fixture");
+    gate.observe({ type: "session.info", session_id: "live_fixture", payload: {
+      cwd: "/tmp/isolated-fixture", branch: "", project: null, lazy: true,
+    } });
+    gate.observe({ type: "session.info", session_id: "live_fixture", payload: {
+      ...expected, tools: { matrix_jev_recipe: ["mcp__matrix_jev_recipe__jev_inbox_preview"] },
+    } });
+    await expect(gate.ready(new AbortController().signal)).resolves.toBeUndefined();
+  });
+  it.each(["provider", "model"])("rejects a changed %s even with the correct sole tool", async field => {
+    const expected = { provider: "openai-codex", model: "gpt-5.6-sol" };
+    const gate = createJevHermesCatalogGate(expected); gate.setSession("live_fixture");
+    gate.observe({ type: "session.info", session_id: "live_fixture", payload: { ...expected, [field]: "different",
+      lazy: false, tools: { matrix_jev_recipe: ["mcp__matrix_jev_recipe__jev_inbox_preview"] } } });
+    await expect(gate.ready(new AbortController().signal)).rejects.toThrow();
+  });
 });

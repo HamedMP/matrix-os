@@ -35,10 +35,14 @@ idle past TTL.
 
 ## Preview VPS (verify loop)
 
-Label the PR `preview-vps`. CI builds bundle `0.0.0-pr<N>.<sha7>`, registers it
-**without any channel** (it can never reach real users), provisions VPS `pr-<N>`,
+Label the PR `preview-vps`. CI builds bundle `v<YYYY.MM.DD>-pr<N>-<run>-<attempt>-<sha7>`,
+registers it **without any channel** (it can never reach real users), provisions VPS `pr-<N>`,
 deploys, and comments the URL. Closed PR ⇒ VPS deleted (daily reaper as backstop,
 72h TTL). Manual run: `gh workflow run preview-vps.yml -f pr=<N>`.
+
+The shared `pr-<N>` VPS cannot use personal Integrations or Custom MCP. To test a PR
+against your own connected accounts, an internal member runs `matrix preview start <N>`
+for an owner-only Private Preview (see `docs/dev/preview-environments.md`).
 
 ## Logs — one interface for everything
 

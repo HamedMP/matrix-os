@@ -94,8 +94,8 @@ write_files:
       ExecStart=/opt/matrix/bin/matrix-gateway
       Restart=on-failure
       RestartSec=5
-      MemoryHigh=1G
-      MemoryMax=1536M
+      MemoryHigh=40%
+      MemoryMax=50%
 
       [Install]
       WantedBy=multi-user.target
@@ -397,6 +397,8 @@ write_files:
       MATRIX_UPDATE_CHANNEL={{updateChannel}}
       MATRIX_PLATFORM_REGISTER_URL={{platformRegisterUrl}}
       PLATFORM_INTERNAL_URL={{platformInternalUrl}}
+      {{updateManifestBaseUrlEnv}}
+      {{collaborationDisabledEnv}}
       UPGRADE_TOKEN={{platformVerificationToken}}
       MATRIX_AUTH_TOKEN={{platformVerificationToken}}
       MATRIX_SYNC_RUNTIME_TOKEN={{syncRuntimeToken}}

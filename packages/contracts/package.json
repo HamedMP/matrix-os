@@ -11,6 +11,7 @@
   },
   "imports": {
     "#chat-subagent": "./src/chat-subagent.ts",
+    "#private-preview": "./src/private-preview.ts",
     "#sync": "./src/sync.ts",
     "#app-ai": "./src/app-ai.ts",
     "#file-download": "./src/file-download.ts",
@@ -61,6 +62,7 @@
     "#provider-settings": "./src/provider-settings.ts",
     "#funded-ai": "./src/funded-ai.ts",
     "#jev": "./src/jev.ts",
+    "#jev-hermes-route": "./src/jev-hermes-route.ts",
     "#getting-started": "./src/getting-started.ts",
     "#os-view": "./src/os-view.ts",
     "#provider-settings": "./src/provider-settings.ts",

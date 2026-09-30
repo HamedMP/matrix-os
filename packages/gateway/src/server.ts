@@ -1166,6 +1166,8 @@ export async function createGateway(config: GatewayConfig) {
       if (!providerSettingsStore) throw new Error("Provider settings are unavailable");
       return providerSettingsStore.getSnapshot(options);
     } },
+    runtimeSource: Object.assign((signal: AbortSignal) => agentRuntimeServices.systemRuntimeSources.hermes(signal),
+      { invalidate: () => agentRuntimeServices.systemRuntimeSources.hermes.invalidate?.() }),
     getAgent: (ownerId, agentId) => canonicalChatRuntime?.agents.get({ type: "personal", ownerId }, agentId) ?? Promise.resolve(null),
     service: jevService, summary: fundedAiFundingSummaryReader,
     routes: fundedAiRuntimeConfig ? createFundedAiRouteReadinessClient(fundedAiRuntimeConfig) : undefined,
@@ -1274,7 +1276,7 @@ export async function createGateway(config: GatewayConfig) {
     canonicalChatExecutionRoots, gatewayCollaboration,
   });
 
-  const processManager = registerDeferredRuntimeRoutes({
+  const { processManager, customMcp } = registerDeferredRuntimeRoutes({
     app, homePath, integrationRoutes, internalIntegrationBaseUrl,
     internalPlatformToken, internalPlatformUrl, internalHandle,
     proxyIntegrationRequest: (c, targetBase, machineToken, routePrefix) =>
@@ -1830,6 +1832,7 @@ export async function createGateway(config: GatewayConfig) {
       canvasSubscriptionHub?.close();
       systemActivityCandidates.clear();
       await channelManager.stop();
+      customMcp.stop();
       await processManager.shutdownAll();
       await forwardTunnelHub.close();
       await watcher.close();

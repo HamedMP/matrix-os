@@ -69,6 +69,8 @@ export interface UserMachinesTable {
   runtime_token_epoch: Generated<number>;
   provisioning_class: string;
   access_clerk_user_ids: string[];
+  source_pr: number | null;
+  confirmed_bundle_version: string | null;
   developer_tools: string;
   hetzner_server_id: number | null;
   public_ipv4: string | null;
@@ -334,6 +336,8 @@ export interface HostBundleReleasesTable {
   update_type: string;
   changelog: string | null;
   created_at: string;
+  source_pr: number | null;
+  source_author: string | null;
 }
 
 export interface HostBundleChannelsTable {
@@ -912,6 +916,10 @@ export interface UserMachineRecord {
   runtimeTokenEpoch: number;
   provisioningClass: UserMachineProvisioningClass;
   accessClerkUserIds: string[];
+  /** PR whose bundle a Private Preview runs; null for every other class. */
+  sourcePr: number | null;
+  /** The only release a Private Preview's update base serves; null for every other class. */
+  confirmedBundleVersion: string | null;
   developerTools: DeveloperToolId[];
   hetznerServerId: number | null;
   publicIPv4: string | null;
@@ -1003,6 +1011,9 @@ export interface HostBundleReleaseRecord {
   updateType: string;
   changelog: string | null;
   createdAt: string;
+  /** Same-repository PR that produced this bundle (spec 537); null for other releases. */
+  sourcePr: number | null;
+  sourceAuthor: string | null;
 }
 
 export interface NewHostBundleRelease {
@@ -1022,6 +1033,8 @@ export interface NewHostBundleRelease {
   updateType?: string;
   changelog?: string | null;
   createdAt?: string;
+  sourcePr?: number | null;
+  sourceAuthor?: string | null;
 }
 
 export interface HostBundleChannelRecord {
@@ -1204,6 +1217,8 @@ export interface NewUserMachine {
   runtimeTokenEpoch?: number;
   provisioningClass?: UserMachineProvisioningClass;
   accessClerkUserIds?: string[];
+  sourcePr?: number | null;
+  confirmedBundleVersion?: string | null;
   developerTools?: DeveloperToolId[];
   hetznerServerId?: number | null;
   publicIPv4?: string | null;
@@ -1820,6 +1835,7 @@ export {
   HostBundleReleaseConflictError,
   upsertHostBundleRelease,
   getHostBundleRelease,
+  getLatestHostBundleReleaseForPr,
   listHostBundleReleases,
   promoteHostBundleChannel,
   promoteHostBundleChannelInTransaction,

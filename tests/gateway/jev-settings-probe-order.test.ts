@@ -66,7 +66,8 @@ it.each(["pin", "catalog", "profile"])("real production resolver → SettingsSto
     const rejection = mode === "pin" ? expect(completed).rejects.toThrow() : completed;
     if (mode !== "pin") {
       await vi.waitFor(() => expect(f.primary.requests.some(request => request.method === "session.create")).toBe(true));
-      f.primary.event("session.info", { lazy: false, tools: { matrix_jev_recipe: mode === "catalog" ? ["forged_tool"] : ["mcp__matrix_jev_recipe__jev_inbox_preview"] } });
+      f.primary.event("session.info", { provider: "anthropic", model: "claude-sonnet-5", lazy: false,
+        tools: { matrix_jev_recipe: mode === "catalog" ? ["forged_tool"] : ["mcp__matrix_jev_recipe__jev_inbox_preview"] } });
     }
     await rejection;
     expect(f.genericProbe).not.toHaveBeenCalled(); expect(f.paidJev).not.toHaveBeenCalled();

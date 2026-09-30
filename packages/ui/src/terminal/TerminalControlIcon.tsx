@@ -2,6 +2,7 @@ import React from "react";
 
 export type TerminalControlIconName =
   | "split-right"
+  | "attachment"
   | "split-down"
   | "maximize"
   | "keyboard"
@@ -44,6 +45,7 @@ export function TerminalControlIcon({
         </>
       )}
       {name === "maximize" && <path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5" />}
+      {name === "attachment" && <path d="m21 11-9 9a6 6 0 0 1-8.5-8.5l9-9a4 4 0 0 1 5.7 5.7l-9 9a2 2 0 0 1-2.8-2.8L15 6" />}
       {name === "keyboard" && (
         <>
           <rect x="2" y="5" width="20" height="14" rx="3" />

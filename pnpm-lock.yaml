@@ -680,6 +680,9 @@ importers:
       ws:
         specifier: ^8.19.0
         version: 8.19.0(bufferutil@4.1.0)(utf-8-validate@6.0.6)
+      yaml:
+        specifier: 2.8.2
+        version: 2.8.2
       zod:
         specifier: ^4.4.3
         version: 4.4.3

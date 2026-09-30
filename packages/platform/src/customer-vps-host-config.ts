@@ -2,6 +2,7 @@ import type { CustomerVpsConfig } from './customer-vps-config.js';
 import type { ProvisionRequest } from './customer-vps-schema.js';
 import type { HostBundleRef } from './customer-vps-host-bundle.js';
 import type { CustomerHostConfig } from './customer-vps-cloud-init.js';
+import type { UserMachineProvisioningClass } from './db.js';
 import {
   buildPlatformRuntimeVerificationToken,
   buildPlatformSpeechRuntimeVerificationToken,
@@ -30,6 +31,8 @@ export const DEFAULT_CLOUD_INIT_TEMPLATE = [
   '      MATRIX_HOST_BUNDLE_URL={{hostBundleUrl}}',
   '      MATRIX_PLATFORM_REGISTER_URL={{platformRegisterUrl}}',
   '      PLATFORM_INTERNAL_URL={{platformInternalUrl}}',
+  '      {{updateManifestBaseUrlEnv}}',
+  '      {{collaborationDisabledEnv}}',
   '      UPGRADE_TOKEN={{platformVerificationToken}}',
   '      MATRIX_AUTH_TOKEN={{platformVerificationToken}}',
   '      MATRIX_SYNC_RUNTIME_TOKEN={{syncRuntimeToken}}',
@@ -64,7 +67,7 @@ export const DEFAULT_CLOUD_INIT_TEMPLATE = [
 
 export function buildHostConfig(
   config: CustomerVpsConfig,
-  input: ProvisionRequest,
+  input: ProvisionRequest & { provisioningClass?: UserMachineProvisioningClass },
   machineId: string,
   registrationToken: string,
   registrationTokenExpiresAt: string,
@@ -73,6 +76,10 @@ export function buildHostConfig(
   runtimeTokenEpoch = 1,
 ): CustomerHostConfig {
   const platformInternalUrl = new URL(config.platformRegisterUrl).origin;
+  // Spec 537: a Private Preview's updater may fetch only its owner-confirmed
+  // release, and its gateway never joins collaboration. Other classes get no
+  // line at all, since an empty assignment would override the updater fallback.
+  const privatePreview = input.provisioningClass === 'private-preview';
   const runtimeIdentity = {
     handle: input.handle,
     machineId,
@@ -106,5 +113,9 @@ export function buildHostConfig(
     posthogApiHost: config.posthogApiHost,
     fundedAiEnabled: config.fundedAiEnabled ? 'true' : 'false',
     fundedAiRelayUrl: config.fundedAiRelayUrl,
+    updateManifestBaseUrlEnv: privatePreview
+      ? `MATRIX_UPDATE_MANIFEST_BASE_URL=${platformInternalUrl}/private-preview-updates/${input.handle}`
+      : '',
+    collaborationDisabledEnv: privatePreview ? 'MATRIX_COLLABORATION_DISABLED=1' : '',
   };
 }
