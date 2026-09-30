@@ -1,4 +1,5 @@
 import { boundedOperation } from "../bounded-operation.js";
+import { BatchInput, type BatchPresentation } from "./inbox-batch.js";
 import { randomBytes } from "node:crypto";
 import { EMAIL_TRIAGE_LABELS, JevEmailTriageResultSchema, JevEmailTriageScoresSchema,
   evaluateEmailTriagePolicy } from "@matrix-os/contracts";
@@ -9,11 +10,12 @@ import { assembleInboxEvidence, GmailId, threadIdentity } from "./inbox-evidence
 import { JevLabelConfirmation, JevLabelInput } from "../integrations/jev-bound-labels.js";
 
 const Receipt = z.string().regex(/^[a-f0-9]{64}$/);
-export const InboxPreviewInput = z.discriminatedUnion("operation", [
+const SingleInboxInput = z.discriminatedUnion("operation", [
   z.strictObject({ operation: z.literal("discover") }),
   z.strictObject({ operation: z.literal("select"), receipt: Receipt, threadId: GmailId }),
   z.strictObject({ operation: z.literal("evaluate"), receipt: Receipt }),
 ]);
+export const InboxPreviewInput = z.union([SingleInboxInput, BatchInput]);
 const Discovery = z.object({ threads: z.array(z.object({ id: GmailId, snippet: z.string().max(4096).optional() })).max(30).optional(),
   nextPageToken: z.string().max(4096).optional() });
 const Profile = z.object({ emailAddress: z.email().max(320) });
@@ -40,7 +42,7 @@ type RecordState = { fingerprint: string; expiresAt: number; discoveryReceipt: s
   discovering?: Promise<NonNullable<RecordState["discovery"]>>;
   selection?: { threadId: string; receipt: string; identity?: ReturnType<typeof threadIdentity>; evidence?: Evidence };
   selecting?: Promise<{ kind: "evidence"; receipt: string; threadId: string; messageCount: number; readonly: true } | ReturnType<typeof review>>;
-  evaluating?: Promise<Proposal>; presentation?: Proposal };
+  evaluating?: Promise<Proposal>; presentation?: Proposal; batchVisible?: boolean };
 export type JevInboxBroker = ReturnType<typeof createJevInboxBroker>;
 
 /** Run-local bounded receipts; no model text, IDs, verification flags or scores grant authority. */
@@ -50,6 +52,8 @@ export function createJevInboxBroker(options: {
   evaluate: JevService["evaluate"];
   label?: (ownerId: string, scope: HermesJevScope, input: z.infer<typeof JevLabelInput>, signal: AbortSignal | undefined,
     authorize: () => Promise<void>) => Promise<unknown>;
+  batch?: { execute(owner:string,scope:HermesJevScope,input:unknown,signal?:AbortSignal):Promise<BatchPresentation>;
+    presentation(owner:string,scope:HermesJevScope):BatchPresentation|null };
   now?: () => number;
 }) {
   const records = new Map<string, RecordState>();
@@ -69,10 +73,16 @@ export function createJevInboxBroker(options: {
     alive(owner, scope, record, signal);
     assertJevInboxProfile(value, scope);
   }
+  async function completed<T>(operation: Promise<T>, record: RecordState, batchVisible: boolean): Promise<T> {
+    const result = await operation;
+    record.batchVisible = batchVisible;
+    return result;
+  }
   return {
-    presentation(ownerId: string, scope: HermesJevScope): Proposal | null {
+    presentation(ownerId: string, scope: HermesJevScope): Proposal | BatchPresentation | null {
       sweep();
       const record = records.get(key(ownerId, scope.runId));
+      if (record?.fingerprint === fingerprint(scope) && record.batchVisible) return options.batch?.presentation(ownerId,scope) ?? null;
       return record?.fingerprint === fingerprint(scope) && record.presentation ? structuredClone(record.presentation) : null;
     },
     async preflight(ownerId: string, scope: HermesJevScope, signal: AbortSignal): Promise<void> {
@@ -95,6 +105,15 @@ export function createJevInboxBroker(options: {
       const runKey = key(ownerId, scope.runId);
       let record = records.get(runKey);
       if (record && record.fingerprint !== fingerprint(scope)) throw new InboxPreviewError("denied");
+      if (input.operation === "batch_start" || input.operation === "batch_next" || input.operation === "batch_resume" || input.operation === "batch_status") {
+        if (!options.batch) throw new InboxPreviewError("unavailable");
+        if (!record) {
+          if (records.size >= MAX_RUNS) throw new InboxPreviewError("unavailable");
+          record = {fingerprint:fingerprint(scope),expiresAt:now()+TTL,discoveryReceipt:randomBytes(32).toString("hex")};
+          records.set(runKey,record);
+        }
+        return completed(options.batch.execute(ownerId, scope, input, signal), record, true);
+      }
       if (input.operation === "discover") {
         if (!record) {
           if (records.size >= MAX_RUNS) throw new InboxPreviewError("unavailable");
@@ -121,7 +140,7 @@ export function createJevInboxBroker(options: {
               && current.fingerprint === fingerprint(scope) && current.discovering === attempt) current.discovering = undefined;
           });
         }
-        return current.discovering;
+        return completed(current.discovering, current, false);
       }
       if (!record) throw new InboxPreviewError("denied");
       const current = record;
@@ -164,7 +183,7 @@ export function createJevInboxBroker(options: {
               && current.fingerprint === fingerprint(scope) && current.selecting === attempt) current.selecting = undefined;
           });
         }
-        return current.selecting;
+        return completed(current.selecting, current, false);
       }
       const selected = current.selection;
       if (!selected?.evidence || !selected.identity || input.receipt !== selected.receipt) throw new InboxPreviewError("denied");
@@ -230,7 +249,7 @@ export function createJevInboxBroker(options: {
         }
         return current.presentation;
       })();
-      return current.evaluating;
+      return completed(current.evaluating, current, false);
     },
   };
 }

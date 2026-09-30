@@ -8,7 +8,7 @@ const Identity = {
 const Id = JevInboxGmailIdSchema;
 const Input = z.discriminatedUnion("kind", [
   z.strictObject({ ...Identity, kind: z.literal("profile") }),
-  z.strictObject({ ...Identity, kind: z.literal("threads") }),
+  z.strictObject({ ...Identity, kind: z.literal("threads"), pageToken: z.string().min(1).max(4096).optional() }),
   z.strictObject({ ...Identity, kind: z.literal("thread-ids"), id: Id }),
   z.strictObject({ ...Identity, kind: z.literal("message"), id: Id }),
 ]);
@@ -41,7 +41,7 @@ async function withinDeadline<T>(operation: () => Promise<T>, signal: AbortSigna
 }
 
 /** Narrow raw REST seam inside the existing Pipedream OAuth/proxy path.
- * Never accepts an arbitrary URL, HTTP method, account mutation, or page token.
+ * Never accepts an arbitrary URL, HTTP method, account mutation, or unconstrained search.
  * The token supplier belongs to the existing SDK client; this adds no auth store.
  */
 export function createBoundedPipedreamGet(options: {
@@ -63,6 +63,7 @@ export function createBoundedPipedreamGet(options: {
       target.pathname = "/gmail/v1/users/me/threads";
       target.searchParams.set("labelIds", "INBOX");
       target.searchParams.set("maxResults", "30");
+      if (input.pageToken) target.searchParams.set("pageToken", input.pageToken);
       target.searchParams.set("fields", "threads(id,snippet),nextPageToken");
     } else if (input.kind === "thread-ids") {
       maxBytes = 64 * 1024;

@@ -25,10 +25,11 @@ function fixture() {
   const resolveCredentials = vi.fn(async () => credentials);
   const verifyRuntime = vi.fn(async () => undefined);
   const preflight = vi.fn(async () => undefined); const clearRun = vi.fn();
+  const activitySummary = vi.fn<(_owner: string, _scope: unknown) => string | null>(() => null);
   const summary = vi.fn<(_owner: string, _scope: unknown) => string | null>(() => null);
   const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn: gateway.spawnFn,
-    jev: { resolveCredentials, verifyRuntime, preflight, clearRun, summary } });
-  return { gateway, adapter, resolveCredentials, verifyRuntime, preflight, clearRun, summary };
+    jev: { resolveCredentials, verifyRuntime, preflight, clearRun, summary, activitySummary } });
+  return { gateway, adapter, resolveCredentials, verifyRuntime, preflight, clearRun, summary, activitySummary };
 }
 describe("production isolated Hermes recipe launch", () => {
   it.each(["openai-api", "openrouter", "openai-codex"])("launches projected %s credentials through the selected session and sole-broker gate", async provider => {
@@ -109,6 +110,7 @@ describe("production isolated Hermes recipe launch", () => {
     const f = fixture();
     const serverSummary = "Read-only Inbox triage proposal\nVerified snapshot: 4 messages\nNo mailbox changes have been made.";
     if (mode !== "empty-broker") f.summary.mockReturnValue(serverSummary);
+    f.activitySummary.mockReturnValue("Inbox batch: 3 examined, 2 confirmed");
     const events = collect(f.adapter.start(input));
     await vi.waitFor(() => expect(f.gateway.requests.some(r => r.method === "session.create")).toBe(true));
     f.gateway.event("session.info", { provider: "anthropic", model: "claude-sonnet-5", lazy: false, tools: { matrix_jev_recipe: ["mcp__matrix_jev_recipe__jev_inbox_preview"] } });
@@ -122,6 +124,7 @@ describe("production isolated Hermes recipe launch", () => {
     const output = completed.find(event => event.type === "tool.output");
     expect(output?.text).toBe(mode === "server-summary" ? serverSummary
       : "Inbox review has no verified proposal. No mailbox changes have been made.");
+    expect(JSON.stringify(completed).includes("Inbox batch: 3 examined, 2 confirmed")).toBe(mode === "server-summary");
     expect(JSON.stringify(completed)).not.toContain("FORGED"); expect(JSON.stringify(completed)).not.toContain("private-payload");
   });
   it("does not inherit server credentials even when ordinary stdio defaults do", async () => {

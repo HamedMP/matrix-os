@@ -1,3 +1,6 @@
+import { createJevInboxBatch } from "./inbox-batch.js";
+import { createInboxBatchProcessor } from "./inbox-batch-process.js";
+import type { JevInboxBatchStore } from "./inbox-batch-store.js";
 import type { ChatAgent } from "@matrix-os/contracts";
 import { ChatAgentContextError } from "../chat/agent-context.js";
 import type { HermesJevScope } from "../chat/hermes-integration-capability.js";
@@ -5,9 +8,9 @@ import type { JevHermesCredentials } from "../chat/jev-hermes-credentials.js";
 import { boundedOperation } from "../bounded-operation.js";
 import { createJevInboxBroker, InboxPreviewError, assertJevInboxProfile } from "./inbox-broker.js";
 import type { JevService } from "./service.js";
-import { formatJevInboxPresentation } from "./inbox-presentation.js";
+import { formatJevInboxPresentation, formatJevInboxActivitySummary } from "./inbox-presentation.js";
 
-const TTL = 15 * 60_000;
+const TTL = 35 * 60_000;
 const MAX_RUNS = 128;
 type Active = { scope: string; expiresAt: number; signal: AbortSignal; onAbort: () => void; ready: boolean };
 
@@ -22,16 +25,24 @@ export function createJevInboxRuntime(options: {
   read: Parameters<typeof createJevInboxBroker>[0]["read"];
   evaluate: JevService["evaluate"];
   label?: Parameters<typeof createJevInboxBroker>[0]["label"];
+  batchStore?: JevInboxBatchStore;
   now?: () => number;
 }) {
   const now = options.now ?? Date.now;
   const active = new Map<string, Active>();
   const id = (owner: string, run: string) => JSON.stringify([owner, run]);
   const stamp = (scope: HermesJevScope) => JSON.stringify(scope);
+  const pausing = new Set<Promise<void>>(); // bounded by MAX_RUNS; removed when settled
   function clearRun(owner: string, run: string): void {
     const key = id(owner, run); const entry = active.get(key);
     if (entry) entry.signal.removeEventListener("abort", entry.onAbort);
     active.delete(key); broker.clearRun(owner, run);
+    if (entry && batch && pausing.size < MAX_RUNS) {
+      const pending = boundedOperation(() => batch.pause(owner, JSON.parse(entry.scope) as HermesJevScope), 20_000).catch(error => {
+        console.warn("[jev-batch] Pause unavailable", { errorName: error instanceof Error ? error.name : "UnknownError" });
+      }).finally(() => pausing.delete(pending));
+      pausing.add(pending);
+    }
   }
   function sweep(): void {
     for (const [key, entry] of active) if (entry.expiresAt <= now() || entry.signal.aborted) {
@@ -63,10 +74,12 @@ export function createJevInboxRuntime(options: {
     const entry = active.get(id(owner, scope.runId));
     if (!entry || entry.scope !== stamp(scope) || entry.signal.aborted || (!provisional && !entry.ready)) throw new InboxPreviewError("denied");
   }
-  const broker = createJevInboxBroker({ read: options.read, evaluate: options.evaluate, label: options.label, now,
-    authorize: async (owner, scope) => {
-      admitted(owner, scope); await bound(owner, scope); admitted(owner, scope);
-    } });
+  const authorize = async (owner:string,scope:HermesJevScope) => {
+    admitted(owner, scope); await bound(owner, scope); admitted(owner, scope);
+  };
+  const batch = options.batchStore ? createJevInboxBatch({store:options.batchStore,authorize,read:options.read,
+    process:createInboxBatchProcessor(options),now}) : undefined;
+  const broker = createJevInboxBroker({ read: options.read, evaluate: options.evaluate, label: options.label, now, batch, authorize });
   return {
     broker,
     async admit(owner: string, agent: ChatAgent): Promise<void> {
@@ -111,6 +124,10 @@ export function createJevInboxRuntime(options: {
         catch (error) { clearRun(owner, scope.runId); throw error; }
       },
       clearRun,
+      activitySummary(owner: string, scope: HermesJevScope): string | null {
+        try {admitted(owner,scope);return formatJevInboxActivitySummary(broker.presentation(owner,scope));}
+        catch(error: unknown) {if(!(error instanceof InboxPreviewError))console.warn("[jev-inbox] Progress unavailable",{errorName:error instanceof Error?error.name:"UnknownError"});return null;}
+      },
       summary(owner: string, scope: HermesJevScope): string | null {
         try { admitted(owner, scope); return formatJevInboxPresentation(broker.presentation(owner, scope)); }
         catch (error: unknown) {
@@ -119,10 +136,12 @@ export function createJevInboxRuntime(options: {
         }
       },
     },
-    close(): void {
+    async close(): Promise<void> {
       for (const key of [...active.keys()]) {
         const [owner, run] = JSON.parse(key) as [string, string]; clearRun(owner, run);
       }
+      await Promise.allSettled([...pausing]);
+      batch?.close();
     },
   };
 }
