@@ -4,7 +4,7 @@
  * Bodies are bounded and strictly validated, errors come from one mapper
  * with allowlisted codes and generic messages, and responses are private.
  */
-import { BotDirectChatResponseSchema, BotGrantIdSchema, BotInteractionIdSchema, BotMemoryItemIdSchema, BotRecipeListResponseSchema, BotTaskListResponseSchema, CanonicalChatIdSchema, ChatAgentIdSchema, type BotTaskSummary } from "@matrix-os/contracts";
+import { BotChatBindingResponseSchema, BotDirectChatResponseSchema, BotGrantIdSchema, BotInteractionIdSchema, BotMemoryItemIdSchema, BotRecipeListResponseSchema, BotTaskListResponseSchema, CanonicalChatIdSchema, ChatAgentIdSchema, type BotTaskSummary } from "@matrix-os/contracts";
 import type { Context } from "hono";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
@@ -87,6 +87,16 @@ export function createBotRoutes(options: {
       ({ recipeId, version, name, description, output }));
     context.header("Cache-Control", "private, no-store");
     return context.json(BotRecipeListResponseSchema.parse({ recipes }));
+  });
+
+  routes.get("/api/chat-agents/:agentId/direct-chat", async (context) => {
+    const principal = options.getPrincipal(context);
+    if (!options.botChats?.directChat) return errorResponse(context, "unavailable");
+    const agentId = ChatAgentIdSchema.safeParse(context.req.param("agentId"));
+    if (!agentId.success) return errorResponse(context, "invalid_request");
+    const chatId = await options.botChats.directChat({ type: "personal", ownerId: principal.userId }, agentId.data);
+    context.header("Cache-Control", "private, no-store");
+    return context.json(BotChatBindingResponseSchema.parse({ chatId }));
   });
 
   routes.get("/api/chats/:chatId/bot", async (context) => {

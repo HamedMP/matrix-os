@@ -37,6 +37,31 @@ describe("bot UI read routes", () => {
     expect(directBot).toHaveBeenCalledTimes(1);
   });
 
+  it("resolves a bot's direct Chat for the authenticated owner and validates IDs", async () => {
+    const directChat = vi.fn(async (owner) => owner.ownerId === "owner_1" ? "chat_research" : null);
+    const server = (ownerId: string | null) => {
+      const app = new Hono();
+      app.route("/", createBotRoutes({ botChats: { directBot: async () => null, directChat }, getPrincipal: () => {
+        if (!ownerId) throw new MissingRequestPrincipalError();
+        return { userId: ownerId, source: "jwt" } as never;
+      } }));
+      return app;
+    };
+    const response = await server("owner_1").request("/api/chat-agents/bot_research1/direct-chat");
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("private, no-store");
+    expect(await response.json()).toEqual({ chatId: "chat_research" });
+    expect(directChat).toHaveBeenCalledWith({ type: "personal", ownerId: "owner_1" }, "bot_research1");
+    expect(await (await server("other_owner").request("/api/chat-agents/bot_research1/direct-chat")).json()).toEqual({ chatId: null });
+    expect((await server(null).request("/api/chat-agents/bot_research1/direct-chat")).status).toBe(401);
+    const calls = directChat.mock.calls.length;
+    expect((await server("owner_1").request("/api/chat-agents/invalid!/direct-chat")).status).toBe(400);
+    expect(directChat).toHaveBeenCalledTimes(calls);
+    const bare = new Hono();
+    bare.route("/", createBotRoutes({ getPrincipal: () => ({ userId: "owner_1" }) as never }));
+    expect((await bare.request("/api/chat-agents/bot_research1/direct-chat")).status).toBe(503);
+  });
+
   it("reads only the principal's Chat and returns allowlisted task fields", async () => {
     const tasks = vi.fn(async () => [{ taskId: "task_abcdefgh", agentId: "bot_research1", chatId: "chat_research",
       status: "waiting_person", revision: 2, updatedAt: "2026-09-28T12:00:00.000Z" }]);

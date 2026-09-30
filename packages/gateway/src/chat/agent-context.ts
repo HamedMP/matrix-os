@@ -18,6 +18,7 @@ import { MATRIX_BOT_INSTANCE_ID, MATRIX_BOT_SELECTION } from "../bots/selection.
 /** Finds the recipe bot whose live direct chat this is, if any. */
 export interface BotChatLookup {
   directBot(owner: ChatOwner, chatId: string): Promise<string | null>;
+  directChat?(owner: ChatOwner, agentId: string): Promise<string | null>;
 }
 
 export class ChatAgentContextError extends Error {

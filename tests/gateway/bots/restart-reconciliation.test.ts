@@ -120,6 +120,22 @@ describe("bot services at gateway start", () => {
     await services!.close();
   });
 
+  it("resolves only live recipe-bot Chats belonging to the requesting owner", async () => {
+    const services = await startBots(base());
+    try {
+      const created = await services!.instantiation.instantiate(OWNER, {
+        clientRequestId: "req_sidebar_0123456789abcdef",
+        recipe: { recipeId: "writing-bot", version: "2026-09-27.1" },
+      });
+      const owner = { type: "personal" as const, ownerId: OWNER };
+      await expect(services!.botChats.directChat!(owner, created.agent.id)).resolves.toBe(created.chatId);
+      await expect(services!.botChats.directChat!({ type: "personal", ownerId: "other_owner" }, created.agent.id)).resolves.toBeNull();
+      await expect(services!.botChats.directChat!({ type: "org", ownerId: OWNER }, created.agent.id)).resolves.toBeNull();
+      await agents.update(owner, created.agent.id, { baseRevision: created.agent.revision, archived: true });
+      await expect(services!.botChats.directChat!(owner, created.agent.id)).resolves.toBeNull();
+    } finally { await services!.close(); }
+  });
+
   it("offers creation but no bot runtime when the scope runtime is unavailable", async () => {
     const { host: down } = host(false);
     const services = await startBots({ ...base(), host: down as never });
