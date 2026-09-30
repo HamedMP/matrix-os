@@ -184,6 +184,7 @@ export function WorkRail({
   const projectSharing = useDesktopProjectSharingContext(active);
   const [shareProjectTarget, setShareProjectTarget] = useState<{
     project: Project;
+    organizationId: string;
     requestId: string;
   } | null>(null);
 
@@ -191,6 +192,13 @@ export function WorkRail({
     if (!active || !client) setSearchOpen(false);
     if (!active) setShareProjectTarget(null);
   }, [active, client]);
+
+  useEffect(() => {
+    if (shareProjectTarget
+      && shareProjectTarget.organizationId !== projectSharing?.organizationId) {
+      setShareProjectTarget(null);
+    }
+  }, [projectSharing?.organizationId, shareProjectTarget]);
 
   useEffect(() => {
     let current = true;
@@ -411,7 +419,14 @@ export function WorkRail({
           setDeleteChatTarget(record);
         }}
         sharing={projectSharing}
-        onShareProject={(project) => setShareProjectTarget({ project, requestId: crypto.randomUUID() })}
+        onShareProject={(project) => {
+          if (!projectSharing?.organizationId) return;
+          setShareProjectTarget({
+            project,
+            organizationId: projectSharing.organizationId,
+            requestId: crypto.randomUUID(),
+          });
+        }}
       />
     );
   };
@@ -576,7 +591,9 @@ export function WorkRail({
           else onSelectChat(record);
         }}
       />
-      {shareProjectTarget && projectSharing && shareProjectTarget.project.id ? (
+      {shareProjectTarget
+        && projectSharing?.organizationId === shareProjectTarget.organizationId
+        && shareProjectTarget.project.id ? (
         <DesktopProjectSharingHost
           key={shareProjectTarget.requestId}
           sharing={projectSharing}

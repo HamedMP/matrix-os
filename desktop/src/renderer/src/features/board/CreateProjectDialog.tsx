@@ -497,18 +497,32 @@ function CreateProjectForm({ onClose, canShareAfterCreate, onCreatedProject }: {
 
 export default function CreateProjectDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   const organizationId = useConnection((state) => state.organizationId);
-  const [shareTarget, setShareTarget] = useState<{ id: string; name: string; requestId: string } | null>(null);
+  const [shareTarget, setShareTarget] = useState<{
+    id: string;
+    name: string;
+    organizationId: string;
+    requestId: string;
+  } | null>(null);
   const sharing = useDesktopProjectSharingContext(
     organizationId !== null && (open || shareTarget !== null),
   );
 
+  useEffect(() => {
+    if (shareTarget && shareTarget.organizationId !== organizationId) setShareTarget(null);
+  }, [organizationId, shareTarget]);
+
   const handleCreatedProject = useCallback((project: Project) => {
-    if (!project.id) {
-      console.warn("[project-collaboration] created project has no canonical id");
+    if (!project.id || !organizationId) {
+      console.warn("[project-collaboration] created project sharing context unavailable");
       return;
     }
-    setShareTarget({ id: project.id, name: project.name || project.slug, requestId: crypto.randomUUID() });
-  }, []);
+    setShareTarget({
+      id: project.id,
+      name: project.name || project.slug,
+      organizationId,
+      requestId: crypto.randomUUID(),
+    });
+  }, [organizationId]);
 
   return <>
     <Dialog open={open} onClose={onClose} width={480} title="Create a project" placement="center">
@@ -518,7 +532,7 @@ export default function CreateProjectDialog({ open, onClose }: { open: boolean; 
         onCreatedProject={handleCreatedProject}
       />
     </Dialog>
-    {shareTarget && sharing ? <DesktopProjectSharingHost
+    {shareTarget && sharing?.organizationId === shareTarget.organizationId ? <DesktopProjectSharingHost
       key={shareTarget.requestId}
       sharing={sharing}
       projectId={shareTarget.id}

@@ -50,13 +50,17 @@ import { useConnection } from "@desktop/renderer/src/stores/connection";
 
 const alpha = { id: "proj_alpha", slug: "alpha", name: "Alpha", kind: "folder" as const };
 
+function rail() {
+  return <WorkRail client={null} projects={[alpha]} active activeProjectSlug={alpha.slug}
+    onNewGlobalChat={vi.fn()} onCreateProject={vi.fn()} onNewProjectChat={vi.fn()}
+    onSelectChat={vi.fn()} onCollapse={vi.fn()} />;
+}
+
 function setup(sharing: { organizationId: string | null } | null) {
   sharingState.available = sharing !== null;
   sharingState.organizationId = sharing?.organizationId ?? null;
   useConnection.setState({ api: { patch: vi.fn() } as never, userId: null });
-  render(<WorkRail client={null} projects={[alpha]} active activeProjectSlug={alpha.slug}
-    onNewGlobalChat={vi.fn()} onCreateProject={vi.fn()} onNewProjectChat={vi.fn()}
-    onSelectChat={vi.fn()} onCollapse={vi.fn()} />);
+  return render(rail());
 }
 
 function openMenu() {
@@ -75,7 +79,7 @@ afterEach(() => {
 
 describe("Chats project sharing", () => {
   it("starts whole-project sharing from the project menu and survives section collapse", async () => {
-    setup({ organizationId: "org_matrix_team" });
+    const view = setup({ organizationId: "org_matrix_team" });
     openMenu();
     fireEvent.click(screen.getByRole("menuitem", { name: "Share project" }));
 
@@ -90,6 +94,10 @@ describe("Chats project sharing", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Projects" }));
     expect(screen.getByTestId("project-sharing-dialogs")).toBeTruthy();
+
+    sharingState.organizationId = "org_other";
+    view.rerender(rail());
+    await waitFor(() => expect(screen.queryByTestId("project-sharing-dialogs")).toBeNull());
   });
 
   it("explains the organization requirement in the project menu", () => {

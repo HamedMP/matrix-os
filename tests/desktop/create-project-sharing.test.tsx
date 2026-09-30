@@ -2,13 +2,14 @@
 
 import React from "react";
 import * as Tooltip from "@radix-ui/react-tooltip";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const sharingController = vi.hoisted(() => ({
   start: vi.fn(),
   lastOptions: null as null | Record<string, unknown>,
 }));
+const sharingState = vi.hoisted(() => ({ organizationId: "org_matrix_team" }));
 
 vi.mock("@matrix-os/ui", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@matrix-os/ui")>();
@@ -35,7 +36,7 @@ vi.mock("@desktop/renderer/src/features/project/DesktopProjectSharing", async (i
     useDesktopProjectSharingContext: (enabled = true) => enabled ? ({
       api: { baseUrl: "https://app.matrix-os.com", get: vi.fn(), post: vi.fn(), delete: vi.fn() },
       runtimeId: "vps:10000000-0000-4000-8000-000000000001",
-      organizationId: "org_matrix_team",
+      organizationId: sharingState.organizationId,
     }) : null,
   };
 });
@@ -52,6 +53,7 @@ describe("project creation sharing", () => {
   }
 
   beforeEach(() => {
+    sharingState.organizationId = "org_matrix_team";
     useConnection.setState({
       status: "signed-in",
       handle: "operator",
@@ -97,5 +99,11 @@ describe("project creation sharing", () => {
       projectName: "Alpha",
     });
     expect(screen.getByTestId("project-sharing-dialogs")).toBeTruthy();
+
+    act(() => {
+      sharingState.organizationId = "org_other";
+      useConnection.setState({ organizationId: "org_other" });
+    });
+    await waitFor(() => expect(screen.queryByTestId("project-sharing-dialogs")).toBeNull());
   });
 });
