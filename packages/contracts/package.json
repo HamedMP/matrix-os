@@ -8,7 +8,8 @@
     "./chat-subagent": "./src/chat-subagent.ts",
     "./collaboration": "./src/collaboration.ts",
     "./collaboration-direct": "./src/collaboration-direct.ts",
-    "./bots": "./src/bots/index.ts"
+    "./bots": "./src/bots/index.ts",
+    "./slack-bridge": "./src/slack-bridge.ts"
   },
   "imports": {
     "#chat-subagent": "./src/chat-subagent.ts",

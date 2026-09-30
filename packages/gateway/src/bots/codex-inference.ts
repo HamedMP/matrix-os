@@ -36,7 +36,7 @@ export function codexSubscriptionBody(body: string): string {
 
 export async function forwardCodexBotInference(request: ScopeRuntimeBotInferenceRequest, options: {
   resolveIdentity: ResolveCodexOwnerIdentity;
-  stillAuthorized(): boolean;
+  stillAuthorized(): boolean | Promise<boolean>;
   signal: AbortSignal;
   fetchImpl: typeof fetch;
 }): Promise<ScopeRuntimeBrokerResponse> {
@@ -45,7 +45,7 @@ export async function forwardCodexBotInference(request: ScopeRuntimeBotInference
   const body = codexSubscriptionBody(request.body);
   const send = async (refresh = false): Promise<Response | "denied"> => {
     const identity = IdentitySchema.parse(await options.resolveIdentity(options.signal, refresh));
-    if (!options.stillAuthorized()) return "denied";
+    if (!await options.stillAuthorized()) return "denied";
     return options.fetchImpl(identity.url, { method: "POST", redirect: "error", signal: options.signal, body,
       headers: { ...identity.headers, originator: "codex_cli_rs", accept: "text/event-stream", "content-type": "application/json" } });
   };

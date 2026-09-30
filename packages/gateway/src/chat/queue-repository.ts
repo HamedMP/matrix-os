@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import {
   ChatRunContextSchema,
   CanonicalChatIdSchema,
+  CanonicalChatExecutionRootRefSchema,
   CanonicalChatMessageSchema,
   CanonicalChatModelSelectionSchema,
   CanonicalChatQueuedTurnIdSchema,
@@ -334,6 +335,15 @@ export class ChatQueueRepository {
       if (provider.capability.status !== "available" || !provider.execution) {
         throw new SharedChatQueueError("unavailable");
       }
+      const executionRoot = input.executionRoot === undefined ? null
+        : CanonicalChatExecutionRootRefSchema.parse(input.executionRoot);
+      const executionRootFingerprint = input.executionRootFingerprint ?? null;
+      if ((executionRoot === null) !== (executionRootFingerprint === null)
+        || (executionRootFingerprint !== null && !/^[a-f0-9]{64}$/.test(executionRootFingerprint))
+        || (executionRoot && (executionRoot.kind === "bot_workspace" || executionRoot.projectId !== chat.project_id))
+        || (provider.execution.driverKind === "matrix_bot" && !executionRoot)) {
+        throw new SharedChatQueueError("unavailable");
+      }
       const duplicate = await trx.selectFrom("chat_queued_turns").selectAll()
         .where("chat_id", "=", chatId)
         .where("requesting_actor_id", "=", requestingActorId)
@@ -391,8 +401,8 @@ export class ChatQueueRepository {
         selection: jsonb(provider.execution.selection),
         interaction_mode: input.interactionMode,
         permission_mode: input.permissionMode,
-        execution_root: null,
-        execution_root_fingerprint: null,
+        execution_root: executionRoot ? jsonb(executionRoot) : null,
+        execution_root_fingerprint: executionRootFingerprint,
         capability_snapshot: jsonb(capabilitySnapshot),
         claimed_turn_id: null,
         claimed_run_id: null,
@@ -948,6 +958,14 @@ export class ChatQueueRepository {
           || !sameSelection(candidateSelection.data, provider.execution.selection)) {
           sharedAdmission = "unavailable";
         }
+      }
+      if (candidate.collaboration_scope_id && sharedAdmission === "allowed") {
+        const root = candidate.execution_root === null ? null
+          : CanonicalChatExecutionRootRefSchema.safeParse(safelyParseSharedJson(candidate.execution_root));
+        if ((root === null) !== (candidate.execution_root_fingerprint === null)
+          || (root && (!root.success || root.data.kind === "bot_workspace" || root.data.projectId !== chat.project_id))
+          || (candidate.execution_root_fingerprint !== null && !/^[a-f0-9]{64}$/.test(candidate.execution_root_fingerprint))
+          || (candidate.driver_kind === "matrix_bot" && root === null)) sharedAdmission = "unavailable";
       }
       if (candidate.collaboration_scope_id && sharedAdmission !== "allowed") {
         await this.terminalizeSharedCandidate(

@@ -24,6 +24,8 @@ export interface BotSessionKey {
   ownerId: string;
   botId: string;
   chatId: string;
+  /** Server-derived shared run, policy session generation and root fingerprint hash. */
+  contextGeneration?: string;
 }
 
 function assertRuntimeVersions(versions: Record<string, string>): void {
@@ -38,11 +40,24 @@ export function createBotSessionsRepository(db: BotExecutor) {
   return {
     /** A chat with no saved transcript loads as revision 0 with no messages. */
     async load(key: BotSessionKey, executor: BotExecutor = db): Promise<BotSessionSnapshot> {
-      const row = await executor.selectFrom("bot_agent_sessions")
-        .select(["messages", "revision", "compacted_through_seq", "needs_recompaction", "updated_at"])
+      if (key.contextGeneration !== undefined && !/^[a-f0-9]{64}$/.test(key.contextGeneration)) throw new BotStateError("invalid_input");
+      if (key.contextGeneration && !executor.isTransaction) return executor.transaction().execute((trx) => this.load(key, trx));
+      let row = await executor.selectFrom("bot_agent_sessions")
+        .select(["messages", "revision", "compacted_through_seq", "needs_recompaction", "updated_at", "runtime_versions"])
         .where("owner_id", "=", key.ownerId).where("bot_id", "=", key.botId).where("chat_id", "=", key.chatId)
+        .$if(key.contextGeneration !== undefined, (query) => query.forUpdate())
         .executeTakeFirst();
       if (!row) return { revision: 0, messages: [], compactedThroughSeq: null, needsRecompaction: false, updatedAt: null };
+      const storedVersions = typeof row.runtime_versions === "string" ? JSON.parse(row.runtime_versions) as Record<string, string> : row.runtime_versions;
+      if (!key.contextGeneration && storedVersions["matrix-session-context"]) throw new BotStateError("not_found");
+      if (key.contextGeneration && storedVersions["matrix-session-context"] !== key.contextGeneration) {
+        row = await executor.updateTable("bot_agent_sessions").set({ messages: "[]", token_estimate: 0, compacted_through_seq: null,
+          needs_recompaction: false, runtime_versions: JSON.stringify({ ...storedVersions, "matrix-session-context": key.contextGeneration }),
+          revision: sql<number>`revision + 1`, updated_at: new Date().toISOString() })
+          .where("owner_id", "=", key.ownerId).where("bot_id", "=", key.botId).where("chat_id", "=", key.chatId)
+          .where("revision", "=", row.revision).returning(["messages", "revision", "compacted_through_seq", "needs_recompaction", "updated_at", "runtime_versions"])
+          .executeTakeFirstOrThrow();
+      }
       const messages = typeof row.messages === "string" ? JSON.parse(row.messages) as unknown : row.messages;
       return {
         revision: toSafeInteger(row.revision),
@@ -69,7 +84,9 @@ export function createBotSessionsRepository(db: BotExecutor) {
       if (encoder.encode(encoded).byteLength > BOT_SESSION_MAX_BYTES) throw new BotStateError("too_large");
       if (!Number.isSafeInteger(input.tokenEstimate) || input.tokenEstimate < 0) throw new BotStateError("invalid_input");
       assertRuntimeVersions(input.runtimeVersions);
-      const runtimeVersions = JSON.stringify(input.runtimeVersions);
+      if ("matrix-session-context" in input.runtimeVersions) throw new BotStateError("invalid_input");
+      if (input.contextGeneration !== undefined && !/^[a-f0-9]{64}$/.test(input.contextGeneration)) throw new BotStateError("invalid_input");
+      const runtimeVersions = JSON.stringify({ ...input.runtimeVersions, ...(input.contextGeneration ? { "matrix-session-context": input.contextGeneration } : {}) });
       if (input.baseRevision === 0) {
         const inserted = await executor.insertInto("bot_agent_sessions").values({
           session_id: newBotStateId("bses"),
@@ -106,6 +123,8 @@ export function createBotSessionsRepository(db: BotExecutor) {
         })
         .where("owner_id", "=", input.ownerId).where("bot_id", "=", input.botId).where("chat_id", "=", input.chatId)
         .where("revision", "=", input.baseRevision)
+        .$if(input.contextGeneration === undefined, (query) => query.where(sql<boolean>`runtime_versions ->> 'matrix-session-context' IS NULL`))
+        .$if(input.contextGeneration !== undefined, (query) => query.where(sql<boolean>`runtime_versions ->> 'matrix-session-context' = ${input.contextGeneration}`))
         .returning("revision")
         .executeTakeFirst();
       if (!updated) throw new BotStateError("revision_conflict");

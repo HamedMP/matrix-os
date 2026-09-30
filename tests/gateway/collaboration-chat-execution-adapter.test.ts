@@ -78,6 +78,18 @@ describe("CollaborationChatExecutionAdapter", () => {
     ));
   });
 
+  it("persists only the execution root returned by the trusted context resolver", async () => {
+    const root = { ref: { kind: "project" as const, projectId: "project_brain" }, fingerprint: "a".repeat(64) };
+    const resolveExecutionRoot = vi.fn(async () => root);
+    const enqueueSharedQueuedTurn = vi.fn(async () => ({ ...queued, pendingCount: 1, alreadyAccepted: false, resourceRevision: 13 }));
+    const adapter = createAdapter({ resolveExecutionRoot, enqueueSharedQueuedTurn });
+    await adapter.submit(context, { clientRequestId: queued.clientRequestId, expectedRevision: "12", text: "Summarize this Chat" });
+    expect(resolveExecutionRoot).toHaveBeenCalledWith(context);
+    expect(enqueueSharedQueuedTurn).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      executionRoot: root.ref, executionRootFingerprint: root.fingerprint,
+    }));
+  });
+
   it("does not wake dispatch for an actor-scoped idempotent replay", async () => {
     const requestDispatch = vi.fn(async () => undefined);
     const adapter = createAdapter({
@@ -292,6 +304,7 @@ function createAdapter(overrides: Record<string, unknown> = {}) {
     repository,
     commands,
     resolveParticipant: async (actorId) => ({ actorId, displayName: "Ada Editor" }),
+    resolveExecutionRoot: overrides.resolveExecutionRoot as never,
     resolveResourceRevision: async () => 13,
     resolveEligibility: async () => collaborationExecutionEligibility(),
     // S08/S09: this suite covers admission mechanics on a scope whose owner already

@@ -87,3 +87,12 @@ export function resolveBotRoute(snapshot: AiProviderSnapshotV3, now = Date.now()
   }
   throw new BotRouteError("model_unavailable");
 }
+
+
+/** Resolves exactly a scope's selected source/model; never uses active/default/fallback choices. */
+export function resolveBotRouteForAccessSource(snapshot: AiProviderSnapshotV3, accessSourceId: string, modelId: string, now = Date.now()): ResolvedBotRoute {
+  const source = botSource(accessSourceId);
+  const resolved = source ? routeFor(snapshot, source, modelId, now) : undefined;
+  if (!resolved) throw new BotRouteError("model_unavailable");
+  return resolved;
+}

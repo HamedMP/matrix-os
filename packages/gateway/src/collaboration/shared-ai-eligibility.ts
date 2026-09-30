@@ -7,6 +7,23 @@ import {
   SCOPE_RUNTIME_PROFILE_VERSION,
 } from "@matrix-os/scope-runtime/profile";
 import { z } from "zod/v4";
+import { SCOPE_RUNTIME_BOT_PROFILE_ID, SCOPE_RUNTIME_BOT_PROFILE_VERSION, SCOPE_RUNTIME_BOT_PROFILE_DIGEST, SCOPE_RUNTIME_BOT_ADAPTER_ID, SCOPE_RUNTIME_BOT_HARNESS_VERSION } from "@matrix-os/scope-runtime/bot-profile";
+import { MATRIX_BOT_INSTANCE_ID } from "../bots/selection.js";
+
+/** Pi is qualified under its own profile/workload, never added to the standard adapter array. */
+export const SHARED_MATRIX_BOT_ELIGIBILITY = {
+  profileId: SCOPE_RUNTIME_BOT_PROFILE_ID,
+  profileVersion: SCOPE_RUNTIME_BOT_PROFILE_VERSION,
+  profileDigest: SCOPE_RUNTIME_BOT_PROFILE_DIGEST,
+  adapterId: SCOPE_RUNTIME_BOT_ADAPTER_ID,
+  harnessVersion: SCOPE_RUNTIME_BOT_HARNESS_VERSION,
+  workload: "bot_agent",
+} as const;
+const MatrixBotProfileSchema = z.object({
+  profileId: z.literal(SCOPE_RUNTIME_BOT_PROFILE_ID), profileVersion: z.literal(SCOPE_RUNTIME_BOT_PROFILE_VERSION),
+  profileDigest: z.literal(SCOPE_RUNTIME_BOT_PROFILE_DIGEST), adapterId: z.literal(SCOPE_RUNTIME_BOT_ADAPTER_ID),
+  harnessVersion: z.literal(SCOPE_RUNTIME_BOT_HARNESS_VERSION), workload: z.literal("bot_agent"),
+}).strict();
 
 export type CollaborationAiAdapterId = "claude-code" | "codex";
 
@@ -39,6 +56,7 @@ export const CollaborationAiExecutionEligibilitySchema = z.union([
       .refine((items) => new Set(items.map((item) => item.adapterId)).size === items.length, {
         message: "Duplicate isolated adapter",
       }),
+    matrixBot: MatrixBotProfileSchema.optional(),
   }).strict(),
   ProfileSchema.extend(ClaudeAdapterSchema.shape).strict(),
 ]).transform((value) => "adapters" in value ? value : {
@@ -46,6 +64,7 @@ export const CollaborationAiExecutionEligibilitySchema = z.union([
   profileVersion: value.profileVersion,
   profileDigest: value.profileDigest,
   adapters: [{ adapterId: value.adapterId, harnessVersion: value.harnessVersion }],
+  matrixBot: undefined,
 });
 
 export type CollaborationAiExecutionEligibility = z.output<
@@ -78,8 +97,9 @@ export function sharedAiEligibilitySupportsDriver(
   driverKind: CanonicalProviderDriverKind,
   instanceId: string,
 ): boolean {
+  const parsed = CollaborationAiExecutionEligibilitySchema.safeParse(value);
+  if (driverKind === "matrix_bot") return parsed.success && instanceId === MATRIX_BOT_INSTANCE_ID && parsed.data.matrixBot !== undefined;
   const adapterId = sharedAiAdapterFor(driverKind, instanceId);
   if (!adapterId) return false;
-  const parsed = CollaborationAiExecutionEligibilitySchema.safeParse(value);
   return parsed.success && parsed.data.adapters.some((adapter) => adapter.adapterId === adapterId);
 }
