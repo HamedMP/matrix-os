@@ -58,7 +58,7 @@ export function createSlackAppRoutes(options: SlackAppRouteOptions): Hono & { sh
     if (!request) return fail(c, "Invalid request", 422);
     if (!await options.requireOrgAdmin({ actorId, organizationId: request.organizationId })) return fail(c, "Forbidden", 403);
     const token = randomBytes(32).toString("base64url");
-    await options.repository.createOAuthState({ hash: digest(token), actorId, organizationId: request.organizationId });
+    await options.repository.createOAuthState({ hash: digest(token), appId: options.config.appId, actorId, organizationId: request.organizationId });
     const url = new URL("https://slack.com/oauth/v2/authorize");
     url.search = new URLSearchParams({ client_id: options.config.clientId, scope: SLACK_BOT_SCOPES.join(","), redirect_uri: callbackUrl, state: token }).toString();
     c.header("Cache-Control", "no-store"); return c.json({ url: url.toString() });
@@ -70,7 +70,7 @@ export function createSlackAppRoutes(options: SlackAppRouteOptions): Hono & { sh
     const hash = digest(parsed.data.state);
     const state = await options.repository.getOAuthState(hash);
     if (!state) return fail(c, "Request expired", 409);
-    if (state.actorId !== actorId || !await options.requireOrgAdmin({ actorId, organizationId: state.organizationId })) return fail(c, "Forbidden", 403);
+    if (state.appId !== options.config.appId || state.actorId !== actorId || !await options.requireOrgAdmin({ actorId, organizationId: state.organizationId })) return fail(c, "Forbidden", 403);
     try { await options.repository.consumeOAuthState(hash, actorId); } catch (error: unknown) { return repositoryFailure(c, error); }
     const installed = await options.api.exchangeCode({ code: parsed.data.code, redirectUri: callbackUrl });
     if (installed.appId !== options.config.appId) return fail(c, "Forbidden", 403);
@@ -78,7 +78,7 @@ export function createSlackAppRoutes(options: SlackAppRouteOptions): Hono & { sh
     if (!await options.requireOrgAdmin({ actorId, organizationId: state.organizationId })) return fail(c, "Forbidden", 403);
     try {
       await options.repository.saveInstallation({ ...installed, organizationId: state.organizationId, installedBy: actorId,
-        encryptedBotToken: encryptSlackToken(installed.botToken, options.config.tokenEncryptionKey, `${installed.appId}:${installed.teamId}`) });
+        encryptedBotToken: encryptSlackToken(installed.botToken, options.config.tokenEncryptionKey, `${installed.appId}:${installed.teamId}`) }, { oauthStateHash: hash });
     } catch (error: unknown) { return repositoryFailure(c, error); }
     c.header("Cache-Control", "no-store"); return c.json({ connected: true, teamId: installed.teamId });
   });
@@ -137,12 +137,14 @@ export function createSlackAppRoutes(options: SlackAppRouteOptions): Hono & { sh
     const envelope = EnvelopeSchema.safeParse(payload); if (!envelope.success) return fail(c, "Invalid request", 422);
     const { api_app_id: appId, team_id: teamId, event_id: eventId, event } = envelope.data;
     if (appId !== options.config.appId) return fail(c, "Forbidden", 403);
+    const revocation = event.type === "app_uninstalled" || event.type === "tokens_revoked";
     const installed = await options.repository.getInstallation(appId, teamId);
-    if (!installed || installed.state !== "active") return fail(c, "Forbidden", 403);
+    if ((!installed || installed.state !== "active") && !revocation) return fail(c, "Forbidden", 403);
     if (envelope.data.is_ext_shared_channel || event.is_ext_shared || (event.user_team && event.user_team !== teamId)) return c.json({ received: true });
     const relevant = event.type === "app_mention" || (event.type === "message" && event.channel_type === "im");
-    if (event.bot_id || event.subtype || event.user === installed.botUserId || (!relevant && event.type !== "app_uninstalled" && event.type !== "tokens_revoked")) return c.json({ received: true });
-    if (relevant && (!event.user || !event.channel || !event.ts || event.text === undefined
+    if (event.bot_id || event.subtype || (event.user && event.user === installed?.botUserId) || (!relevant && !revocation)) return c.json({ received: true });
+    if (relevant && !event.text?.trim()) return c.json({ received: true });
+    if (relevant && (!event.user || !event.channel || !event.ts
       || (event.type === "message" && !event.channel.startsWith("D")) || (event.type === "app_mention" && event.channel.startsWith("D")))) return fail(c, "Invalid request", 422);
     const key = { appId, teamId, eventId };
     const claim = await options.repository.claimEvent(key, digest(body));
@@ -151,7 +153,8 @@ export function createSlackAppRoutes(options: SlackAppRouteOptions): Hono & { sh
     if (claim.outcome === "completed") return c.json({ received: true });
     try {
       await (async () => {
-        if (event.type === "app_uninstalled" || event.type === "tokens_revoked") { await options.repository.revokeInstallation(appId, teamId); return; }
+        if (revocation) { await options.repository.revokeInstallation(appId, teamId); return; }
+        const activeInstallation = installed!; // Non-revocation events passed the active-installation guard above.
         const inbound: SlackInboundEvent = { eventId, appId, teamId, userId: event.user!, channelId: event.channel!, ts: event.ts!,
           ...(event.thread_ts ? { threadTs: event.thread_ts } : {}), text: event.text!, kind: event.type === "app_mention" ? "mention" : "direct_message" };
         if (inbound.kind === "direct_message" && /^connect$/i.test(inbound.text.trim())) {
@@ -159,21 +162,21 @@ export function createSlackAppRoutes(options: SlackAppRouteOptions): Hono & { sh
           const token = createHmac("sha256", options.config.signingSecret).update(`matrix-slack-link-v1:${appId}:${teamId}:${eventId}:${inbound.userId}`).digest("base64url");
           await options.repository.createChallenge({ hash: digest(token), appId, teamId, slackUserId: inbound.userId });
           const url = new URL("/slack/link", publicUrl.origin); url.searchParams.set("token", token);
-          await options.api.postMessage({ token: decryptSlackToken(installed.encryptedBotToken, options.config.tokenEncryptionKey, `${appId}:${teamId}`),
+          await options.api.postMessage({ token: decryptSlackToken(activeInstallation.encryptedBotToken, options.config.tokenEncryptionKey, `${appId}:${teamId}`),
             channelId: inbound.channelId, text: `Connect your Matrix account privately: ${url.toString()}`, signal });
           return;
         }
         const link = await options.repository.getLink(appId, teamId, inbound.userId);
-        if (!link || link.organizationId !== installed.organizationId || !await options.isCurrentMember({ actorId: link.actorId, organizationId: installed.organizationId })) return;
+        if (!link || link.organizationId !== activeInstallation.organizationId || !await options.isCurrentMember({ actorId: link.actorId, organizationId: activeInstallation.organizationId })) return;
         const binding = inbound.kind === "mention" ? await options.repository.getChannelBinding(appId, teamId, inbound.channelId) : null;
-        if (inbound.kind === "mention" && (!binding || !binding.approvedOutput || binding.organizationId !== installed.organizationId)) return;
+        if (inbound.kind === "mention" && (!binding || !binding.approvedOutput || binding.organizationId !== activeInstallation.organizationId)) return;
         signal.throwIfAborted();
-        const destination = await options.dispatch({ installation: installed, link, binding, event: inbound, signal });
+        const destination = await options.dispatch({ installation: activeInstallation, link, binding, event: inbound, signal });
         const ownerId = ActorIdSchema.parse(destination.ownerId);
         if (inbound.kind === "direct_message" && ownerId !== link.actorId) throw new Error("Slack personal destination mismatch");
         await options.repository.recordDestination(key, claim.leaseToken, { ownerId, actorId: link.actorId, slackUserId: inbound.userId,
-          organizationId: installed.organizationId, channelId: inbound.channelId, threadTs: inbound.threadTs ?? inbound.ts, eventTs: inbound.ts,
-          scopeId: binding?.scopeId ?? null, installationGeneration: installed.generation });
+          organizationId: activeInstallation.organizationId, channelId: inbound.channelId, threadTs: inbound.threadTs ?? inbound.ts, eventTs: inbound.ts,
+          scopeId: binding?.scopeId ?? null, installationGeneration: activeInstallation.generation });
       })();
       await options.repository.settleEvent(key, claim.leaseToken, true);
       return c.json({ received: true });
