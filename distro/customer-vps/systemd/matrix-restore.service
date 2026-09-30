@@ -1,7 +1,7 @@
 [Unit]
 Description=Matrix OS customer restore gate
-After=docker.service
-Requires=docker.service
+After=matrix-postgres.service
+Requires=matrix-postgres.service
 
 [Service]
 Type=oneshot
