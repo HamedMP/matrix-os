@@ -305,6 +305,19 @@ describe("Slack company Pi composition", () => {
     expect((await platform.routes.request("/webhooks/slack/events", signed())).status).toBe(200);
     await restarted.service!.drain(); expect(posts).toHaveBeenCalledOnce(); expect(s.stream).toHaveBeenCalledTimes(2);
   }, 20_000);
+  it("retries a company initializer revision conflict and preserves the employee request",async()=>{
+    const s=await setup();
+    const submit=vi.spyOn(s.collaboration.chatExecutionAdapter!,"submit");
+    submit.mockRejectedValueOnce(Object.assign(new Error("Concurrent initializer"),{code:"conflict"}));
+    const {company,platform,posts,signed}=await setupSlack(s);
+    expect((await platform.routes.request("/webhooks/slack/events",signed())).status).toBe(200);
+    await company.service!.drain();
+    const inboxDb=s.db as unknown as Kysely<SlackCompanyDatabase>;
+    expect((await inboxDb.selectFrom("slack_company_inbox").select(["state","attempts"]).executeTakeFirstOrThrow())).toEqual({state:"pending",attempts:1});
+    await completeCompanyRuns(s,company.service!);await company.service!.drain();
+    expect(posts).toHaveBeenCalledOnce();expect(s.stream).toHaveBeenCalledTimes(2);
+    expect((await inboxDb.selectFrom("slack_company_inbox").select("state").executeTakeFirstOrThrow()).state).toBe("completed");
+  },20_000);
   it("withholds actual Pi output when the employee loses Project authority before publication", async () => {
     const s = await setup();
     const { company, platform, posts, signed } = await setupSlack(s);
