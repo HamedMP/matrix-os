@@ -400,6 +400,7 @@ export const CanonicalChatSafeErrorSchema = z.object({
     "provider_instance_locked",
     "model_unavailable",
     "capability_mismatch",
+    "agent_full_access_required",
     "run_not_found",
     "run_not_resumable",
     "run_unavailable",

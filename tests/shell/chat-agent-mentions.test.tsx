@@ -33,7 +33,7 @@ const base = {
   sessionId: "chat_original", busy: false, connected: true, conversations: [],
   onNewChat: vi.fn(), onSwitchConversation: vi.fn(),
 };
-it("uses the existing Web Chat input with typed mentions and preserves rejected drafts", async () => {
+it("sends a mentioned Agent in Supervised mode and preserves rejected drafts", async () => {
   const submit = vi.fn(async () => false);
   render(<ChatApp {...base} onSubmit={submit} agentClient={client} />);
   await waitFor(() => expect((screen.getByRole("textbox", { name: "Message chat" }) as HTMLTextAreaElement).disabled).toBe(false));
@@ -42,10 +42,10 @@ it("uses the existing Web Chat input with typed mentions and preserves rejected 
   fireEvent.click(await screen.findByRole("option", { name: /Meeting helper/ }));
   expect(submit).not.toHaveBeenCalled();
   fireEvent.change(editor, { target: { value: "Prepare the meeting" } });
-  fireEvent.click(screen.getByRole("checkbox", { name: /Allow Full access/ }));
+  expect((screen.getByRole("button", { name: "Send" }) as HTMLButtonElement).disabled).toBe(false);
   fireEvent.click(screen.getByRole("button", { name: "Send" }));
   await waitFor(() => expect(submit).toHaveBeenCalled());
-  expect(submit.mock.calls[0]![2]).toMatchObject({ resources: [agent], permissionMode: "full_access", instanceId: "codex_fixture" });
+  expect(submit.mock.calls[0]![2]).toMatchObject({ resources: [agent], permissionMode: "supervised", instanceId: "codex_fixture" });
   expect(CanonicalChatRequestIdSchema.safeParse(submit.mock.calls[0]![2]?.clientRequestId).success).toBe(true);
   expect((editor as HTMLTextAreaElement).value).toBe("Prepare the meeting");
   expect(screen.getByText("Original Chat text")).toBeTruthy();
@@ -189,7 +189,7 @@ it("preserves the existing text-only busy composer behavior without treating tex
   expect((editor as HTMLTextAreaElement).value).toBe("Ordinary text while running");
 });
 
-it("requires fresh consent when a website handoff replaces a draft with the same Agent", async () => {
+it("resets optional Full access when a website handoff replaces a draft with the same Agent", async () => {
   const submit = vi.fn(async () => false);
   function Workspace() {
     const [draft, setDraft] = React.useState<{ id: number; text: string; resources: typeof agent[] } | null>({
@@ -210,5 +210,5 @@ it("requires fresh consent when a website handoff replaces a draft with the same
   fireEvent.click(screen.getByRole("button", { name: "Replace recipe" }));
   expect(editor().value).toBe("Replacement recipe");
   expect((screen.getByRole("checkbox", { name: /Allow Full access/ }) as HTMLInputElement).checked).toBe(false);
-  expect((screen.getByRole("button", { name: "Send" }) as HTMLButtonElement).disabled).toBe(true);
+  expect((screen.getByRole("button", { name: "Send" }) as HTMLButtonElement).disabled).toBe(false);
 });

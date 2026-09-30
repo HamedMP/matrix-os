@@ -14,7 +14,7 @@ import type { ChatOwner } from "./records.js";
 import type { ChatRepository } from "./repository.js";
 
 export class ChatAgentContextError extends Error {
-  constructor(readonly code: "feature_disabled" | "context_unavailable" | "agent_permission_required" | "workflow_unavailable" | "workflow_setup_required" | "workflow_funding_required") {
+  constructor(readonly code: "feature_disabled" | "context_unavailable" | "workflow_unavailable" | "workflow_setup_required" | "workflow_funding_required") {
     super(code);
     this.name = "ChatAgentContextError";
   }
@@ -102,7 +102,6 @@ export class ChatAgentContext {
     }
     if (chatReferences.some((reference) => reference.id === chatId)) throw new ChatAgentContextError("context_unavailable");
     const agent = agentReference ? await this.agent(owner, agentReference.id) : undefined;
-    if (agent && input.permissionMode !== "full_access") throw new ChatAgentContextError("agent_permission_required");
     if (agent?.recipe?.skills.includes("matrix-jev-email-triage") &&
       (!agent.recipe.jevInboxTriage || agent.recipe.jevInboxTriage.ownerId !== owner.ownerId)) {
       throw new ChatAgentContextError("context_unavailable");

@@ -183,6 +183,44 @@ describe("Hermes Agent invocation through canonical Chat", () => {
     expect(detail?.record.chat.currentSelection).toEqual(selection);
   });
 
+  it("admits a mentioned Codex Agent in Supervised mode", async () => {
+    await agents.update(owner, agentId, { baseRevision: 1, selection });
+    const request = {
+      ...await input("req_codex_supervised", [mention("agent", agentId), { type: "text" as const, text: "Review safely" }]),
+      permissionMode: "supervised" as const,
+    };
+    const admitted = await orchestrator.admitTurn(principal, owner, "chat_parent", request);
+    await complete();
+    expect(admitted.run.driverKind).toBe("codex");
+    expect(calls[0]?.input.permissionMode).toBe("supervised");
+    expect(calls[0]?.input.prompt).toContain("Separate decisions from open questions.");
+  });
+
+  it("explains when a saved Agent runtime cannot use Supervised mode", async () => {
+    const request = {
+      ...await input("req_hermes_supervised", [mention("agent", agentId), { type: "text" as const, text: "Review safely" }]),
+      permissionMode: "supervised" as const,
+    };
+    await expect(orchestrator.admitTurn(principal, owner, "chat_parent", request)).rejects.toMatchObject({
+      safeError: { code: "agent_full_access_required", safeMessage: "This Agent's runtime requires Full access. Enable it for this request or choose a different Agent model." },
+    });
+    expect(calls).toHaveLength(0);
+  });
+
+  it("rejects an unsupported Supervised Agent before queueing it", async () => {
+    hold = new Promise<void>((resolve) => { release = resolve; });
+    await orchestrator.admitTurn(principal, owner, "chat_parent", await input("req_held", [{ type: "text", text: "Current work" }]));
+    const request = {
+      ...await input("req_hermes_supervised_queue", [mention("agent", agentId), { type: "text" as const, text: "Review next" }]),
+      permissionMode: "supervised" as const,
+    };
+    await expect(orchestrator.enqueueQueuedTurn(principal, owner, "chat_parent", request)).rejects.toMatchObject({
+      safeError: { code: "agent_full_access_required", safeMessage: "This Agent's runtime requires Full access. Enable it for this request or choose a different Agent model." },
+    });
+    release?.();
+    await complete();
+  });
+
   it("queues a saved Codex Agent behind an active run without dropping its context", async () => {
     await agents.update(owner, agentId, { baseRevision: 1, selection });
     hold = new Promise<void>((resolve) => { release = resolve; });

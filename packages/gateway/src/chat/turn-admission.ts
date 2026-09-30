@@ -16,6 +16,7 @@ import type { CanonicalChatProviderRegistry, CanonicalChatProviderAdapter } from
 import type { ChatExecutionRootResolver, ResolvedChatExecutionRoot } from "./execution-root.js";
 import { CanonicalChatOrchestrationError, mapRepositoryError, safeError, requirementsFor } from "./orchestration-input.js";
 import { loadChatResumeState } from "./resume-checkpoint.js";
+import { unsupportedAgentPermissionMode } from "./agent-permission.js";
 
 export interface TurnAdmissionOptions {
   repository: Pick<ChatRepository, "get" | "findTurnAdmission" | "getLatestAdapterStateForChat" | "admitTurn" | "finishRun">;
@@ -71,7 +72,10 @@ export async function admitCanonicalTurn(
         part.type !== "resource_reference" || !["agent", "chat"].includes(part.resource.kind)) : input.parts }),
     });
     if (!validated.ok) {
-      throw new CanonicalChatOrchestrationError(validated.error, validated.error.code === "provider_instance_locked" ? 409 : 400);
+      const agentModeError = validated.error.code === "capability_mismatch"
+        ? unsupportedAgentPermissionMode(catalog, effective.selection, effective.permissionMode, Boolean(prepared?.context?.agent))
+        : null;
+      throw new CanonicalChatOrchestrationError(agentModeError ?? validated.error, validated.error.code === "provider_instance_locked" ? 409 : 400);
     }
     const adapter = deps.adapters.get(validated.instance.driverKind);
     if (!adapter) {
