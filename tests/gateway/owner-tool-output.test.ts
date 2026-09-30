@@ -56,6 +56,9 @@ describe("owner-only output response projection", () => {
     const value = content();
     value.record.chat.collaboration = { mode: "shared", membership: { role: "owner", memberCount: 2 } };
     value.record.chat.lastMessagePreview = "Open /home/matrix/home/private/report.txt";
+    value.activities!.push({ id: "evt_plain_tool", runId: "run_test", chatId: "chat_test", sequence: 3,
+      occurredAt: "2026-09-20T00:00:00.000Z", type: "tool.output", toolCallId: "tool_plain",
+      text: "Wrote /home/matrix/home/private/report.txt", truncated: false });
     value.activities!.push({ id: "evt_delta", runId: "run_test", chatId: "chat_test", sequence: 2,
       occurredAt: "2026-09-20T00:00:00.000Z", type: "assistant.delta", delta: "Open /home/ma" });
     value.messageDelta = { message: { id: "msg_delta", chatId: "chat_test", seq: 1, role: "assistant",
@@ -64,6 +67,8 @@ describe("owner-only output response projection", () => {
     const projected = createOwnerToolOutputProjection(key, ["alice"])(owner, value);
     expect(projected.record.chat.lastMessagePreview).toBe("Open [redacted path]");
     expect(projected.activities?.some((activity) => activity.type === "assistant.delta")).toBe(false);
+    expect(projected.activities?.find((activity) => activity.type === "tool.output" && activity.toolCallId === "tool_plain"))
+      .toMatchObject({ text: "Wrote [redacted path]" });
     expect(projected.messageDelta).toBeUndefined();
   });
 });

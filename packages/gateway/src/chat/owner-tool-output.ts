@@ -37,10 +37,11 @@ export function createOwnerToolOutputProjection(key: Buffer | undefined, runtime
             ...(activity.summary ? { summary: redactAssistantPaths(activity.summary) } : {}),
           };
         }
-        if (activity.type !== "tool.output" || !activity.protectedOutput) return activity;
+        if (activity.type !== "tool.output") return activity;
         const { protectedOutput, ...coarse } = activity;
-        if (!key || !allowed || activity.chatId !== content.record.chat.id) return shared
-          ? { ...coarse, text: redactAssistantPaths(coarse.text) } : coarse;
+        if (shared) return { ...coarse, text: redactAssistantPaths(coarse.text) };
+        if (!protectedOutput) return activity;
+        if (!key || !allowed || activity.chatId !== content.record.chat.id) return coarse;
         try {
           const result = CanonicalChatToolOutputTextSchema.safeParse(openToolOutput(key, activity.toolCallId, protectedOutput));
           return result.success ? { ...coarse, text: result.data } : coarse;
