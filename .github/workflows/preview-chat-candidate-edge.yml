@@ -98,9 +98,10 @@ jobs:
           wrangler_secrets="$(mktemp)"
           response_headers="$(mktemp)"
           response_body="$(mktemp)"
-          cleanup() { rm -f "$raw_selector" "$wrangler_secrets" "$response_headers" "$response_body"; }
+          gateway_response="$(mktemp)"
+          cleanup() { rm -f "$raw_selector" "$wrangler_secrets" "$response_headers" "$response_body" "$gateway_response"; }
           trap cleanup EXIT
-          chmod 600 "$raw_selector" "$wrangler_secrets" "$response_headers" "$response_body"
+          chmod 600 "$raw_selector" "$wrangler_secrets" "$response_headers" "$response_body" "$gateway_response"
           gcloud secrets versions access latest \
             --secret pr2045-preview-chat-candidate \
             --project "$GCP_PROJECT_ID" \
@@ -165,6 +166,22 @@ jobs:
               .head.repo.full_name == $repo and
               any(.labels[]?; .name == "preview-chat-candidate-route")
             ' >/dev/null
+          # Cloudflare AI Gateway read permission probe. Never print the response body.
+          gateway_status=000
+          if gateway_status="$(curl --silent --connect-timeout 5 --max-time 15 \
+            --request GET --header "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+            --output "$gateway_response" --write-out '%{http_code}' \
+            "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/ai-gateway/gateways/matrix-funded-preview" 2>/dev/null)"; then
+            :
+          else
+            gateway_status=000
+          fi
+          readable=false
+          if [ "$gateway_status" = 200 ] &&
+            jq -e '.success == true and .result.id == "matrix-funded-preview"' "$gateway_response" >/dev/null 2>&1; then
+            readable=true
+          fi
+          echo "Cloudflare AI Gateway probe: HTTP ${gateway_status}; readable=${readable}"
           pnpm --filter @matrix-os/edge-router exec wrangler deploy --secrets-file "$wrangler_secrets"
           chat_id="$(python3 - "$wrangler_secrets" <<'PY'
           import json

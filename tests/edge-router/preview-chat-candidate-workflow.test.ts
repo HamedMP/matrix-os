@@ -4,6 +4,22 @@ import { describe, expect, it } from "vitest";
 const workflowPath = new URL("../../.github/workflows/preview-chat-candidate-edge.yml", import.meta.url);
 
 describe("one-chat Platform candidate Edge deployment", () => {
+  it("probes only read access to the bounded funded Preview gateway without exposing its settings", () => {
+    const source = readFileSync(workflowPath, "utf8");
+    expect(source).toContain("Cloudflare AI Gateway read permission probe");
+    expect(source).toContain("--request GET");
+    expect(source).toContain("/ai-gateway/gateways/matrix-funded-preview");
+    expect(source).toContain(".success == true and .result.id == \"matrix-funded-preview\"");
+    expect(source).toContain("readable=${readable}");
+    expect(source).not.toMatch(/--request (?:PUT|POST|PATCH|DELETE).*ai-gateway/);
+    expect(source.indexOf("# Cloudflare AI Gateway read permission probe.")).toBeGreaterThan(
+      source.indexOf('Candidate selector does not approve this exact head'),
+    );
+    expect(source.indexOf("# Cloudflare AI Gateway read permission probe.")).toBeGreaterThan(
+      source.lastIndexOf('gh api "repos/${GITHUB_REPOSITORY}/pulls/2045"'),
+    );
+  });
+
   it("requires a deliberate same-repository PR label and an approved exact head before Production secrets", () => {
     const source = readFileSync(workflowPath, "utf8");
     expect(source).toContain("pull_request:");
