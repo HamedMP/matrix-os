@@ -4,17 +4,17 @@ Do not start the full runtime or invoke paid providers without separate authoriz
 
 ## Deterministic development
 
-Use the existing bun/pnpm scripts after verifying their actual composition. Before running any composed fixture, assert that BOTH speech and canonical model/action adapters are fake. MATRIX_VOICE_SIMULATOR=1 alone is not a no-paid-call guarantee and grants no native action eligibility.
+Use the existing bun/pnpm scripts after verifying their actual composition. Before running any composed fixture, assert that BOTH speech and canonical model/action adapters are fake. `MATRIX_VOICE_SIMULATOR=1` alone is not a no-paid-call guarantee, grants no native action eligibility, and currently selects an empty/discarding simulator even before the production guard. Until fixed, `dev:voice:integration` means simulator composition, not real managed-speech integration.
 
-Presentation fixture scenarios: idle/permission, listening, thinking, tool/task, speaking, approval, clarification, progress/result, reconnect, failure. Run shared presentation through Web Canvas and Web Desktop fixture hosts with Chat closed; the Electron fixture host is deferred with the Electron Desktop follow-up. Record actual commands and artifact paths in requirement-evidence.md; browser fixtures are not real-device evidence.
+Presentation fixture scenarios: idle/permission, listening, batch-final caption, thinking, tool/activity, speaking, approval, qualified clarification, navigation/artifact/reconciliation result, reconnect and failure. Replace or explicitly label the existing Chat-attached `tests/fixtures/voice-session/ui-fixture` as legacy; it is not Aoede evidence. Run `AoedePanel`/controller through standalone Web Canvas and Web Desktop fixture hosts with Chat closed. Record actual commands and inspected artifact paths in requirement-evidence.md; browser fixtures are not real-device evidence.
 
 ## Focused verification
 
-Use pnpm exec vitest run with exact affected files, plus affected package tsc --noEmit. Run failures first for risky changes. Run bun run check:patterns and git diff --check after integration. React changes additionally require React Doctor against package roots; shell changes require bun run build:shell:production. Never use npm for installs/scripts or fetch a floating brand-new audit dependency merely to pass a gate.
+Use `pnpm exec vitest run` with exact affected files, plus affected-package `tsc --noEmit`. Run failures first for risky changes. The final deterministic gate is: focused affected tests; composed fake-speech + fake-model/action test; disposable-Postgres delivery and action suites; `bun run typecheck`; `bun run check:patterns`; `git diff --check`; `npx react-doctor@latest packages/ui --verbose --scope changed`; `npx react-doctor@latest shell --verbose --scope changed`; `bun run build:shell:production`; and inspected standalone Web Canvas/Web Desktop screenshots plus keyboard/focus/accessibility states. Record failures and environment blocks rather than suppressing them.
 
 ## PostgreSQL
 
-bun run test:voice:postgres must provision a disposable local isolated database or fail clearly. Do not point it at a shared database, read credentials from .env, or claim PGlite proves crash/locking behavior. Cleanup only test databases created by the gate. Include canonical action concurrency/recovery cases in addition to delivery races.
+`bun run test:voice:postgres` must provision a disposable local isolated database or fail clearly. Do not point it at a shared database, read credentials from `.env`, or claim PGlite proves crash/locking behavior. Cleanup only test databases created by the gate. The command currently omits `tests/gateway/chat-action-postgres.test.ts`; add it to this gate (or add a separately mandatory action-PG command) before relying on the script. The old raw-array JSONB fixture defect is fixed in source but requires a current rerun.
 
 ## Optional qualification, not authorized now
 

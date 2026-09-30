@@ -8,7 +8,7 @@ Target surfaces for this delivery are `web_canvas` and `web_desktop`. `electron_
 
 Authenticated `POST /api/aoede/bootstrap` accepts strict `{clientRequestId, intent: "continue" | "new", projectId?: string, surface: "web_canvas" | "web_desktop"}`. This delivery only launches from the two browser surfaces; `electron_desktop` remains valid only in the pre-existing shared voice capability schema and is deferred to the follow-up. Owner/runtime derive from server configuration/principal. It resolves an owner/runtime/scope-unique canonical conversation pointer transactionally; New uses request-id deduplication and retains old canonical history. Response exposes `{chatId, scope, selection, capability}` using existing selection/capability schemas, plus no credential. No microphone/provider run starts. Missing/deleted/access-lost backing Chat on Continue returns structured unavailable; only explicit New replaces it. Mutations require existing auth, strict Zod/bodyLimit, bounded request IDs and 10-second client timeout. New persistence is owner-local PostgreSQL/Kysely only.
 
-Canonical HTTP/event APIs supply bounded current response captions, exact approvals/input/activity/task/artifacts/terminal results. Presentation does not invent voice approval/action records. Icon/palette open/focus/toggle converge on one controller. Explicit Start invokes existing chat-scoped media APIs. Dismiss stops capture/playback and retains canonical work; End releases media only. History navigation is optional, never required for approval/input/recovery.
+Canonical HTTP/event APIs are the required source for bounded current response captions, exact approvals/input/activity/navigation/artifacts/reconciliation and terminal results. At checkpoint `553fff73d`, approvals and activities project, but qualified native input is rejected and open/apply results remain opaque tool-output JSON rather than accepted Aoede navigation/artifacts. Presentation must not invent voice approval/action/result records. Icon/palette open/focus converge on one controller. Explicit Start invokes existing chat-scoped media APIs. Dismiss stops capture/playback and retains canonical work; End releases media only. History navigation is optional, never required for approval/input/recovery.
 
 ## Additive managed synthesis streaming contract
 
@@ -47,7 +47,9 @@ The transport ticket is not a bearer credential for canonical Chat routes and is
 
 ```ts
 type VoiceCapability = {
+  contractVersion: 1;
   status: "available" | "degraded" | "unavailable";
+  surface: "web_canvas" | "web_desktop" | "electron_desktop" | "native_mobile";
   transportModes: Array<"relayed_websocket" | "direct_webrtc">;
   turnModes: Array<"hands_free" | "push_to_talk">;
   supportsInterruption: boolean;
@@ -57,6 +59,7 @@ type VoiceCapability = {
   actionCancellation: "none" | "run" | "tool";
   supportsInputSelection: boolean;
   supportsOutputSelection: boolean;
+  outputAudio?: VoiceOutputAudioFormat;
   limits?: {
     maxSessionSeconds: number;
     maxIdleSeconds: number;
@@ -71,6 +74,8 @@ type VoiceCapability = {
 ```
 
 No provider key, provider-native model name, internal URL, owner path, or raw upstream error is returned.
+
+Availability is not established by configured adapter presence. Server composition/bootstrap must call the bounded managed-speech readiness probe (or a bounded cache) and require ready transcription plus ready streaming synthesis. Probe timeout, unknown, stale or configured-but-unready state returns `status: "unavailable"`, empty `transportModes` and `turnModes`, and an allowlisted reason. Only `status: "available"` may create or reconnect a session; `degraded` is display-only and also denies both mutations. Simulator capability is test-only and simulator registration must be rejected when `NODE_ENV === "production"`.
 
 ## Session creation
 
@@ -132,10 +137,26 @@ Creation is semantically idempotent for the same principal, Chat, and `clientReq
 
 ## Client-to-Gateway frames
 
-Every JSON control frame contains `type`, `sessionId`, `epoch`, and monotonically increasing `sequence`.
+Every JSON control frame is `VoiceFrameCommon & payload`, where common fields are `{contractVersion: 1, sessionId, epoch, sequence}`. `sequence` is monotonically increasing within the current epoch. Payload examples below omit no required common identity because the intersection supplies it.
 
 ```ts
-type VoiceClientFrame =
+type AudioFormat = {
+  codec: "pcm_s16le" | "pcm_f32le" | "opus";
+  sampleRateHz: 8000 | 16000 | 24000 | 32000 | 44100 | 48000;
+  channels: 1 | 2;
+  frameDurationMs: number;
+};
+
+type VoiceOutputAudioFormat = Omit<AudioFormat, "frameDurationMs">;
+
+type VoiceFrameCommon = {
+  contractVersion: 1;
+  sessionId: VoiceSessionId;
+  epoch: number;
+  sequence: number;
+};
+
+type VoiceClientFrame = VoiceFrameCommon & (
   | { type: "client.ready"; audio: AudioFormat; capabilities: ClientMediaCapabilities }
   | { type: "capture.start"; turnId: string; mode: "hands_free" | "push_to_talk" }
   | { type: "capture.stop"; turnId: string }
@@ -144,9 +165,12 @@ type VoiceClientFrame =
   | { type: "session.resume" }
   | { type: "session.end"; reason: "user" | "surface_closed" | "sign_out" }
   | { type: "response.interrupt"; responseId: string; playedThroughMs: number }
+  | { type: "generation.cancel"; responseId: string }
+  | { type: "action.cancel"; actionId: string }
   | { type: "playback.segment_played"; responseId: string; segmentId: string; playedThroughMs: number; deliveryRevision: number }
   | { type: "device.changed"; inputDeviceId?: string; outputDeviceId?: string }
-  | { type: "heartbeat"; timestampMs: number };
+  | { type: "heartbeat"; timestampMs: number }
+);
 ```
 
 Binary audio frames may replace base64 JSON after transport negotiation. They retain the same bounded session, epoch, turn, sequence, and timestamp semantics.
@@ -154,20 +178,25 @@ Binary audio frames may replace base64 JSON after transport negotiation. They re
 ## Gateway-to-client frames
 
 ```ts
-type VoiceServerFrame =
+type VoiceServerFrame = VoiceFrameCommon & (
   | { type: "session.state"; state: VoiceSessionState; reason?: SafeVoiceReason }
+  | { type: "session.resumed"; state: VoiceSessionState; reason?: SafeVoiceReason }
   | { type: "transcript.provisional"; turnId: string; revision: number; text: string }
-  | { type: "transcript.final"; turnId: string; canonicalTurnId: string; text: string }
+  | { type: "transcript.final"; turnId: string; finalityId: string; canonicalTurnId?: string; canonicalQueuedTurnId?: string; localOrder: number; text: string }
+  | { type: "transcript.correction"; turnId: string; finalityId: string; revision: number; text: string }
   | { type: "capture.completed"; turnId: string; outcome: "empty" | "failed" }
   | { type: "response.started"; responseId: string; runId: string }
-  | { type: "response.audio"; responseId: string; segmentId: string; startMs: number; data: string }
-  | { type: "response.audio_end"; responseId: string; generatedDurationMs: number }
+  | { type: "response.audio"; responseId: string; segmentId: string; startMs: number; data: string; format?: VoiceOutputAudioFormat }
+  | { type: "response.audio_end"; responseId: string; segmentId?: string; generatedDurationMs: number }
   | { type: "response.interrupted"; responseId: string; effectiveThroughMs: number }
   | { type: "operation.status"; runId: string; label: string; state: CanonicalOperationState }
   | { type: "transport.going_away"; retryAfterMs: number; reconnectAllowed: boolean }
   | { type: "session.error"; code: SafeVoiceErrorCode; retryable: boolean; recovery: VoiceRecoveryAction }
-  | { type: "heartbeat.ack"; timestampMs: number };
+  | { type: "heartbeat.ack"; timestampMs: number }
+);
 ```
+
+`transcript.final` requires either `canonicalTurnId` or `canonicalQueuedTurnId`. A reconnect commits a new epoch before transport attachment; the replacement transport receives `session.resumed`, not an epoch-rotated `session.state`. `generation.cancel` targets the current canonical response/run, while `action.cancel` targets a qualified canonical action and must not be represented as local playback interruption.
 
 Durable assistant text, tool activity, approvals, and terminal results still arrive through the canonical Chat event stream. The voice channel may carry a bounded operation label for immediate spoken/UI feedback but cannot replace canonical activity state.
 
@@ -188,7 +217,7 @@ At `capture.start`, the session snapshots canonical selection, interaction mode,
 | Empty or truncated final | Do not execute; keep editable/retryable transcript state |
 | Correction after admission | Annotate provenance/presentation only; user correction is a new explicit turn |
 
-Session-only policy applies to spoken and typed turns admitted while the session owns the Chat. It is carried through send, queue, steering, adapters, and tools rather than inferred from session UI.
+Session-only is not supported in this delivery: capability reports `sessionOnly: "unsupported"`, and session creation with `memoryMode: "session_only"` is rejected. If it is qualified later, its policy must apply to spoken and typed turns admitted while the session owns the Chat and be carried through send, queue, steering, adapters and tools rather than inferred from session UI.
 
 ## Delivery acknowledgement and checkpoint contract
 
@@ -209,6 +238,10 @@ Voice action eligibility is derived from canonical harness/tool capabilities:
 - truthful cancellation granularity (`none`, `run`, `tool`).
 
 The voice layer never supplies missing enforcement. Unsupported routes degrade to conversation-only or safe reads. Stop speaking, cancel generation, and cancel action are separate commands and statuses.
+
+At checkpoint `553fff73d`, consequential execution is constrained Codex with five bounded app tools; delegation is disabled, non-Codex frozen action policies fail closed, and canonical Codex native input/approval delivery is unavailable. Run-level cancellation exists; targeted Aoede `action.cancel` is not wired. This current matrix must remain explicit until each added provider/capability is structurally qualified.
+
+Tool return JSON is not itself shell authority. `matrix_open_app`, file-apply artifacts, `outcome_unknown` and reconciliation results must become bounded canonical navigation/resource/activity records. Aoede may open only those validated projected records, and both Web Canvas and Web Desktop must prove the resulting destination behavior. Arbitrary `tool.output` text is never parsed into a navigation or filesystem command.
 
 ## State contract
 
@@ -242,6 +275,7 @@ type SafeVoiceErrorCode =
   | "provider_unavailable"
   | "session_limit_reached"
   | "usage_limit_reached"
+  | "audio_backpressure"
   | "chat_unavailable"
   | "session_conflict"
   | "unsupported_surface"
@@ -274,9 +308,9 @@ Server logs use correlation/session IDs and typed internal causes. Client errors
 
 ## Integration wiring
 
-1. Gateway server construction receives the existing canonical Chat runtime and a voice provider registry.
+1. Gateway server construction receives the existing canonical Chat runtime and a voice provider registry; production construction rejects simulator registration.
 2. Voice session routes are registered after canonical Chat and authenticated speech/platform clients are initialized.
-3. Session creation verifies principal, Chat write access, policy, provider health, concurrency, and budget before minting transport credentials.
+3. Session creation verifies principal, Chat write access, policy, authoritatively probed managed-speech readiness, provider health, concurrency, and budget before minting transport credentials.
 4. The media adapter emits provisional/final speech events to the session engine.
 5. Final speech is ordered and admitted once through canonical Chat using the decision table, frozen policy snapshot, and stable request ID.
 6. Canonical run events drive the synthesis queue and normal Chat event stream.

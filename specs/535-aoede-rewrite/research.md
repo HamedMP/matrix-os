@@ -8,17 +8,21 @@ Scope correction (same date): target surfaces for this delivery are Web Canvas a
 
 ## Revalidated local baseline
 
-Read-only git discovery confirms feat/aoede-rewrite at 505b331ad and thirteen modified baseline files listed by the owner. Preserve reconnect strict-response/accepted-resumed epoch and persistent parity Origin/speech changes. The baseline provider-catalog helper previously permitted tool-capable Codex based on MATRIX_VOICE_SIMULATOR; that eligibility bypass has been removed from `packages/gateway/src/chat/provider-catalog.ts`, which now takes a server-owned `qualifiedPolicy` instead (diff-verified this pass; the stale dist build output is not authority). `MATRIX_VOICE_SIMULATOR` remains only as the explicit fake speech-adapter selection in `voice-session/adapter-registration.ts`; simulator speech does not imply fake model/actions.
+High-mode read-only validation covered `1eafe737b2668a84592eacadb307707e094eb1a7..553fff73d` on `feat/aoede-product-rebuild` (37 commits, 249 changed files). The old `feat/aoede-rewrite` dirty checkout is an archive, not the implementation baseline. Preserve reconnect strict-response/accepted-resumed epoch and persistent parity Origin/speech changes from the parity base.
+
+The former provider-catalog tool-eligibility shortcut based on `MATRIX_VOICE_SIMULATOR` is removed, but simulator isolation is **not complete**: `voice-session/adapter-registration.ts` evaluates `MATRIX_VOICE_SIMULATOR=1` before the production check, registers an empty timeline, and the simulator discards captured audio while synthesizing deterministic bytes. Production must reject simulator selection structurally. `dev:voice:integration` is simulator composition, not real managed-speech integration, and the current visual fixture remains Chat-attached legacy UI.
 
 ## Existing canonical authority
 
 turn-admission.ts parses ordinary requests, folds live immutable policy, hashes idempotency, validates actual catalog selection, resolves project scope, selects delivery-aware native resume, persists Chat message/turn/run and dispatches through CanonicalChatOrchestrator. canonical-ports.ts calls this same orchestrator for speech and canonical queue on busy; its voice event labels are lossy and do not suffice for standalone approvals/input/artifacts. Reuse canonical content/event/client APIs for complete projection rather than inventing voice records.
 
+Current capability is narrower than canonical ownership: constrained Codex is the only qualified consequential path, with five bounded app tools. Delegation is rejected, non-Codex frozen action policies fail closed, and canonical Codex runs reject provider-native input/approval delivery. Activity projection is not a universal task service. `matrix_open_app` and file apply currently return navigation/artifact data inside tool-output JSON, while Aoede only accepts projected file `resource_reference` artifacts; navigation/result/reconciliation therefore require explicit canonical representation and end-to-end proof.
+
 ## Managed speech findings
 
-Read packages/platform/src/speech/DOMAIN.md and packages/gateway/src/speech/DOMAIN.md. Current Platform Speech already owns transcription AND completed-payload synthesis, runtime HMAC auth, policy, reserve/claim/settle/cancel and content-free operation metadata. Platform-only OpenAI credentials stay in the platform adapter. Gateway speech/voice-session-ports.ts currently yields a whole buffered PCM payload; this is not streaming. Add bounded streaming sibling API under the same funding/dispatch authority; do not invent Gateway production provider-key authority.
+Read packages/platform/src/speech/DOMAIN.md and packages/gateway/src/speech/DOMAIN.md. Current Platform Speech owns transcription and streaming/completed synthesis, runtime HMAC auth, policy, reserve/claim/settle/cancel and content-free operation metadata. Platform-only OpenAI credentials stay in the platform adapter. A bounded readiness probe exists for transcription plus streaming synthesis, but production server composition does not call it; adapter presence currently follows configured platform-client presence. Capability must use the probe (or a bounded cache) and fail closed on unknown, timeout or configured-but-unready state.
 
-Rolling completed-WAV interim requests, if implemented, must be disclosed as bounded provisional polling and separately metered. They are not proof of genuine streaming recognition or latency. Measured speech quality/latency/account billing/retention remains an authorized-release gate.
+Provisional recognition is currently unavailable. Any future rolling completed-WAV interim requests must be disclosed as bounded provisional polling and separately metered. They are not proof of genuine streaming recognition or latency. Measured speech quality/latency/account billing/retention remains an authorized-release gate.
 
 ## Provider qualification
 
