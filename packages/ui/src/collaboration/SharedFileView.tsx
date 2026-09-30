@@ -1,6 +1,7 @@
 import {
   CollaborationFileActionResponseSchema,
   CollaborationFileListResponseSchema,
+  CollaborationCatalogEntrySchema,
   CollaborationScopeSchema,
   type CollaborationCatalogEntry,
 } from "@matrix-os/contracts";
@@ -68,18 +69,18 @@ function byteLength(text: string): number {
 }
 
 /** The file entry of a file scope and a bounded preview of its bytes. */
-async function readSharedFile(api: CollaborationApi, scopeId: string): Promise<SharedFile> {
+async function readSharedFile(api: CollaborationApi, scopeId: string, fileId?: string): Promise<SharedFile> {
   let listed: unknown;
   try {
-    listed = await api.get(`${scopePath(scopeId)}/files?limit=1`);
+    listed = await api.get(fileId ? `${scopePath(scopeId)}/files/${encodeURIComponent(fileId)}` : `${scopePath(scopeId)}/files?limit=1`);
   } catch (error: unknown) {
     // The scope itself was just authorized; a missing listing means the owner moved or deleted the file.
     if (sharedFileFailureCode(error) === "not_found") throw new ResourceMissing();
     throw error;
   }
-  const page = CollaborationFileListResponseSchema.parse(listed);
-  const entry = page.entries.find((candidate) => candidate.kind === "file");
-  if (!entry || !api.getContent) throw new ResourceMissing();
+  const entry = fileId ? CollaborationCatalogEntrySchema.parse(listed)
+    : CollaborationFileListResponseSchema.parse(listed).entries.find((candidate) => candidate.kind === "file");
+  if (!entry || entry.kind !== "file" || !api.getContent) throw new ResourceMissing();
   let content;
   try {
     content = await api.getContent(contentPath(scopeId, entry.id), { maxBytes: SHARED_FILE_PREVIEW_MAX_BYTES });
@@ -123,9 +124,9 @@ async function downloadSharedFile(api: CollaborationApi, scopeId: string, file: 
 }
 
 /** A write the home rejected is a conflict when the home now holds a newer revision. */
-async function findSharedFileConflict(api: CollaborationApi, scopeId: string, readRevision: string): Promise<Conflict | null> {
+async function findSharedFileConflict(api: CollaborationApi, scopeId: string, readRevision: string, fileId?: string): Promise<Conflict | null> {
   try {
-    const latest = await readSharedFile(api, scopeId);
+    const latest = await readSharedFile(api, scopeId, fileId);
     if (latest.entry.revision === readRevision) return null;
     return { text: latest.preview.kind === "text" ? latest.preview.text : null, file: latest };
   } catch (error: unknown) {
@@ -137,7 +138,7 @@ async function findSharedFileConflict(api: CollaborationApi, scopeId: string, re
 type SaveOutcome = { kind: "saved"; file: SharedFile } | { kind: "conflict"; conflict: Conflict } | { kind: "failed"; message: string };
 
 /** Writes `draft` conditional on the revision it was based on; never retries over a newer revision. */
-async function saveSharedFileDraft(api: CollaborationApi, scopeId: string, file: SharedFile, draft: string, clientRequestId: string): Promise<SaveOutcome> {
+async function saveSharedFileDraft(api: CollaborationApi, scopeId: string, file: SharedFile, draft: string, clientRequestId: string, fileId?: string): Promise<SaveOutcome> {
   try {
     const result = CollaborationFileActionResponseSchema.parse(await api.post(`${scopePath(scopeId)}/files/actions`, {
       type: "write", fileId: file.entry.id, content: draft, expectedRevision: file.entry.revision, clientRequestId,
@@ -147,7 +148,7 @@ async function saveSharedFileDraft(api: CollaborationApi, scopeId: string, file:
   } catch (error: unknown) {
     const code = sharedFileFailureCode(error);
     console.warn("[shared-file] save failed", code ?? (error instanceof Error ? error.name : "UnknownError"));
-    const conflict = code === "invalid_request" ? await findSharedFileConflict(api, scopeId, file.entry.revision) : null;
+    const conflict = code === "invalid_request" ? await findSharedFileConflict(api, scopeId, file.entry.revision, fileId) : null;
     return conflict ? { kind: "conflict", conflict } : { kind: "failed", message: saveFailureMessage(error) };
   }
 }
@@ -157,7 +158,9 @@ async function saveSharedFileDraft(api: CollaborationApi, scopeId: string, file:
  * everything downloads; Contributors edit text against the revision they read,
  * and a conflict keeps their text beside the owner's version, never overwriting.
  */
-export function SharedFileView({ api, scopeId }: { api: CollaborationApi; scopeId: string }) {
+export function SharedFileView({ api, scopeId, fileId, onDraftChange }: {
+  api: CollaborationApi; scopeId: string; fileId?: string; onDraftChange?: (draft: string | null) => void;
+}) {
   const [state, setState] = useState<FileState>({ status: "loading" });
   const generation = useRef(0);
 
@@ -166,19 +169,19 @@ export function SharedFileView({ api, scopeId }: { api: CollaborationApi; scopeI
     setState({ status: "loading" });
     try {
       const scope = CollaborationScopeSchema.parse(await api.get(scopePath(scopeId)));
-      if (scope.kind !== "file") throw new Error("Scope kind mismatch");
+      if (scope.kind !== "file" && !(scope.kind === "project" && fileId)) throw new Error("Scope kind mismatch");
       if (!api.getContent) {
         if (current === generation.current) setState({ status: "no_content" });
         return;
       }
-      const file = await readSharedFile(api, scopeId);
+      const file = await readSharedFile(api, scopeId, fileId);
       if (current === generation.current) setState({ status: "ready", scope, file });
     } catch (error: unknown) {
       if (current !== generation.current) return;
       if (!(error instanceof ResourceMissing)) console.warn("[shared-file] load failed", error instanceof Error ? error.name : "UnknownError");
       setState({ status: "failed", reason: error instanceof ResourceMissing ? "resource_missing" : classifySharedFileFailure(error) });
     }
-  }, [api, scopeId]);
+  }, [api, scopeId, fileId]);
 
   // react-doctor-disable-next-line react-doctor/no-fetch-in-effect -- loads the shared file from its home through the collaboration API; stale results are fenced by the generation counter.
   useEffect(() => {
@@ -189,7 +192,8 @@ export function SharedFileView({ api, scopeId }: { api: CollaborationApi; scopeI
   if (state.status === "loading") return <p role="status" className="p-8">Loading shared file…</p>;
   if (state.status === "no_content") return <FileMessage title="Shared file" body="Files can’t be opened in this version of Matrix." />;
   if (state.status === "failed") return <SharedFileFailure reason={state.reason} retry={() => void load()} />;
-  return <SharedFileEditor key={state.file.entry.id} api={api} scopeId={scopeId} scope={state.scope} initial={state.file} />;
+  return <SharedFileEditor key={state.file.entry.id} api={api} scopeId={scopeId} scope={state.scope} initial={state.file}
+    fileId={fileId} onDraftChange={onDraftChange} />;
 }
 
 function SharedFileFailure({ reason, retry }: { reason: SharedFileUnavailableReason; retry: () => void }) {
@@ -204,11 +208,13 @@ function SharedFileFailure({ reason, retry }: { reason: SharedFileUnavailableRea
   />;
 }
 
-function SharedFileEditor({ api, scopeId, scope, initial }: {
+function SharedFileEditor({ api, scopeId, scope, initial, fileId, onDraftChange }: {
   api: CollaborationApi;
   scopeId: string;
   scope: Scope;
   initial: SharedFile;
+  fileId?: string;
+  onDraftChange?: (draft: string | null) => void;
 }) {
   const [file, setFile] = useState(initial);
   const [draft, setDraft] = useState<string | null>(null);
@@ -234,10 +240,11 @@ function SharedFileEditor({ api, scopeId, scope, initial }: {
     setSaving(true);
     setSaveNotice(null);
     try {
-      const outcome = await saveSharedFileDraft(api, scopeId, file, draft, saveRequest.current.id);
+      const outcome = await saveSharedFileDraft(api, scopeId, file, draft, saveRequest.current.id, fileId);
       if (outcome.kind === "saved") {
         setFile(outcome.file);
         setDraft(null);
+        onDraftChange?.(null);
         setSaveNotice({ kind: "saved" });
       } else if (outcome.kind === "conflict") {
         setConflict(outcome.conflict);
@@ -253,12 +260,14 @@ function SharedFileEditor({ api, scopeId, scope, initial }: {
   const resolveConflict = (resolved: Conflict, keepDraft: boolean) => {
     setFile(resolved.file);
     setConflict(null);
-    if (!keepDraft) setDraft(null);
+    if (!keepDraft) { setDraft(null); onDraftChange?.(null); }
   };
   const toggleEditing = (open: boolean) => {
     setSaveNotice(null);
     setDownloadNotice(null);
-    setDraft(open && preview.kind === "text" ? preview.text : null);
+    const next = open && preview.kind === "text" ? preview.text : null;
+    setDraft(next);
+    onDraftChange?.(next);
   };
 
   return <main data-slot="shared-file-view" className="mx-auto flex min-h-full w-full max-w-4xl flex-col gap-4 p-5 sm:p-8">
@@ -272,7 +281,7 @@ function SharedFileEditor({ api, scopeId, scope, initial }: {
     {conflict ? <ConflictPanel conflict={conflict} onKeep={() => resolveConflict(conflict, true)} onTakeOwner={() => resolveConflict(conflict, false)}
       onDownloadMine={() => saveBytes(draft ?? "", sharedFileCopyName(name), "text/plain")} /> : null}
     {draft !== null
-      ? <DraftEditor draft={draft} onChange={setDraft} saving={saving} tooLarge={draftTooLarge} inConflict={conflict !== null} />
+      ? <DraftEditor draft={draft} onChange={(next) => { setDraft(next); onDraftChange?.(next); }} saving={saving} tooLarge={draftTooLarge} inConflict={conflict !== null} />
       : <FilePreview preview={preview} showEditLimit={scope.role !== "viewer" && !canEdit} />}
   </main>;
 }
