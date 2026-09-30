@@ -52,6 +52,24 @@ describe("collaboration direct content", () => {
     expect(request.headers.get("authorization")).toBeNull();
   });
 
+  it("preserves an authenticated home session when a platform content relay asks the actor to sign in", async () => {
+    world = fakeDirectWorld({ endpointOrigin: PLATFORM });
+    const transport: typeof fetch = async (input, init) => {
+      const url = new URL(String(input));
+      if (url.origin === PLATFORM && url.pathname === contentPath) {
+        contentRequests.push({ headers: new Headers(init?.headers), url: url.href });
+        return new Response(null, { status: 401, headers: { "www-authenticate": "Bearer" } });
+      }
+      return world.fetchImpl(input, init);
+    };
+    const direct = createCollaborationDirectClient({ platformBaseUrl: PLATFORM, fetchImpl: transport,
+      webSocketFactory: world.webSocketFactory, clientOrigin: CLIENT_ORIGIN, now: world.now });
+    await expect(direct.requestContent(scopeId, contentPath, { maxBytes: 1024 })).rejects.toMatchObject({ code: "unauthenticated" });
+    expect(contentRequests).toHaveLength(1);
+    expect(world.home.sessions.size).toBe(1);
+    expect(direct.describe(scopeId).state).toBe("unauthenticated");
+  });
+
   it("stops at the declared size without reading the body", async () => {
     const cancel = vi.fn();
     respond = () => {
