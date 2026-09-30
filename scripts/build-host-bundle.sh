@@ -124,7 +124,9 @@ cp -a "$ROOT_DIR/distro/customer-vps/host-bin/." "$STAGE_DIR/bin/"
 chmod 0755 "$STAGE_DIR/bin/matrix-postgres-start"
 node "$ROOT_DIR/scripts/inline-sync-agent-recovery.mjs" \
   "$STAGE_DIR/bin/matrix-sync-agent" \
-  "$STAGE_DIR/bin/matrix-sync-agent-recovery"
+  "$STAGE_DIR/bin/matrix-sync-agent-recovery" \
+  "$STAGE_DIR/bin/matrix-update-manifest" \
+  "$STAGE_DIR/bin/matrix-update-request-rejection"
 cp -a "$ROOT_DIR/distro/customer-vps/systemd/." "$STAGE_DIR/systemd/"
 cp -a "$ROOT_DIR/distro/customer-vps/systemd-user/." "$STAGE_DIR/user-systemd/"
 # The bundle is usually extracted as root:root during in-place upgrades, while

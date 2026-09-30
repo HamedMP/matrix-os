@@ -60,9 +60,11 @@ function syncAgentHarnessSource(): string {
   return syncAgent
     .slice(0, syncAgent.indexOf('# ── Main loop'))
     .replace('source /opt/matrix/env/host.env', ':')
+    .replace(/# BEGIN update manifest library loader[\s\S]*?# END update manifest library loader/, () => read('distro/customer-vps/host-bin/matrix-update-manifest'))
+    .replace(/# BEGIN update request rejection library loader[\s\S]*?# END update request rejection library loader/, () => read('distro/customer-vps/host-bin/matrix-update-request-rejection'))
     .replace(
       /# BEGIN update recovery library loader[\s\S]*?# END update recovery library loader/,
-      recoveryLibrary,
+      () => recoveryLibrary,
     )
     .replace('readonly APP_DIR="/opt/matrix/app"', 'readonly APP_DIR="$TEST_ROOT/app"')
     .replace('readonly STAGING_DIR="/opt/matrix/staging"', 'readonly STAGING_DIR="$TEST_ROOT/staging"')
