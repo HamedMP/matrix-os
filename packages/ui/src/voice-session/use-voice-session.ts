@@ -14,7 +14,7 @@
  * `./client-commands.js` routes controller commands. Public types live in
  * `./client-types.js`.
  */
-import { useEffect, useRef, useSyncExternalStore } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import {
   VOICE_SESSION_CONTRACT_VERSION,
   VOICE_SESSION_LIMITS,
@@ -39,6 +39,7 @@ import {
 } from "./session-api.js";
 import {
   capabilityUnavailableError,
+  CONNECTION_LOST_FATAL,
   DEFAULT_VOICE_AUDIO_FORMAT,
   voiceWarn,
   type VoiceSessionClient,
@@ -47,7 +48,7 @@ import {
   type VoiceSessionClientSnapshot,
   type VoiceSessionHook,
 } from "./client-types.js";
-import { createReconnectLoop } from "./client-reconnect.js";
+import { createReconnectLoop, createRemoteCleanupQueue } from "./client-reconnect.js";
 import { routeVoiceCommand } from "./client-commands.js";
 import { createTransportAttachment, voiceDeclaredAudioFormat } from "./client-transport.js";
 
@@ -118,7 +119,6 @@ export function createVoiceSessionClient(options: VoiceSessionClientOptions): Vo
   let notice: SafeVoiceError | null = null;
   let reconnectStatus: VoiceSessionClientSnapshot["reconnectStatus"] = null;
   let activeTurnId: string | null = null;
-  let sessionDeleted = false;
   let ending = false;
   let disposed = false;
   let generation = 0;
@@ -198,6 +198,11 @@ export function createVoiceSessionClient(options: VoiceSessionClientOptions): Vo
       } catch (stopError: unknown) {
         voiceWarn("[voice-session] capture stop on failure failed:", stopError);
       }
+      try {
+        held.stopPlayback();
+      } catch (playbackError: unknown) {
+        voiceWarn("[voice-session] playback stop on failure failed:", playbackError);
+      }
     }
     void releaseMedia();
     transport.retire();
@@ -219,14 +224,61 @@ export function createVoiceSessionClient(options: VoiceSessionClientOptions): Vo
     }
   };
 
+  /**
+   * Bounded remote-session cleanup. A job is keyed by the captured
+   * chat/session pair and settles ONLY after the remote DELETE confirms:
+   * failures retry on the injected timers (max 3 attempts), concurrent
+   * teardowns dedupe, and exhaustion parks the key in a separate bounded
+   * failed registry — never marked settled — with a discoverable safe
+   * notice on the snapshot. Failed keys are never retried automatically;
+   * `retryCleanup` is the explicit, rate-limited escape hatch.
+   */
+  const cleanupQueue = createRemoteCleanupQueue({
+    deleteRemote: (cid, sid) => api.deleteSession(cid, sid),
+    setTimeoutFn,
+    clearTimeoutFn,
+    now: options.now,
+    onRetry: (_cid, _sid, attempt, deleteError) => {
+      voiceWarn(`[voice-session] remote session cleanup attempt ${attempt} failed:`, deleteError);
+    },
+    onExhausted: () => {
+      notice = CONNECTION_LOST_FATAL;
+      emit();
+    },
+    onSettled: () => {
+      // A confirmed remote DELETE retires the cleanup-failure notice, but
+      // never clobbers an unrelated warning (e.g. audio_backpressure).
+      if (notice === CONNECTION_LOST_FATAL) {
+        notice = null;
+        emit();
+      }
+    },
+  });
+
   const deleteRemote = () => {
-    if (!sessionId || !chatId || sessionDeleted) return;
-    sessionDeleted = true;
-    const sid = sessionId;
-    const cid = chatId;
-    void api.deleteSession(cid, sid).catch((deleteError: unknown) => {
-      voiceWarn("[voice-session] session delete failed:", deleteError);
-    });
+    if (!sessionId || !chatId) return;
+    cleanupQueue.enqueue(chatId, sessionId);
+  };
+
+  /**
+   * Transport-loss halt: stop capture and every current/queued playback
+   * locally. No wire frames are sent — halting audio must never imply that
+   * the canonical run, model generation, or a tool was cancelled.
+   */
+  const haltMedia = () => {
+    activeTurnId = null;
+    const held = media;
+    if (!held) return;
+    try {
+      held.stopCapture();
+    } catch (stopError: unknown) {
+      voiceWarn("[voice-session] capture stop on transport loss failed:", stopError);
+    }
+    try {
+      held.stopPlayback();
+    } catch (playbackError: unknown) {
+      voiceWarn("[voice-session] playback stop on transport loss failed:", playbackError);
+    }
   };
 
   async function teardownSession(remoteEnded: boolean): Promise<void> {
@@ -284,6 +336,7 @@ export function createVoiceSessionClient(options: VoiceSessionClientOptions): Vo
     declaredOutputAudio: () => declaredOutputAudio,
     options,
     noteRetryAfter: (ms) => reconnectLoop.noteRetryAfter(ms),
+    haltMedia,
     goingAway: injectGoingAway,
     onResumed: () => reconnectLoop.onResumed(),
     setPhase,
@@ -312,32 +365,47 @@ export function createVoiceSessionClient(options: VoiceSessionClientOptions): Vo
       // Server-side `session.state` -> failed intends reconnect-revival:
       // keep the bounded ladder when allowed, fail terminally otherwise.
       if (disposed || ending || phase === "ended" || phase === "idle") return;
+      haltMedia();
       injectGoingAway();
       setPhase("reconnecting");
       reconnectLoop.schedule();
     },
   });
 
-  const mediaCallbacks: VoiceMediaCallbacks = {
-    onAudioChunk: (chunk) =>
-      disposed || ending ? false : (transport.current()?.send({ type: "capture.audio", ...chunk }) ?? false),
-    onSegmentPlayed: (ack) => {
-      try {
-        controller?.acknowledgePlayback(ack);
-      } catch (ackError: unknown) {
-        voiceWarn("[voice-session] playback ack failed:", ackError);
-      }
-    },
-    onBackpressure: () => {
-      notice = voiceErrorForCode("audio_backpressure");
-      emit();
-    },
-    onDeviceChanged: (change) => {
-      transport.current()?.send({ type: "device.changed", ...change });
-    },
-    onError: (mediaError) => {
-      failSession(mediaError);
-    },
+  /**
+   * Per-session media callbacks, fenced by session identity: the ref is set
+   * right after the factory returns, so a released or superseded media
+   * session can never feed chunks, acks, or errors into the live session.
+   */
+  const makeMediaCallbacks = (held: { current: VoiceMediaSession | null }): VoiceMediaCallbacks => {
+    const live = () => !disposed && !ending && held.current !== null && media === held.current;
+    return {
+      onAudioChunk: (chunk) =>
+        live() ? (transport.current()?.send({ type: "capture.audio", ...chunk }) ?? false) : false,
+      onSegmentPlayed: (ack) => {
+        if (disposed || held.current === null || media !== held.current) return;
+        try {
+          controller?.acknowledgePlayback(ack);
+        } catch (ackError: unknown) {
+          voiceWarn("[voice-session] playback ack failed:", ackError);
+        }
+      },
+      onBackpressure: () => {
+        if (!live()) return;
+        notice = voiceErrorForCode("audio_backpressure");
+        emit();
+      },
+      onDeviceChanged: (change) => {
+        if (!live()) return;
+        transport.current()?.send({ type: "device.changed", ...change });
+      },
+      onError: (mediaError) => {
+        // A late media error must never resurrect a torn-down session.
+        if (held.current === null || media !== held.current || disposed || ending
+          || phase === "idle" || phase === "ended" || phase === "failed") return;
+        failSession(mediaError);
+      },
+    };
   };
 
   /**
@@ -409,7 +477,6 @@ export function createVoiceSessionClient(options: VoiceSessionClientOptions): Vo
     await teardownSession(false);
     if (stale()) return;
     reconnectLoop.reset();
-    sessionDeleted = false;
     ending = false;
     error = null;
     notice = null;
@@ -439,14 +506,27 @@ export function createVoiceSessionClient(options: VoiceSessionClientOptions): Vo
     // format (e.g. 24 kHz PCM); segments without a per-frame format use it.
     declaredOutputAudio = voiceDeclaredAudioFormat(capability.outputAudio);
 
+    const mediaRef: { current: VoiceMediaSession | null } = { current: null };
     const heldMedia = options.mediaFactory
-      ? options.mediaFactory({ audio, callbacks: mediaCallbacks })
-      : createWebVoiceMediaSession({ audio, callbacks: mediaCallbacks });
+      ? options.mediaFactory({ audio, callbacks: makeMediaCallbacks(mediaRef) })
+      : createWebVoiceMediaSession({ audio, callbacks: makeMediaCallbacks(mediaRef) });
+    mediaRef.current = heldMedia;
     media = heldMedia;
     try {
       await heldMedia.prepare({ onRationale: options.onPermissionRationale });
     } catch (mediaError: unknown) {
+      // Fence callbacks BEFORE releasing: a prepare that rejects after
+      // partial allocation can still emit late chunks/errors, and none may
+      // reach this (or a future) session. Then release whatever the —
+      // possibly custom — media implementation allocated before throwing;
+      // failSession's releaseMedia would skip it now that `media` is null.
+      mediaRef.current = null;
       media = null;
+      try {
+        await heldMedia.release();
+      } catch (releaseError: unknown) {
+        voiceWarn("[voice-session] media release after failed prepare failed:", releaseError);
+      }
       if (!stale()) {
         failSession(mediaError instanceof VoiceMediaError
           ? mediaError.safeError
@@ -485,13 +565,12 @@ export function createVoiceSessionClient(options: VoiceSessionClientOptions): Vo
     if (!created) return;
     if (stale()) {
       // The request already minted a remote session before the caller
-      // cancelled (end/continueInChat/dispose): delete it best-effort so no
-      // hidden live session survives. `existing_consumed` reports a session
-      // this request did not mint, so it is left alone.
+      // cancelled (end/continueInChat/dispose): it enters the bounded
+      // cleanup queue so no hidden live session survives even when the
+      // first DELETE is lost. `existing_consumed` reports a session this
+      // request did not mint, so it is left alone.
       if (created.outcome !== "existing_consumed") {
-        void api.deleteSession(parsedChatId, created.sessionId).catch((deleteError: unknown) => {
-          voiceWarn("[voice-session] cancelled-session delete failed:", deleteError);
-        });
+        cleanupQueue.enqueue(parsedChatId, created.sessionId);
       }
       return;
     }
@@ -573,6 +652,11 @@ export function createVoiceSessionClient(options: VoiceSessionClientOptions): Vo
         void reconnectLoop.perform(true);
       }
     },
+    retryCleanup() {
+      // Explicit-only: dispose/teardown enqueues dedupe on failed keys, so
+      // nothing here can become an automatic retry loop.
+      return cleanupQueue.retryFailed();
+    },
     continueInChat() {
       const active = controller;
       if (active && active.getState().state !== "ended") {
@@ -633,9 +717,7 @@ export function createVoiceSessionClient(options: VoiceSessionClientOptions): Vo
  * and closes the socket.
  */
 export function useVoiceSession(options: VoiceSessionClientOptions): VoiceSessionHook {
-  const ref = useRef<VoiceSessionClient | null>(null);
-  if (ref.current === null) ref.current = createVoiceSessionClient(options);
-  const client = ref.current;
+  const [client] = useState(() => createVoiceSessionClient(options));
 
   useEffect(() => () => client.dispose(), [client]);
 
@@ -648,6 +730,7 @@ export function useVoiceSession(options: VoiceSessionClientOptions): VoiceSessio
     startVoice: (chatIdForCall: string) => client.startVoice(chatIdForCall),
     reconnect: () => client.reconnect(),
     retry: () => client.retry(),
+    retryCleanup: () => client.retryCleanup(),
     continueInChat: () => client.continueInChat(),
     end: () => client.end(),
   };

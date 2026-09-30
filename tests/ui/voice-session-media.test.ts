@@ -104,6 +104,7 @@ function mediaHarness(options: {
   getUserMediaImpl?: () => Promise<unknown>;
   maxInFlightMs?: number;
   acceptChunks?: boolean;
+  captureSampleRateHz?: number;
 } = {}): MediaHarness {
   const chunks: MediaHarness["chunks"] = [];
   const acks: VoicePlaybackAck[] = [];
@@ -117,7 +118,7 @@ function mediaHarness(options: {
   let emitSamples: (samples: Float32Array) => void = () => undefined;
   const captureFactory: VoiceCaptureFactory = ({ onSamples }) => {
     emitSamples = onSamples;
-    return { sampleRateHz: 16_000, stop: captureStop };
+    return { sampleRateHz: options.captureSampleRateHz ?? 16_000, stop: captureStop };
   };
   let now = 5_000;
   const callbacks: VoiceMediaCallbacks = {
@@ -226,6 +227,19 @@ describe("createWebVoiceMediaSession", () => {
     emitSamples(silence(CHUNK_SAMPLES + 40, 0.25));
     emitSamples(silence(CHUNK_SAMPLES - 40, 0.25));
     expect(chunks).toHaveLength(3);
+  });
+
+  it("resamples the browser capture rate to the 16kHz wire format it advertises", async () => {
+    const { session, emitSamples, chunks } = mediaHarness({ captureSampleRateHz: 48_000 });
+    await session.prepare();
+    session.startCapture({ turnId: "vturn_rate" });
+
+    // 20ms from a browser that ignored the requested 16kHz AudioContext rate.
+    emitSamples(silence(960, 0.5));
+    expect(chunks).toHaveLength(1);
+    const decoded = decodeBase64(chunks[0]!.data);
+    expect(decoded?.byteLength).toBe(CHUNK_SAMPLES * 2);
+    expect(session.pendingAudioMs()).toBe(0);
   });
 
   it("keeps a single capture owner across turn switches", async () => {
@@ -340,5 +354,65 @@ describe("createWebVoiceMediaSession", () => {
 
     await session.release();
     expect(devices.track.stop).toHaveBeenCalledOnce();
+  });
+});
+
+describe("capture-side AudioContext readiness", () => {
+  function readinessHarness(ensureReady?: () => void | Promise<void>) {
+    const track = { stop: vi.fn(), getSettings: () => ({ deviceId: "mic_default" }) };
+    const stream: VoiceMediaStreamLike = { getTracks: () => [track] };
+    const devices: VoiceMediaDevicesLike = { getUserMedia: vi.fn(async () => stream) };
+    const captureStop = vi.fn(async () => undefined);
+    const ready = vi.fn(ensureReady ?? (() => undefined));
+    const captureFactory: VoiceCaptureFactory = () => ({
+      sampleRateHz: 16_000,
+      ensureReady: ready,
+      stop: captureStop,
+    });
+    const errors: { code: string }[] = [];
+    const session = createWebVoiceMediaSession({
+      audio: AUDIO,
+      callbacks: {
+        onAudioChunk: () => true,
+        onSegmentPlayed: () => undefined,
+        onError: (error) => errors.push(error),
+      },
+      mediaDevices: devices,
+      createAudioContext: () => fakePlaybackContext().context,
+      captureFactory,
+    });
+    return { session, track, captureStop, ready, errors };
+  }
+
+  it("observes capture readiness inside prepare and marks the session prepared", async () => {
+    const { session, ready } = readinessHarness();
+    await session.prepare();
+    expect(ready).toHaveBeenCalledOnce();
+    expect(session.startCapture({ turnId: "vturn_1" })).toBe(true);
+    await session.release();
+  });
+
+  it("fails prepare as input_unavailable and releases the partial allocation when readiness rejects", async () => {
+    const { session, track, captureStop } = readinessHarness(async () => {
+      throw new Error("AudioContext resume blocked");
+    });
+    await expect(session.prepare()).rejects.toMatchObject({
+      name: "VoiceMediaError",
+      safeError: { code: "input_unavailable", recovery: "choose_input", retryable: true },
+    });
+    // The half-prepared mic and capture handle are released, not leaked.
+    expect(track.stop).toHaveBeenCalledOnce();
+    expect(captureStop).toHaveBeenCalledOnce();
+    // The session never becomes capturable after a failed prepare.
+    expect(session.startCapture({ turnId: "vturn_1" })).toBe(false);
+  });
+
+  it("propagates a VoiceMediaError from ensureReady unchanged", async () => {
+    const { session } = readinessHarness(async () => {
+      throw new VoiceMediaError({ code: "input_unavailable", recovery: "choose_input", retryable: true });
+    });
+    await expect(session.prepare()).rejects.toMatchObject({
+      safeError: { code: "input_unavailable", recovery: "choose_input" },
+    });
   });
 });

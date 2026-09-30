@@ -91,6 +91,8 @@ export {
 
 export * from "./voice-session/index.js";
 
+export * from "./aoede/index.js";
+
 export { ChatShareDialog } from "./chat/ChatShareDialog.js";
 export { ChatContextMenu } from "./chat/ChatContextMenu.js";
 export { ChatSharingButton } from "./chat/ChatSharingButton.js";

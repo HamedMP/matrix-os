@@ -102,6 +102,7 @@ interface FakeMedia {
   callbacks: VoiceMediaCallbacks | null;
   startedTurns: string[];
   stops: number;
+  playbackStops: number;
   enqueued: { responseId: string; segmentId: string; data: string }[];
   interrupts: string[];
   interruptBoundary: number | null;
@@ -113,6 +114,7 @@ function fakeMedia(prepareImpl?: () => Promise<void>): FakeMedia {
     callbacks: null,
     startedTurns: [],
     stops: 0,
+    playbackStops: 0,
     enqueued: [],
     interrupts: [],
     interruptBoundary: 123,
@@ -133,6 +135,9 @@ function fakeMedia(prepareImpl?: () => Promise<void>): FakeMedia {
       interruptResponse: vi.fn((responseId: string) => {
         media.interrupts.push(responseId);
         return media.interruptBoundary;
+      }),
+      stopPlayback: vi.fn(() => {
+        media.playbackStops += 1;
       }),
       playedThroughMs: vi.fn(() => null),
       pendingAudioMs: () => 0,

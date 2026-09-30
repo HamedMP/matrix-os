@@ -55,6 +55,15 @@ export interface VoiceAudioContextLike {
 
 export interface VoiceCaptureHandle {
   readonly sampleRateHz: number;
+  /**
+   * Brings the capture pipeline live inside the caller's explicit-start
+   * gesture: resolves once capture can produce samples, rejects when the
+   * capture-side AudioContext cannot reach a running state. No auto-resume
+   * is armed for later non-gesture moments — this is only ever invoked by
+   * `VoiceMediaSession.prepare`, which the client drives from the explicit
+   * Start path.
+   */
+  ensureReady?(): void | Promise<void>;
   stop(): void | Promise<void>;
 }
 
@@ -101,7 +110,9 @@ export function webAudioContextFactory(): VoiceAudioContextLike | null {
       };
     },
     close: () => context.close(),
-    resume: () => void context.resume(),
+    // The promise is returned so a suspended/autoplay-blocked resume
+    // rejection is observed by the caller instead of going unhandled.
+    resume: () => context.resume(),
   };
 }
 
@@ -123,6 +134,25 @@ export function webCaptureFactory(input: {
   node.connect(context.destination);
   return {
     sampleRateHz: context.sampleRate,
+    async ensureReady() {
+      // A capture context stuck suspended/interrupted produces silence
+      // forever. resume() only runs here — inside the explicit Start
+      // gesture — and its rejection is surfaced rather than swallowed.
+      if (context.state === "closed") {
+        throw new VoiceMediaError(voiceErrorForCode("input_unavailable"));
+      }
+      if (context.state !== "running") {
+        try {
+          await context.resume();
+        } catch (error: unknown) {
+          console.warn("[voice-session] AudioContext resume failed", error);
+          throw new VoiceMediaError(voiceErrorForCode("input_unavailable"));
+        }
+      }
+      if (context.state !== "running") {
+        throw new VoiceMediaError(voiceErrorForCode("input_unavailable"));
+      }
+    },
     async stop() {
       node.onaudioprocess = null;
       source.disconnect();

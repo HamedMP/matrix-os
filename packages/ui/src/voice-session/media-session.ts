@@ -108,6 +108,12 @@ export interface VoiceMediaSession {
   enqueueSegment(input: { responseId: string; segmentId: string; data: string; format?: VoiceOutputAudioFormat }): void;
   /** Stops playout; returns the true heard boundary (ms) or null when unknown. */
   interruptResponse(responseId: string): number | null;
+  /**
+   * Immediately stops every current and queued playback (transport loss).
+   * Sources are stopped and response queues dropped while the playback
+   * context is kept alive for post-resume audio.
+   */
+  stopPlayback(): void;
   playedThroughMs(responseId: string): number | null;
   pendingAudioMs(): number;
   release(): Promise<void>;
@@ -172,6 +178,9 @@ export function createWebVoiceMediaSession(options: {
   const trackedInputTracks = new Set<VoiceMediaStreamLike["getTracks"] extends () => (infer T)[] ? T : never>();
 
   let pendingSamples = new Float32Array(0);
+  let resampleBuffer = new Float32Array(0);
+  let resamplePosition = 0;
+  let resampleSourceRateHz: number = audio.sampleRateHz;
   const pendingChunks: PendingChunk[] = [];
   const responses = new Map<string, ResponsePlayback>();
   /**
@@ -253,13 +262,49 @@ export function createWebVoiceMediaSession(options: {
     drainChunks();
   };
 
+  const resetResampler = () => {
+    resampleBuffer = new Float32Array(0);
+    resamplePosition = 0;
+    resampleSourceRateHz = audio.sampleRateHz;
+  };
+
+  /** Streaming linear resampler: browser AudioContext may ignore the requested rate. */
+  const resampleCapture = (samples: Float32Array, sourceRateHz: number): Float32Array => {
+    if (sourceRateHz === audio.sampleRateHz) {
+      resetResampler();
+      return samples;
+    }
+    if (resampleSourceRateHz !== sourceRateHz) {
+      resampleBuffer = new Float32Array(0);
+      resamplePosition = 0;
+      resampleSourceRateHz = sourceRateHz;
+    }
+    const input = new Float32Array(resampleBuffer.length + samples.length);
+    input.set(resampleBuffer);
+    input.set(samples, resampleBuffer.length);
+    const step = sourceRateHz / audio.sampleRateHz;
+    const output: number[] = [];
+    while (resamplePosition + 1 < input.length) {
+      const index = Math.floor(resamplePosition);
+      const fraction = resamplePosition - index;
+      output.push(input[index]! + (input[index + 1]! - input[index]!) * fraction);
+      resamplePosition += step;
+    }
+    const consumed = Math.min(Math.floor(resamplePosition), Math.max(0, input.length - 1));
+    resampleBuffer = input.slice(consumed);
+    resamplePosition -= consumed;
+    return Float32Array.from(output);
+  };
+
   const onSamples = (samples: Float32Array) => {
     if (!capturing || samples.length === 0) return;
     const rateHz = Math.max(1, Math.floor(capture?.sampleRateHz ?? audio.sampleRateHz));
-    const samplesPerChunk = Math.max(1, Math.round((audio.frameDurationMs * rateHz) / 1_000));
-    const merged = new Float32Array(pendingSamples.length + samples.length);
+    const wireSamples = resampleCapture(samples, rateHz);
+    if (wireSamples.length === 0) return;
+    const samplesPerChunk = Math.max(1, Math.round((audio.frameDurationMs * audio.sampleRateHz) / 1_000));
+    const merged = new Float32Array(pendingSamples.length + wireSamples.length);
     merged.set(pendingSamples, 0);
-    merged.set(samples, pendingSamples.length);
+    merged.set(wireSamples, pendingSamples.length);
     pendingSamples = merged;
     while (pendingSamples.length >= samplesPerChunk) {
       emitChunk(pendingSamples.subarray(0, samplesPerChunk));
@@ -292,6 +337,7 @@ export function createWebVoiceMediaSession(options: {
     capturing = false;
     activeTurnId = null;
     pendingSamples = new Float32Array(0);
+    resetResampler();
     pendingChunks.length = 0;
     const endedCapture = capture;
     capture = null;
@@ -353,7 +399,18 @@ export function createWebVoiceMediaSession(options: {
       scheduleNext(responseId, playback);
     };
     try {
-      context.resume?.();
+      const resumeResult = context.resume?.() as Promise<void> | undefined;
+      if (resumeResult && typeof resumeResult.then === "function") {
+        // AudioContext.resume() is async and can reject (autoplay policy,
+        // device revoked). Observe it: a suspended context never produces
+        // sound, so the session must not go on believing audio is live.
+        void resumeResult.catch((resumeError: unknown) => {
+          console.warn("[voice-session] playback resume failed:", resumeError instanceof Error ? resumeError.name : "UnknownError");
+          if (!released && playbackContext === context) {
+            emitError(voiceErrorForCode("output_unavailable"));
+          }
+        });
+      }
       source.start(startedAtSeconds);
     } catch (error: unknown) {
       console.warn("[voice-session] playback start failed:", error instanceof Error ? error.name : "UnknownError");
@@ -412,6 +469,48 @@ export function createWebVoiceMediaSession(options: {
         console.warn("[voice-session] capture pipeline failed:", error instanceof Error ? error.name : "UnknownError");
         throw new VoiceMediaError(voiceErrorForCode("input_unavailable"));
       }
+      // Observe capture-side AudioContext readiness while still inside the
+      // explicit Start gesture: a suspended/interrupted capture context
+      // produces silence forever, so readiness failure is surfaced as
+      // input_unavailable instead of leaving a dead-but-prepared session.
+      const pendingCapture = capture;
+      let readinessError: unknown;
+      try {
+        await pendingCapture.ensureReady?.();
+      } catch (ensureError: unknown) {
+        readinessError = ensureError;
+      }
+      if (readinessError !== undefined) {
+        // Release everything this prepare allocated — a failed prepare must
+        // not leave a half-live mic or capture pipeline behind.
+        if (!released) {
+          if (capture === pendingCapture) capture = null;
+          const heldStream = stream;
+          stream = null;
+          if (heldStream !== null) {
+            for (const track of heldStream.getTracks()) {
+              try {
+                track.stop();
+              } catch (trackError: unknown) {
+                console.warn("[voice-session] track stop after readiness failure failed:", trackError instanceof Error ? trackError.name : "UnknownError");
+              }
+            }
+          }
+          try {
+            await pendingCapture.stop();
+          } catch (stopError: unknown) {
+            console.warn("[voice-session] unready capture stop failed:", stopError instanceof Error ? stopError.name : "UnknownError");
+          }
+        }
+        if (readinessError instanceof VoiceMediaError) throw readinessError;
+        console.warn("[voice-session] capture readiness failed:", readinessError instanceof Error ? readinessError.name : "UnknownError");
+        throw new VoiceMediaError(voiceErrorForCode("input_unavailable"));
+      }
+      if (released) {
+        // release() ran while readiness was in flight and already owned the
+        // allocated handles; refuse to mark the session prepared.
+        throw new VoiceMediaError(voiceErrorForCode("internal_failure"));
+      }
       prepared = true;
       for (const track of stream.getTracks()) {
         trackedInputTracks.add(track);
@@ -430,6 +529,7 @@ export function createWebVoiceMediaSession(options: {
       activeTurnId = turnId;
       capturing = true;
       pendingSamples = new Float32Array(0);
+      resetResampler();
       pendingChunks.length = 0;
       return true;
     },
@@ -441,6 +541,7 @@ export function createWebVoiceMediaSession(options: {
       const tail = pendingSamples;
       pendingSamples = new Float32Array(0);
       if (tail.length > 0) emitChunk(tail);
+      resetResampler();
       pendingChunks.length = 0;
       activeTurnId = null;
     },
@@ -533,6 +634,25 @@ export function createWebVoiceMediaSession(options: {
       releaseInFlightResponse(responseId);
       return boundary;
     },
+    stopPlayback() {
+      // Transport loss: halt every current source and drop all queued
+      // segments. Unacked segments leave the dedupe set so post-resume
+      // redelivery can play again; already-acked segments keep their
+      // recorded ack so a replay only completes server bookkeeping.
+      for (const playback of responses.values()) {
+        playback.stopping = true;
+        playback.queue = [];
+        playback.queuedMs = 0;
+        try {
+          playback.current?.source.stop();
+        } catch (error: unknown) {
+          console.warn("[voice-session] playback stop failed:", error instanceof Error ? error.name : "UnknownError");
+        }
+        playback.current = null;
+      }
+      responses.clear();
+      inFlightSegments.clear();
+    },
     playedThroughMs(responseId) {
       const playback = responses.get(responseId);
       return playback ? heardBoundaryMs(playback) : null;
@@ -546,6 +666,7 @@ export function createWebVoiceMediaSession(options: {
       capturing = false;
       activeTurnId = null;
       pendingSamples = new Float32Array(0);
+      resetResampler();
       pendingChunks.length = 0;
       mediaDevices?.removeEventListener?.("devicechange", onDeviceChange);
       for (const track of trackedInputTracks) {

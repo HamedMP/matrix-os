@@ -55,6 +55,12 @@ export interface VoiceTransportAttachmentDeps {
     | "clearIntervalFn"
   >;
   noteRetryAfter(ms: number): void;
+  /**
+   * Connection lost: immediately stop capture and every current/queued
+   * playback. Local-only — no wire frames, so nothing implies a run, model
+   * generation, or tool was cancelled.
+   */
+  haltMedia(): void;
   /** Local `transport.going_away` injection for the controller. */
   goingAway(): void;
   onResumed(): void;
@@ -148,6 +154,10 @@ export function createTransportAttachment(deps: VoiceTransportAttachmentDeps): V
             },
             onConnectionLost: (info) => {
               if (!deps.lossIsReconnectable()) return;
+              // Silence the mic and drop all playout BEFORE scheduling the
+              // reconnect so stale capture/queued audio cannot outlive the
+              // dead epoch on the user side.
+              deps.haltMedia();
               if (!info.reconnectable) {
                 deps.failSession(CONNECTION_LOST_FATAL);
                 return;

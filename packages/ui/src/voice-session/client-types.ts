@@ -87,6 +87,13 @@ export interface VoiceSessionClient {
   /** Explicit reconnect: required after `existing_consumed`, also used by retry. */
   reconnect(): Promise<void>;
   retry(): void;
+  /**
+   * Explicitly retries remote-session DELETEs that exhausted their bounded
+   * attempts (discoverable via the snapshot notice). Never automatic: each
+   * failed key gets at most one fresh bounded cycle per 60s window.
+   * Returns the number of retry cycles started.
+   */
+  retryCleanup(): number;
   continueInChat(): void;
   end(): Promise<void>;
   dispose(): void;
@@ -99,6 +106,7 @@ export interface VoiceSessionHook {
   startVoice(chatId: string): Promise<void>;
   reconnect(): Promise<void>;
   retry(): void;
+  retryCleanup(): number;
   continueInChat(): void;
   end(): Promise<void>;
 }
