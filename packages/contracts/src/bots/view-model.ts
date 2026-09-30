@@ -63,3 +63,17 @@ const blockedCopy: Record<BotBlockedReason, string> = {
 export function botTaskStatusCopy(task: BotTaskSummary): string {
   return task.status === "blocked" && task.blockedReason ? blockedCopy[task.blockedReason] : statusCopy[task.status];
 }
+
+/** Presentation only: these labels never change a grant or connection state. */
+export function botServiceLabel(service: string): string {
+  const labels: Record<string, string> = { gmail: "Gmail", google_calendar: "Google Calendar", slack: "Slack", notion: "Notion", github: "GitHub" };
+  return labels[service] ?? service.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+export function botConnectionStateLabel(state: BotConnectionState["state"]): string {
+  return { granted: "Access allowed", connected_not_granted: "Connected · no access", not_connected: "Not connected" }[state];
+}
+
+export function botAccessLabel(effects: readonly string[]): string {
+  return effects.map((effect) => effect.charAt(0).toUpperCase() + effect.slice(1).replaceAll("_", " ")).join(", ");
+}

@@ -103,9 +103,10 @@ suite("Electron Desktop bot visual evidence", () => {
       await gettingStarted.waitFor({ state: "hidden" });
     }
     await page.getByText("Which company should I watch?").waitFor();
-    expect(await page.getByRole("button", { name: "Show bot authority" }).isVisible()).toBe(true);
+    expect(await page.getByRole("button", { name: "Bot settings" }).isVisible()).toBe(true);
     await page.screenshot({ path: join(evidence, "electron-desktop-question.png") });
-    await page.getByRole("button", { name: "Show bot authority" }).click();
+    await page.getByRole("button", { name: "Bot settings" }).click();
+    await page.getByRole("button", { name: /Memory/ }).click();
     await page.getByText("Keep briefs concise").waitFor();
     await page.getByText("Keep briefs concise").scrollIntoViewIfNeeded();
     await page.screenshot({ path: join(evidence, "electron-desktop-authority-memory.png") });

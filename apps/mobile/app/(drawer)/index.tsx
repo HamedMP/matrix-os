@@ -231,7 +231,8 @@ export default function ChatScreen() {
             setShowBotRecipes(false);
             void chats.invalidate();
           }} /> : null}
-      {botChat.snapshot ? <BotChatControls snapshot={botChat.snapshot} actionsAvailable={!botChat.isError}
+      {botChat.snapshot ? <BotChatControls scopeKey={JSON.stringify([userId, gatewayUrl, activeChatId])}
+        snapshot={botChat.snapshot} actionsAvailable={!botChat.isError}
         onResolve={botChat.resolve}
         onRevoke={botChat.revoke} onMemory={botChat.memory} onRefresh={botChat.refresh}
         onConnectUrl={async (url) => {

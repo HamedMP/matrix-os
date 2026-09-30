@@ -1,8 +1,9 @@
 import { useState } from "react";
-import { Pressable, ScrollView, Text, TextInput, View } from "react-native";
+import { Keyboard, Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
+import { BotSettingsSheet } from "./BotSettingsSheet";
 import {
-  botInteractionCard, botTaskStatusCopy, groupBotAuthority,
+  botInteractionCard, botTaskStatusCopy,
   type BotAuthorityView, type BotInteraction, type BotMemoryMutationRequest,
   type BotTaskSummary, type ResolveBotInteractionRequest, type ResolveBotInteractionResponse,
 } from "@matrix-os/contracts";
@@ -16,6 +17,8 @@ export interface BotChatSnapshot {
 }
 
 interface BotChatControlsProps {
+  /** Owner, runtime, and Chat identity: bots with matching IDs may belong to different scopes. */
+  scopeKey: string;
   snapshot: BotChatSnapshot;
   actionsAvailable?: boolean;
   onResolve: (interactionId: string, input: ResolveBotInteractionRequest) => Promise<ResolveBotInteractionResponse>;
@@ -163,69 +166,29 @@ function BotInteractionControl({ interaction, onResolve, onRefresh, onConnectUrl
   </View>;
 }
 
-export function BotChatControls({ snapshot, actionsAvailable = true, onResolve, onRevoke, onMemory, onRefresh, onConnectUrl }: BotChatControlsProps) {
-  const [showAuthority, setShowAuthority] = useState(false);
-  const [pending, setPending] = useState<string | null>(null);
-  const [error, setError] = useState("");
-  const change = async (key: string, action: () => Promise<unknown>) => {
-    if (pending || !actionsAvailable) return;
-    setPending(key);
-    setError("");
-    try {
-      await action();
-    } catch (failure: unknown) {
-      console.warn("[mobile-bots] Authority change failed:", failure instanceof Error ? failure.name : "UnknownError");
-      setError("Could not change bot access. Try again.");
-      setPending(null);
-      return;
-    }
-    try {
-      await onRefresh();
-    } catch (failure: unknown) {
-      console.warn("[mobile-bots] Status refresh failed:", failure instanceof Error ? failure.name : "UnknownError");
-      setError("Bot status could not be loaded. Try again.");
-    } finally {
-      setPending(null);
-    }
-  };
-  const authority = snapshot.authority;
+export function BotChatControls(props: BotChatControlsProps) {
+  return <BotChatControlsForAgent key={JSON.stringify([props.scopeKey, props.snapshot.agentId])} {...props} />;
+}
+
+function BotChatControlsForAgent({ snapshot, actionsAvailable = true, onResolve, onRevoke, onMemory, onRefresh, onConnectUrl }: BotChatControlsProps) {
+  const [showSettings, setShowSettings] = useState(false);
   return <View style={styles.panel}>
     <View style={styles.header}>
-      <View style={styles.title}><Text style={styles.heading}>{snapshot.name}</Text><Text style={styles.muted}>Your bot's Chat</Text></View>
-      <Pressable accessibilityRole="button" accessibilityState={{ expanded: showAuthority }} style={styles.button}
-        onPress={() => setShowAuthority((value) => !value)}><Text style={styles.text}>Access &amp; memory</Text></Pressable>
+      <View style={styles.title}><Text style={styles.heading}>{snapshot.name}</Text></View>
+      <Pressable accessibilityRole="button" accessibilityLabel="Bot settings"
+        accessibilityState={{ expanded: showSettings }} style={styles.button}
+        onPress={() => { Keyboard.dismiss(); setShowSettings(true); }}><Text style={styles.text}>Bot settings</Text></Pressable>
     </View>
-    <ScrollView style={styles.scroller} contentContainerStyle={styles.group} nestedScrollEnabled>
+    {snapshot.interactions.length || snapshot.tasks.length ? <ScrollView style={styles.scroller}
+      contentContainerStyle={styles.group} nestedScrollEnabled>
       {snapshot.interactions.map((interaction) => <BotInteractionControl key={interaction.interactionId}
         interaction={interaction} actionsAvailable={actionsAvailable}
         onResolve={onResolve} onRefresh={onRefresh} onConnectUrl={onConnectUrl} />)}
       {snapshot.tasks.map((task) => <Text key={task.taskId} style={styles.muted}>{botTaskStatusCopy(task)}</Text>)}
-      {showAuthority ? <View style={styles.card}>
-        <Text style={styles.heading}>What this bot can access</Text>
-        {groupBotAuthority(authority).map((group) => <View key={group.service} style={styles.group}>
-          <Text style={styles.text}>{group.service.replaceAll("_", " ")} · {group.state.replaceAll("_", " ")}</Text>
-          {group.grants.map((grant) => <View key={grant.grantId} style={styles.group}>
-            <Text style={styles.text}>{grant.accountLabel} · {grant.effects.join(", ")}</Text>
-            <Pressable accessibilityRole="button" accessibilityState={{ disabled: !!pending || !actionsAvailable }}
-              disabled={!!pending || !actionsAvailable} style={styles.button}
-              onPress={() => void change(grant.grantId, () => onRevoke(grant.grantId))}>
-              <Text style={styles.text}>Revoke {grant.accountLabel}</Text></Pressable>
-          </View>)}
-        </View>)}
-        <Text style={styles.heading}>Remembered</Text>
-        {authority.memory.items.map((item) => <View key={item.itemId} style={styles.group}>
-          <Text style={styles.text}>{item.content}</Text>
-          <Text style={styles.muted}>From Chat · {item.source.at}</Text>
-          {!item.confirmed ? <Pressable accessibilityRole="button" disabled={!!pending || !actionsAvailable} style={styles.button}
-            onPress={() => void change(item.itemId, () => onMemory(item.itemId, "confirm", { baseRevision: item.revision }))}>
-            <Text style={styles.text}>Confirm memory</Text></Pressable> : null}
-          <Pressable accessibilityRole="button" disabled={!!pending || !actionsAvailable} style={styles.button}
-            onPress={() => void change(item.itemId, () => onMemory(item.itemId, "forget", { baseRevision: item.revision }))}>
-            <Text style={styles.text}>Forget memory</Text></Pressable>
-        </View>)}
-      </View> : null}
-      {error ? <Text accessibilityRole="alert" style={styles.text}>{error}</Text> : null}
-    </ScrollView>
+    </ScrollView> : null}
+    <BotSettingsSheet open={showSettings} name={snapshot.name} authority={snapshot.authority}
+      actionsAvailable={actionsAvailable} onClose={() => setShowSettings(false)}
+      onRevoke={onRevoke} onMemory={onMemory} onRefresh={onRefresh} />
   </View>;
 }
 

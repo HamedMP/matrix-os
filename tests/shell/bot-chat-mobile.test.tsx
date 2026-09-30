@@ -34,6 +34,7 @@ it("shows bot identity, questions, and memory in Web Mobile Chat", async () => {
 
   expect(await screen.findByText("Research Rabbit")).toBeTruthy();
   expect(await screen.findByText("Which company?")).toBeTruthy();
-  fireEvent.click(screen.getByRole("button", { name: "Show bot authority" }));
-  expect(await screen.findByText("Keep briefs concise")).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Bot settings" }));
+  fireEvent.click(screen.getByRole("button", { name: /Memory/ }));
+    expect(await screen.findByText("Keep briefs concise")).toBeTruthy();
 });
