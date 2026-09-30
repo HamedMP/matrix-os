@@ -90,9 +90,16 @@ Funding limits and model policy remain enforced by Platform and the relay.
    read in fresh Claude Chat. Record the serving Platform revision, host bundle
    and actual Chat outcome; repeat in a new run only with a fresh browser grant.
 
-The tagged Platform Preview uses staging data and cannot validate a production
-Drive connection. A real owner-account test requires a separately reviewed
-production Platform rollout of the narrow route before the Preview Chat run.
+The separate Platform Preview service uses staging data and cannot validate a
+production Drive connection. For the shared Preview acceptance, keep a tagged
+revision of the production Platform service at zero default traffic and route
+only one exact Preview Chat's browser turn and approval POSTs to that revision.
+The temporary Edge Router selector requires the exact Preview handle, Chat ID,
+same-service candidate origin, and an expiry within two hours. It preserves
+the trusted external host and Edge secret; Platform still verifies the browser
+session before minting an actor proof. All other routes continue to the default
+production Platform revision. The operator must verify the selected response
+marker, wrong-Chat default routing, and removal or expiry of the selector.
 
 The gateway contract is shared by Electron Desktop, Web Desktop and Web Canvas.
 No shell business logic is duplicated. Record live surface coverage separately.

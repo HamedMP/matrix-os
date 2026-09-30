@@ -1,12 +1,20 @@
 export const UPSTREAM_TIMEOUT_MS = 30_000;
 const WORKER_BODY_LIMIT = 10 * 1024 * 1024;
 const EDGE_SECRET_HEADER = "X-Matrix-Edge-Secret";
+const PREVIEW_CHAT_CANDIDATE_MAX_DURATION_MS = 2 * 60 * 60 * 1000;
+const PREVIEW_CHAT_PATH = /^\/vm\/(pr-[1-9][0-9]{0,8})(?:\/~runtime\/(pr-[1-9][0-9]{0,8}))?\/api\/chats\/(chat_[A-Za-z0-9_-]{1,128})\/(.+)$/;
+const PREVIEW_CHAT_APPROVAL_PATH = /^runs\/run_[A-Za-z0-9_-]{1,128}\/approvals\/[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
 
 export type EdgeRouteClass = "platform" | "app" | "code" | "unknown";
 
 export interface EdgeRouterEnv {
   EDGE_ROUTER_SECRET?: string;
   PLATFORM_ORIGIN?: string;
+  /** Temporary, exact-chat route to a zero-traffic production-data Platform candidate. */
+  PREVIEW_CHAT_CANDIDATE_ORIGIN?: string;
+  PREVIEW_CHAT_CANDIDATE_HANDLE?: string;
+  PREVIEW_CHAT_CANDIDATE_CHAT_ID?: string;
+  PREVIEW_CHAT_CANDIDATE_EXPIRES_AT?: string;
 }
 
 export type EdgeResponseInit = ResponseInit & {
@@ -51,7 +59,8 @@ export async function handleEdgeRouterRequest(
     });
   }
 
-  const upstreamUrl = `${platformOrigin}${url.pathname}${url.search}`;
+  const candidateOrigin = previewChatCandidateOrigin(request, url, routeClass, env, platformOrigin);
+  const upstreamUrl = `${candidateOrigin ?? platformOrigin}${url.pathname}${url.search}`;
   const body = await readRequestBody(request);
   if (body instanceof Response) return body;
   const upstreamRequest = buildPlatformRequest(request, upstreamUrl, url.host, edgeSecret, body);
@@ -78,7 +87,52 @@ export async function handleEdgeRouterRequest(
     if (headerTimer !== undefined) clearTimeout(headerTimer);
   }
 
-  return withEdgeHeaders(response, routeClass, url.pathname);
+  const result = withEdgeHeaders(response, routeClass, url.pathname);
+  if (candidateOrigin) result.headers.set("x-matrix-preview-platform-route", "candidate");
+  return result;
+}
+
+/** A route selector only: Platform still verifies Clerk and mints all actor authority. */
+function previewChatCandidateOrigin(
+  request: Request,
+  url: URL,
+  routeClass: EdgeRouteClass,
+  env: EdgeRouterEnv,
+  platformOrigin: string,
+): string | null {
+  if (routeClass !== "app" || request.method !== "POST") return null;
+  const match = PREVIEW_CHAT_PATH.exec(url.pathname);
+  if (!match) return null;
+  const [, handle, runtimeSlot, chatId, actionPath] = match;
+  if (runtimeSlot && runtimeSlot !== handle) return null;
+  // The Platform may resolve a no-prefix /vm route from the runtime query.
+  // Keep that selector bound to the same Preview runtime as the path.
+  if (url.searchParams.getAll("runtime").some((slot) => slot !== handle)) return null;
+  if (actionPath !== "turns" && !PREVIEW_CHAT_APPROVAL_PATH.test(actionPath!)) return null;
+  if (handle !== env.PREVIEW_CHAT_CANDIDATE_HANDLE || chatId !== env.PREVIEW_CHAT_CANDIDATE_CHAT_ID) return null;
+
+  const expiresAt = env.PREVIEW_CHAT_CANDIDATE_EXPIRES_AT;
+  if (!expiresAt || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(expiresAt)) return null;
+  const remainingMs = Date.parse(expiresAt) - Date.now();
+  if (!Number.isFinite(remainingMs) || remainingMs <= 0 || remainingMs > PREVIEW_CHAT_CANDIDATE_MAX_DURATION_MS) return null;
+
+  const candidate = env.PREVIEW_CHAT_CANDIDATE_ORIGIN;
+  if (!candidate) return null;
+  try {
+    const base = new URL(platformOrigin);
+    const tagged = new URL(candidate);
+    const prNumber = handle!.slice(3);
+    const tag = tagged.hostname.slice(0, tagged.hostname.length - `---${base.hostname}`.length);
+    const tagMatch = /^pr([1-9][0-9]{0,8})(?:-[a-z0-9]+)+$/.exec(tag);
+    if (tagged.protocol !== "https:" || tagged.username || tagged.password || tagged.port
+      || tagged.pathname !== "/" || tagged.search || tagged.hash
+      || !tagged.hostname.endsWith(`---${base.hostname}`)
+      || tagMatch?.[1] !== prNumber) return null;
+    return tagged.origin;
+  } catch (error: unknown) {
+    if (error instanceof TypeError) return null;
+    throw error;
+  }
 }
 
 function buildPlatformRequest(
@@ -128,6 +182,8 @@ async function readRequestBody(request: Request): Promise<ArrayBuffer | null | R
 
 function withEdgeHeaders(response: Response, routeClass: EdgeRouteClass, pathname: string): Response {
   const headers = new Headers(response.headers);
+  // This marker is asserted by the Worker after routing, never by an upstream.
+  headers.delete("x-matrix-preview-platform-route");
   if (shouldPreserveBrowserCache(routeClass, pathname, response)) {
     const upstreamCacheControl = headers.get("cache-control");
     headers.set("cache-control", upstreamCacheControl ?? browserCacheControlForAppStaticAsset(pathname));

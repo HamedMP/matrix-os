@@ -257,6 +257,43 @@ release scripts from `main`. `preview-vps` builds carry it once the PR branch
 includes the provenance flags, so rebase an older branch or add
 `preview-bundle`.
 
+## One Chat against a production-data tagged Platform candidate
+
+When a Preview VPS needs a browser-authenticated Platform change before that
+change can receive default traffic, the production Edge Router can temporarily
+send one exact Preview Chat's turn and approval POSTs to a zero-traffic tagged
+revision of the production Platform service. This is an operator-reviewed
+production Edge Router deployment, even though the Platform traffic split does
+not change. The tagged revision must use the same production database, Clerk
+verification, Platform signing secret, and trusted Edge Router secret as the
+default service. The separate `matrix-platform-preview` service uses staging
+data and cannot test an existing production personal connection.
+
+First create an otherwise empty Chat in the authenticated Preview browser and
+read its `chat_<id>` from that browser's Chat list response. Configure the
+Edge Router's four Wrangler secrets:
+`PREVIEW_CHAT_CANDIDATE_ORIGIN` (the tagged `pr<N>-...---matrix-platform-...run.app`
+origin of the existing production service),
+`PREVIEW_CHAT_CANDIDATE_HANDLE` (`pr-<N>`),
+`PREVIEW_CHAT_CANDIDATE_CHAT_ID` (that exact Chat ID), and
+`PREVIEW_CHAT_CANDIDATE_EXPIRES_AT` (UTC ISO timestamp no more than two hours
+ahead). Keep these values in the deployment secret store; do not commit them.
+Deploy the reviewed Edge Router code and verify the response header
+`x-matrix-preview-platform-route: candidate` on the selected turn and approval.
+Check that another Chat, handle, route and HTTP method still reach the default
+Platform. The selector is only a route choice: the candidate must verify the
+browser's Clerk session and Preview access before it can sign an actor proof.
+No client-supplied actor or forwarded host becomes an authorization source.
+
+The route stops selecting the candidate when its timestamp expires. To stop it
+immediately, delete `PREVIEW_CHAT_CANDIDATE_CHAT_ID` with Wrangler's secret
+delete command for `matrix-edge-router`; deleting that binding creates a new
+Worker version without the selector. Confirm the selected URL no longer returns
+the candidate marker, then delete the other three temporary secrets. Merely
+redeploying without `--secrets-file` does **not** remove them: Wrangler preserves
+omitted secrets. Keep the candidate tag at zero default traffic throughout the
+test.
+
 ## Platform preview revisions
 
 Add the **`preview-platform`** label. The workflow (bound to the GitHub
