@@ -361,7 +361,10 @@ export class OrganizationDriveService {
       console.warn("[organization-drive] object verification unavailable", error instanceof Error ? error.name : "UnknownError");
       throw new OrganizationDriveError("unavailable");
     }
-    if (!object.body || object.contentLength !== Number(upload.size_bytes)) return null;
+    // Streaming brokers may omit Content-Length. The bounded read below still
+    // requires the exact reserved byte count and SHA-256 before publication.
+    if (!object.body || (object.contentLength !== undefined
+      && object.contentLength !== Number(upload.size_bytes))) return null;
     const hash = createHash("sha256");
     let bytes = 0;
     const content = new Uint8Array(Number(upload.size_bytes));
