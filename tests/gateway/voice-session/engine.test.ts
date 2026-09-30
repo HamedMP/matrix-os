@@ -274,6 +274,18 @@ describe("frames, turns, and admission", () => {
     expect(lastFrame(s.sink, "session.error")).toMatchObject({ code: "chat_unavailable" });
   });
 
+  it("ends media when canonical admission proves backing Chat deletion/access loss", async () => {
+    const rig = makeRig();
+    const s = await listeningSession(rig);
+    rig.admission.push({ outcome: "rejected", revision: 0,
+      error: { code: "chat_unavailable", retryable: false, recovery: "start_new_session" } });
+    await admitTurn(rig, s, "deleted");
+    await flush(rig, s.sessionId);
+    expect(rig.engine.describeSession({ principal: PRINCIPAL, chatId: CHAT_ID, sessionId: s.sessionId })?.status).toBe("ended");
+    expect(rig.adapter.sessions[0]?.closed).toBe(true);
+    expect(rig.runControl.cancelledRuns).toEqual([]);
+  });
+
   it("treats admitted outcomes without canonical identity as internal_failure", async () => {
     rig.admission.push({ outcome: "sent", runId: "run_x", revision: 1 });
     const s = await listeningSession(rig);
@@ -354,10 +366,17 @@ describe("synthesis, delivery, and interruption", () => {
     }));
     await flush(rig, s.sessionId);
     expect(rig.adapter.sessions[0]?.interrupts).toEqual([{ responseId: started.responseId, playedThroughMs: 40 }]);
+    expect(rig.runControl.cancelledRuns).toEqual([]);
     expect(rig.delivery.terminals[0]?.reason).toBe("interrupted");
     expect(rig.delivery.terminals[0]?.effectiveThroughMs).toBe(40);
     expect(lastFrame(s.sink, "response.interrupted")).toMatchObject({ effectiveThroughMs: 40 });
     expect(lastFrame(s.sink, "session.state")).toMatchObject({ state: "listening" });
+    // Stop speaking must not make the distinct generation control unusable.
+    await s.handle.receive(clientFrame(s.sessionId, s.epoch, {
+      type: "generation.cancel", responseId: started.responseId,
+    }));
+    await flush(rig, s.sessionId);
+    expect(rig.runControl.cancelledRuns).toEqual([{ chatId: CHAT_ID, runId: "run_1", principalId: "user_1", reason: "user" }]);
   });
 
   it("generation.cancel cancels adapter response and canonical run", async () => {
@@ -444,6 +463,40 @@ describe("reconnect and epochs", () => {
     s.handle.transportClosed();
     const summary = rig.engine.describeSession({ principal: PRINCIPAL, chatId: CHAT_ID, sessionId: s.sessionId });
     expect(summary?.status).toBe("reconnecting");
+  });
+
+  it("revives a failed session with a resumed frame on the rotated epoch", async () => {
+    const limited = makeRig({ limits: { maxIdleSeconds: 1 } });
+    const s = await listeningSession(limited);
+    limited.clock.advance(1_000);
+    await flush(limited, s.sessionId);
+    expect(limited.engine.describeSession({ principal: PRINCIPAL, chatId: CHAT_ID, sessionId: s.sessionId })?.status)
+      .toBe("failed");
+
+    const reconnect = limited.engine.reconnectSession({
+      principal: PRINCIPAL,
+      chatId: CHAT_ID,
+      sessionId: s.sessionId,
+    });
+    const consumed = limited.tickets.consume(reconnect.lease.ticket, {
+      path: reconnect.lease.path,
+      sessionId: s.sessionId,
+      chatId: CHAT_ID,
+    });
+    const replacementSink = makeSink();
+    limited.engine.attachTransport({
+      sessionId: s.sessionId,
+      chatId: CHAT_ID,
+      principalId: PRINCIPAL.userId,
+      generation: consumed.binding.generation,
+    }, replacementSink);
+
+    expect(lastFrame(replacementSink, "session.resumed")).toMatchObject({
+      epoch: reconnect.lease.epoch,
+      state: "listening",
+      reason: "restored",
+    });
+    expect(lastFrame(replacementSink, "session.state")).toBeUndefined();
   });
 
   it("revalidates a queued frame against the captured binding before dispatch", async () => {
@@ -563,6 +616,34 @@ describe("timeouts and shutdown", () => {
       .toBe("ended");
   });
 
+  it("retains terminal cleanup ownership when teardown fails and permits an explicit retry", async () => {
+    const rig = makeRig();
+    const created = rig.engine.createSession({
+      principal: PRINCIPAL,
+      chatId: CHAT_ID,
+      request: makeCreateRequest(),
+    });
+    if (created.outcome === "existing_consumed") throw new Error("unexpected");
+    const sessionId = created.session.sessionId;
+    const record = (rig.engine as unknown as { sessions: Map<string, { runtime: { end(kind: string): Promise<void> } }> })
+      .sessions.get(sessionId)!;
+    const originalEnd = record.runtime.end.bind(record.runtime);
+    const end = vi.spyOn(record.runtime, "end")
+      .mockRejectedValueOnce(new Error("teardown unavailable"))
+      .mockImplementation(originalEnd);
+
+    await expect(rig.engine.endSession({
+      principal: PRINCIPAL, chatId: CHAT_ID, sessionId, kind: "user",
+    })).rejects.toThrow("teardown unavailable");
+    expect(rig.tickets.describeSession(sessionId)?.state).toBe("minted");
+
+    await expect(rig.engine.endSession({
+      principal: PRINCIPAL, chatId: CHAT_ID, sessionId, kind: "user",
+    })).resolves.toMatchObject({ session: { status: "ended" } });
+    expect(end).toHaveBeenCalledTimes(2);
+    expect(rig.tickets.describeSession(sessionId)?.state).toBe("revoked");
+  });
+
   it("terminates a session when the mutation task backlog overflows", async () => {
     const { rig, adapter } = makeDeferredRig({ maxPendingMutationTasks: 2 });
     const s = createAttached(rig);
@@ -586,6 +667,41 @@ describe("timeouts and shutdown", () => {
 
 describe("capability gating", () => {
   beforeEach(() => resetFrameSeq());
+
+  it("rejects session_only even when speech claims enforcement", () => {
+    const rig = makeRig();
+    expect(() => rig.engine.createSession({ principal: PRINCIPAL, chatId: CHAT_ID,
+      request: makeCreateRequest({ memoryMode: "session_only" }) })).toThrowError(VoiceSessionError);
+  });
+
+  it("persists a server-owned immutable policy for typed lookup and spoken admission", async () => {
+    const rig = makeRig();
+    const executionPolicy = { revision: "policy_v1", actionMode: "safe_reads" as const,
+      workspaceScope: "workspace", tools: ["workspace_read"], delegation: false };
+    const created = rig.engine.createSession({ principal: PRINCIPAL, chatId: CHAT_ID,
+      request: makeCreateRequest(), executionPolicy });
+    executionPolicy.tools.push("unsafe_write");
+    expect(rig.engine.sessionPolicyLookup.policyForChat(CHAT_ID)).toMatchObject({
+      executionPolicy: { tools: ["workspace_read"], actionMode: "safe_reads" },
+    });
+    if (created.outcome === "existing_consumed") throw new Error("unexpected");
+    const consumed = rig.tickets.consume(created.lease.ticket, {
+      path: created.lease.path, sessionId: created.session.sessionId, chatId: CHAT_ID,
+    });
+    const handle = rig.engine.attachTransport({ sessionId: created.session.sessionId, chatId: CHAT_ID,
+      principalId: PRINCIPAL.userId, generation: consumed.binding.generation }, makeSink());
+    const s = { handle, sessionId: created.session.sessionId, epoch: created.lease.epoch };
+    await handle.receive(clientFrame(s.sessionId, s.epoch, { type: "client.ready",
+      audio: { codec: "pcm_s16le", sampleRateHz: 16_000, channels: 1, frameDurationMs: 20 },
+      capabilities: { formats: [{ codec: "pcm_s16le", sampleRateHz: 16_000, channels: 1, frameDurationMs: 20 }], binaryAudio: false, maxAudioFrameBytes: 65_536, deviceChangeEvents: false },
+    }));
+    await handle.receive(clientFrame(s.sessionId, s.epoch, { type: "capture.start", turnId: "vturn_policy", mode: "hands_free" }));
+    rig.adapter.emit({ type: "transcript.final", turnId: "vturn_policy", finalityId: "vfinal_policy", text: "Read workspace" });
+    await flush(rig, s.sessionId);
+    expect(rig.admission.calls[0]).toMatchObject({ executionPolicy: { tools: ["workspace_read"], revision: "policy_v1" } });
+    await rig.engine.endSession({ principal: PRINCIPAL, chatId: CHAT_ID, sessionId: s.sessionId });
+    expect(rig.runControl.cancelledRuns).toEqual([]);
+  });
 
   it("rejects session_only when the adapter does not enforce it", () => {
     const rig = makeRig();

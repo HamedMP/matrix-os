@@ -477,6 +477,14 @@ describe("finals ordered by capture localOrder", () => {
     rig.clock.advance(60_000);
     await flush(rig, s.sessionId);
     expect(rig.admission.calls.map((call) => call.transcript)).toEqual(["second"]);
+    expect(framesOfType(s.sink, "capture.completed")).toContainEqual(
+      expect.objectContaining({ turnId: "vturn_1", outcome: "failed" }),
+    );
+    // Timeout terminalizes the missing turn. Its late provider final can never
+    // execute after the later turn has already been admitted.
+    rig.adapter.emit({ type: "transcript.final", turnId: "vturn_1", finalityId: "vfinal_late", text: "late first" });
+    await flush(rig, s.sessionId);
+    expect(rig.admission.calls.map((call) => call.transcript)).toEqual(["second"]);
   });
 });
 
@@ -489,9 +497,13 @@ describe("interruption and action cancel truth", () => {
 
   it("requests canonical run cancellation with reason 'interruption' on barge-in", async () => {
     const { s, responseId } = await speaking(rig);
+    // Capture barge-in: the client opens a new turn while the response is
+    // still open and the adapter's VAD reports speech — that, not the
+    // media-only `response.interrupt` frame, is the canonical interruption.
     await s.handle.receive(clientFrame(s.sessionId, s.epoch, {
-      type: "response.interrupt", responseId, playedThroughMs: 20,
+      type: "capture.start", turnId: "vturn_barge", mode: "hands_free",
     }));
+    rig.adapter.emit({ type: "vad", turnId: "vturn_barge", action: "speech_start" });
     await flush(rig, s.sessionId);
     expect(rig.runControl.cancelledRuns).toEqual([
       { chatId: CHAT_ID, runId: "run_1", principalId: PRINCIPAL.userId, reason: "interruption" },
@@ -503,8 +515,9 @@ describe("interruption and action cancel truth", () => {
     const { s, responseId } = await speaking(rig);
     rig.runControl.runError = new Error("run control down");
     await s.handle.receive(clientFrame(s.sessionId, s.epoch, {
-      type: "response.interrupt", responseId, playedThroughMs: 20,
+      type: "capture.start", turnId: "vturn_barge", mode: "hands_free",
     }));
+    rig.adapter.emit({ type: "vad", turnId: "vturn_barge", action: "speech_start" });
     await flush(rig, s.sessionId);
     expect(rig.runControl.cancelledRuns).toHaveLength(1);
     expect(lastFrame(s.sink, "response.interrupted")).toMatchObject({ responseId });

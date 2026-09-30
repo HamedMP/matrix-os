@@ -34,7 +34,12 @@ import {
   VoiceMediaAdapterRegistry,
   createAdapterCapabilityPort,
 } from "../../../packages/gateway/src/voice-session/adapter.js";
-import { createCanonicalVoicePorts } from "../../../packages/gateway/src/voice-session/canonical-ports.js";
+import {
+  canonicalVoiceDecision,
+  canonicalVoiceSelectionRequirements,
+  createCanonicalVoicePorts,
+} from "../../../packages/gateway/src/voice-session/canonical-ports.js";
+import { validateChatProviderSelection } from "../../../packages/gateway/src/chat/provider-catalog.js";
 import { VoiceSessionEngine } from "../../../packages/gateway/src/voice-session/engine.js";
 import { createSystemVoiceClock } from "../../../packages/gateway/src/voice-session/ports.js";
 import {
@@ -113,7 +118,7 @@ const catalog: CanonicalProviderCatalog = CanonicalProviderCatalogSchema.parse({
       worktrees: "optional",
       resources: ["file", "folder", "project", "task", "app", "terminal_session"],
       interactionModes: ["default"],
-      permissionModes: ["supervised"],
+      permissionModes: ["supervised", "full_access"],
     },
   }],
 });
@@ -185,7 +190,10 @@ describe("voice session composed path", () => {
       initialEpoch: 1,
       limits: { maxQueuedAudioMs: 10_000, maxDurationMs: 60_000 },
       timeline: [{
-        atMs: 30,
+        // Provider timelines are relative to adapter start (`client.ready`),
+        // not capture start. Leave enough deterministic room for the capture
+        // frame to enter the serialized session queue first.
+        atMs: 1_000,
         type: "transcript.final",
         turnId: "vturn_1",
         finalityId: "vfinal_1",
@@ -246,6 +254,10 @@ describe("voice session composed path", () => {
       resolvePrincipal: () => PRINCIPAL,
       chatAccess: voicePorts.chatAccess,
       capabilities,
+      canonicalDecision: () => canonicalVoiceDecision({
+        selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+        catalog,
+      }),
     }));
     registerVoiceSessionWebSocketRoute({
       app,

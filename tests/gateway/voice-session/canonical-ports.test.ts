@@ -1,14 +1,19 @@
 import { describe, expect, it } from "vitest";
-import type {
-  CanonicalChatContent,
-  CanonicalCreateChatTurnRequest,
+import {
+  CanonicalProviderCatalogSchema,
+  type CanonicalChatContent,
+  type CanonicalCreateChatTurnRequest,
 } from "@matrix-os/contracts";
+import { canonicalJsonStringify } from "../../../packages/gateway/src/chat/argument-digest.js";
 import {
   CanonicalChatOrchestrationError,
   canonicalChatSafeError,
 } from "../../../packages/gateway/src/chat/orchestration-errors.js";
 import type { ChatOwner } from "../../../packages/gateway/src/chat/records.js";
-import { createCanonicalVoicePorts } from "../../../packages/gateway/src/voice-session/canonical-ports.js";
+import {
+  canonicalVoiceDecision,
+  createCanonicalVoicePorts,
+} from "../../../packages/gateway/src/voice-session/canonical-ports.js";
 import type { VoiceCanonicalChatEvent } from "../../../packages/gateway/src/voice-session/ports.js";
 import type { VoiceTurnAdmissionRequest } from "../../../packages/gateway/src/voice-session/ports.js";
 
@@ -234,6 +239,25 @@ function outboxEvent(eventType: string, payload: Record<string, unknown>, chatId
 }
 
 describe("createCanonicalVoicePorts", () => {
+  it("passes the immutable server execution inventory into canonical speech and queue policy", async () => {
+    const { ports, orchestrator } = rig();
+    const executionPolicy = { revision: "policy_1", actionMode: "safe_reads" as const,
+      workspaceScope: "workspace", tools: ["workspace_read"], delegation: false };
+    await ports.admission.admitFinalTranscript(admissionRequest({ executionPolicy }));
+    expect(orchestrator.admitCalls[0].input.runPolicy?.executionPolicy).toEqual(executionPolicy);
+    orchestrator.admitError = new CanonicalChatOrchestrationError(canonicalChatSafeError("chat_busy", "busy", true, ["retry"]), 409);
+    await ports.admission.admitFinalTranscript(admissionRequest({ executionPolicy }));
+    expect(orchestrator.queuedCalls[0].input).toMatchObject({ runPolicy: { executionPolicy } });
+  });
+
+  it("fails closed before admission when durable unheard delivery lookup fails", async () => {
+    const { ports, orchestrator, deliveries } = rig();
+    Object.assign(deliveries.deliveries, { kysely: { selectFrom() { throw new Error("database timeout"); } } });
+    const result = await ports.admission.admitFinalTranscript(admissionRequest());
+    expect(result).toMatchObject({ outcome: "failed", error: { code: "internal_failure" } });
+    expect(orchestrator.admitCalls).toEqual([]);
+    expect(orchestrator.queuedCalls).toEqual([]);
+  });
   it("admits finals through canonical admission with voice run policy", async () => {
     const { ports, orchestrator } = rig();
     const result = await ports.admission.admitFinalTranscript(
@@ -475,10 +499,29 @@ describe("createCanonicalVoicePorts", () => {
       chatId: CHAT_ID, principalId: OWNER.ownerId, runId: "run_1", reason: "user",
     })).toBe("unavailable");
 
-    // Per-action cancellation is unimplemented and must stay truthful.
+    // No configured canonical action authority stays truthfully unavailable.
     expect(await ports.runControl.cancelAction({
       chatId: CHAT_ID, principalId: OWNER.ownerId, actionId: "act_1",
     })).toBe("unavailable");
+  });
+
+  it("routes targeted action cancellation through canonical action authority", async () => {
+    const orchestrator = orchestratorRig();
+    const repository = repositoryRig();
+    const deliveries = deliveriesRig();
+    const cancelById = vi.fn(async () => ({ state: "cancelled" }));
+    const ports = createCanonicalVoicePorts({
+      orchestrator: orchestrator.orchestrator,
+      repository: repository.repository,
+      deliveries: deliveries.deliveries,
+      actions: { cancelById } as never,
+    });
+    expect(await ports.runControl.cancelAction({
+      chatId: CHAT_ID, principalId: OWNER.ownerId, actionId: "action_1",
+    })).toBe("cancelled");
+    expect(cancelById).toHaveBeenCalledWith({
+      owner: OWNER, chatId: CHAT_ID, actionId: "action_1",
+    });
   });
 
   it("loads the canonical chat revision for lazy admission hydration", async () => {
@@ -633,5 +676,132 @@ describe("createCanonicalVoicePorts", () => {
       playedThroughMs: 100, deliveryRevision: 4, effectiveTextEnd: 9,
     });
     expect(result).toBe("out_of_order");
+  });
+});
+
+describe("canonical voice decision", () => {
+  const voiceInstance = {
+    id: "kernel_default",
+    driverKind: "kernel" as const,
+    displayName: "Matrix AI",
+    availability: "available" as const,
+    workspaceRequirement: "none" as const,
+    catalogRevision: "catalog_voice",
+    models: [{
+      id: "model_voice",
+      displayName: "Voice model",
+      availability: "available" as const,
+      capabilities: ["reasoning"],
+      supportsVision: false,
+      supportsToolUse: false,
+    }],
+    options: [],
+    skills: [],
+    commands: [],
+    setupActions: [],
+    supports: {
+      rootChat: true,
+      resume: true,
+      cancellation: "run" as const,
+      attachments: [] as never[],
+      tools: [] as never[],
+      approvals: false,
+      userInput: false,
+      worktrees: "none" as const,
+      resources: [] as never[],
+      interactionModes: ["default"],
+      permissionModes: ["full_access"],
+    },
+    defaultSelection: { instanceId: "kernel_default", model: "model_voice" },
+  };
+  const voiceCatalog = CanonicalProviderCatalogSchema.parse({
+    revision: "catalog_voice",
+    drivers: [{
+      kind: "kernel",
+      displayName: "Kernel",
+      adapterVersion: "1.0.0",
+      capabilityClass: "system_agent",
+    }],
+    instances: [voiceInstance],
+  });
+  const selection = { instanceId: "kernel_default", model: "model_voice" };
+
+  it("returns no decision when no canonical selection exists — fail closed", () => {
+    expect(canonicalVoiceDecision({ selection: undefined, catalog: voiceCatalog })).toBeUndefined();
+  });
+
+  it("projects an eligible route with a frozen conversation-only policy", () => {
+    const decision = canonicalVoiceDecision({
+      selection, catalog: voiceCatalog, surface: "web_canvas",
+    });
+    expect(decision).toMatchObject({
+      selection,
+      interactionMode: "default",
+      permissionMode: "full_access",
+      executionPolicy: {
+        revision: "voice_conversation_only_v1",
+        actionMode: "conversation_only",
+        workspaceScope: "apps",
+        tools: [],
+        delegation: false,
+      },
+    });
+    expect(decision?.capability).toMatchObject({
+      status: "available",
+      surface: "web_canvas",
+      transportModes: ["relayed_websocket"],
+      turnModes: ["hands_free", "push_to_talk"],
+      supportsInterruption: true,
+      resume: "delivery_aware",
+      sessionOnly: "unsupported",
+      actionMode: "conversation_only",
+      actionCancellation: "none",
+    });
+  });
+
+  it("reports an unavailable capability for a tool-capable route instead of dropping the decision", () => {
+    const toolCapable = CanonicalProviderCatalogSchema.parse({
+      revision: "catalog_tool_voice",
+      drivers: [{ kind: "codex", displayName: "Codex", adapterVersion: "1.0.0", capabilityClass: "coding_agent" }],
+      instances: [{
+        ...voiceInstance, id: "codex_default", driverKind: "codex",
+        catalogRevision: "catalog_tool_voice",
+        models: [{ ...voiceInstance.models[0]!, capabilities: ["reasoning", "tools"], supportsToolUse: true }],
+        defaultSelection: { instanceId: "codex_default", model: "model_voice" },
+      }],
+    });
+    const decision = canonicalVoiceDecision({
+      selection: { instanceId: "codex_default", model: "model_voice" },
+      catalog: toolCapable,
+    });
+    expect(decision?.selection).toEqual({ instanceId: "codex_default", model: "model_voice" });
+    expect(decision?.capability).toMatchObject({
+      status: "unavailable",
+      reason: "provider_unavailable",
+      transportModes: [],
+      turnModes: [],
+      actionMode: "conversation_only",
+      actionCancellation: "none",
+      sessionOnly: "unsupported",
+    });
+  });
+
+  it("marks a route without the canonical voice modes unavailable", () => {
+    const wrongModes = CanonicalProviderCatalogSchema.parse({
+      revision: "catalog_modes_voice",
+      drivers: [{ kind: "kernel", displayName: "Kernel", adapterVersion: "1.0.0", capabilityClass: "system_agent" }],
+      instances: [{
+        ...voiceInstance, catalogRevision: "catalog_modes_voice",
+        supports: { ...voiceInstance.supports, permissionModes: ["supervised"] },
+      }],
+    });
+    expect(canonicalVoiceDecision({ selection, catalog: wrongModes })?.capability.status)
+      .toBe("unavailable");
+  });
+
+  it("produces a byte-stable frozen policy so reconnect assertions hold", () => {
+    const a = canonicalVoiceDecision({ selection, catalog: voiceCatalog });
+    const b = canonicalVoiceDecision({ selection, catalog: voiceCatalog, surface: "electron_desktop" });
+    expect(canonicalJsonStringify(a?.executionPolicy)).toBe(canonicalJsonStringify(b?.executionPolicy));
   });
 });

@@ -13,14 +13,22 @@ import type {
   CanonicalChatRunActivity,
   CanonicalCreateChatTurnRequest,
   CanonicalChatRunPolicy,
+  CanonicalChatModelSelection,
+  CanonicalProviderCatalog,
 } from "@matrix-os/contracts";
-import { CanonicalChatContentSchema } from "@matrix-os/contracts";
-import type {
-  SafeVoiceErrorCode,
-  VoiceRecoveryAction,
+import { CanonicalChatContentSchema, CanonicalChatRunPolicySchema } from "@matrix-os/contracts";
+import {
+  VoiceCapabilitySchema,
+  type SafeVoiceErrorCode,
+  type VoiceCapability,
+  type VoiceRecoveryAction,
 } from "@matrix-os/contracts/voice-session";
 import type { CanonicalChatOrchestrator } from "../chat/orchestrator.js";
 import { CanonicalChatOrchestrationError } from "../chat/orchestration-errors.js";
+import {
+  validateChatProviderSelection,
+  voiceProviderSelectionRequirements,
+} from "../chat/provider-catalog.js";
 import type { ChatRepository } from "../chat/repository.js";
 import type { ChatOutboxEvent, ChatOwner } from "../chat/records.js";
 import type { ChatVoiceDeliveryRepository } from "../chat/voice-delivery-repository.js";
@@ -28,11 +36,13 @@ import type { RequestPrincipal } from "../request-principal.js";
 import type {
   VoiceAdmissionPort,
   VoiceCanonicalChatEvent,
+  VoiceCanonicalDecision,
   VoiceChatAccessPort,
   VoiceChatEventSource,
   VoiceChatEventSubscription,
   VoiceDeliveryPort,
   VoiceDeliverySegmentInput,
+  VoiceExecutionPolicy,
   VoiceRunControlPort,
   VoiceTurnAdmissionRequest,
   VoiceTurnAdmissionResult,
@@ -97,6 +107,7 @@ function runPolicyFor(request: VoiceTurnAdmissionRequest): CanonicalChatRunPolic
     source: "voice",
     voiceSessionId: request.sessionId,
     nativeCheckpointPolicy: request.memoryMode === "session_only" ? "disposable" : "reusable",
+    ...(request.executionPolicy ? { executionPolicy: request.executionPolicy } : {}),
   };
 }
 
@@ -185,6 +196,7 @@ export function createCanonicalVoicePorts(options: {
   orchestrator: CanonicalChatOrchestrator;
   repository: ChatRepository;
   deliveries: ChatVoiceDeliveryRepository;
+  actions?: import("../chat/action-authority.js").CanonicalActionAuthority;
   log?: (event: string, fields: Record<string, unknown>) => void;
 }): {
   admission: VoiceAdmissionPort;
@@ -237,12 +249,12 @@ export function createCanonicalVoicePorts(options: {
       try {
         unheardResponses = await listUnheardDeliveryIds(options.deliveries, owner, request.chatId);
       } catch (error: unknown) {
-        // Fail closed for resume eligibility: keep the admission alive but
-        // supply every known boundary so nothing unheard seeds the next run.
+        // Missing delivery truth cannot be treated as empty/heard context.
         log("voice.admission.unheard_lookup_failed", {
           sessionId: request.sessionId,
           error: error instanceof Error ? error.name : "UnknownError",
         });
+        return failed("internal_failure", true, "retry_connection");
       }
       const hints = unheardResponses.length > 0
         ? { deliveryContext: { unheardResponses } }
@@ -567,10 +579,21 @@ export function createCanonicalVoicePorts(options: {
         return "unavailable";
       }
     },
-    async cancelAction() {
-      // Canonical Chat has no targeted action-cancellation surface yet; report
-      // truthfully rather than pretending a granular cancel happened.
-      return "unavailable";
+    async cancelAction(input) {
+      if (!options.actions) return "unavailable";
+      try {
+        const operation = await options.actions.cancelById({
+          owner: ownerFor(input.principalId),
+          chatId: input.chatId,
+          actionId: input.actionId,
+        });
+        return operation.state === "cancelled" ? "cancelled" : "unknown";
+      } catch (error: unknown) {
+        log("voice.run_control.action_cancel_failed", {
+          error: error instanceof Error ? error.name : "UnknownError",
+        });
+        return "unknown";
+      }
     },
   };
 
@@ -742,4 +765,126 @@ function projectActivity(
     default:
       return;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Canonical voice decision — the server-owned intersection a voice surface is
+// allowed to see: the Chat's persisted Provider selection, that selection's
+// canonical voice-route eligibility, one canonical interaction/permission
+// mode pair, and a frozen conversation-only execution policy. No client field
+// can widen it; no adapter-claimed actionMode survives it.
+// ---------------------------------------------------------------------------
+
+/** Canonical voice runs share one interaction/permission mode pair. */
+const CANONICAL_VOICE_INTERACTION_MODE = "default";
+const CANONICAL_VOICE_PERMISSION_MODE = "full_access";
+
+/**
+ * Frozen at session create and compared byte-for-byte on reconnect, so the
+ * revision must be content-stable — it can never embed a catalog revision or
+ * per-call nonce. `conversation_only` with an empty tool inventory is the
+ * only policy the voice surface may carry: a live session stamps it onto every
+ * turn that owns the Chat, so typed turns cannot widen it either.
+ */
+const CANONICAL_VOICE_EXECUTION_POLICY: VoiceExecutionPolicy = {
+  revision: "voice_conversation_only_v1",
+  actionMode: "conversation_only",
+  workspaceScope: "apps",
+  tools: [],
+  delegation: false,
+};
+
+/**
+ * A voice session may only carry a policy the loaded provider adapter can
+ * actually enforce — structurally bound, delegation-free, and scoped to the
+ * owner apps workspace. Anything else stays conversation-only.
+ */
+function qualifiedVoicePolicy(value: unknown): VoiceExecutionPolicy | undefined {
+  const parsed = CanonicalChatRunPolicySchema.shape.executionPolicy.safeParse(value);
+  if (!parsed.success) return undefined;
+  const policy = parsed.data;
+  if (!policy || policy.delegation || policy.actionMode === "conversation_only"
+    || (policy.actionMode === "safe_reads" && policy.tools.length === 0)
+    || policy.workspaceScope !== "apps") return undefined;
+  return policy;
+}
+
+/**
+ * Provider-route eligibility shared by capability advertisement, session
+ * create, reconnect, and the canonical decision. The conversation-only
+ * requirements always apply; the canonical interaction/permission modes are
+ * part of the route check so an instance without them is never eligible.
+ */
+export function canonicalVoiceSelectionRequirements(): Parameters<
+  typeof validateChatProviderSelection
+>[0]["requirements"] {
+  return {
+    ...voiceProviderSelectionRequirements(),
+    interactionMode: CANONICAL_VOICE_INTERACTION_MODE,
+    permissionMode: CANONICAL_VOICE_PERMISSION_MODE,
+  };
+}
+
+/**
+ * Resolve the trusted canonical decision for one Chat selection against one
+ * catalog snapshot. Returns `undefined` when no canonical route exists at all
+ * (e.g. the Chat never persisted a selection) so callers fail closed rather
+ * than inventing policy. A route that exists but is not voice-eligible still
+ * returns a decision with `capability.status: "unavailable"` — advertisement
+ * and session admission must agree.
+ */
+export function canonicalVoiceDecision(input: {
+  selection: CanonicalChatModelSelection | undefined;
+  catalog: CanonicalProviderCatalog;
+  surface?: string;
+  /**
+   * Server-owned qualification result for the selected route — the exact
+   * frozen policy the adapter can enforce, or nothing. Voice never invents
+   * one; absent or unqualified providers stay conversation-only.
+   */
+  qualifiedPolicy?: unknown;
+}): VoiceCanonicalDecision | undefined {
+  if (!input.selection) return undefined;
+  const qualifiedCandidate = qualifiedVoicePolicy(input.qualifiedPolicy);
+  const eligible = validateChatProviderSelection({
+    catalog: input.catalog,
+    selection: input.selection,
+    requirements: {
+      ...canonicalVoiceSelectionRequirements(),
+      ...(qualifiedCandidate ? { qualifiedPolicy: qualifiedCandidate } : {}),
+    },
+  });
+  const qualified = eligible.ok ? qualifiedCandidate : undefined;
+  const executionPolicy = qualified
+    ?? CANONICAL_VOICE_EXECUTION_POLICY;
+  const canInterrupt = eligible.ok
+    && eligible.instance.supports.cancellation !== false
+    && eligible.instance.supports.cancellation !== "none";
+  const capability = VoiceCapabilitySchema.parse({
+    contractVersion: 1,
+    status: eligible.ok ? "available" : "unavailable",
+    surface: input.surface ?? "web_desktop",
+    // Canonical admission only rides the gateway-relayed transport; direct
+    // WebRTC is not a canonical transport path.
+    transportModes: eligible.ok ? ["relayed_websocket"] : [],
+    turnModes: eligible.ok ? ["hands_free", "push_to_talk"] : [],
+    supportsInterruption: canInterrupt,
+    resume: !eligible.ok
+      ? "unsupported"
+      : eligible.instance.supports.resume ? "delivery_aware" : "rebuild_only",
+    sessionOnly: "unsupported",
+    actionMode: qualified ? executionPolicy.actionMode : "conversation_only",
+    actionCancellation: qualified && executionPolicy.tools.length > 0 ? "run" : "none",
+    supportsInputSelection: true,
+    supportsOutputSelection: true,
+    ...(eligible.ok ? {} : { reason: "provider_unavailable" as const }),
+  });
+  return {
+    capability,
+    selection: input.selection,
+    interactionMode: CANONICAL_VOICE_INTERACTION_MODE,
+    permissionMode: CANONICAL_VOICE_PERMISSION_MODE,
+    // Fresh object per call; the engine freezes its own copy at create.
+    executionPolicy: { ...executionPolicy, tools: [...executionPolicy.tools] },
+  };
 }

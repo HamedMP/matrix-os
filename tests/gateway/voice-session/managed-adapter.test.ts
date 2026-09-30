@@ -163,19 +163,13 @@ describe("createManagedVoiceTranscriptionPort", () => {
 
 describe("createManagedVoiceSynthesisPort", () => {
   it("returns decoded managed PCM and forwards cancellation", async () => {
-    const calls: Parameters<PlatformSpeechClient["synthesize"]>[0][] = [];
+    const calls: Parameters<PlatformSpeechClient["synthesizeStream"]>[0][] = [];
     const pcm = Buffer.from([1, 0, 2, 0]);
-    const client: Pick<PlatformSpeechClient, "synthesize"> = {
-      synthesize: async (input) => {
+    const client: Pick<PlatformSpeechClient, "synthesizeStream"> = {
+      synthesizeStream: async function* (input) {
         calls.push(input);
-        return {
-          contractVersion: 1,
-          requestId: input.requestId,
-          status: "succeeded",
-          format: "pcm_s16le_24000_mono",
-          durationMs: 1,
-          audio: pcm.toString("base64"),
-        };
+        yield { type: "audio", sequence: 0, data: pcm.toString("base64") };
+        yield { type: "end", sequence: 1, format: "pcm_s16le_24000_mono", durationMs: 1 };
       },
     };
     const controller = new AbortController();
@@ -195,8 +189,8 @@ describe("createManagedVoiceSynthesisPort", () => {
   });
 
   it("maps managed failures to provider-neutral voice errors", async () => {
-    const client: Pick<PlatformSpeechClient, "synthesize"> = {
-      synthesize: async () => {
+    const client: Pick<PlatformSpeechClient, "synthesizeStream"> = {
+      synthesizeStream: async function* () {
         throw new PlatformSpeechClientError("allowance_exhausted", "Speech is unavailable", 402);
       },
     };

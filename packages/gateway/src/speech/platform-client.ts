@@ -6,6 +6,10 @@ import {
   SpeechStatusResponseSchema,
   SpeechSynthesisRequestSchema,
   SpeechSynthesisResponseSchema,
+  SpeechSynthesisStreamFrameSchema,
+  SPEECH_SYNTHESIS_STREAM_MAX_AUDIO_BYTES,
+  SPEECH_SYNTHESIS_STREAM_MAX_LINE_BYTES,
+  type SpeechSynthesisStreamFrame,
   SpeechTranscriptionResponseSchema,
   type SpeechCancellationResponse,
   type SpeechCapabilitiesResponse,
@@ -54,6 +58,7 @@ export interface PlatformSpeechClient {
     text: string;
     signal: AbortSignal;
   }): Promise<SpeechSynthesisResponse>;
+  synthesizeStream(input: { requestId: string; text: string; signal: AbortSignal }): AsyncIterable<SpeechSynthesisStreamFrame>;
   status(requestId: string, signal?: AbortSignal): Promise<SpeechStatusResponse | undefined>;
   cancel(requestId: string, signal?: AbortSignal): Promise<SpeechCancellationResponse>;
 }
@@ -152,10 +157,23 @@ export function loadPlatformSpeechRuntimeConfig(
   };
 }
 
-async function readBoundedJson(response: Response, maxBytes = MAX_RESPONSE_BYTES): Promise<unknown> {
+async function readWithSignal(reader: ReadableStreamDefaultReader<Uint8Array>, signal?: AbortSignal) {
+  if (!signal) return reader.read();
+  signal.throwIfAborted();
+  let onAbort!: () => void;
+  const aborted = new Promise<never>((_resolve, reject) => {
+    onAbort = () => reject(signal.reason);
+    signal.addEventListener("abort", onAbort, { once: true });
+    if (signal.aborted) onAbort();
+  });
+  try { return await Promise.race([reader.read(), aborted]); }
+  finally { signal.removeEventListener("abort", onAbort); }
+}
+
+async function readBoundedJson(response: Response, maxBytes = MAX_RESPONSE_BYTES, signal?: AbortSignal): Promise<unknown> {
   const declared = Number(response.headers.get("content-length"));
   if (Number.isFinite(declared) && declared > maxBytes) {
-    await response.body?.cancel();
+    if (response.body) void response.body.cancel().catch((error: unknown) => console.warn("[platform-speech] response cleanup failed", error));
     throw new PlatformSpeechClientError("invalid_response", "Speech is unavailable", 503);
   }
   if (!response.body) throw new PlatformSpeechClientError("invalid_response", "Speech is unavailable", 503);
@@ -164,15 +182,17 @@ async function readBoundedJson(response: Response, maxBytes = MAX_RESPONSE_BYTES
   let size = 0;
   try {
     while (true) {
-      const next = await reader.read();
+      const next = await readWithSignal(reader, signal);
       if (next.done) break;
       if (size + next.value.byteLength > maxBytes) {
-        await reader.cancel();
         throw new PlatformSpeechClientError("invalid_response", "Speech is unavailable", 503);
       }
       bytes.set(next.value, size);
       size += next.value.byteLength;
     }
+  } catch (error: unknown) {
+    void reader.cancel().catch((error: unknown) => console.warn("[platform-speech] response cleanup failed", error));
+    throw error;
   } finally {
     reader.releaseLock();
   }
@@ -226,7 +246,14 @@ export function createPlatformSpeechClient(
       if (error instanceof PlatformSpeechClientError) throw error;
       throw new PlatformSpeechClientError("unavailable", "Speech is unavailable", 503);
     }
-    const payload = await readBoundedJson(response, options.maxResponseBytes);
+    let payload: unknown;
+    try { payload = await readBoundedJson(response, options.maxResponseBytes, signal); }
+    catch (error: unknown) {
+      if (options.signal?.aborted) throw new PlatformSpeechClientError("cancelled", "Transcription was cancelled", 409);
+      if (timeout.aborted) throw new PlatformSpeechClientError("timeout", "Transcription timed out", 504);
+      if (error instanceof PlatformSpeechClientError) throw error;
+      throw new PlatformSpeechClientError("invalid_response", "Speech is unavailable", 503);
+    }
     if (response.ok) {
       const parsed = options.schema.safeParse(payload);
       if (!parsed.success) {
@@ -285,6 +312,89 @@ export function createPlatformSpeechClient(
         schema: SpeechSynthesisResponseSchema,
         maxResponseBytes: MAX_SYNTHESIS_RESPONSE_BYTES,
       }))!;
+    },
+    async *synthesizeStream(input) {
+      const body = SpeechSynthesisRequestSchema.parse({ requestId: input.requestId, text: input.text });
+      const timeout = makeTimeoutSignal(config.requestTimeoutMs);
+      const local = new AbortController();
+      const signal = AbortSignal.any([input.signal, timeout, local.signal]);
+      let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+      let finished = false;
+      const invalid = () => new PlatformSpeechClientError("invalid_response", "Speech is unavailable", 503);
+      try {
+        signal.throwIfAborted();
+        const response = await fetchFn(url("/syntheses/stream"), {
+          method: "POST", redirect: "error", signal,
+          headers: { authorization: `Bearer ${config.runtimeAuthToken}`, accept: "application/x-ndjson", "content-type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        if (!response.ok) {
+          const payload = await readBoundedJson(response, MAX_RESPONSE_BYTES, signal);
+          const error = SpeechSafeErrorResponseSchema.safeParse(payload);
+          if (response.status === 401) throw new PlatformSpeechClientError("unavailable", "Speech is unavailable", 503);
+          if (!error.success) throw invalid();
+          throw new PlatformSpeechClientError(error.data.error.code, error.data.error.message, response.status);
+        }
+        if (!response.headers.get("content-type")?.toLowerCase().startsWith("application/x-ndjson") || !response.body) {
+          if (response.body) void response.body.cancel().catch((error: unknown) => console.warn("[platform-speech] stream cleanup failed", error));
+          throw invalid();
+        }
+        reader = response.body.getReader();
+        const line = new Uint8Array(SPEECH_SYNTHESIS_STREAM_MAX_LINE_BYTES);
+        const decoder = new TextDecoder("utf-8", { fatal: true });
+        let lineSize = 0;
+        let wireBytes = 0;
+        let audioBytes = 0;
+        let sequence = 0;
+        let terminal: SpeechSynthesisStreamFrame | undefined;
+        for (;;) {
+          const next = await readWithSignal(reader, signal);
+          if (next.done) break;
+          wireBytes += next.value.byteLength;
+          // Separate wire budget also bounds malicious tiny-frame overhead.
+          if (wireBytes > 16 * 1024 * 1024) throw invalid();
+          let offset = 0;
+          while (offset < next.value.byteLength) {
+            if (terminal) throw invalid();
+            const newline = next.value.indexOf(10, offset);
+            const end = newline === -1 ? next.value.byteLength : newline;
+            const size = end - offset;
+            if (lineSize + size > line.byteLength) throw invalid();
+            line.set(next.value.subarray(offset, end), lineSize);
+            lineSize += size;
+            offset = newline === -1 ? end : end + 1;
+            if (newline === -1) continue;
+            const parsed = SpeechSynthesisStreamFrameSchema.safeParse(JSON.parse(decoder.decode(line.subarray(0, lineSize))));
+            lineSize = 0;
+            if (!parsed.success || parsed.data.sequence !== sequence++) throw invalid();
+            const frame = parsed.data;
+            if (frame.type === "audio") {
+              audioBytes += Buffer.from(frame.data, "base64").byteLength;
+              if (audioBytes > SPEECH_SYNTHESIS_STREAM_MAX_AUDIO_BYTES) throw invalid();
+              yield frame;
+              signal.throwIfAborted();
+            } else {
+              if (frame.type === "end" && frame.durationMs !== Math.ceil(audioBytes / 48)) throw invalid();
+              terminal = frame;
+            }
+          }
+        }
+        if (lineSize !== 0 || !terminal) throw invalid();
+        finished = true;
+        yield terminal;
+      } catch (error: unknown) {
+        if (input.signal.aborted) throw new PlatformSpeechClientError("cancelled", "Transcription was cancelled", 409);
+        if (timeout.aborted) throw new PlatformSpeechClientError("timeout", "Transcription timed out", 504);
+        if (error instanceof PlatformSpeechClientError) throw error;
+        if (error instanceof SyntaxError || error instanceof TypeError) throw invalid();
+        throw new PlatformSpeechClientError("unavailable", "Speech is unavailable", 503);
+      } finally {
+        local.abort();
+        if (reader) {
+          if (!finished) void reader.cancel().catch((error: unknown) => console.warn("[platform-speech] stream cleanup failed", error));
+          reader.releaseLock();
+        }
+      }
     },
     async status(requestId, signal) {
       return request({

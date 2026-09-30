@@ -345,6 +345,59 @@ describe("createOpenAiVoiceMediaAdapter", () => {
     ]);
   });
 
+  it("emits first synthesis audio once a full chunk plus successor bytes arrive, not after a second full chunk", async () => {
+    // The held-back chunk exists to tag the LAST frame with the durable
+    // segmentId; it must release as soon as a successor byte exists, not wait
+    // for a whole second chunk (~512ms earlier first audio at 48 bytes/ms).
+    const gate = Promise.withResolvers<void>();
+    const h = await startSession({
+      handler: () => new Response(
+        new ReadableStream<Uint8Array>({
+          async start(controller) {
+            controller.enqueue(pcmBytes(24_577));
+            await gate.promise;
+            controller.enqueue(pcmBytes(4_799));
+            controller.close();
+          },
+        }),
+        { status: 200 },
+      ),
+    });
+    h.session.synthesize({ responseId: "vresp_1", segment: segment("vseg_1"), text: "Hello." });
+    await flushAsync();
+
+    const early = eventsOfType(h.events, "synthesis.audio");
+    expect(early).toHaveLength(1);
+    expect(early[0]).toMatchObject({
+      responseId: "vresp_1", segmentId: "vseg_chunk_0", durableSegmentId: "vseg_1", startMs: 0, durationMs: 512,
+    });
+    expect(Buffer.from(early[0]!.data, "base64")).toHaveLength(24_576);
+    expect(eventsOfType(h.events, "synthesis.end")).toHaveLength(0);
+
+    gate.resolve();
+    await flushAsync();
+    const audio = eventsOfType(h.events, "synthesis.audio");
+    expect(audio).toHaveLength(2);
+    expect(audio[1]).toMatchObject({ segmentId: "vseg_1", startMs: 512, durationMs: 100 });
+    expect(eventsOfType(h.events, "synthesis.end")).toEqual([
+      { type: "synthesis.end", responseId: "vresp_1", generatedDurationMs: 612, segmentId: "vseg_1" },
+    ]);
+  });
+
+  it("keeps chunk boundaries stable while draining held audio early", async () => {
+    // 3 x 32KiB bursts: the emitted framing is still 24KiB pieces + tail; each
+    // held piece flushes when its first successor byte lands.
+    const h = await startSession({
+      handler: () => pcmStreamResponse([pcmBytes(32_768), pcmBytes(32_768), pcmBytes(32_768)]),
+    });
+    h.session.synthesize({ responseId: "vresp_1", segment: segment("vseg_1"), text: "Hello." });
+    await flushAsync();
+    const audio = eventsOfType(h.events, "synthesis.audio");
+    expect(audio.map((event) => Buffer.from(event.data, "base64").length)).toEqual([24_576, 24_576, 24_576, 24_576]);
+    expect(audio.map((event) => event.segmentId)).toEqual(["vseg_chunk_0", "vseg_chunk_1", "vseg_chunk_2", "vseg_1"]);
+    expect(audio.map((event) => event.startMs)).toEqual([0, 512, 1_024, 1_536]);
+  });
+
   it("maps synthesis HTTP failures to provider_unavailable without provider detail", async () => {
     const h = await startSession({
       handler: () => new Response("provider exploded", { status: 503 }),

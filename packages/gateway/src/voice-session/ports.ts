@@ -12,6 +12,7 @@
 import type {
   CanonicalChatModelSelection,
   CanonicalCreateChatTurnRequest,
+  CanonicalChatRunPolicy,
 } from "@matrix-os/contracts";
 import type { PrincipalSource } from "../request-principal.js";
 import type {
@@ -22,6 +23,16 @@ import type {
 } from "@matrix-os/contracts/voice-session";
 
 export type VoiceMemoryMode = "ordinary" | "session_only";
+export type VoiceExecutionPolicy = NonNullable<CanonicalChatRunPolicy["executionPolicy"]>;
+
+/** Trusted canonical catalog/policy/readiness intersection, never a media-adapter authority. */
+export interface VoiceCanonicalDecision {
+  capability: VoiceCapability;
+  selection: CanonicalChatModelSelection;
+  interactionMode: string;
+  permissionMode: string;
+  executionPolicy: VoiceExecutionPolicy;
+}
 
 /** Wall-clock + scheduler seam so tests can drive virtual time explicitly. */
 export interface VoiceTimer {
@@ -75,6 +86,7 @@ export interface VoiceTurnAdmissionRequest {
   interactionMode: string;
   permissionMode: string;
   memoryMode: VoiceMemoryMode;
+  executionPolicy?: VoiceExecutionPolicy;
   executionRoot?: CanonicalCreateChatTurnRequest["executionRoot"];
 }
 

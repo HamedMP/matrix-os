@@ -8,6 +8,7 @@ import {
   SpeechStatusResponseSchema,
   SpeechSynthesisRequestSchema,
   SpeechSynthesisResponseSchema,
+  SpeechSynthesisStreamFrameSchema,
   SpeechTranscriptionResponseSchema,
 } from "@matrix-os/contracts";
 import { Hono, type Context } from "hono";
@@ -225,6 +226,88 @@ export function createSpeechRuntimeRoutes(options: {
       });
       return c.json(SpeechSynthesisResponseSchema.parse(result), 200);
     } catch (error: unknown) {
+      return serviceErrorResponse(c, error);
+    }
+  });
+
+  app.post("/syntheses/stream", bodyLimit({
+    maxSize: SYNTHESIS_BODY_BYTES,
+    onError: (c) => c.json(safeError("invalid_request"), 413),
+  }), async (c) => {
+    const runtime = await authenticate(c, options);
+    if ("response" in runtime) return runtime.response;
+    let body: unknown;
+    try { body = await c.req.json(); }
+    catch (error: unknown) {
+      // Hono's chunked-body sentinel is intentionally not publicly exported.
+      if (error instanceof Error && error.name === "BodyLimitError") return c.json(safeError("invalid_request"), 413);
+      if (!(error instanceof SyntaxError)) console.warn("[platform-speech] stream body invalid", error instanceof Error ? error.name : "UnknownError");
+      return c.json(safeError("invalid_request"), 400);
+    }
+    const parsed = SpeechSynthesisRequestSchema.safeParse(body);
+    if (!parsed.success) return c.json(safeError("invalid_request"), 400);
+    const local = new AbortController();
+    const signal = AbortSignal.any([c.req.raw.signal, local.signal]);
+    const iterator = options.service.synthesizeStream({ identity: runtime.identity, ...parsed.data, signal })[Symbol.asyncIterator]();
+    const timer = setTimeout(() => local.abort(), 65_000);
+    timer.unref?.();
+    let closed = false;
+    const cleanup = async () => {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", onAbort);
+      await iterator.return?.();
+    };
+    let streamController: ReadableStreamDefaultController<Uint8Array> | undefined;
+    const onAbort = () => {
+      if (closed) return;
+      closed = true;
+      streamController?.error(new SpeechServiceError("cancelled"));
+      void cleanup().catch((error: unknown) => console.warn("[platform-speech] stream cleanup failed", error instanceof Error ? error.name : "UnknownError"));
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+    try {
+      // Admit/claim before sending headers; first pre-delivery failures preserve HTTP semantics.
+      let pending = await iterator.next();
+      if (pending.done) throw new SpeechServiceError("synthesis_failed");
+      if (pending.value.type === "error") {
+        closed = true;
+        await cleanup();
+        const code = pending.value.code;
+        return serviceErrorResponse(c, new SpeechServiceError(code === "unauthorized" || code === "not_found" ? "unavailable" : code));
+      }
+      const responseBody = new ReadableStream<Uint8Array>({
+        start(controller) { streamController = controller; if (signal.aborted) onAbort(); },
+        async pull(controller) {
+          if (closed) return;
+          try {
+            const next = pending;
+            const frame = next.done ? undefined : SpeechSynthesisStreamFrameSchema.parse(next.value);
+            if (!frame) throw new SpeechServiceError("synthesis_failed");
+            controller.enqueue(new TextEncoder().encode(JSON.stringify(frame) + "\n"));
+            if (frame.type !== "audio") {
+              closed = true;
+              controller.close();
+              await cleanup();
+            } else {
+              // Fetch next provider bytes only on demand; no unbounded output queue.
+              pending = await iterator.next();
+            }
+          } catch (error: unknown) {
+            if (!closed) { closed = true; controller.error(new SpeechServiceError("synthesis_failed")); }
+            local.abort();
+            await cleanup();
+            console.warn("[platform-speech] stream delivery failed", error instanceof Error ? error.name : "UnknownError");
+          }
+        },
+        async cancel() { closed = true; local.abort(); await cleanup(); },
+      }, { highWaterMark: 0 });
+      c.header("Content-Type", "application/x-ndjson");
+      c.header("X-Content-Type-Options", "nosniff");
+      return c.body(responseBody, 200);
+    } catch (error: unknown) {
+      closed = true;
+      local.abort();
+      await cleanup();
       return serviceErrorResponse(c, error);
     }
   });

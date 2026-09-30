@@ -24,6 +24,9 @@ import {
   VoiceClientFrameSchema,
   VoiceSessionIdSchema,
   VoiceTurnModeSchema,
+  SafeVoiceErrorCodeSchema,
+  type SafeVoiceError,
+  type VoiceCapability,
 } from "@matrix-os/contracts/voice-session";
 import {
   isRequestPrincipalError,
@@ -31,7 +34,9 @@ import {
   type RequestPrincipal,
 } from "../request-principal.js";
 import { VoiceSessionError, type VoiceSessionEngine, type VoiceSessionTransportHandle } from "./engine.js";
-import type { VoiceCapabilityPort, VoiceChatAccessPort } from "./ports.js";
+import type { VoiceCanonicalDecision, VoiceCapabilityPort, VoiceChatAccessPort } from "./ports.js";
+import { VOICE_ERROR_RECOVERY } from "./adapter.js";
+import { canonicalJsonStringify } from "../chat/argument-digest.js";
 import { VoiceTicketError, type VoiceTicketAuthority } from "./ticket-auth.js";
 
 const SAFE_ID = /^[A-Za-z0-9_-]+$/;
@@ -81,6 +86,10 @@ export interface VoiceSessionRoutesDeps {
   resolvePrincipal(c: Context): RequestPrincipal;
   chatAccess: VoiceChatAccessPort;
   capabilities: VoiceCapabilityPort;
+  /** Server-injected canonical catalog/tool/scope/account policy decision.
+   * Speech actionMode is deliberately not action authority. Production composition
+   * must supply this; absent decision can advertise conversation-only, never tools. */
+  canonicalDecision?: (input: { principal: RequestPrincipal; chatId: string; surface?: string }) => Promise<VoiceCanonicalDecision | undefined> | VoiceCanonicalDecision | undefined;
   /** Canonical provider-catalog voice eligibility; shared by advertise and create. */
   routeEligibility?: (input: {
     principal: RequestPrincipal;
@@ -113,17 +122,54 @@ async function readJson(c: Context): Promise<unknown> {
   }
 }
 
+export function safeVoiceRestError(code: string): SafeVoiceError {
+  if (code === "unauthorized") return { code: "permission_denied", retryable: false, recovery: "none" };
+  if (code === "invalid_request" || code === "payload_too_large") return { code: "session_conflict", retryable: false, recovery: "none" };
+  if (code === "rate_limited") return { code: "session_limit_reached", retryable: true, recovery: "retry_connection" };
+  if (code === "not_found") return { code: "chat_unavailable", retryable: false, recovery: "start_new_session" };
+  if (code === "unavailable") return { code: "provider_unavailable", retryable: true, recovery: "retry_connection" };
+  const parsed = SafeVoiceErrorCodeSchema.safeParse(code);
+  const safe = parsed.success ? parsed.data : "internal_failure";
+  return { code: safe, retryable: ["connection_failed", "connection_lost", "provider_unavailable"].includes(safe),
+    recovery: VOICE_ERROR_RECOVERY[safe] };
+}
+
+export function projectVoiceCapability(speech: VoiceCapability, decision?: VoiceCanonicalDecision): VoiceCapability {
+  const canonical = decision?.capability;
+  const modes = ["conversation_only", "safe_reads", "canonical_actions"] as const;
+  const actionMode = decision?.executionPolicy.tools.length && canonical
+    ? modes[Math.min(modes.indexOf(decision.executionPolicy.actionMode), modes.indexOf(canonical.actionMode))]
+    : "conversation_only";
+  const projected = VoiceCapabilitySchema.safeParse({ ...speech,
+    ...(canonical ? {
+      status: speech.status === "unavailable" || canonical.status === "unavailable" ? "unavailable"
+        : speech.status === "degraded" || canonical.status === "degraded" ? "degraded" : "available",
+      transportModes: speech.transportModes.filter((mode) => canonical.transportModes.includes(mode)),
+      turnModes: speech.turnModes.filter((mode) => canonical.turnModes.includes(mode)),
+      supportsInterruption: speech.supportsInterruption && canonical.supportsInterruption,
+      resume: canonical.resume === "unsupported" || speech.resume === "unsupported" ? "unsupported"
+        : canonical.resume === "delivery_aware" && speech.resume === "delivery_aware" ? "delivery_aware" : "rebuild_only",
+      ...(canonical.reason ? { reason: canonical.reason } : {}),
+    } : {}),
+    sessionOnly: "unsupported",
+    actionMode,
+    actionCancellation: canonical?.actionCancellation ?? "none",
+  });
+  if (!projected.success) throw new VoiceSessionError("internal_failure", "Voice capability unavailable", 503);
+  return projected.data;
+}
+
 function routeError(c: Context, error: unknown, log: Logger): Response {
   if (error instanceof VoiceSessionError) {
-    return c.json({ error: error.code }, error.status as 400 | 401 | 404 | 409 | 413 | 422 | 429 | 500 | 503);
+    return c.json({ error: safeVoiceRestError(error.code) }, error.status as 400 | 401 | 404 | 409 | 413 | 422 | 429 | 500 | 503);
   }
   if (error instanceof z.ZodError || error instanceof SyntaxError) {
-    return c.json({ error: "invalid_request" }, 400);
+    return c.json({ error: safeVoiceRestError("invalid_request") }, 400);
   }
   log("voice.route.unhandled_error", {
     error: error instanceof Error ? error.name : "UnknownError",
   });
-  return c.json({ error: "internal_failure" }, 500);
+  return c.json({ error: safeVoiceRestError("internal_failure") }, 500);
 }
 
 function requirePrincipal(c: Context, deps: VoiceSessionRoutesDeps): RequestPrincipal {
@@ -145,6 +191,21 @@ function requirePrincipal(c: Context, deps: VoiceSessionRoutesDeps): RequestPrin
 export function createVoiceSessionRoutes(deps: VoiceSessionRoutesDeps): Hono {
   const app = new Hono();
   const log = deps.log ?? defaultLog;
+  // Independent cleanup budget: bounded owner registry + fixed-window expiry.
+  // Ordinary create exhaustion must never strand owned media.
+  const cleanupBudgets = new Map<string, { until: number; used: number }>();
+  const cleanupAllowed = (ownerId: string): boolean => {
+    const now = deps.engine.clock.now();
+    for (const [id, budget] of cleanupBudgets) if (budget.until <= now) cleanupBudgets.delete(id);
+    let budget = cleanupBudgets.get(ownerId);
+    if (!budget) {
+      if (cleanupBudgets.size >= 256) return false;
+      budget = { until: now + 60_000, used: 0 };
+      cleanupBudgets.set(ownerId, budget);
+    }
+    budget.used += 1;
+    return budget.used <= 12;
+  };
 
   const rateLimited = async (
     principal: RequestPrincipal,
@@ -177,6 +238,7 @@ export function createVoiceSessionRoutes(deps: VoiceSessionRoutesDeps): Hono {
           transportModes: [],
           turnModes: [],
           reason: "provider_unavailable",
+          actionMode: "conversation_only", actionCancellation: "none", sessionOnly: "unsupported",
         }));
       }
       const capability = await deps.capabilities.capabilities({
@@ -184,8 +246,9 @@ export function createVoiceSessionRoutes(deps: VoiceSessionRoutesDeps): Hono {
         chatId,
         ...(parsedSurface !== undefined ? { surface: parsedSurface } : {}),
       });
-      // Defense in depth: a malformed/provider-shaped capability never serializes.
-      return c.json(VoiceCapabilitySchema.parse(capability));
+      const decision = await deps.canonicalDecision?.({ principal, chatId,
+        ...(parsedSurface ? { surface: parsedSurface } : {}) });
+      return c.json(projectVoiceCapability(capability, decision));
     } catch (error: unknown) {
       return routeError(c, error, log);
     }
@@ -193,7 +256,7 @@ export function createVoiceSessionRoutes(deps: VoiceSessionRoutesDeps): Hono {
 
   app.post(
     "/api/chats/:chatId/voice/sessions",
-    bodyLimit({ maxSize: CREATE_BODY_BYTES, onError: (c) => c.json({ error: "payload_too_large" }, 413) }),
+    bodyLimit({ maxSize: CREATE_BODY_BYTES, onError: (c) => c.json({ error: safeVoiceRestError("payload_too_large") }, 413) }),
     async (c) => {
       try {
         const chatId = parseParam(VoiceCanonicalChatIdSchema, c.req.param("chatId"));
@@ -212,7 +275,27 @@ export function createVoiceSessionRoutes(deps: VoiceSessionRoutesDeps): Hono {
             422,
           );
         }
-        const result = deps.engine.createSession({ principal, chatId, request });
+        // Session create rides the server-owned canonical decision only. A
+        // Chat without a persisted canonical selection yields no decision —
+        // `request.selection` is never trusted as a substitute.
+        const decision = await deps.canonicalDecision?.({ principal, chatId });
+        if (!decision) {
+          throw new VoiceSessionError("provider_unavailable", "Voice unavailable", 503);
+        }
+        const capability = projectVoiceCapability(await deps.capabilities.capabilities({ principalId: principal.userId, chatId }), decision);
+        if (capability.status === "unavailable") throw new VoiceSessionError("provider_unavailable", "Voice unavailable", 503);
+        if (request.memoryMode === "session_only" || !capability.turnModes.includes(request.turnMode)
+          || !capability.transportModes.includes(request.requestedTransport ?? "relayed_websocket")) {
+          throw new VoiceSessionError("unsupported_surface", "Voice mode unavailable", 422);
+        }
+        if (canonicalJsonStringify(decision.selection) !== canonicalJsonStringify(request.selection)) {
+          throw new VoiceSessionError("session_conflict", "Canonical selection changed", 409);
+        }
+        const result = deps.engine.createSession({ principal, chatId,
+          request: { ...request, selection: decision.selection,
+            permissionMode: decision.permissionMode, interactionMode: decision.interactionMode },
+          executionPolicy: decision.executionPolicy,
+        });
         if (result.outcome === "existing_consumed") {
           // Credential-less branch: transport/ticket/ephemeralCredential can
           // never serialize here (contract-asserted).
@@ -247,14 +330,18 @@ export function createVoiceSessionRoutes(deps: VoiceSessionRoutesDeps): Hono {
 
   app.delete(
     "/api/chats/:chatId/voice/sessions/:sessionId",
-    bodyLimit({ maxSize: DELETE_BODY_BYTES, onError: (c) => c.json({ error: "payload_too_large" }, 413) }),
+    bodyLimit({ maxSize: DELETE_BODY_BYTES, onError: (c) => c.json({ error: safeVoiceRestError("payload_too_large") }, 413) }),
     async (c) => {
       try {
         const chatId = parseParam(VoiceCanonicalChatIdSchema, c.req.param("chatId"));
         const sessionId = parseParam(VoiceSessionIdSchema, c.req.param("sessionId"));
         const principal = requirePrincipal(c, deps);
-        await rateLimited(principal, "delete");
-        await deps.chatAccess.requireAccess({ principalId: principal.userId, chatId, level: "write" });
+        // Exact owner/session binding first. Cleanup remains authorized after
+        // backing Chat deletion/access loss; it never admits canonical work.
+        if (!deps.engine.describeSession({ principal, chatId, sessionId })) {
+          throw new VoiceSessionError("not_found", "Session unavailable", 404);
+        }
+        if (!cleanupAllowed(principal.userId)) throw new VoiceSessionError("rate_limited", "Cleanup rate limited", 429);
         const result = await deps.engine.endSession({ principal, chatId, sessionId, kind: "user" });
         return c.json({
           sessionId: result.session.sessionId,
@@ -271,22 +358,44 @@ export function createVoiceSessionRoutes(deps: VoiceSessionRoutesDeps): Hono {
 
   app.post(
     "/api/chats/:chatId/voice/sessions/:sessionId/reconnect",
-    bodyLimit({ maxSize: RECONNECT_BODY_BYTES, onError: (c) => c.json({ error: "payload_too_large" }, 413) }),
+    bodyLimit({ maxSize: RECONNECT_BODY_BYTES, onError: (c) => c.json({ error: safeVoiceRestError("payload_too_large") }, 413) }),
     async (c) => {
       try {
         const chatId = parseParam(VoiceCanonicalChatIdSchema, c.req.param("chatId"));
         const sessionId = parseParam(VoiceSessionIdSchema, c.req.param("sessionId"));
         // Reconnect body is optional; malformed JSON is still a 400, not a {}.
         const raw = await c.req.text().catch((error: unknown) => {
-          if (!(error instanceof Error)) throw error;
-          return "";
+          if (error instanceof Error && error.name === "BodyLimitError") {
+            throw new VoiceSessionError("payload_too_large", "Request body too large", 413);
+          }
+          throw error;
         });
         const request = ReconnectVoiceSessionRequestSchema.parse(
           raw.trim().length === 0 ? {} : JSON.parse(raw),
         );
         const principal = requirePrincipal(c, deps);
+        if (!deps.engine.describeSession({ principal, chatId, sessionId })) {
+          throw new VoiceSessionError("not_found", "Session unavailable", 404);
+        }
         await rateLimited(principal, "reconnect");
-        await deps.chatAccess.requireAccess({ principalId: principal.userId, chatId, level: "write" });
+        try {
+          await deps.chatAccess.requireAccess({ principalId: principal.userId, chatId, level: "write" });
+          const decision = await deps.canonicalDecision?.({ principal, chatId });
+          const capability = projectVoiceCapability(await deps.capabilities.capabilities({ principalId: principal.userId, chatId }), decision);
+          if (capability.status === "unavailable" || (deps.routeEligibility && !await deps.routeEligibility({ principal, chatId }))) {
+            throw new VoiceSessionError("provider_unavailable", "Voice unavailable", 503);
+          }
+          if (deps.canonicalDecision) {
+            // A session created under a canonical decision must still resolve
+            // one; a vanished decision means its policy can no longer be
+            // re-verified, so reconnect fails closed.
+            if (!decision) throw new VoiceSessionError("provider_unavailable", "Voice unavailable", 503);
+            deps.engine.assertCanonicalDecision({ principal, chatId, sessionId }, decision);
+          }
+        } catch (error: unknown) {
+          await deps.engine.endSession({ principal, chatId, sessionId, kind: "user" });
+          throw error;
+        }
         const result = deps.engine.reconnectSession({
           principal,
           chatId,
@@ -296,8 +405,7 @@ export function createVoiceSessionRoutes(deps: VoiceSessionRoutesDeps): Hono {
         return c.json({
           sessionId: result.session.sessionId,
           chatId: result.session.chatId,
-          status: result.session.status,
-          reconnectAttempts: result.session.reconnectAttempts,
+          limits: result.session.limits,
           transport: {
             kind: result.lease.kind,
             url: result.lease.path,

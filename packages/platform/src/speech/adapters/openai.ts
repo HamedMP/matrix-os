@@ -42,34 +42,21 @@ export interface FileTranscriptionAdapter {
 export interface SpeechSynthesisAdapter {
   readonly id: string;
   synthesize(input: { text: string; signal: AbortSignal }): Promise<Uint8Array>;
+  /** Real incremental provider PCM, never a rechunked completed payload. */
+  stream?(input: { text: string; signal: AbortSignal }): AsyncIterable<Uint8Array>;
 }
 
-async function readBoundedBytes(response: Response, maxBytes: number): Promise<Uint8Array> {
-  if (!response.body) throw new SpeechAdapterError("invalid_response", "Synthesis response was invalid");
-  const reader = response.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  try {
-    for (;;) {
-      const next = await reader.read();
-      if (next.done) break;
-      total += next.value.byteLength;
-      if (total > maxBytes) {
-        startBestEffortCleanup(() => reader.cancel());
-        throw new SpeechAdapterError("invalid_response", "Synthesis response exceeded its limit");
-      }
-      chunks.push(next.value);
-    }
-  } finally {
-    reader.releaseLock();
-  }
-  const output = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) {
-    output.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return output;
+/** Abort races also bound fake/custom readers that do not honor fetch's signal. */
+async function readSpeechChunk(reader: ReadableStreamDefaultReader<Uint8Array>, signal: AbortSignal) {
+  signal.throwIfAborted();
+  let onAbort!: () => void;
+  const aborted = new Promise<never>((_resolve, reject) => {
+    onAbort = () => reject(signal.reason);
+    signal.addEventListener("abort", onAbort, { once: true });
+    if (signal.aborted) onAbort();
+  });
+  try { return await Promise.race([reader.read(), aborted]); }
+  finally { signal.removeEventListener("abort", onAbort); }
 }
 
 export function createOpenAiSpeechSynthesisAdapter(options: {
@@ -85,41 +72,72 @@ export function createOpenAiSpeechSynthesisAdapter(options: {
   }
   const fetchImpl = options.fetchImpl ?? fetch;
   const timeoutMs = options.timeoutMs ?? 60_000;
-  return {
-    id: "openai-speech",
-    async synthesize(input) {
-      const timeout = AbortSignal.timeout(timeoutMs);
-      let response: Response;
-      try {
-        response = await fetchImpl(SPEECH_ENDPOINT, {
-          method: "POST",
-          redirect: "error",
-          headers: {
-            authorization: `Bearer ${options.apiKey}`,
-            "content-type": "application/json",
-          },
-          body: JSON.stringify({
-            model: options.model,
-            voice: options.voice,
-            input: input.text,
-            response_format: "pcm",
-          }),
-          signal: AbortSignal.any([input.signal, timeout]),
-        });
-      } catch (_error: unknown) {
-        if (input.signal.aborted) throw new SpeechAdapterError("cancelled", "Synthesis was cancelled");
-        if (timeout.aborted) throw new SpeechAdapterError("timeout", "Synthesis timed out");
-        throw new SpeechAdapterError("request_failed", "Synthesis request failed");
-      }
-      if (!response.ok) {
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1_000 || timeoutMs > 65_000) {
+    throw new SpeechAdapterError("misconfigured", "Speech adapter limits are invalid");
+  }
+  async function* stream(input: { text: string; signal: AbortSignal }): AsyncGenerator<Uint8Array> {
+    const timeout = AbortSignal.timeout(timeoutMs);
+    const local = new AbortController();
+    const signal = AbortSignal.any([input.signal, timeout, local.signal]);
+    let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+    let finished = false;
+    try {
+      signal.throwIfAborted();
+      const response = await fetchImpl(SPEECH_ENDPOINT, {
+        method: "POST", redirect: "error",
+        headers: { authorization: `Bearer ${options.apiKey}`, "content-type": "application/json" },
+        // `stream_format: "audio"` pins the raw-bytes chunked stream; an SSE
+        // response would deliver event text this reader must not parse as PCM.
+        body: JSON.stringify({ model: options.model, voice: options.voice, input: input.text, response_format: "pcm", stream_format: "audio" }),
+        signal,
+      });
+      if (!response.ok || !response.body) {
         if (response.body) startBestEffortCleanup(() => response.body!.cancel());
         throw new SpeechAdapterError("request_failed", "Synthesis request failed");
       }
-      const audio = await readBoundedBytes(response, SPEECH_MAX_SYNTHESIS_AUDIO_BYTES);
-      if (audio.byteLength < 2 || audio.byteLength % 2 !== 0) {
-        throw new SpeechAdapterError("invalid_response", "Synthesis response was invalid");
+      reader = response.body.getReader();
+      let total = 0;
+      let carry: number | undefined;
+      for (;;) {
+        const next = await readSpeechChunk(reader, signal);
+        if (next.done) break;
+        total += next.value.byteLength;
+        if (total > SPEECH_MAX_SYNTHESIS_AUDIO_BYTES) throw new SpeechAdapterError("invalid_response", "Synthesis response exceeded its limit");
+        let offset = 0;
+        if (carry !== undefined && next.value.byteLength > 0) {
+          yield new Uint8Array([carry, next.value[0]!]);
+          carry = undefined;
+          offset = 1;
+        }
+        const evenEnd = offset + Math.floor((next.value.byteLength - offset) / 2) * 2;
+        for (; offset < evenEnd; offset += 65_536) {
+          signal.throwIfAborted();
+          yield next.value.slice(offset, Math.min(offset + 65_536, evenEnd));
+        }
+        if (evenEnd < next.value.byteLength) carry = next.value[evenEnd];
       }
-      return audio;
+      signal.throwIfAborted();
+      if (total < 2 || carry !== undefined) throw new SpeechAdapterError("invalid_response", "Synthesis response was invalid");
+      finished = true;
+    } catch (error: unknown) {
+      if (input.signal.aborted) throw new SpeechAdapterError("cancelled", "Synthesis was cancelled");
+      if (timeout.aborted) throw new SpeechAdapterError("timeout", "Synthesis timed out");
+      if (error instanceof SpeechAdapterError) throw error;
+      throw new SpeechAdapterError("request_failed", "Synthesis request failed");
+    } finally {
+      local.abort();
+      if (reader) {
+        if (!finished) startBestEffortCleanup(() => reader!.cancel());
+        reader.releaseLock();
+      }
+    }
+  }
+  return {
+    id: "openai-speech", stream,
+    async synthesize(input) {
+      const chunks: Uint8Array[] = [];
+      for await (const chunk of stream(input)) chunks.push(chunk);
+      return Buffer.concat(chunks);
     },
   };
 }

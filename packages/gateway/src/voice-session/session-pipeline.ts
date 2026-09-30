@@ -194,17 +194,17 @@ export class VoiceSessionPipeline {
     s.adapter?.setCapture(null);
   }
 
-  async onInterrupt(
-    frame: Extract<VoiceClientFrame, { type: "response.interrupt" }>,
+  /** Canonical generation interruption for capture barge-in: media stops at
+   * the acknowledged boundary AND the run producing it is cancelled with
+   * reason "interruption". Media interrupt happens even when the canonical
+   * cancel attempt fails. */
+  private async interruptResponse(
+    ledger: VoiceResponseLedger,
+    playedThroughMs: number,
   ): Promise<void> {
     const s = this.session;
-    const ledger = s.responses.get(frame.responseId);
-    if (!ledger || ledger.state !== "open") {
-      this.runtime.countStale("interrupt_for_terminal_response");
-      return;
-    }
     ledger.state = "interrupted";
-    const effectiveThroughMs = Math.min(frame.playedThroughMs, ledger.deliveredThroughMs);
+    const effectiveThroughMs = Math.min(playedThroughMs, ledger.deliveredThroughMs);
     s.adapter?.interrupt(ledger.responseId, effectiveThroughMs);
     // Barge-in must also stop the canonical run still producing the audio —
     // a local playback stop alone leaves it executing and streaming text.
@@ -367,6 +367,20 @@ export class VoiceSessionPipeline {
         const turn = s.turns.get(event.turnId);
         if (!turn) {
           this.runtime.countStale("vad_for_unknown_turn");
+          return;
+        }
+        if (event.action === "speech_start") {
+          // Capture barge-in: the user started talking over the assistant's
+          // still-open response. Media stops AND the canonical run producing
+          // it is cancelled — a local playback stop alone leaves it
+          // executing and streaming text. Explicit client "stop speaking"
+          // (`response.interrupt`) stays media-only; generation.cancel is
+          // the distinct explicit run control.
+          for (const ledger of s.responses.values()) {
+            if (ledger.state === "open") {
+              await this.interruptResponse(ledger, ledger.playedThroughMs);
+            }
+          }
           return;
         }
         if (event.action === "speech_end" && turn.phase === "capturing") {
@@ -635,13 +649,13 @@ export class VoiceSessionPipeline {
         if (head && !s.stagedFinals.has(head.turnId)
           && (head.phase === "capturing" || head.phase === "finalizing")) {
           // The blocking turn never resolved inside the bounded wait —
-          // abandon the hole; a late final for it still admits (its order is
-          // already below the head by then).
+          // terminally reject it before advancing. A late provider final must
+          // never execute after a later turn has already been admitted.
           this.host.log("voice.turn.order_wait_expired", {
             sessionId: s.sessionId,
             turnId: head.turnId,
           });
-          s.nextAdmissionOrder = head.localOrder + 1;
+          this.completeFailedCapture(head);
         }
         await this.drainAdmissionQueue();
       });

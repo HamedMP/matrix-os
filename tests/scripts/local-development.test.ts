@@ -656,10 +656,12 @@ describe("local development contracts", () => {
       handle: "local",
       hostBundleUrl: "http://10.0.2.2:9876/matrix-host-bundle.tar.gz",
       platformUrl: "http://10.0.2.2:9003",
+      shellOrigin: "http://app.localhost:9003",
       platformSecret: "platform-secret",
       registrationToken: "registration-token",
       registrationTokenExpiresAt: "2026-09-29T00:00:00.000Z",
       postgresPassword: "postgres-secret",
+      platformSpeechEnabled: true,
     });
 
     expect(rendered).toContain("path: /etc/systemd/system/matrix-gateway.service");
@@ -669,6 +671,25 @@ describe("local development contracts", () => {
     expect(rendered).toContain("MATRIX_METADATA_INSTANCE_ID_URL=http://10.0.2.2:9876/metadata/instance-id");
     expect(rendered).toContain("MATRIX_METADATA_PUBLIC_IPV4_URL=http://10.0.2.2:9876/metadata/public-ipv4");
     expect(rendered).toContain("NODE_EXTRA_CA_CERTS=/opt/matrix/local-parity-storage-ca.pem");
+    expect(rendered).toContain("MATRIX_PLATFORM_SPEECH_ENABLED=true");
+    expect(rendered).toContain("SHELL_ORIGIN=http://app.localhost:9003");
+    const cloudInit = parse(rendered) as { write_files: Array<{ path: string; content: string }> };
+    const persistentEnv = cloudInit.write_files.find((file) => file.path === "/opt/matrix/env/host.env")!.content;
+    expect(persistentEnv).toContain("SHELL_ORIGIN=http://app.localhost:9003");
+    expect(persistentEnv).toContain("MATRIX_PLATFORM_SPEECH_ENABLED=true");
+    // Bundle updates replace app/bin/systemd payloads, not this durable environment.
+    const updateAgent = readFileSync(resolve(root, "distro/customer-vps/host-bin/matrix-sync-agent"), "utf8");
+    expect(updateAgent).toContain('readonly APP_DIR="/opt/matrix/app"');
+    expect(updateAgent).toContain("source /opt/matrix/env/host.env");
+    expect(updateAgent).not.toMatch(/(?:cp|mv|tee|install|cat)[^\n]*(?:>|\s)\/opt\/matrix\/env\/host\.env/);
+    const gatewayUnit = readFileSync(resolve(root, "distro/customer-vps/systemd/matrix-gateway.service"), "utf8");
+    expect(gatewayUnit).toContain("EnvironmentFile=/opt/matrix/env/host.env");
+    expect(rendered).not.toContain("matrix-gateway.service.d");
+    expect(() => renderLocalParityCloudInit(template, {
+      machineId: "fixture", clerkUserId: "fixture", handle: "fixture", platformSecret: "fixture",
+      hostBundleUrl: "http://10.0.2.2:9876/bundle", platformUrl: "http://10.0.2.2:9003",
+      shellOrigin: "http://app.localhost:9003\nINJECTED=true",
+    })).toThrow("Invalid parity shell origin");
     expect(rendered).not.toContain("growpart:\n  mode: off\nresize_rootfs: false");
     expect(rendered).not.toMatch(/\{\{[a-zA-Z0-9_]+\}\}/);
     expect(rendered).not.toContain("MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED");

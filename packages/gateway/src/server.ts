@@ -24,6 +24,7 @@ import { cors } from "hono/cors";
 import { existsSync, readFileSync } from "node:fs";
 import {
   appendFile as appendFileAsync,
+  lstat,
   mkdir as mkdirAsync,
   writeFile as writeFileAsync,
 } from "node:fs/promises";
@@ -34,6 +35,9 @@ import { createAgentSandbox } from "./agent-sandbox.js";
 import { createAgentSessionManager } from "./agent-session-manager.js";
 import { createAiGenerationRecorder } from "./ai-analytics.js";
 import { buildAllowedOrigins, createAllowedOriginController } from "./allowed-origins.js";
+import { AoedeBindingRepository } from "./aoede/binding-repository.js";
+import { AoedeBootstrapService } from "./aoede/bootstrap-service.js";
+import { createAoedeRoutes } from "./aoede/routes.js";
 import { createRuntimeAppAiRoutes } from "./app-ai/runtime.js";
 import type { AppRegistry } from "./app-db-registry.js";
 import type { AppDb } from "./app-db.js";
@@ -45,6 +49,9 @@ import { withAsyncChatInput } from "./chat/async-input-adapter.js";
 import { createClaudeChatProviderAdapter } from "./chat/claude-provider-adapter.js";
 import { createCustomMcpApprovalClient } from "./chat/custom-mcp-approval-client.js";
 import { createCanonicalCodingChatProviderAdapter } from "./chat/coding-provider-adapter.js";
+import { createCanonicalActionAuthority, type CanonicalActionAuthority } from "./chat/action-authority.js";
+import { ActionRepository } from "./chat/action-repository.js";
+import { createCanonicalActionTools, type CanonicalActionTool } from "./chat/action-tools.js";
 import type { ChatExecutionRootResolver } from "./chat/execution-root.js";
 import type { createGatewayChatEventStream } from "./chat/gateway-event-stream.js";
 import { createHermesChatProviderAdapter } from "./chat/hermes-provider-adapter.js";
@@ -70,7 +77,11 @@ import {
   VoiceMediaAdapterRegistry,
 } from "./voice-session/adapter.js";
 import { registerVoiceSessionMediaAdapters } from "./voice-session/adapter-registration.js";
-import { createCanonicalVoicePorts } from "./voice-session/canonical-ports.js";
+import {
+  canonicalVoiceDecision,
+  canonicalVoiceSelectionRequirements,
+  createCanonicalVoicePorts,
+} from "./voice-session/canonical-ports.js";
 import { VoiceSessionEngine } from "./voice-session/engine.js";
 import {
   createManagedVoiceTranscriptionPort,
@@ -79,6 +90,7 @@ import {
 } from "./speech/voice-session-ports.js";
 import {
   createVoiceSessionRoutes,
+  projectVoiceCapability,
   registerVoiceSessionWebSocketRoute,
 } from "./voice-session/routes.js";
 import {
@@ -92,6 +104,7 @@ import {
   isWorkspaceSessionRuntimeAlive,
 } from "./coding-agents/chat-idle-reaper.js";
 import { createCodexControlClient } from "./coding-agents/codex-control-client.js";
+import { invokeCodexCanonicalAction } from "./coding-agents/codex-canonical-tools.mjs";
 import { createCodexEventBridge, type CodexEventBridge } from "./coding-agents/codex-event-bridge.js";
 import { createCodingAgentFileStore } from "./coding-agents/file-read.js";
 import { createCodingHarnessCredentialResolver } from "./coding-agents/harness-credentials.js";
@@ -300,6 +313,27 @@ export async function resetVolatilePtySessionList(persistPath: string): Promise<
 
 const MAX_MAIN_WS_CLIENTS = 100;
 
+async function codexCanonicalAuthFile(homePath: string): Promise<string | undefined> {
+  const codexHome = process.env.CODEX_HOME?.trim()
+    ? resolve(process.env.CODEX_HOME)
+    : join(homePath, ".codex");
+  const authFile = join(codexHome, "auth.json");
+  try {
+    const info = await lstat(authFile);
+    return info.isFile()
+      && !info.isSymbolicLink()
+      && (info.mode & 0o077) === 0
+      && (!process.getuid || info.uid === process.getuid())
+      ? authFile
+      : undefined;
+  } catch (error: unknown) {
+    if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) {
+      console.warn("[chat/actions] Codex auth inspection failed", error instanceof Error ? error.name : "UnknownError");
+    }
+    return undefined;
+  }
+}
+
 export async function createGateway(config: GatewayConfig) {
   const { homePath: rawHomePath, port = 4000, syncReport } = config;
   const homePath = resolve(rawHomePath);
@@ -478,6 +512,11 @@ export async function createGateway(config: GatewayConfig) {
   });
   let codingAgentThreadStore: (CodingAgentThreadStore & CodingAgentTurnStore) | undefined;
   let chatRepository: ChatRepository | null = null;
+  let canonicalActionRepository: ActionRepository | null = null;
+  let canonicalActionTools: readonly CanonicalActionTool[] = [];
+  let canonicalActionAuthority: CanonicalActionAuthority | undefined;
+  const codexControlClient = codexExecutable ? createCodexControlClient({ homePath }) : undefined;
+  const codexCanonicalAuth = codexExecutable ? await codexCanonicalAuthFile(homePath) : undefined;
   let codexEventBridge: CodexEventBridge | undefined;
   let codingAgentWorkspaceRuntime: WorkspaceSessionOrchestrator | null = null;
   let codingAgentApprovalsEnabled = false;
@@ -557,6 +596,20 @@ export async function createGateway(config: GatewayConfig) {
             ? isWorkspaceSessionRuntimeAlive(sessionId, sessions, terminalWorkspaceRuntime, backgroundAgentRuntime)
             : Promise.resolve(false);
         },
+        onCanonicalActionRequest: async ({ request, sessionId, canonical, signal }) => {
+          const actions = canonicalActionAuthority;
+          const control = codexControlClient;
+          if (!actions || !control) throw new Error("Canonical action authority is unavailable");
+          await invokeCodexCanonicalAction(request, {
+            executionPolicy: canonical.executionPolicy,
+            inventory: canonical.inventory,
+            owner: canonical.identity.owner,
+            chatId: canonical.identity.chatId,
+            runId: canonical.identity.runId,
+            actions,
+            signal,
+          }, (frame) => control.submitCanonicalToolResult({ sessionId, frame }));
+        },
       })
       : undefined;
     const codingAgentSessionManager = createAgentSessionManager({
@@ -581,7 +634,7 @@ export async function createGateway(config: GatewayConfig) {
       runtime: codingAgentWorkspaceRuntime,
       homePath,
       codexEvents: codexEventBridge,
-      codexControl: codexExecutable ? createCodexControlClient({ homePath }) : undefined,
+      codexControl: codexControlClient,
       pi: {
         resolveCredentialLaunch: createCodingHarnessCredentialResolver({
           harness: "pi",
@@ -809,6 +862,8 @@ export async function createGateway(config: GatewayConfig) {
   let canonicalChatCollaborationGuard: ReturnType<typeof createDiscussionOnlyChatExecutionGuard> | null = null;
   let gatewayCollaboration: GatewayCollaborationRuntime | null = null;
   let messagingRepository: MessagingKyselyRepository | null = null;
+  let aoedeBindings: AoedeBindingRepository | null = null;
+  let aoedeBootstrapService: AoedeBootstrapService | null = null;
   // Collaboration wiring always constructs (S20): there is no release flag.
   // Incomplete configuration or a missing owner database registers the
   // fail-closed routes below instead of skipping construction.
@@ -852,6 +907,22 @@ export async function createGateway(config: GatewayConfig) {
   canonicalChatCollaborationGuard = ownerDatabaseServices?.chatCollaborationGuard ?? null;
   gatewayCollaboration = ownerDatabaseServices?.collaboration ?? null;
   messagingRepository = ownerDatabaseServices?.messagingRepository ?? null;
+
+  // Action and Aoede tables are part of canonical Chat bootstrap. Runtime
+  // composition cannot silently create or accept a partial schema here.
+  if (chatRepository) {
+    canonicalActionRepository = new ActionRepository(chatRepository.kysely);
+    const ownerHomeIds = new Set([...codingAgentOwnerIds, ...terminalRuntimeOwnerIds]);
+    canonicalActionTools = createCanonicalActionTools({
+      homeForOwner: async (owner) => {
+        if (owner.type !== "personal" || !ownerHomeIds.has(owner.ownerId)) {
+          throw new Error("Canonical action owner is unavailable");
+        }
+        return homePath;
+      },
+    });
+    aoedeBindings = new AoedeBindingRepository(chatRepository);
+  }
 
   const trustedOsViewOwnerId = process.env.MATRIX_USER_ID?.trim();
   const osViewTools = osViewStateRepository
@@ -1526,6 +1597,16 @@ export async function createGateway(config: GatewayConfig) {
           threads: codingAgentThreadStore,
           toolOutputKey,
           nativeInputProvider: codingAgentProviders.find(provider => provider.providerId === "codex"),
+          ...(canonicalActionRepository && canonicalActionTools.length > 0 ? {
+            canonical: {
+              inventory: canonicalActionTools,
+              ...(codexCanonicalAuth ? { authFile: codexCanonicalAuth } : {}),
+              isDispatchLive: () => canonicalActionAuthority !== undefined
+                && codexEventBridge !== undefined
+                && codexControlClient !== undefined
+                && codexCanonicalAuth !== undefined,
+            },
+          } : {}),
         }));
       }
       if (codingAgentProviders.some((provider) => provider.providerId === "pi")) {
@@ -1549,13 +1630,53 @@ export async function createGateway(config: GatewayConfig) {
     // lookup so typed/queued/steered/retired admissions inherit it too —
     // created before the canonical runtime because admission consumes it.
     voiceSessionPolicy = createVoiceSessionPolicyLookup();
+    const canonicalAdapterRegistry = new CanonicalChatProviderRegistry(
+      canonicalAdapters.map(adapter => withAsyncChatInput(adapter)),
+    );
+    canonicalActionAuthority = canonicalActionRepository
+      ? createCanonicalActionAuthority({
+        repository: canonicalActionRepository,
+        tools: canonicalActionTools,
+        qualifyPolicy: async (input) => canonicalAdapterRegistry.get(input.driverKind)?.qualifyPolicy?.(input),
+        onEvent: async (identity, event) => {
+          const orchestrator = canonicalChatOrchestrator;
+          if (!orchestrator) throw new Error("Canonical action projection is unavailable");
+          await orchestrator.projectActionEvent(identity, event);
+        },
+      })
+      : undefined;
+    const qualifiedCanonicalPolicyFor = async (
+      selection: Parameters<typeof canonicalVoiceDecision>[0]["selection"],
+      catalog: Parameters<typeof canonicalVoiceDecision>[0]["catalog"],
+    ) => {
+      if (!selection) return undefined;
+      const eligible = validateChatProviderSelection({
+        catalog,
+        selection,
+        requirements: { interactionMode: "default", permissionMode: "full_access" },
+      });
+      if (!eligible.ok) return undefined;
+      try {
+        return await canonicalAdapterRegistry.get(eligible.instance.driverKind)?.qualifyPolicy?.({
+          driverKind: eligible.instance.driverKind,
+          selection: eligible.selection,
+          permissionMode: "full_access",
+          workspaceScope: "apps",
+        });
+      } catch (error: unknown) {
+        console.warn("[chat/actions] Provider policy qualification failed",
+          error instanceof Error ? error.name : "UnknownError");
+        return undefined;
+      }
+    };
     canonicalChatRuntime = await createCanonicalChatRuntime({
       homePath,
       repository: chatRepository,
       voiceSessionPolicy: voiceSessionPolicy.lookup,
       catalog: canonicalChatProviderCatalog,
-      adapters: new CanonicalChatProviderRegistry(canonicalAdapters.map(adapter => withAsyncChatInput(adapter))),
+      adapters: canonicalAdapterRegistry,
       executionRoots: canonicalChatExecutionRoots,
+      ...(canonicalActionAuthority ? { actions: canonicalActionAuthority } : {}),
       ...(canonicalChatCollaborationGuard ? { collaborationGuard: canonicalChatCollaborationGuard } : {}),
       ...(gatewayCollaboration ? {
         onSharedEvent: (scopeId: string) => gatewayCollaboration!.eventRegistry.broadcastScope(scopeId),
@@ -1564,6 +1685,10 @@ export async function createGateway(config: GatewayConfig) {
       ...(jevInboxRuntime ? { admitJevWorkflow: (owner, agent) => jevInboxRuntime.admit(owner.ownerId, agent) } : {}),
     });
     canonicalChatOrchestrator = canonicalChatRuntime.orchestrator;
+    if (canonicalActionAuthority) {
+      const recovery = await canonicalActionAuthority.reconcilePending();
+      if (recovery.checked > 0) console.warn("[chat/actions] startup reconciliation", recovery);
+    }
     backgroundChatProjection.setReconciler(ownerId => canonicalChatOrchestrator?.reconcileActiveRuns({ type: "personal", ownerId }) ?? Promise.resolve());
 
     // ------------------------------------------------------------------
@@ -1578,6 +1703,7 @@ export async function createGateway(config: GatewayConfig) {
       orchestrator: canonicalChatOrchestrator,
       repository: chatRepository,
       deliveries: voiceDeliveries,
+      ...(canonicalActionAuthority ? { actions: canonicalActionAuthority } : {}),
       log: voiceLog,
     });
     const voiceAdapters = new VoiceMediaAdapterRegistry();
@@ -1651,11 +1777,30 @@ export async function createGateway(config: GatewayConfig) {
         const selected = selection ?? (await chatRepository!.get(owner, chatId))?.chat.currentSelection;
         if (!selected) return false;
         const catalog = await canonicalChatProviderCatalog.getCatalog(principal);
+        const qualifiedPolicy = await qualifiedCanonicalPolicyFor(selected, catalog);
         return validateChatProviderSelection({
           catalog,
           selection: selected,
-          requirements: { voiceConversationOnly: true },
+          requirements: {
+            ...canonicalVoiceSelectionRequirements(),
+            ...(qualifiedPolicy ? { qualifiedPolicy } : {}),
+          },
         }).ok;
+      },
+      // Server-owned canonical authority: persisted Chat selection, provider
+      // route eligibility, and the adapter-qualified frozen execution policy.
+      // No decision (no persisted selection) fails closed to conversation_only.
+      canonicalDecision: async ({ principal, chatId, surface }) => {
+        const owner = { type: "personal" as const, ownerId: principal.userId };
+        const selection = (await chatRepository!.get(owner, chatId))?.chat.currentSelection;
+        if (!selection) return undefined;
+        const catalog = await canonicalChatProviderCatalog.getCatalog(principal);
+        return canonicalVoiceDecision({
+          selection,
+          catalog,
+          qualifiedPolicy: await qualifiedCanonicalPolicyFor(selection, catalog),
+          ...(surface !== undefined ? { surface } : {}),
+        });
       },
       checkRateLimit: ({ principal }) => voiceSessionRateLimiter.check(principal.userId),
     }));
@@ -1675,6 +1820,56 @@ export async function createGateway(config: GatewayConfig) {
       ),
       log: voiceLog,
     });
+
+    // ------------------------------------------------------------------
+    // Aoede standalone assistant bootstrap — an authenticated owner-local
+    // pointer to exactly one canonical Chat per runtime/scope. Runtime
+    // identity is server configuration only; request fields never supply it.
+    // No dispatch, microphone, or provider run starts here.
+    const aoedeMachineId = process.env.MATRIX_MACHINE_ID?.trim();
+    const aoedeRuntimeSlot = process.env.MATRIX_RUNTIME_SLOT?.trim();
+    if (aoedeBindings && aoedeMachineId && aoedeRuntimeSlot) {
+      try {
+        aoedeBootstrapService = new AoedeBootstrapService({
+          repository: aoedeBindings,
+          catalog: canonicalChatProviderCatalog,
+          runtimeIdentity: { machineId: aoedeMachineId, runtimeSlot: aoedeRuntimeSlot },
+          resolveProject: async (principal, projectId) => {
+            const resolved = await codingAgentProjectManager.getProjectById(
+              { type: "user", id: principal.userId }, projectId,
+            );
+            return resolved.ok
+              ? { kind: "project" as const, id: resolved.project.id, label: resolved.project.name }
+              : null;
+          },
+          resolveReadiness: async ({ principal, surface, selection, catalog }) => ({
+            // The exact requested/saved selection is authoritative — the
+            // service rejects any substituted route, so never substitute.
+            selection,
+            capability: projectVoiceCapability(
+              // The Chat may not exist yet; adapter capability is not chat-scoped.
+              await voiceCapabilities.capabilities({
+                principalId: principal.userId, chatId: "aoede_bootstrap", surface,
+              }),
+              canonicalVoiceDecision({
+                selection,
+                catalog,
+                surface,
+                qualifiedPolicy: await qualifiedCanonicalPolicyFor(selection, catalog),
+              }),
+            ),
+          }),
+        });
+        app.route("/", createAoedeRoutes({
+          service: aoedeBootstrapService,
+          requirePrincipal: requireRequestPrincipal,
+        }));
+      } catch (error: unknown) {
+        aoedeBootstrapService = null;
+        console.warn("[aoede] bootstrap service unavailable:",
+          error instanceof Error ? error.name : "UnknownError");
+      }
+    }
     // Shared AI marks runs the previous process lost (gateway_restart) before the
     // owner reconcile loop below finishes them; the reverse order loses attribution.
     // S07: this layer has no execution-root resolver, so no `sandboxManifests` source is passed
@@ -1713,6 +1908,14 @@ export async function createGateway(config: GatewayConfig) {
         ),
       });
     }
+  }
+  if (!aoedeBootstrapService) {
+    // Fail closed: the authenticated bootstrap exists but cannot create or
+    // bind Chats until the owner DB, schema, and trusted runtime identity are
+    // all present. The error shape matches the Aoede route's safe contract.
+    app.all("/api/aoede/bootstrap", (c) => c.json({
+      error: { code: "internal_failure", retryable: true, recovery: "retry_connection" },
+    }, 503));
   }
   // Bind deletion and run tombstone recovery only after Chat dependencies are ready.
   const deleteProjectChats = chatRepository && canonicalChatOrchestrator

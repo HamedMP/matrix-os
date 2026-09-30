@@ -94,7 +94,18 @@ export function createLocalParityPlan(options = {}) {
   };
 }
 
+// This persistent host.env entry is shared by fresh boot and bundle updates;
+// do not substitute a temporary systemd override for browser Origin policy.
+function parityShellOrigin(raw) {
+  if (typeof raw !== "string" || raw.length > 2048 || /[\s'"`$\\]/.test(raw)) throw new Error("Invalid parity shell origin");
+  let url;
+  try { url = new URL(raw); } catch (error) { throw new Error("Invalid parity shell origin", { cause: error }); }
+  if (!["http:", "https:"].includes(url.protocol) || url.username || url.password || url.pathname !== "/" || url.search || url.hash) throw new Error("Invalid parity shell origin");
+  return url.origin;
+}
+
 export function renderLocalParityCloudInit(template, input) {
+  const shellOrigin = parityShellOrigin(input.shellOrigin);
   const identity = { handle: input.handle, machineId: input.machineId, runtimeSlot: "primary" };
   const verificationToken = createHmac("sha256", input.platformSecret).update(input.handle).digest("hex");
   const artifactOrigin = new URL(input.hostBundleUrl).origin;
@@ -116,7 +127,7 @@ export function renderLocalParityCloudInit(template, input) {
     platformVerificationToken: verificationToken,
     syncRuntimeToken: runtimeToken("matrix-sync-runtime", identity, input.platformSecret),
     fundedAiRuntimeToken: runtimeToken("matrix-funded-ai-runtime", identity, input.platformSecret),
-    platformSpeechEnabled: "false",
+    platformSpeechEnabled: String(input.platformSpeechEnabled === true),
     platformSpeechOrigin: input.platformUrl,
     platformSpeechRuntimeToken: runtimeToken("matrix-platform-speech-runtime", identity, input.platformSecret),
     registrationToken: input.registrationToken,
@@ -137,6 +148,7 @@ export function renderLocalParityCloudInit(template, input) {
       `      MATRIX_METADATA_INSTANCE_ID_URL=${artifactOrigin}/metadata/instance-id`,
       `      MATRIX_METADATA_PUBLIC_IPV4_URL=${artifactOrigin}/metadata/public-ipv4`,
       "      NODE_EXTRA_CA_CERTS=/opt/matrix/local-parity-storage-ca.pem",
+      `      SHELL_ORIGIN=${shellOrigin}`,
       "      DATABASE_URL=postgresql://matrix:{{postgresPassword}}@127.0.0.1:5432/matrix",
     ].join("\n"),
   );
@@ -968,6 +980,8 @@ async function up() {
       ...state,
       hostBundleUrl: `${localArtifactUrl}/matrix-host-bundle.tar.gz`,
       platformUrl: localPlatformUrl,
+      shellOrigin: `http://app.localhost:${platformPort}`,
+      platformSpeechEnabled: configuredEnv.MATRIX_PLATFORM_SPEECH_RUNTIME_ENABLED === "true",
     });
     mkdirSync(stateDirectory, { recursive: true });
     writeFileSync(cloudInitPath, rendered, { mode: 0o600 });

@@ -10,6 +10,7 @@
  */
 import { randomUUID } from "node:crypto";
 import { VOICE_SESSION_LIMITS } from "@matrix-os/contracts/voice-session";
+import { SpeechCapabilitiesResponseSchema } from "@matrix-os/contracts";
 import {
   VoiceSpeechPortError,
   sanitizeLanguageHints,
@@ -83,25 +84,59 @@ export function createManagedVoiceTranscriptionPort(options: {
 }
 
 export function createManagedVoiceSynthesisPort(options: {
-  client: Pick<PlatformSpeechClient, "synthesize">;
+  client: Pick<PlatformSpeechClient, "synthesizeStream">;
   now?: () => number;
 }): VoiceSynthesisPort {
+  if (typeof options.client.synthesizeStream !== "function") throw new TypeError("Managed voice requires a streaming synthesis client");
   const now = options.now ?? Date.now;
   return async function* (request) {
-    let result;
+    let ended = false;
     try {
-      result = await options.client.synthesize({
-        requestId: speechRequestId(now),
-        text: request.text,
-        signal: request.signal,
-      });
+      for await (const frame of options.client.synthesizeStream({
+        requestId: speechRequestId(now), text: request.text, signal: request.signal,
+      })) {
+        if (request.signal.aborted) throw new VoiceSpeechPortError("aborted");
+        if (frame.type === "audio") yield Buffer.from(frame.data, "base64");
+        else if (frame.type === "error") throw new VoiceSpeechPortError(frame.code === "timeout" ? "timeout" : "unavailable");
+        else ended = true;
+      }
+      if (!ended) throw new VoiceSpeechPortError("connection");
     } catch (error: unknown) {
       if (request.signal.aborted) throw new VoiceSpeechPortError("aborted");
-      if (error instanceof PlatformSpeechClientError) {
-        throw new VoiceSpeechPortError(error.code === "timeout" ? "timeout" : "unavailable");
-      }
+      if (error instanceof VoiceSpeechPortError) throw error;
+      if (error instanceof PlatformSpeechClientError) throw new VoiceSpeechPortError(error.code === "timeout" ? "timeout" : "unavailable");
       throw new VoiceSpeechPortError("connection");
     }
-    yield Buffer.from(result.audio, "base64");
   };
+}
+
+/** Coarse authoritative probe for server composition. No key-presence heuristic,
+ * no cache of funded readiness, no provider details returned. Bound probes to 10s.
+ */
+export async function probeManagedVoiceSpeechReadiness(options: {
+  client: Pick<PlatformSpeechClient, "capabilities">;
+  signal?: AbortSignal;
+}): Promise<{ ready: boolean }> {
+  const signal = options.signal ? AbortSignal.any([options.signal, AbortSignal.timeout(10_000)]) : AbortSignal.timeout(10_000);
+  let onAbort!: () => void;
+  const aborted = new Promise<never>((_resolve, reject) => {
+    onAbort = () => reject(signal.reason);
+    signal.addEventListener("abort", onAbort, { once: true });
+    if (signal.aborted) onAbort();
+  });
+  try {
+    const response = await Promise.race([options.client.capabilities(signal), aborted]);
+    const result = SpeechCapabilitiesResponseSchema.safeParse(response);
+    // Aoede streams segment audio: a ready-but-completed-only synthesis
+    // (absent/false `streaming`) is not readiness for the managed voice path.
+    return {
+      ready: result.success
+        && result.data.fileTranscription.status === "ready"
+        && result.data.synthesis?.status === "ready"
+        && result.data.synthesis.streaming === true,
+    };
+  } catch (error: unknown) {
+    console.warn("[platform-speech] capability probe unavailable", error instanceof Error ? error.name : "UnknownError");
+    return { ready: false };
+  } finally { signal.removeEventListener("abort", onAbort); }
 }

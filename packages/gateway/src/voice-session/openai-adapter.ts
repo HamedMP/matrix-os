@@ -71,6 +71,10 @@ export interface OpenAiVoiceAdapterOptions {
   maxCaptureBytes?: number;
   /** Synthesis stream cap in bytes (default ~16 MiB). */
   maxSynthesisBytes?: number;
+  /** Opt-in request only: polling remains unavailable until platform admission
+   * budgets qualify interim + final STT and TTS together. This is NOT realtime.
+   */
+  provisionalRecognition?: "completed_wav_polling";
   /** Server-side energy VAD tuning over PCM frames. */
   vad?: {
     /** RMS cutoff on the s16le scale (default 500). */
@@ -499,6 +503,13 @@ class ChunkedVoiceMediaSession implements VoiceMediaSession {
           if (heldChunk) this.emitSynthesisChunk(resp, command, heldChunk, false);
           heldChunk = piece;
         }
+        // The held piece exists only so the LAST frame can carry the durable
+        // segmentId. Release it on the first successor byte — first audio no
+        // longer waits for a whole second chunk (~512ms at 48 bytes/ms).
+        if (heldChunk && pendingBytes > 0) {
+          this.emitSynthesisChunk(resp, command, heldChunk, false);
+          heldChunk = null;
+        }
       }
       if (pendingBytes > 0) {
         const piece = takeBytes(pending, pendingBytes);
@@ -586,7 +597,21 @@ function takeBytes(pending: Buffer[], size: number): Buffer {
  * declared output format, byte caps, VAD tuning) — a misconfigured adapter
  * never reaches `start()`.
  */
-export function createOpenAiVoiceMediaAdapter(options: OpenAiVoiceAdapterOptions): VoiceMediaAdapter {
+/** Existing owner limit is 10 admissions/minute shared by STT and TTS. Six
+ * rolling interim holds plus final + segmented TTS can exhaust that budget;
+ * there is no authoritative reserved-final budget/capability in today's API.
+ * Do not dispatch speculative billed requests or fabricate partial captions.
+ */
+export function getProvisionalRecognitionCapability() {
+  return {
+    mode: "completed_wav_polling", status: "unavailable", reason: "admission_budget_unqualified",
+    minCadenceMs: 2_000, maxAttemptsPerUtterance: 6, maxInFlight: 1,
+  } as const;
+}
+
+export function createOpenAiVoiceMediaAdapter(options: OpenAiVoiceAdapterOptions): VoiceMediaAdapter & {
+  provisionalRecognition: ReturnType<typeof getProvisionalRecognitionCapability>;
+} {
   if (
     !options
     || typeof options.speech !== "object"
@@ -652,6 +677,7 @@ export function createOpenAiVoiceMediaAdapter(options: OpenAiVoiceAdapterOptions
   };
   return {
     id: options.id ?? "openai",
+    provisionalRecognition: getProvisionalRecognitionCapability(),
     capabilities,
     start: (context) => new ChunkedVoiceMediaSession(context, config),
   };

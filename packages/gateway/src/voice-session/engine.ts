@@ -13,7 +13,7 @@
  * ports in `ports.ts` — the engine never touches canonical state directly.
  */
 import { randomUUID } from "node:crypto";
-import type { CanonicalChatModelSelection } from "@matrix-os/contracts";
+import { CanonicalChatRunPolicySchema, type CanonicalChatModelSelection } from "@matrix-os/contracts";
 import {
   VOICE_SESSION_LIMITS,
   type SafeVoiceErrorCode,
@@ -22,6 +22,7 @@ import {
   type VoiceTurnMode,
 } from "@matrix-os/contracts/voice-session";
 import type { RequestPrincipal } from "../request-principal.js";
+import { canonicalJsonStringify } from "../chat/argument-digest.js";
 import type { VoiceMediaAdapterRegistry } from "./adapter.js";
 import type {
   VoiceAdmissionPort,
@@ -29,6 +30,8 @@ import type {
   VoiceClock,
   VoiceDeliveryPort,
   VoiceMemoryMode,
+  VoiceExecutionPolicy,
+  VoiceCanonicalDecision,
   VoiceRunControlPort,
 } from "./ports.js";
 import { createSystemVoiceClock } from "./ports.js";
@@ -206,6 +209,7 @@ export class VoiceSessionEngine implements VoiceSessionHost {
             sessionId: session.sessionId,
             memoryMode: session.memoryMode,
             permissionMode: session.permissionMode,
+            ...(session.executionPolicy ? { executionPolicy: session.executionPolicy } : {}),
           };
           return policy;
         }
@@ -218,7 +222,26 @@ export class VoiceSessionEngine implements VoiceSessionHost {
     this.deps = deps;
     this.limits = { ...VOICE_SESSION_LIMITS, ...deps.limits };
     this.clock = deps.clock ?? createSystemVoiceClock();
-    this.admission = deps.admission;
+    this.admission = {
+      ...(deps.admission.loadChatRevision ? { loadChatRevision: deps.admission.loadChatRevision.bind(deps.admission) } : {}),
+      admitFinalTranscript: async (request) => {
+        const session = this.sessions.get(request.sessionId);
+        // Frozen server policy overrides any pipeline/request assertion.
+        const result = await deps.admission.admitFinalTranscript({ ...request,
+          ...(session?.executionPolicy ? { executionPolicy: session.executionPolicy } : {}),
+        });
+        if (session && result.error && !result.error.retryable
+          && (result.error.code === "chat_unavailable" || result.error.code === "permission_denied")) {
+          // We already own the mutation queue: enqueue cleanup, never await
+          // it here (which would wait on this admission itself).
+          session.runtime.emit({ type: "session.error", ...result.error });
+          session.runtime.closeTransportGracefully("Chat unavailable", false);
+          session.runtime.stopCapture();
+          void this.finish(session, "user");
+        }
+        return result;
+      },
+    };
     this.delivery = deps.delivery;
     this.adapters = deps.adapters;
     this.maxSessions = deps.maxSessions ?? 64;
@@ -264,6 +287,8 @@ export class VoiceSessionEngine implements VoiceSessionHost {
     principal: RequestPrincipal;
     chatId: string;
     request: VoiceSessionCreateInput;
+    /** Canonical server decision, not parsed from the client request. */
+    executionPolicy?: VoiceExecutionPolicy;
   }): VoiceSessionCreateOutcome {
     this.assertOpen();
     const { principal, chatId, request } = input;
@@ -272,7 +297,12 @@ export class VoiceSessionEngine implements VoiceSessionHost {
     );
     if (existingId) {
       const existing = this.sessions.get(existingId);
-      if (existing) return this.retryCreate(existing, request);
+      if (existing) {
+        if (canonicalJsonStringify(existing.executionPolicy ?? null) !== canonicalJsonStringify(input.executionPolicy ?? null)) {
+          throw new VoiceSessionError("session_conflict", "Canonical session policy changed", 409);
+        }
+        return this.retryCreate(existing, request);
+      }
     }
     this.assertSessionCapacity();
     this.assertNoActiveConflict(principal.userId, chatId);
@@ -282,7 +312,7 @@ export class VoiceSessionEngine implements VoiceSessionHost {
       throw new VoiceSessionError("provider_unavailable", "No voice adapter is configured", 503);
     }
     const caps = adapter.capabilities;
-    if (request.memoryMode === "session_only" && caps.sessionOnly !== "enforced") {
+    if (request.memoryMode === "session_only") {
       throw new VoiceSessionError("unsupported_surface", "Session-only mode is not supported", 422);
     }
     if (request.requestedTransport === "direct_webrtc" || !caps.transportModes.includes("relayed_websocket")) {
@@ -292,6 +322,12 @@ export class VoiceSessionEngine implements VoiceSessionHost {
       throw new VoiceSessionError("unsupported_surface", "Requested turn mode is not supported", 422);
     }
 
+    const executionPolicy = input.executionPolicy
+      ? CanonicalChatRunPolicySchema.shape.executionPolicy.parse(input.executionPolicy) : undefined;
+    if (executionPolicy) {
+      Object.freeze(executionPolicy.tools);
+      Object.freeze(executionPolicy);
+    }
     const now = this.clock.now();
     const sessionId = this.createId("vs");
     const record: VoiceSessionRecord = {
@@ -309,7 +345,8 @@ export class VoiceSessionEngine implements VoiceSessionHost {
       leaseConsumed: false,
       turnMode: request.turnMode,
       memoryMode: request.memoryMode,
-      selection: request.selection,
+      ...(executionPolicy ? { executionPolicy } : {}),
+      selection: structuredClone(request.selection),
       interactionMode: request.interactionMode,
       permissionMode: request.permissionMode,
       ...(request.locale !== undefined ? { locale: request.locale } : {}),
@@ -445,6 +482,17 @@ export class VoiceSessionEngine implements VoiceSessionHost {
     }
   }
 
+  /** Reconnect cannot retarget or widen the immutable admission snapshot. */
+  assertCanonicalDecision(input: { principal: RequestPrincipal; chatId: string; sessionId: string },
+    decision: VoiceCanonicalDecision): void {
+    const session = this.requireOwnedSession(input);
+    if (canonicalJsonStringify(session.executionPolicy ?? null) !== canonicalJsonStringify(decision.executionPolicy)
+      || canonicalJsonStringify(session.selection) !== canonicalJsonStringify(decision.selection)
+      || session.permissionMode !== decision.permissionMode || session.interactionMode !== decision.interactionMode) {
+      throw new VoiceSessionError("session_conflict", "Canonical session policy changed", 409);
+    }
+  }
+
   // --------------------------------------------------------------- reconnect
 
   reconnectSession(input: {
@@ -468,7 +516,11 @@ export class VoiceSessionEngine implements VoiceSessionHost {
     if (session.state === "failed") {
       // Explicit retry is the only way out of failed; the end path already
       // released adapter + subscription, so restore both before continuing.
-      session.state = "connecting";
+      // A retry rotates the epoch, so the first frame on the replacement
+      // transport must be session.resumed. The client deliberately rejects a
+      // higher-epoch session.state frame because it cannot distinguish one
+      // from stale/split-brain traffic.
+      session.state = "reconnecting";
       session.restorableState = "listening";
       session.endedAtMs = null;
       session.endKind = null;
@@ -534,19 +586,19 @@ export class VoiceSessionEngine implements VoiceSessionHost {
     session.ending ??= enqueueSessionTask(
       session,
       () => session.runtime.end(kind),
-      { bypassLimit: true },
+      { bypassLimit: true, propagateError: true },
     ).then(
       () => {
         this.afterTerminal(session);
       },
       (error: unknown) => {
-        // Terminal cleanup failures are logged; a later finish may retry.
+        // Keep retry ownership and the ticket fence until cleanup succeeds.
         this.log("voice.session.end_failed", {
           sessionId: session.sessionId,
           error: error instanceof Error ? error.name : "UnknownError",
         });
         session.ending = null;
-        this.afterTerminal(session);
+        throw error;
       },
     );
     return session.ending;
@@ -566,7 +618,7 @@ export class VoiceSessionEngine implements VoiceSessionHost {
           error: error instanceof Error ? error.name : "UnknownError",
         });
         session.ending = null;
-        this.afterTerminal(session);
+        throw error;
       },
     );
     return session.ending;

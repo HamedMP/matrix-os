@@ -481,7 +481,7 @@ describe("T133: Auth token middleware", () => {
     const mw = authMiddleware("secret-token");
     let nextCalled = false;
     await mw(
-      mockContext("/ws/voice", undefined, "secret-token"),
+      mockContext("/ws/onboarding", undefined, "secret-token"),
       async () => { nextCalled = true; },
     );
     expect(nextCalled).toBe(true);
@@ -491,7 +491,7 @@ describe("T133: Auth token middleware", () => {
     const mw = authMiddleware("secret-token");
     let nextCalled = false;
     const result = await mw(
-      mockContext("/ws/voice", undefined, "wrong-token"),
+      mockContext("/ws/onboarding", undefined, "wrong-token"),
       async () => { nextCalled = true; },
     );
     expect(nextCalled).toBe(false);
@@ -503,6 +503,17 @@ describe("T133: Auth token middleware", () => {
     let nextCalled = false;
     const result = await mw(
       mockContext("/ws/terminal", undefined, "secret-token", "10.0.0.1"),
+      async () => { nextCalled = true; },
+    );
+    expect(nextCalled).toBe(false);
+    expect(result?.status).toBe(401);
+  });
+
+  it("rejects query-token auth on the retired /ws/voice route", async () => {
+    const mw = authMiddleware("secret-token");
+    let nextCalled = false;
+    const result = await mw(
+      mockContext("/ws/voice", undefined, "secret-token", "10.0.0.1"),
       async () => { nextCalled = true; },
     );
     expect(nextCalled).toBe(false);

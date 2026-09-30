@@ -14,6 +14,7 @@ import {
   createVoiceSessionRoutes,
   registerVoiceSessionWebSocketRoute,
 } from "../../../packages/gateway/src/voice-session/routes.js";
+import type { VoiceCanonicalDecision } from "../../../packages/gateway/src/voice-session/ports.js";
 import { createVoiceOriginAllowlist } from "../../../packages/gateway/src/voice-session/ticket-auth.js";
 import {
   CHAT_ID,
@@ -41,6 +42,23 @@ const CAPABILITY: VoiceCapability = {
   supportsOutputSelection: true,
 };
 
+/** Server-owned canonical decision matching `makeCreateRequest().selection`:
+ * conversation-only speech over an available provider. Session create rides
+ * this decision — fixtures that omit it fail closed by design. */
+const DECISION: VoiceCanonicalDecision = {
+  capability: CAPABILITY,
+  selection: { instanceId: "instance-1", model: "claude-sonnet-4" },
+  interactionMode: "chat",
+  permissionMode: "default",
+  executionPolicy: {
+    revision: "policy_conversation",
+    actionMode: "conversation_only",
+    workspaceScope: "apps",
+    tools: [],
+    delegation: false,
+  },
+};
+
 function jsonInit(body: unknown, extraHeaders: Record<string, string> = {}) {
   return {
     method: "POST",
@@ -61,6 +79,7 @@ function makeRoutes(options: {
   denied?: boolean;
   rateLimited?: boolean;
   routeEligibility?: Parameters<typeof createVoiceSessionRoutes>[0]["routeEligibility"];
+  canonicalDecision?: Parameters<typeof createVoiceSessionRoutes>[0]["canonicalDecision"];
 } = {}): RouteRig {
   const rig = options.rig ?? makeRig();
   const access = new FakeChatAccess();
@@ -74,6 +93,7 @@ function makeRoutes(options: {
     },
     chatAccess: access,
     capabilities: { capabilities: () => CAPABILITY },
+    canonicalDecision: options.canonicalDecision ?? (() => DECISION),
     ...(options.routeEligibility ? { routeEligibility: options.routeEligibility } : {}),
     ...(options.rateLimited ? { checkRateLimit: () => false } : {}),
   });
@@ -89,6 +109,56 @@ async function createViaHttp(app: Hono, overrides: Record<string, unknown> = {})
 
 describe("voice capabilities route", () => {
   beforeEach(() => resetFrameSeq());
+
+  it("speech conversation_only does not suppress a qualified canonical tool inventory", async () => {
+    const rig = makeRig();
+    const request = makeCreateRequest();
+    const executionPolicy = { revision: "policy_safe", actionMode: "safe_reads" as const,
+      workspaceScope: "workspace", tools: ["workspace_read"], delegation: false };
+    let decision = { capability: { ...CAPABILITY, actionMode: "safe_reads" as const },
+      selection: request.selection, interactionMode: "canonical_mode", permissionMode: "supervised", executionPolicy };
+    const app = createVoiceSessionRoutes({ engine: rig.engine, resolvePrincipal: () => PRINCIPAL,
+      chatAccess: new FakeChatAccess(), capabilities: { capabilities: () => CAPABILITY },
+      canonicalDecision: () => decision });
+    const caps = await app.request(`http://test/api/chats/${CHAT_ID}/voice/capabilities`);
+    expect(await caps.json()).toMatchObject({ actionMode: "safe_reads", sessionOnly: "unsupported" });
+    const created = await createViaHttp(app);
+    expect(created.res.status).toBe(201);
+    expect(rig.engine.sessionPolicyLookup.policyForChat(CHAT_ID)).toMatchObject({
+      permissionMode: "supervised", executionPolicy,
+    });
+    decision = { ...decision, executionPolicy: { ...executionPolicy, revision: "changed" } };
+    const retry = await createViaHttp(app);
+    expect(retry.res.status).toBe(409);
+    const reconnect = await app.request(`http://test${CREATE_URL}/${created.body.sessionId}/reconnect`, jsonInit({}));
+    expect(reconnect.status).toBe(409);
+    expect(rig.engine.describeSession({ principal: PRINCIPAL, chatId: CHAT_ID,
+      sessionId: String(created.body.sessionId) })?.status).toBe("ended");
+  });
+
+  it("canonical readiness denies create before any adapter/media work", async () => {
+    const rig = makeRig();
+    const request = makeCreateRequest();
+    const app = createVoiceSessionRoutes({ engine: rig.engine, resolvePrincipal: () => PRINCIPAL,
+      chatAccess: new FakeChatAccess(), capabilities: { capabilities: () => CAPABILITY },
+      canonicalDecision: () => ({ selection: request.selection, interactionMode: "default", permissionMode: "default",
+        capability: { ...CAPABILITY, status: "unavailable", reason: "policy_disabled" },
+        executionPolicy: { revision: "policy_none", actionMode: "conversation_only", workspaceScope: "workspace", tools: [], delegation: false } }) });
+    const created = await createViaHttp(app);
+    expect(created.res.status).toBe(503);
+    expect(created.body).toEqual({ error: { code: "provider_unavailable", retryable: true, recovery: "retry_connection" } });
+    expect(rig.adapter.startCalls).toEqual([]);
+    expect(rig.engine.size).toBe(0);
+  });
+
+  it("absent canonical qualification never advertises speech-claimed actions or session-only", async () => {
+    const rig = makeRig();
+    const app = createVoiceSessionRoutes({ engine: rig.engine, resolvePrincipal: () => PRINCIPAL,
+      chatAccess: new FakeChatAccess(), capabilities: { capabilities: () => ({ ...CAPABILITY,
+        actionMode: "canonical_actions", actionCancellation: "tool" }) } });
+    const caps = await app.request(`http://test/api/chats/${CHAT_ID}/voice/capabilities`);
+    expect(await caps.json()).toMatchObject({ actionMode: "conversation_only", actionCancellation: "none", sessionOnly: "unsupported" });
+  });
 
   it("returns schema-valid capabilities for an authorized principal", async () => {
     const { app, access } = makeRoutes();
@@ -134,7 +204,7 @@ describe("voice capabilities route", () => {
     });
     const created = await createViaHttp(app, { selection });
     expect(created.res.status).toBe(422);
-    expect(created.body).toEqual({ error: "unsupported_surface" });
+    expect(created.body).toEqual({ error: { code: "unsupported_surface", retryable: false, recovery: "continue_in_chat" } });
     expect(rig.engine.size).toBe(0);
   });
 
@@ -142,14 +212,14 @@ describe("voice capabilities route", () => {
     const { app } = makeRoutes();
     const res = await app.request("http://test/api/chats/bogus!!/voice/capabilities");
     expect(res.status).toBe(400);
-    expect(await res.json()).toEqual({ error: "invalid_request" });
+    expect(await res.json()).toEqual({ error: { code: "session_conflict", retryable: false, recovery: "none" } });
   });
 
   it("returns 401 when the principal resolver fails", async () => {
     const { app } = makeRoutes({ principal: null });
     const res = await app.request(`http://test/api/chats/${CHAT_ID}/voice/capabilities`);
     expect(res.status).toBe(401);
-    expect(await res.json()).toEqual({ error: "unauthorized" });
+    expect(await res.json()).toEqual({ error: { code: "permission_denied", retryable: false, recovery: "none" } });
   });
 
   it("returns 404 when canonical access denies the chat", async () => {
@@ -162,7 +232,7 @@ describe("voice capabilities route", () => {
     const { app } = makeRoutes({ rateLimited: true });
     const res = await app.request(`http://test/api/chats/${CHAT_ID}/voice/capabilities`);
     expect(res.status).toBe(429);
-    expect(await res.json()).toEqual({ error: "rate_limited" });
+    expect(await res.json()).toEqual({ error: { code: "session_limit_reached", retryable: true, recovery: "retry_connection" } });
   });
 });
 
@@ -185,7 +255,7 @@ describe("voice session create route", () => {
     const { app } = makeRoutes();
     const bad = await app.request(`http://test${CREATE_URL}`, jsonInit({ clientRequestId: "x" }));
     expect(bad.status).toBe(400);
-    expect(await bad.json()).toEqual({ error: "invalid_request" });
+    expect(await bad.json()).toEqual({ error: { code: "session_conflict", retryable: false, recovery: "none" } });
     const extra = await app.request(`http://test${CREATE_URL}`, jsonInit({ ...makeCreateRequest(), smuggle: true }));
     expect(extra.status).toBe(400);
   });
@@ -236,7 +306,7 @@ describe("voice session create route", () => {
     await createViaHttp(app);
     const conflict = await createViaHttp(app, { turnMode: "push_to_talk" });
     expect(conflict.res.status).toBe(409);
-    expect(conflict.body).toEqual({ error: "session_conflict" });
+    expect(conflict.body).toEqual({ error: { code: "session_conflict", retryable: false, recovery: "start_new_session" } });
   });
 
   it("rejects a second active session for the same chat", async () => {
@@ -244,12 +314,38 @@ describe("voice session create route", () => {
     await createViaHttp(app);
     const conflict = await createViaHttp(app, { clientRequestId: "req-other" });
     expect(conflict.res.status).toBe(409);
-    expect(conflict.body).toEqual({ error: "session_conflict" });
+    expect(conflict.body).toEqual({ error: { code: "session_conflict", retryable: false, recovery: "start_new_session" } });
   });
 });
 
 describe("voice session delete route", () => {
   beforeEach(() => resetFrameSeq());
+
+  it("cleanup bypasses create admission exhaustion and remains bounded after exact owner/session checks", async () => {
+    const rig = makeRig();
+    const access = new FakeChatAccess();
+    const app = createVoiceSessionRoutes({ engine: rig.engine, resolvePrincipal: () => PRINCIPAL,
+      chatAccess: access, capabilities: { capabilities: () => CAPABILITY }, checkRateLimit: () => false });
+    const created = rig.engine.createSession({ principal: PRINCIPAL, chatId: CHAT_ID, request: makeCreateRequest() });
+    access.denied = true; // deleted/revoked Chat must not strand owned media cleanup
+    const url = `http://test${CREATE_URL}/${created.session.sessionId}`;
+    const ended = await app.request(url, { method: "DELETE" });
+    expect(ended.status).toBe(200);
+    expect((await ended.json()).ended).toBe(true);
+    for (let i = 0; i < 11; i++) expect((await app.request(url, { method: "DELETE" })).status).toBe(200);
+    const capped = await app.request(url, { method: "DELETE" });
+    expect(capped.status).toBe(429);
+    expect(await capped.json()).toEqual({ error: { code: "session_limit_reached", retryable: true, recovery: "retry_connection" } });
+  });
+
+  it("reconnect access loss stops the exact owned session before returning unavailable", async () => {
+    const { app, rig, access } = makeRoutes();
+    const created = await createViaHttp(app);
+    access.denied = true;
+    const res = await app.request(`http://test${CREATE_URL}/${created.body.sessionId}/reconnect`, jsonInit({}));
+    expect(res.status).toBe(404);
+    expect(rig.engine.describeSession({ principal: PRINCIPAL, chatId: CHAT_ID, sessionId: String(created.body.sessionId) })?.status).toBe("ended");
+  });
 
   it("ends the session idempotently", async () => {
     const { app } = makeRoutes();
@@ -308,6 +404,12 @@ describe("voice session reconnect route", () => {
     );
     expect(res.status).toBe(200);
     const body = await res.json() as Record<string, unknown>;
+    expect(body).toMatchObject({
+      sessionId: created.body.sessionId,
+      chatId: CHAT_ID,
+      limits: created.body.limits,
+    });
+    expect(Object.keys(body).sort()).toEqual(["chatId", "limits", "sessionId", "transport"]);
     const transport = body.transport as Record<string, unknown>;
     expect(String(transport.ticket)).toMatch(/^vt_/);
     expect(transport.epoch).toBe(2);
@@ -327,7 +429,7 @@ describe("voice session reconnect route", () => {
       body: "{oops",
     });
     expect(bad.status).toBe(400);
-    expect(await bad.json()).toEqual({ error: "invalid_request" });
+    expect(await bad.json()).toEqual({ error: { code: "session_conflict", retryable: false, recovery: "none" } });
   });
 
   it("returns 404 for unknown sessions and 409 for ended sessions", async () => {
@@ -338,7 +440,7 @@ describe("voice session reconnect route", () => {
     await app.request(`http://test${CREATE_URL}/${String(created.body.sessionId)}`, { method: "DELETE" });
     const ended = await app.request(`http://test${CREATE_URL}/${String(created.body.sessionId)}/reconnect`, jsonInit({}));
     expect(ended.status).toBe(409);
-    expect(await ended.json()).toEqual({ error: "session_conflict" });
+    expect(await ended.json()).toEqual({ error: { code: "session_conflict", retryable: false, recovery: "start_new_session" } });
   });
 });
 
@@ -375,6 +477,7 @@ describe("voice websocket upgrade", () => {
       resolvePrincipal: () => PRINCIPAL,
       chatAccess: new FakeChatAccess(),
       capabilities: { capabilities: () => CAPABILITY },
+      canonicalDecision: () => DECISION,
     });
     const fakeUpgrade = ((createEvents: (c: Context) => WSEvents) => {
       return async (c: Context) => {

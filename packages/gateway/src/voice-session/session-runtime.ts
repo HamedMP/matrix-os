@@ -41,6 +41,7 @@ import type {
   VoiceClock,
   VoiceDeliveryPort,
   VoiceMemoryMode,
+  VoiceExecutionPolicy,
   VoiceRunControlPort,
   VoiceTimer,
 } from "./ports.js";
@@ -140,6 +141,7 @@ export interface VoiceSessionRecord {
   leaseConsumed: boolean;
   turnMode: VoiceTurnMode;
   memoryMode: VoiceMemoryMode;
+  executionPolicy?: VoiceExecutionPolicy;
   selection: CanonicalChatModelSelection;
   interactionMode: string;
   permissionMode: string;
@@ -216,7 +218,7 @@ export type ServerFramePayload = DistributiveOmit<VoiceServerFrame, keyof VoiceF
 export function enqueueSessionTask(
   session: VoiceSessionRecord,
   task: () => Promise<void> | void,
-  options: { bytes?: number; bypassLimit?: boolean } = {},
+  options: { bytes?: number; bypassLimit?: boolean; propagateError?: boolean } = {},
 ): Promise<void> {
   const bytes = options.bytes ?? 0;
   if (!options.bypassLimit
@@ -242,7 +244,7 @@ export function enqueueSessionTask(
       session.runtime.noteTaskError(error);
     },
   );
-  return session.mutation;
+  return options.propagateError ? run : session.mutation;
 }
 
 /** Evict-then-check bounded map admission. Returns false when still full. */
@@ -501,10 +503,10 @@ export class VoiceSessionRuntime {
         await this.host.finishInternal(s, frame.reason);
         return;
       case "response.interrupt":
-        await this.pipeline.onInterrupt(frame);
+        await this.stopSpeaking(frame);
         return;
       case "generation.cancel":
-        await this.pipeline.onGenerationCancel(frame);
+        await this.cancelGeneration(frame);
         return;
       case "action.cancel":
         await this.pipeline.onActionCancel(frame);
@@ -524,6 +526,43 @@ export class VoiceSessionRuntime {
         this.countStale(`unknown_${(exhaustive as { type?: string }).type ?? "frame"}`);
       }
     }
+  }
+
+  /** An audio terminal is not a canonical run terminal. A user can still
+   * explicitly cancel generation after Stop speaking without implying rollback. */
+  private async cancelGeneration(frame: Extract<VoiceClientFrame, { type: "generation.cancel" }>): Promise<void> {
+    const s = this.session;
+    const ledger = s.responses.get(frame.responseId);
+    if (!ledger || ledger.state === "open") {
+      await this.pipeline.onGenerationCancel(frame);
+      return;
+    }
+    if (!s.runIds.has(ledger.runId) || s.terminalRunIds.has(ledger.runId) || !this.host.runControl) return;
+    try {
+      await this.host.runControl.cancelRun({ chatId: s.chatId, runId: ledger.runId,
+        principalId: s.principalId, reason: "user" });
+    } catch (error: unknown) {
+      this.host.log("voice.run_control.cancel_failed", { sessionId: s.sessionId,
+        error: error instanceof Error ? error.name : "UnknownError" });
+      this.emitError("internal_failure", true);
+    }
+  }
+
+  /** Explicit Stop speaking affects media/delivery only. Capture barge-in
+   * continues to use the pipeline's canonical generation interruption path. */
+  private async stopSpeaking(frame: Extract<VoiceClientFrame, { type: "response.interrupt" }>): Promise<void> {
+    const s = this.session;
+    const ledger = s.responses.get(frame.responseId);
+    if (!ledger || ledger.state !== "open") {
+      this.countStale("interrupt_for_terminal_response");
+      return;
+    }
+    ledger.state = "interrupted";
+    const effectiveThroughMs = Math.min(frame.playedThroughMs, ledger.deliveredThroughMs);
+    s.adapter?.interrupt(ledger.responseId, effectiveThroughMs);
+    await this.recordTerminalDelivery(ledger, "interrupted", effectiveThroughMs);
+    this.emit({ type: "response.interrupted", responseId: ledger.responseId, effectiveThroughMs });
+    if (ACTIVE_SESSION_STATES.has(s.state)) this.setState("listening");
   }
 
   // ------------------------------------------------------------- delivery io
