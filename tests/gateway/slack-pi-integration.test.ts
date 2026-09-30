@@ -38,6 +38,7 @@ import { createCompanyBotSetup, startSlackCompany } from "../../packages/gateway
 import { createSlackBridgeRoutes } from "../../packages/gateway/src/startup/slack-bridge.js";
 import { createSlackOwnerClient } from "../../packages/gateway/src/startup/slack-owner-client.js";
 import { createSlackApp } from "../../packages/platform/src/slack/wiring.js";
+import type { SlackCompanyDatabase } from "../../packages/gateway/src/slack/database.js";
 import type { SlackDatabase } from "../../packages/platform/src/slack/database.js";
 import { encryptSlackToken } from "../../packages/platform/src/slack/security.js";
 import { createSlackHomeTransport } from "../../packages/platform/src/slack-home-transport.js";
@@ -83,7 +84,7 @@ function socketTransport(handleFrame: (frame: unknown) => Promise<unknown>): Soc
   return socket as unknown as Socket;
 }
 
-async function setup() {
+async function setup(revisionRace = false) {
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.setSystemTime(new Date("2026-09-30T12:00:00Z"));
   const fixture = await (process.env.MATRIX_TEST_POSTGRES_URL ? createRealBotStateDatabase() : createBotStateDatabase());
@@ -125,7 +126,14 @@ async function setup() {
   if (!company) throw new Error("Company Pi setup unavailable");
   cleanup.push(() => { company.close(); return Promise.resolve(); });
   const faux = fauxProvider({ models: [{ id: ROUTE.modelId, input: ["text"], contextWindow: ROUTE.contextWindow, maxTokens: ROUTE.maxOutputTokens }] });
-  faux.setResponses([fauxAssistantMessage(fauxText("Company thread initialized.")), fauxAssistantMessage(fauxText(ANSWER))]);
+  let releaseInitializer!: () => void;
+  const initializerResponse = new Promise<void>(resolve => { releaseInitializer = resolve; });
+  if (!revisionRace) releaseInitializer();
+  let releaseEmployee!: () => void;
+  const employeeResponse = new Promise<void>(resolve => { releaseEmployee = resolve; });
+  faux.setResponses([async () => { await initializerResponse; return fauxAssistantMessage(fauxText("Company thread initialized.")); }, async () => {
+    await employeeResponse; return fauxAssistantMessage(fauxText(ANSWER));
+  }]);
   const stream = vi.spyOn(faux.provider, "streamSimple");
   const specs: BotRunSpec[] = [];
   let frames: ((frame: unknown) => Promise<unknown>) | undefined;
@@ -150,6 +158,7 @@ async function setup() {
   const canonical = new CanonicalChatOrchestrator({ repository: chats, executionRoots: roots,
     adapters: new CanonicalChatProviderRegistry([bots!.adapter!]), catalog: { getCatalog: async () => { throw new Error("Private catalog must not be consulted"); } } });
   cleanup.push(() => canonical.close());
+  cleanup.push(async () => { releaseInitializer(); releaseEmployee(); });
   const readinessChecks: Array<{ boundDriverKind: string | null; result: string }> = [];
   const execution = new CollaborationChatExecutionAdapter({ repository: chats,
     commands: { cancel: async () => { throw new Error("unused"); }, retry: async () => { throw new Error("unused"); }, decideApproval: async () => { throw new Error("unused"); } },
@@ -161,7 +170,14 @@ async function setup() {
       readinessChecks.push({ boundDriverKind, result }); return result;
     },
     resolveCanonicalProviderAuthority: async () => ({ driverKind: "matrix_bot", selection: MATRIX_BOT_SELECTION }),
-    resolveResourceRevision: async (_scopeId, chatId) => (await db.selectFrom("chats").select("revision").where("id", "=", chatId).executeTakeFirstOrThrow()).revision,
+    resolveResourceRevision: async (_scopeId, chatId) => {
+      const revision = (await db.selectFrom("chats").select("revision").where("id", "=", chatId).executeTakeFirstOrThrow()).revision;
+      if (revisionRace && await db.selectFrom("chat_runs").select("id").where("chat_id", "=", chatId).executeTakeFirst()) {
+        revisionRace = false; releaseInitializer();
+        await vi.waitFor(async () => { expect(await db.selectFrom("chat_runs").select("status").where("chat_id", "=", chatId).execute()).toEqual([{ status: "completed" }]); });
+      }
+      return revision;
+    },
     resolveExecutionRoot: async context => {
       const chat = await db.selectFrom("chats").select("project_id").where("id", "=", context.resourceId).executeTakeFirstOrThrow();
       if (!chat.project_id) throw new Error("Project root required");
@@ -178,7 +194,7 @@ async function setup() {
     }) });
   const collaboration = { authority, executionPolicies: policies, ownerSource, runBindings: bindings, chatExecutionAdapter: execution,
     sharedAiCapability: { generation: 1, eligibility: { ...collaborationExecutionEligibility(), matrixBot: SHARED_MATRIX_BOT_ELIGIBILITY } } } as unknown as GatewayCollaborationRuntime;
-  return { fixture, db, home, chats, authority, roots, bots: bots!, canonical, collaboration, specs, stream, privateMemory, createRuntime, readinessChecks };
+  return { fixture, db, home, chats, authority, roots, bots: bots!, canonical, collaboration, specs, stream, privateMemory, createRuntime, readinessChecks, releaseEmployee };
 }
 
 async function setupSlack(s: Awaited<ReturnType<typeof setup>>, beforeMetadata?: () => Promise<void>) {
@@ -232,16 +248,31 @@ async function setupSlack(s: Awaited<ReturnType<typeof setup>>, beforeMetadata?:
   } };
 }
 
+/** Production drains every five seconds; the fixture must advance its frozen clock over a retry lease. */
+async function completeCompanyRuns(s: Awaited<ReturnType<typeof setup>>, service: { drain(): Promise<void> }) {
+  try {
+    await vi.waitFor(async () => {
+      await service.drain();
+      const inbox = await (s.db as unknown as Kysely<SlackCompanyDatabase>).selectFrom("slack_company_inbox")
+        .select(["state", "lease_until"]).executeTakeFirstOrThrow();
+      if (inbox.state === "pending" && inbox.lease_until) vi.setSystemTime(new Date(new Date(inbox.lease_until).getTime() + 1));
+      expect(inbox.state).toBe("accepted");
+    }, { timeout: 10_000 });
+    // Keep real Pi completion behind admission so retry drains cannot publish before the test's authority/evidence fence.
+    s.releaseEmployee();
+    await vi.waitFor(async () => {
+      expect(await s.db.selectFrom("chat_runs").select("status").execute()).toEqual([{ status: "completed" }, { status: "completed" }]);
+    }, { timeout: 10_000 });
+  } finally { s.releaseEmployee(); }
+}
+
 describe("Slack company Pi composition", () => {
   it("initializes an unbound company Chat as its owner, runs an employee through Pi, and publishes the exact committed output", async () => {
     const s = await setup();
     const { company, platform, posts, payload, signed, restart, platformDb } = await setupSlack(s);
     expect((await platform.routes.request("/webhooks/slack/events", signed())).status).toBe(200);
     expect(await s.db.selectFrom("chat_queued_turns").selectAll().execute()).toEqual([]);
-    await company.service!.drain();
-    await vi.waitFor(async () => {
-      expect(await s.db.selectFrom("chat_runs").select("status").execute()).toEqual([{ status: "completed" }, { status: "completed" }]);
-    }, { timeout: 10_000 });
+    await completeCompanyRuns(s, company.service!);
     await company.close();
     const restarted = await restart(); cleanup.push(() => restarted.close());
     await restarted.service!.drain();
@@ -278,10 +309,7 @@ describe("Slack company Pi composition", () => {
     const s = await setup();
     const { company, platform, posts, signed } = await setupSlack(s);
     expect((await platform.routes.request("/webhooks/slack/events", signed())).status).toBe(200);
-    await company.service!.drain();
-    await vi.waitFor(async () => {
-      expect(await s.db.selectFrom("chat_runs").select("status").execute()).toEqual([{ status: "completed" }, { status: "completed" }]);
-    }, { timeout: 10_000 });
+    await completeCompanyRuns(s, company.service!);
     await s.db.updateTable("collaboration_members").set({ status: "revoked" })
       .where("scope_id", "=", ids.scope).where("actor_id", "=", actors.editor).execute();
     await company.service!.drain();
@@ -296,10 +324,7 @@ describe("Slack company Pi composition", () => {
       if (erase) { erase = false; await company.brain.erase(ids.scope, actors.owner); }
     });
     expect((await platform.routes.request("/webhooks/slack/events", signed())).status).toBe(200);
-    await company.service!.drain();
-    await vi.waitFor(async () => {
-      expect(await s.db.selectFrom("chat_runs").select("status").execute()).toEqual([{ status: "completed" }, { status: "completed" }]);
-    }, { timeout: 10_000 });
+    await completeCompanyRuns(s, company.service!);
     erase = true;
     await company.service!.drain();
     expect(posts).not.toHaveBeenCalled();
@@ -307,7 +332,7 @@ describe("Slack company Pi composition", () => {
   }, 20_000);
 
   it("binds publication authorization to the exact sending receipt, actor, scope and output digest", async () => {
-    const s = await setup();
+    const s = await setup(true);
     let inspect = false;
     const native = await setupSlack(s, async () => {
       if (!inspect) return; inspect = false;
@@ -321,10 +346,8 @@ describe("Slack company Pi composition", () => {
       }
     });
     expect((await native.platform.routes.request("/webhooks/slack/events", native.signed())).status).toBe(200);
-    await native.company.service!.drain();
-    await vi.waitFor(async () => {
-      expect(await s.db.selectFrom("chat_runs").select("status").execute()).toEqual([{ status: "completed" }, { status: "completed" }]);
-    }, { timeout: 10_000 });
+    await completeCompanyRuns(s, native.company.service!);
+    expect((await (s.db as unknown as Kysely<SlackCompanyDatabase>).selectFrom("slack_company_inbox").select("attempts").executeTakeFirstOrThrow()).attempts).toBe(2);
     inspect = true;
     await native.company.service!.drain();
     expect(inspect).toBe(false); expect(native.posts).toHaveBeenCalledOnce();
