@@ -1,3 +1,4 @@
+import { verifyPreviewOwnerControl } from "./preview-owner-auth.js";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type { Context, MiddlewareHandler } from "hono";
 import {
@@ -419,6 +420,18 @@ export function authMiddleware(
         }
         return unauthorized(c);
       }
+    }
+
+    // Preview control is opt-in, exact-runtime and exact-owner. A scoped
+    // credential cannot authenticate other actors or query-only callers.
+    const previewOwner = authHeader?.startsWith("Bearer ")
+      ? verifyPreviewOwnerControl({ bearer: presentedToken,
+          actorId: c.req.header("x-platform-user-id"), proof: c.req.header("x-platform-verified") })
+      : undefined;
+    if (previewOwner) {
+      setPlatformVerifiedPrincipal(c, previewOwner);
+      setTerminalAccess(previewOwner);
+      return nextWithReady(c, next);
     }
 
     const legacyHeaderOk =
