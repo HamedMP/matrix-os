@@ -1,3 +1,4 @@
+import { JevInboxBatchRepository } from "./inbox-batch-store.js";
 import type { Kysely } from "kysely";
 import type { MatrixFundedCredentialProvider } from "../funded-ai-credential-manager.js";
 import { createOwnedJevMaintenance, type JevMaintenancePoolFactory } from "./owned-maintenance.js";
@@ -18,6 +19,7 @@ export async function initializeJevRuntime(options: {
 }): Promise<{
   service: ReturnType<typeof createJevService> | null;
   cleanup: ReturnType<typeof startJevResultCleanup>;
+  batchStore: JevInboxBatchRepository;
 } | null> {
   if (!options.db) return null;
   if (!options.databaseUrl && !options.maintenanceRepositoryForTests) {
@@ -28,6 +30,8 @@ export async function initializeJevRuntime(options: {
   // Jev route is disabled after earlier use. This wrapper never owns the pool.
   const repository = new JevEvaluationRepository(options.db, { now: options.now });
   await repository.bootstrap();
+  const batchStore = new JevInboxBatchRepository(options.db);
+  await batchStore.bootstrap();
   const service = options.fundedRuntimeEnabled && options.credentialProvider
     ? createJevService({ store: repository, credentialProvider: options.credentialProvider })
     : null;
@@ -53,5 +57,5 @@ export async function initializeJevRuntime(options: {
       await ownedMaintenance?.close();
     },
   };
-  return { service, cleanup };
+  return { service, cleanup, batchStore };
 }

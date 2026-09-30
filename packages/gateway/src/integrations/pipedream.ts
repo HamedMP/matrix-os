@@ -1,5 +1,6 @@
 import { collectPipedreamPages } from "./pipedream-pagination.js";
 import { createBoundedPipedreamGet } from "./pipedream-bounded-get.js";
+import { createBoundedPipedreamLabels } from "./pipedream-bounded-labels.js";
 
 export interface PipedreamConfig {
   clientId: string;
@@ -22,6 +23,7 @@ export interface RunActionResult {
 export interface PipedreamConnectClient {
   /** Available only to the bound recipe read path; ordinary integration calls stay unchanged. */
   boundedGmailGet?: ReturnType<typeof createBoundedPipedreamGet>;
+  boundedGmailLabels?: ReturnType<typeof createBoundedPipedreamLabels>;
   createConnectToken(
     externalUserId: string,
     redirects?: {
@@ -131,6 +133,8 @@ export async function createPipedreamClient(
   });
 
   return {
+    boundedGmailLabels: createBoundedPipedreamLabels({ projectId: config.projectId,
+      environment: normalizePipedreamProjectEnvironment(config.environment), getAccessToken: () => sdk.rawAccessToken }),
     boundedGmailGet: createBoundedPipedreamGet({
       projectId: config.projectId,
       environment: normalizePipedreamProjectEnvironment(config.environment),

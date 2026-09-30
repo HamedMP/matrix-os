@@ -89,8 +89,8 @@ describe("Codex provider contract checker", () => {
     }
   });
 
-  it("qualifies exact published Codex 0.159.0 bytes on both supported targets", () => {
-    const version = "0.159.0";
+  it("qualifies exact published Codex 0.159.2 bytes on both supported targets", () => {
+    const version = "0.159.2";
     const execSchemaBytes = readFileSync(new URL(
       "../fixtures/codex-0158/exec-events.rs",
       import.meta.url,
@@ -103,8 +103,8 @@ describe("Codex provider contract checker", () => {
 
     // The checked-in fixture is the tagged source plus published CLI-generated
     // schema, not a hand-built approximation of the methods we consume.
-    // Exact 0.159.0 exec source is identical to 0.157.1; the app-server
-    // schema adds a denial reason and documents error metadata on interrupted turns.
+    // The official 0.159.2 exec source matches 0.157.1, while its published
+    // app-server schema matches 0.159.0 on both supported targets.
     expect(digest(execSchemaBytes)).toBe(
       "dafa872d7e86a099e56e28a329dcb9c03db90ed768c3b88cca8c91d46dc1d0e5",
     );
@@ -145,8 +145,8 @@ describe("Codex provider contract checker", () => {
     })).toThrow("Codex 0.158.1 is not verified");
   });
 
-  it("retains reviewed Codex schemas through 0.159.0", () => {
-    expect(contract.latestVerifiedVersion).toBe("0.159.0");
+  it("retains reviewed Codex schemas through 0.159.2", () => {
+    expect(contract.latestVerifiedVersion).toBe("0.159.2");
     expect(contract.verifiedVersions["0.156.0"]).toEqual({
       schemaSha256: "dafa872d7e86a099e56e28a329dcb9c03db90ed768c3b88cca8c91d46dc1d0e5",
     });
@@ -157,13 +157,17 @@ describe("Codex provider contract checker", () => {
     expect(contract.verifiedVersions["0.157.1"]).toEqual(contract.verifiedVersions["0.157.0"]);
     expect(contract.verifiedVersions["0.158.0"]).toEqual(contract.verifiedVersions["0.157.1"]);
     expect(contract.verifiedVersions["0.159.0"]).toEqual(contract.verifiedVersions["0.158.0"]);
+    expect(contract.verifiedVersions["0.159.2"]).toEqual(contract.verifiedVersions["0.159.0"]);
     expect(appServerContract.verifiedVersions["0.159.0"]).toEqual({
       schemaSha256ByTarget: {
         "darwin-arm64": "7243ba241962af92ca60581f1a81808ebda4212a800f8b205f54703bcfd508c5",
         "linux-x64": "7243ba241962af92ca60581f1a81808ebda4212a800f8b205f54703bcfd508c5",
       },
     });
-    expect(appServerContract.latestVerifiedVersion).toBe("0.159.0");
+    expect(appServerContract.verifiedVersions["0.159.2"]).toEqual(
+      appServerContract.verifiedVersions["0.159.0"],
+    );
+    expect(appServerContract.latestVerifiedVersion).toBe("0.159.2");
     expect(appServerContract.verifiedVersions["0.156.0"]).toEqual({
       schemaSha256ByTarget: {
         "darwin-arm64": "655adafa0ccea3d84f30bcbdc74e201fa14511c51e08d0cd024a0280daa8bc60",

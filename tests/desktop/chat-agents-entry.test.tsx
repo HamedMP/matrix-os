@@ -29,6 +29,20 @@ function stampJevCreate(client: ReturnType<typeof clientFixture>, expectedEmail:
 afterEach(cleanup);
 
 describe("shared Agents entry", () => {
+  it("offers only the configured Hermes model when editing a Jev bot", async () => {
+    const client = clientFixture();
+    client.list.mockResolvedValue({ enabled: true, agents: [{ ...saved, recipe: {
+      skills: ["matrix-jev-email-triage", "matrix-integrations"], integrations: [{ service: "gmail", accountLabel: "Work" }],
+      output: "Read-only proposals",
+    } }] });
+    render(<ChatAgentsEntry client={client} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Agents" }));
+    fireEvent.click(await screen.findByRole("button", { name: `Edit ${saved.name}` }));
+    const model = screen.getByRole("combobox", { name: "Model" });
+    expect((model as HTMLSelectElement).options).toHaveLength(1);
+    expect((model as HTMLSelectElement).selectedOptions[0]!.textContent).toContain("Hermes");
+    expect((model as HTMLSelectElement).value).toBe(JSON.stringify([saved.selection.instanceId, saved.selection.model]));
+  });
   it("disables Agent creation and launch when the host has no Chat handoff", async () => {
     const client = clientFixture();
     client.list.mockResolvedValue({ enabled: true, agents: [saved] });
@@ -180,7 +194,7 @@ describe("shared Agents entry", () => {
     render(<ChatAgentsWorkspace><ChatAgentsRailSection client={client} onStartChat={vi.fn()} />
       <ChatAgentsContent client={client} scopeKey="chat_one"><p>Chat canvas</p></ChatAgentsContent></ChatAgentsWorkspace>);
     fireEvent.click(await screen.findByRole("button", { name: "Browse agent recipes" }));
-    expect(await screen.findByText(/requires the selected Hermes owner API-key route and funded Jev readiness/i)).toBeTruthy();
+    expect(await screen.findByText(/uses your configured Hermes account/i)).toBeTruthy();
   });
 
   it("accepts server-stamped readback when the account email changes after the panel loaded", async () => {

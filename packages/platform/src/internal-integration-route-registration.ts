@@ -28,6 +28,7 @@ export function registerInternalIntegrationRoutes(app: Hono<any>, options: {
     Variables: {
       internalContainerHandle: string;
       internalContainerClerkUserId: string;
+      internalSignedOwnerDelegation: boolean;
     };
   }>();
   const integrationGuard = createInternalIntegrationGuard();
@@ -88,6 +89,7 @@ export function registerInternalIntegrationRoutes(app: Hono<any>, options: {
           return;
         }
         actorId = delegatedId;
+        c.set('internalSignedOwnerDelegation', true);
       }
 
       c.set('internalContainerHandle', handle);

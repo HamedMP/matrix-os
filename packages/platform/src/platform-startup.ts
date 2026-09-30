@@ -152,11 +152,13 @@ interface GatewayPipedreamModule {
 }
 
 interface GatewayIntegrationRoutesModule {
+  authorizeInternalJevLabels(c: Context): Promise<boolean>;
   createIntegrationRoutes(opts: {
     db: GatewayPlatformDb;
     pipedream: unknown;
     webhookSecret: string;
     resolveUserId: (c: Context) => Promise<string | null>;
+    authorizeJevLabelCall?: (c: Context) => Promise<boolean>;
     mcpPresetBroker?: unknown;
   }): Hono;
 }
@@ -489,7 +491,7 @@ async function startPlatformServerWithCleanup(
   const integrationConfig = resolvePlatformIntegrationConfig(process.env, runtimeConfig.platformDatabaseUrl);
   if (integrationConfig) {
     const [
-      { createIntegrationRoutes },
+      { createIntegrationRoutes, authorizeInternalJevLabels },
       { createPipedreamClient },
       { createPlatformDb: createGatewayPlatformDb },
     ] = await Promise.all([
@@ -545,6 +547,7 @@ async function startPlatformServerWithCleanup(
       db: trustedPlatformDb,
       pipedream,
       webhookSecret,
+      authorizeJevLabelCall: authorizeInternalJevLabels,
       resolveUserId: async (c) => {
         const clerkUserId = c.get('internalContainerClerkUserId') as string | undefined;
         const handle = c.get('internalContainerHandle') as string | undefined;

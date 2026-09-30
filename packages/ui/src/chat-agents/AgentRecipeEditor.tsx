@@ -2,6 +2,7 @@ import { useId } from "react";
 import type { ChatAgentRecipe, ChatAgentRecipeCatalog } from "@matrix-os/contracts";
 import { AgentRecipeIntegrations } from "./AgentRecipeIntegrations.js";
 import { AgentRecipeSkills } from "./AgentRecipeSkills.js";
+import { JevLabelPermission } from "./JevLabelPermission.js";
 import type { ChatAgentIntegrationConnection } from "./client.js";
 import { chatAgentButtonClass, chatAgentInputClass, chatAgentMutedStyle } from "./theme.js";
 
@@ -73,7 +74,11 @@ export function AgentRecipeEditor({ recipe, hadRecipe, catalog, connections, loa
       unavailable={Boolean(error)} onChange={(skills) => onChange({ ...recipe, skills })} onRefresh={onRetry} />
 
     <AgentRecipeIntegrations recipe={recipe} catalog={catalog} connections={connections} connectionError={connectionError}
-      pending={pending} onChange={onChange} />
+      pending={pending} onChange={next => onChange(next && JSON.stringify(next.integrations) !== JSON.stringify(recipe.integrations)
+        ? { ...next, jevInboxLabeling: false } : next)} />
+
+    {recipe.skills.includes("matrix-jev-email-triage") ? <JevLabelPermission enabled={recipe.jevInboxLabeling === true}
+      disabled={pending} onChange={jevInboxLabeling => onChange({ ...recipe, jevInboxLabeling })} /> : null}
 
     <label className="grid gap-1 text-sm" htmlFor={`${ids}-output`}>Expected output
       <textarea id={`${ids}-output`} className={`${input} min-h-24 resize-y`} value={recipe.output} maxLength={1000}

@@ -68,6 +68,7 @@ import { useCreateAppRequest } from "../../stores/create-app-request";
 import { useChatComposerDrafts } from "./use-chat-composer-drafts";
 import { chatAgentComposerDraft } from "./chat-agent-draft";
 import { QueuedTurnEditContext } from "./QueuedTurnEditContext";
+import { useChatArtifactActions } from "./use-chat-artifact-actions";
 
 const EMPTY_PROVIDER_SUMMARIES: AgentProviderSummary[] = [];
 
@@ -331,6 +332,7 @@ export function CanonicalChatWorkspace({
     streamedMessageIds: controller.streamedMessageIds,
   }) : [];
   const projectedSharedChat = sharedChatMembershipFromProjection(controller.detail?.record.chat.collaboration);
+  const artifactActions = useChatArtifactActions(api, controller.detail, projects);
 
   useEffect(() => {
     if (!editingQueuedTurn || !controller.detail) return;
@@ -879,6 +881,7 @@ export function CanonicalChatWorkspace({
             <ChatContextMenu chatId={controller.detail.record.chat.id}>
             <div className="contents">
             <ConversationTranscript turns={transcript} callbacks={{
+              ...artifactActions,
               copyText,
               openAttachment: (rawPath) => {
                 const path = normalizeDesktopEditorPath(rawPath);

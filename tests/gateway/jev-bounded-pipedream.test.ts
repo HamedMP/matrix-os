@@ -85,3 +85,9 @@ describe("bounded Jev Pipedream transport", () => {
     } finally { vi.useRealTimers(); }
   });
 });
+it("follows a bounded opaque cursor while retaining the fixed Inbox-only target",async()=>{
+ const f=fixture();await f.get({...identity,kind:"threads",pageToken:"next+/opaque=="});
+ const target=new URL(Buffer.from(new URL(f.fetcher.mock.calls[0]![0]).pathname.split("/").at(-1)!,"base64url").toString());
+ expect(target.searchParams.get("pageToken")).toBe("next+/opaque==");expect(target.searchParams.get("labelIds")).toBe("INBOX");
+ await expect(f.get({...identity,kind:"threads",pageToken:"x".repeat(4097)})).rejects.toThrow();
+});
