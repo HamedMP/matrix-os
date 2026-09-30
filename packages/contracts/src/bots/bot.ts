@@ -17,6 +17,7 @@ export const BotRecipeSummarySchema = BotRecipeRefSchema.extend({
 export const BotRecipeListResponseSchema = z.object({
   recipes: z.array(BotRecipeSummarySchema).max(128),
 }).strict();
+export const BotChatBindingResponseSchema = z.object({ chatId: CanonicalChatIdSchema.nullable() }).strict();
 export const BotDirectChatResponseSchema = z.object({ agentId: BotIdSchema.nullable() }).strict();
 
 /** The server chooses bot, chat, workspace, avatar, and runtime; the client supplies intent only. */

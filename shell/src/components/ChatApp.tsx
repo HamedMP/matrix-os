@@ -406,7 +406,7 @@ function ChatAppContent({
           </Button>
         </div>
 
-        <div className="px-2 pb-2"><ChatAgentsRailSection client={agentClient} onStartChat={startAgentChat} onOpen={() => { if (mobile) setSidebarOpen(false); }} onSetup={() => setSetupOpen(true)} /></div>
+        <div className="px-2 pb-2"><ChatAgentsRailSection client={agentClient} onOpenBotChat={onSwitchConversation} onStartChat={startAgentChat} onOpen={() => { if (mobile) setSidebarOpen(false); }} onSetup={() => setSetupOpen(true)} /></div>
         {onOpenSharedHome ? <SharedWithMeNav active={collaborationView?.kind === "home"} onOpen={() => {
           onOpenSharedHome();
           if (mobile) setSidebarOpen(false);

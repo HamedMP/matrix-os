@@ -1,5 +1,5 @@
 import {
-  BotAuthorityViewSchema, BotDirectChatResponseSchema, BotGrantIdSchema, BotInteractionIdSchema, BotInteractionSchema,
+  BotChatBindingResponseSchema, BotAuthorityViewSchema, BotDirectChatResponseSchema, BotGrantIdSchema, BotInteractionIdSchema, BotInteractionSchema,
   BotMemoryItemIdSchema, BotMemoryMutationRequestSchema, BotMemoryMutationResponseSchema,
   BotRecipeListResponseSchema, BotTaskListResponseSchema, CanonicalChatIdSchema, ChatAgentIdSchema,
   InstantiateBotRequestSchema, InstantiateBotResponseSchema, ResolveBotInteractionRequestSchema,
@@ -38,6 +38,7 @@ function safeError(error: unknown): BotClientError {
 }
 
 export interface BotClient {
+  directChat(agentId: string): Promise<string | null>;
   directBot(chatId: string): Promise<string | null>;
   recipes(): Promise<BotRecipeSummary[]>;
   instantiate(input: InstantiateBotRequest): Promise<InstantiateBotResponse>;
@@ -61,6 +62,7 @@ export function createBotClient(request: BotRequest): BotClient {
   const agentPath = (agentId: string) => `/api/chat-agents/${encodeURIComponent(ChatAgentIdSchema.parse(agentId))}`;
   const chatPath = (chatId: string) => `/api/chats/${encodeURIComponent(CanonicalChatIdSchema.parse(chatId))}`;
   return {
+    directChat: async (agentId) => (await call(`${agentPath(agentId)}/direct-chat`, "GET", BotChatBindingResponseSchema)).chatId,
     directBot: async (chatId) => (await call(`${chatPath(chatId)}/bot`, "GET", BotDirectChatResponseSchema)).agentId,
     recipes: async () => (await call("/api/chat-agents/bot-recipes", "GET", BotRecipeListResponseSchema)).recipes,
     instantiate: (input) => call("/api/chat-agents/instantiate", "POST", InstantiateBotResponseSchema, InstantiateBotRequestSchema.parse(input)),

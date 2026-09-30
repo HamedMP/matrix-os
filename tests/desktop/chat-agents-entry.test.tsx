@@ -74,6 +74,31 @@ describe("shared Agents entry", () => {
     fireEvent.click(await screen.findByRole("button", { name: `Edit ${saved.name}` }));
     expect((screen.getByRole("textbox", { name: "Instructions" }) as HTMLTextAreaElement).value).toBe(saved.instructions);
   });
+  it("shows recipe bots as Pi with server routing and saves without a coding selection", async () => {
+    const client = clientFixture();
+    const bot = { ...saved, recipeRef: { recipeId: "writing-bot", version: "1" },
+      recipe: { skills: ["matrix-integrations"], integrations: [], output: "Legacy Agent recipe" } };
+    client.recipeCatalog.mockResolvedValue({ ...recipeCatalog, skills: [] });
+    client.list.mockResolvedValue({ enabled: true, agents: [bot] });
+    render(<ChatAgentsWorkspace><ChatAgentsRailSection client={client} onStartChat={vi.fn()} />
+      <ChatAgentsContent client={client} scopeKey="chat_one"><p>Current Chat</p></ChatAgentsContent></ChatAgentsWorkspace>);
+    fireEvent.click(await screen.findByRole("button", { name: "Manage agents" }));
+    fireEvent.click(await screen.findByRole("button", { name: `Edit ${saved.name}` }));
+    expect(screen.getByText("Pi")).toBeTruthy();
+    expect(screen.getByText("Automatic · managed by this computer")).toBeTruthy();
+    expect(screen.queryByRole("combobox", { name: "Model" })).toBeNull();
+    expect(screen.queryByText(/Set up Codex or Hermes/)).toBeNull();
+    expect(screen.queryByText(/Agent requests use Full access/)).toBeNull();
+    expect(screen.queryByRole("button", { name: "Add recipe" })).toBeNull();
+    fireEvent.change(screen.getByRole("textbox", { name: "Name" }), { target: { value: "My writing bot" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(client.update).toHaveBeenCalledWith(saved.id,
+      expect.objectContaining({ name: "My writing bot", baseRevision: saved.revision })));
+    expect(client.update.mock.calls[0]![1]).not.toHaveProperty("selection");
+    expect(client.update.mock.calls[0]![1]).not.toHaveProperty("recipe");
+    expect(await screen.findByText("Saved. Open this bot’s Chat from the sidebar to send a request.")).toBeTruthy();
+  });
+
   it("presents Agents as a collapsible rail section with Recipes first and conversational creation", async () => {
     const client = clientFixture();
     client.list.mockResolvedValue({ enabled: true, agents: [saved] });
@@ -583,7 +608,6 @@ describe("shared Agents entry", () => {
     fireEvent.change(screen.getByRole("textbox", { name: "Description Optional" }), { target: { value: "Updated description" } });
     fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
     await waitFor(() => expect(client.update).toHaveBeenCalledTimes(1));
-    expect(client.update.mock.calls[0]![1]).not.toHaveProperty("recipe");
   });
   it("sends recipe null only when removing an existing saved recipe", async () => {
     const client = clientFixture();

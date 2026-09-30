@@ -196,6 +196,12 @@ export async function startBots(options: {
     await sweeping;
   };
   const botChats: BotChatLookup = {
+    async directChat(owner, agentId) {
+      if (owner.type !== "personal") return null;
+      const agent = await options.agents.get(owner, agentId);
+      if (!agent?.recipeRef || agent.archived) return null;
+      return await bindings.directChatId({ ownerId: owner.ownerId, botId: agentId }) ?? null;
+    },
     async directBot(owner, chatId) {
       if (owner.type !== "personal") return null;
       const bound = await bindings.forChat({ ownerId: owner.ownerId, chatId });

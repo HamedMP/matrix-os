@@ -249,8 +249,9 @@ export function ChatAgentsPanel({ client, view = "library", onClose, onSetup, on
   };
   const save = async () => {
     const draft = state.draft;
+    const recipeBot = state.editing !== null && state.editing !== "new" && Boolean(state.editing.recipeRef);
     if (state.pending || !draft?.selection || !draft.name.trim() || !draft.instructions.trim()
-      || (draft.recipe !== undefined && draft.recipe !== null && (!ChatAgentRecipeSchema.safeParse(draft.recipe).success
+      || (!recipeBot && draft.recipe !== undefined && draft.recipe !== null && (!ChatAgentRecipeSchema.safeParse(draft.recipe).success
         || !recipeSkillsFit(draft.recipe.skills, state.recipeCatalog?.skills ?? [])))) return;
     patch({ pending: true, error: "" });
     try {
@@ -258,11 +259,12 @@ export function ChatAgentsPanel({ client, view = "library", onClose, onSetup, on
       const saved = state.editing === "new"
         ? await client.create({ ...fields, selection: draft.selection, clientRequestId: draft.requestId, ...(draft.recipe ? { recipe: draft.recipe } : {}) })
         : await client.update(state.editing!.id, { ...fields,
-          ...(JSON.stringify(draft.selection) === JSON.stringify(state.editing!.selection) ? {} : { selection: draft.selection }), baseRevision: state.editing!.revision,
-          ...(draft.recipe === undefined ? {} : { recipe: draft.recipe }) });
+          ...(recipeBot || JSON.stringify(draft.selection) === JSON.stringify(state.editing!.selection) ? {} : { selection: draft.selection }), baseRevision: state.editing!.revision,
+          ...(recipeBot || draft.recipe === undefined ? {} : { recipe: draft.recipe }) });
       setState((current) => ({ ...current, pending: false, editing: null, draft: null,
         agents: [...current.agents.filter((agent) => agent.id !== saved.id), saved],
-        notice: `Saved. Type @${saved.name} in a Chat to give this Agent a request.`,
+        notice: recipeBot ? "Saved. Open this bot’s Chat from the sidebar to send a request."
+          : `Saved. Type @${saved.name} in a Chat to give this Agent a request.`,
       }));
     } catch (failure: unknown) {
       console.warn("[chat-agents] Save failed:", failure instanceof Error ? failure.name : "UnknownError");

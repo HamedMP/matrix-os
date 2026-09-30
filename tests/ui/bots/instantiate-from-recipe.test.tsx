@@ -75,3 +75,12 @@ describe("bot browser client", () => {
     expect(request).toHaveBeenCalledWith("/api/chats/chat_0123456789abcdef/bot", "GET", undefined);
   });
 });
+
+it("resolves a bot's owner-bound chat with validated transport responses", async () => {
+  const request = vi.fn(async () => ({ chatId: "chat_0123456789abcdef" }));
+  const client = createBotClient(request);
+  expect(await client.directChat("bot_0123456789abcdef")).toBe("chat_0123456789abcdef");
+  expect(request).toHaveBeenCalledWith("/api/chat-agents/bot_0123456789abcdef/direct-chat", "GET", undefined);
+  await expect(createBotClient(async () => ({ chatId: "invalid!" })).directChat("bot_0123456789abcdef"))
+    .rejects.toThrow("Bots are temporarily unavailable.");
+});
