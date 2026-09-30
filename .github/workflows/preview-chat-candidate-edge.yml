@@ -97,9 +97,10 @@ jobs:
           raw_selector="$(mktemp)"
           wrangler_secrets="$(mktemp)"
           response_headers="$(mktemp)"
-          cleanup() { rm -f "$raw_selector" "$wrangler_secrets" "$response_headers"; }
+          response_body="$(mktemp)"
+          cleanup() { rm -f "$raw_selector" "$wrangler_secrets" "$response_headers" "$response_body"; }
           trap cleanup EXIT
-          chmod 600 "$raw_selector" "$wrangler_secrets" "$response_headers"
+          chmod 600 "$raw_selector" "$wrangler_secrets" "$response_headers" "$response_body"
           gcloud secrets versions access latest \
             --secret pr2045-preview-chat-candidate \
             --project "$GCP_PROJECT_ID" \
@@ -174,13 +175,19 @@ jobs:
           )"
           status_code="$(curl --silent --show-error --max-time 20 \
             --request POST --header 'content-type: application/json' --data '{}' \
-            --dump-header "$response_headers" --output /dev/null --write-out '%{http_code}' \
+            --dump-header "$response_headers" --output "$response_body" --write-out '%{http_code}' \
             "https://app.matrix-os.com/vm/pr-2045/~runtime/pr-2045/api/chats/${chat_id}/turns")"
           if ! grep -Eqi '^x-matrix-preview-platform-route: candidate[[:space:]]*$' "$response_headers"; then
             echo 'The selected Preview Chat request did not reach the tagged Platform candidate.' >&2
             exit 1
           fi
-          if [ "$status_code" != "401" ] && [ "$status_code" != "403" ]; then
+          unauth_login=false
+          if [ "$status_code" = "200" ] &&
+            grep -Eqi '^content-type: text/html' "$response_headers" &&
+            grep -Fq 'Sign in to continue to your Matrix computer' "$response_body"; then
+            unauth_login=true
+          fi
+          if [ "$status_code" != "401" ] && [ "$status_code" != "403" ] && [ "$unauth_login" != true ]; then
             echo "The candidate did not reject an unauthenticated Chat turn (HTTP ${status_code})." >&2
             exit 1
           fi

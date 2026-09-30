@@ -23,7 +23,10 @@ describe("one-chat Platform candidate Edge deployment", () => {
     expect(source).toContain("--secrets-file");
     expect(source).toContain("x-matrix-preview-platform-route: candidate");
     expect(source).toContain('status_code="$(curl');
-    expect(source).toContain('if [ "$status_code" != "401" ] && [ "$status_code" != "403" ]; then');
+    expect(source).toContain('if [ "$status_code" != "401" ] && [ "$status_code" != "403" ] && [ "$unauth_login" != true ]; then');
+    expect(source).toContain('"$status_code" = "200"');
+    expect(source).toContain('^content-type: text/html');
+    expect(source).toContain('Sign in to continue to your Matrix computer');
     expect(source).toContain("trap cleanup EXIT");
     expect(source).not.toMatch(/echo\s+.*(?:CLOUDFLARE_API_TOKEN|chatId|candidateOrigin)/);
   });
