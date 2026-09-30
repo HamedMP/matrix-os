@@ -81,7 +81,7 @@ describe('start-platform-cloud-run.sh', () => {
   it('installs the shared UI dependency graph before building the auth shell', () => {
     const dockerfile = readFileSync(join(process.cwd(), 'Dockerfile.platform'), 'utf8');
     const uiPackage = JSON.parse(readFileSync(join(process.cwd(), 'packages/ui/package.json'), 'utf8'));
-    expect(uiPackage.dependencies['@noble/hashes']).toBe('1.8.0');
+    expect(uiPackage.dependencies['@noble/hashes']).toBe('2.3.0');
     const manifestCopy = dockerfile.indexOf('COPY packages/ui/package.json packages/ui/package.json');
     expect(manifestCopy).toBeGreaterThanOrEqual(0);
     expect(manifestCopy).toBeLessThan(dockerfile.indexOf('RUN pnpm install'));
