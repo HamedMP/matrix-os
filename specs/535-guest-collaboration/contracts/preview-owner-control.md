@@ -69,3 +69,23 @@ and version suffix to match the requested head. The archive is removed on
 success or failure. A stale latest matching deployment fails closed. Existing
 route validation, connection-time PR recheck, platform image provenance,
 protected environment approval and exact owner/machine checks still apply.
+
+
+## Manual runtime provenance
+
+A connection selects artifacts for the requested PR, rather than a shared window
+of unrelated dispatches. Each candidate must belong to a completed successful
+same-repository `main` dispatch of `preview-vps.yml`. The latest qualifying
+deployment must prove its full source commit; a stale proof fails closed.
+
+Both built and pinned deployments publish a small installed-provenance artifact
+after the existing health and stability checks. A bounded, symlink-safe read of
+`/opt/matrix/release.json` and the active app marker must agree on the requested
+version, full PR commit, preview kind and `none` channel. No owner data or
+credentials are included. The artifact is read without archive extraction.
+
+Older built deployments retain the bounded bundle-metadata fallback. An older
+pinned deployment without either provenance or a bundle must be rerun using the
+updated trusted workflow; its short version suffix alone cannot prove the full
+commit. Artifact search is bounded to five pages of 100 PR-specific candidates,
+and downloads retain size/time bounds and explicit cleanup.
