@@ -10,7 +10,7 @@ import {
   CollaborationSharedChatMessageSchema,
   type CanonicalChatMessagePart,
 } from "@matrix-os/contracts";
-import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -50,6 +50,7 @@ export function ChatCollaboration({
   onChatMetadata,
   headerContainer,
   layers,
+  emptyStateAction,
 }: {
   view: ChatCollaborationView;
   api: CollaborationApi;
@@ -63,10 +64,12 @@ export function ChatCollaboration({
   onChatMetadata?: (metadata: { title: string; role: "owner" | "editor" | "viewer" }) => void;
   headerContainer?: HTMLElement | null;
   layers?: CollaborationOverlayLayers;
+  /** Optional call to action inside the empty Shared with me state. */
+  emptyStateAction?: ReactNode;
 }) {
   if (view.kind === "home") {
     return <CollaborationHome api={api} openInvitation={openInvitation} openChat={openChat}
-      openTerminal={openTerminal} openProject={openProject} />;
+      openTerminal={openTerminal} openProject={openProject} emptyStateAction={emptyStateAction} />;
   }
   if (view.kind === "invitation") {
     return <InvitationView api={api} invitationId={view.invitationId} openChat={openChat}
@@ -81,12 +84,13 @@ export function ChatCollaboration({
     scopeId={view.scopeId} storage={storage} onMetadata={onChatMetadata} headerContainer={headerContainer} layers={layers} />;
 }
 
-function CollaborationHome({ api, openInvitation, openChat, openTerminal, openProject }: {
+function CollaborationHome({ api, openInvitation, openChat, openTerminal, openProject, emptyStateAction }: {
   api: CollaborationApi;
   openInvitation: (invitationId: string) => void;
   openChat: (scopeId: string, chatId?: string, title?: string) => void;
   openTerminal: (scopeId: string) => void;
   openProject: (scopeId: string) => void;
+  emptyStateAction?: ReactNode;
 }) {
   const [items, setItems] = useState<DiscoveryItem[]>([]);
   const [inboxCursor, setInboxCursor] = useState<string | null>(null);
@@ -215,6 +219,7 @@ function CollaborationHome({ api, openInvitation, openChat, openTerminal, openPr
       <div aria-hidden className="text-3xl">◇</div>
       <h2 className="mt-3 text-lg font-medium">Nothing shared yet</h2>
       <p className="mt-1 text-sm" style={{ color: "var(--text-secondary)" }}>Invitations and accepted shared items will appear here.</p>
+      {emptyStateAction ? <div className="mt-5">{emptyStateAction}</div> : null}
     </div> : null}
     <div className="grid gap-3">
       {items.map((item) => item.status === "organization_pending"
@@ -236,7 +241,7 @@ function CollaborationHome({ api, openInvitation, openChat, openTerminal, openPr
         </article>
         : item.status === "invited"
         ? <article key={`invite:${item.invitationId}`} className="flex flex-wrap items-center gap-4 rounded-2xl border p-4">
-          <div className="min-w-0 flex-1">
+          <div className="min-w-0 grow basis-48">
             <p className="font-medium">{item.resource.owner.displayName} invited you</p>
             <p className="text-sm" style={{ color: "var(--text-secondary)" }}>Shared {kindLabel(item.kind)} · {roleLabel(item.resource.role)}</p>
           </div>
