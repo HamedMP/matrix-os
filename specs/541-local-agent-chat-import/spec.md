@@ -279,3 +279,52 @@ claim those capabilities from the parser fixtures or an isolated API success.
 A compatible Electron/Desktop renderer must ship before customer imports emit
 new canonical part types. Imported source context and thinking remain private
 archive material and never become shared human messages.
+
+
+## Local client increment
+
+The client increment adds shared streamed previews, original-byte multipart
+upload, and canonical read-back for selected Codex or Claude Code JSONL files.
+`matrix chats discover` lists bounded metadata from active, archived, and subagent
+roots independently of indexes. `--project` uses present Git common-directory
+membership or recorded remote/commit evidence; unresolved sessions remain
+separate. Discovery reads no credentials or global input history.
+
+Web Canvas and Web Desktop use the shared Settings panel with an immutable
+browser File and the existing scoped computer URL prefix. Authentication goes
+only to Matrix; R2 PUTs carry only the server-issued upload capability.
+Electron Desktop uses a native picker, captured file identity and byte boundary,
+and native network I/O. Its renderer receives an opaque selection ID and bounded
+preview, never a local path, credential, or storage URL. Selections are capped at
+four and expire after one hour; one operation runs at a time. Account/runtime
+changes abort transfers and clear selections; shutdown drains the active read
+before quitting. A later append is outside the captured archive. Changed bytes
+cannot seal successfully against the approved preview hash.
+
+CLI 0.3.21 exposes both harnesses and uses the same preview/upload protocol.
+Both skill distributions require this version and explain private archives,
+external dependencies, source issues, and owner-chosen sharing. Stopping waiting
+does not claim that queued server verification was cancelled. A lost receipt can
+be resumed by retrying the same exact source. Distinct changed snapshots and
+legacy Chat upgrades remain reconciliation work; users must not automatically
+apply those sources as duplicate Chats. Parent/child linking, explicit external
+asset selection, archive download actions, shared-recipient asset grants, and
+Native Mobile historical rendering remain required follow-ups. Public guide
+updates ship as a separate private site-repository PR. Browser R2 CORS and
+compatible packaged Electron assets remain release validation gates.
+
+### Electron import IPC authority
+
+| Channel | Caller | Payload | Response |
+| --- | --- | --- | --- |
+| `runtime:chat-import-select` | Trusted main renderer frame, current signed-in owner/runtime generation | Harness and runtime identity; no file path | Opaque selection UUID and bounded local preview |
+| `runtime:chat-import-apply` | Same frame and original owner/runtime generation | Selection UUID and bounded title | Verified Chat and archive job IDs or safe error |
+| `runtime:chat-import-pause` | Same frame and current runtime generation | Runtime identity | Coarse acknowledgment; server work may continue |
+
+All requests and responses are strict Zod schemas, validated in preload/main.
+Dependencies resolve at registration time. Upload destinations are issued by the
+authenticated server and validated against private/loopback/internal ranges
+before native fetch. Existing DNS preflight does not pin fetch resolution; retain
+that residual rebinding limitation. Redirects are rejected and all network
+operations have bounded timeouts. Renderer-origin and main-frame checks occur
+before opening the native picker.
