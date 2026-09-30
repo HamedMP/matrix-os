@@ -1,4 +1,5 @@
 "use client";
+import { ChatProviderOnboarding } from "./chat-provider-onboarding";
 import type { ChatAgentDraftRequest, ChatCollaborationView, StartAgentChat } from "@matrix-os/ui";
 
 import { useChatReadState, CanonicalChatInputForm } from "@matrix-os/ui";
@@ -758,14 +759,16 @@ function EmptyState({
     <div className="flex flex-1 flex-col items-center justify-center px-4">
       <div className="w-full max-w-[600px] space-y-8">
         {/* Greeting */}
-        <div className="text-center space-y-2">
+        <ChatProviderOnboarding><div className="text-center space-y-2">
           <h1 className="text-2xl font-medium tracking-tight text-foreground/90">
             What should Matrix do?
           </h1>
           <p className="text-sm text-muted-foreground">
-            {modelLabel ? `Using ${modelLabel}` : "Connect a harness in Settings to start chatting."}
+            {modelLabel ? `Using ${modelLabel}` : "Choose a model to start chatting."}
           </p>
         </div>
+
+        </ChatProviderOnboarding>
 
         {/* Input */}
         <ChatInput

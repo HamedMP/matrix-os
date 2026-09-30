@@ -1,6 +1,6 @@
 # Chat startup and provider onboarding (ENG-60)
 
-Status: planning; implementation awaits user approval of the final plan.
+Status: implemented; exact-head Electron Desktop acceptance and Human Review pending.
 
 ## Goal and scope
 
@@ -33,3 +33,59 @@ The implementation must cover Electron Desktop's native Chat and the shared Web 
 - Build and inspect the exact-head Electron Desktop with a fresh profile and restored state. Fixture evidence and live selected-runtime evidence must be recorded separately. Any backend change additionally requires matching Preview VPS validation.
 - Deliver one primary implementation PR for ENG-60 and a companion public documentation PR in the private `FinnaAI/matrix-os-site` repository under `content/docs/`.
 - Present an exact-head runnable Human Review flow. User Human Review approval precedes requested Greptile/final CI and landing gates; no automatic merge or production rollout is authorized.
+
+## Executable contracts
+
+### Scope and trigger
+
+Web Desktop/Web Canvas bootstrap and Electron Desktop restoration consume one startup decision per authenticated runtime entry. Provider onboarding is mounted only in new/empty Chat presentation; the composer remains mounted outside the provider panel.
+
+### Signatures and existing routes
+
+`shouldOpenChatOnStartup({ settled, consumed, explicitLaunch, navigationChanged, chatOpen }): boolean` is shared by both renderers. Open/minimized Chat counts as present. Restore/catalog/mode settlement precedes the decision. A manual navigation or explicit launch consumes the automatic entry decision.
+
+`deriveChatProviderConnectionState(snapshot, failed): connected | disconnected | checking | unknown | unavailable` uses the Settings snapshot, separately from the existing send admission logic.
+
+| Existing route | Auth | Purpose |
+| --- | --- | --- |
+| `GET /api/ai/provider-settings?includeCapabilities=true` | Selected-runtime authenticated transport | Validated connection snapshot and advertised methods |
+| `POST /api/ai/provider-settings/actions` | Existing writable provider permission | Revisioned/idempotent `start_login`; no new auth policy |
+| `/api/terminal/sessions` | Existing selected-runtime terminal permission | Open the exact server-returned session |
+
+### Request and response boundaries
+
+Use `ProviderSettingsController` for schema validation, request cancellation, revision/idempotency, safe errors, and accepted login attempts. Select an advertised harness/method and eligible existing account identity; a missing method disables that row. Never enable an Off provider implicitly. Follow only the validated server action (`open_terminal` with exact `terminalSessionId`, or the supported authorization path).
+
+Identity comprises runtime/account generation on Electron Desktop and gateway origin on the hosted Chat. Reject completion/action effects when identity changes. Refresh on focus/visibility return or `Check connection`; deduplicate concurrent refresh requests and invalidate the existing catalog after an accepted explicit refresh.
+
+`ProviderSettingsController.refresh({ refresh: false })` is a silent snapshot read: it does not probe local authentication or emit catalog-change notifications. A panel receiving the shared catalog-change event uses this path; user/focus refresh uses the default probe and notification. This prevents two mounted empty Chat panels from indefinitely refreshing one another.
+
+### Validation and error matrix
+
+| Evidence | Presentation |
+| --- | --- |
+| Authenticated account/harness or ready access source with authoritative observation | Existing new-Chat content |
+| Connected provider disabled or configured Matrix source awaiting credits | Existing readiness/funding recovery, no login guide |
+| Confirmed no connected provider | Claude Code and Codex connection rows |
+| No snapshot | Checking state |
+| Unknown/stale/unverified local login evidence | Recoverable unknown state, no authentication claim |
+| Read/mutation/action failure | Safe generic error and bounded retry/continue controls |
+| Old runtime response | Discarded; no terminal/browser action |
+
+### Good, base, and bad cases
+
+- Good: restore a minimized Chat alongside another active app; preserve Chat geometry and active app, without another open/focus call.
+- Base: fresh entry with disconnected installed Claude; open Chat once, request the advertised login, foreground its server-owned Terminal, refresh after auth, retain the draft.
+- Bad: installed CLI or remembered model selection treated as authentication; a late bootstrap/login response reopens Chat or acts on another runtime.
+
+### Tests required
+
+Startup policy and renderer integration tests assert restoration ordering, current navigation precedence, existing/minimized preservation, entry replacement, and manual close. Shared/hosted/native provider tests assert truthful evidence, supported actions, identity rejection, failures, and draft retention. Built Electron E2E verifies actual Chat and Terminal windows, one server command, connection transition, and closing Chat without reopening. Fixture auth is not live provider acceptance.
+
+### Wrong versus correct
+
+Wrong: unconditionally call `openChat()` from a provider/presentation effect, or run a fabricated `claude auth login` command from Chat.
+
+Correct: consume the shared startup predicate after restoration; submit the existing Settings mutation and open only the server-returned session while the initiating runtime remains current.
+
+Companion documentation: https://github.com/FinnaAI/matrix-os-site/pull/143 (preview wording until release).

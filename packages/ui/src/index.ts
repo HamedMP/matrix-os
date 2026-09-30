@@ -181,3 +181,5 @@ export { captureTerminalFileDrag, terminalDropFiles, terminalDropMimeType, MAX_T
 export { canonicalChatSafeFailureReason } from "./canonical-chat-error-copy.js";
 
 export { ConversationSubagentActivity } from "./chat/subagent-activity";
+export { ChatProviderConnections, ChatProviderOnboarding, deriveChatProviderConnectionState } from "./agents-providers/ChatProviderConnections.js";
+export { shouldOpenChatOnStartup } from "./chat-startup-policy.js";

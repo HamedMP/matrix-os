@@ -12,8 +12,9 @@ import { createShellSnapshotScope, saveShellSnapshot } from "../../shell/src/lib
 import { createShellQueryClient } from "../../shell/src/api/query-client.js";
 import { appKeys, type ApiAppEntry } from "../../shell/src/api/apps.js";
 
+const fileWatcher = vi.hoisted(() => ({ callback: null as null | ((path: string, event: string) => void) }));
 vi.mock("../../shell/src/hooks/useFileWatcher.js", () => ({
-  useFileWatcher: () => undefined,
+  useFileWatcher: (callback: (path: string, event: string) => void) => { fileWatcher.callback = callback; },
 }));
 
 vi.mock("../../shell/src/components/terminal/TerminalApp.js", () => ({
@@ -251,6 +252,99 @@ describe("Desktop launcher dock button by mode", () => {
     resetLayoutPersistence();
     queryClient.clear();
     vi.unstubAllGlobals();
+  });
+
+  it("opens one Chat after normal startup and never reopens it after manual close or a presentation switch", async () => {
+    resetShellMode("desktop", true);
+    renderDesktop();
+    await waitFor(() => expect(windowManagerStore.getState().windows.filter((w) => w.path === "__chat__")).toHaveLength(1));
+    const chat = windowManagerStore.getState().windows.find((w) => w.path === "__chat__")!;
+    act(() => windowManagerStore.getState().closeWindow(chat.id));
+    act(() => desktopModeStore.setState({ mode: "canvas" }));
+    await act(async () => { await Promise.resolve(); });
+    expect(windowManagerStore.getState().windows.some((w) => w.path === "__chat__")).toBe(false);
+  });
+
+  it("waits for restoration and gives an explicit Terminal launch precedence", async () => {
+    resetShellMode("desktop", true);
+    const bootstrap = deferredResponse();
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => String(input).includes("/api/shell/bootstrap")
+      ? bootstrap.promise : jsonResponse({})));
+    renderDesktop({ launchAppPath: "__terminal__" });
+    expect(windowManagerStore.getState().windows).toHaveLength(0);
+    await act(async () => bootstrap.resolve(new Response(JSON.stringify({ layout: { windows: [{
+      title: "Chat", path: "__chat__", x: 100, y: 100, width: 800, height: 600, state: "open",
+    }] } }), { status: 200 })));
+    await waitFor(() => expect(windowManagerStore.getState().windows.find((w) => w.id === windowManagerStore.getState().focusedWindowId)?.path).toBe("__terminal__"));
+  });
+
+  it.each([false, true])("does not refocus or rewrite an existing Chat (minimized=%s)", async (minimized) => {
+    resetShellMode("desktop", true);
+    windowManagerStore.getState().openWindow("Chat", "__chat__", 70);
+    const chat = windowManagerStore.getState().windows[0]!;
+    if (minimized) windowManagerStore.getState().minimizeWindow(chat.id);
+    windowManagerStore.getState().openWindow("Terminal", "__terminal__", 70);
+    const before = windowManagerStore.getState();
+    renderDesktop();
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith(expect.stringContaining("/api/os-view-state"), expect.anything()));
+    await act(async () => { await Promise.resolve(); });
+    expect(windowManagerStore.getState().windows.find((w) => w.id === chat.id)).toEqual(before.windows.find((w) => w.id === chat.id));
+    expect(windowManagerStore.getState().focusedWindowId).toBe(before.focusedWindowId);
+  });
+
+  it("does not overwrite navigation or reopen Chat after a delayed saved layout arrives", async () => {
+    resetShellMode("desktop", true);
+    const bootstrap = deferredResponse();
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => String(input).includes("/api/shell/bootstrap")
+      ? bootstrap.promise : jsonResponse({})));
+    renderDesktop();
+    act(() => windowManagerStore.getState().openWindow("Terminal", "__terminal__", 70));
+    const terminal = windowManagerStore.getState().windows[0]!;
+    await act(async () => bootstrap.resolve(new Response(JSON.stringify({ layout: { windows: [{
+      title: "Chat", path: "__chat__", x: 100, y: 100, width: 800, height: 600, state: "open",
+    }] } }), { status: 200 })));
+    await act(async () => { await Promise.resolve(); });
+    expect(windowManagerStore.getState().windows).toEqual([terminal]);
+    expect(windowManagerStore.getState().focusedWindowId).toBe(terminal.id);
+  });
+
+  it("does not reopen a manually closed Chat when bootstrap reloads", async () => {
+    resetShellMode("desktop", true);
+    renderDesktop();
+    await waitFor(() => expect(windowManagerStore.getState().windows.some((w) => w.path === "__chat__")).toBe(true));
+    const chat = windowManagerStore.getState().windows.find((w) => w.path === "__chat__")!;
+    act(() => windowManagerStore.getState().closeWindow(chat.id));
+    await act(async () => fileWatcher.callback?.("system/modules.json", "change"));
+    expect(windowManagerStore.getState().windows.some((w) => w.path === "__chat__")).toBe(false);
+  });
+
+  it("rejects stale bootstrap completion when the runtime entry changes", async () => {
+    resetShellMode("desktop", true);
+    const previous = deferredResponse();
+    let bootstrapCalls = 0;
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => String(input).includes("/api/shell/bootstrap")
+      ? ++bootstrapCalls === 1 ? previous.promise : jsonResponse({ layout: { windows: [] } })
+      : jsonResponse({})));
+    const primary = createShellSnapshotScope({ userId: "user_123", pathname: "/vm/primary" });
+    const preview = createShellSnapshotScope({ userId: "user_123", pathname: "/vm/preview" });
+    const view = renderDesktop({ cacheScope: primary });
+    view.rerender(<QueryClientProvider client={queryClient}><DesktopComponent cacheScope={preview} /></QueryClientProvider>);
+    await waitFor(() => expect(windowManagerStore.getState().windows.some((w) => w.path === "__chat__")).toBe(true));
+    const before = windowManagerStore.getState().windows;
+    await act(async () => previous.resolve(new Response(JSON.stringify({ layout: { windows: [{
+      title: "Terminal", path: "__terminal__", x: 50, y: 50, width: 800, height: 600, state: "open",
+    }] } }), { status: 200 })));
+    expect(windowManagerStore.getState().windows).toEqual(before);
+  });
+
+  it("opens a saved closed Chat on a fresh runtime entry", async () => {
+    resetShellMode("desktop", true);
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => String(input).includes("/api/shell/bootstrap")
+      ? jsonResponse({ layout: { windows: [{ title: "Chat", path: "__chat__", x: 180, y: 140, width: 800, height: 600, state: "closed" }] } })
+      : jsonResponse({})));
+    renderDesktop();
+    await waitFor(() => expect(windowManagerStore.getState().windows.filter((w) => w.path === "__chat__")).toHaveLength(1));
+    expect(windowManagerStore.getState().windows.find((w) => w.path === "__chat__")).toMatchObject({ x: 180, width: 800, height: 600 });
   });
 
   it("keeps the launcher visible in canvas mode even before mode hydration completes", async () => {
