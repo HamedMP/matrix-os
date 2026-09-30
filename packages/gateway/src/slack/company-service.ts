@@ -1,4 +1,5 @@
 import { z } from "zod/v4";
+import { createHash } from "node:crypto";
 import type { Kysely } from "kysely";
 import type { CollaborationAuthority, AuthorizedCollaborationContext } from "../collaboration/authority.js";
 import type { CollaborationChatExecutionAdapter } from "../collaboration/chat-execution-adapter.js";
@@ -16,6 +17,9 @@ export interface SlackCanonicalResult {
 export interface SlackReplyInput {
   envelope: SlackHomeEnvelope; scopeId: string; chatId: string; queuedTurnId: string; runId: string; text: string;
 }
+export interface SlackPublicationInput {
+  organizationId:string;actorId:string;scopeId:string;appId:string;teamId:string;eventId:string;textDigest:string;
+}
 export interface SlackCompanyOptions {
   db: Kysely<SlackCompanyDatabase>; ownerId: string; authority: Pick<CollaborationAuthority, "authorize">;
   execution: Pick<CollaborationChatExecutionAdapter, "submit" | "resourceRevision">;
@@ -25,7 +29,7 @@ export interface SlackCompanyOptions {
   findAcceptedRequest?(input: { ownerId: string; scopeId: string; chatId: string; actorId: string; clientRequestId: string }): Promise<{ queuedTurnId: string; payloadHash: string | null } | null>;
   readResult(input: { ownerId: string; scopeId: string; chatId: string; queuedTurnId: string }): Promise<SlackCanonicalResult>;
   sendReply(input: SlackReplyInput): Promise<{ status: "sent"; messageTs: string } | { status: "retryable" | "uncertain" }>;
-  brain?: Pick<CompanyBrainService, "retrieveForRun" | "captureSlackMention" | "get">;
+  brain?: Pick<CompanyBrainService, "retrieveForRun" | "captureSlackMention" | "verifyEvidence">;
   now?: () => Date;
 }
 
@@ -74,6 +78,39 @@ export class SlackCompanyService {
     const eventTime = Number(envelope.event.ts.split(".")[0])*1000;
     if (eventTime < this.now().getTime()-7*86400_000 || eventTime > this.now().getTime()+300_000) throw new SlackCompanyError("forbidden");
     return this.repository.receive(envelope);
+  }
+
+  /** Signed platform callback immediately before publication; proofs come only from this owner's durable receipt. */
+  async authorizePublication(raw:SlackPublicationInput):Promise<true> {
+    if(this.stopping) throw new SlackCompanyError("unavailable");
+    const parsed=z.object({organizationId:SlackHomeEnvelopeSchema.shape.organizationId,actorId:SlackHomeEnvelopeSchema.shape.actorId,
+      scopeId:z.uuid(),appId:SlackHomeEnvelopeSchema.shape.event.shape.appId,teamId:SlackHomeEnvelopeSchema.shape.event.shape.teamId,
+      eventId:SlackHomeEnvelopeSchema.shape.event.shape.eventId,textDigest:z.string().regex(/^[a-f0-9]{64}$/)}).strict().safeParse(raw);
+    if(!parsed.success) throw new SlackCompanyError("forbidden");
+    const input=parsed.data;
+    const receipt=await this.repository.publicationReceipt(input.appId,input.teamId,input.eventId);
+    if(!receipt) throw new SlackCompanyError("forbidden");
+    const {inbox,outbox}=receipt;
+    const envelope=this.repository.envelope(inbox);
+    if(envelope.ownerId!==this.options.ownerId || envelope.organizationId!==input.organizationId || envelope.actorId!==input.actorId
+      || envelope.channelScopeId!==input.scopeId || envelope.event.appId!==input.appId || envelope.event.teamId!==input.teamId
+      || envelope.event.eventId!==input.eventId || createHash("sha256").update(outbox.text,"utf8").digest("hex")!==input.textDigest) throw new SlackCompanyError("forbidden");
+    const {binding}=await this.binding(inbox);
+    const result=await this.options.readResult({ownerId:envelope.ownerId,scopeId:binding.scopeId,chatId:binding.chatId,queuedTurnId:inbox.queued_turn_id!});
+    if(result.status!=="completed" || result.requestingActorId!==input.actorId || result.runId!==outbox.run_id
+      || result.text?.slice(0,12_000)!==outbox.text) throw new SlackCompanyError("forbidden");
+    // Source reads are last among external authorization callbacks, closing the metadata-lookup window.
+    await this.verifySources(inbox,envelope,async()=>{
+      await this.chat(envelope,binding);
+      const finalResult=await this.options.readResult({ownerId:envelope.ownerId,scopeId:binding.scopeId,chatId:binding.chatId,queuedTurnId:inbox.queued_turn_id!});
+      if(finalResult.status!=="completed" || finalResult.requestingActorId!==input.actorId || finalResult.runId!==outbox.run_id
+        || finalResult.text?.slice(0,12_000)!==outbox.text) throw new SlackCompanyError("forbidden");
+      const live=await this.repository.publicationReceipt(input.appId,input.teamId,input.eventId);
+      if(this.stopping || !live || live.outbox.lease!==outbox.lease || live.outbox.run_id!==outbox.run_id || live.outbox.text!==outbox.text
+        || live.inbox.queued_turn_id!==inbox.queued_turn_id || live.inbox.chat_id!==inbox.chat_id || live.inbox.scope_id!==inbox.scope_id
+        || live.inbox.payload_hash!==inbox.payload_hash || slackIdentity(live.inbox.source_proofs)!==slackIdentity(inbox.source_proofs)) throw new SlackCompanyError("forbidden");
+    });
+    return true;
   }
 
   drain(): Promise<void> {
@@ -199,18 +236,17 @@ export class SlackCompanyService {
     await this.chat(envelope, binding);
     return { envelope, binding };
   }
-  private async verifySources(row: SlackInbox,envelope: SlackHomeEnvelope) {
+  private async verifySources(row: SlackInbox,envelope: SlackHomeEnvelope,beforeRead?:()=>Promise<void>) {
     const parsed=z.array(z.object({scopeId:z.uuid(),sourceId:z.string().regex(/^[a-f0-9]{64}$/),incarnation:z.uuid(),revision:z.number().int().positive()}).strict()).max(6)
       .safeParse(typeof row.source_proofs === "string" ? JSON.parse(row.source_proofs) : row.source_proofs);
     // Legacy revision-only proofs cannot establish identity across source erasure/recreation.
     if(!parsed.success) throw new SlackCompanyError("forbidden");
     const proofs=parsed.data;
     if (proofs.length && !this.options.brain) throw new SlackCompanyError("forbidden");
-    for (const proof of proofs) {
-      if (proof.scopeId !== envelope.channelScopeId) throw new SlackCompanyError("forbidden");
-      const source=await this.options.brain!.get(proof.scopeId,envelope.actorId,proof.sourceId);
-      if (source.incarnation !== proof.incarnation || source.revision !== proof.revision) throw new SlackCompanyError("forbidden");
-    }
+    if(proofs.some(proof=>proof.scopeId!==envelope.channelScopeId)) throw new SlackCompanyError("forbidden");
+    if(!proofs.length){await beforeRead?.();return;}
+    await this.options.brain!.verifyEvidence(envelope.channelScopeId!,envelope.actorId,
+      proofs.map(proof=>({sourceId:proof.sourceId,incarnation:proof.incarnation,revision:proof.revision})),beforeRead);
   }
   private async collect(row: SlackInbox) {
     const { envelope, binding } = await this.binding(row);

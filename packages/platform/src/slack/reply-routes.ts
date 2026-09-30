@@ -21,13 +21,14 @@ export function createSlackReplyRoutes(options: SlackAppRouteOptions): Hono {
     try { payload = await c.req.json(); } catch (error: unknown) { if (error instanceof Error && error.name === "BodyLimitError") throw error; if (!(error instanceof SyntaxError)) console.warn("[slack] reply parse failed"); return c.json({ error: "Invalid request" }, 422); }
     const parsed = RequestSchema.safeParse(payload); if (!parsed.success) return c.json({ error: "Invalid request" }, 422);
     const key = { appId: options.config.appId, teamId: parsed.data.teamId, eventId: parsed.data.eventId };
-    const authorized = await authorizeSlackDestination(options, key, runtime.ownerId);
+    const digest = createHash("sha256").update(parsed.data.text).digest("hex");
+    const publication = { textDigest: digest };
+    const authorized = await authorizeSlackDestination(options, key, runtime.ownerId, publication);
     if (!authorized) return c.json({ error: "Forbidden" }, 403);
     const { installed, destination } = authorized;
     const token = decryptSlackToken(installed.encryptedBotToken, options.config.tokenEncryptionKey, `${key.appId}:${key.teamId}`);
     const channel = await options.api.conversationInfo({ token, channelId: destination.channelId });
     if (!channel.canAccess || channel.isExternalShared) return c.json({ error: "Forbidden" }, 403);
-    const digest = createHash("sha256").update(parsed.data.text).digest("hex");
     const claim = await options.repository.claimReply(key, digest);
     if (claim === "sent") {
       const messageTs = await options.repository.getSentReply(key);
@@ -36,7 +37,7 @@ export function createSlackReplyRoutes(options: SlackAppRouteOptions): Hono {
     if (claim !== "claimed") return c.json({ error: "Delivery needs review" }, 409);
     try {
       // Channel metadata and intent persistence may take seconds. Do not publish with authority from before that latency.
-      if (!await authorizeSlackDestination(options, key, runtime.ownerId)) {
+      if (!await authorizeSlackDestination(options, key, runtime.ownerId, publication)) {
         await options.repository.settleReply(key, null);
         return c.json({ error: "Forbidden" }, 403);
       }

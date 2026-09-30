@@ -279,6 +279,22 @@ describe("owner-hosted Company Brain durable sources", () => {
     expect(recreated.incarnation).not.toBe(first.incarnation);
   });
 
+  it.each(["get","search","export"] as const)("refuses evidence erased and recreated during the authority recheck of %s",async(operation)=>{
+    await service.publish(ids.scope,actors.owner,document);
+    let calls=0;
+    const racing=new CompanyBrainService({db,ownerId:actors.owner,authority:{authorize:async(input)=>{
+      const context=await authority.authorize(input);
+      if(++calls===2){
+        await service.erase(ids.scope,actors.owner);
+        await service.publish(ids.scope,actors.owner,{...document,text:"Replacement release decision"});
+      }
+      return context;
+    }}});
+    const request=operation==="get" ? racing.get(ids.scope,actors.owner,sourceId)
+      : operation==="export" ? racing.export(ids.scope,actors.owner) : racing.search(ids.scope,actors.owner,{query:"release"});
+    await expect(request).rejects.toMatchObject({code:"forbidden"});
+  });
+
   it("backfills durable distinct incarnations for existing sources without rewriting their revisions",async()=>{
     await service.publish(ids.scope,actors.owner,document);
     await service.publish(ids.scope,actors.owner,{...document,sourceId:"b".repeat(64)});
@@ -290,6 +306,23 @@ describe("owner-hosted Company Brain durable sources", () => {
     expect(migrated[0].incarnation).not.toBe(migrated[1].incarnation);
     await bootstrapCompanyBrainDatabase(db);
     expect(await db.selectFrom("company_brain_documents").select(["source_id","incarnation","revision"]).orderBy("source_id").execute()).toEqual(migrated);
+  });
+
+  it("verifies all evidence identities in one fresh batch after authority and receipt callbacks",async()=>{
+    const first=await service.publish(ids.scope,actors.owner,document);
+    const second=await service.publish(ids.scope,actors.owner,{...document,sourceId:"b".repeat(64)});
+    const proofs=[first,second].map(source=>({sourceId:source.sourceId,incarnation:source.incarnation,revision:source.revision}));
+    expect(await service.verifyEvidence(ids.scope,actors.owner,proofs)).toBe(true);
+    let calls=0;
+    const racing=new CompanyBrainService({db,ownerId:actors.owner,authority:{authorize:async(input)=>{
+      const context=await authority.authorize(input);
+      if(++calls===2) await service.remove(ids.scope,actors.owner,first.sourceId,1);
+      return context;
+    }}});
+    await expect(racing.verifyEvidence(ids.scope,actors.owner,proofs)).rejects.toMatchObject({code:"forbidden"});
+    await expect(service.verifyEvidence(ids.scope,actors.owner,[proofs[1]],async()=>{
+      await service.remove(ids.scope,actors.owner,second.sourceId,1);
+    })).rejects.toMatchObject({code:"forbidden"});
   });
 
   it("fences the owner member organization inside publication transactions",async()=>{

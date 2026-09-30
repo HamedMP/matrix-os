@@ -8,11 +8,11 @@ const token = "a".repeat(64);
 const ownerId = "user_host";
 const scopeId = "b8205675-a985-462c-a1be-5167adb5f6aa";
 const now = () => new Date("2026-09-30T10:00:00Z");
-function setup() {
+function setup(publication?: (input: unknown) => Promise<boolean>) {
   const receive = vi.fn().mockResolvedValue(undefined);
   const authorize = vi.fn().mockImplementation(async ({scopeId,actorId,action}) => ({scopeId,actorId,ownerId,
     organizationId: "org_company", resourceKind: "project", resourceId: "project_company", role:"owner", capability:action}));
-  const app = createSlackBridgeRoutes({ownerId,token,receive,authority:{authorize},now});
+  const app = createSlackBridgeRoutes({ownerId,token,receive,authority:{authorize},now,authorizePublication:publication});
   return {app,receive,authorize};
 }
 async function request(path: string, data: unknown, secret = token) {
@@ -64,4 +64,26 @@ describe("owner Slack bridge", () => {
     authorize.mockResolvedValue({...data,resourceKind:"chat",resourceId:"chat_1",role:"owner"});
     expect(await (await app.request("/api/internal/slack/authorize",await request("/api/internal/slack/authorize",data))).json()).toEqual({allowed:false});
   });
+  it("requires a receipt-bound publication verifier after fresh contributor discussion authority",async()=>{
+    const publication=vi.fn().mockResolvedValue(true);
+    const {app,authorize}=setup(publication);
+    const data={ownerId,organizationId:"org_company",actorId:"user_employee",scopeId,action:"publish_reply",appId:"A123",teamId:"T123",eventId:"Ev123",textDigest:"d".repeat(64)};
+    expect(await(await app.request("/api/internal/slack/authorize",await request("/api/internal/slack/authorize",data))).json()).toEqual({allowed:true});
+    expect(authorize).toHaveBeenCalledWith({scopeId,actorId:"user_employee",action:"discuss"});
+    expect(publication).toHaveBeenCalledWith({organizationId:"org_company",actorId:"user_employee",scopeId,appId:"A123",teamId:"T123",eventId:"Ev123",textDigest:"d".repeat(64)});
+    publication.mockResolvedValueOnce(false);
+    expect(await(await app.request("/api/internal/slack/authorize",await request("/api/internal/slack/authorize",data))).json()).toEqual({allowed:false});
+    const {app:missing}=setup();
+    expect(await(await missing.request("/api/internal/slack/authorize",await request("/api/internal/slack/authorize",data))).json()).toEqual({allowed:false});
+    authorize.mockResolvedValueOnce({...data,capability:"discuss",resourceKind:"project",resourceId:"project_company",role:"viewer"});
+    expect(await(await app.request("/api/internal/slack/authorize",await request("/api/internal/slack/authorize",data))).json()).toEqual({allowed:false});
+    expect(publication).toHaveBeenCalledTimes(2);
+  });
+  it.each([{textDigest:"wrong"},{eventId:"not_an_event"},{appId:"B123"},{teamId:"wrong"},{scopeId:"bad"},{actorId:"other"},{eventId:undefined},{sourceProofs:[]}])("rejects malformed or caller-supplied publication proofs %o",async(change)=>{
+    const publication=vi.fn().mockResolvedValue(true);const {app}=setup(publication);
+    const data={ownerId,organizationId:"org_company",actorId:"user_employee",scopeId,action:"publish_reply",appId:"A123",teamId:"T123",eventId:"Ev123",textDigest:"d".repeat(64),...change};
+    expect((await app.request("/api/internal/slack/authorize",await request("/api/internal/slack/authorize",data))).status).toBe(400);
+    expect(publication).not.toHaveBeenCalled();
+  });
+
 });

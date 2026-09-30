@@ -43,7 +43,7 @@ export interface SlackAuthorityDependencies {
   /** Must durably commit to the selected owner home; dedup by app/team/eventId. A resolved promise acknowledges that commit. */
   dispatch(input: { installation: SlackInstallation; link: SlackEmployeeLink; binding: SlackChannelBinding | null; event: SlackInboundEvent; signal: AbortSignal }): Promise<{ ownerId: string }>;
   authenticateRuntime?(c: Context): Promise<{ ownerId: string } | null>;
-  authorizeReply?(input: { installation: SlackInstallation; destination: SlackReplyDestination; ownerId: string }): Promise<boolean>;
+  authorizeReply?(input: { installation: SlackInstallation; destination: SlackReplyDestination; ownerId: string; publication?: { textDigest: string } }): Promise<boolean>;
 }
 
 export interface SlackReplyDestination { appId: string; teamId: string; eventId: string; ownerId: string; actorId: string; slackUserId: string; organizationId: string; channelId: string; threadTs: string; eventTs?: string; scopeId: string | null; installationGeneration: number }

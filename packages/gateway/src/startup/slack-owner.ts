@@ -1,5 +1,5 @@
 import {Hono} from "hono";
-import type {SlackBridgeEnvelope} from "@matrix-os/contracts/slack-bridge";
+import type {SlackBridgeEnvelope,SlackPublicationIdentity} from "@matrix-os/contracts/slack-bridge";
 import type {CollaborationAuthority} from "../collaboration/authority.js";
 import {createSlackBridgeRoutes} from "./slack-bridge.js";
 
@@ -7,6 +7,7 @@ interface SlackInboxTransport {
   receive(envelope:SlackBridgeEnvelope):Promise<unknown>;
   drain():Promise<void>;
   close():Promise<void>;
+  authorizePublication?(input:SlackPublicationIdentity):Promise<boolean>;
 }
 
 /** The ingress acknowledges only durable storage; background passes never overlap. */
@@ -17,10 +18,16 @@ export function registerOwnerSlack(options:{
 }) {
   let stopping=false;
   let active:Promise<void>|undefined;
+  const authorizePublication=options.company?.authorizePublication?.bind(options.company);
   const services=[options.personal,options.company].filter((service):service is SlackInboxTransport=>!!service);
   const unavailable=new Hono();unavailable.all("*",c=>c.json({error:"Slack unavailable"},503));
   if(options.token && /^[a-f0-9]{64}$/.test(options.token)) {
     options.app.route("/",createSlackBridgeRoutes({ownerId:options.ownerId,token:options.token,authority:options.authority,now:options.now,
+      authorizePublication:async input=>{
+        if(stopping || !authorizePublication)return false;
+        const allowed=await authorizePublication(input);
+        return !stopping && allowed;
+      },
       async receive(envelope){
         const service=envelope.event.kind==="direct_message"?options.personal:options.company;
         if(stopping || !service)throw new Error("SlackServiceUnavailable");

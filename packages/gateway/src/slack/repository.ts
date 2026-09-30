@@ -119,6 +119,15 @@ export class SlackCompanyRepository {
     await this.db.updateTable("slack_company_outbox").set({ state, message_ts: messageTs ?? null, lease: null, lease_until: state === "pending" ? new Date(this.now().getTime()+30_000) : null, updated_at: this.now() })
       .where("event_id", "=", eventId).where("lease", "=", lease).execute();
   }
+  async publicationReceipt(appId:string,teamId:string,eventId:string) {
+    const id=slackRequestId([appId,teamId,eventId]);
+    const inbox=await this.db.selectFrom("slack_company_inbox").selectAll().where("id","=",id)
+      .where("owner_id","=",this.ownerId).where("state","=","completed").executeTakeFirst();
+    if(!inbox) return null;
+    const outbox=await this.db.selectFrom("slack_company_outbox").selectAll().where("event_id","=",id)
+      .where("state","=","sending").where("lease","is not",null).where("lease_until",">",this.now()).executeTakeFirst();
+    return outbox ? {inbox,outbox} : null;
+  }
   async cleanup() {
     await this.db.transaction().execute(async(trx)=>{
       const now=this.now();

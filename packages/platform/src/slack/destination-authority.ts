@@ -2,7 +2,7 @@ import type { SlackReceiptKey } from "./repository.js";
 import type { SlackAppRouteOptions } from "./routes.js";
 
 /** Shared by context reads and publication. The scope resolver rechecks live resource grants and output audience. */
-export async function authorizeSlackDestination(options: SlackAppRouteOptions, key: SlackReceiptKey, ownerId: string) {
+export async function authorizeSlackDestination(options: SlackAppRouteOptions, key: SlackReceiptKey, ownerId: string, publication?: { textDigest: string }) {
   const destination = await options.repository.getReplyDestination(key);
   if (!destination || destination.ownerId !== ownerId) return null;
   const pinned = destination;
@@ -22,7 +22,7 @@ export async function authorizeSlackDestination(options: SlackAppRouteOptions, k
     return { destination: current, installed };
   }
   const metadata = await currentMetadata();
-  if (!metadata || !options.authorizeReply || !await options.authorizeReply({ installation: metadata.installed, destination: metadata.destination, ownerId })) return null;
+  if (!metadata || !options.authorizeReply || !await options.authorizeReply({ installation: metadata.installed, destination: metadata.destination, ownerId, ...(publication ? { publication } : {}) })) return null;
   // Owner authorization can wait on a home RPC. Unlink, uninstall or rebinding during
   // that wait must invalidate the stale response without issuing another home RPC.
   return currentMetadata();

@@ -2,11 +2,11 @@ import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod/v4";
 import { SlackBridgeEnvelopeSchema, SlackBridgeAuthorizationSchema, verifySlackBridgeRequest,
-  type SlackBridgeEnvelope } from "@matrix-os/contracts/slack-bridge";
+  type SlackBridgeEnvelope, type SlackPublicationIdentity } from "@matrix-os/contracts/slack-bridge";
 import { CollaborationAuthorizationError, type CollaborationAuthority } from "../collaboration/authority.js";
 
 export function createSlackBridgeRoutes(options:{ownerId:string;token:string;authority:Pick<CollaborationAuthority,"authorize">;
-  receive(envelope:SlackBridgeEnvelope):Promise<unknown>;now?:()=>Date}) {
+  receive(envelope:SlackBridgeEnvelope):Promise<unknown>;authorizePublication?(input:SlackPublicationIdentity):Promise<boolean>;now?:()=>Date}) {
   const app=new Hono();
   app.onError((error,c)=>{
     if(error instanceof z.ZodError || error instanceof SyntaxError) return c.json({error:"Invalid request"},400);
@@ -33,12 +33,21 @@ export function createSlackBridgeRoutes(options:{ownerId:string;token:string;aut
   app.post("/api/internal/slack/authorize",async c=>{
     const request=SlackBridgeAuthorizationSchema.parse(await c.req.json());
     if(request.ownerId!==options.ownerId) return c.json({allowed:false});
-    const context=await options.authority.authorize({scopeId:request.scopeId,actorId:request.actorId,action:request.action});
+    const action=request.action==="publish_reply"?"discuss":request.action;
+    const context=await options.authority.authorize({scopeId:request.scopeId,actorId:request.actorId,action});
     const allowed=context.ownerId===options.ownerId && context.actorId===request.actorId
       && context.organizationId===request.organizationId && context.scopeId===request.scopeId && context.resourceKind==="project"
-      && context.capability===request.action && context.role!=="viewer"
+      && context.capability===action && context.role!=="viewer"
       && (request.action!=="manage_members" || (context.role==="owner" && context.actorId===options.ownerId));
-    return c.json({allowed});
+    if(!allowed || request.action!=="publish_reply") return c.json({allowed});
+    if(!options.authorizePublication)return c.json({allowed:false});
+    try {
+      return c.json({allowed:await options.authorizePublication({organizationId:request.organizationId,actorId:request.actorId,
+        scopeId:request.scopeId,appId:request.appId,teamId:request.teamId,eventId:request.eventId,textDigest:request.textDigest})===true});
+    } catch(error:unknown) {
+      if(error instanceof Error && "code" in error && ["forbidden","not_found","conflict"].includes(String(error.code)))return c.json({allowed:false});
+      throw error;
+    }
   });
   return app;
 }

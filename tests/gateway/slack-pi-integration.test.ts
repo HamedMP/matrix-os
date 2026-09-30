@@ -181,7 +181,7 @@ async function setup() {
   return { fixture, db, home, chats, authority, roots, bots: bots!, canonical, collaboration, specs, stream, privateMemory, createRuntime, readinessChecks };
 }
 
-async function setupSlack(s: Awaited<ReturnType<typeof setup>>) {
+async function setupSlack(s: Awaited<ReturnType<typeof setup>>, beforeMetadata?: () => Promise<void>) {
   const platformFixture = await createBotStateDatabase(); cleanup.push(platformFixture.destroy);
   const config = { appId: "A123", clientId: "123.456", clientSecret: "c".repeat(32), signingSecret: "s".repeat(32),
     tokenEncryptionKey: Buffer.alloc(32, 42).toString("base64"), publicBaseUrl: "https://platform.test" };
@@ -190,13 +190,16 @@ async function setupSlack(s: Awaited<ReturnType<typeof setup>>) {
   const homeRpc = createSlackHomeTransport({ fetchImpl: (async (url, init) => bridge.request(new Request(String(url), init))) as typeof fetch });
   const posts = vi.fn(async () => ({ ts: "1790766001.000001" }));
   const platform = await createSlackApp({ db: platformFixture.db as unknown as Kysely<SlackDatabase>, config, startCleanup: false,
-    api: { exchangeCode: async () => { throw new Error("unused"); }, postMessage: posts, conversationInfo: async () => ({ isExternalShared: false, canAccess: true }),
+    api: { exchangeCode: async () => { throw new Error("unused"); }, postMessage: posts, conversationInfo: async () => { await beforeMetadata?.(); return { isExternalShared: false, canAccess: true }; },
     replies: async () => ({ messages: [{ user: "U123", ts: "1790766000.000001", text: "Launch is Monday" }], hasMore: false }),
     history: async () => ({ messages: [], hasMore: false }), addReaction: async () => undefined },
     resolveActor: async () => actors.owner, requireOrgAdmin: async () => true, isCurrentMember: async () => true,
     authorizeChannelBinding: async input => (await homeRpc(home, "authorize", { ownerId: actors.owner, organizationId: ORG, actorId: input.actorId, scopeId: input.scopeId, action: "manage_members" })).allowed === true,
     authenticateRuntime: async c => c.req.header("authorization") === `Bearer ${TOKEN}` && c.req.header("x-matrix-handle") === "company-owner" ? { ownerId: actors.owner } : null,
-    authorizeReply: async ({ destination, ownerId }) => ownerId === actors.owner && (await homeRpc(home, "authorize", { ownerId, organizationId: ORG, actorId: destination.actorId, scopeId: destination.scopeId, action: "discuss" })).allowed === true,
+    authorizeReply: async ({ destination, ownerId, publication }) => ownerId === actors.owner && (await homeRpc(home, "authorize", {
+      ownerId, organizationId: ORG, actorId: destination.actorId, scopeId: destination.scopeId,
+      ...(publication ? { action: "publish_reply", appId: destination.appId, teamId: destination.teamId, eventId: destination.eventId, textDigest: publication.textDigest } : { action: "discuss" }),
+    })).allowed === true,
     dispatch: async ({ installation, link, binding, event, signal }) => {
     await homeRpc(home, "events", { ownerId: actors.owner, organizationId: installation.organizationId, actorId: link.actorId,
       channelScopeId: binding!.scopeId, companyPublicationApproved: binding!.approvedOutput, event }, signal);
@@ -207,7 +210,7 @@ async function setupSlack(s: Awaited<ReturnType<typeof setup>>) {
     fetchImpl: (async (url, init) => platform.routes.request(new Request(String(url), init))) as typeof fetch });
   const company = await startSlackCompany({ ownerId: actors.owner, repository: s.chats, collaboration: s.collaboration, executionRoots: s.roots, bots: s.bots, client });
   cleanup.push(() => company.close()); expect(company.service).toBeDefined();
-  bridge = createSlackBridgeRoutes({ ownerId: actors.owner, token: TOKEN, authority: s.authority, receive: input => company.service!.receive(input) });
+  bridge = createSlackBridgeRoutes({ ownerId: actors.owner, token: TOKEN, authority: s.authority, receive: input => company.service!.receive(input), authorizePublication: input => company.service!.authorizePublication(input) });
   await company.brain.publish(ids.scope, actors.owner, { sourceId: "b".repeat(64), audienceScopeId: ids.scope, title: "Launch decision", text: "The company launch is Monday",
     permalink: "https://example.com/launch", sourceUpdatedAt: new Date().toISOString(), expectedRevision: 0 });
   await platform.repository.saveInstallation({ appId: "A123", teamId: "T123", organizationId: ORG, installedBy: actors.owner, botUserId: "UBOT",
@@ -222,7 +225,11 @@ async function setupSlack(s: Awaited<ReturnType<typeof setup>>) {
     return { method: "POST", body, headers: { "content-type": "application/json", "x-slack-request-timestamp": timestamp,
     "x-slack-signature": `v0=${createHmac("sha256", config.signingSecret).update(`v0:${timestamp}:${body}`).digest("hex")}` } };
   };
-  return { company, platform, posts, payload, signed, platformDb: platformFixture.db as unknown as Kysely<SlackDatabase>, restart: () => startSlackCompany({ ownerId: actors.owner, repository: s.chats, collaboration: s.collaboration, executionRoots: s.roots, bots: s.bots, client }) };
+  return { company, platform, posts, payload, signed, authorizePublication: (input: unknown) => homeRpc(home, "authorize", input), platformDb: platformFixture.db as unknown as Kysely<SlackDatabase>, restart: async () => {
+    const next = await startSlackCompany({ ownerId: actors.owner, repository: s.chats, collaboration: s.collaboration, executionRoots: s.roots, bots: s.bots, client });
+    bridge = createSlackBridgeRoutes({ ownerId: actors.owner, token: TOKEN, authority: s.authority, receive: input => next.service!.receive(input), authorizePublication: input => next.service!.authorizePublication(input) });
+    return next;
+  } };
 }
 
 describe("Slack company Pi composition", () => {
@@ -280,6 +287,47 @@ describe("Slack company Pi composition", () => {
     await company.service!.drain();
     expect(posts).not.toHaveBeenCalled();
     expect(s.stream).toHaveBeenCalledTimes(2);
+  }, 20_000);
+
+  it("withholds actual Pi evidence erased during Slack channel metadata latency", async () => {
+    const s = await setup();
+    let erase = false;
+    const { company, platform, posts, signed } = await setupSlack(s, async () => {
+      if (erase) { erase = false; await company.brain.erase(ids.scope, actors.owner); }
+    });
+    expect((await platform.routes.request("/webhooks/slack/events", signed())).status).toBe(200);
+    await company.service!.drain();
+    await vi.waitFor(async () => {
+      expect(await s.db.selectFrom("chat_runs").select("status").execute()).toEqual([{ status: "completed" }, { status: "completed" }]);
+    }, { timeout: 10_000 });
+    erase = true;
+    await company.service!.drain();
+    expect(posts).not.toHaveBeenCalled();
+    expect(s.stream).toHaveBeenCalledTimes(2);
+  }, 20_000);
+
+  it("binds publication authorization to the exact sending receipt, actor, scope and output digest", async () => {
+    const s = await setup();
+    let inspect = false;
+    const native = await setupSlack(s, async () => {
+      if (!inspect) return; inspect = false;
+      const request = { ownerId: actors.owner, organizationId: ORG, actorId: actors.editor, scopeId: ids.scope, action: "publish_reply",
+        appId: "A123", teamId: "T123", eventId: "EvPI123", textDigest: createHash("sha256").update(ANSWER, "utf8").digest("hex") };
+      expect(await native.authorizePublication(request)).toEqual({ allowed: true });
+      for (const change of [{ appId: "A999" }, { teamId: "T999" }, { eventId: "EvFORGED" }, { textDigest: "b".repeat(64) },
+        { scopeId: "10000000-0000-4000-8000-000000000099" }, { actorId: actors.owner }, { ownerId: actors.editor }]) {
+        const allowed = await native.authorizePublication({ ...request, ...change }).then(result => result.allowed === true, () => false);
+        expect(allowed).toBe(false);
+      }
+    });
+    expect((await native.platform.routes.request("/webhooks/slack/events", native.signed())).status).toBe(200);
+    await native.company.service!.drain();
+    await vi.waitFor(async () => {
+      expect(await s.db.selectFrom("chat_runs").select("status").execute()).toEqual([{ status: "completed" }, { status: "completed" }]);
+    }, { timeout: 10_000 });
+    inspect = true;
+    await native.company.service!.drain();
+    expect(inspect).toBe(false); expect(native.posts).toHaveBeenCalledOnce();
   }, 20_000);
 
 });

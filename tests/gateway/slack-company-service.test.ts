@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createHash } from "node:crypto";
 import { CompanyBrainService } from "../../packages/gateway/src/company-brain/service.js";
 import { bootstrapCompanyBrainDatabase, type CompanyBrainDatabase } from "../../packages/gateway/src/company-brain/database.js";
 import type { Kysely } from "kysely";
@@ -23,7 +24,7 @@ describe("durable Slack company requests use canonical shared Chat admission", (
   let authority: CollaborationAuthority;
   let service: SlackCompanyService;
   let options: SlackCompanyOptions;
-  const brain={retrieveForRun:vi.fn(),captureSlackMention:vi.fn(),get:vi.fn()};
+  const brain={retrieveForRun:vi.fn(),captureSlackMention:vi.fn(),verifyEvidence:vi.fn()};
   const readThread=vi.fn();
   let completed = false;
   let currentTime=now;
@@ -47,7 +48,7 @@ describe("durable Slack company requests use canonical shared Chat admission", (
     sendReply.mockResolvedValue({ status: "sent", messageTs: "1790766001.000001" });
     resolveThread.mockResolvedValue({ scopeId: childId, chatId: ids.chat, projectScopeId: ids.scope, projectId: "company_project" });
     brain.retrieveForRun.mockResolvedValue({sources:[]}); brain.captureSlackMention.mockResolvedValue({sourceId:"a".repeat(64),revision:1,incarnation:"20000000-0000-4000-8000-000000000001",audienceScopeId:ids.scope});
-    brain.get.mockResolvedValue({revision:1,incarnation:"20000000-0000-4000-8000-000000000001"});
+    brain.verifyEvidence.mockImplementation(async(_scope,_actor,_proofs,beforeRead)=>{await beforeRead?.();return true;});
     readThread.mockResolvedValue({messages:[{ts:envelope.event.ts,text:"Launch on Monday",user:"U123"}]});
     options = { db, ownerId: actors.owner, authority, now: () => currentTime, resolveThread,
       execution: { submit, resourceRevision: async () => "0" },
@@ -106,7 +107,7 @@ describe("durable Slack company requests use canonical shared Chat admission", (
     expect(brain.captureSlackMention).toHaveBeenCalledTimes(1);
     expect(brain.captureSlackMention).toHaveBeenCalledWith(ids.scope,childId,actors.owner,expect.objectContaining({approval:{ownerId:actors.owner,organizationId:"org_team",scopeId:ids.scope},text:expect.stringContaining("Launch on Monday")}));
     completed=true;
-    brain.get.mockRejectedValueOnce(Object.assign(new Error("removed"),{code:"not_found"}));
+    brain.verifyEvidence.mockRejectedValueOnce(Object.assign(new Error("removed"),{code:"not_found"}));
     await service.drain();
     expect(sendReply).not.toHaveBeenCalled();
   });
@@ -197,6 +198,66 @@ describe("durable Slack company requests use canonical shared Chat admission", (
     const receipt=await db.selectFrom("slack_company_inbox").select("state").executeTakeFirstOrThrow();
     expect(receipt.state).toBe(retry ? "failed" : "completed");
     if(!retry) expect((await db.selectFrom("slack_company_outbox").select("state").executeTakeFirstOrThrow()).state).toBe("failed");
+  });
+
+  it.each([false,true])("revalidates persisted evidence at the final receipt publication boundary (erased=%s)",async(erased)=>{
+    const brainDb=fixture.db as unknown as Kysely<CompanyBrainDatabase>;
+    await bootstrapCompanyBrainDatabase(brainDb);
+    const realBrain=new CompanyBrainService({db:brainDb,authority,ownerId:actors.owner,now:()=>now});
+    await realBrain.publish(ids.scope,actors.owner,{sourceId:"a".repeat(64),audienceScopeId:ids.scope,title:"Launch",text:"Launch decision is Monday",permalink:"https://example.com/launch",sourceUpdatedAt:now.toISOString(),expectedRevision:0});
+    const actualPublication=vi.fn();
+    sendReply.mockImplementation(async(reply)=>{
+      // Platform metadata lookup happens after the gateway's first evidence check.
+      await Promise.resolve();
+      if(erased) await realBrain.erase(ids.scope,actors.owner);
+      expect(await service.authorizePublication({organizationId:"org_team",actorId:actors.owner,scopeId:ids.scope,
+        appId:"A123",teamId:"T123",eventId:"Ev123",textDigest:createHash("sha256").update(reply.text,"utf8").digest("hex")})).toBe(true);
+      actualPublication();return {status:"sent",messageTs:"1790766001.000001"};
+    });
+    options={...options,brain:realBrain};service=new SlackCompanyService(options);
+    await service.receive(envelope);await service.drain();completed=true;await service.drain();
+    expect(actualPublication).toHaveBeenCalledTimes(erased?0:1);
+    expect((await db.selectFrom("slack_company_outbox").select("state").executeTakeFirstOrThrow()).state).toBe(erased?"failed":"sent");
+  });
+
+  it("requires the exact completed receipt, actor, Project and raw canonical text digest for publication",async()=>{
+    const publication={organizationId:"org_team",actorId:actors.owner,scopeId:ids.scope,appId:"A123",teamId:"T123",eventId:"Ev123",
+      textDigest:createHash("sha256").update("Ship <@U123> & <!channel>","utf8").digest("hex")};
+    await expect(service.authorizePublication(publication)).rejects.toMatchObject({code:"forbidden"});
+    await service.receive(envelope);await service.drain();
+    await expect(service.authorizePublication(publication)).rejects.toMatchObject({code:"forbidden"});
+    sendReply.mockImplementation(async()=>{
+      for(const mutation of [{organizationId:"org_other"},{actorId:actors.editor},{scopeId:childId},{appId:"A999"},{teamId:"T999"},{eventId:"Ev999"},{textDigest:"b".repeat(64)}]) {
+        await expect(service.authorizePublication({...publication,...mutation})).rejects.toMatchObject({code:"forbidden"});
+      }
+      await expect(service.authorizePublication({...publication,sourceProofs:[]} as never)).rejects.toMatchObject({code:"forbidden"});
+      expect(await service.authorizePublication(publication)).toBe(true);
+      return {status:"sent",messageTs:"1790766001.000001"};
+    });
+    completed=true;await service.drain();
+    expect((await db.selectFrom("slack_company_outbox").select("state").executeTakeFirstOrThrow()).state).toBe("sent");
+    await expect(service.authorizePublication(publication)).rejects.toMatchObject({code:"forbidden"});
+  });
+
+  it.each(["changed_text","changed_actor","expired_lease","changed_during_proof_authority"])("fails final publication closed when %s changes while callbacks settle",async(mutation)=>{
+    let finalCheck=false;
+    let proofAuthoritySettled=false;
+    brain.verifyEvidence.mockImplementation(async(_scope,_actor,_proofs,beforeRead)=>{
+      if(finalCheck && mutation==="expired_lease") currentTime=new Date(now.getTime()+60_000);
+      if(finalCheck) proofAuthoritySettled=true;
+      await beforeRead?.();return true;
+    });
+    options={...options,readResult:async()=>completed?{status:"completed",requestingActorId:finalCheck && mutation==="changed_actor"?actors.editor:actors.owner,
+      runId:"run_slack_test",text:finalCheck && (mutation==="changed_text" || (mutation==="changed_during_proof_authority" && proofAuthoritySettled))?"Different canonical result":"Ship <@U123> & <!channel>"}:{status:"pending",requestingActorId:actors.owner}};
+    sendReply.mockImplementation(async(reply)=>{
+      finalCheck=true;
+      await service.authorizePublication({organizationId:"org_team",actorId:actors.owner,scopeId:ids.scope,appId:"A123",teamId:"T123",eventId:"Ev123",
+        textDigest:createHash("sha256").update(reply.text,"utf8").digest("hex")});
+      throw new Error("Publication should have been denied");
+    });
+    service=new SlackCompanyService(options);
+    await service.receive({...envelope,companyPublicationApproved:true});await service.drain();completed=true;await service.drain();
+    expect((await db.selectFrom("slack_company_outbox").select("state").executeTakeFirstOrThrow()).state).toBe("failed");
   });
 
   it("reacts only after canonical admission and preserves accepted work if the reaction fails",async()=>{

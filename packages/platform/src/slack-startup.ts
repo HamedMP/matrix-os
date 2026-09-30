@@ -65,12 +65,13 @@ export async function bootstrapPlatformSlack(options:{env:NodeJS.ProcessEnv;db:P
       const bearer=c.req.header("authorization")?.replace(/^Bearer /,"");
       return machine && timingSafeTokenEquals(bearer,buildPlatformVerificationToken(machine.handle,options.platformSecret))?{ownerId:machine.clerkUserId}:null;
     },
-    authorizeReply:async({destination,ownerId})=>{
+    authorizeReply:async({destination,ownerId,publication})=>{
       if(destination.ownerId!==ownerId || !await organizations.projection.isCurrentMember({actorId:destination.actorId,organizationId:destination.organizationId}))return false;
       if(!destination.scopeId)return ownerId===destination.actorId && destination.channelId.startsWith("D");
       const home=await homeFor(destination.actorId,destination.scopeId,destination.organizationId);
       if(home.ownerId!==ownerId)return false;
-      return (await rpc(home,"authorize",{ownerId,organizationId:destination.organizationId,actorId:destination.actorId,scopeId:destination.scopeId,action:"discuss"})).allowed===true;
+      return (await rpc(home,"authorize",{ownerId,organizationId:destination.organizationId,actorId:destination.actorId,scopeId:destination.scopeId,
+        ...(publication?{action:"publish_reply",appId:destination.appId,teamId:destination.teamId,eventId:destination.eventId,textDigest:publication.textDigest}:{action:"discuss"})})).allowed===true;
     },
   });
 }

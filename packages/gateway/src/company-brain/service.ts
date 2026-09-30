@@ -27,6 +27,7 @@ export interface BrainCitation {
   provenance: "manually_published" | "slack_thread";
 }
 export interface BrainSearchResult extends BrainCitation { excerpt: string }
+export interface BrainEvidenceProof {sourceId:string;incarnation:string;revision:number}
 export interface CompanyBrainOptions {
   db: Kysely<CompanyBrainDatabase>;
   authority: Pick<CollaborationAuthority, "authorize">;
@@ -76,6 +77,16 @@ export class CompanyBrainService {
       || current.resourceId !== context.resourceId || current.organizationId !== context.organizationId
       || current.ownerId !== context.ownerId) throw new CompanyBrainError("forbidden");
     await this.binding(current, this.options.db);
+  }
+
+  /** Authority callbacks can outlive a source erasure; validate loaded content after they settle. */
+  private async assertCurrentSources(scopeId:string,rows:Array<Pick<Selectable<CompanyBrainDocumentsTable>,"source_id"|"incarnation"|"revision">>) {
+    if(!rows.length) return;
+    if(rows.length>1000) throw new CompanyBrainError("capacity");
+    const current=await this.options.db.selectFrom("company_brain_documents").select(["source_id","incarnation","revision"])
+      .where("scope_id","=",scopeId).where("source_id","in",rows.map(row=>row.source_id)).where("deleted_at","is",null).execute();
+    if(current.length!==rows.length || rows.some(row=>!current.some(source=>source.source_id===row.source_id
+      && source.incarnation===row.incarnation && source.revision===row.revision))) throw new CompanyBrainError("forbidden");
   }
 
   private async fenceOwner(context: AuthorizedCollaborationContext,trx: Transaction<CompanyBrainDatabase>) {
@@ -183,11 +194,23 @@ export class CompanyBrainService {
       .where("source_id", "=", sourceId).where("deleted_at", "is", null).executeTakeFirst();
     await this.recheck(context);
     if (!row) throw new CompanyBrainError("not_found");
+    await this.assertCurrentSources(scopeId,[row]);
     return { ...citation(row), text: row.text };
   }
 
   async search(scopeId: string, actorId: string, input: SearchBrain): Promise<BrainSearchResult[]> {
     return this.find(scopeId, actorId, input, "read");
+  }
+
+  /** Bounded all-source snapshot after live authority and any trusted transport receipt fence. */
+  async verifyEvidence(scopeId:string,actorId:string,raw:BrainEvidenceProof[],beforeRead?:()=>Promise<void>):Promise<true> {
+    const proofs=z.array(z.object({sourceId:BrainSourceIdSchema,incarnation:z.uuid(),revision:BrainRevisionSchema.refine(value=>value>0)}).strict()).max(6).parse(raw);
+    const context=await this.authorize(scopeId,actorId,"read");
+    await this.binding(context,this.options.db);
+    await this.recheck(context);
+    await beforeRead?.();
+    await this.assertCurrentSources(scopeId,proofs.map(proof=>({source_id:proof.sourceId,incarnation:proof.incarnation,revision:proof.revision})));
+    return true;
   }
 
   private async find(scopeId: string, actorId: string, input: SearchBrain, action: "read" | "request_ai", naturalQuestion=false) {
@@ -203,6 +226,7 @@ export class CompanyBrainService {
       .orderBy(sql<number>`ts_rank_cd(to_tsvector('english',title || ' ' || text),${terms})`,"desc")
       .orderBy("updated_at", "desc").orderBy("source_id", "asc").limit(query.limit).execute();
     await this.recheck(context);
+    await this.assertCurrentSources(scopeId,rows);
     return rows.map((row) => ({ ...citation(row), excerpt: row.matched_excerpt.slice(0, 2000) }));
   }
 
@@ -224,6 +248,7 @@ export class CompanyBrainService {
     }
     const results = await this.find(sourceScopeId, actorId, input, "read",true);
     await this.recheck(run);
+    await this.assertCurrentSources(sourceScopeId,results.map(source=>({source_id:source.sourceId,incarnation:source.incarnation,revision:source.revision})));
     return { trust: "untrusted_source_material" as const, scopeId: sourceScopeId, runScopeId,
       sources: boundContext(results) };
   }
@@ -235,6 +260,7 @@ export class CompanyBrainService {
       .where("deleted_at", "is", null).orderBy("source_id", "asc").limit(1001).execute();
     if (rows.length > 1000 || rows.reduce((n, row) => n + row.byte_count, 0) > MAX_SCOPE_BYTES) throw new CompanyBrainError("capacity");
     await this.recheck(context, true);
+    await this.assertCurrentSources(scopeId,rows);
     return { version: 1, hosting: "owner_hosted" as const, organizationId: context.organizationId, ownerId: context.ownerId,
       scopeId, exportedAt: this.now().toISOString(), documents: rows.map((row) => ({ ...citation(row), text: row.text })) };
   }

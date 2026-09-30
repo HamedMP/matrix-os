@@ -12,8 +12,17 @@ export const SlackBridgeEnvelopeSchema = z.object({
     text:z.string().min(1).max(40_000),kind:z.enum(["mention","direct_message"])}).strict(),
 }).strict();
 export type SlackBridgeEnvelope = z.infer<typeof SlackBridgeEnvelopeSchema>;
-export const SlackBridgeAuthorizationSchema = z.object({ownerId:Actor,organizationId:Organization,actorId:Actor,
-  scopeId:z.uuid(),action:z.enum(["manage_members","discuss"])}).strict();
+const AuthorizationIdentity = { ownerId: Actor, organizationId: Organization, actorId: Actor, scopeId: z.uuid() };
+export const SlackBridgePublicationSchema = z.object({ ...AuthorizationIdentity, action: z.literal("publish_reply"),
+  appId: SlackBridgeEnvelopeSchema.shape.event.shape.appId, teamId: SlackBridgeEnvelopeSchema.shape.event.shape.teamId,
+  eventId: SlackBridgeEnvelopeSchema.shape.event.shape.eventId, textDigest: z.string().regex(/^[a-f0-9]{64}$/),
+}).strict();
+export type SlackPublicationIdentity = Omit<z.infer<typeof SlackBridgePublicationSchema>, "ownerId" | "action">;
+export const SlackBridgeAuthorizationSchema = z.discriminatedUnion("action", [
+  z.object({ ...AuthorizationIdentity, action: z.literal("manage_members") }).strict(),
+  z.object({ ...AuthorizationIdentity, action: z.literal("discuss") }).strict(),
+  SlackBridgePublicationSchema,
+]);
 const encoder = new TextEncoder();
 async function key(token:string) {
   if (!/^[a-f0-9]{64}$/.test(token)) throw new Error("Slack bridge unavailable");

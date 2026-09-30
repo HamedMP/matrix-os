@@ -1,4 +1,4 @@
-import { createHmac } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
 import { Kysely } from "kysely";
 import { KyselyPGlite } from "kysely-pglite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -133,6 +133,17 @@ describe("Slack reply publication", () => {
     expect(replay.status).toBe(200); expect(await replay.json()).toEqual({ sent: true, messageTs: "123.999" });
     expect(api.postMessage).toHaveBeenCalledOnce();
     expect((await reply("different")).status).toBe(409);
+  });
+
+  it("passes the raw output digest and original receipt into both publication fences",async()=>{
+    await admitDm();actor="user_employee";
+    const text="Company answer: 語 and <@U123>";
+    expect((await reply(text)).status).toBe(200);
+    expect(authorizeReply).toHaveBeenCalledTimes(2);
+    for(const [input] of authorizeReply.mock.calls) expect(input).toMatchObject({
+      publication:{textDigest:createHash("sha256").update(text,"utf8").digest("hex")},
+      destination:{appId:"A123",teamId:"T123",eventId:"Ev123",actorId:"user_employee",channelId:"D123",threadTs:"123.456"},
+    });
   });
   it("fails closed on revocation and preserves unknown delivery without blindly resending", async () => {
     await admitDm(); actor = "user_employee";

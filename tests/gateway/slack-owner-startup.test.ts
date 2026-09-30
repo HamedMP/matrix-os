@@ -24,7 +24,7 @@ describe("owner Slack composition",()=>{
   personal.receive.mockImplementation(()=>new Promise<void>(resolve=>{release=resolve;}));
   const runtime=registerOwnerSlack({app,ownerId,token,authority:{authorize:vi.fn()},personal,now,startDrain:false});
   const dm={ownerId,actorId:ownerId,organizationId:"org_company",event};
-  const response=app.request("/api/internal/slack/events",await signed(dm));await vi.waitFor(()=>expect(personal.receive).toHaveBeenCalledOnce());
+  const response=Promise.resolve(app.request("/api/internal/slack/events",await signed(dm)));await vi.waitFor(()=>expect(personal.receive).toHaveBeenCalledOnce());
   let settled=false;void response.then(()=>{settled=true;});await Promise.resolve();expect(settled).toBe(false);release();expect((await response).status).toBe(202);
   expect((await app.request("/api/internal/slack/events",await signed({...dm,event:{...event,kind:"mention",channelId:"C123"}}))).status).toBe(503);
   await runtime.close();expect((await app.request("/api/internal/slack/events",await signed(dm))).status).toBe(503);
@@ -42,4 +42,29 @@ describe("owner Slack composition",()=>{
   expect((await app.request("/api/internal/slack/events",{method:"POST"})).status).toBe(503);
   expect((await app.request("/api/company-brain/scopes/anything/search")).status).toBe(503);await runtime.close();
  });
+ it("resolves the company publication helper at registration and denies it after shutdown",async()=>{
+  const app=new Hono(),publication=vi.fn().mockResolvedValue(true),company={...transport(),authorizePublication:publication};
+  const scopeId="b8205675-a985-462c-a1be-5167adb5f6aa";
+  const authority={authorize:vi.fn(async({scopeId,actorId,action})=>({scopeId,actorId,ownerId,organizationId:"org_company",resourceKind:"project",resourceId:"project_company",role:"editor",capability:action}))};
+  const runtime=registerOwnerSlack({app,ownerId,token,authority:authority as never,company,now,startDrain:false});
+  company.authorizePublication=vi.fn().mockResolvedValue(false);
+  const path="/api/internal/slack/authorize",data={ownerId,organizationId:"org_company",actorId:"user_employee",scopeId,action:"publish_reply",appId:"A123",teamId:"T123",eventId:"Ev123",textDigest:"d".repeat(64)};
+  const call=async()=>{const body=JSON.stringify(data);return app.request(path,{method:"POST",body,headers:{"content-type":"application/json",...await signSlackBridgeRequest({token,path,body,now:now()})}});};
+  expect(await(await call()).json()).toEqual({allowed:true});expect(publication).toHaveBeenCalledOnce();
+  expect(company.authorizePublication).not.toHaveBeenCalled();
+  await runtime.close();expect(await(await call()).json()).toEqual({allowed:false});expect(publication).toHaveBeenCalledOnce();
+ });
+
+ it("denies an authorization that finishes after owner transport shutdown",async()=>{
+  const app=new Hono();let release!:()=>void;
+  const publication=vi.fn(()=>new Promise<boolean>(resolve=>{release=()=>resolve(true);}));
+  const scopeId="b8205675-a985-462c-a1be-5167adb5f6aa";
+  const authority={authorize:vi.fn(async({scopeId,actorId,action})=>({scopeId,actorId,ownerId,organizationId:"org_company",resourceKind:"project",resourceId:"project_company",role:"editor",capability:action}))};
+  const runtime=registerOwnerSlack({app,ownerId,token,authority:authority as never,company:{...transport(),authorizePublication:publication},now,startDrain:false});
+  const path="/api/internal/slack/authorize",body=JSON.stringify({ownerId,organizationId:"org_company",actorId:"user_employee",scopeId,action:"publish_reply",appId:"A123",teamId:"T123",eventId:"Ev123",textDigest:"d".repeat(64)});
+  const response=app.request(path,{method:"POST",body,headers:{"content-type":"application/json",...await signSlackBridgeRequest({token,path,body,now:now()})}});
+  await vi.waitFor(()=>expect(publication).toHaveBeenCalledOnce());await runtime.close();release();
+  expect(await(await response).json()).toEqual({allowed:false});
+ });
+
 });
