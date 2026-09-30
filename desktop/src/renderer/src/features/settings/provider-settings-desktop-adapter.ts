@@ -27,6 +27,8 @@ const PROVIDER_SETTINGS_ACTIONS_PATH = "/api/ai/provider-settings/actions";
 const MAX_RESPONSE_BYTES = 1024 * 1024;
 const MAX_MUTATION_BYTES = 64 * 1024;
 const MAX_CHECKOUT_RESPONSE_BYTES = 8 * 1024;
+const PROVIDER_TERMINAL_DISCOVERY_ATTEMPTS = 8;
+const PROVIDER_TERMINAL_DISCOVERY_INTERVAL_MS = 250;
 
 export { desktopProviderIdentityKey } from "../../lib/provider-settings-identity";
 
@@ -96,12 +98,22 @@ export async function openExistingProviderTerminalSession(
   isIdentityCurrent: () => boolean = () => true,
 ): Promise<boolean> {
   if (!isValidShellSessionName(terminalSessionId)) return false;
-  const sessions = await useShellSessions.getState().load(api);
-  if (!isIdentityCurrent()) return false;
-  const exists = sessions?.some((session) => (
-    session.name === terminalSessionId && session.status === "active"
-  )) ?? false;
-  if (!exists) return false;
+  let active = false;
+  for (let attempt = 0; attempt < PROVIDER_TERMINAL_DISCOVERY_ATTEMPTS; attempt += 1) {
+    if (!isIdentityCurrent()) return false;
+    const sessions = await useShellSessions.getState().load(api);
+    if (!isIdentityCurrent()) return false;
+    const matching = sessions?.find((session) => session.name === terminalSessionId);
+    if (matching?.status === "active") {
+      active = true;
+      break;
+    }
+    if (matching?.status === "exited" || matching?.status === "degraded") return false;
+    if (attempt < PROVIDER_TERMINAL_DISCOVERY_ATTEMPTS - 1) {
+      await new Promise((resolve) => setTimeout(resolve, PROVIDER_TERMINAL_DISCOVERY_INTERVAL_MS));
+    }
+  }
+  if (!active || !isIdentityCurrent()) return false;
   const tabId = useTabs.getState().openTab({ kind: "terminals", title: "Terminal" });
   useDesktopSurfaces.getState().activateSurface(tabId);
   useTabs.getState().requestTerminalSession(terminalSessionId);
