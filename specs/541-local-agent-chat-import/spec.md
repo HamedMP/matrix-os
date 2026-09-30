@@ -112,16 +112,16 @@ owner field or provider session binding grants access to import jobs or archives
 Existing `/api/chats/imports/codex` compatibility remains available while the
 new protocol is independently versioned. Harness is part of source identity.
 
-| Proposed route | Method | Authority | Request body limit |
+| Implemented route | Method | Authority | Request body limit |
 | --- | --- | --- | --- |
-| `/api/chats/imports/local` | POST | Personal owner; job/archive admission | 16 KiB |
+| `/api/chats/imports/local` | POST | Personal runtime owner; job/archive admission | 8 KiB |
 | `/api/chats/imports/local/:jobId` | GET | Exact job owner | None |
-| `/api/chats/imports/local/:jobId/archive/parts` | POST | Exact job owner; bounded part numbers | 16 KiB |
-| `/api/chats/imports/local/:jobId/archive/complete` | POST | Exact job owner; exact staged object | 512 KiB |
-| `/api/chats/imports/local/:jobId/archive/parts/:partNumber` | PUT | Exact job owner; acknowledged size and receipt | 16 KiB |
-| `/api/chats/imports/local/:jobId/complete` | POST | Exact job owner; verified bytes and reconstruction | 16 KiB |
-| `/api/chats/imports/local/:jobId` | DELETE | Exact job owner; cancel incomplete job only | 4 KiB |
-| `/api/chats/:chatId/import-archive` | GET | Personal source owner, independently of Chat sharing | None |
+| `/api/chats/imports/local/:jobId/parts` | POST | Exact job owner; at most eight part numbers | 8 KiB |
+| `/api/chats/imports/local/:jobId/parts/ack` | POST | Exact job owner; acknowledged size and receipt | 8 KiB |
+| `/api/chats/imports/local/:jobId/complete` | POST | Exact job owner; immutable archive completion, queue verification | 8 KiB |
+| `/api/chats/imports/local/:jobId` | DELETE | Exact job owner; cancel idle unfinished job only | 8 KiB |
+| `/api/chats/imports/local/:jobId/archive` | GET | Personal source owner, independently of Chat sharing | None |
+| `/api/chats/:chatId/imports/assets/:assetId/content` | GET | Personal runtime owner; live owned Chat and exact visible asset occurrence | None |
 
 Strict Zod schemas validate IDs, harness, hashes, integer sizes, offsets and
 part numbers. Reject owner IDs and caller-selected object keys. Admission has
@@ -207,7 +207,7 @@ retain durable asset/archive cleanup until verified.
 
 The initial foundation PR supplies readers, reconstruction fixtures, archive
 verification, durable transfer jobs and authenticated R2 recovery capabilities.
-It does not register the proposed Chat import routes or replace existing UI.
+It does not register the Chat import routes or replace existing UI.
 Publication, rendering, clients and final runtime wiring ship in subsequent
 reviewed PRs before claiming the new importer is available.
 
@@ -244,3 +244,38 @@ acknowledge current parts before resealing. Transport/unknown errors remain
 `sealing` for original-object existence recovery; they do not overwrite an
 archive whose completion response was lost. The broker projects a generic
 `receipt_mismatch` code, never a raw object-store error.
+
+## Canonical publication increment
+
+The publication increment registers the authenticated routes above and a single
+runtime worker. Gateway shutdown aborts and drains this worker before shared DB
+and primary R2 resources close. A synthetic integration test exercises admission,
+part signing/acknowledgment, archive sealing, worker verification, canonical Chat
+read-back, full-text download, cross-owner denial and injected resource lifetime.
+
+Verification publishes only after exact raw SHA-256, length and source/agent
+identity succeed. The transaction commits personal Chat membership, historical
+turns, messages, asset links and outbox together. Assistant-only history is
+readable without fabricating a human message, turn or executable run. Projection
+is limited to 100,000 bounded canonical rows and 64 MiB per decoded asset; an
+excess fails explicitly. Original JSONL is unchanged. Long text and tool payloads
+use full-content assets with bounded UI previews. Same-origin authenticated asset
+streaming is compatible with packaged Electron CSP. Never pass arbitrary source
+paths or URLs into the asset transport.
+
+Historical presentation preserves source sequence, all distinct results per
+call, later call/result linkage, and adjacent compatible Claude response
+fragments. Tool activity is an ordering boundary. Incomplete calls never acquire
+live progress or approval actions. The source owner alone can download the raw
+archive. Failed, cancelled and expired staging is swept repeatedly using durable
+exact-key cleanup intent; deleting a published Chat schedules its private archive
+and assets for cleanup.
+
+This increment does not expose a new Settings/CLI import action. Incremental
+overlapping snapshots, explicit upgrades of existing text-only Chats, external
+file selection, parent/child Chat linking, shared-recipient asset authorization,
+and Native Mobile historical rendering remain subsequent delivery gates. Do not
+claim those capabilities from the parser fixtures or an isolated API success.
+A compatible Electron/Desktop renderer must ship before customer imports emit
+new canonical part types. Imported source context and thinking remain private
+archive material and never become shared human messages.

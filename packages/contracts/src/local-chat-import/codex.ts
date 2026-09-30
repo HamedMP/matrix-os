@@ -1,5 +1,5 @@
-import { importBlocks, firstText, isInjectedContext } from "./blocks.js";
-import { object, string, type ImportBlock, type ImportConversation, type ImportProjection, type ImportSource } from "./types.js";
+import { importBlocks, firstText, isInjectedContext } from "#local-chat-import/blocks";
+import { object, string, type ImportBlock, type ImportConversation, type ImportProjection, type ImportSource } from "#local-chat-import/types";
 interface Mirror { paired?: boolean; at: number; key: string; role: string; representation: string; itemId?: string; turnId?: string; firstDigest: string; digest: string }
 async function digest(value: string): Promise<string> {
   const bytes = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));

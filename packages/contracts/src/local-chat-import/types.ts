@@ -1,4 +1,4 @@
-import type { LocalChatSourceIssue } from "./jsonl.js";
+import type { LocalChatSourceIssue } from "#local-chat-import/jsonl";
 export type ImportHarness = "codex" | "claude";
 export interface ImportSource {
   line: number; offset: number; end: number; ordinal?: number; blockIndex?: number;

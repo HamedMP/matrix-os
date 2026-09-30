@@ -1,5 +1,6 @@
 /** Owner import persistence, extracted from the large canonical database bootstrap. */
 import { sql, type ColumnType, type Kysely } from "kysely";
+import { bootstrapChatPublication, type LocalChatPublicationDatabase } from "./local-import/publication-database.js";
 type Timestamp = ColumnType<Date | string, Date | string | undefined, Date | string>;
 type NullableTimestamp = ColumnType<Date | string | null, Date | string | null | undefined, Date | string | null>;
 export interface ChatImportJobsTable {
@@ -36,7 +37,7 @@ export interface LocalChatImportJobsTable {
   created_at: Timestamp; updated_at: Timestamp;
 }
 export interface LocalChatImportPartsTable { job_id: string; part_number: number; etag: string; size_bytes: number }
-export interface ChatImportDatabase {
+export interface ChatImportDatabase extends LocalChatPublicationDatabase {
   chat_import_jobs: ChatImportJobsTable;
   chat_import_messages: ChatImportMessagesTable;
   local_chat_import_jobs: LocalChatImportJobsTable;
@@ -94,4 +95,5 @@ export async function bootstrapChatImports<Database extends ChatImportDatabase>(
     size_bytes BIGINT NOT NULL CHECK (size_bytes > 0 AND size_bytes <= 67108864),
     PRIMARY KEY(job_id,part_number)
   )`.execute(db);
+  await bootstrapChatPublication(db);
 }

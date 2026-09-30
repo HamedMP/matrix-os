@@ -1,5 +1,5 @@
-import { importBlocks } from "./blocks.js";
-import { object, string, type ImportConversation, type ImportProjection, type ImportSource } from "./types.js";
+import { importBlocks } from "#local-chat-import/blocks";
+import { object, string, type ImportConversation, type ImportProjection, type ImportSource } from "#local-chat-import/types";
 /** Claude UUIDs identify records; message IDs identify responses with multiple fragments. */
 export function projectClaude(record: Record<string, unknown>, source: ImportSource): ImportProjection[] {
   const conversation: ImportConversation = { harness: "claude", sessionId: string(record.sessionId), agentId: string(record.agentId) };

@@ -1,3 +1,4 @@
+import { ImportedChatProvenancePartSchema, ImportedChatReferencePartSchema } from "#canonical-chat-import-parts";
 import { z } from "zod/v4";
 import { ChatSubagentSchema } from "#chat-subagent";
 import { ChatRunContextSchema, isChatAgentDriver } from "#chat-agent-context";
@@ -267,6 +268,8 @@ export const CanonicalChatApprovalDecisionSchema = z.enum([
 ]);
 
 export const CanonicalChatMessagePartSchema = z.discriminatedUnion("type", [
+  ImportedChatProvenancePartSchema,
+  ImportedChatReferencePartSchema,
   z.object({
     type: z.literal("text"),
     text: canonicalBoundedText(32_000, 96 * 1024),
