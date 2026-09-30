@@ -225,3 +225,22 @@ not grant authority. Exact-key enumeration returns at most ten upload receipts;
 truncated provider enumeration fails closed. HEAD returns a coarse `exists`
 boolean only. Missing upload abort is idempotent, while access/transport failures
 remain errors. No credential or raw object-store error reaches clients.
+
+### Reconstruction and receipt repair safeguards
+
+Different-ID Codex mirrors require recorded turn evidence and adjacency or the
+same explicit turn. Turn/context boundaries and assistant/tool activity close
+unpaired human-input mirror candidates. Ambiguous different-ID repeated prompts
+remain separate rather than disappearing. Each Claude content block retains its
+block index and is emitted in recorded order; shared response identity does not
+move prose across tools or thinking. Every readable record must establish its
+session and agent identity. Oversized records fail projection explicitly instead
+of reporting a complete readable import with skipped content. Raw source files
+remain unchanged and the staged object stays private.
+
+A definitive invalid-part receipt error restores `uploading` and clears stale
+acknowledgments in one lease-guarded transaction. Clients can re-upload and
+acknowledge current parts before resealing. Transport/unknown errors remain
+`sealing` for original-object existence recovery; they do not overwrite an
+archive whose completion response was lost. The broker projects a generic
+`receipt_mismatch` code, never a raw object-store error.

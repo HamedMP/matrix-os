@@ -101,5 +101,15 @@ describe("owner-private durable local Chat import jobs", () => {
     expect(await jobs.get(owner, first.jobId)).toMatchObject({ status: "cancelled", cleanupPending: false });
     expect((await chats.list(owner, { limit: 10 })).items).toEqual([]);
   });
+  it("restores upload repair after definitive stale receipts without stranding the job", async () => {
+    const first = await jobs.begin(owner, request);
+    await jobs.acknowledgePart(owner, first.jobId, { partNumber: 1, etag: "old", size: 100 });
+    r2.completeMultipartUpload.mockRejectedValueOnce(Object.assign(new Error("stale receipt"), { name: "InvalidPart" }));
+    await expect(jobs.completeArchive(owner, first.jobId)).rejects.toMatchObject({ code: "incomplete" });
+    expect(await jobs.get(owner, first.jobId)).toMatchObject({ status: "uploading", parts: [] });
+    await jobs.acknowledgePart(owner, first.jobId, { partNumber: 1, etag: "new", size: 100 });
+    expect(await jobs.completeArchive(owner, first.jobId)).toMatchObject({ status: "uploaded" });
+    expect(r2.completeMultipartUpload.mock.calls.at(-1)?.[2]).toEqual([{ partNumber: 1, etag: "new" }]);
+  });
 
 });

@@ -27,12 +27,19 @@ export class CodexReconstruction {
       this.inheritedUntil = typeof item.subagent_history_start_ordinal === "number" ? item.subagent_history_start_ordinal : undefined;
       return [{ ...base(), kind: "metadata", metadata: item }];
     }
-    if (recordType === "turn_context") this.turnId = string(item.turn_id) ?? this.turnId;
+    if (recordType === "turn_context") {
+      this.mirrors = []; this.turnId = string(item.turn_id);
+    }
     if (recordType === "compacted") return [{ ...base(), kind: "compaction", blocks: importBlocks(string(item.message)) }];
     if (BOOKKEEPING.has(recordType)) return [{ ...base(), kind: "bookkeeping", recordType }];
     let representation = "model";
     if (recordType === "event_msg") {
-      this.turnId = string(item.turn_id) ?? this.turnId;
+      const nextTurn = string(item.turn_id);
+      if (nextTurn && this.turnId && nextTurn !== this.turnId) this.mirrors = [];
+      this.turnId = nextTurn ?? this.turnId;
+      if (["turn_started", "turn.started", "task_started", "turn_complete", "turn.completed", "task_complete"].includes(String(item.type))) {
+        this.mirrors = []; this.turnId = nextTurn;
+      }
       if (item.type === "turn_aborted" || item.type === "turn.aborted") {
         return [{ ...base(), kind: "notice", outcome: "interrupted", label: "Imported turn interrupted" }];
       }
@@ -54,6 +61,7 @@ export class CodexReconstruction {
       const role = type === "UserMessage" ? "user" : type === "AgentMessage" || type === "agent_message" ? "assistant" : item.role;
       const blocks = importBlocks(item.content ?? string(item.text));
       if (role !== "user" && role !== "assistant") return [{ ...base(), kind: "context", blocks }];
+      if (role === "assistant") this.mirrors = this.mirrors.filter(entry => entry.role !== "user");
       if (role === "user" && (isInjectedContext(firstText(blocks))
         || (this.inheritedUntil !== undefined && source.ordinal !== undefined && source.ordinal < this.inheritedUntil))) {
         return [{ ...base(), kind: "context", blocks }];
@@ -66,7 +74,9 @@ export class CodexReconstruction {
       const mirror = this.mirrors.slice().reverse().find((entry) => entry.role === role
         && (!entry.turnId || !this.turnId || entry.turnId === this.turnId)
         && ((itemId && entry.itemId === itemId && entry.digest === allDigest)
-          || (!entry.paired && entry.representation !== representation && Boolean(firstText(blocks)) && entry.firstDigest === firstDigest
+          || (!entry.paired && entry.representation !== representation && Boolean(firstText(blocks))
+            && Boolean(entry.turnId || this.turnId) && (source.line - entry.at === 1 || (entry.turnId && entry.turnId === this.turnId))
+            && entry.firstDigest === firstDigest
             && (role === "user" || entry.digest === allDigest))));
       if (mirror) mirror.paired = true;
       if (mirror && (mirror.digest === allDigest || representation === "event")) return [];
@@ -78,6 +88,7 @@ export class CodexReconstruction {
         origin: role === "assistant" ? "assistant" : this.child ? "agent_task" : "human",
         phase: item.phase === "commentary" ? "commentary" : item.phase === "final" || item.phase === "final_answer" ? "final" : "unknown", blocks }];
     }
+    this.mirrors = this.mirrors.filter(entry => entry.role !== "user");
     const callId = string(item.call_id) ?? string(item.id) ?? `missing:${source.offset}`;
     if (type === "function_call" || type === "custom_tool_call") {
       return [{ ...base(), kind: "tool_call", callId, name: string(item.name) ?? "Unknown tool", input: item.arguments ?? item.input }];

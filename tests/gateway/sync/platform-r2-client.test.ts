@@ -143,3 +143,13 @@ it("brokers exact-key recovery and coarse existence under machine authentication
   }
   vi.restoreAllMocks();
 });
+
+
+it("preserves a definitive receipt-repair signal without exposing provider errors", async () => {
+  vi.restoreAllMocks();
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ error: "Multipart completion unavailable", code: "receipt_mismatch" }), { status: 409 }));
+  const client = createPlatformR2Client({ baseUrl: "https://platform.example.test", handle: "test", token: "token" });
+  await expect(client.completeMultipartUpload("matrixos-sync/user_test/files/private", "upload", [{ partNumber: 1, etag: "old" }]))
+    .rejects.toMatchObject({ name: "MultipartReceiptMismatchError", message: "Multipart receipts require repair" });
+  vi.restoreAllMocks();
+});

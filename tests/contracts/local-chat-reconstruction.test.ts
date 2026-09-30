@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { reconstructLocalChat } from "../../packages/contracts/src/local-chat-import/reconstruct.js";
-const session = "01a067a0-fc39-7641-9f43-601afa987750";
+const session = "019eb0ae-9a30-7541-bdb8-db4d17e65146";
 const timestamp = "2026-09-03T16:16:38.000Z";
 function wrapped(type: string, payload: unknown) { return { timestamp, type, payload }; }
 function text(type: string, value: string) { return { type, text: value }; }
@@ -80,12 +80,36 @@ describe("local Codex and Claude history reconstruction", () => {
   it("uses each different-ID mirror pairing only once when identical prompts are legitimate repeats", async () => {
     const events = await project("codex", [
       ...[1, 2].flatMap(n => [
-        wrapped("event_msg", { type: "item_completed", item: { type: "UserMessage", id: `event-${n}`, content: [text("text", "again")] } }),
+        wrapped("event_msg", { type: "item_completed", turn_id: `turn-${n}`, item: { type: "UserMessage", id: `event-${n}`, content: [text("text", "again")] } }),
         wrapped("response_item", { type: "message", id: `model-${n}`, role: "user", content: [text("input_text", "again"), text("input_text", "image context")] }),
       ]),
     ]);
     const messages = events.filter(e => e.kind === "message");
     expect(new Set(messages.map(e => e.messageKey)).size).toBe(2);
+  });
+  it("preserves repeated prompts across an assistant boundary when turn identity is absent", async () => {
+    const events = await project("codex", [
+      wrapped("event_msg", { type: "item_completed", item: { type: "UserMessage", id: "old", content: [text("text", "repeat")] } }),
+      wrapped("response_item", { type: "message", role: "assistant", id: "answer", content: [text("output_text", "answer")] }),
+      wrapped("response_item", { type: "message", role: "user", id: "new", content: [text("input_text", "repeat")] }),
+    ]);
+    expect(events.filter(e => e.kind === "message" && e.role === "user")).toHaveLength(2);
+  });
+  it("does not guess a different-ID mirror without recorded turn evidence", async () => {
+    const events = await project("codex", [
+      wrapped("event_msg", { type: "item_completed", item: { type: "UserMessage", id: "old", content: [text("text", "repeat")] } }),
+      wrapped("response_item", { type: "message", role: "user", id: "new", content: [text("input_text", "repeat")] }),
+    ]);
+    expect(counts(events).messages).toBe(2);
+  });
+  it("keeps interleaved Claude prose and tools in exact block order", async () => {
+    const events = await project("claude", [{ type: "assistant", sessionId: session, uuid: "record", message: { id: "response", content: [
+      text("text", "before"), { type: "tool_use", id: "call", name: "synthetic", input: {} },
+      text("text", "after"), { type: "thinking", thinking: "separate" }, text("text", "last"),
+    ] } }]);
+    expect(events.map(e => e.kind)).toEqual(["message", "tool_call", "message", "thinking", "message"]);
+    expect(events.map(e => e.source.blockIndex)).toEqual([0, 1, 2, 3, 4]);
+    expect(counts(events).messages).toBe(1);
   });
   it("supports legacy unwrapped Codex records without fabricating per-message timestamps", async () => {
     const events = await project("codex", [

@@ -173,6 +173,15 @@ export class LocalChatImportJobs {
       await this.db.updateTable("local_chat_import_jobs").set({ status: "uploaded", lease_token: null, lease_expires_at: null, updated_at: this.now() })
         .where("id", "=", row.id).where("owner_id", "=", row.owner_id).where("status", "=", "sealing").where("lease_token", "=", row.lease_token).execute();
     } catch (error: unknown) {
+      if (error instanceof Error && ["InvalidPart", "InvalidPartOrder", "MultipartReceiptMismatchError"].includes(error.name)) {
+        await this.db.transaction().execute(async trx => {
+          const restored = await trx.updateTable("local_chat_import_jobs").set({ status: "uploading", lease_token: null,
+            lease_expires_at: null, updated_at: this.now() }).where("id", "=", row.id).where("owner_id", "=", row.owner_id)
+            .where("status", "=", "sealing").where("lease_token", "=", row.lease_token).returning("id").executeTakeFirst();
+          if (restored) await trx.deleteFrom("local_chat_import_parts").where("job_id", "=", row.id).execute();
+        });
+        throw new LocalChatImportJobError("incomplete");
+      }
       console.warn("[chat/import] archive completion pending", error instanceof Error ? error.name : "UnknownError");
       throw new LocalChatImportJobError("unavailable");
     }

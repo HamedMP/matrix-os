@@ -1,4 +1,4 @@
-import { importBlocks, firstText } from "./blocks.js";
+import { importBlocks } from "./blocks.js";
 import { object, string, type ImportConversation, type ImportProjection, type ImportSource } from "./types.js";
 /** Claude UUIDs identify records; message IDs identify responses with multiple fragments. */
 export function projectClaude(record: Record<string, unknown>, source: ImportSource): ImportProjection[] {
@@ -16,30 +16,27 @@ export function projectClaude(record: Record<string, unknown>, source: ImportSou
   const content = message.content;
   const messageKey = `${conversation.sessionId ?? "unknown"}:${conversation.agentId ?? "main"}:${type === "assistant" ? string(message.id) ?? source.recordId ?? source.offset : source.recordId ?? source.offset}`;
   const result: ImportProjection[] = [];
-  const prose: unknown[] = [];
-  for (const raw of typeof content === "string" ? [{ type: "text", text: content }] : Array.isArray(content) ? content : []) {
-    const block = object(raw);
+  const values = typeof content === "string" ? [{ type: "text", text: content }] : Array.isArray(content) ? content : [];
+  for (let blockIndex = 0; blockIndex < values.length; blockIndex++) {
+    const block = object(values[blockIndex]);
+    const at = { ...base, source: { ...source, blockIndex } };
     if (block.type === "tool_use") {
-      result.push({ ...base, kind: "tool_call", callId: string(block.id) ?? `missing:${source.offset}`,
+      result.push({ ...at, kind: "tool_call", callId: string(block.id) ?? `missing:${source.offset}:${blockIndex}`,
         name: string(block.name) ?? "Unknown tool", input: block.input, responseKey: messageKey });
     } else if (block.type === "tool_result") {
-      result.push({ ...base, kind: "tool_result", callId: string(block.tool_use_id) ?? `missing:${source.offset}`,
+      result.push({ ...at, kind: "tool_result", callId: string(block.tool_use_id) ?? `missing:${source.offset}:${blockIndex}`,
         blocks: importBlocks(block.content), outcome: block.is_error === true ? "failed" : "success" });
     } else if (block.type === "thinking" || block.type === "redacted_thinking") {
-      result.push({ ...base, kind: "thinking", text: string(block.thinking), responseKey: messageKey });
-    } else prose.push(raw);
-  }
-  const blocks = importBlocks(prose);
-  if (blocks.length) {
-    if (record.isMeta === true || record.isCompactSummary === true) {
-      result.push({ ...base, kind: record.isCompactSummary === true ? "compaction" : "context", blocks });
+      result.push({ ...at, kind: "thinking", text: string(block.thinking), responseKey: messageKey });
     } else {
-      result.push({ ...base, kind: "message", messageKey, role: type,
+      const blocks = importBlocks([values[blockIndex]]);
+      if (record.isMeta === true || record.isCompactSummary === true) {
+        result.push({ ...at, kind: record.isCompactSummary === true ? "compaction" : "context", blocks });
+      } else if (blocks.length) result.push({ ...at, kind: "message", messageKey, role: type,
         origin: type === "assistant" ? "assistant" : conversation.agentId || record.isSidechain === true ? "agent_task" : "human",
         phase: message.stop_reason === "end_turn" ? "final" : "unknown", blocks });
     }
   }
-  // A title or an empty response is retained in the archive without inventing prose.
-  if (!result.length && firstText(blocks) === undefined) result.push({ ...base, kind: "bookkeeping", recordType: type });
+  if (!result.length) result.push({ ...base, kind: "bookkeeping", recordType: type });
   return result;
 }

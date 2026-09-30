@@ -2,7 +2,7 @@ import type { ImportProjection } from "@matrix-os/contracts/local-chat-import";
 import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import { verifyLocalChatArchive } from "../../packages/gateway/src/chat/local-import/archive-verification.js";
-const sourceId = "01a067a0-fc39-7641-9f43-601afa987750";
+const sourceId = "019eb0ae-9a30-7541-bdb8-db4d17e65146";
 const body = JSON.stringify({ type: "session_meta", payload: { id: sourceId, cwd: "/synthetic" } }) + "\n"
   + JSON.stringify({ type: "response_item", timestamp: "2026-09-03T16:16:38Z", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "Synthetic prompt" }] } }) + "\n";
 const bytes = new TextEncoder().encode(body);
@@ -34,7 +34,7 @@ describe("owner-private original archive verification", () => {
     expect(stage).not.toHaveBeenCalled();
   });
   it("rejects source-session mismatch rather than publishing into another session", async () => {
-    const { options } = setup(); options.sourceId = "01a067a0-fc39-7641-9f43-601afa987751";
+    const { options } = setup(); options.sourceId = "019eb0ae-9a30-7541-bdb8-db4d17e65147";
     await expect(verifyLocalChatArchive(options)).rejects.toMatchObject({ code: "source_mismatch" });
   });
   it("does not import a child archive as the main conversation", async () => {
@@ -43,6 +43,18 @@ describe("owner-private original archive verification", () => {
     options.expectedSize = Buffer.byteLength(value); options.expectedSha256 = createHash("sha256").update(value).digest("hex");
     await expect(verifyLocalChatArchive({ ...options, harness: "claude" })).rejects.toMatchObject({ code: "source_mismatch" });
     expect(await verifyLocalChatArchive({ ...options, harness: "claude", sourceAgentId: "child" })).toMatchObject({ parserVersion: 1 });
+  });
+  it("fails an oversized readable projection explicitly instead of reporting a complete import", async () => {
+    const { options } = setup();
+    await expect(verifyLocalChatArchive({ ...options, maxRecordBytes: 100 })).rejects.toMatchObject({ code: "projection_limit" });
+  });
+  it("rejects unidentified Claude prose even when another record identifies the requested session", async () => {
+    const value = JSON.stringify({ type: "user", sessionId: sourceId, uuid: "one", message: { content: "known" } }) + "\n"
+      + JSON.stringify({ type: "assistant", uuid: "two", message: { id: "reply", content: [{ type: "text", text: "unidentified" }] } }) + "\n";
+    const { options, stage } = setup(value); options.expectedSize = Buffer.byteLength(value);
+    options.expectedSha256 = createHash("sha256").update(value).digest("hex");
+    await expect(verifyLocalChatArchive({ ...options, harness: "claude" })).rejects.toMatchObject({ code: "source_mismatch" });
+    expect(stage.mock.calls.some(([event]) => event.kind === "message" && event.conversation.sessionId === undefined)).toBe(false);
   });
   it("keeps malformed records in the verified original while reporting reconstruction issues", async () => {
     const value = body + "{bad}\n";

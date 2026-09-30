@@ -120,6 +120,14 @@ export function createPlatformR2Client(config: {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ key, uploadId, parts }),
       }, INTERNAL_SYNC_WRITE_TIMEOUT_MS);
+      if (res.status === 409) {
+        const result = await res.json() as { code?: unknown };
+        if (result.code === "receipt_mismatch") {
+          const error = new Error("Multipart receipts require repair"); error.name = "MultipartReceiptMismatchError";
+          throw error;
+        }
+        throw new Error("Multipart completion unavailable");
+      }
       const data = await expectJson<{ etag: string | null }>(res);
       return { etag: data.etag ?? undefined };
     },

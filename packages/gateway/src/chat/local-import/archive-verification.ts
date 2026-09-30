@@ -6,9 +6,10 @@ const MAX_ARCHIVE_BYTES = 20 * 1024 * 1024 * 1024;
 const ARCHIVE_DEADLINE_MS = 60 * 60_000;
 const READ_IDLE_MS = 30_000;
 const InputSchema = z.object({ expectedSize: z.number().int().min(1).max(MAX_ARCHIVE_BYTES),
-  expectedSha256: z.string().regex(/^[a-f0-9]{64}$/), sourceId: z.uuid(), sourceAgentId: z.string().min(1).max(512).optional(), harness: z.enum(["codex", "claude"]) });
+  expectedSha256: z.string().regex(/^[a-f0-9]{64}$/), sourceId: z.uuid(), sourceAgentId: z.string().min(1).max(512).optional(),
+  maxRecordBytes: z.number().int().min(1).max(64 * 1024 * 1024).optional(), harness: z.enum(["codex", "claude"]) });
 export class ChatArchiveVerificationError extends Error {
-  constructor(readonly code: "invalid" | "unavailable" | "cancelled" | "size_mismatch" | "checksum_mismatch" | "source_mismatch") {
+  constructor(readonly code: "invalid" | "unavailable" | "cancelled" | "size_mismatch" | "checksum_mismatch" | "source_mismatch" | "projection_limit") {
     super("Chat archive verification failed"); this.name = "ChatArchiveVerificationError";
   }
 }
@@ -16,6 +17,7 @@ export class ChatArchiveVerificationError extends Error {
 export async function verifyLocalChatArchive(options: {
   getUrl(): Promise<string>;
   expectedSize: number; expectedSha256: string; sourceId: string; sourceAgentId?: string; harness: ImportHarness;
+  maxRecordBytes?: number;
   stage(event: ImportProjection): Promise<void>;
   signal?: AbortSignal; fetchImpl?: typeof fetch;
 }): Promise<{ rawSize: number; sha256: string; issues: number; unknownRecords: number; parserVersion: 1 }> {
@@ -63,14 +65,17 @@ export async function verifyLocalChatArchive(options: {
     let agentSeen = false;
     let issues = 0;
     let unknownRecords = 0;
-    const records = readLocalChatJsonl(bytes(), { finalLine: "complete" });
+    const records = readLocalChatJsonl(bytes(), { finalLine: "complete", maxRecordBytes: options.maxRecordBytes });
     for await (const event of reconstructLocalChat(options.harness, records)) {
       if (signal.aborted) throw new ChatArchiveVerificationError("cancelled");
+      if (event.kind === "issue" && event.code === "record_too_large") throw new ChatArchiveVerificationError("projection_limit");
+      const readable = ["message", "tool_call", "tool_result", "thinking", "context", "compaction", "inter_agent", "notice"].includes(event.kind);
       const session = event.conversation.sessionId;
+      if (readable && !session) throw new ChatArchiveVerificationError("source_mismatch");
       if (session && session !== options.sourceId) throw new ChatArchiveVerificationError("source_mismatch");
       if (session === options.sourceId) sourceSeen = true;
       const agent = event.conversation.agentId;
-      if (agent && agent !== options.sourceAgentId) throw new ChatArchiveVerificationError("source_mismatch");
+      if ((agent && agent !== options.sourceAgentId) || (readable && options.sourceAgentId && !agent)) throw new ChatArchiveVerificationError("source_mismatch");
       if (agent === options.sourceAgentId) agentSeen = true;
       if (event.kind === "issue") issues += 1;
       if (event.kind === "unknown") unknownRecords += 1;

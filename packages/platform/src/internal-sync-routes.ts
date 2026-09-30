@@ -572,6 +572,9 @@ export function createInternalSyncRoutes(opts: {
         );
         return c.json({ etag: result.etag ?? null });
       } catch (err: unknown) {
+        if (err instanceof Error && ["InvalidPart", "InvalidPartOrder"].includes(err.name)) {
+          return c.json({ error: "Multipart completion unavailable", code: "receipt_mismatch" }, 409);
+        }
         console.error(
           "[internal-sync] Multipart completion failed:",
           err instanceof Error ? err.message : String(err),

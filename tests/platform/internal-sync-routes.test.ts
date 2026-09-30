@@ -560,6 +560,15 @@ describe("platform/internal-sync-routes", () => {
     );
   });
 
+  it("returns a coarse repair code for invalid part receipts without leaking storage errors", async () => {
+    r2.completeMultipartUpload.mockRejectedValue(Object.assign(new Error("private storage details"), { name: "InvalidPart" }));
+    const app = createTestApp();
+    const res = await app.request("/internal/containers/alice/sync/multipart/complete", { method: "POST",
+      headers: { authorization: `Bearer ${bearerFor("alice", "platform-secret-123")}`, "content-type": "application/json" },
+      body: JSON.stringify({ key: "matrixos-sync/user_alice/files/private.jsonl", uploadId: "upload", parts: [{ partNumber: 1, etag: "old" }] }) });
+    expect(res.status).toBe(409); expect(await res.json()).toEqual({ error: "Multipart completion unavailable", code: "receipt_mismatch" });
+  });
+
   it("returns a generic JSON 500 when multipart completion fails in storage", async () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     r2.completeMultipartUpload.mockRejectedValue(new Error("r2 complete exploded"));

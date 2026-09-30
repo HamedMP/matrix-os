@@ -1,7 +1,7 @@
 import type { LocalChatSourceIssue } from "./jsonl.js";
 export type ImportHarness = "codex" | "claude";
 export interface ImportSource {
-  line: number; offset: number; end: number; ordinal?: number;
+  line: number; offset: number; end: number; ordinal?: number; blockIndex?: number;
   timestamp?: string; recordId?: string; parentRecordId?: string;
 }
 export interface ImportConversation { harness: ImportHarness; sessionId?: string; agentId?: string }
