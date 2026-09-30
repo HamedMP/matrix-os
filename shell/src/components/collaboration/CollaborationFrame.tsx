@@ -208,7 +208,7 @@ function CollaborationFrameChrome({
   );
 }
 
-function sharedPath(kind: "chat" | "terminal" | "project" | "file" | "app" | "invitations", id: string): string {
+function sharedPath(kind: "chat" | "terminal" | "project" | "file" | "app" | "folder" | "invitations", id: string): string {
   return `${SHARED_HOME}/${kind}/${encodeURIComponent(id)}`;
 }
 
@@ -305,6 +305,7 @@ function FrameCollaboration({ view, api, actorId, session }: {
       openProject={(scopeId) => router.push(sharedPath("project", scopeId))}
       openFile={(scopeId) => router.push(sharedPath("file", scopeId))}
       openApp={(scopeId) => router.push(sharedPath("app", scopeId))}
+      openFolder={(scopeId) => router.push(sharedPath("folder", scopeId))}
     />
   );
 }

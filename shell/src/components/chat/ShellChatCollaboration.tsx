@@ -56,6 +56,7 @@ export function ShellChatCollaboration({
       openProject={(scopeId) => router.push(`/shared/project/${encodeURIComponent(scopeId)}`)}
       openFile={(scopeId) => router.push(`/shared/file/${encodeURIComponent(scopeId)}`)}
       openApp={(scopeId) => router.push(`/shared/app/${encodeURIComponent(scopeId)}`)}
+      openFolder={(scopeId) => router.push(`/shared/folder/${encodeURIComponent(scopeId)}`)}
     />
   </div>;
 }

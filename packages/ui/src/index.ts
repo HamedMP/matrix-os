@@ -108,6 +108,14 @@ export {
 } from "./collaboration/chat-projection.js";
 export { SharedChatControls } from "./collaboration/SharedChatControls.js";
 export { SharedTerminalControls } from "./collaboration/SharedTerminalControls.js";
+export {
+  MAX_DISCOVERY_PAGES,
+  MAX_RETAINED_DRIVE_PAGES,
+  createRefreshGuard,
+  driveBasePath,
+  loadDiscoveryItems,
+  loadDriveSnapshotPages,
+} from "./collaboration/shared-folder-paging.js";
 export { TerminalSharingButton } from "./collaboration/TerminalSharingButton.js";
 export { ProjectSharingDialog } from "./collaboration/ProjectSharingDialog.js";
 export { ProjectSharingButton } from "./collaboration/ProjectSharingButton.js";
