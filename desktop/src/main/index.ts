@@ -1,6 +1,7 @@
-import { app, BrowserWindow, dialog, ipcMain, Notification, safeStorage, screen, session, shell } from "electron";
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Notification, safeStorage, screen, session, shell, type IpcMainInvokeEvent } from "electron";
 import { join } from "node:path";
 import { createFileDownloadService } from "./files/file-download-service";
+import { registerTerminalClipboardIpc } from "./files/terminal-clipboard";
 import { pathToFileURL } from "node:url";
 import { AuthService } from "./auth/auth-service";
 import { createAnalyticsBeforeQuit } from "./analytics-quit";
@@ -357,6 +358,17 @@ if (!gotLock) {
         },
       });
       const downloads = fileDownloads;
+      registerTerminalClipboardIpc(ipcMain, {
+        clipboard,
+        isTrustedSender: (rawEvent) => {
+          const event = rawEvent as IpcMainInvokeEvent;
+          const contents = mainWindow?.webContents;
+          const rendererUrl = desktopRendererUrl ?? pathToFileURL(join(__dirname, "../renderer/index.html")).toString();
+          return !!contents && !contents.isDestroyed()
+            && event.sender === contents && event.senderFrame === contents.mainFrame
+            && contents.getURL() === rendererUrl;
+        },
+      });
       registerIpcHandlers(ipcMain, {
         downloadFile: (request) => downloads.download(request),
         cancelFileDownload: (requestId) => downloads.cancel(requestId),

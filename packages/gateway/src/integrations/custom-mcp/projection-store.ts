@@ -16,7 +16,12 @@ function isMissingFile(error: unknown): boolean {
 
 export class CustomMcpProjectionStore {
   readonly path: string;
-  private mutationQueue: Promise<void> = Promise.resolve();
+  // Holds the latest mutation itself; its caller handles its rejection, so no
+  // derived promise is left unhandled.
+  private mutationQueue: Promise<unknown> = Promise.resolve();
+  // Counts pushed writes as they are queued, so a pull can tell whether a
+  // push overtook the list it fetched.
+  private pushedWrites = 0;
 
   constructor(homePath: string) {
     this.path = join(homePath, "system", "mcp-servers.json");
@@ -35,9 +40,16 @@ export class CustomMcpProjectionStore {
     }
   }
 
+  writeGeneration(): number {
+    return this.pushedWrites;
+  }
+
   async upsert(server: CustomMcpServerProjection): Promise<void> {
-    return this.mutate(async (file) => {
+    this.pushedWrites += 1;
+    await this.mutate(async (file) => {
       const existingIndex = file.servers.findIndex((entry) => entry.id === server.id);
+      // Pushes and startup pulls can arrive out of order; never regress a server.
+      if (existingIndex !== -1 && file.servers[existingIndex]!.revision > server.revision) return;
       if (existingIndex === -1 && file.servers.length >= MAX_SERVERS) {
         throw new Error("Custom MCP server limit reached");
       }
@@ -49,14 +61,28 @@ export class CustomMcpProjectionStore {
   }
 
   async remove(serverId: string): Promise<void> {
-    return this.mutate(async (file) => {
+    this.pushedWrites += 1;
+    await this.mutate(async (file) => {
       file.servers = file.servers.filter((server) => server.id !== serverId);
     });
   }
 
+  /**
+   * Replaces every server with a list the platform returned, unless a push was
+   * queued after `generation` was read: that push may be newer than the list,
+   * so the caller pulls again instead. Returns whether the list was applied.
+   */
+  async replaceFromPull(servers: CustomMcpServerProjection[], generation: number): Promise<boolean> {
+    if (servers.length > MAX_SERVERS) throw new Error("Custom MCP server limit reached");
+    return this.mutate(async (file) => {
+      if (this.pushedWrites !== generation) return false;
+      file.servers = structuredClone(servers).sort((left, right) => left.id.localeCompare(right.id));
+    });
+  }
+
   private async mutate(
-    operation: (file: CustomMcpProjectionFile) => Promise<void>,
-  ): Promise<void> {
+    operation: (file: CustomMcpProjectionFile) => Promise<void | false>,
+  ): Promise<boolean> {
     const previous = this.mutationQueue.catch((error: unknown) => {
       console.warn(
         "[custom-mcp] previous projection mutation failed:",
@@ -65,8 +91,9 @@ export class CustomMcpProjectionStore {
     });
     const next = previous.then(async () => {
       const file = await this.read();
-      await operation(file);
+      if (await operation(file) === false) return false;
       await atomicWriteJson(this.path, file);
+      return true;
     });
     this.mutationQueue = next;
     return next;

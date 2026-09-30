@@ -274,6 +274,7 @@ export function normalizeHermesRuntimeSnapshot(input: {
       model: configured ? currentModel : null,
       configured,
     },
+    messagingObserved: true,
   };
 }
 

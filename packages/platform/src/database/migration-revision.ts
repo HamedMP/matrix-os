@@ -2,6 +2,6 @@
  * step changes. The test covers migrate.ts, migrations/*.ts, and their DDL
  * helper. Older Cloud Run instances skip newer generations during rollouts. */
 export const PLATFORM_SCHEMA_REVISION = {
-  generation: 4,
-  fingerprint: "c2027263df6757fd7a3d5072d7deda5ef52b6bd6a135e6b811cf027d5860cc42",
+  generation: 6,
+  fingerprint: "053b205ef5d67a9c5fe8648aa8ba3c0ffebeedfb366df32c2da160ca0d950433",
 } as const;
