@@ -63,6 +63,7 @@ import { closeCanonicalChatEventLifecycle } from "./chat/routes.js";
 import { createGatewayChatProviderCatalog } from "./chat/runtime-provider-catalog.js";
 import { createCanonicalChatRuntime } from "./chat/runtime.js";
 import { ChatVoiceDeliveryRepository } from "./chat/voice-delivery-repository.js";
+import { createVoiceSessionPolicyLookup } from "./chat/voice-session-policy.js";
 import {
   createAdapterCapabilityPort,
   VoiceMediaAdapterRegistry,
@@ -800,6 +801,7 @@ export async function createGateway(config: GatewayConfig) {
   let canonicalChatEventStream: ReturnType<typeof createGatewayChatEventStream> | null = null;
   let canonicalChatOrchestrator: CanonicalChatOrchestrator | null = null;
   let voiceSessionEngine: VoiceSessionEngine | null = null;
+  let voiceSessionPolicy: ReturnType<typeof createVoiceSessionPolicyLookup> | null = null;
   let canonicalChatRuntime: Awaited<ReturnType<typeof createCanonicalChatRuntime>> | null = null;
   let canonicalChatExecutionRoots: ChatExecutionRootResolver | null = null;
   let canonicalChatCollaborationGuard: ReturnType<typeof createDiscussionOnlyChatExecutionGuard> | null = null;
@@ -1541,9 +1543,14 @@ export async function createGateway(config: GatewayConfig) {
         }));
       }
     }
+    // Live voice sessions publish their immutable run policy through this
+    // lookup so typed/queued/steered/retired admissions inherit it too —
+    // created before the canonical runtime because admission consumes it.
+    voiceSessionPolicy = createVoiceSessionPolicyLookup();
     canonicalChatRuntime = await createCanonicalChatRuntime({
       homePath,
       repository: chatRepository,
+      voiceSessionPolicy: voiceSessionPolicy.lookup,
       catalog: canonicalChatProviderCatalog,
       adapters: new CanonicalChatProviderRegistry(canonicalAdapters.map(adapter => withAsyncChatInput(adapter))),
       executionRoots: canonicalChatExecutionRoots,
@@ -1615,6 +1622,7 @@ export async function createGateway(config: GatewayConfig) {
       tickets: voiceTickets,
       log: voiceLog,
     });
+    voiceSessionPolicy?.set(voiceSessionEngine.sessionPolicyLookup);
     const voiceSessionRateLimiter = createRateLimiter({
       maxAttempts: 30,
       windowMs: 60_000,
@@ -1913,6 +1921,7 @@ export async function createGateway(config: GatewayConfig) {
       await backgroundChatProjection.close();
       // Voice sessions drain before canonical Chat: terminal deliveries and
       // run cancellations still need a live orchestrator and repository.
+      if (voiceSessionEngine) voiceSessionPolicy?.clear(voiceSessionEngine.sessionPolicyLookup);
       await voiceSessionEngine?.close();
       voiceSessionEngine = null;
       await canonicalChatOrchestrator?.close();
