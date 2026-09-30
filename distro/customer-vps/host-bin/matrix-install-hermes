@@ -96,8 +96,8 @@ log "installing pinned Hermes native-provider dependencies"
 run_installer_as_runtime_user env \
   HOME="$MATRIX_RUNTIME_HOME" \
   UV_HTTP_TIMEOUT=60 \
-  PATH="$MATRIX_RUNTIME_HOME/.local/bin:/usr/local/bin:/usr/bin:/bin" \
-  timeout 300 "${MATRIX_RUNTIME_HOME}/.local/bin/uv" --no-config pip install \
+  PATH="$MATRIX_RUNTIME_HOME/.local/bin:/opt/matrix/bin:/opt/matrix/runtime/node/bin:/usr/local/bin:/usr/bin:/bin" \
+  timeout 300 uv --no-config pip install \
   --python "${HERMES_HOME}/hermes-agent/venv/bin/python" \
   --index-url https://pypi.org/simple \
   --editable "${HERMES_HOME}/hermes-agent[anthropic]"

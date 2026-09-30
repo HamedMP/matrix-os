@@ -30,7 +30,7 @@ describe("customer VPS Hermes release", () => {
     const sourceInstall = installer.indexOf('bash "$HERMES_INSTALLER_PATH" --branch main');
     const extraInstall = installer.indexOf('"${HERMES_HOME}/hermes-agent[anthropic]"');
     expect(extraInstall).toBeGreaterThan(sourceInstall);
-    expect(installer).toContain('timeout 300 "${MATRIX_RUNTIME_HOME}/.local/bin/uv" --no-config pip install');
+    expect(installer).toContain('timeout 300 uv --no-config pip install');
     expect(installer).toContain('--python "${HERMES_HOME}/hermes-agent/venv/bin/python"');
     expect(installer).toContain('--index-url https://pypi.org/simple');
     expect(installer).not.toMatch(/anthropic==|openai==/);
@@ -56,6 +56,25 @@ describe("customer VPS Hermes release", () => {
       ].join("\n"));
       if (status === 0) expect(await readFile(join(root, "success"), "utf8")).toBe("success");
       else await expect(access(join(root, "success"))).rejects.toThrow();
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
+  it("uses managed runtime uv when the owner-local uv is absent", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hermes-managed-uv-"));
+    try {
+      const installer = await readFile(installerPath, "utf8");
+      const managedBin = join(root, "managed/bin");
+      const block = installer.slice(installer.indexOf('log "installing pinned Hermes native-provider dependencies"'),
+        installer.indexOf("for cli in uv uvx hermes; do")).replaceAll("/opt/matrix/runtime/node/bin", managedBin);
+      await mkdir(join(root, ".local/bin"), { recursive: true });
+      await mkdir(managedBin, { recursive: true });
+      await writeFile(join(root, ".local/bin/timeout"), '#!/bin/sh\n[ "$1" = 300 ] || exit 99\nshift\nexec "$@"\n', { mode: 0o755 });
+      await writeFile(join(managedBin, "uv"), '#!/bin/sh\nprintf managed > "$HOME/invocation"\n', { mode: 0o755 });
+      await expect(access(join(root, ".local/bin/uv"))).rejects.toThrow();
+      const script = `set -eu\nMATRIX_RUNTIME_HOME="$1"\nHERMES_HOME="$1/.hermes"\nlog() { :; }\nrun_installer_as_runtime_user() { "$@"; }\n${block}\nprintf success > "$1/success"\n`;
+      execFileSync("bash", ["-c", script, "fixture", root]);
+      expect(await readFile(join(root, "invocation"), "utf8")).toBe("managed");
+      expect(await readFile(join(root, "success"), "utf8")).toBe("success");
     } finally { await rm(root, { recursive: true, force: true }); }
   });
 
