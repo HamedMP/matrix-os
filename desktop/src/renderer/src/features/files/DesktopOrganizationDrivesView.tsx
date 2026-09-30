@@ -1,5 +1,4 @@
-import {useWorkSurfaceRuntime} from "../work/WorkSurfaceRuntime";
-import {useTabs} from "../../stores/tabs";
+import {desktopDriveDraftIdentity, openDesktopCompanyDriveChat} from "../../stores/company-drive-chat-draft";
 import { OrganizationDriveSnapshotSchema } from "@matrix-os/contracts";
 import {
   companyDriveChatReference, resolveOrganizationDriveNavigation, OrganizationDriveBrowser, createRefreshGuard,
@@ -25,7 +24,7 @@ function message(error: unknown): string {
 }
 
 export function DesktopOrganizationDrivesView({ isActive = true, requestedScopeId, requestedIntentId }: { isActive?: boolean; requestedScopeId?: string; requestedIntentId?: string }) {
-  const workRuntime=useWorkSurfaceRuntime();
+  const draftIdentity=useConnection(desktopDriveDraftIdentity);
   const platformHost = useConnection((state) => state.platformHost);
   const runtimeSlot = useConnection((state) => state.runtimeSlot);
   const authGeneration = useConnection((state) => state.authGeneration);
@@ -169,11 +168,10 @@ export function DesktopOrganizationDrivesView({ isActive = true, requestedScopeI
             <OrganizationDriveBrowser key={active.scopeId} name={active.name} files={active.snapshot.files}
               usedBytes={active.snapshot.usedBytes} reservedBytes={active.snapshot.reservedBytes} quotaBytes={active.snapshot.quotaBytes}
               busy={busy} canUpload={Boolean(active.canUpload)} folder={folder} onFolderChange={setFolder}
-              onChatContext={workRuntime?selection=>{
+              onChatContext={selection=>{
                 const reference=companyDriveChatReference(active,selection.kind==="file"?{kind:"file",fileId:selection.file.id,version:selection.file.version,path:selection.file.path}:selection.kind==="folder"?selection:undefined);
-                workRuntime.requestAgentDraft("",[reference]);
-                useTabs.getState().openTab({kind:"work",title:"Chat",workRoute:"chat",chatView:"draft",closable:false});
-              }:undefined}
+                openDesktopCompanyDriveChat(reference,draftIdentity);
+              }}
               onDownload={file => void download(active, file.id)} hasMore={Boolean(active.snapshot.nextCursor)}
               pageLimitReached={(active.pages ?? 1) >= 20} onLoadMore={() => void loadMore(active)}
               uploadControl={<button type="button" className={button} style={buttonStyle} disabled={busy}

@@ -1,3 +1,4 @@
+import { useCompanyDriveChatHandoff } from "./use-company-drive-chat-handoff";
 import { chatMessageVersionUrl, chatReadStateVersionUrl } from "@matrix-os/contracts";
 import { ChatAgentsWorkspace, type ChatAgentDraftRequest, type StartAgentChat } from "@matrix-os/ui";
 import {
@@ -31,7 +32,7 @@ const EMPTY_CHAT_TITLE_PROJECTIONS: CanonicalChatTitleProjection[] = [];
 
 const WorkSurfaceRuntimeContext = createContext<WorkSurfaceRuntime | null>(null);
 
-export function WorkSurfaceRuntimeProvider({ active, children }: { active: boolean; children: ReactNode }) {
+export function WorkSurfaceRuntimeProvider({ active, tabId, children }: { active: boolean; tabId?: string; children: ReactNode }) {
   const api = useConnection((state) => state.api);
   const runtimeSlot = useConnection((state) => state.runtimeSlot);
   const authGeneration = useConnection((state) => state.authGeneration);
@@ -47,6 +48,7 @@ export function WorkSurfaceRuntimeProvider({ active, children }: { active: boole
     agentDraftSequence.current += 1;
     setAgentDraft({ client, request: { id: agentDraftSequence.current, text, resources } });
   }, [client]);
+  useCompanyDriveChatHandoff(active,tabId,requestAgentDraft);
   const agentDraftRequest = agentDraft?.client === client ? agentDraft.request : null;
   const eventSource = useMemo<CanonicalChatEventSource | null>(() => {
     if (!api || !active) return null;
