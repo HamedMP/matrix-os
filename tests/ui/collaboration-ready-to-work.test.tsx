@@ -243,6 +243,16 @@ describe("organization ready-to-work presentation", () => {
     expect(api.post).not.toHaveBeenCalled();
   });
 
+  it("names the missing organization instead of silently disabling resource sharing", () => {
+    const api = { baseUrl: "http://localhost", get: vi.fn(), post: vi.fn(), delete: vi.fn() };
+    render(<ResourceSharingButton api={api} runtimeId="vps:owner" organizationId={null} kind="file" path="notes/plan.md" />);
+    const button = screen.getByRole("button", { name: "Share file" });
+    expect(button).toBeEnabled();
+    fireEvent.click(button);
+    expect(screen.getByRole("alert")).toHaveTextContent("Join an organization to share this file.");
+    expect(api.post).not.toHaveBeenCalled();
+  });
+
   it("fails closed when catalog resolves a different folder path", async () => {
     const api = { baseUrl: "http://localhost", get: vi.fn(), post: vi.fn(async () => ({
       id: "30000000-0000-4000-8000-000000000401", kind: "folder", path: "notes", incarnation: "folder_v1", revision: "1",

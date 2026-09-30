@@ -134,6 +134,31 @@ describe("IPC contract", () => {
     }).success).toBe(false);
   });
 
+  it("carries only a validated active organization identifier for signed-in status", () => {
+    const response = INVOKE_CHANNELS["auth:status"].response;
+    const signedIn = {
+      signedIn: true,
+      handle: "neo",
+      userId: "user_2abcDEF",
+      runtimeSlot: "primary",
+      platformHost: "https://app.matrix-os.com",
+      authGeneration: 1,
+    };
+
+    expect(response.safeParse({ ...signedIn, organizationId: "org_2matrixTeam" }).success).toBe(true);
+    expect(response.safeParse({ ...signedIn, organizationId: "team_2matrix" }).success).toBe(false);
+    expect(response.safeParse({ ...signedIn, organizationId: "org_" + "x".repeat(200) }).success).toBe(false);
+    expect(response.safeParse({
+      signedIn: false,
+      organizationId: "org_2matrixTeam",
+      runtimeSlot: "primary",
+      platformHost: "https://app.matrix-os.com",
+      authGeneration: 2,
+    }).success).toBe(false);
+    expect(EVENT_CHANNELS["auth:organization-changed"].safeParse({}).success).toBe(true);
+    expect(EVENT_CHANNELS["auth:organization-changed"].safeParse({ organizationId: "org_2matrixTeam" }).success).toBe(false);
+  });
+
   it("returns only a verified Support identity proof over IPC", () => {
     const response = INVOKE_CHANNELS["support:get-identity"].response;
 
@@ -1083,6 +1108,7 @@ describe("IPC contract", () => {
   it("defines event channels with schemas", () => {
     for (const ch of [
       "auth:changed",
+      "auth:organization-changed",
       "runtime:changed",
       "embed:state",
       "notification:clicked",

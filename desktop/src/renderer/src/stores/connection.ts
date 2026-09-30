@@ -19,10 +19,9 @@ interface ConnectionState {
   handle: string | null;
   userId: string | null;
   /**
-   * Active Clerk organization for collaboration sharing (S20 / T101). The
-   * trusted-core auth status does not surface it yet, so it stays null and the
-   * share controls stay disabled on Electron Desktop until the device-auth
-   * status carries the organization.
+   * Active organization for collaboration sharing (S20 / T101), resolved by
+   * the trusted core from the platform membership listing. Null renders the
+   * Share controls' organization-required state.
    */
   organizationId: string | null;
   displayName: string | null;
@@ -38,6 +37,8 @@ interface ConnectionState {
   providerCatalogGeneration: number;
   invalidateProviderCatalog: (identityKey: string) => void;
   refresh: () => Promise<void>;
+  /** Re-reads only the active organization; keeps the API client and caches. */
+  refreshOrganization: () => Promise<void>;
   selectRuntime: (slot: string) => Promise<void>;
   signOut: () => Promise<void>;
 }
@@ -100,7 +101,7 @@ export const useConnection = create<ConnectionState>()((set, get) => ({
         status: status.signedIn ? "signed-in" : "signed-out",
         handle: status.handle ?? null,
         userId: status.userId ?? null,
-        organizationId: readOrganizationId(status),
+        organizationId: status.signedIn ? status.organizationId ?? null : null,
         displayName: status.displayName ?? null,
         imageUrl: status.imageUrl ?? null,
         email: status.email ?? null,
@@ -120,6 +121,17 @@ export const useConnection = create<ConnectionState>()((set, get) => ({
       }
       set({ status: "signed-out", handle: null, userId: null, organizationId: null, displayName: null, imageUrl: null, email: null, api: null });
     }
+  },
+
+  refreshOrganization: async () => {
+    const status = await invoke("auth:status", {});
+    const current = get();
+    // A snapshot for another identity belongs to the full refresh that the
+    // matching auth/runtime event triggers; applying only its organization
+    // here would pair it with the previous identity.
+    if (!status.signedIn || current.status !== "signed-in" || current.userId !== (status.userId ?? null)
+      || current.authGeneration !== status.authGeneration) return;
+    set({ organizationId: status.organizationId ?? null });
   },
 
   selectRuntime: async (slot) => {
@@ -184,6 +196,15 @@ function refreshFromConnectionEvent(): void {
     });
 }
 
+function refreshOrganizationFromEvent(): void {
+  void useConnection
+    .getState()
+    .refreshOrganization()
+    .catch((err: unknown) => {
+      console.warn("[connection] failed to refresh active organization:", err instanceof Error ? err.message : String(err));
+    });
+}
+
 function refreshFromRuntimeChangedEvent(): void {
   // selectRuntime reconciles and refreshes itself; refreshing here would
   // publish the new slot before the previous computer's state is cleared.
@@ -198,6 +219,7 @@ export function wireConnectionEvents(): void {
     // S06 / T034: direct collaboration sessions end with the actor; nothing shared survives a sign-in change.
     onEvent("auth:changed", closeDesktopCollaborationSessions),
     onEvent("auth:changed", refreshFromConnectionEvent),
+    onEvent("auth:organization-changed", refreshOrganizationFromEvent),
     onEvent("runtime:changed", refreshFromRuntimeChangedEvent),
   ];
 }
@@ -208,10 +230,4 @@ export function unwireConnectionEvents(): void {
   }
   connectionEventCleanups = [];
   wired = false;
-}
-
-function readOrganizationId(status: unknown): string | null {
-  if (!status || typeof status !== "object") return null;
-  const value = Reflect.get(status, "organizationId");
-  return typeof value === "string" && /^org_[A-Za-z0-9_-]{1,124}$/.test(value) ? value : null;
 }

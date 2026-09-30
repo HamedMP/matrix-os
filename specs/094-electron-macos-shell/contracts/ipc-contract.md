@@ -11,7 +11,7 @@ logged (FR-081). The preload exposes exactly this surface via `contextBridge` as
 |---|---|---|---|
 | `auth:start-device-flow` | `{intent?: "sign-up" | "sign-in"}` | `{userCode, verificationUri, expiresIn}` | Electron Desktop main returns the matching Clerk approval URL; its renderer opens the system browser |
 | `auth:poll` | `{}` | `{status: "pending"\|"authorized"\|"expired", profile?}` | profile = `{handle, userId}` — no token |
-| `auth:status` | `{}` | `{signedIn, handle?, runtimeSlot, platformHost}` | |
+| `auth:status` | `{}` | `{signedIn, handle?, organizationId?, runtimeSlot, platformHost}` | `organizationId` is the active organization for Share controls, resolved by main from the platform `GET /api/organizations` listing with the device credential; present only for a single unambiguous membership until an organization switch exists |
 | `auth:sign-out` | `{}` | `{ok}` | clears credential + embed partitions (FR-006) |
 | `app:get-version` | `{}` | `{version, source: {commit, ancestors} \| null}` | Native version and build-time Git source; full 40-character hashes, at most 256 ancestors; no credentials |
 | `runtime:select` | `{slot: string(1-64)}` | `{ok}` | triggers socket teardown→rebuild broadcast |
@@ -31,6 +31,7 @@ logged (FR-081). The preload exposes exactly this surface via `contextBridge` as
 | Channel | Payload | Notes |
 |---|---|---|
 | `auth:changed` | `{signedIn, handle?}` | sign-in/out, credential expiry |
+| `auth:organization-changed` | `{}` | active organization changed without a credential change; renderer re-reads `auth:status` and keeps its API client |
 | `runtime:changed` | `{slot}` | after teardown completes |
 | `embed:state` | `{embedId, state: "loading"\|"ready"\|"auth-required"\|"failed"}` | inline sign-in trigger (FR-061) |
 | `notification:clicked` | `{threadId}` | deep-link focus (FR-071) |

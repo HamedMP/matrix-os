@@ -182,6 +182,15 @@ function getActiveTerminalId(ctx: ReturnType<typeof useTerminalAppContext>): str
   return activePaneId ? getPaneSessionId(activeTab.paneTree, activePaneId) : null;
 }
 
+/**
+ * Owner Share control for the focused terminal in the desktop session header
+ * (Web Desktop and Web Canvas). Mobile chrome renders the same slot above.
+ */
+export function ActiveTerminalSharing() {
+  const ctx = useTerminalAppContext();
+  return <TerminalSharingSlot terminalId={getActiveTerminalId(ctx)} emptyWidth={0} />;
+}
+
 function TerminalSharingSlot({ terminalId, emptyWidth }: { terminalId: string | null; emptyWidth: number }) {
   return terminalId ? <TerminalSharing terminalId={terminalId} />
     : <span aria-hidden="true" style={{ width: emptyWidth }} />;

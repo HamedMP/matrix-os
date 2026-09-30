@@ -27,7 +27,7 @@ import { isShellThemeId } from "@/stores/terminal-defaults";
 import { getTerminalThemePreset } from "./terminal-themes";
 import { getTerminalAppChromeCssVars, getTerminalAppChromeTheme, getTerminalAppThemeOption } from "./terminal-app-chrome-theme";
 import { TerminalAppContext, type CreateShellSessionTabOptions, type TerminalWindowControls } from "./TerminalAppContext";
-import { TerminalEmbeddedToolbar, TerminalWorkspaceChrome } from "./TerminalChrome";
+import { ActiveTerminalSharing, TerminalEmbeddedToolbar, TerminalWorkspaceChrome } from "./TerminalChrome";
 import { MobileCommandComposer, MobileTerminalActions } from "./MobileTerminalControls";
 import { DEFAULT_TERMINAL_SIDEBAR_WIDTH, LocalTerminalSidebar } from "./TerminalSidebar";
 import { TerminalKeyBar } from "./TerminalKeyBar";
@@ -1278,8 +1278,8 @@ function LocalTerminalApp({ initialCommand, initialLabel, initialClaudeMode = fa
                     }
                   : {})}
               >
-                {desktopParity ? (
-                  <DesktopTerminalSessionHeader title={activeTab.label} />
+                {!mobile ? (
+                  <DesktopTerminalSessionHeader title={activeTab.label} actions={<ActiveTerminalSharing />} />
                 ) : null}
                 {!suspended ? (
                   <PaneGrid

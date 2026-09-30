@@ -324,6 +324,85 @@ describe("connection event wiring", () => {
     expect(useConnection.getState()).toMatchObject({ userId: null, email: null });
   });
 
+  it("publishes the trusted-core active organization and clears it with the identity", async () => {
+    window.operator = {
+      invoke: vi.fn(async () => ({
+        signedIn: true,
+        handle: "neo",
+        userId: "user_2abcDEF",
+        organizationId: "org_matrix_team",
+        platformHost: "https://app.matrix-os.com",
+        runtimeSlot: "primary",
+        authGeneration: 1,
+      })),
+      on: vi.fn(),
+    };
+
+    await useConnection.getState().refresh();
+    expect(useConnection.getState().organizationId).toBe("org_matrix_team");
+
+    window.operator.invoke = vi.fn(async () => ({
+      signedIn: false,
+      platformHost: "https://app.matrix-os.com",
+      runtimeSlot: "primary",
+      authGeneration: 2,
+    }));
+    await useConnection.getState().refresh();
+    expect(useConnection.getState().organizationId).toBeNull();
+  });
+
+  it("applies an organization change without replacing the runtime API client", async () => {
+    const listeners = new Map<string, Listener>();
+    let organizationId: string | undefined;
+    window.operator = {
+      invoke: vi.fn(async () => ({
+        signedIn: true,
+        handle: "neo",
+        userId: "user_2abcDEF",
+        ...(organizationId ? { organizationId } : {}),
+        platformHost: "https://app.matrix-os.com",
+        runtimeSlot: "primary",
+        authGeneration: 3,
+      })),
+      on: vi.fn((channel: string, callback: Listener) => {
+        listeners.set(channel, callback);
+        return () => listeners.delete(channel);
+      }),
+    };
+    await useConnection.getState().refresh();
+    const api = useConnection.getState().api;
+    expect(api).not.toBeNull();
+    expect(useConnection.getState().organizationId).toBeNull();
+
+    wireConnectionEvents();
+    organizationId = "org_matrix_team";
+    listeners.get("auth:organization-changed")?.({});
+
+    await vi.waitFor(() => expect(useConnection.getState().organizationId).toBe("org_matrix_team"));
+    expect(useConnection.getState().api).toBe(api);
+  });
+
+  it("ignores an organization snapshot that belongs to a different identity", async () => {
+    useConnection.setState({ status: "signed-in", handle: "neo", userId: "user_2abcDEF", authGeneration: 3, organizationId: null });
+    window.operator = {
+      invoke: vi.fn(async () => ({
+        signedIn: true,
+        handle: "trinity",
+        userId: "user_trinity",
+        organizationId: "org_other_team",
+        platformHost: "https://app.matrix-os.com",
+        runtimeSlot: "primary",
+        authGeneration: 4,
+      })),
+      on: vi.fn(),
+    };
+
+    await useConnection.getState().refreshOrganization();
+
+    expect(useConnection.getState().organizationId).toBeNull();
+    expect(useConnection.getState().handle).toBe("neo");
+  });
+
   it("recovers from an initial auth status failure instead of staying loading", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     window.operator = {
@@ -384,11 +463,13 @@ describe("connection event wiring", () => {
     await fire("auth:changed");
     expect(invoke).toHaveBeenCalledTimes(1);
     expect(listeners.has("auth:changed")).toBe(true);
+    expect(listeners.has("auth:organization-changed")).toBe(true);
     expect(listeners.has("runtime:changed")).toBe(true);
 
     unwireConnectionEvents();
 
     expect(listeners.has("auth:changed")).toBe(false);
+    expect(listeners.has("auth:organization-changed")).toBe(false);
     expect(listeners.has("runtime:changed")).toBe(false);
 
     wireConnectionEvents();

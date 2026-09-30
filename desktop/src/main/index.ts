@@ -5,6 +5,7 @@ import { createOrganizationDriveTransferService } from "./files/organization-dri
 import { readDriveUploadFile, saveDriveDownloadFile } from "./files/organization-drive-file-io";
 import { registerTerminalClipboardIpc } from "./files/terminal-clipboard";
 import { pathToFileURL } from "node:url";
+import { ACTIVE_ORGANIZATION_REFRESH_INTERVAL_MS } from "./auth/active-organization";
 import { AuthService } from "./auth/auth-service";
 import { createAnalyticsBeforeQuit } from "./analytics-quit";
 import { readDesktopBuildSource } from "./build-source";
@@ -245,9 +246,18 @@ if (!gotLock) {
               ...(status.imageUrl ? { imageUrl: status.imageUrl } : {}),
             } : {}),
           });
+          if (status.signedIn) void auth.refreshOrganization();
         },
+        onOrganizationChanged: () => sendEvent("auth:organization-changed", {}),
       });
       await auth.init();
+      // Share controls read the active organization from auth:status. Resolve it
+      // at startup and after each sign-in, and re-check (throttled) when the
+      // user returns to the app, e.g. after joining an organization on the web.
+      void auth.refreshOrganization();
+      app.on("browser-window-focus", () => {
+        void auth.refreshOrganization({ maxAgeMs: ACTIVE_ORGANIZATION_REFRESH_INTERVAL_MS });
+      });
 
       const rendererOrigin = desktopRendererUrl
         ? new URL(desktopRendererUrl).origin
@@ -426,6 +436,10 @@ if (!gotLock) {
           embeds.closeAll();
           codingAgentThreadEvents.closeAll();
           sendEvent("runtime:changed", { slot });
+          // The replaced credential drops any lookup still in flight; re-resolve
+          // with the new one. The shown organization belongs to the account and
+          // stays until then.
+          void auth.refreshOrganization();
         },
         checkUpdate: async () => {
           await updater.check();

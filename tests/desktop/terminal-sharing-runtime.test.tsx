@@ -83,6 +83,30 @@ describe("DesktopTerminalSharing", () => {
     expect(sharingButton).not.toHaveBeenCalled();
   });
 
+  it("starts a fresh Share control when the selected terminal changes", async () => {
+    sharingButton.mockImplementation((({ terminalId }: { terminalId: string }) => {
+      const [openedFor, setOpenedFor] = useState<string | null>(null);
+      return <button type="button" onClick={() => setOpenedFor(terminalId)}>
+        {openedFor ? `Sharing ${openedFor}` : `Share ${terminalId}`}
+      </button>;
+    }) as never);
+    const api = { get: vi.fn(async () => ({ runtime: { machineId: "10000000-0000-4000-8000-000000000001" }, capabilities: { collaboration: true } })) };
+    useConnection.setState({ api: api as never, organizationId: "org_matrix_team" });
+    try {
+      const view = render(<DesktopTerminalSharing terminalId="terminal_one" />);
+      const first = await view.findByRole("button", { name: "Share terminal_one" });
+      act(() => { first.click(); });
+      await waitFor(() => expect(view.getByRole("button", { name: "Sharing terminal_one" })).toBeTruthy());
+
+      view.rerender(<DesktopTerminalSharing terminalId="terminal_two" />);
+
+      expect(view.getByRole("button", { name: "Share terminal_two" })).toBeTruthy();
+      expect(view.queryByRole("button", { name: /Sharing terminal_one/ })).toBeNull();
+    } finally {
+      sharingButton.mockImplementation(() => null);
+    }
+  });
+
   it("fails closed when a legacy JSON read returns no request promise", async () => {
     useConnection.setState({ api: { get: vi.fn(() => undefined) } as never });
 

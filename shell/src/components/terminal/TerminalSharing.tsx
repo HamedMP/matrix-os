@@ -11,6 +11,7 @@ export function TerminalSharing({ terminalId }: { terminalId: string }) {
   const platformHost = useBrowserOrigin();
   const [runtimeId, setRuntimeId] = useState<string | null>(null);
   const api = useMemo(() => platformHost ? createShellCollaborationApi(platformHost) : null, [platformHost]);
+  // react-doctor-disable-next-line react-doctor/no-fetch-in-effect -- owner runtime identity is local gateway state; the bounded request has an unmount guard and matches the project and resource Share adapters.
   useEffect(() => {
     let active = true;
     void fetch(`${getGatewayUrl()}/api/system/info`, {
@@ -26,6 +27,8 @@ export function TerminalSharing({ terminalId }: { terminalId: string }) {
     });
     return () => { active = false; };
   }, []);
-  return api && runtimeId ? <CollaborationOrganization>{(organizationId) => <TerminalSharingButton api={api} runtimeId={runtimeId}
-    organizationId={organizationId} terminalId={terminalId} />}</CollaborationOrganization> : null;
+  // Keyed by terminal: switching the focused terminal must not carry one terminal's
+  // pending preflight or open dialog over to another.
+  return api && runtimeId ? <CollaborationOrganization>{(organizationId) => <TerminalSharingButton key={terminalId} api={api}
+    runtimeId={runtimeId} organizationId={organizationId} terminalId={terminalId} />}</CollaborationOrganization> : null;
 }
