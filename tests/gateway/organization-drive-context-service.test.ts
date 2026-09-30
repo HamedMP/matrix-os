@@ -14,10 +14,10 @@ async function fixture(){
  await sql`INSERT INTO collaboration_scopes VALUES (${scopeId},'folder-drive',1,NULL)`.execute(db);
  const objects=new Map<string,Uint8Array>();let staged=new Uint8Array();let wrongLength=false;const cancel=vi.fn();
  const getObject=vi.fn(async(key:string)=>{const bytes=objects.get(key)??staged;return {body:new ReadableStream<Uint8Array>({start(c){c.enqueue(bytes);if(!wrongLength)c.close();},cancel}),contentLength:wrongLength?bytes.length+1:bytes.length};});
- const service=new OrganizationDriveService({db,ownerId:"user_owner",runtimeSlot:"primary",r2:{getObject,getPresignedPutUrl:async()=>"https://storage.example/put",getPresignedGetUrl:async()=>"https://storage.example/get",putObject:async(key,bytes)=>{objects.set(key,new Uint8Array(bytes));},deleteObject:async key=>{objects.delete(key);}}});
+ const service=new OrganizationDriveService({db,ownerId:"user_owner",runtimeSlot:"primary",r2:{getObject,getPresignedPutUrl:async()=>"https://storage.example/put",getPresignedGetUrl:async()=>"https://storage.example/get",putObject:async(key,bytes)=>{if(!objects.has(key)&&objects.size>=16)objects.delete(objects.keys().next().value!);objects.set(key,new Uint8Array(bytes));},deleteObject:async key=>{objects.delete(key);}}});
  await service.enable({...identity,runtimeId:"vps:owner",generation:1,quotaBytes:10_000_000});
  async function upload(path:string,text:string,baseVersion=0){staged=new TextEncoder().encode(text);const reserved=await service.reserve({...identity,actorId:"user_owner",request:{path,size:staged.length,sha256:createHash("sha256").update(staged).digest("hex"),requestId:randomUUID(),baseVersion}});return service.commit({...identity,actorId:"user_owner",uploadId:reserved.uploadId});}
- return {db,service,objects,getObject,cancel,upload,statements,wrongLength(){wrongLength=true;},close:()=>db.destroy()};
+ return {db,service,objects,getObject,cancel,upload,statements,wrongLength(){wrongLength=true;},close:async()=>{objects.clear();await db.destroy();}};
 }
 describe("organization drive context authority persistence",()=>{
  it("reads current or pinned immutable versions without storage keys",async()=>{
