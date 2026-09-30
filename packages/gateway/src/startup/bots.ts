@@ -341,7 +341,7 @@ export async function startBots(options: {
     listGrants: (ownerId, botId) => createBotGrantsRepository(db).listLive({ ownerId, botId, audience: "direct", now: now().toISOString() }),
     ...(integrationTools ? { ensureAccess: (binding: import("../bots/runtime-registry.js").BotRuntimeBinding, signal: AbortSignal) => integrationTools.ensureAccess(binding, "gmail", ["read", "label"], signal) } : {}),
   }) : undefined;
-  const admission = createPrivateBotAdmission({ db, host, roots: options.executionRoots, registry,
+  const admission = createPrivateBotAdmission({ db, host, roots: options.executionRoots, registry, homePath: options.homePath,
     ...(options.group ? { authorizeGroup: options.group.authorizeGroup } : {}) });
   const managedCapabilities: import("@matrix-os/contracts").BotToolCapability[] = [
     ...(options.sharedBrowser ? ["browser.action"] as const : []),
