@@ -8,6 +8,7 @@ import { clientFixture, saved } from "../desktop/chat-agents-fixture";
 vi.mock("@clerk/nextjs", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@clerk/nextjs")>()),
   useOrganization: () => ({ organization: null }),
+  useAuth: () => ({ isLoaded: true, userId: null }),
 }));
 
 beforeEach(() => {
