@@ -614,6 +614,48 @@ describe("Cloudflare funded relay control-plane ordering", () => {
     await relay.close();
   });
 
+  it("settles an upstream 429 with zero usage after a usage-mode start", async () => {
+    const events: string[] = [];
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/check")) return json(checkResponse());
+      if (url.endsWith("/authorize")) {
+        events.push("authorize");
+        const authorized = authorizationResponse("request_123");
+        return json({ ...authorized, reservation: {
+          ...authorized.reservation, billingMode: "usage", maxCostMicrousd: 4_801_200,
+          reservedMicrousd: 4_801_200,
+        } });
+      }
+      if (url.endsWith("/start")) { events.push("start"); return json(startResponse("request_123")); }
+      if (url.endsWith("/release")) { events.push("release"); return json({}); }
+      if (url.endsWith("/finalize")) {
+        const body = JSON.parse(String(init?.body));
+        events.push(`finalize:${body.mode}:${body.actualCostMicrousd}`);
+        return json(finalizationResponse({
+          requestId: "request_123", actualCostMicrousd: 0, finalizationMode: "exact",
+        }));
+      }
+      events.push("upstream_429");
+      return new Response(JSON.stringify({ type: "error", error: {
+        type: "rate_limit_error", message: "private provider context",
+      } }), { status: 429, headers: { "retry-after": "60", "anthropic-ratelimit-input-tokens-remaining": "0" } });
+    });
+    const relay = configuredRelay(fetchMock as typeof fetch, { reservationMode: "usage" });
+    const app = new Hono();
+    relay.register(app);
+    expect((await app.request("/v1/messages", fundedRequest())).status).toBe(429);
+    await vi.waitFor(() => expect(events).toContain("finalize:exact:0"));
+    expect(events).toEqual(["authorize", "start", "upstream_429", "finalize:exact:0"]);
+    expect(warn).toHaveBeenCalledWith("[proxy] Funded AI upstream rate limited", {
+      retryAfterSeconds: 60, inputTokensRemaining: 0,
+    });
+    expect(JSON.stringify(warn.mock.calls)).not.toContain("private provider context");
+    warn.mockRestore();
+    await relay.close();
+  });
+
   it("never releases an in-flight reservation after generation fetch fails", async () => {
     const events: string[] = [];
     const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
