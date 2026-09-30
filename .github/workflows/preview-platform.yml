@@ -762,7 +762,28 @@ jobs:
           service="$(gcloud run services describe "$CLOUD_RUN_PREVIEW_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json --quiet)"
           revision="$(jq -er --arg tag "pr-$PR_NUMBER" '.status.traffic[] | select(.tag == $tag) | .revisionName' <<< "$service")"
           url="$(jq -er --arg tag "pr-$PR_NUMBER" '.status.traffic[] | select(.tag == $tag) | .url' <<< "$service")"
-          image="$(gcloud run revisions describe "$revision" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(spec.containers[0].image)' --quiet)"
+          revision_json="$(gcloud run revisions describe "$revision" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json --quiet)"
+          image="$(jq -er '.spec.containers[0].image' <<< "$revision_json")"
+          service_base_url="$(jq -er '.status.url' <<< "$service")"
+          public_origin="$(jq -er '
+            .spec.containers[0].env as $env
+            | ([$env[]? | select(.name == "MATRIX_APP_ORIGIN") | .value][0]
+              // [$env[]? | select(.name == "MATRIX_APP_URL") | .value][0]
+              // "https://preview.matrix-os.com")
+          ' <<< "$revision_json")"
+          public_origin="${public_origin%/}"
+          for origin in "$public_origin" "$url" "$service_base_url"; do
+            if ! [[ "$origin" =~ ^https://[A-Za-z0-9.-]+$ ]]; then
+              echo "Preview routing origins are invalid." >&2
+              exit 1
+            fi
+          done
+          case "$public_origin" in
+            https://app.matrix-os.com|https://api.matrix-os.com)
+              echo "A preview must not use a production browser origin." >&2
+              exit 1
+              ;;
+          esac
           expected_image="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${ARTIFACT_REPOSITORY}/matrix-platform:pr-${PR_NUMBER}-${EXPECTED_HEAD_SHA::12}"
           expected_digest="$(gcloud artifacts docker images describe "$expected_image" \
             --project "$GCP_PROJECT_ID" --format='value(image_summary.digest)' --quiet)"
@@ -779,7 +800,7 @@ jobs:
           fi
           gcloud run deploy "$CLOUD_RUN_PREVIEW_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" \
             --image "$image" --tag "pr-$PR_NUMBER" --no-traffic \
-            --update-env-vars "^@^MATRIX_APP_DOMAIN_HOSTS=preview.matrix-os.com,${url#https://}@CUSTOMER_VPS_TLS_VERIFY=false@CUSTOM_MCP_ENABLED=${CUSTOM_MCP_ENABLED}@MCP_OAUTH_CALLBACK_URL=${url}/api/mcp-servers/oauth/callback" \
+            --update-env-vars "^@^MATRIX_APP_ORIGIN=${public_origin}@MATRIX_APP_DOMAIN_HOSTS=${public_origin#https://},${url#https://},${service_base_url#https://}@CUSTOMER_VPS_TLS_VERIFY=false@CUSTOM_MCP_ENABLED=${CUSTOM_MCP_ENABLED}@MCP_OAUTH_CALLBACK_URL=${url}/api/mcp-servers/oauth/callback" \
             "${custom_mcp_args[@]}" --quiet
           if ! [[ "$PREVIEW_CLERK_USER_ID" =~ ^user_[A-Za-z0-9]+$ ]]; then
             echo "PREVIEW_CLERK_USER_ID is required for preview speech authorization." >&2
