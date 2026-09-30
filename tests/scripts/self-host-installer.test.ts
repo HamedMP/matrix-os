@@ -39,6 +39,9 @@ describe("self-host server installer", () => {
     expect(script).toContain("read_env_value /opt/matrix/env/host.env MATRIX_AUTH_TOKEN || random_secret");
     expect(script).toContain("read_env_value /opt/matrix/env/host.env MATRIX_FUNDED_AI_RUNTIME_TOKEN || true");
     expect(script).toContain("MATRIX_FUNDED_AI_RUNTIME_TOKEN=${funded_ai_runtime_token}");
+    // On-host nginx is the only trusted proxy for forwarded client-IP headers.
+    expect(script).toContain("read_env_value /opt/matrix/env/host.env MATRIX_TRUSTED_PROXIES || printf '127.0.0.1,::1'");
+    expect(script).toContain("MATRIX_TRUSTED_PROXIES=${trusted_proxies}");
     expect(script).toContain("read_env_value /opt/matrix/env/host.env MATRIX_CODE_PROXY_TOKEN || random_secret");
     expect(script).toContain("read_env_value /opt/matrix/env/postgres.env POSTGRES_PASSWORD || random_secret");
     expect(script).toContain("cleanup_install_tmp");

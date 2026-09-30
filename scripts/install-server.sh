@@ -436,6 +436,9 @@ write_env() {
   platform_speech_enabled="$(read_env_value /opt/matrix/env/host.env MATRIX_PLATFORM_SPEECH_ENABLED || printf 'false')"
   platform_speech_origin="$(read_env_value /opt/matrix/env/host.env MATRIX_PLATFORM_SPEECH_ORIGIN || true)"
   platform_speech_runtime_token="$(read_env_value /opt/matrix/env/host.env MATRIX_PLATFORM_SPEECH_RUNTIME_TOKEN || true)"
+  # nginx on the same host is the only trusted proxy: forwarded client-IP
+  # headers are honored solely from loopback peers.
+  trusted_proxies="$(read_env_value /opt/matrix/env/host.env MATRIX_TRUSTED_PROXIES || printf '127.0.0.1,::1')"
 
   cat >/opt/matrix/env/postgres.env <<EOF
 POSTGRES_DB=matrix
@@ -464,6 +467,7 @@ MATRIX_FUNDED_AI_RUNTIME_TOKEN=${funded_ai_runtime_token}
 MATRIX_PLATFORM_SPEECH_ENABLED=${platform_speech_enabled}
 MATRIX_PLATFORM_SPEECH_ORIGIN=${platform_speech_origin}
 MATRIX_PLATFORM_SPEECH_RUNTIME_TOKEN=${platform_speech_runtime_token}
+MATRIX_TRUSTED_PROXIES=${trusted_proxies}
 PLATFORM_INTERNAL_URL=${platform_internal_url}
 MATRIX_HOST_BUNDLE_URL=${MATRIX_HOST_BUNDLE_URL}
 MATRIX_HOME=${MATRIX_HOME_DIR}

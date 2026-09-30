@@ -422,6 +422,9 @@ exit 99
     expect(cloudInit).toContain('MATRIX_PLATFORM_SPEECH_ENABLED={{platformSpeechEnabled}}');
     expect(cloudInit).toContain('MATRIX_PLATFORM_SPEECH_ORIGIN={{platformSpeechOrigin}}');
     expect(cloudInit).toContain('MATRIX_PLATFORM_SPEECH_RUNTIME_TOKEN={{platformSpeechRuntimeToken}}');
+    // On-host nginx is the only trusted proxy: forwarded client-IP headers
+    // are honored solely from loopback peers (see gateway auth.ts).
+    expect(cloudInit).toContain('MATRIX_TRUSTED_PROXIES=127.0.0.1,::1');
     expect(cloudInit).toContain('PLATFORM_INTERNAL_URL={{platformInternalUrl}}');
     expect(cloudInit).toContain('POSTHOG_TOKEN={{posthogToken}}');
     expect(cloudInit).toContain('NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN={{posthogProjectToken}}');

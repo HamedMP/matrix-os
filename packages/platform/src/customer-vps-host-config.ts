@@ -37,6 +37,9 @@ export const DEFAULT_CLOUD_INIT_TEMPLATE = [
   '      MATRIX_PLATFORM_SPEECH_ENABLED={{platformSpeechEnabled}}',
   '      MATRIX_PLATFORM_SPEECH_ORIGIN={{platformSpeechOrigin}}',
   '      MATRIX_PLATFORM_SPEECH_RUNTIME_TOKEN={{platformSpeechRuntimeToken}}',
+  // On-host nginx is the only trusted proxy: forwarded client-IP headers
+  // are honored solely from loopback peers (see gateway auth.ts).
+  '      MATRIX_TRUSTED_PROXIES=127.0.0.1,::1',
   '      MATRIX_CODE_PROXY_TOKEN={{platformVerificationToken}}',
   '      MATRIX_FUNDED_AI_ENABLED={{fundedAiEnabled}}',
   '      MATRIX_FUNDED_AI_RELAY_URL={{fundedAiRelayUrl}}',
