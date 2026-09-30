@@ -48,6 +48,7 @@ function setup(overrides: {
   fundedAdmission?: FundedAdmissionQueue;
   publish?: () => Promise<void>;
   revalidateBinding?: () => Promise<boolean>;
+  authorizeGroup?: import("../../../packages/gateway/src/bots/runtime-registry.js").GroupBotAuthorizer;
 } = {}) {
   const registry = new BotRuntimeRegistry();
   registry.bind(binding);
@@ -62,6 +63,7 @@ function setup(overrides: {
   const actions = createBotBrokerActions({
     db,
     registry,
+    authorizeGroup: overrides.authorizeGroup,
     sessions: createBotSessionsRepository(db),
     checkpoints: overrides.checkpoints ? overrides.checkpoints(checkpoints, registry) : checkpoints,
     runs: {
@@ -405,4 +407,58 @@ it("waits for preflight without recording a dispatched effect and stops noncoope
   await expect(work).resolves.toMatchObject({ ok: false, code: "stale_generation" });
   expect(tools.dispatch).not.toHaveBeenCalled();
   expect(await createBotCheckpointsRepository(db).listForRun({ ownerId: OWNER, runId: "run_broker1" })).toEqual([]);
+});
+
+describe("group bot broker fencing", () => {
+  const group = { sessionGeneration: "1", scopeId: "scope-company", actorId: "user_member", authEpoch: 4, authorityGeneration: 1, authorityRuntimeId: "owner-runtime" };
+  const current = () => ({ ...group, ownerId: OWNER, organizationId: "org_company", resourceKind: "chat" as const, resourceId: binding.chatId, capability: "request_ai" as const, membershipScopeId: group.scopeId, role: "owner" as const });
+  it("fails closed without a current collaboration authorizer, including context and inference", async () => {
+    binding = { ...binding, group };
+    const { actions, tools } = setup();
+    await expect(actions.handleFrame(frame({ action: "bot.run.load" }))).resolves.toMatchObject({ ok: false, code: "denied" });
+    await expect(actions.handleFrame(frame({ action: "bot.session.load" }))).resolves.toMatchObject({ ok: false, code: "denied" });
+    await expect(actions.handleFrame(tool())).resolves.toMatchObject({ ok: false, code: "denied" });
+    expect(tools.dispatch).not.toHaveBeenCalled();
+    await expect(actions.handleFrame({ version: 1, requestId: REQUEST_ID, runtimeHandle: RUNTIME, executionGeneration: "6", action: "inference.messages", method: "POST", path: "/v1/messages?beta=true", headers: { "anthropic-version": "2023-06-01" }, body: JSON.stringify({model: spec.route.modelId, stream: true, messages: []}) }))
+      .resolves.toMatchObject({ ok: false, error: "action_denied" });
+  });
+  it("rechecks every frame and denies access after revocation", async () => {
+    binding = { ...binding, group, capabilities: [] };
+    const authorizeGroup = vi.fn(async () => current());
+    const { actions } = setup({ authorizeGroup });
+    await expect(actions.handleFrame(frame({ action: "bot.session.load" }))).resolves.toMatchObject({ ok: true });
+    authorizeGroup.mockRejectedValueOnce(new Error("membership revoked"));
+    await expect(actions.handleFrame(frame({ action: "bot.session.load" }))).resolves.toMatchObject({ ok: false, code: "denied" });
+    expect(authorizeGroup).toHaveBeenCalledTimes(2);
+  });
+  it("refuses personal artifact, memory, and interaction tools even with group authorization", async () => {
+    binding = { ...binding, group };
+    const { actions, tools } = setup({ authorizeGroup: async () => current() });
+    await expect(actions.handleFrame(tool())).resolves.toMatchObject({ ok: false, code: "denied" });
+    expect(tools.dispatch).not.toHaveBeenCalled();
+  });
+  it("isolates shared evidence per canonical run and fences an earlier run's saves", async () => {
+    binding = { ...binding, group };
+    const { actions, registry } = setup({ authorizeGroup: async () => current() });
+    const oldRun = binding.runId;
+    const messages = [{ role: "user", content: "Brain source A, which will be erased" }];
+    await expect(actions.handleFrame(frame({ action: "bot.session.save", session: { baseRevision: 0, messages } })))
+      .resolves.toMatchObject({ ok: true, result: { revision: 1 } });
+    await expect(actions.handleFrame(frame({ action: "bot.session.load" })))
+      .resolves.toMatchObject({ ok: true, result: { revision: 1, messages } });
+    registry.release(RUNTIME);
+    binding = { ...binding, runId: "run_broker2" };
+    registry.bind(binding);
+    // The same group, immutable policy session generation and root must not
+    // resume an earlier request's evidence after it has been deleted/revised.
+    await expect(actions.handleFrame(frame({ action: "bot.session.load", runId: binding.runId })))
+      .resolves.toMatchObject({ ok: true, result: { revision: 2, messages: [] } });
+    await expect(actions.handleFrame(frame({ action: "bot.session.save", runId: oldRun, session: { baseRevision: 2, messages } })))
+      .resolves.toMatchObject({ ok: false, code: "stale_generation" });
+    const nextMessages = [{ role: "user", content: "Current request's fresh evidence only" }];
+    await expect(actions.handleFrame(frame({ action: "bot.session.save", runId: binding.runId, session: { baseRevision: 2, messages: nextMessages } })))
+      .resolves.toMatchObject({ ok: true, result: { revision: 3 } });
+    await expect(actions.handleFrame(frame({ action: "bot.session.load", runId: binding.runId })))
+      .resolves.toMatchObject({ ok: true, result: { messages: nextMessages } });
+  });
 });

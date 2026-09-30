@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { createBotModelRouteResolver } from "../../../packages/gateway/src/bots/codex-route.js";
+import { createBotModelRouteResolver, createSharedBotModelRouteResolver } from "../../../packages/gateway/src/bots/codex-route.js";
 import { BotRouteError } from "../../../packages/gateway/src/bots/route-resolver.js";
 const url = "https://chatgpt.com/backend-api/codex/responses";
 describe("explicit owner Codex subscription bot route", () => {
@@ -45,4 +45,15 @@ it("resolves a concrete Bot managed model without unrelated native discovery", a
   const resolve = createBotModelRouteResolver({ providers: { getSnapshot } });
   await expect(resolve({ instanceId: "matrix_pi_default", model: "@cf/zai-org/glm-5.3-flash" }))
     .resolves.toMatchObject({ accessSourceId: "matrix_included", route: { modelId: "@cf/zai-org/glm-5.3-flash" } });
+});
+
+describe("explicit shared Pi policy route", () => {
+  const decision = { policyRevision: "4", harness: "codex" as const, providerInstanceId: "codex_default", accessSourceId: null, allowedModelIds: ["gpt-5.6-luna"], effectiveSubmitMode: "members" as const };
+  it("uses only the concrete model authorized by the company policy", async () => {
+    const getSnapshot = vi.fn();
+    const resolve = createSharedBotModelRouteResolver({ providers: { getSnapshot }, resolveCodexIdentity: async () => ({ url, headers: {} }), lifetime: new AbortController().signal });
+    expect(await resolve(decision, "gpt-5.6-luna")).toMatchObject({ accessSourceId: "owner_openai_profile", route: { modelId: "gpt-5.6-luna" } });
+    await expect(resolve(decision, "gpt-other")).rejects.toBeInstanceOf(BotRouteError);
+    expect(getSnapshot).not.toHaveBeenCalled();
+  });
 });

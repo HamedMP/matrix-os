@@ -8,7 +8,7 @@
  * address a private handle: no collaboration scope uses this namespace.
  */
 import { createHash } from "node:crypto";
-import type { BotModelRoute, BotToolCapability } from "@matrix-os/contracts";
+import type { CanonicalChatExecutionRootRef, BotModelRoute, BotToolCapability } from "@matrix-os/contracts";
 import {
   SCOPE_RUNTIME_BOT_ADAPTER_ID,
   SCOPE_RUNTIME_BOT_HARNESS_VERSION,
@@ -21,7 +21,7 @@ import type { BotCredentialAccessSourceId } from "./credentials.js";
 import type { ScopeRuntimeHost } from "../scope-runtime-host/index.js";
 import { ScopeRuntimeClientError } from "../collaboration/scope-runtime-client.js";
 import type { BotExecutor } from "./repositories/shared.js";
-import { BotRuntimeRegistry, BotRuntimeRegistryError } from "./runtime-registry.js";
+import { requireGroupBotAuthority, type GroupBotAuthorizer, BotRuntimeRegistry, BotRuntimeRegistryError } from "./runtime-registry.js";
 
 export type BotAdmissionErrorCode = "not_found" | "invalid_root" | "root_changed" | "unavailable" | "capacity_exceeded";
 
@@ -36,6 +36,15 @@ export class BotAdmissionError extends Error {
 /** `scope_` and the first 32 hex of sha256("bot-private:" + owner + ":" + bot). */
 export function privateBotScopeHandle(ownerId: string, botId: string): string {
   return `scope_${createHash("sha256").update(`bot-private:${ownerId}:${botId}`).digest("hex").slice(0, 32)}`;
+}
+
+export interface GroupBotRunRequest {
+  scopeId: string;
+  actorId: string;
+  /** A root resolved from shared Chat authority, never the personal bot workspace. */
+  executionRoot: Exclude<CanonicalChatExecutionRootRef, { kind: "bot_workspace" }>;
+  executionRootFingerprint: string;
+  sessionGeneration: string;
 }
 
 export interface PrivateBotRunRequest {
@@ -54,6 +63,7 @@ export interface PrivateBotRunRequest {
   requestClass: "interactive" | "background";
   /** The fingerprint stored with the task; a drift blocks the run as `root_changed`. */
   expectedRootFingerprint?: string;
+  group?: GroupBotRunRequest;
 }
 
 export interface AdmittedBotRuntime {
@@ -67,13 +77,14 @@ export function createPrivateBotAdmission(deps: {
   host: Pick<ScopeRuntimeHost, "client" | "available">;
   roots: Pick<ChatExecutionRootResolver, "resolve">;
   registry: BotRuntimeRegistry;
+  authorizeGroup?: GroupBotAuthorizer;
 }) {
-  async function ownsDirectChat(input: { ownerId: string; botId: string; chatId: string }): Promise<boolean> {
+  async function ownsChat(input: { ownerId: string; botId: string; chatId: string; group?: GroupBotRunRequest }): Promise<boolean> {
     const row = await deps.db.selectFrom("bot_chat_bindings as binding")
       .innerJoin("chats as chat", "chat.id", "binding.chat_id")
       .select("binding.chat_id")
       .where("binding.owner_id", "=", input.ownerId).where("binding.bot_id", "=", input.botId)
-      .where("binding.chat_id", "=", input.chatId).where("binding.kind", "=", "direct")
+      .where("binding.chat_id", "=", input.chatId).where("binding.kind", "=", input.group ? "group" : "direct")
       .where("binding.removed_at", "is", null)
       .where("chat.owner_type", "=", "personal").where("chat.owner_id", "=", input.ownerId)
       .where("chat.collaboration", "is", null).where("chat.lifecycle", "=", "active")
@@ -100,24 +111,41 @@ export function createPrivateBotAdmission(deps: {
      */
     async admit(input: PrivateBotRunRequest): Promise<AdmittedBotRuntime> {
       if (!deps.host.available) throw new BotAdmissionError("unavailable");
-      if (!await ownsDirectChat(input)) throw new BotAdmissionError("not_found");
+      if (!await ownsChat(input)) throw new BotAdmissionError("not_found");
+      let group;
+      if (input.group) {
+        if (!deps.authorizeGroup) throw new BotAdmissionError("unavailable");
+        try {
+          group = await requireGroupBotAuthority({ ownerId: input.ownerId, chatId: input.chatId, runId: input.runId, group: input.group }, deps.authorizeGroup);
+        } catch (error: unknown) {
+          console.warn("[bots] group admission denied:", error instanceof Error ? error.name : "UnknownError");
+          throw new BotAdmissionError("not_found");
+        }
+        if (!/^[1-9][0-9]{0,18}$/.test(input.group.sessionGeneration)) throw new BotAdmissionError("not_found");
+        if (!["project", "worktree"].includes(input.group.executionRoot.kind)) throw new BotAdmissionError("invalid_root");
+        if (input.capabilities.some((capability) => !["integration.inventory", "integration.call"].includes(capability))) throw new BotAdmissionError("not_found");
+      }
       let root: Awaited<ReturnType<typeof deps.roots.resolve>>;
       try {
-        root = await deps.roots.resolve({ type: "personal", ownerId: input.ownerId }, { kind: "bot_workspace", botId: input.botId });
+        root = await deps.roots.resolve({ type: "personal", ownerId: input.ownerId }, input.group?.executionRoot ?? { kind: "bot_workspace", botId: input.botId });
       } catch (error: unknown) {
         if (error instanceof ChatExecutionRootError) {
           throw new BotAdmissionError(error.code === "validation_unavailable" ? "unavailable" : "invalid_root");
         }
         throw error;
       }
+      if (input.group && (!/^[a-f0-9]{64}$/.test(input.group.executionRootFingerprint)
+        || input.group.executionRootFingerprint !== root.fingerprint)) throw new BotAdmissionError("root_changed");
       if (input.expectedRootFingerprint !== undefined && input.expectedRootFingerprint !== root.fingerprint) {
         throw new BotAdmissionError("root_changed");
       }
-      const scopeHandle = privateBotScopeHandle(input.ownerId, input.botId);
+      const scopeHandle = input.group
+        ? `scope_${createHash("sha256").update(`bot-group:${input.ownerId}:${input.group.scopeId}:${input.chatId}:${input.botId}`).digest("hex").slice(0, 32)}`
+        : privateBotScopeHandle(input.ownerId, input.botId);
       const manifest: ScopeRuntimeSandboxManifest = {
         version: 1,
         scopeHandle,
-        actorId: input.botId,
+        actorId: input.group?.actorId ?? input.botId,
         worktree: { hostPath: root.primaryWorkspaceRoot, mode: "rw", fingerprint: root.fingerprint },
         network: "broker_only",
       };
@@ -138,7 +166,9 @@ export function createPrivateBotAdmission(deps: {
       try {
         // Provisioning awaits external work; authority may have changed since preflight.
         // Refuse publication and stop the new workload through the existing cleanup path.
-        if (!await ownsDirectChat(input)) throw new BotAdmissionError("not_found");
+        if (!await ownsChat(input)) throw new BotAdmissionError("not_found");
+        // Recheck after launch; membership can be revoked while runtime creation waits.
+        if (group) await requireGroupBotAuthority({ ownerId: input.ownerId, chatId: input.chatId, runId: input.runId, group }, deps.authorizeGroup);
         deps.registry.bind({
           runtimeHandle: runtime.runtimeHandle,
           executionGeneration: runtime.executionGeneration,
@@ -156,6 +186,7 @@ export function createPrivateBotAdmission(deps: {
           ...(input.anthropicApi ? { anthropicApi: input.anthropicApi } : {}),
           capabilities: input.capabilities,
           requestClass: input.requestClass,
+          ...(group ? { group } : {}),
         });
       } catch (error: unknown) {
         await release(runtime.runtimeHandle);
@@ -167,7 +198,7 @@ export function createPrivateBotAdmission(deps: {
       return { ...runtime, rootFingerprint: root.fingerprint };
     },
     release,
-    ownsDirectChat,
+    ownsDirectChat: (input: { ownerId: string; botId: string; chatId: string }) => ownsChat(input),
   };
 }
 
