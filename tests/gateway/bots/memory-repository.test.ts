@@ -42,6 +42,14 @@ describe("bot memory repository", () => {
     await expect(repo.confirm({ ownerId: OWNER, itemId: item.itemId, baseRevision: 1, now: at(4) })).rejects.toEqual(new BotStateError("revision_conflict"));
   });
 
+  it("finds a confirmed preference when the query uses natural word forms", async () => {
+    const repo = createBotMemoryRepository(db);
+    await repo.remember({ ...base, kind: "preference", content: "The owner prefers plumprooff0 in greetings.", now: NOW });
+
+    const hits = await repo.search({ ownerId: OWNER, botId: BOT, query: "greeting preference", scopes: ["bot"], now: at(1) });
+    expect(hits.map((item) => item.content)).toEqual(["The owner prefers plumprooff0 in greetings."]);
+  });
+
   it("forgets an item and flags the bot's transcripts for recompaction together", async () => {
     await insertChat(db, "chat_mem1");
     const sessions = createBotSessionsRepository(db);

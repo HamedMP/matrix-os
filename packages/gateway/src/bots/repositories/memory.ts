@@ -122,19 +122,33 @@ export function createBotMemoryRepository(db: BotExecutor) {
       const query = input.query.trim().slice(0, MAX_QUERY_CHARS);
       if (query.length === 0 || input.scopes.length === 0) return [];
       const limit = Math.max(1, Math.min(Math.trunc(input.limit ?? 5), MAX_SEARCH_RESULTS));
-      const tsQuery = sql`websearch_to_tsquery('simple', ${query})`;
-      const rows = await executor.selectFrom("bot_memory_items")
+      const visibleItems = () => executor.selectFrom("bot_memory_items")
         .select([...COLUMNS])
         .where("owner_id", "=", input.ownerId).where("bot_id", "=", input.botId)
         .where("confirmed", "=", true).where("forgotten_at", "is", null)
         .where((eb) => eb.or([eb("expires_at", "is", null), eb("expires_at", ">", input.now)]))
-        .where("scope", "in", [...input.scopes])
+        .where("scope", "in", [...input.scopes]);
+      const tsQuery = sql`websearch_to_tsquery('simple', ${query})`;
+      const rows = await visibleItems()
         .where(sql<boolean>`content_tsv @@ ${tsQuery}`)
         .orderBy(sql`ts_rank(content_tsv, ${tsQuery})`, "desc")
         .orderBy("updated_at", "desc")
         .limit(limit)
         .execute();
-      return rows.map(fromRow);
+      if (rows.length > 0) return rows.map(fromRow);
+
+      // The indexed exact search is fast, but "greeting preference" should also
+      // find "prefers ... in greetings". Each bot is capped at 2,000 live items,
+      // so a stemming fallback over this owner's visible items is bounded.
+      const stemmedQuery = sql`websearch_to_tsquery('english', ${query})`;
+      const stemmedContent = sql`to_tsvector('english', content)`;
+      const stemmedRows = await visibleItems()
+        .where(sql<boolean>`${stemmedContent} @@ ${stemmedQuery}`)
+        .orderBy(sql`ts_rank(${stemmedContent}, ${stemmedQuery})`, "desc")
+        .orderBy("updated_at", "desc")
+        .limit(limit)
+        .execute();
+      return stemmedRows.map(fromRow);
     },
     /** The owner confirms an externally sourced item at its revision. */
     async confirm(input: { ownerId: string; itemId: string; baseRevision: number; now: string }, executor: BotExecutor = db): Promise<BotMemoryRecord> {
