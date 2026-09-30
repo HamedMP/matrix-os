@@ -12,12 +12,14 @@ export class DriveContextRuntimeError extends Error {
 /** Ephemeral proof per operation. Enrollment credentials go only to the configured platform origin. */
 export function createDriveContextRuntimeClient(options: {
     platformOrigin: string;
+    relayOrigin?: string;
     runtimeId: string;
     ownerId: string;
     serviceToken: string;
     fetchImpl?: typeof fetch;
 }) {
     const origin = CollaborationClientOriginSchema.parse(options.platformOrigin);
+    const relayOrigin = CollaborationClientOriginSchema.parse(options.relayOrigin ?? options.platformOrigin);
     const owner = CollaborationActorIdSchema.parse(options.ownerId);
     const runtime = z.string().min(1).max(128).regex(/^[A-Za-z0-9:_-]+$/).parse(options.runtimeId);
     const token = z.string().min(32).max(4096).regex(/^[A-Za-z0-9._~-]+$/).parse(options.serviceToken);
@@ -62,11 +64,11 @@ export function createDriveContextRuntimeClient(options: {
             signal.throwIfAborted();
             const issued = TicketResponse.parse(await request("/connections", "POST", { scopeId: reference.scopeId, clientRequestId: randomUUID(), proofPublicKey: key.publicKey }));
             const ticket = issued.signedTicket.ticket;
-            if (issued.endpoint.origin !== origin || ticket.actorId !== owner || ticket.organizationId !== reference.organizationId || ticket.resource.scopeId !== reference.scopeId || ticket.resource.kind !== "folder" || ticket.purpose !== "direct_session" || ticket.proofKeyThumbprint !== proofKeyThumbprint(key.publicKey))
+            if (issued.endpoint.origin !== relayOrigin || ticket.actorId !== owner || ticket.organizationId !== reference.organizationId || ticket.resource.scopeId !== reference.scopeId || ticket.resource.kind !== "folder" || ticket.purpose !== "direct_session" || ticket.proofKeyThumbprint !== proofKeyThumbprint(key.publicKey))
                 throw new DriveContextRuntimeError();
             const h = headers();
             h.set("x-matrix-collaboration-runtime", ticket.runtime.runtimeId);
-            session = CollaborationDirectSessionSchema.parse(await request(`/relay/api/collaboration/direct-sessions?scope=${reference.scopeId}`, "POST", { clientRequestId: randomUUID(), signedTicket: issued.signedTicket, proofPublicKey: key.publicKey, possession: signWithSeed(key.seed, possessionPayload({ ticketNonce: ticket.nonce, purpose: "direct_session" })), clientOrigin: origin }, h));
+            session = CollaborationDirectSessionSchema.parse(await request(`/relay/api/collaboration/direct-sessions?scope=${reference.scopeId}`, "POST", { clientRequestId: randomUUID(), signedTicket: issued.signedTicket, proofPublicKey: key.publicKey, possession: signWithSeed(key.seed, possessionPayload({ ticketNonce: ticket.nonce, purpose: "direct_session" })), clientOrigin: relayOrigin }, h));
             if (session.actorId !== owner || session.organizationId !== reference.organizationId || session.scopeId !== reference.scopeId || session.runtimeId !== ticket.runtime.runtimeId || session.authorityGeneration !== ticket.runtime.authorityGeneration || session.proofKeyThumbprint !== ticket.proofKeyThumbprint || session.purpose !== "direct_session")
                 throw new DriveContextRuntimeError();
             return await signed(body === undefined ? "GET" : "POST", path, query, false, body);

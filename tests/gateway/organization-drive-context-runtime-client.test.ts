@@ -4,7 +4,7 @@ import { proofKeyThumbprint, requestSigningPayload, sha256Hex, verifyEd25519 } f
 const scopeId = "00000000-0000-4000-8000-000000000001";
 const fileId = "00000000-0000-4000-8000-000000000002";
 const ref = { kind: "drive" as const, scopeId, organizationId: "org_example" };
-function fixture() {
+function fixture(platformOrigin = "https://app.example", relayOrigin = platformOrigin) {
     let key = "";
     const paths: string[] = [];
     let actor = "user_owner";
@@ -42,7 +42,7 @@ function fixture() {
             return Response.json({ organizationId: ref.organizationId, scopeId, files: [] });
         return Response.json({ status: "text", readOnly: true, text: "current company data", truncated: false, file: { id: fileId, organizationId: ref.organizationId, path, version: 2, size: 20, sha256: "a".repeat(64), updatedBy: "user_owner", updatedAt: at(0) } });
     });
-    const client = createDriveContextRuntimeClient({ platformOrigin: "https://app.example", runtimeId: "vps:requester", ownerId: "user_owner", serviceToken: "a".repeat(32), fetchImpl });
+    const client = createDriveContextRuntimeClient({ platformOrigin, relayOrigin, runtimeId: "vps:requester", ownerId: "user_owner", serviceToken: "a".repeat(32), fetchImpl });
     return { client, paths, fetchImpl, setActor(value: string) { actor = value; }, setPath(value: string) { path = value; }, setOrigin(value: string) { origin = value; } };
 }
 describe("headless drive context proof transport", () => {
@@ -56,5 +56,7 @@ describe("headless drive context proof transport", () => {
     it("rejects oversized streamed responses and still closes the session", async () => { const f = fixture(); const original = f.fetchImpl.getMockImplementation()!; f.fetchImpl.mockImplementation(async (url, init) => { const response = await original(url, init); if (String(url).includes("context/search"))
         return new Response(new Uint8Array(128 * 1024 + 1)); return response; }); await expect(f.client.search(ref, {})).rejects.toMatchObject({ code: "unavailable" }); expect(f.paths.at(-1)).toContain(`/direct-sessions/${fileId}`); });
  it("normalizes an invalid upstream response into a safe error",async()=>{const f=fixture();const original=f.fetchImpl.getMockImplementation()!;f.fetchImpl.mockImplementation(async(url,init)=>{const response=await original(url,init);return String(url).includes("context/search")?Response.json({internal_path:"/private/owner"}):response;});await expect(f.client.search(ref,{})).rejects.toMatchObject({code:"unavailable",message:"Company drive context is unavailable"});});
+
+ it("keeps enrollment requests on the internal origin while binding the public relay origin",async()=>{const f=fixture("https://platform.example","https://app.example");await f.client.search(ref,{});expect(f.fetchImpl.mock.calls.every(([url])=>new URL(String(url)).origin==="https://platform.example")).toBe(true);const exchange=f.fetchImpl.mock.calls.find(([url,init])=>String(url).endsWith("direct-sessions?scope="+scopeId)&&init?.method==="POST")!;expect(JSON.parse(exchange[1]!.body as string).clientOrigin).toBe("https://app.example");});
 
 });
