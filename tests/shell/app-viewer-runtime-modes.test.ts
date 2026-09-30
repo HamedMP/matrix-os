@@ -183,9 +183,9 @@ describe("AppViewer bridged runtime loading", () => {
       expect(result).toContain("crossorigin");
     });
 
-    it("only allows Symphony to bridge its first-party API routes", () => {
-      expect(isAllowedBridgeFetchUrl("symphony", "/api/symphony/state")).toBe(true);
-      expect(isAllowedBridgeFetchUrl("apps/symphony", "/api/symphony/service/start")).toBe(true);
+    it("rejects retired Symphony API bridge routes", () => {
+      expect(isAllowedBridgeFetchUrl("symphony", "/api/symphony/state")).toBe(false);
+      expect(isAllowedBridgeFetchUrl("apps/symphony", "/api/symphony/service/start")).toBe(false);
       expect(isAllowedBridgeFetchUrl("notes", "/api/symphony/state")).toBe(false);
       expect(isAllowedBridgeFetchUrl("symphony", "https://app.matrix-os.com/api/symphony/state")).toBe(false);
       expect(isAllowedBridgeFetchUrl("symphony", "/api/auth/app-session")).toBe(false);

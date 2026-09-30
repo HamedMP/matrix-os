@@ -7,7 +7,7 @@ afterEach(() => vi.useRealTimers());
 it("shares a bounded close result without mistaking failed termination calls for exit", async () => {
   vi.useFakeTimers();
   const child = Object.assign(new EventEmitter(), {
-    stdin: { write: () => true, end: () => { throw new Error("EPIPE"); } },
+    stdin: Object.assign(new EventEmitter(), { write: () => true, end: () => { throw new Error("EPIPE"); } }),
     stdout: new EventEmitter(), stderr: new EventEmitter(),
     kill: vi.fn(() => { throw new Error("EPERM"); }),
   }) satisfies HermesGatewayProcess;
@@ -36,7 +36,7 @@ it("settles a definitive no-child spawn error without waiting for an impossible 
   vi.useFakeTimers();
   const child = Object.assign(new EventEmitter(), {
     pid: undefined,
-    stdin: { write: () => true, end: vi.fn() },
+    stdin: Object.assign(new EventEmitter(), { write: () => true, end: vi.fn() }),
     stdout: new EventEmitter(), stderr: new EventEmitter(), kill: vi.fn(),
   });
   const client = createHermesStdioClient({ command: "missing-hermes", args: [], cwd: "/safe", env: {},

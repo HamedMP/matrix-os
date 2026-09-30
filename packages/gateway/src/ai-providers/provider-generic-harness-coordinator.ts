@@ -14,6 +14,8 @@ import { readAgentConfig, readConfig } from "../agent-config/runtime-files.js";
 import { readRuntimeSnapshot, type AgentRuntimeSource } from "../agent-config/service.js";
 import type { ProviderSettingsRuntimeCoordinator } from "./provider-settings-coordinators.js";
 import { ProviderSettingsStoreError } from "./provider-settings-errors.js";
+import { assertSpecializedHarnessEnablement, isSpecializedHarness } from "./provider-specialized-harness-enablement.js";
+import { hermesNativeModelId } from "./hermes-native-catalog.js";
 import {
   MAX_PROVIDER_SETTINGS_RECEIPTS,
   ProviderSettingsConfigurationSchema,
@@ -258,11 +260,15 @@ export function createProviderGenericHarnessCoordinator(options: {
 
   function configuredRuntimeRoute(harness: HarnessConfiguration & {
     harness: "hermes" | "openclaw";
-  }): RuntimeRoute {
+  }, snapshot?: Parameters<ProviderSettingsRuntimeCoordinator["applyConfiguration"]>[0]["snapshot"]): RuntimeRoute {
+    const source = snapshot?.accessSources.find((candidate) => candidate.id === harness.accessSourceId);
+    const nativeModel = source?.kind === "harness_profile" && harness.harness === "hermes"
+      ? hermesNativeModelId(harness, source) : undefined;
+    if (nativeModel === null) throw new ProviderSettingsStoreError("invalid_route", 400);
     return RuntimeRouteSchema.parse({
       harness: harness.harness,
       providerId: harness.route.providerId,
-      modelId: harness.route.modelId,
+      modelId: nativeModel ?? harness.route.modelId,
     });
   }
 
@@ -493,12 +499,12 @@ export function createProviderGenericHarnessCoordinator(options: {
       await requireRuntimeSupport(supportedFallback, input.canonical, input.snapshot);
       return configuredRuntimeRoute(supportedFallback as typeof supportedFallback & {
         harness: "hermes" | "openclaw";
-      });
+      }, input.snapshot);
     }
     if (affected.after?.enabled === true
       && mutation.type !== "update_harness"
       && mutation.type !== "remove_harness") {
-      return configuredRuntimeRoute(systemTarget);
+      return configuredRuntimeRoute(systemTarget, input.snapshot);
     }
     return null;
   }
@@ -569,6 +575,13 @@ export function createProviderGenericHarnessCoordinator(options: {
     }
 
     const affected = affectedHarness(input);
+    const specialized = affected.after ?? affected.before;
+    if (specialized && isSpecializedHarness(specialized)) {
+      assertSpecializedHarnessEnablement({ harness: specialized, mutation, canonical: input.canonical });
+      replaceReceipt(receipts, { key: input.idempotencyKey, payloadHash, state: "applied" });
+      await writeReceipts(receipts);
+      return;
+    }
     const target = requireGenericHarness(affected.after ?? affected.before);
 
     if (mutation.type === "remove_harness" && affected.before?.enabled === true) {
@@ -716,6 +729,8 @@ export function createProviderGenericHarnessCoordinator(options: {
 
   return {
     supportedHarnessKinds: [
+      "claude" as const,
+      "codex" as const,
       "hermes" as const,
       "openclaw" as const,
       ...CodingHarnessSchema.options.filter((harness) => enabledCodingHarnesses.has(harness)),

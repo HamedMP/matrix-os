@@ -20,14 +20,14 @@ import { FileDownloadStatus } from "./FileDownloadStatus";
 const MAX_FILE_TABS = 12;
 const SAFE_FOLDER_NAME = /^[^/\\\u0000-\u001f]{1,128}$/;
 
-interface FileTab { id: string; path: string; title: string }
+interface FileTab { id: string; path: string; initialPath: string; title: string }
 interface NewFolderRequest {
   parentPath: string;
   tabId: string;
   runtimeSlot: string;
   authGeneration: number;
 }
-const HOME_TAB: FileTab = { id: "files-home", path: "", title: "Matrix home" };
+const HOME_TAB: FileTab = { id: "files-home", path: "", initialPath: "", title: "Matrix home" };
 
 function pathTitle(path: string): string {
   return path.split("/").filter(Boolean).at(-1) ?? "Matrix home";
@@ -85,7 +85,7 @@ export default function FilesWorkspace() {
       setActiveTabId(existing.id);
       return;
     }
-    const tab = { id: `files-folder-${nextTabId.current++}`, path, title };
+    const tab = { id: `files-folder-${nextTabId.current++}`, path, initialPath: path, title };
     setTabs([...tabs, tab].slice(-MAX_FILE_TABS));
     setActiveTabId(tab.id);
   }, [tabs]);
@@ -183,7 +183,8 @@ export default function FilesWorkspace() {
             return (
               <RetainedPane key={tab.id} active={active} visible={active}>
                 <ComputerFileBrowser
-                  initialPath={tab.path}
+                  // Keep the creation seed stable; current tab path is navigation output.
+                  initialPath={tab.initialPath}
                   onPathChange={(path) => updateTabPath(tab.id, path)}
                   onSelectionChange={(next: BrowserSelection | null) => setSelections((current) => ({ ...current, [tab.id]: next ? { slot: runtimeSlot, authGeneration, path: next.path, entry: next.entry } : null }))}
                   onDownload={download.download}

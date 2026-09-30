@@ -2,6 +2,16 @@ import { describe, expect, it } from "vitest";
 import { makeAiProviderSnapshot } from "../fixtures/ai-provider-snapshot.js";
 import { managedChatInstances } from "../../packages/gateway/src/chat/managed-chat-catalog.js";
 
+function expectUnavailableManagedRoute(snapshot: ReturnType<typeof makeAiProviderSnapshot>) {
+  const instances = managedChatInstances(snapshot, []);
+  expect(instances).toHaveLength(1);
+  expect(instances[0]).toMatchObject({
+    id: "kernel_matrix_included", connectionLabel: "Matrix AI",
+    availability: "unavailable", connectionState: "unavailable", models: [], options: [],
+  });
+  expect(instances[0]?.defaultSelection).toBeUndefined();
+}
+
 describe("managed Chat catalog", () => {
   it("projects the ready managed route without inventing an agent or account", () => {
     const [instance] = managedChatInstances(makeAiProviderSnapshot(), []);
@@ -14,19 +24,19 @@ describe("managed Chat catalog", () => {
     expect(instance?.models.map((model) => model.id)).toEqual(["claude-sonnet-5"]);
   });
 
-  it.each(["setup_required", "unavailable", "unknown", "expired"] as const)("hides a %s access source", (state) => {
+  it.each(["setup_required", "unavailable", "unknown", "expired"] as const)("retains a non-runnable Matrix AI route for a %s access source", (state) => {
     const snapshot = makeAiProviderSnapshot();
     snapshot.accessSources[0]!.state = state;
-    expect(managedChatInstances(snapshot, [])).toEqual([]);
+    expectUnavailableManagedRoute(snapshot);
   });
 
-  it("hides stale relay readiness and unavailable instances", () => {
+  it("keeps stale relay readiness and unavailable instances non-runnable", () => {
     const snapshot = makeAiProviderSnapshot();
     snapshot.accessSources[0]!.staleAfter = "2000-01-01T00:00:00.000Z";
-    expect(managedChatInstances(snapshot, [])).toEqual([]);
+    expectUnavailableManagedRoute(snapshot);
     snapshot.accessSources[0]!.staleAfter = null;
     snapshot.instances[0]!.readiness.state = "unavailable";
-    expect(managedChatInstances(snapshot, [])).toEqual([]);
+    expectUnavailableManagedRoute(snapshot);
   });
 
   it("intersects the model and source policies without silently replacing a saved model", () => {
@@ -34,7 +44,7 @@ describe("managed Chat catalog", () => {
     snapshot.instances[0]!.defaultModelId = null;
     expect(managedChatInstances(snapshot, [])[0]?.defaultSelection).toBeUndefined();
     snapshot.accessSources[0]!.eligibleModelIds = [];
-    expect(managedChatInstances(snapshot, [])).toEqual([]);
+    expectUnavailableManagedRoute(snapshot);
   });
 
   it("does not invent readiness without a snapshot or a matching managed source", () => {

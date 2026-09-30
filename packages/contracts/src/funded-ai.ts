@@ -6,6 +6,24 @@ import { JEV_MODEL_ID, JEV_PRICING_VERSION, JevProvenanceSchema } from "#jev";
 export const FUNDED_AI_AUDIENCE = "matrix-funded-relay" as const;
 export const FUNDED_AI_SCOPE = "ai:invoke" as const;
 
+// Generic relay readiness includes scale-from-zero startup and the relay's
+// bounded 5s generation. Leave time for budget admission, owner-policy rereads,
+// and transport at each outer boundary; credential/funding requests stay 5s.
+export const FUNDED_AI_READINESS_TIMEOUTS = Object.freeze({
+  relayProbeMs: 10_000,
+  platformRouteMs: 12_000,
+  gatewayRequestMs: 13_000,
+  gatewayObservationMs: 14_000,
+  rendererRequestMs: 15_000,
+  jevProbeMs: 5_000,
+  jevRouteMs: 6_000,
+});
+
+// Checkout clients have a total cutoff distinct from readiness. Stripe keeps
+// its existing 10s per-attempt timeout and SDK retries; an interrupted client
+// may leave an idempotent claim for deliberate reuse, never an automatic retry.
+export const FUNDED_AI_CHECKOUT_TIMEOUT_MS = 30_000;
+
 const RevisionSchema = z.number().int().nonnegative();
 const RuntimeSlotSchema = z.string().min(1).max(80).regex(/^[a-z0-9][a-z0-9_-]*$/);
 const UniqueModelIdsSchema = z.array(ProviderModelReferenceSchema).max(64)

@@ -26,6 +26,7 @@ Gateway routes for conversational bots. Additive to the canonical Chat API (`pac
 |---|---|---|---|---|---|
 | `GET /api/chat-agents/bot-recipes` | Launch metadata | No | No | No | No |
 | `POST /api/chat-agents/instantiate` | Yes | No | No | No | No |
+| `GET /api/chat-agents/:agentId/direct-chat` | Live direct Chat ID or null | No | No | No | No |
 | `GET /api/chats/:chatId/bot` | Direct bot ID or null | No | No | No | No |
 | `GET /api/chats/:chatId/bot-tasks` | Up to 20 open tasks | No | No | No | No |
 | `GET /api/chat-agents/:agentId/authority` | Full | Group-visible subset (M3) | Group-visible subset (M3) | Group-visible subset (M3) | No |
@@ -73,6 +74,12 @@ Errors:
 - `409 conflict`: same `clientRequestId`, different payload
 - `429 rate_limited`: owner at the 100-bot cap
 - `503 unavailable`: store, database, or runtime missing
+
+## `GET /api/chat-agents/:agentId/direct-chat` (M1)
+
+Returns `{ "chatId": "chat_..." }` for the authenticated owner's active recipe bot and live direct binding, or `{ "chatId": null }` otherwise. The owner comes only from the request principal. Missing lookup infrastructure returns `503 unavailable`; invalid bot IDs return `400 invalid_request`. Reads are private and uncached.
+
+All applicable Chat sidebars use this binding to open recipe bots, rather than attaching them to a new coding-agent draft. A lookup failure stays visible and never falls back to a different runtime. Recipe bot editors identify them by `recipeRef`, show Pi with automatic server routing, and omit coding model, Full access, and ordinary Agent recipe controls. PATCH selection changes are rejected for recipe bots; model routing stays under gateway policy.
 
 ## `GET /api/chat-agents/:agentId/authority` (M1)
 

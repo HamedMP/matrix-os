@@ -1,5 +1,4 @@
 import { SHELL_ATTACH_LIVE_TAIL_FROM_SEQ } from "../protocol/shell.js";
-import { z } from "zod/v4";
 import {
   createMacOsClipboardImageReader,
   type ClipboardImageReader,
@@ -12,6 +11,7 @@ import {
   type RichPasteRewriter,
   type RichPasteUploadClient,
 } from "./rich-paste.js";
+import { ShellServerFrameSchema } from "./shell-server-frame-schema.js";
 
 export interface ShellClientOptions {
   gatewayUrl: string;
@@ -41,81 +41,6 @@ export interface ShellClient {
 }
 
 export interface TerminalRef { workspaceId: string; tabId: string }
-
-const TerminalRefSchema = z.object({
-  workspaceId: z.string().regex(/^tws_[0-9a-f]{32}$/),
-  tabId: z.string().regex(/^tt_[0-9a-f]{32}$/),
-}).strict();
-const TerminalGridSizeSchema = z.object({
-  cols: z.number().int().min(20).max(500),
-  rows: z.number().int().min(5).max(200),
-}).strict();
-const TerminalServerEventBaseSchema = z.object({
-  terminalRef: TerminalRefSchema,
-  revision: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
-});
-const TerminalServerFrameSchema = z.discriminatedUnion("type", [
-  TerminalServerEventBaseSchema.extend({
-    type: z.literal("attached"),
-    canonicalSize: TerminalGridSizeSchema,
-    nextSeq: z.number().int().min(0),
-    ownership: z.enum(["writer", "observer"]).optional(),
-    leaseEpoch: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER).optional(),
-  }).strict(),
-  TerminalServerEventBaseSchema.extend({
-    type: z.literal("snapshot"),
-    canonicalSize: TerminalGridSizeSchema,
-    seq: z.number().int().min(0),
-    ansi: z.string().max(4 * 1024 * 1024),
-    viewport: z.object({
-      top: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
-      rows: z.number().int().min(1).max(200),
-    }).strict(),
-  }).strict(),
-  TerminalServerEventBaseSchema.extend({
-    type: z.literal("output"),
-    seq: z.number().int().min(0),
-    data: z.string().min(1).max(64 * 1024),
-  }).strict(),
-  TerminalServerEventBaseSchema.extend({ type: z.literal("replay-start"), fromSeq: z.number().int().min(0) }).strict(),
-  TerminalServerEventBaseSchema.extend({
-    type: z.literal("replay-evicted"),
-    fromSeq: z.number().int().min(0),
-    nextSeq: z.number().int().min(0),
-  }).strict(),
-  TerminalServerEventBaseSchema.extend({
-    type: z.literal("replay-gap"),
-    fromSeq: z.number().int().min(0),
-    nextSeq: z.number().int().min(0),
-  }).strict(),
-  TerminalServerEventBaseSchema.extend({
-    type: z.literal("replay-end"),
-    nextSeq: z.number().int().min(0),
-    toSeq: z.number().int().min(0).nullable().optional(),
-  }).strict(),
-  TerminalServerEventBaseSchema.extend({ type: z.literal("canonical-size"), canonicalSize: TerminalGridSizeSchema }).strict(),
-  TerminalServerEventBaseSchema.extend({ type: z.literal("pong") }).strict(),
-  TerminalServerEventBaseSchema.extend({ type: z.literal("exit"), exitCode: z.number().int().nullable() }).strict(),
-  z.object({
-    type: z.literal("lease-revoked"),
-    terminalRef: TerminalRefSchema,
-    epoch: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).nullable(),
-  }).strict(),
-  z.object({
-    type: z.literal("error"),
-    terminalRef: TerminalRefSchema.optional(),
-    code: z.string().min(1).max(80).regex(/^[a-z0-9][a-z0-9_-]{0,79}$/),
-    message: z.string().min(1).max(720),
-  }).strict(),
-  z.object({
-    type: z.literal("safe-error"),
-    terminalRef: TerminalRefSchema.optional(),
-    error: z.object({
-      code: z.string().min(1).max(80).regex(/^[a-z0-9][a-z0-9_-]{0,79}$/),
-      message: z.string().min(1).max(720),
-    }).strict(),
-  }).strict(),
-]);
 
 export interface ShellClientError extends Error {
   code: string;
@@ -556,11 +481,10 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
     url.searchParams.set("tabId", ref.tabId);
     url.searchParams.set("client", "cli");
     if (attachOptions.size) {
-      // Declare as a hard sizing client (spec 107 FR-007): a TTY cannot scale
-      // its render, so its size participates in canonical-size negotiation.
-      // Without a known size the declaration is omitted (legacy behavior) so
-      // an undeclared hard client can never pin the session to a fallback.
-      url.searchParams.set("client", "hard");
+      // Declare the TTY size (spec 107 FR-007): a TTY cannot scale its render,
+      // so the gateway treats a sized `cli` writer as a hard sizing client.
+      // Without a known size the declaration is omitted so an undeclared
+      // client can never pin the session to a fallback.
       url.searchParams.set("cols", String(attachOptions.size.cols));
       url.searchParams.set("rows", String(attachOptions.size.rows));
       url.searchParams.set("lease", "exclusive");
@@ -1359,7 +1283,7 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
             }
             return;
           }
-          const validated = TerminalServerFrameSchema.safeParse(parsed);
+          const validated = ShellServerFrameSchema.safeParse(parsed);
           if (!validated.success) {
             return;
           }

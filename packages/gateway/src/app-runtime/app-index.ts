@@ -73,6 +73,9 @@ async function readManifestCandidate(
     logAppIndexSkip(relativePath, result.error);
     return null;
   }
+  // Older homes retain the bundled app files. Keep owner files intact while
+  // retiring the current runtime and its API from the app catalog and router.
+  if (result.manifest.slug === "symphony") return null;
 
   return {
     slug: result.manifest.slug,
@@ -157,6 +160,9 @@ export async function resolveAppBySlug(
 > {
   if (!SAFE_SLUG.test(slug)) {
     return { ok: false, error: new ManifestError("not_found", "invalid slug") };
+  }
+  if (slug === "symphony") {
+    return { ok: false, error: new ManifestError("not_found", "retired app") };
   }
 
   const candidates = (await getManifestCandidates(appsDir))

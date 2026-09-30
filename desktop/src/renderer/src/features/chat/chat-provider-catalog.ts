@@ -1,10 +1,12 @@
 import {
   CanonicalProviderCatalogSchema,
+  FUNDED_AI_READINESS_TIMEOUTS,
   type CanonicalProviderCatalog,
 } from "@matrix-os/contracts";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ApiClient } from "../../lib/api";
 import { useConnection } from "../../stores/connection";
+import { desktopProviderIdentityKey } from "../../lib/provider-settings-identity";
 
 export function failClosedProviderCatalog(
   catalog: CanonicalProviderCatalog,
@@ -24,7 +26,8 @@ export async function fetchCanonicalProviderCatalog(
   refresh = false,
 ): Promise<CanonicalProviderCatalog> {
   return CanonicalProviderCatalogSchema.parse(await api.get<unknown>(
-    refresh ? "/api/chat-providers?refresh=true&includeConnectionLabels=true" : "/api/chat-providers?includeConnectionLabels=true",
+    refresh ? "/api/chat-providers?refresh=true&includeConnectionLabels=true&includeConnectionState=true" : "/api/chat-providers?includeConnectionLabels=true&includeConnectionState=true",
+    { timeoutMs: FUNDED_AI_READINESS_TIMEOUTS.rendererRequestMs },
   ));
 }
 
@@ -40,14 +43,20 @@ export function useChatProviderCatalog(
   refresh: () => void;
 } {
   const connectionApi = useConnection((state) => state.api);
+  const identityKey = useConnection(desktopProviderIdentityKey);
+  const catalogGeneration = useConnection((state) => state.providerCatalogGeneration);
   const { api: apiOverride, active = true } = options;
   const api = apiOverride === undefined ? connectionApi : apiOverride;
+  const unavailableCatalog = useMemo(() => failClosedProviderCatalog(fallback), [fallback]);
   const [state, setState] = useState<{
     catalog: CanonicalProviderCatalog;
     status: "fallback" | "loading" | "ready" | "error";
-  }>(() => ({ catalog: fallback, status: api && active ? "loading" : "fallback" }));
+    identityKey: string;
+    generation: number;
+    api: typeof api;
+  }>(() => ({ catalog: fallback, status: api && active ? "loading" : "fallback", identityKey, generation: catalogGeneration, api }));
 
-  const trustedCatalogRef = useRef<{ api: Pick<ApiClient, "get">; catalog: CanonicalProviderCatalog } | null>(null);
+  const trustedCatalogRef = useRef<{ api: Pick<ApiClient, "get">; catalog: CanonicalProviderCatalog; identityKey: string; generation: number } | null>(null);
   const refreshRef = useRef<() => void>(() => undefined);
   const refresh = useCallback(() => refreshRef.current(), []);
 
@@ -57,11 +66,13 @@ export function useChatProviderCatalog(
     let cancelled = false;
     let requestSequence = 0;
     let lastTrustedCatalog = trustedCatalogRef.current?.api === api
+      && trustedCatalogRef.current.identityKey === identityKey
+      && trustedCatalogRef.current.generation === catalogGeneration
       ? trustedCatalogRef.current.catalog : null;
     if (!active || !api || typeof api.get !== "function") {
       trustedCatalogRef.current = null;
       refreshRef.current = () => undefined;
-      setState({ catalog: fallback, status: "fallback" });
+      setState({ catalog: fallback, status: "fallback", identityKey, generation: catalogGeneration, api });
       return () => {
         cancelled = true;
       };
@@ -69,24 +80,31 @@ export function useChatProviderCatalog(
     if (!lastTrustedCatalog) trustedCatalogRef.current = null;
     const retainedCatalog = lastTrustedCatalog;
     setState((current) => ({
-      catalog: retainedCatalog ?? fallback,
+      catalog: retainedCatalog ?? unavailableCatalog,
+      identityKey, generation: catalogGeneration, api,
       status: retainedCatalog ? current.status === "error" ? "error" : "ready" : "loading",
     }));
+    const isCurrentScope = () => {
+      const current = useConnection.getState();
+      return desktopProviderIdentityKey(current) === identityKey
+        && current.providerCatalogGeneration === catalogGeneration;
+    };
     const update = () => {
       const request = ++requestSequence;
       void fetchCanonicalProviderCatalog(api, true).then((catalog) => {
-        if (!cancelled && request === requestSequence) {
+        if (!cancelled && request === requestSequence && isCurrentScope()) {
           lastTrustedCatalog = catalog;
-          trustedCatalogRef.current = { api, catalog };
-          setState({ catalog, status: "ready" });
+          trustedCatalogRef.current = { api, catalog, identityKey, generation: catalogGeneration };
+          setState({ catalog, status: "ready", identityKey, generation: catalogGeneration, api });
         }
       }).catch((error: unknown) => {
         console.warn(
           "[chat] Provider catalog unavailable:",
           error instanceof Error ? error.name : "UnknownError",
         );
-        if (!cancelled && request === requestSequence) setState({
-          catalog: lastTrustedCatalog ?? failClosedProviderCatalog(fallback),
+        if (!cancelled && request === requestSequence && isCurrentScope()) setState({
+          catalog: lastTrustedCatalog ?? unavailableCatalog,
+          identityKey, generation: catalogGeneration, api,
           status: "error",
         });
       });
@@ -105,7 +123,11 @@ export function useChatProviderCatalog(
       window.removeEventListener("focus", refresh);
       document.removeEventListener("visibilitychange", visibility);
     };
-  }, [active, api, fallback]);
+  }, [active, api, fallback, unavailableCatalog, identityKey, catalogGeneration]);
 
-  return { ...state, refresh };
+  // A scope/change render must fail closed before passive effects run. Old
+  // state must never be observable by a composer or a layout-effect consumer.
+  const current = state.identityKey === identityKey && state.generation === catalogGeneration && state.api === api;
+  return { catalog: current ? state.catalog : unavailableCatalog,
+    status: current ? state.status : "loading", refresh };
 }

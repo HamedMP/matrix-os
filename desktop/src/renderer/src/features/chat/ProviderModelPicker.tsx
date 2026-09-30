@@ -27,18 +27,22 @@ export function ProviderModelPicker({ catalog, selection, instanceLocked, disabl
   const [open, setOpen] = useState(false);
   const selectedInstance = catalog.instances.find((instance) => instance.id === selection?.instanceId);
   const selectedModel = selectedInstance?.models.find((model) => model.id === selection?.model);
+  const unavailable = Boolean(selection && (selectedInstance?.availability !== "available" || selectedModel?.availability !== "available"));
+  const routeLabel = `${selectedModel?.displayName ?? selection?.model ?? unavailableProviderLabel ?? "Choose model"}${selectedInstance ? ` · ${selectedInstance.displayName}` : ""}${selectedInstance?.connectionLabel && selectedInstance.connectionLabel !== selectedInstance.displayName ? ` · ${selectedInstance.connectionLabel}` : ""}`;
+  const selectionLabel = `${routeLabel}${unavailable ? " · Unavailable" : ""}`;
   return <><Popover.Root open={open && !disabled} onOpenChange={(nextOpen) => {
     setOpen(nextOpen);
     if (nextOpen) onOpen?.();
   }}>
     <Popover.Trigger asChild>
       <button type="button" disabled={disabled} aria-label="Choose model and provider"
-        data-provider-instance={selectedInstance?.id ?? ""} data-model={selectedModel?.id ?? ""}
-        title={selectedInstance && selectedModel ? `${selectedModel.displayName} · ${selectedInstance.displayName}` : unavailableProviderLabel}
+        data-provider-instance={selectedInstance?.id ?? selection?.instanceId ?? ""} data-model={selectedModel?.id ?? selection?.model ?? ""}
+        title={selectionLabel}
         className="flex h-8 max-w-[18rem] items-center gap-1.5 rounded-lg px-2 text-sm font-medium outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:opacity-50"
         style={{ color: "var(--text-secondary)" }}>
         {selectedInstance ? <ProviderDriverGlyph kind={selectedInstance.driverKind} /> : <Cpu size={15} />}
-        <span className="truncate">{selectedModel?.displayName ?? unavailableProviderLabel ?? "Choose model"}{selectedInstance ? ` · ${selectedInstance.displayName}` : ""}{selectedInstance?.connectionLabel && selectedInstance.connectionLabel !== selectedInstance.displayName ? ` · ${selectedInstance.connectionLabel}` : ""}</span>
+        <span className="truncate">{routeLabel}</span>
+        {unavailable ? <span className="shrink-0">Unavailable</span> : null}
         <ChevronDown size={13} aria-hidden />
       </button>
     </Popover.Trigger>

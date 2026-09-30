@@ -3,10 +3,11 @@ import { anthropicMessagesApi } from "@earendil-works/pi-ai/api/anthropic-messag
 import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
 import { openAIResponsesApi } from "@earendil-works/pi-ai/api/openai-responses.lazy";
 import type { BotModelRoute } from "@matrix-os/contracts";
+import { createBotBridgeFetch } from "./bridge-fetch.js";
 
 /**
  * The worker holds no credential. SDKs require some key, so this placeholder is
- * sent to the loopback inference bridge and replaced by the gateway broker.
+ * sent to the private inference bridge and replaced by the gateway broker.
  */
 export const BROKER_PLACEHOLDER_KEY = "matrix-broker-placeholder";
 export const BROKER_PROVIDER_ID = "matrix-broker";
@@ -30,7 +31,7 @@ export function assertLoopbackBridge(bridgeOrigin: string): void {
   }
 }
 
-export function createBridgeModel(route: BotModelRoute, bridgeOrigin: string): { provider: Provider<Api>; model: Model<Api> } {
+export function createBridgeModel(route: BotModelRoute, bridgeOrigin: string, bridgeSocket?: string): { provider: Provider<Api>; model: Model<Api> } {
   assertLoopbackBridge(bridgeOrigin);
   const model: Model<Api> = {
     id: route.modelId,
@@ -44,6 +45,8 @@ export function createBridgeModel(route: BotModelRoute, bridgeOrigin: string): {
     contextWindow: route.contextWindow,
     maxTokens: route.maxOutputTokens,
   };
+  const api = API_FACTORIES[route.api]();
+  const bridgeFetch = bridgeSocket ? createBotBridgeFetch(bridgeSocket) : undefined;
   const provider = createProvider<Api>({
     id: BROKER_PROVIDER_ID,
     name: "Matrix broker",
@@ -54,7 +57,11 @@ export function createBridgeModel(route: BotModelRoute, bridgeOrigin: string): {
       },
     },
     models: [model],
-    api: { [route.api]: API_FACTORIES[route.api]() },
+    api: { [route.api]: bridgeFetch ? {
+      ...api,
+      stream: (model, context, options) => api.stream(model, context, { ...options, fetch: bridgeFetch }),
+      streamSimple: (model, context, options) => api.streamSimple(model, context, { ...options, fetch: bridgeFetch }),
+    } : api },
   });
   return { provider, model };
 }

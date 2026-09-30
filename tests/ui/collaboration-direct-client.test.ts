@@ -7,7 +7,7 @@
  * hydrated from the home.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { COLLABORATION_DIRECT_PROTOCOL_VERSION } from "@matrix-os/contracts";
+import { COLLABORATION_DIRECT_PROTOCOL_VERSION, CollaborationDiscoveryItemSchema } from "@matrix-os/contracts";
 import { possessionPayload, verifyEd25519 } from "../../packages/gateway/src/collaboration/direct-crypto.js";
 import { CollaborationRelay } from "../../packages/platform/src/collaboration/relay.js";
 import { CollaborationDirectError, createCollaborationDirectClient } from "../../packages/ui/src/collaboration/direct-client.js";
@@ -245,6 +245,19 @@ describe("collaboration direct client", () => {
     const invitation = await api.get("/api/collaboration/invitations/20000000-0000-4000-8000-000000000001") as Json;
     expect(invitation.role).toBe("editor");
     expect(world.home.requests.at(-1)!.url).toBe(`${RELAY}/api/collaboration/invitations/20000000-0000-4000-8000-000000000001`);
+  });
+
+  it("marks a discovered item for sign-in, not ended access, when the platform no longer recognizes the actor", async () => {
+    world.platform.shared = [{ scopeId, runtimeId: "vps:11111111-1111-4111-8111-111111111111", ownerId: "user_owner", kind: "chat", authorityGeneration: 3, status: "accepted" }];
+    const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => new URL(String(input)).pathname === "/api/collaboration/connections"
+      ? new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: { "content-type": "application/json" } })
+      : world.fetchImpl(input, init));
+    const api = createCollaborationDirectApi({ platformBaseUrl: PLATFORM, fetchImpl, webSocketFactory: world.webSocketFactory, clientOrigin: CLIENT_ORIGIN, now: world.now });
+    const shared = await api.get("/api/collaboration/shared") as { items: Json[] };
+    expect(shared.items[0]).toMatchObject({ scopeId, status: "accepted", home: "unauthenticated" });
+    expect(CollaborationDiscoveryItemSchema.safeParse(shared.items[0]).success).toBe(true);
+    expect(api.direct.describe(scopeId).state).toBe("unauthenticated");
+    expect(world.home.requests).toHaveLength(0);
   });
 
   it("evicts old scope records when many resources are visited", async () => {

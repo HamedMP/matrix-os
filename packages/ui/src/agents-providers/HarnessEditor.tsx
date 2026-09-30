@@ -75,7 +75,7 @@ export function HarnessEditor({
   const provider = providerFor(snapshot, harness);
   const model = provider?.models.find((candidate) => candidate.id === harness.route.modelId) ?? null;
   const accessSource = snapshot.accessSources.find((source) => source.id === harness.accessSourceId) ?? null;
-  useLocalObservationExpiry([accessSource?.localObservation?.staleAfter]);
+  useLocalObservationExpiry([accessSource?.localObservation?.staleAfter, harness.localObservation?.staleAfter]);
   const savedSourceUnsupported = accessSource !== null && !isSupportedGenericHarnessCredentialRoute(harness, accessSource);
   const account = snapshot.accounts.find((candidate) => candidate.id === harness.selectedAccountId) ?? null;
   const sources = snapshot.accessSources.filter((source) => source.providerId === harness.route.providerId
@@ -133,7 +133,7 @@ export function HarnessEditor({
         </div>
       ) : null}
       {harness.connectivity !== "online" ? (
-        <div className="matrix-ap-notice" data-tone="warning"><strong>Connection not verified</strong><button type="button" className="matrix-ap-button" disabled={disabled} onClick={onRefresh}>Check again</button></div>
+        <div className="matrix-ap-notice" data-tone="warning"><strong>Connection not verified</strong>{harness.localObservation ? <span>{codexLocalObservationLabel(harness.localObservation)}</span> : null}<button type="button" className="matrix-ap-button" disabled={disabled} onClick={onRefresh}>Check again</button></div>
       ) : null}
       {routeUnavailable ? (
         <div className="matrix-ap-notice" data-tone="warning">

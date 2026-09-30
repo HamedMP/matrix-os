@@ -110,6 +110,7 @@ export function WorkRail({
   onSelectChat: selectChat,
   onOpenAgents,
   onStartAgentChat,
+  onOpenBotChat,
   onChatDeleted,
   onChatRenamed,
   onCollapse,
@@ -126,6 +127,7 @@ export function WorkRail({
   onNewGlobalChat: () => void;
   onOpenAgents?: () => void;
   onStartAgentChat?: StartAgentChat;
+  onOpenBotChat?: (chatId: string) => void;
   onCreateProject: () => void;
   onNewProjectChat: (project: Project) => void;
   onSelectChat: (record: CanonicalChatRecord, project?: Project) => void;
@@ -424,7 +426,7 @@ export function WorkRail({
       <SharedWithMeRailRow />
       {readError ? <p role="alert" className="px-3 text-xs">{readError}</p> : null}
       {unreadOnly && !records.some(isChatUnread) ? <p className="px-3 text-xs">No unread chats.</p> : null}
-      <ChatAgentsRailSection client={client?.agents} onOpen={onOpenAgents} onStartChat={onStartAgentChat} onSetup={() => { useUi.getState().requestSettingsSection("agents-providers"); useTabs.getState().openTab({ kind: "settings", title: "Settings" }); }} />
+      <ChatAgentsRailSection client={client?.agents} onOpen={onOpenAgents} onStartChat={onStartAgentChat} onOpenBotChat={onOpenBotChat} onSetup={() => { useUi.getState().requestSettingsSection("agents-providers"); useTabs.getState().openTab({ kind: "settings", title: "Settings" }); }} />
       <div className="contents">
         <WorkRailSection
           label="Pinned"

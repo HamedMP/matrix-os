@@ -100,6 +100,13 @@ export const DeployRequestSchema = z.object({
   message: 'Specify either version or channel',
 });
 
+export const SpeechActivationRequestSchema = z.object({
+  handle: SafeHandleSchema.optional(),
+  afterMachineId: z.uuid().optional(),
+}).strict().refine((value) => !(value.handle && value.afterMachineId), {
+  message: 'Specify either handle or continuation cursor',
+});
+
 export type ProvisionRequest = z.infer<typeof ProvisionRequestSchema>;
 export type PreviewProvisionInput = z.input<typeof PreviewProvisionRequestSchema>;
 export type PreviewProvisionRequest = z.output<typeof PreviewProvisionRequestSchema>;
@@ -107,3 +114,4 @@ export type RegisterRequest = z.infer<typeof RegisterRequestSchema>;
 export type RecoverRequest = z.infer<typeof RecoverRequestSchema>;
 export type ResizeMachineRequest = z.infer<typeof ResizeMachineRequestSchema>;
 export type DeployRequest = z.infer<typeof DeployRequestSchema>;
+export type SpeechActivationRequest = z.infer<typeof SpeechActivationRequestSchema>;

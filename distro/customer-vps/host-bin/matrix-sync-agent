@@ -26,6 +26,7 @@ readonly UPDATE_ERROR_MARKER="$APP_DIR/.update-error.json"
 readonly UPDATE_PHASE_MARKER="$STAGING_DIR/update-phase"
 readonly UPDATE_TRANSACTION_DIR="$STAGING_DIR/update-transaction"
 readonly UPDATE_TRANSACTION_STATE="$UPDATE_TRANSACTION_DIR/state"
+readonly RETIRED_SYMPHONY_ROLLBACK_DIR="/etc/matrix-symphony-rollback"
 readonly HERMES_RECONCILE_MARKER="$STAGING_DIR/hermes-reconcile-pending"
 readonly UPDATE_REPAIR_TRIGGER="$APP_DIR/.update-repair-now"
 readonly ROLLBACK_TRIGGER="$APP_DIR/.rollback-now"
@@ -37,17 +38,11 @@ readonly UPDATE_FREE_BUFFER_KB="${MATRIX_UPDATE_FREE_BUFFER_KB:-1048576}"
 readonly UPDATE_EXPANSION_FACTOR="${MATRIX_UPDATE_EXPANSION_FACTOR:-8}"
 readonly LEGACY_UPGRADE_DIR="/opt/matrix-upgrade"
 readonly LEGACY_UPGRADE_TTL_SECONDS="${MATRIX_LEGACY_UPGRADE_TTL_SECONDS:-86400}"
-readonly SYMPHONY_ENV_FILE="/opt/matrix/env/symphony.env"
 readonly LEGACY_R2_ENV_FILE="/opt/matrix/env/r2.env"
 readonly LEGACY_R2_RETRY_INTERVAL_SECONDS="${MATRIX_LEGACY_R2_RETRY_INTERVAL_SECONDS:-300}"
 readonly TERMINAL_RUNTIME_ROOT="/opt/matrix/terminal-runtime"
 readonly TERMINAL_RUNTIME_GENERATION_FILE="TERMINAL_RUNTIME_GENERATION"
 readonly TERMINAL_RUNTIME_MAX_GENERATIONS="${MATRIX_TERMINAL_RUNTIME_MAX_GENERATIONS:-8}"
-# Keys this agent owns and rewrites on every sync from platform-provided values.
-# Any other key in symphony.env (e.g. an operator-set SYMPHONY_LINEAR_PROJECT_SLUG)
-# is preserved across updates instead of being wiped.
-readonly SYMPHONY_MANAGED_KEYS="MATRIX_HANDLE PLATFORM_INTERNAL_URL UPGRADE_TOKEN"
-
 log() { echo "matrix-sync-agent: $(date -u +%Y-%m-%dT%H:%M:%SZ) $*"; }
 current_version() { cat "$VERSION_FILE" 2>/dev/null || echo "unknown"; }
 platform_url() { echo "${MATRIX_UPDATE_MANIFEST_BASE_URL:-${PLATFORM_INTERNAL_URL:-https://app.matrix-os.com}}"; }
@@ -61,6 +56,144 @@ resume_symphony_after_update() {
     sudo systemctl start --no-block matrix-symphony.service
     log "Resumed previously active Symphony"
   fi
+}
+
+# The retired service may still be installed by an older host bundle. Preserve
+# owner configuration and workspaces; only remove the OS-owned systemd unit.
+persist_legacy_symphony_rollback() {
+  local source="$UPDATE_TRANSACTION_DIR/systemd/matrix-symphony.service"
+  local masked="$UPDATE_TRANSACTION_DIR/symphony.masked"
+  local installed_unit=/etc/systemd/system/matrix-symphony.service
+  local incoming="${RETIRED_SYMPHONY_ROLLBACK_DIR}.incoming.$$"
+  local mode="" from_live=false state activity
+  if [ -L "$source" ] || [ -L "$masked" ]; then
+    log "ERROR: invalid legacy Symphony update snapshot"
+    return 1
+  fi
+  if [ -f "$source" ] && [ -f "$masked" ]; then
+    log "ERROR: ambiguous legacy Symphony update snapshot"
+    return 1
+  elif [ -f "$source" ]; then
+    mode=unit
+  elif [ -f "$masked" ]; then
+    mode=masked
+  # A prior retirement attempt may have stopped or disabled the unit already.
+  # Keep the first snapshot, which records its original rollback state.
+  elif [ -d "$RETIRED_SYMPHONY_ROLLBACK_DIR" ] && [ ! -L "$RETIRED_SYMPHONY_ROLLBACK_DIR" ] &&
+    { { [ -f "$RETIRED_SYMPHONY_ROLLBACK_DIR/unit" ] && [ ! -L "$RETIRED_SYMPHONY_ROLLBACK_DIR/unit" ] &&
+        [ ! -e "$RETIRED_SYMPHONY_ROLLBACK_DIR/masked" ] && [ ! -L "$RETIRED_SYMPHONY_ROLLBACK_DIR/masked" ]; } ||
+      { [ -f "$RETIRED_SYMPHONY_ROLLBACK_DIR/masked" ] && [ ! -L "$RETIRED_SYMPHONY_ROLLBACK_DIR/masked" ] &&
+        [ ! -e "$RETIRED_SYMPHONY_ROLLBACK_DIR/unit" ] && [ ! -L "$RETIRED_SYMPHONY_ROLLBACK_DIR/unit" ]; }; } &&
+    [ -f "$RETIRED_SYMPHONY_ROLLBACK_DIR/enablement" ] && [ ! -L "$RETIRED_SYMPHONY_ROLLBACK_DIR/enablement" ] &&
+    [ -f "$RETIRED_SYMPHONY_ROLLBACK_DIR/activity" ] && [ ! -L "$RETIRED_SYMPHONY_ROLLBACK_DIR/activity" ]; then
+    return 0
+  elif [ -e "$RETIRED_SYMPHONY_ROLLBACK_DIR" ] || [ -L "$RETIRED_SYMPHONY_ROLLBACK_DIR" ]; then
+    log "ERROR: invalid legacy Symphony rollback snapshot"
+    return 1
+  # The old updater removes its transaction before restarting into this new
+  # script. The installed unit is still present, so snapshot it on first boot.
+  elif [ -L "$installed_unit" ]; then
+    [ "$(readlink "$installed_unit")" = /dev/null ] ||
+      { log "ERROR: invalid legacy Symphony installed unit symlink"; return 1; }
+    mode=masked
+    from_live=true
+  elif [ -f "$installed_unit" ]; then
+    mode=unit
+    source="$installed_unit"
+    from_live=true
+  elif [ -e "$installed_unit" ]; then
+    log "ERROR: invalid legacy Symphony installed unit"
+    return 1
+  else
+    log "ERROR: legacy Symphony rollback source is unavailable"
+    return 1
+  fi
+  if [ "$from_live" = true ]; then
+    state="$(sudo systemctl is-enabled matrix-symphony.service 2>/dev/null || true)"
+    case "$state" in
+      enabled|enabled-runtime|disabled|masked|masked-runtime|static|indirect|generated|transient) ;;
+      *) log "ERROR: could not snapshot legacy Symphony enablement"; return 1 ;;
+    esac
+    activity="$(sudo systemctl is-active matrix-symphony.service 2>/dev/null || true)"
+    case "$activity" in
+      active|activating|reloading) activity=active ;;
+      inactive|failed|unknown) activity=inactive ;;
+      *) log "ERROR: could not snapshot legacy Symphony activity"; return 1 ;;
+    esac
+    if [ "$mode" = masked ] && { [ "$state" != masked ] || [ "$activity" != inactive ]; }; then
+      log "ERROR: legacy Symphony mask state cannot be safely restored"
+      return 1
+    fi
+  fi
+  sudo rm -rf -- "$incoming" || return 1
+  sudo install -d -o root -g matrix -m 0750 "$incoming" || return 1
+  if [ "$mode" = masked ]; then
+    if [ "$from_live" = true ]; then
+      sudo install -o root -g matrix -m 0640 /dev/null "$incoming/masked" || return 1
+    else
+      sudo install -o root -g matrix -m 0640 "$masked" "$incoming/masked" || return 1
+    fi
+  else
+    sudo install -o root -g matrix -m 0640 "$source" "$incoming/unit" || return 1
+  fi
+  if [ "$from_live" = true ]; then
+    sudo install -o root -g matrix -m 0640 /dev/null "$incoming/enablement" || return 1
+    sudo install -o root -g matrix -m 0640 /dev/null "$incoming/activity" || return 1
+    printf 'matrix-symphony.service:%s\n' "$state" | sudo tee "$incoming/enablement" >/dev/null || return 1
+    printf 'matrix-symphony.service:%s\n' "$activity" | sudo tee "$incoming/activity" >/dev/null || return 1
+  else
+    sudo install -o root -g matrix -m 0640 "$UPDATE_TRANSACTION_DIR/systemd.enablement" "$incoming/enablement" || return 1
+    sudo install -o root -g matrix -m 0640 "$UPDATE_TRANSACTION_DIR/systemd.activity" "$incoming/activity" || return 1
+  fi
+  if [ -L "$RETIRED_SYMPHONY_ROLLBACK_DIR" ] ||
+    { [ -e "$RETIRED_SYMPHONY_ROLLBACK_DIR" ] && [ ! -d "$RETIRED_SYMPHONY_ROLLBACK_DIR" ]; }; then
+    log "ERROR: legacy Symphony rollback destination has an invalid file type"
+    return 1
+  fi
+  sudo rm -rf -- "$RETIRED_SYMPHONY_ROLLBACK_DIR" || return 1
+  sudo mv -T -- "$incoming" "$RETIRED_SYMPHONY_ROLLBACK_DIR" || return 1
+}
+
+retire_legacy_symphony() {
+  local unit=/etc/systemd/system/matrix-symphony.service
+  if [ -L "$unit" ]; then
+    [ "$(readlink "$unit")" = /dev/null ] || { log "ERROR: invalid legacy Symphony unit symlink"; return 1; }
+    persist_legacy_symphony_rollback || return 1
+    if sudo systemctl is-active --quiet matrix-symphony.service; then
+      sudo systemctl stop matrix-symphony.service || return 1
+    fi
+    sudo rm -f -- "$unit" || return 1
+    sudo systemctl daemon-reload || return 1
+    log "Retired masked legacy Symphony service"
+    return 0
+  fi
+  if ! sudo systemctl cat matrix-symphony.service >/dev/null 2>&1; then
+    if sudo systemctl is-active --quiet matrix-symphony.service; then
+      sudo systemctl stop matrix-symphony.service || return 1
+      if sudo systemctl is-active --quiet matrix-symphony.service; then
+        log "ERROR: retired Symphony process remains active without a unit file"
+        return 1
+      fi
+    fi
+    return 0
+  fi
+  persist_legacy_symphony_rollback || return 1
+  sudo systemctl disable --now matrix-symphony.service || return 1
+  sudo rm -f -- /etc/systemd/system/matrix-symphony.service || return 1
+  sudo systemctl daemon-reload || return 1
+  if sudo systemctl is-active --quiet matrix-symphony.service; then
+    log "ERROR: retired Symphony service remains active"
+    return 1
+  fi
+  log "Retired legacy Symphony service"
+}
+
+# The host-bin upgrade can survive a failed or interrupted service retirement.
+# Retry only when the installed app bundle no longer contains the old runtime;
+# a rollback to the prior bundle must remain runnable.
+maybe_retire_legacy_symphony() {
+  [ -x "$APP_DIR/packages/symphony-elixir/release/bin/symphony" ] && return 0
+  retire_legacy_symphony
 }
 
 # Hermes lives under the owner home, outside the host-bundle rollback tree.
@@ -115,7 +248,10 @@ maybe_reconcile_hermes_release() {
 
 stop_runtime_services() {
   local service state
-  local runtime_services=(matrix-symphony matrix-gateway matrix-shell)
+  local runtime_services=(matrix-gateway matrix-shell)
+  if sudo systemctl cat matrix-symphony.service >/dev/null 2>&1; then
+    runtime_services+=(matrix-symphony)
+  fi
   # Older installations may not have either collaboration runtime unit yet.
   # Probe before stopping so the first bundle introducing one can still upgrade.
   if sudo systemctl cat matrix-terminal-runtime.service >/dev/null 2>&1; then
@@ -219,49 +355,6 @@ restore_rollback_release_metadata() {
   sudo mv -Tf "$RELEASE_ROLLBACK_FILE" "$RELEASE_FILE" || return 1
 }
 
-# Echo the lines of an existing symphony.env that this agent does not manage so
-# operator-set configuration survives a host bundle update. Blank and comment
-# lines are kept; managed KEY= lines are dropped (re-emitted with fresh values
-# by write_symphony_env). Group-readable file (root:matrix 0640), so the matrix
-# user that runs this agent can read it directly.
-preserve_unmanaged_symphony_env() {
-  local existing_file="$1"
-  [ -f "$existing_file" ] || return 0
-  local line key
-  while IFS= read -r line || [ -n "$line" ]; do
-    case "$line" in
-      '' | '#'*)
-        printf '%s\n' "$line"
-        ;;
-      *=*)
-        key="${line%%=*}"
-        case " $SYMPHONY_MANAGED_KEYS " in
-          *" $key "*) : ;; # managed key: re-emitted with fresh value elsewhere
-          *) printf '%s\n' "$line" ;;
-        esac
-        ;;
-      *)
-        printf '%s\n' "$line"
-        ;;
-    esac
-  done <"$existing_file"
-}
-
-write_symphony_env() {
-  local status=0
-  local temp_file
-  temp_file="$(mktemp)"
-  {
-    printf 'MATRIX_HANDLE=%s\n' "${MATRIX_HANDLE:?MATRIX_HANDLE is required}"
-    printf 'PLATFORM_INTERNAL_URL=%s\n' "${PLATFORM_INTERNAL_URL:?PLATFORM_INTERNAL_URL is required}"
-    printf 'UPGRADE_TOKEN=%s\n' "${UPGRADE_TOKEN:?UPGRADE_TOKEN is required}"
-    preserve_unmanaged_symphony_env "$SYMPHONY_ENV_FILE"
-  } >"$temp_file"
-  sudo install -o root -g matrix -m 0640 "$temp_file" "$SYMPHONY_ENV_FILE" || status=$?
-  rm -f "$temp_file"
-  return "$status"
-}
-
 install_host_bin_payload() {
   local source_dir="$1" source name incoming destination
   [ -d "$source_dir" ] && [ ! -L "$source_dir" ] || return 1
@@ -330,6 +423,48 @@ record_update_payload_directory() {
   done < <(find "$source_dir" -mindepth 1 -maxdepth 1 -type f -print0)
 }
 
+# The retirement bundle omits this unit, so the generic candidate-payload
+# snapshot will not see it. Record the installed unit and its pre-update state
+# explicitly; failed updates and a later manual rollback must restore it.
+record_legacy_symphony_unit() {
+  local extract_dir="$1" name=matrix-symphony.service
+  local unit="/etc/systemd/system/$name" state activity
+  [ -f "$extract_dir/systemd/$name" ] && return 0
+  if [ ! -e "$unit" ] && [ ! -L "$unit" ]; then
+    return 0
+  fi
+  if [ -L "$unit" ] && [ "$(readlink "$unit")" = /dev/null ]; then
+    : >"$UPDATE_TRANSACTION_DIR/symphony.masked" || return 1
+  elif [ -L "$unit" ] || [ ! -f "$unit" ]; then
+    log "ERROR: invalid legacy Symphony unit file"
+    return 1
+  else
+    sudo cp -a -- "$unit" "$UPDATE_TRANSACTION_DIR/systemd/$name" || return 1
+    printf '%s\n' "$name" >>"$UPDATE_TRANSACTION_DIR/systemd.present" || return 1
+  fi
+  state="$(sudo systemctl is-enabled "$name" 2>/dev/null || true)"
+  case "$state" in
+    enabled|enabled-runtime|disabled|masked|masked-runtime|static|indirect|generated|transient) ;;
+    *) log "ERROR: could not record legacy Symphony enablement"; return 1 ;;
+  esac
+  if [ -f "$UPDATE_TRANSACTION_DIR/symphony.masked" ] && [ "$state" != masked ]; then
+    log "ERROR: legacy Symphony mask state is inconsistent"
+    return 1
+  fi
+  printf '%s:%s\n' "$name" "$state" >>"$UPDATE_TRANSACTION_DIR/systemd.enablement" || return 1
+  activity="$(sudo systemctl is-active "$name" 2>/dev/null || true)"
+  case "$activity" in
+    active|activating|reloading) activity=active ;;
+    inactive|failed|unknown) activity=inactive ;;
+    *) log "ERROR: could not record legacy Symphony activity"; return 1 ;;
+  esac
+  if [ -f "$UPDATE_TRANSACTION_DIR/symphony.masked" ] && [ "$activity" != inactive ]; then
+    log "ERROR: active masked Symphony cannot be safely restored"
+    return 1
+  fi
+  printf '%s:%s\n' "$name" "$activity" >>"$UPDATE_TRANSACTION_DIR/systemd.activity" || return 1
+}
+
 write_update_transaction_state() {
   local state="$1" incoming="$UPDATE_TRANSACTION_DIR/.state.$$"
   case "$state" in prepared|mutating) ;;
@@ -382,6 +517,7 @@ prepare_update_transaction() {
   : >"$UPDATE_TRANSACTION_DIR/systemd.activity"
   record_update_payload_directory "$extract_dir/bin" "$BIN_DIR" bin || return 1
   record_update_payload_directory "$extract_dir/systemd" /etc/systemd/system systemd || return 1
+  record_legacy_symphony_unit "$extract_dir" || return 1
   record_update_payload_directory "$extract_dir/user-systemd" /etc/systemd/user user-systemd || return 1
   record_update_file "$RELEASE_FILE" release-metadata || return 1
   record_update_file "$RELEASE_ROLLBACK_FILE" rollback-release-metadata || return 1
@@ -533,6 +669,18 @@ restore_update_transaction() {
 
 cleanup_update_transaction() {
   sudo rm -rf -- "$UPDATE_TRANSACTION_DIR"
+}
+
+# Keep the one-level rollback snapshot while the previous app bundle can still
+# be restored. The next update replaces both its rollback app and transaction.
+preserve_symphony_rollback_transaction() {
+  if { [ -f "$UPDATE_TRANSACTION_DIR/systemd.present" ] &&
+      grep -Fxq 'matrix-symphony.service' "$UPDATE_TRANSACTION_DIR/systemd.present"; } ||
+    [ -f "$UPDATE_TRANSACTION_DIR/symphony.masked" ]; then
+    log "Preserved legacy Symphony unit and service state for rollback"
+  else
+    cleanup_update_transaction
+  fi
 }
 
 prepare_legacy_r2_migration() {
@@ -1204,7 +1352,11 @@ apply_update() {
     write_update_error "pre_install_service_stop_failed" "The running services could not be stopped safely, so the update was not installed." "$version"
     cleanup_staged_release_metadata
     sudo systemctl start matrix-terminal-runtime matrix-gateway matrix-shell || true
-    cleanup_update_transaction || true
+    if resume_symphony_after_update; then
+      cleanup_update_transaction || true
+    else
+      log "ERROR: legacy Symphony could not resume; retaining the update transaction for recovery"
+    fi
     rm -rf "$extract_dir" "$bundle_file"
     return 1
   fi
@@ -1261,9 +1413,6 @@ apply_update() {
     fi
     log "Updated bin scripts"
   fi
-  write_symphony_env
-  log "Updated Symphony env"
-
   if [ -d "$extract_dir/systemd" ]; then
     sudo install -d -o root -g root -m 0755 /etc/systemd/system
     sudo find "$extract_dir/systemd" -maxdepth 1 -name 'matrix-*.service' -exec install -o root -g root -m 0644 {} /etc/systemd/system/ \;
@@ -1308,9 +1457,6 @@ apply_update() {
       sudo systemctl enable matrix-code.service
       sudo systemctl start --no-block matrix-code.service || true
       log "Code editor service enabled"
-    fi
-    if [ -f "$extract_dir/systemd/matrix-symphony.service" ]; then
-      resume_symphony_after_update
     fi
     if [ -x /opt/matrix/messaging/bin/synapse ] && [ -x /opt/matrix/messaging/bin/mautrix-telegram ] && [ -x /opt/matrix/messaging/bin/mautrix-whatsapp ]; then
       sudo systemctl enable matrix-homeserver.service matrix-bridge-telegram.service matrix-bridge-whatsapp.service
@@ -1364,6 +1510,12 @@ apply_update() {
   if [ "$healthy" = true ]; then
     if commit_release_metadata; then
       log "Updated release metadata"
+      if ! retire_legacy_symphony; then
+        log "ERROR: legacy Symphony service could not be retired"
+        write_update_error "symphony_retirement_failed" "The update completed, but the retired Symphony service could not be stopped safely." "$version"
+        rm -rf "$extract_dir" "$bundle_file"
+        return 1
+      fi
       if mark_hermes_reconciliation_pending "$version"; then
         reconcile_hermes_release || log "WARN: Hermes release reconciliation deferred; will retry"
       else
@@ -1380,7 +1532,7 @@ apply_update() {
       fi
       log "Health check passed — update to $version complete"
       clear_consumed_update_markers
-      cleanup_update_transaction
+      preserve_symphony_rollback_transaction
     else
       log "ERROR: release metadata commit failed — rolling back"
       if do_rollback false; then
@@ -1623,6 +1775,7 @@ mkdir -p "$STAGING_DIR"
 clean_staging
 clean_legacy_upgrade_artifacts || true
 recover_interrupted_update
+maybe_retire_legacy_symphony || log "WARN: legacy Symphony retirement will retry"
 maybe_reconcile_hermes_release || log "WARN: Hermes release reconciliation retry failed"
 last_legacy_r2_reconcile="$(date +%s)"
 reconcile_legacy_r2_credentials || log "WARN: legacy R2 credential removal deferred; will retry"
@@ -1685,6 +1838,7 @@ while true; do
   # Poll for new version
   check_for_update || true
   maybe_clean_staging
+  maybe_retire_legacy_symphony || log "WARN: legacy Symphony retirement will retry"
   maybe_reconcile_hermes_release || log "WARN: Hermes release reconciliation retry failed"
   maybe_reconcile_legacy_r2_credentials || log "WARN: legacy R2 credential removal retry failed"
 

@@ -105,6 +105,7 @@ export async function recordUsageFunding(
   addonDebitMicrousd: number,
   checkedAt: string,
   matrixAbsorbsOverrun = false,
+  trackMonthlyBudget = true,
 ): Promise<void> {
   const reservedMicrousd = exactInteger(reservation.reserved_microusd);
   const chargedMicrousd = promotionalDebitMicrousd + addonDebitMicrousd;
@@ -162,8 +163,10 @@ export async function recordUsageFunding(
     addon_balance_microusd: sql<number>`addon_balance_microusd - ${addonDebitMicrousd}`,
     reserved_microusd: sql<number>`reserved_microusd - ${reservedMicrousd}`,
     funding_shortfall_microusd: sql<number>`funding_shortfall_microusd + ${fundingShortfallMicrousd}`,
-    month_spent_microusd: sql<number>`CASE WHEN month_period_start = ${reservation.period_start} THEN month_spent_microusd + ${matrixAbsorbsOverrun ? chargedMicrousd : actualCostMicrousd} ELSE month_spent_microusd END`,
-    month_reserved_microusd: sql<number>`CASE WHEN month_period_start = ${reservation.period_start} THEN month_reserved_microusd - ${reservedMicrousd} ELSE month_reserved_microusd END`,
+    ...(trackMonthlyBudget ? {
+      month_spent_microusd: sql<number>`CASE WHEN month_period_start = ${reservation.period_start} THEN month_spent_microusd + ${matrixAbsorbsOverrun ? chargedMicrousd : actualCostMicrousd} ELSE month_spent_microusd END`,
+      month_reserved_microusd: sql<number>`CASE WHEN month_period_start = ${reservation.period_start} THEN month_reserved_microusd - ${reservedMicrousd} ELSE month_reserved_microusd END`,
+    } : {}),
     updated_at: checkedAt,
   }).where("machine_id", "=", reservation.machine_id)
     .where(sql<boolean>`reserved_microusd >= ${reservedMicrousd}`)

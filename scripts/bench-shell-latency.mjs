@@ -488,7 +488,7 @@ export function attachUrl(gateway, session) {
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
   url.searchParams.set("workspaceId", session.workspaceId);
   url.searchParams.set("tabId", session.tabId);
-  url.searchParams.set("client", "hard");
+  url.searchParams.set("client", "cli");
   url.searchParams.set("cols", "120");
   url.searchParams.set("rows", "40");
   url.searchParams.set("fromSeq", String(LIVE_TAIL_FROM_SEQ));

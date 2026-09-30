@@ -48,7 +48,96 @@ describe("desktop shared agents and providers adapter", () => {
   afterEach(() => {
     cleanup();
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
     useConnection.setState(useConnection.getInitialState(), true);
+  });
+
+  it.each(["runtime", "owner", "credential", "unmount"])(
+    "cancels checkout and rejects a late URL after %s changes in the rendered caller",
+    async (change) => {
+      let release!: (value: unknown) => void;
+      let requestSignal!: AbortSignal;
+      const post = vi.fn((_path, _body, options) => {
+        requestSignal = options.signal;
+        return new Promise((resolve) => { release = resolve; });
+      });
+      const openExternal = vi.fn().mockResolvedValue(undefined);
+      vi.stubGlobal("operator", { invoke: openExternal });
+      useConnection.setState({ api: { post, forRuntime: vi.fn(() => ({})) } as never });
+      const view = render(<AgentsProvidersAdapter />);
+      const props = mocks.view.mock.calls.at(-1)![0] as unknown as {
+        onAddCredit: (source: string, packageId: "usd_5", requestId: string) => Promise<void>;
+      };
+      let pending!: Promise<boolean>;
+      act(() => {
+        pending = props.onAddCredit("matrix", "usd_5", crypto.randomUUID()).then(() => true, () => false);
+      });
+      if (change === "unmount") view.unmount();
+      else act(() => useConnection.setState(change === "runtime" ? { runtimeSlot: "other" }
+        : change === "owner" ? { handle: "bob" } : { authGeneration: 8 }));
+      release({ url: "https://checkout.stripe.com/c/pay/cs_previous" });
+      let completed!: boolean;
+      await act(async () => { completed = await pending; });
+      expect({ completed, aborted: requestSignal.aborted, opens: openExternal.mock.calls.length })
+        .toEqual({ completed: false, aborted: true, opens: 0 });
+      expect(post).toHaveBeenCalledOnce();
+    },
+  );
+
+  it("does not start checkout from a callback whose rendered scope has left", async () => {
+    const post = vi.fn().mockResolvedValue({ url: "https://checkout.stripe.com/c/pay/cs_stale" });
+    const openExternal = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("operator", { invoke: openExternal });
+    useConnection.setState({ api: { post, forRuntime: vi.fn(() => ({})) } as never });
+    const view = render(<AgentsProvidersAdapter />);
+    const props = mocks.view.mock.calls.at(-1)![0] as unknown as {
+      onAddCredit: (source: string, packageId: "usd_5", requestId: string) => Promise<void>;
+    };
+    view.unmount();
+    await expect(props.onAddCredit("matrix", "usd_5", crypto.randomUUID())).rejects.toThrow("Checkout unavailable");
+    expect(post).not.toHaveBeenCalled();
+    expect(openExternal).not.toHaveBeenCalled();
+  });
+
+  it("opens checkout once while the rendered identity and lifetime are current", async () => {
+    const post = vi.fn().mockResolvedValue({ url: "https://checkout.stripe.com/c/pay/cs_current" });
+    const openExternal = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("operator", { invoke: openExternal });
+    useConnection.setState({ api: { post, forRuntime: vi.fn(() => ({})) } as never });
+    render(<React.StrictMode><AgentsProvidersAdapter /></React.StrictMode>);
+    const props = mocks.view.mock.calls.at(-1)![0] as unknown as {
+      onAddCredit: (source: string, packageId: "usd_5", requestId: string) => Promise<void>;
+    };
+    await act(() => props.onAddCredit("matrix", "usd_5", crypto.randomUUID()));
+    expect(post).toHaveBeenCalledOnce();
+    expect(openExternal).toHaveBeenCalledExactlyOnceWith("shell:open-external", {
+      url: "https://checkout.stripe.com/c/pay/cs_current",
+    });
+  });
+
+  it("rechecks the live identity immediately before opening, even before scope cleanup", async () => {
+    let signalWasAborted = true;
+    const post = vi.fn(async (_path, _body, options) => ({
+      get url() {
+        signalWasAborted = options.signal.aborted;
+        useConnection.setState({ authGeneration: 8 });
+        return "https://checkout.stripe.com/c/pay/cs_previous";
+      },
+    }));
+    const openExternal = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("operator", { invoke: openExternal });
+    useConnection.setState({ api: { post, forRuntime: vi.fn(() => ({})) } as never });
+    render(<AgentsProvidersAdapter />);
+    const props = mocks.view.mock.calls.at(-1)![0] as unknown as {
+      onAddCredit: (source: string, packageId: "usd_5", requestId: string) => Promise<void>;
+    };
+    let completed!: boolean;
+    await act(async () => {
+      completed = await props.onAddCredit("matrix", "usd_5", crypto.randomUUID()).then(() => true, () => false);
+    });
+    expect(signalWasAborted).toBe(false);
+    expect(completed).toBe(false);
+    expect(openExternal).not.toHaveBeenCalled();
   });
 
   it("renders the shared view with a runtime- and credential-scoped controller", () => {
@@ -63,6 +152,23 @@ describe("desktop shared agents and providers adapter", () => {
       }),
     }));
     expect(useConnection.getState().api?.forRuntime).toHaveBeenCalledWith("vm-2");
+  });
+
+  it("invalidates Chat only from accepted Settings callbacks for the current scope", () => {
+    render(<AgentsProvidersAdapter />);
+    const accepted = mocks.controller.mock.calls.at(-1)![0].onCatalogChanged;
+    expect(useConnection.getState().providerCatalogGeneration).toBe(0);
+    act(() => accepted());
+    expect(useConnection.getState().providerCatalogGeneration).toBe(1);
+    act(() => useConnection.setState({ authGeneration: 8 }));
+    act(() => accepted());
+    expect(useConnection.getState().providerCatalogGeneration).toBe(1);
+    const current = mocks.controller.mock.calls.at(-1)![0].onCatalogChanged;
+    act(() => current());
+    expect(useConnection.getState().providerCatalogGeneration).toBe(2);
+    act(() => useConnection.setState({ runtimeSlot: "other" }));
+    act(() => current());
+    expect(useConnection.getState().providerCatalogGeneration).toBe(2);
   });
 
   it("changes controller identity when the trusted credential generation changes", () => {

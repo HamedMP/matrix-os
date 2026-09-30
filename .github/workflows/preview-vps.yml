@@ -2,6 +2,9 @@
 #
 # Label a same-repo PR with `preview-vps` to get a disposable Hetzner VPS
 # running that PR's host bundle, reachable at app.matrix-os.com/vm/pr-<N>.
+# Adding `preview-collaboration` as well provisions pr-<N> under the
+# collaboration-only owner from the protected collaboration-e2e environment,
+# with an empty preview access list (spec 535 A0b).
 #
 # Flow:
 #   deploy   — on label / push while labeled: build a unique exact-head bundle,
@@ -48,7 +51,7 @@ permissions:
   pull-requests: write
 
 concurrency:
-  group: preview-vps-${{ github.event.pull_request.number || inputs.pr || 'reaper' }}-${{ github.event.action == 'labeled' && github.event.label.name != 'preview-vps' && github.run_id || 'active' }}
+  group: preview-vps-${{ github.event.pull_request.number || inputs.pr || 'reaper' }}-${{ github.event.action == 'labeled' && github.event.label.name != 'preview-vps' && github.event.label.name != 'preview-collaboration' && github.run_id || 'active' }}
   cancel-in-progress: ${{ github.event.action != 'closed' && github.event_name != 'schedule' }}
 
 env:
@@ -66,6 +69,7 @@ jobs:
       head_sha: ${{ steps.decide.outputs.head_sha }}
       head_ref: ${{ steps.decide.outputs.head_ref }}
       requested_version: ${{ steps.decide.outputs.requested_version }}
+      collaboration: ${{ steps.decide.outputs.collaboration }}
     steps:
       - name: Decide action
         id: decide
@@ -75,6 +79,7 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number || inputs.pr }}
           LABELED_NAME: ${{ github.event.label.name }}
           HAS_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'preview-vps') }}
+          HAS_COLLABORATION_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'preview-collaboration') }}
           EVENT_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           EVENT_HEAD_REF: ${{ github.event.pull_request.head.ref }}
           EVENT_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
@@ -93,11 +98,20 @@ jobs:
           head_sha="$EVENT_HEAD_SHA"
           head_ref="$EVENT_HEAD_REF"
           head_repo="$EVENT_HEAD_REPO"
+          has_preview_label="$HAS_LABEL"
+          has_collaboration_label="$HAS_COLLABORATION_LABEL"
           if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
             pr_json="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
             head_sha="$(jq -r .head.sha <<< "$pr_json")"
             head_ref="$(jq -r .head.ref <<< "$pr_json")"
             head_repo="$(jq -r .head.repo.full_name <<< "$pr_json")"
+            has_preview_label="$(jq -r 'any(.labels[]?; .name == "preview-vps")' <<< "$pr_json")"
+            has_collaboration_label="$(jq -r 'any(.labels[]?; .name == "preview-collaboration")' <<< "$pr_json")"
+          fi
+          # Collaboration ownership needs both labels, whatever started the run.
+          collaboration=false
+          if [ "$has_preview_label" = "true" ] && [ "$has_collaboration_label" = "true" ]; then
+            collaboration=true
           fi
           if [ "$head_repo" != "$GITHUB_REPOSITORY" ]; then
             echo "Fork PRs never get preview VPSes (secrets are not exposed to them anyway)."
@@ -117,6 +131,8 @@ jobs:
             if [ "$HAS_LABEL" = "true" ]; then action="teardown"; fi
           elif [ "$EVENT_ACTION" = "labeled" ]; then
             if [ "$LABELED_NAME" = "preview-vps" ]; then action="deploy"; fi
+            # Adding preview-collaboration to a preview-vps PR redeploys it under the collaboration owner.
+            if [ "$LABELED_NAME" = "preview-collaboration" ] && [ "$HAS_LABEL" = "true" ]; then action="deploy"; fi
           elif [ "$HAS_LABEL" = "true" ]; then
             action="deploy"
           fi
@@ -143,8 +159,9 @@ jobs:
             echo "head_sha=$head_sha"
             echo "head_ref=$head_ref"
             echo "requested_version=$REQUESTED_VERSION"
+            echo "collaboration=$collaboration"
           } >> "$GITHUB_OUTPUT"
-          echo "action=$action pr=$PR_NUMBER"
+          echo "action=$action pr=$PR_NUMBER collaboration=$collaboration"
 
   build:
     name: Build preview bundle
@@ -233,6 +250,10 @@ jobs:
     if: always() && ((needs.gate.outputs.action == 'deploy' && needs.build.result == 'success') || needs.gate.outputs.action == 'deploy_existing')
     runs-on: ubuntu-latest
     timeout-minutes: 105
+    # A preview-collaboration PR provisions under the collaboration-only owner, which only the
+    # protected collaboration-e2e environment (required reviewer) releases. Other previews run
+    # without an environment, exactly as before.
+    environment: ${{ needs.gate.outputs.collaboration == 'true' && 'collaboration-e2e' || '' }}
     env:
       R2_ACCOUNT_ID: ${{ secrets.R2_BUNDLES_ACCOUNT_ID || secrets.R2_ACCOUNT_ID }}
       AWS_ACCESS_KEY_ID: ${{ secrets.R2_BUNDLES_ACCESS_KEY_ID || secrets.R2_ACCESS_KEY_ID }}
@@ -243,6 +264,8 @@ jobs:
       PLATFORM_SECRET: ${{ secrets.PLATFORM_SECRET }}
       PREVIEW_CLERK_USER_ID: ${{ secrets.PREVIEW_CLERK_USER_ID }}
       PREVIEW_CLERK_ACCESS_USER_IDS: ${{ secrets.PREVIEW_CLERK_ACCESS_USER_IDS }}
+      PREVIEW_COLLABORATION: ${{ needs.gate.outputs.collaboration }}
+      PREVIEW_COLLABORATION_OWNER_USER_ID: ${{ needs.gate.outputs.collaboration == 'true' && secrets.PREVIEW_COLLABORATION_OWNER_USER_ID || '' }}
       PREVIEW_PROVISION_TIMEOUT_SECONDS: 3900
       PREVIEW_INSTALL_TIMEOUT_SECONDS: 600
       HANDLE: ${{ needs.gate.outputs.handle }}
@@ -281,8 +304,28 @@ jobs:
             echo "PREVIEW_CLERK_USER_ID secret is not configured." >&2
             exit 1
           fi
+          preview_owner="$PREVIEW_CLERK_USER_ID"
           access_user_ids="${PREVIEW_CLERK_ACCESS_USER_IDS:-[]}"
-          if ! jq -e --arg owner "$PREVIEW_CLERK_USER_ID" '
+          if [ "${PREVIEW_COLLABORATION:-false}" = "true" ]; then
+            if ! [[ "${PREVIEW_COLLABORATION_OWNER_USER_ID:-}" =~ ^user_[A-Za-z0-9]+$ ]]; then
+              echo "PREVIEW_COLLABORATION_OWNER_USER_ID is not available from the collaboration-e2e environment." >&2
+              exit 1
+            fi
+            if [ "$PREVIEW_COLLABORATION_OWNER_USER_ID" = "$PREVIEW_CLERK_USER_ID" ]; then
+              echo "The collaboration preview owner must differ from PREVIEW_CLERK_USER_ID." >&2
+              exit 1
+            fi
+            # The job runs in collaboration-e2e; an environment override must never send the
+            # production operator secret to the preview platform.
+            if [ "${PLATFORM_PUBLIC_URL%/}" = "https://preview.matrix-os.com" ]; then
+              echo "The collaboration-e2e environment must not override PLATFORM_PUBLIC_URL; previews provision through the production platform." >&2
+              exit 1
+            fi
+            # No preview access list: access proofs must not mask organization checks.
+            preview_owner="$PREVIEW_COLLABORATION_OWNER_USER_ID"
+            access_user_ids='[]'
+          fi
+          if ! jq -e --arg owner "$preview_owner" '
             type == "array" and length <= 8
             and all(.[]; type == "string" and test("^user_[A-Za-z0-9]+$"))
             and (unique | length) == length
@@ -309,6 +352,11 @@ jobs:
           status="$(jq -r '.status' <<< "$fleet_machine")"
           runtime_slot="$(jq -r '.runtimeSlot // ""' <<< "$fleet_machine")"
           echo "Fleet status for ${HANDLE}: ${status}"
+          # Ownership is never reassigned: a preview provisioned for another owner must be torn down first.
+          if [ "$status" != "absent" ] && [ "$(jq -r '.clerkUserId // ""' <<< "$fleet_machine")" != "$preview_owner" ]; then
+            echo "Preview ${HANDLE} belongs to a different owner. Tear it down (workflow_dispatch with teardown_preview=true), then re-run." >&2
+            exit 1
+          fi
 
           case "$status" in
             provisioning|running)
@@ -330,7 +378,7 @@ jobs:
           # The idempotent provision call also reconciles the complete access
           # allowlist on already-running previews.
           provision_body="$(jq -cn \
-            --arg owner "$PREVIEW_CLERK_USER_ID" \
+            --arg owner "$preview_owner" \
             --arg handle "$HANDLE" \
             --arg bundle_version "$VERSION" \
             --argjson access "$access_user_ids" \
@@ -629,7 +677,12 @@ jobs:
 
           - Shell: https://app.matrix-os.com/vm/${HANDLE}
           - Bundle: \`${VERSION}\`
-          - Logs (from the ops box): \`./scripts/preview-logs.sh --handle ${HANDLE}\` (enroll first with \`./scripts/enable-vps-logship.sh ${HANDLE} preview\`)
+          - Logs (from the ops box): \`./scripts/preview-logs.sh --handle ${HANDLE}\` (enroll first with \`./scripts/enable-vps-logship.sh ${HANDLE} preview\`)"
+          if [ "${PREVIEW_COLLABORATION:-false}" = "true" ]; then
+            body="${body}
+          - Collaboration preview: owned by the collaboration test owner with no preview access list. Connect it to the preview platform with \`gh workflow run preview-platform.yml -f pr=${PR} -f connect_share_preview=true -f connect_collaboration_preview=true\`"
+          fi
+          body="${body}
 
           The VPS is deleted when this PR closes, or by the daily reaper after ${PREVIEW_TTL_HOURS}h."
           existing="$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR}/comments" \

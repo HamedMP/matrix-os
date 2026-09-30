@@ -2,6 +2,7 @@ import {
   AgentSettingsViewSchema,
   type AgentMessagingSelection,
   type AgentProviderDescriptor,
+  type AgentRuntimeDescriptor,
   type AgentRuntimeSelection,
   type AgentSettingsView,
   type AiProviderSnapshotV3,
@@ -31,6 +32,8 @@ export interface AgentRuntimeSettingsSnapshot {
   runtime: AgentRuntimeSelection;
   providers: AgentProviderDescriptor[];
   messaging: AgentMessagingSelection;
+  /** Internal native profile evidence; selection remains a separate owner choice. */
+  nativeProfileObservations?: Array<Omit<NonNullable<AgentRuntimeDescriptor["nativeRouteObservation"]>, "modelId">>;
 }
 
 export interface AgentRuntimeSource {
@@ -176,7 +179,10 @@ export function buildAgentSettingsView(
     contractVersion: 2,
     revision,
     chat,
-    runtime: input.runtimeSnapshot?.runtime ?? {
+    runtime: input.runtimeSnapshot ? {
+      ...input.runtimeSnapshot.runtime,
+      options: input.runtimeSnapshot.runtime.options.map(({ nativeRouteObservation: _nativeRouteObservation, ...runtime }) => runtime),
+    } : {
       selected: "hermes",
       options: [
         {

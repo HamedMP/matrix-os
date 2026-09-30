@@ -12,6 +12,7 @@ import {
   FundedAiRuntimeFundingSummaryResponseSchema,
   FundedAiRouteReadinessReceiptSchema,
   FundedAiRouteReadinessRequestSchema,
+  FUNDED_AI_READINESS_TIMEOUTS,
   JEV_MODEL_ID,
   FundedAiSettlementRequestSchema,
   FundedAiStartRequestSchema,
@@ -293,10 +294,12 @@ export function createAiFundedRuntimeRoutes(options: {
     if (!machine) return c.json(safeError("unauthorized"), 401);
     const body = FundedAiRouteReadinessRequestSchema.safeParse(await readStrictJson(c));
     if (!body.success) return c.json(safeError("invalid_request"), 400);
-    const deadlineAtMs = Date.now() + 6_000;
+    const timeoutMs = body.data.modelId === JEV_MODEL_ID
+      ? FUNDED_AI_READINESS_TIMEOUTS.jevRouteMs : FUNDED_AI_READINESS_TIMEOUTS.platformRouteMs;
+    const deadlineAtMs = Date.now() + timeoutMs;
     const controller = new AbortController();
     const onRequestAbort = () => controller.abort();
-    const deadlineTimer = setTimeout(onRequestAbort, 6_000);
+    const deadlineTimer = setTimeout(onRequestAbort, timeoutMs);
     c.req.raw.signal.addEventListener("abort", onRequestAbort, { once: true });
     if (c.req.raw.signal.aborted) controller.abort();
     try {

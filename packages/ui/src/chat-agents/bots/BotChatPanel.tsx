@@ -7,12 +7,14 @@ import { BotAuthorityPanel } from "./BotAuthorityPanel.js";
 import { InteractionCard } from "./InteractionCard.js";
 import { BotTaskStatus } from "./BotTaskStatus.js";
 
+import { useDirectBotChat } from "./use-direct-bot-chat.js";
+
 const REFRESH_INTERVAL_MS = 15_000;
 
 /** Shared by Web Canvas and Web Desktop through ChatApp. */
-export function BotChatPanel({ chatId, client, refreshKey }: { chatId?: string; client?: ChatAgentClient; refreshKey?: number }) {
+export function BotChatPanel({ chatId, client, refreshKey, directBotId }: { chatId?: string; client?: ChatAgentClient; refreshKey?: number; directBotId?: string | null }) {
   const bots = client?.bots;
-  const [agentId, setAgentId] = useState<string | null>(null);
+  const agentId = useDirectBotChat(chatId, client, directBotId);
   const [name, setName] = useState<string | null>(null);
   const [interactions, setInteractions] = useState<BotInteraction[]>([]);
   const [interactionsFresh, setInteractionsFresh] = useState(false);
@@ -22,7 +24,6 @@ export function BotChatPanel({ chatId, client, refreshKey }: { chatId?: string; 
   const [error, setError] = useState("");
   const [tick, setTick] = useState(0);
   useEffect(() => {
-    setAgentId(null);
     setInteractions([]);
     setInteractionsFresh(false);
     setTasks([]);
@@ -30,13 +31,7 @@ export function BotChatPanel({ chatId, client, refreshKey }: { chatId?: string; 
     setName(null);
     setShowAuthority(false);
     setError("");
-    if (!chatId || !bots) return;
-    let current = true;
-    void bots.directBot(chatId).then((id) => { if (current) setAgentId(id); }).catch((failure: unknown) => {
-      console.warn("[chat-agents] Direct bot lookup failed:", failure instanceof Error ? failure.name : "UnknownError");
-    });
-    return () => { current = false; };
-  }, [chatId, bots]);
+  }, [chatId, bots, agentId]);
   useEffect(() => {
     if (!agentId || !chatId || !bots || !client) return;
     let current = true;
@@ -72,7 +67,7 @@ export function BotChatPanel({ chatId, client, refreshKey }: { chatId?: string; 
       <div className="flex items-center gap-2">
         <AgentAvatar id={agentId} name={name ?? "Your bot"} />
         <div className="min-w-0 flex-1"><p className="text-sm font-semibold">{name ?? "Your bot"}</p>
-          <p className="text-xs" style={chatAgentMutedStyle}>Your bot's Chat</p></div>
+          <p className="text-xs" style={chatAgentMutedStyle}>Your bot's Chat</p><p className="text-xs" style={chatAgentMutedStyle}>Runtime: Pi · Model routing: automatic</p></div>
         <button type="button" aria-label="Show bot authority" aria-expanded={showAuthority} className={chatAgentButtonClass}
           onClick={() => setShowAuthority((value) => !value)}>Access &amp; memory</button>
       </div>

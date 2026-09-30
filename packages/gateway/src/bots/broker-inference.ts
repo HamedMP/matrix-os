@@ -15,15 +15,20 @@ import { z } from "zod/v4";
 import type { FundedAdmissionQueue } from "../funded-ai/admission-queue.js";
 import type { MatrixFundedCredentialProvider } from "../funded-ai-credential-manager.js";
 import { buildKernelCredentialLaunch } from "../kernel-credentials.js";
+import { createCodexOwnerIdentityResolver, type ResolveCodexOwnerIdentity } from "../collaboration/codex-owner-identity.js";
+import { forwardCodexBotInference } from "./codex-inference.js";
+import type { BotInferenceAuthorization } from "./credentials.js";
 import {
   discard,
   readBoundedBody,
   safeResponseHeaders,
-  type ScopeRuntimeBrokerAuthorization,
 } from "../collaboration/scope-runtime-broker.js";
 import type { BotRuntimeBinding } from "./runtime-registry.js";
 
 const INFERENCE_TIMEOUT_MS = 30_000;
+/** Codex tool continuations can outlast one short provider call; the worker
+ * and broker still bound the whole turn independently. */
+const CODEX_INFERENCE_TIMEOUT_MS = 120_000;
 export const MAX_BOT_TOOLS = 64;
 
 const BotInferenceBodySchema = z.object({
@@ -38,6 +43,7 @@ export interface BotInferenceDependencies {
   fundedCredentialProvider?: MatrixFundedCredentialProvider;
   fundedAdmission?: FundedAdmissionQueue;
   resolveCredentials?: typeof buildKernelCredentialLaunch;
+  resolveCodexIdentity?: ResolveCodexOwnerIdentity;
   fetchImpl?: typeof fetch;
 }
 
@@ -58,7 +64,7 @@ function failure(
 export async function forwardBotInference(
   request: ScopeRuntimeBotInferenceRequest,
   binding: BotRuntimeBinding,
-  authorize: (modelId: string) => ScopeRuntimeBrokerAuthorization,
+  authorize: (modelId: string) => BotInferenceAuthorization,
   deps: BotInferenceDependencies,
 ): Promise<ScopeRuntimeBrokerResponse> {
   let modelId: string;
@@ -74,8 +80,9 @@ export async function forwardBotInference(
   if (!authorization.allowed || !authorization.accessSourceId || !authorization.allowedModelIds.includes(modelId)) {
     return failure(request.requestId, "action_denied");
   }
-  // No access source serves the OpenAI Responses API for bots yet; the route resolver never selects it.
-  if (request.action === "inference.responses") return failure(request.requestId, "provider_unavailable");
+  if ((request.action === "inference.responses") !== (authorization.accessSourceId === "owner_openai_profile")) {
+    return failure(request.requestId, "provider_unavailable");
+  }
   // Chat completions exist only on Matrix's managed route (the funded relay).
   if (request.action === "inference.chat_completions" && authorization.accessSourceId !== "matrix_included") {
     return failure(request.requestId, "provider_unavailable");
@@ -90,6 +97,14 @@ export async function forwardBotInference(
   const fetchImpl = deps.fetchImpl ?? fetch;
 
   try {
+    if (accessSourceId === "owner_openai_profile") {
+      return await forwardCodexBotInference(request, {
+        resolveIdentity: deps.resolveCodexIdentity ?? createCodexOwnerIdentityResolver({ homePath: deps.homePath, fetchImpl }),
+        stillAuthorized,
+        signal: AbortSignal.any([deps.lifetime, AbortSignal.timeout(CODEX_INFERENCE_TIMEOUT_MS)]),
+        fetchImpl,
+      });
+    }
     const resolveCredentials = deps.resolveCredentials ?? buildKernelCredentialLaunch;
     const launch = await resolveCredentials(
       deps.homePath,

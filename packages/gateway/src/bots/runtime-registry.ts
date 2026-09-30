@@ -17,10 +17,10 @@ import {
 } from "@matrix-os/contracts";
 import { z } from "zod/v4";
 import {
-  KernelCredentialAccessSourceIdSchema,
-  type KernelCredentialAccessSourceId,
-} from "../kernel-credentials.js";
-import type { ScopeRuntimeBrokerAuthorization } from "../collaboration/scope-runtime-broker.js";
+  BotCredentialAccessSourceIdSchema,
+  type BotCredentialAccessSourceId,
+} from "./credentials.js";
+import type { BotInferenceAuthorization } from "./credentials.js";
 
 export const BOT_RUNTIME_REGISTRY_CAPACITY = 64;
 /** A bot run holds its workload for at most the profile lifetime (900 s) plus margin. */
@@ -40,7 +40,7 @@ export interface BotRuntimeBinding {
   /** sha256 of the mounted workspace; the broker revalidates it before artifact effects. */
   rootFingerprint: string;
   route: BotModelRoute;
-  accessSourceId: KernelCredentialAccessSourceId;
+  accessSourceId: BotCredentialAccessSourceId;
   capabilities: readonly BotToolCapability[];
   /** Funded priority for this run: a person waiting in chat, or a routine. */
   requestClass: "interactive" | "background";
@@ -67,7 +67,7 @@ const BindingSchema = z.object({
   runId: z.string().regex(/^run_[A-Za-z0-9_-]{1,128}$/),
   rootFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
   route: BotModelRouteSchema,
-  accessSourceId: KernelCredentialAccessSourceIdSchema,
+  accessSourceId: BotCredentialAccessSourceIdSchema,
   capabilities: z.array(BotToolCapabilitySchema).max(16),
   requestClass: z.enum(["interactive", "background"]),
 }).strict();
@@ -131,7 +131,7 @@ export class BotRuntimeRegistry {
     executionGeneration: string;
     action: ScopeRuntimeBrokerRequest["action"] | "inference.chat_completions";
     modelId?: string;
-  }): ScopeRuntimeBrokerAuthorization {
+  }): BotInferenceAuthorization {
     const entry = this.lookup(input);
     if (!entry || input.action !== INFERENCE_ACTION[entry.route.api]
       || (input.modelId !== undefined && input.modelId !== entry.route.modelId)) {

@@ -66,6 +66,15 @@ function selectionForInstance(
   };
 }
 
+export function canonicalComposerSelectionIsAvailable(
+  catalog: CanonicalProviderCatalog,
+  selection: CanonicalComposerSelection | null,
+): boolean {
+  const instance = catalog.instances.find((candidate) => candidate.id === selection?.instanceId);
+  return instance?.availability === "available"
+    && instance.models.some((model) => model.id === selection?.model && model.availability === "available");
+}
+
 export function createCanonicalComposerSelection(
   catalog: CanonicalProviderCatalog,
   preferredInstanceId?: string,

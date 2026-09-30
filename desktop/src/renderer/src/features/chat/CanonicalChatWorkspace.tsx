@@ -1,8 +1,12 @@
+import { MATRIX_BOT_SELECTION } from "@matrix-os/contracts";
+import { desktopProviderIdentityKey } from "../../lib/provider-settings-identity";
+import { canonicalComposerSelectionIsAvailable } from "./canonical-composer-state";
 import {
   isChatUnread,
   chatReadAction,
   CanonicalSharedChatPanel,
   BotChatPanel,
+  useDirectBotChat,
   SharedChatPanel,
   sharedChatMembershipFromProjection,
 } from "@matrix-os/ui";
@@ -182,6 +186,8 @@ export function CanonicalChatWorkspace({
     : controller.activeChatId ?? initialChatId;
   const {
     text: draft,
+    revision: draftRevision,
+    updateIfUnchanged: updateDraftIfUnchanged,
     referenceTokens,
     requestIdentity: draftRequestIdentity,
     draftProjectId,
@@ -195,6 +201,12 @@ export function CanonicalChatWorkspace({
     chatId: routedComposerChatId,
     projectId,
     conversation: globalView === "conversation",
+  });
+  const draftScope = globalView === "conversation" && routedComposerChatId
+    ? `chat:${routedComposerChatId}` : `new:${projectId ?? "global"}`;
+  const composerOwner = useRef({ client, draftScope, draftRevision, identity: desktopProviderIdentityKey(useConnection.getState()) });
+  useLayoutEffect(() => {
+    composerOwner.current = { client, draftScope, draftRevision, identity: desktopProviderIdentityKey(useConnection.getState()) };
   });
   const mentionResources = referenceTokens.flatMap((token) => token.type === "resource" ? [token.resource] : []);
   const [query, setQuery] = useState("");
@@ -230,7 +242,7 @@ export function CanonicalChatWorkspace({
     refreshRuntimeSummary,
     api ?? null,
   );
-  const { selection, onSelectionChange } = useCanonicalComposerSelection({
+  const { selection: providerSelection, onSelectionChange } = useCanonicalComposerSelection({
     catalog: providerCatalog,
     catalogReady: Boolean(catalog || liveCatalog.status === "ready" || liveCatalog.status === "error"),
     initializeImmediately: Boolean(catalog),
@@ -238,6 +250,9 @@ export function CanonicalChatWorkspace({
     currentSelection: controller.detail?.record.chat.currentSelection,
     boundInstanceId: controller.detail?.record.providerBinding?.instanceId,
   });
+  const directBotId = useDirectBotChat(explicitSharedRoute ? undefined : routedComposerChatId ?? undefined, client.agents);
+  const selection = directBotId ? { ...MATRIX_BOT_SELECTION, options: [], interactionMode: "default", permissionMode: "default" } : providerSelection;
+  const selectionAvailable = Boolean(directBotId || canonicalComposerSelectionIsAvailable(providerCatalog, selection));
   const mentionPermission = useChatMentionPermission(routedComposerChatId ?? `new:${projectId ?? "global"}`, mentionResources,
     selection?.permissionMode ?? "supervised", draftRequestIdentity);
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; title: string } | null>(null);
@@ -430,6 +445,7 @@ export function CanonicalChatWorkspace({
     const selectedInstance = providerCatalog.instances.find((instance) => instance.id === selection?.instanceId);
     if (
       !selection
+      || !selectionAvailable
       || !mentionPermission.allowed
       || (activeRun && !mentionResources.length)
       || uploadingAttachments
@@ -442,11 +458,20 @@ export function CanonicalChatWorkspace({
     }
     setSubmissionError(null);
     const runtimeGeneration = captureRuntimeGeneration();
+    const providerCatalogGeneration = useConnection.getState().providerCatalogGeneration;
     const sequence = ++submissionSequence.current;
-    const isCurrentSubmission = () => (
+    const owner = composerOwner.current;
+    const isCurrentOwner = () => (
       sequence === submissionSequence.current
       && isCurrentRuntimeGeneration(runtimeGeneration)
+      && composerOwner.current.client === owner.client
+      && composerOwner.current.draftScope === owner.draftScope
+      && desktopProviderIdentityKey(useConnection.getState()) === owner.identity
     );
+    const isCurrentSubmission = () => isCurrentOwner()
+      && composerOwner.current.draftRevision === draftRevision
+      && useConnection.getState().providerCatalogGeneration === providerCatalogGeneration;
+    const submittedAttachmentIds = attachments.items.map((item) => item.localId);
     setUploadingAttachments(true);
     try {
       const parts = await resolveSubmissionParts(submission, isCurrentSubmission);
@@ -464,11 +489,18 @@ export function CanonicalChatWorkspace({
       const requestScope = routedComposerChatId ?? `new:${projectId ?? "global"}`;
       const attempt = mentionResources.length ? mentionRequests.resolve(client, requestScope, input, "send") : undefined;
       const clientRequestId = attempt?.clientRequestId;
+      const acknowledgeAccepted = () => {
+        if (!isCurrentRuntimeGeneration(runtimeGeneration)
+          || composerOwner.current.client !== owner.client
+          || desktopProviderIdentityKey(useConnection.getState()) !== owner.identity) return;
+        if (clientRequestId) mentionRequests.accepted(requestScope, clientRequestId);
+        updateDraftIfUnchanged(draftRevision, { text: "", referenceTokens: [] });
+        for (const id of submittedAttachmentIds) attachments.remove(id);
+      };
       const admitted = attempt?.operation === "queue"
-        ? await controller.queueTurn({ ...input, clientRequestId })
-        : await controller.submitTurn({ ...input, clientRequestId }, canonicalChatTitle(submission), draftProjectId ?? projectId);
-      if (admitted && clientRequestId) mentionRequests.accepted(requestScope, clientRequestId);
-      if (!admitted || !isCurrentSubmission()) return;
+        ? await controller.queueTurn({ ...input, clientRequestId }, acknowledgeAccepted)
+        : await controller.submitTurn({ ...input, clientRequestId }, canonicalChatTitle(submission), draftProjectId ?? projectId, acknowledgeAccepted);
+      if (!admitted || !isCurrentOwner()) return;
       if ("record" in admitted) {
         reportedChatId.current = admitted.record.chat.id;
         const admittedProjectId = admitted.record.projectId ?? null;
@@ -480,9 +512,6 @@ export function CanonicalChatWorkspace({
         setGlobalView("conversation");
         setDraftProjectId(admittedProjectId);
       }
-      setDraft("");
-      setReferenceTokens([]);
-      attachments.clear();
     } finally {
       if (sequence === submissionSequence.current) setUploadingAttachments(false);
     }
@@ -494,32 +523,38 @@ export function CanonicalChatWorkspace({
       (!activeRun && !editingQueuedTurn && !mentionResources.length)
       || !controller.detail
       || !selection
+      || !selectionAvailable
       || !mentionPermission.allowed
       || composerAction
       || uploadingAttachments
       || (attachments.items.length > 0 && !supportsNativeFileAttachments(selectedInstance))
     ) return;
     const runtimeGeneration = captureRuntimeGeneration();
+    const providerCatalogGeneration = useConnection.getState().providerCatalogGeneration;
     const sequence = ++submissionSequence.current;
-    const isCurrentSubmission = () => (
+    const owner = composerOwner.current;
+    const isCurrentOwner = () => (
       sequence === submissionSequence.current
       && isCurrentRuntimeGeneration(runtimeGeneration)
+      && composerOwner.current.client === owner.client
+      && composerOwner.current.draftScope === owner.draftScope
+      && desktopProviderIdentityKey(useConnection.getState()) === owner.identity
     );
+    const isCurrentSubmission = () => isCurrentOwner()
+      && composerOwner.current.draftRevision === draftRevision
+      && useConnection.getState().providerCatalogGeneration === providerCatalogGeneration;
+    const submittedAttachmentIds = attachments.items.map((item) => item.localId);
     setComposerAction(editingQueuedTurn ? "edit" : "queue");
     setUploadingAttachments(true);
     try {
       const parts = await resolveSubmissionParts(submission, isCurrentSubmission);
       if (!parts) return;
-      const submittedDraft = draft;
-      const submittedReferenceTokens = referenceTokens;
       const updatedParts = editingQueuedTurn
         ? [
             ...editingQueuedTurn.parts.filter((part) => part.type !== "text"),
             ...parts,
           ]
         : parts;
-      setDraft("");
-      setReferenceTokens([]);
       const input = {
         parts: updatedParts,
         selection: { instanceId: selection.instanceId, model: selection.model, ...(selection.options.length ? { options: selection.options } : {}) },
@@ -528,19 +563,21 @@ export function CanonicalChatWorkspace({
       const requestScope = routedComposerChatId ?? `new:${projectId ?? "global"}`;
       const attempt = mentionResources.length ? mentionRequests.resolve(client, requestScope, input, "queue") : undefined;
       const clientRequestId = attempt?.clientRequestId;
+      const acknowledgeAccepted = () => {
+        if (!isCurrentRuntimeGeneration(runtimeGeneration)
+          || composerOwner.current.client !== owner.client
+          || desktopProviderIdentityKey(useConnection.getState()) !== owner.identity) return;
+        if (clientRequestId) mentionRequests.accepted(requestScope, clientRequestId);
+        updateDraftIfUnchanged(draftRevision, { text: "", referenceTokens: [] });
+        for (const id of submittedAttachmentIds) attachments.remove(id);
+      };
       const response = editingQueuedTurn
-        ? await controller.updateQueuedTurn(editingQueuedTurn.id, updatedParts)
+        ? await controller.updateQueuedTurn(editingQueuedTurn.id, updatedParts, acknowledgeAccepted)
         : attempt?.operation === "send"
-          ? await controller.submitTurn({ ...input, clientRequestId }, canonicalChatTitle(submission), draftProjectId ?? projectId)
-          : await controller.queueTurn({ ...input, clientRequestId });
-      if (response && clientRequestId) mentionRequests.accepted(requestScope, clientRequestId);
-      if (!isCurrentSubmission()) return;
-      if (!response) {
-        setDraft(submittedDraft);
-        setReferenceTokens(submittedReferenceTokens);
-        return;
-      }
-      attachments.clear();
+          ? await controller.submitTurn({ ...input, clientRequestId }, canonicalChatTitle(submission), draftProjectId ?? projectId, acknowledgeAccepted)
+          : await controller.queueTurn({ ...input, clientRequestId }, acknowledgeAccepted);
+      if (!isCurrentOwner()) return;
+      if (!response) return;
       setEditingQueuedTurn(null);
     } finally {
       if (sequence === submissionSequence.current) {
@@ -663,11 +700,12 @@ export function CanonicalChatWorkspace({
         onAbort={activeRun ? () => void controller.cancelActiveRun() : undefined}
         busy={Boolean(activeRun) || uploadingAttachments}
         submitWhileBusy={Boolean(activeRun)}
-        disabled={controller.status === "loading" || uploadingAttachments || (!catalog && liveCatalog.status === "loading")}
-        canSubmit={Boolean(selection && mentionPermission.allowed && !uploadingAttachments && (
+        disabled={controller.status === "loading" || uploadingAttachments || (!directBotId && !catalog && liveCatalog.status === "loading")}
+        canSubmit={Boolean(selectionAvailable && mentionPermission.allowed && !uploadingAttachments && (
           draft.trim() || referenceTokens.length > 0 || attachments.items.length > 0
         ))}
         catalog={providerCatalog}
+        automaticRouting={Boolean(directBotId)}
         onProviderPickerOpen={catalog ? undefined : liveCatalog.refresh}
         selection={selection}
         onSelectionChange={onSelectionChange}
@@ -857,7 +895,7 @@ export function CanonicalChatWorkspace({
           <>
             {api && !chromeHost ? <ChatSharingButton key={controller.detail.record.chat.id} api={api} chatId={controller.detail.record.chat.id} copyText={copyText} /> : null}
             <BotChatPanel key={controller.detail.record.chat.id} chatId={controller.detail.record.chat.id}
-              client={client.agents} refreshKey={controller.detail.record.chat.revision + botEventRevision} />
+              client={client.agents} directBotId={directBotId} refreshKey={controller.detail.record.chat.revision + botEventRevision} />
             <ChatContextMenu chatId={controller.detail.record.chat.id}>
             <div className="contents">
             <ConversationTranscript turns={transcript} callbacks={{

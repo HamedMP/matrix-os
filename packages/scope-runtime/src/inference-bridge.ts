@@ -52,7 +52,8 @@ export function brokerRequest(
       else resolve(value ?? {});
     };
     socket.setTimeout(timeout, () => finish(new ScopeRuntimeBrokerError("Broker timed out")));
-    socket.once("connect", () => socket.write(`${JSON.stringify(frame)}\n`));
+    // Half-close the request direction so the broker can validate the whole frame.
+    socket.once("connect", () => socket.end(`${JSON.stringify(frame)}\n`));
     socket.on("data", (chunk) => {
       const bytes = Buffer.from(chunk);
       response = Buffer.concat([response, bytes], response.length + bytes.length);
@@ -95,6 +96,8 @@ async function readHttpBody(request: AsyncIterable<Buffer | string>): Promise<st
 
 export interface ScopeInferenceBridgeOptions {
   brokerSocket: string;
+  /** Bot workloads deny all IP traffic, including loopback; use a private Unix listener. */
+  socketPath?: string;
   runtimeHandle: string;
   executionGeneration: string;
   /** Returns the broker action for a request, or undefined to refuse it with 404. */
@@ -150,13 +153,14 @@ export async function startInferenceBridge(options: ScopeInferenceBridgeOptions)
   });
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
-    server.listen(0, "127.0.0.1", resolve);
+    if (options.socketPath) server.listen(options.socketPath, resolve);
+    else server.listen(0, "127.0.0.1", resolve);
   });
   const address = server.address();
-  if (!address || typeof address === "string") throw new ScopeRuntimeBrokerError("Bridge unavailable");
+  if (!address) throw new ScopeRuntimeBrokerError("Bridge unavailable");
   return {
     server,
-    port: address.port,
+    port: typeof address === "string" ? 0 : address.port,
     async close() {
       server.closeAllConnections();
       await new Promise<void>((resolve) => server.close(() => resolve()));

@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -91,7 +91,7 @@ describe("CanvasService", () => {
   });
 
   it("delegates terminal actions to the project workspace runtime", async () => {
-    const homePath = await mkdtemp(join(tmpdir(), "canvas-home-"));
+    const homePath = await realpath(await mkdtemp(join(tmpdir(), "canvas-home-")));
     const projectPath = join(homePath, "projects", "app");
     await mkdir(projectPath, { recursive: true });
     const runtime = terminalRuntime();

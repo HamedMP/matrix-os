@@ -258,6 +258,23 @@ function snapshot(): ProviderSettingsSnapshot {
   return value;
 }
 
+function snapshotWithNativeCodexProfile(nativeOwner: "pi" | "opencode" | "hermes"): ProviderSettingsSnapshot {
+  const next = snapshot();
+  next.modelProviders.push({ id: "openai-codex", displayName: "OpenAI Codex",
+    models: [{ id: "openai-codex:gpt-5.6-sol", displayName: "GPT-5.6 Sol", enabled: true }] });
+  next.accessSources.push({
+    id: `harness_${nativeOwner}_openai-codex`, kind: "harness_profile", harness: nativeOwner,
+    fundingKind: "owner_account", providerId: "openai-codex", accountId: null,
+    displayName: `${nativeOwner} Codex account`,
+    readiness: { state: "unknown", checkedAt: now, staleAfter: null, action: "retry", safeReason: "unknown" },
+    localObservation: { state: "present_unverified", checkedAt: now, staleAfter: later },
+    eligibleModelIds: ["openai-codex:gpt-5.6-sol"],
+    usage: { kind: "unavailable", authority: "unavailable", state: "not_applicable", scope: "access_source",
+      reason: "provider_does_not_report", asOf: now },
+  });
+  return next;
+}
+
 function setup(overrides: Partial<React.ComponentProps<typeof AgentsProvidersView>> = {}) {
   const onMutate = vi.fn<(intent: ProviderSettingsMutationIntent) => void>();
   const props: React.ComponentProps<typeof AgentsProvidersView> = {
@@ -301,7 +318,7 @@ describe("AgentsProvidersView", () => {
     expect(screen.getAllByText(/Local login found; access not verified/)).toHaveLength(2);
     expect(screen.queryByText("Authenticated · Oauth")).not.toBeInTheDocument();
     act(() => vi.advanceTimersByTime(5_001));
-    expect(screen.getAllByText(/Access not verified/)).toHaveLength(2);
+    expect(screen.getAllByText(/Local login last found; access not verified/)).toHaveLength(2);
     expect(screen.queryByText(/Local login found; access not verified/)).not.toBeInTheDocument();
     next.harnesses[0]!.enabled = false;
     next.harnesses[0]!.configuredEnabled = false;
@@ -324,9 +341,9 @@ describe("AgentsProvidersView", () => {
     expect(screen.getAllByText("Local login found; access not verified")).toHaveLength(2);
     act(() => vi.advanceTimersByTime(5001));
     expect(screen.queryByText("Local login found; access not verified")).not.toBeInTheDocument();
-    expect(screen.getAllByText("Access not verified")).toHaveLength(2);
+    expect(screen.getAllByText("Local login last found; access not verified")).toHaveLength(2);
   });
-  it("shows saved enabled intent separately from a failed connection and permits disabling it", () => {
+  it("shows saved enabled intent separately from unavailable access and permits disabling it", () => {
     const next = snapshot();
     const harness = next.harnesses[0]!;
     Object.assign(harness, {
@@ -1104,6 +1121,58 @@ describe("AgentsProvidersView", () => {
       .getByRole("option", { name: "Work Anthropic key · setup required" })).toBeVisible();
     fireEvent.click(within(dialog).getByRole("button", { name: "Next" }));
     expect(within(dialog).queryByLabelText("Model provider")).toBeNull();
+  });
+
+  it.each([
+    ["hermes", "pi"], ["hermes", "opencode"],
+    ["openclaw", "pi"], ["openclaw", "opencode"],
+  ] as const)("does not offer a foreign %s route using the %s Codex profile", (harness, nativeOwner) => {
+    const next = snapshotWithNativeCodexProfile(nativeOwner);
+    Object.assign(next.harnesses[0]!, { harness, displayName: harness });
+    const { onMutate } = setup({ snapshot: next });
+    const providerPicker = within(screen.getByLabelText("Model provider"));
+
+    expect(providerPicker.queryByRole("option", { name: "OpenAI Codex" })).toBeNull();
+    expect(providerPicker.getByRole("option", { name: "Anthropic" })).toBeVisible();
+    expect(providerPicker.getByRole("option", { name: "OpenAI" })).toBeVisible();
+    expect(onMutate).not.toHaveBeenCalled();
+  });
+
+  it("offers only Hermes's own native Codex source without claiming authenticated subscription access", () => {
+    vi.useFakeTimers(); vi.setSystemTime(new Date(now));
+    const next = snapshotWithNativeCodexProfile("hermes");
+    const source = next.accessSources.find((row) => row.harness === "hermes")!;
+    source.readiness = { state: "unknown", checkedAt: null, staleAfter: null, action: "retry", safeReason: "unknown" };
+    source.localObservation = { state: "present_unverified", checkedAt: now, staleAfter: "2026-08-30T10:00:05Z" };
+    Object.assign(next.harnesses[0]!, { harness: "hermes", displayName: "Hermes", selectedAccountId: null, accountIds: [],
+      accessSourceId: source.id, authState: "unknown", connectivity: "unknown",
+      route: { kind: "configurable", providerId: "openai-codex", modelId: "openai-codex:gpt-5.6-sol" } });
+    const { onMutate } = setup({ snapshot: next });
+    expect(within(screen.getByLabelText("Model provider")).getByRole("option", { name: "OpenAI Codex" })).toBeVisible();
+    expect(screen.getByLabelText("Model")).toHaveValue("openai-codex:gpt-5.6-sol");
+    expect(screen.getByText("Hermes manages authentication for this route. Add or switch accounts from its visible Terminal flow.")).toBeInTheDocument();
+    expect(screen.getAllByText("Local login found; access not verified").length).toBeGreaterThan(0);
+    expect(onMutate).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["hermes", "pi"], ["hermes", "opencode"],
+    ["openclaw", "pi"], ["openclaw", "opencode"],
+  ] as const)("preserves the saved %s route reference while marking a foreign %s profile unavailable", (harness, nativeOwner) => {
+    const next = snapshotWithNativeCodexProfile(nativeOwner);
+    Object.assign(next.harnesses[0]!, {
+      harness, displayName: harness, selectedAccountId: null,
+      route: { kind: "configurable", providerId: "openai-codex", modelId: "openai-codex:gpt-5.6-sol" },
+      accessSourceId: `harness_${nativeOwner}_openai-codex`,
+    });
+    const savedHarness = structuredClone(next.harnesses[0]!);
+    const { onMutate } = setup({ snapshot: next });
+
+    expect(screen.getByTestId("provider-signal-path")).toHaveTextContent("Saved access unavailable");
+    expect(screen.getByLabelText("Model provider")).toHaveValue("openai-codex");
+    expect(screen.getByLabelText("Model")).toHaveValue("openai-codex:gpt-5.6-sol");
+    expect(next.harnesses[0]).toEqual(savedHarness);
+    expect(onMutate).not.toHaveBeenCalled();
   });
 
   it("offers a harness-owned OpenCode catalog as real provider and model choices", () => {

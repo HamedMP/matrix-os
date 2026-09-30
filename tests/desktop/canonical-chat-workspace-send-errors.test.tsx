@@ -101,7 +101,7 @@ describe("CanonicalChatWorkspace send failures", () => {
     expect(routeClient.create).not.toHaveBeenCalled();
   });
 
-  it("clears a queued message during admission and restores it after a definitive failure", async () => {
+  it("retains a queued message during admission and after a definitive failure", async () => {
     const running = createCanonicalChatFixture("running").snapshot;
     const runningRecord = {
       chat: running.chat,
@@ -143,8 +143,8 @@ describe("CanonicalChatWorkspace send failures", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
     await waitFor(() => expect(routeClient.queueTurn).toHaveBeenCalledTimes(1));
-    expect(editor.textContent).toBe("");
-    expect(screen.queryByText("Keep this message if queueing fails")).toBeNull();
+    expect(editor.textContent).toBe("Keep this message if queueing fails");
+    expect(screen.getByText("Keep this message if queueing fails")).toBeTruthy();
 
     rejectQueue(new AppError("offline"));
 

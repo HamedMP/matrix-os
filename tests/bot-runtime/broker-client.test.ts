@@ -15,7 +15,7 @@ function broker(reply: (frame: Record<string, unknown>) => string | null): { soc
   const dir = mkdtempSync(join(tmpdir(), "bot-broker-"));
   const socketPath = join(dir, "broker.sock");
   const frames: Record<string, unknown>[] = [];
-  const server: Server = createServer((socket) => {
+  const server: Server = createServer({ allowHalfOpen: true }, (socket) => {
     let buffered = "";
     socket.on("data", (chunk) => {
       buffered += chunk.toString("utf8");

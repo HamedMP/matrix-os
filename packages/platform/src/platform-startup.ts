@@ -8,6 +8,7 @@ import type { Hono, Context } from 'hono';
 import type { Server } from 'node:http';
 import type Dockerode from 'dockerode';
 import type { Agent } from 'undici';
+import { shouldEnablePlatformBackgroundWorkers } from './platform-worker-mode.js';
 import { randomBytes } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import {
@@ -294,7 +295,7 @@ async function startPlatformServerWithCleanup(
   if (checkCustomerVpsPrimaryStorageEnv().length > 0) {
     process.exit(1);
   }
-  const backgroundWorkersEnabled = process.env.PLATFORM_BACKGROUND_WORKERS_ENABLED !== 'false';
+  const backgroundWorkersEnabled = shouldEnablePlatformBackgroundWorkers(process.env);
   let runtimeConfig;
   let speechConfig;
   try {

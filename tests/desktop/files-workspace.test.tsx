@@ -107,6 +107,67 @@ describe("Files workspace", () => {
     URL.revokeObjectURL = originalRevoke;
   });
 
+  it("retains same-tab Back and Forward history after the parent tab path updates", async () => {
+    render(<Tooltip.Provider><FilesWorkspace /></Tooltip.Provider>);
+    await screen.findByRole("button", { name: "Open workspaces" });
+    fireEvent.doubleClick(screen.getByRole("button", { name: "Open workspaces" }));
+    await screen.findByRole("button", { name: "Open matrix-os" });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Back" }).hasAttribute("disabled")).toBe(false));
+    fireEvent.doubleClick(screen.getByRole("button", { name: "Open matrix-os" }));
+    await screen.findByRole("button", { name: "Open package.json" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    await screen.findByRole("button", { name: "Open app.ts" });
+    expect(screen.getByRole("button", { name: "Forward" }).hasAttribute("disabled")).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    await screen.findByRole("button", { name: "Open README.md" });
+    expect(screen.getByRole("button", { name: "Back" }).hasAttribute("disabled")).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Forward" }));
+    await screen.findByRole("button", { name: "Open app.ts" });
+    fireEvent.click(screen.getByRole("button", { name: "Forward" }));
+    await screen.findByRole("button", { name: "Open package.json" });
+    expect(screen.getByRole("button", { name: "Forward" }).hasAttribute("disabled")).toBe(true);
+  });
+
+  it("starts external folder tabs at their requested path and isolates each tab history", async () => {
+    render(<Tooltip.Provider><FilesWorkspace /></Tooltip.Provider>);
+    fireEvent.doubleClick(await screen.findByRole("button", { name: "Open workspaces" }));
+    await screen.findByRole("button", { name: "Open app.ts" });
+    act(() => { useFilesNavigation.getState().navigate("workspaces/matrix-os"); });
+    await screen.findByRole("button", { name: "Open package.json" });
+    expect(screen.getByRole("button", { name: "Back" }).hasAttribute("disabled")).toBe(true);
+    fireEvent.doubleClick(screen.getByRole("button", { name: "Open packages" }));
+    await screen.findByRole("button", { name: "Open gateway" });
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    await screen.findByRole("button", { name: "Open package.json" });
+    expect(screen.getByRole("button", { name: "Back" }).hasAttribute("disabled")).toBe(true);
+    expect(screen.getByRole("button", { name: "Forward" }).hasAttribute("disabled")).toBe(false);
+
+    fireEvent.click(screen.getByRole("tab", { name: "workspaces" }));
+    await screen.findByRole("button", { name: "Open app.ts" });
+    expect(screen.getByRole("button", { name: "Back" }).hasAttribute("disabled")).toBe(false);
+    expect(screen.getByRole("button", { name: "Forward" }).hasAttribute("disabled")).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    await screen.findByRole("button", { name: "Open README.md" });
+    fireEvent.click(screen.getByRole("tab", { name: "matrix-os" }));
+    await screen.findByRole("button", { name: "Open package.json" });
+    fireEvent.click(screen.getByRole("button", { name: "Forward" }));
+    await screen.findByRole("button", { name: "Open gateway" });
+  });
+
+  it.each(["runtimeSlot", "authGeneration"] as const)("discards folder history when %s changes", async (key) => {
+    render(<Tooltip.Provider><FilesWorkspace /></Tooltip.Provider>);
+    fireEvent.doubleClick(await screen.findByRole("button", { name: "Open workspaces" }));
+    await screen.findByRole("button", { name: "Open app.ts" });
+    await act(async () => {
+      useConnection.setState(key === "runtimeSlot" ? { runtimeSlot: "replacement" } : { authGeneration: 4 });
+    });
+    await screen.findByRole("button", { name: "Open README.md" });
+    expect(screen.getByRole("button", { name: "Back" }).hasAttribute("disabled")).toBe(true);
+    expect(screen.getByRole("button", { name: "Forward" }).hasAttribute("disabled")).toBe(true);
+    expect(screen.queryByRole("button", { name: "Open app.ts" })).toBeNull();
+  });
+
   it("consumes project navigation in the real Files browser and reuses the folder tab", async () => {
     useFilesNavigation.getState().navigate("workspaces/matrix-os");
     render(<Tooltip.Provider><FilesWorkspace /></Tooltip.Provider>);

@@ -73,7 +73,7 @@ describe("managed model default parity", () => {
 });
 
 describe("canonical Provider choice presentation", () => {
-  it("downgrades expired Codex local evidence to generic unverified copy without removing the route", () => {
+  it("retains historical expired Codex local evidence without claiming current access without removing the route", () => {
     const codex = {
       ...catalog.instances[0]!, driverKind: "codex" as const,
       localObservation: {
@@ -82,7 +82,7 @@ describe("canonical Provider choice presentation", () => {
         staleAfter: new Date(Date.now() - 5_000).toISOString(),
       },
     };
-    expect(canonicalProviderAvailabilityLabel(codex)).toBe("Access not verified");
+    expect(canonicalProviderAvailabilityLabel(codex)).toBe("Local login last found; access not verified");
     expect(deriveCanonicalProviderChoices({ ...catalog, instances: [codex] })).toHaveLength(1);
   });
   it("derives only runnable exact instance/model choices", () => {
@@ -116,5 +116,13 @@ it.each(["pi", "opencode"] as const)("%s shows local observation rather than Ava
   const instance = { ...catalog.instances[0]!, driverKind, localObservation: { state: "present_unverified" as const,
     checkedAt: new Date(now - 100).toISOString(), staleAfter: new Date(now + 5000).toISOString() } };
   expect(canonicalProviderAvailabilityLabel(instance)).toBe("Local login found; access not verified");
-  expect(canonicalProviderAvailabilityLabel({ ...instance, localObservation: { ...instance.localObservation, staleAfter: new Date(now - 1).toISOString() } })).toBe("Access not verified");
+  expect(canonicalProviderAvailabilityLabel({ ...instance, localObservation: { ...instance.localObservation, staleAfter: new Date(now - 1).toISOString() } })).toBe("Local login last found; access not verified");
+});
+
+ it.each(["unknown", "absent", "future", "reversed", "malformed"] as const)("does not turn %s local evidence into a historical login claim", (state) => {
+  const now = Date.now();
+  const localObservation = { state: state === "absent" ? "absent" as const : state === "unknown" ? "unknown" as const : "present_unverified" as const,
+    checkedAt: state === "malformed" ? "not-a-date" : new Date(now + (state === "future" ? 1000 : -10000)).toISOString(),
+    staleAfter: new Date(now + (state === "reversed" ? -20000 : -5000)).toISOString() };
+  expect(canonicalProviderAvailabilityLabel({ ...catalog.instances[0]!, driverKind: "codex", localObservation })).toBe("Access not verified");
 });

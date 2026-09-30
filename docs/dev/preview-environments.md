@@ -220,6 +220,24 @@ Avoid `--to-latest` here — on this service "latest" is the most recently
 whatever deployed last. To park the host on a known-good target, point traffic
 at an explicit revision/tag you designate as the resting state.
 
+**Collaboration authority.** Each preview revision runs the real collaboration
+composition (organizations, discovery, tickets and relay) against the staging
+database instead of the fail-closed registrar. It signs tickets with the
+preview-only keyring `collaboration-ticket-keys-preview`, never the production
+`collaboration-ticket-keys`, so a preview ticket cannot verify on a production
+home and a production ticket cannot verify on a preview home. The active key ID
+comes from the `Preview` environment variable
+`PREVIEW_COLLABORATION_TICKET_ACTIVE_KEY_ID` (default
+`collaboration-preview-v1`). The browser (allowed) and relay origins are the
+preview host, `https://preview.matrix-os.com`, derived from `PREVIEW_PUBLIC_URL`,
+which must be an HTTPS origin and never a production host. Before deploying, the
+workflow checks that the secret has a readable latest version, that its keyring
+holds at most eight well-formed Ed25519 seeds including the active key, and that
+the preview runtime service account has `secretAccessor` on it. After deploying,
+it confirms the tagged revision binds exactly that secret and those origins and
+that `/api/collaboration/inbox` answers an anonymous request with `401` (the
+fail-closed registrar answers `503`). Key material is never printed.
+
 Provisioning the boot→ready hand-off in the browser is still out of scope (no
 Hetzner token on preview); enabling it is a deliberate follow-up (a
 preview-scoped Hetzner token + VPS reaping). For that slice today, use the
@@ -244,6 +262,17 @@ The label workflow assumes this is already provisioned in GCP/Cloudflare/Stripe
    (`checkout.session.completed`, `.expired`, `customer.subscription.*`); store
    its signing secret as `stripe-webhook-secret-test`.
 4. Grant `matrix-platform-preview-runner` `secretAccessor` on the new secrets.
+5. **Collaboration ticket keys** (preview only): create
+   `collaboration-ticket-keys-preview` holding a freshly generated keyring, a
+   JSON object mapping the active key ID to a base64url 32-byte Ed25519 seed
+   (for example `{"collaboration-preview-v1": "<43 characters>"}`). Generate the
+   seed locally and pipe it into `gcloud secrets create --data-file=-`; never
+   reuse or copy the production keyring. Grant
+   `matrix-platform-preview-runner` `secretAccessor` on it, and set the
+   `Preview` environment variable `PREVIEW_COLLABORATION_TICKET_ACTIVE_KEY_ID`
+   to the key ID. To rotate, add a secret version that holds both the old and
+   the new key IDs, then switch the variable; homes learn the published keys
+   when they re-register.
 
 The GitHub `Preview` environment may set `MATRIX_CARD_TRIALS_ENABLED` to
 `true` or `false`; it defaults to `true`. Disable it temporarily for an immediate-
@@ -253,6 +282,94 @@ through `30`. Each change
 requires redeploying the preview revision. Existing Stripe trials and reserved
 Checkout attempts retain their original duration, and billing status continues
 to display that reserved duration until the attempt settles.
+
+## Collaboration previews
+
+A collaboration preview is a pre-merge gate for organization collaboration: a
+disposable `pr-<N>` home served by that PR's preview platform revision, owned
+by a dedicated test account instead of `PREVIEW_CLERK_USER_ID`. It takes two
+labels and one dispatch.
+
+1. **Provision.** Add `preview-vps` and `preview-collaboration` to a same-repo
+   PR. The `Preview VPS` deploy job then runs in the protected
+   `collaboration-e2e` environment, which waits for a required reviewer. It
+   provisions `pr-<N>` with `clerkUserId = PREVIEW_COLLABORATION_OWNER_USER_ID`
+   and an empty `accessClerkUserIds`, so preview access proofs cannot mask
+   organization checks. The job refuses an owner equal to
+   `PREVIEW_CLERK_USER_ID`. It never reassigns ownership: if `pr-<N>` already
+   exists under another owner, in either direction, it fails and asks for
+   `teardown_preview`. Previews without the label are unchanged. Fork PRs never
+   get a preview.
+2. **Platform revision.** Add `preview-platform` so the same head has a tagged
+   preview platform revision with the preview collaboration authority.
+3. **Connect.** Once both are green for the same head, sign in once as the
+   collaboration owner at `https://app.matrix-os.com` (the connection drives the
+   home through that account's active session), then run:
+
+   ```bash
+   gh workflow run preview-platform.yml -f pr=<N> \
+     -f connect_share_preview=true -f connect_collaboration_preview=true
+   ```
+
+   `connect_collaboration_preview` runs only together with
+   `connect_share_preview`; alone, the dispatch fails. It replaces the speech
+   and Custom MCP share connection for that PR.
+
+The `Connect collaboration preview home` job, also gated by
+`collaboration-e2e`, works in this order:
+
+- It confirms the PR is open, same-repo, labeled both ways and still at the
+  selected exact head, and that the tagged revision runs that head's image and
+  binds `collaboration-ticket-keys-preview`.
+- The home proves it is this preview before anything changes: `MATRIX_HANDLE`
+  and `MATRIX_RUNTIME_SLOT` equal `pr-<N>`, and `MATRIX_CLERK_USER_ID` is the
+  collaboration owner. It reports its machine ID.
+- In one staging transaction, it registers the machine under its real ID and
+  owner with an empty access list. It retires this handle's synthetic share
+  fixture row and earlier incarnations owned by the same account, and refuses
+  anything owned by someone else.
+- It arms a dead-man guard: a 300 s systemd timer that restores the rollback
+  copy and restarts the gateway unless this run commits. Only then does the
+  run claim the connection, which also installs the guard. The latest claim
+  owns the home, so ownership only moves to a run whose timer already covers
+  it, and a cancelled earlier run's timer can never undo a newer connection.
+  A failed claim leaves the earlier owner and its timer in charge.
+- Under the guard's lock, and only while it still owns the connection, it
+  re-points only the home's collaboration binding in
+  `/opt/matrix/env/host.env`:
+  - `PLATFORM_INTERNAL_URL` becomes the PR tag URL;
+  - `UPGRADE_TOKEN` becomes HMAC-SHA256 of the handle under the preview
+    `PLATFORM_SECRET`, the credential the preview platform verifies;
+  - `MATRIX_COLLABORATION_CLIENT_ORIGINS` becomes the tagged revision's allowed
+    origins;
+  - `MATRIX_UPDATE_MANIFEST_BASE_URL` is pinned to the original platform, so
+    later exact-head deploys still find their release metadata.
+
+  `MATRIX_AUTH_TOKEN` is untouched, so the `/vm/pr-<N>` control channel keeps
+  working for rollback. The file keeps its owner, group and mode. One rollback
+  copy (`.host.env.preview-collaboration-rollback`, the file before the first
+  connection) sits next to it. Nothing prints the file or a value.
+- It restarts the gateway and requires local health with collaboration
+  configured from a new gateway process (a different `MainPID`). Next it
+  requires that process to register its runtime endpoint (`vps-<machine ID>`)
+  and keep its control stream live on the preview platform, with enrollment
+  evidence dated after the new process was healthy. Only then does it commit
+  and disarm the guard. Any failure after the claim fires the guard
+  immediately, and a lost runner leaves the timer to fire. A failed
+  reconnection therefore returns the home to its original binding.
+
+The host scripts live in `scripts/preview-collaboration-{probe,home,guard}.py`.
+The terminal run API caps each argument at 4096 characters, so each script
+travels as 4000-character chunks that a one-line loader joins and runs.
+
+After connecting, the home is reachable for collaboration only through
+`https://preview.matrix-os.com` with that PR's tag holding traffic. Other
+platform calls that follow `PLATFORM_INTERNAL_URL` also move to the preview
+platform and may be unavailable there: platform-mediated sync, personal
+integrations, Custom MCP and Symphony. Run collaboration journeys only on such
+a preview. Closing the PR or `teardown_preview` deletes the VPS as usual. The
+staging row stays `running` until the next connection, but the platform issues
+no ticket for a home whose control stream has been silent for 60 s.
 
 ## Centralized logs
 

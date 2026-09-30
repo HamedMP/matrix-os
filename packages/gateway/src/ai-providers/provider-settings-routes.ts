@@ -21,7 +21,7 @@ function withCapabilities(snapshot: ProviderSettingsSnapshot, include: boolean):
     && snapshot.supportedActions.includes("set_harness_enabled") };
   return {
     ...publicSnapshot,
-    harnesses: publicSnapshot.harnesses.map(({ configuredEnabled: _configuredEnabled, configuredAccessSourceId: _configuredAccessSourceId, ...harness }) => harness),
+    harnesses: publicSnapshot.harnesses.map(({ configuredEnabled: _configuredEnabled, configuredAccessSourceId: _configuredAccessSourceId, localObservation: _localObservation, ...harness }) => harness),
     accessSources: snapshot.accessSources.map(({ localObservation: _localObservation, ...source }) => source),
   };
 }

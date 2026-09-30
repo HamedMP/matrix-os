@@ -25,7 +25,7 @@ export function hermesStartupProcesses(options: {
     const close = () => { if (options.confirmExit !== false) queueMicrotask(exit); };
     const process = Object.assign(emitter, { stdout, stderr,
       kill: vi.fn(close),
-      stdin: { end: vi.fn(close), write: vi.fn((line: string) => {
+      stdin: Object.assign(new EventEmitter(), { end: vi.fn(close), write: vi.fn((line: string) => {
         const request = JSON.parse(line) as Request;
         requests.push(request);
         if (request.method === options.ignoreMethod) return true;
@@ -36,9 +36,12 @@ export function hermesStartupProcesses(options: {
             : request.method === "config.set" ? { key: "yolo", value: "1", scope: "session" }
             : { status: "streaming" };
           send({ jsonrpc: "2.0", id: request.id, result });
+          if (request.method === "session.create") {
+            event("session.info", { provider: request.params.provider, model: request.params.model });
+          }
         });
         return true;
-      }) },
+      }) }),
     }) satisfies HermesGatewayProcess;
     return { process, requests, event, exit, get exited() { return exited; } };
   }

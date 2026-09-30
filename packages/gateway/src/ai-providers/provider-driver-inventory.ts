@@ -17,6 +17,8 @@ function runtimeDriver(runtime: Awaited<ReturnType<AgentRuntimeSource>>["runtime
     kind: "cli",
     installState: runtime.installState,
     health: runtimeHealth(runtime.health),
+    ...(runtime.id === "hermes" && runtime.nativeRouteObservation
+      ? { nativeRouteObservation: runtime.nativeRouteObservation } : {}),
     capabilities: ["tools", "resume", "reasoning"],
     setupActions: runtime.installState === "missing"
       ? ["install"]

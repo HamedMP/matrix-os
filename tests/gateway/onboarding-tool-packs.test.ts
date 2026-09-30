@@ -1,6 +1,8 @@
 import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { promisify } from "node:util";
 import { describe, expect, it, vi } from "vitest";
 import {
   SelectToolPacksRequestSchema,
@@ -16,6 +18,8 @@ import {
   type ToolPackRepository,
 } from "../../packages/gateway/src/onboarding/tool-packs.js";
 import { testPrincipal } from "../helpers/activation-readiness.js";
+
+const execFileAsync = promisify(execFile);
 
 function jsonRequest(path: string, body: unknown): Request {
   return new Request(`http://localhost${path}`, {
@@ -266,6 +270,7 @@ describe("onboarding tool packs", () => {
     const scriptPath = join(tempDir, "installer");
     await writeFile(scriptPath, [
       "#!/usr/bin/env bash",
+      "if [ \"$1\" = \"--fixture-ready\" ]; then exit 0; fi",
       "if [ \"$1\" = \"linux-tools\" ]; then",
       "  sleep 0.1",
       "else",
@@ -276,6 +281,11 @@ describe("onboarding tool packs", () => {
     await chmod(scriptPath, 0o755);
 
     try {
+      // Qualify the owned executable before measuring pack-specific work.
+      await expect(execFileAsync(scriptPath, ["--fixture-ready"], {
+        timeout: 2_000,
+        maxBuffer: 1_024,
+      })).resolves.toMatchObject({ stdout: "", stderr: "" });
       const installer = createHostToolPackInstaller({
         scriptPath,
         timeoutMs: 50,

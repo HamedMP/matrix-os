@@ -6,6 +6,7 @@ const MAX_COMPOSER_DRAFTS = 100;
 
 type ComposerDraft = {
   requestIdentity: number;
+  revision: number;
   text: string;
   referenceTokens: ComposerReferenceToken[];
   projectId: string | null;
@@ -30,6 +31,7 @@ function rememberDraft(
     projectId: fallbackProjectId,
     ...drafts[scope],
     ...patch,
+    revision: (drafts[scope]?.revision ?? 0) + 1,
   };
   const scopes = Object.keys(next);
   if (scopes.length > MAX_COMPOSER_DRAFTS) delete next[scopes[0]!];
@@ -68,6 +70,11 @@ export function useChatComposerDrafts({
 
   return {
     requestIdentity: draft?.requestIdentity ?? 0,
+    revision: draft?.revision ?? 0,
+    updateIfUnchanged: useCallback((revision: number, patch: Pick<ComposerDraft, "text" | "referenceTokens">) => {
+      setDrafts((current) => (current[scope]?.revision ?? 0) === revision
+        ? rememberDraft(current, scope, patch, projectId) : current);
+    }, [projectId, scope]),
     text: draft?.text ?? "",
     referenceTokens: draft?.referenceTokens ?? EMPTY_REFERENCE_TOKENS,
     draftProjectId: draft?.projectId ?? projectId,
@@ -75,12 +82,20 @@ export function useChatComposerDrafts({
       setDrafts((current) => {
         const currentText = current[scope]?.text ?? "";
         const text = typeof nextText === "function" ? nextText(currentText) : nextText;
+        if (text === currentText) return current;
         return rememberDraft(current, scope, { text }, projectId);
       });
     }, [projectId, scope]),
-    setReferenceTokens: useCallback((referenceTokens: ComposerReferenceToken[]) => (
-      updateCurrent({ referenceTokens })
-    ), [updateCurrent]),
+    setReferenceTokens: useCallback((referenceTokens: ComposerReferenceToken[]) => {
+      setDrafts((current) => {
+        const currentTokens = current[scope]?.referenceTokens ?? EMPTY_REFERENCE_TOKENS;
+        // Cursor-only Lexical updates report unchanged text and token objects.
+        // They must not invalidate an admission whose payload has not changed.
+        if (currentTokens.length === referenceTokens.length
+          && currentTokens.every((token, index) => token === referenceTokens[index])) return current;
+        return rememberDraft(current, scope, { referenceTokens }, projectId);
+      });
+    }, [projectId, scope]),
     setDraftProjectId: useCallback((nextProjectId: string | null) => (
       updateCurrent({ projectId: nextProjectId })
     ), [updateCurrent]),

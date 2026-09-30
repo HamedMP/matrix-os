@@ -71,7 +71,8 @@ function exchange(options: BotBrokerClientOptions, frame: unknown): Promise<unkn
       else resolve(value);
     };
     socket.setTimeout(options.timeoutMs ?? DEFAULT_TIMEOUT_MS, () => finish(new BotBrokerError("timeout")));
-    socket.once("connect", () => socket.write(`${JSON.stringify(frame)}\n`));
+    // The broker handles one frame after EOF, then replies on the half-open socket.
+    socket.once("connect", () => socket.end(`${JSON.stringify(frame)}\n`));
     socket.on("data", (chunk: Buffer) => {
       reply = Buffer.concat([reply, chunk]);
       if (reply.length > MAX_REPLY_BYTES) {

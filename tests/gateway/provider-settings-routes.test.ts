@@ -120,7 +120,7 @@ describe("provider settings routes", () => {
       harnesses: [{
         id: "harness_claude", harness: "claude", displayName: "Claude", accentColor: null,
         enabled: false, configuredEnabled: true, configuredAccessSourceId: "removed_source", enablementOrigin: "generated_default", version: null,
-        installState: "installed", authState: "unknown", loginMethods: ["terminal"],
+        installState: "installed", authState: "unknown", localObservation: { state: "present_unverified", checkedAt: "2026-08-30T10:00:00.000Z", staleAfter: "2026-08-30T10:00:05.000Z" }, loginMethods: ["terminal"],
         recommendedLoginMethod: "terminal", connectivity: "offline", accountIds: [],
         selectedAccountId: null, accessSourceId: null,
         route: { kind: "fixed", providerId: "anthropic", modelId: "anthropic/claude-opus-5" },
@@ -132,6 +132,7 @@ describe("provider settings routes", () => {
     expect(legacy).not.toHaveProperty("atomicConnectSupported");
     expect(legacy.harnesses[0]).not.toHaveProperty("configuredEnabled");
     expect(legacy.harnesses[0]).not.toHaveProperty("configuredAccessSourceId");
+    expect(legacy.harnesses[0]).not.toHaveProperty("localObservation");
     const { configuredAccessSourceId: _configuredBinding, ...legacyShape } = ProviderHarnessInstanceSchema.shape;
     expect(z.object(legacyShape).strict().safeParse(legacy.harnesses[0]).success).toBe(true);
     expect(legacy.harnesses[0]).not.toHaveProperty("enablementOrigin");
@@ -141,6 +142,7 @@ describe("provider settings routes", () => {
     expect(modern.harnesses[0]).toHaveProperty("configuredEnabled", true);
     expect(modern.harnesses[0]).toHaveProperty("configuredAccessSourceId", "removed_source");
     expect(modern.harnesses[0]).not.toHaveProperty("enablementOrigin");
+    expect(modern.harnesses[0].localObservation).toMatchObject({ state: "present_unverified" });
     expect(modern.accessSources[0].localObservation).toMatchObject({ state: "present_unverified" });
     expect(ProviderSettingsSnapshotSchema.safeParse(modern).success).toBe(true);
     expect((await app.request("/api/ai/provider-settings?includeCapabilities=maybe")).status).toBe(400);

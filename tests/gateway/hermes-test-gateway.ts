@@ -11,14 +11,17 @@ interface RpcRequest {
 
 class FakeStream extends EventEmitter {}
 
-export function fakeGateway(options: { emitReady?: boolean; ignoreMethods?: readonly string[] } = {}) {
+export function fakeGateway(options: { emitReady?: boolean; ignoreMethods?: readonly string[];
+  effectiveRoute?: {provider:string;model:string}; omitRouteInfo?: boolean } = {}) {
   const stdout = new FakeStream();
   const stderr = new FakeStream();
   const emitter = new EventEmitter();
   const requests: RpcRequest[] = [];
+  let route = {provider:"openai-codex",model:"gpt-5.6-luna"};
+  let restricted = false;
   const send = (frame: unknown) => stdout.emit("data", Buffer.from(`${JSON.stringify(frame)}\n`));
   const respond = (request: RpcRequest, result: unknown) => send({ jsonrpc: "2.0", id: request.id, result });
-  const stdin = {
+  const stdin = Object.assign(new EventEmitter(), {
     write: vi.fn((chunk: string) => {
       for (const line of chunk.trim().split("\n")) {
         const request = JSON.parse(line) as RpcRequest;
@@ -26,6 +29,7 @@ export function fakeGateway(options: { emitReady?: boolean; ignoreMethods?: read
         if (options.ignoreMethods?.includes(request.method)) continue;
         queueMicrotask(() => {
           if (request.method === "session.create") {
+            route={provider:String(request.params.provider),model:String(request.params.model)};
             respond(request, { session_id: "live_session", stored_session_id: "durable_session" });
           } else if (request.method === "session.resume") {
             respond(request, { session_id: "live_session", session_key: request.params.session_id });
@@ -36,8 +40,12 @@ export function fakeGateway(options: { emitReady?: boolean; ignoreMethods?: read
           } else if (request.method === "session.steer") {
             respond(request, { status: "queued", text: request.params.text });
           } else if (request.method === "config.set" && request.params.key === "yolo") {
+            if (!restricted && !options.omitRouteInfo && route.provider === "openai-codex") send({jsonrpc:"2.0",method:"event",params:{type:"session.info",session_id:"live_session",
+              payload:{...(options.effectiveRoute ?? route),lazy:false}}});
             respond(request, { key: "yolo", value: "1", scope: "session" });
           } else if (request.method === "config.set" && request.params.key === "model") {
+            const [model,provider] = String(request.params.value).split(" --provider ");
+            route={model:model!,provider:provider!.split(" ")[0]!};
             respond(request, { key: "model", value: request.params.value, confirm_required: false });
           } else if (request.method === "session.cwd.set") {
             respond(request, { cwd: request.params.cwd });
@@ -51,10 +59,11 @@ export function fakeGateway(options: { emitReady?: boolean; ignoreMethods?: read
       return true;
     }),
     end: vi.fn(() => queueMicrotask(() => emitter.emit("exit", 0, null))),
-  };
+  });
   const kill = vi.fn((signal: NodeJS.Signals) => queueMicrotask(() => emitter.emit("exit", null, signal)));
   const process = Object.assign(emitter, { stdin, stdout, stderr, kill }) as unknown as HermesGatewayProcess;
-  const spawnFn = vi.fn<HermesGatewaySpawn>(() => {
+  const spawnFn = vi.fn<HermesGatewaySpawn>((_command,args) => {
+    restricted=args.includes("-I");
     if (options.emitReady !== false) {
       queueMicrotask(() => send({
         jsonrpc: "2.0",
@@ -95,4 +104,3 @@ export const baseInput = {
   executionRoot: "/safe/project",
   signal: new AbortController().signal,
 };
-

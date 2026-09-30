@@ -252,6 +252,20 @@ export interface SpeechOperationsTable {
   expires_at: string;
 }
 
+export interface SpeechRuntimeAllowancesTable {
+  machine_id: string;
+  owner_id: string;
+  runtime_slot: string;
+  enabled: boolean;
+  monthly_budget_microusd: number;
+  monthly_promotional_credit_microusd: number;
+  period_start: string;
+  period_spent_microusd: number;
+  period_reserved_microusd: number;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface AiCreditCheckoutClaimsTable {
   request_id: string;
   owner_id: string;
@@ -781,6 +795,7 @@ export interface PlatformDatabase {
   ai_funded_promotional_grant_balances: AiFundedPromotionalGrantBalancesTable;
   ai_funded_runtime_balances: AiFundedRuntimeBalancesTable;
   speech_operations: SpeechOperationsTable;
+  speech_runtime_allowances: SpeechRuntimeAllowancesTable;
   ai_credit_checkout_claims: AiCreditCheckoutClaimsTable;
   ai_funded_credit_restrictions: AiFundedCreditRestrictionsTable;
   provisioning_jobs: ProvisioningJobsTable;
@@ -1772,6 +1787,7 @@ export {
   listNonDeletedUserMachinesByClerkId,
   updateUserMachine,
   listRunningUserMachines,
+  iterateRunningUserMachinePages,
   listAllUserMachines,
   listStaleUserMachines,
 } from './database/user-machines.js';

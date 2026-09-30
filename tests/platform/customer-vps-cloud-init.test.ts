@@ -245,7 +245,7 @@ exit 99
     expect(rendered).toContain('MATRIX_CODE_PROXY_TOKEN=platform-verification-secret');
     expect(rendered).toContain('MATRIX_FUNDED_AI_RUNTIME_TOKEN=funded-runtime-verification-secret');
     expect(rendered).toContain('PLATFORM_INTERNAL_URL=https://platform.example');
-    expect(rendered).toContain('path: /opt/matrix/env/symphony.env');
+    expect(rendered).not.toContain('path: /opt/matrix/env/symphony.env');
     expect(rendered).toContain('MATRIX_HANDLE=alice');
     expect(rendered).toContain('UPGRADE_TOKEN=platform-verification-secret');
     expect(rendered).not.toContain('UPGRADE_TOKEN=\n');
@@ -628,7 +628,7 @@ exit 99
     expect(cloudInit).toContain('ln -sfn /home/matrix/home /home/matrixos/home');
     expect(cloudInit).toContain('DEBIAN_FRONTEND=noninteractive apt-get install -y software-properties-common');
     expect(cloudInit).toContain('add-apt-repository -y universe');
-    expect(cloudInit).toContain('DEBIAN_FRONTEND=noninteractive apt-get install -y bubblewrap build-essential ca-certificates cmatrix curl docker.io elixir erlang-base erlang-crypto erlang-inets erlang-public-key erlang-ssl erlang-tools file git postgresql-client procps python3-cryptography nginx openssl socat sudo unzip zsh');
+    expect(cloudInit).toContain('DEBIAN_FRONTEND=noninteractive apt-get install -y bubblewrap build-essential ca-certificates cmatrix curl docker.io file git postgresql-client procps python3-cryptography nginx openssl socat sudo unzip zsh');
     expect(cloudInit).toContain("cat >/etc/apparmor.d/bwrap <<'EOF'");
     expect(cloudInit).toContain('profile bwrap /usr/bin/bwrap flags=(unconfined) {');
     expect(cloudInit).toContain('      userns,');
@@ -669,7 +669,7 @@ exit 99
     expect(cloudInit).toContain('sudo');
     expect(cloudInit).toContain('DEBIAN_FRONTEND=noninteractive apt-get install -y software-properties-common');
     expect(cloudInit).toContain('add-apt-repository -y universe');
-    expect(cloudInit).toContain('DEBIAN_FRONTEND=noninteractive apt-get install -y bubblewrap build-essential ca-certificates cmatrix curl docker.io elixir erlang-base erlang-crypto erlang-inets erlang-public-key erlang-ssl erlang-tools file git postgresql-client procps python3-cryptography nginx openssl socat sudo unzip zsh');
+    expect(cloudInit).toContain('DEBIAN_FRONTEND=noninteractive apt-get install -y bubblewrap build-essential ca-certificates cmatrix curl docker.io file git postgresql-client procps python3-cryptography nginx openssl socat sudo unzip zsh');
     expect(cloudInit).toContain('install -d -o root -g root -m 0750 /etc/sudoers.d');
     expect(cloudInit).toContain("printf 'matrix ALL=(ALL) NOPASSWD:ALL\\n' >/etc/sudoers.d/matrix");
     expect(cloudInit).toContain('chage -d "$(date +%Y-%m-%d)" -M -1 -E -1 root');
@@ -849,6 +849,17 @@ exit 99
     expect(gateway).toContain('ConditionPathExists=/opt/matrix/restore-complete');
   });
 
+  it('scales gateway memory guardrails with VPS RAM in both service templates', () => {
+    const root = process.cwd();
+    const gateway = readFileSync(join(root, 'distro/customer-vps/systemd/matrix-gateway.service'), 'utf8');
+    const cloudInit = readFileSync(join(root, 'distro/customer-vps/cloud-init.yaml'), 'utf8');
+
+    for (const template of [gateway, cloudInit]) {
+      expect(template).toContain('MemoryHigh=40%');
+      expect(template).toContain('MemoryMax=50%');
+    }
+  });
+
   it('only skips restore on confirmed missing R2 backup markers', () => {
     const root = process.cwd();
     const restore = readFileSync(join(root, 'distro/customer-vps/matrix-restore.sh'), 'utf8');
@@ -949,7 +960,7 @@ exit 99
     }
     expect(cloudInit).toMatch(/for required_bin in matrixctl matrix-r2-broker\.mjs matrix-db-backup\.sh matrix-restore\.sh matrix-owner-env matrix-gateway matrix-shell /);
     expect(cloudInit).toContain('path: /etc/systemd/system/matrix-db-backup.timer');
-    expect(cloudInit).toContain('docker.io elixir erlang-base erlang-crypto erlang-inets erlang-public-key erlang-ssl erlang-tools file git postgresql-client procps python3-cryptography nginx openssl socat sudo unzip zsh');
+    expect(cloudInit).toContain('docker.io file git postgresql-client procps python3-cryptography nginx openssl socat sudo unzip zsh');
     expect(cloudInit).toContain('https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip');
     expect(cloudInit).toContain('/tmp/aws/install --bin-dir /usr/local/bin --install-dir /usr/local/aws-cli');
     expect(cloudInit).toContain('docker run -d');

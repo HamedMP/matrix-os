@@ -273,7 +273,7 @@ describe('CI workflows', () => {
     expect(workflow).toContain('ci-results:');
     expect(workflow).toContain('name: CI Results');
     expect(workflow).toContain('if: always()');
-    expect(workflow).toContain('needs: [changes, typecheck, shell-production-build, patterns, react-doctor, sync-client, agent-sdk-compatibility, unit, docs-contract, os-view-parity, e2e, symphony]');
+    expect(workflow).toContain('needs: [changes, typecheck, shell-production-build, patterns, react-doctor, sync-client, agent-sdk-compatibility, unit, docs-contract, os-view-parity, e2e]');
     expect(workflow).toContain('### CI Results');
     expect(workflow).toContain('needs.typecheck.result');
     expect(workflow).toContain('needs.shell-production-build.result');
@@ -282,12 +282,12 @@ describe('CI workflows', () => {
     expect(workflow).toContain('needs.sync-client.result');
     expect(workflow).toContain('needs.agent-sdk-compatibility.result');
     expect(workflow).toContain('needs.unit.result');
-    expect(workflow).toContain('needs.symphony.result');
-    expect(workflow).toContain('mix test --no-start');
+    expect(workflow).not.toContain('needs.symphony.result');
+    expect(workflow).not.toContain('mix test --no-start');
     expect(workflow).toContain('needs.docs-contract.result');
     expect(workflow).toContain('needs.os-view-parity.result');
     expect(workflow).toContain('needs.e2e.result');
-    expect(workflow).toContain('"$PATTERNS_RESULT" "$REACT_DOCTOR_RESULT" "$SYNC_CLIENT_RESULT" "$AGENT_SDK_COMPATIBILITY_RESULT" "$UNIT_RESULT" "$SYMPHONY_RESULT" "$DOCS_CONTRACT_RESULT" "$OS_VIEW_PARITY_RESULT"');
+    expect(workflow).toContain('"$PATTERNS_RESULT" "$REACT_DOCTOR_RESULT" "$SYNC_CLIENT_RESULT" "$AGENT_SDK_COMPATIBILITY_RESULT" "$UNIT_RESULT" "$DOCS_CONTRACT_RESULT" "$OS_VIEW_PARITY_RESULT"');
     expect(workflow).toContain('Branch protection should require this aggregate job');
   });
 
@@ -893,15 +893,19 @@ describe('CI workflows', () => {
     expect(workflow).toContain('--min-instances "$min_instances"');
   });
 
-  it('allocates CPU outside requests for production background workers', () => {
+  it('keeps production web replicas free of workers and gives the dedicated worker CPU', () => {
     const root = process.cwd();
     const workflow = readFileSync(join(root, '.github/workflows/platform-cloud-run.yml'), 'utf8');
     const productionRoleDeploy = workflow.match(
-      /- name: Deploy production-role revision[\s\S]*?- name: Promote revision/,
+      /- name: Deploy production-role revision[\s\S]*?- name: Deploy dedicated platform worker/,
+    )?.[0] ?? '';
+    const dedicatedWorkerDeploy = workflow.match(
+      /- name: Deploy dedicated platform worker[\s\S]*?- name: Verify dedicated platform worker/,
     )?.[0] ?? '';
 
-    expect(productionRoleDeploy).toContain('PLATFORM_BACKGROUND_WORKERS_ENABLED=true');
+    expect(productionRoleDeploy).toContain('PLATFORM_BACKGROUND_WORKERS_ENABLED=false');
     expect(productionRoleDeploy).toContain('--no-cpu-throttling');
+    expect(dedicatedWorkerDeploy).toContain('render-platform-worker-service.mjs');
   });
 
   it('smokes the pre-VPS auth and onboarding shell surface before promotion', () => {
@@ -1018,7 +1022,7 @@ describe('CI workflows', () => {
     expect(workflow).toContain('PUBLISH_VERSION: ${{ needs.build.outputs.version }}');
     expect(workflow).toContain('VERSION="$PUBLISH_VERSION"');
     expect(workflow).not.toContain('VERSION="${{ needs.build.outputs.version }}"');
-    expect(workflow).toContain('DEPLOY_RESPONSE="$(curl --fail --silent --show-error --max-time 30 \\');
+    expect(workflow).toContain('DEPLOY_RESPONSE="$(curl --fail --silent --show-error --max-time 60 \\');
     expect(workflow).toContain('failed="$(printf \'%s\' "$DEPLOY_RESPONSE" | jq -r \'.failed // 0\')"');
     expect(workflow).toContain('triggered="$(printf \'%s\' "$DEPLOY_RESPONSE" | jq -r \'.triggered // 0\')"');
     expect(workflow).toContain('if [ "$failed" -gt 0 ] || [ "$triggered" -eq 0 ]; then');
@@ -1027,5 +1031,30 @@ describe('CI workflows', () => {
     expect(releaseDocs).toContain('`deploy_after_publish=true`');
     expect(releaseDocs).toContain('Security severity does not override this opt-in deployment gate.');
     expect(releaseDocs).not.toContain('which auto-deploys the built version after publish');
+  });
+
+  it('supports a fail-closed targeted retry for one unhealthy customer computer', () => {
+    const root = process.cwd();
+    const workflow = readFileSync(join(root, '.github/workflows/host-bundle-release.yml'), 'utf8');
+    const targetedJob = workflow.slice(workflow.indexOf('\n  targeted-deploy:'));
+
+    expect(workflow).toMatch(/target_unhealthy_customer:[\s\S]*?default: false/);
+    expect(workflow).toMatch(/existing_version:[\s\S]*?default: ""/);
+    expect(targetedJob).toContain("github.ref_type == 'branch' && github.ref_name == 'main'");
+    expect(targetedJob).toContain('inputs.skip_dev_bundle && inputs.target_unhealthy_customer');
+    expect(targetedJob).toContain('^v[0-9]{4}\\.[0-9]{2}\\.[0-9]{2}-[0-9]+$');
+    expect(targetedJob).toContain(".version == $version");
+    expect(targetedJob).toContain('uses: actions/checkout@v4');
+    expect(targetedJob).toContain('node scripts/ci/targeted-fleet-maintenance.mjs select-target');
+    expect(targetedJob).toContain('for attempt in $(seq 1 5); do');
+    expect(targetedJob).toContain('for attempt in $(seq 1 30); do');
+    expect(targetedJob).toContain('{version: $version, handle: $handle}');
+    expect(targetedJob).toContain('.triggered == 1 and .failed == 0');
+    expect(targetedJob).toContain('.healthy == true and .runtimeVersion == $version');
+    expect(targetedJob).toContain('{handle: $handle}');
+    expect(targetedJob).toContain('.activated == 1 and .failed == 0 and .complete == true');
+    expect(targetedJob).toContain('node scripts/ci/targeted-fleet-maintenance.mjs activate-fleet');
+    expect(targetedJob).toContain('::add-mask::$TARGET_HANDLE');
+    expect(targetedJob).not.toContain('printf \'%s\\n\' "$FLEET_RESPONSE"');
   });
 });

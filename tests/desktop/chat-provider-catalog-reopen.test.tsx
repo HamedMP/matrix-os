@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import React from "react";
+import React, { useLayoutEffect } from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CanonicalProviderCatalogSchema, type CanonicalProviderCatalog } from "@matrix-os/contracts";
@@ -40,9 +40,72 @@ function CatalogComposer({ api, active = true, fallback = oldCatalog }: { api: {
     selection={{ instanceId: "pi_owner", model: "model", options: [], interactionMode: "default", permissionMode: "supervised" }}
     onSelectionChange={() => undefined} instanceLocked={false} onProviderPickerOpen={state.refresh} /></>;
 }
+function LayoutCatalogProbe({ api, observe }: { api: { get: () => Promise<unknown> }; observe: (value: string | undefined) => void }) {
+  const state = useChatProviderCatalog(oldCatalog, { api });
+  useLayoutEffect(() => { observe(state.catalog.instances[0]?.availability); });
+  return <output>{state.status}</output>;
+}
 const openPicker = () => fireEvent.click(screen.getByRole("button", { name: "Choose model and provider" }));
 afterEach(() => { cleanup(); useConnection.setState(useConnection.getInitialState(), true); useCodingAgentWorkspace.setState(useCodingAgentWorkspace.getInitialState(), true); useBoard.setState(useBoard.getInitialState(), true); });
 describe("native Chat catalog freshness", () => {
+  it.each([true, false])("refreshes accepted Settings route changes without reopening (savedOff=%s)", async (savedOff) => {
+    const before = catalog("pre_settings", !savedOff);
+    const after = catalog("post_settings", savedOff);
+    const get = vi.fn().mockResolvedValueOnce(before).mockResolvedValue(after);
+    render(<CatalogComposer api={{ get }} />);
+    await screen.findByText("pre_settings");
+    act(() => useConnection.setState({ providerCatalogGeneration: 1 }));
+    await screen.findByText("post_settings");
+    expect(screen.getByTestId("availability").textContent).toBe(savedOff ? "unavailable" : "available");
+  });
+
+  it("cannot retain a pre-change trusted catalog when the first post-change read fails", async () => {
+    const get = vi.fn().mockResolvedValueOnce(oldCatalog).mockRejectedValue(new Error("unavailable"));
+    render(<CatalogComposer api={{ get }} />);
+    await screen.findByText("before_update");
+    act(() => useConnection.setState({ providerCatalogGeneration: 1 }));
+    await waitFor(() => expect(screen.getByTestId("catalog-status").textContent).toBe("error"));
+    expect(screen.getByTestId("availability").textContent).toBe("unavailable");
+    openPicker();
+    expect(screen.queryByText("Owner model")).toBeNull();
+  });
+
+  it("drops pre-change in-flight responses even when the post-change read fails", async () => {
+    const older = deferred<CanonicalProviderCatalog>();
+    const get = vi.fn().mockResolvedValueOnce(oldCatalog).mockImplementationOnce(() => older.promise)
+      .mockRejectedValue(new Error("unavailable"));
+    render(<CatalogComposer api={{ get }} />);
+    await screen.findByText("before_update");
+    openPicker();
+    act(() => useConnection.setState({ providerCatalogGeneration: 1 }));
+    await waitFor(() => expect(screen.getByTestId("catalog-status").textContent).toBe("error"));
+    await act(async () => older.resolve(oldCatalog));
+    expect(screen.getByTestId("availability").textContent).toBe("unavailable");
+    expect(screen.queryByText("Owner model")).toBeNull();
+  });
+
+  it.each(["runtimeSlot", "authGeneration"] as const)("discards old trusted truth when %s changes even with the same API object", async (field) => {
+    const get = vi.fn().mockResolvedValueOnce(oldCatalog).mockRejectedValue(new Error("unavailable"));
+    render(<CatalogComposer api={{ get }} />);
+    await screen.findByText("before_update");
+    act(() => useConnection.setState(field === "runtimeSlot" ? { runtimeSlot: "other" } : { authGeneration: 1 }));
+    await waitFor(() => expect(screen.getByTestId("catalog-status").textContent).toBe("error"));
+    expect(screen.getByTestId("availability").textContent).toBe("unavailable");
+  });
+
+  it.each(["providerCatalogGeneration", "runtimeSlot", "authGeneration"] as const)("never commits old available truth after %s changes", async (field) => {
+    const pending = deferred<CanonicalProviderCatalog>();
+    const get = vi.fn().mockResolvedValueOnce(oldCatalog).mockImplementation(() => pending.promise);
+    const observations: Array<string | undefined> = [];
+    render(<LayoutCatalogProbe api={{ get }} observe={(value) => observations.push(value)} />);
+    await screen.findByText("ready");
+    observations.length = 0;
+    act(() => useConnection.setState(field === "runtimeSlot" ? { runtimeSlot: "other" }
+      : field === "authGeneration" ? { authGeneration: 1 } : { providerCatalogGeneration: 1 }));
+    expect(observations.length).toBeGreaterThan(0);
+    expect(observations).not.toContain("available");
+  });
+
   it("reloads saved-off truth when the normal picker is reopened without a cold restart", async () => {
     const get = vi.fn().mockResolvedValueOnce(oldCatalog).mockResolvedValue(newCatalog);
     render(<CatalogComposer api={{ get }} />);
@@ -50,7 +113,7 @@ describe("native Chat catalog freshness", () => {
     await waitFor(() => expect(get).toHaveBeenCalledTimes(1));
     openPicker();
     await screen.findByText("Disabled in Settings");
-    expect(get).toHaveBeenLastCalledWith("/api/chat-providers?refresh=true&includeConnectionLabels=true");
+    expect(get).toHaveBeenLastCalledWith("/api/chat-providers?refresh=true&includeConnectionLabels=true&includeConnectionState=true", { timeoutMs: 15_000 });
     expect(screen.queryByText("Owner model")).toBeNull();
     expect(screen.queryByText("Connect Pi")).toBeNull();
     // Closing and rendering do not issue reads; one explicit reopen does.
@@ -123,7 +186,7 @@ describe("native Chat catalog freshness", () => {
     openPicker();
     await screen.findByText("Disabled in Settings");
     expect(get).toHaveBeenCalledTimes(3);
-    expect(get).toHaveBeenLastCalledWith("/api/chat-providers?refresh=true&includeConnectionLabels=true");
+    expect(get).toHaveBeenLastCalledWith("/api/chat-providers?refresh=true&includeConnectionLabels=true&includeConnectionState=true", { timeoutMs: 15_000 });
     expect(screen.queryByText("Owner model")).toBeNull();
   });
 

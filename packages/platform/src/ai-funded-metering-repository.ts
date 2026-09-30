@@ -76,6 +76,9 @@ const GrantSchema = z.object({
   if (value.kind === "addon_grant" && value.expiresAt !== null) {
     ctx.addIssue({ code: "custom", path: ["expiresAt"], message: "Add-on credit cannot expire" });
   }
+  if (value.entryId.startsWith("speech-monthly:")) {
+    ctx.addIssue({ code: "custom", path: ["entryId"], message: "Reserved credit namespace" });
+  }
 });
 const MAX_PROMOTIONAL_GRANTS_PER_RUNTIME = 64;
 

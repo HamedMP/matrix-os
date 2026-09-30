@@ -113,6 +113,9 @@ export function createChatAgentRoutes(options: {
     if (!options.enabled()) return c.json({ error: "Agents are disabled." }, 409);
     const { agents } = requireServices();
     const input = UpdateChatAgentRequestSchema.parse(await c.req.json());
+    if (input.selection && (await agents.get({ type: "personal", ownerId: principal.userId }, id))?.recipeRef) {
+      return c.json({ error: "This bot’s model is managed by this computer." }, 400);
+    }
     if (input.selection && !await validSelection(principal, input.selection)) return c.json({ error: "Choose an available Agent model." }, 400);
     const recipe = input.recipe ? await bindJevInboxRecipe({ ownerId: principal.userId, recipe: input.recipe,
       listGmailAccounts: options.listGmailAccounts }) : undefined;

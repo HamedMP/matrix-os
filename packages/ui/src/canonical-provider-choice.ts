@@ -83,6 +83,10 @@ const UNAVAILABLE_LABELS: Record<
 export function canonicalProviderAvailabilityLabel(
   instance: CanonicalProviderInstanceDescriptor,
 ): string {
+  if (instance.unavailabilityReason !== "disabled_in_settings" && instance.unavailabilityReason !== "settings_unavailable") {
+    if (instance.connectionState === "credit_required") return "Matrix AI credit required";
+    if (instance.connectionState === "unavailable") return "Matrix AI unavailable";
+  }
   if (instance.availability === "available") return (instance.driverKind === "codex" || instance.localObservation !== undefined)
     ? codexLocalObservationLabel(instance.localObservation)
     : "Available";
@@ -97,7 +101,9 @@ export function codexLocalObservationLabel(observation?: AiProviderLocalObservat
   const staleAfter = observation?.staleAfter ? Date.parse(observation.staleAfter) : NaN;
   const now = Date.now();
   if (!Number.isFinite(checkedAt) || !Number.isFinite(staleAfter)
-    || checkedAt > now || staleAfter <= now) return "Access not verified";
+    || checkedAt > now || staleAfter <= checkedAt) return "Access not verified";
+  if (staleAfter <= now) return observation?.state === "present_unverified"
+    ? "Local login last found; access not verified" : "Access not verified";
   if (observation?.state === "present_unverified") return "Local login found; access not verified";
   if (observation?.state === "absent") return "Local login missing";
   return "Access not verified";

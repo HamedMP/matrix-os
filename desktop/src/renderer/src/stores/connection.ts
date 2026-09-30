@@ -1,3 +1,4 @@
+import { desktopProviderIdentityKey } from "../lib/provider-settings-identity";
 // Connection/auth status store. Holds NO credential — only status snapshots
 // from the trusted core (FR-002).
 import { create } from "zustand";
@@ -33,6 +34,9 @@ interface ConnectionState {
   // replacement so caches keyed on visible identity cannot cross sessions.
   authGeneration: number;
   api: ApiClient | null;
+  /** Invalidates catalogs only for an accepted Settings change in this identity. */
+  providerCatalogGeneration: number;
+  invalidateProviderCatalog: (identityKey: string) => void;
   refresh: () => Promise<void>;
   selectRuntime: (slot: string) => Promise<void>;
   signOut: () => Promise<void>;
@@ -50,6 +54,11 @@ export const useConnection = create<ConnectionState>()((set, get) => ({
   runtimeSlot: "primary",
   authGeneration: 0,
   api: null,
+  providerCatalogGeneration: 0,
+  invalidateProviderCatalog: (identityKey) => {
+    if (desktopProviderIdentityKey(get()) !== identityKey) return;
+    set((state) => ({ providerCatalogGeneration: state.providerCatalogGeneration + 1 }));
+  },
 
   refresh: async () => {
     try {

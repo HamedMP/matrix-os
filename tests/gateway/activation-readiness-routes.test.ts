@@ -44,13 +44,12 @@ describe("activation readiness routes", () => {
     ]));
   });
 
-  it("derives coding setup gates from GitHub, project, issue source, Symphony, and terminal state", async () => {
+  it("derives coding setup gates from GitHub, project, issue source, and terminal state", async () => {
     const { service } = createTestReadinessService(undefined, {
       codingSetup: {
         githubConnected: true,
         selectedProject: { slug: "matrix-os", name: "Matrix OS" },
         issueSourceConfigured: true,
-        symphonyReady: true,
         terminalReady: false,
         activeAgents: ["codex", "hermes"],
         handoffStatus: "running",
@@ -75,12 +74,10 @@ describe("activation readiness routes", () => {
     });
     expect(gatesById.get("issue_source.selected")).toMatchObject({
       status: "pass",
+      criticality: "recommended",
       message: "A task source is connected for coding work",
     });
-    expect(gatesById.get("symphony.ready")).toMatchObject({
-      status: "pass",
-      message: "Symphony is ready to dispatch coding work",
-    });
+    expect(gatesById.has("symphony.ready")).toBe(false);
     expect(gatesById.get("terminal.ready")).toMatchObject({
       status: "fail",
       remediation: "Open the Matrix terminal for the selected project",
@@ -89,13 +86,37 @@ describe("activation readiness routes", () => {
     expect(body.codingHandoffStatus).toBe("running");
   });
 
+  it("describes a missing optional task source without making it a coding prerequisite", async () => {
+    const { service } = createTestReadinessService(undefined, {
+      codingSetup: {
+        githubConnected: true,
+        selectedProject: { slug: "matrix-os", name: "Matrix OS" },
+        issueSourceConfigured: false,
+        terminalReady: true,
+        activeAgents: ["codex", "hermes"],
+        handoffStatus: "ready",
+      },
+    });
+    const app = createReadinessRoutes({ service, getPrincipal: () => testPrincipal });
+    await app.request(jsonRequest("/goals", { goalIds: ["coding"] }));
+    const res = await app.request("/readiness");
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    const gate = body.gates.find((item: { id: string }) => item.id === "issue_source.selected");
+    expect(gate).toMatchObject({
+      criticality: "recommended",
+      status: "fail",
+      message: "No task source is connected; you can add one later",
+      remediation: "Connect Linear or choose a Matrix task list when needed",
+    });
+  });
+
   it("keeps GitHub gated until a coding project is selected", async () => {
     const { service } = createTestReadinessService(undefined, {
       codingSetup: {
         githubConnected: true,
         selectedProject: null,
         issueSourceConfigured: true,
-        symphonyReady: true,
         terminalReady: false,
         activeAgents: ["codex", "hermes"],
         handoffStatus: "idle",

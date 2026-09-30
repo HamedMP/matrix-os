@@ -1,5 +1,5 @@
 import { sql } from "kysely";
-import { IsoTimestampSchema, JEV_MODEL_ID } from "@matrix-os/contracts";
+import { FUNDED_AI_READINESS_TIMEOUTS, IsoTimestampSchema, JEV_MODEL_ID } from "@matrix-os/contracts";
 import { z } from "zod/v4";
 import type { PlatformDB } from "./db.js";
 import { JevProbeRuntimeSchema, probeOwnerFundedJev, probeWithSignal, cancelProbeBody, type JevProbeRuntime, type JevProbeCredentials } from "./ai-funded-jev-probe.js";
@@ -11,7 +11,6 @@ const POSITIVE_TTL_MS = 30_000;
 const NEGATIVE_TTL_MS = 5_000;
 const MAX_PENDING_BUDGET_OPERATIONS = 8;
 const MAX_WAITERS_PER_MODEL = 32;
-const MAX_CALLER_WINDOW_MS = 6_000;
 const pendingBudgetOperations = new Set<Promise<boolean>>();
 const ReadyEvidenceSchema = z.object({ ready: z.literal(true), priceValidThrough: IsoTimestampSchema }).strict();
 
@@ -159,9 +158,9 @@ export function createFundedModelProbeService(input: {
     return [...entry.waiters.values()].some((waiter) => current < waiter.deadlineAtMs && !waiter.signal?.aborted);
   };
 
-  function join(model: string, entry: PendingProbe, call: FundedModelProbeCall): Promise<FundedModelProbeResult> {
-    const deadlineAtMs = Math.min(call.deadlineAtMs ?? Date.now() + MAX_CALLER_WINDOW_MS,
-      Date.now() + MAX_CALLER_WINDOW_MS);
+  function join(model: string, entry: PendingProbe, call: FundedModelProbeCall, windowMs: number): Promise<FundedModelProbeResult> {
+    const deadlineAtMs = Math.min(call.deadlineAtMs ?? Date.now() + windowMs,
+      Date.now() + windowMs);
     if (!Number.isFinite(deadlineAtMs) || deadlineAtMs <= Date.now() || call.signal?.aborted
       || entry.waiters.size >= MAX_WAITERS_PER_MODEL) return Promise.resolve(unavailable());
     const token = Symbol("funded-model-waiter");
@@ -199,10 +198,11 @@ export function createFundedModelProbeService(input: {
       if (call.signal?.aborted || (call.deadlineAtMs !== undefined && call.deadlineAtMs <= Date.now())) return unavailable();
       const model = runtime ? JSON.stringify([JEV_MODEL_ID, runtime.identity.ownerId, runtime.identity.machineId,
         runtime.identity.runtimeSlot, runtime.globalRevision, runtime.runtimeRevision]) : modelId;
+      const windowMs = runtime ? FUNDED_AI_READINESS_TIMEOUTS.jevRouteMs : FUNDED_AI_READINESS_TIMEOUTS.platformRouteMs;
       const cached = cache.get(model);
       if (cached && Date.parse(cached.staleAfter) > now().getTime()) return cached;
       const pending = inFlight.get(model);
-      if (pending) return join(model, pending, call);
+      if (pending) return join(model, pending, call, windowMs);
       if (inFlight.size >= MAX_KEYS) return unavailable();
       const entry: PendingProbe = {
         controller: new AbortController(), waiters: new Map(), promise: undefined as unknown as Promise<FundedModelProbeResult>,
@@ -220,12 +220,12 @@ export function createFundedModelProbeService(input: {
         let priceValidThrough: string | undefined;
         try {
           if (runtime) {
-            const signal = AbortSignal.any([entry.controller.signal, AbortSignal.timeout(5_000)]);
+            const signal = AbortSignal.any([entry.controller.signal, AbortSignal.timeout(FUNDED_AI_READINESS_TIMEOUTS.jevProbeMs)]);
             priceValidThrough = await probeOwnerFundedJev({ runtime, credentials: input.credentials!, relayBase: base!,
               relayControlToken: input.relayControlToken!, signal,
               fetchFn: input.fetchFn ?? fetch, readReady: response => readPriceValidThrough(response, signal) });
           } else {
-            const signal = AbortSignal.any([entry.controller.signal, AbortSignal.timeout(2_000)]);
+            const signal = AbortSignal.any([entry.controller.signal, AbortSignal.timeout(FUNDED_AI_READINESS_TIMEOUTS.relayProbeMs)]);
             const url = new URL(`/ready?model=${encodeURIComponent(model)}`, base!);
             const response = await (input.fetchFn ?? fetch)(url.toString(), {
               headers: { authorization: `Bearer ${input.relayControlToken}` },
@@ -246,7 +246,7 @@ export function createFundedModelProbeService(input: {
         remember(model, result);
         return result;
       })().finally(() => { if (inFlight.get(model) === entry) inFlight.delete(model); });
-      return join(model, entry, call);
+      return join(model, entry, call, windowMs);
     },
   };
 }

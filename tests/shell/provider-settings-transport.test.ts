@@ -89,10 +89,12 @@ const snapshot = ProviderSettingsSnapshotSchema.parse({
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
 describe("provider settings shell transport", () => {
   it("loads and schema-validates a bounded no-store snapshot from the active gateway", async () => {
+    const timeout = vi.spyOn(AbortSignal, "timeout");
     const fetcher = vi.fn(async () => Response.json(snapshot));
     const transport = createProviderSettingsTransport({ fetcher });
 
@@ -101,9 +103,11 @@ describe("provider settings shell transport", () => {
       `${window.location.origin}/api/ai/provider-settings?includeCapabilities=true`,
       expect.objectContaining({ cache: "no-store", signal: expect.any(AbortSignal) }),
     );
+    expect(timeout).toHaveBeenCalledWith(15_000);
   });
 
   it("invalidates the shared Provider catalog only after a successful mutation", async () => {
+    const timeout = vi.spyOn(AbortSignal, "timeout");
     const changed = vi.fn();
     window.addEventListener(PROVIDER_SETTINGS_CHANGED_EVENT, changed);
     const fetcher = vi.fn(async () => Response.json({ kind: "snapshot", snapshot }));
@@ -116,6 +120,7 @@ describe("provider settings shell transport", () => {
       monthlyBudgetMicrousd: 2_000_000,
     })).resolves.toEqual({ kind: "snapshot", snapshot });
     expect(changed).toHaveBeenCalledOnce();
+    expect(timeout).toHaveBeenCalledWith(10_000);
 
     window.removeEventListener(PROVIDER_SETTINGS_CHANGED_EVENT, changed);
   });

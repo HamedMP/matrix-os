@@ -1,4 +1,5 @@
 import type { CanonicalProviderDriverKind } from "@matrix-os/contracts";
+import { rabbitMarkSvg } from "@matrix-os/brand/marks";
 import { CODING_AGENT_ARTWORK } from "@matrix-os/ui";
 import { Cpu } from "@renderer/lib/hugeicons";
 import hermesProviderIcon from "../../assets/providers/hermes-provider.png";
@@ -7,6 +8,10 @@ export function ProviderDriverGlyph({ kind, size = 15 }: {
   kind: CanonicalProviderDriverKind;
   size?: number;
 }) {
+  if (kind === "kernel") {
+    return <span aria-hidden data-provider-glyph={kind} className="inline-flex shrink-0 [&_svg]:size-full"
+      style={{ height: size, width: size }} dangerouslySetInnerHTML={{ __html: rabbitMarkSvg("matrix-chat-rabbit-mark") }} />;
+  }
   if (kind === "hermes") {
     return <img aria-hidden alt="" data-provider-glyph={kind} src={hermesProviderIcon}
       width={size} height={size} className="shrink-0 object-cover"

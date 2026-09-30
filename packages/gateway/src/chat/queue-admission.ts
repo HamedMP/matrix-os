@@ -85,7 +85,7 @@ export async function enqueueCanonicalQueuedTurn(options: {
   }
   const prepared = await options.agentContext?.prepare(options.owner, options.chatId, input);
   const effective = { ...input, ...prepared };
-  const catalog = await options.catalog.getCatalog(options.principal);
+  const catalog = await options.catalog.getCatalog(options.principal, prepared?.selection);
   const validated = validateChatProviderSelection({
     catalog,
     selection: effective.selection,

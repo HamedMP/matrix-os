@@ -6,7 +6,7 @@
  * gated on COLLABORATION_PROBE_SCOPE_RUNTIME_HOST=1 and are reported as
  * explicitly unrun otherwise; they are never faked.
  */
-import { chmod, lstat, mkdir, mkdtemp, link, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, link, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFile } from "node:child_process";
@@ -46,7 +46,7 @@ afterEach(async () => {
 });
 
 async function worktree(): Promise<{ root: string; worktree: string }> {
-  const root = await mkdtemp(join(tmpdir(), "s07-sandbox-"));
+  const root = await realpath(await mkdtemp(join(tmpdir(), "s07-sandbox-")));
   cleanups.push(root);
   const tree = join(root, "home", "projects", "launch-site");
   await mkdir(tree, { recursive: true, mode: 0o700 });

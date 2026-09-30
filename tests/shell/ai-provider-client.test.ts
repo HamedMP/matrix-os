@@ -47,7 +47,7 @@ describe("shell AI provider client", () => {
       expect.stringContaining("/api/ai/providers?refresh=true"),
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
-    expect(timeout).toHaveBeenCalledWith(10_000);
+    expect(timeout).toHaveBeenCalledWith(15_000);
 
     const oversized = vi.fn(async () => new Response("x".repeat(1_048_577)));
     await expect(loadAiProviderSnapshot({ fetcher: oversized })).rejects

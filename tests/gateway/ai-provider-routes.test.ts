@@ -43,6 +43,17 @@ describe("AI provider routes", () => {
     expect(AiProviderSnapshotV3Schema.parse(current).nativeHarnessCatalog).toEqual(native);
     expect((await app.request("/api/ai/providers?includeNativeProfiles=yes")).status).toBe(400);
   });
+  it("negotiates exact native driver observation fields without changing legacy V3 responses", async () => {
+    const driver = { id: "hermes", displayName: "Hermes", kind: "cli" as const, installState: "installed" as const, health: "degraded" as const, capabilities: [], setupActions: [] };
+    const nativeRouteObservation = { providerId: "anthropic", modelId: "claude-sonnet-5", credentialKind: "provider_profile" as const,
+      localObservation: { state: "present_unverified" as const, checkedAt: "2026-08-30T10:00:00.000Z", staleAfter: "2026-08-30T10:00:05.000Z" } };
+    const app = new Hono();
+    app.route("/api/ai", createAiProviderRoutes({ service: { getSnapshot: async () => ({ ...emptySnapshot, drivers: [{ ...driver, nativeRouteObservation }] }) }, getPrincipal: () => ({ userId: "owner_123" }) }));
+    const legacy = await (await app.request("/api/ai/providers")).json();
+    expect(legacy.drivers).toEqual([driver]);
+    const modern = await (await app.request("/api/ai/providers?includeNativeProfiles=true")).json();
+    expect(AiProviderSnapshotV3Schema.parse(modern).drivers[0]?.nativeRouteObservation).toEqual(nativeRouteObservation);
+  });
   it("supports an explicit bounded refresh and rejects unknown query values", async () => {
     const getSnapshot = vi.fn(async () => emptySnapshot);
     const app = new Hono();

@@ -1,13 +1,14 @@
 /**
  * Sandbox-side runner for `bot_agent` workloads (`scope-runtime-bot-v1`).
  *
- * It checks the fixed boundary, starts the loopback inference bridge, and
+ * It checks the fixed boundary, starts the private Unix inference bridge, and
  * serves the runtime's command socket. The bot runtime supplies the command
  * handler, so this module has no dependency on the agent loop. It imports
  * only side-effect-free modules and never the Chat worker entry, so the
  * bundled bot worker cannot start a Chat worker by accident.
  */
 import type { IncomingMessage } from "node:http";
+import { chmod } from "node:fs/promises";
 import { createServer, type Server, type Socket } from "node:net";
 import { fileURLToPath } from "node:url";
 import { SCOPE_RUNTIME_BOT_ADAPTER_ID, SCOPE_RUNTIME_BOT_HARNESS_VERSION } from "./bot-profile.js";
@@ -32,6 +33,7 @@ import {
 
 const COMMAND_SOCKET = "/run/matrix-scope-command/worker.sock";
 const BROKER_SOCKET = "/run/matrix-scope/broker.sock";
+const INFERENCE_SOCKET = "/run/matrix-scope-command/inference.sock";
 /** Relay commands carry identifiers and at most 8 KiB of steering text. */
 const MAX_COMMAND_FRAME_BYTES = 16 * 1024;
 /** One active run plus its steer and cancel commands. */
@@ -87,6 +89,7 @@ export interface ScopeRuntimeBotHandlerContext {
   executionGeneration: string;
   brokerSocket: string;
   bridgeOrigin: string;
+  bridgeSocket?: string;
 }
 
 /** The relayed frame must name this runtime and generation exactly. */
@@ -179,6 +182,17 @@ export async function startBotCommandServer(options: {
     server.once("error", reject);
     server.listen(options.socketPath, resolve);
   });
+  // DynamicUser plus the fixed 0077 umask creates an owner-only socket. The
+  // capability-free supervisor cannot bypass that UID's permissions. Its
+  // private 0700 runtime directory limits host access; frames still require
+  // this runtime's unpredictable handle and exact execution generation.
+  try {
+    await chmod(options.socketPath, 0o666);
+  } catch (error: unknown) {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    await removeScopeRuntimeCommandSocket(options.socketPath);
+    throw error;
+  }
   return {
     server,
     async close() {
@@ -216,8 +230,10 @@ export async function runScopeRuntimeBotWorker(options: {
   }
   const invocation = parseScopeRuntimeBotWorkerArguments(environment.invocationArguments ?? []);
   await verifyScopeRuntimeBoundary();
+  await removeScopeRuntimeCommandSocket(INFERENCE_SOCKET);
   const bridge = await startInferenceBridge({
     brokerSocket: BROKER_SOCKET,
+    socketPath: INFERENCE_SOCKET,
     runtimeHandle: invocation.runtimeHandle,
     executionGeneration: invocation.executionGeneration,
     actionFor: botInferenceAction,
@@ -230,7 +246,9 @@ export async function runScopeRuntimeBotWorker(options: {
       runtimeHandle: invocation.runtimeHandle,
       executionGeneration: invocation.executionGeneration,
       brokerSocket: BROKER_SOCKET,
-      bridgeOrigin: `http://127.0.0.1:${bridge.port}`,
+      // URL syntax for the SDK only. Its fetch adapter connects over AF_UNIX.
+      bridgeOrigin: "http://127.0.0.1",
+      bridgeSocket: INFERENCE_SOCKET,
     });
     commands = await startBotCommandServer({ socketPath: COMMAND_SOCKET, invocation, handler });
     try {

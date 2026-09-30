@@ -30,6 +30,7 @@ export interface RunBotTurnInput {
   command: BotRunCommand;
   broker: BotBrokerClient;
   bridgeOrigin: string;
+  bridgeSocket?: string;
   /** Tests inject a scripted provider; production always uses the loopback bridge. */
   route?: { provider: Provider<Api>; model: Model<Api> };
   signal?: AbortSignal;
@@ -60,7 +61,7 @@ function failureCodeOf(error: unknown, context: string): BotToolErrorCode {
 
 /**
  * Runs one bot turn in the sandboxed workload. The agent holds no credential
- * and no network: model calls go through the loopback bridge and every tool
+ * and no network: model calls go through the private bridge and every tool
  * call is a broker request that the gateway authorizes and checkpoints.
  */
 export async function runBotTurn(input: RunBotTurnInput): Promise<BotRunOutcome> {
@@ -80,7 +81,7 @@ export async function runBotTurn(input: RunBotTurnInput): Promise<BotRunOutcome>
   if (input.signal?.aborted) {
     return outcome(command, { status: "cancelled", sessionRevision: snapshot.revision, toolActions: 0 });
   }
-  const { provider, model } = input.route ?? createBridgeModel(command.route, input.bridgeOrigin);
+  const { provider, model } = input.route ?? createBridgeModel(command.route, input.bridgeOrigin, input.bridgeSocket);
   const tools: BotToolsState = { waitingForPerson: false, effectUnknown: false };
   let toolActions = 0;
   let budgetExhausted = false;

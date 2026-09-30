@@ -410,9 +410,12 @@ export function useCanonicalChatRouteController({
     input: Omit<CanonicalCreateChatTurnRequest, "clientRequestId" | "baseRevision"> & { clientRequestId?: string },
     title: string,
     initialProjectId: string | null = projectId,
+    onAccepted?: () => void,
   ) => {
     const routeScope = routeScopeRef.current;
-    const isCurrentScope = () => Boolean(routeScope?.active && routeScopeRef.current === routeScope);
+    const selectedChatId = activeChatIdRef.current;
+    const isCurrentScope = () => Boolean(routeScope?.active && routeScopeRef.current === routeScope
+      && activeChatIdRef.current === selectedChatId);
     if (!isCurrentScope()) return null;
     try {
       let current = detail;
@@ -439,6 +442,8 @@ export function useCanonicalChatRouteController({
       }, {
         chatScope: current.record.projectId ? "project" : "global",
       });
+      // Actual admission settles the original draft even when current-view publication is stale.
+      onAccepted?.();
       if (!isCurrentScope()) return null;
       const streamed = detailRef.current;
       const next: CanonicalChatDetailResponse = {
@@ -537,20 +542,25 @@ export function useCanonicalChatRouteController({
 
   const queueTurn = useCallback(async (
     input: Omit<CanonicalQueueChatTurnRequest, "clientRequestId" | "baseRevision"> & { clientRequestId?: string },
+    onAccepted?: () => void,
   ) => {
     const current = detailRef.current;
     if (!current || (!current.record.activeRun && !input.clientRequestId)) return null;
     const routeScope = routeScopeRef.current;
-    const isCurrentScope = () => Boolean(routeScope?.active && routeScopeRef.current === routeScope);
+    const isCurrentScope = () => Boolean(routeScope?.active && routeScopeRef.current === routeScope
+      && activeChatIdRef.current === current.record.chat.id);
     try {
       const response = await client.queueTurn(current.record.chat.id, {
         ...input,
         clientRequestId: input.clientRequestId ?? canonicalChatRequestId(),
         baseRevision: current.record.chat.revision,
       });
+      // Actual admission settles the original draft even when current-view publication is stale.
+      onAccepted?.();
       if (!isCurrentScope()) return null;
       if (response.alreadyClaimed) {
         await loadDetail(current.record.chat.id);
+        if (!isCurrentScope()) return null;
         setError(null);
         return response;
       }
@@ -580,8 +590,9 @@ export function useCanonicalChatRouteController({
       return response;
     } catch (error: unknown) {
       console.warn("[canonical-chat] queue failed:", diagnosticErrorKind(error));
-      if (!isCurrentScope()) return null;
+      if (!isCurrentScope() || activeChatIdRef.current !== current.record.chat.id) return null;
       await loadDetail(current.record.chat.id);
+      if (!isCurrentScope() || activeChatIdRef.current !== current.record.chat.id) return null;
       setError("The message could not be queued. Refresh and try again.");
       return null;
     }
@@ -590,17 +601,21 @@ export function useCanonicalChatRouteController({
   const updateQueuedTurn = useCallback(async (
     queuedTurnId: string,
     parts: CanonicalUpdateQueuedChatTurnRequest["parts"],
+    onAccepted?: () => void,
   ) => {
     const current = detailRef.current;
     if (!current) return null;
     const routeScope = routeScopeRef.current;
-    const isCurrentScope = () => Boolean(routeScope?.active && routeScopeRef.current === routeScope);
+    const isCurrentScope = () => Boolean(routeScope?.active && routeScopeRef.current === routeScope
+      && activeChatIdRef.current === current.record.chat.id);
     try {
       const response = await client.updateQueuedTurn(current.record.chat.id, queuedTurnId, {
         clientRequestId: canonicalChatRequestId(),
         baseRevision: current.record.chat.revision,
         parts,
       });
+      // Actual admission settles the original draft even when current-view publication is stale.
+      onAccepted?.();
       if (!isCurrentScope()) return null;
       detailRequestSequence.current += 1;
       updateDetail((currentDetail) => {
@@ -626,9 +641,10 @@ export function useCanonicalChatRouteController({
       return response;
     } catch (error: unknown) {
       console.warn("[canonical-chat] queue update failed:", diagnosticErrorKind(error));
-      if (!isCurrentScope()) return null;
-      setError("The queued message could not be saved. Refresh and try again.");
+      if (!isCurrentScope() || activeChatIdRef.current !== current.record.chat.id) return null;
       await loadDetail(current.record.chat.id);
+      if (!isCurrentScope() || activeChatIdRef.current !== current.record.chat.id) return null;
+      setError("The queued message could not be saved. Refresh and try again.");
       return null;
     }
   }, [client, loadDetail, updateDetail]);

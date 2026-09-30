@@ -59,7 +59,7 @@ describe("bench-shell-latency script helpers", () => {
     const terminalRef = { workspaceId: "tws_bench", tabId: "tt_main" };
     const url = attachUrl("https://app.matrix-os.com", terminalRef);
 
-    expect(url).toBe(`wss://app.matrix-os.com/ws/terminal/tab?workspaceId=tws_bench&tabId=tt_main&client=hard&cols=120&rows=40&fromSeq=${LIVE_TAIL_FROM_SEQ}`);
+    expect(url).toBe(`wss://app.matrix-os.com/ws/terminal/tab?workspaceId=tws_bench&tabId=tt_main&client=cli&cols=120&rows=40&fromSeq=${LIVE_TAIL_FROM_SEQ}`);
     expect(url).not.toContain("token=");
   });
 

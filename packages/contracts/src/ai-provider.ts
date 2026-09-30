@@ -74,6 +74,14 @@ export const AiProviderLocalObservationSchema = z.object({
   staleAfter: NullableTimestampSchema,
 }).strict();
 
+/** A selected native CLI route observed locally; never remote or funded readiness. */
+export const AiProviderNativeRouteObservationSchema = z.object({
+  providerId: AiProviderIdSchema,
+  modelId: ProviderModelReferenceSchema,
+  credentialKind: z.enum(["provider_profile", "api_key", "custom"]),
+  localObservation: AiProviderLocalObservationSchema,
+}).strict();
+
 export const AiAccessSourceViewSchema = AiProviderReadinessSchema.extend({
   id: AiProviderIdSchema,
   displayName: canonicalSafeLabel(120, 480),
@@ -123,6 +131,7 @@ export const AiProviderDriverViewSchema = z.object({
   kind: z.enum(["agent_sdk", "cli", "acp", "openai_compatible"]),
   installState: z.enum(["installed", "missing", "installing", "failed", "unknown"]),
   health: z.enum(["ready", "degraded", "stopped", "unavailable", "unknown"]),
+  nativeRouteObservation: AiProviderNativeRouteObservationSchema.optional(),
   capabilities: z.array(AiProviderDriverCapabilitySchema).max(16),
   setupActions: z.array(z.enum([
     "install",
@@ -214,20 +223,22 @@ export const AiProviderInstanceViewSchema = z.object({
 /** Native CLI catalogs support arbitrary provider IDs without inventing funded accounts. */
 export const AiNativeHarnessCatalogSchema = z.object({
   profiles: z.array(z.object({
-    harness: z.enum(["pi", "opencode"]),
+    harness: z.enum(["pi", "opencode", "hermes"]),
     providerId: canonicalReferenceId(96),
     providerDisplayName: canonicalSafeLabel(120, 480),
     models: z.array(z.object({ id: ProviderModelReferenceSchema, displayName: canonicalSafeLabel(120, 480), enabled: z.boolean() }).strict()).max(256),
     defaultModelId: ProviderModelReferenceSchema.nullable(),
     localObservation: AiProviderLocalObservationSchema,
   }).strict()).max(48),
-  failures: z.array(z.enum(["pi", "opencode"])).max(2),
+  failures: z.array(z.enum(["pi", "opencode", "hermes"])).max(3),
 }).strict().superRefine((catalog, ctx) => {
   if (!unique(catalog.profiles.map((profile) => `${profile.harness}:${profile.providerId}`)) || !unique(catalog.failures))
     ctx.addIssue({ code: "custom", message: "Duplicate native catalog scope" });
-  for (const harness of ["pi", "opencode"]) if (catalog.profiles.filter((profile) => profile.harness === harness && profile.defaultModelId !== null).length > 1)
+  for (const harness of ["pi", "opencode", "hermes"]) if (catalog.profiles.filter((profile) => profile.harness === harness && profile.defaultModelId !== null).length > 1)
     ctx.addIssue({ code: "custom", message: "Ambiguous native default" });
   catalog.profiles.forEach((profile, index) => {
+    if (profile.harness === "hermes" && profile.providerId !== "openai-codex")
+      ctx.addIssue({ code: "custom", path: ["profiles", index], message: "Unsupported Hermes native provider" });
     if (!profile.models.every((model) => model.id.startsWith(`${profile.providerId}:`)) || !unique(profile.models.map((model) => model.id)) || (profile.defaultModelId !== null && !profile.models.some((model) => model.id === profile.defaultModelId && model.enabled)))
       ctx.addIssue({ code: "custom", path: ["profiles", index], message: "Invalid native default or model inventory" });
   });

@@ -78,6 +78,24 @@ describe("Chat Agent HTTP boundary", () => {
   });
   const json = (method: string, body: unknown) => ({ method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
 
+  it("protects server-routed recipe bots from coding-model edits while allowing profile edits", async () => {
+    const bot = await agents.createRecipeBot(owner, {
+      id: "bot_writingroute", createHash: "a".repeat(64),
+      fields: { name: "Writing Bot", description: "Write", instructions: "Help write", selection: fields.selection },
+      recipeRef: { recipeId: "writing-bot", version: "1" },
+    });
+    const rejected = await app.request(`/api/chat-agents/${bot.id}`, json("PATCH", {
+      baseRevision: bot.revision, selection: fields.selection,
+    }));
+    expect(rejected.status).toBe(400);
+    expect((await agents.get(owner, bot.id))?.revision).toBe(bot.revision);
+    const edited = await app.request(`/api/chat-agents/${bot.id}`, json("PATCH", {
+      baseRevision: bot.revision, name: "My Writing Bot",
+    }));
+    expect(edited.status).toBe(200);
+    expect(await edited.json()).toMatchObject({ name: "My Writing Bot", recipeRef: bot.recipeRef });
+  });
+
   it("stamps owner, exact label, connection ID and expected email on Jev creation", async () => {
     const recipe = { skills: ["matrix-jev-email-triage", "matrix-integrations"],
       integrations: [{ service: "gmail", accountLabel: "My Gmail" }], output: "Review proposed labels" };

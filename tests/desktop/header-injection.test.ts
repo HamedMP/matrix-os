@@ -179,6 +179,19 @@ describe("installGatewayCors", () => {
     ]));
   });
 
+  it("permits the direct collaboration headers the shared client sends to the platform relay", () => {
+    const { session, fire } = corsSession();
+    installGatewayCors(session, () => GATEWAY, "null");
+    const res = fire({ url: `${GATEWAY}/api/collaboration/direct-sessions`, method: "OPTIONS" });
+    const allowed = res.responseHeaders?.["Access-Control-Allow-Headers"]?.[0]
+      .toLowerCase().split(/,\s*/);
+    expect(allowed).toEqual(expect.arrayContaining([
+      "x-matrix-collaboration-session", "x-matrix-collaboration-request", "x-matrix-collaboration-runtime",
+      "x-matrix-collaboration-owner-runtime", "x-matrix-client-request-id", "x-matrix-expected-revision",
+      "x-matrix-expected-member-revision",
+    ]));
+  });
+
   it("adds Access-Control-Allow-Origin for gateway responses", () => {
     const { session, fire } = corsSession();
     installGatewayCors(session, () => GATEWAY, "http://localhost:5173");

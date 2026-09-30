@@ -62,6 +62,8 @@ export async function createPlatformCollaboration(options: {
   organizations?: PlatformOrganizations;
   /** S05 direct transport: runtime endpoints, tickets and the control stream; registered and drained with the runtime. */
   direct?: PlatformCollaborationDirect;
+  /** Browser origins allowed to send cookie-authenticated relay mutations. */
+  allowedOrigins?: readonly string[];
   resolveActor(c: Context): Promise<string | null>;
   authenticateRuntime(input: {
     runtimeId: string;
@@ -81,6 +83,7 @@ export async function createPlatformCollaboration(options: {
   const routes = createPlatformCollaborationRoutes({
     repository,
     ...(options.direct?.relay ? { relay: options.direct.relay } : {}),
+    ...(options.allowedOrigins ? { allowedOrigins: options.allowedOrigins } : {}),
     resolveActor: options.resolveActor,
     authenticateRuntime: options.authenticateRuntime,
     resolveParticipant: options.resolveParticipant,

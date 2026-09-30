@@ -1,3 +1,4 @@
+import { projectHermesNativeRouteObservation } from "./hermes-native-route-observation.js";
 import { qualifyGeneratedNativeSource } from "./provider-generated-native-route.js";
 import {
   ProviderSettingsSnapshotSchema,
@@ -339,12 +340,14 @@ function projectHarness(input: {
     && (source.kind !== "harness_profile" || source.harness === input.stored.harness)
     && (source.kind !== "matrix_gateway" || input.allowedGatewayModels.has(input.stored.route.modelId));
   const generatedNative = input.stored.enablementOrigin === "generated_default"
-    && (input.stored.harness === "pi" || input.stored.harness === "opencode");
+    && (input.stored.harness === "pi" || input.stored.harness === "opencode"
+      || (input.stored.harness === "hermes" && source?.kind === "harness_profile"));
   const managedCatalogRoute = source?.kind === "matrix_gateway"
     && source.providerId === input.stored.route.providerId && !generatedNative;
   const routeCatalogUnavailable = !routeAvailable
     || (input.catalogUnavailable && !managedCatalogRoute);
-  const nativeCredentialRoute = input.stored.harness === "pi" || input.stored.harness === "opencode";
+  const nativeCredentialRoute = input.stored.harness === "pi" || input.stored.harness === "opencode"
+    || (input.stored.harness === "hermes" && source?.kind === "harness_profile");
   const routeSourceEligible = sourceEligible === true && !routeCatalogUnavailable
     && (source.kind === "matrix_gateway"
       ? isFreshReady(source.readiness, input.now)
@@ -387,6 +390,7 @@ function projectHarness(input: {
     ...(input.stored.enablementOrigin ? { enablementOrigin: input.stored.enablementOrigin } : {}),
     version: null,
     installState: driver?.installState ?? "missing",
+    ...projectHermesNativeRouteObservation({ driver, stored: input.stored, source, accounts: input.accounts, now: input.now }),
     authState: authState(readiness),
     loginMethods: [...visibleMethods],
     recommendedLoginMethod: visibleMethods[0] ?? null,

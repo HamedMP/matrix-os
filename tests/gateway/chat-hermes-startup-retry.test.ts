@@ -1,3 +1,4 @@
+import { EventEmitter } from "node:events";
 import { afterEach, expect, it, vi } from "vitest";
 import { createHermesChatProviderAdapter } from "../../packages/gateway/src/chat/hermes-provider-adapter";
 import type { CanonicalProviderRunEvent } from "../../packages/gateway/src/chat/provider-adapter";
@@ -25,6 +26,28 @@ function reconnects(events: CanonicalProviderRunEvent[]) {
   return events.filter((event) => event.type === "agent.activity"
     && event.label.startsWith("Reconnecting") && event.status === "running");
 }
+
+it("turns a startup fixture stdin pipe error into one safe failed Run", async () => {
+  vi.useFakeTimers();
+  const run = start({ ignoreMethod: "session.create" });
+  try {
+    await vi.advanceTimersByTimeAsync(0);
+    expect(run.fixture.children).toHaveLength(1);
+    const stdin = run.fixture.children[0]!.process.stdin as EventEmitter;
+    expect(() => stdin.emit("error", new Error("synthetic private EPIPE detail"))).not.toThrow();
+    await vi.advanceTimersByTimeAsync(2_000);
+    await run.done;
+    expect(run.events.filter((event) => event.type === "run.completed"))
+      .toEqual([expect.objectContaining({ outcome: "failed" })]);
+    expect(run.fixture.children).toHaveLength(1);
+    expect(JSON.stringify(run.events)).not.toContain("synthetic private EPIPE detail");
+  } finally {
+    run.fixture.children[0]?.exit();
+    run.controller.abort();
+    await vi.advanceTimersByTimeAsync(2_000);
+    await run.done;
+  }
+});
 
 it("reconnects after confirmed pre-prompt timeout and submits one Hermes prompt", async () => {
   vi.useFakeTimers();
