@@ -75,13 +75,18 @@ describe("shared organization drive browser", () => {
   expect(screen.getByText("Search covers loaded files. This view has reached its browsing limit.")).toBeTruthy();
  });
 
- it("leaves room for file names when validating upload folder bytes", () => {
+ it("accepts long valid folders and explains their remaining file-name budget", () => {
   const change=vi.fn();render(<OrganizationDriveBrowser {...props} onFolderChange={change}/>);
   fireEvent.click(screen.getByRole("button",{name:"Choose upload folder"}));
-  fireEvent.change(screen.getByLabelText("Upload folder path"),{target:{value:"é".repeat(273)}});
+  fireEvent.change(screen.getByLabelText("Upload folder path"),{target:{value:"é".repeat(400)}});
   fireEvent.click(screen.getByRole("button",{name:"Use folder"}));expect(change).not.toHaveBeenCalled();expect(screen.getByRole("alert")).toBeTruthy();
-  fireEvent.change(screen.getByLabelText("Upload folder path"),{target:{value:"é".repeat(272)}});
-  fireEvent.click(screen.getByRole("button",{name:"Use folder"}));expect(change).toHaveBeenCalledWith("é".repeat(272));
+  fireEvent.change(screen.getByLabelText("Upload folder path"),{target:{value:"é".repeat(399)}});
+  fireEvent.click(screen.getByRole("button",{name:"Use folder"}));expect(change).toHaveBeenCalledWith("é".repeat(399));
+ });
+
+ it("shows a filename-length warning for an existing long folder", () => {
+  render(<OrganizationDriveBrowser {...props} folder={"a".repeat(545)}/>);
+  expect(screen.getByText("This folder leaves 254 UTF-8 bytes for each file name.")).toBeTruthy();
  });
 
 });

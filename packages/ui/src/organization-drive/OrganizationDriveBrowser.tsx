@@ -31,7 +31,7 @@ export function OrganizationDriveBrowser(props: OrganizationDriveBrowserProps) {
   function chooseFolder() {
     const value = uploadFolder.trim();
     const parsed = value ? OrganizationDrivePathSchema.safeParse(value) : null;
-    if (value && (!parsed?.success || new TextEncoder().encode(value).byteLength > 544)) {setFolderError(true); return;}
+    if (value && (!parsed?.success || new TextEncoder().encode(value).byteLength > 798)) {setFolderError(true); return;}
     navigate(value); setChoosingFolder(false); setFolderError(false);
   }
   return <section className="flex min-w-0 flex-1 flex-col gap-4" aria-label={`${props.name} drive`}>
@@ -43,9 +43,9 @@ export function OrganizationDriveBrowser(props: OrganizationDriveBrowserProps) {
       </div> : null}
     </header>
     {choosingFolder && props.canUpload ? <form onSubmit={event => {event.preventDefault(); chooseFolder();}} className="space-y-2 rounded-md border p-3" style={border}>
-      <label className="block text-xs">Upload folder path<input type="text" value={uploadFolder} maxLength={544} disabled={props.busy} placeholder="reports/2027" onChange={event => setUploadFolder(event.target.value)} className={`${control} mt-1 w-full bg-transparent`} style={border}/></label>
-      <p className="text-xs" style={muted}>New folders appear after their first upload. Use up to 544 bytes for the folder path to leave room for file names. Leave blank for the drive root.</p>
-      {folderError ? <p role="alert" className="text-xs">Enter a relative folder path of at most 544 bytes, without empty segments, backslashes or parent traversal.</p> : null}
+      <label className="block text-xs">Upload folder path<input type="text" value={uploadFolder} maxLength={798} disabled={props.busy} placeholder="reports/2027" onChange={event => setUploadFolder(event.target.value)} className={`${control} mt-1 w-full bg-transparent`} style={border}/></label>
+      <p className="text-xs" style={muted}>New folders appear after their first upload. File names must fit within the remaining path length. Leave blank for the drive root.</p>
+      {folderError ? <p role="alert" className="text-xs">Enter a relative folder path of at most 798 bytes, without empty segments, backslashes or parent traversal.</p> : null}
       <div className="flex gap-2"><button type="submit" disabled={props.busy} className={control} style={border}>Use folder</button><button type="button" className={control} style={border} onClick={() => setChoosingFolder(false)}>Cancel</button></div>
     </form> : null}
     <div className="space-y-2"><div className="flex flex-wrap justify-between gap-2 text-xs" style={muted}>
@@ -63,6 +63,7 @@ export function OrganizationDriveBrowser(props: OrganizationDriveBrowserProps) {
       <select aria-label="Sort drive files" value={sort} onChange={event => setSort(event.target.value as "name" | "modified")} className={`${control} bg-[var(--bg-surface,var(--background))]`} style={border}><option value="name">Name</option><option value="modified">Recently modified</option></select>
     </div>
     {props.canUpload ? <p className="text-xs" style={muted}>{props.folder ? `Uploads go to ${props.folder}.` : "Uploads go to the drive root."}</p> : null}
+    {props.canUpload && new TextEncoder().encode(props.folder).byteLength > 544 ? <p className="text-xs" style={muted}>This folder leaves {Math.max(0, 799 - new TextEncoder().encode(props.folder).byteLength)} UTF-8 bytes for each file name.</p> : null}
     {props.hasMore ? <p className="text-xs" style={muted}>{props.pageLimitReached ? "Search covers loaded files. This view has reached its browsing limit." : "Search covers loaded files. Load more to include additional files."}</p> : null}
     <ul className="min-w-0 divide-y rounded-lg border px-3" style={border} aria-label="Drive files">
       {entries.map(entry => <li key={`${entry.kind}:${entry.path}`} className="flex min-w-0 items-center gap-3 py-3" style={border}>
