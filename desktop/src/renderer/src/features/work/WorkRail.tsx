@@ -31,6 +31,7 @@ import { WorkRailSearchDialog } from "./WorkRailSearchDialog";
 import type { CanonicalChatTitleProjection } from "./WorkSurfaceRuntime";
 import { createDesktopCollaborationApi } from "../../lib/collaboration";
 import { useConnection } from "../../stores/connection";
+import { DesktopProjectSharingHost, useDesktopProjectSharingContext } from "../project/DesktopProjectSharing";
 
 type SectionKey = "pinned" | "projects" | "recents";
 const MAX_CHAT_PAGES = 10;
@@ -180,10 +181,24 @@ export function WorkRail({
     () => [...model.pinnedProjects, ...model.projects],
     [model],
   );
+  const projectSharing = useDesktopProjectSharingContext(active);
+  const [shareProjectTarget, setShareProjectTarget] = useState<{
+    project: Project;
+    organizationId: string;
+    requestId: string;
+  } | null>(null);
 
   useEffect(() => {
     if (!active || !client) setSearchOpen(false);
+    if (!active) setShareProjectTarget(null);
   }, [active, client]);
+
+  useEffect(() => {
+    if (shareProjectTarget
+      && shareProjectTarget.organizationId !== projectSharing?.organizationId) {
+      setShareProjectTarget(null);
+    }
+  }, [projectSharing?.organizationId, shareProjectTarget]);
 
   useEffect(() => {
     let current = true;
@@ -403,6 +418,15 @@ export function WorkRail({
           setDeleteChatError(null);
           setDeleteChatTarget(record);
         }}
+        sharing={projectSharing}
+        onShareProject={(project) => {
+          if (!projectSharing?.organizationId) return;
+          setShareProjectTarget({
+            project,
+            organizationId: projectSharing.organizationId,
+            requestId: crypto.randomUUID(),
+          });
+        }}
       />
     );
   };
@@ -567,6 +591,18 @@ export function WorkRail({
           else onSelectChat(record);
         }}
       />
+      {shareProjectTarget
+        && projectSharing?.organizationId === shareProjectTarget.organizationId
+        && shareProjectTarget.project.id ? (
+        <DesktopProjectSharingHost
+          key={shareProjectTarget.requestId}
+          sharing={projectSharing}
+          projectId={shareProjectTarget.project.id}
+          projectName={shareProjectTarget.project.name || shareProjectTarget.project.slug}
+          startOnMount
+          onClose={() => setShareProjectTarget(null)}
+        />
+      ) : null}
     </nav>
   );
 }
