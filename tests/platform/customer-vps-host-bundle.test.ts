@@ -113,6 +113,8 @@ describe('customer VPS host bundle', () => {
     expect(script).toContain('install -m 0755 "$DIST_DIR/$GH_DIST/bin/gh" "$STAGE_DIR/runtime/node/bin/gh"');
     expect(script).toContain('install -m 0755 "$DIST_DIR/$GH_DIST/bin/gh" "$STAGE_DIR/app/node_modules/.bin/gh"');
     expect(script).toContain('chmod 0755 "$STAGE_DIR/bin/matrix-owner-env" "$STAGE_DIR/bin/matrix-gateway"');
+    expect(script).toContain('chmod 0755 "$STAGE_DIR/bin/matrix-configure-platform-speech.py"');
+    expect(existsSync(join(root, 'distro/customer-vps/host-bin/matrix-configure-platform-speech.py'))).toBe(true);
     expect(script).toContain('tar -xzf "$DIST_DIR/$ZELLIJ_ARCHIVE" -C "$STAGE_DIR/bin" zellij');
     expect(script).toContain('test -x "$STAGE_DIR/bin/zellij"');
     expect(script).toContain('rm -rf "$STAGE_DIR/app/shell/.next/cache" "$STAGE_DIR/app/shell/e2e" "$STAGE_DIR/app/shell/node_modules"');
@@ -784,6 +786,10 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
   it('host bundle release workflow stamps the resolved channel into release metadata before packaging', () => {
     const root = process.cwd();
     const workflow = readFileSync(join(root, '.github/workflows/host-bundle-release.yml'), 'utf8');
+    const deployJob = workflow.slice(
+      workflow.indexOf('\n  deploy:'),
+      workflow.indexOf('\n  targeted-deploy:'),
+    );
 
     expect(workflow).toContain('channel: ${{ steps.channel.outputs.channel }}');
     expect(workflow).toContain('id: channel');
@@ -791,12 +797,22 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(workflow).toContain('HOST_BUNDLE_CHANNEL: ${{ needs.build.outputs.channel }}');
     expect(workflow).toContain("PLATFORM_PUBLIC_URL: ${{ vars.PLATFORM_PUBLIC_URL || 'https://app.matrix-os.com' }}");
     expect(workflow).toContain('R2_ACCOUNT_ID: ${{ secrets.R2_BUNDLES_ACCOUNT_ID || secrets.R2_ACCOUNT_ID }}');
-    expect(workflow).toContain('timeout-minutes: 20');
+    expect(workflow).toContain('timeout-minutes: 90');
     expect(workflow).toContain('AWS_ACCESS_KEY_ID: ${{ secrets.R2_BUNDLES_ACCESS_KEY_ID || secrets.R2_ACCESS_KEY_ID }}');
     expect(workflow).toContain('AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_BUNDLES_SECRET_ACCESS_KEY || secrets.R2_SECRET_ACCESS_KEY }}');
     expect(workflow).toContain("R2_BUCKET: ${{ vars.R2_BUNDLES_BUCKET || vars.R2_BUCKET || 'matrixos-sync' }}");
     expect(workflow).toContain("R2_ENDPOINT: ${{ vars.R2_BUNDLES_ENDPOINT || vars.R2_ENDPOINT || format('https://{0}.r2.cloudflarestorage.com', secrets.R2_BUNDLES_ACCOUNT_ID || secrets.R2_ACCOUNT_ID) }}");
     expect(workflow).toContain('-X POST "${PLATFORM_PUBLIC_URL%/}/vps/deploy"');
+    expect(workflow).toContain('DEPLOY_RESPONSE="$(curl --fail --silent --show-error --max-time 60 \\');
+    expect(workflow).toContain("MATRIX_PLATFORM_SPEECH_RUNTIME_ENABLED: ${{ vars.MATRIX_PLATFORM_SPEECH_RUNTIME_ENABLED || 'false' }}");
+    expect(workflow).toContain('-X POST "${PLATFORM_PUBLIC_URL%/}/vps/speech/activate"');
+    expect(workflow).toContain('for page_attempt in $(seq 1 20); do');
+    expect(workflow).toContain("--arg afterMachineId \"$PAGE_CURSOR\"");
+    expect(workflow).toContain("complete=\"$(printf '%s' \"$ACTIVATE_RESPONSE\" | jq -r '.complete')\"");
+    expect(workflow).toContain("next_cursor=\"$(printf '%s' \"$ACTIVATE_RESPONSE\" | jq -r '.nextCursor // empty')\"");
+    expect(workflow).toContain('Managed speech activation page is still converging:');
+    expect(deployJob).not.toContain('for attempt in $(seq 1 20); do');
+    expect(workflow).toContain('Managed speech activation did not converge within the bounded rollout window.');
     expect(workflow).not.toContain('HOST_BUNDLE_CHANNEL: ${{ steps.meta.outputs.channel }}');
     expect(workflow).not.toContain('-X POST "https://app.matrix-os.com/vps/deploy"');
   });

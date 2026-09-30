@@ -35,6 +35,16 @@ describe("retiring the legacy Symphony runtime", () => {
     expect(bundle).not.toContain('"$STAGE_DIR/bin/matrix-symphony"');
   });
 
+  it("does not ship the retired first-party app", () => {
+    expect(existsSync("home/apps/symphony")).toBe(false);
+    const manifest = JSON.parse(readFileSync("home/.template-manifest.json", "utf8")) as Record<string, string>;
+    expect(Object.keys(manifest).some((path) => path.startsWith("apps/symphony/"))).toBe(false);
+  });
+
+  it("removes the retired Elixir source package", () => {
+    expect(existsSync("packages/symphony-elixir")).toBe(false);
+  });
+
   it("retries retirement after an interrupted or partially successful update", () => {
     expect(syncAgent).toContain('maybe_retire_legacy_symphony()');
     expect(syncAgent).toContain('[ -x "$APP_DIR/packages/symphony-elixir/release/bin/symphony" ] && return 0');
@@ -44,8 +54,8 @@ describe("retiring the legacy Symphony runtime", () => {
   it("snapshots the old unit and retains it through a committed update for rollback", () => {
     expect(syncAgent).toContain('record_legacy_symphony_unit "$extract_dir"');
     expect(syncAgent).toContain('matrix-symphony.service:active');
-    expect(syncAgent).toContain('preserve_symphony_rollback_transaction');
-    expect(recovery).toContain('preserve_symphony_rollback_transaction');
+    expect(syncAgent).toContain('preserve_host_rollback_transaction');
+    expect(recovery).toContain('preserve_host_rollback_transaction');
     expect(syncAgent).toContain('if ! retire_legacy_symphony; then');
     expect(syncAgent).toContain('if resume_symphony_after_update; then\n      cleanup_update_transaction');
   });

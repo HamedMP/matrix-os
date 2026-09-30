@@ -5,6 +5,7 @@ import {
   createAiFundedPolicyRepository,
 } from "../../packages/platform/src/ai-funded-policy-repository.js";
 import { insertUserMachine, type PlatformDB } from "../../packages/platform/src/db.js";
+import { ensureSpeechMonthlyAllowance } from "../../packages/platform/src/speech/allowance.js";
 import { createTestPlatformDb, destroyTestPlatformDb } from "./platform-db-test-helper.js";
 
 const modelId = "anthropic/claude-sonnet-5";
@@ -1246,6 +1247,32 @@ describe("funded AI metering", () => {
       settledThisMonthMicrousd: 5,
       remainingBalanceMicrousd: 0,
     });
+  });
+
+  it("never debits speech-only grants while cleaning a legacy text reservation", async () => {
+    const credential = await enableAndFund({ budget: 20, credit: 0 });
+    await db.transaction((trx) => ensureSpeechMonthlyAllowance(trx.executor, identity, {
+      monthlyBudgetMicrousd: 1_000_000,
+      monthlyPromotionalCreditMicrousd: 1_000_000,
+      now: clock,
+    }));
+    await insertLegacyReservation({
+      tokenId: credential.tokenId,
+      reservationId: "legacy_text_must_not_spend_speech",
+      requestId: "legacy_text_must_not_spend_speech_request",
+      reservedMicrousd: 5,
+      status: "in_flight",
+      expiresAt: clock.toISOString(),
+    });
+
+    await expect(repo.cleanupExpiredReservations({ limit: 10 })).resolves.toBe(1);
+
+    expect(await db.executor.selectFrom("ai_funded_promotional_grant_balances")
+      .select("remaining_microusd").where("grant_entry_id", "like", "speech-monthly:%")
+      .executeTakeFirstOrThrow()).toEqual({ remaining_microusd: 1_000_000 });
+    expect(await db.executor.selectFrom("ai_funded_runtime_balances")
+      .select("funding_shortfall_microusd").where("machine_id", "=", identity.machineId)
+      .executeTakeFirstOrThrow()).toEqual({ funding_shortfall_microusd: 5 });
   });
 
   it("charges an in-flight reservation before retiring its expired promotional backing", async () => {

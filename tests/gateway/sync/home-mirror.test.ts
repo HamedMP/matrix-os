@@ -1448,6 +1448,45 @@ describe("createHomeMirror", () => {
       await mirror.stop();
     });
 
+    it("completes a multi-chunk startup push when storage returns web stream bodies like the platform broker", async () => {
+      const originalGetObject = r2.getObject.bind(r2);
+      r2.getObject = async (key: string) => {
+        const buf = r2.store.get(key);
+        if (!buf) return originalGetObject(key);
+        const bytes = new Uint8Array(buf);
+        return {
+          body: new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(bytes);
+              controller.close();
+            },
+          }),
+          etag: `"etag-${key}"`,
+          contentLength: bytes.byteLength,
+        };
+      };
+      await mkdir(join(tmpRoot, "notes"), { recursive: true });
+      for (let i = 0; i < 60; i++) {
+        await writeFile(join(tmpRoot, "notes", `note-${i}.md`), `note ${i}`);
+      }
+
+      const mirror = createHomeMirror({
+        r2,
+        manifestDb: db,
+        homeRoot: tmpRoot,
+        userId: "alice",
+        peerId: "gateway-alice",
+        peerRegistry: registry,
+        logger: { info: () => {}, error: () => {} },
+        watchLocalChanges: false,
+      });
+      await mirror.start();
+
+      const manifest = storedManifest(r2);
+      expect(Object.keys(manifest?.files ?? {}).filter((path) => path.startsWith("notes/"))).toHaveLength(60);
+      await mirror.stop();
+    });
+
     it("cleans up orphaned temp files on startup", async () => {
       await mkdir(join(tmpRoot, "notes"), { recursive: true });
       const orphanedTmp = join(tmpRoot, "notes", "stale.md.matrixos-0f8b3c7e-1a2b-4c3d-9e8f-0123456789ab.tmp");

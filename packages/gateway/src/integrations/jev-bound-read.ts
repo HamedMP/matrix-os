@@ -9,7 +9,7 @@ export class JevBoundReadError extends Error {
 const Profile = z.object({ emailAddress: z.email().max(320) });
 const Read = z.discriminatedUnion("action", [
   z.strictObject({ action: z.literal("get_profile"), params: z.strictObject({}).optional() }),
-  z.strictObject({ action: z.literal("list_threads"), params: z.strictObject({}).optional() }),
+  z.strictObject({ action: z.literal("list_threads"), params: z.strictObject({ pageToken: z.string().min(1).max(4096).optional() }).optional() }),
   z.strictObject({ action: z.literal("get_thread_ids"), params: z.strictObject({ threadId: JevInboxGmailIdSchema }) }),
   z.strictObject({ action: z.literal("get_message"), params: z.strictObject({ messageId: JevInboxGmailIdSchema }) }),
 ]);
@@ -40,7 +40,7 @@ export async function executeJevBoundRead(options: {
   const profile = Profile.safeParse(rawProfile);
   if (!profile.success || profile.data.emailAddress !== binding.expectedEmail) throw new JevBoundReadError("denied");
   if (read.data.action === "get_profile") return profile.data;
-  if (read.data.action === "list_threads") return get({ ...identity, kind: "threads" }, options.signal);
+  if (read.data.action === "list_threads") return get({ ...identity, kind: "threads", ...(read.data.params?.pageToken ? { pageToken: read.data.params.pageToken } : {}) }, options.signal);
   if (read.data.action === "get_thread_ids") return get({ ...identity, kind: "thread-ids", id: read.data.params.threadId }, options.signal);
   return get({ ...identity, kind: "message", id: read.data.params.messageId }, options.signal);
 }

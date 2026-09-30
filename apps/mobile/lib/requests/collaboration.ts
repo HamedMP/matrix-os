@@ -1,7 +1,4 @@
 import {
-  COLLABORATION_CLIENT_REQUEST_ID_HEADER,
-  COLLABORATION_EXPECTED_MEMBER_REVISION_HEADER,
-  COLLABORATION_EXPECTED_REVISION_HEADER,
   CollaborationActorIdSchema,
   CollaborationChatMessagesResponseSchema,
   CollaborationAiRequestAcceptedResponseSchema,
@@ -11,9 +8,9 @@ import {
   CollaborationAiRequestControlSchema,
   CollaborationApprovalDecisionRequestSchema,
   CollaborationChatSchema,
-  CollaborationConnectionTicketResponseSchema,
   CollaborationCreateDiscussionRequestSchema,
   CollaborationDeclineInvitationRequestSchema,
+  CollaborationDiscoveryItemSchema,
   CollaborationDiscussionMessageSchema,
   CollaborationDiscussionMessagesResponseSchema,
   CollaborationDiscussionUserStatePatchSchema,
@@ -35,7 +32,16 @@ import {
   CollaborationUserStateSchema,
   type CollaborationTerminalAction,
 } from "@matrix-os/contracts/collaboration";
+import { getRandomValues } from "expo-crypto";
 import { z } from "zod/v4";
+import {
+  CollaborationDirectError,
+  createMobileCollaborationDirect,
+  type CollaborationDeleteConditions,
+  type CollaborationDirectMethod,
+  type CollaborationDirectStream,
+  type CollaborationStreamPurpose,
+} from "@/lib/collaboration-direct";
 import { HOSTED_GATEWAY_URL } from "@/lib/storage";
 import { fetchAuthenticatedJson } from "./http";
 
@@ -66,8 +72,51 @@ const MemberMutationSchema = z.looseObject({
   memberRevision: z.number().int().nonnegative(),
 });
 
+const MAX_HYDRATION_CONCURRENCY = 4;
+
+type DiscoveryItem = z.infer<typeof CollaborationDiscoveryItemSchema>;
+interface ResponseSchema<T> { parse(value: unknown): T }
+
+/**
+ * Native CSPRNG only. expo-crypto's `getRandomBytes` falls back to `Math.random`
+ * under remote JS debugging, which must never produce proof keys or nonces.
+ */
+function secureRandomBytes(length: number): Uint8Array {
+  return getRandomValues(new Uint8Array(length));
+}
+
+/**
+ * Scope content lives on the resource's home and is reached only over the direct
+ * transport; the platform serves discovery metadata and connection tickets.
+ */
+const direct = createMobileCollaborationDirect({ platformUrl: HOSTED_GATEWAY_URL, randomBytes: secureRandomBytes });
+
 function url(path: string): string {
   return `${HOSTED_GATEWAY_URL}${path}`;
+}
+
+async function scoped<T>(
+  token: string,
+  scopeId: string,
+  schema: ResponseSchema<T>,
+  method: CollaborationDirectMethod,
+  path: string,
+  body?: unknown,
+  conditions?: CollaborationDeleteConditions,
+): Promise<T> {
+  try {
+    return schema.parse(await direct.request(token, scopeId, method, path, body, conditions));
+  } catch (error: unknown) {
+    if (!(error instanceof CollaborationDirectError) && !(error instanceof z.ZodError)) {
+      console.warn("[mobile-collaboration] scoped request failed", error instanceof Error ? error.name : "UnknownError");
+    }
+    throw new Error(ERROR);
+  }
+}
+
+/** Ends every cached home session in this process, e.g. before another account signs in. */
+export function closeCollaborationSessions(): void {
+  direct.close();
 }
 
 function discoveryUrl(path: "inbox" | "shared", cursor?: string): string {
@@ -85,52 +134,110 @@ export function fetchSharedCollaborations(token: string, cursor?: string) {
   return fetchAuthenticatedJson({ url: discoveryUrl("shared", cursor), token, schema: CollaborationDiscoveryResponseSchema, errorMessage: ERROR });
 }
 
-export function fetchCollaborationInvitation(token: string, invitationId: string) {
-  const id = CollaborationIdSchema.parse(invitationId);
-  return fetchAuthenticatedJson({ url: url(`/api/collaboration/invitations/${id}`), token, schema: CollaborationInvitationSchema, errorMessage: ERROR });
+/** Kinds Native Mobile can open; other kinds stay metadata-only. */
+const HYDRATED_KINDS = new Set(["chat", "terminal", "project"]);
+
+/** Whether an item still has content to fetch from its home (and should show as loading until then). */
+export function collaborationDiscoveryNeedsHydration(item: DiscoveryItem): boolean {
+  if (item.status === "organization_pending" || item.resource !== undefined || item.home !== undefined) return false;
+  return item.status === "invited" || HYDRATED_KINDS.has(item.kind);
 }
 
-export function acceptCollaborationInvitation(token: string, invitationId: string, expectedRevision: string, clientRequestId: string) {
+/**
+ * Fills each metadata-only discovery item from the resource's home, the way the
+ * web direct client does. An unreachable home leaves the item as `offline`, a
+ * refusal or an unexpected shape as `denied`; kinds Native Mobile cannot open
+ * yet stay metadata-only. `onHydrated` receives each item as soon as its home
+ * answers, so one slow home never holds back the rest of the list.
+ */
+export async function hydrateCollaborationDiscovery(
+  token: string,
+  items: readonly DiscoveryItem[],
+  onHydrated?: (item: DiscoveryItem) => void,
+): Promise<DiscoveryItem[]> {
+  const results: DiscoveryItem[] = new Array(items.length);
+  let next = 0;
+  const workers = Array.from({ length: Math.min(MAX_HYDRATION_CONCURRENCY, items.length) }, async () => {
+    while (next < items.length) {
+      const index = next++;
+      // react-doctor-disable-next-line react-doctor/async-await-in-loop -- intentional: each worker drains the shared queue one item at a time so at most MAX_HYDRATION_CONCURRENCY home requests are in flight.
+      const item = await hydrateDiscoveryItem(token, items[index]!);
+      results[index] = item;
+      onHydrated?.(item);
+    }
+  });
+  await Promise.all(workers);
+  return results;
+}
+
+async function hydrateDiscoveryItem(token: string, item: DiscoveryItem): Promise<DiscoveryItem> {
+  if (item.status === "organization_pending" || !collaborationDiscoveryNeedsHydration(item)) return item;
+  try {
+    if (item.status === "invited") {
+      const resource = await direct.request(token, item.scopeId, "GET", `/api/collaboration/invitations/${item.invitationId}`);
+      return parseHydrated({ ...item, resource });
+    }
+    const content = item.kind;
+    const base = `/api/collaboration/scopes/${item.scopeId}`;
+    const [scope, value] = await Promise.all([
+      direct.request(token, item.scopeId, "GET", base),
+      direct.request(token, item.scopeId, "GET", `${base}/${content}`),
+    ]);
+    return parseHydrated({ ...item, resource: { scope, [content]: value } });
+  } catch (error: unknown) {
+    const code = error instanceof CollaborationDirectError ? error.code : "unavailable";
+    if (!(error instanceof CollaborationDirectError)) {
+      console.warn("[mobile-collaboration] discovery hydration failed", error instanceof Error ? error.name : "UnknownError");
+    }
+    return { ...item, home: code === "host_offline" || code === "unavailable" ? "offline" : "denied" };
+  }
+}
+
+function parseHydrated(candidate: unknown): DiscoveryItem {
+  const parsed = CollaborationDiscoveryItemSchema.safeParse(candidate);
+  if (!parsed.success) throw new CollaborationDirectError("invalid_response");
+  return parsed.data;
+}
+
+export function fetchCollaborationInvitation(token: string, scopeId: string, invitationId: string) {
   const id = CollaborationIdSchema.parse(invitationId);
-  return fetchAuthenticatedJson({
-    url: url(`/api/collaboration/invitations/${id}/accept`), token, schema: AcceptedSchema, errorMessage: ERROR,
-    method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ clientRequestId: CollaborationIdSchema.parse(clientRequestId), expectedRevision: CollaborationRevisionSchema.parse(expectedRevision) }),
+  return scoped(token, scopeId, CollaborationInvitationSchema, "GET", `/api/collaboration/invitations/${id}`);
+}
+
+export function acceptCollaborationInvitation(
+  token: string,
+  scopeId: string,
+  invitationId: string,
+  expectedRevision: string,
+  clientRequestId: string,
+) {
+  const id = CollaborationIdSchema.parse(invitationId);
+  return scoped(token, scopeId, AcceptedSchema, "POST", `/api/collaboration/invitations/${id}/accept`, {
+    clientRequestId: CollaborationIdSchema.parse(clientRequestId),
+    expectedRevision: CollaborationRevisionSchema.parse(expectedRevision),
   });
 }
 
 export function declineCollaborationInvitation(
   token: string,
+  scopeId: string,
   invitationId: string,
   expectedRevision: string,
   clientRequestId: string,
 ) {
   const id = CollaborationIdSchema.parse(invitationId);
   const body = CollaborationDeclineInvitationRequestSchema.parse({ clientRequestId, expectedRevision });
-  return fetchAuthenticatedJson({
-    url: url(`/api/collaboration/invitations/${id}/decline`),
-    token,
-    schema: DeclinedSchema,
-    errorMessage: ERROR,
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
+  return scoped(token, scopeId, DeclinedSchema, "POST", `/api/collaboration/invitations/${id}/decline`, body);
 }
 
 export function fetchCollaborationScope(token: string, scopeId: string) {
   const id = CollaborationIdSchema.parse(scopeId);
-  return fetchAuthenticatedJson({ url: url(`/api/collaboration/scopes/${id}`), token, schema: CollaborationScopeSchema, errorMessage: ERROR });
+  return scoped(token, id, CollaborationScopeSchema, "GET", `/api/collaboration/scopes/${id}`);
 }
 
 export function fetchCollaborationMembers(token: string, scopeId: string) {
   const id = CollaborationIdSchema.parse(scopeId);
-  return fetchAuthenticatedJson({
-    url: url(`/api/collaboration/scopes/${id}/members`),
-    token,
-    schema: MembersSchema,
-    errorMessage: ERROR,
-  });
+  return scoped(token, id, MembersSchema, "GET", `/api/collaboration/scopes/${id}/members`);
 }
 
 export function inviteCollaborationMember(
@@ -143,11 +250,7 @@ export function inviteCollaborationMember(
 ) {
   const id = CollaborationIdSchema.parse(scopeId);
   const body = CollaborationCreateInvitationRequestSchema.parse({ identifier, role, expectedRevision, clientRequestId });
-  return fetchAuthenticatedJson({
-    url: url(`/api/collaboration/scopes/${id}/invitations`), token,
-    schema: CollaborationInvitationSchema, errorMessage: ERROR,
-    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
-  });
+  return scoped(token, id, CollaborationInvitationSchema, "POST", `/api/collaboration/scopes/${id}/invitations`, body);
 }
 
 export function changeCollaborationMemberRole(
@@ -164,11 +267,7 @@ export function changeCollaborationMemberRole(
   const body = CollaborationMemberPatchRequestSchema.parse({
     role, expectedRevision, expectedMemberRevision, clientRequestId,
   });
-  return fetchAuthenticatedJson({
-    url: url(`/api/collaboration/scopes/${id}/members/${encodeURIComponent(actor)}`), token,
-    schema: MemberMutationSchema, errorMessage: ERROR,
-    method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
-  });
+  return scoped(token, id, MemberMutationSchema, "PATCH", `/api/collaboration/scopes/${id}/members/${encodeURIComponent(actor)}`, body);
 }
 
 export function removeCollaborationMember(
@@ -181,16 +280,8 @@ export function removeCollaborationMember(
 ) {
   const id = CollaborationIdSchema.parse(scopeId);
   const actor = CollaborationActorIdSchema.parse(actorId);
-  return fetchAuthenticatedJson({
-    url: url(`/api/collaboration/scopes/${id}/members/${encodeURIComponent(actor)}`), token,
-    schema: MemberMutationSchema, errorMessage: ERROR,
-    method: "DELETE",
-    headers: {
-      [COLLABORATION_CLIENT_REQUEST_ID_HEADER]: CollaborationIdSchema.parse(clientRequestId),
-      [COLLABORATION_EXPECTED_REVISION_HEADER]: CollaborationRevisionSchema.parse(expectedRevision),
-      [COLLABORATION_EXPECTED_MEMBER_REVISION_HEADER]: CollaborationRevisionSchema.parse(expectedMemberRevision),
-    },
-  });
+  return scoped(token, id, MemberMutationSchema, "DELETE", `/api/collaboration/scopes/${id}/members/${encodeURIComponent(actor)}`,
+    undefined, { clientRequestId, expectedRevision, expectedMemberRevision });
 }
 
 export function revokeCollaborationInvitation(
@@ -203,40 +294,25 @@ export function revokeCollaborationInvitation(
 ) {
   const id = CollaborationIdSchema.parse(scopeId);
   const invitation = CollaborationIdSchema.parse(invitationId);
-  return fetchAuthenticatedJson({
-    url: url(`/api/collaboration/scopes/${id}/invitations/${invitation}`), token,
-    schema: MemberMutationSchema, errorMessage: ERROR,
-    method: "DELETE",
-    headers: {
-      [COLLABORATION_CLIENT_REQUEST_ID_HEADER]: CollaborationIdSchema.parse(clientRequestId),
-      [COLLABORATION_EXPECTED_REVISION_HEADER]: CollaborationRevisionSchema.parse(expectedRevision),
-      [COLLABORATION_EXPECTED_MEMBER_REVISION_HEADER]: CollaborationRevisionSchema.parse(expectedMemberRevision),
-    },
-  });
+  return scoped(token, id, MemberMutationSchema, "DELETE", `/api/collaboration/scopes/${id}/invitations/${invitation}`,
+    undefined, { clientRequestId, expectedRevision, expectedMemberRevision });
 }
 
 export function fetchSharedProject(token: string, scopeId: string) {
   const id = CollaborationIdSchema.parse(scopeId);
-  return fetchAuthenticatedJson({
-    url: url(`/api/collaboration/scopes/${id}/project`),
-    token,
-    schema: CollaborationProjectSchema,
-    errorMessage: ERROR,
-  });
+  return scoped(token, id, CollaborationProjectSchema, "GET", `/api/collaboration/scopes/${id}/project`);
 }
 
 export function fetchSharedChat(token: string, scopeId: string) {
   const id = CollaborationIdSchema.parse(scopeId);
-  return fetchAuthenticatedJson({ url: url(`/api/collaboration/scopes/${id}/chat`), token, schema: CollaborationChatSchema, errorMessage: ERROR });
+  return scoped(token, id, CollaborationChatSchema, "GET", `/api/collaboration/scopes/${id}/chat`);
 }
 
 export function fetchSharedChatMessages(token: string, scopeId: string, after = "0") {
   const id = CollaborationIdSchema.parse(scopeId);
   const cursor = CollaborationRevisionSchema.parse(after);
-  return fetchAuthenticatedJson({
-    url: url(`/api/collaboration/scopes/${id}/chat/messages?after=${cursor}&limit=100`), token,
-    schema: CollaborationChatMessagesResponseSchema, errorMessage: ERROR,
-  });
+  return scoped(token, id, CollaborationChatMessagesResponseSchema, "GET",
+    `/api/collaboration/scopes/${id}/chat/messages?after=${cursor}&limit=100`);
 }
 
 export function postSharedChatDiscussion(
@@ -247,26 +323,18 @@ export function postSharedChatDiscussion(
   clientRequestId: string,
 ) {
   const id = CollaborationIdSchema.parse(scopeId);
-  return fetchAuthenticatedJson({
-    url: url(`/api/collaboration/scopes/${id}/chat/messages`), token, schema: CollaborationHumanMessageSchema, errorMessage: ERROR,
-    method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      clientRequestId: CollaborationIdSchema.parse(clientRequestId),
-      expectedRevision: CollaborationRevisionSchema.parse(expectedRevision),
-      text: z.string().trim().min(1).max(65_536).parse(text),
-    }),
+  return scoped(token, id, CollaborationHumanMessageSchema, "POST", `/api/collaboration/scopes/${id}/chat/messages`, {
+    clientRequestId: CollaborationIdSchema.parse(clientRequestId),
+    expectedRevision: CollaborationRevisionSchema.parse(expectedRevision),
+    text: z.string().trim().min(1).max(65_536).parse(text),
   });
 }
 
 export function fetchSessionDiscussion(token: string, scopeId: string, after = "0") {
   const id = CollaborationIdSchema.parse(scopeId);
   const cursor = CollaborationRevisionSchema.parse(after);
-  return fetchAuthenticatedJson({
-    url: url(`/api/collaboration/scopes/${id}/discussion/messages?after=${cursor}&limit=100`),
-    token,
-    schema: CollaborationDiscussionMessagesResponseSchema,
-    errorMessage: ERROR,
-  });
+  return scoped(token, id, CollaborationDiscussionMessagesResponseSchema, "GET",
+    `/api/collaboration/scopes/${id}/discussion/messages?after=${cursor}&limit=100`);
 }
 
 export function postSessionDiscussion(
@@ -282,47 +350,23 @@ export function postSessionDiscussion(
     expectedRevision,
     text,
   });
-  return fetchAuthenticatedJson({
-    url: url(`/api/collaboration/scopes/${id}/discussion/messages`),
-    token,
-    schema: CollaborationDiscussionMessageSchema,
-    errorMessage: ERROR,
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
+  return scoped(token, id, CollaborationDiscussionMessageSchema, "POST", `/api/collaboration/scopes/${id}/discussion/messages`, body);
 }
 
 export function fetchSessionDiscussionUserState(token: string, scopeId: string) {
   const id = CollaborationIdSchema.parse(scopeId);
-  return fetchAuthenticatedJson({
-    url: url(`/api/collaboration/scopes/${id}/discussion/user-state`),
-    token,
-    schema: CollaborationDiscussionUserStateSchema,
-    errorMessage: ERROR,
-  });
+  return scoped(token, id, CollaborationDiscussionUserStateSchema, "GET", `/api/collaboration/scopes/${id}/discussion/user-state`);
 }
 
 export function updateSessionDiscussionReadState(token: string, scopeId: string, readThroughSeq: string) {
   const id = CollaborationIdSchema.parse(scopeId);
   const body = CollaborationDiscussionUserStatePatchSchema.parse({ readThroughSeq });
-  return fetchAuthenticatedJson({
-    url: url(`/api/collaboration/scopes/${id}/discussion/user-state`),
-    token,
-    schema: CollaborationDiscussionUserStateSchema,
-    errorMessage: ERROR,
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
+  return scoped(token, id, CollaborationDiscussionUserStateSchema, "PATCH", `/api/collaboration/scopes/${id}/discussion/user-state`, body);
 }
 
 export function fetchSharedAiRequests(token: string, scopeId: string) {
   const id = CollaborationIdSchema.parse(scopeId);
-  return fetchAuthenticatedJson({
-    url: url(`/api/collaboration/scopes/${id}/chat/requests`), token,
-    schema: CollaborationAiRequestsResponseSchema, errorMessage: ERROR,
-  });
+  return scoped(token, id, CollaborationAiRequestsResponseSchema, "GET", `/api/collaboration/scopes/${id}/chat/requests`);
 }
 
 export function postSharedAiRequest(
@@ -338,11 +382,7 @@ export function postSharedAiRequest(
     expectedRevision,
     text,
   });
-  return fetchAuthenticatedJson({
-    url: url(`/api/collaboration/scopes/${id}/chat/requests`), token,
-    schema: CollaborationAiRequestAcceptedResponseSchema, errorMessage: ERROR,
-    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
-  });
+  return scoped(token, id, CollaborationAiRequestAcceptedResponseSchema, "POST", `/api/collaboration/scopes/${id}/chat/requests`, body);
 }
 
 export function controlSharedAiRequest(
@@ -356,11 +396,7 @@ export function controlSharedAiRequest(
   const id = CollaborationIdSchema.parse(scopeId);
   const request = CollaborationResourceIdSchema.parse(requestId);
   const body = CollaborationAiRequestControlSchema.parse({ clientRequestId, expectedRevision });
-  return fetchAuthenticatedJson({
-    url: url(`/api/collaboration/scopes/${id}/chat/requests/${request}/${action}`), token,
-    schema: AiControlResponseSchema, errorMessage: ERROR,
-    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
-  });
+  return scoped(token, id, AiControlResponseSchema, "POST", `/api/collaboration/scopes/${id}/chat/requests/${request}/${action}`, body);
 }
 
 export function decideSharedAiApproval(
@@ -380,51 +416,41 @@ export function decideSharedAiApproval(
     runId,
     decision,
   });
-  return fetchAuthenticatedJson({
-    url: url(`/api/collaboration/scopes/${id}/chat/approvals/${approval}/decision`), token,
-    schema: AiControlResponseSchema, errorMessage: ERROR,
-    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
-  });
+  return scoped(token, id, AiControlResponseSchema, "POST", `/api/collaboration/scopes/${id}/chat/approvals/${approval}/decision`, body);
 }
 
 export function updateSharedChatReadState(token: string, scopeId: string, readThroughSeq: string) {
   const id = CollaborationIdSchema.parse(scopeId);
-  return fetchAuthenticatedJson({
-    url: url(`/api/collaboration/scopes/${id}/user-state`), token, schema: CollaborationUserStateSchema, errorMessage: ERROR,
-    method: "PATCH", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ readThroughSeq: CollaborationRevisionSchema.parse(readThroughSeq) }),
+  return scoped(token, id, CollaborationUserStateSchema, "PATCH", `/api/collaboration/scopes/${id}/user-state`, {
+    readThroughSeq: CollaborationRevisionSchema.parse(readThroughSeq),
   });
 }
 
-export function fetchCollaborationEventTicket(
+/**
+ * A one-use direct event or terminal socket for this scope: open `url` with
+ * `headers`, then send `handshake` as the first frame before anything else.
+ * Pass `reconnect` after a socket closed so a session the home ended is replaced.
+ */
+export async function openCollaborationStream(
   token: string,
   scopeId: string,
-  clientRequestId: string,
-  purpose: "events" | "terminal" = "events",
-) {
-  const id = CollaborationIdSchema.parse(scopeId);
-  return fetchAuthenticatedJson({
-    url: url(`/api/collaboration/scopes/${id}/connection-tickets`),
-    token,
-    schema: CollaborationConnectionTicketResponseSchema,
-    errorMessage: ERROR,
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      clientRequestId: CollaborationIdSchema.parse(clientRequestId),
-      purpose,
-    }),
-  });
+  purpose: CollaborationStreamPurpose,
+  after = "0",
+  reconnect = false,
+): Promise<CollaborationDirectStream> {
+  try {
+    return await direct.stream(token, CollaborationIdSchema.parse(scopeId), purpose, after, reconnect);
+  } catch (error: unknown) {
+    if (!(error instanceof CollaborationDirectError) && !(error instanceof z.ZodError)) {
+      console.warn("[mobile-collaboration] stream preparation failed", error instanceof Error ? error.name : "UnknownError");
+    }
+    throw new Error(ERROR);
+  }
 }
 
 export function fetchSharedTerminal(token: string, scopeId: string) {
   const id = CollaborationIdSchema.parse(scopeId);
-  return fetchAuthenticatedJson({
-    url: url(`/api/collaboration/scopes/${id}/terminal`),
-    token,
-    schema: CollaborationTerminalSchema,
-    errorMessage: ERROR,
-  });
+  return scoped(token, id, CollaborationTerminalSchema, "GET", `/api/collaboration/scopes/${id}/terminal`);
 }
 
 export function controlSharedTerminal(
@@ -434,33 +460,5 @@ export function controlSharedTerminal(
 ) {
   const id = CollaborationIdSchema.parse(scopeId);
   const body = CollaborationTerminalActionSchema.parse(action);
-  return fetchAuthenticatedJson({
-    url: url(`/api/collaboration/scopes/${id}/terminal/actions`),
-    token,
-    schema: CollaborationTerminalActionResultSchema,
-    errorMessage: ERROR,
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-}
-
-export function collaborationEventsUrl(scopeId: string, ticket: string, after = "0"): string {
-  const id = CollaborationIdSchema.parse(scopeId);
-  const cursor = CollaborationRevisionSchema.parse(after);
-  const parsedTicket = CollaborationConnectionTicketResponseSchema.shape.ticket.parse(ticket);
-  const target = new URL(`/ws/collaboration/scopes/${id}/events`, HOSTED_GATEWAY_URL);
-  target.protocol = target.protocol === "https:" ? "wss:" : "ws:";
-  target.searchParams.set("ticket", parsedTicket);
-  target.searchParams.set("after", cursor);
-  return target.toString();
-}
-
-export function collaborationTerminalUrl(scopeId: string, ticket: string): string {
-  const id = CollaborationIdSchema.parse(scopeId);
-  const parsedTicket = CollaborationConnectionTicketResponseSchema.shape.ticket.parse(ticket);
-  const target = new URL(`/ws/collaboration/scopes/${id}/terminal`, HOSTED_GATEWAY_URL);
-  target.protocol = target.protocol === "https:" ? "wss:" : "ws:";
-  target.searchParams.set("ticket", parsedTicket);
-  return target.toString();
+  return scoped(token, id, CollaborationTerminalActionResultSchema, "POST", `/api/collaboration/scopes/${id}/terminal/actions`, body);
 }

@@ -47,167 +47,76 @@ describe("collaboration browser client", () => {
       .toBe("40000000-0000-4000-8000-000000000001");
   });
 
-  it("does not advance the realtime cursor when canonical refresh fails", async () => {
-    vi.useFakeTimers();
-    const urls: string[] = [];
-    const sockets: Array<{
-      onopen: (() => void) | null;
-      onmessage: ((event: { data: string }) => void) | null;
-      onerror: (() => void) | null;
-      onclose: (() => void) | null;
-      send: ReturnType<typeof vi.fn>;
-      close: ReturnType<typeof vi.fn>;
-    }> = [];
-    let rejectRefresh!: (error: Error) => void;
-    const refresh = new Promise<void>((_resolve, reject) => { rejectRefresh = reject; });
-    const api = createCollaborationBrowserApi({
-      baseUrl: "https://app.matrix-os.com",
-      fetchImpl: async () => new Response(JSON.stringify({
-        ticket: "t".repeat(43), actorId: "user_editor", expiresAt: "2026-09-07T12:00:30.000Z",
-      }), { headers: { "content-type": "application/json" } }),
-      webSocketFactory: (url) => {
-        urls.push(url);
-        const socket = {
-          onopen: null, onmessage: null, onerror: null, onclose: null,
-          send: vi.fn(), close: vi.fn(),
-        };
-        sockets.push(socket);
-        return socket as unknown as WebSocket;
-      },
-    });
-    const onConnectionChange = vi.fn();
-    const unsubscribe = api.subscribe!(
-      "10000000-0000-4000-8000-000000000001",
-      async () => refresh,
-      vi.fn(),
-      onConnectionChange,
-    );
-    await vi.waitFor(() => expect(sockets).toHaveLength(1));
-    sockets[0]!.onopen?.();
-    expect(onConnectionChange).not.toHaveBeenCalledWith("connected");
-    sockets[0]!.onmessage?.({ data: JSON.stringify({
-      version: 1,
-      type: "refresh_required",
-      scopeId: "10000000-0000-4000-8000-000000000001",
-      resourceId: "chat_one",
-      authorityGeneration: "1",
-      sequence: "103",
-    }) });
-    sockets[0]!.onmessage?.({ data: JSON.stringify({
-      version: 1,
-      type: "heartbeat",
-      scopeId: "10000000-0000-4000-8000-000000000001",
-      resourceId: "chat_one",
-      authorityGeneration: "1",
-      sequence: "104",
-    }) });
-    sockets[0]!.onmessage?.({ data: JSON.stringify({
-      version: 1,
-      type: "ready",
-      scopeId: "10000000-0000-4000-8000-000000000001",
-      resourceId: "chat_one",
-      authorityGeneration: "1",
-      sequence: "105",
-    }) });
-    await vi.waitFor(() => expect(onConnectionChange).toHaveBeenCalledWith("connected"));
-    rejectRefresh(new Error("refresh failed"));
-    await vi.waitFor(() => expect(sockets[0]!.close).toHaveBeenCalled());
-    sockets[0]!.onclose?.();
-    expect(onConnectionChange).toHaveBeenCalledWith("reconnecting");
-    await vi.advanceTimersByTimeAsync(500);
-    await vi.waitFor(() => expect(sockets).toHaveLength(2));
-    expect(new URL(urls[1]!).searchParams.get("after")).toBe("0");
-    unsubscribe();
-    vi.useRealTimers();
+  it("carries no realtime streams and refuses the retired V1 connection-ticket route", async () => {
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ ok: true }), {
+      headers: { "content-type": "application/json" },
+    }));
+    const api = createCollaborationBrowserApi({ baseUrl: "https://app.matrix-os.com", fetchImpl });
+    // Event and terminal sockets exist only on the direct transport (direct-api.ts).
+    expect(api.subscribe).toBeUndefined();
+    expect(api.subscribeTerminal).toBeUndefined();
+    await expect(api.post(
+      "/api/collaboration/scopes/10000000-0000-4000-8000-000000000001/connection-tickets",
+      { clientRequestId: "40000000-0000-4000-8000-000000000001", purpose: "events" },
+    )).rejects.toThrow("CollaborationUnavailable");
+    expect(fetchImpl).not.toHaveBeenCalled();
   });
+});
 
-  it("opens a ticketed terminal stream and validates scoped terminal frames", async () => {
-    const urls: string[] = [];
-    const sockets: Array<{
-      onopen: (() => void) | null;
-      onmessage: ((event: { data: string }) => void) | null;
-      onerror: (() => void) | null;
-      onclose: (() => void) | null;
-      send: ReturnType<typeof vi.fn>;
-      close: ReturnType<typeof vi.fn>;
-    }> = [];
-    const fetchImpl = vi.fn(async (_url: string, init?: RequestInit) => {
-      expect(JSON.parse(String(init?.body))).toMatchObject({ purpose: "terminal" });
-      return new Response(JSON.stringify({
-        ticket: "t".repeat(43), actorId: "user_editor", expiresAt: "2026-09-07T12:00:30.000Z",
-      }), { headers: { "content-type": "application/json" } });
-    });
+describe("collaboration browser client organization directory reads", () => {
+  const ok = () => vi.fn(async () => new Response(JSON.stringify({ organizations: [] }), {
+    headers: { "content-type": "application/json" },
+  }));
+
+  it("reads the organization listing and member pages with the platform credentials", async () => {
+    const fetchImpl = ok();
     const api = createCollaborationBrowserApi({
       baseUrl: "https://app.matrix-os.com",
       fetchImpl,
-      webSocketFactory: (url) => {
-        urls.push(url);
-        const socket = {
-          onopen: null, onmessage: null, onerror: null, onclose: null,
-          send: vi.fn(), close: vi.fn(),
-        };
-        sockets.push(socket);
-        return socket as unknown as WebSocket;
-      },
+      getHeaders: async () => ({ Authorization: "Bearer actor-token" }),
     });
-    const onReady = vi.fn();
-    const onOutput = vi.fn();
-    const onState = vi.fn();
-    const onDisconnected = vi.fn();
-    const unsubscribe = api.subscribeTerminal!(
-      "10000000-0000-4000-8000-000000000001",
-      { onReady, onOutput, onState, onRefreshRequired: vi.fn(), onUnavailable: vi.fn(), onDisconnected },
-    );
-    await vi.waitFor(() => expect(sockets).toHaveLength(1));
-    expect(new URL(urls[0]!).pathname).toBe(
-      "/ws/collaboration/scopes/10000000-0000-4000-8000-000000000001/terminal",
-    );
-    sockets[0]!.onmessage?.({ data: JSON.stringify({
-      version: 1,
-      type: "terminal.ready",
-      connectionId: "connection_editor",
-      scopeId: "10000000-0000-4000-8000-000000000001",
-      resourceId: "terminal_release",
-      authorityGeneration: "1",
-      incarnation: `terminal-${"a".repeat(32)}`,
-      sequence: "0",
-      terminal: {
-        id: "terminal_release",
-        scopeId: "10000000-0000-4000-8000-000000000001",
-        incarnation: `terminal-${"a".repeat(32)}`,
-        executionGeneration: "4",
-        status: "active",
-        createdBy: { actorId: "user_owner", displayName: "Nima" },
-        createdAt: "2026-09-07T12:00:00.000Z",
-      },
-    }) });
-    sockets[0]!.onmessage?.({ data: JSON.stringify({
-      version: 1,
-      type: "terminal.output",
-      scopeId: "10000000-0000-4000-8000-000000000001",
-      resourceId: "terminal_release",
-      authorityGeneration: "1",
-      incarnation: `terminal-${"a".repeat(32)}`,
-      sequence: "1",
-      data: "hello\n",
-    }) });
-    const escapedTerminalOutput = "\u0000".repeat(20_000);
-    sockets[0]!.onmessage?.({ data: JSON.stringify({
-      version: 1,
-      type: "terminal.output",
-      scopeId: "10000000-0000-4000-8000-000000000001",
-      resourceId: "terminal_release",
-      authorityGeneration: "1",
-      incarnation: `terminal-${"a".repeat(32)}`,
-      sequence: "2",
-      data: escapedTerminalOutput,
-    }) });
-    expect(onReady).toHaveBeenCalledTimes(1);
-    expect(onOutput).toHaveBeenCalledWith(expect.objectContaining({ data: "hello\n", sequence: "1" }));
-    expect(onOutput).toHaveBeenCalledWith(expect.objectContaining({ data: escapedTerminalOutput, sequence: "2" }));
-    expect(onState).not.toHaveBeenCalled();
-    sockets[0]!.onclose?.();
-    expect(onDisconnected).toHaveBeenCalledOnce();
-    unsubscribe();
+    await api.get("/api/organizations");
+    await api.get("/api/organizations/org_alpha/members");
+    await api.get(`/api/organizations/${encodeURIComponent("org_alpha")}/members?cursor=dXNlcl9tZW1iZXI_-`);
+    expect(fetchImpl.mock.calls.map(([url]) => url)).toEqual([
+      "https://app.matrix-os.com/api/organizations",
+      "https://app.matrix-os.com/api/organizations/org_alpha/members",
+      "https://app.matrix-os.com/api/organizations/org_alpha/members?cursor=dXNlcl9tZW1iZXI_-",
+    ]);
+    for (const [, init] of fetchImpl.mock.calls) {
+      expect(init).toMatchObject({ method: "GET", credentials: "same-origin", redirect: "error" });
+      expect(new Headers(init?.headers).get("authorization")).toBe("Bearer actor-token");
+      expect(init?.signal).toBeInstanceOf(AbortSignal);
+    }
+  });
+
+  it.each([
+    ["a mutation of the listing", "post", "/api/organizations"],
+    ["a mutation of a member page", "patch", "/api/organizations/org_alpha/members"],
+    ["a delete of a member page", "delete", "/api/organizations/org_alpha/members"],
+    ["a listing query", "get", "/api/organizations?limit=5"],
+    ["a trailing slash", "get", "/api/organizations/"],
+    ["an organization read", "get", "/api/organizations/org_alpha"],
+    ["a member subresource", "get", "/api/organizations/org_alpha/members/user_member"],
+    ["a malformed organization", "get", "/api/organizations/team_alpha/members"],
+    ["an encoded separator", "get", "/api/organizations/org_alpha%2Fmembers/members"],
+    ["a traversal", "get", "/api/organizations/org_alpha/../members"],
+    ["a sibling prefix", "get", "/api/organizationsx"],
+    ["a limit parameter", "get", "/api/organizations/org_alpha/members?limit=100"],
+    ["a repeated cursor", "get", "/api/organizations/org_alpha/members?cursor=a&cursor=b"],
+    ["an empty cursor", "get", "/api/organizations/org_alpha/members?cursor="],
+    ["a malformed cursor", "get", "/api/organizations/org_alpha/members?cursor=a%20b"],
+    ["an oversized cursor", "get", `/api/organizations/org_alpha/members?cursor=${"a".repeat(257)}`],
+    ["a fragment", "get", "/api/organizations#members"],
+    ["another origin", "get", "https://evil.example/api/organizations"],
+    ["a protocol-relative origin", "get", "//evil.example/api/organizations"],
+    ["another platform route", "get", "/api/runtimes"],
+  ] as const)("refuses %s before any request", async (_label, method, path) => {
+    const fetchImpl = ok();
+    const api = createCollaborationBrowserApi({ baseUrl: "https://app.matrix-os.com", fetchImpl });
+    const call = method === "get" ? api.get(path) : method === "post" ? api.post(path, {}) : method === "patch" ? api.patch!(path, {})
+      : api.delete(path, { clientRequestId: "40000000-0000-4000-8000-000000000001", expectedRevision: "1", expectedMemberRevision: "1" });
+    await expect(call).rejects.toThrow("CollaborationUnavailable");
+    expect(fetchImpl).not.toHaveBeenCalled();
   });
 });

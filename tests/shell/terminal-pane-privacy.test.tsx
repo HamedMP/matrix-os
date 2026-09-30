@@ -271,7 +271,6 @@ describe("TerminalPane session replay privacy", () => {
           headers: expect.objectContaining({
             Authorization: "Bearer ws-token",
             "Content-Type": "application/json",
-            "X-Matrix-Filename": "screen shot.png",
           }),
           credentials: "same-origin",
           signal: expect.any(AbortSignal),
@@ -424,7 +423,7 @@ describe("TerminalPane session replay privacy", () => {
     await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
     expect(stubWs.close).not.toHaveBeenCalled();
     expect(stubWs.send).not.toHaveBeenCalledWith(expect.stringContaining("photo.jpg"));
-    expect(await screen.findByText("Image paste failed. Try again.")).toBeTruthy();
+    expect(await screen.findByText("File upload failed. Try again.")).toBeTruthy();
     const diagnostics = JSON.stringify(warn.mock.calls);
     expect(diagnostics).not.toContain(rawFailure);
     expect(diagnostics).not.toContain("OpenAI");

@@ -12,6 +12,7 @@ import {
   CollaborationActorIdSchema,
   CollaborationControlAckSchema,
   CollaborationOrganizationIdSchema,
+  CollaborationOrganizationMembersCursorSchema,
 } from "@matrix-os/contracts";
 import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
@@ -28,7 +29,7 @@ const RuntimeIdSchema = z.string().min(1).max(128).regex(/^[A-Za-z0-9:_-]+$/);
 const BearerTokenSchema = z.string().min(32).max(4_096).regex(/^[A-Za-z0-9._~-]+$/);
 const MembersQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(MEMBERSHIP_PAGE_LIMIT).default(50),
-  cursor: z.string().max(256).regex(/^[A-Za-z0-9_-]+$/).optional(),
+  cursor: CollaborationOrganizationMembersCursorSchema.optional(),
 }).strict();
 const AccessResolveSchema = z.object({
   protocolVersion: z.literal(COLLABORATION_DIRECT_PROTOCOL_VERSION),

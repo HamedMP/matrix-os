@@ -13,13 +13,16 @@ it("dependency preflight imports the installed SDK without executing ignored ven
     await writeFile(join(site, "anthropic.py"), "SYNTHETIC = True\n");
     await mkdir(join(site, "anthropic-0.87.0.dist-info"));
     await writeFile(join(site, "anthropic-0.87.0.dist-info/METADATA"), "Name: anthropic\nVersion: 0.87.0\n");
+    await writeFile(join(site, "openai.py"), "SYNTHETIC = True\n");
+    await mkdir(join(site, "openai-2.24.0.dist-info"));
+    await writeFile(join(site, "openai-2.24.0.dist-info/METADATA"), "Name: openai\nVersion: 2.24.0\n");
     await writeFile(join(site, "startup.pth"), `import os; open(${JSON.stringify(marker)}, 'w').write('unchecked startup')\n`);
     await verifyJevHermesDependencies(root, new AbortController().signal);
     await expect(access(marker)).rejects.toThrow();
   } finally { await rm(root, { recursive: true, force: true }); }
 });
-it("requires the exact spike-tested Anthropic SDK to import in isolated Python before launch", async () => {
-  const command = vi.fn(async (_executable: string, _args: string[], _signal: AbortSignal) => "0.87.0\n");
+it("requires the exact spike-tested Anthropic and OpenAI SDKs to import in isolated Python before launch", async () => {
+  const command = vi.fn(async (_executable: string, _args: string[], _signal: AbortSignal) => "0.87.0\n2.24.0\n");
   await verifyJevHermesDependencies("/fixture/hermes", new AbortController().signal, command);
   expect(command).toHaveBeenCalledWith("/fixture/hermes/venv/bin/python", expect.arrayContaining(["-I", "-c"]), expect.any(AbortSignal));
   expect(command.mock.calls[0]![1].join(" ")).toContain("import anthropic");

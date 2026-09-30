@@ -19,13 +19,21 @@ describe("Chat catalog connection label wire negotiation", () => {
     const result = await response.json();
     expect(response.status).toBe(200);
     expect(result.instances[0]).not.toHaveProperty("connectionLabel");
+    expect(result.instances[0]).not.toHaveProperty("connectionState");
     expect(result.revision).toBe(catalog.revision);
     expect(catalog.instances[0]).toHaveProperty("connectionLabel", "Matrix AI");
     expect(query.includes("refresh=true") ? service.refresh : service.getCatalog).toHaveBeenCalledOnce();
   });
   it.each(["?includeConnectionLabels=true", "?refresh=true&includeConnectionLabels=true"])("includes labels only with explicit opt-in %s", async (query) => {
     const { routes, catalog } = fixture();
-    expect(await (await routes.request(`/api/chat-providers${query}`)).json()).toEqual(catalog);
+    const result = await (await routes.request(`/api/chat-providers${query}`)).json();
+    const expected = {
+      ...catalog,
+      instances: catalog.instances.map(({ connectionState: _state, ...instance }) => instance),
+    };
+    expect(result).toEqual(expected);
+    expect(result.instances[0]).not.toHaveProperty("connectionState");
+    expect(catalog.instances[0]).toHaveProperty("connectionState", "ready");
   });
   it.each(["yes", "TRUE", "x".repeat(512)])("rejects invalid negotiation value %s without reading provider state", async (flag) => {
     const { routes, service } = fixture();

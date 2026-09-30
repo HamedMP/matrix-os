@@ -56,7 +56,7 @@ test.describe("onboarding activation", () => {
     await expect(page.getByText("Hermes is available as the Matrix system agent")).toBeVisible();
   });
 
-  test("handholds the coding setup path with project, issue source, Symphony, and terminal context", async ({ page }) => {
+  test("handholds the coding setup path with project, issue source, and terminal context", async ({ page }) => {
     await page.route("**/api/onboarding/readiness", async (route) => {
       await route.fulfill({
         json: {
@@ -88,21 +88,11 @@ test.describe("onboarding activation", () => {
             {
               id: "issue_source.selected",
               category: "coding",
-              criticality: "goal_required",
+              criticality: "recommended",
               status: "fail",
-              message: "Choose a task source before starting coding work",
-              remediation: "Connect Linear or choose a Matrix task list",
+              message: "No task source is connected; you can add one later",
+              remediation: "Connect Linear or choose a Matrix task list when needed",
               owner: "user",
-              lastCheckedAt: "2026-05-23T00:00:00.000Z",
-            },
-            {
-              id: "symphony.ready",
-              category: "coding",
-              criticality: "goal_required",
-              status: "pass",
-              message: "Symphony is ready to dispatch coding work",
-              remediation: null,
-              owner: "matrix",
               lastCheckedAt: "2026-05-23T00:00:00.000Z",
             },
             {
@@ -129,8 +119,7 @@ test.describe("onboarding activation", () => {
           steps: [
             { id: "github.connected", required: true, title: "Connect GitHub", unlocks: ["coding"] },
             { id: "project.selected", required: true, title: "Choose a project", unlocks: ["coding"] },
-            { id: "issue_source.selected", required: true, title: "Choose task source", unlocks: ["coding"] },
-            { id: "symphony.ready", required: true, title: "Prepare Symphony", unlocks: ["coding"] },
+            { id: "issue_source.selected", required: false, title: "Choose task source", unlocks: ["coding"] },
             { id: "terminal.ready", required: false, title: "Open terminal context", unlocks: ["coding"] },
           ],
         },

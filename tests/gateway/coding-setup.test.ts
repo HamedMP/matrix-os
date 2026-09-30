@@ -16,17 +16,14 @@ describe("coding setup aggregation", () => {
       listMatrixProjects,
       getSelectedProjectSlug: async () => "matrix-os",
       hasIssueSource: async () => true,
-      getSymphonyStatus: async () => ({
-        ready: true,
-        runStatuses: ["running"],
-        activeAgents: ["codex"],
-      }),
       hasTerminalContext: async () => true,
     });
 
     const status = await provider.getCodingSetup("owner_123");
 
     expect(status.githubConnected).toBe(true);
+    expect(status.activeAgents).toEqual(["hermes"]);
+    expect(status.handoffStatus).toBe("idle");
     expect(listMatrixProjects).toHaveBeenCalledTimes(1);
     expect(hasGitHubConnection).toHaveBeenCalledWith("owner_123", expect.objectContaining({
       slug: "matrix-os",

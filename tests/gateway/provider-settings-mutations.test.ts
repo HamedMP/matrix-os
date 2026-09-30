@@ -30,6 +30,35 @@ describe("provider settings configuration mutations", () => {
     }
   });
 
+  it.each(([
+    ["hermes", "pi"], ["hermes", "opencode"],
+    ["openclaw", "pi"], ["openclaw", "opencode"],
+  ] as const).flatMap(([harness, nativeOwner]) =>
+    ["add_harness", "set_route", "select_access_source"].map((action) => ({ harness, nativeOwner, action })),
+  ))("rejects $action for $harness using a foreign $nativeOwner profile without changing configuration", ({ harness, nativeOwner, action }) => {
+    const sourceId = `harness_${nativeOwner}_openai-codex`;
+    const route = { kind: "configurable" as const, providerId: "openai-codex", modelId: "openai-codex:gpt-5.6-sol" };
+    const original = {
+      version: 1, revision: 0, accountProfiles: [], gatewayPolicy: null, receipts: [],
+      harnesses: [{ id: "generic", driverId: harness, harness, displayName: harness, accentColor: null,
+        enabled: false, selectedAccountId: null, accessSourceId: sourceId, route }],
+    } satisfies ProviderSettingsConfiguration;
+    const snapshot = { accessSources: [{ id: sourceId, kind: "harness_profile", harness: nativeOwner,
+      fundingKind: "owner_account", providerId: route.providerId, accountId: null, eligibleModelIds: [route.modelId] }],
+      accounts: [], gatewayPolicy: null } as unknown as ProviderSettingsSnapshot;
+    const base = { expectedRevision: 0, idempotencyKey: `foreign_${harness}_${nativeOwner}_${action}` };
+    const mutation = action === "add_harness"
+      ? { ...base, type: "add_harness" as const, harness, displayName: harness, route, accessSourceId: sourceId, accountId: null }
+      : action === "set_route"
+        ? { ...base, type: "set_route" as const, harnessInstanceId: "generic", route, accessSourceId: sourceId, accountId: null }
+        : { ...base, type: "select_access_source" as const, harnessInstanceId: "generic", accessSourceId: sourceId };
+    const config = structuredClone(original);
+
+    expect(() => applyProviderConfigurationMutation({ mutation, config, snapshot,
+      canonical: providerSettingsCanonicalFixture(), id: () => "new" })).toThrow("invalid_route");
+    expect(config).toEqual(original);
+  });
+
   it.each(["pi", "opencode"] as const)("preserves supported Matrix AI add and route for %s", (harness) => {
     const config = { version: 1, revision: 0, accountProfiles: [], gatewayPolicy: null, receipts: [], harnesses: [] } as ProviderSettingsConfiguration;
     const route = { kind: "configurable" as const, providerId: "anthropic", modelId: "claude-sonnet-5" };
@@ -46,14 +75,14 @@ describe("provider settings configuration mutations", () => {
     expect(config.harnesses[0]?.enablementOrigin).toBe("owner_configuration");
   });
 
-  it("switches provider, model, source, and account as one route mutation", () => {
+  it.each(["hermes", "openclaw"] as const)("switches %s provider, model, source, and account as one route mutation", (harness) => {
     const config = {
       version: 1,
       revision: 0,
       harnesses: [{
         id: "harness_generic",
         driverId: "kernel",
-        harness: "hermes" as const,
+        harness,
         displayName: "Hermes",
         accentColor: null,
         enabled: true,

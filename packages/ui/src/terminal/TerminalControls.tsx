@@ -9,6 +9,7 @@ import {
 } from "./TerminalControlIcon.js";
 import { TerminalKeyboardSettings } from "./TerminalKeyboardSettings.js";
 import "./terminal-controls.css";
+import { TerminalAttachmentButton, type TerminalAttachmentAction } from "./TerminalAttachmentButton.js";
 
 const PRIMARY_ACTIONS: Array<{
   label: string;
@@ -38,9 +39,11 @@ export function TerminalControls({
   theme,
   placement = "surface",
   layers,
+  attachment,
 }: {
   placement?: "surface" | "header";
   layers?: { popover: number; dialog: number };
+  attachment?: TerminalAttachmentAction;
   controls: TerminalControlsState;
   theme?: { background?: string; foreground?: string };
 }) {
@@ -89,6 +92,7 @@ export function TerminalControls({
         aria-label="Terminal pane controls"
         className="matrix-terminal-toolbar"
       >
+        {attachment && <TerminalAttachmentButton action={attachment} target={target} />}
         {placement === "surface" && (
           <span className="matrix-terminal-hint" aria-hidden="true">
             Pane controls <kbd>⌃ G</kbd>

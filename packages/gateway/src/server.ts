@@ -161,8 +161,6 @@ import { createGatewaySpeechRuntime } from "./speech/gateway-runtime.js";
 import { initializeOwnerDatabaseServices } from "./startup/owner-database.js";
 import { enableOwnerSharedAi } from "./startup/collaboration.js";
 import { initializePlatformIntegrations } from "./startup/platform-integrations.js";
-import { createSymphonyRunner } from "./symphony-runner.js";
-import { createElixirSymphonyProxyRoutes } from "./symphony/proxy.js";
 import { getVersion } from "./system-info.js";
 import { createTaskManager } from "./task-manager.js";
 import { createTerminalLiveOwnership } from "./terminal-live-ownership.js";
@@ -246,11 +244,8 @@ import { registerMainWebSocketRoutes } from "./server/main-ws-routes.js";
 import { registerMessageLayoutRoutes } from "./server/message-layout-routes.js";
 import { registerOperationalRoutes } from "./server/operational-routes.js";
 import { registerShellTerminalRoutes } from "./server/shell-terminal-routes.js";
-import {
-  resolveInitialSymphonyPort,
-  symphonyUpstreamOriginForPort,
-} from "./server/symphony-origin.js";
 import { registerSystemOperatorRoutes } from "./server/system-operator-routes.js";
+import { createPlatformSpeechHostConfigRoutes } from "./speech/host-activation.js";
 import { registerTerminalWebSocketRoutes } from "./server/terminal-ws-routes.js";
 import type { GatewayConfig, ServerMessage } from "./server/types.js";
 import { registerVoiceWebSocketRoutes } from "./server/voice-ws-routes.js";
@@ -266,10 +261,6 @@ export {
   buildAllowedOrigins,
   createAllowedOriginController,
 } from "./allowed-origins.js";
-export {
-  readInitialSymphonyPort,
-  resolveInitialSymphonyPort,
-} from "./server/symphony-origin.js";
 export type { GatewayConfig, ServerMessage } from "./server/types.js";
 export {
   registerTerminalSessionRoutes,
@@ -329,11 +320,6 @@ export async function createGateway(config: GatewayConfig) {
   const workspaceSessionRuntimeBridge = createSessionRuntimeBridge();
   const shellPreferencesStore = new ShellPreferencesStore({ homePath });
   const terminalWindowLayoutStore = new TerminalWindowLayoutStore({ homePath });
-  const symphonyRunner = createSymphonyRunner({ homePath });
-  const initialSymphonyPort = await resolveInitialSymphonyPort(symphonyRunner);
-  if (initialSymphonyPort) {
-    allowedOriginController.updateSymphonyPort(initialSymphonyPort);
-  }
   const forwardTunnelHub = createForwardTunnelHub();
   // One distinct id for every gateway telemetry event so all events on a
   // dev gateway without owner env vars land under the same person.
@@ -692,7 +678,6 @@ export async function createGateway(config: GatewayConfig) {
     githubConnected: false,
     selectedProject: null,
     issueSourceConfigured: false,
-    symphonyReady: false,
     terminalReady: false,
     activeAgents: ["hermes"],
     handoffStatus: "idle",
@@ -1171,8 +1156,10 @@ export async function createGateway(config: GatewayConfig) {
       if (!providerSettingsStore) throw new Error("Provider settings are unavailable");
       return providerSettingsStore.getSnapshot(options);
     } },
+    runtimeSource: Object.assign((signal: AbortSignal) => agentRuntimeServices.systemRuntimeSources.hermes(signal),
+      { invalidate: () => agentRuntimeServices.systemRuntimeSources.hermes.invalidate?.() }),
     getAgent: (ownerId, agentId) => canonicalChatRuntime?.agents.get({ type: "personal", ownerId }, agentId) ?? Promise.resolve(null),
-    service: jevService, summary: fundedAiFundingSummaryReader,
+    service: jevService, batchStore: jevRuntime?.batchStore, summary: fundedAiFundingSummaryReader,
     routes: fundedAiRuntimeConfig ? createFundedAiRouteReadinessClient(fundedAiRuntimeConfig) : undefined,
     internalBaseUrl: internalIntegrationBaseUrl, machineToken: internalPlatformToken, db: platformDb, pipedream: pipedreamClient,
   }) : null;
@@ -1227,6 +1214,7 @@ export async function createGateway(config: GatewayConfig) {
       })
     : undefined;
   app.route("/api/speech", speechRuntime.routes);
+  app.route("/api/internal/platform-speech", createPlatformSpeechHostConfigRoutes());
   const fundedOwnerIds = new Set([
     fundedAiRuntimeConfig?.identity.ownerId,
     process.env.MATRIX_USER_ID?.trim(),
@@ -1278,7 +1266,7 @@ export async function createGateway(config: GatewayConfig) {
     canonicalChatExecutionRoots, gatewayCollaboration,
   });
 
-  const processManager = registerDeferredRuntimeRoutes({
+  const { processManager, customMcp } = registerDeferredRuntimeRoutes({
     app, homePath, integrationRoutes, internalIntegrationBaseUrl,
     internalPlatformToken, internalPlatformUrl, internalHandle,
     proxyIntegrationRequest: (c, targetBase, machineToken, routePrefix) =>
@@ -1406,6 +1394,7 @@ export async function createGateway(config: GatewayConfig) {
   });
   const aiProviderService = new AiProviderService({
     nativeHarnessCatalogReader: genericHarnessModelCatalog,
+    hermesRuntimeSource: agentRuntimeServices.systemRuntimeSources.hermes,
     homePath,
     healthProbe: createOwnerAnthropicKeyPreflight({ homePath }),
     fundedCredentialProvider,
@@ -1607,9 +1596,6 @@ export async function createGateway(config: GatewayConfig) {
     ...chatBoundWorkspaceRouteDeps,
   }));
   app.route("/api", createShellRoutes(shellRouteDeps));
-  app.route("/api/symphony", createElixirSymphonyProxyRoutes({
-    upstreamOrigin: symphonyUpstreamOriginForPort(initialSymphonyPort),
-  }));
   const workspaceStartupRecoveryController = createWorkspaceStartupRecovery({
     deleteProjectChats,
     homePath,
@@ -1772,7 +1758,7 @@ export async function createGateway(config: GatewayConfig) {
     pluginRegistry,
     hookRunner,
     async close() {
-      jevInboxRuntime?.close();
+      await jevInboxRuntime?.close();
       matrixMcpCapabilities.close();
       workspaceStartupRecoveryController.close();
       await terminalPasteAssetCleanup.close();
@@ -1833,6 +1819,7 @@ export async function createGateway(config: GatewayConfig) {
       canvasSubscriptionHub?.close();
       systemActivityCandidates.clear();
       await channelManager.stop();
+      customMcp.stop();
       await processManager.shutdownAll();
       await forwardTunnelHub.close();
       await watcher.close();

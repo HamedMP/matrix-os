@@ -3,7 +3,7 @@ import type { ChatAgentClient } from "../../packages/ui/src/chat-agents/client.j
 import { createCanonicalProviderCatalogFixture } from "../contracts/fixtures/canonical-chat";
 
 export const saved = { id: "bot_meeting01", revision: 1, name: "Meeting helper", description: "Prepare meetings",
-  instructions: "Summarize decisions.", selection: { instanceId: "hermes_default", model: "openai:gpt-5.6-sol" },
+  instructions: "Summarize decisions.", selection: { instanceId: "hermes_default", model: "openai-api:gpt-5.6-sol" },
   archived: false, createdAt: "2026-09-10T00:00:00.000Z", updatedAt: "2026-09-10T00:00:00.000Z" };
 export const recipeCatalog = {
   enabled: true,
@@ -24,7 +24,7 @@ const connections = [
 export function clientFixture() {
   const catalog = createCanonicalProviderCatalogFixture();
   catalog.drivers.push({ ...catalog.drivers[0]!, kind: "hermes", displayName: "Hermes" });
-  catalog.instances.push({ ...catalog.instances[0]!, id: "hermes_default", driverKind: "hermes",
+  catalog.instances.push({ ...catalog.instances[0]!, id: "hermes_default", driverKind: "hermes", displayName: "Hermes",
     models: [{ ...catalog.instances[0]!.models[0]!, id: saved.selection.model }],
     defaultSelection: saved.selection,
   });

@@ -18,9 +18,11 @@ export function createChatProviderRoutes(options: {
       const query = z.object({
         refresh: z.enum(["true", "false"]).optional(),
         includeConnectionLabels: z.enum(["true", "false"]).optional(),
+        includeConnectionState: z.enum(["true", "false"]).optional(),
       }).strict().safeParse({
         refresh: context.req.query("refresh"),
         includeConnectionLabels: context.req.query("includeConnectionLabels"),
+        includeConnectionState: context.req.query("includeConnectionState"),
       });
       if (!query.success) return context.json({ error: "Invalid request" }, 400);
       const catalog = query.data.refresh === "true"
@@ -28,9 +30,13 @@ export function createChatProviderRoutes(options: {
         : await options.catalog.getCatalog(principal);
       // Older clients validate instances strictly. Presentation additions must be
       // negotiated on the wire, without modifying the authoritative admission catalog.
-      return context.json(query.data.includeConnectionLabels === "true" ? catalog : {
+      return context.json({
         ...catalog,
-        instances: catalog.instances.map(({ connectionLabel: _connectionLabel, ...legacy }) => legacy),
+        instances: catalog.instances.map(({ connectionLabel, connectionState, ...legacy }) => ({
+          ...legacy,
+          ...(query.data.includeConnectionLabels === "true" && connectionLabel !== undefined ? { connectionLabel } : {}),
+          ...(query.data.includeConnectionState === "true" && connectionState !== undefined ? { connectionState } : {}),
+        })),
       });
     } catch (error: unknown) {
       const retryable = error instanceof ProviderCatalogUnavailableError && error.retryable;

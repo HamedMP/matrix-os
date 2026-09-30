@@ -149,7 +149,7 @@ describe("Hermes Agent invocation through canonical Chat", () => {
       expect(calls[0]?.input.context?.agent?.recipe?.jevInboxTriage?.connectionId).toBe("conn_own");
     } else {
       await expect(pending).rejects.toMatchObject({ safeError: { safeMessage: mode === "setup"
-        ? "Inbox triage requires a ready selected Hermes owner API-key account. Check Agents & providers."
+        ? "Inbox triage requires a supported configured Hermes account. Check Agents & providers."
         : "Inbox triage funding is unavailable. Check Matrix AI readiness and retry." } });
       expect(calls).toEqual([]);
     }

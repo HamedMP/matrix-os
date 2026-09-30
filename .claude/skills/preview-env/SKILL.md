@@ -15,6 +15,7 @@ reference: `docs/dev/preview-environments.md`. Spec: `specs/093-preview-environm
 | Shell/gateway/kernel UI, fast iteration | **Staging slot** (HMR, seconds per change) | `./scripts/staging-slot.sh up <worktree>` |
 | Shell/gateway/kernel, production-shaped verify; onboarding (needs virgin VPS) | **Preview VPS** | add the `preview-vps` label to the PR |
 | Platform (packages/platform) | **Platform preview revision** | add the `preview-platform` label to the PR |
+| Organization collaboration (pre-merge gate) | **Collaboration preview** | labels `preview-vps`, `preview-collaboration` and `preview-platform`, then the `connect_collaboration_preview` dispatch (docs, "Collaboration previews") |
 | macOS app | CI artifact + any preview VPS via `app.matrix-os.com/vm/<handle>` | build artifact from `macos-086.yml` |
 | CLI | npm dist-tag paired with a preview VPS profile | see docs |
 
@@ -34,10 +35,14 @@ idle past TTL.
 
 ## Preview VPS (verify loop)
 
-Label the PR `preview-vps`. CI builds bundle `0.0.0-pr<N>.<sha7>`, registers it
-**without any channel** (it can never reach real users), provisions VPS `pr-<N>`,
+Label the PR `preview-vps`. CI builds bundle `v<YYYY.MM.DD>-pr<N>-<run>-<attempt>-<sha7>`,
+registers it **without any channel** (it can never reach real users), provisions VPS `pr-<N>`,
 deploys, and comments the URL. Closed PR ⇒ VPS deleted (daily reaper as backstop,
 72h TTL). Manual run: `gh workflow run preview-vps.yml -f pr=<N>`.
+
+The shared `pr-<N>` VPS cannot use personal Integrations or Custom MCP. To test a PR
+against your own connected accounts, an internal member runs `matrix preview start <N>`
+for an owner-only Private Preview (see `docs/dev/preview-environments.md`).
 
 ## Logs — one interface for everything
 

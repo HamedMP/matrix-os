@@ -24,7 +24,7 @@ import { z } from "zod/v4";
 import { requireCliAuthToken } from "../auth-state.js";
 import { cliError, formatCliError, formatCliSuccess } from "../output.js";
 import { resolveCliProfile } from "../profiles.js";
-import { createCliCollaborationTransport, type CliCollaborationTransport } from "../collaboration-direct-transport.js";
+import { collaborationAuthRejected, createCliCollaborationTransport, type CliCollaborationTransport } from "../collaboration-direct-transport.js";
 
 const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
 const ScopeIdSchema = z.uuid();
@@ -67,7 +67,7 @@ interface CollaborationTerminalSocket {
   close(code?: number, reason?: string): void;
 }
 
-type CollaborationTerminalSocketConstructor = new (url: string) => CollaborationTerminalSocket;
+type CollaborationTerminalSocketConstructor = new (url: string, options: { headers: Record<string, string> }) => CollaborationTerminalSocket;
 
 export async function watchCollaborationTerminal(options: {
   platformUrl: string;
@@ -88,7 +88,7 @@ export async function watchCollaborationTerminal(options: {
   const WebSocketImpl = options.WebSocketImpl
     ?? await import("ws").then((module) => module.WebSocket as unknown as CollaborationTerminalSocketConstructor);
   if (!WebSocketImpl) throw cliError("collaboration_failed");
-  const socket = new WebSocketImpl(connection.url);
+  const socket = new WebSocketImpl(connection.url, { headers: connection.headers });
   const writeOutput = options.writeOutput ?? ((value: string) => process.stdout.write(value));
   const writeState = options.writeState ?? ((value: unknown) => console.error(JSON.stringify(value)));
   let connectionId: string | null = null;
@@ -197,6 +197,7 @@ export async function collaborationRequest(input: CollaborationRequestInput): Pr
         .request(scopeId, input.method, input.path, input.body);
     } catch (error: unknown) {
       if (!(error instanceof Error)) console.warn("[cli-collaboration] request failed", "UnknownError");
+      if ((error as { code?: unknown }).code === "auth_rejected") throw error;
       throw cliError("collaboration_failed");
     }
   }
@@ -232,6 +233,7 @@ async function platformRequest(input: CollaborationRequestInput): Promise<unknow
     if (error instanceof DOMException || error instanceof TypeError) throw cliError("collaboration_failed");
     throw error;
   }
+  if (response.status === 401) { await response.body?.cancel(); throw collaborationAuthRejected(); }
   if (!response.ok) throw cliError("collaboration_failed");
   const declaredLength = Number(response.headers.get("content-length") ?? "0");
   if (Number.isFinite(declaredLength) && declaredLength > MAX_RESPONSE_BYTES) {
@@ -301,7 +303,7 @@ async function run(
     const code = error instanceof Error && "code" in error && typeof error.code === "string"
       ? error.code
       : "collaboration_failed";
-    const authMessage = (code === "not_authenticated" || code === "auth_expired") && error instanceof Error
+    const authMessage = (code === "not_authenticated" || code === "auth_expired" || code === "auth_rejected") && error instanceof Error
       ? error.message
       : undefined;
     console.error(json ? formatCliError(code, authMessage) : authMessage ?? "Error: Collaboration request failed.");

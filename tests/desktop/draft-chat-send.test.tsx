@@ -367,7 +367,7 @@ describe("draft chat implicit thread creation", () => {
     const choices = screen.getByRole("listbox", { name: "Models and connections" });
     expect(within(choices).queryAllByRole("option")).toHaveLength(0);
     if (providers.length === 0) expect(screen.getByRole("status").textContent)
-      .toBe("No ready connections. Open Agents & providers settings to connect.");
+      .toBe("Matrix AI is unavailable on this computer.");
     if (providers.length > 0) expect(screen.getByRole("button", { name: `Codex agent, ${availability}` })).toBeTruthy();
     if (action) {
       fireEvent.click(screen.getByRole("button", { name: `Codex agent, ${availability}` }));

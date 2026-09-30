@@ -97,6 +97,7 @@ const HMAC_WEBHOOK_PREFIXES = [
 // use service-specific tokens instead of the user/session MATRIX_AUTH_TOKEN.
 const ROUTE_SCOPED_BEARER_PATHS = [
   "/api/internal/upgrade",
+  "/api/internal/platform-speech/config",
 ];
 const ROUTE_SCOPED_SIGNATURE_PATHS = [
   "/api/internal/terminal-acceptance/run",

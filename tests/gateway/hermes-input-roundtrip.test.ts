@@ -17,7 +17,10 @@ let prompts = 0, answers = 0;
 createInterface({ input: process.stdin }).on("line", line => {
   const request = JSON.parse(line);
   switch (request.method) {
-    case "session.create": respond(request, { session_id: "native_session", stored_session_id: "durable_session" }); break;
+    case "session.create":
+      respond(request, { session_id: "native_session", stored_session_id: "durable_session" });
+      event("session.info", { provider: request.params.provider, model: request.params.model });
+      break;
     case "config.set": respond(request, { key: request.params.key, value: request.params.key === "yolo" ? "1" : request.params.value, scope: "session" }); break;
     case "session.cwd.set": respond(request, { cwd: request.params.cwd }); break;
     case "prompt.submit":

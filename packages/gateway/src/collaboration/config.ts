@@ -33,7 +33,8 @@ export type GatewayCollaborationConfigurationFailure =
   | "signing_configuration_missing"
   | "platform_configuration_missing"
   | "owner_database_missing"
-  | "construction_failed";
+  | "construction_failed"
+  | "disabled_for_machine";
 
 export function loadGatewayCollaborationConfig(env: NodeJS.ProcessEnv): GatewayCollaborationConfig | null {
   const health = describeRuntimeConfiguration(env);
@@ -68,6 +69,9 @@ export function describeGatewayCollaborationConfiguration(
 }
 
 function describeRuntimeConfiguration(env: NodeJS.ProcessEnv): GatewayCollaborationConfigurationHealth {
+  // Spec 537: the platform writes this for Private Previews, which only their
+  // owner may reach. The platform refuses their registration regardless.
+  if (env.MATRIX_COLLABORATION_DISABLED?.trim() === "1") return { configured: false, reason: "disabled_for_machine" };
   const configuredRuntimeId = env.MATRIX_RUNTIME_ID?.trim();
   const machineId = env.MATRIX_MACHINE_ID?.trim();
   const runtimeId = configuredRuntimeId

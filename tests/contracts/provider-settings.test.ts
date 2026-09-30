@@ -11,6 +11,7 @@ import {
   isNativeGenericHarnessCredentialRoute,
   isPortableGenericHarnessCredentialRoute,
   isRunnableGenericHarnessCredentialRoute,
+  isSupportedGenericHarnessCredentialRoute,
   type ProviderSettingsMutation,
   type ProviderSettingsSnapshot,
 } from "@matrix-os/contracts";
@@ -258,6 +259,47 @@ describe("provider settings contracts", () => {
       { ...harness, harness: "pi" },
       source,
     )).toBe(false);
+  });
+
+  it.each([
+    ["hermes", "pi"], ["hermes", "opencode"],
+    ["openclaw", "pi"], ["openclaw", "opencode"],
+  ] as const)("rejects a %s route using a foreign %s native profile", (harnessKind, nativeOwner) => {
+    const snapshot = makeSnapshot();
+    const source = {
+      ...snapshot.accessSources[1]!,
+      id: `harness_${nativeOwner}_openai-codex`,
+      kind: "harness_profile" as const,
+      harness: nativeOwner,
+      fundingKind: "owner_account" as const,
+      providerId: "openai-codex",
+      accountId: null,
+      eligibleModelIds: ["openai-codex:gpt-5.6-sol"],
+    };
+    const harness = {
+      ...snapshot.harnesses[0]!, harness: harnessKind, accessSourceId: source.id,
+      route: { kind: "configurable" as const, providerId: source.providerId, modelId: source.eligibleModelIds[0]! },
+    };
+
+    expect(isSupportedGenericHarnessCredentialRoute(harness, source)).toBe(false);
+  });
+
+  it.each(["hermes", "openclaw"] as const)("preserves provider accounts and excludes Matrix relay for %s", (harnessKind) => {
+    const snapshot = makeSnapshot();
+    const harness = { ...snapshot.harnesses[0]!, harness: harnessKind };
+
+    expect(isSupportedGenericHarnessCredentialRoute(harness, snapshot.accessSources[1])).toBe(true);
+    expect(isSupportedGenericHarnessCredentialRoute(harness, {
+      ...snapshot.accessSources[1]!, fundingKind: "owner_api_key",
+    })).toBe(true);
+    expect(isSupportedGenericHarnessCredentialRoute(harness, snapshot.accessSources[0])).toBe(false);
+  });
+
+  it.each(["hermes", "openclaw"] as const)("requires an access source for %s", (harnessKind) => {
+    const harness = { ...makeSnapshot().harnesses[0]!, harness: harnessKind };
+
+    expect(isSupportedGenericHarnessCredentialRoute(harness, null)).toBe(false);
+    expect(isSupportedGenericHarnessCredentialRoute(harness, undefined)).toBe(false);
   });
 
   it("accepts a secret-free UI mutation projection derived from V3", () => {

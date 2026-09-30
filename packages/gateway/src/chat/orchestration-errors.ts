@@ -39,7 +39,7 @@ export function mapRepositoryError(error: unknown): never {
       throw new CanonicalChatOrchestrationError(canonicalChatSafeError(
         error.code === "workflow_setup_required" ? "capability_mismatch" : "service_unavailable",
         error.code === "workflow_setup_required"
-          ? "Inbox triage requires a ready selected Hermes owner API-key account. Check Agents & providers."
+          ? "Inbox triage requires a supported configured Hermes account. Check Agents & providers."
           : "Inbox triage funding is unavailable. Check Matrix AI readiness and retry.",
       ), error.code === "workflow_setup_required" ? 400 : 503);
     }

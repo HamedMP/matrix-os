@@ -94,8 +94,8 @@ write_files:
       ExecStart=/opt/matrix/bin/matrix-gateway
       Restart=on-failure
       RestartSec=5
-      MemoryHigh=1G
-      MemoryMax=1536M
+      MemoryHigh=40%
+      MemoryMax=50%
 
       [Install]
       WantedBy=multi-user.target
@@ -397,6 +397,8 @@ write_files:
       MATRIX_UPDATE_CHANNEL={{updateChannel}}
       MATRIX_PLATFORM_REGISTER_URL={{platformRegisterUrl}}
       PLATFORM_INTERNAL_URL={{platformInternalUrl}}
+      {{updateManifestBaseUrlEnv}}
+      {{collaborationDisabledEnv}}
       UPGRADE_TOKEN={{platformVerificationToken}}
       MATRIX_AUTH_TOKEN={{platformVerificationToken}}
       MATRIX_SYNC_RUNTIME_TOKEN={{syncRuntimeToken}}
@@ -667,6 +669,11 @@ runcmd:
     for required_bin in matrixctl matrix-r2-broker.mjs matrix-db-backup.sh matrix-restore.sh matrix-owner-env matrix-gateway matrix-shell matrix-code matrix-sync-agent matrix-install-hermes; do
       chmod 0750 "/opt/matrix/bin/${required_bin}"
     done
+    if [ -f /opt/matrix/bin/matrix-support-access ] && [ ! -L /opt/matrix/bin/matrix-support-access ]; then
+      install -d -o root -g root -m 0755 /usr/local/libexec
+      install -o root -g root -m 0755 /opt/matrix/bin/matrix-support-access /usr/local/libexec/matrix-support-access
+      chmod 0644 /opt/matrix/bin/matrix-support-access
+    fi
     for optional_bin in matrix-register-vps matrix-integrations matrix-integrations-mcp matrix-register-integrations-mcp matrix-hermes-dashboard matrix-install-openclaw matrix-openclaw-gateway matrix-agent-runtime-control matrix-install-linux-tools matrix-install-developer-tools matrix-messaging-health matrix-messaging-backup matrix-messaging-restore; do
       if [ -e "/opt/matrix/bin/${optional_bin}" ]; then
         chmod 0750 "/opt/matrix/bin/${optional_bin}"

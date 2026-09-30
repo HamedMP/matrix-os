@@ -209,6 +209,19 @@ export function installSupportMessageAnalytics(
   });
 }
 
+// Direct collaboration requests the shared client sends to the platform relay:
+// session, request signature and relay routing headers plus the conditional
+// DELETE headers (`@matrix-os/contracts`).
+const COLLABORATION_REQUEST_HEADERS = [
+  "x-matrix-collaboration-session",
+  "x-matrix-collaboration-request",
+  "x-matrix-collaboration-runtime",
+  "x-matrix-collaboration-owner-runtime",
+  "x-matrix-client-request-id",
+  "x-matrix-expected-revision",
+  "x-matrix-expected-member-revision",
+];
+
 // The renderer (file:// in production, http://localhost in dev) is a different
 // origin than the gateway, so its fetch() calls are cross-origin and the
 // gateway does not send Access-Control-Allow-Origin for them. Since the trusted
@@ -255,7 +268,10 @@ export function installGatewayCors(
       responseHeaders["Access-Control-Allow-Origin"] = [rendererOrigin];
       responseHeaders["Access-Control-Allow-Methods"] = ["GET, POST, PATCH, PUT, DELETE, OPTIONS"];
       responseHeaders["Access-Control-Allow-Headers"] = [
-        "Authorization, Content-Type, x-runtime-slot, X-Matrix-Filename, X-Conversations-Token, X-Matrix-Chat-Metadata, X-Matrix-Chat-Protocol, Last-Event-ID",
+        [
+          "Authorization, Content-Type, x-runtime-slot, X-Matrix-Filename, X-Conversations-Token, X-Matrix-Chat-Metadata, X-Matrix-Chat-Protocol, Last-Event-ID",
+          ...COLLABORATION_REQUEST_HEADERS,
+        ].join(", "),
       ];
       responseHeaders["Access-Control-Allow-Credentials"] = ["true"];
     }

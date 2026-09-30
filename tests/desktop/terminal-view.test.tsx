@@ -1055,6 +1055,7 @@ describe("TerminalView session switching", () => {
       isComposing: false,
       preventDefault: vi.fn(),
     } as unknown as KeyboardEvent);
+    await waitFor(() => expect(readText).toHaveBeenCalledOnce());
     first.unmount();
     unmountedRead.resolve("after unmount");
     await act(async () => unmountedRead.promise);

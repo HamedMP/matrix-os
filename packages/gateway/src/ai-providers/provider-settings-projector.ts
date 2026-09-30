@@ -340,12 +340,14 @@ function projectHarness(input: {
     && (source.kind !== "harness_profile" || source.harness === input.stored.harness)
     && (source.kind !== "matrix_gateway" || input.allowedGatewayModels.has(input.stored.route.modelId));
   const generatedNative = input.stored.enablementOrigin === "generated_default"
-    && (input.stored.harness === "pi" || input.stored.harness === "opencode");
+    && (input.stored.harness === "pi" || input.stored.harness === "opencode"
+      || (input.stored.harness === "hermes" && source?.kind === "harness_profile"));
   const managedCatalogRoute = source?.kind === "matrix_gateway"
     && source.providerId === input.stored.route.providerId && !generatedNative;
   const routeCatalogUnavailable = !routeAvailable
     || (input.catalogUnavailable && !managedCatalogRoute);
-  const nativeCredentialRoute = input.stored.harness === "pi" || input.stored.harness === "opencode";
+  const nativeCredentialRoute = input.stored.harness === "pi" || input.stored.harness === "opencode"
+    || (input.stored.harness === "hermes" && source?.kind === "harness_profile");
   const routeSourceEligible = sourceEligible === true && !routeCatalogUnavailable
     && (source.kind === "matrix_gateway"
       ? isFreshReady(source.readiness, input.now)

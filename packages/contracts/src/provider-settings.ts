@@ -219,8 +219,9 @@ export const ProviderAccessSourceSchema = z.object({
   }
   if (source.kind === "harness_profile"
     && (matrixFunded || source.accountId !== null
-      || (source.harness !== "pi" && source.harness !== "opencode"))) {
-    ctx.addIssue({ code: "custom", message: "Harness profiles require one coding harness and no Matrix or account funding" });
+      || (source.harness !== "pi" && source.harness !== "opencode" && source.harness !== "hermes")
+      || (source.harness === "hermes" && (source.providerId !== "openai-codex" || source.fundingKind !== "owner_account")))) {
+    ctx.addIssue({ code: "custom", message: "Harness profiles require one exact harness and no Matrix funding or provider account" });
   }
   if (source.kind !== "harness_profile" && source.harness !== undefined) {
     ctx.addIssue({ code: "custom", path: ["harness"], message: "Only harness profiles can name a harness" });
@@ -662,7 +663,7 @@ export function isPortableGenericHarnessCredentialRoute(
     && source.fundingKind === "owner_api_key";
 }
 
-/** Returns whether the selected model is authenticated by Pi/OpenCode itself. */
+/** Returns whether the selected route uses its exact harness-owned profile. */
 export function isNativeGenericHarnessCredentialRoute(
   harness: Pick<ProviderHarnessInstance, "harness" | "accessSourceId" | "route">,
   source: Pick<
@@ -670,7 +671,8 @@ export function isNativeGenericHarnessCredentialRoute(
     "id" | "kind" | "providerId" | "accountId" | "harness"
   > | null | undefined,
 ): boolean {
-  return (harness.harness === "pi" || harness.harness === "opencode")
+  return (harness.harness === "pi" || harness.harness === "opencode"
+      || (harness.harness === "hermes" && source?.providerId === "openai-codex"))
     && harness.route.kind === "configurable"
     && harness.accessSourceId !== null
     && source?.kind === "harness_profile"
@@ -698,7 +700,8 @@ export function isSupportedGenericHarnessCredentialRoute(
   source: ProviderAccessSource | null | undefined,
 ): boolean {
   if (harness.harness === "hermes" || harness.harness === "openclaw") {
-    return source?.kind !== "matrix_gateway";
+    return source?.kind === "provider_account"
+      || (harness.harness === "hermes" && isNativeGenericHarnessCredentialRoute(harness, source));
   }
   if (harness.harness === "pi" || harness.harness === "opencode") {
     return isRunnableGenericHarnessCredentialRoute(harness, source);

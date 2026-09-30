@@ -251,6 +251,25 @@ describe("generic provider harness lifecycle coordinator", () => {
     });
   });
 
+  it("bridges only Hermes's own native Codex route once and retains bare receipt routes for rollback", async () => {
+    const { coordinator, update } = await makeCoordinator();
+    const input = systemRouteInput("openai-codex:gpt-5.6-sol", "native_hermes_codex");
+    input.after.harnesses[0]!.route.providerId = "openai-codex";
+    input.after.harnesses[0]!.accessSourceId = "harness_hermes_openai-codex";
+    input.mutation.route = input.after.harnesses[0]!.route;
+    input.mutation.accessSourceId = "harness_hermes_openai-codex";
+    const snapshot = { accessSources: [{
+      id: "harness_hermes_openai-codex", kind: "harness_profile", harness: "hermes", providerId: "openai-codex",
+      accountId: null, fundingKind: "owner_account", eligibleModelIds: ["openai-codex:gpt-5.6-sol"],
+    }] } as ProviderSettingsSnapshot;
+    await coordinator.applyConfiguration({ ...input, snapshot });
+    expect(update).toHaveBeenLastCalledWith({ revision: 4, runtime: "hermes", provider: "openai-codex", messagingModel: "gpt-5.6-sol" });
+    const receipt = JSON.parse(await readFile(join(homePath!, "system/ai-providers/runtime-receipts.json"), "utf8"));
+    expect(receipt.receipts[0].afterRoute).toEqual({ harness: "hermes", providerId: "openai-codex", modelId: "gpt-5.6-sol" });
+    await coordinator.rollbackConfiguration({ ...input, snapshot });
+    expect(update).toHaveBeenLastCalledWith(expect.objectContaining({ provider: "anthropic", messagingModel: "claude-sonnet-5" }));
+  });
+
   it("reapplies an applied duplicate and restores the displaced legacy route on rollback", async () => {
     const { coordinator, update } = await makeCoordinator();
     const input = systemRouteInput("claude-opus-5", "route_duplicate_after_legacy_put");

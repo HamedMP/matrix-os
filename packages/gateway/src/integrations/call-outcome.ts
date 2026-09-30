@@ -1,24 +1,6 @@
 import type { Context } from "hono";
 import type { PlatformDb } from "../platform-db.js";
 import { IntegrationActionNotImplementedError } from "./action-execution.js";
-import { SYMPHONY_LINEAR_ACTIONS, classifySymphonyGraphqlFailure, type SymphonyGraphqlFailure } from "./symphony-linear.js";
-
-function isSymphonyAction(service: string, action: string): boolean {
-  return service === "linear" && Object.hasOwn(SYMPHONY_LINEAR_ACTIONS, action);
-}
-
-function symphonyFailureResponse(c: Context, kind: SymphonyGraphqlFailure, action: string): Response {
-  if (kind === "operation") {
-    return c.json({ service: "linear", action, data: { errors: [{ extensions: { code: "OPERATION_FAILED" } }] } });
-  }
-  if (kind === "rate_limited") {
-    return c.json({ error: "Please retry later", code: "rate_limited" }, { status: 429, headers: { "Retry-After": "60" } });
-  }
-  if (kind === "configuration") {
-    return c.json({ error: "Integration setup required", code: "configuration_error" }, 422);
-  }
-  return c.json({ error: "Integration temporarily unavailable", code: "transient_failure" }, 503);
-}
 
 export function isConnectionError(err: unknown): boolean {
   if (!(err instanceof Error)) return false;
@@ -67,10 +49,6 @@ export async function integrationActionSuccess(c: Context, input: {
   summary?: string;
 }): Promise<Response> {
   const { db, connectionId, service, action, data, summary } = input;
-  if (isSymphonyAction(service, action)) {
-    const failure = classifySymphonyGraphqlFailure(data);
-    if (failure) return symphonyFailureResponse(c, failure, action);
-  }
   try {
     await db.touchServiceUsage(connectionId);
   } catch (err: unknown) {
@@ -88,25 +66,12 @@ export function integrationActionFailure(c: Context, err: unknown, service: stri
     return c.json({ error: "Action not available" }, 501);
   }
   const upstreamStatus = getErrorStatusCode(err);
-  if (isSymphonyAction(service, action) && upstreamStatus === 400) {
-    const body = err && typeof err === "object" && "body" in err ? err.body : undefined;
-    const failure = classifySymphonyGraphqlFailure(body);
-    if (failure) return symphonyFailureResponse(c, failure, action);
-  }
-  if (isSymphonyAction(service, action) && upstreamStatus
-      && upstreamStatus >= 400 && upstreamStatus < 500 && ![408, 429].includes(upstreamStatus)) {
-    return c.json({ error: "Integration setup required", code: "provider_rejected" }, 422);
-  }
   if (upstreamStatus === 429) {
     const retryAfter = getRetryAfterSeconds(err);
     return c.json(
       { error: "Rate limited by provider. Please try again later.", retry_after: retryAfter },
       { status: 429, headers: { "Retry-After": String(retryAfter) } },
     );
-  }
-  if (isSymphonyAction(service, action)) {
-    console.warn("[integrations] symphony_call outcome=transient_failure");
-    return c.json({ error: "Integration temporarily unavailable", code: "transient_failure" }, 503);
   }
   if (isTimeoutError(err)) {
     console.error(`[integrations] callAction timeout for ${service}/${action}`);
