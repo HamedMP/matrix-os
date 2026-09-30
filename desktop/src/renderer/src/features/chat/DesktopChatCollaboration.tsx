@@ -39,6 +39,7 @@ export default function DesktopChatCollaboration() {
         sessionName: `shared:${scopeId}`,
         sharedScopeId: scopeId,
       })}
-      openProject={(scopeId) => setView({ kind: "project", scopeId })} />
+      openProject={(scopeId) => setView({ kind: "project", scopeId })}
+      openFile={(scopeId) => setView({ kind: "file", scopeId })} />
   </div>;
 }

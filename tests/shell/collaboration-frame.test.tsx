@@ -61,6 +61,7 @@ import SharedChatPage from "../../shell/src/app/shared/chat/[scopeId]/page";
 import SharedTerminalPage from "../../shell/src/app/shared/terminal/[scopeId]/page";
 import SharedInvitationPage from "../../shell/src/app/shared/invitations/[invitationId]/page";
 import SharedProjectPage from "../../shell/src/app/shared/project/[scopeId]/page";
+import SharedFilePage from "../../shell/src/app/shared/file/[scopeId]/page";
 import { CollaborationFrame } from "../../shell/src/components/collaboration/CollaborationFrame";
 import { ShellClerkAuth } from "../../shell/src/components/auth/ShellClerkAuth";
 import { closeShellCollaborationSessions, createShellCollaborationApi } from "../../shell/src/lib/collaboration";
@@ -200,6 +201,7 @@ describe("shared pages select the shell surface", () => {
     { name: "terminal", render: () => SharedTerminalPage({ params: Promise.resolve({ scopeId }) }), vps: ["OnboardingGate", "ShellHome"] },
     { name: "invitation", render: () => SharedInvitationPage({ params: Promise.resolve({ invitationId: scopeId }) }), vps: ["OnboardingGate", "ShellHome"] },
     { name: "project", render: () => SharedProjectPage({ params: Promise.resolve({ scopeId }) }), vps: ["CollaborationPage"] },
+    { name: "file", render: () => SharedFilePage({ params: Promise.resolve({ scopeId }) }), vps: ["OnboardingGate", "ShellHome"] },
   ];
 
   it.each(pages)("renders the collaboration frame for $name on the platform surface", async ({ render: renderPage }) => {
@@ -225,12 +227,21 @@ describe("shared pages select the shell surface", () => {
       await expect(SharedTerminalPage({ params: Promise.resolve({ scopeId: "not-a-scope" }) })).rejects.toThrow("NEXT_NOT_FOUND");
       await expect(SharedInvitationPage({ params: Promise.resolve({ invitationId: "x" }) })).rejects.toThrow("NEXT_NOT_FOUND");
       await expect(SharedProjectPage({ params: Promise.resolve({ scopeId: "../../api/x" }) })).rejects.toThrow("NEXT_NOT_FOUND");
+      await expect(SharedFilePage({ params: Promise.resolve({ scopeId: "../../files/x" }) })).rejects.toThrow("NEXT_NOT_FOUND");
     }
   });
 
   it("passes the validated destination to the frame", async () => {
     const page = await SharedChatPage({ params: Promise.resolve({ scopeId }) }) as ReactElement<{ view: unknown }>;
     expect(page.props.view).toEqual({ kind: "chat", scopeId });
+    const file = await SharedFilePage({ params: Promise.resolve({ scopeId }) }) as ReactElement<{ view: unknown }>;
+    expect(file.props.view).toEqual({ kind: "file", scopeId });
+  });
+
+  it("opens the shared file in the full OS Chat panel on a customer computer", async () => {
+    surface.platform = false;
+    const page = await SharedFilePage({ params: Promise.resolve({ scopeId }) }) as ReactElement<{ children: ReactElement<{ initialCollaborationView: unknown }> }>;
+    expect(page.props.children.props.initialCollaborationView).toEqual({ kind: "file", scopeId });
   });
 });
 
@@ -296,12 +307,17 @@ describe("CollaborationFrame", () => {
   });
 
   it("opens shared items inside the shared destination family", async () => {
-    apiState.fake = fakeApi({ shared: { items: [acceptedChat] } });
+    apiState.fake = fakeApi({ shared: { items: [acceptedChat, {
+      scopeId: otherScopeId, runtimeId: acceptedChat.runtimeId, ownerId: "user_owner", kind: "file", authorityGeneration: 1, status: "accepted",
+      resource: { scope: { ...acceptedChat.resource.scope, id: otherScopeId, kind: "file", resourceId: "20000000-0000-4000-8000-000000000001" }, name: "brief.md" },
+    }] } });
 
     render(<CollaborationFrame view={{ kind: "home" }} />);
 
     fireEvent.click(await screen.findByRole("button", { name: "Open Chat" }));
     expect(navigation.push).toHaveBeenCalledWith(`/shared/chat/${scopeId}`);
+    fireEvent.click(screen.getByRole("button", { name: "Open file" }));
+    expect(navigation.push).toHaveBeenCalledWith(`/shared/file/${otherScopeId}`);
   });
 
   it("renders a shared Chat inside the frame", async () => {
@@ -429,6 +445,12 @@ describe("CollaborationFrame", () => {
     expect(second).not.toBe(first);
     expect(closeFirst).toHaveBeenCalledOnce();
     await waitFor(() => expect(requests.filter((request) => request.path === "/api/collaboration/inbox")).toHaveLength(2));
+  });
+
+  it("builds Tailwind classes for the shared collaboration views the frame renders", async () => {
+    const { readFileSync } = await vi.importActual<typeof import("node:fs")>("node:fs");
+    const css = readFileSync(`${process.cwd()}/shell/src/app/globals.css`, "utf8");
+    expect(css).toContain('@source "../../../packages/ui/src/collaboration";');
   });
 
   it("uses brand tokens instead of hard-coded colors", async () => {

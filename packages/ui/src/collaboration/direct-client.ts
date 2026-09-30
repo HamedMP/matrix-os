@@ -97,9 +97,19 @@ export interface CollaborationDirectClientOptions {
   now?: () => Date;
 }
 
+/** Largest resource body a client may hold in memory; the platform relay also caps responses at 2 MiB. */
+export const COLLABORATION_CONTENT_MAX_BYTES = 2 * 1024 * 1024;
+
+/** Bytes of one shared file, bounded in memory; `too_large` carries the declared size when the home sent one. */
+export type CollaborationContent =
+  | { status: "ok"; bytes: Uint8Array; contentType: string; size: number }
+  | { status: "too_large"; size: number | null };
+
 export interface CollaborationDirectClient {
   request(scopeId: string, method: DirectMethod, path: string, body?: unknown,
     conditions?: DirectDeleteConditions, signal?: AbortSignal): Promise<unknown>;
+  /** Signed GET of a scope's file content (`/files/:fileId/content`), read up to `maxBytes`. */
+  requestContent(scopeId: string, path: string, options: { maxBytes: number }): Promise<CollaborationContent>;
   requestOwnerRuntime(runtimeId: string, organizationId: string, path: string, body: unknown): Promise<unknown>;
   requestOwnerProject(runtimeId: string, organizationId: string, method: "GET" | "POST", path: string, body?: unknown): Promise<unknown>;
   subscribeEvents(scopeId: string, handlers: DirectEventHandlers): () => void;
@@ -490,6 +500,36 @@ export function createCollaborationDirectClient(options: CollaborationDirectClie
     return readJson(response);
   };
 
+  const requestContent: CollaborationDirectClient["requestContent"] = async (scopeId, rawPath, { maxBytes }) => {
+    if (!UUID.test(scopeId) || !Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > COLLABORATION_CONTENT_MAX_BYTES) {
+      throw new CollaborationDirectError("invalid_request", "Invalid collaboration request");
+    }
+    const { path, query } = splitPath(rawPath, scopeId);
+    if (query !== "" || !new RegExp(`^/api/collaboration/scopes/${scopeId}/files/[0-9a-f-]{36}/content$`).test(path)) {
+      throw new CollaborationDirectError("invalid_request", "Invalid collaboration request");
+    }
+    const initial = record(scopeId);
+    const generation = initial.generation;
+    let connected = await ensure(scopeId);
+    if (disposed || initial.generation !== generation) throw closedError();
+    let response = await signedFetch(scopeId, connected, "GET", path, "", undefined);
+    if (disposed || initial.generation !== generation) { await response.body?.cancel(); throw closedError(); }
+    if (response.status === 401 && !isPlatformChallenge(response, connected.origin)) {
+      await response.body?.cancel();
+      record(scopeId).connected = null;
+      connected = await ensure(scopeId, true);
+      response = await signedFetch(scopeId, connected, "GET", path, "", undefined);
+      if (disposed || initial.generation !== generation) { await response.body?.cancel(); throw closedError(); }
+    }
+    if (response.status === 503 && await isRelayTooLarge(response)) return { status: "too_large", size: null };
+    if (response.status < 200 || response.status >= 300) await response.body?.cancel();
+    const challenged = isPlatformChallenge(response, connected.origin);
+    if (challenged) initial.state = "unauthenticated";
+    else if (initial.state === "unauthenticated") initial.state = "connected";
+    throwForStatus(response.status, challenged);
+    return readBoundedContent(response, maxBytes);
+  };
+
   const streams = createDirectStreams({
     ensure,
     issueTicket: (scopeId, purpose, key) => issueTicket(scopeId, purpose, key),
@@ -513,6 +553,7 @@ export function createCollaborationDirectClient(options: CollaborationDirectClie
 
   return {
     request,
+    requestContent,
     requestOwnerRuntime,
     requestOwnerProject,
     subscribeEvents: streams.subscribeEvents,
@@ -584,6 +625,56 @@ function scopeStateFor(code: CollaborationDirectErrorCode): DirectScopeState {
   if (code === "host_offline") return "offline";
   if (code === "upgrade_required" || code === "unauthenticated" || code === "denied") return code;
   return "idle";
+}
+
+/** The platform relay answers a declared oversize response with a 503 carrying `code: "too_large"`. */
+async function isRelayTooLarge(response: Response): Promise<boolean> {
+  if (!response.headers.get("content-type")?.startsWith("application/json")) return false;
+  if (Number(response.headers.get("content-length") ?? 0) > 1_024) return false;
+  try {
+    const text = await response.clone().text();
+    if (text.length > 1_024) return false;
+    const body = JSON.parse(text) as unknown;
+    return typeof body === "object" && body !== null && (body as { code?: unknown }).code === "too_large";
+  } catch (error: unknown) {
+    if (!(error instanceof SyntaxError)) console.warn("[collaboration-direct] relay error parse failed", error instanceof Error ? error.name : "UnknownError");
+    return false;
+  }
+}
+
+async function readBoundedContent(response: Response, maxBytes: number): Promise<CollaborationContent> {
+  const declaredHeader = response.headers.get("content-length");
+  const declared = declaredHeader === null ? null : Number(declaredHeader);
+  const declaredSize = declared !== null && Number.isSafeInteger(declared) && declared >= 0 ? declared : null;
+  if (declaredSize !== null && declaredSize > maxBytes) {
+    await response.body?.cancel();
+    return { status: "too_large", size: declaredSize };
+  }
+  const chunks: Uint8Array[] = [];
+  let received = 0;
+  const reader = response.body?.getReader();
+  if (reader) {
+    for (;;) {
+      const next = await reader.read();
+      if (next.done) break;
+      received += next.value.byteLength;
+      if (received > maxBytes) {
+        await reader.cancel();
+        return { status: "too_large", size: declaredSize };
+      }
+      chunks.push(next.value);
+    }
+  }
+  const bytes = new Uint8Array(received);
+  let offset = 0;
+  for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
+  const mediaType = response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase() ?? "";
+  return {
+    status: "ok",
+    bytes,
+    contentType: /^[a-z0-9.+-]+\/[a-z0-9.+-]+$/.test(mediaType) ? mediaType : "application/octet-stream",
+    size: received,
+  };
 }
 
 async function readJson(response: Response): Promise<unknown> {
