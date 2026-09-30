@@ -35,13 +35,17 @@ export interface OrganizationMembershipProjection {
   shutdown(): Promise<void>;
 }
 
+export class OrganizationRefreshUnavailableError extends Error {
+  constructor() { super("Organization refresh unavailable"); this.name = "OrganizationRefreshUnavailableError"; }
+}
+
 export const ORGANIZATION_EVIDENCE_TTL_MS = 20_000;
 export const ORGANIZATION_POSITIVE_EVIDENCE_MAX_AGE_MS = 60_000;
 export const ORGANIZATION_REFRESH_INTERVAL_MS = 10_000;
 const CLOCK_SKEW_MS = 5_000;
 const ACTIVE_WINDOW_MS = 5 * 60_000;
 const MAX_REFRESH_CONCURRENCY = 4;
-const MAX_INFLIGHT_RECONCILIATIONS = 64;
+export const MAX_INFLIGHT_RECONCILIATIONS = 64;
 const FAILED_REFRESH_RETRY_MS = 10_000;
 
 export function createOrganizationMembershipProjection(options: {
@@ -112,9 +116,10 @@ export function createOrganizationMembershipProjection(options: {
     }
     if ((retryAfter.get(organizationId) ?? 0) > current) return { verified: false, endedMemberships: [] };
     if (inflight.size >= MAX_INFLIGHT_RECONCILIATIONS) {
-      // Bounded: the organization simply stays unverified (fail closed) until a later attempt.
+      // Capacity is availability, not membership evidence. Reads fail closed
+      // with an unavailable response rather than silently hiding valid organizations.
       console.warn("[organizations] reconciliation deferred: too many in flight");
-      return { verified: false, endedMemberships: [] };
+      throw new OrganizationRefreshUnavailableError();
     }
     const promise = reconcileNow(organizationId).then((result) => {
       if (result.verified) retryAfter.delete(organizationId);

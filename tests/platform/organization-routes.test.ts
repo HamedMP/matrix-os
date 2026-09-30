@@ -129,6 +129,40 @@ describe("platform organization routes (T018)", () => {
     finally { release(); await request; check.mockRestore(); }
   });
 
+  it("returns all 100 supported idle organizations without exhausting its own refresh pool", async () => {
+    const entries = Array.from({ length: 100 }, (_, index) => ({
+      organization: { organizationId: `org_capacity${String(index).padStart(16, "0")}`, name: "Org", slug: "org", aiSubmission: "members" as const, lifecycle: "active" as const, membershipEpoch: 1, sourceUpdatedAt: new Date(1_000), verifiedAt: new Date(clock.getTime() - 60_001) },
+      membership: { organizationId: `org_capacity${String(index).padStart(16, "0")}`, membershipId: `orgmem_${index}`, actorId: member, role: "org:member", state: "active" as const, membershipEpoch: 1, sourceUpdatedAt: new Date(1_000) },
+    }));
+    const refreshed = new Set<string>(); // Request fixture contains exactly 100 IDs.
+    vi.spyOn(repository, "listOrganizationsForActor").mockImplementation(async () => entries);
+    vi.spyOn(repository, "getOrganization").mockImplementation(async (id) => {
+      const entry = entries.find((item) => item.organization.organizationId === id)!;
+      return { ...entry.organization, verifiedAt: refreshed.has(id) ? clock : entry.organization.verifiedAt };
+    });
+    vi.spyOn(repository, "getMembership").mockImplementation(async ({ organizationId }) => entries.find((entry) => entry.organization.organizationId === organizationId)!.membership);
+    vi.spyOn(repository, "reconcileOrganization").mockImplementation(async (snapshot) => {
+      refreshed.add(snapshot.organization.organizationId);
+      return { endedMemberships: [], membershipEpoch: 1 };
+    });
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const upstream = vi.fn(async (id: string) => {
+      await gate;
+      return { organization: { organizationId: id, name: "Org", slug: "org", aiSubmission: "members" as const, sourceUpdatedAt: new Date(1_000) }, members: [] };
+    });
+    const limited = createOrganizationMembershipProjection({ repository, upstream: { listMembers: upstream }, now: () => clock });
+    const listing = createPlatformOrganizationRoutes({ repository, projection: limited, controlAuthority: authority, resolveActor: async () => member, authenticateRuntime: async () => null, now: () => clock });
+    const request = listing.request("/api/organizations");
+    try {
+      await vi.waitFor(() => expect(upstream).toHaveBeenCalledTimes(64));
+      release();
+      const response = await request;
+      expect(response.status).toBe(200);
+      expect((await response.json() as { organizations: unknown[] }).organizations).toHaveLength(100);
+    } finally { release(); await request; await limited.shutdown(); vi.restoreAllMocks(); }
+  });
+
   it("serves paginated members only to current members and validates the page request", async () => {
     await projection.reconcile(org);
     const first = await app.request(`/api/organizations/${org}/members?limit=1`);

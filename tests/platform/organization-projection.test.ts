@@ -150,6 +150,18 @@ describe("organization membership projection (T016/T019)", () => {
     } finally { await projection.shutdown(); }
   });
 
+  it("reports exhausted capacity as unavailable instead of denying a known member", async () => {
+    await repository.reconcileOrganization(snapshot(org, [member]), new Date(clock.getTime() - 60_001));
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const listMembers = vi.fn(async (id: string) => { await gate; return snapshot(id, []); });
+    const projection = createOrganizationMembershipProjection({ repository, upstream: { listMembers }, now: () => clock });
+    const pending = Array.from({ length: 64 }, (_, index) => projection.reconcile(`org_pool${String(index).padStart(20, "0")}`));
+    try {
+      await expect(projection.isCurrentMember({ organizationId: org, actorId: member })).rejects.toThrow("Organization refresh unavailable");
+    } finally { release(); await Promise.all(pending); await projection.shutdown(); }
+  });
+
   it("denies everything when no upstream is configured", async () => {
     const projection = createOrganizationMembershipProjection({ repository, now: () => clock });
     await repository.applyOrganization({ organizationId: org, name: "Org", slug: "org", aiSubmission: "owner_only", sourceUpdatedAt: new Date(1) });

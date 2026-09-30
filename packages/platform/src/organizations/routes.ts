@@ -20,7 +20,7 @@ import { z } from "zod/v4";
 import type { CollaborationControlAuthority } from "../collaboration/control-authority.js";
 import { logicalRuntimeIdFor } from "../collaboration/runtime-identity.js";
 import { applyClerkOrganizationEvent } from "./commands.js";
-import type { OrganizationMembershipProjection } from "./projection.js";
+import { MAX_INFLIGHT_RECONCILIATIONS, type OrganizationMembershipProjection } from "./projection.js";
 import { MEMBERSHIP_PAGE_LIMIT, type PlatformOrganizationRepository } from "./repository.js";
 import { parseClerkOrganizationWebhook } from "./roles.js";
 import { verifyClerkWebhookSignature } from "./webhook-signature.js";
@@ -60,12 +60,18 @@ export function createPlatformOrganizationRoutes(options: {
     if (!actorId) return safeJson(c, "Unauthorized", 401);
     try {
       const memberships = await options.repository.listOrganizationsForActor(actorId);
-      // The repository caps the list at 100 and the projection caps upstream
-      // concurrency. Independent stale organizations must not wait serially.
-      const decisions = await Promise.all(memberships.map(async (entry) => ({
-        organizationId: entry.organization.organizationId,
-        member: await options.projection.isCurrentMember({ organizationId: entry.organization.organizationId, actorId }),
-      })));
+      // The repository caps this request at 100 entries. Use at most the
+      // global pool's capacity, so one supported listing can refresh every
+      // entry without rejecting its own excess work or waiting serially.
+      const decisions: Array<{ organizationId: string; member: boolean }> = new Array(memberships.length);
+      let next = 0;
+      await Promise.all(Array.from({ length: Math.min(MAX_INFLIGHT_RECONCILIATIONS, memberships.length) }, async () => {
+        while (next < memberships.length) {
+          const index = next++;
+          const organizationId = memberships[index]!.organization.organizationId;
+          decisions[index] = { organizationId, member: await options.projection.isCurrentMember({ organizationId, actorId }) };
+        }
+      }));
       const permitted = new Set(decisions.filter((decision) => decision.member).map((decision) => decision.organizationId));
       // Request-local set is bounded by the repository's 100-entry limit.
       // Refresh may change role, policy, epoch or remove membership entirely.
