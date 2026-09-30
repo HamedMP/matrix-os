@@ -69,17 +69,16 @@ const SPECS: ToolSpec[] = [
   {
     name: "remember",
     capability: "memory.propose",
-    description: "Remember an owner-stated preference, fact, or finished task. For owner-stated content, omit optional sourceUrl; never invent a URL. A pending-confirmation result is not active memory.",
+    description: "Remember an owner-stated stable preference, fact, or finished task. Provide only kind and content; the server attaches the owner's message as provenance. Never invent a source link. A pending-confirmation result is not active memory.",
     parameters: Type.Object({
       kind: Type.Union([Type.Literal("preference"), Type.Literal("fact"), Type.Literal("episode")]),
       content: Type.String({ minLength: 1, maxLength: 4096 }),
-      sourceUrl: Type.Optional(Type.String({ maxLength: 2048, pattern: "^https://", description: "Optional real HTTPS source link; omit for the owner's own statement." })),
     }),
     toArgs: (params, now) => ({
       kind: params.kind,
       scope: "bot",
       content: params.content,
-      source: { ...(typeof params.sourceUrl === "string" ? { url: params.sourceUrl } : {}), at: now().toISOString() },
+      source: { at: now().toISOString() },
     }),
   },
   {
