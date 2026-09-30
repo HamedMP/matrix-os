@@ -30,7 +30,7 @@ export interface BrainSearchResult extends BrainCitation { excerpt: string }
 export interface BrainEvidenceProof {sourceId:string;incarnation:string;revision:number}
 export interface CompanyBrainOptions {
   db: Kysely<CompanyBrainDatabase>;
-  authority: Pick<CollaborationAuthority, "authorize">;
+  authority: Pick<CollaborationAuthority, "authorize" | "organizationPrecondition">;
   ownerId: string;
   now?: () => Date;
   maxDocumentsPerScope?: number;
@@ -85,8 +85,14 @@ export class CompanyBrainService {
     if(rows.length>1000) throw new CompanyBrainError("capacity");
     const current=await this.options.db.selectFrom("company_brain_documents").select(["source_id","incarnation","revision"])
       .where("scope_id","=",scopeId).where("source_id","in",rows.map(row=>row.source_id)).where("deleted_at","is",null).execute();
-    if(current.length!==rows.length || rows.some(row=>!current.some(source=>source.source_id===row.source_id
+    if(rows.some(row=>!current.some(source=>source.source_id===row.source_id
       && source.incarnation===row.incarnation && source.revision===row.revision))) throw new CompanyBrainError("forbidden");
+  }
+
+  /** Remote organization evidence cannot be locked in the owner's database; refresh it before the local write fence. */
+  private async recheckOrganization(context: AuthorizedCollaborationContext) {
+    const evidence=await this.options.authority.organizationPrecondition.require({organizationId:context.organizationId,actorId:context.actorId});
+    if(evidence.membershipEpoch!==context.membershipEvidenceEpoch) throw new CompanyBrainError("forbidden");
   }
 
   private async fenceOwner(context: AuthorizedCollaborationContext,trx: Transaction<CompanyBrainDatabase>) {
@@ -130,6 +136,8 @@ export class CompanyBrainService {
         .onConflict((oc) => oc.column("scope_id").doNothing()).execute();
       // One scope lock serializes CAS, admission counts, and erasure.
       await trx.selectFrom("company_brain_scopes").select("scope_id").where("scope_id", "=", scopeId).forUpdate().executeTakeFirstOrThrow();
+      await this.recheckOrganization(context);
+      if(runContext) await this.recheckOrganization(runContext);
       if(runContext) await this.fenceRun(runContext,trx);
       await this.fenceOwner(context,trx);
       await this.binding(context, trx);
@@ -219,7 +227,8 @@ export class CompanyBrainService {
     const query = SearchBrainSchema.parse(input);
     const context = await this.authorize(scopeId, actorId, action);
     await this.binding(context, this.options.db);
-    const terms=naturalQuestion ? sql`replace(plainto_tsquery('english',${query.query})::text,' & ',' | ')::tsquery`
+    const terms=naturalQuestion ? sql`case when numnode(plainto_tsquery('english',${query.query}))=0
+      then plainto_tsquery('english',${query.query}) else replace(plainto_tsquery('english',${query.query})::text,' & ',' | ')::tsquery end`
       : sql`plainto_tsquery('english',${query.query})`;
     const rows = await this.options.db.selectFrom("company_brain_documents").selectAll().where("scope_id", "=", scopeId)
       .select(sql<string>`ts_headline('english',text,${terms},'MaxWords=150,MinWords=20,StartSel="",StopSel=""')`.as("matched_excerpt"))
@@ -273,6 +282,7 @@ export class CompanyBrainService {
     const context = await this.authorize(scopeId, actorId, "publish_snapshot", true);
     await this.options.db.transaction().execute(async (trx) => {
       await trx.selectFrom("company_brain_scopes").select("scope_id").where("scope_id", "=", scopeId).forUpdate().execute();
+      await this.recheckOrganization(context);
       await this.fenceOwner(context,trx);
       await this.binding(context, trx);
       const row = await trx.selectFrom("company_brain_documents").selectAll().where("scope_id", "=", scopeId)
@@ -290,6 +300,7 @@ export class CompanyBrainService {
     const context = await this.authorize(scopeId, actorId, "publish_snapshot", true);
     await this.options.db.transaction().execute(async (trx) => {
       await trx.selectFrom("company_brain_scopes").select("scope_id").where("scope_id", "=", scopeId).forUpdate().execute();
+      await this.recheckOrganization(context);
       await this.fenceOwner(context,trx);
       await this.binding(context, trx);
       await trx.deleteFrom("company_brain_documents").where("scope_id", "=", scopeId).execute();

@@ -5,6 +5,7 @@ import { createCompanyBrainRoutes } from "../../packages/gateway/src/company-bra
 import { markAuthContextReady, setPlatformVerifiedPrincipal } from "../../packages/gateway/src/request-principal.js";
 import { bootstrapChatDatabase } from "../../packages/gateway/src/chat/database.js";
 import { CollaborationAuthority } from "../../packages/gateway/src/collaboration/authority.js";
+import { createOrganizationPrecondition } from "../../packages/gateway/src/collaboration/organization-precondition.js";
 import { bootstrapCollaborationDatabase } from "../../packages/gateway/src/collaboration/database.js";
 import { CollaborationRepository } from "../../packages/gateway/src/collaboration/repository.js";
 import { bootstrapCompanyBrainDatabase, type CompanyBrainDatabase } from "../../packages/gateway/src/company-brain/database.js";
@@ -61,6 +62,52 @@ describe("owner-hosted Company Brain durable sources", () => {
     expect(await db.selectFrom("company_brain_documents").selectAll().execute()).toHaveLength(0);
   });
 
+  it.each(["publish","remove","erase"] as const)("refuses %s when live organization membership is revoked after initial authorization",async(operation)=>{
+    await service.publish(ids.scope,actors.owner,document);
+    let member=true;
+    const organizationPrecondition=createOrganizationPrecondition({now:()=>at,source:{assertMembership:async()=>member
+      ? {member:true,expiresAt:new Date(at.getTime()+60_000).toISOString(),membershipEpoch:"1",aiSubmission:"members"}
+      : {member:false}}});
+    const live=new CollaborationAuthority(new CollaborationRepository(fixture.db,{now:()=>at}),{now:()=>at,organizationPrecondition});
+    const guarded=new CompanyBrainService({db,ownerId:actors.owner,now:()=>at,authority:{organizationPrecondition,authorize:async(input)=>{
+      const context=await live.authorize(input);member=false;return context;
+    }}});
+    const mutation=operation==="publish" ? guarded.publish(ids.scope,actors.owner,{...document,expectedRevision:1,text:"Revoked correction"})
+      : operation==="remove" ? guarded.remove(ids.scope,actors.owner,sourceId,1) : guarded.erase(ids.scope,actors.owner);
+    await expect(mutation).rejects.toMatchObject({code:"not_found"});
+    expect(await db.selectFrom("company_brain_documents").select(["revision","text","deleted_at"]).executeTakeFirstOrThrow())
+      .toMatchObject({revision:1,text:document.text,deleted_at:null});
+    expect(await db.selectFrom("company_brain_scopes").select("scope_id").execute()).toHaveLength(1);
+  });
+
+  it("refuses writes when the organization membership epoch changes after initial authorization",async()=>{
+    let epoch="1";
+    const organizationPrecondition=createOrganizationPrecondition({now:()=>at,source:{assertMembership:async()=>({member:true,
+      expiresAt:new Date(at.getTime()+60_000).toISOString(),membershipEpoch:epoch,aiSubmission:"members"})}});
+    const live=new CollaborationAuthority(new CollaborationRepository(fixture.db,{now:()=>at}),{now:()=>at,organizationPrecondition});
+    const guarded=new CompanyBrainService({db,ownerId:actors.owner,authority:{organizationPrecondition,authorize:async(input)=>{
+      const context=await live.authorize(input);epoch="2";return context;
+    }}});
+    await expect(guarded.publish(ids.scope,actors.owner,document)).rejects.toMatchObject({code:"forbidden"});
+    expect(await db.selectFrom("company_brain_scopes").select("scope_id").execute()).toEqual([]);
+    expect(await db.selectFrom("company_brain_documents").select("source_id").execute()).toEqual([]);
+  });
+
+  it("accepts repeated current proofs but checks every duplicate incarnation and revision",async()=>{
+    const source=await service.publish(ids.scope,actors.owner,document);
+    const proof={sourceId,incarnation:source.incarnation,revision:source.revision};
+    await expect(service.verifyEvidence(ids.scope,actors.editor,[proof,proof])).resolves.toBe(true);
+    await expect(service.verifyEvidence(ids.scope,actors.editor,[proof,{...proof,revision:2}])).rejects.toMatchObject({code:"forbidden"});
+    await expect(service.verifyEvidence(ids.scope,actors.editor,[proof,{...proof,incarnation:"10000000-0000-4000-8000-000000000099"}])).rejects.toMatchObject({code:"forbidden"});
+    await expect(service.verifyEvidence(ids.scope,actors.editor,Array.from({length:7},()=>proof))).rejects.toMatchObject({name:"ZodError"});
+  });
+
+  it("returns empty evidence safely for stopword-only natural queries",async()=>{
+    await service.publish(ids.scope,actors.owner,document);
+    expect(await service.retrieve(ids.scope,actors.editor,{query:"the and for me"})).toMatchObject({sources:[]});
+    expect(await service.search(ids.scope,actors.editor,{query:"the and for me"})).toEqual([]);
+  });
+
   it("publishes under inherited owner membership and fences expiration after owner preflight",async()=>{
     const parent="10000000-0000-4000-8000-000000000030";
     const repository=new CollaborationRepository(fixture.db,{now:()=>at});
@@ -69,7 +116,7 @@ describe("owner-hosted Company Brain durable sources", () => {
     await fixture.db.updateTable("collaboration_scopes").set({membership_mode:"inherited",parent_scope_id:parent}).where("id","=",ids.scope).execute();
     await service.publish(ids.scope,actors.owner,document);
     expect((await service.get(ids.scope,actors.owner,sourceId)).text).toBe(document.text);
-    const expiring=new CompanyBrainService({db,ownerId:actors.owner,now:()=>at,authority:{authorize:async(input)=>{
+    const expiring=new CompanyBrainService({db,ownerId:actors.owner,now:()=>at,authority:{organizationPrecondition:authority.organizationPrecondition,authorize:async(input)=>{
       const context=await authority.authorize(input);
       await fixture.db.updateTable("collaboration_members").set({expires_at:at}).where("scope_id","=",parent).where("actor_id","=",actors.owner).execute();
       return context;
@@ -166,7 +213,7 @@ describe("owner-hosted Company Brain durable sources", () => {
   it("returns no material if authority is revoked while a search is executing", async () => {
     await service.publish(ids.scope, actors.owner, document);
     let calls = 0;
-    const changingAuthority = { authorize: async (input: Parameters<CollaborationAuthority["authorize"]>[0]) => {
+    const changingAuthority = { organizationPrecondition:authority.organizationPrecondition,authorize: async (input: Parameters<CollaborationAuthority["authorize"]>[0]) => {
       calls += 1;
       if (calls === 2) await fixture.db.updateTable("collaboration_members").set({ status: "revoked" }).where("actor_id", "=", actors.editor).execute();
       return authority.authorize(input);
@@ -195,7 +242,7 @@ describe("owner-hosted Company Brain durable sources", () => {
     expect(() => new CompanyBrainService({ db, authority, ownerId: actors.owner, maxDocumentsPerScope: 0 })).toThrow();
     await service.publish(ids.scope, actors.owner, document);
     let calls = 0;
-    const changed = new CompanyBrainService({ db, ownerId: actors.owner, authority: { authorize: async (input) => {
+    const changed = new CompanyBrainService({ db, ownerId: actors.owner, authority: { organizationPrecondition:authority.organizationPrecondition,authorize: async (input) => {
       const context = await authority.authorize(input);
       return ++calls === 2 ? { ...context, authEpoch: context.authEpoch + 1 } : context;
     } } });
@@ -215,6 +262,20 @@ describe("owner-hosted Company Brain durable sources", () => {
     const first=await service.captureSlackMention(projectScope,childScope,actors.editor,input);
     expect(first).toMatchObject({provenance:"slack_thread",revision:1,audienceScopeId:projectScope,permalink:expect.stringContaining("T123/C123/thread/C123-1790766000.000001")});
     expect(await service.captureSlackMention(projectScope,childScope,actors.editor,input)).toEqual(first);
+    const retrieved=await service.retrieveForRun(projectScope,childScope,actors.editor,{query:"launch"});
+    const proofs=[first,...retrieved.sources].map(({sourceId,incarnation,revision})=>({sourceId,incarnation,revision}));
+    expect(await service.verifyEvidence(projectScope,actors.editor,proofs)).toBe(true);
+    for(const revokedActor of [actors.owner,actors.editor]){
+      let revoked=false;
+      const organizationPrecondition=createOrganizationPrecondition({now:()=>at,source:{assertMembership:async(request)=>revoked && request.actorId===revokedActor
+        ? {member:false} : {member:true,expiresAt:new Date(at.getTime()+60_000).toISOString(),membershipEpoch:"1",aiSubmission:"members"}}});
+      const live=new CollaborationAuthority(repository,{now:()=>at,organizationPrecondition});
+      const guarded=new CompanyBrainService({db,ownerId:actors.owner,authority:{organizationPrecondition,authorize:async(request)=>{
+        const context=await live.authorize(request);if(request.scopeId===childScope) revoked=true;return context;
+      }}});
+      await expect(guarded.captureSlackMention(projectScope,childScope,actors.editor,{...input,eventId:"EvOrgRevoked"})).rejects.toMatchObject({code:"not_found"});
+      expect(await db.selectFrom("company_brain_documents").select("source_id").execute()).toHaveLength(1);
+    }
     await expect(service.captureSlackMention(projectScope,childScope,actors.editor,{...input,approval:{...input.approval,ownerId:actors.editor}})).rejects.toMatchObject({code:"forbidden"});
     await expect(service.captureSlackMention(projectScope,ids.scope,actors.editor,input)).rejects.toBeDefined();
     await expect(service.publish(projectScope,actors.editor,{...document,audienceScopeId:projectScope})).rejects.toMatchObject({code:"forbidden"});
@@ -224,7 +285,7 @@ describe("owner-hosted Company Brain durable sources", () => {
     await service.erase(projectScope,actors.owner);
     await service.publish(projectScope,actors.owner,{...document,sourceId:first.sourceId,audienceScopeId:projectScope});
     await expect(service.captureSlackMention(projectScope,childScope,actors.editor,input)).rejects.toMatchObject({code:"conflict"});
-    const disappearing=new CompanyBrainService({db,ownerId:actors.owner,authority:{authorize:async(request)=>{
+    const disappearing=new CompanyBrainService({db,ownerId:actors.owner,authority:{organizationPrecondition:authority.organizationPrecondition,authorize:async(request)=>{
       const context=await authority.authorize(request);
       if(request.scopeId===childScope) await fixture.db.deleteFrom("collaboration_scopes").where("id","=",childScope).execute();
       return context;
@@ -264,7 +325,7 @@ describe("owner-hosted Company Brain durable sources", () => {
       if(property==="transaction") return ()=>({execute:async<T>(operation:(trx:unknown)=>Promise<T>)=>target.transaction().execute(async(trx)=>{inside=true;try{return await operation(trx);}finally{inside=false;}})});
       const value=Reflect.get(target,property,target);return typeof value==="function" ? value.bind(target) : value;
     }});
-    const guardedAuthority={authorize:async(input:Parameters<CollaborationAuthority["authorize"]>[0])=>{
+    const guardedAuthority={organizationPrecondition:authority.organizationPrecondition,authorize:async(input:Parameters<CollaborationAuthority["authorize"]>[0])=>{
       if(inside) throw new Error("Cannot acquire a second connection from a saturated pool");
       return authority.authorize(input);
     }};
@@ -303,7 +364,7 @@ describe("owner-hosted Company Brain durable sources", () => {
 
   it("rolls back publication when owner scope authority changes after preflight",async()=>{
     let changed=false;
-    const changing=new CompanyBrainService({db,ownerId:actors.owner,authority:{authorize:async(input)=>{
+    const changing=new CompanyBrainService({db,ownerId:actors.owner,authority:{organizationPrecondition:authority.organizationPrecondition,authorize:async(input)=>{
       const context=await authority.authorize(input);
       if(!changed){changed=true;await fixture.db.updateTable("collaboration_scopes").set({auth_epoch:context.authEpoch+1}).where("id","=",ids.scope).execute();}
       return context;
@@ -327,7 +388,7 @@ describe("owner-hosted Company Brain durable sources", () => {
   it.each(["get","search","export"] as const)("refuses evidence erased and recreated during the authority recheck of %s",async(operation)=>{
     await service.publish(ids.scope,actors.owner,document);
     let calls=0;
-    const racing=new CompanyBrainService({db,ownerId:actors.owner,authority:{authorize:async(input)=>{
+    const racing=new CompanyBrainService({db,ownerId:actors.owner,authority:{organizationPrecondition:authority.organizationPrecondition,authorize:async(input)=>{
       const context=await authority.authorize(input);
       if(++calls===2){
         await service.erase(ids.scope,actors.owner);
@@ -359,7 +420,7 @@ describe("owner-hosted Company Brain durable sources", () => {
     const proofs=[first,second].map(source=>({sourceId:source.sourceId,incarnation:source.incarnation,revision:source.revision}));
     expect(await service.verifyEvidence(ids.scope,actors.owner,proofs)).toBe(true);
     let calls=0;
-    const racing=new CompanyBrainService({db,ownerId:actors.owner,authority:{authorize:async(input)=>{
+    const racing=new CompanyBrainService({db,ownerId:actors.owner,authority:{organizationPrecondition:authority.organizationPrecondition,authorize:async(input)=>{
       const context=await authority.authorize(input);
       if(++calls===2) await service.remove(ids.scope,actors.owner,first.sourceId,1);
       return context;
@@ -381,7 +442,7 @@ describe("owner-hosted Company Brain durable sources", () => {
   });
 
   it("fences the owner member organization inside publication transactions",async()=>{
-    const changed=new CompanyBrainService({db,ownerId:actors.owner,authority:{authorize:async(input)=>{
+    const changed=new CompanyBrainService({db,ownerId:actors.owner,authority:{organizationPrecondition:authority.organizationPrecondition,authorize:async(input)=>{
       const context=await authority.authorize(input);
       await fixture.db.updateTable("collaboration_members").set({organization_id:"org_other"}).where("scope_id","=",ids.scope).where("actor_id","=",actors.owner).execute();
       return context;
