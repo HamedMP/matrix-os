@@ -9,6 +9,11 @@ const platformShellAssetPrefix = process.env.MATRIX_PLATFORM_AUTH_SHELL === "1"
 
 const nextConfig: NextConfig = {
   assetPrefix: platformShellAssetPrefix,
+  // Clerk turns next() into a same-URL rewrite. Next normalizes 127.0.0.1
+  // to localhost in its proxy request; against the loopback auth server that
+  // becomes an external self-proxy loop. Preserve the original network URL
+  // only for the platform build; Clerk's public origin is handled separately.
+  skipProxyUrlNormalize: Boolean(platformShellAssetPrefix),
   env: {
     NEXT_PUBLIC_PLATFORM_SHELL_ASSET_PREFIX: platformShellAssetPrefix ?? "",
   },
