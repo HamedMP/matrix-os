@@ -115,6 +115,21 @@ describe("server-resolved Chat mention context", () => {
     })).rejects.toMatchObject({ code: "context_unavailable" });
   });
 
+  it("preserves Supervised mode for a saved Codex Agent", async () => {
+    const agent = await agents.create(owner, {
+      clientRequestId: "req_supervised_bot", name: "Supervised helper", description: "Reviews work",
+      instructions: "Review before editing.",
+      selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+    });
+    const prepared = await context.prepare(owner, "chat_current", {
+      ...request, permissionMode: "supervised",
+      parts: [...request.parts, mention("agent", agent.id)],
+    });
+    expect(prepared.permissionMode).toBe("supervised");
+    expect(prepared.selection).toEqual(agent.selection);
+    expect(prepared.context?.agent?.id).toBe(agent.id);
+  });
+
   it("pins recipe instructions and renders explicit integration and output guidance", async () => {
     const agent = await agents.create(owner, {
       clientRequestId: "req_recipe_bot",

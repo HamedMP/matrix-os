@@ -54,7 +54,7 @@ describe("Hermes Agent invocation through canonical Chat", () => {
     const catalog = createCanonicalProviderCatalogFixture();
     const hermes = { ...catalog.instances[0]!, id: "hermes_default", driverKind: "hermes" as const,
       models: [{ ...catalog.instances[0]!.models[0]!, id: agentSelection.model }],
-      supports: { ...catalog.instances[0]!.supports, resources: [], permissionModes: ["full_access"] },
+      supports: { ...catalog.instances[0]!.supports, attachments: [], resources: [], permissionModes: ["full_access"] },
     };
     catalog.drivers.push({ ...catalog.drivers[0]!, kind: "hermes", displayName: "Hermes" });
     catalog.instances.push(hermes);
@@ -181,6 +181,90 @@ describe("Hermes Agent invocation through canonical Chat", () => {
     expect(detail?.runs.at(-1)?.context?.agent?.id).toBe(agentId);
     expect(detail?.runs.at(-1)?.status).toBe("completed");
     expect(detail?.record.chat.currentSelection).toEqual(selection);
+  });
+
+  it("admits a mentioned Codex Agent in Supervised mode", async () => {
+    await agents.update(owner, agentId, { baseRevision: 1, selection });
+    const request = {
+      ...await input("req_codex_supervised", [mention("agent", agentId), { type: "text" as const, text: "Review safely" }]),
+      permissionMode: "supervised" as const,
+    };
+    const admitted = await orchestrator.admitTurn(principal, owner, "chat_parent", request);
+    await complete();
+    expect(admitted.run.driverKind).toBe("codex");
+    expect(calls[0]?.input.permissionMode).toBe("supervised");
+    expect(calls[0]?.input.prompt).toContain("Separate decisions from open questions.");
+  });
+
+  it("explains when a saved Agent runtime cannot use Supervised mode", async () => {
+    const request = {
+      ...await input("req_hermes_supervised", [mention("agent", agentId), { type: "text" as const, text: "Review safely" }]),
+      permissionMode: "supervised" as const,
+    };
+    await expect(orchestrator.admitTurn(principal, owner, "chat_parent", request)).rejects.toMatchObject({
+      safeError: { code: "agent_full_access_required", safeMessage: "This Agent's runtime requires Full access. Enable it for this request or choose a different Agent model." },
+    });
+    expect(calls).toHaveLength(0);
+  });
+
+  it("preserves another capability error when Full access would not make the Agent request runnable", async () => {
+    const request = {
+      ...await input("req_hermes_supervised_attachment", [
+        mention("agent", agentId),
+        { type: "text" as const, text: "Review safely" },
+        {
+          type: "attachment_reference" as const,
+          attachmentId: "attachment_agent_unsupported",
+          kind: "file" as const,
+          label: "notes.txt",
+          mimeType: "text/plain",
+          ownerReference: "uploads/notes.txt",
+        },
+      ]),
+      permissionMode: "supervised" as const,
+    };
+    await expect(orchestrator.admitTurn(principal, owner, "chat_parent", request)).rejects.toMatchObject({
+      safeError: { code: "capability_mismatch" },
+    });
+    expect(calls).toHaveLength(0);
+  });
+
+  it("rejects an unsupported Supervised Agent before queueing it", async () => {
+    hold = new Promise<void>((resolve) => { release = resolve; });
+    await orchestrator.admitTurn(principal, owner, "chat_parent", await input("req_held", [{ type: "text", text: "Current work" }]));
+    const request = {
+      ...await input("req_hermes_supervised_queue", [mention("agent", agentId), { type: "text" as const, text: "Review next" }]),
+      permissionMode: "supervised" as const,
+    };
+    await expect(orchestrator.enqueueQueuedTurn(principal, owner, "chat_parent", request)).rejects.toMatchObject({
+      safeError: { code: "agent_full_access_required", safeMessage: "This Agent's runtime requires Full access. Enable it for this request or choose a different Agent model." },
+    });
+    release?.();
+    await complete();
+  });
+
+  it("preserves another capability error before queueing an Agent request", async () => {
+    hold = new Promise<void>((resolve) => { release = resolve; });
+    await orchestrator.admitTurn(principal, owner, "chat_parent", await input("req_held_attachment", [{ type: "text", text: "Current work" }]));
+    const request = {
+      ...await input("req_hermes_supervised_attachment_queue", [
+        mention("agent", agentId),
+        {
+          type: "attachment_reference" as const,
+          attachmentId: "attachment_agent_queue_unsupported",
+          kind: "file" as const,
+          label: "notes.txt",
+          mimeType: "text/plain",
+          ownerReference: "uploads/notes.txt",
+        },
+      ]),
+      permissionMode: "supervised" as const,
+    };
+    await expect(orchestrator.enqueueQueuedTurn(principal, owner, "chat_parent", request)).rejects.toMatchObject({
+      safeError: { code: "capability_mismatch" },
+    });
+    release?.();
+    await complete();
   });
 
   it("queues a saved Codex Agent behind an active run without dropping its context", async () => {

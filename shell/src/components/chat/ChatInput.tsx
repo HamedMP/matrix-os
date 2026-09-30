@@ -84,7 +84,7 @@ export function ChatInput({
     },
   });
   const speechBusy = speech.phase === "requesting_permission" || speech.phase === "recording" || speech.phase === "transcribing";
-  const canSend = !speechBusy && canSendChatInput({ connected, sending, allowed: permission.allowed, busy, references: resources.length, text: input, attachments: attachments.length });
+  const canSend = !speechBusy && canSendChatInput({ connected, sending, busy, references: resources.length, text: input, attachments: attachments.length });
 
   useEffect(() => {
     inputRef.current = input;

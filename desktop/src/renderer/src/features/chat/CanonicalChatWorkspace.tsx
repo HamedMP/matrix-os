@@ -434,7 +434,6 @@ export function CanonicalChatWorkspace({
     if (
       !selection
       || !canonicalComposerSelectionIsAvailable(providerCatalog, selection)
-      || !mentionPermission.allowed
       || (activeRun && !mentionResources.length)
       || uploadingAttachments
     ) return;
@@ -512,7 +511,6 @@ export function CanonicalChatWorkspace({
       || !controller.detail
       || !selection
       || !canonicalComposerSelectionIsAvailable(providerCatalog, selection)
-      || !mentionPermission.allowed
       || composerAction
       || uploadingAttachments
       || (attachments.items.length > 0 && !supportsNativeFileAttachments(selectedInstance))
@@ -689,7 +687,7 @@ export function CanonicalChatWorkspace({
         busy={Boolean(activeRun) || uploadingAttachments}
         submitWhileBusy={Boolean(activeRun)}
         disabled={controller.status === "loading" || uploadingAttachments || (!catalog && liveCatalog.status === "loading")}
-        canSubmit={Boolean(canonicalComposerSelectionIsAvailable(providerCatalog, selection) && mentionPermission.allowed && !uploadingAttachments && (
+        canSubmit={Boolean(canonicalComposerSelectionIsAvailable(providerCatalog, selection) && !uploadingAttachments && (
           draft.trim() || referenceTokens.length > 0 || attachments.items.length > 0
         ))}
         catalog={providerCatalog}
