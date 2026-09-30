@@ -95,16 +95,27 @@ function isReconnectableClose(code: number | null): boolean {
   return true;
 }
 
+/**
+ * One outbound queue entry. Frames are validated at send-entry but stay
+ * UNSTAMPED until the actual socket write: a frame queued while CONNECTING
+ * must take its sequence after `client.ready`, so the wire order is always a
+ * strictly increasing sequence within an epoch.
+ */
+type OutboundPending =
+  | { kind: "json"; frame: VoiceClientFrame }
+  | { kind: "binary"; data: ArrayBuffer | ArrayBufferView };
+
 export class VoiceTransport {
   private socket: VoiceTransportSocket | null = null;
   private epoch = 1;
   private sequence = 0;
-  private queue: string[] = [];
-  private binaryQueue: (ArrayBuffer | ArrayBufferView)[] = [];
+  private pending: OutboundPending[] = [];
   private heartbeatTimer: unknown;
   private lastInboundAt = 0;
   private open = false;
   private disposed = false;
+  /** True only during the onOpen dispatch: hello frames jump the CONNECTING queue. */
+  private priorityWrites = false;
   private readonly stats = { sentFrames: 0, droppedOutbound: 0, invalidInbound: 0, invalidOutbound: 0, binaryInbound: 0 };
 
   constructor(private readonly options: VoiceTransportOptions) {
@@ -177,8 +188,7 @@ export class VoiceTransport {
     this.detachSocket(1_000, "epoch replaced");
     this.epoch = input.epoch;
     this.sequence = 0;
-    this.queue = [];
-    this.binaryQueue = [];
+    this.pending = [];
     this.open = false;
 
     const factory = this.options.webSocketFactory
@@ -199,9 +209,16 @@ export class VoiceTransport {
       this.open = true;
       this.lastInboundAt = this.now;
       this.startHeartbeat();
-      // client.ready (emitted by onOpen) must reach the wire before any frame
-      // that was queued while the socket was connecting.
-      this.options.events.onOpen?.();
+      // client.ready (emitted by onOpen) must reach the wire before frames
+      // queued while CONNECTING: during the onOpen dispatch, sends jump the
+      // pending queue and stamp sequence 1..k; queued frames stamp 2..N at
+      // flush time, so the wire order stays strictly increasing.
+      this.priorityWrites = true;
+      try {
+        this.options.events.onOpen?.();
+      } finally {
+        this.priorityWrites = false;
+      }
       this.flushQueue(socket);
     };
     socket.onmessage = (event: { data: unknown }) => {
@@ -231,29 +248,34 @@ export class VoiceTransport {
     };
   }
 
-  /** Queues or sends a client frame body; returns false when the frame cannot be accepted at all. */
+  /**
+   * Validates and queues a client frame body; returns false when the frame
+   * cannot be accepted at all. The sequence is stamped at the actual socket
+   * write so `client.ready` (emitted from `onOpen`) and any frames queued
+   * while CONNECTING keep a strictly increasing wire order.
+   */
   send(body: VoiceClientFrameBody): boolean {
     if (this.disposed) return false;
-    const candidate = this.sequence + 1;
-    const stamped = {
+    // Preview the fully stamped frame for schema and size validation. The
+    // wire sequence may be higher by flush time; only strict monotonicity and
+    // the field-level schema matter, so the preview guarantees validity.
+    const preview = {
       contractVersion: VOICE_SESSION_CONTRACT_VERSION,
       sessionId: this.options.sessionId,
       epoch: this.epoch,
-      sequence: candidate,
+      sequence: this.sequence + this.pending.length + 1,
       ...body,
     };
-    const parsed = VoiceClientFrameSchema.safeParse(stamped);
+    const parsed = VoiceClientFrameSchema.safeParse(preview);
     if (!parsed.success) {
       this.rejectOutbound();
       return false;
     }
-    const payload = JSON.stringify(stamped);
-    if (payload.length > this.maxFrameChars) {
+    if (JSON.stringify(preview).length > this.maxFrameChars) {
       this.rejectOutbound();
       return false;
     }
-    this.sequence = candidate;
-    this.sendOrQueue(payload);
+    this.writeOrQueue(parsed.data);
     return true;
   }
 
@@ -263,9 +285,11 @@ export class VoiceTransport {
     if (data.byteLength <= 0 || data.byteLength > VOICE_SESSION_LIMITS.maxAudioFrameBytes + MAX_BINARY_HEADER_BYTES) {
       return false;
     }
-    this.sequence += 1;
     const socket = this.socket;
-    if (socket && this.open && (socket.bufferedAmount ?? 0) <= this.maxBufferedBytes) {
+    if (this.canWriteNow(socket)) {
+      // A binary frame occupies one sequence position; its stamped header is
+      // producer-encoded so the transport only reserves the counter slot.
+      this.sequence += 1;
       try {
         socket.send(data);
         this.stats.sentFrames += 1;
@@ -274,8 +298,8 @@ export class VoiceTransport {
         warn("[voice-session] binary send failed:", error);
       }
     }
-    this.binaryQueue.push(data);
-    this.trimQueue(this.binaryQueue);
+    this.pending.push({ kind: "binary", data });
+    this.trimQueue();
     return true;
   }
 
@@ -288,13 +312,39 @@ export class VoiceTransport {
     if (this.disposed) return;
     this.disposed = true;
     this.detachSocket(1_000, "disposed");
-    this.queue = [];
-    this.binaryQueue = [];
+    this.pending = [];
   }
 
-  private sendOrQueue(payload: string): void {
+  /**
+   * Direct writes only happen when nothing is queued (a queued frame must
+   * never be overtaken on the wire), except inside the onOpen dispatch where
+   * the hello must lead the CONNECTING backlog.
+   */
+  private canWriteNow(socket: VoiceTransportSocket | null): socket is VoiceTransportSocket {
+    return socket !== null
+      && socket === this.socket
+      && this.open
+      && (this.priorityWrites || this.pending.length === 0)
+      && (socket.bufferedAmount ?? 0) <= this.maxBufferedBytes;
+  }
+
+  /** Stamps the next wire sequence onto a validated frame. */
+  private stampWire(frame: VoiceClientFrame): string | null {
+    const wire = { ...frame, epoch: this.epoch, sequence: this.sequence + 1 };
+    const payload = JSON.stringify(wire);
+    if (payload.length > this.maxFrameChars) {
+      this.rejectOutbound();
+      return null;
+    }
+    this.sequence += 1;
+    return payload;
+  }
+
+  private writeOrQueue(frame: VoiceClientFrame): void {
     const socket = this.socket;
-    if (socket && this.open && (socket.bufferedAmount ?? 0) <= this.maxBufferedBytes) {
+    if (this.canWriteNow(socket)) {
+      const payload = this.stampWire(frame);
+      if (payload === null) return;
       try {
         socket.send(payload);
         this.stats.sentFrames += 1;
@@ -303,39 +353,45 @@ export class VoiceTransport {
         warn("[voice-session] socket send failed:", error);
       }
     }
-    this.queue.push(payload);
-    this.trimQueue(this.queue);
+    this.pending.push({ kind: "json", frame });
+    this.trimQueue();
   }
 
-  private trimQueue(queue: unknown[]): void {
-    while (queue.length > this.maxOutboundQueue) {
-      queue.shift();
+  private trimQueue(): void {
+    while (this.pending.length > this.maxOutboundQueue) {
+      this.pending.shift();
       this.stats.droppedOutbound += 1;
       this.options.events.onBackpressure?.(this.stats.droppedOutbound);
     }
   }
 
   private flushQueue(socket: VoiceTransportSocket): void {
-    while (socket === this.socket && this.open && (this.queue.length > 0 || this.binaryQueue.length > 0)) {
+    while (socket === this.socket && this.open && this.pending.length > 0) {
       if ((socket.bufferedAmount ?? 0) > this.maxBufferedBytes) return;
-      if (this.queue.length > 0) {
-        const payload = this.queue.shift();
-        if (payload === undefined) continue;
+      const item = this.pending[0] as OutboundPending;
+      if (item.kind === "json") {
+        const payload = this.stampWire(item.frame);
+        if (payload === null) {
+          this.pending.shift();
+          continue;
+        }
         try {
           socket.send(payload);
           this.stats.sentFrames += 1;
+          this.pending.shift();
         } catch (error: unknown) {
           warn("[voice-session] queued send failed:", error);
           return;
         }
       } else {
-        const payload = this.binaryQueue.shift();
-        if (payload === undefined) continue;
+        this.sequence += 1;
         try {
-          socket.send(payload);
+          socket.send(item.data);
           this.stats.sentFrames += 1;
+          this.pending.shift();
         } catch (error: unknown) {
           warn("[voice-session] queued binary send failed:", error);
+          this.sequence -= 1;
           return;
         }
       }
@@ -396,8 +452,7 @@ export class VoiceTransport {
       // frames still queued for the previous epoch are stale.
       this.epoch = frame.epoch;
       this.sequence = 0;
-      this.queue = [];
-      this.binaryQueue = [];
+      this.pending = [];
     }
     this.options.events.onFrame(frame);
   }

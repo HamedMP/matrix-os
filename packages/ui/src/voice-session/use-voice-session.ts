@@ -19,8 +19,10 @@ import {
   VOICE_SESSION_CONTRACT_VERSION,
   VOICE_SESSION_LIMITS,
   VoiceCanonicalChatIdSchema,
+  type AudioFormat,
   type ClientMediaCapabilities,
   type SafeVoiceError,
+  type VoiceOutputAudioFormat,
 } from "@matrix-os/contracts/voice-session";
 import { VoiceSessionController, type VoiceSessionCommand } from "./controller.js";
 import {
@@ -47,7 +49,7 @@ import {
 } from "./client-types.js";
 import { createReconnectLoop } from "./client-reconnect.js";
 import { routeVoiceCommand } from "./client-commands.js";
-import { createTransportAttachment } from "./client-transport.js";
+import { createTransportAttachment, voiceDeclaredAudioFormat } from "./client-transport.js";
 
 export {
   capabilityUnavailableError,
@@ -69,7 +71,32 @@ export function createVoiceSessionClient(options: VoiceSessionClientOptions): Vo
     fetcher: options.fetcher,
     makeTimeoutSignal: options.makeTimeoutSignal,
   });
-  const audio = options.audio ?? DEFAULT_VOICE_AUDIO_FORMAT;
+  const requestedAudio = options.audio ?? DEFAULT_VOICE_AUDIO_FORMAT;
+  // Capture is mono: the pipeline reads one channel, so a stereo config is
+  // normalized and the EFFECTIVE format is what client.ready advertises.
+  const audio: AudioFormat = requestedAudio.channels === 1
+    ? requestedAudio
+    : { ...requestedAudio, channels: 1 };
+  if (audio !== requestedAudio) {
+    console.warn("[voice-session] stereo capture is unsupported; advertising mono (channels: 1)");
+  }
+  const declaredCapabilities = options.mediaCapabilities;
+  const resolvedMediaCapabilities = (): ClientMediaCapabilities => declaredCapabilities === undefined
+    ? {
+        formats: [audio],
+        binaryAudio: false,
+        maxAudioFrameBytes: VOICE_SESSION_LIMITS.maxAudioFrameBytes,
+        deviceChangeEvents: typeof navigator !== "undefined"
+          && typeof navigator.mediaDevices?.addEventListener === "function",
+      }
+    : {
+        ...declaredCapabilities,
+        // Honest capabilities: the client never captures stereo, so declared
+        // formats are normalized to what the pipeline actually produces.
+        formats: declaredCapabilities.formats.map(
+          (format): AudioFormat => (format.channels === 1 ? format : { ...format, channels: 1 }),
+        ),
+      };
   const maxReconnectAttempts = Math.max(
     0,
     Math.min(options.maxReconnectAttempts ?? VOICE_SESSION_LIMITS.maxReconnectAttempts, VOICE_SESSION_LIMITS.maxReconnectAttempts),
@@ -95,6 +122,8 @@ export function createVoiceSessionClient(options: VoiceSessionClientOptions): Vo
   let disposed = false;
   let generation = 0;
   let startPromise: Promise<void> | null = null;
+  /** Output format declared by the capability response for playback fallback. */
+  let declaredOutputAudio: VoiceOutputAudioFormat | undefined;
   let snapshot: VoiceSessionClientSnapshot = {
     phase, error, notice, sessionId, chatId, reconnectStatus, voice: null,
   };
@@ -149,8 +178,26 @@ export function createVoiceSessionClient(options: VoiceSessionClientOptions): Vo
     });
   };
 
+  /**
+   * Terminal failure teardown: stop capture first so no late audio chunk
+   * escapes, then release the mic, retire the socket, and delete the remote
+   * session when one was minted. Safe to call from any failure path —
+   * release/delete are idempotent.
+   */
   const failSession = (safeError: SafeVoiceError) => {
     reconnectLoop.cancel();
+    activeTurnId = null;
+    const held = media;
+    if (held) {
+      try {
+        held.stopCapture();
+      } catch (stopError: unknown) {
+        voiceWarn("[voice-session] capture stop on failure failed:", stopError);
+      }
+    }
+    void releaseMedia();
+    transport.retire();
+    deleteRemote();
     error = safeError;
     injectFrame({ type: "session.error", ...safeError });
     phase = "failed";
@@ -186,6 +233,16 @@ export function createVoiceSessionClient(options: VoiceSessionClientOptions): Vo
     if (!remoteEnded) deleteRemote();
   }
 
+  /**
+   * Every teardown path fences an in-flight startFlow: bumping the generation
+   * before tearing down makes each `stale()` gate reject the late-resolved
+   * awaits (capabilities, permission, createSession) of a cancelled start.
+   */
+  const teardown = (remoteEnded: boolean): Promise<void> => {
+    generation += 1;
+    return teardownSession(remoteEnded);
+  };
+
   const reconnectLoop = createReconnectLoop({
     isDisposed: () => disposed,
     generation: () => generation,
@@ -206,26 +263,24 @@ export function createVoiceSessionClient(options: VoiceSessionClientOptions): Vo
     },
   });
 
+  /** Projects a local `transport.going_away` into the controller so visible state tracks revival intent. */
+  const injectGoingAway = () => injectFrame({
+    type: "transport.going_away",
+    retryAfterMs: reconnectLoop.retryAfter(),
+    reconnectAllowed: true,
+  });
+
   const transport = createTransportAttachment({
     sessionId: () => sessionId,
     controller: () => controller,
     media: () => media,
     lossIsReconnectable: () => !disposed && !ending && phase !== "ended" && phase !== "idle",
     audio,
-    mediaCapabilities: () => options.mediaCapabilities ?? {
-      formats: [audio],
-      binaryAudio: false,
-      maxAudioFrameBytes: VOICE_SESSION_LIMITS.maxAudioFrameBytes,
-      deviceChangeEvents: typeof navigator !== "undefined"
-        && typeof navigator.mediaDevices?.addEventListener === "function",
-    } satisfies ClientMediaCapabilities,
+    mediaCapabilities: resolvedMediaCapabilities,
+    declaredOutputAudio: () => declaredOutputAudio,
     options,
     noteRetryAfter: (ms) => reconnectLoop.noteRetryAfter(ms),
-    goingAway: () => injectFrame({
-      type: "transport.going_away",
-      retryAfterMs: reconnectLoop.retryAfter(),
-      reconnectAllowed: true,
-    }),
+    goingAway: injectGoingAway,
     onResumed: () => reconnectLoop.onResumed(),
     setPhase,
     failSession,
@@ -234,7 +289,20 @@ export function createVoiceSessionClient(options: VoiceSessionClientOptions): Vo
       notice = safeError;
       emit();
     },
-    onRemoteEnd: () => void teardownSession(true),
+    onRemoteEnd: () => {
+      // Server-side `session.state` -> ended is authoritative: tear down
+      // without a DELETE and surface the terminal phase to the shell.
+      void teardown(true);
+      setPhase("ended");
+    },
+    onRemoteFailed: () => {
+      // Server-side `session.state` -> failed intends reconnect-revival:
+      // keep the bounded ladder when allowed, fail terminally otherwise.
+      if (disposed || ending || phase === "ended" || phase === "idle") return;
+      injectGoingAway();
+      setPhase("reconnecting");
+      reconnectLoop.schedule();
+    },
   });
 
   const mediaCallbacks: VoiceMediaCallbacks = {
@@ -292,9 +360,15 @@ export function createVoiceSessionClient(options: VoiceSessionClientOptions): Vo
         activeTurnId = turnId;
       },
       makeId,
-      teardown: teardownSession,
+      teardown,
       reconnect: () => void reconnectLoop.perform(true),
-      onContinueInChat: () => options.onContinueInChat?.(),
+      onContinueInChat: () => {
+        // Continuing in chat ends the voice session on every path; keep the
+        // public phase truthful before handing off to the host surface.
+        phase = "ended";
+        emit();
+        options.onContinueInChat?.();
+      },
     }, command);
   };
 
@@ -329,6 +403,7 @@ export function createVoiceSessionClient(options: VoiceSessionClientOptions): Vo
     reconnectStatus = null;
     sessionId = null;
     chatId = null;
+    declaredOutputAudio = undefined;
     setPhase("starting");
 
     let capability;
@@ -347,6 +422,9 @@ export function createVoiceSessionClient(options: VoiceSessionClientOptions): Vo
       failSession(capabilityUnavailableError(capability.reason));
       return;
     }
+    // Optional capability field: the server may declare the synthesis output
+    // format (e.g. 24 kHz PCM); segments without a per-frame format use it.
+    declaredOutputAudio = voiceDeclaredAudioFormat(capability.outputAudio);
 
     const heldMedia = options.mediaFactory
       ? options.mediaFactory({ audio, callbacks: mediaCallbacks })
@@ -376,7 +454,18 @@ export function createVoiceSessionClient(options: VoiceSessionClientOptions): Vo
       }
       return;
     }
-    if (stale()) return;
+    if (stale()) {
+      // The request already minted a remote session before the caller
+      // cancelled (end/continueInChat/dispose): delete it best-effort so no
+      // hidden live session survives. `existing_consumed` reports a session
+      // this request did not mint, so it is left alone.
+      if (created.outcome !== "existing_consumed") {
+        void api.deleteSession(parsedChatId, created.sessionId).catch((deleteError: unknown) => {
+          voiceWarn("[voice-session] cancelled-session delete failed:", deleteError);
+        });
+      }
+      return;
+    }
 
     sessionId = created.sessionId;
     chatId = parsedChatId;
@@ -456,13 +545,22 @@ export function createVoiceSessionClient(options: VoiceSessionClientOptions): Vo
       if (active && active.getState().state !== "ended") {
         active.continueInChat();
       } else {
-        void teardownSession(false);
+        // No live controller: tear down locally, fence any in-flight start,
+        // and mark the phase terminal before the host surface takes over.
+        void teardown(false);
+        phase = "ended";
+        emit();
         options.onContinueInChat?.();
       }
     },
     async end() {
       if (disposed || ending || phase === "ended") return;
       ending = true;
+      // Fence an in-flight start BEFORE tearing down: every stale() gate in
+      // startFlow must see a newer generation, and a late-resolved create
+      // deletes the minted remote session rather than attaching it.
+      generation += 1;
+      startPromise = null;
       try {
         if (controller && controller.getState().state !== "ended") {
           controller.end();
@@ -479,6 +577,7 @@ export function createVoiceSessionClient(options: VoiceSessionClientOptions): Vo
       if (disposed) return;
       disposed = true;
       generation += 1;
+      startPromise = null;
       reconnectLoop.cancel();
       transport.retire();
       deleteRemote();

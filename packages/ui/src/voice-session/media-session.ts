@@ -9,8 +9,10 @@
  */
 import {
   VOICE_SESSION_LIMITS,
+  VoiceOutputAudioFormatSchema,
   type AudioFormat,
   type SafeVoiceError,
+  type VoiceOutputAudioFormat,
   type VoicePlaybackAck,
 } from "@matrix-os/contracts/voice-session";
 import { voiceErrorForCode } from "./session-api.js";
@@ -51,6 +53,37 @@ export type {
 const DEFAULT_MAX_IN_FLIGHT_MS = 2_000;
 const DEFAULT_MAX_RESPONSES = 16;
 const DEFAULT_MAX_QUEUED_SEGMENTS = 128;
+/** Bounded replay protection: seen segment ids for dedupe (oldest evicted). */
+const MAX_SEEN_SEGMENTS = 256;
+
+/**
+ * Capture is mono: the web pipeline reads one channel, so a configured
+ * stereo format is normalized rather than advertised dishonestly.
+ */
+function monoFormat(format: AudioFormat): AudioFormat {
+  return format.channels === 1 ? format : { ...format, channels: 1 };
+}
+
+/** Validates an optional wire-declared output format; malformed values fall back to the negotiated format. */
+function declaredFormat(
+  value: VoiceOutputAudioFormat | undefined,
+  fallback: AudioFormat,
+): VoiceOutputAudioFormat {
+  if (value === undefined) return fallback;
+  return VoiceOutputAudioFormatSchema.safeParse(value).success ? value : fallback;
+}
+
+/** Converts interleaved wire samples into the planar layout `createPcmBuffer` expects. */
+function deinterleave(interleaved: Float32Array, channels: number): Float32Array {
+  const frames = Math.floor(interleaved.length / channels);
+  const planar = new Float32Array(frames * channels);
+  for (let channel = 0; channel < channels; channel += 1) {
+    for (let index = 0; index < frames; index += 1) {
+      planar[channel * frames + index] = interleaved[index * channels + channel] as number;
+    }
+  }
+  return planar;
+}
 
 export interface VoiceMediaCallbacks {
   /** Returns false while the transport cannot accept the chunk; the media queue retains it. */
@@ -66,7 +99,13 @@ export interface VoiceMediaSession {
   prepare(input?: { onRationale?: () => void | Promise<void>; inputDeviceId?: string }): Promise<void>;
   startCapture(input: { turnId: string }): boolean;
   stopCapture(): void;
-  enqueueSegment(input: { responseId: string; segmentId: string; data: string }): void;
+  /**
+   * Queues one response audio segment. `format` is an optional per-segment
+   * output format declared by the wire (e.g. 24 kHz synthesis vs 16 kHz
+   * input); when absent or malformed the negotiated session format decodes
+   * the data.
+   */
+  enqueueSegment(input: { responseId: string; segmentId: string; data: string; format?: VoiceOutputAudioFormat }): void;
   /** Stops playout; returns the true heard boundary (ms) or null when unknown. */
   interruptResponse(responseId: string): number | null;
   playedThroughMs(responseId: string): number | null;
@@ -101,7 +140,12 @@ export function createWebVoiceMediaSession(options: {
   maxQueuedSegments?: number;
   now?: () => number;
 }): VoiceMediaSession {
-  const audio = options.audio;
+  // Capture and negotiated-format playback are mono-only; a configured stereo
+  // input format is normalized instead of producing silent-channel lies.
+  const audio = monoFormat(options.audio);
+  if (audio !== options.audio) {
+    console.warn("[voice-session] stereo capture is unsupported; using mono (channels: 1)");
+  }
   const callbacks = options.callbacks;
   const mediaDevices = options.mediaDevices === undefined ? defaultMediaDevices() : options.mediaDevices;
   const createAudioContext = options.createAudioContext ?? webAudioContextFactory;
@@ -129,6 +173,15 @@ export function createWebVoiceMediaSession(options: {
   let pendingSamples = new Float32Array(0);
   const pendingChunks: PendingChunk[] = [];
   const responses = new Map<string, ResponsePlayback>();
+  /**
+   * Replay protection for `response.audio` redelivery (post-reconnect or
+   * transport retries). `inFlight` covers segments queued or playing;
+   * `played` keeps the emitted ack so an at-least-once redelivery can be
+   * re-acked for server delivery bookkeeping without a second playout.
+   * Both are FIFO-bounded.
+   */
+  const inFlightSegments = new Set<string>();
+  const playedSegments = new Map<string, VoicePlaybackAck>();
 
   const emitError = (error: SafeVoiceError) => {
     try {
@@ -144,8 +197,8 @@ export function createWebVoiceMediaSession(options: {
     throw new VoiceMediaError(voiceErrorForCode("internal_failure"));
   };
 
-  const decodeBytes = (bytes: Uint8Array): Float32Array => {
-    if (audio.codec === "pcm_f32le") return pcmF32ToFloat(bytes);
+  const decodeBytes = (bytes: Uint8Array, format: VoiceOutputAudioFormat): Float32Array => {
+    if (format.codec === "pcm_f32le") return pcmF32ToFloat(bytes);
     return pcm16ToFloat(bytes);
   };
 
@@ -254,13 +307,22 @@ export function createWebVoiceMediaSession(options: {
       playback.current = null;
       playback.playedMs += segment.buffer.durationMs;
       playback.ackRevision += 1;
+      const ack: VoicePlaybackAck = {
+        responseId,
+        segmentId: segment.segmentId,
+        deliveryRevision: playback.ackRevision,
+        playedThroughMs: Math.round(playback.playedMs),
+      };
+      const dedupeKey = `${responseId}:${segment.segmentId}`;
+      inFlightSegments.delete(dedupeKey);
+      while (playedSegments.size >= MAX_SEEN_SEGMENTS) {
+        const oldest = playedSegments.keys().next().value;
+        if (oldest === undefined) break;
+        playedSegments.delete(oldest);
+      }
+      playedSegments.set(dedupeKey, ack);
       try {
-        callbacks.onSegmentPlayed({
-          responseId,
-          segmentId: segment.segmentId,
-          deliveryRevision: playback.ackRevision,
-          playedThroughMs: Math.round(playback.playedMs),
-        });
+        callbacks.onSegmentPlayed(ack);
       } catch (error: unknown) {
         console.warn("[voice-session] playback ack listener failed:", error instanceof Error ? error.name : "UnknownError");
       }
@@ -354,12 +416,32 @@ export function createWebVoiceMediaSession(options: {
       pendingChunks.length = 0;
       activeTurnId = null;
     },
-    enqueueSegment({ responseId, segmentId, data }) {
+    enqueueSegment({ responseId, segmentId, data, format }) {
       if (released) return;
-      if (audio.codec === "opus") {
+      // Per-segment wire-declared output format wins; fall back to the
+      // negotiated session format when absent or malformed.
+      const wireFormat = declaredFormat(format, audio);
+      if (wireFormat.codec === "opus") {
         // PCM-only decoder: opus requires an encoded-audio pipeline the web
         // layer does not provide; count and drop rather than mis-decode.
         invalidSegments += 1;
+        return;
+      }
+      const dedupeKey = `${responseId}:${segmentId}`;
+      if (inFlightSegments.has(dedupeKey)) {
+        // Still queued or playing: the original playout emits the single ack.
+        return;
+      }
+      const replayAck = playedSegments.get(dedupeKey);
+      if (replayAck !== undefined) {
+        // At-least-once redelivery of an already-heard segment: re-emit the
+        // recorded ack so server delivery bookkeeping completes; the user
+        // never hears the segment twice.
+        try {
+          callbacks.onSegmentPlayed(replayAck);
+        } catch (error: unknown) {
+          console.warn("[voice-session] replay ack failed:", error instanceof Error ? error.name : "UnknownError");
+        }
         return;
       }
       let playback = responses.get(responseId);
@@ -386,11 +468,22 @@ export function createWebVoiceMediaSession(options: {
       const bytes = decodeBase64(data);
       const context = playbackCtx();
       if (bytes === null || bytes.length === 0 || context === null) return;
+      let samples = decodeBytes(bytes, wireFormat);
+      if (wireFormat.channels === 2) {
+        // Wire PCM is interleaved; the playback buffer takes planar channels.
+        samples = deinterleave(samples, 2);
+      }
       const buffer = context.createPcmBuffer({
-        samples: decodeBytes(bytes),
-        sampleRateHz: audio.sampleRateHz,
-        channels: audio.channels,
+        samples,
+        sampleRateHz: wireFormat.sampleRateHz,
+        channels: wireFormat.channels,
       });
+      while (inFlightSegments.size >= MAX_SEEN_SEGMENTS) {
+        const oldest = inFlightSegments.values().next().value;
+        if (oldest === undefined) break;
+        inFlightSegments.delete(oldest);
+      }
+      inFlightSegments.add(dedupeKey);
       playback.queue.push({ segmentId, buffer });
       playback.queuedMs += buffer.durationMs;
       scheduleNext(responseId, playback);

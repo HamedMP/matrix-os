@@ -5,10 +5,11 @@
  * fresh grant here rather than reusing sockets.
  */
 import {
-  VOICE_SESSION_LIMITS,
+  VoiceOutputAudioFormatSchema,
   type AudioFormat,
   type ClientMediaCapabilities,
   type SafeVoiceError,
+  type VoiceOutputAudioFormat,
 } from "@matrix-os/contracts/voice-session";
 import type { VoiceSessionController } from "./controller.js";
 import type { VoiceMediaSession } from "./media-session.js";
@@ -22,6 +23,17 @@ import { VoiceTransport } from "./transport.js";
 
 type RelayedGrant = Extract<VoiceSessionTransportGrant, { kind: "relayed_websocket" }>;
 
+/**
+ * Tolerant reader for the optional output format declared on `response.audio`
+ * frames (`format`) or the capability response (`outputAudio`). Malformed
+ * values are ignored so playback falls back to the negotiated session format.
+ */
+export function voiceDeclaredAudioFormat(value: unknown): VoiceOutputAudioFormat | undefined {
+  if (value === undefined || value === null) return undefined;
+  const parsed = VoiceOutputAudioFormatSchema.safeParse(value);
+  return parsed.success ? parsed.data : undefined;
+}
+
 export interface VoiceTransportAttachmentDeps {
   sessionId(): string | null;
   controller(): VoiceSessionController | null;
@@ -30,6 +42,8 @@ export interface VoiceTransportAttachmentDeps {
   lossIsReconnectable(): boolean;
   audio: AudioFormat;
   mediaCapabilities(): ClientMediaCapabilities;
+  /** Default output format declared by the capability response, if any. */
+  declaredOutputAudio(): VoiceOutputAudioFormat | undefined;
   options: Pick<
     VoiceSessionClientOptions,
     | "webSocketFactory"
@@ -50,6 +64,12 @@ export interface VoiceTransportAttachmentDeps {
   setNotice(error: SafeVoiceError): void;
   /** Server ended the session via `session.state` -> ended. */
   onRemoteEnd(): void;
+  /**
+   * Server marked the session `session.state` -> failed. The server intends
+   * reconnect-revival: schedule a bounded reconnect, or fail terminally when
+   * the ladder is exhausted.
+   */
+  onRemoteFailed(): void;
 }
 
 export interface VoiceTransportAttachment {
@@ -107,11 +127,17 @@ export function createTransportAttachment(deps: VoiceTransportAttachmentDeps): V
                   responseId: frame.responseId,
                   segmentId: frame.segmentId,
                   data: frame.data,
+                  // A frame-declared output format (e.g. 24 kHz synthesis)
+                  // wins over the capability-declared default, which wins
+                  // over the negotiated input format.
+                  format: frame.format ?? deps.declaredOutputAudio(),
                 });
               } else if (frame.type === "response.interrupted") {
                 deps.media()?.interruptResponse(frame.responseId);
               } else if (frame.type === "session.state" && frame.state === "ended") {
                 deps.onRemoteEnd();
+              } else if (frame.type === "session.state" && frame.state === "failed") {
+                deps.onRemoteFailed();
               }
             },
             onConnectionLost: (info) => {

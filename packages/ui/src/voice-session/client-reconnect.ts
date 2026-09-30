@@ -55,6 +55,10 @@ export function createReconnectLoop(deps: VoiceReconnectLoopDeps): VoiceReconnec
   let attempts = 0;
   let retryAfterMs = 0;
   let timer: unknown;
+  /** Single-flight latch: overlapping performs join one REST reconnect. */
+  let inFlight: Promise<void> | null = null;
+  /** Monotonic perform id; only the newest perform may apply its grant. */
+  let performSeq = 0;
 
   const cancel = () => {
     if (timer !== undefined) {
@@ -63,8 +67,15 @@ export function createReconnectLoop(deps: VoiceReconnectLoopDeps): VoiceReconnec
     }
   };
 
-  const schedule = () => {
-    if (deps.isDisposed() || timer !== undefined) return;
+  const schedule = () => scheduleRetry(false);
+
+  /**
+   * `force` is used only by the in-flight perform's own failure path: fresh
+   * losses cannot arrive while a perform runs, so an external schedule()
+   * during flight would only produce a redundant post-connect reconnect.
+   */
+  const scheduleRetry = (force: boolean) => {
+    if (deps.isDisposed() || timer !== undefined || (!force && inFlight !== null)) return;
     if (attempts >= deps.maxAttempts) {
       deps.failSession(CONNECTION_LOST_FATAL);
       return;
@@ -79,6 +90,37 @@ export function createReconnectLoop(deps: VoiceReconnectLoopDeps): VoiceReconnec
     }, delay);
   };
 
+  const run = async (resetAttempts: boolean): Promise<void> => {
+    const session = deps.session();
+    if (session === null || deps.isDisposed()) return;
+    if (resetAttempts) attempts = 0;
+    cancel();
+    attempts += 1;
+    const myPerform = ++performSeq;
+    const gen = deps.generation();
+    deps.setPhase("reconnecting");
+    let grant;
+    try {
+      grant = await deps.api.reconnect(session.chatId, session.sessionId);
+    } catch (reconnectError: unknown) {
+      if (deps.isDisposed() || deps.generation() !== gen) return;
+      const safe = reconnectError instanceof VoiceSessionApiError
+        ? reconnectError.safeError
+        : voiceErrorForCode("connection_failed");
+      if (safe.retryable && attempts < deps.maxAttempts) {
+        scheduleRetry(true);
+        return;
+      }
+      deps.failSession(safe.retryable ? safe : CONNECTION_LOST_FATAL);
+      return;
+    }
+    if (deps.isDisposed() || deps.generation() !== gen) return;
+    // Single-flight makes concurrent mints impossible, but belt-and-braces:
+    // a grant from any superseded perform is dropped, never applied.
+    if (myPerform !== performSeq) return;
+    deps.onGrant(grant.transport);
+  };
+
   const loop: VoiceReconnectLoop = {
     noteRetryAfter(ms) {
       retryAfterMs = Number.isFinite(ms) && ms > 0 ? Math.min(ms, MAX_RECONNECT_DELAY_MS) : 0;
@@ -87,31 +129,18 @@ export function createReconnectLoop(deps: VoiceReconnectLoopDeps): VoiceReconnec
       return retryAfterMs;
     },
     schedule,
-    async perform(resetAttempts) {
-      const session = deps.session();
-      if (session === null || deps.isDisposed()) return;
-      if (resetAttempts) attempts = 0;
-      cancel();
-      attempts += 1;
-      const gen = deps.generation();
-      deps.setPhase("reconnecting");
-      let grant;
-      try {
-        grant = await deps.api.reconnect(session.chatId, session.sessionId);
-      } catch (reconnectError: unknown) {
-        if (deps.isDisposed() || deps.generation() !== gen) return;
-        const safe = reconnectError instanceof VoiceSessionApiError
-          ? reconnectError.safeError
-          : voiceErrorForCode("connection_failed");
-        if (safe.retryable && attempts < deps.maxAttempts) {
-          schedule();
-          return;
-        }
-        deps.failSession(safe.retryable ? safe : CONNECTION_LOST_FATAL);
-        return;
+    perform(resetAttempts) {
+      // A second caller (manual retry, scheduled timer, controller retry)
+      // joins the in-flight attempt instead of minting a competing epoch.
+      if (inFlight !== null) {
+        if (resetAttempts) attempts = 0;
+        return inFlight;
       }
-      if (deps.isDisposed() || deps.generation() !== gen) return;
-      deps.onGrant(grant.transport);
+      const pending = run(resetAttempts).finally(() => {
+        if (inFlight === pending) inFlight = null;
+      });
+      inFlight = pending;
+      return pending;
     },
     onResumed() {
       attempts = 0;
