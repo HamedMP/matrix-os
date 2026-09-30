@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { CompanyBrainService } from "../../packages/gateway/src/company-brain/service.js";
 import { bootstrapCompanyBrainDatabase, type CompanyBrainDatabase } from "../../packages/gateway/src/company-brain/database.js";
 import type { Kysely } from "kysely";
+import { sql } from "kysely";
 import { createCollaborationTestDatabase, createRealCollaborationTestDatabase, type CollaborationTestDatabase, allowAllOrganizationPrecondition, collaborationActors as actors, collaborationIds as ids } from "./collaboration-test-support.js";
 import { bootstrapChatDatabase } from "../../packages/gateway/src/chat/database.js";
 import { bootstrapCollaborationDatabase } from "../../packages/gateway/src/collaboration/database.js";
@@ -136,7 +137,7 @@ describe("durable Slack company requests use canonical shared Chat admission", (
   it("refreshes only unaccepted conflicting revisions and reconciles an already accepted exact request",async()=>{
     submit.mockRejectedValueOnce(Object.assign(new Error("Revision changed"),{code:"conflict"}));
     const lookup=vi.fn(async()=>null);
-    const revision=vi.fn(async()=>"2");
+    const revision=vi.fn<SlackCompanyOptions["execution"]["resourceRevision"]>(async()=>"2");
     options={...options,findAcceptedRequest:lookup,execution:{submit,resourceRevision:revision}};
     service=new SlackCompanyService(options);
     await service.receive(envelope);await service.drain();
@@ -301,5 +302,109 @@ describe("durable Slack company requests use canonical shared Chat admission", (
     await fixture.db.updateTable("collaboration_scopes").set({ lifecycle: "archived" }).where("id", "in", [ids.scope, childId]).execute();
     await service.drain();
     expect(sendReply).not.toHaveBeenCalled();
+  });
+
+  it("requires an owner and uses the live clock when no test clock is supplied",async()=>{
+    expect(()=>new SlackCompanyService({...options,ownerId:""})).toThrow("Missing Slack runtime owner");
+    service=new SlackCompanyService({...options,now:undefined});
+    expect(await service.receive({...envelope,event:{...envelope.event,ts:`${Math.floor(Date.now()/1000)}.000001`}})).toMatchObject({accepted:true});
+  });
+  it.each([-8*86400_000,301_000])("rejects an event outside the replay window (%s ms)",async(offset)=>{
+    await expect(service.receive({...envelope,event:{...envelope.event,ts:`${Math.floor((now.getTime()+offset)/1000)}.000001`}})).rejects.toMatchObject({code:"forbidden"});
+    expect(await db.selectFrom("slack_company_inbox").select("id").execute()).toHaveLength(0);
+  });
+  it("coalesces drains, waits for active admission on shutdown and rejects new work",async()=>{
+    let release!:()=>void;
+    submit.mockImplementationOnce(()=>new Promise(resolve=>{release=()=>resolve({request:{id:"qturn_slack_test"}});}));
+    await service.receive(envelope);const draining=service.drain();expect(service.drain()).toBe(draining);
+    await vi.waitFor(()=>expect(submit).toHaveBeenCalledTimes(1));
+    let closed=false;const closing=service.close().then(()=>{closed=true;});
+    await expect(service.receive(envelope)).rejects.toMatchObject({code:"unavailable"});
+    await expect(service.authorizePublication({} as never)).rejects.toMatchObject({code:"unavailable"});
+    expect(closed).toBe(false);release();await closing;await service.drain();expect(closed).toBe(true);
+    expect(submit).toHaveBeenCalledTimes(1);
+  });
+  it("rejects a mismatched read authority before asking for a revision",async()=>{
+    const revision=vi.fn(async()=>"0");
+    options={...options,execution:{submit,resourceRevision:revision},authority:{authorize:async(input)=>{
+      const context=await authority.authorize(input);return input.scopeId===childId&&input.action==="read"?{...context,resourceId:"other_chat"}:context;
+    }}};service=new SlackCompanyService(options);
+    await service.receive(envelope);await service.drain();expect(revision).not.toHaveBeenCalled();expect(submit).not.toHaveBeenCalled();
+    expect((await db.selectFrom("slack_company_inbox").select("state").executeTakeFirstOrThrow()).state).toBe("failed");
+  });
+  it("keeps approved original text bounded when Brain and thread context are absent",async()=>{
+    service=new SlackCompanyService({...options,brain:undefined,readThread:undefined});
+    await service.receive({...envelope,companyPublicationApproved:true,event:{...envelope.event,text:"x".repeat(9000)}});await service.drain();
+    expect(submit.mock.calls[0][1].text).toBe("x".repeat(8000)+"\n(Slack message truncated.)");
+    expect((await db.selectFrom("slack_company_inbox").select("ingestion_status").executeTakeFirstOrThrow()).ingestion_status).toBe("unavailable");
+  });
+  it("retrieves mention-only prompts with a fallback query and labels null context unavailable",async()=>{
+    readThread.mockResolvedValueOnce(null);
+    await service.receive({...envelope,event:{...envelope.event,text:"<@U123>"}});await service.drain();
+    expect(brain.retrieveForRun).toHaveBeenCalledWith(ids.scope,childId,actors.owner,{query:"company",limit:5});
+    expect(submit.mock.calls[0][1].text).toContain("Slack thread context unavailable");
+  });
+  it("retains admission when context, approved capture and progress reaction reject non-Error values",async()=>{
+    readThread.mockRejectedValueOnce("context failed");brain.captureSlackMention.mockRejectedValueOnce("capture failed");
+    const onAdmitted=vi.fn(async()=>{throw "reaction failed";});service=new SlackCompanyService({...options,onAdmitted});
+    await service.receive({...envelope,companyPublicationApproved:true,event:{...envelope.event,threadTs:envelope.event.ts}});await service.drain();
+    expect(brain.captureSlackMention.mock.calls[0][3]).toMatchObject({threadTs:envelope.event.ts});
+    expect(submit).toHaveBeenCalledTimes(1);expect(onAdmitted).toHaveBeenCalledTimes(1);
+    expect((await db.selectFrom("slack_company_inbox").select("ingestion_status").executeTakeFirstOrThrow()).ingestion_status).toBe("unavailable");
+  });
+  it("bounds evidence before submission and retries unknown admission failures durably",async()=>{
+    brain.retrieveForRun.mockResolvedValueOnce({sources:[{sourceId:"a".repeat(64),incarnation:"20000000-0000-4000-8000-000000000001",revision:1,text:"x".repeat(70000)}]} as never);
+    await service.receive(envelope);await service.drain();expect(submit).not.toHaveBeenCalled();
+    currentTime=new Date(now.getTime()+11_000);submit.mockRejectedValueOnce("unknown failure");await service.drain();
+    expect(submit).toHaveBeenCalledTimes(1);
+    expect((await db.selectFrom("slack_company_inbox").select("state").executeTakeFirstOrThrow()).state).toBe("pending");
+  });
+  it("does not reconcile a conflicting accepted request with a different payload",async()=>{
+    submit.mockRejectedValueOnce(Object.assign(new Error("conflict"),{code:"conflict"}));
+    service=new SlackCompanyService({...options,findAcceptedRequest:async()=>({queuedTurnId:"other_queue",payloadHash:"b".repeat(64)})});
+    await service.receive(envelope);await service.drain();
+    expect((await db.selectFrom("slack_company_inbox").selectAll().executeTakeFirstOrThrow())).toMatchObject({state:"failed",queued_turn_id:null});
+  });
+  it.each(["missing_binding","legacy_proof","foreign_proof","no_brain"])("suppresses output from a persisted receipt with %s",async(mutation)=>{
+    await service.receive(envelope);await service.drain();completed=true;
+    const proof={scopeId:mutation==="foreign_proof"?childId:ids.scope,sourceId:"a".repeat(64),incarnation:"20000000-0000-4000-8000-000000000001",revision:1};
+    if(mutation==="missing_binding") await db.updateTable("slack_company_inbox").set({scope_id:null}).execute();
+    else {
+      const proofs=mutation==="legacy_proof"?[{scopeId:ids.scope,sourceId:proof.sourceId,revision:1}]:[proof];
+      await db.updateTable("slack_company_inbox").set({source_proofs:sql`${JSON.stringify(proofs)}::jsonb`}).execute();
+      if(mutation==="no_brain") service=new SlackCompanyService({...options,brain:undefined});
+    }
+    await service.drain();expect(sendReply).not.toHaveBeenCalled();
+  });
+  it("accepts valid legacy serialized proofs while enforcing their exact source authority",async()=>{
+    await service.receive(envelope);await service.drain();completed=true;
+    const proofs=[{scopeId:ids.scope,sourceId:"a".repeat(64),incarnation:"20000000-0000-4000-8000-000000000001",revision:1}];
+    await db.updateTable("slack_company_inbox").set({source_proofs:sql`${JSON.stringify(JSON.stringify(proofs))}::jsonb`}).execute();
+    await service.drain();expect(brain.verifyEvidence).toHaveBeenCalledWith(ids.scope,actors.owner,[{sourceId:proofs[0].sourceId,incarnation:proofs[0].incarnation,revision:1}],undefined);
+    expect(sendReply).toHaveBeenCalledTimes(1);
+  });
+  it.each(["wrong_actor","failed","missing_run","missing_text","unknown_error"])("handles canonical reconciliation %s without publication",async(mutation)=>{
+    await service.receive(envelope);await service.drain();
+    service=new SlackCompanyService({...options,readResult:async()=>{
+      if(mutation==="unknown_error") throw "database unavailable";
+      return {status:mutation==="failed"?"failed":"completed",requestingActorId:mutation==="wrong_actor"?actors.editor:actors.owner,
+        runId:mutation==="missing_run"?undefined:"run_slack_test",text:mutation==="missing_text"?undefined:"Answer"};
+    }});await service.drain();expect(sendReply).not.toHaveBeenCalled();
+    expect((await db.selectFrom("slack_company_inbox").select("state").executeTakeFirstOrThrow()).state).toBe(mutation==="unknown_error"?"accepted":"failed");
+  });
+  it("rechecks canonical run identity after collection before publication",async()=>{
+    await service.receive(envelope);await service.drain();let reads=0;
+    service=new SlackCompanyService({...options,readResult:async()=>({status:"completed",requestingActorId:actors.owner,runId:++reads===1?"run_first":"run_changed",text:"Answer"})});
+    await service.drain();expect(sendReply).not.toHaveBeenCalled();
+    expect((await db.selectFrom("slack_company_outbox").select("state").executeTakeFirstOrThrow()).state).toBe("failed");
+  });
+  it("caps known retryable replies at three attempts and holds unknown failures without replay",async()=>{
+    await service.receive(envelope);await service.drain();completed=true;sendReply.mockResolvedValue({status:"retryable"});
+    for(let attempt=0;attempt<3;attempt++){await service.drain();currentTime=new Date(currentTime.getTime()+31_000);}
+    expect(sendReply).toHaveBeenCalledTimes(3);
+    expect((await db.selectFrom("slack_company_outbox").select("state").executeTakeFirstOrThrow()).state).toBe("failed");
+    await service.receive({...envelope,event:{...envelope.event,eventId:"EvUNKNOWN"}});sendReply.mockRejectedValueOnce("ambiguous response");
+    await service.drain();await service.drain();expect(sendReply).toHaveBeenCalledTimes(4);
+    expect(await db.selectFrom("slack_company_outbox").select("state").where("state","=","uncertain").execute()).toHaveLength(1);
   });
 });

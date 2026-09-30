@@ -61,6 +61,23 @@ describe("owner-hosted Company Brain durable sources", () => {
     expect(await db.selectFrom("company_brain_documents").selectAll().execute()).toHaveLength(0);
   });
 
+  it("publishes under inherited owner membership and fences expiration after owner preflight",async()=>{
+    const parent="10000000-0000-4000-8000-000000000030";
+    const repository=new CollaborationRepository(fixture.db,{now:()=>at});
+    await repository.createDirectScope({scopeId:parent,organizationId:"org_team",ownerId:actors.owner,kind:"project",resourceId:"inherited_brain",authorityRuntimeId:ids.runtime});
+    await fixture.db.updateTable("collaboration_scopes").set({lifecycle:"shared"}).where("id","=",parent).execute();
+    await fixture.db.updateTable("collaboration_scopes").set({membership_mode:"inherited",parent_scope_id:parent}).where("id","=",ids.scope).execute();
+    await service.publish(ids.scope,actors.owner,document);
+    expect((await service.get(ids.scope,actors.owner,sourceId)).text).toBe(document.text);
+    const expiring=new CompanyBrainService({db,ownerId:actors.owner,now:()=>at,authority:{authorize:async(input)=>{
+      const context=await authority.authorize(input);
+      await fixture.db.updateTable("collaboration_members").set({expires_at:at}).where("scope_id","=",parent).where("actor_id","=",actors.owner).execute();
+      return context;
+    }}});
+    await expect(expiring.publish(ids.scope,actors.owner,{...document,expectedRevision:1,text:"Expired correction"})).rejects.toMatchObject({code:"forbidden"});
+    expect((await db.selectFrom("company_brain_documents").select("revision").executeTakeFirstOrThrow()).revision).toBe(1);
+  });
+
   it("requires explicit revision for corrections and refuses to resurrect tombstones", async () => {
     await service.publish(ids.scope, actors.owner, document);
     await expect(service.publish(ids.scope, actors.owner, { ...document, text: "Actually launch in November" })).rejects.toMatchObject({ code: "conflict" });
@@ -204,6 +221,34 @@ describe("owner-hosted Company Brain durable sources", () => {
     expect((await service.search(projectScope,actors.editor,{query:"launch"}))[0].provenance).toBe("slack_thread");
     await service.remove(projectScope,actors.owner,first.sourceId,1);
     await expect(service.captureSlackMention(projectScope,childScope,actors.editor,input)).rejects.toMatchObject({code:"conflict"});
+    await service.erase(projectScope,actors.owner);
+    await service.publish(projectScope,actors.owner,{...document,sourceId:first.sourceId,audienceScopeId:projectScope});
+    await expect(service.captureSlackMention(projectScope,childScope,actors.editor,input)).rejects.toMatchObject({code:"conflict"});
+    const disappearing=new CompanyBrainService({db,ownerId:actors.owner,authority:{authorize:async(request)=>{
+      const context=await authority.authorize(request);
+      if(request.scopeId===childScope) await fixture.db.deleteFrom("collaboration_scopes").where("id","=",childScope).execute();
+      return context;
+    }}});
+    await expect(disappearing.captureSlackMention(projectScope,childScope,actors.editor,{...input,eventId:"Ev124"})).rejects.toMatchObject({code:"forbidden"});
+    expect(await db.selectFrom("company_brain_documents").select("source_id").execute()).toHaveLength(1);
+  });
+
+  it.each(["documents","bytes"] as const)("bounds export when an existing owner dataset exceeds the %s ceiling",async(ceiling)=>{
+    const text=ceiling==="bytes" ? "x".repeat(65_520) : document.text;
+    await service.publish(ids.scope,actors.owner,{...document,text});
+    await sql`INSERT INTO company_brain_documents (scope_id,source_id,title,text,permalink,source_updated_at,published_at,updated_at,revision,byte_count,provenance,deleted_at)
+      SELECT scope_id,md5(i::text)||md5(i::text),title,text,permalink,source_updated_at,published_at,updated_at,revision,byte_count,provenance,deleted_at
+      FROM company_brain_documents CROSS JOIN generate_series(1,${ceiling==="bytes" ? 128 : 1000}) i`.execute(db);
+    await expect(service.export(ids.scope,actors.owner)).rejects.toMatchObject({code:"capacity"});
+  });
+
+  it("bounds retrieval evidence across many long matching sources while preserving citations",async()=>{
+    const text=("release "+"evidence".repeat(40)+" ").repeat(20);
+    for(let index=0;index<10;index++) await service.publish(ids.scope,actors.owner,{...document,sourceId:index.toString(16).padStart(64,"0"),text});
+    const context=await service.retrieve(ids.scope,actors.owner,{query:"release",limit:20});
+    expect(context.sources).toHaveLength(8);
+    expect(context.sources.reduce((total,source)=>total+source.excerpt.length,0)).toBe(16_000);
+    expect(context.sources.every(source=>source.revision===1 && source.audienceScopeId===ids.scope && source.permalink===document.permalink)).toBe(true);
   });
 
   it("retrieves ranked evidence for natural questions without demanding every conversational word",async()=>{

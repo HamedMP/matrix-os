@@ -2,13 +2,14 @@ import { signSlackBridgeRequest } from "@matrix-os/contracts/slack-bridge";
 import { createSlackBridgeRoutes } from "../../packages/gateway/src/startup/slack-bridge.js";
 import { bootstrapCompanyBrainDatabase, type CompanyBrainDatabase } from "../../packages/gateway/src/company-brain/database.js";
 import { CompanyBrainService } from "../../packages/gateway/src/company-brain/service.js";
-import type { Kysely } from "kysely";
+import { sql, type Kysely } from "kysely";
 import { bootstrapSlackCompanyDatabase, type SlackCompanyDatabase } from "../../packages/gateway/src/slack/database.js";
 import { SlackCompanyService } from "../../packages/gateway/src/slack/company-service.js";
 import { createSlackCanonicalReaders } from "../../packages/gateway/src/slack/canonical-readers.js";
 import { CollaborationChatExecutionAdapter } from "../../packages/gateway/src/collaboration/chat-execution-adapter.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ChatRepository } from "../../packages/gateway/src/chat/repository.js";
+import type { ChatDatabase } from "../../packages/gateway/src/chat/database.js";
 import { bootstrapChatDatabase } from "../../packages/gateway/src/chat/database.js";
 import { CollaborationRepository } from "../../packages/gateway/src/collaboration/repository.js";
 import { CollaborationAuthority } from "../../packages/gateway/src/collaboration/authority.js";
@@ -35,9 +36,9 @@ describe("Slack thread creation inherits live Project authority", () => {
     resolve.mockResolvedValue({ ref: { kind: "project", projectId: "company_project" }, fingerprint: "a".repeat(64), primaryWorkspaceRoot: "/private/shared_project" });
   });
   afterEach(async () => { await fixture.destroy(); });
-  function resolver() { return createSlackThreadResolver({ db: fixture.db, chats: new ChatRepository(fixture.db), authority,
+  function resolver(overrides: Partial<import("../../packages/gateway/src/slack/thread-resolver.js").SlackThreadResolverOptions> = {}) { return createSlackThreadResolver({ db: fixture.db, chats: new ChatRepository(fixture.db as unknown as Kysely<ChatDatabase>), authority,
     executionRoots: { resolve }, resolveCompanyBot, initializeThread,
-    getEligibility: async () => ({ generation: 1, eligibility: { ...collaborationExecutionEligibility(), matrixBot: SHARED_MATRIX_BOT_ELIGIBILITY } }), now: () => at }); }
+    getEligibility: async () => ({ generation: 1, eligibility: { ...collaborationExecutionEligibility(), matrixBot: SHARED_MATRIX_BOT_ELIGIBILITY } }), now: () => at, ...overrides }); }
   it("creates one owner Chat with Matrix selection and an inherited child, preserving it on replay", async () => {
     const project = await authority.authorize({ scopeId: ids.scope, actorId: actors.owner, action: "read" });
     const first = await resolver()({ envelope, project });
@@ -52,7 +53,7 @@ describe("Slack thread creation inherits live Project authority", () => {
     expect(resolveCompanyBot).toHaveBeenCalledWith(expect.objectContaining({ chatId: first.chatId, projectScopeId: ids.scope, projectId: "company_project" }));
   });
   it("passes a verified Slack event through inherited Chat admission, canonical Pi queue and completed output", async()=>{
-    const chats=new ChatRepository(fixture.db);
+    const chats=new ChatRepository(fixture.db as unknown as Kysely<ChatDatabase>);
     chats.setSharedAuthorizer((scopeId,actorId,action)=>authority.authorize({scopeId,actorId,action}));
     const db=fixture.db as unknown as Kysely<SlackCompanyDatabase>;
     await bootstrapSlackCompanyDatabase(db);
@@ -67,7 +68,7 @@ describe("Slack thread creation inherits live Project authority", () => {
     await bootstrapCompanyBrainDatabase(brainDb);
     const brain=new CompanyBrainService({db:brainDb,ownerId:actors.owner,authority,now:()=>at});
     await brain.publish(ids.scope,actors.owner,{sourceId:"a".repeat(64),audienceScopeId:ids.scope,title:"Launch decision",text:"The launch decision is to ship on Monday",permalink:"https://example.com/launch",sourceUpdatedAt:at.toISOString(),expectedRevision:0});
-    const service=new SlackCompanyService({db,ownerId:actors.owner,authority,execution,resolveThread:resolver(),...createSlackCanonicalReaders(fixture.db),sendReply,brain,now:()=>at});
+    const service=new SlackCompanyService({db,ownerId:actors.owner,authority,execution,resolveThread:resolver(),...createSlackCanonicalReaders(fixture.db as unknown as Kysely<ChatDatabase>),sendReply,brain,now:()=>at});
     const inbound={...envelope,event:{...envelope.event,text:"<@UBOT> Summarize the launch decision"}};
     const path="/api/internal/slack/events", token="a".repeat(64), body=JSON.stringify(inbound);
     const signed=await signSlackBridgeRequest({token,path,body,now:at});
@@ -112,4 +113,57 @@ describe("Slack thread creation inherits live Project authority", () => {
     await expect(resolver()({ envelope, project })).rejects.toMatchObject({ code: "forbidden" });
     expect(await fixture.db.selectFrom("chats").selectAll().execute()).toEqual([]);
   });
+  it("refuses a direct event, a stale authority projection and a non-Project execution root",async()=>{
+    const project=await authority.authorize({scopeId:ids.scope,actorId:actors.owner,action:"read"});
+    await expect(resolver()({envelope:{...envelope,channelScopeId:undefined},project})).rejects.toMatchObject({code:"forbidden"});
+    await expect(resolver()({envelope,project:{...project,authEpoch:project.authEpoch+1}})).rejects.toMatchObject({code:"forbidden"});
+    resolve.mockResolvedValueOnce({ref:{kind:"standalone"},fingerprint:"a".repeat(64)});
+    await expect(resolver()({envelope,project})).rejects.toMatchObject({code:"forbidden"});expect(resolveCompanyBot).not.toHaveBeenCalled();
+  });
+  it("rejects a substituted create result or an existing Chat owned by another actor",async()=>{
+    const project=await authority.authorize({scopeId:ids.scope,actorId:actors.owner,action:"read"});
+    const create=vi.fn(async()=>({chat:{id:"chat_wrong"}}));
+    await expect(resolver({chats:{create} as never})({envelope,project})).rejects.toMatchObject({code:"forbidden"});expect(resolveCompanyBot).not.toHaveBeenCalled();
+    const binding=await resolver()({envelope,project});
+    await fixture.db.updateTable("chats").set({owner_id:actors.editor}).where("id","=",binding.chatId).execute();
+    await expect(resolver()({envelope,project})).rejects.toMatchObject({code:"forbidden"});
+  });
+  it("leaves only a recoverable owner Chat when company agent preparation fails",async()=>{
+    const project=await authority.authorize({scopeId:ids.scope,actorId:actors.owner,action:"read"});
+    resolveCompanyBot.mockRejectedValueOnce(new Error("Company recipe unavailable"));
+    await expect(resolver()({envelope,project})).rejects.toThrow("Company recipe unavailable");
+    const orphan=await fixture.db.selectFrom("chats").select(["id","collaboration"]).executeTakeFirstOrThrow();expect(orphan.collaboration).toBeNull();
+    const recovered=await resolver()({envelope,project});expect(recovered.chatId).toBe(orphan.id);expect(await fixture.db.selectFrom("chats").select("id").execute()).toHaveLength(1);
+  });
+  it("rejects blocked inherited bindings and unsupported or invalid live Pi capability generations",async()=>{
+    const project=await authority.authorize({scopeId:ids.scope,actorId:actors.owner,action:"read"});
+    const binding=await resolver()({envelope,project});
+    for(const generation of [0,1.5])await expect(resolver({getEligibility:async()=>({generation,eligibility:{...collaborationExecutionEligibility(),matrixBot:SHARED_MATRIX_BOT_ELIGIBILITY}})})({envelope,project})).rejects.toMatchObject({code:"unavailable"});
+    await expect(resolver({getEligibility:async()=>({generation:1,eligibility:collaborationExecutionEligibility()})})({envelope,project})).rejects.toMatchObject({code:"unavailable"});
+    await fixture.db.updateTable("collaboration_resource_bindings").set({readiness:"blocked",blocker:"unavailable"}).where("resource_scope_id","=",binding.scopeId).execute();
+    await expect(resolver()({envelope,project})).rejects.toMatchObject({code:"forbidden"});
+  });
+  it("fences Project revocation and stale capability generations in the binding transaction",async()=>{
+    const project=await authority.authorize({scopeId:ids.scope,actorId:actors.owner,action:"read"});
+    const first=await resolver()({envelope,project});
+    await fixture.db.updateTable("collaboration_scopes").set({execution_generation:2}).where("id","=",first.scopeId).execute();
+    await expect(resolver()({envelope,project})).rejects.toMatchObject({code:"forbidden"});
+    await fixture.db.updateTable("collaboration_scopes").set({execution_generation:1}).where("id","=",first.scopeId).execute();
+    const getEligibility=async()=>{await fixture.db.updateTable("collaboration_scopes").set({auth_epoch:project.authEpoch+1}).where("id","=",ids.scope).execute();return {generation:1,eligibility:{...collaborationExecutionEligibility(),matrixBot:SHARED_MATRIX_BOT_ELIGIBILITY}};};
+    await expect(resolver({getEligibility})({envelope,project})).rejects.toMatchObject({code:"forbidden"});
+    expect(Number((await fixture.db.selectFrom("collaboration_scopes").select("execution_generation").where("id","=",first.scopeId).executeTakeFirstOrThrow()).execution_generation)).toBe(1);
+  });
+  it("refuses a changed Chat selection and accepts its legacy serialized exact Matrix selection",async()=>{
+    const project=await authority.authorize({scopeId:ids.scope,actorId:actors.owner,action:"read"});const first=await resolver()({envelope,project});
+    await fixture.db.updateTable("chats").set({current_selection:null}).where("id","=",first.chatId).execute();await expect(resolver()({envelope,project})).rejects.toMatchObject({code:"forbidden"});
+    await fixture.db.updateTable("chats").set({current_selection:sql`${JSON.stringify(JSON.stringify(MATRIX_BOT_SELECTION))}::jsonb`}).where("id","=",first.chatId).execute();
+    expect(await resolver()({envelope,project})).toEqual(first);
+  });
+  it("rechecks final inherited audience after optional canonical initialization",async()=>{
+    const project=await authority.authorize({scopeId:ids.scope,actorId:actors.owner,action:"read"});
+    const changing={authorize:async(input:Parameters<CollaborationAuthority["authorize"]>[0])=>{const context=await authority.authorize(input);return input.action==="request_ai"?{...context,resourceId:"other_chat"}:context;}};
+    await expect(resolver({authority:changing,initializeThread:undefined,now:undefined})({envelope,project})).rejects.toMatchObject({code:"forbidden"});
+    expect(initializeThread).not.toHaveBeenCalled();
+  });
+
 });
