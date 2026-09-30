@@ -1,0 +1,52 @@
+---
+status: active
+date: 2026-09-30
+---
+
+# Implementation and qualification evidence
+
+## Reviewed implementation
+
+Core implementation: `37024c22a2a276b4bcccab16e306b6b27d75db5e`. Final publication and authorization fences: `d3639b4eb`. Failure/recovery qualification: `44bf5f9f8`.
+
+The native app supports verified employee linking, personal Pi DMs, approved company Project mentions, bounded thread reads, progress reactions and exact thread replies. Company sources support publication, automatic approved mention capture, search, export and deletion. Company execution uses canonical collaboration Chats and the existing Pi task/broker; private sessions, memory and artifacts do not become company context.
+
+This is an **owner-hosted pilot**, with the selected host supplying database, model policy and funding. It does not establish organization-owned durability, transfer or employee-departure recovery. Setup and source management use APIs; a complete settings/Brain UI and historical email/calendar/channel synchronization are deferred.
+
+## Exact dependency revisions
+
+| Dependency | Tested revision | Status at verification |
+|---|---|---|
+| Pi PR #2048 | `bab5658e4c63c58c7d4d9f2f91b0a6a818cbdcd9` | Open; feature base |
+| Collaboration preview PR #2055 | `c5e3f40ffb5811ecedd68001b3f3981b5e77353c` | Open; combined compatibility checkout |
+| Inspected main | `3f4ec7b90` | Already-merged collaboration authority baseline |
+
+The feature PR is stacked on PR #2048. A separate disposable checkout merged PR #2055 and applied this feature to check the combined result. Five existing Pi/preview conflicts preserved both runtime/recipe and preview behavior; the feature startup conflict preserved both preview access and Slack registration. This validation merge is not a shipping branch and does not replace either upstream PR's own review.
+
+## Automated checks
+
+- Feature regression: **78 files, 667 tests passed**, using real PostgreSQL. Covers bot runtime, personal/company transport, Company Brain, canonical shared AI/Chat and native platform Slack routes.
+- Combined collaboration preview: **65 files, 645 tests passed**, using real PostgreSQL. Includes the preview's 44 changed backend suites and the Slack/Brain/Pi integration suites. Linux preview date fixtures used GNU date on macOS. The scoped app bridge test now isolates and cleans its exact namespace per test, avoiding cross-test contamination. After the coverage additions, the six updated/new suites passed **142/142** in this combined checkout. The local-only compatibility snapshot is `b4f61a605`; it is not a shipping branch.
+- Strict TypeScript checks passed for gateway, platform, contracts and bot-runtime on both the feature and combined checkouts; an additional strict check passed for the five extended/new Slack test files.
+- Focused real-Postgres Brain/transport verification: **67/67 passed**. Platform repository verification: **8/8 passed**, including 16-worker receipt claiming, expired lease fencing, single-use OAuth and conservative uncertain delivery. The real Postgres fixture uses an isolated schema and an eight-connection pool.
+- Pattern review: **zero violations**. Four whole-file review warnings concern existing identifier/body/entrypoint patterns inspected during review.
+- Public documentation: [matrix-os-site PR #145](https://github.com/FinnaAI/matrix-os-site/pull/145); **233 tests passed**, production build generated **420 pages**.
+
+Tests use Node 24 directly with the pinned dependency tree. The local package-manager shim could not run reliably; dependencies were installed with the cached pinned pnpm 10.33.4 and frozen lockfile. No dependency or lockfile change is introduced.
+
+Coverage for `packages/gateway/src/company-brain/**/*.ts` and `packages/gateway/src/slack/**/*.ts` passed the unchanged repository thresholds: **99.54% statements, 98.69% branches, 100% functions and lines**. Brain: 99.17% statements / 97.88% branches; Slack: 99.68% statements / 98.92% branches. This measures the new modules, not coverage of the entire repository. The first run exposed missing failure/recovery branches; meaningful quota, receipt race, authority, orphan recovery, shutdown, canonical output and retry tests closed them without production edits or threshold/ignore changes.
+
+## Integration and review limits
+
+The composed integration exercises native Slack ingress, signed owner-home transport, actual company bot setup, first owner initialization followed by employee execution, canonical shared coordination, immutable binding, schema-checked Pi broker, real `runBotTurn`, committed assistant output and exact Slack reply. Slack HTTP, supervisor socket transport and model inference are fixtures. It is not a paid model or Linux supervisor qualification.
+
+Independent correctness, testing, maintainability, project standards, agent-native, learnings and security/data/API/reliability reviews were completed. Confirmed source-incarnation, pinned evidence retry, metadata-latency authorization, pending-result fairness and final publication findings were fixed and independently checked. Final source identity/revision checks run as one bounded snapshot after authority and receipt callbacks. A source or permission change after the last check while Slack's external write is in flight cannot atomically undo that write; uncertain outcomes are retained and never blindly replayed.
+
+## Remaining external gates
+
+- Current-head Greptile 5/5 and required CI on the implementation and documentation PRs; apply `ready-for-ci` only when the exact current head has that score.
+- Select a Slack workspace/admin and a Matrix host, provision app credentials, authorize OAuth and configure an explicitly approved Project/channel.
+- Validate live linking, account-only employee access, real thread-reading capability, personal/company isolation, revocation and exact reply behavior on that selected host.
+- Qualify Linux no-network Pi sandbox, exact paid access source/model and funding behavior. No production deployment, fleet rollout, Marketplace qualification or live Slack success is claimed.
+
+The temporary test database is local-only and disposable. Feature and documentation worktrees stay available until their PRs are merged; only then may completed clean worktrees be removed under the repository cleanup rules.
