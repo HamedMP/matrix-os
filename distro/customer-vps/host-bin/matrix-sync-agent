@@ -41,6 +41,8 @@ readonly LEGACY_UPGRADE_TTL_SECONDS="${MATRIX_LEGACY_UPGRADE_TTL_SECONDS:-86400}
 readonly LEGACY_R2_ENV_FILE="/opt/matrix/env/r2.env"
 readonly LEGACY_R2_RETRY_INTERVAL_SECONDS="${MATRIX_LEGACY_R2_RETRY_INTERVAL_SECONDS:-300}"
 readonly TERMINAL_RUNTIME_ROOT="/opt/matrix/terminal-runtime"
+readonly PROTECTED_LIBEXEC_DIR="/usr/local/libexec"
+readonly POSTGRES_ROOT_UNIT="/etc/systemd/system/matrix-postgres.service"
 readonly TERMINAL_RUNTIME_GENERATION_FILE="TERMINAL_RUNTIME_GENERATION"
 readonly TERMINAL_RUNTIME_MAX_GENERATIONS="${MATRIX_TERMINAL_RUNTIME_MAX_GENERATIONS:-8}"
 log() { echo "matrix-sync-agent: $(date -u +%Y-%m-%dT%H:%M:%SZ) $*"; }
@@ -375,6 +377,22 @@ install_host_bin_payload() {
       return 1
     fi
   done < <(find "$source_dir" -mindepth 1 -maxdepth 1 -type f -print0)
+  protected_helper="$source_dir/matrix-postgres-start"
+  if [ -f "$protected_helper" ] && [ ! -L "$protected_helper" ]; then
+    sudo install -d -o root -g root -m 0755 /usr/local/libexec || return 1
+    incoming="/usr/local/libexec/.matrix-postgres-start.incoming.$$"
+    destination=/usr/local/libexec/matrix-postgres-start
+    if [ -L "$destination" ] || { [ -e "$destination" ] && [ ! -f "$destination" ]; }; then
+      log "ERROR: invalid protected PostgreSQL helper destination"
+      return 1
+    fi
+    sudo rm -f -- "$incoming" || return 1
+    if ! sudo install -o root -g root -m 0755 "$source_dir/matrix-postgres-start" "$incoming" \
+      || ! sudo mv -Tf "$incoming" "$destination"; then
+      sudo rm -f -- "$incoming"
+      return 1
+    fi
+  fi
   protected_helper="$source_dir/matrix-support-access"
   if [ -f "$protected_helper" ] && [ ! -L "$protected_helper" ]; then
     sudo install -d -o root -g root -m 0755 /usr/local/libexec || return 1
@@ -538,6 +556,7 @@ prepare_update_transaction() {
   record_update_payload_directory "$extract_dir/user-systemd" /etc/systemd/user user-systemd || return 1
   record_update_file "$RELEASE_FILE" release-metadata || return 1
   record_update_file "$RELEASE_ROLLBACK_FILE" rollback-release-metadata || return 1
+  record_update_file /usr/local/libexec/matrix-postgres-start postgres-helper || return 1
   record_update_file /usr/local/libexec/matrix-support-access support-helper || return 1
 
   if [ -L "$TERMINAL_RUNTIME_ROOT/current" ]; then
@@ -640,6 +659,10 @@ restore_update_transaction() {
   restore_update_payload_directory /etc/systemd/user user-systemd || return 1
   restore_update_file "$RELEASE_FILE" release-metadata || return 1
   restore_update_file "$RELEASE_ROLLBACK_FILE" rollback-release-metadata || return 1
+  # Transactions prepared by an older updater predate this protected helper.
+  if [ -f "$UPDATE_TRANSACTION_DIR/postgres-helper.present" ] || [ -f "$UPDATE_TRANSACTION_DIR/postgres-helper.missing" ]; then
+    restore_update_file /usr/local/libexec/matrix-postgres-start postgres-helper || return 1
+  fi
   if [ -f "$UPDATE_TRANSACTION_DIR/support-helper.present" ] || [ -f "$UPDATE_TRANSACTION_DIR/support-helper.missing" ]; then
     restore_update_file /usr/local/libexec/matrix-support-access support-helper || return 1
   fi
@@ -780,6 +803,31 @@ reconcile_legacy_r2_credentials() {
   fi
   clear_legacy_r2_update_error
   log "Removed legacy R2 credentials after broker and release health verification"
+}
+
+# Extraction boundary: specs/538-support-access-resilience/spec.md (Sync-agent extraction plan).
+# An older updater installs the root PostgreSQL unit and bundle helper without
+# the protected copy its ExecStart needs, so the unit would be skipped.
+reconcile_postgres_root_service() {
+  local source="$BIN_DIR/matrix-postgres-start"
+  local destination="$PROTECTED_LIBEXEC_DIR/matrix-postgres-start" incoming
+  [ -f "$POSTGRES_ROOT_UNIT" ] || return 0
+  [ -f "$source" ] && [ ! -L "$source" ] || return 0
+  if [ -L "$destination" ] || { [ -e "$destination" ] && [ ! -f "$destination" ]; }; then
+    log "ERROR: invalid protected PostgreSQL helper destination"
+    return 1
+  fi
+  [ -e "$destination" ] && return 0
+  sudo install -d -o root -g root -m 0755 "$PROTECTED_LIBEXEC_DIR" || return 1
+  incoming="$PROTECTED_LIBEXEC_DIR/.matrix-postgres-start.incoming.$$"
+  sudo rm -f -- "$incoming" || return 1
+  if ! sudo install -o root -g root -m 0755 "$source" "$incoming" \
+    || ! sudo mv -Tf "$incoming" "$destination"; then
+    sudo rm -f -- "$incoming"
+    return 1
+  fi
+  log "Installed protected PostgreSQL helper"
+  sudo systemctl start --no-block matrix-postgres.service
 }
 
 install_terminal_runtime_bootstrap_helpers() {
@@ -1835,6 +1883,7 @@ mkdir -p "$STAGING_DIR"
 clean_staging
 clean_legacy_upgrade_artifacts || true
 recover_interrupted_update
+reconcile_postgres_root_service || log "WARN: PostgreSQL root service reconciliation failed"
 maybe_retire_legacy_symphony || log "WARN: legacy Symphony retirement will retry"
 maybe_reconcile_hermes_release || log "WARN: Hermes release reconciliation retry failed"
 last_legacy_r2_reconcile="$(date +%s)"

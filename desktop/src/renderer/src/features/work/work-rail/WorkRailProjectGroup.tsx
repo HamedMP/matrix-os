@@ -7,6 +7,8 @@ import { useProjectActions } from "./use-project-actions";
 import type { Project } from "../../../stores/board";
 import type { WorkRailProjectGroup as WorkRailProjectGroupModel } from "../work-rail-model";
 import { WorkRailChatRow } from "./WorkRailChatRow";
+import type { DesktopProjectSharingContext } from "../../project/DesktopProjectSharing";
+import { projectShareMenuItems } from "./project-share-action";
 
 export function WorkRailProjectGroup({
   group,
@@ -27,6 +29,8 @@ export function WorkRailProjectGroup({
   onRenameCancel,
   onPinChat,
   onDeleteChat,
+  sharing = null,
+  onShareProject,
 }: {
   group: WorkRailProjectGroupModel;
   expanded: boolean;
@@ -46,6 +50,8 @@ export function WorkRailProjectGroup({
   onRenameCancel: () => void;
   onPinChat: (record: CanonicalChatRecord) => void;
   onDeleteChat: (record: CanonicalChatRecord) => void;
+  sharing?: DesktopProjectSharingContext | null;
+  onShareProject?: (project: Project) => void;
 }) {
   const actionButtonRef = useRef<HTMLButtonElement>(null);
   const actions = useProjectActions(group.project);
@@ -53,6 +59,7 @@ export function WorkRailProjectGroup({
     { label: group.project.pinned ? "Unpin" : "Pin", icon: group.project.pinned ? <PinOffIcon size={16} aria-hidden /> : <PinIcon size={16} aria-hidden />, disabled: !actions.available || actions.pending, onSelect: () => { void actions.update({ pinned: !group.project.pinned }); } },
     { label: "Edit", icon: <Settings size={16} aria-hidden />, disabled: !actions.available || actions.pending, onSelect: () => actions.setDialog("edit") },
     { label: "Show in Files", icon: <FolderOpen size={16} aria-hidden />, disabled: !actions.available || actions.pending, onSelect: () => { void actions.showInFiles(); } },
+    ...projectShareMenuItems(group, sharing, onShareProject),
     { label: "Delete project", icon: <Trash2 size={16} aria-hidden />, danger: true, disabled: actions.pending, onSelect: () => onDeleteProject(group.project) },
   ];
   return (

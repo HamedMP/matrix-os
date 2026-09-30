@@ -210,3 +210,20 @@ idempotency rule, and end-to-end wiring test.
   and data boundaries, without host identities or operator commands.
 - Decide per-operator keys versus short-lived certificates, and decide whether
   customer host-root remains a supported advanced mode, before implementation.
+
+## Sync-agent extraction plan
+
+Before removing owner sudo or Docker access, move PostgreSQL startup reconciliation
+and protected-helper installation, transaction backup, and rollback out of
+`matrix-sync-agent` into a root-owned `/usr/local/libexec/matrix-update-helpers`
+module. The sync agent should submit a validated immutable version request and
+sequence services; the protected updater owns privileged filesystem mutations.
+
+The module accepts only fixed helper names and validated release roots. Keep
+installation idempotent, refuse symlinks, and preserve transaction compatibility
+when older journals omit a helper field. Separate PostgreSQL reconciliation from
+generic helper installation so each stays below 500 lines with one responsibility.
+Move the existing executed install/reconcile/rollback tests to that boundary, then
+prove upgrade from an older bundle, boot with a running database, failed-update
+rollback, and a fresh support SSH login on a disposable VPS. Keep the owner’s
+privileges until those gates pass.

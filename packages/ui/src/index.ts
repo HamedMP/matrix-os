@@ -112,6 +112,11 @@ export { SharedTerminalControls } from "./collaboration/SharedTerminalControls.j
 export { TerminalSharingButton } from "./collaboration/TerminalSharingButton.js";
 export { ProjectSharingDialog } from "./collaboration/ProjectSharingDialog.js";
 export { ProjectSharingButton } from "./collaboration/ProjectSharingButton.js";
+export {
+  PROJECT_SHARING_UNAVAILABLE_MESSAGE,
+  useProjectSharing,
+  type ProjectSharingController,
+} from "./collaboration/useProjectSharing.js";
 export { ResourceSharingButton } from "./collaboration/ResourceSharingButton.js";
 export { ReadinessSummary } from "./collaboration/ReadinessSummary.js";
 export { ProjectSourceSummary } from "./collaboration/ProjectSourceSummary.js";
