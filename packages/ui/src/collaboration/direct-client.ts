@@ -98,7 +98,8 @@ export interface CollaborationDirectClientOptions {
 }
 
 export interface CollaborationDirectClient {
-  request(scopeId: string, method: DirectMethod, path: string, body?: unknown, conditions?: DirectDeleteConditions): Promise<unknown>;
+  request(scopeId: string, method: DirectMethod, path: string, body?: unknown,
+    conditions?: DirectDeleteConditions, signal?: AbortSignal): Promise<unknown>;
   requestOwnerRuntime(runtimeId: string, organizationId: string, path: string, body: unknown): Promise<unknown>;
   requestOwnerProject(runtimeId: string, organizationId: string, method: "GET" | "POST", path: string, body?: unknown): Promise<unknown>;
   subscribeEvents(scopeId: string, handlers: DirectEventHandlers): () => void;
@@ -360,7 +361,7 @@ export function createCollaborationDirectClient(options: CollaborationDirectClie
     return entry.pending;
   };
 
-  const signedFetch = async (_scopeId: string, connected: { session: { id: string; runtimeId: string }; origin: string; key: ProofKeyPair }, method: DirectMethod, path: string, query: string, body: string | undefined, conditions?: DirectDeleteConditions, ownerProject = false) => {
+  const signedFetch = async (_scopeId: string, connected: { session: { id: string; runtimeId: string }; origin: string; key: ProofKeyPair }, method: DirectMethod, path: string, query: string, body: string | undefined, conditions?: DirectDeleteConditions, ownerProject = false, signal?: AbortSignal) => {
     const bodyBytes = new TextEncoder().encode(body ?? "");
     const conditional = conditions
       ? new TextEncoder().encode(JSON.stringify({ clientRequestId: conditions.clientRequestId, expectedRevision: conditions.expectedRevision, expectedMemberRevision: conditions.expectedMemberRevision }))
@@ -390,10 +391,12 @@ export function createCollaborationDirectClient(options: CollaborationDirectClie
     }
     const url = new URL(path, connected.origin);
     url.search = query;
+    if (signal?.aborted) throw new DOMException("Request cancelled", "AbortError");
     return guardedFetch(fetchImpl, url.href, {
       method, headers, credentials: await endpointCredentials(connected.origin, headers), redirect: "error",
       ...(body === undefined ? {} : { body }),
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(REQUEST_TIMEOUT_MS)])
+        : AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
   };
 
@@ -403,7 +406,8 @@ export function createCollaborationDirectClient(options: CollaborationDirectClie
       .catch((error: unknown) => { console.warn("[collaboration-direct] session close failed", error instanceof Error ? error.name : "UnknownError"); });
   };
 
-  const request: CollaborationDirectClient["request"] = async (scopeId, method, rawPath, body, conditions) => {
+  const request: CollaborationDirectClient["request"] = async (scopeId, method, rawPath, body, conditions, signal) => {
+    if (signal?.aborted) throw new DOMException("Request cancelled", "AbortError");
     if (!UUID.test(scopeId)) throw new CollaborationDirectError("invalid_request", "Invalid collaboration request");
     const { path, query } = splitPath(rawPath, scopeId);
     const serialized = method === "DELETE" || body === undefined ? undefined : JSON.stringify(body);
@@ -414,7 +418,7 @@ export function createCollaborationDirectClient(options: CollaborationDirectClie
     const generation = initial.generation;
     let connected = await ensure(scopeId);
     if (disposed || initial.generation !== generation) throw closedError();
-    let response = await signedFetch(scopeId, connected, method, path, query, serialized, conditions);
+    let response = await signedFetch(scopeId, connected, method, path, query, serialized, conditions, false, signal);
     if (disposed || initial.generation !== generation) { await response.body?.cancel(); throw closedError(); }
     if (response.status === 401 && !isPlatformChallenge(response, connected.origin)) {
       // The session ended on the home (expiry, denial or a new authority generation): one fresh ticket, one retry.
@@ -422,7 +426,7 @@ export function createCollaborationDirectClient(options: CollaborationDirectClie
       const entry = record(scopeId);
       entry.connected = null;
       connected = await ensure(scopeId, true);
-      response = await signedFetch(scopeId, connected, method, path, query, serialized, conditions);
+      response = await signedFetch(scopeId, connected, method, path, query, serialized, conditions, false, signal);
       if (disposed || initial.generation !== generation) { await response.body?.cancel(); throw closedError(); }
     }
     // The home session outlives a lapsed platform session, so it is kept for when the actor signs back in.

@@ -98,6 +98,13 @@ export function registerOrganizationDriveRoutes(routes: Hono, options: RouteOpti
     return c.body(null, 204);
   }));
 
+  routes.post(`${base}/files/lookup`, async (c) => driveHandle(c, async () => {
+    const { value, bytes } = await readJson(c);
+    const request = z.object({ path: OrganizationDrivePathSchema }).strict().parse(value);
+    const context = await driveContext(options, c, bytes, "read");
+    return c.json({ baseVersion: await required(options).versionForPath({ ...identity(context), path: request.path }) });
+  }));
+
   routes.get(`${base}/files/:fileId`, async (c) => driveHandle(c, async () => {
     const fileId = IdSchema.parse(c.req.param("fileId"));
     const context = await driveContext(options, c, new Uint8Array(), "read");
