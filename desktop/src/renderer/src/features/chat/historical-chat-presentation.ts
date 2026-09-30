@@ -38,15 +38,23 @@ export function historicalChatPresentation(input: CanonicalChatMessage[], id: st
   const ordered = input.slice().sort((a, b) => a.seq - b.seq);
   const context = toolLinks(ordered); const messages = responseFragments(ordered);
   const user = messages.find(message => message.id === inputMessageId && message.role === "user");
-  const final = messages.filter(message => message.role === "assistant" && message.parts.some(part => part.type === "import_provenance" && part.phase === "final") && hasDisplayableMessageContent(message)).at(-1);
-  const work: ConversationWorkPresentation[] = messages.flatMap(message => {
-    if (message.id === user?.id || message.id === final?.id) return [];
-    return [ ...messageWork(message, context), ...(hasDisplayableMessageContent(message) ? [messagePresentation(message, "commentary")] : []) ];
-  });
-  if (final) work.push(...messageWork(final, context));
+  const last = messages.at(-1)!;
+  const final = last.role === "assistant" && last.parts.some(part => part.type === "import_provenance" && part.phase === "final") && hasDisplayableMessageContent(last) ? last : undefined;
+  const work: ConversationWorkPresentation[] = [];
+  const userFollowups = messages.filter(message => message.role === "user" && message.id !== user?.id).map(message => messagePresentation(message, "commentary"));
+  const timeline: NonNullable<ConversationTurnPresentation["timeline"]> = [];
+  for (const message of messages) {
+    if (message.id === user?.id || message.id === final?.id) continue;
+    if (message.role === "user") { timeline.push({ kind: "user-followup", message: messagePresentation(message, "commentary") }); continue; }
+    const activity = [...messageWork(message, context), ...(hasDisplayableMessageContent(message) ? [messagePresentation(message, "commentary")] : [])];
+    work.push(...activity); timeline.push(...activity.map(item => ({ kind: "work" as const, item })));
+  }
+  if (final) { const activity = messageWork(final, context); work.push(...activity); timeline.push(...activity.map(item => ({ kind: "work" as const, item }))); }
+
   return { id, active: false, expandedByDefault: true,
     startedAt: Date.parse(messages[0]!.createdAt), endedAt: Date.parse(messages.at(-1)!.createdAt),
-    ...(user ? { user: messagePresentation(user, "commentary") } : {}), work,
+    ...(user ? { user: messagePresentation(user, "commentary") } : {}), work, timeline,
+    ...(userFollowups.length ? { userFollowups } : {}),
     ...(final ? { final: messagePresentation(final, "final") } : {}),
   };
 }

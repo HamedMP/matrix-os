@@ -99,4 +99,16 @@ describe("verified private archives publish canonical Chat atomically", () => {
     expect(r2.deleteObject).not.toHaveBeenCalled();
   });
 
+  it("replaces a stronger Codex mirror without inflating staged counts or dropping its attachment", async () => {
+    const raw = transcript([header,
+      { type: "event_msg", payload: { type: "item_completed", turn_id: "turn", item: { type: "UserMessage", id: "event-user", content: [{ type: "text", text: "Synthetic input" }] } } },
+      { type: "response_item", payload: { type: "message", id: "model-user", role: "user", content: [{ type: "input_text", text: "Synthetic input" }, { type: "input_image", image_url: "data:image/png;base64,iVBORw0KGgo=" }] } },
+      { type: "response_item", payload: { type: "message", id: "answer", role: "assistant", phase: "final_answer", content: [{ type: "output_text", text: "Synthetic answer" }] } },
+    ]);
+    const result = await publisher(raw).publish(owner, await uploaded(raw)); const exported = await chats.exportChat(owner, result.chatId);
+    expect(result.messageCount).toBe(2); expect(exported?.messages.filter(message => message.role === "user")).toHaveLength(1);
+    expect(exported?.messages[0]?.parts.some(part => part.type === "import_reference" && part.kind === "image")).toBe(true);
+    expect((await chats.kysely.selectFrom("local_chat_import_records").selectAll().execute())).toEqual([]);
+  });
+
 });

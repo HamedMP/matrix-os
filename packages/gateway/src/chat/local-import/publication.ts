@@ -133,12 +133,15 @@ export class LocalChatImportPublisher {
       await trx.deleteFrom("local_chat_import_records").where("job_id", "=", jobId).execute();
       return current;
     });
+    // Verification awaits each stage callback. This counter belongs to that one lease;
+    // recovery resets its private staging before replaying the original from byte zero.
+    const staging = { count: 0 };
     try {
       await verifyLocalChatArchive({ harness: job.harness, sourceId: job.source_id, ...(job.source_agent_id ? { sourceAgentId: job.source_agent_id } : {}),
         expectedSize: Number(job.raw_size), expectedSha256: job.source_hash, signal, fetchImpl: this.options.fetchImpl,
-        getUrl: () => this.options.storage.getPresignedGetUrl(job.object_key, 3600), stage: event => this.stage(job, token, event) });
+        getUrl: () => this.options.storage.getPresignedGetUrl(job.object_key, 3600), stage: event => this.stage(job, token, event, staging) });
       if (signal?.aborted) throw new ChatArchiveVerificationError("cancelled");
-      return await this.commit(owner, jobId, token);
+      return await this.commit(owner, jobId, token, staging.count);
     } catch (error: unknown) {
       await this.db.transaction().execute(async trx => {
         const changed = await trx.updateTable("local_chat_import_jobs").set({ status: "failed", cleanup_pending: true,
@@ -170,34 +173,36 @@ export class LocalChatImportPublisher {
     }
     return { assetId: asset.id };
   }
-  private async stage(job: Selectable<LocalChatImportJobsTable>, token: string, event: ImportProjection) {
+  private async stage(job: Selectable<LocalChatImportJobsTable>, token: string, event: ImportProjection, staging: { count: number }) {
     // Malformed bytes and unknown records are already preserved verbatim in the private original.
     if (!event.conversation.sessionId) return;
     const rows = await projectImportedChatRecord(event, { storeAsset: input => this.asset(job, token, input) });
-    await this.db.transaction().execute(async trx => {
+    staging.count = await this.db.transaction().execute(async trx => {
       await this.lock(trx, job.id, token);
-      if (!rows.length) return;
-      const count = await trx.selectFrom("local_chat_import_records").select(trx.fn.countAll<string>().as("count")).where("job_id", "=", job.id).executeTakeFirstOrThrow();
-      if (Number(count.count) + rows.length > MAX_RECORDS) throw new ChatArchiveVerificationError("projection_limit");
+      if (!rows.length) return staging.count;
+      let removed = 0;
       let offset = event.source.offset;
       if (rows[0]!.mode === "replace_mirror") {
         const prior = await trx.selectFrom("local_chat_import_records").select("source_offset").where("job_id", "=", job.id).where("logical_key", "=", rows[0]!.logicalKey).orderBy("source_offset").executeTakeFirst();
         if (prior) offset = Number(prior.source_offset);
-        await trx.deleteFrom("local_chat_import_records").where("job_id", "=", job.id).where("logical_key", "=", rows[0]!.logicalKey).execute();
+        removed = (await trx.deleteFrom("local_chat_import_records").where("job_id", "=", job.id).where("logical_key", "=", rows[0]!.logicalKey).returning("record_key").execute()).length;
       }
-      await trx.insertInto("local_chat_import_records").values(rows.map((row, chunk) => ({ job_id: job.id, record_key: row.recordKey, logical_key: row.logicalKey,
+      const inserted = await trx.insertInto("local_chat_import_records").values(rows.map((row, chunk) => ({ job_id: job.id, record_key: row.recordKey, logical_key: row.logicalKey,
         source_offset: offset, source_block: (event.source.blockIndex ?? 0) * 2 + (event.kind === "tool_result" ? 1 : 0), chunk, role: row.role, parts: jsonb(row.parts), created_at: row.createdAt ?? job.created_at })))
-        .onConflict(oc => oc.columns(["job_id", "record_key"]).doNothing()).execute();
+        .onConflict(oc => oc.columns(["job_id", "record_key"]).doNothing()).returning("record_key").execute();
+      const count = staging.count - removed + inserted.length;
+      if (count < 0 || count > MAX_RECORDS) throw new ChatArchiveVerificationError("projection_limit");
+      return count;
     });
   }
-  private async commit(owner: ChatOwner, jobId: string, token: string) {
+  private async commit(owner: ChatOwner, jobId: string, token: string, expectedCount: number) {
     return this.options.repository.withTransaction(async repo => {
       const trx = repo.kysely as Transaction<ChatDatabase>;
       const job = await this.lock(trx, jobId, token);
       if (job.owner_id !== this.owner(owner)) throw new LocalChatImportJobError("not_found");
       const stats = await trx.selectFrom("local_chat_import_records").select(trx.fn.countAll<string>().as("count")).where("job_id", "=", jobId).executeTakeFirstOrThrow();
       const count = Number(stats.count);
-      if (!count || count > MAX_RECORDS) throw new ChatArchiveVerificationError("projection_limit");
+      if (!count || count !== expectedCount || count > MAX_RECORDS) throw new ChatArchiveVerificationError("projection_limit");
       const chatId = id("chat"); const createdAt = new Date(job.created_at).toISOString();
       await trx.insertInto("chats").values({ id: chatId, owner_type: "personal", owner_id: job.owner_id, create_request_id: `req_import_${job.id.replaceAll("-", "")}`,
         project_id: null, title: job.title, title_manual: false, lifecycle: "active", attention: "none", revision: 1, message_count: count,

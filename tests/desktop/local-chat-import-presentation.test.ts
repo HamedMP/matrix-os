@@ -70,4 +70,24 @@ describe("historical Chat presentation", () => {
     expect(images).toHaveLength(2); expect(new Set(images.map(item => item.id)).size).toBe(2);
   });
 
+  it("keeps every continuation chunk of a large human input on the human side", () => {
+    const parts = Array.from({ length: 40 }, (_, index) => ({ type: "text", text: `Chunk ${index} ` }));
+    const messages = [1, 2, 3].map((seq) => CanonicalChatMessageSchema.parse({ id: `msg_human_${seq}`, chatId: "chat_imported_test", seq, turnId: "cturn_history",
+      role: "user", state: "committed", createdAt, parts: [...parts, { ...provenance, phase: "human", origin: "human" }] }));
+    const view = canonicalChatPresentation({ messages, turns: [{ id: "cturn_history", chatId: "chat_imported_test", inputMessageId: messages[0]!.id,
+      clientRequestId: "req_history", baseMessageSeq: 0, status: "completed", createdAt, updatedAt: createdAt }], runs: [], activities: [] });
+    expect(view[0]!.user?.role).toBe("user"); expect(view[0]!.userFollowups).toHaveLength(2);
+    expect(view[0]!.work.some(item => item.kind === "message" && item.role === "user")).toBe(false);
+    expect(view[0]!.timeline?.map(entry => entry.kind)).toEqual(["user-followup", "user-followup"]);
+  });
+  it("keeps a trailing tool result after a saved final answer in source order", () => {
+    const messages = [CanonicalChatMessageSchema.parse({ id: "msg_prior_final", chatId: "chat_imported_test", seq: 1,
+      role: "assistant", state: "committed", createdAt, parts: [provenance, { type: "text", text: "Saved final" }] }),
+      CanonicalChatMessageSchema.parse({ id: "msg_trailing_result", chatId: "chat_imported_test", seq: 2, role: "tool", state: "committed", createdAt,
+        parts: [{ ...provenance, phase: "tool", origin: "tool" }, { type: "tool_result", toolCallId: "call_tail", outcome: "success", truncated: false, text: "Trailing result" }] })];
+    const view = canonicalChatPresentation({ messages, turns: [], runs: [], activities: [] });
+    expect(view[0]!.final).toBeUndefined(); expect(view[0]!.work[0]).toMatchObject({ kind: "message", markdown: "Saved final" });
+    expect(view[0]!.work[1]).toMatchObject({ kind: "activity-group" });
+  });
+
 });
