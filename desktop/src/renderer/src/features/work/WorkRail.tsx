@@ -23,6 +23,7 @@ import ProjectLifecycleDialog from "../mission-control/ProjectLifecycleDialog";
 import {
   buildWorkRailModel,
 } from "./work-rail-model";
+import { OrganizationDrivesRail } from "./work-rail/OrganizationDrivesRail";
 import { WorkRailChatRow } from "./work-rail/WorkRailChatRow";
 import { WorkRailHeader } from "./work-rail/WorkRailHeader";
 import { WorkRailProjectGroup } from "./work-rail/WorkRailProjectGroup";
@@ -446,6 +447,7 @@ export function WorkRail({
         showCollapseControl={showCollapseControl}
       />
       <SharedWithMeRailRow />
+      <OrganizationDrivesRail active={active} />
       {readError ? <p role="alert" className="px-3 text-xs">{readError}</p> : null}
       {unreadOnly && !records.some(isChatUnread) ? <p className="px-3 text-xs">No unread chats.</p> : null}
       <ChatAgentsRailSection client={client?.agents} onOpen={onOpenAgents} onStartChat={onStartAgentChat} onSetup={() => { useUi.getState().requestSettingsSection("agents-providers"); useTabs.getState().openTab({ kind: "settings", title: "Settings" }); }} />

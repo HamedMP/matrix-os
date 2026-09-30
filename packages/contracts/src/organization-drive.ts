@@ -12,6 +12,9 @@ export const OrganizationDrivePathSchema = z.string().min(1).max(800).refine((pa
   { message: "Invalid drive path" },
 );
 
+/** Reserve the slash and at least one UTF-8 filename byte; the full file path is validated at upload. */
+export const OrganizationDriveUploadFolderSchema = z.union([z.literal(""), OrganizationDrivePathSchema.refine(path => utf8.encode(path).byteLength <= 798)]);
+
 /** Organization-selected authority generation changes whenever the serving home moves. */
 export const OrganizationDriveAuthoritySchema = z.object({
   organizationId: CollaborationOrganizationIdSchema,

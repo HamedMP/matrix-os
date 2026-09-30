@@ -14,6 +14,7 @@ import { useChatComposerDraft } from "./chat/useChatComposerDraft";
 import { ChatAgentsRailSection, ChatAgentsWorkspace, ChatAgentsContent, useChatAgentsNavigation, type ChatAgentClient } from "@matrix-os/ui";
 import type { ChatSubmitOptions } from "@/hooks/useChatState";
 import { ChatSharing } from "./chat/ChatSharing";
+import { OrganizationDrivesNav } from "./chat/OrganizationDrivesNav";
 import { SharedWithMeNav } from "./chat/SharedWithMeNav";
 import { ShellChatCollaboration } from "./chat/ShellChatCollaboration";
 import { ChatAttachments, ChatContextMenu } from "@matrix-os/ui";
@@ -404,6 +405,7 @@ function ChatAppContent({
           onOpenSharedHome();
           if (mobile) setSidebarOpen(false);
         }} /> : null}
+        <OrganizationDrivesNav />
         {/* Search */}
         <div className="px-3 pb-2">
           <div className={`flex items-center gap-2 rounded-lg bg-background/60 px-2.5 text-xs ${mobile ? "py-2.5" : "py-1.5"}`}>

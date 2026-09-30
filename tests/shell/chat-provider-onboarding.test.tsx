@@ -7,7 +7,11 @@ import { ChatApp } from "../../shell/src/components/ChatApp";
 import { disconnectedSnapshot } from "../ui/chat-provider-settings-fixture";
 import { OPEN_PROVIDER_TERMINAL_EVENT } from "../../shell/src/lib/canonical-provider-setup";
 import { CanonicalProviderCatalogSchema } from "@matrix-os/contracts";
-vi.mock("@clerk/nextjs", async (original) => ({ ...(await original<typeof import("@clerk/nextjs")>()), useOrganization: () => ({ organization: null }) }));
+vi.mock("@clerk/nextjs", async (original) => ({
+  ...(await original<typeof import("@clerk/nextjs")>()),
+  useOrganization: () => ({ organization: null }),
+  useAuth: () => ({ userId: null, sessionId: null }),
+}));
 const catalog = CanonicalProviderCatalogSchema.parse({ revision: "empty", drivers: [], instances: [] });
 function renderChat() {
   return render(<ChatApp messages={[]} sessionId={undefined} busy={false} connected conversations={[]}

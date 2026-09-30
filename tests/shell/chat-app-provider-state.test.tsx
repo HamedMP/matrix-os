@@ -17,6 +17,7 @@ vi.mock("../../shell/src/components/chat-provider-onboarding", () => ({
 vi.mock("@clerk/nextjs", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@clerk/nextjs")>()),
   useOrganization: () => ({ organization: null }),
+  useAuth: () => ({userId:null,sessionId:null}),
 }));
 
 function providerCatalog(available = true, secondModel = false) {

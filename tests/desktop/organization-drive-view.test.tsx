@@ -65,4 +65,12 @@ describe("Electron organization drive view", () => {
     await waitFor(() => expect(unsubscribe).toHaveBeenCalled());
     expect(direct.close).not.toHaveBeenCalledWith(scopeId);
   });
+  it("does not open an unrelated drive when the requested shortcut is unavailable", async () => {
+    createApi.mockImplementation(() => ({get: vi.fn(async path => path === "/api/organizations" ? {organizations: []} : {items: []}), direct: {close: vi.fn(), request: vi.fn()}}));
+    useConnection.setState({platformHost:"https://app.matrix-os.com",runtimeSlot:"primary",authGeneration:3});
+    render(<DesktopOrganizationDrivesView requestedScopeId="00000000-0000-4000-8000-0000000000ff" requestedIntentId="new-request"/>);
+    expect(await screen.findByText("This drive is unavailable. Choose another drive or refresh.")).toBeTruthy();
+    expect(screen.queryByRole("button",{name:"Upload file"})).toBeNull();
+  });
+
 });
