@@ -4,7 +4,6 @@ import {
   TerminalTabClientFrameSchema,
   type TerminalRef,
   type TerminalTab,
-  type TerminalWorkspace,
 } from "@matrix-os/contracts";
 import type { TerminalRuntimeSocketClient } from "@matrix-os/terminal-runtime";
 import { z } from "zod/v4";
@@ -55,25 +54,28 @@ function providerLoginRegistryError(code: "session_not_found" | "session_exists"
   return Object.assign(new Error(message), { code });
 }
 
-function matchingProviderTabs(workspaces: readonly TerminalWorkspace[], name: string): TerminalTab[] {
-  return workspaces.flatMap((workspace) => workspace.tabs.filter((tab) => tab.name === name));
-}
-
 function providerLoginCwd(cwd: string | undefined): string {
   if (!cwd || cwd === "~") return "";
   return cwd.startsWith("~/") ? cwd.slice(2) : cwd;
 }
 
 export function createProviderLoginTerminalRegistry(runtime: ProviderLoginRuntime) {
-  async function find(name: string): Promise<TerminalTab> {
-    const matches = matchingProviderTabs(await runtime.listWorkspaces(), name);
+  async function find(identity: string | TerminalRef): Promise<TerminalTab> {
+    const matches = (await runtime.listWorkspaces()).flatMap((workspace) => workspace.tabs
+      .filter((tab) => typeof identity === "string" ? tab.name === identity
+        : workspace.id === identity.workspaceId && tab.id === identity.tabId)
+      .map((tab) => ({ tab, workspaceId: workspace.id })));
     if (matches.length === 0) {
       throw providerLoginRegistryError("session_not_found", "Provider terminal was not found");
     }
     if (matches.length !== 1) {
       throw new Error("Provider terminal identity is ambiguous");
     }
-    return matches[0]!;
+    const match = matches[0]!;
+    if (match.tab.workspaceId !== match.workspaceId) {
+      throw new Error("Provider terminal identity is invalid");
+    }
+    return match.tab;
   }
 
   async function findOptional(name: string): Promise<TerminalTab | undefined> {
@@ -86,6 +88,16 @@ export function createProviderLoginTerminalRegistry(runtime: ProviderLoginRuntim
   }
 
   return {
+    /** Resolve only the exact server-created tab, without creating or adopting another terminal. */
+    async resolveTerminalRef(identity: string): Promise<TerminalRef> {
+      const [workspaceId, tabId, extra] = identity.split(":");
+      const suppliedRef = TerminalRefSchema.safeParse({ workspaceId, tabId });
+      const tab = await find(extra === undefined && suppliedRef.success ? suppliedRef.data : identity);
+      const ref = TerminalRefSchema.safeParse({ workspaceId: tab.workspaceId, tabId: tab.id });
+      if (!ref.success) throw new Error("Provider terminal identity is invalid");
+      return ref.data;
+    },
+
     async create(input: {
       name: string;
       cwd?: string;

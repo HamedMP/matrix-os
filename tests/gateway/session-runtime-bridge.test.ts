@@ -174,6 +174,38 @@ describe("session runtime bridge", () => {
 });
 
 describe("provider login terminal registry", () => {
+  it("resolves server-created names and verifies existing durable references without creating tabs", async () => {
+    const runtime = {
+      listWorkspaces: vi.fn(async () => [MAIN_WORKSPACE]),
+      ensureWorkspace: vi.fn(), createTab: vi.fn(), renameTab: vi.fn(), terminateTab: vi.fn(),
+    };
+    const registry = createProviderLoginTerminalRegistry(runtime);
+    await expect(registry.resolveTerminalRef(ACTIVE_TAB.name)).resolves.toEqual(TERMINAL_REF);
+    await expect(registry.resolveTerminalRef(`${TERMINAL_REF.workspaceId}:${TERMINAL_REF.tabId}`))
+      .resolves.toEqual(TERMINAL_REF);
+    expect(runtime.createTab).not.toHaveBeenCalled();
+    expect(runtime.ensureWorkspace).not.toHaveBeenCalled();
+  });
+
+  it("rejects missing, ambiguous, malformed or inconsistent handoff identities", async () => {
+    const runtime = {
+      listWorkspaces: vi.fn().mockResolvedValue([]),
+      ensureWorkspace: vi.fn(), createTab: vi.fn(), renameTab: vi.fn(), terminateTab: vi.fn(),
+    };
+    const registry = createProviderLoginTerminalRegistry(runtime);
+    await expect(registry.resolveTerminalRef(ACTIVE_TAB.name)).rejects.toThrow();
+    await expect(registry.resolveTerminalRef(`${TERMINAL_REF.workspaceId}:${TERMINAL_REF.tabId}`)).rejects.toThrow();
+    runtime.listWorkspaces.mockResolvedValue([MAIN_WORKSPACE, MAIN_WORKSPACE]);
+    await expect(registry.resolveTerminalRef(ACTIVE_TAB.name)).rejects.toThrow();
+    await expect(registry.resolveTerminalRef(`${TERMINAL_REF.workspaceId}:${TERMINAL_REF.tabId}`)).rejects.toThrow();
+    runtime.listWorkspaces.mockResolvedValue([{ ...MAIN_WORKSPACE, tabs: [{ ...ACTIVE_TAB, id: "legacy-tab" }] }]);
+    await expect(registry.resolveTerminalRef(ACTIVE_TAB.name)).rejects.toThrow();
+    runtime.listWorkspaces.mockResolvedValue([{ ...MAIN_WORKSPACE, tabs: [{ ...ACTIVE_TAB,
+      workspaceId: "tws_00000000000000000000000000000002" }] }]);
+    await expect(registry.resolveTerminalRef(ACTIVE_TAB.name)).rejects.toThrow();
+    expect(runtime.createTab).not.toHaveBeenCalled();
+  });
+
   it("creates provider login commands as shared-runtime tabs", async () => {
     const created = { ...ACTIVE_TAB, name: "provider-auth-claude", agent: { providerId: "claude" } };
     const runtime = {

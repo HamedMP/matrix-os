@@ -125,6 +125,12 @@ Only an omitted configured canonical owner source with matching vendor/model eli
 
 For presentation, validate absence against the authoritative snapshot's `refreshedAt` on the same server clock as its observation. Do not compare server timestamps with the client wall clock: real Preview acceptance reproduced a 0.6-second offset that incorrectly rejected fresh absence. Render the coherent snapshot until a new read replaces it; refresh on existing focus, visibility, catalog and explicit retry paths. A new snapshot whose observation was expired, future or missing at generation remains unknown. This presentation does not change authentication, TTLs or send admission.
 
+### Existing named Terminal handoff compatibility
+
+Live Connect acceptance exposed a second integration defect: the login coordinator persists named Terminal aliases, while current clients open canonical `workspaceId:tabId` references. Project the authenticated mutation response's `open_terminal` action to the exact existing tab reference using the owner runtime registry. Apply projection after store mutation/replay so cached idempotent receipts are covered as well as new and recovered attempts. Keep internal names, receipt hashes, expiry, idempotency and recovery behavior unchanged. Resolve only an exact unique named tab, validate its reference, and fail closed with a safe error on missing, ambiguous or invalid identity. Never create another tab during projection or guess an identifier in the client. Authentication and Terminal permissions remain authoritative at their existing boundaries.
+
+Keep this behavior in a focused handoff helper and registry resolver; existing large server entrypoints contain dependency registration only. Tests must prove fresh and replayed responses yield the same actual tab, dependency wiring is validated, unsupported/browser actions retain their existing semantics, and missing/ambiguous identities cannot open a Terminal. Real Electron acceptance must click Connect and observe the existing login Terminal on the selected Preview.
+
 ### Validation / error matrix
 - Explicit matching missing credentials, no contradictory observations: unauthenticated projection.
 - Present, unknown, stale, future, or timestamp-free local observation: no negative override.
