@@ -6,6 +6,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { DesktopOrganizationDrivesView } from "../../desktop/src/renderer/src/features/files/DesktopOrganizationDrivesView";
 import { WorkSurfaceRuntimeProvider, useWorkSurfaceRuntime } from "../../desktop/src/renderer/src/features/work/WorkSurfaceRuntime";
 import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
+import { CanonicalChatWorkspace } from "../../desktop/src/renderer/src/features/chat/CanonicalChatWorkspace";
+import { createCanonicalChatWorkspaceClient, providerCatalog } from "./canonical-chat-workspace-test-utils";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
 
 const { createApi } = vi.hoisted(() => ({ createApi: vi.fn() }));
@@ -66,9 +68,13 @@ describe("Electron organization drive view", () => {
     const tab=useTabs.getState().tabs.find(item=>item.id===useTabs.getState().activeTabId)!;
     expect(tab).toMatchObject({kind:"work",workRoute:"chat",chatView:"draft"});
     expect(tab.chatId).toBeUndefined();
-    function Receipt(){const runtime=useWorkSurfaceRuntime();return <output data-testid="files-chat-draft">{JSON.stringify(runtime?.agentDraftRequest??null)}</output>;}
+    const client=createCanonicalChatWorkspaceClient();
+    function Receipt(){const runtime=useWorkSurfaceRuntime();return <><output data-testid="files-chat-draft">{JSON.stringify(runtime?.agentDraftRequest??null)}</output><CanonicalChatWorkspace client={client} catalog={providerCatalog} projectId={null} initialView="draft" draftRequest={runtime?.agentDraftRequest} externalNavigation active/></>;}
     const chat=render(<WorkSurfaceRuntimeProvider active tabId={tab.id}><Receipt/></WorkSurfaceRuntimeProvider>);
     await waitFor(()=>expect(JSON.parse(screen.getByTestId("files-chat-draft").textContent!)).toMatchObject({text:"",resources:[{kind:"organization_drive",drive:{kind:"drive",organizationId,scopeId}}]}));
+    await waitFor(()=>expect(screen.getByRole("textbox").textContent).toContain("Authority"));
+    expect(client.create).not.toHaveBeenCalled();
+    expect(client.admitTurn).not.toHaveBeenCalled();
     expect(direct.request.mock.calls.every(call=>call[1]==="GET")).toBe(true);
     chat.unmount();
     await waitFor(() => expect(subscribe).toHaveBeenCalled());
