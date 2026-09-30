@@ -49,12 +49,13 @@ suite("Electron Desktop Chat against an authenticated runtime", () => {
       });
       const snapshot = ProviderSettingsSnapshotSchema.parse(evidence.snapshot);
       const connectionState = deriveChatProviderConnectionState(snapshot);
-      writeFileSync(join(output, "live-provenance.json"), JSON.stringify({
+      const provenance = {
         runtimeSlot: evidence.runtimeSlot, clientCommit: evidence.clientCommit,
         runtimeVersion: evidence.runtimeVersion, runtimeCommit: evidence.runtimeCommit, connectionState,
         harnesses: snapshot.harnesses.map(({ harness, authState, enabled }) => ({ harness, authState, enabled })),
         sources: snapshot.accessSources.map(({ kind, readiness }) => ({ kind, state: readiness.state, safeReason: readiness.safeReason })),
-      }, null, 2));
+      };
+      writeFileSync(join(output, "live-provenance.json"), JSON.stringify(provenance, null, 2));
       expect(connectionState).toBe(process.env.MATRIX_CHAT_LIVE_EXPECT_CONNECTION ?? "connected");
       const later = page.getByRole("button", { name: "Later", exact: true });
       if (await later.isVisible()) await later.click();
@@ -63,7 +64,14 @@ suite("Electron Desktop Chat against an authenticated runtime", () => {
       expect(await page.getByRole("button", { name: "Connect Claude Code", exact: true }).count()).toBe(0);
       expect(await page.getByRole("button", { name: "Connect Codex", exact: true }).count()).toBe(0);
       if (connectionState === "unknown") {
-        await chat.getByRole("heading", { name: "Connection status unavailable", exact: true }).waitFor();
+        // A runtime that cannot load canonical Chat keeps its existing recovery
+        // instead of converting the failure to a misleading provider login guide.
+        const status = chat.getByRole("heading", { name: "Connection status unavailable", exact: true });
+        const recovery = chat.getByText("Chat unavailable", { exact: true });
+        await status.or(recovery).first().waitFor();
+        writeFileSync(join(output, "live-provenance.json"), JSON.stringify({ ...provenance,
+          chatPresentation: await recovery.isVisible() ? "canonical_chat_unavailable" : "connection_status_unknown",
+        }, null, 2));
       }
       expect(await chat.count()).toBe(1);
       await page.screenshot({ path: join(output, `electron-live-${connectionState}.png`) });
