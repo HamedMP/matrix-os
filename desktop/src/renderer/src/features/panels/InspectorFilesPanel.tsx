@@ -9,7 +9,7 @@ import { FilePreview, resolveActivePath, type FileSelection } from "../files/Fil
 import type { WorkFilesScope } from "../work/work-files-scope";
 import { ArrowUp, ChevronRight, Folder } from "@renderer/lib/hugeicons";
 import { FileTypeIcon } from "../files/FileTypeIcon";
-import { MonacoReadOnlyEditor } from "../editor/MonacoReadOnlyEditor";
+import { InspectorResourcePreview } from "./InspectorResourcePreview";
 
 export type InspectorFileTarget =
   | { kind: "home"; path: string; label: string }
@@ -382,54 +382,7 @@ function ProjectNavigableFilesPanel({
 }
 
 export function InspectorFilePreview({ target }: { target: InspectorFileTarget }) {
-  if (target.kind === "home") {
-    return (
-      <Suspense
-        fallback={<div className="flex flex-1 items-center justify-center text-xs" style={{ color: "var(--text-tertiary)" }}>Loading preview…</div>}
-      >
-        <FilePreview path={target.path} textRenderer="monaco" />
-      </Suspense>
-    );
-  }
-  return <ProjectFilePreview target={target} />;
-}
-
-function ProjectFilePreview({
-  target,
-}: {
-  target: Extract<InspectorFileTarget, { kind: "project" }>;
-}) {
-  const [file, setFile] = useState<FileReadResponse | null>(null);
-  const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
-
-  useEffect(() => {
-    let current = true;
-    setFile(null);
-    setStatus("loading");
-    void invoke("runtime:get-file-content", {
-      projectId: target.projectId,
-      ...(target.worktreeId ? { worktreeId: target.worktreeId } : {}),
-      path: target.path,
-    }).then((response) => {
-      if (!current) return;
-      setFile(response);
-      setStatus("ready");
-    }).catch(() => {
-      if (current) setStatus("error");
-    });
-    return () => { current = false; };
-  }, [target.path, target.projectId, target.worktreeId]);
-
-  if (status === "loading") {
-    return <p className="p-4 text-xs" style={{ color: "var(--text-tertiary)" }}>Loading preview…</p>;
-  }
-  if (status === "error" || !file) {
-    return <p className="p-4 text-xs" style={{ color: "var(--danger)" }}>Preview unavailable.</p>;
-  }
-  return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-      <MonacoReadOnlyEditor path={target.path} content={file.content} />
-      {file.truncated ? <p className="shrink-0 border-t px-3 py-2 text-xs" style={{ borderColor: "var(--border-subtle)", color: "var(--text-tertiary)" }}>Preview truncated.</p> : null}
-    </div>
-  );
+  const runtimeSlot = useConnection((state) => state.runtimeSlot);
+  const authGeneration = useConnection((state) => state.authGeneration);
+  return <InspectorResourcePreview key={`${runtimeSlot}:${authGeneration}:${JSON.stringify(target)}`} target={target} />;
 }

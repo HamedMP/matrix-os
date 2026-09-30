@@ -1436,7 +1436,7 @@ export type {
   PatchOsViewStateRequest,
 } from "#os-view";
 
-export { resolveChatMessageLink } from "#chat-links";
+export { resolveChatMessageLink, resolveChatAppReference } from "#chat-links";
 export { ShareSnapshotSchema, ShareTokenSchema, shareHtml, isPublicShareLink, type ShareSnapshot } from "#chat-sharing";
 export * from "#terminal-keyboard";
 

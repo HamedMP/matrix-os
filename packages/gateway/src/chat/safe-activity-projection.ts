@@ -3,6 +3,13 @@ import { isAbsolute, relative, sep } from "node:path";
 const SECRET_TEXT = /(?:authorization\s*[:=]|bearer\s+|(?:api[_-]?(?:key|token)|access[_-]?token|secret|password|credential)\s*[:=]|\bprivate\s+raw\b|ghp_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9_-]+)/i;
 const SECRET_ASSIGNMENT = /\b(?:API[_-]?KEY|API[_-]?TOKEN|ACCESS[_-]?TOKEN|SECRET|PASSWORD|CREDENTIAL)\s*=\s*[^\s,;]+/gi;
 const ABSOLUTE_PATH = /(^|[\s"'`(=:<>|;&])\/(?=[A-Za-z0-9._~-])(?!\/)[^\s"'`<>)]*/g;
+// Fixed public collection names are product references, not host locations.
+// No descendants, query strings, or arbitrary /api paths are exempted.
+const PUBLIC_PRODUCT_ROUTES = new Set(["/api/integrations", "/api/apps"]);
+function redactAbsolutePath(match: string, prefix: string): string {
+  const path = match.slice(prefix.length).replace(/[.,;!]+$/, "");
+  return PUBLIC_PRODUCT_ROUTES.has(path) ? match : `${prefix}[redacted path]`;
+}
 const DANGLING_BEARER = /(?:^|[^A-Za-z0-9_])Bearer\s+$/i;
 const ACTIVE_BEARER = /(?:^|[^A-Za-z0-9_])Bearer\s+/i;
 const DANGLING_SECRET_ASSIGNMENT = /(?:^|[^A-Za-z0-9_])(?:API[_-]?(?:KEY|TOKEN)|ACCESS[_-]?TOKEN|SECRET|PASSWORD|CREDENTIAL)\s*(?:=\s*)?$/i;
@@ -74,7 +81,7 @@ export function safePublishedText(
   if (executionRoot && !executionRoot.startsWith(`${homePath}/`)) {
     projected = projected.replaceAll(`${executionRoot}/`, "").replaceAll(executionRoot, ".");
   }
-  projected = projected.replace(ABSOLUTE_PATH, (match, prefix: string) => `${prefix}[redacted path]`);
+  projected = projected.replace(ABSOLUTE_PATH, redactAbsolutePath);
   const maxChars = options.maxChars ?? 2_000;
   return Array.from(projected).slice(0, maxChars).join("");
 }
@@ -92,7 +99,7 @@ export function sanitizeAssistantText(
   return projected
     .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]+/gi, "Bearer [redacted]")
     .replace(SECRET_ASSIGNMENT, "[redacted credential]")
-    .replace(ABSOLUTE_PATH, (match, prefix: string) => `${prefix}[redacted path]`);
+    .replace(ABSOLUTE_PATH, redactAbsolutePath);
 }
 
 /** Project streamed text only after its path or credential token is complete. */

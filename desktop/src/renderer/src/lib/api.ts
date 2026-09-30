@@ -30,6 +30,7 @@ export interface ApiClientOptions {
 }
 
 export interface BoundedReadOptions {
+  headers?: Record<string, string>;
   // Hard cap on the bytes read from the response body. The stat that sized a
   // file can be stale by the time the body is fetched, so the cap must apply
   // to the transfer itself; exceeding it rejects with "file_too_large".
@@ -205,8 +206,8 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
       getRuntimeSlot: () => runtimeSlot,
     }),
     get: (path, requestOptions) => request(path, { method: "GET" }, requestOptions),
-    getText: (path, boundedOptions) => requestText(path, { method: "GET" }, boundedOptions),
-    getBlob: (path, boundedOptions) => requestBlob(path, { method: "GET" }, boundedOptions),
+    getText: (path, boundedOptions) => requestText(path, { method: "GET", ...(boundedOptions?.headers ? { headers: boundedOptions.headers } : {}) }, boundedOptions),
+    getBlob: (path, boundedOptions) => requestBlob(path, { method: "GET", ...(boundedOptions?.headers ? { headers: boundedOptions.headers } : {}) }, boundedOptions),
     openStream: (path, streamOptions) => send(path, {
       method: "GET",
       headers: { accept: streamOptions.accept, ...streamOptions.headers },

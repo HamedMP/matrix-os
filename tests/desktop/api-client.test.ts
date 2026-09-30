@@ -44,6 +44,12 @@ describe("buildGatewayUrl", () => {
 });
 
 describe("createApiClient", () => {
+  it("sends a bounded text range to the pinned Preview runtime", async () => {
+    const fetchFn = vi.fn().mockResolvedValue(new Response("first part", { status: 206 }));
+    const client = createApiClient({ baseUrl: "https://app.matrix-os.com", getRuntimeSlot: () => "primary", fetchFn }).forRuntime("pr-2047");
+    await expect(client.getText("/api/file-preview/content?kind=project", { maxBytes: 65536, headers: { Range: "bytes=0-65535" } })).resolves.toBe("first part");
+    expect(fetchFn).toHaveBeenCalledWith("https://app.matrix-os.com/api/file-preview/content?kind=project&runtime=pr-2047", expect.objectContaining({ headers: { Range: "bytes=0-65535" }, signal: expect.any(AbortSignal) }));
+  });
   it.each([undefined, 128])("accepts 204 deletion without parsing JSON (maxBytes=%s)", async (maxBytes) => {
     const response = new Response(null, { status: 204 });
     const json = vi.spyOn(response, "json");

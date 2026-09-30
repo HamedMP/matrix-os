@@ -92,7 +92,7 @@ export {
 export { ChatShareDialog } from "./chat/ChatShareDialog.js";
 export { ChatContextMenu } from "./chat/ChatContextMenu.js";
 export { ChatSharingButton } from "./chat/ChatSharingButton.js";
-export { ChatAttachments, type ChatMessageAttachment } from "./chat/ChatAttachments.js";
+export { ChatAttachments, AttachmentImage, type ChatMessageAttachment } from "./chat/ChatAttachments.js";
 export { ChatCollaboratorsDialog, type CollaborationApi } from "./collaboration/ChatCollaboratorsDialog.js";
 export {
   CanonicalSharedChatPanel,
@@ -153,6 +153,8 @@ export { CanonicalChatInputForm, type CanonicalChatInputFormProps } from "./chat
 export { useFileDownload, type FileDownloadTransport, type FileDownloadController } from "./files/use-file-download.js";
 export { filePreviewContentUrl, filePreviewMetadataUrl } from "./files/file-preview-policy.js";
 export { FilePreviewContent, type FilePreviewContentProps } from "./files/FilePreviewContent.js";
+export { FilePreviewActions } from "./files/FilePreviewActions.js";
+export { copyFileImage, savePreviewBlob } from "./files/file-image-actions.js";
 
 export { resolveRecipeHandoff } from "./chat-agents/recipe-handoff.js";
 export { generatedChatTitle } from "./generated-chat-title";
