@@ -7,6 +7,8 @@
  * registry, which the broker checks on every frame. Shared routes cannot
  * address a private handle: no collaboration scope uses this namespace.
  */
+import { lstat, realpath } from "node:fs/promises";
+import { isAllowedSandboxRoot } from "../collaboration/shared-ai-runtime.js";
 import { createHash } from "node:crypto";
 import type { CanonicalChatExecutionRootRef, BotModelRoute, BotToolCapability } from "@matrix-os/contracts";
 import {
@@ -74,6 +76,8 @@ export function createPrivateBotAdmission(deps: {
   roots: Pick<ChatExecutionRootResolver, "resolve">;
   registry: BotRuntimeRegistry;
   authorizeGroup?: GroupBotAuthorizer;
+  /** Trusted owner home; group mounts are restricted to its managed shared roots. */
+  homePath?: string;
 }) {
   async function ownsChat(input: { ownerId: string; botId: string; chatId: string; group?: GroupBotRunRequest }): Promise<boolean> {
     const row = await deps.db.selectFrom("bot_chat_bindings as binding")
@@ -127,6 +131,16 @@ export function createPrivateBotAdmission(deps: {
           throw new BotAdmissionError(error.code === "validation_unavailable" ? "unavailable" : "invalid_root");
         }
         throw error;
+      }
+      if (input.group) {
+        if (!deps.homePath) throw new BotAdmissionError("unavailable");
+        try {
+          const [home, candidate, stats] = await Promise.all([realpath(deps.homePath), realpath(root.primaryWorkspaceRoot), lstat(root.primaryWorkspaceRoot)]);
+          if (!stats.isDirectory() || stats.isSymbolicLink() || candidate !== root.primaryWorkspaceRoot || !isAllowedSandboxRoot(home, candidate)) throw new BotAdmissionError("invalid_root");
+        } catch (error: unknown) {
+          if (error instanceof BotAdmissionError) throw error;
+          throw new BotAdmissionError(error instanceof Error && "code" in error && ["ENOENT", "ENOTDIR", "EACCES"].includes(String(error.code)) ? "invalid_root" : "unavailable");
+        }
       }
       if (input.group && (!/^[a-f0-9]{64}$/.test(input.group.executionRootFingerprint)
         || input.group.executionRootFingerprint !== root.fingerprint)) throw new BotAdmissionError("root_changed");

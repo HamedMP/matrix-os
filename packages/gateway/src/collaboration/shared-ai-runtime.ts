@@ -920,7 +920,7 @@ export async function createSharedChatSandboxManifest(input: {
   };
 }
 
-function isAllowedSandboxRoot(homePath: string, candidate: string): boolean {
+export function isAllowedSandboxRoot(homePath: string, candidate: string): boolean {
   if (!isAbsolute(candidate)) return false;
   return [join(homePath, "projects"), join(homePath, "worktrees")].some((root) => {
     const child = relative(root, candidate);

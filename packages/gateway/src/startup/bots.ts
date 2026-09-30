@@ -268,7 +268,7 @@ export async function startBots(options: {
   const lifetime = new AbortController();
   const resolveCodexIdentity = createCodexOwnerIdentityResolver({ homePath: options.homePath });
   const registry = new BotRuntimeRegistry();
-  const admission = createPrivateBotAdmission({ db, host, roots: options.executionRoots, registry,
+  const admission = createPrivateBotAdmission({ db, host, roots: options.executionRoots, registry, homePath: options.homePath,
     ...(options.group ? { authorizeGroup: options.group.authorizeGroup } : {}) });
   let forgetRun: (runId: string) => void = () => undefined;
   const orchestrator = createBotTaskOrchestrator({

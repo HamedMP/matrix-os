@@ -268,7 +268,7 @@ export function createBotBrokerActions(deps: {
       // Shared evidence is freshly admitted per run; never resume a prior run's
       // source text after that evidence was erased or its audience changed.
       const key = { ownerId: binding.ownerId, botId: binding.botId, chatId: binding.chatId,
-        ...(binding.group ? { contextGeneration: createHash("sha256").update(`group:${binding.group.scopeId}:${binding.group.sessionGeneration}:${binding.rootFingerprint}:${binding.runId}`).digest("hex") } : {}) };
+        ...(binding.group ? { contextRunId: binding.runId, contextGeneration: createHash("sha256").update(`group:${binding.group.scopeId}:${binding.group.sessionGeneration}:${binding.rootFingerprint}:${binding.runId}`).digest("hex") } : {}) };
       if (binding.group && !binding.group.sessionGeneration && ["bot.session.load", "bot.session.save"].includes(request.action)) return refusal(request.requestId, "denied");
       try {
         await reauthorize(binding);

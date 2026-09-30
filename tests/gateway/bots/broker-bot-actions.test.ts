@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Kysely } from "kysely";
 import type { BotRunSpec, BotToolRequest } from "@matrix-os/contracts";
 import type { OwnerBotDatabase } from "../../../packages/gateway/src/bots/database.js";
+import { admitSessionRun } from "./shared-session-run-support.js";
 import { BotBrokerActionError, createBotBrokerActions, type BotToolDispatcher } from "../../../packages/gateway/src/bots/broker-actions.js";
 import { createBotCheckpointsRepository, type BotCheckpointsRepository } from "../../../packages/gateway/src/bots/repositories/checkpoints.js";
 import type { FundedAdmissionQueue } from "../../../packages/gateway/src/funded-ai/admission-queue.js";
@@ -382,6 +383,7 @@ describe("group bot broker fencing", () => {
       .resolves.toMatchObject({ ok: false, error: "action_denied" });
   });
   it("rechecks every frame and denies access after revocation", async () => {
+    await admitSessionRun(db, OWNER, binding.chatId, binding.runId);
     binding = { ...binding, group, capabilities: [] };
     const authorizeGroup = vi.fn(async () => current());
     const { actions } = setup({ authorizeGroup });
@@ -400,6 +402,7 @@ describe("group bot broker fencing", () => {
     binding = { ...binding, group };
     const { actions, registry } = setup({ authorizeGroup: async () => current() });
     const oldRun = binding.runId;
+    const canonicalOld = await admitSessionRun(db, OWNER, binding.chatId, oldRun);
     const messages = [{ role: "user", content: "Brain source A, which will be erased" }];
     await expect(actions.handleFrame(frame({ action: "bot.session.save", session: { baseRevision: 0, messages } })))
       .resolves.toMatchObject({ ok: true, result: { revision: 1 } });
@@ -407,6 +410,7 @@ describe("group bot broker fencing", () => {
       .resolves.toMatchObject({ ok: true, result: { revision: 1, messages } });
     registry.release(RUNTIME);
     binding = { ...binding, runId: "run_broker2" };
+    await canonicalOld.complete(); await admitSessionRun(db, OWNER, binding.chatId, binding.runId);
     registry.bind(binding);
     // The same group, immutable policy session generation and root must not
     // resume an earlier request's evidence after it has been deleted/revised.
