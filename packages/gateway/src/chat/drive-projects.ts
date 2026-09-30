@@ -20,6 +20,18 @@ const QuerySchema = z.object({}).strict();
 class ProjectError extends Error {
     constructor(readonly status: 404 | 409 | 503) { super("Company drive project unavailable"); }
 }
+/** Short locked reads; callers finish this transaction before any source I/O. */
+async function lockEligibleChat(scoped: ChatRepository, owner: ChatOwner, chatId: string) {
+    const db = scoped.kysely;
+    await sql`SET LOCAL statement_timeout = '5s'`.execute(db);
+    await sql`SET LOCAL lock_timeout = '5s'`.execute(db);
+    const chat = await db.selectFrom('chats').select(['revision', 'collaboration', 'lifecycle'])
+        .where('id', '=', chatId).where('owner_type', '=', owner.type).where('owner_id', '=', owner.ownerId)
+        .forUpdate().executeTakeFirst();
+    if (!chat) throw new ProjectError(404);
+    if (chat.collaboration || chat.lifecycle !== 'active') throw new ProjectError(409);
+    return chat;
+}
 const failure = (c: Context, error: unknown) => {
     c.header("Cache-Control", "private, no-store");
     if (isRequestPrincipalError(error)) {
@@ -79,18 +91,15 @@ export async function createChatDriveProjectRoutes(options: {
             if (owner.type !== "personal") throw new ProjectError(409);
             // Source membership is independent of Chat mutation state and holds no Chat DB connection.
             if (input.reference) {
+                // Fail ineligible targets promptly, then release the lock and pool connection.
+                await repository.withTransaction(async scoped => { await lockEligibleChat(scoped, owner, chatId); });
                 if (!options.drives) throw new ProjectError(503);
                 await options.drives.authorizeSources(owner, [input.reference]);
             }
             const result = await repository.withTransaction(async (scoped) => {
                 const db = scoped.kysely.withTables<AssociationDatabase>();
-                await sql`SET LOCAL statement_timeout = '5s'`.execute(db);
-                await sql`SET LOCAL lock_timeout = '5s'`.execute(db);
-                const chat = await db.selectFrom('chats').select(['revision', 'collaboration', 'lifecycle']).where('id', '=', chatId).where('owner_type', '=', owner.type).where('owner_id', '=', owner.ownerId).forUpdate().executeTakeFirst();
-                if (!chat)
-                    throw new ProjectError(404);
-                if (chat.collaboration || chat.lifecycle !== 'active')
-                    throw new ProjectError(409);
+                // Source I/O can race ownership/lifecycle/sharing changes: lock and recheck here.
+                const chat = await lockEligibleChat(scoped, owner, chatId);
                 const previous = await db.selectFrom('chat_drive_projects').selectAll().where('chat_id', '=', chatId).executeTakeFirst();
                 if (previous?.request_id === input.clientRequestId) {
                     const saved = ChatDriveProjectReferenceSchema.nullable().parse(previous.reference);

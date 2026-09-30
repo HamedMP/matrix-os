@@ -59,6 +59,18 @@ describe("owner-persisted company drive Chat projects", () => {
         await repository.kysely.updateTable("chats").set({ collaboration: { scopeId: reference.scopeId, mode: "discussion_only", executionFenced: true } }).where("id", "=", "chat_project").execute();
         expect((await app.request('/api/chats/chat_project/drive-project', json(request))).status).toBe(409);
     });
+    it("rejects ineligible Chats before contacting an unavailable source", async () => {
+        authorize.mockRejectedValue(new Error("Source offline"));
+        actor = "user_other";
+        expect((await app.request('/api/chats/chat_project/drive-project', json(request))).status).toBe(404);
+        actor = owner.ownerId;
+        expect((await app.request('/api/chats/chat_deleted/drive-project', json(request))).status).toBe(404);
+        await repository.kysely.updateTable("chats").set({ lifecycle: "archived" }).where("id", "=", "chat_project").execute();
+        expect((await app.request('/api/chats/chat_project/drive-project', json(request))).status).toBe(409);
+        await repository.kysely.updateTable("chats").set({ lifecycle: "active", collaboration: { scopeId: reference.scopeId, mode: "discussion_only", executionFenced: true } }).where("id", "=", "chat_project").execute();
+        expect((await app.request('/api/chats/chat_project/drive-project', json(request))).status).toBe(409);
+        expect(authorize).not.toHaveBeenCalled();
+    });
     it("validates every boundary and rechecks a sharing transition after source I/O", async () => {
         expect((await app.request('/api/chats/invalid/drive-project', json(request))).status).toBe(422);
         expect((await app.request('/api/chats/chat_project/drive-project?actor=other', json(request))).status).toBe(422);
