@@ -41,6 +41,8 @@ readonly LEGACY_UPGRADE_TTL_SECONDS="${MATRIX_LEGACY_UPGRADE_TTL_SECONDS:-86400}
 readonly LEGACY_R2_ENV_FILE="/opt/matrix/env/r2.env"
 readonly LEGACY_R2_RETRY_INTERVAL_SECONDS="${MATRIX_LEGACY_R2_RETRY_INTERVAL_SECONDS:-300}"
 readonly TERMINAL_RUNTIME_ROOT="/opt/matrix/terminal-runtime"
+readonly PROTECTED_LIBEXEC_DIR="/usr/local/libexec"
+readonly POSTGRES_ROOT_UNIT="/etc/systemd/system/matrix-postgres.service"
 readonly TERMINAL_RUNTIME_GENERATION_FILE="TERMINAL_RUNTIME_GENERATION"
 readonly TERMINAL_RUNTIME_MAX_GENERATIONS="${MATRIX_TERMINAL_RUNTIME_MAX_GENERATIONS:-8}"
 log() { echo "matrix-sync-agent: $(date -u +%Y-%m-%dT%H:%M:%SZ) $*"; }
@@ -375,6 +377,22 @@ install_host_bin_payload() {
       return 1
     fi
   done < <(find "$source_dir" -mindepth 1 -maxdepth 1 -type f -print0)
+  protected_helper="$source_dir/matrix-postgres-start"
+  if [ -f "$protected_helper" ] && [ ! -L "$protected_helper" ]; then
+    sudo install -d -o root -g root -m 0755 /usr/local/libexec || return 1
+    incoming="/usr/local/libexec/.matrix-postgres-start.incoming.$$"
+    destination=/usr/local/libexec/matrix-postgres-start
+    if [ -L "$destination" ] || { [ -e "$destination" ] && [ ! -f "$destination" ]; }; then
+      log "ERROR: invalid protected PostgreSQL helper destination"
+      return 1
+    fi
+    sudo rm -f -- "$incoming" || return 1
+    if ! sudo install -o root -g root -m 0755 "$source_dir/matrix-postgres-start" "$incoming" \
+      || ! sudo mv -Tf "$incoming" "$destination"; then
+      sudo rm -f -- "$incoming"
+      return 1
+    fi
+  fi
   protected_helper="$source_dir/matrix-support-access"
   if [ -f "$protected_helper" ] && [ ! -L "$protected_helper" ]; then
     sudo install -d -o root -g root -m 0755 /usr/local/libexec || return 1
@@ -538,6 +556,7 @@ prepare_update_transaction() {
   record_update_payload_directory "$extract_dir/user-systemd" /etc/systemd/user user-systemd || return 1
   record_update_file "$RELEASE_FILE" release-metadata || return 1
   record_update_file "$RELEASE_ROLLBACK_FILE" rollback-release-metadata || return 1
+  record_update_file /usr/local/libexec/matrix-postgres-start postgres-helper || return 1
   record_update_file /usr/local/libexec/matrix-support-access support-helper || return 1
 
   if [ -L "$TERMINAL_RUNTIME_ROOT/current" ]; then
@@ -640,6 +659,10 @@ restore_update_transaction() {
   restore_update_payload_directory /etc/systemd/user user-systemd || return 1
   restore_update_file "$RELEASE_FILE" release-metadata || return 1
   restore_update_file "$RELEASE_ROLLBACK_FILE" rollback-release-metadata || return 1
+  # Transactions prepared by an older updater predate this protected helper.
+  if [ -f "$UPDATE_TRANSACTION_DIR/postgres-helper.present" ] || [ -f "$UPDATE_TRANSACTION_DIR/postgres-helper.missing" ]; then
+    restore_update_file /usr/local/libexec/matrix-postgres-start postgres-helper || return 1
+  fi
   if [ -f "$UPDATE_TRANSACTION_DIR/support-helper.present" ] || [ -f "$UPDATE_TRANSACTION_DIR/support-helper.missing" ]; then
     restore_update_file /usr/local/libexec/matrix-support-access support-helper || return 1
   fi
@@ -780,6 +803,31 @@ reconcile_legacy_r2_credentials() {
   fi
   clear_legacy_r2_update_error
   log "Removed legacy R2 credentials after broker and release health verification"
+}
+
+# Extraction boundary: specs/538-support-access-resilience/spec.md (Sync-agent extraction plan).
+# An older updater installs the root PostgreSQL unit and bundle helper without
+# the protected copy its ExecStart needs, so the unit would be skipped.
+reconcile_postgres_root_service() {
+  local source="$BIN_DIR/matrix-postgres-start"
+  local destination="$PROTECTED_LIBEXEC_DIR/matrix-postgres-start" incoming
+  [ -f "$POSTGRES_ROOT_UNIT" ] || return 0
+  [ -f "$source" ] && [ ! -L "$source" ] || return 0
+  if [ -L "$destination" ] || { [ -e "$destination" ] && [ ! -f "$destination" ]; }; then
+    log "ERROR: invalid protected PostgreSQL helper destination"
+    return 1
+  fi
+  [ -e "$destination" ] && return 0
+  sudo install -d -o root -g root -m 0755 "$PROTECTED_LIBEXEC_DIR" || return 1
+  incoming="$PROTECTED_LIBEXEC_DIR/.matrix-postgres-start.incoming.$$"
+  sudo rm -f -- "$incoming" || return 1
+  if ! sudo install -o root -g root -m 0755 "$source" "$incoming" \
+    || ! sudo mv -Tf "$incoming" "$destination"; then
+    sudo rm -f -- "$incoming"
+    return 1
+  fi
+  log "Installed protected PostgreSQL helper"
+  sudo systemctl start --no-block matrix-postgres.service
 }
 
 install_terminal_runtime_bootstrap_helpers() {
@@ -1057,13 +1105,21 @@ consume_update_trigger() {
   sudo rm -f -- "$UPDATE_TRIGGER"
 }
 
-fetch_manifest() {
-  local url="$1" manifest
-  if ! manifest="$(curl --fail --silent --show-error --max-time 15 "$url" 2>&1)"; then
-    log "WARN: failed to fetch release metadata from $url"; return 1
-  fi
-  printf '%s' "$manifest"
+# BEGIN update manifest library loader
+[ -f "$BIN_DIR/matrix-update-manifest" ] && [ ! -L "$BIN_DIR/matrix-update-manifest" ] || {
+  log "ERROR: update manifest library is unavailable"
+  exit 1
 }
+source "$BIN_DIR/matrix-update-manifest"
+# END update manifest library loader
+
+# BEGIN update request rejection library loader
+[ -f "$BIN_DIR/matrix-update-request-rejection" ] && [ ! -L "$BIN_DIR/matrix-update-request-rejection" ] || {
+  log "ERROR: update request rejection library is unavailable"
+  exit 1
+}
+source "$BIN_DIR/matrix-update-request-rejection"
+# END update request rejection library loader
 
 write_prepared_update_marker() {
   local manifest="$1" temp
@@ -1078,10 +1134,29 @@ write_prepared_update_marker() {
   fi
 }
 
+bundle_url_is_https() {
+  python3 - "$1" <<'PY'
+import sys
+from urllib.parse import urlsplit
+
+url = sys.argv[1]
+if len(url) > 8192:
+    raise SystemExit(1)
+parts = urlsplit(url)
+if parts.scheme != "https" or not parts.hostname or parts.username or parts.password or parts.fragment:
+    raise SystemExit(1)
+PY
+}
+
 download_bundle() {
   local version="$1" expected_sha256="$2" expected_size="$3" bundle_url="$4" bundle_file="$5"
   local attempt refreshed refreshed_version refreshed_sha256 refreshed_size refreshed_url partial_size
   local -a continue_args
+  if ! bundle_url_is_https "$bundle_url"; then
+    write_update_error "download_metadata_changed" \
+      "The immutable release metadata changed during download." "$version"
+    return 1
+  fi
   rm -f -- "$bundle_file"
   for attempt in 1 2; do
     continue_args=()
@@ -1095,7 +1170,8 @@ download_bundle() {
       refreshed_url="$(json_field "$refreshed" url)"
       if ! [ "$refreshed_version" = "$version" ] ||
         ! [ "$refreshed_sha256" = "$expected_sha256" ] ||
-        ! [ "$refreshed_size" = "$expected_size" ] || [ -z "$refreshed_url" ]; then
+        ! [ "$refreshed_size" = "$expected_size" ] ||
+        ! bundle_url_is_https "$refreshed_url"; then
         write_update_error "download_metadata_changed" \
           "The immutable release metadata changed during download." "$version"
         rm -f -- "$bundle_file"
@@ -1119,6 +1195,7 @@ download_bundle() {
       fi
     fi
     if /usr/bin/timeout --signal=KILL 1800 curl --fail --location \
+      --proto '=https' --proto-redir '=https' --max-redirs 3 \
       --connect-timeout 10 --max-time 1770 --http1.1 \
       "${continue_args[@]}" "$bundle_url" -o "$bundle_file"; then
       [ -f "$bundle_file" ] && [ ! -L "$bundle_file" ] && return 0
@@ -1173,16 +1250,17 @@ consume_idempotent_update_request() {
 prepare_triggered_update() {
   local url="" target="" requested_version=""
   prepare_triggered_update_action=apply
-  if [ -f "$UPDATE_VERSION_FILE" ]; then
+  if [ -f "$UPDATE_VERSION_FILE" ] && ! update_target_was_rejected "$UPDATE_VERSION_FILE"; then
     target="$(cat "$UPDATE_VERSION_FILE" 2>/dev/null || true)"
     [ -n "$target" ] || { log "WARN: update version file is empty"; return 1; }
+    [[ "$target" =~ ^[A-Za-z0-9._-]{1,128}$ ]] || return 2
     requested_version="$target"
     url="$(release_url_for_version "$target")"
-  elif [ -f "$UPDATE_CHANNEL_FILE" ]; then
+  elif [ -f "$UPDATE_CHANNEL_FILE" ] && ! update_target_was_rejected "$UPDATE_CHANNEL_FILE"; then
     target="$(cat "$UPDATE_CHANNEL_FILE" 2>/dev/null || true)"
     [ -n "$target" ] || { log "WARN: update channel file is empty"; return 1; }
     url="$(release_url_for_channel "$target")"
-  elif [ -f "$UPDATE_MARKER" ]; then
+  elif [ -f "$UPDATE_MARKER" ] && ! update_target_was_rejected "$UPDATE_MARKER"; then
     local manifest remote_version marker_channel
     manifest="$(cat "$UPDATE_MARKER")"
     remote_version="$(json_field "$manifest" version)"
@@ -1198,7 +1276,8 @@ prepare_triggered_update() {
   fi
 
   local manifest remote_version
-  manifest="$(fetch_manifest "$url")" || return 1
+  if manifest="$(fetch_manifest "$url")"; then :;
+  else return "$?"; fi
   remote_version="$(json_field "$manifest" version)"
   if [ -z "$remote_version" ]; then
     log "WARN: release metadata missing 'version' field"; return 1
@@ -1224,6 +1303,8 @@ prepare_triggered_update() {
 
 # ── Poll for updates ─────────────────────────────────────────────────
 check_for_update() {
+  # Explicit requests take priority until verified, applied, or replaced.
+  if [ -e "$UPDATE_TRIGGER" ] || [ -L "$UPDATE_TRIGGER" ]; then return 0; fi
   local url manifest remote_version cur
   url="$(manifest_url)"
   if ! manifest="$(curl --fail --silent --show-error --max-time 15 "$url" 2>&1)"; then
@@ -1276,11 +1357,23 @@ apply_update() {
     log "No update available — nothing to apply"; return 1
   fi
   local manifest version sha256 bundle_url cur bundle_file extract_dir
-  manifest="$(cat "$UPDATE_MARKER")"
+  local request_identity validation_status
+  request_identity="$(update_request_identity)" || return 1
+  if manifest="$(load_trusted_apply_manifest)"; then :;
+  else
+    validation_status=$?
+    # Transient failures retain the request; permanent failures claim only the
+    # unchanged trigger. Concurrent replacements survive that atomic claim.
+    if [ "$validation_status" -eq 2 ]; then
+      reject_unchanged_update_request "$request_identity" || return 1
+    fi
+    write_update_error "update_request_rejected" \
+      "The requested update could not be verified against platform release metadata." || true
+    return 1
+  fi
   version="$(json_field "$manifest" version)"
   sha256="$(json_field "$manifest" sha256)"
   bundle_url="$(json_field "$manifest" url)"
-  bundle_url="${bundle_url:-$MATRIX_HOST_BUNDLE_URL}"
   cur="$(current_version)"
   log "Starting update from $cur to $version"
 
@@ -1318,18 +1411,14 @@ apply_update() {
 
   # Verify checksum
   write_update_phase verify || return 1
-  if [ -n "$sha256" ]; then
-    local actual_sha256
-    actual_sha256="$(sha256sum "$bundle_file" | awk '{print $1}')"
-    if [ "$actual_sha256" != "$sha256" ]; then
-      log "ERROR: checksum mismatch (expected $sha256, got $actual_sha256)"
-      write_update_error "checksum_mismatch" "The release bundle checksum did not match." "$version"
-      rm -f "$bundle_file"; return 1
-    fi
-    log "Checksum verified"
-  else
-    log "WARN: no sha256 in manifest, skipping verification"
+  local actual_sha256
+  actual_sha256="$(sha256sum "$bundle_file" | awk '{print $1}')"
+  if [ "$actual_sha256" != "$sha256" ]; then
+    log "ERROR: checksum mismatch (expected $sha256, got $actual_sha256)"
+    write_update_error "checksum_mismatch" "The release bundle checksum did not match." "$version"
+    rm -f "$bundle_file"; return 1
   fi
+  log "Checksum verified"
 
   # Extract and validate
   log "Extracting bundle..."
@@ -1794,6 +1883,7 @@ mkdir -p "$STAGING_DIR"
 clean_staging
 clean_legacy_upgrade_artifacts || true
 recover_interrupted_update
+reconcile_postgres_root_service || log "WARN: PostgreSQL root service reconciliation failed"
 maybe_retire_legacy_symphony || log "WARN: legacy Symphony retirement will retry"
 maybe_reconcile_hermes_release || log "WARN: Hermes release reconciliation retry failed"
 last_legacy_r2_reconcile="$(date +%s)"
@@ -1804,6 +1894,7 @@ while true; do
   # React to trigger files and signals
   if [ -f "$UPDATE_TRIGGER" ]; then
     rm -f "$AUTO_APPLY_FAILED_MARKER"
+    request_identity="$(update_request_identity)" || request_identity=""
     if prepare_triggered_update; then
       if [ "$prepare_triggered_update_action" = already-current ]; then
         consume_idempotent_update_request
@@ -1813,9 +1904,11 @@ while true; do
         log "Update failed — will retry on next trigger"
       fi
     else
-      log "Requested release metadata fetch failed — skipping apply"
-      rm -f "$UPDATE_MARKER"
-      consume_update_trigger || log "WARN: failed to consume update trigger"
+      preparation_status=$?
+      if [ "$preparation_status" -eq 2 ]; then
+        reject_unchanged_update_request "$request_identity" || log "WARN: rejected request cleanup deferred"
+      fi
+      log "Requested update could not be prepared"
     fi
   fi
   if [ -f "$ROLLBACK_TRIGGER" ]; then

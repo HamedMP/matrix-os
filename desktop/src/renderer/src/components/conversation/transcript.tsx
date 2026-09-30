@@ -144,7 +144,7 @@ function ResponseMessage({
             <ChatAttachments
               attachments={attachments}
               align="start"
-              open={callbacks.openAttachment}
+              open={callbacks.openAttachment} openImportedAsset={callbacks.openImportedAsset}
               loadImage={callbacks.loadImage}
             />
           ) : null}

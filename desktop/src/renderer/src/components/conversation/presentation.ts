@@ -1,4 +1,4 @@
-import type { ChatSubagent, CanonicalChatApprovalDecision } from "@matrix-os/contracts";
+import type { ChatSubagent, CanonicalChatApprovalDecision, ImportedChatAssetRef } from "@matrix-os/contracts";
 import type { ChatRunContext, CanonicalChatExecutionRootRef, CanonicalChatInputView, CanonicalSubmitChatInputRequest } from "@matrix-os/contracts";
 export type ConversationMessageRole = "user" | "assistant";
 
@@ -10,8 +10,8 @@ export interface ConversationAttachmentPresentation {
 
 export type ConversationMessageContentPresentation =
   | { kind: "text"; text: string }
-  | { kind: "reference"; id: string; referenceKind: "file" | "resource" | "invocation"; label: string; path?: string }
-  | { kind: "image"; id: string; label: string; src: string; path?: string };
+  | { kind: "reference"; id: string; referenceKind: "file" | "resource" | "invocation"; label: string; path?: string; importAsset?: ImportedChatAssetRef }
+  | { kind: "image"; id: string; label: string; src: string; path?: string; importAsset?: ImportedChatAssetRef };
 
 export interface ConversationMessagePresentation {
   kind: "message";
@@ -144,6 +144,7 @@ export interface ConversationPresentationCallbacks {
   performAction?: (action: ConversationActionPresentation, input?: string) => Promise<void>;
   canPerformAction?: (action: ConversationActionPresentation) => boolean;
   openFile?: (path: string, executionRoot?: CanonicalChatExecutionRootRef) => boolean;
+  openImportedAsset?: (asset: ImportedChatAssetRef) => Promise<void>;
   openAttachment?: (path: string) => boolean;
   openWebLink?: (url: string) => boolean;
 }

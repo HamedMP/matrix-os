@@ -1,5 +1,8 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { PortPool } from "../../../packages/gateway/src/app-runtime/port-pool.js";
+import {
+  APP_PORT_RANGE,
+  PortPool,
+} from "../../../packages/gateway/src/app-runtime/port-pool.js";
 import { SpawnError } from "../../../packages/gateway/src/app-runtime/errors.js";
 
 describe("PortPool", () => {
@@ -95,11 +98,19 @@ describe("PortPool", () => {
     }
   });
 
-  it("defaults to the full 40000-49999 range with cap 100", () => {
+  it("defaults to the app port range with cap 100", () => {
     const defaultPool = new PortPool();
     const p = defaultPool.allocate();
-    expect(p).toBeGreaterThanOrEqual(40000);
-    expect(p).toBeLessThanOrEqual(49999);
+    expect(p).toBeGreaterThanOrEqual(APP_PORT_RANGE.min);
+    expect(p).toBeLessThanOrEqual(APP_PORT_RANGE.max);
     defaultPool.release(p);
+  });
+
+  it("keeps the app port range below the Linux ephemeral port range", () => {
+    // The kernel hands out 32768-60999 (net.ipv4.ip_local_port_range default)
+    // as local ports for outbound connections. An app told to listen on a
+    // port an outbound socket already holds dies with EADDRINUSE at startup.
+    expect(APP_PORT_RANGE.min).toBeGreaterThan(1023);
+    expect(APP_PORT_RANGE.max).toBeLessThan(32768);
   });
 });

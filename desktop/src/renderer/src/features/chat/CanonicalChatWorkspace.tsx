@@ -68,6 +68,7 @@ import { useCreateAppRequest } from "../../stores/create-app-request";
 import { useChatComposerDrafts } from "./use-chat-composer-drafts";
 import { chatAgentComposerDraft } from "./chat-agent-draft";
 import { QueuedTurnEditContext } from "./QueuedTurnEditContext";
+import { useImportedChatAssets } from "./use-imported-chat-assets";
 import { useChatArtifactActions } from "./use-chat-artifact-actions";
 
 const EMPTY_PROVIDER_SUMMARIES: AgentProviderSummary[] = [];
@@ -333,6 +334,7 @@ export function CanonicalChatWorkspace({
   }) : [];
   const projectedSharedChat = sharedChatMembershipFromProjection(controller.detail?.record.chat.collaboration);
   const artifactActions = useChatArtifactActions(api, controller.detail, projects);
+  const importedAssets = useImportedChatAssets(api, controller.detail?.record.chat.id);
 
   useEffect(() => {
     if (!editingQueuedTurn || !controller.detail) return;
@@ -342,8 +344,9 @@ export function CanonicalChatWorkspace({
   }, [controller.detail, editingQueuedTurn, queuedTurns]);
   const loadChatImage = useCallback((src: string) => {
     if (!api) return Promise.reject(new Error("ChatUnavailable"));
+    if (/^\/api\/chats\/[^/]+\/imports\/assets\//.test(src)) return importedAssets.loadImportedImage(src);
     return api.getBlob(src, { maxBytes: 8 * 1024 * 1024 });
-  }, [api]);
+  }, [api, importedAssets.loadImportedImage]);
   const copyText = useCallback(async (text: string) => {
     if (!navigator.clipboard?.writeText) throw new Error("ClipboardUnavailable");
     await navigator.clipboard.writeText(text);
@@ -431,7 +434,6 @@ export function CanonicalChatWorkspace({
     if (
       !selection
       || !canonicalComposerSelectionIsAvailable(providerCatalog, selection)
-      || !mentionPermission.allowed
       || (activeRun && !mentionResources.length)
       || uploadingAttachments
     ) return;
@@ -509,7 +511,6 @@ export function CanonicalChatWorkspace({
       || !controller.detail
       || !selection
       || !canonicalComposerSelectionIsAvailable(providerCatalog, selection)
-      || !mentionPermission.allowed
       || composerAction
       || uploadingAttachments
       || (attachments.items.length > 0 && !supportsNativeFileAttachments(selectedInstance))
@@ -686,7 +687,7 @@ export function CanonicalChatWorkspace({
         busy={Boolean(activeRun) || uploadingAttachments}
         submitWhileBusy={Boolean(activeRun)}
         disabled={controller.status === "loading" || uploadingAttachments || (!catalog && liveCatalog.status === "loading")}
-        canSubmit={Boolean(canonicalComposerSelectionIsAvailable(providerCatalog, selection) && mentionPermission.allowed && !uploadingAttachments && (
+        canSubmit={Boolean(canonicalComposerSelectionIsAvailable(providerCatalog, selection) && !uploadingAttachments && (
           draft.trim() || referenceTokens.length > 0 || attachments.items.length > 0
         ))}
         catalog={providerCatalog}
@@ -883,6 +884,7 @@ export function CanonicalChatWorkspace({
             <ConversationTranscript turns={transcript} callbacks={{
               ...artifactActions,
               copyText,
+              openImportedAsset: importedAssets.openImportedAsset,
               openAttachment: (rawPath) => {
                 const path = normalizeDesktopEditorPath(rawPath);
                 if (!path || !fileNavigation || !controller.detail) return false;

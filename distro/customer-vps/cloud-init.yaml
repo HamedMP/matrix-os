@@ -458,9 +458,7 @@ runcmd:
       printf 'matrix-host-timing phase=%s elapsed_seconds=%s image_source=%s\n' \
         "$1" "$((phase_now - bootstrap_started_at))" "${MATRIX_IMAGE_SOURCE:-clean_image}"
     }
-    # Swap first so nothing later in provisioning (or after) can OOM the box.
-    # Fleet default 8GiB, shrunk to keep >=10GiB free on /; skipped below 2GiB.
-    # matrix-ensure-swap (host bundle) reconciles the same policy on updates.
+    # Provision swap before setup; matrix-ensure-swap reconciles it on updates.
     (
       SWAP_GB=8
       free_gb=$(( $(df -k --output=avail / | tail -1) / 1024 / 1024 ))
@@ -624,10 +622,7 @@ runcmd:
     ln -sfn /home/matrix/home /home/matrixos/home
     chown root:matrix /opt/matrix/postgres-compose.yml /opt/matrix/env/host.env /opt/matrix/env/postgres.env /opt/matrix/env/registration.env
 
-    # The builder performs this recursive normalization before writing the
-    # exact-bundle readiness proof. A certified immutable clone preserves that
-    # tree, so walking it again only delays first boot. Clean images, legacy
-    # snapshots, and mismatched snapshots retain the full repair path.
+    # Certified clones already have normalized immutable release permissions.
     if [ "$exact_snapshot_fast_path" != true ]; then
       chown -R root:matrix /opt/matrix/bin /opt/matrix/app /opt/matrix/runtime
       if [ -d /opt/matrix/terminal-runtime ]; then
@@ -694,19 +689,21 @@ runcmd:
     ln -sf /etc/nginx/sites-available/matrix /etc/nginx/sites-enabled/matrix
     nginx -t
 
-    if docker ps --format '{{.Names}}' | grep -qx matrix-postgres; then
+    # Bundles older than the root PostgreSQL helper keep inline startup.
+    if [ -f /opt/matrix/bin/matrix-postgres-start ] && [ ! -L /opt/matrix/bin/matrix-postgres-start ] && [ -f /etc/systemd/system/matrix-postgres.service ]; then
+      chmod 0750 /opt/matrix/bin/matrix-postgres-start
+      install -d -o root -g root -m 0755 /usr/local/libexec
+      install -o root -g root -m 0755 /opt/matrix/bin/matrix-postgres-start /usr/local/libexec/matrix-postgres-start
+      systemctl daemon-reload
+      systemctl start matrix-postgres.service
+    elif docker ps --format '{{.Names}}' | grep -qx matrix-postgres; then
       :
     elif docker ps -a --format '{{.Names}}' | grep -qx matrix-postgres; then
       docker start matrix-postgres >/dev/null
     else
       docker volume create matrix-postgres >/dev/null
-      docker run -d \
-        --name matrix-postgres \
-        --restart unless-stopped \
-        --env-file /opt/matrix/env/postgres.env \
-        -v matrix-postgres:/var/lib/postgresql/data \
-        -p 127.0.0.1:5432:5432 \
-        postgres:16 >/dev/null
+      docker run -d --name matrix-postgres --restart unless-stopped --env-file /opt/matrix/env/postgres.env \
+        -v matrix-postgres:/var/lib/postgresql/data -p 127.0.0.1:5432:5432 postgres:16 >/dev/null
     fi
 
     systemctl daemon-reload

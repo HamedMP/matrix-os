@@ -1446,3 +1446,5 @@ export * from "#custom-mcp-availability";
 
 export { normalizeTerminalSnapshot } from "#terminal-snapshot";
 export { chatSubagentPresentation, projectChatSubagent, ChatSubagentSchema, type ChatSubagent } from "#chat-subagent";
+
+export { ImportedChatAssetRefSchema, importedChatAssetContentPath, type ImportedChatAssetRef } from "#canonical-chat-import-parts";

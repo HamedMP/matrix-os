@@ -9,9 +9,12 @@
     "./collaboration": "./src/collaboration.ts",
     "./collaboration-direct": "./src/collaboration-direct.ts",
     "./codex-chat-import": "./src/codex-chat-import.ts",
-    "./codex-chat-import-client": "./src/codex-chat-import-client.ts"
+    "./codex-chat-import-client": "./src/codex-chat-import-client.ts",
+    "./local-chat-import": "./src/local-chat-import/index.ts"
   },
   "imports": {
+    "#canonical-chat-import-parts": "./src/canonical-chat-import-parts.ts",
+    "#local-chat-import/*": "./src/local-chat-import/*.ts",
     "#chat-subagent": "./src/chat-subagent.ts",
     "#private-preview": "./src/private-preview.ts",
     "#sync": "./src/sync.ts",
