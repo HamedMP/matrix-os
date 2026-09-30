@@ -98,23 +98,23 @@ export function ChatImportPanel({ transport, native, onOpenChat }: {
             }
         }
     }
-    function pause() { operation.current?.abort(); native?.pause(); setProgress("Stopped waiting. Retry the same file to check its import status."); }
+    function pause() { operation.current?.abort(); native?.pause(); setProgress(null); setError("Stopped waiting. Retry the same file to check its import status."); }
     const preview = selection?.preview;
     return <section className="mx-auto max-w-2xl space-y-4 text-sm">
-  <div><h2 className="text-xl font-semibold">Import chats</h2><p className="mt-1 text-[var(--text-secondary)]">Bring a local Codex or Claude Code transcript into Matrix. Preview it before uploading readable history and a private original archive.</p></div>
+  <div><h2 className="text-xl font-semibold">Import chats</h2><p className="mt-1 text-[var(--text-secondary,var(--muted-foreground))]">Bring a local Codex or Claude Code transcript into Matrix. Preview it before uploading readable history and a private original archive.</p></div>
   <label className="block space-y-1"><span>Chat tool</span><select value={harness} disabled={busy} onChange={event => { setHarness(event.target.value as ImportHarness); setSelection(null); setResult(null); setError(null); setProgress(null); }}><option value="codex">Codex</option><option value="claude">Claude Code</option></select></label>
-  {native ? <button type="button" disabled={busy} onClick={() => void selectFile()} className="rounded border border-[var(--border)] px-3 py-2">Choose transcript</button> : <label className="block space-y-1"><span>Choose a {harness === "codex" ? "Codex" : "Claude Code"} transcript</span><input type="file" accept=".jsonl,application/jsonl" disabled={busy} onChange={event => void selectFile(event.currentTarget.files?.[0])}/></label>}
-  {preview ? <div className="space-y-3 rounded-lg border border-[var(--border)] p-4">
+  {native ? <button type="button" disabled={busy} onClick={() => void selectFile()} className="rounded border border-[var(--border-default,var(--border))] px-3 py-2">Choose transcript</button> : <label className="block space-y-1"><span>Choose a {harness === "codex" ? "Codex" : "Claude Code"} transcript</span><input type="file" accept=".jsonl,application/jsonl" disabled={busy} onChange={event => void selectFile(event.currentTarget.files?.[0])}/></label>}
+  {preview ? <div className="space-y-3 rounded-lg border border-[var(--border-default,var(--border))] p-4">
    <p>{preview.counts.humanInputs} human inputs · {preview.counts.assistantResponses} assistant responses</p>
    <p>{preview.counts.toolCalls} tool {preview.counts.toolCalls === 1 ? "call" : "calls"} · {preview.counts.toolResults} tool results · {preview.counts.attachments} embedded attachments</p>
-   <p className="break-all text-[var(--text-secondary)]">Session: {preview.sourceId}</p>
-   {preview.recordedDirectory ? <p className="break-all text-[var(--text-secondary)]">Recorded directory: {preview.recordedDirectory}</p> : null}
-   {preview.repositoryUrl ? <p className="break-all text-[var(--text-secondary)]">Recorded repository: {preview.repositoryUrl}</p> : null}
+   <p className="break-all text-[var(--text-secondary,var(--muted-foreground))]">Session: {preview.sourceId}</p>
+   {preview.recordedDirectory ? <p className="break-all text-[var(--text-secondary,var(--muted-foreground))]">Recorded directory: {preview.recordedDirectory}</p> : null}
+   {preview.repositoryUrl ? <p className="break-all text-[var(--text-secondary,var(--muted-foreground))]">Recorded repository: {preview.repositoryUrl}</p> : null}
    {preview.counts.externalReferences ? <p>{preview.counts.externalReferences} external {preview.counts.externalReferences === 1 ? "reference" : "references"} cannot be recovered from this file. Referenced local files are not automatically uploaded.</p> : null}
    {preview.counts.sourceIssues ? <p>{preview.counts.sourceIssues} source {preview.counts.sourceIssues === 1 ? "issue" : "issues"} recorded. Original bytes are preserved; incomplete or damaged content may not be readable.</p> : null}
-   {preview.firstVisibleText ? <div className="rounded border border-[var(--border)] p-3"><p className="font-medium">First visible message</p><p className="mt-1 whitespace-pre-wrap break-words">{preview.firstVisibleText}</p></div> : null}
-   <label className="block space-y-1"><span>Chat title</span><input type="text" maxLength={160} disabled={busy || Boolean(result)} value={title} onChange={event => setTitle(event.target.value)} className="w-full rounded border border-[var(--border)] bg-transparent px-2 py-1"/></label>
-   <p className="text-[var(--text-secondary)]">History includes saved messages, tools, and supported embedded attachments. Internal context and thinking stay in the private original archive. Transcripts may contain pasted secrets. This Chat stays private until you explicitly share it; sharing a Chat does not share its original archive.</p>
+   {preview.firstVisibleText ? <div className="rounded border border-[var(--border-default,var(--border))] p-3"><p className="font-medium">First visible message</p><p className="mt-1 whitespace-pre-wrap break-words">{preview.firstVisibleText}</p></div> : null}
+   <label className="block space-y-1"><span>Chat title</span><input type="text" maxLength={160} disabled={busy || Boolean(result)} value={title} onChange={event => setTitle(event.target.value)} className="w-full rounded border border-[var(--border-default,var(--border))] bg-transparent px-2 py-1"/></label>
+   <p className="text-[var(--text-secondary,var(--muted-foreground))]">History includes saved messages, tools, and supported embedded attachments. Internal context and thinking stay in the private original archive. Transcripts may contain pasted secrets. This Chat stays private until you explicitly share it; sharing a Chat does not share its original archive.</p>
    <button type="button" disabled={busy || Boolean(result) || !title.trim()} onClick={() => void importChat()} className="rounded bg-[var(--accent)] px-3 py-2 text-white disabled:opacity-50">Import private Chat</button>
   </div> : null}
   {busy && !preview ? <p role="status">Reading transcript…</p> : null}{progress ? <p role="status">{progress}</p> : null}

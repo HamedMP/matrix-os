@@ -1,4 +1,4 @@
-import { LocalChatTransferError, type LocalChatImportRequest } from "./client.js";
+import { LocalChatTransferError, type LocalChatImportRequest } from "#local-chat-import/client";
 async function jsonResponse(response: Response): Promise<unknown> {
   if (!response.body) throw new LocalChatTransferError("invalid_response");
   const reader = response.body.getReader(); const chunks: Uint8Array[] = []; let size = 0;
@@ -22,7 +22,7 @@ export function createLocalChatHttpTransport(options: { baseUrl: string; headers
     const headers = { "X-Matrix-Chat-Metadata": "1", ...await options.headers(), ...(input.body === undefined ? {} : { "content-type": "application/json" }) };
     options.assertCurrent?.(); input.signal.throwIfAborted();
     const response = await fetchImpl(url, { method: input.method, headers, ...(options.credentials ? { credentials: options.credentials } : {}), ...(input.body === undefined ? {} : { body: JSON.stringify(input.body) }),
-      redirect: "error", signal: AbortSignal.any([input.signal, AbortSignal.timeout(30_000)]) });
+      redirect: "error", signal: AbortSignal.any([input.signal, AbortSignal.timeout(input.timeoutMs===undefined?30_000:Math.max(1000,Math.min(input.timeoutMs,5*60_000)))]) });
     try {
       options.assertCurrent?.(); input.signal.throwIfAborted();
       if (!response.ok) throw new LocalChatTransferError(response.status === 410 ? "expired" : "unavailable");

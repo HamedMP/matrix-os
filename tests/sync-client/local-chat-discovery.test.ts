@@ -29,7 +29,7 @@ describe("bounded local transcript discovery", () => {
         expect(JSON.stringify(result)).not.toContain("secret@");
         expect(result.files.every(value => value.association === "unresolved")).toBe(true);
     });
-    it("uses exact Git common-directory evidence and rejects recorded remote conflicts", async () => {
+    it("prefers present Git directory evidence and reports changed recorded remotes", async () => {
         dir = await mkdtemp(join(tmpdir(), "matrix-import-discovery-"));
         const codex = join(dir, "codex");
         await mkdir(join(codex, "sessions"), { recursive: true });
@@ -38,6 +38,14 @@ describe("bounded local transcript discovery", () => {
         const git = vi.fn(async (_cwd: string, args: string[]) => args.includes("remote") ? "https://github.com/example/repo.git" : args.includes("--git-common-dir") ? "/work/repo/.git" : "/work/repo");
         const result = await discoverLocalChatFiles({ codexRoot: codex, claudeRoot: join(dir, "missing"), project: "/work/repo", git, resolveDirectory: async (value) => value });
         expect(result.files.find(value => value.path.endsWith("same.jsonl"))?.association).toBe("matched");
-        expect(result.files.find(value => value.path.endsWith("other.jsonl"))?.association).toBe("unrelated");
+        expect(result.files.find(value => value.path.endsWith("other.jsonl"))?.association).toBe("matched");
+        expect(result.files.find(value=>value.path.endsWith("other.jsonl"))?.recordedRemoteChanged).toBe(true);
+    });
+    it("allows repositories without an origin and continues past individual unsupported files",async()=>{
+        dir=await mkdtemp(join(tmpdir(),"matrix-import-discovery-"));const codex=join(dir,"codex");await mkdir(join(codex,"sessions"),{recursive:true});
+        await writeFile(join(codex,"sessions","one.jsonl"),JSON.stringify({type:"session_meta",payload:{id,cwd:"/work/repo"}})+"\n");await writeFile(join(codex,"sessions","empty.jsonl"),"");
+        const git=vi.fn(async(_cwd:string,args:string[])=>{if(args.includes("remote"))throw Object.assign(new Error("missing remote"),{code:2,stderr:"error: No such remote 'origin'"});return "/work/repo/.git";});
+        const result=await discoverLocalChatFiles({codexRoot:codex,claudeRoot:join(dir,"missing"),project:"/work/repo",git,resolveDirectory:async value=>value});
+        expect(result.files).toHaveLength(1);expect(result.files[0]?.association).toBe("matched");expect(result.issues).toEqual([{path:join(codex,"sessions","empty.jsonl"),code:"unsupported"}]);
     });
 });

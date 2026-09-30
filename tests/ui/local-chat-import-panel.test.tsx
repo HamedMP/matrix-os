@@ -34,4 +34,12 @@ describe("full Chat import Settings", () => {
         unmount();
         expect(pause).toHaveBeenCalled();
     });
+    it("stops waiting without displaying a late completion as a new successful import",async()=>{
+        let finish!:(value:{chatId:string;jobId:string;messageCount:number})=>void;
+        const apply=vi.fn(()=>new Promise<{chatId:string;jobId:string;messageCount:number}>(resolve=>{finish=resolve;}));
+        render(<ChatImportPanel native={{select:async()=>({selectionId:sourceId,preview}),apply,pause:vi.fn()}}/>);
+        fireEvent.click(screen.getByRole("button",{name:"Choose transcript"}));await screen.findByText("Synthetic prompt");fireEvent.click(screen.getByRole("button",{name:"Import private Chat"}));
+        await screen.findByRole("button",{name:"Stop waiting"});fireEvent.click(screen.getByRole("button",{name:"Stop waiting"}));
+        finish({chatId:"chat_late",jobId:sourceId,messageCount:2});expect(await screen.findByRole("alert")).toHaveProperty("textContent","Stopped waiting. Retry the same file to check its import status.");expect(screen.queryByText("Imported 2 history entries into Matrix Chat.")).toBeNull();
+    });
 });

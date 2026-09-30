@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
-import { uploadLocalChatArchive } from "../../packages/contracts/src/local-chat-import/client.js";
+import { uploadLocalChatArchive, LocalChatTransferError } from "../../packages/contracts/src/local-chat-import/client.js";
 const sourceId = "019eb0ae-9a30-7541-bdb8-db4d17e65146";
 const jobId = "019eb0ae-9a30-7541-bdb8-db4d17e65147";
 const raw = new TextEncoder().encode("Synthetic original bytes\n");
@@ -60,4 +60,9 @@ describe("shared original-byte Chat upload client", () => {
     expect(x.request.mock.calls.some(([path]) => path.endsWith("/complete"))).toBe(false);
   });
 
+  it("recovers a completion response lost after the server publishes the archive",async()=>{
+    const x=fixture();const original=x.request.getMockImplementation()!;
+    x.request.mockImplementation(async(path,input)=>{const value=await original(path,input);if(path.endsWith("/complete"))throw new LocalChatTransferError("unavailable");return value;});
+    expect(await uploadLocalChatArchive(x.payload,x.source,{request:x.request,put:x.put})).toMatchObject({chatId:"chat_synthetic_import",jobId});
+  });
 });

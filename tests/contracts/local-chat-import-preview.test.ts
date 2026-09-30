@@ -37,4 +37,8 @@ describe("bounded local Chat preview", () => {
       { type: "user", sessionId: "019eb0ae-9a30-7541-bdb8-db4d17e65147", uuid: "v", message: { content: "Two" } },
     ]))).rejects.toMatchObject({ code: "source_mismatch" });
   });
+  it.each([["https://user:password@example.test/repo.git?token=synthetic-secret#private","https://example.test/repo.git"],["git@example.test:org/repo.git?token=synthetic-secret#private","git@example.test:org/repo.git"]])("removes query and fragment credentials from recorded repository hint %s",async(url,expected)=>{
+    const preview=await previewLocalChatSource("codex",input([{type:"session_meta",payload:{id:sourceId,git:{repository_url:url}}},{type:"response_item",payload:{type:"message",role:"user",content:[{type:"input_text",text:"Synthetic prompt"}]}}]));
+    expect(preview.repositoryUrl).toBe(expected);expect(JSON.stringify(preview)).not.toContain("synthetic-secret");
+  });
 });

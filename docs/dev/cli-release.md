@@ -112,8 +112,8 @@ For macOS app packaging, also verify the GitHub release contains `MatrixSync-0.3
 
 ## Rollback
 
-npm package versions are immutable. If a bad CLI release is published, ship a patch release such as `0.3.21` and update Homebrew through the release workflow. Only deprecate the bad npm version when the replacement is available:
+npm package versions are immutable. If a bad CLI release is published, ship a patch release such as `0.3.22` and update Homebrew through the release workflow. Only deprecate the bad npm version when the replacement is available:
 
 ```bash
-npm deprecate @finnaai/matrix@0.3.21 "Use @finnaai/matrix@0.3.21"
+npm deprecate @finnaai/matrix@0.3.21 "Use @finnaai/matrix@0.3.22"
 ```

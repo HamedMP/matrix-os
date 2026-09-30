@@ -9,7 +9,8 @@ export const localChatDiscoverCommand = defineCommand({ meta: { name: "discover"
         process.once("SIGTERM", stop);
         try {
             const result = await discoverLocalChatFiles({ ...(typeof args.project === "string" ? { project: expandLocalPath(args.project) } : {}), signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10 * 60000)]) });
-            console.log(args.json ? formatCliSuccess(result) : result.files.map(file => `${file.harness}\t${file.sourceKind}\t${file.association}\t${file.rawBytes}\t${file.path}`).join("\n") || "No supported local transcript files found.");
+            if(!args.json&&result.issues.length)console.error(`${result.issues.length} transcript files were unavailable or unsupported; inspect --json for paths and issue codes.`);
+        console.log(args.json ? formatCliSuccess(result) : result.files.map(file => `${file.harness}\t${file.sourceKind}\t${file.association}\t${file.rawBytes}\t${file.path}`).join("\n") || "No supported local transcript files found.");
         }
         catch (error: unknown) {
             console.warn("[chat/discover] inventory failed", error instanceof Error ? error.name : "UnknownError");

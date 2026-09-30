@@ -42,6 +42,7 @@ export function createNativeChatImportService(deps: Deps) {
     let controller: AbortController | null = null;
     let pending: Promise<unknown> | null = null;
     let disposed = false;
+    let pickerActive=false;
     const sweep = () => { const now = Date.now(); for (const [id, value] of selections)
         if (value.expiresAt <= now)
             selections.delete(id); };
@@ -53,7 +54,7 @@ export function createNativeChatImportService(deps: Deps) {
         status: "error";
         message: string;
     }> {
-        if (disposed || pending)
+        if (disposed || pending || pickerActive)
             return { status: "error", message: "Another import is in progress. Try again when it finishes." };
         const operation = new AbortController();
         controller = operation;
@@ -79,7 +80,15 @@ export function createNativeChatImportService(deps: Deps) {
         return run(async (operation) => {
             let source: Source | undefined;
             try {
-                const path = await deps.chooseFile(parsed.data.harness);
+                operation.signal.throwIfAborted();
+                pickerActive=true;
+                const picker=Promise.resolve().then(()=>{operation.signal.throwIfAborted();return deps.chooseFile(parsed.data.harness);});
+                void picker.then(()=>{pickerActive=false;},(error:unknown)=>{pickerActive=false;console.warn("[chat-import] picker closed",error instanceof Error?error.name:"UnknownError");});
+                let onAbort:()=>void=()=>{};
+                let path:string|null;
+                try{
+                  path=await Promise.race([picker,new Promise<never>((_resolve,reject)=>{onAbort=()=>reject(new DOMException("Cancelled","AbortError"));operation.signal.addEventListener("abort",onAbort,{once:true});})]);
+                }finally{operation.signal.removeEventListener("abort",onAbort);}
                 if (!path || operation.signal.aborted || !current(owner))
                     return { status: "cancelled" as const };
                 source = await openLocalChatSource(path);

@@ -1,3 +1,4 @@
+import { LocalChatImportDisplayError } from "@matrix-os/contracts/local-chat-import";
 import { useMemo } from "react";
 import { ChatImportPanel, type NativeChatImportAdapter } from "@matrix-os/ui";
 import { invoke, onEvent } from "../../../lib/operator";
@@ -18,7 +19,7 @@ export default function ChatImportSection() {
                     const response = await invoke("runtime:chat-import-select", { ...session, harness });
                     signal.throwIfAborted();
                     if (response.status === "error")
-                        throw new Error("Chat import unavailable");
+                        throw new LocalChatImportDisplayError(response.message);
                     return response.status === "selected" ? response : null;
                 }
                 finally {
@@ -33,7 +34,7 @@ export default function ChatImportSection() {
                     const response = await invoke("runtime:chat-import-apply", { ...session, selectionId, title });
                     signal.throwIfAborted();
                     if (response.status === "error")
-                        throw new Error("Chat import unavailable");
+                        throw new LocalChatImportDisplayError(response.message);
                     return response.status === "imported" ? response : null;
                 }
                 finally {

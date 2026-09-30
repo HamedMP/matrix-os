@@ -3,12 +3,12 @@ export type { LocalChatSourceEntry, LocalChatSourceRecord, LocalChatSourceIssue 
 export { reconstructLocalChat } from "#local-chat-import/reconstruct";
 export type { ImportHarness, ImportProjection, ImportSource, ImportBlock, ImportConversation } from "#local-chat-import/types";
 
-export { uploadLocalChatArchive, LocalChatTransferError } from "./client.js";
-export type { LocalChatImportPayload, LocalChatImportRequest, LocalChatUploadSource, LocalChatImportProgress } from "./client.js";
+export { uploadLocalChatArchive, LocalChatTransferError } from "#local-chat-import/client";
+export type { LocalChatImportPayload, LocalChatImportRequest, LocalChatUploadSource, LocalChatImportProgress } from "#local-chat-import/client";
 
-export { previewLocalChatSource, LocalChatPreviewError } from "./preview.js";
-export type { LocalChatSourcePreview, LocalChatImportCounts } from "./preview.js";
+export { previewLocalChatSource, LocalChatPreviewError } from "#local-chat-import/preview";
+export type { LocalChatSourcePreview, LocalChatImportCounts } from "#local-chat-import/preview";
 
-export { createLocalChatHttpTransport } from "./http.js";
+export { createLocalChatHttpTransport } from "#local-chat-import/http";
 
-export { localChatImportErrorText } from "./errors.js";
+export { localChatImportErrorText, LocalChatImportDisplayError } from "#local-chat-import/errors";

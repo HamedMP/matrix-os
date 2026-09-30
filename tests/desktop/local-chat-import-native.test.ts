@@ -81,4 +81,11 @@ describe("native original transcript import", () => {
             await x.service.dispose();
         }
     });
+    it("does not hold application shutdown behind an unresolved file picker",async()=>{
+        const x=await fixture();let opened!:()=>void;const started=new Promise<void>(resolve=>{opened=resolve;});
+        x.chooseFile.mockImplementation(async()=>{opened();return new Promise<string>(()=>{});});
+        const selected=x.service.select(x.request);await started;
+        const drained=await Promise.race([x.service.dispose().then(()=>true),new Promise<boolean>(resolve=>setTimeout(()=>resolve(false),100))]);
+        expect(drained).toBe(true);expect(await selected).toEqual({status:"cancelled"});
+    });
 });

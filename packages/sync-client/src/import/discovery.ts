@@ -4,6 +4,7 @@ import { opendir, lstat, realpath } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { z } from "zod/v4";
+import { LocalChatPreviewError, LocalChatTransferError } from "@matrix-os/contracts/local-chat-import";
 import { openLocalChatSource } from "./local-chat-source.js";
 const exec = promisify(execFile);
 type Git = (cwd: string, args: string[]) => Promise<string>;
@@ -19,6 +20,8 @@ interface Entry {
     repositoryUrl?: string;
     commit?: string;
     association: "matched" | "unrelated" | "unresolved";
+    associationBasis?:"current_directory"|"recorded_git";
+    recordedRemoteChanged?:true;
 }
 function record(value: unknown): Record<string, unknown> { return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {}; }
 function text(value: unknown, max = 4096): string | undefined { return typeof value === "string" && value.length <= max && !/[\u0000-\u001f\u007f]/.test(value) ? value : undefined; }
@@ -60,6 +63,7 @@ export async function discoverLocalChatFiles(options: {
     let scanned = 0;
     let skipped = 0;
     const files: Entry[] = [];
+    const issues:Array<{path:string;code:"unsupported"|"changed"|"unreadable"}>=[];
     let projectCommon: string | undefined;
     let projectRemote: string | undefined;
     if (options.project) {
@@ -69,23 +73,20 @@ export async function discoverLocalChatFiles(options: {
             projectRemote = remote(await git(project, ["remote", "get-url", "origin"]));
         }
         catch (error: unknown) {
-            if (!expectedProbeFailure(error))
+            if (!expectedProbeFailure(error)&&!(error instanceof Error&&"code" in error&&error.code===2&&"stderr" in error&&typeof error.stderr==="string"&&/No such remote/.test(error.stderr)))
                 throw error;
         }
     }
     async function associate(entry: Entry) {
         if (!options.project || !projectCommon)
             return;
-        if (entry.repositoryUrl && projectRemote && comparable(entry.repositoryUrl) !== comparable(projectRemote)) {
-            entry.association = "unrelated";
-            return;
-        }
         if (entry.recordedDirectory) {
             try {
                 const cwd = await directory(entry.recordedDirectory);
                 const common = await directory(resolve(cwd, await git(cwd, ["rev-parse", "--git-common-dir"])));
                 if (common === projectCommon) {
-                    entry.association = "matched";
+                    entry.association = "matched";entry.associationBasis="current_directory";
+                    if(entry.repositoryUrl&&projectRemote&&comparable(entry.repositoryUrl)!==comparable(projectRemote))entry.recordedRemoteChanged=true;
                     return;
                 }
             }
@@ -94,10 +95,14 @@ export async function discoverLocalChatFiles(options: {
                     throw error; /* Missing or non-Git historical cwd remains unresolved. */
             }
         }
+        if (entry.repositoryUrl && projectRemote && comparable(entry.repositoryUrl) !== comparable(projectRemote)) {
+            entry.association = "unrelated";
+            return;
+        }
         if (entry.repositoryUrl && projectRemote && comparable(entry.repositoryUrl) === comparable(projectRemote) && entry.commit) {
             try {
                 await git(resolve(options.project), ["cat-file", "-e", `${entry.commit}^{commit}`]);
-                entry.association = "matched";
+                entry.association = "matched";entry.associationBasis="recorded_git";
             }
             catch (error: unknown) {
                 if (!expectedProbeFailure(error))
@@ -176,7 +181,15 @@ export async function discoverLocalChatFiles(options: {
             else if (entry.isFile() && entry.name.endsWith(".jsonl")) {
                 if (files.length >= 10000)
                     throw new Error("Transcript discovery limit reached");
-                await inspect(path, harness, harness === "claude" && path.split(/[\\/]/).includes("subagents") ? "subagent" : kind);
+                try{await inspect(path, harness, harness === "claude" && path.split(/[\\/]/).includes("subagents") ? "subagent" : kind);}
+                catch(error:unknown){
+                  let code:"unsupported"|"changed"|"unreadable";
+                  if(error instanceof LocalChatPreviewError)code=error.code==="source_changed"?"changed":"unsupported";
+                  else if(error instanceof LocalChatTransferError&&error.code==="source_changed")code="changed";
+                  else if(error instanceof Error&&"code" in error&&["ENOENT","EACCES","EPERM","EIO","ENOTDIR"].includes(error.code as never))code="unreadable";
+                  else throw error;
+                  if(issues.length>=10_000)throw new Error("Transcript discovery limit reached");issues.push({path,code});skipped++;
+                }
             }
         }
     }
@@ -185,5 +198,5 @@ export async function discoverLocalChatFiles(options: {
     await walk(join(codex, "sessions"), "codex", "active");
     await walk(join(codex, "archived_sessions"), "codex", "archived");
     await walk(join(claude, "projects"), "claude", "active");
-    return { files, skipped };
+    return { files, skipped, issues };
 }

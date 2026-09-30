@@ -9,15 +9,16 @@ const Job = z.object({ jobId: z.uuid(), status: z.enum(["creating", "uploading",
   parts: z.array(Receipt).max(320), chatId: z.string().regex(/^chat_[A-Za-z0-9_-]{1,128}$/).optional() });
 const Signed = z.object({ parts: z.array(z.object({ partNumber: Receipt.shape.partNumber, size: Receipt.shape.size, url: z.string().max(8192), expiresAt: z.iso.datetime() })).length(1) });
 export type LocalChatImportPayload = z.infer<typeof Input>;
-export type LocalChatImportRequest = (path: string, options: { method: "GET" | "POST"; body?: unknown; signal: AbortSignal }) => Promise<unknown>;
+export type LocalChatImportRequest = (path: string, options: { method: "GET" | "POST"; body?: unknown; signal: AbortSignal; timeoutMs?: number }) => Promise<unknown>;
 export interface LocalChatUploadSource {
   read(offset: number, length: number, signal: AbortSignal): Promise<Uint8Array>;
   createHash(): { update(bytes: Uint8Array): void; digest(): string | Promise<string> };
 }
 export interface LocalChatImportProgress { phase: "uploading" | "verifying"; uploadedBytes: number; totalBytes: number; jobId: string }
 export class LocalChatTransferError extends Error {
-  constructor(readonly code: "invalid" | "invalid_response" | "source_changed" | "cancelled" | "unavailable" | "failed" | "expired") {
-    super("Chat import unavailable"); this.name = "LocalChatTransferError";
+  code: "invalid" | "invalid_response" | "source_changed" | "cancelled" | "unavailable" | "failed" | "expired";
+  constructor(code: "invalid" | "invalid_response" | "source_changed" | "cancelled" | "unavailable" | "failed" | "expired") {
+    super("Chat import unavailable"); this.name = "LocalChatTransferError"; this.code = code;
   }
 }
 function checked<T>(schema: z.ZodType<T>, value: unknown): T {
@@ -41,7 +42,8 @@ export async function uploadLocalChatArchive(payload: LocalChatImportPayload, so
   const signal = options.signal ? AbortSignal.any([options.signal, AbortSignal.timeout(60 * 60_000)]) : AbortSignal.timeout(60 * 60_000);
   let expectedJobId: string | undefined;
   const request = async (path: string, body?: unknown) => {
-    aborted(signal); return transport.request(path, { method: body === undefined ? "GET" : "POST", ...(body === undefined ? {} : { body }), signal: AbortSignal.any([signal, AbortSignal.timeout(30_000)]) });
+    const timeoutMs=path.endsWith("/complete")?5*60_000:30_000;
+    aborted(signal); return transport.request(path, { method: body === undefined ? "GET" : "POST", ...(body === undefined ? {} : { body }), timeoutMs, signal: AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]) });
   };
   const state = (value: unknown) => {
     const job = checked(Job, value);
@@ -87,7 +89,15 @@ export async function uploadLocalChatArchive(payload: LocalChatImportPayload, so
       options.onProgress?.({ phase: "uploading", uploadedBytes, totalBytes: payload.rawSize, jobId: job.jobId });
     }
     if (await hash.digest() !== payload.sourceHash) throw new LocalChatTransferError("source_changed");
-    aborted(signal); job = state(await request(`${base}/complete`, {}));
+    aborted(signal);
+    try { job = state(await request(`${base}/complete`, {})); }
+    catch(error:unknown){
+      aborted(signal);
+      if(!(error instanceof LocalChatTransferError&&error.code==="unavailable")&&!(error instanceof Error&&error.name==="TimeoutError"))throw error;
+      // Completion is durable. A response lost after sealing is recovered by the exact selected job.
+      job=state(await request(base));
+      if(job.status==="uploading")throw new LocalChatTransferError("unavailable");
+    }
   }
   while (job.status !== "published") {
     aborted(signal); options.onProgress?.({ phase: "verifying", uploadedBytes: payload.rawSize, totalBytes: payload.rawSize, jobId: job.jobId });

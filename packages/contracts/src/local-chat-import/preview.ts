@@ -1,8 +1,8 @@
-import { LocalChatTransferError } from "./client.js";
+import { LocalChatTransferError } from "#local-chat-import/client";
 import { z } from "zod/v4";
-import { readLocalChatJsonl, type LocalChatSourceEntry } from "./jsonl.js";
-import { reconstructLocalChat } from "./reconstruct.js";
-import { object, string, type ImportHarness, type ImportBlock } from "./types.js";
+import { readLocalChatJsonl, type LocalChatSourceEntry } from "#local-chat-import/jsonl";
+import { reconstructLocalChat } from "#local-chat-import/reconstruct";
+import { object, string, type ImportHarness, type ImportBlock } from "#local-chat-import/types";
 const MAX_ENTRIES = 100_000;
 export interface LocalChatImportCounts {
   humanInputs: number; assistantResponses: number; agentInputs: number; toolCalls: number; toolResults: number;
@@ -15,8 +15,9 @@ export interface LocalChatSourcePreview {
   counts: LocalChatImportCounts; parserVersion: 1;
 }
 export class LocalChatPreviewError extends Error {
-  constructor(readonly code: "invalid" | "source_changed" | "source_mismatch" | "projection_limit" | "no_readable_history") {
-    super("Local Chat preview unavailable"); this.name = "LocalChatPreviewError";
+  code: "invalid" | "source_changed" | "source_mismatch" | "projection_limit" | "no_readable_history";
+  constructor(code: "invalid" | "source_changed" | "source_mismatch" | "projection_limit" | "no_readable_history") {
+    super("Local Chat preview unavailable"); this.name = "LocalChatPreviewError"; this.code = code;
   }
 }
 async function digest(value: string): Promise<string> {
@@ -25,8 +26,8 @@ async function digest(value: string): Promise<string> {
 }
 function repositoryHint(value: unknown): string | undefined {
   if (typeof value !== "string" || value.length > 4096 || /[\u0000-\u001f\u007f]/.test(value)) return undefined;
-  try { const url = new URL(value); if (!["https:", "ssh:", "git:"].includes(url.protocol)) return undefined; url.username = ""; url.password = ""; return url.toString(); }
-  catch (error: unknown) { if (!(error instanceof TypeError)) throw error; return /^git@[A-Za-z0-9.-]+:[^\s]+$/.test(value) ? value : undefined; }
+  try { const url = new URL(value); if (!["https:", "ssh:", "git:"].includes(url.protocol)) return undefined; url.username = ""; url.password = ""; url.search = ""; url.hash = ""; return url.toString(); }
+  catch (error: unknown) { if (!(error instanceof TypeError)) throw error; const safe=value.split(/[?#]/,1)[0]!; return /^git@[A-Za-z0-9.-]+:[^\s]+$/.test(safe) ? safe : undefined; }
 }
 /** Bounded counts and one local preview, never an in-memory copy of every message or private context. */
 export async function previewLocalChatSource(harness: ImportHarness, input: {
