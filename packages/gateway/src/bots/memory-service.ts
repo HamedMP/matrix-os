@@ -158,6 +158,7 @@ export function createBotMemoryService(deps: { transact: BotStateTransactions; n
   return {
     /** `memory.propose` from a bot run. */
     async propose(binding: BotRuntimeBinding, args: ProposeArgs): Promise<BotToolResult> {
+      if (binding.group) throw new BotBrokerActionError("denied");
       if (!scopesFor(binding.chatId).includes(args.scope)) throw new BotBrokerActionError("invalid_arguments");
       try {
         const item = await deps.transact(binding.ownerId, async (tx) => {
@@ -199,6 +200,7 @@ export function createBotMemoryService(deps: { transact: BotStateTransactions; n
 
     /** `memory.search` from a bot run: confirmed items in this bot's and this chat's scope only. */
     async search(binding: BotRuntimeBinding, args: SearchArgs): Promise<BotToolResult> {
+      if (binding.group) throw new BotBrokerActionError("denied");
       const items = await deps.transact(binding.ownerId, (tx) => createBotMemoryRepository(tx.db).search({
         ownerId: binding.ownerId, botId: binding.botId, query: args.query, scopes: scopesFor(binding.chatId), limit: args.limit, now: now(),
       }, tx.db));
@@ -210,9 +212,13 @@ export function createBotMemoryService(deps: { transact: BotStateTransactions; n
 
     /** Confirmed memory for a run's system prompt, within the token budget. */
     async admitted(input: { ownerId: string; botId: string; chatId: string }): Promise<string[]> {
-      const items = await deps.transact(input.ownerId, (tx) => createBotMemoryRepository(tx.db).listAdmissible({
-        ownerId: input.ownerId, botId: input.botId, scopes: scopesFor(input.chatId), now: now(),
-      }, tx.db));
+      const items = await deps.transact(input.ownerId, async (tx) => {
+        const bindings = await createBotBindingsRepository(tx.db).forChat({ ownerId: input.ownerId, chatId: input.chatId }, tx.db);
+        if (bindings.length !== 1 || bindings[0]!.kind !== "direct" || bindings[0]!.botId !== input.botId) return [];
+        return createBotMemoryRepository(tx.db).listAdmissible({
+          ownerId: input.ownerId, botId: input.botId, scopes: scopesFor(input.chatId), now: now(),
+        }, tx.db);
+      });
       return admitMemory(items);
     },
 

@@ -1,9 +1,13 @@
+import { SCOPE_RUNTIME_HARNESS_VERSION, SCOPE_RUNTIME_PROFILE_ID } from "@matrix-os/scope-runtime/profile";
 import { CanonicalProviderCatalogSchema } from "@matrix-os/contracts";
 import { describe, expect, it, vi } from "vitest";
 import { CollaborationAuthorizationError } from "../../packages/gateway/src/collaboration/authority.js";
 import { SharedChatRunPreparationError } from "../../packages/gateway/src/chat/shared-execution-coordinator.js";
+import { SHARED_MATRIX_BOT_ELIGIBILITY } from "../../packages/gateway/src/collaboration/shared-ai-eligibility.js";
 import { collaborationExecutionEligibility } from "./collaboration-test-support.js";
 import {
+  prepareSharedMatrixBotAdapter,
+  deriveSharedAiEligibility,
   createSharedAiApprovalReconciler,
   createSharedAiCancellationDispatcher,
   createSharedChatSandboxManifest,
@@ -442,5 +446,53 @@ describe("shared AI queue recovery", () => {
     expect(dispatch).toHaveBeenCalledTimes(2);
     expect(dispatch).toHaveBeenCalledWith("scope-1", "chat-1");
     expect(dispatch).toHaveBeenCalledWith("scope-2", "chat-2");
+  });
+});
+
+describe("shared Matrix bot adapter policy seam", () => {
+  const execution = { scopeId: "scope_company", queuedTurnId: "qturn_1", requestingActorId: "user_member", authEpoch: 2, authorityGeneration: 3, executionGeneration: 1, executionEligibility: {}, driverKind: "matrix_bot" as const, selection: { instanceId: "matrix_bot_default", model: "auto" } };
+  const run = { id: "run_1", turnId: "cturn_1", executionRoot: { kind: "project" as const, projectId: "project_company" }, executionRootFingerprint: "a".repeat(64) };
+  const context = { actorId: "user_member", ownerId: "user_owner", organizationId: "org_company", scopeId: execution.scopeId, membershipScopeId: execution.scopeId, resourceKind: "chat" as const, resourceId: "chat_company", role: "editor" as const, authEpoch: 2, authorityGeneration: 3, authorityRuntimeId: "runtime_owner", capability: "request_ai" as const };
+  const decision = { policyRevision: "4", harness: "codex" as const, providerInstanceId: "codex_default", accessSourceId: null, allowedModelIds: ["gpt-5.4"], effectiveSubmitMode: "members" as const };
+  it("selects an explicit policy harness before preparing Pi and pins its concrete allowed model", async () => {
+    const prepare = vi.fn(async () => decision);
+    const adapter = { driverKind: "matrix_bot" } as never;
+    const prepareAdapter = vi.fn(async () => ({ adapter, modelId: "gpt-5.4" }));
+    const admit = vi.fn(async () => undefined);
+    await expect(prepareSharedMatrixBotAdapter({ execution, run, context, ownerSource: { prepare }, extension: { resolvePolicyDriver: async () => "codex", prepareAdapter }, admit })).resolves.toBe(adapter);
+    expect(prepare).toHaveBeenCalledWith(expect.objectContaining({ driverKind: "codex", requestingActorId: "user_member", ownerId: "user_owner" }));
+    expect(prepareAdapter).toHaveBeenCalledWith(execution, run, context, decision);
+    expect(admit).toHaveBeenCalledWith(decision, "gpt-5.4");
+  });
+  it("does not substitute a default when policy is missing, model disallowed, or private root supplied", async () => {
+    const adapter = { driverKind: "matrix_bot" } as never;
+    const prepareAdapter = vi.fn(async () => ({ adapter, modelId: "gpt-unknown" }));
+    const extension = { resolvePolicyDriver: async () => "codex" as const, prepareAdapter };
+    const admit = vi.fn(async () => undefined);
+    await expect(prepareSharedMatrixBotAdapter({ execution, run, context, ownerSource: { prepare: async () => { throw new SharedChatRunPreparationError("unavailable"); } }, extension, admit })).rejects.toMatchObject({ requestState: "unavailable" });
+    expect(prepareAdapter).not.toHaveBeenCalled();
+    await expect(prepareSharedMatrixBotAdapter({ execution, run, context, ownerSource: { prepare: async () => decision }, extension, admit })).rejects.toMatchObject({ requestState: "unavailable" });
+    await expect(prepareSharedMatrixBotAdapter({ execution, run: { ...run, executionRoot: { kind: "bot_workspace", botId: "bot_0123456789abcdef" } }, context, ownerSource: { prepare: async () => decision }, extension, admit })).rejects.toMatchObject({ requestState: "unavailable" });
+    expect(admit).not.toHaveBeenCalled();
+  });
+});
+
+
+describe("separate shared Matrix bot capability", () => {
+  it("requires the exact bot profile, workload and execution generation without widening standard adapters", async () => {
+    const standard = { available: true as const, profileId: SCOPE_RUNTIME_PROFILE_ID, executionGeneration: "7",
+      supportedAdapters: [{ adapterId: "claude-code", harnessVersion: SCOPE_RUNTIME_HARNESS_VERSION, workloads: ["chat_ai" as const] }],
+      sandbox: { policyVersion: 1 as const, policyDigest: "a".repeat(64), workloads: ["chat_ai" as const] } };
+    const profile = { available: true as const, profileId: SHARED_MATRIX_BOT_ELIGIBILITY.profileId, executionGeneration: "7",
+      supportedAdapters: [{ adapterId: SHARED_MATRIX_BOT_ELIGIBILITY.adapterId, harnessVersion: SHARED_MATRIX_BOT_ELIGIBILITY.harnessVersion, workloads: ["bot_agent" as const] }],
+      sandbox: { policyVersion: 1 as const, policyDigest: "a".repeat(64), workloads: ["bot_agent" as const] } };
+    const options = { client: { capability: () => standard, profileCapability: () => profile }, sandboxManifests: { resolve: async () => null }, matrixBotEnabled: true };
+    const result = await deriveSharedAiEligibility(options);
+    expect(result?.matrixBot).toEqual(SHARED_MATRIX_BOT_ELIGIBILITY);
+    expect(result?.adapters.some((adapter) => adapter.adapterId === ("matrix-bot" as never))).toBe(false);
+    expect((await deriveSharedAiEligibility({ ...options, matrixBotEnabled: false }))?.matrixBot).toBeUndefined();
+    for (const bad of [{ ...profile, executionGeneration: "8" }, { ...profile, profileId: "scope-runtime-standard-v1" }, { ...profile, sandbox: undefined }, { ...profile, supportedAdapters: [] }]) {
+      expect((await deriveSharedAiEligibility({ ...options, client: { ...options.client, profileCapability: () => bad } }))?.matrixBot).toBeUndefined();
+    }
   });
 });

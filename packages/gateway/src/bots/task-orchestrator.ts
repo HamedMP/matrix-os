@@ -25,7 +25,7 @@ import {
 import type { ChatAgentStore } from "../chat/agent-store.js";
 import { createCanonicalCliEventQueue, type CanonicalCliEventQueue } from "../chat/cli-process.js";
 import type { ScopeRuntimeHostClient } from "../scope-runtime-host/index.js";
-import { BotAdmissionError, type PrivateBotAdmission } from "./admission.js";
+import { BotAdmissionError, type PrivateBotAdmission, type GroupBotRunRequest } from "./admission.js";
 import { BotBrokerActionError, type BotEventSink, type BotRunSource } from "./broker-actions.js";
 import { BotRecipeCatalogError, type BotRecipeCatalog } from "./recipe-catalog.js";
 import type { BotBindingsRepository } from "./repositories/bindings.js";
@@ -34,7 +34,7 @@ import type { BotInteractionService } from "./interactions.js";
 import type { BotMemoryService } from "./memory-service.js";
 import { createBotTasksRepository, type BotBlockedReason, type BotTask } from "./repositories/tasks.js";
 import { BotRouteError, type ResolvedBotRoute } from "./route-resolver.js";
-import { BOT_RUNTIME_REGISTRY_CAPACITY, type BotRuntimeRegistry } from "./runtime-registry.js";
+import { requireGroupBotAuthority, type GroupBotAuthorizer, BOT_RUNTIME_REGISTRY_CAPACITY, type BotRuntimeRegistry } from "./runtime-registry.js";
 import { buildBotSystemPrompt, BotSystemPromptError } from "./system-prompt.js";
 
 const ACTIVE_DEADLINE_MS = 10 * 60_000;
@@ -94,7 +94,12 @@ export function createBotTaskOrchestrator(deps: {
   agents: Pick<ChatAgentStore, "get">;
   recipes: BotRecipeCatalog;
   resolveRoute(ownerId: string): Promise<ResolvedBotRoute>;
+  /** Exact run-bound owner policy route; groups never consult the personal default resolver. */
+  resolveGroupRoute?(input: { ownerId: string; chatId: string; runId: string; group: GroupBotRunRequest }): Promise<ResolvedBotRoute>;
   admission: Pick<PrivateBotAdmission, "admit" | "release">;
+  /** Server-owned canonical run identity; must resolve requesting actor, scope and shared root. */
+  resolveGroupRun?(input: { ownerId: string; chatId: string; runId: string }): Promise<GroupBotRunRequest>;
+  authorizeGroup?: GroupBotAuthorizer;
   registry: Pick<BotRuntimeRegistry, "lookupRun">;
   client: Pick<ScopeRuntimeHostClient, "runBot">;
   onRunFinished?(runId: string): void;
@@ -193,7 +198,24 @@ export function createBotTaskOrchestrator(deps: {
 
   async function execute(input: { ownerId: string; chatId: string; runId: string; text: string; signal: AbortSignal }, run: ActiveRun): Promise<BotTurnResult> {
     const owner = { type: "personal" as const, ownerId: input.ownerId };
-    const botId = await directBot(input.ownerId, input.chatId);
+    const bindings = await deps.bindings.forChat({ ownerId: input.ownerId, chatId: input.chatId });
+    // Ambiguous direct/group bindings never get an authority fallback.
+    if (bindings.length !== 1) return { status: "failed" };
+    const binding = bindings[0]!;
+    let group: GroupBotRunRequest | undefined;
+    if (binding.kind === "group") {
+      if (!deps.resolveGroupRun) return { status: "failed" };
+      try { group = await deps.resolveGroupRun(input); } catch (error: unknown) {
+        console.warn("[bots] group run context unavailable:", error instanceof Error ? error.name : "UnknownError");
+        return { status: "failed" };
+      }
+      if (!group) return { status: "failed" };
+      try { await requireGroupBotAuthority({ ownerId: input.ownerId, chatId: input.chatId, runId: input.runId, group }, deps.authorizeGroup); } catch (error: unknown) {
+        console.warn("[bots] group turn denied:", error instanceof Error ? error.name : "UnknownError");
+        return { status: "failed" };
+      }
+    }
+    const botId = binding.botId;
     const agent = botId ? await deps.agents.get(owner, botId) : null;
     if (!botId || !agent || agent.archived || !agent.recipeRef) return { status: "failed" };
     let recipe;
@@ -207,7 +229,7 @@ export function createBotTaskOrchestrator(deps: {
     run.queue.push({ kind: "state", state: { taskId: task.taskId } });
     // A reply in Chat answers a question the waiting task still has open.
     try {
-      if (continued) await deps.interactions?.answerWithMessage({ ownerId: input.ownerId, taskId: task.taskId, chatId: input.chatId, text: input.text });
+      if (continued && !group) await deps.interactions?.answerWithMessage({ ownerId: input.ownerId, taskId: task.taskId, chatId: input.chatId, text: input.text });
     } catch (error: unknown) {
       console.warn("[bots] task answer failed:", error instanceof Error ? error.name : "UnknownError");
       return settle(task, "failed");
@@ -216,15 +238,19 @@ export function createBotTaskOrchestrator(deps: {
 
     let resolved: ResolvedBotRoute;
     try {
-      resolved = await deps.resolveRoute(input.ownerId);
+      if (group) {
+        if (!deps.resolveGroupRoute) throw new BotRouteError("model_unavailable");
+        resolved = await deps.resolveGroupRoute({ ownerId: input.ownerId, chatId: input.chatId, runId: input.runId, group });
+      } else resolved = await deps.resolveRoute(input.ownerId);
     } catch (error: unknown) {
       if (!(error instanceof BotRouteError)) console.warn("[bots] model route unavailable:", error instanceof Error ? error.name : "UnknownError");
       return settle(task, "blocked", "model_unavailable");
     }
-    const capabilities = recipe.capabilities.filter((capability) => SERVED_CAPABILITIES.includes(capability));
+    const capabilities = recipe.capabilities.filter((capability) => SERVED_CAPABILITIES.includes(capability)
+      && (!group || ["integration.inventory", "integration.call"].includes(capability)));
     let memory: string[];
     try {
-      memory = deps.memory ? await deps.memory.admitted({ ownerId: input.ownerId, botId, chatId: input.chatId }) : [];
+      memory = !group && deps.memory ? await deps.memory.admitted({ ownerId: input.ownerId, botId, chatId: input.chatId }) : [];
     } catch (error: unknown) {
       console.warn("[bots] admitted memory failed:", error instanceof Error ? error.name : "UnknownError");
       return settle(task, "failed");
@@ -232,7 +258,7 @@ export function createBotTaskOrchestrator(deps: {
     try {
       run.spec = BotRunSpecSchema.parse({
         route: resolved.route,
-        systemPrompt: buildBotSystemPrompt({ botName: agent.name, instructions: agent.instructions, recipe, memory, now: new Date(now()) }),
+        systemPrompt: buildBotSystemPrompt({ botName: agent.name, instructions: agent.instructions, recipe, memory, audience: group ? "group" : "personal", now: new Date(now()) }),
         capabilities,
         limits: { maxToolActions: MAX_TOOL_ACTIONS },
         turn: { kind: "prompt", text: input.text },
@@ -247,6 +273,7 @@ export function createBotTaskOrchestrator(deps: {
       runtime = await deps.admission.admit({
         ownerId: input.ownerId, botId, chatId: input.chatId, taskId: task.taskId, runId: input.runId,
         route: resolved.route, accessSourceId: resolved.accessSourceId, capabilities, requestClass: "interactive",
+        ...(group ? { group, expectedRootFingerprint: group.executionRootFingerprint } : {}),
       });
     } catch (error: unknown) {
       if (!(error instanceof BotAdmissionError)) throw error;
@@ -322,7 +349,15 @@ export function createBotTaskOrchestrator(deps: {
     /** Relays a person's steering message to the running worker. */
     async steer(runId: string, text: string): Promise<boolean> {
       const run = active.get(runId);
-      if (!run?.runtime || !deps.registry.lookupRun({ ...run.runtime, runId })) return false;
+      if (!run?.runtime) return false;
+      const binding = deps.registry.lookupRun({ ...run.runtime, runId });
+      if (!binding) return false;
+      if (binding.group) {
+        try { await requireGroupBotAuthority({ ownerId: binding.ownerId, chatId: binding.chatId, runId: binding.runId, group: binding.group }, deps.authorizeGroup); } catch (error: unknown) {
+          console.warn("[bots] group steering denied:", error instanceof Error ? error.name : "UnknownError");
+          return false;
+        }
+      }
       const reply = await deps.client.runBot({ ...run.runtime, command: { version: 1, kind: "bot.steer", runId, text: text.slice(0, 8 * 1024) } });
       return reply.ok;
     },

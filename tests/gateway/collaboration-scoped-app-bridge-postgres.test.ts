@@ -1,12 +1,12 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { sql } from "kysely";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createScopedAppBridge } from "../../packages/gateway/src/collaboration/scoped-app-bridge.js";
 import { createCollaborationTestDatabase, createRealCollaborationTestDatabase, type CollaborationTestDatabase } from "./collaboration-test-support.js";
 
-const SCOPE = "10000000-0000-4000-8000-000000000601";
+let SCOPE: string;
 const APP = "board";
-const namespace = `p${createHash("sha256").update(SCOPE).update("\0").update(APP).digest("hex").slice(0, 32)}`;
+let namespace: string;
 
 const fixtureFactory = process.env.MATRIX_TEST_POSTGRES_URL ? createRealCollaborationTestDatabase : createCollaborationTestDatabase;
 
@@ -16,15 +16,21 @@ describe("scoped app bridge", () => {
   let bridge: ReturnType<typeof createScopedAppBridge>;
 
   beforeEach(async () => {
+    SCOPE = randomUUID();
+    namespace = `p${createHash("sha256").update(SCOPE).update("\0").update(APP).digest("hex").slice(0, 32)}`;
     fixture = await fixtureFactory();
     const result = await sql<{ name: string }>`SELECT current_schema() AS name`.execute(fixture.db);
     schema = result.rows[0]!.name;
     await sql`CREATE TABLE ${sql.id(schema)}.${sql.id("cards")} (id TEXT PRIMARY KEY, title TEXT NOT NULL)`.execute(fixture.db);
+    await sql`CREATE TABLE IF NOT EXISTS public._kv (app TEXT NOT NULL, key TEXT NOT NULL, value TEXT, updated_at TIMESTAMPTZ DEFAULT now(), PRIMARY KEY (app, key))`.execute(fixture.db);
     bridge = createScopedAppBridge({
       resolveApp: async (appId) => appId === APP ? { storageSchema: schema, tables: ["cards"] } : null,
     });
   });
-  afterEach(async () => { await fixture.destroy(); });
+  afterEach(async () => {
+    await sql`DELETE FROM public._kv WHERE app = ${namespace}`.execute(fixture.db);
+    await fixture.destroy();
+  });
 
   it("uses the owner transaction and a registered schema for reads and mutations", async () => {
     await fixture.db.transaction().execute(async (transaction) => {

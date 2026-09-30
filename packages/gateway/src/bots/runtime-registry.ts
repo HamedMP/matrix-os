@@ -16,6 +16,7 @@ import {
   type BotToolCapability,
 } from "@matrix-os/contracts";
 import { z } from "zod/v4";
+import type { AuthorizedCollaborationContext } from "../collaboration/authority.js";
 import {
   BotCredentialAccessSourceIdSchema,
   type BotCredentialAccessSourceId,
@@ -28,6 +29,47 @@ const DEFAULT_TTL_MS = 16 * 60_000;
 const MAX_TTL_MS = 20 * 60_000;
 const GenerationSchema = z.string().regex(/^(0|[1-9][0-9]{0,19})$/);
 const ReferenceSchema = z.string().min(1).max(160).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]*$/);
+
+export interface GroupBotAuthority {
+  scopeId: string;
+  actorId: string;
+  authEpoch: number;
+  authorityGeneration: number;
+  authorityRuntimeId: string;
+  resourceAuthEpoch?: number;
+  membershipAuthEpoch?: number;
+  membershipEvidenceEpoch?: string;
+  sessionGeneration?: string;
+}
+
+/** Must consult the existing collaboration authority with request_ai on every call. */
+export type GroupBotAuthorizer = (input: { scopeId: string; actorId: string; runId?: string; ownerId?: string; chatId?: string }) => Promise<AuthorizedCollaborationContext>;
+
+/** Deny any change of membership/resource/runtime authority since admission. */
+export async function requireGroupBotAuthority(
+  input: { ownerId: string; chatId: string; runId?: string; group: Pick<GroupBotAuthority, "scopeId" | "actorId"> & Partial<GroupBotAuthority> },
+  authorize: GroupBotAuthorizer | undefined,
+): Promise<GroupBotAuthority> {
+  if (!authorize) throw new Error("Group bot authorization unavailable");
+  const current = await authorize({ scopeId: input.group.scopeId, actorId: input.group.actorId, ownerId: input.ownerId, chatId: input.chatId, ...(input.runId ? { runId: input.runId } : {}) });
+  if (current.capability !== "request_ai" || current.resourceKind !== "chat"
+    || current.scopeId !== input.group.scopeId || current.actorId !== input.group.actorId
+    || current.ownerId !== input.ownerId || current.resourceId !== input.chatId || !current.organizationId) {
+    throw new Error("Group bot authority mismatch");
+  }
+  const admitted: GroupBotAuthority = {
+    ...(input.group.sessionGeneration ? { sessionGeneration: input.group.sessionGeneration } : {}),
+    scopeId: current.scopeId, actorId: current.actorId, authEpoch: current.authEpoch,
+    authorityGeneration: current.authorityGeneration, authorityRuntimeId: current.authorityRuntimeId,
+    ...(current.resourceAuthEpoch !== undefined ? { resourceAuthEpoch: current.resourceAuthEpoch } : {}),
+    ...(current.membershipAuthEpoch !== undefined ? { membershipAuthEpoch: current.membershipAuthEpoch } : {}),
+    ...(current.membershipEvidenceEpoch !== undefined ? { membershipEvidenceEpoch: current.membershipEvidenceEpoch } : {}),
+  };
+  for (const key of ["authEpoch", "authorityGeneration", "authorityRuntimeId", "resourceAuthEpoch", "membershipAuthEpoch", "membershipEvidenceEpoch"] as const) {
+    if (input.group[key] !== undefined && input.group[key] !== admitted[key]) throw new Error("Group bot authority changed");
+  }
+  return GroupBotAuthoritySchema.parse(admitted);
+}
 
 export interface BotRuntimeBinding {
   runtimeHandle: string;
@@ -44,6 +86,8 @@ export interface BotRuntimeBinding {
   capabilities: readonly BotToolCapability[];
   /** Funded priority for this run: a person waiting in chat, or a routine. */
   requestClass: "interactive" | "background";
+  /** Absent only for private direct runs. Never supplied by the worker. */
+  group?: GroupBotAuthority;
 }
 
 interface StoredBinding extends BotRuntimeBinding {
@@ -56,6 +100,17 @@ export class BotRuntimeRegistryError extends Error {
     this.name = "BotRuntimeRegistryError";
   }
 }
+
+const GroupBotAuthoritySchema = z.object({
+  sessionGeneration: z.string().regex(/^[1-9][0-9]{0,18}$/).optional(),
+  scopeId: z.string().min(1).max(160), actorId: ReferenceSchema,
+  authEpoch: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  authorityGeneration: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  authorityRuntimeId: ReferenceSchema,
+  resourceAuthEpoch: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
+  membershipAuthEpoch: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
+  membershipEvidenceEpoch: z.string().regex(/^[0-9]{1,20}$/).optional(),
+}).strict();
 
 const BindingSchema = z.object({
   runtimeHandle: RuntimeHandleSchema,
@@ -70,6 +125,7 @@ const BindingSchema = z.object({
   accessSourceId: BotCredentialAccessSourceIdSchema,
   capabilities: z.array(BotToolCapabilitySchema).max(16),
   requestClass: z.enum(["interactive", "background"]),
+  group: GroupBotAuthoritySchema.optional(),
 }).strict();
 
 /** The broker action each model API uses; a route never reaches another. */

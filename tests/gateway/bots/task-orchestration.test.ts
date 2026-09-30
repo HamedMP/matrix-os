@@ -49,12 +49,15 @@ function setup(options: {
   agent?: Record<string, unknown> | null;
   memory?: string[];
   admitted?: () => Promise<string[]>;
+  resolveGroupRun?: (input: { ownerId: string; chatId: string; runId: string }) => Promise<unknown>;
+  authorizeGroup?: import("../../../packages/gateway/src/bots/runtime-registry.js").GroupBotAuthorizer;
   answerWithMessage?: () => Promise<void>;
 } = {}) {
   const registry = new BotRuntimeRegistry();
   const admission = {
     admit: vi.fn(options.admit ?? (async (request: Parameters<typeof registry.bind>[0]) => {
-      registry.bind({ ...request, runtimeHandle: RUNTIME, executionGeneration: "3", rootFingerprint: "f".repeat(64) });
+      const { expectedRootFingerprint: _fingerprint, ...runtimeRequest } = request as typeof request & { expectedRootFingerprint?: string };
+      registry.bind({ ...runtimeRequest, ...(request.group ? { group: { scopeId: "scope-company", actorId: "user_member", authEpoch: 4, authorityGeneration: 1, authorityRuntimeId: "owner-runtime" } } : {}), runtimeHandle: RUNTIME, executionGeneration: "3", rootFingerprint: "f".repeat(64) });
       return { runtimeHandle: RUNTIME, executionGeneration: "3", rootFingerprint: "f".repeat(64) };
     }) as never),
     release: vi.fn(async (handle: string) => registry.release(handle)),
@@ -80,8 +83,11 @@ function setup(options: {
     memory: { admitted: options.admitted ?? (async () => options.memory ?? []) },
     agents: { get: vi.fn(async () => (options.agent === undefined ? AGENT : options.agent) as never) },
     recipes: createBotRecipeCatalog(),
+    resolveGroupRoute: options.resolveGroupRun ? (async () => ({ route: ROUTE, accessSourceId: "matrix_included" as const })) : undefined,
     resolveRoute: options.resolveRoute ?? (async () => ({ route: ROUTE, accessSourceId: "matrix_included" as const })),
     admission,
+    resolveGroupRun: options.resolveGroupRun as never,
+    authorizeGroup: options.authorizeGroup,
     registry,
     client: { runBot: runBot as never },
     ...(options.activeDeadlineMs ? { activeDeadlineMs: options.activeDeadlineMs } : {}),
@@ -360,5 +366,39 @@ describe("bot turns through the matrix_bot adapter", () => {
     expect(stopRuntime).toHaveBeenCalledWith(RUNTIME);
     expect(commands).toEqual([]);
     await expect(tasks()).resolves.toEqual([expect.objectContaining({ status: "failed" })]);
+  });
+});
+
+
+describe("group Pi run isolation", () => {
+  it("uses an explicit group binding and omits all private context and capabilities", async () => {
+    await insertChat(db, "chat_company1");
+    await db.insertInto("bot_chat_bindings").values({ owner_id: OWNER, bot_id: BOT, chat_id: "chat_company1", kind: "group", created_at: "2026-09-27T12:00:00.000Z", removed_at: null }).execute();
+    const admitted = vi.fn(async () => ["PRIVATE OWNER FACT"]);
+    let orchestrator: ReturnType<typeof createBotTaskOrchestrator>;
+    const service = setup({ admitted,
+      authorizeGroup: async () => ({ scopeId: "scope-company", actorId: "user_member", ownerId: OWNER, resourceId: "chat_company1", resourceKind: "chat", organizationId: "org_company", membershipScopeId: "scope-company", authEpoch: 4, authorityGeneration: 1, authorityRuntimeId: "owner-runtime", capability: "request_ai", role: "editor" }),
+      resolveGroupRun: async () => ({ scopeId: "scope-company", actorId: "user_member", executionRoot: { kind: "project", projectId: "project_company" }, executionRootFingerprint: "f".repeat(64), sessionGeneration: "1" }),
+      worker: async (input) => {
+        const spec = await orchestrator.runSource.loadRunSpec({ runId: input.command.runId } as never);
+        expect(spec.systemPrompt).not.toContain("PRIVATE OWNER FACT");
+        expect(spec.systemPrompt).toContain("shared company thread");
+        expect(spec.capabilities).toEqual([]);
+        return { runId: input.command.runId, status: "completed", toolActions: 0, sessionRevision: 1 };
+      },
+    });
+    orchestrator = service.orchestrator;
+    const events = await collect(service.adapter.start({ ...turn(), chatId: "chat_company1" }));
+    expect(events.at(-1)).toMatchObject({ type: "run.completed", outcome: "completed" });
+    expect(admitted).not.toHaveBeenCalled();
+    expect(service.admission.admit).toHaveBeenCalledWith(expect.objectContaining({ chatId: "chat_company1", expectedRootFingerprint: "f".repeat(64), group: expect.objectContaining({ actorId: "user_member" }) }));
+  });
+  it("refuses a group Chat when no explicit resolver is wired, without private fallback", async () => {
+    await insertChat(db, "chat_company1");
+    await db.insertInto("bot_chat_bindings").values({ owner_id: OWNER, bot_id: BOT, chat_id: "chat_company1", kind: "group", created_at: "2026-09-27T12:00:00.000Z", removed_at: null }).execute();
+    const service = setup();
+    const events = await collect(service.adapter.start({ ...turn(), chatId: "chat_company1" }));
+    expect(events.at(-1)).toMatchObject({ type: "run.completed", outcome: "failed" });
+    expect(service.admission.admit).not.toHaveBeenCalled();
   });
 });
