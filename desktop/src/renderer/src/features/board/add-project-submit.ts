@@ -129,6 +129,10 @@ export async function submitClone(
     ...result.project,
     kind: "github" as const,
   };
+  if (ctx.onCreatedProject && !project.id) {
+    ctx.setError("The project was created, but sharing could not be prepared. Refresh and share it from Chats.");
+    return;
+  }
   await finish(ctx, project, { created: true });
 }
 

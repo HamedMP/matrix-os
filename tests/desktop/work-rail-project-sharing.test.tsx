@@ -2,13 +2,17 @@
 
 import React from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 const controller = vi.hoisted(() => ({
   start: vi.fn(),
   close: vi.fn(),
   error: false,
   lastOptions: null as null | Record<string, unknown>,
+}));
+const sharingState = vi.hoisted(() => ({
+  organizationId: "org_matrix_team" as string | null,
+  available: true,
 }));
 
 vi.mock("@matrix-os/ui", async (importOriginal) => {
@@ -29,19 +33,30 @@ vi.mock("@matrix-os/ui", async (importOriginal) => {
   };
 });
 
-import { WorkRailProjectGroup } from "@desktop/renderer/src/features/work/work-rail/WorkRailProjectGroup";
+vi.mock("@desktop/renderer/src/features/project/DesktopProjectSharing", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@desktop/renderer/src/features/project/DesktopProjectSharing")>();
+  return {
+    ...actual,
+    useDesktopProjectSharingContext: () => sharingState.available ? ({
+      api: { baseUrl: "https://app.matrix-os.com", get: vi.fn(), post: vi.fn(), delete: vi.fn() },
+      runtimeId: "vps:10000000-0000-4000-8000-000000000001",
+      organizationId: sharingState.organizationId,
+    }) : null,
+  };
+});
+
+import { WorkRail } from "@desktop/renderer/src/features/work/WorkRail";
 import { useConnection } from "@desktop/renderer/src/stores/connection";
 
 const alpha = { id: "proj_alpha", slug: "alpha", name: "Alpha", kind: "folder" as const };
-const api = { baseUrl: "https://app.matrix-os.com", get: vi.fn(), post: vi.fn(), delete: vi.fn() };
 
 function setup(sharing: { organizationId: string | null } | null) {
-  useConnection.setState({ api: { patch: vi.fn() } as never });
-  render(<WorkRailProjectGroup group={{ id: alpha.id, slug: alpha.slug, name: alpha.name, project: alpha, chats: [] }}
-    expanded={false} pinning={{}} onToggle={vi.fn()} onNewChat={vi.fn()} onDeleteProject={vi.fn()}
-    onSelectChat={vi.fn()} renamingChatId={null} renamePending={false} onRenameChat={vi.fn()}
-    onRenameCommit={vi.fn()} onRenameCancel={vi.fn()} onPinChat={vi.fn()} onDeleteChat={vi.fn()}
-    sharing={sharing ? { api: api as never, runtimeId: "vps:10000000-0000-4000-8000-000000000001", organizationId: sharing.organizationId } : null} />);
+  sharingState.available = sharing !== null;
+  sharingState.organizationId = sharing?.organizationId ?? null;
+  useConnection.setState({ api: { patch: vi.fn() } as never, userId: null });
+  render(<WorkRail client={null} projects={[alpha]} active activeProjectSlug={alpha.slug}
+    onNewGlobalChat={vi.fn()} onCreateProject={vi.fn()} onNewProjectChat={vi.fn()}
+    onSelectChat={vi.fn()} onCollapse={vi.fn()} />);
 }
 
 function openMenu() {
@@ -53,22 +68,27 @@ afterEach(() => {
   controller.start.mockReset();
   controller.error = false;
   controller.lastOptions = null;
+  sharingState.available = true;
+  sharingState.organizationId = "org_matrix_team";
   useConnection.setState({ api: null });
 });
 
 describe("Chats project sharing", () => {
-  it("starts whole-project sharing from the project right-click menu", () => {
+  it("starts whole-project sharing from the project menu and survives section collapse", async () => {
     setup({ organizationId: "org_matrix_team" });
     openMenu();
     fireEvent.click(screen.getByRole("menuitem", { name: "Share project" }));
 
-    expect(controller.start).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(controller.start).toHaveBeenCalledTimes(1));
     expect(controller.lastOptions).toMatchObject({
       runtimeId: "vps:10000000-0000-4000-8000-000000000001",
       organizationId: "org_matrix_team",
       projectId: "proj_alpha",
       projectName: "Alpha",
     });
+    expect(screen.getByTestId("project-sharing-dialogs")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Projects" }));
     expect(screen.getByTestId("project-sharing-dialogs")).toBeTruthy();
   });
 

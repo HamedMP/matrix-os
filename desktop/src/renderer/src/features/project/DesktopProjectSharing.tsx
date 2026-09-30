@@ -48,12 +48,13 @@ export interface DesktopProjectSharingHandle {
  * Keeps the project sharing dialogs mounted outside transient project menus
  * and outside the creation dialog that closes after a successful create.
  */
-export function DesktopProjectSharingHost({ ref, sharing, projectId, projectName, startOnMount = false }: {
+export function DesktopProjectSharingHost({ ref, sharing, projectId, projectName, startOnMount = false, onClose }: {
   ref?: Ref<DesktopProjectSharingHandle>;
   sharing: DesktopProjectSharingContext;
   projectId: string;
   projectName: string;
   startOnMount?: boolean;
+  onClose?: () => void;
 }) {
   const flow = useProjectSharing({
     api: sharing.api,
@@ -61,6 +62,7 @@ export function DesktopProjectSharingHost({ ref, sharing, projectId, projectName
     organizationId: sharing.organizationId,
     projectId,
     projectName,
+    onClose,
   });
   useImperativeHandle(ref, () => ({ start: flow.start }));
   const startedOnMount = useRef(false);

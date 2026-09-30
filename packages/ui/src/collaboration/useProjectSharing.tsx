@@ -29,12 +29,13 @@ export interface ProjectSharingController {
  * Owns the whole-project preflight, inventory confirmation, and member manager
  * so buttons and short-lived menu items can launch the same sharing flow.
  */
-export function useProjectSharing({ api, runtimeId, organizationId, projectId, projectName }: {
+export function useProjectSharing({ api, runtimeId, organizationId, projectId, projectName, onClose }: {
   api: CollaborationApi;
   runtimeId: string | null;
   organizationId: string | null;
   projectId: string;
   projectName: string;
+  onClose?: () => void;
 }): ProjectSharingController {
   const [surface, setSurface] = useState<"inventory" | "members" | null>(null);
   const [scope, setScope] = useState<CollaborationScope | null>(null);
@@ -136,6 +137,7 @@ export function useProjectSharing({ api, runtimeId, organizationId, projectId, p
     setInventory(null);
     setScope(null);
     setError(false);
+    onClose?.();
   };
 
   const dialogs = <>

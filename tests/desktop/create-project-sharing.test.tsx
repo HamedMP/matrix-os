@@ -32,11 +32,11 @@ vi.mock("@desktop/renderer/src/features/project/DesktopProjectSharing", async (i
   const actual = await importOriginal<typeof import("@desktop/renderer/src/features/project/DesktopProjectSharing")>();
   return {
     ...actual,
-    useDesktopProjectSharingContext: () => ({
+    useDesktopProjectSharingContext: (enabled = true) => enabled ? ({
       api: { baseUrl: "https://app.matrix-os.com", get: vi.fn(), post: vi.fn(), delete: vi.fn() },
       runtimeId: "vps:10000000-0000-4000-8000-000000000001",
       organizationId: "org_matrix_team",
-    }),
+    }) : null,
   };
 });
 
@@ -46,6 +46,11 @@ import { useConnection } from "@desktop/renderer/src/stores/connection";
 import { useTabs } from "@desktop/renderer/src/stores/tabs";
 
 describe("project creation sharing", () => {
+  function Harness() {
+    const [open, setOpen] = React.useState(true);
+    return <CreateProjectDialog open={open} onClose={() => setOpen(false)} />;
+  }
+
   beforeEach(() => {
     useConnection.setState({
       status: "signed-in",
@@ -76,7 +81,7 @@ describe("project creation sharing", () => {
   });
 
   it("offers whole-project sharing during creation and opens the existing share flow after success", async () => {
-    render(<Tooltip.Provider><CreateProjectDialog open onClose={vi.fn()} /></Tooltip.Provider>);
+    render(<Tooltip.Provider><Harness /></Tooltip.Provider>);
 
     fireEvent.change(screen.getByLabelText("What are you working on?"), { target: { value: "Alpha" } });
     fireEvent.click(screen.getByRole("button", { name: /New folder/ }));
@@ -84,6 +89,7 @@ describe("project creation sharing", () => {
     fireEvent.click(screen.getByRole("button", { name: "Create" }));
 
     await waitFor(() => expect(sharingController.start).toHaveBeenCalledTimes(1));
+    expect(screen.queryByRole("dialog", { name: "Create a project" })).toBeNull();
     expect(sharingController.lastOptions).toMatchObject({
       runtimeId: "vps:10000000-0000-4000-8000-000000000001",
       organizationId: "org_matrix_team",

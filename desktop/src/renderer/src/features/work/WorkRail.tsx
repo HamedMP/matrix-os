@@ -31,7 +31,7 @@ import { WorkRailSearchDialog } from "./WorkRailSearchDialog";
 import type { CanonicalChatTitleProjection } from "./WorkSurfaceRuntime";
 import { createDesktopCollaborationApi } from "../../lib/collaboration";
 import { useConnection } from "../../stores/connection";
-import { useDesktopProjectSharingContext } from "../project/DesktopProjectSharing";
+import { DesktopProjectSharingHost, useDesktopProjectSharingContext } from "../project/DesktopProjectSharing";
 
 type SectionKey = "pinned" | "projects" | "recents";
 const MAX_CHAT_PAGES = 10;
@@ -182,9 +182,14 @@ export function WorkRail({
     [model],
   );
   const projectSharing = useDesktopProjectSharingContext(active);
+  const [shareProjectTarget, setShareProjectTarget] = useState<{
+    project: Project;
+    requestId: string;
+  } | null>(null);
 
   useEffect(() => {
     if (!active || !client) setSearchOpen(false);
+    if (!active) setShareProjectTarget(null);
   }, [active, client]);
 
   useEffect(() => {
@@ -406,6 +411,7 @@ export function WorkRail({
           setDeleteChatTarget(record);
         }}
         sharing={projectSharing}
+        onShareProject={(project) => setShareProjectTarget({ project, requestId: crypto.randomUUID() })}
       />
     );
   };
@@ -570,6 +576,16 @@ export function WorkRail({
           else onSelectChat(record);
         }}
       />
+      {shareProjectTarget && projectSharing && shareProjectTarget.project.id ? (
+        <DesktopProjectSharingHost
+          key={shareProjectTarget.requestId}
+          sharing={projectSharing}
+          projectId={shareProjectTarget.project.id}
+          projectName={shareProjectTarget.project.name || shareProjectTarget.project.slug}
+          startOnMount
+          onClose={() => setShareProjectTarget(null)}
+        />
+      ) : null}
     </nav>
   );
 }

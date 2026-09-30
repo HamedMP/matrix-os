@@ -497,8 +497,10 @@ function CreateProjectForm({ onClose, canShareAfterCreate, onCreatedProject }: {
 
 export default function CreateProjectDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   const organizationId = useConnection((state) => state.organizationId);
-  const sharing = useDesktopProjectSharingContext(open && organizationId !== null);
   const [shareTarget, setShareTarget] = useState<{ id: string; name: string; requestId: string } | null>(null);
+  const sharing = useDesktopProjectSharingContext(
+    organizationId !== null && (open || shareTarget !== null),
+  );
 
   const handleCreatedProject = useCallback((project: Project) => {
     if (!project.id) {
@@ -512,7 +514,7 @@ export default function CreateProjectDialog({ open, onClose }: { open: boolean; 
     <Dialog open={open} onClose={onClose} width={480} title="Create a project" placement="center">
       <CreateProjectForm
         onClose={onClose}
-        canShareAfterCreate={Boolean(sharing?.organizationId)}
+        canShareAfterCreate={Boolean(open && sharing?.organizationId)}
         onCreatedProject={handleCreatedProject}
       />
     </Dialog>
@@ -522,6 +524,7 @@ export default function CreateProjectDialog({ open, onClose }: { open: boolean; 
       projectId={shareTarget.id}
       projectName={shareTarget.name}
       startOnMount
+      onClose={() => setShareTarget(null)}
     /> : null}
   </>;
 }
