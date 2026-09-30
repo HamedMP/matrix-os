@@ -182,6 +182,7 @@ describe("unified CLI command tree", () => {
       expect(script).toContain("matrix completion paths");
       expect(script).toContain("upload");
       expect(script).toContain("download");
+      expect(script).toContain("chats");
     }
   });
 

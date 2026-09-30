@@ -7,7 +7,9 @@
     ".": "./src/index.ts",
     "./chat-subagent": "./src/chat-subagent.ts",
     "./collaboration": "./src/collaboration.ts",
-    "./collaboration-direct": "./src/collaboration-direct.ts"
+    "./collaboration-direct": "./src/collaboration-direct.ts",
+    "./codex-chat-import": "./src/codex-chat-import.ts",
+    "./codex-chat-import-client": "./src/codex-chat-import-client.ts"
   },
   "imports": {
     "#chat-subagent": "./src/chat-subagent.ts",

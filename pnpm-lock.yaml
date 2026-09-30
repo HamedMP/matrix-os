@@ -1072,6 +1072,9 @@ importers:
       '@matrix-os/contracts':
         specifier: workspace:*
         version: link:../contracts
+      '@noble/hashes':
+        specifier: 1.8.0
+        version: 1.8.0
       '@radix-ui/react-context-menu':
         specifier: ^2.2.16
         version: 2.2.16(@types/react-dom@19.2.3(@types/react@19.2.14))(@types/react@19.2.14)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
