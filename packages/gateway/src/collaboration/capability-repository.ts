@@ -366,9 +366,9 @@ export class CollaborationCapabilityRepository {
       }
       const changed = await apply(trx, grant, now);
       if (!changed) return;
-      await advanceScopeAuthEpoch(trx, scope, now);
+      const advancedScope = await advanceScopeAccessRevision(trx, scope, now);
       await appendMutationRecords(trx, {
-        scope,
+        scope: advancedScope,
         actorId: input.actorId,
         action: auditAction,
         recipients: [{ actorId: input.actorId }],
@@ -431,9 +431,9 @@ export class CollaborationCapabilityRepository {
           .returning("grant_id").execute();
         const count = revoked.length + deleted.length;
         if (count > 0) {
-          await advanceScopeAuthEpoch(trx, scope, now);
+          const advancedScope = await advanceScopeAccessRevision(trx, scope, now);
           await appendMutationRecords(trx, {
-            scope, actorId: input.actorId, action: "grant.ended_by_departure",
+            scope: advancedScope, actorId: input.actorId, action: "grant.ended_by_departure",
             recipients: [{ actorId: input.actorId }], discoveryState: "revoked", now, reasonCode: "membership_ended",
           });
         }
@@ -555,18 +555,21 @@ export class CollaborationCapabilityRepository {
   }
 }
 
-/** A changed decision invalidates authorization snapshots while the caller holds the scope lock. */
-async function advanceScopeAuthEpoch(
+/** A changed access decision advances discovery and authorization under the scope lock. */
+async function advanceScopeAccessRevision(
   trx: Transaction<OwnerCollaborationDatabase>,
   scope: ScopeRow,
   now: string,
-): Promise<void> {
+): Promise<ScopeRow> {
   const updated = await trx.updateTable("collaboration_scopes").set({
+    revision: sql<number>`revision + 1`,
     auth_epoch: sql<number>`auth_epoch + 1`,
     updated_at: now,
   }).where("id", "=", scope.id)
+    .where("revision", "=", Number(scope.revision))
     .where("auth_epoch", "=", Number(scope.auth_epoch))
-    .returning("auth_epoch")
+    .returning(["revision", "auth_epoch"])
     .executeTakeFirst();
   if (!updated) throw new CollaborationRepositoryError("conflict", "Scope authorization epoch changed");
+  return { ...scope, revision: updated.revision, auth_epoch: updated.auth_epoch, updated_at: now };
 }
