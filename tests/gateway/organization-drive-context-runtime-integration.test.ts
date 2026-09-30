@@ -14,8 +14,8 @@ import { DirectSessionService } from "../../packages/gateway/src/collaboration/d
 import { createDirectSessionRoutes } from "../../packages/gateway/src/collaboration/direct-routes.js";
 import { registerOrganizationDriveRoutes } from "../../packages/gateway/src/organization-drive/routes.js";
 import { createCollaborationTestDatabase, allowAllOrganizationPrecondition } from "./collaboration-test-support.js";
-const scopeId = "00000000-0000-4000-8000-000000000001";
-const fileId = "00000000-0000-4000-8000-000000000002";
+const scopeId = "00000000-0000-7000-8000-000000000001";
+const fileId = "00000000-0000-8000-8000-000000000002";
 const origin = "https://app.example";
 const organizationId = "org_example";
 const member = "user_member";
