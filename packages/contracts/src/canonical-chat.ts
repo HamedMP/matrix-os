@@ -1,4 +1,4 @@
-import { ImportedChatProvenancePartSchema, ImportedChatReferencePartSchema } from "./canonical-chat-import-parts.js";
+import { ImportedChatProvenancePartSchema, ImportedChatReferencePartSchema } from "#canonical-chat-import-parts";
 import { z } from "zod/v4";
 import { ChatSubagentSchema } from "#chat-subagent";
 import { ChatRunContextSchema, isChatAgentDriver } from "#chat-agent-context";

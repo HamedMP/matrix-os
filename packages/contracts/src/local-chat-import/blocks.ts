@@ -1,4 +1,4 @@
-import { object, string, type ImportBlock } from "./types.js";
+import { object, string, type ImportBlock } from "#local-chat-import/types";
 const TEXT_TYPES = new Set(["text", "Text", "input_text", "output_text"]);
 /** Explicit block traversal only: never interprets arbitrary strings as files or URLs. */
 export function importBlocks(value: unknown, depth = 0): ImportBlock[] {

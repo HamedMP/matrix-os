@@ -1,7 +1,7 @@
-import { CodexReconstruction } from "./codex.js";
-import { projectClaude } from "./claude.js";
-import { string, type ImportHarness, type ImportProjection, type ImportSource } from "./types.js";
-import type { LocalChatSourceEntry } from "./jsonl.js";
+import { CodexReconstruction } from "#local-chat-import/codex";
+import { projectClaude } from "#local-chat-import/claude";
+import { string, type ImportHarness, type ImportProjection, type ImportSource } from "#local-chat-import/types";
+import type { LocalChatSourceEntry } from "#local-chat-import/jsonl";
 /** Streaming source reconstruction; downstream durable staging applies fragment/mirror semantics. */
 export async function* reconstructLocalChat(harness: ImportHarness, records: AsyncIterable<LocalChatSourceEntry>): AsyncGenerator<ImportProjection> {
   if (harness !== "codex" && harness !== "claude") throw new Error("Unsupported import harness");

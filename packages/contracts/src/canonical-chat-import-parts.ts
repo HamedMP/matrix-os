@@ -1,5 +1,5 @@
 import { z } from "zod/v4";
-import { canonicalSafeLabel, canonicalReferenceId } from "./canonical-chat-primitives.js";
+import { canonicalSafeLabel, canonicalReferenceId } from "#canonical-chat-primitives";
 /** Historical source metadata is read-only; live user input cannot submit these parts. */
 export const ImportedChatProvenancePartSchema = z.object({
   type: z.literal("import_provenance"), harness: z.enum(["codex", "claude"]), sourceId: z.uuid(),
