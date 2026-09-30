@@ -7,6 +7,7 @@ import { z } from "zod/v4";
 import { LOCAL_CHAT_IMPORT_INVOKE, LOCAL_CHAT_IMPORT_EVENTS } from "./local-chat-import-ipc";
 import {
   AppGenerateEventSchema,
+  OrganizationDriveUploadFolderSchema,
   BuildSourceSchema,
   FileDownloadRequestSchema,
   FileDownloadResultSchema,
@@ -260,7 +261,7 @@ export const INVOKE_CHANNELS = {
   },
   "runtime:organization-drive-upload": {
     request: z.object({ scopeId: z.uuid(), organizationId: z.string().regex(/^org_[A-Za-z0-9_-]+$/),
-      folder: z.string().max(700), runtimeSlot: z.string().min(1).max(128),
+      folder: OrganizationDriveUploadFolderSchema, runtimeSlot: z.string().min(1).max(128),
       authGeneration: z.number().int().nonnegative() }).strict(),
     response: z.discriminatedUnion("status", [
       z.object({ status: z.literal("cancelled") }).strict(),

@@ -47,6 +47,7 @@ export default function FilesWorkspace() {
   const [tabs, setTabs] = useState<FileTab[]>([HOME_TAB]);
   const [activeTabId, setActiveTabId] = useState(HOME_TAB.id);
   const [driveOpened, setDriveOpened] = useState(false);
+  const [requestedDrive, setRequestedDrive] = useState<{scopeId: string; id: string | undefined}>();
   const [selections, setSelections] = useState<Record<string, FileSelection | null>>({});
   const [refreshes, setRefreshes] = useState<Record<string, number>>({});
   const [newFolderRequest, setNewFolderRequest] = useState<NewFolderRequest | null>(null);
@@ -67,6 +68,7 @@ export default function FilesWorkspace() {
     setTabs([HOME_TAB]);
     setActiveTabId(HOME_TAB.id);
     setDriveOpened(false);
+    setRequestedDrive(undefined);
     setNewFolderRequest(null);
     setNewFolderName("");
     setNewFolderError(null);
@@ -98,7 +100,9 @@ export default function FilesWorkspace() {
     if (!navigation) return;
     useFilesNavigation.getState().consume(navigation);
     if (navigation.runtimeSlot !== runtimeSlot || navigation.authGeneration !== authGeneration || !isCurrentRuntimeGeneration(navigation.generation)) return;
-    openFolderTab(navigation.path);
+    if (navigation.driveScopeId) {
+      setDriveOpened(true); setRequestedDrive({scopeId: navigation.driveScopeId, id: navigation.driveIntentId}); setActiveTabId(ORGANIZATION_DRIVES_TAB);
+    } else openFolderTab(navigation.path);
   }, [navigation, runtimeSlot, authGeneration, openFolderTab]);
 
   const closeTab = useCallback((tabId: string) => {
@@ -209,7 +213,7 @@ export default function FilesWorkspace() {
             );
           })}
           {driveOpened && <RetainedPane active={activeTabId === ORGANIZATION_DRIVES_TAB} visible={activeTabId === ORGANIZATION_DRIVES_TAB}>
-            <DesktopOrganizationDrivesView key={`${runtimeSlot}:${authGeneration}`} isActive={activeTabId === ORGANIZATION_DRIVES_TAB} />
+            <DesktopOrganizationDrivesView key={`${runtimeSlot}:${authGeneration}`} isActive={activeTabId === ORGANIZATION_DRIVES_TAB} requestedScopeId={requestedDrive?.scopeId} requestedIntentId={requestedDrive?.id} />
           </RetainedPane>}
         </div>
         {previewSelection ? (

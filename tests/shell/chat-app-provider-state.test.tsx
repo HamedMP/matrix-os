@@ -12,6 +12,7 @@ import { TERMINAL_AGENT_OPTIONS } from "../../shell/src/components/terminal/term
 vi.mock("@clerk/nextjs", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@clerk/nextjs")>()),
   useOrganization: () => ({ organization: null }),
+  useAuth: () => ({userId:null,sessionId:null}),
 }));
 
 function providerCatalog(available = true, secondModel = false) {
