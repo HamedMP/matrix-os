@@ -78,6 +78,10 @@ export const SpeechCapabilitiesResponseSchema = z.object({
       status: z.literal("ready"),
       maxInputChars: z.number().int().positive().max(SPEECH_MAX_SYNTHESIS_CHARS),
       format: z.literal("pcm_s16le_24000_mono"),
+      /** True only when the adapter exposes real incremental synthesis
+       * (`stream`); absent or false means completed-payload only — a ready
+       * synthesis that must never masquerade as streaming. */
+      streaming: z.boolean().optional(),
     }).strict(),
     z.object({
       status: z.literal("unavailable"),

@@ -1,43 +1,55 @@
 # Aoede requirement/evidence matrix
 
-Baseline: feat/aoede-rewrite 505b331ad, thirteen pre-existing modified files revalidated via git on 2026-09-30. Historical test counts are not current evidence. A = locally implemented; B = deterministically validated; C = release-qualified. Initial status below is intentionally unverified. Update only after source/diff/test/artifact review.
+Baseline: feat/aoede-rewrite 505b331ad plus the uncommitted Aoede implementation diff reviewed in this pass. Scope correction 2026-09-30: target surfaces are Web Canvas and browser Web Desktop only; Electron Desktop is deferred to a separate follow-up. The pre-existing shared `electron_desktop` voice-protocol value stays schema-valid for compatibility, but Aoede's bootstrap contract accepts only `web_canvas`/`web_desktop`; it is not a target, gate or claim. Historical test counts are not current evidence. A = locally implemented; B = deterministically validated; C = release-qualified.
+
+**Deterministic evidence recorded 2026-09-30.** Commands run from repo root, `node_modules/.bin/vitest run <files>` (vitest 4.0.18, Node v24.21.0, source aliases — no package build needed). All listed files passed unless marked otherwise:
+
+- `tests/gateway/aoede-bootstrap.test.ts` — 9/9 (owner-local PGlite, fake readiness)
+- `tests/gateway/chat-action-{contract,policy,repository,tools}.test.ts` — 16/16
+- `tests/gateway/chat-action-integration.test.ts` + `tests/gateway/coding-adapter-qualification.test.ts` — 7/7
+- `tests/gateway/codex-canonical-{config,launch,runner,tools}.test.ts` — 18/18
+- `tests/gateway/platform-speech-streaming.test.ts` + `tests/gateway/voice-session/managed-streaming.test.ts` + `tests/platform/speech-streaming-synthesis.test.ts` — 42/42
+- `tests/ui/aoede-{canonical-cards,controller,panel,projection}.test.ts(x)` + `tests/ui/voice-session-reliability.test.ts` — 100/100
+- `tests/shell/aoede-{desktop-icon,shell-host,shell-lib}.test.ts(x)` — 29/29
+
+Disposable real Postgres: throwaway Homebrew postgresql@18 instance (initdb `/tmp/aoede-pg-data`, port 55432), database `aoede_disposable_test` created for the run and the instance stopped/removed afterwards; `MATRIX_TEST_POSTGRES_URL` pointed only at that disposable DB. `tests/gateway/chat-voice-delivery-postgres.test.ts` 4/4 pass. **`tests/gateway/chat-action-postgres.test.ts` BLOCKED**: `beforeAll` fails on real PG with `invalid input syntax for type json` at line 25 — the fixture inserts a raw JS array into JSONB `chat_messages.parts` (PGlite tolerates it; the `pg` driver requires serialization). Fixture defect, not a product-code failure; the concurrent-claim/reconstruction assertions never executed. No .env read; no paid provider, full runtime, push/PR or deploy occurred. Focused totals: 221 unit/integration passes + 4 disposable-PG passes, 1 blocked PG suite.
 
 | Requirements | Implementation authority / intended evidence | A | B | C |
 | --- | --- | --- | --- | --- |
-| AO-01/02 | Shell root singleton, launcher/palette race and closed-Chat integration tests | pending | pending | unauthorized |
-| AO-03/04 | Owner-local bootstrap uniqueness, identity/scope/access/deletion/restart tests | pending | pending | unauthorized |
-| AO-05 | No mic on restore/open; explicit permission/start tests | pending | pending | unauthorized |
-| AO-06/07 | Shared canonical policy derivation at all admission and execution boundaries | pending | pending | unauthorized |
-| AO-08/09 | Version-pinned native/tool/config/plugin/delegation escape tests | pending | pending | unauthorized |
-| AO-10/11 | Modality-neutral exact approval and atomic operation/authorization dispatch | pending | pending | unauthorized |
-| AO-12/13 | Real disposable-PG concurrent claim/crash-after-effect/reconciliation/delegated policy | pending | pending | unauthorized |
-| AO-14/15 | Independent controls and canonical approval/input/activity/task/artifact projections | pending | pending | unauthorized |
-| AO-16/17/18 | Ordered typed/spoken finals, durable delivery and asymmetric interrupted context | baseline exists; revalidate | pending | unauthorized |
-| AO-19 | Unsupported session-only across every provider until fully enforceable | pending | pending | unauthorized |
-| AO-20/21 | Managed STT/TTS funding spine exists; streaming/cadence implementation required | partial baseline | pending | unauthorized |
-| AO-22/23/24 | Cleanup retry/rate exhaustion, loss playback stop, device/permission/resume/stale epoch | partial baseline | pending | unauthorized |
-| AO-25 | Persistent Origin/speech create/update plus narrow packaged Origin/CSP policy | partial baseline | pending | unauthorized |
-| AO-26/27/28/29 | Standalone shared UI controls + three-host inspected states and accessibility | pending | pending | unauthorized |
-| AO-30 | Electron nonmodal/non-overlapping native-view strategy with fixture geometry evidence | pending | pending | unauthorized |
-| AO-31 | Legacy data read/write audit, no import/delete | pending | pending | unauthorized |
-| AO-32 | Remove env-selected simulator admission bypass; assert both fake execution boundaries | pending | pending | unauthorized |
-| AO-33 | Disposable real PG concurrency/recovery, no PGlite crash claims | pending | pending | unauthorized |
-| AO-34 | This matrix and revised specification/checklist | implemented document | self-review pending | unauthorized |
+| AO-01/02 | `shell/src/components/ShellAoedeHost.tsx` (shell-root singleton, `app:__aoede__` palette command + launcher icon converge on `controller.focus()`), `shell/src/lib/aoede-shell.ts` (`AoedeShellSurface = "web_canvas" \| "web_desktop"` only), Desktop/ShellHome wiring, `__aoede__` retired window path. Shell suites 29/29 pass incl. racing launcher-tile/icon/palette convergence and one bootstrap flight; no ChatApp ownership | implemented | validated (focused, injected seams) | unauthorized |
+| AO-03/04 | `packages/gateway/src/aoede/` (binding PK owner+runtime+project scope, `ON CONFLICT … FOR UPDATE` lock, semantic-hash request dedupe, tombstoned history, structured unavailable); `packages/contracts/src/aoede.ts`. Controller fences by generation/remount identity | implemented | validated (9/9 PGlite); real-PG bootstrap races not yet gated | unauthorized |
+| AO-05 | Open/focus never starts media (`ShellAoedeHost` reveal-only; `controller.start()` requires explicit gesture + permission state); asserted in shell-host and controller suites | implemented | validated (focused) | unauthorized |
+| AO-06/07 | `chat/action-policy.ts` + `qualifiedPolicy` plumbed through `provider-catalog.ts` selection and `bootstrap-service.ts` capability intersection (speech∩harness∩tools∩surface∩readiness) | implemented | validated (policy/contract suites) | unauthorized |
+| AO-08/09 | `action-authority.ts` fail-closed modes; `codex-qualified-config.mjs` pinned `CODEX_CONSTRAINED_CONFIG` (shell/plugins/MCP/web/multi-agent/memories off, `tools.update_plan.enabled:false`) + config-layer assertion; dynamic canonical tools only | implemented | validated (codex-canonical-* 18/18 incl. fake-child launch denial of native approval/MCP/plugin/delegation) | unauthorized |
+| AO-10/11 | `action-repository.ts` revision/state write-predicate consume; argument digest binding; approval→claim→dispatch sequence in `action-authority.ts`; typed and spoken approval equality proven in `chat-action-integration.test.ts` (2/2) | implemented | validated (PGlite + integration) | unauthorized |
+| AO-12/13 | Operation lifecycle persisted before dispatch; `outcome_unknown` never redispatches (repository suite covers crash-after-effect/ambiguous timeout). `executionPolicy.delegation` is fail-closed today — propagation to delegated callers is NOT implemented; provider subagent activity is not advertised as a task service | implemented (delegation fail-closed; propagation gap) | partially validated — real-PG concurrent-claim gate blocked (AO-33) | unauthorized |
+| AO-14/15 | Controller exposes distinct `dismiss`/`end`/`stopSpeaking`/`cancelGeneration`/cancel-action paths; `AoedeCanonicalCards`/`projection.ts` render approvals/input/progress/artifacts from canonical detail only | implemented | validated (ui aoede-* 100/100 incl. cancel granularity tests) | unauthorized |
+| AO-16/17/18 | Baseline admission/delivery retained and extended: reliability suite covers lost response/stale epoch fencing, transport-loss playback stop; `chat-voice-delivery-postgres` proves ack-convergence/terminal-write races/epoch adoption/unknown-recovery on real PG | baseline retained + extended | validated (15/15 + managed-streaming 8/8 + 4/4 real PG); asymmetric interrupted-history coverage partial | unauthorized |
+| AO-19 | `sessionOnly` forced `"unsupported"` in `bootstrap-service.ts` capability projection; asserted in bootstrap suite | implemented | validated | unauthorized |
+| AO-20/21 | `packages/platform/src/speech/streaming-synthesis.ts` + `contracts/speech-stream.ts` NDJSON bounded frames under existing funding admission/claim/settlement; gateway `managed-streaming` ports consume incrementally; provisional polling honestly reported unavailable/unqualified, no fabricated partials | implemented | validated (42/42 with fake adapters) | unauthorized |
+| AO-22/23/24 | Voice-session client reliability: bounded failed-DELETE registry with parked retry + 60s rate window, transport-loss stops queued playback, AudioContext resume rejection surfaced, generation-fenced late grants, strict reconnect/epoch tests retained | implemented | validated (voice-session-reliability 15/15); device-loss and permission-timeout paths partially covered | unauthorized |
+| AO-25 | Baseline parity Origin/speech persistence changes retained (research ledger); no Origin:null global trust or CSP weakening added — Electron packaged-app policy no longer applies to this delivery | baseline retained | pending re-validation on affected files | unauthorized |
+| AO-26/27/28/29 | `packages/ui/src/aoede` panel/presentation/cards: literal status labels, bounded captions, mic/scope display, PTT/pause/stop/end/cancel/approval/input/result controls, Escape dismiss + focus return; token-mapped theme | implemented | partially validated — rendered-state unit tests pass; inspected screenshots and manual keyboard/screen-reader/contrast/zoom pass on both surfaces outstanding | unauthorized |
+| AO-30 | **Deferred** — Electron Desktop host (nonmodal/native-view geometry, no modal lease) removed from this delivery; belongs to the Electron follow-up spec with its own evidence | n/a | n/a | deferred |
+| AO-31 | Read-only audit stands: no live vocal-profile read/write path found; no import/delete implemented | implemented (non-destructive) | validated (code search; no new paths added) | unauthorized |
+| AO-32 | `MATRIX_VOICE_SIMULATOR` tool-eligibility bypass removed from `provider-catalog.ts` (diff-verified; simulator remains only as explicit fake speech adapter in `adapter-registration.ts`); UI/shell fixtures inject fake `api`/`voiceFactory` seams | implemented | partially validated — a single composed fake-speech + fake-canonical-model end-to-end fixture is not yet evidenced | unauthorized |
+| AO-33 | `test:voice:postgres`-style disposable gating proven for delivery races (4/4 on disposable PG 18); **canonical action claim suite blocked** by its own fixture JSONB serialization defect (above) — process-crash evidence still not claimed | partial | blocked (fixture defect) | unauthorized |
+| AO-34 | This matrix, spec.md, plan.md, checklist and contract updates for the scope correction | implemented | self-review this pass | unauthorized |
 
 ## Provider/tool qualification (must freeze before action advertisement)
 
 | Harness / tool | Installed/deployed version evidence | Enforced mode / inventory | Approval / reconciliation | Cancellation | Evidence |
 | --- | --- | --- | --- | --- | --- |
-| Codex | pending version-matched schema/source research | pending, no simulator eligibility bypass | native approval ID is insufficient | whole-run baseline; qualify tool separately | pending |
+| Codex | Pinned `rust-v0.156.1` = commit `b412ff32c417f855c2b2d1581b77058eed87c84b` (`CODEX_CONSTRAINED_VERSION`/`SOURCE`); local `codex --version` 0.144.5 — no version parity claimed | `codex-qualified-config.mjs` freezes native features off; empty `environments`; canonical dynamic tools only; no simulator eligibility bypass (removed) | Native approval IDs not trusted; consequential effects go through canonical `matrix_*` approval | Whole-run baseline; tool-level cancel not claimed | codex-canonical-{config,tools,launch,runner} 18/18 pass |
 | Hermes | pending | declarations conservative; native subagent events not universal tasks | pending | pending | pending |
 | Pi / OpenCode | pending | supervised/read-only is not by itself bounded safe_reads | no consequential approvals claimed | baseline run-level; revalidate | pending |
 | Kernel | pending | no universal action eligibility claim | pending | pending | pending |
-| Canonical Matrix tools | exact inventory to freeze | each tool individually qualified | operation identity/exact digest/reconcile required | tool-specific | pending |
+| Canonical Matrix tools | Inventory frozen in `action-tools.ts`: `matrix_list_apps`, `matrix_inspect_app`, `matrix_search_workspace`, `matrix_open_app`, `matrix_apply_app_files` @ `canonical_apps_v1` | Each tool individually qualified; `files` effect requires approval + reconciliation + app-scope match | Operation identity + normalized-argument digest + reconcile implemented | `before_dispatch` only; running/non-cancellable stays truthful | chat-action-{contract,policy,repository,tools} 16/16; integration 2/2 |
 
 ## Verification and artifacts
 
-No current-pass test, build or visual success claimed yet. Read-only discovery confirmed managed platform synthesis exists but buffers the complete PCM payload. Reconnect/parity baseline diffs have been inspected and will be retained/superseded. No .env read or paid provider/full-runtime call performed.
+Recorded this pass: the focused vitest runs and the disposable-PG run listed above (exact commands, file counts and the blocked suite). Outstanding before any broader completion claim: affected-package `tsc --noEmit`, `bun run check:patterns`, `git diff --check`, React Doctor on `packages/ui` + `shell`, `bun run build:shell:production`, inspected Web Canvas/Web Desktop screenshots and accessibility pass, composed fake-speech+fake-model end-to-end fixture, real-PG canonical-action gate (fix the fixture JSONB insert first), and at most one broader suite. No .env read or paid provider/full-runtime call performed. No screenshot artifacts captured this pass.
 
 ## Separately authorized qualification gates
 
-Real managed speech → actual Codex → managed speech; real devices; packaged Electron; parity provisioning/restart; provider account/retention/funding review; measured latency/interruption; accessibility/usability. No C claim until these pass. Public docs PR/release review is also not authorized.
+Real managed speech → actual Codex → managed speech; real devices; production parity provisioning/restart; provider account/retention/funding review; measured latency/interruption; accessibility/usability. No C claim until these pass. Public docs PR/release review is also not authorized. **Electron Desktop (host, packaged app, Origin/CSP policy, fixtures, icon/palette fencing) is deferred to a separate follow-up and is not a gate, requirement or claim of this delivery.**

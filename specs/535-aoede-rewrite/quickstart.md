@@ -6,7 +6,7 @@ Do not start the full runtime or invoke paid providers without separate authoriz
 
 Use the existing bun/pnpm scripts after verifying their actual composition. Before running any composed fixture, assert that BOTH speech and canonical model/action adapters are fake. MATRIX_VOICE_SIMULATOR=1 alone is not a no-paid-call guarantee and grants no native action eligibility.
 
-Presentation fixture scenarios: idle/permission, listening, thinking, tool/task, speaking, approval, clarification, progress/result, reconnect, failure. Run shared presentation through Web Canvas, Web Desktop and Electron fixture hosts with Chat closed. Record actual commands and artifact paths in requirement-evidence.md; do not treat this fixture as packaged-Electron or real-device evidence.
+Presentation fixture scenarios: idle/permission, listening, thinking, tool/task, speaking, approval, clarification, progress/result, reconnect, failure. Run shared presentation through Web Canvas and Web Desktop fixture hosts with Chat closed; the Electron fixture host is deferred with the Electron Desktop follow-up. Record actual commands and artifact paths in requirement-evidence.md; browser fixtures are not real-device evidence.
 
 ## Focused verification
 
@@ -18,7 +18,7 @@ bun run test:voice:postgres must provision a disposable local isolated database 
 
 ## Optional qualification, not authorized now
 
-Provider conformance may clearly skip absent explicit credentials/authorization. Real managed STT → actual Codex → managed TTS, mic/speaker, packaged Electron, production parity creation/update/restart, account retention/funding, measured latency/interruption and usability are separate gates. Preview-no-charge bypasses Matrix ledger debit, not upstream provider billing.
+Provider conformance may clearly skip absent explicit credentials/authorization. Real managed STT → actual Codex → managed TTS, mic/speaker, production parity creation/update/restart, account retention/funding, measured latency/interruption and usability are separate gates. Packaged-Electron qualification is deferred to the Electron follow-up, not this delivery. Preview-no-charge bypasses Matrix ledger debit, not upstream provider billing.
 
 ## Delivery
 

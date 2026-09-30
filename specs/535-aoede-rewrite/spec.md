@@ -2,6 +2,7 @@
 
 **Branch:** feat/aoede-rewrite
 **Product correction:** 2026-09-30. This specification supersedes the former active-Chat voice-mode direction. Local implementation and deterministic validation are authorized; release qualification is not.
+**Scope correction:** 2026-09-30. Target surfaces for this delivery are Web Canvas and browser Web Desktop only. Electron Desktop is explicitly out of scope and deferred to a separate follow-up; the `electron_desktop` protocol enum value predates this work and remains for backward compatibility only.
 
 ## Product and ownership
 
@@ -13,7 +14,7 @@ Presentation and media lifecycle are independent of Chat UI. Canonical Matrix Ch
 
 ### 1. Launch without Chat
 
-From Web Canvas, Web Desktop or Electron Desktop, the icon and palette open one assistant with literal Idle status, microphone off, scope and readiness. Racing launches create at most one backing conversation and no media stream. Launch/focus/restore never requests microphone permission. Start requires an explicit gesture and permission rationale. Switching or closing Chat neither retargets nor ends Aoede. Focus returns to the invoking workspace control, not a Chat composer.
+From Web Canvas or browser Web Desktop, the icon and palette open one assistant with literal Idle status, microphone off, scope and readiness. Racing launches create at most one backing conversation and no media stream. Launch/focus/restore never requests microphone permission. Start requires an explicit gesture and permission rationale. Switching or closing Chat neither retargets nor ends Aoede. Focus returns to the invoking workspace control, not a Chat composer.
 
 ### 2. Continue or start fresh
 
@@ -59,12 +60,12 @@ Lost responses reconcile stable creation/request identity. Reconnect rotates tic
 | AO-22 | Cleanup bypasses ordinary admission exhaustion, failed DELETE stays bounded/retryable, transport loss immediately stops queued playback, AudioContext resume rejection is observed. |
 | AO-23 | Permission/device loss releases media and offers recovery; late create/reconnect/device work is identity-fenced. |
 | AO-24 | Strict reconnect schema, accepted resumed epoch, structured SafeVoiceError and one-time ticket rotation are enforced. |
-| AO-25 | Browser Origins and speech enablement persist on parity creation/update; Electron qualification does not globally trust Origin:null or weaken CSP/privileges. |
+| AO-25 | Browser Origins and speech enablement persist on parity creation/update; no qualification may globally trust Origin:null or weaken CSP/privileges. |
 | AO-26 | Shared compact presentation has ambient visual plus accessible literal Listening/Thinking/Using tool/Speaking/Paused/Reconnecting/Failed/Ended labels, mic state and scope. |
 | AO-27 | Captions are bounded current/provisional utterance/response; no Chat list/composer. Clarification-only fields are bounded. |
 | AO-28 | PTT, pause/resume, Stop speaking, End, qualified cancellation, approval/input/result controls and progressive device/settings are available. |
-| AO-29 | Keyboard/focus/screen-reader/reduced-motion/high-contrast/zoom work on all three surfaces. |
-| AO-30 | Electron host is nonmodal/non-overlapping and does not hold a modal lease that detaches native views. |
+| AO-29 | Keyboard/focus/screen-reader/reduced-motion/high-contrast/zoom work on both browser surfaces (Web Canvas and Web Desktop). |
+| AO-30 | Deferred — Electron Desktop host (nonmodal/non-overlapping, no modal lease detaching native views) is out of scope for this delivery and tracked as a separate follow-up. |
 | AO-31 | Legacy vocal-profile data is audited non-destructively; no silent import/delete or second transcript/memory store. |
 | AO-32 | Deterministic fixtures fake both speech and canonical model/action boundaries; environment-selected simulator eligibility bypass is forbidden. |
 | AO-33 | Disposable real Postgres proves locking/concurrency/recovery claims; PGlite is not process-crash evidence. |
@@ -78,10 +79,10 @@ Existing principal/auth/owner-controlled PostgreSQL boundaries apply. Bootstrap 
 
 A: implemented locally. B: deterministically validated with exact evidence and omissions. C: product/release qualified. All unblocked A/B requirements must be implemented; disabled actions or fixture-only behavior do not constitute completion.
 
-Deterministic acceptance includes closed-Chat singleton racing launches; same typed/spoken orchestrator; native/delegated/queue/retry/steer escape attempts; approval mutation; duplicate/concurrent dispatch; crash-after-effect-before-result; no effect replay on reconnect; outcome_unknown; cancellation races; delegated policy; interrupted asymmetric context; cleanup exhaustion/retry; media/device failures; lost response/stale epochs; rendered permission/listening/thinking/tool/speaking/approval/input/progress/reconnect/failure on all three fixture surfaces.
+Deterministic acceptance includes closed-Chat singleton racing launches; same typed/spoken orchestrator; native/delegated/queue/retry/steer escape attempts; approval mutation; duplicate/concurrent dispatch; crash-after-effect-before-result; no effect replay on reconnect; outcome_unknown; cancellation races; delegated policy; interrupted asymmetric context; cleanup exhaustion/retry; media/device failures; lost response/stale epochs; rendered permission/listening/thinking/tool/speaking/approval/input/progress/reconnect/failure on both browser fixture surfaces.
 
-C requires separate authorization/evidence for managed STT → actual Codex → managed TTS, real mic/speaker, packaged Electron, production parity provision/restart, provider account/retention/funding review, measured latency/interruption and accessibility/usability. No push/PR/merge/deploy/full runtime/paid provider is authorized. Public docs in FinnaAI/matrix-os-site are a later separately authorized release deliverable.
+C requires separate authorization/evidence for managed STT → actual Codex → managed TTS, real mic/speaker, production parity provision/restart, provider account/retention/funding review, measured latency/interruption and accessibility/usability. Electron Desktop packaging/host qualification is not part of A, B or C for this delivery; it is deferred to a separate follow-up requiring its own authorization and evidence. No push/PR/merge/deploy/full runtime/paid provider is authorized. Public docs in FinnaAI/matrix-os-site are a later separately authorized release deliverable.
 
 ## Non-goals
 
-Wake words/background listening/menu-bar app/OS-global shortcuts, unrestricted shell/desktop control, provider-owned reasoning, Aoede tools/queues/approval/memory stores, telephony, onboarding rewrite, voice cloning, emotion inference, audio recording and Native Mobile implementation.
+Wake words/background listening/menu-bar app/OS-global shortcuts, unrestricted shell/desktop control, provider-owned reasoning, Aoede tools/queues/approval/memory stores, telephony, onboarding rewrite, voice cloning, emotion inference, audio recording, Electron Desktop host/packaging (deferred to a separate follow-up) and Native Mobile implementation.

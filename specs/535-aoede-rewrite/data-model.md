@@ -1,6 +1,6 @@
 # Aoede ownership and data model
 
-The 2026-09-30 standalone correction supersedes active-Chat mounting, not canonical backend ownership.
+The 2026-09-30 standalone correction supersedes active-Chat mounting, not canonical backend ownership. Target surfaces are Web Canvas and browser Web Desktop; the Electron Desktop host is deferred to a separate follow-up, so no Electron surface state is modeled here.
 
 ## Assistant binding
 

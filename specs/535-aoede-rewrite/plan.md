@@ -1,6 +1,6 @@
 # Implementation plan: standalone Aoede
 
-**Branch:** feat/aoede-rewrite. **Authority:** owner correction 2026-09-30 and spec.md. This replaces the former Chat-mounted delivery plan. No full runtime, paid calls, shared infrastructure/database mutations or publishing are authorized.
+**Branch:** feat/aoede-rewrite. **Authority:** owner correction 2026-09-30 and spec.md. This replaces the former Chat-mounted delivery plan. No full runtime, paid calls, shared infrastructure/database mutations or publishing are authorized. **Scope:** Web Canvas and browser Web Desktop only; Electron Desktop is deferred to a separate follow-up and has no worker, fixture surface, gate or completion claim in this plan.
 
 ## Architecture
 
@@ -30,9 +30,9 @@ Compact independent assistant, not a window full of Chat. A restrained interfere
    - G: Gateway assistant bootstrap/voice integration/canonical projection, own tests; no action/task/approval authority. Server composition remains lead-integrated.
 5. **Wave 3 after G/controller stabilizes:**
    - H: Web Canvas/Desktop shell hosts, built-in identity/icon/palette/launch dispatch and own tests. Remove Chat-mounted session ownership.
-   - I: Electron nonmodal/native-view-safe host, icon/palette/runtime fencing and own tests. No modal overlay lease for persistent assistant.
-6. **Review/integration (lead):** inspect each full returned diff, batch findings, scoped Conventional Commits. Workers never stage/commit/push or broaden exact assigned paths. Preserve baseline reconnect/Origin/speech changes and remove environment-selected simulator admission bypass.
-7. **Verification:** focused tests during implementation, then affected package typechecks, pattern/anti-slop, React Doctor, production shell build, disposable-PG gate, composed fake-speech+fake-model/action path and inspected three-surface screenshots/accessibility. Record failure/skip/artifact paths in evidence matrix. At most one final broader suite after focused work.
+   - (Former worker I — Electron nonmodal/native-view-safe host — removed: Electron Desktop is deferred to a separate follow-up with its own plan and evidence. No Electron worker, fixture surface or icon/palette/runtime fencing work is assigned in this plan.)
+6. **Review/integration (lead):** inspect each full returned diff, batch findings, scoped Conventional Commits. Workers never stage/commit/push or broaden exact assigned paths. Preserve baseline reconnect/Origin/speech changes; the environment-selected simulator admission bypass is removed (diff-verified; see requirement-evidence.md).
+7. **Verification:** focused tests during implementation, then affected package typechecks, pattern/anti-slop, React Doctor, production shell build, disposable-PG gate, composed fake-speech+fake-model/action path and inspected Web Canvas and Web Desktop screenshots/accessibility. Record failure/skip/artifact paths in evidence matrix. At most one final broader suite after focused work.
 
 ## Test design
 
@@ -42,8 +42,8 @@ Real disposable Postgres is required for concurrency/recovery evidence; fake-pro
 
 ## Security/resources and lifecycle
 
-Existing authenticated Gateway principal and owner-local canonical DB remain authoritative. Every mutation has bodyLimit/Zod/timeout/auth. New binding uses unique scope and transactional ON CONFLICT resolution, no network calls under DB locks. Ephemeral session maps/queues/subscriptions/captions have bounds, TTL/eviction and shutdown drain. Cleanup has separate bounded admission from ordinary session creation. Runtime changes stop media before attaching a new identity. Electron retains exact trusted Origin/CSP, no globally trusted null origin.
+Existing authenticated Gateway principal and owner-local canonical DB remain authoritative. Every mutation has bodyLimit/Zod/timeout/auth. New binding uses unique scope and transactional ON CONFLICT resolution, no network calls under DB locks. Ephemeral session maps/queues/subscriptions/captions have bounds, TTL/eviction and shutdown drain. Cleanup has separate bounded admission from ordinary session creation. Runtime changes stop media before attaching a new identity.
 
 ## Qualification gates, not authorized here
 
-Real managed STT → actual Codex → managed TTS; real mic/speaker; packaged Electron; production parity provisioning/restart; provider account/retention/funding validation; measured latency/interruption; accessibility/usability cohort; public docs PR in FinnaAI/matrix-os-site and release PR/review. A/B local implementation is tracked separately from C release qualification. No 'finished' claim with disabled product actions or missing requirements.
+Real managed STT → actual Codex → managed TTS; real mic/speaker; production parity provisioning/restart; provider account/retention/funding validation; measured latency/interruption; accessibility/usability cohort; public docs PR in FinnaAI/matrix-os-site and release PR/review. Electron Desktop host/packaged-app qualification is deferred to the separate follow-up, not a gate of this plan. A/B local implementation is tracked separately from C release qualification. No 'finished' claim with disabled product actions or missing requirements.

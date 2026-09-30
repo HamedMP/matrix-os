@@ -4,9 +4,11 @@
 
 Aoede is standalone presentation over canonical Matrix Chat, not active-Chat voice mode. The former claim that standalone presentation necessarily duplicates transcript/actions was incorrect: presentation, entry point and media ownership can be independent while canonical execution remains shared. Chat visibility is not required. A shell-owned singleton and explicit backing-conversation bootstrap are required.
 
+Scope correction (same date): target surfaces for this delivery are Web Canvas and browser Web Desktop. Electron Desktop is deferred to a separate follow-up; the `electron_desktop` protocol enum value predates this work and remains for backward compatibility only. No Electron host, packaged-app qualification or Electron fixture surface is claimed anywhere below.
+
 ## Revalidated local baseline
 
-Read-only git discovery confirms feat/aoede-rewrite at 505b331ad and thirteen modified baseline files listed by the owner. Preserve reconnect strict-response/accepted-resumed epoch and persistent parity Origin/speech changes. The baseline provider-catalog helper currently permits tool-capable Codex based on MATRIX_VOICE_SIMULATOR; this is an unsafe qualification shortcut and must be replaced by server-owned actual execution policy. Simulator speech does not imply fake model/actions.
+Read-only git discovery confirms feat/aoede-rewrite at 505b331ad and thirteen modified baseline files listed by the owner. Preserve reconnect strict-response/accepted-resumed epoch and persistent parity Origin/speech changes. The baseline provider-catalog helper previously permitted tool-capable Codex based on MATRIX_VOICE_SIMULATOR; that eligibility bypass has been removed from `packages/gateway/src/chat/provider-catalog.ts`, which now takes a server-owned `qualifiedPolicy` instead (diff-verified this pass; the stale dist build output is not authority). `MATRIX_VOICE_SIMULATOR` remains only as the explicit fake speech-adapter selection in `voice-session/adapter-registration.ts`; simulator speech does not imply fake model/actions.
 
 ## Existing canonical authority
 
@@ -24,7 +26,7 @@ Version-matched Codex source/schema, official docs and issue/maintainer evidence
 
 ## Deterministic and live evidence boundaries
 
-Fake-speech + fake-canonical-model/action composition may validate local control flow, no-paid-call invariants and presentation. PGlite is not Postgres process-crash evidence. Disposable real Postgres is required for operation claim/recovery/races. Real managed speech, actual Codex, real devices, packaged Electron, production parity and performance/usability are NOT authorized in this pass. No prior green test counts are carried forward as current evidence.
+Fake-speech + fake-canonical-model/action composition may validate local control flow, no-paid-call invariants and presentation. PGlite is not Postgres process-crash evidence. Disposable real Postgres is required for operation claim/recovery/races. Real managed speech, actual Codex, real devices, production parity and performance/usability are NOT authorized in this pass; Electron Desktop qualification is deferred to the separate follow-up entirely. No prior green test counts are carried forward as current evidence.
 
 ## Primary source entry points
 

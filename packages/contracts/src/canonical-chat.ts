@@ -164,6 +164,13 @@ export const CanonicalChatRunPolicySchema = z.object({
   providerRetentionClass: z.enum(["verified_ephemeral", "standard"]).optional(),
   deliveryContextRevision: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).optional(),
   actionCapabilityRevision: canonicalReferenceId(160).optional(),
+  executionPolicy: z.object({
+    revision: canonicalReferenceId(160),
+    actionMode: z.enum(["conversation_only", "safe_reads", "canonical_actions"]),
+    workspaceScope: z.string().min(1).max(160),
+    tools: z.array(canonicalReferenceId(80)).max(32).refine((tools) => new Set(tools).size === tools.length, "Duplicate action tool"),
+    delegation: z.boolean(),
+  }).strict().optional(),
 }).strict().superRefine((policy, ctx) => {
   if (policy.memoryTools && new Set(policy.memoryTools).size !== policy.memoryTools.length) {
     ctx.addIssue({ code: "custom", path: ["memoryTools"], message: "Duplicate memory tool capability" });
