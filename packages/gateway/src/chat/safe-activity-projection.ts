@@ -15,23 +15,47 @@ function redactAbsolutePath(match: string, prefix: string): string {
 export function redactAssistantPaths(value: string): string {
   return value.replace(ABSOLUTE_PATH, redactAbsolutePath);
 }
-/** Redact a complete assistant text run before splitting it back into parts. */
+/** Join only text parts crossed by one path; preserve independent block boundaries. */
 export function redactAssistantParts(parts: CanonicalChatMessagePart[]): CanonicalChatMessagePart[] {
   const projected: CanonicalChatMessagePart[] = [];
-  let text = "";
-  const flush = () => {
-    if (!text) return;
-    const safe = redactAssistantPaths(text);
+  let textRun: Extract<CanonicalChatMessagePart, { type: "text" }>[] = [];
+  const pushText = (safe: string) => {
     for (let offset = 0; offset < safe.length;) {
       let end = Math.min(offset + 32_000, safe.length);
       if (end < safe.length && /[\uD800-\uDBFF]/u.test(safe[end - 1]!)) end -= 1;
       projected.push({ type: "text", text: safe.slice(offset, end) });
       offset = end;
     }
-    text = "";
+  };
+  const flush = () => {
+    if (!textRun.length) return;
+    const joined = textRun.map((part) => part.text).join("");
+    const boundaries: number[] = [];
+    let offset = 0;
+    for (const part of textRun.slice(0, -1)) {
+      offset += part.text.length;
+      boundaries.push(offset);
+    }
+    const mergeAfter = boundaries.map(() => false);
+    for (const match of joined.matchAll(ABSOLUTE_PATH)) {
+      const start = match.index + match[1]!.length;
+      const end = match.index + match[0].length;
+      boundaries.forEach((boundary, index) => {
+        if (start < boundary && boundary < end) mergeAfter[index] = true;
+      });
+    }
+    let group = "";
+    textRun.forEach((part, index) => {
+      group += part.text;
+      if (!mergeAfter[index]) {
+        pushText(redactAssistantPaths(group));
+        group = "";
+      }
+    });
+    textRun = [];
   };
   for (const part of parts) {
-    if (part.type === "text") text += part.text;
+    if (part.type === "text") textRun.push(part);
     else { flush(); projected.push(part); }
   }
   flush();

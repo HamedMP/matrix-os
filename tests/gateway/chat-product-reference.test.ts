@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { createAssistantTextStreamProjector, safePublishedText, sanitizeAssistantText } from "../../packages/gateway/src/chat/safe-activity-projection";
+import { createAssistantTextStreamProjector, redactAssistantParts, safePublishedText, sanitizeAssistantText } from "../../packages/gateway/src/chat/safe-activity-projection";
 
 it("preserves exact public Matrix collection routes in an explanation across every split", () => {
   const input = "The `/api/integrations` layer and `/api/apps` catalog are available.";
@@ -41,4 +41,13 @@ it("shows complete paths in a private Chat while keeping credentials hidden", ()
   expect(sanitizeAssistantText("Bearer private-token", options)).toBe("Bearer [redacted]");
   expect(sanitizeAssistantText("ACCESS_TOKEN=private-token", options)).toBe("[redacted credential]");
   expect(sanitizeAssistantText("Open /api/apps?token=private-token", options)).toBe("Open [redacted path]");
+});
+
+it("keeps unrelated assistant text blocks separate when projecting a shared history", () => {
+  const parts = [{ type: "text" as const, text: "First paragraph." },
+    { type: "text" as const, text: "Second paragraph." }];
+  expect(redactAssistantParts(parts)).toEqual(parts);
+  expect(redactAssistantParts([{ type: "text" as const, text: "Open /home/ma" },
+    { type: "text" as const, text: "trix/home/private/report.txt" }]))
+    .toEqual([{ type: "text", text: "Open [redacted path]" }]);
 });
