@@ -18,6 +18,7 @@ import { bootstrapSlackCompanyDatabase, type SlackCompanyDatabase } from "../sla
 import { SlackCompanyService } from "../slack/company-service.js";
 import { createSlackThreadResolver } from "../slack/thread-resolver.js";
 import { createSlackCanonicalReaders } from "../slack/canonical-readers.js";
+import { SlackCompanyError } from "../slack/schemas.js";
 import type { createSlackOwnerClient } from "./slack-owner-client.js";
 
 export function createCompanyBotSetup(options:{homePath:string;ownerId:string;repository:ChatRepository;collaboration:GatewayCollaborationRuntime;
@@ -75,8 +76,15 @@ export async function startSlackCompany(options:{ownerId:string;repository:ChatR
       if(accepted)return;
       const context=await collaboration.authority.authorize({scopeId:input.scopeId,actorId:input.ownerId,action:"request_ai"});
       const read=await collaboration.authority.authorize({scopeId:input.scopeId,actorId:input.ownerId,action:"read"});
-      await execution.submit(context,{clientRequestId:input.clientRequestId,expectedRevision:await execution.resourceRevision(read),
-        text:"Initialize this company thread. Wait for employee requests. Use only supplied shared evidence. Do not consult private context."});
+      try {
+        await execution.submit(context,{clientRequestId:input.clientRequestId,expectedRevision:await execution.resourceRevision(read),
+          text:"Initialize this company thread. Wait for employee requests. Use only supplied shared evidence. Do not consult private context."});
+      } catch(error:unknown) {
+        // Another initializer may have won this revision. Retain the employee receipt;
+        // its next attempt rechecks the binding and reconciles the exact initializer.
+        if(error instanceof Error && "code" in error && error.code==="conflict") throw new SlackCompanyError("unavailable");
+        throw error;
+      }
     },
   });
   const service=new SlackCompanyService({db:slackDb,ownerId:options.ownerId,authority:collaboration.authority,execution,resolveThread,...readers,

@@ -38,6 +38,8 @@ export class SlackCompanyRepository {
   async claim() {
     return this.db.transaction().execute(async (trx) => {
       const now = this.now();
+      await trx.updateTable("slack_company_inbox").set({state:"failed",lease:null,lease_until:null,updated_at:now})
+        .where("owner_id","=",this.ownerId).where("state","=","processing").where("attempts",">=",8).where("lease_until","<",now).execute();
       const row = await trx.selectFrom("slack_company_inbox").selectAll().where("owner_id", "=", this.ownerId).where("attempts", "<", 8)
         .where((eb) => eb.or([eb.and([eb("state", "=", "pending"),eb.or([eb("lease_until", "is", null),eb("lease_until", "<=", now)])]), eb.and([eb("state", "=", "processing"), eb("lease_until", "<", now)])]))
         .orderBy("created_at", "asc").forUpdate().skipLocked().limit(1).executeTakeFirst();
@@ -104,6 +106,7 @@ export class SlackCompanyRepository {
       const now = this.now();
       // A crash after beginning a send has an ambiguous outcome; do not send it again automatically.
       await trx.updateTable("slack_company_outbox").set({ state: "uncertain", lease: null, lease_until: null, updated_at: now })
+        .where("event_id", "in", trx.selectFrom("slack_company_inbox").select("id").where("owner_id", "=", this.ownerId))
         .where("state", "=", "sending").where("lease_until", "<", now).execute();
       const row = await trx.selectFrom("slack_company_outbox as outbox").innerJoin("slack_company_inbox as inbox", "inbox.id", "outbox.event_id")
         .selectAll("outbox").where("inbox.owner_id", "=", this.ownerId).where("outbox.state", "=", "pending").where("outbox.attempts", "<", 3).where((eb)=>eb.or([eb("outbox.lease_until","is",null),eb("outbox.lease_until","<=",now)]))
