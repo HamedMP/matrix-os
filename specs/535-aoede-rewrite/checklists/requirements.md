@@ -1,36 +1,21 @@
-# Specification Quality Checklist: Matrix-Native Aoede Voice Mode
+# Standalone Aoede acceptance checklist
 
-**Purpose**: Validate specification completeness and quality before implementation planning
-**Created**: 2026-09-29
-**Feature**: [spec.md](../spec.md)
+This replaces the old all-green active-Chat specification checklist. Evidence is tracked in ../requirement-evidence.md. A checkbox is not a release qualification claim.
 
-## Content Quality
-
-- [x] No implementation details in user requirements or success criteria
-- [x] Focused on user value and business needs
-- [x] Written for non-technical stakeholders
-- [x] All mandatory sections completed
-
-## Requirement Completeness
-
-- [x] No `[NEEDS CLARIFICATION]` markers remain
-- [x] Requirements are testable and unambiguous
-- [x] Success criteria are measurable
-- [x] Success criteria are technology-agnostic
-- [x] All acceptance scenarios are defined
-- [x] Edge cases are identified
-- [x] Scope is clearly bounded
-- [x] Dependencies and assumptions identified
-
-## Feature Readiness
-
-- [x] All functional requirements have clear acceptance criteria
-- [x] User scenarios cover primary flows
-- [x] Feature meets measurable outcomes defined in Success Criteria
-- [x] No implementation details leak into the specification
-
-## Notes
-
-- Validation iteration 1 passed all checklist items.
-- The specification names canonical Matrix product concepts such as Chat, approvals, and memory because they are user-visible authorities, not implementation prescriptions.
-- Provider, transport, package, endpoint, and file-ownership decisions are intentionally deferred to planning artifacts.
+- [x] Owner correction reflected: standalone icon/palette singleton, Chat closed, canonical backend only.
+- [x] Explicit Start, dismissal, End, generation/action cancellation and continuation/New semantics defined.
+- [x] Scope, identity, access loss/deletion and restart behavior defined.
+- [x] Action authorization/operation/reconciliation/delegation requirements and fail-closed modes defined.
+- [x] Managed speech authority, streaming gap and paid qualification limits defined.
+- [x] Three surfaces, accessibility and nonmodal Electron strategy required.
+- [ ] All AO requirements locally implemented with no parallel tool/task/approval/transcript authority.
+- [ ] Typed/spoken/queue/retry/steering execution policy proven, including escape attempts.
+- [ ] Exact approval/claim/concurrent dispatch/crash/unknown/reconciliation/cancellation evidence on disposable Postgres.
+- [ ] Singleton and closed-Chat workspace integration proven on all three surfaces.
+- [ ] Media/transport/cleanup/permission/device regressions proven.
+- [ ] Fake speech AND fake model/action composition established before any fixture run.
+- [ ] All required closed-Chat states rendered and screenshots inspected; keyboard/focus/live-region/reduced-motion/contrast/zoom tested.
+- [ ] Affected focused/broader tests, package typechecks, pattern/anti-slop, React Doctor, shell build, PG gate and diff checks recorded.
+- [ ] No unresolved local implementation requirements concealed as release gates.
+- [ ] Separately authorized real speech/Codex/device/Electron/parity/account/latency/usability release qualification completed.
+- [ ] Separately authorized public docs PR and review/release lifecycle completed.

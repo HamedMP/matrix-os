@@ -1,6 +1,22 @@
 # Voice Session API and Event Contract
 
-This document defines the planning contract. Exact schemas land in `@matrix-os/contracts` through tests-first implementation.
+This document defines the shared backend contract for standalone Aoede. The 2026-09-30 product correction supersedes Chat-mounted presentation; exact existing media schemas remain authoritative in `@matrix-os/contracts`. Aoede has a shell-level singleton and explicit backing conversation, not the selected Chat.
+
+## Standalone bootstrap and presentation contract
+
+Authenticated `POST /api/aoede/bootstrap` accepts strict `{clientRequestId, intent: "continue" | "new", projectId?: string, surface: "web_canvas" | "web_desktop" | "electron_desktop"}`. Owner/runtime derive from server configuration/principal. It resolves an owner/runtime/scope-unique canonical conversation pointer transactionally; New uses request-id deduplication and retains old canonical history. Response exposes `{chatId, scope, selection, capability}` using existing selection/capability schemas, plus no credential. No microphone/provider run starts. Missing/deleted/access-lost backing Chat on Continue returns structured unavailable; only explicit New replaces it. Mutations require existing auth, strict Zod/bodyLimit, bounded request IDs and 10-second client timeout. New persistence is owner-local PostgreSQL/Kysely only.
+
+Canonical HTTP/event APIs supply bounded current response captions, exact approvals/input/activity/task/artifacts/terminal results. Presentation does not invent voice approval/action records. Icon/palette open/focus/toggle converge on one controller. Explicit Start invokes existing chat-scoped media APIs. Dismiss stops capture/playback and retains canonical work; End releases media only. History navigation is optional, never required for approval/input/recovery.
+
+## Additive managed synthesis streaming contract
+
+`POST /internal/containers/:handle/speech/syntheses/stream` shares existing runtime HMAC auth, strict `SpeechSynthesisRequestSchema`, funding admission/unique claim/cancellation/settlement. NDJSON frames are strict discriminated objects:
+
+- `{type:"audio", sequence: nonnegative integer, data: bounded base64 PCM chunk}`; chunks max 64KiB decoded, frame boundary even-byte aligned.
+- `{type:"end", sequence: nonnegative integer, format:"pcm_s16le_24000_mono", durationMs: bounded nonnegative integer}`.
+- `{type:"error", sequence: nonnegative integer, code: existing SpeechSafeErrorCode}`.
+
+Sequence starts at 0 and is contiguous. Format is fixed mono 24kHz PCM S16LE; total max 8MiB, line max 96KiB, duration byte-derived. No end after error; EOF without terminal is failure. Caller cancellation/timeouts abort provider reading and conservatively settle any claimed operation under existing rules; no redispatch/replay. Existing completed synthesis API remains compatible. Gateway consumes chunks incrementally and never sees provider credentials. Interim completed-WAV transcription, if used, is explicitly metered provisional polling, not claimed as genuine realtime recognition.
 
 ## Contract principles
 
@@ -14,6 +30,7 @@ This document defines the planning contract. Exact schemas land in `@matrix-os/c
 
 | Route/channel | Caller | Authentication and authority | Public | Limit |
 | --- | --- | --- | --- | --- |
+| `POST /api/aoede/bootstrap` | Web/Electron authenticated shell | Existing Gateway principal; server-owned runtime identity; authorized project/scope; idempotent canonical binding | No | 4 KiB body; 10-second client timeout; no media/model dispatch |
 | `GET /api/chats/:chatId/voice/capabilities` | Web/Electron authenticated shell | Existing Gateway principal; read access to exact Chat; runtime policy | No | 10-second request; rate limited |
 | `POST /api/chats/:chatId/voice/sessions` | Web/Electron authenticated shell | Existing Gateway principal; Chat write access; runtime/provider policy and concurrency admission | No | Small JSON body; one active session per admitted Chat/user policy |
 | `DELETE /api/chats/:chatId/voice/sessions/:sessionId` | Owning shell | Existing principal plus exact Chat/session binding; idempotent | No | Empty bounded body; 10-second request |
