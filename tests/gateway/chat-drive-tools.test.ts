@@ -13,6 +13,12 @@ function fixture() {
 }
 describe("read-only tools bound to admitted Chat drive references", () => {
     it("authorizes the configured private owner and current source membership", async () => { const f = fixture(); await f.service.authorize(owner, "chat_drive", [drive]); expect(f.search).toHaveBeenCalledWith(drive, { limit: 1 }, expect.any(AbortSignal)); await expect(f.service.authorize({ ...owner, ownerId: "user_other" }, "chat_drive", [drive])).rejects.toThrow(); expect(f.search).toHaveBeenCalledTimes(1); });
+    it("can authorize source membership without a Chat database read, while rejecting another owner",async()=>{
+      const f=fixture();await f.service.authorizeSources(owner,[drive]);expect(f.get).not.toHaveBeenCalled();
+      expect(f.search).toHaveBeenCalledWith(drive,{limit:1},expect.any(AbortSignal));
+      await expect(f.service.authorizeSources({...owner,ownerId:"user_other"},[drive])).rejects.toThrow();
+      expect(f.search).toHaveBeenCalledTimes(1);expect(f.get).not.toHaveBeenCalled();
+    });
     it("blocks a shared Chat until an audience policy is implemented", async () => { const f = fixture(); f.get.mockResolvedValueOnce({ chat: { id: "chat_drive", lifecycle: "active", collaboration: { mode: "shared" } } } as never); await expect(f.service.authorize(owner, "chat_drive", [drive])).rejects.toThrow(); expect(f.search).not.toHaveBeenCalled(); });
     it("searches only a server-admitted reference; input cannot replace its scope", async () => { const f = fixture(); await f.service.search(owner.ownerId, "run_live", { referenceIndex: 0, query: "plan" }); expect(f.search).toHaveBeenCalledWith(drive, { query: "plan", limit: 30 }, expect.any(AbortSignal)); expect(f.load).toHaveBeenCalledTimes(2); await expect(f.service.search(owner.ownerId, "run_live", { referenceIndex: 0, scopeId: "forged" } as never)).rejects.toThrow(); expect(f.search).toHaveBeenCalledTimes(1); });
     it("denies invalid indexes, inactive runs and another owner before source I/O", async () => { const f = fixture(); await expect(f.service.read("user_other", "run_live", { referenceIndex: 0, fileId })).rejects.toThrow(); await expect(f.service.search(owner.ownerId, "run_live", { referenceIndex: 2 })).rejects.toThrow(); f.load.mockResolvedValueOnce(null as never); await expect(f.service.read(owner.ownerId, "run_done", { referenceIndex: 0, fileId })).rejects.toThrow(); expect(f.read).not.toHaveBeenCalled(); expect(f.search).not.toHaveBeenCalled(); });

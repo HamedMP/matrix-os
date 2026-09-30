@@ -46,9 +46,9 @@ export function createChatDriveContext(options: {
     }
     function owner(actor: string) { if (actor !== options.ownerId)
         throw new ChatDriveContextError(); }
-    async function privateChat(actor: string, chatId: string, repository: Pick<ChatRepository, "get"> = options.repository) {
+    async function privateChat(actor: string, chatId: string) {
         owner(actor);
-        const record = await repository.get({ type: "personal", ownerId: actor }, chatId);
+        const record = await options.repository.get({ type: "personal", ownerId: actor }, chatId);
         if (!record || record.chat.lifecycle !== "active" || record.chat.collaboration)
             throw new ChatDriveContextError();
     }
@@ -69,21 +69,27 @@ export function createChatDriveContext(options: {
         if (current.run.chatId !== initial.run.chatId || JSON.stringify(current.reference) !== JSON.stringify(initial.reference))
             throw new ChatDriveContextError();
     }
+    async function authorizeSources(ownerValue: ChatOwner, references: OrganizationDriveContextReference[]) {
+        if (ownerValue.type !== "personal") throw new ChatDriveContextError();
+        owner(ownerValue.ownerId);
+        const selected = z.array(OrganizationDriveContextReferenceSchema).min(1).max(3).parse(references);
+        const signal = AbortSignal.timeout(60000);
+        for (const reference of selected) {
+            if (reference.kind === "file") await options.client.read(reference, undefined, signal);
+            else await options.client.search(reference, { limit: 1 }, signal);
+        }
+    }
     return {
-        authorize(ownerValue: ChatOwner, chatId: string, references: OrganizationDriveContextReference[], repository: Pick<ChatRepository, "get"> = options.repository) {
+        /** Source membership only: never reads Chat state or acquires its database connection. */
+        authorizeSources(ownerValue: ChatOwner, references: OrganizationDriveContextReference[]) {
+            return safe(() => authorizeSources(ownerValue, references));
+        },
+        authorize(ownerValue: ChatOwner, chatId: string, references: OrganizationDriveContextReference[]) {
             return safe(async () => {
-                if (ownerValue.type !== "personal")
-                    throw new ChatDriveContextError();
-                await privateChat(ownerValue.ownerId, chatId, repository);
-                const selected = z.array(OrganizationDriveContextReferenceSchema).min(1).max(3).parse(references);
-                const signal = AbortSignal.timeout(60000);
-                for (const reference of selected) {
-                    if (reference.kind === "file")
-                        await options.client.read(reference, undefined, signal);
-                    else
-                        await options.client.search(reference, { limit: 1 }, signal);
-                }
-                await privateChat(ownerValue.ownerId, chatId, repository);
+                if (ownerValue.type !== "personal") throw new ChatDriveContextError();
+                await privateChat(ownerValue.ownerId, chatId);
+                await authorizeSources(ownerValue, references);
+                await privateChat(ownerValue.ownerId, chatId);
             });
         },
         search(actor: string, runId: string, raw: z.input<typeof ChatDriveSearchInputSchema>, callerSignal?: AbortSignal) {

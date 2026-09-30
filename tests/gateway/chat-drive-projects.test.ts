@@ -11,7 +11,7 @@ describe("owner-persisted company drive Chat projects", () => {
     let app: Awaited<ReturnType<typeof createChatDriveProjectRoutes>>;
     let actor: string;
     let authorize: ReturnType<typeof vi.fn>;
-    beforeEach(async () => { repository = new ChatRepository((await KyselyPGlite.create()).dialect); await repository.bootstrap(); await repository.create(owner, { id: "chat_project", clientRequestId: "req_create", title: "Private plan" }); actor = owner.ownerId; authorize = vi.fn(async () => undefined); app = await createChatDriveProjectRoutes({ repository, drives: { authorize }, resolveOwner: () => ({ type: "personal", ownerId: actor }) }); });
+    beforeEach(async () => { repository = new ChatRepository((await KyselyPGlite.create()).dialect); await repository.bootstrap(); await repository.create(owner, { id: "chat_project", clientRequestId: "req_create", title: "Private plan" }); actor = owner.ownerId; authorize = vi.fn(async () => undefined); app = await createChatDriveProjectRoutes({ repository, drives: { authorizeSources: authorize }, resolveOwner: () => ({ type: "personal", ownerId: actor }) }); });
     afterEach(async () => { await repository.kysely.destroy(); });
     it("persists an idempotent private association and its revision event together", async () => {
         const events: unknown[] = [];
@@ -19,7 +19,7 @@ describe("owner-persisted company drive Chat projects", () => {
         const first = await app.request('/api/chats/chat_project/drive-project', json(request));
         expect(first.status).toBe(200);
         expect(await first.json()).toMatchObject({ chatId: "chat_project", reference, revision: 1 });
-        expect(authorize).toHaveBeenCalledWith(owner, "chat_project", [reference], expect.anything());
+        expect(authorize).toHaveBeenCalledWith(owner, [reference]);
         expect((await repository.get(owner, "chat_project"))?.chat.collaboration).toBeUndefined();
         expect((await repository.get(owner, "chat_project"))?.projectId).toBeUndefined();
         expect(events).toHaveLength(1);
@@ -30,18 +30,28 @@ describe("owner-persisted company drive Chat projects", () => {
         expect(await lookup.json()).toMatchObject({ associations: [{ chatId: "chat_project", reference }] });
         sink.dispose();
     });
-    it("keeps authorization reads and the association write in one scoped transaction", async()=>{
-        authorize.mockImplementationOnce(async (_owner,_chatId,_references,scoped)=>{
-          expect(scoped).toBeDefined();
-          expect(scoped.kysely.isTransaction).toBe(true);
-          expect((await scoped.get(owner,"chat_project"))?.chat.id).toBe("chat_project");
-        });
-        expect((await app.request('/api/chats/chat_project/drive-project',json(request))).status).toBe(200);
+    it("does not hold a database connection while source authorization waits", async()=>{
+        let held=0;
+        const original=repository.withTransaction.bind(repository);
+        vi.spyOn(repository,"withTransaction").mockImplementation(callback=>original(async scoped=>{held++;try{return await callback(scoped);}finally{held--;}}));
+        let started!:()=>void, finish!:()=>void;
+        const entered=new Promise<void>(resolve=>{started=resolve;});
+        const pending=new Promise<void>(resolve=>{finish=resolve;});
+        authorize.mockImplementationOnce(async()=>{expect(held).toBe(0);started();await pending;});
+        const operation=app.request('/api/chats/chat_project/drive-project',json(request));
+        await Promise.race([entered,operation.then(()=>{throw new Error("Authorization failed before becoming available");})]);
+        const unrelated=repository.create(owner,{id:"chat_unrelated",clientRequestId:"req_unrelated",title:"Another Chat"});
+        let timer:ReturnType<typeof setTimeout>|undefined;
+        const available=await Promise.race([unrelated.then(()=>true),new Promise<boolean>(resolve=>{timer=setTimeout(()=>resolve(false),1000);})]);
+        if(timer)clearTimeout(timer);
+        finish();await unrelated;
+        expect((await operation).status).toBe(200);
+        expect(available).toBe(true);
     });
     it("rejects stale writes, other owners, shared Chats and ungranted sources", async () => {
         actor = "user_other";
         expect((await app.request('/api/chats/chat_project/drive-project', json(request))).status).toBe(404);
-        expect(authorize).not.toHaveBeenCalled();
+        expect((await repository.get(owner, "chat_project"))?.chat.revision).toBe(0);
         actor = owner.ownerId;
         expect((await app.request('/api/chats/chat_project/drive-project', json({ ...request, baseRevision: 9 }))).status).toBe(409);
         authorize.mockRejectedValueOnce(new Error("Revoked membership"));
@@ -54,7 +64,7 @@ describe("owner-persisted company drive Chat projects", () => {
         expect((await app.request('/api/chats/chat_project/drive-project?actor=other', json(request))).status).toBe(422);
         expect((await app.request('/api/chats/chat_project/drive-project', json({ ...request, actorId: "other" }))).status).toBe(422);
         expect((await app.request('/api/chats/chat_project/drive-project', json({ padding: "x".repeat(5000) }))).status).toBe(413);
-        authorize.mockImplementationOnce(async (_owner,_chatId,_references,scoped) => { await scoped.kysely.updateTable("chats").set({ collaboration: { scopeId: reference.scopeId, mode: "discussion_only", executionFenced: true } }).where("id", "=", "chat_project").execute(); });
+        authorize.mockImplementationOnce(async () => { await repository.kysely.updateTable("chats").set({ collaboration: { scopeId: reference.scopeId, mode: "discussion_only", executionFenced: true } }).where("id", "=", "chat_project").execute(); });
         expect((await app.request('/api/chats/chat_project/drive-project', json(request))).status).toBe(409);
         const result = await app.request('/api/chat-drive-projects/lookup', { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ chatIds: ["chat_project"] }) });
         expect(await result.json()).toEqual({ associations: [] });
