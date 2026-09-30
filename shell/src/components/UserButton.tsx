@@ -2,6 +2,7 @@
 
 import { useAuth, useClerk, useUser } from "@clerk/nextjs";
 import { useIsClient } from "@/hooks/useIsClient";
+import { OrganizationMenuItems } from "@/components/OrganizationMenuItems";
 import { ADD_COMPUTER_ONBOARDING_PATH } from "@/lib/runtime-routes";
 import { cn } from "@/lib/utils";
 import {
@@ -264,6 +265,7 @@ function MountedUserButton({
                 Shared with me
               </Link>
             </DropdownMenuPrimitive.Item> : null}
+            <OrganizationMenuItems itemClass={itemClass} />
             <DropdownMenuPrimitive.Item asChild>
               <a
                 className={itemClass}
