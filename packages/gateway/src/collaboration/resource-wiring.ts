@@ -25,7 +25,7 @@ export interface OwnerResourceProjectSource<Project> {
   listManagedProjects(input: {
     visibility: "all";
     ownerScope: { type: "user"; id: string };
-  }): Promise<{ projects: readonly { id: string }[] }>;
+  }): Promise<{ projects: readonly (Project & { id: string })[] }>;
   getProjectById(
     ownerScope: { type: "user"; id: string },
     projectId: string,
@@ -89,6 +89,18 @@ export function enableGatewaySharedResources<Project>(input: {
       const result = await input.projects.getProjectById({ type: "user", id: ownerId }, projectId);
       if (!result.ok) return null;
       return input.projects.resolveProjectWorkingDirectory(result.project);
+    },
+    resolveProjectBoundaryWorkingDirectory: async (ownerId, projectId) => {
+      // Archived checkouts still define protected project boundaries. The ordinary
+      // active-project lookup intentionally returns 404 for them, so resolve the
+      // same owner-scoped inventory used by listOwnedProjectIds instead.
+      const { projects } = await input.projects.listManagedProjects({
+        visibility: "all", ownerScope: { type: "user", id: ownerId },
+      });
+      if (projects.length > 1_000) return null;
+      const matches = projects.filter((project) => project.id === projectId);
+      if (matches.length !== 1) return null;
+      return input.projects.resolveProjectWorkingDirectory(matches[0]!);
     },
     resolveAppAssetRoot: async (_ownerId, _projectId, appId) => {
       if (!await registeredApp(appId)) return null;
