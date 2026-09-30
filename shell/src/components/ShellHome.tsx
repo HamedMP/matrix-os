@@ -18,6 +18,14 @@ import { CommandPalette } from "@/components/CommandPalette";
 import { ApprovalDialog } from "@/components/ApprovalDialog";
 import { useMobileViewport } from "@/hooks/useMobileViewport";
 import { createShellSnapshotScope } from "@/lib/shell-snapshot-cache";
+import { useDesktopMode } from "@/stores/desktop-mode";
+import { ShellAoedeHost } from "@/components/ShellAoedeHost";
+import {
+  aoedeEntrySupported,
+  aoedeSurfaceForDesktopMode,
+  openAoedeHistory,
+  openAoedeResult,
+} from "@/lib/aoede-shell";
 
 const LAUNCHABLE_BUILT_IN_PATHS = new Set([
   "__terminal__",
@@ -101,6 +109,14 @@ function ShellHomeContent({
 
   const register = useCommandStore((s) => s.register);
   const unregister = useCommandStore((s) => s.unregister);
+  const desktopMode = useDesktopMode((s) => s.mode);
+  const switchConversation = chat.switchConversation;
+  // "View history" selects the backing record in canonical Chat state and
+  // reveals its real window; Aoede never retargets to another conversation.
+  const handleAoedeHistory = useCallback(
+    (chatId: string) => openAoedeHistory(chatId, switchConversation),
+    [switchConversation],
+  );
 
   useEffect(() => {
     register([
@@ -127,6 +143,14 @@ function ShellHomeContent({
   return (
     <GettingStartedVisibilityProvider scope={JSON.stringify([cacheScope?.storageKey ?? cachePathname, sessionId, runtimeSlot])}>
     <ChatProvider value={chat}>
+      <ShellAoedeHost
+        userId={userId}
+        runtimeSlot={runtimeSlot}
+        surface={aoedeSurfaceForDesktopMode(desktopMode)}
+        supported={aoedeEntrySupported(isMobile)}
+        onOpenHistory={handleAoedeHistory}
+        onOpenResult={openAoedeResult}
+      >
       <div className="flex h-screen w-screen flex-col overflow-hidden md:flex-row">
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           <div className="relative flex min-h-0 flex-1 flex-col">
@@ -152,6 +176,7 @@ function ShellHomeContent({
         <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} />
         <ApprovalDialog />
       </div>
+      </ShellAoedeHost>
     </ChatProvider>
     </GettingStartedVisibilityProvider>
   );

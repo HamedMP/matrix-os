@@ -156,6 +156,91 @@ describe("WebDesktopSurface", () => {
     expect(onOpenApp).toHaveBeenCalledWith("apps/notes/index.html", "Notes");
   });
 
+  it("presents the Aoede singleton icon only when supported and routes it to onOpenApp", () => {
+    const onOpenApp = vi.fn();
+    const onRemoveDesktopIcon = vi.fn();
+    const { rerender } = render(
+      <WebDesktopSurface
+        apps={apps}
+        windows={windows}
+        fullscreenWindowId={null}
+        launcherOpen={false}
+        aoedeSupported
+        desktopIcons={[
+          { path: "__chat__", x: 20, y: 58 },
+          { path: "__terminal__", x: 20, y: 150 },
+        ]}
+        onMoveDesktopIcon={vi.fn()}
+        onRemoveDesktopIcon={onRemoveDesktopIcon}
+        onOpenApp={onOpenApp}
+        onOpenLauncher={vi.fn()}
+        onOpenSettings={vi.fn()}
+        onActivateWindow={vi.fn()}
+        onCloseWindow={vi.fn()}
+        onShowDesktop={vi.fn()}
+        onToggleFullscreen={vi.fn()}
+      />,
+    );
+
+    // Supported: the assistant icon occupies its own render-only slot.
+    const aoedeIcon = screen.getByRole("button", { name: "Aoede" });
+    fireEvent.doubleClick(aoedeIcon);
+    expect(onOpenApp).toHaveBeenCalledWith("__aoede__", "Aoede");
+
+    // It is a locked system affordance: no drag/remove context affordance.
+    fireEvent.contextMenu(aoedeIcon);
+    expect(screen.queryByRole("menuitem", { name: /Remove Aoede/ })).toBeNull();
+    expect(onRemoveDesktopIcon).not.toHaveBeenCalled();
+
+    // Unsupported: the icon disappears entirely rather than dead-ending.
+    rerender(
+      <WebDesktopSurface
+        apps={apps}
+        windows={windows}
+        fullscreenWindowId={null}
+        launcherOpen={false}
+        aoedeSupported={false}
+        desktopIcons={[
+          { path: "__chat__", x: 20, y: 58 },
+          { path: "__terminal__", x: 20, y: 150 },
+          // Even a stale persisted placement cannot surface it unsupported.
+          { path: "__aoede__", x: 20, y: 242 },
+        ]}
+        onMoveDesktopIcon={vi.fn()}
+        onRemoveDesktopIcon={onRemoveDesktopIcon}
+        onOpenApp={onOpenApp}
+        onOpenLauncher={vi.fn()}
+        onOpenSettings={vi.fn()}
+        onActivateWindow={vi.fn()}
+        onCloseWindow={vi.fn()}
+        onShowDesktop={vi.fn()}
+        onToggleFullscreen={vi.fn()}
+      />,
+    );
+    expect(screen.queryByRole("button", { name: "Aoede" })).toBeNull();
+  });
+
+  it("renders a persisted Aoede placement once when it is already canonical", () => {
+    render(
+      <WebDesktopSurface
+        apps={apps}
+        windows={windows}
+        fullscreenWindowId={null}
+        launcherOpen={false}
+        aoedeSupported
+        desktopIcons={[{ path: "__aoede__", x: 20, y: 58 }]}
+        onOpenApp={vi.fn()}
+        onOpenLauncher={vi.fn()}
+        onOpenSettings={vi.fn()}
+        onActivateWindow={vi.fn()}
+        onCloseWindow={vi.fn()}
+        onShowDesktop={vi.fn()}
+        onToggleFullscreen={vi.fn()}
+      />,
+    );
+    expect(screen.getAllByRole("button", { name: "Aoede" })).toHaveLength(1);
+  });
+
   it("keeps the dedicated Browser desktop icon when a custom app is also named Browser", () => {
     const onOpenApp = vi.fn();
     const customBrowser = {

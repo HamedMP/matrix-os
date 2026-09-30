@@ -43,6 +43,12 @@ import {
   resolveWebDesktopBuiltInLaunch,
 } from "@/lib/web-desktop-app-launch";
 import {
+  AOEDE_APP_PATH,
+  aoedeEntrySupported,
+  revealShellAppWindow,
+} from "@/lib/aoede-shell";
+import { useMobileViewport } from "@/hooks/useMobileViewport";
+import {
   createOsViewLayoutMemory,
   transitionOsViewLayout,
 } from "@/lib/os-view-layout-memory";
@@ -141,7 +147,14 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
     })),
     [apiApps],
   );
-  const apps = useMemo(() => buildWebDesktopIconApps(installedApps), [installedApps]);
+  // Desktop mounts only on the non-mobile web surface, but the helper keeps
+  // the same aoedeEntrySupported contract the host uses, so a phone-width
+  // mount or missing mic capture still hides the entry (fail closed).
+  const aoedeSupported = aoedeEntrySupported(useMobileViewport());
+  const apps = useMemo(
+    () => buildWebDesktopIconApps(installedApps, { aoedeSupported }),
+    [installedApps, aoedeSupported],
+  );
 
   const [interacting, setInteracting] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -409,6 +422,14 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
     }
     if (builtInLaunch?.kind === "os-view") {
       useDesktopMode.getState().setMode(builtInLaunch.mode);
+      return;
+    }
+    if (builtInLaunch?.kind === "aoede") {
+      // Standalone assistant: a shell-level singleton, never an OS window.
+      // Route through the registered "app:__aoede__" command so every icon
+      // converges on the one controller; retired-path guards make the raw
+      // window fallback a no-op for this path anyway.
+      revealShellAppWindow(AOEDE_APP_PATH, "Aoede");
       return;
     }
     focusOrOpen(name ?? apps.find((app) => app.path === path)?.name ?? "App", path);
@@ -961,16 +982,22 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
   }, [register, unregister, visibleModes, setDesktopMode, openWindow, animateMinimize, wmCloseWindow, wmToggleFullscreen]);
 
   useEffect(() => {
-    const appCommands = apps.map((app) => ({
-      id: `app:${app.path}`,
-      label: app.name,
-      group: "Apps" as const,
-      icon: app.iconUrl,
-      keywords: [app.path],
-      execute: () => openAppOrFocus(app.path, app.name),
-    }));
+    // Retired built-ins ("__aoede__", "__workspace__") are never windows; the
+    // assistant's own shell host registers "app:__aoede__" against the
+    // singleton controller — a duplicate registration here would overwrite
+    // it and route the command back into openAppOrFocus (re-entrant loop).
+    const appCommands = apps
+      .filter((app) => !isRetiredBuiltInAppPath(app.path))
+      .map((app) => ({
+        id: `app:${app.path}`,
+        label: app.name,
+        group: "Apps" as const,
+        icon: app.iconUrl,
+        keywords: [app.path],
+        execute: () => openAppOrFocus(app.path, app.name),
+      }));
     if (appCommands.length > 0) register(appCommands);
-    return () => unregister(apps.map((a) => `app:${a.path}`));
+    return () => unregister(apps.filter((a) => !isRetiredBuiltInAppPath(a.path)).map((a) => `app:${a.path}`));
   }, [apps, openAppOrFocus, register, unregister]);
 
   useEffect(() => {
@@ -1000,8 +1027,8 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
   ) : null;
 
   const launcherApps = useMemo(
-    () => buildWebDesktopLauncherApps(installedApps, desktopMode),
-    [installedApps, desktopMode],
+    () => buildWebDesktopLauncherApps(installedApps, desktopMode, { aoedeSupported }),
+    [installedApps, desktopMode, aoedeSupported],
   );
 
   const openLauncherDestination = useCallback((name: string, path: string) => {
@@ -1407,6 +1434,7 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
               windows={windows}
               fullscreenWindowId={fullscreenWindowId}
               launcherOpen={taskBoardOpen}
+              aoedeSupported={aoedeSupported}
               onOpenApp={openAppOrFocus}
               onOpenLauncher={() => {
                 setTaskBoardOpen((open) => !open);

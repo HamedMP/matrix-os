@@ -13,7 +13,11 @@ export type WebDesktopBuiltInLaunch =
   | { kind: "external"; url: string }
   | { kind: "external-code" }
   | { kind: "os-view"; mode: DesktopMode }
-  | { kind: "app"; name: string; path: string };
+  | { kind: "app"; name: string; path: string }
+  // The standalone Aoede assistant is a shell-level singleton revealed by its
+  // own launcher icon / the command palette — never an OS window. Launch
+  // resolution recognizes the path so no surface routes it into a window.
+  | { kind: "aoede" };
 
 export { isOsViewDestinationPath };
 
@@ -37,6 +41,12 @@ export function resolveWebDesktopBuiltInLaunch(path: string): WebDesktopBuiltInL
   if (path === OS_VIEW_DESTINATION_PATHS.desktop) {
     return { kind: "os-view", mode: "desktop" };
   }
+  if (path === "__aoede__") {
+    // Pure recognition: callers must handle kind "aoede" explicitly and
+    // route to the registered "app:__aoede__" command (the shell-level
+    // singleton). It must never fall through to windowed app handling.
+    return { kind: "aoede" };
+  }
   return null;
 }
 
@@ -48,13 +58,28 @@ function namedDesktopApp(app: AppEntry | undefined, fallback: AppEntry): AppEntr
   return app ? { ...app, name: fallback.name } : fallback;
 }
 
-export function buildWebDesktopIconApps(apps: readonly AppEntry[]): AppEntry[] {
+export interface WebDesktopIconAppsOptions {
+  /**
+   * When true (`aoedeEntrySupported` semantics: non-mobile viewport + mic
+   * capture), the standalone Aoede assistant appears as a first-class app
+   * icon. When false the entry is hidden entirely — surfaces must never
+   * present a dead no-op icon, and the retired-path guards keep "__aoede__"
+   * out of windows regardless.
+   */
+  aoedeSupported?: boolean;
+}
+
+export function buildWebDesktopIconApps(
+  apps: readonly AppEntry[],
+  options?: WebDesktopIconAppsOptions,
+): AppEntry[] {
   const chat = findCanonicalApp(apps, ["__chat__"]);
   const browserPaths = ["__browser__", "apps/browser/index.html", "apps/browser/dist/index.html"];
   const notesPaths = ["apps/notes/index.html", "apps/notes/dist/index.html"];
   const whiteboardPaths = ["apps/whiteboard/index.html", "apps/whiteboard/dist/index.html"];
   const firstClass: AppEntry[] = [
     chat ? { ...chat, name: "Chat" } : { name: "Chat", path: "__chat__" },
+    ...(options?.aoedeSupported ? [{ name: "Aoede", path: "__aoede__" }] : []),
     findCanonicalApp(apps, ["__terminal__"]) ?? { name: "Terminal", path: "__terminal__" },
     findCanonicalApp(apps, ["__file-browser__"]) ?? { name: "Files", path: "__file-browser__" },
     { name: "Editor", path: "__editor__" },
@@ -67,6 +92,7 @@ export function buildWebDesktopIconApps(apps: readonly AppEntry[]): AppEntry[] {
   ];
   const firstClassPaths = new Set([
     ...DEFAULT_OS_VIEW_DESKTOP_APP_PATHS,
+    "__aoede__",
     ...browserPaths,
     ...notesPaths,
     ...whiteboardPaths,
@@ -77,6 +103,7 @@ export function buildWebDesktopIconApps(apps: readonly AppEntry[]): AppEntry[] {
 export function buildWebDesktopLauncherApps(
   apps: readonly AppEntry[],
   currentMode: DesktopMode = "desktop",
+  options?: WebDesktopIconAppsOptions,
 ): AppEntry[] {
   const destinationMode = otherOsViewMode(currentMode);
   const viewDestination: AppEntry = {
@@ -84,5 +111,5 @@ export function buildWebDesktopLauncherApps(
     path: OS_VIEW_DESTINATION_PATHS[destinationMode],
     iconUrl: iconUrlForSlug(destinationMode),
   };
-  return [viewDestination, ...buildWebDesktopIconApps(apps)];
+  return [viewDestination, ...buildWebDesktopIconApps(apps, options)];
 }

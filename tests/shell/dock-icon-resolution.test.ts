@@ -30,10 +30,25 @@ describe("dock icon resolution", () => {
       readFile("shell/src/lib/builtin-apps.ts", "utf8"),
     ]);
 
-    expect(desktopSource).toContain("buildWebDesktopIconApps(installedApps)");
-    expect(builtInSource).toContain('new Set(["__workspace__"])');
+    expect(desktopSource).toContain("buildWebDesktopIconApps(installedApps, { aoedeSupported })");
+    // "__aoede__" is retired alongside "__workspace__": a known built-in that
+    // no surface may ever spawn as an OS window.
+    expect(builtInSource).toContain('new Set(["__workspace__", "__aoede__"])');
     expect(builtInSource).not.toContain('"__workspace__",\n  "__terminal__"');
-    expect(desktopSource).toContain("buildWebDesktopLauncherApps(installedApps, desktopMode)");
+    expect(desktopSource).toContain("buildWebDesktopLauncherApps(installedApps, desktopMode, { aoedeSupported })");
+  });
+
+  it("routes the Aoede launch kind to the singleton command, never a window", async () => {
+    const source = await readFile("shell/src/components/Desktop.tsx", "utf8");
+
+    // openAppOrFocus must handle kind "aoede" explicitly — before the
+    // fall-through that would hand "__aoede__" to focusOrOpen/openWindow.
+    expect(source).toContain('builtInLaunch?.kind === "aoede"');
+    const aoedeBranch = source.indexOf('builtInLaunch?.kind === "aoede"');
+    const fallThrough = source.indexOf('focusOrOpen(name ?? apps.find');
+    expect(aoedeBranch).toBeGreaterThanOrEqual(0);
+    expect(fallThrough).toBeGreaterThan(aoedeBranch);
+    expect(source).toContain('revealShellAppWindow(AOEDE_APP_PATH, "Aoede")');
   });
 
   it("writes regenerated icons into the React Query catalog", async () => {

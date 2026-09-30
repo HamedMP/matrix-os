@@ -7,10 +7,13 @@ import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 import { buildWebDesktopIconApps } from "@/lib/web-desktop-app-launch";
 import {
   createDefaultOsViewDesktopIcons,
+  findOpenOsViewDesktopSlot,
   fitOsViewDesktopIconsToViewport,
   normalizeOsViewDesktopAppPath,
 } from "@matrix-os/contracts";
+import { AOEDE_APP_PATH } from "@/lib/aoede-shell";
 import {
+  AudioLinesIcon,
   Blocks,
   BrushIcon,
   Code2,
@@ -32,6 +35,8 @@ interface WebDesktopSurfaceProps {
   windows: AppWindow[];
   fullscreenWindowId: string | null;
   launcherOpen: boolean;
+  /** Aoede entry support on this surface; false hides the icon entirely. */
+  aoedeSupported?: boolean;
   onOpenApp: (path: string, name?: string) => void;
   onOpenLauncher: () => void;
   onOpenSettings: (section: WebDesktopSettingsSection) => void;
@@ -71,6 +76,9 @@ export function desktopAppearanceForApp(app: AppEntry): DesktopIconAppearance {
   }
   if (app.path === "__file-browser__") {
     return { color: "var(--surface-brand-emphasis, #748E59)", iconColor: "white", icon: FolderTree };
+  }
+  if (app.path === AOEDE_APP_PATH) {
+    return { color: "#6D5AC4", iconColor: "white", icon: AudioLinesIcon };
   }
   if (app.path === "__editor__") {
     return { color: "#4D7FA8", iconColor: "white", icon: FilePenLine };
@@ -132,6 +140,11 @@ function DesktopDestination({
   onMove?: (path: string, x: number, y: number) => void;
   onRemove?: (path: string) => void;
 }) {
+  // The Aoede assistant is a shell-level singleton with a render-only slot:
+  // it is never a persisted placement, so drag/remove affordances stay off.
+  const isSystemAffordance = app.path === AOEDE_APP_PATH;
+  const onMoveIcon = isSystemAffordance ? undefined : onMove;
+  const onRemoveIcon = isSystemAffordance ? undefined : onRemove;
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   return (
     <>
@@ -148,7 +161,7 @@ function DesktopDestination({
           setMenu({ x: event.clientX, y: event.clientY });
         }}
         onPointerDown={(event) => {
-          if (event.button !== 0 || !onMove) return;
+          if (event.button !== 0 || !onMoveIcon) return;
           const target = event.currentTarget;
           const startX = event.clientX;
           const startY = event.clientY;
@@ -161,7 +174,7 @@ function DesktopDestination({
             target.removeEventListener("pointerup", up);
             const dx = upEvent.clientX - startX;
             const dy = upEvent.clientY - startY;
-            if (Math.abs(dx) + Math.abs(dy) > 3) onMove(app.path, Math.max(0, placement.x + dx), Math.max(0, placement.y + dy));
+            if (Math.abs(dx) + Math.abs(dy) > 3) onMoveIcon(app.path, Math.max(0, placement.x + dx), Math.max(0, placement.y + dy));
           };
           target.addEventListener("pointermove", move);
           target.addEventListener("pointerup", up);
@@ -183,14 +196,14 @@ function DesktopDestination({
         {app.name === "Hermes" ? "Chat" : app.name}
       </span>
       </button>
-      {menu && onRemove ? (
+      {menu && onRemoveIcon ? (
         <div role="menu" className="pointer-events-auto fixed min-w-48 rounded-xl border bg-popover p-1 text-popover-foreground shadow-lg" style={{ left: menu.x, top: menu.y, zIndex: SHELL_Z_INDEX.launchpad }}>
           <button
             type="button"
             role="menuitem"
             className="w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-accent"
             onClick={() => {
-              onRemove(app.path);
+              onRemoveIcon(app.path);
               setMenu(null);
             }}
           >
@@ -246,6 +259,7 @@ export function WebDesktopSurface({
   windows,
   fullscreenWindowId,
   launcherOpen,
+  aoedeSupported = false,
   onOpenApp,
   onOpenLauncher,
   onOpenSettings,
@@ -265,7 +279,10 @@ export function WebDesktopSurface({
     height: typeof window === "undefined" ? 594 : Math.max(1, window.innerHeight - 126),
   }));
   const primeDesktopIcons = useDesktopConfigStore((state) => state.primeDesktopIcons);
-  const desktopApps = useMemo(() => buildWebDesktopIconApps(apps).slice(0, 10), [apps]);
+  const desktopApps = useMemo(
+    () => buildWebDesktopIconApps(apps, { aoedeSupported }).slice(0, 10),
+    [apps, aoedeSupported],
+  );
   const defaultPlacements = useMemo<DesktopIconPlacement[]>(createDefaultOsViewDesktopIcons, []);
   useLayoutEffect(() => {
     if (desktopIcons === undefined) primeDesktopIcons(defaultPlacements);
@@ -279,10 +296,21 @@ export function WebDesktopSurface({
     return () => window.removeEventListener("resize", updateViewport);
   }, []);
   const canonicalPlacements = desktopIcons ?? defaultPlacements;
-  const placements = useMemo(
-    () => fitOsViewDesktopIconsToViewport(canonicalPlacements, viewport),
-    [canonicalPlacements, viewport],
-  );
+  const placements = useMemo(() => {
+    const fitted = fitOsViewDesktopIconsToViewport(canonicalPlacements, viewport);
+    // Render-only Aoede slot: the assistant is a shell-level singleton, so
+    // its desktop icon is injected into the fitted display positions without
+    // touching the canonical persisted layout. When unsupported (or the
+    // grid is full) it is simply absent — never a dead icon.
+    if (
+      aoedeSupported
+      && !fitted.some((icon) => normalizeOsViewDesktopAppPath(icon.path) === AOEDE_APP_PATH)
+    ) {
+      const slot = findOpenOsViewDesktopSlot(fitted, viewport);
+      if (slot) fitted.push({ path: AOEDE_APP_PATH, ...slot });
+    }
+    return fitted;
+  }, [aoedeSupported, canonicalPlacements, viewport]);
   const placedApps = useMemo(() => placements.flatMap((placement) => {
     const app = desktopApps.find((candidate) => (
       normalizeOsViewDesktopAppPath(candidate.path) === placement.path
