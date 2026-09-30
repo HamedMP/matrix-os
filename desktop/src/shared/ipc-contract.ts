@@ -4,6 +4,7 @@
 // (FR-081). The bearer credential never appears in any schema; Hermes provider
 // credentials are accepted only by the bounded write-only setter request.
 import { z } from "zod/v4";
+import { LOCAL_CHAT_IMPORT_INVOKE, LOCAL_CHAT_IMPORT_EVENTS } from "./local-chat-import-ipc";
 import {
   AppGenerateEventSchema,
   BuildSourceSchema,
@@ -137,6 +138,7 @@ const BoundedJsonValue = z.unknown().refine(
 );
 
 export const INVOKE_CHANNELS = {
+  ...LOCAL_CHAT_IMPORT_INVOKE,
   "terminal:read-clipboard-files": { request: Empty, response: TerminalClipboardResultSchema },
   "analytics:flush-complete": { request: Empty, response: Ok },
   "auth:start-device-flow": {
@@ -497,6 +499,7 @@ export const INVOKE_CHANNELS = {
 } as const;
 
 export const EVENT_CHANNELS = {
+  ...LOCAL_CHAT_IMPORT_EVENTS,
   "app:generate": AppGenerateEventSchema,
   "analytics:capture": DesktopAnalyticsDetailSchema,
   "analytics:flush-requested": Empty,

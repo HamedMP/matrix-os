@@ -1,7 +1,7 @@
 ---
 name: matrix-chat-import
-description: Import a specifically selected local Codex JSONL session into the owner's private Matrix Chat. Use when a user asks to bring their local Codex conversation into Matrix Chat.
-version: 1.0.0
+description: Discover and import owner-selected local Codex and Claude Code transcripts as private Matrix Chats with original archives.
+version: 2.0.0
 author: Matrix OS
 license: MIT
 platforms: [linux, macos]
@@ -9,32 +9,65 @@ platforms: [linux, macos]
 
 # Matrix Chat import
 
-Use the authenticated Matrix CLI to preview one local Codex session, then
-import that same file into the user's private canonical Chat. This is a Chat
-import, not a raw Files upload or a continuation of the old Codex runtime.
+Requires Matrix CLI 0.3.21 or newer and a compatible Matrix gateway. Check
+`matrix --version`, then `matrix whoami` to verify the intended owner. Do not
+pass credentials in command arguments or copy sessions to another member.
 
-Requires Matrix CLI 0.3.20 or newer. Check `matrix --version` first; if the
-installed CLI is older, upgrade it before running the import command.
+## Discover and select
 
-1. Identify the exact `rollout-*.jsonl` file the owner selected. If choosing
-   from a project, inspect Codex `session_meta` repository URL and recorded
-   working directory; do not choose by file modification time alone. Do not
-   scan or import unrelated global sessions.
-2. Run `matrix whoami` and verify the authenticated Matrix account is the
-   intended owner. Do not pass access tokens in command arguments.
-3. Run `matrix chats import codex /absolute/path/to/rollout.jsonl` to preview
-   the session identity, recorded repository, projected message count and raw
-   SHA-256. If an expected hash is known, add `--sha256 <expected-hash>`.
-   Raw transcripts may contain pasted secrets; the importer sends visible user
-   and final assistant text, so review the selected source before importing.
-4. When the owner has selected this exact session for import, rerun with
-   `--apply` and the same file/hash. Report the returned Chat ID and message
-   count. If verification fails, report the error; do not claim success or
-   rerun against another file automatically.
-5. The imported Chat stays private. Let the owner choose any later project
-   attachment or organization sharing in Matrix. Do not share all imports or
-   copy provider session files to another member's computer.
+Use `matrix chats discover --json` for metadata-only inventory, or add
+`--project /absolute/path/to/repository` for repository evidence. Discovery
+uses `CODEX_HOME` (default `~/.codex`) and `CLAUDE_CONFIG_DIR` (default
+`~/.claude`). It includes Codex `sessions/**/*.jsonl` and
+`archived_sessions/*.jsonl`, and Claude `projects/**/*.jsonl` including
+subagents. Project folder names, including `CLAUDE_CODE_PROJECT_DIR_NAME`,
+are not repository evidence. Indexes and global input history are not complete
+transcripts. Credential stores and adjacent files are excluded.
 
-For multiple sessions, repeat the preview and import for each exact file. A
-large raw JSONL file is read as a stream; the importer excludes hidden
-instructions, reasoning, tool output and duplicate event records.
+Keep unresolved sessions separate. Association is a suggestion, not permission
+to attach a Chat to a project or share it. A recorded cwd inside a currently
+verified Git worktree/common directory, or an exact recorded remote plus a
+commit present in the selected repository, can establish a match. A branch,
+shared workspace parent, directory slug, title, or modification time cannot.
+
+## Preview and import
+
+1. Choose exact files within the owner's requested scope. Existing approval to
+   import those selected sessions remains valid; do not request it again.
+2. Preview each file without uploads:
+   `matrix chats import codex /absolute/path/session.jsonl --json`
+   or `matrix chats import claude /absolute/path/session.jsonl --json`.
+   Report session identity, counts, bytes, hash, source issues, and unavailable
+   external references. Keep private transcript text out of reports unless the
+   owner specifically requests it.
+3. Apply that same file and captured hash:
+   `matrix chats import claude /absolute/path/session.jsonl --apply --sha256 <hash>`.
+   Use `codex` for Codex files. Optionally supply `--title`.
+4. Report success only after canonical read-back returns the Chat ID, stored
+   history count, and original archive job ID. Retrying the same captured bytes
+   resumes durable parts or returns the already published Chat. A changed
+   snapshot or prior text-only import requires explicit reconciliation; do not
+   automatically re-import it as another Chat or claim incremental merging.
+5. Imports stay private. Let the owner choose later project or organization
+   sharing. Original archives, internal instructions, and thinking remain
+   owner-private. Never automatically share every discovered session.
+
+Files are read without changing or resuming the source sessions. Original bytes
+are uploaded in bounded parts and verified by size/SHA-256. Readable history
+includes saved prose, tools, and supported embedded media. Unknown, encrypted,
+malformed, and internal records remain in the original archive. External paths
+and URLs are not followed automatically. Missing historical output cannot be
+recovered from a preview or the current version of an edited file. Raw archives
+can contain secrets previously pasted into a conversation.
+
+Stopping the client pauses upload/waiting; queued server verification may
+continue. Retry the same file to check its status. Do not claim cancellation
+removed a published Chat. Do not claim complete support for unseen compaction,
+fork, remote media, or platform formats.
+
+## Settings
+
+Web Canvas, Web Desktop, and Electron Desktop expose **Settings → Import chats**:
+choose Codex or Claude Code, select one JSONL file, review the preview, and press
+**Import private Chat**. Electron uses a native picker and native upload; its
+renderer receives no local filesystem path or credential.
