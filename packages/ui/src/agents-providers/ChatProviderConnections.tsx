@@ -23,6 +23,9 @@ export function deriveChatProviderConnectionState(snapshot: ProviderSettingsSnap
   const freshAbsent = (observation: { state: string; checkedAt: string | null; staleAfter: string | null } | undefined) =>
     observation?.state === "absent" && Date.parse(observation.checkedAt ?? "") <= Date.now()
       && Date.parse(observation.staleAfter ?? "") > Date.now();
+  const unselectedDiscovery = (source: NonNullable<typeof snapshot>["accessSources"][number]) =>
+    source.kind === "harness_profile" && source.readiness.state === "unknown" && source.localObservation?.state === "unknown"
+      && !snapshot.harnesses.some((harness) => harness.accessSourceId === source.id || harness.configuredAccessSourceId === source.id);
   // Local CLI login never proves remote authentication; only fresh explicit
   // absence can contribute negative connection evidence.
   if (snapshot.accounts.some((account) => account.authState === "unknown"
@@ -30,8 +33,8 @@ export function deriveChatProviderConnectionState(snapshot: ProviderSettingsSnap
     || snapshot.harnesses.some((harness) => harness.installState !== "missing"
       && ((harness.authState === "unknown" && !freshAbsent(harness.localObservation ?? sourceForHarness(harness)?.localObservation))
         || (harness.localObservation !== undefined && !freshAbsent(harness.localObservation))))
-    || snapshot.accessSources.some((source) => (source.localObservation !== undefined && !freshAbsent(source.localObservation))
-      || (["unknown", "stale", "unavailable"].includes(source.readiness.state) && !freshAbsent(source.localObservation)))) return "unknown";
+    || snapshot.accessSources.some((source) => !unselectedDiscovery(source) && ((source.localObservation !== undefined && !freshAbsent(source.localObservation))
+      || (["unknown", "stale", "unavailable"].includes(source.readiness.state) && !freshAbsent(source.localObservation))))) return "unknown";
   return "disconnected";
 }
 

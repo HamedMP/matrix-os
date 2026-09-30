@@ -27,16 +27,16 @@ The implementation must cover Electron Desktop's native Chat and the shared Web 
 - Acceptable orphan states: abandoned login attempts follow the existing expiry/cancel contract; no Chat/conversation is created just to render onboarding.
 - Auth source of truth: selected-runtime authenticated transport and existing server permission checks. The new UI never handles credentials directly or manufactures shell commands.
 - Resource policy: bounded requests, existing cancellation/stale-runtime guards, no new unbounded polling or registries.
-- Deferred scope: integration onboarding, pending Settings Figma redesign, new provider auth policy, funding changes, deployment/merge, and Native Mobile startup changes.
+- Deferred scope: integration onboarding, broader Settings design, new provider auth policy, funding changes, production fleet rollout, and Native Mobile startup changes.
 
 ## Acceptance and delivery
 
 - Tests first for one-shot startup, restore ordering, explicit launch precedence, duplicate prevention, preserving active Chat/drafts, provider-state classification, and actual connection controls.
 - Component integration tests must exercise native and hosted Chat empty states plus successful, pending, cancelled, failed, and stale-runtime authentication outcomes.
 - Regression tests retain Settings connection behavior and usable alternate providers.
-- Build and inspect the exact-head Electron Desktop with a fresh profile and restored state. Fixture evidence and live selected-runtime evidence must be recorded separately. This frontend-only change does not require a new Preview VPS. Any future backend change additionally requires matching Preview VPS validation.
+- Build and inspect the exact-head Electron Desktop with a fresh profile and restored state. Fixture evidence and live selected-runtime evidence must be recorded separately. Fresh-runtime credential projection corrections additionally require matching Preview VPS validation; use the existing pr-2061 runtime without logging out or modifying other computers.
 - Deliver one primary implementation PR for ENG-60 and a companion public documentation PR in the private `FinnaAI/matrix-os-site` repository under `content/docs/`.
-- Present an exact-head runnable Human Review flow. User Human Review approval precedes requested Greptile/final CI and landing gates; no automatic merge or production rollout is authorized.
+- Present an exact-head runnable Human Review flow. The latest user instruction authorizes merging after real Preview/Electron acceptance, current-head Greptile 5/5 and green CI. Production fleet rollout remains outside scope.
 
 ## Executable contracts
 
@@ -104,3 +104,34 @@ Companion documentation: https://github.com/FinnaAI/matrix-os-site/pull/143 (pre
 
 ### Real VPS correction: connection inspection must not gate Chat
 Render the connection guide only for `deriveChatProviderConnectionState(...) === "disconnected"`. Other states retain the supplied normal Chat content. Keep evidence classification truthful and canonical catalog/send admission unchanged. Tests assert no connection-status replacement for checking/unknown/read failure and preserve supported disconnected login wiring. Live primary VPS evidence and built-client provenance are independent; a successful fixture is not proof of live provider availability.
+
+### Fresh runtime credential projection acceptance
+A new unauthenticated VPS must show the connection guide after its fresh credential inspection completes. Settings projection must preserve authoritative missing-credential evidence even when an unconfigured account is omitted or a model catalog is unavailable. Optional discovery alone does not establish a connection; failed/unknown probes on a configured route remain uncertain. Collect short-lived negative local observations late enough that unrelated native catalog reads do not expire them before the client receives the snapshot. No TTL extension, synthetic authentication, or send-admission bypass is permitted.
+
+Tests reproduce the real canonical-to-Settings snapshot and assert disconnected fresh Chat plus suppression for existing credentials, configured custom routes, and failed probes. Live Electron Desktop acceptance must independently confirm the guide on the exact-head pr-2061 bundle and normal Chat on the user's existing connected runtime.
+
+## Fresh-runtime missing credential contract
+
+### Scope / trigger
+A fresh VPS can omit unconfigured account-backed sources from Settings while canonical inventory still records missing credentials. Preserve that negative connection evidence independently of model-catalog availability, without making the route executable.
+
+### Signatures
+`projectMissingCredentialAuth({ canonical, stored, source, driver, now }): "unauthenticated" | undefined` participates only in `projectProviderSettings` harness authentication projection. `AiProviderService.getSnapshot({ refresh })` collects the bounded Codex observation after independent metadata/catalog reads settle, on both refreshed and silent reads.
+
+### Contracts
+Only an omitted configured canonical owner source with matching vendor/model eligibility and explicit `setup_required` or `auth_required` qualifies. Any source/driver local observation must be `absent` and satisfy `checkedAt <= now < staleAfter`; preserve original timestamps and five-second observation lifetime. The helper provides no account/source execution binding. Shared connection derivation ignores discovery metadata only when a `harness_profile` source has unknown readiness/unknown observation and no harness selects or configures it.
+
+### Validation / error matrix
+- Explicit matching missing credentials, no contradictory observations: unauthenticated projection.
+- Present, unknown, stale, future, or timestamp-free local observation: no negative override.
+- Unknown/unavailable configured source, different vendor/model, or missing source reference: no negative override.
+- Positive or configured native profile: retain normal Chat. Read failures never imply disconnection.
+
+### Good / base / bad cases
+Good: fresh canonical source survives optional Pi catalog failure as negative auth evidence; newly collected Codex absence remains fresh at response time. Base: connected account bypasses the guide and existing admission remains authoritative. Bad: treating a failed probe as no login, or extending an expired observation's timestamp.
+
+### Required tests
+`tests/gateway/provider-settings-chat-onboarding.test.ts` exercises canonical service -> Settings store -> authenticated Hono route, both refresh modes, rejected negative timestamps, configured/native positive uncertainty, connected accounts, and the existing server-issued Terminal action with no projected account. Built live Electron E2E checks explicit disconnected guide actions and exact client/runtime provenance.
+
+### Wrong versus correct
+Wrong: derive disconnection from unavailable models or replace an expired timestamp with response time. Correct: retain matching canonical missing-credential evidence, collect short-lived observations after slow catalogs, and suppress the guide on configured or positive local evidence.

@@ -48,6 +48,7 @@ suite("Electron Desktop Chat against an authenticated runtime", () => {
           runtimeVersion: system.runtimeVersion ?? system.version, runtimeCommit: system.build?.sha };
       });
       if (process.env.MATRIX_EXPECTED_CLIENT_COMMIT) expect(evidence.clientCommit).toBe(process.env.MATRIX_EXPECTED_CLIENT_COMMIT);
+      if (process.env.MATRIX_EXPECTED_RUNTIME_VERSION) expect(evidence.runtimeVersion).toBe(process.env.MATRIX_EXPECTED_RUNTIME_VERSION);
       const snapshot = ProviderSettingsSnapshotSchema.parse(evidence.snapshot);
       const connectionState = deriveChatProviderConnectionState(snapshot);
       const provenance = {
@@ -62,8 +63,18 @@ suite("Electron Desktop Chat against an authenticated runtime", () => {
       if (await later.isVisible()) await later.click();
       const chat = page.getByRole("dialog", { name: "Chat window", exact: true });
       await chat.waitFor({ timeout: 20_000 });
-      expect(await page.getByRole("button", { name: "Connect Claude Code", exact: true }).count()).toBe(0);
-      expect(await page.getByRole("button", { name: "Connect Codex", exact: true }).count()).toBe(0);
+      if (connectionState === "disconnected") {
+        await chat.getByRole("heading", { name: "Connect a coding agent", exact: true }).waitFor();
+        for (const name of ["Connect Claude Code", "Connect Codex"]) {
+          const action = chat.getByRole("button", { name, exact: true });
+          await action.waitFor();
+          expect(await action.isEnabled()).toBe(true);
+        }
+      } else {
+        expect(await chat.getByRole("heading", { name: "Connect a coding agent", exact: true }).count()).toBe(0);
+        expect(await chat.getByRole("button", { name: "Connect Claude Code", exact: true }).count()).toBe(0);
+        expect(await chat.getByRole("button", { name: "Connect Codex", exact: true }).count()).toBe(0);
+      }
       if (connectionState === "unknown") {
         // Unknown Settings evidence retains normal Chat or its existing canonical
         // recovery; the new onboarding must not install a connection-status gate.
