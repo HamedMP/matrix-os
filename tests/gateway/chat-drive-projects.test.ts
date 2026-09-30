@@ -71,6 +71,16 @@ describe("owner-persisted company drive Chat projects", () => {
         expect((await app.request('/api/chats/chat_project/drive-project', json(request))).status).toBe(409);
         expect(authorize).not.toHaveBeenCalled();
     });
+    it("uses canonical maximum-length Chat and request IDs across lookup and update", async () => {
+        const id = "chat_" + "x".repeat(128);
+        const clientRequestId = "req_" + "x".repeat(128);
+        await repository.create(owner, { id, clientRequestId: "req_create_long", title: "Long identifier" });
+        const response = await app.request(`/api/chats/${id}/drive-project`, json({ baseRevision: 0, clientRequestId, reference: null }));
+        expect(response.status).toBe(200);
+        const lookup = await app.request('/api/chat-drive-projects/lookup', { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ chatIds: [id] }) });
+        expect(lookup.status).toBe(200);
+        expect(await lookup.json()).toMatchObject({ associations: [{ chatId: id, reference: null }] });
+    });
     it("validates every boundary and rechecks a sharing transition after source I/O", async () => {
         expect((await app.request('/api/chats/invalid/drive-project', json(request))).status).toBe(422);
         expect((await app.request('/api/chats/chat_project/drive-project?actor=other', json(request))).status).toBe(422);

@@ -565,6 +565,7 @@ export class ChatQueueRepository {
         created_at: createdAt,
         updated_at: createdAt,
       }).returningAll().executeTakeFirstOrThrow();
+      await associateAdmittedDriveChat(trx, chatId, clientRequestId, context);
       // Run output advances the chat-wide revision while the user is composing.
       // Appending a uniquely keyed queued turn does not overwrite concurrent state,
       // so serialize on the locked Chat row and advance its current revision.

@@ -1,10 +1,11 @@
 import { z } from "zod/v4";
 import { OrganizationDriveContextReferenceSchema } from "#organization-drive-context";
-const ChatId = z.string().regex(/^chat_[A-Za-z0-9_-]{1,120}$/);
+import { CanonicalChatIdSchema, CanonicalChatRequestIdSchema } from "#canonical-chat";
+const ChatId = CanonicalChatIdSchema;
 export const ChatDriveProjectReferenceSchema = OrganizationDriveContextReferenceSchema.options[0];
 export const UpdateChatDriveProjectSchema = z.object({
     baseRevision: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
-    clientRequestId: z.string().regex(/^req_[A-Za-z0-9_-]{1,120}$/),
+    clientRequestId: CanonicalChatRequestIdSchema,
     reference: ChatDriveProjectReferenceSchema.nullable(),
 }).strict();
 export const ChatDriveProjectSchema = z.object({ chatId: ChatId, reference: ChatDriveProjectReferenceSchema.nullable(), revision: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER) }).strict();
