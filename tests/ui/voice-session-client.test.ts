@@ -732,6 +732,27 @@ describe("voice session device selection", () => {
     client.dispose();
   });
 
+  it("ignores a superseded input failure after the newer microphone succeeds", async () => {
+    const world = makeWorld({ turnMode: "hands_free" });
+    const client = await started(world);
+    world.sockets[0]!.emitOpen();
+    listen(world);
+    let rejectOld!: (error: Error) => void;
+    world.media.switchImpl = device => device === "mic_a"
+      ? new Promise<void>((_resolve, reject) => { rejectOld = reject; })
+      : Promise.resolve();
+    const old = client.setInputDevice("mic_a");
+    await expect(client.setInputDevice("mic_b")).resolves.toBe(true);
+    rejectOld(new Error("stale acquisition"));
+    await expect(old).resolves.toBe(false);
+    expect(client.getSnapshot()).toMatchObject({ phase: "active", error: null });
+    expect(world.options.request.inputDeviceId).toBe("mic_b");
+    expect(world.media.releases).toBe(0);
+    expect(world.sockets[0]!.sent.filter(frame => frame.type === "device.changed"))
+      .toEqual([expect.objectContaining({ inputDeviceId: "mic_b" })]);
+    client.dispose();
+  });
+
   it("routes output selection through the media session and stores it for next start", async () => {
     const world = makeWorld();
     const client = await started(world);

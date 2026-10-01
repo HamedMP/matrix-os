@@ -184,6 +184,8 @@ export function createWebVoiceMediaSession(options: {
   let capture: VoiceCaptureHandle | null = null;
   let playbackContext: VoiceAudioContextLike | null = null;
   let playbackContextReady: Promise<boolean> | null = null;
+  let outputGeneration = 0;
+  let sinkChange: Promise<boolean> = Promise.resolve(true);
   /** Explicit output-device selection recorded before/without a live context; applied at every context creation. `undefined` = never set, `null` = explicit system default. */
   let pendingOutputDeviceId: string | null | undefined;
   let prepared = false;
@@ -365,6 +367,26 @@ export function createWebVoiceMediaSession(options: {
     emitError(voiceErrorForCode("input_unavailable"));
   };
 
+  const routeOutput = (context: VoiceAudioContextLike, deviceId: string | null): Promise<boolean> => {
+    const revision = ++outputGeneration;
+    const current = () => !released && playbackContext === context && revision === outputGeneration;
+    // Serialize physical routing: a late old success must not undo a newer sink.
+    sinkChange = sinkChange.then(async () => {
+      if (!current()) return false;
+      if (typeof context.setSinkId !== "function") return deviceId === null;
+      try {
+        await context.setSinkId(deviceId ?? "");
+        return current();
+      } catch (error: unknown) {
+        console.warn("[voice-session] output sink apply failed:", error instanceof Error ? error.name : "UnknownError");
+        if (current()) emitError(voiceErrorForCode("output_unavailable"));
+        return false;
+      }
+    });
+    playbackContextReady = sinkChange;
+    return sinkChange;
+  };
+
   const playbackCtx = (): VoiceAudioContextLike | null => {
     if (playbackContext) return playbackContext;
     try {
@@ -376,28 +398,9 @@ export function createWebVoiceMediaSession(options: {
     // A pending explicit output selection applies to every context created
     // after it was recorded (e.g. re-created after release->prepare cycles).
     if (playbackContext !== null && pendingOutputDeviceId !== undefined) {
-      const context = playbackContext;
-      const sinkId = pendingOutputDeviceId ?? "";
-      if (typeof context.setSinkId === "function") {
-        try {
-          playbackContextReady = Promise.resolve(context.setSinkId(sinkId)).then(
-            () => !released && playbackContext === context,
-            (sinkError: unknown) => {
-              console.warn("[voice-session] pending output sink failed:", sinkError instanceof Error ? sinkError.name : "UnknownError");
-              if (!released && playbackContext === context) emitError(voiceErrorForCode("output_unavailable"));
-              return false;
-            },
-          );
-        } catch (sinkError: unknown) {
-          console.warn("[voice-session] pending output sink failed:", sinkError instanceof Error ? sinkError.name : "UnknownError");
-          emitError(voiceErrorForCode("output_unavailable"));
-          playbackContextReady = Promise.resolve(false);
-        }
-      } else {
-        // An explicit non-default route must not silently play through the
-        // system default on browsers without AudioContext output selection.
-        playbackContextReady = Promise.resolve(pendingOutputDeviceId === null);
-        if (pendingOutputDeviceId !== null) emitError(voiceErrorForCode("output_unavailable"));
+      void routeOutput(playbackContext, pendingOutputDeviceId);
+      if (typeof playbackContext.setSinkId !== "function" && pendingOutputDeviceId !== null) {
+        emitError(voiceErrorForCode("output_unavailable"));
       }
     }
     if (playbackContext === null) emitError(voiceErrorForCode("output_unavailable"));
@@ -493,8 +496,10 @@ export function createWebVoiceMediaSession(options: {
    * Shared by `prepare` (initial acquisition) and `switchInputDevice` (hot
    * swap): never emits rationale — callers own that UX.
    */
-  const acquireCapture = async (inputDeviceId: string | undefined): Promise<void> => {
-    const acquisition = ++captureGeneration;
+  const acquireCapture = async (inputDeviceId: string | undefined, acquisition: number): Promise<void> => {
+    if (released || acquisition !== captureGeneration) {
+      throw new VoiceMediaError(voiceErrorForCode("input_unavailable"));
+    }
     let rawStream: unknown;
     try {
       rawStream = await mediaDevices!.getUserMedia({
@@ -581,13 +586,15 @@ export function createWebVoiceMediaSession(options: {
       if (released) throw new VoiceMediaError(voiceErrorForCode("internal_failure"));
       if (!supported || mediaDevices === null) throw new VoiceMediaError(voiceErrorForCode("unsupported_surface"));
       if (prepared) return;
+      const acquisition = ++captureGeneration;
       await input?.onRationale?.();
-      await acquireCapture(input?.inputDeviceId);
+      await acquireCapture(input?.inputDeviceId, acquisition);
       mediaDevices.addEventListener?.("devicechange", onDeviceChange);
     },
     async switchInputDevice(deviceId) {
       if (released) throw new VoiceMediaError(voiceErrorForCode("internal_failure"));
       if (!supported || mediaDevices === null) throw new VoiceMediaError(voiceErrorForCode("unsupported_surface"));
+      const acquisition = ++captureGeneration;
       // Retire only the capture side; in-flight playback keeps its context.
       capturing = false;
       activeTurnId = null;
@@ -617,7 +624,7 @@ export function createWebVoiceMediaSession(options: {
           }
         }
       }
-      await acquireCapture(deviceId);
+      await acquireCapture(deviceId, acquisition);
     },
     async setOutputDevice(deviceId) {
       if (released) return "unavailable";
@@ -629,26 +636,18 @@ export function createWebVoiceMediaSession(options: {
       // No live context: the preference is in force and applies when one is
       // created (playback is lazy — the sink is bound at creation).
       if (context === null) return "applied";
-      if (typeof context.setSinkId !== "function") {
-        playbackContextReady = Promise.resolve(deviceId === null);
-        return deviceId === null ? "applied" : "unsupported";
+      const supportedSink = typeof context.setSinkId === "function";
+      const readiness = routeOutput(context, deviceId);
+      const ready = await readiness;
+      if (ready && playbackContextReady === readiness) {
+        playbackContextReady = null;
+        // Recovery must wake existing queues, not wait for another segment.
+        for (const [responseId, playback] of responses) {
+          playback.waitingForContext = false;
+          scheduleNext(responseId, playback);
+        }
       }
-      try {
-        playbackContextReady = Promise.resolve(context.setSinkId(deviceId ?? "")).then(
-          () => !released && playbackContext === context,
-          (error: unknown) => {
-            console.warn("[voice-session] output sink apply failed:", error instanceof Error ? error.name : "UnknownError");
-            if (!released && playbackContext === context) emitError(voiceErrorForCode("output_unavailable"));
-            return false;
-          },
-        );
-        return await playbackContextReady ? "applied" : "unavailable";
-      } catch (error: unknown) {
-        console.warn("[voice-session] output sink apply failed:", error instanceof Error ? error.name : "UnknownError");
-        playbackContextReady = Promise.resolve(false);
-        if (!released && playbackContext === context) emitError(voiceErrorForCode("output_unavailable"));
-        return "unavailable";
-      }
+      return ready ? "applied" : !supportedSink ? "unsupported" : "unavailable";
     },
     startCapture({ turnId }) {
       if (released || !prepared) {

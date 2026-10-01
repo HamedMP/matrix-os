@@ -399,6 +399,7 @@ describe("voice media device selection", () => {
     await session.prepare();
 
     const switchA = session.switchInputDevice!("mic_a");
+    await vi.waitFor(() => expect(devices.getUserMedia).toHaveBeenCalledTimes(2));
     const switchB = session.switchInputDevice!("mic_b");
     requestB.resolve(streams.b);
     await switchB;
@@ -418,14 +419,16 @@ describe("voice media device selection", () => {
     const pending = new Promise<VoiceMediaStreamLike>((done) => { resolve = done; });
     const track = { stop: vi.fn(), getSettings: () => ({ deviceId: "mic_late" }) };
     const captureStop = vi.fn(async () => undefined);
+    const getUserMedia = vi.fn(async () => pending);
     const session = createWebVoiceMediaSession({
       audio: AUDIO,
       callbacks: { onAudioChunk: () => true, onSegmentPlayed: () => undefined },
-      mediaDevices: { getUserMedia: vi.fn(async () => pending) },
+      mediaDevices: { getUserMedia },
       createAudioContext: () => fakePlaybackContext().context,
       captureFactory: () => ({ sampleRateHz: 16_000, stop: captureStop }),
     });
     const preparing = session.prepare();
+    await vi.waitFor(() => expect(getUserMedia).toHaveBeenCalledOnce());
     await session.release();
     resolve({ getTracks: () => [track] });
     await expect(preparing).rejects.toMatchObject({ safeError: { code: "input_unavailable" } });
@@ -493,6 +496,23 @@ describe("voice media device selection", () => {
     });
   });
 
+  it("does not let delayed old capture cleanup supersede a newer microphone", async () => {
+    const { session, captureStop, devices } = mediaHarness();
+    await session.prepare();
+    let resolveStop!: () => void;
+    captureStop.mockImplementationOnce(() => new Promise<void>(resolve => { resolveStop = resolve; }));
+    const old = session.switchInputDevice!("mic_a");
+    const oldResult = old.catch(error => error);
+    await session.switchInputDevice!("mic_b");
+    expect(devices.devices.getUserMedia).toHaveBeenCalledTimes(2);
+    resolveStop();
+    await oldResult;
+    expect(devices.devices.getUserMedia).toHaveBeenCalledTimes(2);
+    expect(devices.devices.getUserMedia).toHaveBeenLastCalledWith(expect.objectContaining({
+      audio: expect.objectContaining({ deviceId: { exact: "mic_b" } }),
+    }));
+  });
+
   it("applies setSinkId to the live playback context and resets to default", async () => {
     const { session, playback } = mediaHarness();
     const setSinkId = vi.fn(async (_id: string) => undefined);
@@ -537,6 +557,7 @@ describe("voice media device selection", () => {
     await expect(session.setOutputDevice?.("spk_a")).resolves.toBe("applied");
     session.enqueueSegment({ responseId: "vresp_1", segmentId: "vseg_1", data: pcmSegment(320) });
     expect(playback.sources).toHaveLength(0);
+    await vi.waitFor(() => expect(playback.context.setSinkId).toHaveBeenCalledWith("spk_a"));
     resolveSink();
     await vi.waitFor(() => expect(playback.sources).toHaveLength(1));
     expect(playback.sources[0]!.startedAt).toBe(0);
@@ -549,6 +570,7 @@ describe("voice media device selection", () => {
     await session.prepare();
     await expect(session.setOutputDevice?.("spk_a")).resolves.toBe("applied");
     session.enqueueSegment({ responseId: "vresp_1", segmentId: "vseg_1", data: pcmSegment(320) });
+    await vi.waitFor(() => expect(playback.context.setSinkId).toHaveBeenCalledWith("spk_a"));
     rejectSink(new Error("routing failed"));
     await vi.waitFor(() => expect(errors).toContainEqual(expect.objectContaining({ code: "output_unavailable" })));
     session.enqueueSegment({ responseId: "vresp_1", segmentId: "vseg_2", data: pcmSegment(320) });
@@ -559,8 +581,51 @@ describe("voice media device selection", () => {
     expect(acks).toHaveLength(0);
     playback.context.setSinkId = vi.fn(async () => undefined);
     await expect(session.setOutputDevice?.("spk_b")).resolves.toBe("applied");
+    // Recovery alone must resume both blocked responses, without new audio.
+    await vi.waitFor(() => expect(playback.sources).toHaveLength(2));
+    expect(playback.sources.every(source => source.startedAt === 0)).toBe(true);
+    playback.sources[0]!.finish();
+    await vi.waitFor(() => expect(playback.sources).toHaveLength(3));
+    expect(acks[0]).toMatchObject({ responseId: "vresp_1", segmentId: "vseg_1" });
     session.enqueueSegment({ responseId: "vresp_3", segmentId: "vseg_4", data: pcmSegment(320) });
-    await vi.waitFor(() => expect(playback.sources).toHaveLength(1));
+    await vi.waitFor(() => expect(playback.sources).toHaveLength(4));
+  });
+
+  it("wakes old queues when new audio arrives during explicit output recovery", async () => {
+    const { session, playback, errors } = mediaHarness();
+    playback.context.setSinkId = vi.fn(async () => { throw new Error("lost output"); });
+    await session.prepare();
+    await session.setOutputDevice!("spk_a");
+    session.enqueueSegment({ responseId: "vresp_old", segmentId: "vseg_old", data: pcmSegment(320) });
+    await vi.waitFor(() => expect(errors).toHaveLength(1));
+    let resolveSink!: () => void;
+    playback.context.setSinkId = vi.fn(() => new Promise<void>(resolve => { resolveSink = resolve; }));
+    const recovering = session.setOutputDevice!("spk_b");
+    session.enqueueSegment({ responseId: "vresp_new", segmentId: "vseg_new", data: pcmSegment(320) });
+    await vi.waitFor(() => expect(playback.context.setSinkId).toHaveBeenCalledWith("spk_b"));
+    resolveSink();
+    await recovering;
+    await vi.waitFor(() => expect(playback.sources).toHaveLength(2));
+  });
+
+  it("does not report a superseded sink failure or block the newer route", async () => {
+    const { session, playback, errors } = mediaHarness();
+    await session.prepare();
+    session.enqueueSegment({ responseId: "vresp_1", segmentId: "vseg_1", data: pcmSegment(320) });
+    let rejectOld!: (error: Error) => void;
+    playback.context.setSinkId = vi.fn((id: string) => id === "spk_a"
+      ? new Promise<void>((_resolve, reject) => { rejectOld = reject; })
+      : Promise.resolve());
+    const old = session.setOutputDevice!("spk_a");
+    await vi.waitFor(() => expect(playback.context.setSinkId).toHaveBeenCalledWith("spk_a"));
+    const latest = session.setOutputDevice!("spk_b");
+    expect(playback.context.setSinkId).not.toHaveBeenCalledWith("spk_b");
+    rejectOld(new Error("old device disappeared"));
+    await old;
+    await expect(latest).resolves.toBe("applied");
+    expect(errors).toEqual([]);
+    session.enqueueSegment({ responseId: "vresp_2", segmentId: "vseg_2", data: pcmSegment(320) });
+    await vi.waitFor(() => expect(playback.sources).toHaveLength(2));
   });
 });
 

@@ -161,6 +161,8 @@ export function createVoiceSessionClient(options: VoiceSessionClientOptions): Vo
   let ending = false;
   let disposed = false;
   let generation = 0;
+  let inputSelectionRevision = 0;
+  let outputSelectionRevision = 0;
   let startPromise: Promise<void> | null = null;
   // A transport failure leaves create outcome unknown. Keep the exact request
   // across the user's Retry so the server can reconcile the logical create.
@@ -715,6 +717,7 @@ export function createVoiceSessionClient(options: VoiceSessionClientOptions): Vo
         : typeof deviceId === "string" && VOICE_DEVICE_ID.test(deviceId) ? deviceId
           : undefined;
       if (deviceId !== null && normalized === undefined) return false;
+      const revision = ++inputSelectionRevision;
       options.request.inputDeviceId = normalized;
       const held = media;
       if (held === null || typeof held.switchInputDevice !== "function") {
@@ -738,7 +741,7 @@ export function createVoiceSessionClient(options: VoiceSessionClientOptions): Vo
       try {
         await held.switchInputDevice(normalized);
       } catch (mediaError: unknown) {
-        if (!disposed && media === held && !ending
+        if (revision === inputSelectionRevision && !disposed && media === held && !ending
           && phase !== "idle" && phase !== "ended" && phase !== "failed") {
           failSession(mediaError instanceof VoiceMediaError
             ? mediaError.safeError
@@ -746,7 +749,7 @@ export function createVoiceSessionClient(options: VoiceSessionClientOptions): Vo
         }
         return false;
       }
-      if (disposed || media !== held) return false;
+      if (revision !== inputSelectionRevision || disposed || media !== held) return false;
       transport.current()?.send({
         type: "device.changed",
         ...(normalized === undefined ? {} : { inputDeviceId: normalized }),
@@ -759,14 +762,16 @@ export function createVoiceSessionClient(options: VoiceSessionClientOptions): Vo
         : typeof deviceId === "string" && VOICE_DEVICE_ID.test(deviceId) ? deviceId
           : undefined;
       if (deviceId !== null && normalized === undefined) return "unavailable";
+      const revision = ++outputSelectionRevision;
       options.request.outputDeviceId = normalized;
       const held = media;
       if (held === null) return "applied";
       if (typeof held.setOutputDevice !== "function") return "unsupported";
       try {
-        return await held.setOutputDevice(deviceId);
+        const result = await held.setOutputDevice(deviceId);
+        return revision === outputSelectionRevision && !disposed && media === held ? result : "unavailable";
       } catch (mediaError: unknown) {
-        voiceWarn("[voice-session] output switch failed:", mediaError);
+        if (revision === outputSelectionRevision) voiceWarn("[voice-session] output switch failed:", mediaError);
         return "unavailable";
       }
     },
