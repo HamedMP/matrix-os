@@ -100,7 +100,7 @@ jobs:
           should_run_trigger=true
           if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
             should_run_trigger=false
-            if [ "$PR_ACTION" = "ready_for_review" ] || { [ "$PR_ACTION" = "labeled" ] && [ "$PR_LABEL_NAME" = "ready-for-ci" ]; } || { [ "$PR_ACTION" = "synchronize" ] && [ "$PR_HAS_READY_FOR_CI" = "true" ]; }; then
+            if [ "$PR_ACTION" = "ready_for_review" ] || { [ "$PR_ACTION" = "labeled" ] && { [ "$PR_LABEL_NAME" = "ready-for-ci" ] || [ "$PR_HAS_READY_FOR_CI" = "true" ]; }; } || { [ "$PR_ACTION" = "synchronize" ] && [ "$PR_HAS_READY_FOR_CI" = "true" ]; }; then
               should_run_trigger=true
             fi
           fi

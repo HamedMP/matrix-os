@@ -176,6 +176,7 @@ function runPullRequestChangeDetection(
   root: string,
   workflowPath: string,
   hasReadyForCi: boolean,
+  options: { action?: string; labelName?: string } = {},
 ): {
   output: string;
   status: number | null;
@@ -231,9 +232,9 @@ exit 64
         GITHUB_REF: 'refs/pull/1/merge',
         GITHUB_SHA: '0123456789012345678901234567890123456789',
         GITHUB_TOKEN: 'test-token',
-        PR_ACTION: 'synchronize',
+        PR_ACTION: options.action ?? 'synchronize',
         PR_HAS_READY_FOR_CI: String(hasReadyForCi),
-        PR_LABEL_NAME: '',
+        PR_LABEL_NAME: options.labelName ?? '',
       },
     });
 
@@ -297,6 +298,25 @@ describe('CI workflows', () => {
     if (path.endsWith('ci.yml')) {
       expect(labeled.output).toContain('trigger_requested=true');
     }
+  });
+
+  it('keeps unrelated label events admitted after ready-for-ci is applied', () => {
+    const path = '.github/workflows/ci.yml';
+    const unadmitted = runPullRequestChangeDetection(process.cwd(), path, false, {
+      action: 'labeled',
+      labelName: 'documentation',
+    });
+    expect(unadmitted.status, unadmitted.stderr).toBe(0);
+    expect(unadmitted.output).toContain('trigger_requested=false');
+    expect(unadmitted.output).toContain('should_run=false');
+
+    const admitted = runPullRequestChangeDetection(process.cwd(), path, true, {
+      action: 'labeled',
+      labelName: 'documentation',
+    });
+    expect(admitted.status, admitted.stderr).toBe(0);
+    expect(admitted.output).toContain('trigger_requested=true');
+    expect(admitted.output).toContain('should_run=true');
   });
 
   it('queues main CI runs and delegates only full-plan supersession to a narrow workflow', () => {
