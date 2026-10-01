@@ -151,7 +151,7 @@ Common patterns:
 Split into per-item elements, pass an `--index`, and delay by it. Letters/inline elements need `display: inline-block` (transforms need a box) and `overflow: hidden` on the container to hide their initial position; use `animation-fill-mode: backwards` so they aren't visible before starting.
 
 ```css
-.item { animation: enter 0.6s ease both; animation-delay: calc(var(--delay) * var(--stagger)); --delay: 120ms; }
+.item { animation: enter 0.6s ease both; animation-delay: calc(var(--delay) * var(--index)); --delay: 120ms; }
 @keyframes enter { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
 ```
 

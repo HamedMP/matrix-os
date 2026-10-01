@@ -18,15 +18,23 @@ Reveal a stroke as if it's being drawn by animating `stroke-dashoffset`:
 2. Offset by the path length to hide it.
 3. Animate the offset back to `0` to draw it in.
 
+Normalize the concrete path to 100 user units; use unitless dash values in that same calibrated space. See [SVG pathLength](https://developer.mozilla.org/en-US/docs/Web/SVG/Reference/Attribute/pathLength).
+
+```html
+<svg viewBox="0 0 100 100" aria-hidden="true">
+  <path class="draw-stroke" pathLength="100" d="M10 50 L40 80 L90 20" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="butt" />
+</svg>
+```
+
 ```css
-path { stroke-dasharray: 1px 1.1px; stroke-dashoffset: 1px; animation: draw 0.6s ease forwards; }
+.draw-stroke { stroke-dasharray: 100 110; stroke-dashoffset: 100; animation: draw 0.6s ease forwards; }
 @keyframes draw { to { stroke-dashoffset: 0; } }
 ```
 
 - **`pathLength="100"`** on the path normalizes its length so you work in round numbers / percentages and can share values across paths of different real lengths.
 - **`animation-fill-mode: forwards` is required** or the shape snaps back to hidden.
 - **Stagger** multiple strokes with `animation-delay` (a checkmark waits for its box: `draw 0.4s …; animation-delay: 0.6s`).
-- **`stroke-linecap: round` gotcha:** rounded caps extend past the mathematical dash, so make the gap slightly larger than the dash (`1px` dash, `1.1px` gap) or the caps peek through when the line should be hidden.
+- **`stroke-linecap: round` gotcha:** rounded caps extend past the mathematical dash, so make the gap slightly larger than the dash (for example a normalized 100-unit dash with a larger gap; verify caps when tuning the initial offset) or the caps peek through when the line should be hidden.
 
 ## Rotation & transform-origin (the SVG trap)
 
