@@ -246,6 +246,7 @@ describe("canonical coding Chat Provider adapter", () => {
         approvalPolicy: "on_request",
         sandboxMode: "read_only",
       }),
+      undefined,
     );
   });
 
@@ -287,6 +288,7 @@ describe("canonical coding Chat Provider adapter", () => {
         approvalPolicy: "on_request",
         sandboxMode: "read_only",
       }),
+      undefined,
     );
     },
   );
@@ -323,6 +325,7 @@ describe("canonical coding Chat Provider adapter", () => {
       expect(createThread).toHaveBeenCalledWith(
         expect.objectContaining({ userId: owner.ownerId }),
         expect.objectContaining({ approvalPolicy, sandboxMode }),
+        undefined,
       );
     },
   );
@@ -966,6 +969,43 @@ describe("canonical coding input round trip", () => {
     expect((await stream.next()).value).toMatchObject({ type: "input.requested", questions: [{ questionId: "color" }], safeDescription: "Pick a color" });
     await adapter.submitInput!({ owner, chatId: "chat_coding", runId: "run_coding", requestId: "req_native_input", clientRequestId: "req_answer", structuredAnswers: { color: ["Blue"] }, state: { conversationId: "thread_native", runId: "run_coding" } });
     expect(submitInput).toHaveBeenCalledWith({ userId: owner.ownerId, source: "configured-container" }, "thread_native", "req_native_input", expect.objectContaining({ correlationId: "corr_native", structuredAnswers: { color: ["Blue"] } }));
+    await stream.return(undefined);
+  });
+
+  it("delivers bounded correlated clarification for an active qualified canonical run", async () => {
+    const requested = event({ type: "user_input.requested", eventId: "evt_canonical_input", request: {
+      requestId: "req_canonical_input", threadId: "thread_native", title: "Choose", safeDescription: "Pick a color", correlationId: "corr_canonical",
+      questions: [{ questionId: "color", header: "Color", question: "Which color?", options: [{ label: "Blue", description: "Ocean" }], allowOther: false, secret: false }],
+    } });
+    const store = fakeStore([requested]);
+    const submitInput = vi.fn(async () => snapshot([]));
+    const deferInput = vi.fn(async () => undefined);
+    Object.assign(store.store, { submitInput });
+    const executionPolicy = {
+      revision: "codex_canonical_v1", actionMode: "canonical_actions" as const, workspaceScope: "apps",
+      tools: ["matrix_list_apps"], delegation: false,
+    };
+    const adapter = createCanonicalCodingChatProviderAdapter({
+      providerId: "codex", threads: store.store, nativeInputProvider: { deferInput },
+      canonical: { isDispatchLive: () => true, inventory: [{
+        toolId: "matrix_list_apps", schemaRevision: "canonical_apps_v1", description: "List apps",
+        inputSchema: { type: "object", properties: {}, additionalProperties: false }, effect: "read",
+        approval: false, reconciliation: false, cancellation: "before_dispatch",
+      }] },
+    });
+    const stream = adapter.start(input({ runPolicy: {
+      memoryMode: "ordinary", source: "voice", nativeCheckpointPolicy: "reusable", executionPolicy,
+    } }));
+    await stream.next();
+    expect((await stream.next()).value).toMatchObject({ type: "input.requested", requestId: "req_canonical_input" });
+
+    await adapter.deferInput!({ owner, chatId: "chat_coding", runId: "run_coding", requestId: "req_canonical_input" });
+    await adapter.submitInput!({ owner, chatId: "chat_coding", runId: "run_coding", requestId: "req_canonical_input", clientRequestId: "req_answer", structuredAnswers: { color: ["Blue"] } });
+
+    expect(deferInput).toHaveBeenCalledWith(expect.objectContaining({ inputRequestId: "req_canonical_input" }));
+    expect(submitInput).toHaveBeenCalledWith(expect.objectContaining({ userId: owner.ownerId }), "thread_native", "req_canonical_input", expect.objectContaining({
+      correlationId: "corr_canonical", structuredAnswers: { color: ["Blue"] },
+    }));
     await stream.return(undefined);
   });
 });

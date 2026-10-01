@@ -29,6 +29,7 @@ import {
   CanonicalSubmitChatApprovalRequestSchema,
   CanonicalSteerChatRunRequestSchema,
   CanonicalUpdateChatProjectRequestSchema,
+  CanonicalUpdateChatSelectionRequestSchema,
   CanonicalUpdateChatTitleRequestSchema,
   CanonicalUpdateChatUserStateRequestSchema,
   CanonicalCreateChatRequestSchema,
@@ -56,6 +57,7 @@ import {
   type CanonicalSteerChatRunRequest,
   type CanonicalChatApprovalSubmissionResponse,
   type CanonicalUpdateChatProjectRequest,
+  type CanonicalUpdateChatSelectionRequest,
   type CanonicalUpdateChatTitleRequest,
   type CanonicalUpdateChatUserStateRequest,
 } from "@matrix-os/contracts";
@@ -66,6 +68,10 @@ import type { CanonicalChatRouteService } from "./routes.js";
 import type { RequestPrincipal } from "../request-principal.js";
 import { ChatExecutionRootError, type ChatExecutionRootResolver } from "./execution-root.js";
 import { CanonicalChatOrchestrationError, type CanonicalChatOrchestrator } from "./orchestrator.js";
+import {
+  validateChatProviderSelection,
+  type ChatProviderCatalogService,
+} from "./provider-catalog.js";
 
 const CursorEnvelopeSchema = z.discriminatedUnion("kind", [
   z.object({
@@ -141,6 +147,8 @@ export function createCanonicalChatService(
       "admitTurn" | "enqueueQueuedTurn" | "steerRun" | "steerQueuedTurn" | "cancelRun" | "submitInput" | "submitApproval" | "retryTurn" | "reconcileActiveRuns"
     >;
     projectOwnerToolOutput?: OwnerToolOutputProjection;
+    /** Fail-closed dependency: selection updates are rejected when no catalog is wired. */
+    catalog?: Pick<ChatProviderCatalogService, "getCatalog">;
     executionRoots?: Pick<ChatExecutionRootResolver, "resolve">;
     collaborationGuard?: {
       assertPersonalExecutionAllowed(owner: ChatOwner, chatId: string): Promise<void>;
@@ -208,6 +216,41 @@ export function createCanonicalChatService(
         owner,
         CanonicalChatIdSchema.parse(chatId),
         request,
+      ));
+    },
+
+    async updateSelection(
+      principal: RequestPrincipal,
+      owner: ChatOwner,
+      chatId: string,
+      input: CanonicalUpdateChatSelectionRequest,
+    ): Promise<CanonicalChatRecord> {
+      const request = CanonicalUpdateChatSelectionRequestSchema.parse(input);
+      if (!options.catalog) {
+        throw new CanonicalChatOrchestrationError(CanonicalChatSafeErrorSchema.parse({
+          code: "service_unavailable",
+          safeMessage: "Provider selection is temporarily unavailable.",
+          retryable: true,
+          recoveryActions: ["retry"],
+        }), 503);
+      }
+      const catalog = await options.catalog.getCatalog(principal);
+      // Plain availability/options validation only — never voice requirements.
+      // The bound-instance lock itself is enforced by the revision-guarded write.
+      const validated = validateChatProviderSelection({
+        catalog,
+        selection: request.selection,
+      });
+      if (!validated.ok) {
+        throw new CanonicalChatOrchestrationError(
+          validated.error,
+          validated.error.code === "provider_instance_locked" ? 409 : 400,
+        );
+      }
+      return CanonicalChatRecordSchema.parse(await repository.update(
+        owner,
+        CanonicalChatIdSchema.parse(chatId),
+        { baseRevision: request.baseRevision, currentSelection: validated.selection },
       ));
     },
 
@@ -312,6 +355,8 @@ export function createCanonicalChatService(
         turns: page.turns,
         runs: page.runs,
         activities: options.projectOwnerToolOutput?.(owner, page).activities ?? page.activities,
+        // Absent stays absent: an empty projection never emits the wire field.
+        ...(page.operations?.length ? { operations: page.operations } : {}),
         queuedTurns: page.queuedTurns,
         terminalSessionIds: page.terminalSessionIds,
         ...(page.nextBeforeSeq === undefined ? {} : {
@@ -528,6 +573,7 @@ export function createUnavailableCanonicalChatService(): CanonicalChatRouteServi
   return {
     create: unavailable,
     updateProject: unavailable,
+    updateSelection: unavailable,
     updateTitle: unavailable,
     updateLegacyTitle: unavailable,
     updateReadState: unavailable,

@@ -2086,6 +2086,32 @@ describe("canonical Provider selection policy", () => {
     })).toMatchObject({ ok: false, error: { code: "capability_mismatch" } });
   });
 
+  it("a conversation_only qualified policy cannot bypass the tool-less voice route check", () => {
+    const selection = { instanceId: "codex_default", model: "gpt-5.4" };
+    // The pinned conversation-only sentinel grants nothing: it must not
+    // admit a tool-capable Provider to a voice conversation.
+    const conversationOnly = { revision: "voice_conversation_only_v1", actionMode: "conversation_only" as const, workspaceScope: "apps", tools: [], delegation: false };
+    expect(validateChatProviderSelection({
+      catalog: selectionCatalog(),
+      selection,
+      requirements: { ...voiceProviderSelectionRequirements(), qualifiedPolicy: conversationOnly },
+    })).toMatchObject({ ok: false, error: { code: "capability_mismatch" } });
+    // A canonical_actions qualification is a real grant — the tool-capable
+    // Provider may carry the voice route under it.
+    const canonicalActions = { revision: "policy_v1", actionMode: "canonical_actions" as const, workspaceScope: "apps", tools: ["matrix_list_apps"], delegation: false };
+    expect(validateChatProviderSelection({
+      catalog: selectionCatalog(),
+      selection,
+      requirements: { ...voiceProviderSelectionRequirements(), qualifiedPolicy: canonicalActions },
+    })).toMatchObject({ ok: true });
+    // An empty tool inventory grants nothing either — treated as absent.
+    expect(validateChatProviderSelection({
+      catalog: selectionCatalog(),
+      selection,
+      requirements: { ...voiceProviderSelectionRequirements(), qualifiedPolicy: { ...canonicalActions, tools: [] } },
+    })).toMatchObject({ ok: false, error: { code: "capability_mismatch" } });
+  });
+
   it("returns the canonical locked error for a cross-Instance change", () => {
     const result = validateChatProviderSelection({
       catalog: selectionCatalog(),

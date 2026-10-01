@@ -109,9 +109,33 @@ export function createCanonicalActionAuthority(options: {
       return op;
     },
     async cancel(input) {
-      const op = await repository.get(input);
-      if (["succeeded", "failed", "cancelled", "timed_out"].includes(op.state)) return op;
-      return repository.transition(op, { cancellationRequested: true, state: ["running", "outcome_unknown"].includes(op.state) ? op.state : "cancelled" });
+      // CAS-retry loop: a lost race means a concurrent write landed, so the
+      // re-read row can carry neither our flag nor a terminal state. States
+      // are monotone — bounded retries converge on terminal or our recorded
+      // request, and the caller must map only an actually-set flag to
+      // "requested".
+      for (let attempt = 0; attempt < 4; attempt += 1) {
+        const op = await repository.get(input);
+        if (["succeeded", "failed", "cancelled", "timed_out"].includes(op.state)) return op;
+        if (op.cancellationRequested) return op;
+        const applied = await repository.tryTransition(op, {
+          cancellationRequested: true,
+          state: ["running", "outcome_unknown"].includes(op.state) ? op.state : "cancelled",
+        });
+        if (applied === null) continue;
+        if (applied.state === "cancelled") {
+          // Durable audit: a pre-dispatch cancel leaves no tool.output, so the
+          // activity rail records the cancelled terminal explicitly. Emitted
+          // only when this request's own write landed — a losing CAS never
+          // projects a cancelled trace it did not cause. Best-effort: the
+          // operation row is the authority and cancels may target older runs.
+          await options.onEvent(input, { type: "tool.progress", toolCallId: applied.id, label: applied.toolId, status: "cancelled" }).catch((error: unknown) => {
+            console.warn("[chat/actions] cancel activity projection failed", error instanceof Error ? error.name : "UnknownError");
+          });
+        }
+        return applied;
+      }
+      return repository.get(input);
     },
     async cancelById(input) {
       return authority.cancel(await repository.identityFor(input));

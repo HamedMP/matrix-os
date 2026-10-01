@@ -71,9 +71,13 @@ export function admissionPolicyForTurn(
   if (!session) {
     // Public runPolicy is descriptive, never a grant. Frozen policies on internal
     // retry/dispatch paths are validated separately against their persisted run.
-    if (!requested.runPolicy?.executionPolicy) return requested;
-    const { executionPolicy: _untrusted, ...runPolicy } = requested.runPolicy;
-    return { permissionMode: requested.permissionMode, runPolicy };
+    // Provenance is stripped too: with no live session owning the Chat, a request
+    // cannot claim voice origin or stamp a voiceSessionId — those fields exist
+    // only when a session stamps them itself below.
+    const policy = requested.runPolicy;
+    if (!policy) return requested;
+    const { executionPolicy: _untrusted, voiceSessionId: _forged, ...rest } = policy;
+    return { permissionMode: requested.permissionMode, runPolicy: { ...rest, source: "typed" } };
   }
   const runPolicy: CanonicalChatRunPolicy = {
     ...requested.runPolicy,

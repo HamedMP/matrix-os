@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { CANONICAL_VOICE_CONVERSATION_ONLY_POLICY, type CanonicalExecutionPolicy } from "@matrix-os/contracts";
 import { revalidateActionPolicy, revalidateFrozenRunPolicy } from "../../packages/gateway/src/chat/action-policy.js";
 import { admissionPolicyForTurn } from "../../packages/gateway/src/chat/voice-session-policy.js";
 import type { CanonicalChatProviderAdapter } from "../../packages/gateway/src/chat/provider-adapter.js";
@@ -31,5 +32,35 @@ describe("one frozen execution policy for every canonical entry path", () => {
     try { await expect(revalidateActionPolicy(native, input, policy)).rejects.toThrow(); } finally { vi.unstubAllEnvs(); }
     await expect(revalidateActionPolicy(adapter(), input, { ...policy, memoryMode: "session_only", nativeCheckpointPolicy: "disposable" })).rejects.toThrow();
     await expect(revalidateActionPolicy(native, input)).resolves.toBeUndefined(); // ordinary typed unchanged
+  });
+  it("the pinned conversation-only sentinel is admissible without an adapter echo", async () => {
+    const policy = { source: "voice" as const, memoryMode: "ordinary" as const, nativeCheckpointPolicy: "reusable" as const, executionPolicy: CANONICAL_VOICE_CONVERSATION_ONLY_POLICY };
+    // Adapter without qualifyPolicy: the sentinel grants nothing, so no
+    // adapter attestation is needed for a session frozen conversation-only.
+    const native = adapter(); delete native.qualifyPolicy;
+    await expect(revalidateActionPolicy(native, input, policy)).resolves.toBeUndefined();
+    // Adapter qualifying a different canonical_actions policy: the frozen
+    // sentinel still grants nothing, so a session that started
+    // conversation-only must not break when the adapter qualifies differently.
+    const canonicalActions = { revision: "policy_v2", actionMode: "canonical_actions" as const, workspaceScope: "apps", tools: ["matrix_list_apps"], delegation: false };
+    await expect(revalidateActionPolicy(adapter(canonicalActions), input, policy)).resolves.toBeUndefined();
+  });
+  it("non-sentinel frozen policies still require a byte-exact adapter echo", async () => {
+    const run = (policy: CanonicalExecutionPolicy) => ({ source: "voice" as const, memoryMode: "ordinary" as const, nativeCheckpointPolicy: "reusable" as const, executionPolicy: policy });
+    const canonicalActions = { revision: "policy_v2", actionMode: "canonical_actions" as const, workspaceScope: "apps", tools: ["matrix_list_apps"], delegation: false };
+    // Frozen canonical_actions that does not byte-match the adapter's current
+    // qualifyPolicy output → reject.
+    await expect(revalidateActionPolicy(adapter({ ...canonicalActions, revision: "policy_v3" }), input, run(canonicalActions))).rejects.toThrow();
+    // A non-pinned conversation_only revision gets no exemption: without an
+    // adapter echo it rejects like any other unattested policy.
+    const unpinned = { ...CANONICAL_VOICE_CONVERSATION_ONLY_POLICY, revision: "voice_conversation_only_v2" };
+    const noEcho = adapter(); delete noEcho.qualifyPolicy;
+    await expect(revalidateActionPolicy(noEcho, input, run(unpinned))).rejects.toThrow();
+    // conversation_only with a non-empty tool inventory and delegation stay
+    // structurally rejected even when the adapter could echo them byte-exact.
+    const tooledConversation = { revision: "policy_v1", actionMode: "conversation_only" as const, workspaceScope: "apps", tools: ["matrix_list_apps"], delegation: false };
+    await expect(revalidateActionPolicy(adapter(tooledConversation), input, run(tooledConversation))).rejects.toThrow();
+    const delegated = { ...executionPolicy, delegation: true };
+    await expect(revalidateActionPolicy(adapter(delegated), input, run(delegated))).rejects.toThrow();
   });
 });

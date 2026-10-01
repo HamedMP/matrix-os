@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { KyselyPGlite } from "kysely-pglite";
 import {
+  CANONICAL_VOICE_CONVERSATION_ONLY_POLICY,
   CanonicalChatRunPolicySchema,
   CanonicalProviderCatalogSchema,
   type CanonicalChatRunPolicy,
@@ -28,6 +29,29 @@ const sessionOnlyPolicy = {
   source: "voice",
   voiceSessionId: "vsession_policy",
 } as const satisfies CanonicalChatRunPolicy;
+
+/**
+ * Session-only memory is unsupported at admission (`sessionOnly:
+ * "unsupported"`): `revalidateActionPolicy` rejects it outright, so a live
+ * session always stamps the ordinary mode plus the pinned conversation-only
+ * execution policy — the only frozen policy admissible without an adapter
+ * `qualifyPolicy` echo.
+ */
+const sessionPolicy = {
+  sessionId: "vsession_policy",
+  memoryMode: "ordinary",
+  permissionMode: "supervised",
+  executionPolicy: CANONICAL_VOICE_CONVERSATION_ONLY_POLICY,
+} as const;
+
+/** What a caller supplies: the session overrides authority fields anyway. */
+function requestPolicy(source: "voice" | "typed" = "voice"): CanonicalChatRunPolicy {
+  return { memoryMode: "ordinary", nativeCheckpointPolicy: "reusable", source };
+}
+
+function voiceSessionPolicy() {
+  return { policyForChat: () => sessionPolicy };
+}
 
 function catalog(): CanonicalProviderCatalog {
   return CanonicalProviderCatalogSchema.parse({
@@ -164,23 +188,41 @@ describe("voice run policy admission", () => {
       repository,
       catalog: { getCatalog: async () => catalog() },
       adapters: new CanonicalChatProviderRegistry([adapter(completing("native_voice_1"))]),
+      voiceSessionPolicy: voiceSessionPolicy(),
     });
     try {
       const admitted = await orchestrator.admitTurn(principal, owner, "chat_voice", turnRequest({
-        runPolicy: sessionOnlyPolicy,
+        runPolicy: requestPolicy("voice"),
       }));
       expect(admitted.admission).toBe("accepted");
       expect(admitted.run.runPolicy).toMatchObject({
-        memoryMode: "session_only",
+        memoryMode: "ordinary",
         source: "voice",
         voiceSessionId: "vsession_policy",
+        executionPolicy: CANONICAL_VOICE_CONVERSATION_ONLY_POLICY,
       });
       const stored = await repository.kysely.selectFrom("chat_runs").selectAll()
         .where("id", "=", admitted.run.id).executeTakeFirstOrThrow();
       expect(CanonicalChatRunPolicySchema.parse(stored.run_policy)).toMatchObject({
-        memoryMode: "session_only",
-        nativeCheckpointPolicy: "disposable",
+        memoryMode: "ordinary",
+        nativeCheckpointPolicy: "reusable",
       });
+    } finally {
+      await orchestrator.close();
+    }
+  });
+
+  it("rejects session-only run policies at admission: session_only is unsupported", async () => {
+    await createChat();
+    const orchestrator = new CanonicalChatOrchestrator({
+      repository,
+      catalog: { getCatalog: async () => catalog() },
+      adapters: new CanonicalChatProviderRegistry([adapter(completing("native_voice_session_only"))]),
+    });
+    try {
+      await expect(orchestrator.admitTurn(principal, owner, "chat_voice", turnRequest({
+        runPolicy: sessionOnlyPolicy,
+      }))).rejects.toMatchObject({ status: 400 });
     } finally {
       await orchestrator.close();
     }
@@ -192,25 +234,26 @@ describe("voice run policy admission", () => {
       repository,
       catalog: { getCatalog: async () => catalog() },
       adapters: new CanonicalChatProviderRegistry([adapter(completing("native_voice_2"))]),
+      voiceSessionPolicy: voiceSessionPolicy(),
     });
     try {
       const first = await orchestrator.admitTurn(principal, owner, "chat_voice", turnRequest({
-        runPolicy: sessionOnlyPolicy,
+        runPolicy: requestPolicy("voice"),
       }));
       const replay = await orchestrator.admitTurn(principal, owner, "chat_voice", turnRequest({
-        runPolicy: sessionOnlyPolicy,
+        runPolicy: requestPolicy("voice"),
       }));
       expect(replay.admission).toBe("already_accepted");
       expect(replay.run.id).toBe(first.run.id);
       await expect(orchestrator.admitTurn(principal, owner, "chat_voice", turnRequest({
-        runPolicy: { ...sessionOnlyPolicy, memoryMode: "ordinary", nativeCheckpointPolicy: "reusable" },
+        runPolicy: requestPolicy("typed"),
       }))).rejects.toMatchObject({ status: 409 });
       // A policy-bearing request must not dedup into a policy-less admission either.
       await waitForRunStatus(first.run.id, ["completed", "failed", "aborted"]);
       const flip = await orchestrator.admitTurn(principal, owner, "chat_voice", turnRequest({
         clientRequestId: "req_policy_flip",
         baseRevision: await currentRevision(),
-        runPolicy: sessionOnlyPolicy,
+        runPolicy: requestPolicy("voice"),
       }));
       expect(flip.admission).toBe("accepted");
       await expect(orchestrator.admitTurn(principal, owner, "chat_voice", turnRequest({
@@ -231,11 +274,12 @@ describe("voice run policy through queue and steering", () => {
       repository,
       catalog: { getCatalog: async () => catalog() },
       adapters: new CanonicalChatProviderRegistry([adapter(start)]),
+      voiceSessionPolicy: voiceSessionPolicy(),
     });
     try {
       const spoken = await orchestrator.admitTurn(principal, owner, "chat_voice", turnRequest({
         clientRequestId: "req_spoken",
-        runPolicy: sessionOnlyPolicy,
+        runPolicy: requestPolicy("voice"),
       }));
       expect(spoken.run.runPolicy?.source).toBe("voice");
       await waitForRunStatus(spoken.run.id, ["running", "waiting_for_approval", "waiting_for_input"]);
@@ -243,9 +287,9 @@ describe("voice run policy through queue and steering", () => {
       const typed = await orchestrator.enqueueQueuedTurn(principal, owner, "chat_voice", turnRequest({
         clientRequestId: "req_typed_while_voice",
         parts: [{ type: "text", text: "typed while the session owns the chat" }],
-        runPolicy: { ...sessionOnlyPolicy, source: "typed" },
+        runPolicy: requestPolicy("typed"),
       }));
-      expect(typed.queuedTurn.runPolicy).toMatchObject({ memoryMode: "session_only", source: "typed" });
+      expect(typed.queuedTurn.runPolicy).toMatchObject({ memoryMode: "ordinary", source: "typed" });
       release();
       await expect.poll(async () => {
         const row = await repository.kysely.selectFrom("chat_queued_turns")
@@ -257,7 +301,7 @@ describe("voice run policy through queue and steering", () => {
       const claimedRun = await repository.kysely.selectFrom("chat_runs").selectAll()
         .where("id", "=", claimedRow.claimed_run_id!).executeTakeFirstOrThrow();
       expect(CanonicalChatRunPolicySchema.parse(claimedRun.run_policy)).toMatchObject({
-        memoryMode: "session_only",
+        memoryMode: "ordinary",
         source: "typed",
       });
       const claimedTurn = await repository.kysely.selectFrom("chat_turns").selectAll()
@@ -276,22 +320,25 @@ describe("voice run policy through queue and steering", () => {
       repository,
       catalog: { getCatalog: async () => catalog() },
       adapters: new CanonicalChatProviderRegistry([adapter(start)]),
+      voiceSessionPolicy: voiceSessionPolicy(),
     });
     try {
       const admitted = await orchestrator.admitTurn(principal, owner, "chat_voice", turnRequest({
         clientRequestId: "req_active_run",
       }));
-      expect(admitted.run.runPolicy).toBeUndefined();
+      // A live session owns this Chat: even a policy-less request is stamped.
+      expect(admitted.run.runPolicy).toMatchObject({ memoryMode: "ordinary" });
       await waitForRunStatus(admitted.run.id, ["running", "waiting_for_approval", "waiting_for_input"]);
       const queued = await orchestrator.enqueueQueuedTurn(principal, owner, "chat_voice", turnRequest({
         clientRequestId: "req_queued_voice",
-        runPolicy: sessionOnlyPolicy,
+        runPolicy: requestPolicy("voice"),
       }));
-      expect(queued.queuedTurn.runPolicy).toMatchObject({ memoryMode: "session_only" });
+      expect(queued.queuedTurn.runPolicy).toMatchObject({ memoryMode: "ordinary" });
       const storedQueued = await repository.kysely.selectFrom("chat_queued_turns").selectAll()
         .where("id", "=", queued.queuedTurn.id).executeTakeFirstOrThrow();
       expect(CanonicalChatRunPolicySchema.parse(storedQueued.run_policy)).toMatchObject({
-        memoryMode: "session_only",
+        memoryMode: "ordinary",
+        executionPolicy: CANONICAL_VOICE_CONVERSATION_ONLY_POLICY,
       });
       release();
       await expect.poll(async () => {
@@ -305,7 +352,7 @@ describe("voice run policy through queue and steering", () => {
       const claimedRun = await repository.kysely.selectFrom("chat_runs").selectAll()
         .where("turn_id", "=", claimedTurnId).executeTakeFirstOrThrow();
       expect(CanonicalChatRunPolicySchema.parse(claimedRun.run_policy)).toMatchObject({
-        memoryMode: "session_only",
+        memoryMode: "ordinary",
         source: "voice",
       });
     } finally {
@@ -314,7 +361,7 @@ describe("voice run policy through queue and steering", () => {
     }
   });
 
-  it("rejects steering a session-only queued turn into an ordinary run", async () => {
+  it("rejects session-only queued turns outright: session_only is unsupported", async () => {
     await createChat();
     const { start, release } = gated();
     const provider = adapter(start, { steer: async () => {} });
@@ -328,19 +375,13 @@ describe("voice run policy through queue and steering", () => {
         clientRequestId: "req_active_steer",
       }));
       await waitForRunStatus(admitted.run.id, ["running", "waiting_for_approval", "waiting_for_input"]);
-      const queued = await orchestrator.enqueueQueuedTurn(principal, owner, "chat_voice", turnRequest({
+      await expect(orchestrator.enqueueQueuedTurn(principal, owner, "chat_voice", turnRequest({
         clientRequestId: "req_queued_steer",
         runPolicy: sessionOnlyPolicy,
-      }));
-      await expect(orchestrator.steerQueuedTurn(owner, "chat_voice", admitted.run.id,
-        queued.queuedTurn.id, {
-          clientRequestId: "req_steer_voice",
-          baseRevision: await currentRevision(),
-          expectedTurnId: admitted.turn.id,
-        })).rejects.toMatchObject({ status: 409 });
-      const steerRows = await repository.kysely.selectFrom("chat_run_steers").selectAll()
-        .where("queued_turn_id", "=", queued.queuedTurn.id).execute();
-      expect(steerRows).toHaveLength(0);
+      }))).rejects.toMatchObject({ status: 400 });
+      const queuedRows = await repository.kysely.selectFrom("chat_queued_turns").selectAll()
+        .where("chat_id", "=", "chat_voice").execute();
+      expect(queuedRows).toHaveLength(0);
     } finally {
       release();
       await orchestrator.close();
@@ -355,16 +396,17 @@ describe("voice run policy through queue and steering", () => {
       repository,
       catalog: { getCatalog: async () => catalog() },
       adapters: new CanonicalChatProviderRegistry([provider]),
+      voiceSessionPolicy: voiceSessionPolicy(),
     });
     try {
       const admitted = await orchestrator.admitTurn(principal, owner, "chat_voice", turnRequest({
         clientRequestId: "req_active_steer_match",
-        runPolicy: sessionOnlyPolicy,
+        runPolicy: requestPolicy("voice"),
       }));
       await waitForRunStatus(admitted.run.id, ["running", "waiting_for_approval", "waiting_for_input"]);
       const queued = await orchestrator.enqueueQueuedTurn(principal, owner, "chat_voice", turnRequest({
         clientRequestId: "req_queued_steer_match",
-        runPolicy: { ...sessionOnlyPolicy, source: "typed" },
+        runPolicy: requestPolicy("typed"),
       }));
       const steered = await orchestrator.steerQueuedTurn(owner, "chat_voice", admitted.run.id,
         queued.queuedTurn.id, {
@@ -381,7 +423,8 @@ describe("voice run policy through queue and steering", () => {
         .executeTakeFirstOrThrow();
       expect(queuedRow.status).toBe("claimed");
       expect(CanonicalChatRunPolicySchema.parse(queuedRow.run_policy)).toMatchObject({
-        memoryMode: "session_only",
+        memoryMode: "ordinary",
+        executionPolicy: CANONICAL_VOICE_CONVERSATION_ONLY_POLICY,
       });
     } finally {
       release();

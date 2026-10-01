@@ -1,16 +1,21 @@
 import {
   CanonicalChatIdSchema,
+  CanonicalOperationSchema,
   CanonicalOwnerScopeSchema,
   type CanonicalChatMessage,
   type CanonicalChatRun,
   type CanonicalChatRunActivity,
   type CanonicalChatQueuedTurn,
   type CanonicalChatTurn,
+  type CanonicalOperationView,
 } from "@matrix-os/contracts";
-import type { Kysely } from "kysely";
+import { sql, type Kysely } from "kysely";
 import type { ChatDatabase } from "./database.js";
+import type { ActionChatDatabase } from "./action-schema.js";
+import { toOperationView } from "./action-projection.js";
 import { toQueuedTurn } from "./queue-repository.js";
 import {
+  parseJson,
   toActivities,
   toMessage,
   toRun,
@@ -25,6 +30,8 @@ export interface ChatDetailPage {
   turns: CanonicalChatTurn[];
   runs: CanonicalChatRun[];
   activities: CanonicalChatRunActivity[];
+  /** Safe operation projections for the visible runs; absent when none exist. */
+  operations?: CanonicalOperationView[];
   queuedTurns: CanonicalChatQueuedTurn[];
   terminalSessionIds: string[];
   nextBeforeSeq?: number;
@@ -89,6 +96,37 @@ export class ChatDetailRepository {
       .limit(500)
       .execute();
     activityRows.reverse();
+    // Safe action projections ride along with the visible runs. Rows are
+    // owner-filtered for defense in depth; a malformed operation JSONB is
+    // skipped rather than leaked, and only whitelisted fields project.
+    const operationDb = this.kysely as unknown as Kysely<ActionChatDatabase>;
+    const operationRows = runIds.length === 0 ? [] : await operationDb
+      .selectFrom("chat_action_operations")
+      .select("operation")
+      .where("chat_id", "=", parsedChatId)
+      .where("run_id", "in", runIds)
+      .where("owner_type", "=", owner.type)
+      .where("owner_id", "=", owner.ownerId)
+      .orderBy(sql`operation ->> 'createdAt'`)
+      .limit(200)
+      .execute();
+    const operations = operationRows.flatMap((row) => {
+      const parsed = CanonicalOperationSchema.safeParse(parseJson(row.operation));
+      if (!parsed.success) {
+        console.warn("[chat/detail] Skipped malformed canonical operation row");
+        return [];
+      }
+      // A schema-valid stored operation can still fail view projection (the
+      // view schema re-parses the whitelisted result shape) — one bad row
+      // must not sink the whole detail page.
+      try {
+        return [toOperationView(parsed.data)];
+      } catch (error: unknown) {
+        console.warn("[chat/detail] Skipped unprojectable canonical operation row",
+          error instanceof Error ? error.name : "UnknownError");
+        return [];
+      }
+    });
     const terminalBindings = await this.kysely.selectFrom("chat_terminal_bindings")
       .select("session_id")
       .where("chat_id", "=", parsedChatId)
@@ -107,6 +145,7 @@ export class ChatDetailRepository {
       turns: turnRows.map(toTurn),
       runs: runRows.map(toRun),
       activities: toActivities(activityRows),
+      ...(operations.length === 0 ? {} : { operations }),
       queuedTurns: queuedTurnRows.map(toQueuedTurn),
       terminalSessionIds: terminalBindings.reverse().map((binding) => binding.session_id),
       ...(hasOlder && selectedMessageRows[0]

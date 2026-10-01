@@ -764,7 +764,14 @@ export function validateChatProviderSelection(input: {
   if (model?.availability !== "available") {
     return selectionError("model_unavailable", "The selected model is not available.", ["select_provider"]);
   }
-  if (input.requirements?.voiceConversationOnly && !input.requirements.qualifiedPolicy) {
+  // A conversation-only frozen policy is the pinned self-enforcing floor, not
+  // a qualification: it grants no tools, so it must not bypass the tool-less
+  // route check below and admit a tool-capable Provider to a voice route.
+  const qualifiedPolicy = input.requirements?.qualifiedPolicy;
+  const qualifiedGrant = qualifiedPolicy !== undefined
+    && qualifiedPolicy.actionMode !== "conversation_only"
+    && qualifiedPolicy.tools.length > 0;
+  if (input.requirements?.voiceConversationOnly && !qualifiedGrant) {
     const driver = input.catalog.drivers.find((candidate) => candidate.kind === instance.driverKind);
     if (driver?.capabilityClass !== "system_agent"
       || model.supportsToolUse

@@ -20,7 +20,7 @@ import {
   waitForBoundedChildProcess,
 } from "./lib/platform-speech-local-fixture.js";
 
-const VITEST_ARGS = ["run", "tests/gateway/chat-voice", "tests/gateway/voice-session"];
+const VITEST_ARGS = ["run", "tests/gateway/chat-voice", "tests/gateway/voice-session", "tests/gateway/chat-action-postgres.test.ts"];
 const SAFE_NAME = /^[A-Za-z0-9][A-Za-z0-9_-]{0,62}$/;
 
 function quoteIdentifier(name: string): string {

@@ -76,6 +76,43 @@ describe("canonical effect lifecycle", () => {
     expect((await actions.get(identity)).state).toBe("succeeded");
     expect((await actions.get(identity)).cancellationRequested).toBe(true);
   });
+  it("retries a CAS-lost cancellation and lands the flag on a re-read row", async () => {
+    const op = await actions.propose(proposal());
+    const authority = authorityFor(async () => ({ committed: true }));
+    // First write loses the race — the loop must re-read and retry rather
+    // than return a row that never recorded the request.
+    const tryTransition = vi.spyOn(actions, "tryTransition").mockResolvedValueOnce(null);
+    const cancelled = await authority.cancelById({ owner, chatId: op.chatId, actionId: op.id });
+    expect(cancelled.state).toBe("cancelled");
+    expect(cancelled.cancellationRequested).toBe(true);
+    expect(tryTransition).toHaveBeenCalledTimes(2);
+  });
+  it("emits one cancelled activity for the request that landed the transition", async () => {
+    await actions.propose(proposal());
+    const progress: string[] = [];
+    const authority = createCanonicalActionAuthority({
+      repository: actions, qualifyPolicy: async () => policy, timeoutMs: 1_000,
+      tools: [{ toolId: policy.tools[0]!, schemaRevision: "files_v1", description: "fake bounded commit port", inputSchema: {}, effect: "files", approval: true, reconciliation: true, cancellation: "before_dispatch", normalize: (args) => args, execute: async () => ({ committed: true }), reconcile: async () => ({ confirmed: true }) }],
+      onEvent: async (_input, event) => { if (event.type === "tool.progress" && event.status === "cancelled") progress.push(event.toolCallId); },
+    });
+    const first = await authority.cancelById({ owner, chatId: identity.chatId, actionId: identity.actionId });
+    const second = await authority.cancelById({ owner, chatId: identity.chatId, actionId: identity.actionId });
+    expect(first.state).toBe("cancelled");
+    expect(second.state).toBe("cancelled");
+    expect(progress).toEqual([identity.actionId]);
+  });
+  it("returns an already-flagged in-flight operation without another write", async () => {
+    const op = await actions.propose(proposal());
+    const authorized = await actions.decide({ owner, chatId: op.chatId, runId: op.runId, actionId: op.id, argumentDigest: op.argumentDigest, decision: "approve", clientRequestId: "req_approve_flagged" });
+    const claimed = await actions.claim(authorized);
+    expect(claimed).not.toBeNull();
+    const authority = authorityFor(async () => ({ committed: true }));
+    const first = await authority.cancelById({ owner, chatId: op.chatId, actionId: op.id });
+    expect(first.state).toBe("running");
+    expect(first.cancellationRequested).toBe(true);
+    const second = await authority.cancelById({ owner, chatId: op.chatId, actionId: op.id });
+    expect(second).toEqual(first);
+  });
 });
 describe("durable canonical action identity and claim", () => {
   it("rejects owner mismatch and changed arguments on the same identity", async () => {

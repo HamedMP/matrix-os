@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { Kysely } from "kysely";
 import { CanonicalChatRunPolicySchema, CanonicalOwnerScopeSchema, CanonicalChatIdSchema, CanonicalChatRunIdSchema, CanonicalChatRequestIdSchema, CanonicalChatModelSelectionSchema, CanonicalProviderDriverKindSchema, type CanonicalChatApprovalDecision, type CanonicalOwnerScope } from "@matrix-os/contracts";
-import { CanonicalOperationSchema, type CanonicalOperation, type CanonicalExecutionPolicy } from "@matrix-os/contracts";
+import { CanonicalOperationSchema, CanonicalActionIdSchema, type CanonicalOperation, type CanonicalExecutionPolicy } from "@matrix-os/contracts";
 import { canonicalJsonStringify, normalizedArgumentDigest } from "./argument-digest.js";
 import type { ChatDatabase } from "./database.js";
 import type { ActionChatDatabase } from "./action-schema.js";
@@ -47,12 +47,13 @@ export class ActionRepository {
   async identityFor(input: { owner: CanonicalOwnerScope; chatId: string; actionId: string }): Promise<ActionIdentity> {
     CanonicalOwnerScopeSchema.parse(input.owner);
     CanonicalChatIdSchema.parse(input.chatId);
+    const actionId = CanonicalActionIdSchema.parse(input.actionId);
     const row = await this.db.selectFrom("chat_action_operations").select("run_id")
-      .where("id", "=", input.actionId).where("chat_id", "=", input.chatId)
+      .where("id", "=", actionId).where("chat_id", "=", input.chatId)
       .where("owner_type", "=", input.owner.type).where("owner_id", "=", input.owner.ownerId)
       .executeTakeFirst();
     if (!row) throw new CanonicalActionError();
-    return { ...input, runId: CanonicalChatRunIdSchema.parse(row.run_id) };
+    return { ...input, actionId, runId: CanonicalChatRunIdSchema.parse(row.run_id) };
   }
   async listRecoverable(limit = 128): Promise<ActionIdentity[]> {
     const bounded = Math.max(1, Math.min(limit, 128));
@@ -109,9 +110,16 @@ export class ActionRepository {
       return result ? next : null;
     });
   }
-  async transition(op: CanonicalOperation, patch: OperationPatch): Promise<CanonicalOperation> {
+  /**
+   * CAS write that reports whether the caller's own patch landed. `null` means
+   * a concurrent write won the race — the row moved without this patch.
+   */
+  async tryTransition(op: CanonicalOperation, patch: OperationPatch): Promise<CanonicalOperation | null> {
     const next = this.next(op, patch);
     const result = await this.db.updateTable("chat_action_operations").set({ operation: next, revision: next.revision, state: next.state }).where("id", "=", op.id).where("revision", "=", op.revision).where("state", "=", op.state).returning("id").executeTakeFirst();
-    return result ? next : this.get({ ...op, actionId: op.id });
+    return result ? next : null;
+  }
+  async transition(op: CanonicalOperation, patch: OperationPatch): Promise<CanonicalOperation> {
+    return await this.tryTransition(op, patch) ?? this.get({ ...op, actionId: op.id });
   }
 }

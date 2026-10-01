@@ -38,8 +38,11 @@ import {
   CanonicalRetryChatTurnRequestSchema,
   CanonicalSteerChatRunRequestSchema,
   CanonicalUpdateChatProjectRequestSchema,
+  CanonicalUpdateChatSelectionRequestSchema,
   CanonicalUpdateChatTitleRequestSchema,
   CanonicalUpdateChatUserStateRequestSchema,
+  CanonicalChatActionCancellationResponseSchema,
+  CanonicalActionIdSchema,
   type CanonicalChatDetailResponse,
   type CanonicalChatListResponse,
   type CanonicalChatRecord,
@@ -64,6 +67,7 @@ import {
   type CanonicalRetryChatTurnRequest,
   type CanonicalSteerChatRunRequest,
   type CanonicalUpdateChatProjectRequest,
+  type CanonicalUpdateChatSelectionRequest,
   type CanonicalUpdateChatTitleRequest,
   type CanonicalUpdateChatUserStateRequest,
 } from "@matrix-os/contracts";
@@ -77,6 +81,9 @@ import {
 } from "../request-principal.js";
 import type { ChatOwner } from "./records.js";
 import { CanonicalChatOrchestrationError, mapRepositoryError } from "./orchestrator.js";
+import { CanonicalActionError } from "./action-repository.js";
+import { toOperationView } from "./action-projection.js";
+import type { CanonicalActionAuthority } from "./action-authority.js";
 import {
   createCanonicalChatEventStream,
 } from "./event-stream.js";
@@ -114,12 +121,21 @@ const ChatDetailQuerySchema = z.object({
   cursor: CanonicalChatApiCursorSchema.optional(),
 }).strict();
 
+/** Targeted action cancellation carries no client-controlled payload. */
+const CancelChatActionRequestSchema = z.object({}).strict();
+
 export interface CanonicalChatRouteService {
   create(owner: ChatOwner, input: CanonicalCreateChatRequest): Promise<CanonicalChatRecord>;
   updateProject(
     owner: ChatOwner,
     chatId: string,
     input: CanonicalUpdateChatProjectRequest,
+  ): Promise<CanonicalChatRecord>;
+  updateSelection(
+    principal: RequestPrincipal,
+    owner: ChatOwner,
+    chatId: string,
+    input: CanonicalUpdateChatSelectionRequest,
   ): Promise<CanonicalChatRecord>;
   updateTitle(
     owner: ChatOwner,
@@ -301,6 +317,8 @@ function chatJson(context: Context, value: object, status: 200 | 201 | 202 = 200
 export function createCanonicalChatRoutes(options: {
   service: CanonicalChatRouteService;
   getPrincipal: (context: Context) => RequestPrincipal;
+  /** Fail closed: targeted action cancellation returns 503 without an authority. */
+  actionAuthority?: Pick<CanonicalActionAuthority, "cancelById">;
 }): Hono {
   const routes = new Hono();
   routes.use("/api/chats/*", async (context, next) => {
@@ -418,6 +436,24 @@ export function createCanonicalChatRoutes(options: {
       if (!parsed.success) return validationError(context);
       const result = await options.service.updateProject(
         ownerFromPrincipal(options.getPrincipal(context)),
+        chatId,
+        parsed.data,
+      );
+      return chatJson(context, CanonicalChatRecordSchema.parse(result));
+    } catch (error: unknown) {
+      return handleError(context, error);
+    }
+  });
+
+  routes.patch("/api/chats/:chatId/selection", updateBodyLimit, async (context) => {
+    try {
+      const chatId = CanonicalChatIdSchema.parse(context.req.param("chatId"));
+      const parsed = CanonicalUpdateChatSelectionRequestSchema.safeParse(await context.req.json());
+      if (!parsed.success) return validationError(context);
+      const principal = options.getPrincipal(context);
+      const result = await options.service.updateSelection(
+        principal,
+        ownerFromPrincipal(principal),
         chatId,
         parsed.data,
       );
@@ -676,6 +712,52 @@ export function createCanonicalChatRoutes(options: {
       );
       return chatJson(context, CanonicalChatRunCancellationResponseSchema.parse(result));
     } catch (error: unknown) {
+      return handleError(context, error);
+    }
+  });
+
+  routes.post("/api/chats/:chatId/actions/:actionId/cancel", cancelBodyLimit, async (context) => {
+    try {
+      const chatId = CanonicalChatIdSchema.parse(context.req.param("chatId"));
+      const actionId = CanonicalActionIdSchema.parse(context.req.param("actionId"));
+      // An absent body is accepted; a malformed or non-empty one is not.
+      const text = await context.req.text();
+      let body: unknown = {};
+      if (text.trim().length > 0) {
+        try {
+          body = JSON.parse(text);
+        } catch (error: unknown) {
+          if (!(error instanceof SyntaxError)) throw error;
+          return validationError(context);
+        }
+      }
+      if (!CancelChatActionRequestSchema.safeParse(body).success) return validationError(context);
+      if (!options.actionAuthority) {
+        return context.json({
+          error: CanonicalChatSafeErrorSchema.parse({
+            code: "service_unavailable",
+            safeMessage: "Action cancellation is temporarily unavailable.",
+            retryable: true,
+            recoveryActions: ["retry"],
+          }),
+        }, 503);
+      }
+      const operation = await options.actionAuthority.cancelById({
+        owner: ownerFromPrincipal(options.getPrincipal(context)),
+        chatId,
+        actionId,
+      });
+      const cancellation = operation.state === "cancelled" ? "cancelled"
+        : ["succeeded", "failed", "timed_out"].includes(operation.state) ? "already_terminal"
+        : operation.cancellationRequested ? "requested"
+        : "unknown";
+      return chatJson(context, CanonicalChatActionCancellationResponseSchema.parse({
+        operation: toOperationView(operation),
+        cancellation,
+      }));
+    } catch (error: unknown) {
+      // Missing and foreign-owner operations are indistinguishable and both 404.
+      if (error instanceof CanonicalActionError) return notFound(context);
       return handleError(context, error);
     }
   });

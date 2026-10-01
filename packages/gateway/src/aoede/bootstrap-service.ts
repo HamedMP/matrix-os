@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { z } from "zod/v4";
 import { CanonicalProviderCatalogSchema, type CanonicalProviderCatalog, type CanonicalChatModelSelection } from "@matrix-os/contracts";
-import { validateChatProviderSelection, type ChatProviderCatalogService } from "../chat/provider-catalog.js";
+import { validateChatProviderSelection, ProviderCatalogUnavailableError, type ChatProviderCatalogService } from "../chat/provider-catalog.js";
 import type { SafeVoiceErrorCode, VoiceCapability, VoiceRecoveryAction } from "@matrix-os/contracts/voice-session";
 import {
   AoedeBootstrapRequestSchema, AoedeBootstrapResponseSchema, AoedeScopeSchema,
@@ -78,7 +78,16 @@ export class AoedeBootstrapService {
     if (existing && (existing.projectId ?? undefined) !== request.projectId) unavailable();
     const savedSelection = existing?.chat.currentSelection;
     // Everything potentially external resolves before the single locking transaction.
-    const catalog = CanonicalProviderCatalogSchema.parse(await this.deps.catalog.getCatalog(principal));
+    // A catalog outage is a retryable provider failure, not a generic 500 —
+    // the UI distinguishes "try again" from "something broke".
+    const catalog = CanonicalProviderCatalogSchema.parse(
+      await this.deps.catalog.getCatalog(principal).catch((error: unknown) => {
+        if (error instanceof ProviderCatalogUnavailableError) {
+          throw new AoedeBootstrapError("provider_unavailable", 503, error.retryable, "retry_connection");
+        }
+        throw error;
+      }),
+    );
     const defaultSelection = catalog.instances.flatMap((instance) => instance.defaultSelection
       && validateChatProviderSelection({ catalog, selection: instance.defaultSelection }).ok
       ? [instance.defaultSelection] : [])[0];

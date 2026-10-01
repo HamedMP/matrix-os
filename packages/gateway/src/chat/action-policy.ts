@@ -1,9 +1,20 @@
 import type { CanonicalChatModelSelection, CanonicalChatRunPolicy, CanonicalProviderDriverKind } from "@matrix-os/contracts";
-import { CanonicalExecutionPolicySchema, type CanonicalExecutionPolicy } from "@matrix-os/contracts";
+import { CANONICAL_VOICE_CONVERSATION_ONLY_POLICY, CanonicalExecutionPolicySchema, type CanonicalExecutionPolicy } from "@matrix-os/contracts";
 import type { CanonicalChatProviderAdapter } from "./provider-adapter.js";
 import { canonicalJsonStringify } from "./argument-digest.js";
 import { CanonicalActionError } from "./action-repository.js";
 export interface ActionQualificationInput { driverKind: CanonicalProviderDriverKind; selection: CanonicalChatModelSelection; permissionMode: string; workspaceScope: string }
+
+/**
+ * The pinned conversation-only sentinel is self-enforcing: it grants no
+ * tools and no delegation, the action authority rejects every invoke under
+ * it, and provider selection already proved the route tool-less. A frozen
+ * policy byte-equal to it is therefore admissible without an adapter echo —
+ * adapters that cannot attest policies (and adapters that qualify something
+ * else entirely) must not strand a session that started conversation-only.
+ */
+const CONVERSATION_ONLY_SENTINEL_JSON = canonicalJsonStringify(CANONICAL_VOICE_CONVERSATION_ONLY_POLICY);
+
 /** Caller flags never qualify a route. Only the loaded server adapter can attest its structural boundary. */
 export async function revalidateActionPolicy(adapter: CanonicalChatProviderAdapter, input: Omit<ActionQualificationInput, "workspaceScope">, runPolicy?: CanonicalChatRunPolicy): Promise<void> {
   if (!runPolicy) return;
@@ -13,12 +24,13 @@ export async function revalidateActionPolicy(adapter: CanonicalChatProviderAdapt
     if (runPolicy.source === "voice" || runPolicy.voiceSessionId) throw new CanonicalActionError();
     return;
   }
+  if (frozen.actionMode === "conversation_only" && frozen.tools.length) throw new CanonicalActionError();
+  if (frozen.delegation) throw new CanonicalActionError(); // no independently qualified delegation path yet
+  if (canonicalJsonStringify(frozen) === CONVERSATION_ONLY_SENTINEL_JSON) return;
   if (!adapter.qualifyPolicy) throw new CanonicalActionError();
   const actual = await adapter.qualifyPolicy({ ...input, workspaceScope: frozen.workspaceScope });
   const qualified = CanonicalExecutionPolicySchema.safeParse(actual);
   if (!qualified.success || canonicalJsonStringify(qualified.data) !== canonicalJsonStringify(frozen)) throw new CanonicalActionError();
-  if (frozen.actionMode === "conversation_only" && frozen.tools.length) throw new CanonicalActionError();
-  if (frozen.delegation) throw new CanonicalActionError(); // no independently qualified delegation path yet
 }
 export async function revalidateFrozenRunPolicy(adapter: CanonicalChatProviderAdapter, run: { chatId: string; driverKind: CanonicalProviderDriverKind; selection: CanonicalChatModelSelection; permissionMode: string; runPolicy?: CanonicalChatRunPolicy }, lookup?: import("./voice-session-policy.js").VoiceSessionPolicyLookup): Promise<void> {
   const live = lookup?.policyForChat(run.chatId);

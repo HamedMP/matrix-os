@@ -162,51 +162,64 @@ async function waitForActive(runId: string) {
 }
 
 describe("live voice session policy at admission", () => {
-  it("rejects a voice-source run when the selected harness exposes tool capability", async () => {
+  it("normalizes forged voice provenance on a typed admission to an honest typed policy", async () => {
     const orchestrator = new CanonicalChatOrchestrator({
       repository,
       catalog: { getCatalog: async () => toolCapableCatalog() },
       adapters: new CanonicalChatProviderRegistry([adapter(completing("must_not_start"))]),
     });
     try {
-      await expect(orchestrator.admitTurn(principal, owner, "chat_voice", turnRequest({
+      // No live session owns the Chat, so a caller-supplied voice source and
+      // voiceSessionId are unverifiable claims: admission strips them and
+      // stamps the honest "typed" source rather than persisting forgery.
+      const admitted = await orchestrator.admitTurn(principal, owner, "chat_voice", turnRequest({
         runPolicy: {
           memoryMode: "ordinary",
           nativeCheckpointPolicy: "reusable",
           source: "voice",
           voiceSessionId: "vsession_live",
         },
-      }))).rejects.toMatchObject({ status: 400, safeError: { code: "capability_mismatch" } });
-      const runs = await repository.kysely.selectFrom("chat_runs").select("id").execute();
-      expect(runs).toHaveLength(0);
+      }));
+      expect(admitted.run.runPolicy?.source).toBe("typed");
+      expect(admitted.run.runPolicy?.voiceSessionId).toBeUndefined();
+      expect(admitted.run.runPolicy?.executionPolicy).toBeUndefined();
+      await orchestrator.drain();
     } finally {
       await orchestrator.close();
     }
   });
 
-  it("rejects simulator voice flags but admits/retries server-qualified policies", async () => {
+  it("ignores simulator voice flags but admits/retries server-qualified policies", async () => {
     vi.stubEnv("MATRIX_VOICE_SIMULATOR", "1");
     let attempt = 0;
     const orchestrator = new CanonicalChatOrchestrator({
       repository, catalog: { getCatalog: async () => toolCapableCatalog() },
       adapters: new CanonicalChatProviderRegistry([adapter(async function* () {
         attempt += 1;
-        yield { type: "run.completed", outcome: attempt === 1 ? "failed" : "completed" };
+        yield { type: "run.completed", outcome: attempt === 2 ? "failed" : "completed" };
       })]),
     });
     try {
       const request = turnRequest({ runPolicy: { memoryMode: "ordinary", nativeCheckpointPolicy: "reusable", source: "voice" } });
-      await expect(orchestrator.admitTurn(principal, owner, "chat_voice", request)).rejects.toMatchObject({ status: 400 });
-      const admitted = await orchestrator.admitTurn(principal, owner, "chat_voice", request, { sessionPolicy: liveSession });
+      // A forged voice source never unlocks voice semantics — the run is a
+      // plain typed run until a live session stamps authoritative policy.
+      const forged = await orchestrator.admitTurn(principal, owner, "chat_voice", request);
+      expect(forged.run.runPolicy?.source).toBe("typed");
+      await orchestrator.drain();
+      const admitted = await orchestrator.admitTurn(principal, owner, "chat_voice", turnRequest({
+        clientRequestId: "req_session_turn_qualified",
+        baseRevision: await currentRevision(),
+        runPolicy: { memoryMode: "ordinary", nativeCheckpointPolicy: "reusable", source: "voice" },
+      }), { sessionPolicy: liveSession });
       await orchestrator.drain();
       const failed = await repository.get(owner, "chat_voice");
       const retried = await orchestrator.retryTurn(principal, owner, "chat_voice", admitted.turn.id, { clientRequestId: "req_session_retry", baseRevision: failed!.chat.revision });
       expect(retried.run.runPolicy?.executionPolicy).toEqual(liveSession.executionPolicy);
-      await orchestrator.drain(); expect(attempt).toBe(2);
+      await orchestrator.drain(); expect(attempt).toBe(3);
     } finally { await orchestrator.close(); }
   });
 
-  it("rejects an unqualified queued voice turn even in simulator mode", async () => {
+  it("normalizes a forged voice claim on a queued turn even in simulator mode", async () => {
     vi.stubEnv("MATRIX_VOICE_SIMULATOR", "1");
     const { start, release } = gated();
     const orchestrator = new CanonicalChatOrchestrator({
@@ -219,11 +232,13 @@ describe("live voice session policy at admission", () => {
         clientRequestId: "req_active_for_simulator_queue",
       }));
       await waitForActive(active.run.id);
-      await expect(orchestrator.enqueueQueuedTurn(principal, owner, "chat_voice", turnRequest({
+      const queued = await orchestrator.enqueueQueuedTurn(principal, owner, "chat_voice", turnRequest({
         clientRequestId: "req_simulator_voice_queue", baseRevision: await currentRevision(),
         runPolicy: { memoryMode: "ordinary", nativeCheckpointPolicy: "reusable", source: "voice", voiceSessionId: "vsession_live" },
-      }))).rejects.toMatchObject({ status: 400 });
-      expect(await repository.kysely.selectFrom("chat_queued_turns").select("id").execute()).toHaveLength(0);
+      }));
+      expect(queued.queuedTurn.runPolicy?.source).toBe("typed");
+      expect(queued.queuedTurn.runPolicy?.voiceSessionId).toBeUndefined();
+      expect(queued.queuedTurn.runPolicy?.executionPolicy).toBeUndefined();
     } finally {
       release();
       await orchestrator.drain();

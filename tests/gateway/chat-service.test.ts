@@ -2,6 +2,8 @@ import type { CanonicalChatRecord } from "@matrix-os/contracts";
 import { describe, expect, it, vi } from "vitest";
 import { createCanonicalChatService } from "../../packages/gateway/src/chat/service.js";
 import { ChatExecutionRootError } from "../../packages/gateway/src/chat/execution-root.js";
+import { ChatProviderInstanceLockedError } from "../../packages/gateway/src/chat/repository.js";
+import { createCanonicalProviderCatalogFixture } from "../contracts/fixtures/canonical-chat";
 import type {
   ChatDetailPage,
   ChatListPage,
@@ -89,6 +91,82 @@ describe("canonical Chat service", () => {
     });
     expect(moved.chat.id).toBe("chat_service_test");
     expect(moved.projectId).toBe("project_1");
+  });
+
+  it("fails closed before mutation when no Provider catalog is wired", async () => {
+    const update = vi.fn(async () => record());
+    const service = createCanonicalChatService(repository({ update }));
+
+    await expect(service.updateSelection(
+      { userId: "owner_1", source: "jwt" },
+      owner,
+      "chat_service_test",
+      {
+        baseRevision: 0,
+        selection: { instanceId: "codex_fixture", model: "gpt-5.6-sol" },
+      },
+    )).rejects.toMatchObject({
+      status: 503,
+      safeError: { code: "service_unavailable" },
+    });
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it("validates a selection against the catalog and writes it revision-guarded", async () => {
+    const update = vi.fn(async () => record());
+    const getCatalog = vi.fn(async () => createCanonicalProviderCatalogFixture());
+    const principal = { userId: "owner_1", source: "jwt" as const };
+    const service = createCanonicalChatService(repository({ update }), {
+      catalog: { getCatalog },
+    });
+
+    const updated = await service.updateSelection(
+      principal,
+      owner,
+      "chat_service_test",
+      { baseRevision: 2, selection: { instanceId: "codex_fixture", model: "gpt-5.6-sol" } },
+    );
+
+    expect(getCatalog).toHaveBeenCalledWith(principal);
+    expect(update).toHaveBeenCalledWith(owner, "chat_service_test", {
+      baseRevision: 2,
+      currentSelection: { instanceId: "codex_fixture", model: "gpt-5.6-sol" },
+    });
+    expect(updated.chat.id).toBe("chat_service_test");
+  });
+
+  it("rejects a selection naming an unavailable model without mutating", async () => {
+    const update = vi.fn(async () => record());
+    const service = createCanonicalChatService(repository({ update }), {
+      catalog: { getCatalog: vi.fn(async () => createCanonicalProviderCatalogFixture()) },
+    });
+
+    await expect(service.updateSelection(
+      { userId: "owner_1", source: "jwt" },
+      owner,
+      "chat_service_test",
+      { baseRevision: 0, selection: { instanceId: "codex_fixture", model: "missing_model" } },
+    )).rejects.toMatchObject({
+      status: 400,
+      safeError: { code: "model_unavailable" },
+    });
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it("lets the repository's bound-instance conflict surface for the route mapper", async () => {
+    const update = vi.fn(async () => {
+      throw new ChatProviderInstanceLockedError("chat_service_test");
+    });
+    const service = createCanonicalChatService(repository({ update }), {
+      catalog: { getCatalog: vi.fn(async () => createCanonicalProviderCatalogFixture()) },
+    });
+
+    await expect(service.updateSelection(
+      { userId: "owner_1", source: "jwt" },
+      owner,
+      "chat_service_test",
+      { baseRevision: 0, selection: { instanceId: "codex_fixture", model: "gpt-5.6-sol" } },
+    )).rejects.toBeInstanceOf(ChatProviderInstanceLockedError);
   });
 
   it("renames a Chat through the revision-guarded repository update", async () => {

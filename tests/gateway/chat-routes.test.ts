@@ -2,6 +2,7 @@ import {
   CanonicalChatRunCancellationResponseSchema,
   CanonicalChatRunAdmissionResponseSchema,
   CanonicalChatTurnAdmissionResponseSchema,
+  CanonicalChatActionCancellationResponseSchema,
   CanonicalChatDetailResponseSchema,
   CanonicalChatListResponseSchema,
   CanonicalChatRecordSchema,
@@ -26,6 +27,9 @@ import {
   createCanonicalChatRoutes,
   type CanonicalChatRouteService,
 } from "../../packages/gateway/src/chat/routes.js";
+import { CanonicalActionError } from "../../packages/gateway/src/chat/action-repository.js";
+import type { CanonicalActionAuthority } from "../../packages/gateway/src/chat/action-authority.js";
+import type { CanonicalOperation } from "@matrix-os/contracts";
 import type { ChatOwner } from "../../packages/gateway/src/chat/records.js";
 import { createCanonicalChatService } from "../../packages/gateway/src/chat/service.js";
 
@@ -47,6 +51,7 @@ function routeService(overrides: Partial<CanonicalChatRouteService> = {}): Canon
   return {
     create: vi.fn(async () => record),
     updateProject: vi.fn(async () => record),
+    updateSelection: vi.fn(async () => record),
     updateTitle: vi.fn(async () => record),
     updateLegacyTitle: vi.fn(async () => record),
     updateReadState: vi.fn(async () => record),
@@ -97,11 +102,48 @@ function routeService(overrides: Partial<CanonicalChatRouteService> = {}): Canon
   };
 }
 
-function appFor(service: CanonicalChatRouteService) {
+function appFor(
+  service: CanonicalChatRouteService,
+  actionAuthority?: Pick<CanonicalActionAuthority, "cancelById">,
+) {
   return new Hono().route("/", createCanonicalChatRoutes({
     service,
     getPrincipal: () => ({ userId: "owner_1", source: "jwt" }),
+    ...(actionAuthority ? { actionAuthority } : {}),
   }));
+}
+
+const actionExecutionPolicy = {
+  revision: "canonical_apps_v1_policy",
+  actionMode: "canonical_actions" as const,
+  workspaceScope: "apps",
+  tools: ["matrix_open_app"],
+  delegation: false,
+};
+
+function operationFixture(
+  overrides: Partial<CanonicalOperation> = {},
+): CanonicalOperation {
+  return {
+    id: "action_route_test",
+    owner: { type: "personal", ownerId: "owner_1" },
+    chatId: "chat_route_test",
+    runId: "run_route_test",
+    workspaceScope: "apps",
+    policyRevision: actionExecutionPolicy.revision,
+    executionPolicy: actionExecutionPolicy,
+    toolId: "matrix_open_app",
+    schemaRevision: "canonical_apps_v1",
+    arguments: { app: "timer" },
+    argumentDigest: "a".repeat(64),
+    state: "running",
+    revision: 1,
+    claimToken: "claim_secret",
+    cancellationRequested: false,
+    createdAt: "2026-08-25T12:00:00.000Z",
+    updatedAt: "2026-08-25T12:00:00.000Z",
+    ...overrides,
+  };
 }
 
 function acknowledge(
@@ -276,6 +318,44 @@ describe("canonical Chat routes", () => {
       body: JSON.stringify({ baseRevision: 0, projectId: null, ownerId: "other" }),
     });
     expect(invalid.status).toBe(400);
+  });
+
+  it("updates the Provider selection through a strict owner-derived revision-guarded body", async () => {
+    const selected = {
+      ...record,
+      chat: {
+        ...record.chat,
+        currentSelection: { instanceId: "codex_fixture", model: "gpt-5.6-sol" },
+      },
+    };
+    const updateSelection = vi.fn(async () => selected);
+    const app = appFor(routeService({ updateSelection }));
+
+    const response = await app.request("/api/chats/chat_route_test/selection", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        baseRevision: 1,
+        selection: { instanceId: "codex_fixture", model: "gpt-5.6-sol" },
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(CanonicalChatRecordSchema.parse(await response.json())).toEqual(selected);
+    expect(updateSelection).toHaveBeenCalledWith(
+      { userId: "owner_1", source: "jwt" },
+      { type: "personal", ownerId: "owner_1" },
+      "chat_route_test",
+      { baseRevision: 1, selection: { instanceId: "codex_fixture", model: "gpt-5.6-sol" } },
+    );
+
+    const invalid = await app.request("/api/chats/chat_route_test/selection", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ baseRevision: 1 }),
+    });
+    expect(invalid.status).toBe(400);
+    expect(updateSelection).toHaveBeenCalledTimes(1);
   });
 
   it("projects new metadata only for opted-in clients and accepts legacy rename payloads", async () => {
@@ -1091,5 +1171,148 @@ describe("canonical Chat routes", () => {
       "appr_command",
       { clientRequestId: "req_route_approval", decision: "approve_for_session" },
     );
+  });
+
+  it("fails closed with 503 when no action authority is wired", async () => {
+    const response = await appFor(routeService()).request(
+      "/api/chats/chat_route_test/actions/action_route_test/cancel",
+      { method: "POST", headers: { "content-type": "application/json" }, body: "{}" },
+    );
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({
+      error: {
+        code: "service_unavailable",
+        safeMessage: "Action cancellation is temporarily unavailable.",
+        retryable: true,
+        recoveryActions: ["retry"],
+      },
+    });
+  });
+
+  it("cancels a running action and projects only the safe operation view", async () => {
+    const cancelById = vi.fn(async () => operationFixture({
+      cancellationRequested: true,
+      result: { navigation: { kind: "open_app", app: "timer", path: "apps/timer" } },
+    }));
+    const app = appFor(routeService(), { cancelById });
+
+    const response = await app.request(
+      "/api/chats/chat_route_test/actions/action_route_test/cancel",
+      { method: "POST", headers: { "content-type": "application/json" }, body: "{}" },
+    );
+
+    expect(response.status).toBe(200);
+    const body = CanonicalChatActionCancellationResponseSchema.parse(await response.json());
+    expect(body.cancellation).toBe("requested");
+    expect(body.operation).toEqual({
+      id: "action_route_test",
+      chatId: "chat_route_test",
+      runId: "run_route_test",
+      toolId: "matrix_open_app",
+      schemaRevision: "canonical_apps_v1",
+      policyRevision: "canonical_apps_v1_policy",
+      state: "running",
+      argumentDigest: "a".repeat(64),
+      cancellationRequested: true,
+      result: { navigation: { kind: "open_app", app: "timer", path: "apps/timer" } },
+      createdAt: "2026-08-25T12:00:00.000Z",
+      updatedAt: "2026-08-25T12:00:00.000Z",
+    });
+    const serialized = JSON.stringify(body);
+    expect(serialized).not.toContain("claim_secret");
+    expect(serialized).not.toContain("arguments");
+    expect(cancelById).toHaveBeenCalledWith({
+      owner: { type: "personal", ownerId: "owner_1" },
+      chatId: "chat_route_test",
+      actionId: "action_route_test",
+    });
+  });
+
+  it("reports cancelled and already-terminal operations distinctly", async () => {
+    const cancelById = vi.fn()
+      .mockResolvedValueOnce(operationFixture({ state: "cancelled" }))
+      .mockResolvedValueOnce(operationFixture({ state: "succeeded" }));
+    const app = appFor(routeService(), { cancelById });
+    const path = "/api/chats/chat_route_test/actions/action_route_test/cancel";
+
+    const cancelled = await app.request(path, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    });
+    expect(cancelled.status).toBe(200);
+    expect(CanonicalChatActionCancellationResponseSchema.parse(await cancelled.json()).cancellation)
+      .toBe("cancelled");
+
+    const terminal = await app.request(path, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    });
+    expect(terminal.status).toBe(200);
+    expect(CanonicalChatActionCancellationResponseSchema.parse(await terminal.json()).cancellation)
+      .toBe("already_terminal");
+  });
+
+  it("reports unknown when the returned operation never recorded the request", async () => {
+    // A cancel that persistently lost its CAS races comes back non-terminal
+    // WITHOUT cancellationRequested — the route must not claim "requested".
+    const cancelById = vi.fn(async () => operationFixture({
+      cancellationRequested: false,
+    }));
+    const app = appFor(routeService(), { cancelById });
+
+    const response = await app.request(
+      "/api/chats/chat_route_test/actions/action_route_test/cancel",
+      { method: "POST", headers: { "content-type": "application/json" }, body: "{}" },
+    );
+
+    expect(response.status).toBe(200);
+    expect(CanonicalChatActionCancellationResponseSchema.parse(await response.json()).cancellation)
+      .toBe("unknown");
+  });
+
+  it("accepts an empty body and rejects malformed or non-empty bodies", async () => {
+    const cancelById = vi.fn(async () => operationFixture({ state: "cancelled" }));
+    const app = appFor(routeService(), { cancelById });
+    const path = "/api/chats/chat_route_test/actions/action_route_test/cancel";
+
+    const empty = await app.request(path, { method: "POST" });
+    expect(empty.status).toBe(200);
+
+    const malformed = await app.request(path, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{not json",
+    });
+    expect(malformed.status).toBe(400);
+
+    const nonEmpty = await app.request(path, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ force: true }),
+    });
+    expect(nonEmpty.status).toBe(400);
+    expect(cancelById).toHaveBeenCalledTimes(1);
+  });
+
+  it("maps missing or foreign operations to 404 and bad ids to 400", async () => {
+    const cancelById = vi.fn(async () => {
+      throw new CanonicalActionError();
+    });
+    const app = appFor(routeService(), { cancelById });
+
+    const missing = await app.request(
+      "/api/chats/chat_route_test/actions/action_route_test/cancel",
+      { method: "POST", headers: { "content-type": "application/json" }, body: "{}" },
+    );
+    expect(missing.status).toBe(404);
+
+    const badAction = await app.request(
+      "/api/chats/chat_route_test/actions/not-an-action/cancel",
+      { method: "POST", headers: { "content-type": "application/json" }, body: "{}" },
+    );
+    expect(badAction.status).toBe(400);
+    expect(cancelById).toHaveBeenCalledTimes(1);
   });
 });

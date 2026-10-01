@@ -390,7 +390,7 @@ export interface CanonicalCodingExecutionCapability {
   isDispatchLive(): boolean;
 }
 
-const CANONICAL_CODEX_POLICY_REVISION = "codex_canonical_v1";
+export const CANONICAL_CODEX_POLICY_REVISION = "codex_canonical_v1";
 const CANONICAL_CODEX_PERMISSION_MODES = new Set(["full_access", "auto", "auto_accept_edits", "supervised"]);
 const CANONICAL_WORKSPACE_SCOPE = /^apps(?::[a-z0-9][a-z0-9-]{0,63})?$/;
 
@@ -473,6 +473,7 @@ export function createCanonicalCodingChatProviderAdapter(options: {
     threadId: string;
     legacyTurnId?: string;
     canonical?: boolean;
+    executionPolicy?: CanonicalExecutionPolicy;
   }>();
 
   /**
@@ -500,7 +501,7 @@ export function createCanonicalCodingChatProviderAdapter(options: {
 
   function registerSteerRun(
     runId: string,
-    value: { ownerId: string; chatId: string; threadId: string; legacyTurnId?: string; canonical?: boolean },
+    value: { ownerId: string; chatId: string; threadId: string; legacyTurnId?: string; canonical?: boolean; executionPolicy?: CanonicalExecutionPolicy },
   ): () => void {
     if (!activeSteerRuns.has(runId) && activeSteerRuns.size >= MAX_ACTIVE_STEER_RUNS) {
       throw new Error("Canonical coding steering registry exceeded");
@@ -611,7 +612,7 @@ export function createCanonicalCodingChatProviderAdapter(options: {
           ownerId: input.owner.ownerId,
           chatId: input.chatId,
           threadId: targetThreadId,
-          ...(canonicalExecution ? { canonical: true } : {}),
+          ...(canonicalExecution ? { canonical: true, executionPolicy: canonicalExecution.executionPolicy } : {}),
         });
         for (const published of buffered) {
           if (published.threadId === targetThreadId) inbox.push(published.events, published.tokenUsage);
@@ -726,7 +727,9 @@ export function createCanonicalCodingChatProviderAdapter(options: {
     },
     ...(options.nativeInputProvider?.deferInput ? { deferInput: async (input: { owner: CanonicalProviderRunInput["owner"]; chatId: string; runId: string; requestId: string }) => {
       const active = activeSteerRuns.get(input.runId);
-      if (!active || active.ownerId !== input.owner.ownerId || active.chatId !== input.chatId || active.canonical) throw new Error("Input Run unavailable");
+      if (!active || active.ownerId !== input.owner.ownerId || active.chatId !== input.chatId
+        || (active.canonical && (!active.executionPolicy || active.executionPolicy.actionMode !== "canonical_actions"
+          || active.executionPolicy.delegation))) throw new Error("Input Run unavailable");
       const snapshot = await options.threads.getThread(principal(input.owner.ownerId), active.threadId);
       const requested = snapshot.events.items.some(event => event.type === "user_input.requested" && event.request.requestId === input.requestId);
       const resolved = snapshot.events.items.some(event => event.type === "user_input.answered" && event.requestId === input.requestId);
@@ -735,7 +738,9 @@ export function createCanonicalCodingChatProviderAdapter(options: {
     } } : {}),
     async submitInput(input) {
       const active = activeSteerRuns.get(input.runId);
-      if (!active || active.ownerId !== input.owner.ownerId || active.chatId !== input.chatId || active.canonical) {
+      if (!active || active.ownerId !== input.owner.ownerId || active.chatId !== input.chatId
+        || (active.canonical && (!active.executionPolicy || active.executionPolicy.actionMode !== "canonical_actions"
+          || active.executionPolicy.delegation))) {
         throw new ChatInputNotDeliveredError();
       }
       const current = await options.threads.getThread(principal(input.owner.ownerId), active.threadId);
