@@ -26,7 +26,7 @@ export function createProviderWorkflowRoutes(options: {
     }
     catch (error) {
       if (error instanceof ProviderWorkflowError) {
-        const status = { unavailable: 503, not_found: 404, conflict: 409, rejected: 400, unauthorized: 401 } as const;
+        const status = { unavailable: 503, not_found: 404, conflict: 409, rejected: 400, forbidden: 403 } as const;
         return c.json({ error: { code: error.code, message: error.code === 'rejected' ? 'The key could not be verified. Check it and try again.' : 'This operation is unavailable. Refresh and try again.' } }, status[error.code]);
       }
       console.warn('[provider-workflow] Request failed:', error instanceof Error ? error.name : 'UnknownError');

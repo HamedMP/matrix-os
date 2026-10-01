@@ -57,7 +57,7 @@ Workflow bodies are limited to 8 KiB, operations to 64 retained entries and four
 | Boundary | Authentication | Validation and limits |
 | --- | --- | --- |
 | Existing Settings reads/actions | Existing gateway owner/runtime auth | Existing revision/idempotency/body limits |
-| Workflow capabilities/status | Same gateway owner/runtime auth | Fixed harness/operation IDs, bounded expiring operations, no public endpoints |
+| Workflow capabilities/status | Verified gateway principal matching the configured runtime owner | Fixed harness/operation IDs, bounded expiring operations, no public endpoints |
 | Login/install/cancel/uninstall | Owner writable capability | bodyLimit before buffering, fixed commands/managed prefix, deadline/reaping, operation identity |
 | Key validate/save | Owner writable credential capability | Separate bounded secret payload, provider allowlist, timeout, safe errors and atomic preservation |
 | Usage history | Existing platform Clerk owner auth | Resolve active owner computer from runtime slot; bounded cursor/page, Kysely owner+machine+slot predicate |
@@ -76,3 +76,37 @@ Deliver three English implementation PRs stacked as backend/contracts, shared wo
 Native adapter details are established with bounded disposable spikes and tests before committing to their final contract. Record unavailable native capabilities explicitly and return any material visible scope change for review. Never ship fabricated state or hide an unmet designed workflow.
 
 The actual Codex CLI 0.153.4 isolated-save spike confirmed `login --with-api-key` plus file credential storage writes the synthetic key in `auth_mode: apikey`, without a token object. The temporary directory was removed. This verifies native file format and save behavior; it is separate from valid live-key or subscription acceptance.
+
+## Authenticated workflow denial
+
+### 1. Scope / Trigger
+
+An authenticated Preview collaborator can enter a runtime without owning its native provider credentials. Capability discovery must not terminate that valid Matrix session when owner permission is missing.
+
+### 2. Signatures
+
+All `/api/ai/provider-settings/workflows` capabilities, status, logs, start, key and cancel routes use `getPrincipal(context): { userId: string } | null` plus the configured service `ownerId`.
+
+### 3. Contracts
+
+Missing principal returns HTTP401 with safe `unauthorized`; a valid principal whose `userId` differs from `ownerId` returns HTTP403 with safe `forbidden`. The owner-only boundary applies before adapters, operation receipts or native credentials are accessed. HTTP403 must not invoke Electron `auth:session-expired`; capability discovery may fall back to the existing supported Settings controls. No database, credential or environment identity is rewritten to impersonate the owner.
+
+### 4. Validation & Error Matrix
+
+| Principal | Runtime owner match | Outcome |
+| --- | --- | --- |
+| Missing/invalid | N/A | 401; reauthentication required |
+| Valid | No | 403; session retained, no adapter/native action |
+| Valid | Yes | Existing validated workflow behavior |
+
+### 5. Good/Base/Bad Cases
+
+Good: owner capability lookup continues normally. Base: signed collaborator receives403 and can continue using permitted runtime features. Bad: returning401 for that collaborator signs the user out even though authentication succeeded.
+
+### 6. Tests Required
+
+Exercise real auth middleware, request principal and workflow registration for signed owner, signed collaborator and absent authentication. Assert all workflow endpoints deny the collaborator with403 and zero adapter calls. Assert missing authentication remains401. Cover the renderer API response boundary so403 does not invoke session expiry and401 does.
+
+### 7. Wrong vs Correct
+
+Wrong: `if (actor !== owner) throw new ProviderWorkflowError('unauthorized')` (HTTP401). Correct: distinguish authenticated `forbidden` (HTTP403) from a missing principal (HTTP401), retaining owner-only credential access.

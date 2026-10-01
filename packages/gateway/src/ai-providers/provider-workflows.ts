@@ -1,7 +1,7 @@
 import { randomUUID, createHash } from 'node:crypto';
 import { ProviderWorkflowSchema, ProviderWorkflowCapabilitySchema, type ProviderWorkflow, type ProviderWorkflowCapability, type ProviderWorkflowStart, type ProviderWorkflowKey, type ProviderWorkflowLogs } from '@matrix-os/contracts';
 export class ProviderWorkflowError extends Error {
-  constructor(readonly code: 'unavailable' | 'not_found' | 'conflict' | 'rejected' | 'unauthorized') { super(code); }
+  constructor(readonly code: 'unavailable' | 'not_found' | 'conflict' | 'rejected' | 'forbidden') { super(code); }
 }
 export interface ProviderWorkflowAdapter extends Omit<ProviderWorkflowCapability, 'logs'> {
   start(input: {
@@ -47,7 +47,7 @@ export function createProviderWorkflowService(options: {
   let probes = 0;
   function authorize(owner: string) {
     if (owner !== options.ownerId)
-      throw new ProviderWorkflowError('unauthorized');
+      throw new ProviderWorkflowError('forbidden');
     if (closed)
       throw new ProviderWorkflowError('unavailable');
   }
