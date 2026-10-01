@@ -28,6 +28,12 @@ An already-started evaluation retains its admitted pricing snapshot for exact us
 
 No new endpoint or authentication mechanism is introduced. All existing owner, model, reservation, and account-binding checks remain. Sonnet/GLM price reviews and public checkout policy are outside this change.
 
+## Cold-start readiness bounds
+
+The owner-funded synthetic probe includes Relay startup, generation and exact settlement. Its outer caller must not reuse the five-second credential-issuance deadline. Jev has a bounded chain: Relay probe 20 seconds, Platform route 24 seconds, Gateway request 25 seconds, and Gateway observation 26 seconds. The scoped Inbox reader explicitly selects the Jev model so that it receives this budget. Funding-summary and credential issuance remain bounded at five seconds; ordinary-model readiness is unchanged.
+
+Cancellation still aborts requests, revokes temporary probe credentials, and prevents publishing canceled observations into the ready cache. A timed-out preflight does not submit the agent prompt or authorize mailbox writes. Delayed and stalled dependencies must be tested with fake clocks; a successful warm probe alone does not establish cold-start acceptance.
+
 ## Validation and delivery
 
 - October 1 with explicit reviewed configuration: paid synthetic probe completes, cost settles at 12 microUSD for 275 input tokens, immutable provenance remains, actual configured expiry is returned.
