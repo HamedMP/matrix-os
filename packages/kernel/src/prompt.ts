@@ -254,18 +254,16 @@ Use /api/bridge/query for structured records; /api/bridge/data is legacy KV stat
     sections.push("No knowledge files yet.");
   }
 
-  // Design System (always injected — apps must follow the Matrix OS brand)
+  // Product direction is independent of platform branding; full references load lazily.
   sections.push(`\n## Design System (ALWAYS apply when building apps)\n
-Apps must inherit the shell theme by default through injected --matrix-* CSS variables. Use literal Matrix colors only as fallbacks, and add explicit app branding only when the user asks for it or the app has a clear domain reason.
-Palette defaults: Forest #434E3F (primary), Cream #E0E1CA (secondary), Ember #D06F25 (accent CTA — one per view), Deep #32352E (text). Sand shades: #F7F1E7, #F3EAE0, #D6AB8B.
+Generated products use app-local semantic tokens and a coherent full visual style chosen from the user brief, mood and references: bright minimalism, neo-brutalism, playful, retro or selective neumorphism. Style includes typography, shapes, borders, spacing, imagery and motion, not only accents. For surprise/random requests, choose once and record the direction in DESIGN.md. Keep contrast, visible focus and readable controls. Platform chrome, auth and billing keep the shared Matrix brand; never change OS appearance for a product.
 Read the installed matrix-app-builder skill and its app-craft reference, plus emil-design-eng and apple-design. Use animate for specific motion tasks. Report missing skills honestly. Choose layout, density, and hierarchy for the primary task; avoid generic dashboards, decorative statistics, and welcome heroes.
-Typography: inherit shell fonts with var(--matrix-font-sans) and var(--matrix-font-mono). Do not load remote font stylesheets from generated apps. Inter is the fallback for UI text; JetBrains Mono is the fallback for code.
-Surfaces: inherit light/dark tokens. Solid backgrounds are valid. Glass, gradients, capsule controls, and cards are optional tools for hierarchy, not requirements.
+Typography: shell fonts are a baseline; choose available local fonts to suit the product. Do not load remote font stylesheets from generated apps. Inter is the fallback for UI text; JetBrains Mono is the fallback for code.
+Surfaces: define accessible light/dark behavior for the chosen product palette. Solid backgrounds are valid. Glass, gradients, capsule controls, and cards are optional tools for hierarchy, not requirements.
 Icons: use inline SVG or bundled local icon assets only. Do not load icon scripts, CDNs, remote fonts, or third-party JavaScript from generated apps. NEVER text characters (+, ×, →).
 Launcher app logos: set matrix.json "icon" to the app slug and create ~/system/icons/<slug>.png in the shipped Matrix OS style: light iOS/macOS skeuomorphic artwork, bright warm off-white or pale pastel background, forest/cream/ember/deep accents, glossy ceramic/glass 3D object, no text/logos, no transparency, no empty padding, and no separate icon frame.
 Motion: keep keyboard/repeated actions immediate. Use short ease-out transitions for occasional feedback and interruptible springs for gestures. Respect reduced motion; no blanket mount staggering.
 Before claiming completion: run the builder manifest preflight (owner-built apps need listingTrust:first_party), launch in Matrix, inspect the primary flow and visual states, and verify save/reopen. Report any unavailable checks.
-Shadows: rgba(50,53,46,X) — never pure black. Never use #000000.
 Full reference: ~/agents/knowledge/matrix-design-system.md`);
 
   // Skills TOC

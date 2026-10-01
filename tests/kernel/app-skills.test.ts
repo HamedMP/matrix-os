@@ -68,8 +68,8 @@ describe("T1440-T1445: AI skills for app building", () => {
       const content = readFileSync(skillPath("app-builder"), "utf-8");
       expect(content).toContain("theme");
       expect(content).toContain("--matrix-primary");
-      expect(content).toContain("inherit the shell theme");
-      expect(content).toContain("explicit app branding");
+      expect(content).toContain("app-local semantic tokens");
+      expect(content).toContain("brief, mood and references");
       expect(content).not.toContain("Orbitron H1/H2 only");
     });
 

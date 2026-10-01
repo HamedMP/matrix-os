@@ -69,11 +69,11 @@ Column types: `text`, `integer`, `float`, `boolean`, `timestamptz`, `uuid`, `jso
 
 ## App UI
 
-Apps run in an iframe inside the OS shell, but they should be built by Vite into `dist/`. Use React components and shadcn-style primitives (Button, Card, Input, Badge, Tabs, Dialog) styled with Matrix theme tokens.
+Apps run in an iframe inside the OS shell, but they should be built by Vite into `dist/`. Use React components and shadcn-style primitives (Button, Card, Input, Badge, Tabs, Dialog) styled with app-local semantic tokens; inherited Matrix tokens are a baseline.
 
 ### Theme Integration (Required)
 
-Always use CSS custom properties so the app matches the OS theme:
+Use semantic CSS custom properties, starting from the OS theme when no product direction is chosen:
 
 ```css
 :root {
@@ -86,6 +86,8 @@ Always use CSS custom properties so the app matches the OS theme:
   --input-bg: var(--matrix-input-bg, #f5f5f7);
 }
 ```
+
+Use the selected product family, mood and references to shape color, typography, borders, spacing, materials and interactions. Generated products may define their own semantic palette; do not force every app into muted Forest/Ember colors. A delegated choice can be bright/minimal, bold/neo-brutalist, playful, retro or neumorphic. Keep it coherent and stable in DESIGN.md, preserve readable focus/status, and leave the owner’s global shell appearance unchanged.
 
 ### Data Access
 

@@ -8,7 +8,7 @@ Build a polished, useful Vite/React/TypeScript Matrix app AND a matching product
 
 Work inside this new project. Register unique owner-built app slugs supplied by the orchestrator under MATRIX_HOME/apps; refuse to overwrite any existing app. Use manifest-declared structured Postgres tables through window.MatrixOS.db. Never use fake persistence or expose credentials. Empty/absent bridge is an explicit state. Seed clearly labeled fictional examples only by deliberate user action. Preserve drafts, scope rollback to the failed write, and unsubscribe bridge listeners. Do not call real financial services or external integrations.
 
-Choose a distinctive direction appropriate to the product while preserving Matrix controls/theme. No decorative dashboard metrics, fabricated endorsements or customer counts, meaningless cards, generic stock hero, remote fonts/CDNs, or dead CTAs. Give the landing page a real product preview and working section navigation/CTA; any simulated purchase/signup must be labeled and may not collect personal data. Use local vector illustration or authored CSS imagery where useful. Motion must have purpose and an accessible reduced-motion alternative; repeated keyboard actions are immediate.
+Choose a distinctive direction appropriate to the product using app-local semantic tokens while preserving Matrix integration and accessibility contracts. No decorative dashboard metrics, fabricated endorsements or customer counts, meaningless cards, generic stock hero, remote fonts/CDNs, or dead CTAs. Give the landing page a real product preview and working section navigation/CTA; any simulated purchase/signup must be labeled and may not collect personal data. Use local vector illustration or authored CSS imagery where useful. Motion must have purpose and an accessible reduced-motion alternative; repeated keyboard actions are immediate.
 
 Build and verify each manifest. Test create/edit/delete and reopen persistence in the actual Matrix shell if you have a suitable tool. Inspect rendered wide and narrow windows, dark/light and focus states, fix visual issues, and capture screenshots. Do not call a static build or standalone preview proof of sandbox/Postgres success. Record commands/results, paths, app URLs, screenshots, and unavailable checks honestly in BUILD-REPORT.md. Do not edit OS configuration, existing apps or global skills. Finish rather than asking for design approval before building.
 
@@ -23,3 +23,13 @@ Product: Ledgerlight. A private expense journal for understanding a month. The a
 ## Creative studio
 
 Product: Folio Room. A studio workspace for collecting project ideas and shaping a brief. The app opens onto real saved projects/ideas with title, type, notes, stage and tags; edit/detail panel, search/filter, and move stage with keyboard-accessible controls. Data: projects/ideas with bounded local text content, no remote media imports. Use an editorial visual direction, balanced asymmetry, good negative space, tactile purposeful panel transitions, and readable long-form editing. Landing: showcase the working workspace and explain the ideation-to-brief flow; no invented AI generation/integrations or external client claims.
+
+## Full-style refinement pass
+
+The user rejected the muted palettes and requested full visual styles, not only new accent colors. Send the same refinement direction independently to each model in the theme pair, preserve saved records and contracts, and compile only after each author finishes.
+
+- Stillday: bright minimalism with playful touches; light sky/white surfaces, cobalt and coral, crisp typography, generous alignment, friendly shapes and a concise completion response.
+- Ledgerlight: light neo-brutalism; paper and ink, acid lime with cobalt/coral, strong type, deliberate bold borders and solid offset shadows, readable monetary tables and immediate form feedback.
+- Folio Room: playful retro; cream and lavender, tangerine and deep violet, editorial type hierarchy, printed dividers/stamps, varied scale and purposeful panel motion.
+
+Choose one coherent family for each pair; no random color or style changes between components or renders. Reduced motion, visible focus, readable contrast, responsive layout and real Postgres persistence remain required. Existing Matrix platform chrome keeps its shared brand. Record the refinement in each project's DESIGN.md and BUILD-REPORT.md. Availability must not be described as user approval.

@@ -27,9 +27,9 @@ A planner can be quiet and precise; a finance journal can emphasize readable fig
 
 ## Brand and typography
 
-Inside Matrix, inherit the injected `--matrix-*` colors and fonts, with readable local fallbacks. The shared current Matrix brand uses Bricolage Grotesque for display, Geist for body/UI and Geist Mono for code; use fonts already bundled/injected rather than remote font stylesheets. A user-supplied product direction may shape display composition and illustration while keeping focus, controls, and system integration coherent.
+Inside Matrix, use inherited `--matrix-*` tokens as a baseline, with readable local fallbacks. Follow the product’s selected visual family, mood and palette through app-local semantic tokens; bright minimalism, bold neo-brutalism, playful retro or soft neumorphism can shape the entire page. The shared current Matrix brand uses Bricolage Grotesque for display, Geist for body/UI and Geist Mono for code; use fonts already bundled/injected rather than remote font stylesheets. A user-supplied product direction may shape display composition and illustration while keeping focus, controls, and system integration coherent.
 
-For Matrix platform auth/onboarding/billing or public-site work, consume `@matrix-os/brand` tokens and primitives from the actual repository; do not invent another brand helper. Ordinary generated apps follow the installed theme bridge rather than importing an unavailable platform package.
+For Matrix platform auth/onboarding/billing or public-site work, consume `@matrix-os/brand` tokens and primitives from the actual repository; do not invent another brand helper. Ordinary generated apps retain installed theme/bridge integration and can express their own product style without importing an unavailable platform package.
 
 Use a deliberate type scale, readable measure, generous but purposeful whitespace, and meaningful contrast. Long headings must wrap well at narrow widths. Eyebrows and section numbers are optional; do not use tiny low-contrast uppercase labels for essential information.
 

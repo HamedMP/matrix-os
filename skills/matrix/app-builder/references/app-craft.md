@@ -11,13 +11,13 @@ Common roots are `$MATRIX_HOME/.agents/skills`, `$MATRIX_HOME/agents/skills`,
 `$MATRIX_HOME/.claude/skills`, `$MATRIX_HOME/.codex/skills`, `$HOME/.agents/skills`,
 `$HOME/.claude/skills`, and `$HERMES_HOME/skills` when set.
 If absent, say so and use the guidance below; never claim you loaded a missing skill.
-Matrix's runtime, theme, security, and accessibility requirements still apply.
+Matrix's runtime, integration, security, and accessibility requirements still apply.
 
 ## Before coding
 
 Write a short design direction in the app `DESIGN.md`: who uses this, their primary action,
 the content that deserves the most space, the appropriate density, and one detail
-that makes this particular app useful and memorable. Choose sensible defaults without
+that makes this particular app useful and memorable. Style should change type, shapes, borders, spacing, materials, imagery and interaction character—not only an accent color. Use the user’s mood and chosen family; a calm product can still be bright. Choose sensible defaults without
 turning this into a questionnaire. Follow user-provided references and existing app style.
 Offer two or three reference-based directions only when the user asks or a materially
 ambiguous direction would benefit from comparison; continue with the best-fitting

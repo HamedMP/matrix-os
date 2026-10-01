@@ -17,7 +17,7 @@ metadata:
 
 ## When to Use
 
-Apply this for ALL visual work on Matrix OS: building apps, redesigning the shell, creating landing pages, generating icons, or polishing UI. This is the single source of truth.
+Apply this for Matrix integration and accessibility in all visual work. The shared brand is authoritative for Matrix platform surfaces. Generated products and their landing pages use the user’s mood, references and chosen visual family; read app-builder’s visual-reference guidance and record the product direction in DESIGN.md.
 
 ## Brand
 
@@ -57,16 +57,18 @@ Four brand colors + warm sand shades for gradient depth:
 }
 ```
 
-Use `--matrix-*` directly or define `--app-*` aliases from them. Do not replace inherited tokens with app-local blue, green, purple, or novelty palettes unless the user explicitly asks for branded customization.
+Use `--matrix-*` directly or define `--app-*` aliases from them. Generated apps may override app-local semantic tokens to implement their chosen visual family. A bright, bold, retro or playful product should not be forced into the subdued Matrix brand palette. Keep contrast, visible focus, non-color status cues and bridge integration; do not mutate the global shell theme.
 
-### Color Rules
+### Matrix Platform Brand Rules
 
 1. **One Ember per view.** Multiple uses = visual noise.
 2. **Forest is structural.** Headers, primary buttons, nav active states.
 3. **Cream is warmth.** Secondary fills, hover states.
 4. **Deep is text.** Never use pure black `#000000`.
-5. **Backgrounds inherit the active theme.** Quiet solid surfaces are the default for content. Use gradients only when the chosen art direction calls for depth; do not hardcode a light wash over dark mode.
+5. **Matrix platform backgrounds inherit the active theme.** Quiet solid surfaces are the default for content. Use gradients only when the chosen art direction calls for depth; do not hardcode a light wash over dark mode.
 6. **Shadows always use Deep-tinted** `rgba(50,53,46,X)`, never pure black.
+
+For generated products, select a palette with explicit surface/text/accent roles; choose border weight, shadows, radius and type hierarchy for the actual style. Neo-brutalist products can use ink borders and solid offset shadows; playful products can use cheerful surfaces and original SVG accents. Brand-only Forest/Ember limits do not apply to those product palettes.
 
 ### Optional depth
 
@@ -176,7 +178,7 @@ progress rather than animating invented progress from zero on mount.
 
 Use shadcn-style primitives for app interiors whenever the repo already exposes
 them: Button, Card, Input, Select, Tabs, Tooltip, Badge, Dialog, and related
-unstyled composition helpers. Skin those primitives with Matrix tokens instead
+unstyled composition helpers. Skin those primitives with selected app-local semantic tokens, using inherited Matrix tokens as a baseline instead
 of inventing one-off controls.
 
 
@@ -238,4 +240,4 @@ Use stat cards only when the number helps a real decision. A compact label/value
 - Purposeful, interruptible motion with reduced-motion support
 - All inputs have focus states, all buttons have hover states
 - Inherited fonts with clear hierarchy and legible labels
-- One Ember accent maximum per view
+- A coherent product palette, or one Ember accent maximum on Matrix platform brand surfaces

@@ -29,8 +29,8 @@ Use this when the user asks to build, create, fix, redesign, or publish a Matrix
 - Always create or update `matrix.json`. For apps built for the owner, include `listingTrust: "first_party"` and `scope: "personal"`; missing trust blocks launch even if the build succeeds. Never relabel downloaded/store/community apps to bypass policy.
 - Always run `pnpm install` when dependencies changed and `pnpm build` before saying the app works.
 - Verify `dist/index.html` exists.
-- Use injected Matrix theme variables and iframe-safe sizing. Custom apps should inherit the shell theme by default; add explicit app branding only when the user asks for it or the app has a clear domain reason.
-- For UI, read `matrix-design-system`, `matrix-app-ui-patterns`, and [App craft](references/app-craft.md). Discover relevant installed skills through the active harness catalog (or `load_skill` in kernel routes). Read `emil-design-eng` for polish, `apple-design` for direct manipulation, and `animate` for specific motion work; load supporting references only for the chosen task. Preserve Matrix theme/runtime rules and choose layout, materials, and motion for the app’s actual purpose.
+- Use injected Matrix theme variables and iframe-safe sizing. Choose a coherent product style from the brief, mood and references; use app-local semantic tokens for its palette/materials, with inherited Matrix tokens as the baseline when no direction is chosen.
+- For UI, read `matrix-design-system`, `matrix-app-ui-patterns`, and [App craft](references/app-craft.md). Discover relevant installed skills through the active harness catalog (or `load_skill` in kernel routes). Read `emil-design-eng` for polish, `apple-design` for direct manipulation, and `animate` for specific motion work; load supporting references only for the chosen task. Preserve Matrix integration/runtime rules and choose typography, shapes, borders, layout, materials, color and motion for the app’s actual purpose.
 - Store structured app data through Matrix/Postgres bridge APIs, not ad hoc local databases.
 - Never put provider secrets, API keys, or OAuth tokens inside the app directory.
 - Do not use browser `localStorage` as app persistence in the Matrix shell. Sandboxed iframes can throw `SecurityError`; use `window.MatrixOS.db` and keep local fallback paths test-only/no-op.
@@ -39,7 +39,7 @@ Use this when the user asks to build, create, fix, redesign, or publish a Matrix
 ## Design workflow
 
 1. Read [Visual references and style intake](references/visual-references.md), the craft reference, and the user’s images/links or existing DESIGN.md. Invite a style or inspiration screenshot when the direction is unclear. When available, delegate bounded similar-app screenshot research to one or two subagents, inspect the actual images, and select a task-appropriate direction. Offer annotated alternatives when useful or requested; continue independent work and use the user’s delegated default without a mandatory approval checkpoint.
-2. Save a short app `DESIGN.md`: primary task, layout and density, inherited tokens, typography/spacing, true data and state behavior, and one useful motion recipe with a reduced-motion variant. Keep it updated as the implementation changes.
+2. Save a short app `DESIGN.md`: primary task, visual family and palette, layout and density, semantic tokens, typography/spacing, true data and state behavior, and one useful motion recipe with a reduced-motion variant. Keep it updated as the implementation changes.
 3. Build one complete vertical slice against the owner's real Postgres through `window.MatrixOS.db`: read → create/edit → confirm or restore on failure → reopen. Verify it before expanding secondary screens. Never use convincing fake records to conceal a missing data path.
 4. Inspect the running app in the available Matrix surfaces, refine the largest hierarchy or interaction problem, and inspect again. Check keyboard and reduced motion, not just the default screenshot. Record skills loaded, surface, viewport, theme, states, persistence result, and screenshot/recording evidence; report unavailable evidence explicitly.
 
@@ -150,7 +150,7 @@ injected bridge:
 
 ## Theme Inheritance
 
-The shell injects `--matrix-*` tokens into every bridged app iframe and updates them on theme changes. Build app CSS on those tokens first, with literal colors only as fallbacks:
+The shell injects `--matrix-*` tokens into every bridged app iframe and updates them on theme changes. Use those tokens as a baseline, then define app-local semantic tokens when the selected product style needs its own palette:
 
 ```css
 :root {
@@ -167,7 +167,7 @@ The shell injects `--matrix-*` tokens into every bridged app iframe and updates 
 }
 ```
 
-Use the inherited shell fonts (`var(--matrix-font-sans)`, `var(--matrix-font-mono)`) instead of loading remote font stylesheets. Do not use app-local blue, green, or purple palettes for default UI. If explicit app branding is needed, scope it to named brand tokens and keep system controls, focus states, status colors, and panels on the Matrix tokens.
+Use the inherited shell fonts (`var(--matrix-font-sans)`, `var(--matrix-font-mono)`) instead of loading remote font stylesheets. A chosen product style may use bright, playful, retro, minimal, neo-brutalist or neumorphic art direction. Scope palette, surfaces and materials to app-local semantic tokens. Keep focus/status readable, support the selected modes, and preserve Matrix bridge behavior. Do not override the owner’s global shell theme.
 
 ### Persistence Rules
 

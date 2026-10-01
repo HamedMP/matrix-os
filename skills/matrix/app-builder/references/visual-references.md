@@ -8,7 +8,25 @@ When the visual direction is not already clear, ask one concise question early:
 
 > Do you have an app, screenshot, or style you want this to feel like? You can share an inspiration image or link, describe the mood, or let me choose a direction suited to the product.
 
-Offer two or three concrete choices when helpful: quiet/editorial, crisp/data-focused, or expressive/visual. Ask about density, colors, or motion only when they affect the job. Skip questions already answered by the brief or supplied images. Continue independent data/scaffold work while waiting; use a stated default when the user delegates the choice. Do not turn reference selection into a mandatory approval gate.
+Offer two or three concrete choices when helpful: bright/minimal, bold/neo-brutalist, or playful/retro. Ask about density, colors, or motion only when they affect the job. Skip questions already answered by the brief or supplied images. Continue independent data/scaffold work while waiting; use a stated default when the user delegates the choice. Do not turn reference selection into a mandatory approval gate.
+
+## Choose an actual visual style
+
+Style changes the whole interface: typography, shapes, borders, spacing, materials, imagery and interaction character, as well as color. Read the user’s mood and product intent. Bright, cheerful, playful, bold, nostalgic or calm are useful direction cues; calm does not require a dark or desaturated palette. Do not infer mood from sensitive personal information.
+
+| Family | Visual decisions | Useful color direction |
+| --- | --- | --- |
+| Bright minimalism | Crisp type hierarchy, ample breathing room, restrained shapes, fine dividers, a confident primary action | Light neutral surfaces with cobalt, sky, mint or coral accents |
+| Neo-brutalism | Heavy type, square or deliberately blunt corners, bold borders, offset solid shadows, direct controls | Paper/ink contrast with acid lime, yellow, cobalt or coral |
+| Playful | Friendly shapes, expressive local SVG illustrations, varied but coherent scale, lively feedback on occasional actions | Cheerful paired accents, such as sky/coral or lavender/tangerine |
+| Retro | Era-specific type from available local fonts, printed dividers, badges and original texture details | Cream, punchy orange, violet, cyan or warm red; avoid muddy contrast |
+| Neumorphism | Soft raised/inset surfaces and gentle depth; reserve sculpted treatment for a few controls | Clean light tints with a saturated focus/accent; visible outlines and text distinguish every state |
+
+These are starting directions, not templates or compulsory palettes. Choose one primary family and adapt its density to the task. An expense journal still needs aligned figures, a planner usable dates, and a creative studio room for content. Use style-specific illustrations and composition without adding irrelevant dashboards or oversized decorative cards. For neumorphism, never rely on shadows alone to identify inputs, selection, or disabled states; provide high-contrast outlines when needed.
+
+If the user says “choose,” select a fitting family without delaying the build. If they request surprise/random styles, pick one coherent family/palette once, record it in DESIGN.md, and keep it stable across screens, refreshes and edits. For multiple proposals, deliberately vary families as well as colors. Do not randomize every component or reshuffle styles on launch.
+
+Use named semantic tokens for background, surface, text, primary/secondary accent, border, focus, success and error. Choose readable foreground/background pairs; do not let an inherited muted brand palette erase the user’s chosen product style. Keep focus and status visible and non-color cues intact. Respect a requested light or dark direction; otherwise check both supported modes with the same style character. Matrix platform chrome/auth/billing continues to use its shared brand primitives. Generated products and their landing pages can have their own art direction.
 
 ## Research similar real products
 
@@ -35,6 +53,6 @@ Choose one primary direction and at most one supporting interaction reference. O
 
 Record audience, primary task, layout/density, type hierarchy, spacing scale, component/state patterns, palette roles, imagery, and motion purpose. Keep shared decisions in DESIGN.md; when a page needs an exception, save only that deviation in a small page-specific note and read both before editing. Do not regenerate or overwrite approved decisions from a fresh keyword query. Separate visual family (editorial, minimal, expressive) from page structure (hero, workflow, comparison) and from interaction rules. A finance journal and an accommodation search need different structures even if both are visually quiet.
 
-Check long labels, text scaling, chip/badge reflow, visible keyboard focus, non-color status cues, cancellable/interrupted interactions, and reduced motion. Reference preferences do not replace the Matrix theme, sandbox, Vite/React/TypeScript, owner Postgres, or security contracts. Use local/inherited fonts and assets instead of remote font/CDN imports.
+Check long labels, text scaling, chip/badge reflow, visible keyboard focus, non-color status cues, cancellable/interrupted interactions, and reduced motion. A product style may define app-local semantic color/type/material tokens; preserve Matrix integration, sandbox, Vite/React/TypeScript, owner Postgres, and security contracts. Use local/inherited fonts and assets instead of remote font/CDN imports.
 
 After building, compare a screenshot of the actual Matrix app with the selected references: task hierarchy, spacing, typography, state clarity and responsive fit. Refine the biggest mismatch. Keep the user's direction continuous across iterations, while verifying real functionality and persistence separately. Report the references actually viewed, the selected direction, and which rendered checks passed.
