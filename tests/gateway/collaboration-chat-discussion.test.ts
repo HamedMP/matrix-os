@@ -49,12 +49,13 @@ describe("CollaborationChatAdapter discussion", () => {
     await fixture.destroy();
   });
 
-  it("hides private assistant paths when a collaborator reads shared history", async () => {
+  it("hides private assistant paths and credentials when a collaborator reads shared history", async () => {
     await fixture.db.insertInto("chat_messages").values({
       id: "msg_private_path", chat_id: collaborationIds.chat, seq: 1,
       role: "assistant", state: "committed", turn_id: null, run_id: null,
       parts: JSON.stringify([{ type: "text", text: "Open /home/ma" },
-        { type: "text", text: "trix/home/private/report.txt" }]),
+        { type: "text", text: "trix/home/private/report.txt ACCESS_TO" },
+        { type: "text", text: "KEN=qa-fake-2058" }]),
       byte_count: 60, search_text: "Open", created_at: new Date(now),
     }).execute();
     const context = await authority.authorize({
@@ -64,7 +65,12 @@ describe("CollaborationChatAdapter discussion", () => {
     });
     const messages = await adapter.listMessages(context, { afterSequence: "0", limit: 10 });
     expect(messages[0]?.parts.map((part) => part.type === "text" ? part.text : "").join(""))
-      .toBe("Open [redacted path]");
+      .toBe("Open [redacted path] [redacted credential]");
+    await fixture.db.updateTable("chats").set({
+      last_message_preview: "Open /home/matrix/home/private/report.txt ACCESS_TOKEN=qa-fake-2058",
+    }).where("id", "=", collaborationIds.chat).execute();
+    expect((await adapter.getChat(context)).lastMessagePreview)
+      .toBe("Open [redacted path] [redacted credential]");
     const stored = await fixture.db.selectFrom("chat_messages").select("parts")
       .where("id", "=", "msg_private_path").executeTakeFirstOrThrow();
     expect(JSON.stringify(stored.parts)).toContain("trix/home/private/report.txt");

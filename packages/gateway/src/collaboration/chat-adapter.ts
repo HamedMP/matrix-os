@@ -21,7 +21,7 @@ import { CollaborationAuthorizationError, type AuthorizedCollaborationContext } 
 import type { CollaborationScopesTable, OwnerCollaborationDatabase } from "./database.js";
 import { CollaborationDiscussionError } from "./discussion-error.js";
 import { CollaborationRepositoryError } from "./repository.js";
-import { redactAssistantParts, redactAssistantPaths } from "../chat/safe-activity-projection.js";
+import { redactAssistantParts, redactSharedAssistantText } from "../chat/safe-activity-projection.js";
 
 const OPERATION_RETENTION_MS = 7 * 24 * 60 * 60 * 1_000;
 
@@ -313,7 +313,7 @@ export class CollaborationChatAdapter {
       lifecycle: chat.lifecycle,
       revision: String(chat.revision),
       messageCount: String(chat.message_count),
-      ...(chat.last_message_preview ? { lastMessagePreview: redactAssistantPaths(chat.last_message_preview) } : {}),
+      ...(chat.last_message_preview ? { lastMessagePreview: redactSharedAssistantText(chat.last_message_preview) } : {}),
     });
   }
 
