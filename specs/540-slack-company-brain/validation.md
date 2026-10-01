@@ -74,3 +74,40 @@ reply acceptance remain pending preview configuration; automated checks do not
 establish a live Slack success.
 
 The Slack pilot also selects `preview-isolated` alongside `preview-platform`. Its exact tagged browser origin is resolved before the Next.js build and reused for runtime auth and collaboration origins. Runtime-only overrides cannot fix an auth URL baked into the image. Invalid/non-preview service origins fail before build; previews without the label retain shared-host behavior. `preview-platform-isolated-origin.test.ts` executes the workflow step with a synthetic service URL and covers tag derivation, unsafe origins, invalid PR identifiers, and ordering.
+
+### Explicit legacy sign-in exception for the live pilot
+
+Browser qualification found that the existing production Clerk instance refuses
+the Cloud Run hostname. The owner explicitly approved one 24-hour legacy pilot
+alias, `pr-2079-preview.matrix-os.com`, using the selected existing Matrix account
+and test organization. It targets only this PR's tagged preview backend. It is
+not the spec 530 Preview identity boundary and does not activate its wildcard
+route. The shared browser preview retains its existing traffic assignment.
+
+The separate `slack-pilot.ts` Worker admits only sign-in/static assets, native
+Slack installation/callback, linking, approved-channel configuration/removal,
+and signed Slack events. It refuses runtime, Terminal, personal integration and
+internal Slack broker paths. It validates the exact PR/alias/tag pairing, fails
+closed after its configured expiry, caps actual request bodies at 256 KiB,
+times out incoming bodies and upstream requests after 30 seconds, forwards no
+client-supplied internal identity proof, strips CORS permissions and
+parent-domain response cookies, and follows no upstream redirects. This does
+not establish isolation of the legacy Clerk instance or its browser-managed
+cookies; that exception is specific to this owner-approved test.
+
+Preview-environment variables select a single pilot PR and public app/client
+IDs. Only that PR receives the three existing PR-scoped version-1 Slack secret
+bindings. Missing/unsafe selected configuration fails before build. Other PRs
+retain their normal origin and receive no Slack bindings. The selected alias
+is baked into the next auth-shell build, avoiding a manual configuration loss
+on rebuild. The Worker uses no credentials. Remove its exact route, DNS record
+and script after the test; automatic expiry denies requests in the meantime.
+
+Qualification: the final preview/Worker regression passes 10 suites / 173 tests;
+the documentation repository passes 233 tests. The 26 focused Worker tests cover host/path separation, actual body
+caps, expiry, proof-header removal, cookie handling, auth redirects and stalled
+requests; strict Worker TypeScript passes. Slack itself verified the new event
+URL. The native install-start endpoint independently authenticated the selected
+account and fresh test-organization administrator membership. Slack consent
+was approved, but the browser submission has not yet reached the Matrix
+callback. No successful installation or live bot/model reply is claimed.
