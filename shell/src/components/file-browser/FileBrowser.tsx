@@ -325,7 +325,7 @@ export function FileBrowser({ windowId, mobile = false }: FileBrowserProps) {
       {selectedKind && selectedPath && !showingTrash && !searchResults && !showingOrganizationDrives ? <div className="flex justify-end border-b px-3 py-1.5">
         <FileResourceSharing key={`${selectedKind}:${selectedPath}`} kind={selectedKind} path={selectedPath} />
       </div> : null}
-      {showingOrganizationDrives ? <OrganizationDrivesView key={identity} requestedScopeId={activeDriveRequest?.scopeId} requestedIntentId={activeDriveRequest?.id} /> : isXpExplorer ? (
+      {showingOrganizationDrives ? <OrganizationDrivesView mobile={mobile} draftIdentity={identity} key={identity} requestedScopeId={activeDriveRequest?.scopeId} requestedIntentId={activeDriveRequest?.id} /> : isXpExplorer ? (
         <XpExplorer
           renamingPath={renamingPath}
           onStartRename={setRenamingPath}

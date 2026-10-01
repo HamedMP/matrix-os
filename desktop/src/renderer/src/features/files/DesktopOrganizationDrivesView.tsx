@@ -1,6 +1,7 @@
+import {desktopDriveDraftIdentity, openDesktopCompanyDriveChat} from "../../stores/company-drive-chat-draft";
 import { OrganizationDriveSnapshotSchema } from "@matrix-os/contracts";
 import {
-  resolveOrganizationDriveNavigation, OrganizationDriveBrowser, createRefreshGuard,
+  companyDriveChatReference, resolveOrganizationDriveNavigation, OrganizationDriveBrowser, createRefreshGuard,
   driveBasePath,
   ensureOrganizationContributorGrant,
   loadOrganizationDriveOptions,
@@ -23,6 +24,7 @@ function message(error: unknown): string {
 }
 
 export function DesktopOrganizationDrivesView({ isActive = true, requestedScopeId, requestedIntentId }: { isActive?: boolean; requestedScopeId?: string; requestedIntentId?: string }) {
+  const draftIdentity=useConnection(desktopDriveDraftIdentity);
   const platformHost = useConnection((state) => state.platformHost);
   const runtimeSlot = useConnection((state) => state.runtimeSlot);
   const authGeneration = useConnection((state) => state.authGeneration);
@@ -148,8 +150,8 @@ export function DesktopOrganizationDrivesView({ isActive = true, requestedScopeI
     {error && <p role="alert" className="mb-3 text-xs" style={{ color: "var(--danger)" }}>{error}</p>}
     {loading ? <p style={{ color: "var(--text-tertiary)" }}>Loading drives…</p> : options.length === 0
       ? <p style={{ color: "var(--text-tertiary)" }}>Share a folder with your organization to make a drive available here.</p>
-      : <div className="flex min-h-0 flex-1 gap-5">
-        <nav aria-label="Organization drives" className="w-48 shrink-0 space-y-1 border-r pr-3" style={{ borderColor: "var(--border-subtle)" }}>
+      : <div className="flex min-h-0 flex-1 flex-col gap-4 sm:flex-row">
+        <nav aria-label="Organization drives" className="w-full shrink-0 space-y-1 border-b pb-2 sm:w-48 sm:border-b-0 sm:border-r sm:pb-0 sm:pr-3" style={{ borderColor: "var(--border-subtle)" }}>
           {options.map((option) => <button key={option.scopeId} type="button" aria-current={navigation.scopeId === option.scopeId ? "page" : undefined}
             disabled={busy} onClick={() => { appliedRequest.current = requestedIntentId ?? requestedScopeId; setSelected(option.scopeId); setFolder(""); }} className="w-full rounded-md px-3 py-2 text-left text-xs hover:bg-[var(--bg-hover)]"
             style={{ background: navigation.scopeId === option.scopeId ? "var(--bg-hover)" : undefined }}>{option.name}</button>)}
@@ -166,6 +168,10 @@ export function DesktopOrganizationDrivesView({ isActive = true, requestedScopeI
             <OrganizationDriveBrowser key={active.scopeId} name={active.name} files={active.snapshot.files}
               usedBytes={active.snapshot.usedBytes} reservedBytes={active.snapshot.reservedBytes} quotaBytes={active.snapshot.quotaBytes}
               busy={busy} canUpload={Boolean(active.canUpload)} folder={folder} onFolderChange={setFolder}
+              onChatContext={selection=>{
+                const reference=companyDriveChatReference(active,selection.kind==="file"?{kind:"file",fileId:selection.file.id,version:selection.file.version,path:selection.file.path}:selection.kind==="folder"?selection:undefined);
+                openDesktopCompanyDriveChat(reference,draftIdentity);
+              }}
               onDownload={file => void download(active, file.id)} hasMore={Boolean(active.snapshot.nextCursor)}
               pageLimitReached={(active.pages ?? 1) >= 20} onLoadMore={() => void loadMore(active)}
               uploadControl={<button type="button" className={button} style={buttonStyle} disabled={busy}

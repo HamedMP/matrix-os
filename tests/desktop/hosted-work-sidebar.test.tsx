@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import React from "react";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { CanonicalChatRecord } from "@matrix-os/contracts";
 import type { StartAgentChat } from "@matrix-os/ui";
 import { HostedWorkSidebar } from "@desktop/renderer/src/features/work/HostedWorkSidebar";
@@ -121,6 +121,17 @@ describe("HostedWorkSidebar", () => {
     expect(JSON.parse(screen.getByTestId("hosted-agent-draft").textContent!)).toMatchObject({ text: "Create a research agent" });
     expect(JSON.parse(screen.getByTestId("hosted-agent-draft").textContent!).resources).toBeUndefined();
   });
+  it("preserves an identity-bound draft when the API client becomes available, and clears changed credentials",()=>{
+    render(<WorkSurfaceRuntimeProvider active={false}><HostedDraftReceipt/><HostedWorkSidebar tab={{id:"work_draft",kind:"work",title:"Chat",workRoute:"chat",chatView:"draft",closable:false}} active/></WorkSurfaceRuntimeProvider>);
+    fireEvent.click(screen.getByRole("button",{name:"Start saved agent"}));
+    const request=JSON.parse(screen.getByTestId("hosted-agent-draft").textContent!);
+    expect(request.resources).toHaveLength(1);
+    act(()=>useConnection.setState({api:{} as never}));
+    expect(JSON.parse(screen.getByTestId("hosted-agent-draft").textContent!)).toEqual(request);
+    act(()=>useConnection.setState({authGeneration:1}));
+    expect(screen.getByTestId("hosted-agent-draft").textContent).toBe("null");
+  });
+
   it("synchronizes a rail rename into the active center-title projection", () => {
     useTabs.getState().openTab({
       kind: "work",

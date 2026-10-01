@@ -60,3 +60,8 @@ export function closeShellCollaborationSessions(): void {
   }
   liveApis.clear();
 }
+
+export function releaseShellCollaborationApi(api: CollaborationDirectApi): void {
+ liveApis.delete(api);
+ api.direct.close();
+}

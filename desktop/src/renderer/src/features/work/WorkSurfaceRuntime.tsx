@@ -1,3 +1,5 @@
+import {desktopDriveDraftIdentity} from "../../stores/company-drive-chat-draft";
+import { useCompanyDriveChatHandoff } from "./use-company-drive-chat-handoff";
 import { chatMessageVersionUrl, chatReadStateVersionUrl } from "@matrix-os/contracts";
 import { ChatAgentsWorkspace, type ChatAgentDraftRequest, type StartAgentChat } from "@matrix-os/ui";
 import {
@@ -31,7 +33,8 @@ const EMPTY_CHAT_TITLE_PROJECTIONS: CanonicalChatTitleProjection[] = [];
 
 const WorkSurfaceRuntimeContext = createContext<WorkSurfaceRuntime | null>(null);
 
-export function WorkSurfaceRuntimeProvider({ active, children }: { active: boolean; children: ReactNode }) {
+export function WorkSurfaceRuntimeProvider({ active, tabId, children }: { active: boolean; tabId?: string; children: ReactNode }) {
+  const draftIdentity = useConnection(desktopDriveDraftIdentity);
   const api = useConnection((state) => state.api);
   const runtimeSlot = useConnection((state) => state.runtimeSlot);
   const authGeneration = useConnection((state) => state.authGeneration);
@@ -42,12 +45,13 @@ export function WorkSurfaceRuntimeProvider({ active, children }: { active: boole
   const pendingDisposalRef = useRef<{ source: CanonicalChatEventSource; cancelled: boolean } | null>(null);
   const client = useMemo(() => api ? createCanonicalChatClient(api) : null, [api, authGeneration, runtimeSlot]);
   const agentDraftSequence = useRef(0);
-  const [agentDraft, setAgentDraft] = useState<{ client: CanonicalChatClient | null; request: ChatAgentDraftRequest } | null>(null);
+  const [agentDraft, setAgentDraft] = useState<{ identity: string; request: ChatAgentDraftRequest } | null>(null);
   const requestAgentDraft = useCallback<StartAgentChat>((text, resources) => {
     agentDraftSequence.current += 1;
-    setAgentDraft({ client, request: { id: agentDraftSequence.current, text, resources } });
-  }, [client]);
-  const agentDraftRequest = agentDraft?.client === client ? agentDraft.request : null;
+    setAgentDraft({ identity: draftIdentity, request: { id: agentDraftSequence.current, text, resources } });
+  }, [draftIdentity]);
+  useCompanyDriveChatHandoff(active,tabId,requestAgentDraft);
+  const agentDraftRequest = agentDraft?.identity === draftIdentity ? agentDraft.request : null;
   const eventSource = useMemo<CanonicalChatEventSource | null>(() => {
     if (!api || !active) return null;
     return createCanonicalChatEventSource({

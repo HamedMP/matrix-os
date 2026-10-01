@@ -8,6 +8,14 @@ const organizationId = "org_example";
 function api() {return {get: vi.fn(async (path: string) => path === "/api/organizations" ? {organizations: [{organizationId, name: "Authority"}]} : {items: path.startsWith("/api/collaboration/shared") ? [{scopeId, runtimeId: "runtime_owner", ownerId: "user_owner", kind: "folder", authorityGeneration: 1, organizationId, status: "accepted"}] : []}), direct: {request: vi.fn(async (_scope: string, _method: string, path: string) => path.endsWith("/drive") ? {organizationId, scopeId, usedBytes: 0, reservedBytes: 0, quotaBytes: 1_000_000_000_000, files: []} : {id: scopeId, ownerId: "user_owner", kind: "folder", resourceId: "folder_example", organizationId, membershipMode: "direct", lifecycle: "shared", revision: "1", authEpoch: "1", authorityGeneration: "1", role: "viewer", capabilities: {read: true, discuss: false, manageMembers: false, requestAi: false}})}};}
 afterEach(cleanup);
 describe("organization drives in Chat navigation", () => {
+ it("expands a drive into private associated Chats and creates an unsent context draft", async()=>{
+  const select=vi.fn(),create=vi.fn();render(<OrganizationDrivesNavigation api={api() as never} onOpen={vi.fn()}
+    chats={[{chatId:"chat_company",scopeId,title:"Private plan"}]} onSelectChat={select} onNewChat={create}/>);
+  fireEvent.click(await screen.findByRole("button",{name:"Expand Authority Chats"}));
+  fireEvent.click(screen.getByRole("button",{name:"Private plan"}));expect(select).toHaveBeenCalledWith("chat_company");
+  fireEvent.click(screen.getByRole("button",{name:"New Chat with Authority drive"}));expect(create).toHaveBeenCalledWith(expect.objectContaining({scopeId,organizationId}));
+  expect(screen.getByText("Only you can read these Chats.")).toBeTruthy();
+ });
  it("discovers authorized drives and opens the exact scope", async () => {
   const open=vi.fn(); render(<OrganizationDrivesNavigation api={api() as never} onOpen={open}/>);
   const row=await screen.findByRole("button", {name: "Open Authority drive"}); fireEvent.click(row);

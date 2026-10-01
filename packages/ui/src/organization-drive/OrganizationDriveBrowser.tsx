@@ -11,10 +11,12 @@ function EntryIcon({folder}: {folder: boolean}) {
     {folder ? <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v10H3Z"/> : <><path d="M6 3h8l4 4v14H6Z"/><path d="M14 3v5h4M9 12h6M9 16h6"/></>}
   </svg>;
 }
+export type DriveChatContextSelection = {kind:"drive"}|{kind:"folder";path:string}|{kind:"file";file:OrganizationDriveFile};
 export type OrganizationDriveBrowserProps = {
   name: string; files: readonly OrganizationDriveFile[]; usedBytes: number; reservedBytes: number; quotaBytes: number;
   busy: boolean; canUpload: boolean; folder: string; onFolderChange(folder: string): void;
   onDownload(file: OrganizationDriveFile): void; uploadControl?: ReactNode;
+  onChatContext?(selection:DriveChatContextSelection):void;
   hasMore?: boolean; onLoadMore?(): void; pageLimitReached?: boolean;
 };
 /** Same browsing, copy and derivations for Web Canvas, Web Desktop, Web Mobile and Electron Desktop. */
@@ -48,6 +50,7 @@ export function OrganizationDriveBrowser(props: OrganizationDriveBrowserProps) {
       {folderError ? <p role="alert" className="text-xs">Enter a relative folder path of at most 798 bytes, without empty segments, backslashes or parent traversal.</p> : null}
       <div className="flex gap-2"><button type="submit" disabled={props.busy} className={control} style={border}>Use folder</button><button type="button" className={control} style={border} onClick={() => setChoosingFolder(false)}>Cancel</button></div>
     </form> : null}
+    {props.onChatContext ? <div className="flex flex-wrap items-center gap-2"><button type="button" disabled={props.busy} className={control} style={border} aria-label={props.folder?"Ask about this folder":"Ask about this drive"} onClick={()=>props.onChatContext?.(props.folder?{kind:"folder",path:props.folder}:{kind:"drive"})}>Ask in Chat</button><span className="text-xs" style={muted}>Opens a new private Chat draft.</span></div>:null}
     <div className="space-y-2"><div className="flex flex-wrap justify-between gap-2 text-xs" style={muted}>
       <span>{driveFileSize(props.usedBytes)} of {driveFileSize(props.quotaBytes)} used</span>
       {props.reservedBytes > 0 ? <span>{driveFileSize(props.reservedBytes)} uploading</span> : null}
@@ -66,12 +69,13 @@ export function OrganizationDriveBrowser(props: OrganizationDriveBrowserProps) {
     {props.canUpload && new TextEncoder().encode(props.folder).byteLength > 544 ? <p className="text-xs" style={muted}>This folder leaves {Math.max(0, 799 - new TextEncoder().encode(props.folder).byteLength)} UTF-8 bytes for each file name.</p> : null}
     {props.hasMore ? <p className="text-xs" style={muted}>{props.pageLimitReached ? "Search covers loaded files. This view has reached its browsing limit." : "Search covers loaded files. Load more to include additional files."}</p> : null}
     <ul className="min-w-0 divide-y rounded-lg border px-3" style={border} aria-label="Drive files">
-      {entries.map(entry => <li key={`${entry.kind}:${entry.path}`} className="flex min-w-0 items-center gap-3 py-3" style={border}>
+      {entries.map(entry => <li key={`${entry.kind}:${entry.path}`} className="flex min-w-0 flex-wrap items-center gap-3 py-3" style={border}>
         <EntryIcon folder={entry.kind === "folder"}/>
-        <div className="min-w-0 flex-1">
+        <div className="min-w-0 flex-1 basis-32">
           {entry.kind === "folder" ? <button type="button" aria-label={`Open folder ${entry.name}`} disabled={props.busy} onClick={() => navigate(entry.path)} className="min-h-9 w-full truncate text-left text-sm hover:underline focus-visible:outline-2 focus-visible:outline-[var(--accent)]">{entry.name}</button> : <p className="truncate text-sm" title={entry.path}>{entry.name}</p>}
           <p className="truncate text-xs" style={muted}>{entry.kind === "folder" ? `${entry.fileCount} loaded ${entry.fileCount === 1 ? "file" : "files"}` : query.trim() ? entry.path : `${driveFileSize(entry.file.size)} · ${entry.file.updatedAt.slice(0,10)}`}</p>
         </div>
+        {props.onChatContext ? <button type="button" disabled={props.busy} className={control} style={border} aria-label={`Add ${entry.name}${entry.kind==="folder"?" folder":""} to Chat`} onClick={()=>props.onChatContext?.(entry.kind==="file"?{kind:"file",file:entry.file}:{kind:"folder",path:entry.path})}>Add to Chat</button>:null}
         {entry.kind === "file" ? <button type="button" disabled={props.busy} className={control} style={border} aria-label={`Download ${entry.name}`} onClick={() => props.onDownload(entry.file)}>Download</button> : null}
       </li>)}
     </ul>
