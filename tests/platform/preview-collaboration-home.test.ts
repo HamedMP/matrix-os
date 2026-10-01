@@ -349,7 +349,7 @@ describe("preview collaboration staging registration", () => {
       since, deadline: 60_000, intervalMs: 5_000, now: () => clock, sleep: async (ms: number) => { clock += ms; },
     });
     expect(enrolled).toBe(true);
-    expect(client.queries[0]!.values).toEqual([`vps-${MACHINE}`, OWNER, HANDLE, since.toISOString()]);
+    expect(client.queries[0]!.values).toEqual([`vps:${MACHINE}`, OWNER, HANDLE, since.toISOString()]);
     expect(client.queries[0]!.text).toContain("last_control_at >= $4::timestamptz");
     const never = new FakeClient(() => ({ rows: [] }));
     clock = 0;
