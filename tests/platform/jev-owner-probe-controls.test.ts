@@ -4,6 +4,8 @@ import { createFundedModelProbeService } from "../../packages/platform/src/ai-fu
 import { createAiFundedPolicyRepository } from "../../packages/platform/src/ai-funded-policy-repository.js";
 import { insertUserMachine, type PlatformDB } from "../../packages/platform/src/db.js";
 import { createTestPlatformDb, destroyTestPlatformDb } from "./platform-db-test-helper.js";
+// The mocked observation stays valid relative to this test run, never a calendar cutoff.
+const priceValidThrough = new Date(Date.now() + 86_400_000).toISOString();
 let db: PlatformDB;
 beforeEach(async () => { ({ db } = await createTestPlatformDb()); });
 afterEach(async () => { await destroyTestPlatformDb(db); });
@@ -22,7 +24,7 @@ async function fixture() {
   const fetchFn = vi.fn<typeof fetch>(async (raw, init) => {
     expect(new URL(String(raw)).pathname).toBe("/v1/jev-readiness");
     expect(init).toMatchObject({ method: "POST", body: "{}", redirect: "error", signal: expect.any(AbortSignal) });
-    return Response.json({ ready: true, priceValidThrough: "2026-09-30T23:59:59.999Z" });
+    return Response.json({ ready: true, priceValidThrough });
   });
   const service = createFundedModelProbeService({ db, credentials: repository, relayBaseUrl: "https://relay.example.test",
     relayControlToken: "c".repeat(32), dailyLimit: 10, minuteLimit: 2, fetchFn });
@@ -61,7 +63,7 @@ it("does not populate ready cache after cancellation and revokes the delayed tem
   const pending = f.service.probe(JEV_MODEL_ID, { runtime: f.runtime("a"), signal: controller.signal });
   await vi.waitFor(() => expect(f.fetchFn).toHaveBeenCalledOnce()); controller.abort();
   expect((await pending).ready).toBe(false);
-  response.resolve(Response.json({ ready: true, priceValidThrough: "2026-09-30T23:59:59.999Z" }));
+  response.resolve(Response.json({ ready: true, priceValidThrough }));
   await vi.waitFor(() => expect(f.revoke).toHaveBeenCalledOnce());
   await vi.waitFor(async () => {
     const rows = await db.executor.selectFrom("ai_runtime_credentials").select("revoked_at").execute();

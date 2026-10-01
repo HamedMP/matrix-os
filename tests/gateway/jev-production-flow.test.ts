@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
-import { JEV_EMAIL_TRIAGE_ANSWER_IDS, JEV_MODEL_ID, FundedAiRuntimeFundingSummaryResponseSchema,
+import { JEV_EMAIL_TRIAGE_ANSWER_IDS, JEV_MODEL_ID, JEV_PRICING_VERSION, FundedAiRuntimeFundingSummaryResponseSchema,
   FundedAiRouteReadinessReceiptSchema, type ChatAgent } from "@matrix-os/contracts";
 import type { JevService } from "../../packages/gateway/src/jev/service.js";
 import { createProductionJevInboxRuntime } from "../../packages/gateway/src/jev/inbox-production.js";
@@ -105,7 +105,11 @@ async function fixture(mode = "ready") {
     const relay = createFundedRelay({ ...resolveFundedRelayConfig({ MATRIX_FUNDED_AI_ENABLED: "true", MATRIX_FUNDED_AI_RESERVATION_MODE: "usage",
       CLOUDFLARE_AI_GATEWAY_URL: "https://gateway.ai.cloudflare.com/v1/0123456789abcdef0123456789abcdef/fixture/anthropic",
       CLOUDFLARE_AI_GATEWAY_TOKEN: "g".repeat(32), CLOUDFLARE_WORKERS_AI_TOKEN: "w".repeat(32), PLATFORM_INTERNAL_URL: "https://platform.example.test",
-      AI_RELAY_CONTROL_TOKEN: control, AI_RELAY_METADATA_SECRET: "m".repeat(32) })!,
+      AI_RELAY_CONTROL_TOKEN: control, AI_RELAY_METADATA_SECRET: "m".repeat(32),
+      // Attestation belongs to this test's shared observation epoch, not a calendar cutoff.
+      MATRIX_JEV_PRICING_REVIEW_VERSION: JEV_PRICING_VERSION,
+      MATRIX_JEV_PRICING_REVIEWED_AT: new Date(now - 60_000).toISOString(),
+      MATRIX_JEV_PRICING_VALID_THROUGH: new Date(now + 86_400_000).toISOString() })!,
       fetch: (async (raw, init) => {
         if (String(raw).startsWith("https://platform.example.test/")) return platform.request(String(raw), init);
         const body = JSON.parse(String(init?.body));
