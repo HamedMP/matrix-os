@@ -18,6 +18,7 @@ import type {
 } from "@matrix-os/contracts";
 import { CanonicalChatContentSchema, CanonicalChatRunPolicySchema } from "@matrix-os/contracts";
 import {
+  VOICE_SESSION_LIMITS,
   VoiceCapabilitySchema,
   type SafeVoiceErrorCode,
   type VoiceCapability,
@@ -51,6 +52,13 @@ import { VoiceSessionError } from "./engine.js";
 
 const MAX_UNHEARD_HINT_IDS = 200;
 const FENCED_WRITE_ATTEMPTS = 3;
+const MAX_OPERATION_LABEL_CHARS = VOICE_SESSION_LIMITS.maxOperationLabelChars;
+
+/** Code-point-safe clamp so emitted frames stay inside the wire schema. */
+function clampLabel(value: string): string {
+  const points = [...value];
+  return points.length <= MAX_OPERATION_LABEL_CHARS ? value : points.slice(0, MAX_OPERATION_LABEL_CHARS).join("");
+}
 
 /**
  * The durable manifest stores canonical text offsets only — the engine's
@@ -587,7 +595,13 @@ export function createCanonicalVoicePorts(options: {
           chatId: input.chatId,
           actionId: input.actionId,
         });
-        return operation.state === "cancelled" ? "cancelled" : "unknown";
+        if (operation.state === "cancelled") return "cancelled";
+        if (["succeeded", "failed", "timed_out"].includes(operation.state)) return "already_terminal";
+        // Any flagged non-terminal state ("running", "outcome_unknown", or a
+        // pre-dispatch state still resolving concurrent writes) means the
+        // cancel intent was durably recorded.
+        if (operation.cancellationRequested) return "requested";
+        return "unknown";
       } catch (error: unknown) {
         log("voice.run_control.action_cancel_failed", {
           error: error instanceof Error ? error.name : "UnknownError",
@@ -719,7 +733,7 @@ function projectActivity(
         type: "operation.status",
         runId,
         operationId: activity.toolCallId,
-        label: activity.label,
+        label: clampLabel(activity.label),
         state: activity.status === "completed" ? "succeeded" : activity.status,
       });
       return;
@@ -728,7 +742,7 @@ function projectActivity(
         type: "operation.status",
         runId,
         operationId: activity.approvalId,
-        label: activity.title,
+        label: clampLabel(activity.title),
         state: "waiting_for_approval",
       });
       return;
@@ -747,7 +761,7 @@ function projectActivity(
         type: "operation.status",
         runId,
         operationId: activity.activityId,
-        label: activity.label,
+        label: clampLabel(activity.label),
         state: activity.status === "completed" ? "succeeded"
           : activity.status === "failed" ? "failed"
           : activity.status === "cancelled" ? "cancelled"
@@ -758,7 +772,7 @@ function projectActivity(
       emit({
         type: "operation.status",
         runId,
-        label: activity.error.safeMessage,
+        label: clampLabel(activity.error.safeMessage),
         state: "failed",
       });
       return;

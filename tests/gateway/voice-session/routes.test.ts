@@ -442,6 +442,35 @@ describe("voice session reconnect route", () => {
     expect(ended.status).toBe(409);
     expect(await ended.json()).toEqual({ error: { code: "session_conflict", retryable: false, recovery: "start_new_session" } });
   });
+
+  it("keeps the session alive when re-verification hits a transient failure", async () => {
+    // A capability outage is retryable — it must not destroy a session the
+    // client can still reconnect into once the dependency recovers.
+    let failCapabilities = false;
+    const rig = makeRig();
+    const app = createVoiceSessionRoutes({
+      engine: rig.engine,
+      resolvePrincipal: () => PRINCIPAL,
+      chatAccess: new FakeChatAccess(),
+      capabilities: {
+        capabilities: () => failCapabilities
+          ? Promise.reject(new Error("store blip"))
+          : Promise.resolve(CAPABILITY),
+      },
+      canonicalDecision: () => DECISION,
+    });
+    const created = await createViaHttp(app);
+    const sessionId = String(created.body.sessionId);
+    failCapabilities = true;
+    const res = await app.request(`http://test${CREATE_URL}/${sessionId}/reconnect`, jsonInit({}));
+    expect(res.status).toBeGreaterThanOrEqual(500);
+    expect(rig.engine.describeSession({ principal: PRINCIPAL, chatId: CHAT_ID, sessionId })?.status)
+      .not.toBe("ended");
+    // And the retry succeeds once the dependency recovers.
+    failCapabilities = false;
+    const retry = await app.request(`http://test${CREATE_URL}/${sessionId}/reconnect`, jsonInit({}));
+    expect(retry.status).toBe(200);
+  });
 });
 
 describe("voice websocket upgrade", () => {

@@ -272,9 +272,10 @@ export class VoiceSessionPipeline {
   ): Promise<void> {
     if (!this.host.runControl) {
       this.runtime.countStale("action_cancel_unsupported");
+      this.runtime.emit({ type: "action.cancel_result", actionId: frame.actionId, outcome: "unavailable" });
       return;
     }
-    let outcome: "cancelled" | "unavailable" | "unknown";
+    let outcome: "cancelled" | "requested" | "already_terminal" | "unavailable" | "unknown";
     try {
       outcome = await this.host.runControl.cancelAction({
         chatId: this.session.chatId,
@@ -286,14 +287,19 @@ export class VoiceSessionPipeline {
         sessionId: this.session.sessionId,
         error: error instanceof Error ? error.name : "UnknownError",
       });
+      this.runtime.emit({ type: "action.cancel_result", actionId: frame.actionId, outcome: "unknown" });
       this.runtime.emitError("chat_unavailable", true);
       return;
     }
-    // Never silently succeed: tell the client when nothing was cancelled.
+    // Truthful ack: the client learns the canonical outcome for the actionId
+    // it targeted — "requested" means still running with the flag recorded.
+    this.runtime.emit({ type: "action.cancel_result", actionId: frame.actionId, outcome });
+    // "unavailable" is a durable surface fact worth flagging once: this
+    // deployment has no run-control port at all. "unknown" is a per-action
+    // unproven result — the ack already carries that truth, and a session-level
+    // error would falsely present a live session as failed.
     if (outcome === "unavailable") {
       this.runtime.emitError("unsupported_surface", false);
-    } else if (outcome === "unknown") {
-      this.runtime.emitError("session_conflict", false);
     }
   }
 
@@ -822,6 +828,7 @@ export class VoiceSessionPipeline {
           runId: event.runId,
           label: event.label,
           state: event.state,
+          operationId: event.operationId,
         });
         if (!TERMINAL_OPERATION_STATES.has(event.state)) {
           this.runtime.setState("using_tool");

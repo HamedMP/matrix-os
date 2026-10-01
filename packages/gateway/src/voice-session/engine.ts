@@ -520,11 +520,11 @@ export class VoiceSessionEngine implements VoiceSessionHost {
       // transport must be session.resumed. The client deliberately rejects a
       // higher-epoch session.state frame because it cannot distinguish one
       // from stale/split-brain traffic.
-      session.state = "reconnecting";
-      session.restorableState = "listening";
-      session.endedAtMs = null;
-      session.endKind = null;
-      session.ending = null;
+      //
+      // All fallible work runs before the state commits: if subscribe or
+      // armTimers throws, the session stays "failed" so the next reconnect
+      // re-enters this restore branch instead of wedging as a zombie
+      // "reconnecting" session with no subscription and no timers.
       if (!session.chatSubscription) {
         try {
           session.chatSubscription = this.deps.chatEvents.subscribe(
@@ -540,6 +540,11 @@ export class VoiceSessionEngine implements VoiceSessionHost {
         }
       }
       this.armTimers(session);
+      session.state = "reconnecting";
+      session.restorableState = "listening";
+      session.endedAtMs = null;
+      session.endKind = null;
+      session.ending = null;
     } else if (session.state !== "connecting") {
       session.restorableState = session.runtime.resumeTarget();
       session.state = "reconnecting";

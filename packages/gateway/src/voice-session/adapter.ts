@@ -270,6 +270,16 @@ const SIMULATOR_ERROR_CODES: Record<string, SafeVoiceErrorCode> = {
 };
 
 /**
+ * Pending-queue bounds for turn-scoped media events that fired before the
+ * engine armed their turn: 32 per turn, 128 total, and at most 256 armed
+ * turns remembered per session. Anything beyond the bound is dropped —
+ * the queue exists to absorb scheduling races, not to grow unboundedly.
+ */
+const MAX_PENDING_GATED_PER_TURN = 32;
+const MAX_PENDING_GATED_EVENTS = 128;
+const MAX_ARMED_TURNS = 256;
+
+/**
  * Conforming media adapter over the Layer-1 deterministic simulator. Media-
  * side timeline actions (vad/transcripts/device/quota) are replayed through
  * `emit` at their `atMs` offsets on the injected clock; engine-side actions
@@ -277,6 +287,17 @@ const SIMULATOR_ERROR_CODES: Record<string, SafeVoiceErrorCode> = {
  * or canonical harness, not the provider port. Synthesis commands produce
  * small deterministic base64 frames so engine tests can assert the full
  * pending → audio → ack pipeline without real TTS.
+ *
+ * Turn-scoped media events (`vad`, `transcript.provisional`,
+ * `transcript.final`) are capture-gated: a real provider cannot emit media
+ * for a turn whose capture was never opened, so the simulator holds such
+ * events until `setCapture` arms the exact turn (`atMs` stays the earliest
+ * emit time — armed turns emit on schedule). Once armed a turn stays armed
+ * for the session — real STT finals legitimately land after `setCapture(null)`
+ * releases capture; the null call disarms the active capture without
+ * clearing held events. `capture.completed`, error, quota, and device
+ * events are session-scoped and never gated. `close()` drops everything
+ * still held.
  */
 export class SimulatorVoiceMediaAdapter implements VoiceMediaAdapter {
   readonly id: string;
@@ -311,6 +332,13 @@ export class SimulatorVoiceMediaAdapter implements VoiceMediaAdapter {
   start(context: VoiceAdapterSessionContext): VoiceMediaSession {
     const timers = new Set<ReturnType<VoiceClock["after"]>>();
     const muted = new Set<string>();
+    // Capture-armed turns: a turn becomes armed when the engine calls
+    // setCapture({turnId}) and stays armed for the session — finals
+    // legitimately land after the capture window closes.
+    const armedTurns = new Set<string>();
+    // Bounded hold for gated events that fired before their turn was armed.
+    const pendingByTurn = new Map<string, VoiceAdapterEvent[]>();
+    let pendingCount = 0;
     let closed = false;
     let synthesizedCount = 0;
 
@@ -320,6 +348,37 @@ export class SimulatorVoiceMediaAdapter implements VoiceMediaAdapter {
         if (!closed) fn();
       });
       timers.add(timer);
+    };
+
+    /** Turn identity of capture-gated events; undefined = session-scoped. */
+    const gatedTurnId = (event: VoiceAdapterEvent): string | undefined => (
+      event.type === "vad" || event.type === "transcript.provisional" || event.type === "transcript.final"
+        ? event.turnId
+        : undefined
+    );
+
+    const flushTurn = (turnId: string): void => {
+      const queued = pendingByTurn.get(turnId);
+      if (!queued) return;
+      pendingByTurn.delete(turnId);
+      pendingCount -= queued.length;
+      for (const event of queued) context.emit(event);
+    };
+
+    const emit = (event: VoiceAdapterEvent): void => {
+      const turnId = gatedTurnId(event);
+      if (turnId === undefined || armedTurns.has(turnId)) {
+        context.emit(event);
+        return;
+      }
+      const queued = pendingByTurn.get(turnId);
+      if (pendingCount >= MAX_PENDING_GATED_EVENTS
+        || (queued !== undefined && queued.length >= MAX_PENDING_GATED_PER_TURN)) {
+        return; // bounded hold: drop rather than grow the queue
+      }
+      if (queued) queued.push(event);
+      else pendingByTurn.set(turnId, [event]);
+      pendingCount += 1;
     };
 
     const toEvent = (action: VoiceSimulatorAction): VoiceAdapterEvent | null => {
@@ -346,11 +405,20 @@ export class SimulatorVoiceMediaAdapter implements VoiceMediaAdapter {
 
     for (const action of [...this.scenario.timeline].sort((a, b) => a.atMs - b.atMs)) {
       const event = toEvent(action);
-      if (event) schedule(action.atMs, () => context.emit(event));
+      if (event) schedule(action.atMs, () => emit(event));
     }
 
     return {
-      setCapture() {},
+      setCapture(capture) {
+        if (capture === null || closed) return; // disarm: held events survive
+        if (!armedTurns.has(capture.turnId)) {
+          if (armedTurns.size >= MAX_ARMED_TURNS) {
+            armedTurns.delete(armedTurns.values().next().value!);
+          }
+          armedTurns.add(capture.turnId);
+        }
+        flushTurn(capture.turnId);
+      },
       pushAudio() {},
       synthesize: (command) => {
         if (closed || muted.has(command.responseId)) return;
@@ -359,7 +427,7 @@ export class SimulatorVoiceMediaAdapter implements VoiceMediaAdapter {
         const data = Buffer.from(`sim-segment-${command.segment.segmentIndex}`).toString("base64");
         schedule(0, () => {
           if (muted.has(command.responseId)) return;
-          context.emit({
+          emit({
             type: "synthesis.audio",
             responseId: command.responseId,
             segmentId: command.segment.segmentId,
@@ -367,7 +435,7 @@ export class SimulatorVoiceMediaAdapter implements VoiceMediaAdapter {
             durationMs: command.segment.durationMs || 100,
             data,
           });
-          context.emit({
+          emit({
             type: "synthesis.end",
             responseId: command.responseId,
             generatedDurationMs: command.segment.durationMs || 100,
@@ -380,6 +448,8 @@ export class SimulatorVoiceMediaAdapter implements VoiceMediaAdapter {
       interrupt: (responseId) => { muted.add(responseId); },
       close: () => {
         closed = true;
+        pendingByTurn.clear();
+        pendingCount = 0;
         for (const timer of timers) timer.cancel();
         timers.clear();
       },

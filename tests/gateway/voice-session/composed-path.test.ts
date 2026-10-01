@@ -17,6 +17,9 @@
  * frame that fails VoiceServerFrameSchema and cannot honestly ride the wire.
  */
 import { randomBytes } from "node:crypto";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Hono, type Context } from "hono";
 import type { UpgradeWebSocket, WSEvents } from "hono/ws";
 import { KyselyPGlite } from "kysely-pglite";
@@ -60,6 +63,10 @@ import {
 import { createVoiceSessionPolicyLookup } from "../../../packages/gateway/src/chat/voice-session-policy.js";
 import { ChatRepository } from "../../../packages/gateway/src/chat/repository.js";
 import { ChatVoiceDeliveryRepository } from "../../../packages/gateway/src/chat/voice-delivery-repository.js";
+import { ActionRepository } from "../../../packages/gateway/src/chat/action-repository.js";
+import { createCanonicalActionAuthority } from "../../../packages/gateway/src/chat/action-authority.js";
+import { createCanonicalActionTools } from "../../../packages/gateway/src/chat/action-tools.js";
+import { sha256Hex } from "../../../packages/gateway/src/chat/argument-digest.js";
 import type { ChatOwner } from "../../../packages/gateway/src/chat/records.js";
 import type { RequestPrincipal } from "../../../packages/gateway/src/request-principal.js";
 
@@ -71,6 +78,17 @@ const TRANSCRIPT = "status report please";
 const ASSISTANT_D1 = "Hello";
 const ASSISTANT_D2 = " world";
 const ASSISTANT_TEXT = ASSISTANT_D1 + ASSISTANT_D2;
+const FIVE_APP_TOOLS = [
+  "matrix_list_apps", "matrix_inspect_app", "matrix_search_workspace",
+  "matrix_open_app", "matrix_apply_app_files",
+] as const;
+const EXECUTION_POLICY = {
+  revision: "codex_canonical_v1",
+  actionMode: "canonical_actions" as const,
+  workspaceScope: "apps",
+  tools: [...FIVE_APP_TOOLS],
+  delegation: false,
+};
 
 const CAPTURE_AUDIO = {
   codec: "pcm_s16le",
@@ -85,7 +103,7 @@ const catalog: CanonicalProviderCatalog = CanonicalProviderCatalogSchema.parse({
     kind: "codex",
     displayName: "Codex",
     adapterVersion: "1.0.0",
-    capabilityClass: "system_agent",
+    capabilityClass: "coding_agent",
   }],
   instances: [{
     id: "codex_default",
@@ -112,8 +130,9 @@ const catalog: CanonicalProviderCatalog = CanonicalProviderCatalogSchema.parse({
       cancellation: true,
       steering: "same_run",
       attachments: ["file", "image", "structured_ref"],
-      tools: [],
+      tools: [...FIVE_APP_TOOLS],
       approvals: true,
+      approvalBinding: "argument_digest",
       userInput: true,
       worktrees: "optional",
       resources: ["file", "folder", "project", "task", "app", "terminal_session"],
@@ -126,11 +145,24 @@ const catalog: CanonicalProviderCatalog = CanonicalProviderCatalogSchema.parse({
 describe("voice session composed path", () => {
   let pglite: KyselyPGlite;
   let repository: ChatRepository;
+  let home: string;
 
   beforeEach(async () => {
     pglite = await KyselyPGlite.create();
     repository = new ChatRepository(pglite.dialect);
     await repository.bootstrap();
+    home = await mkdtemp(join(tmpdir(), "matrix-aoede-composed-"));
+    await mkdir(join(home, "apps", "notes", "src"), { recursive: true });
+    await writeFile(join(home, "apps", "notes", "matrix.json"), JSON.stringify({
+      slug: "notes", name: "Notes", version: "1.0.0", runtime: "vite", runtimeVersion: "^24.0.0", scope: "personal",
+      permissions: [], build: { install: "pnpm install --frozen-lockfile", command: "vite build", output: "dist" },
+    }));
+    await writeFile(join(home, "apps", "notes", "package.json"), JSON.stringify({
+      scripts: { dev: "vite", build: "vite build", preview: "vite preview" },
+      dependencies: { react: "19.0.0", "react-dom": "19.0.0" }, devDependencies: { vite: "7.0.0" },
+    }));
+    await writeFile(join(home, "apps", "notes", "index.html"), "<div id=\"root\"></div>");
+    await writeFile(join(home, "apps", "notes", "src", "main.tsx"), "export const title = 'Old notes';\n");
     await repository.create(OWNER, {
       id: CHAT_ID,
       clientRequestId: `req_${randomBytes(8).toString("hex")}`,
@@ -141,15 +173,33 @@ describe("voice session composed path", () => {
 
   afterEach(async () => {
     await repository.kysely.destroy();
+    await rm(home, { recursive: true, force: true });
   });
 
   it("authenticated REST -> ticket -> upgrade -> capture -> canonical admission -> provider -> synthesis -> delivery -> acks -> complete", async () => {
     // ---- Real seam wiring -------------------------------------------------
+    const fakeExternalBoundaries = Object.freeze({ speech: "SimulatorVoiceMediaAdapter", provider: "deterministic canonical model" });
+    expect(fakeExternalBoundaries).toEqual({
+      speech: "SimulatorVoiceMediaAdapter",
+      provider: "deterministic canonical model",
+    });
     const deliveries = new ChatVoiceDeliveryRepository(repository.kysely);
     const providerCalls: CanonicalProviderRunInput[] = [];
+    const actionRepository = new ActionRepository(repository.kysely);
+    const tools = createCanonicalActionTools({ homeForOwner: async () => home });
+    let orchestrator!: CanonicalChatOrchestrator;
+    let answerClarification!: () => void;
+    const clarification = new Promise<void>((resolve) => { answerClarification = resolve; });
+    const actions = createCanonicalActionAuthority({
+      repository: actionRepository,
+      tools,
+      qualifyPolicy: async () => EXECUTION_POLICY,
+      onEvent: async (identity, event) => orchestrator.projectActionEvent(identity, event),
+    });
     const provider: CanonicalChatProviderAdapter<{ sessionId: string }> = {
       driverKind: "codex",
       stateSchemaVersion: 1,
+      qualifyPolicy: async () => EXECUTION_POLICY,
       parseState(value) {
         if (!value || typeof value !== "object"
           || typeof (value as { sessionId?: unknown }).sessionId !== "string") {
@@ -161,6 +211,37 @@ describe("voice session composed path", () => {
       async *start(input) {
         providerCalls.push(input);
         yield { type: "state.updated", state: { sessionId: `native_${randomBytes(4).toString("hex")}` } };
+        yield {
+          type: "input.requested",
+          requestId: "req_composed_clarification",
+          title: "Choose style",
+          safeDescription: "Choose the notes heading style.",
+          questions: [{
+            questionId: "style", header: "Style", question: "Which heading style?",
+            options: [{ label: "Concise", description: "Use a short heading." }],
+            allowOther: false, secret: false,
+          }],
+        };
+        await clarification;
+        const invoke = async (index: number, toolId: typeof FIVE_APP_TOOLS[number], args: unknown) => {
+          try {
+            return await input.actions!.invoke({
+              owner: input.owner, chatId: input.chatId, runId: input.runId,
+              actionId: `action_${String(index).padStart(32, "0")}`, toolId, arguments: args,
+              executionPolicy: input.runPolicy!.executionPolicy!, signal: input.signal,
+            });
+          } catch (error) {
+            throw new Error(`composed tool failed: ${toolId}`, { cause: error });
+          }
+        };
+        await invoke(1, "matrix_list_apps", {});
+        await invoke(2, "matrix_inspect_app", { app: "notes", paths: ["src/main.tsx"] });
+        await invoke(3, "matrix_search_workspace", { app: "notes", query: "Old notes" });
+        await invoke(4, "matrix_open_app", { app: "notes" });
+        const oldText = await readFile(join(home, "apps", "notes", "src", "main.tsx"), "utf8");
+        await invoke(5, "matrix_apply_app_files", { app: "notes", files: [{
+          path: "src/main.tsx", content: "export const title = 'Concise notes';\n", expectedSha256: sha256Hex(oldText),
+        }] });
         yield { type: "assistant.delta", delta: ASSISTANT_D1 };
         yield { type: "assistant.delta", delta: ASSISTANT_D2 };
         yield {
@@ -169,15 +250,23 @@ describe("voice session composed path", () => {
           tokenUsage: { inputTokens: 12, outputTokens: 4, cachedInputTokens: 0, reasoningOutputTokens: 0 },
         };
       },
+      async submitInput(input) {
+        expect(input).toMatchObject({
+          requestId: "req_composed_clarification",
+          structuredAnswers: { style: ["Concise"] },
+        });
+        answerClarification();
+      },
     };
     const providerRegistry = new CanonicalChatProviderRegistry([provider]);
 
     const onAiGeneration = vi.fn();
     const policyLookup = createVoiceSessionPolicyLookup();
-    const orchestrator = new CanonicalChatOrchestrator({
+    orchestrator = new CanonicalChatOrchestrator({
       repository,
       catalog: { getCatalog: async () => catalog },
       adapters: providerRegistry,
+      actions,
       voiceSessionPolicy: policyLookup.lookup,
       onAiGeneration,
     });
@@ -257,6 +346,7 @@ describe("voice session composed path", () => {
       canonicalDecision: () => canonicalVoiceDecision({
         selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
         catalog,
+        qualifiedPolicy: EXECUTION_POLICY,
       }),
     }));
     registerVoiceSessionWebSocketRoute({
@@ -364,22 +454,63 @@ describe("voice session composed path", () => {
 
       // ---- Step 6: provider dispatched via real orchestrator -------------
       await vi.waitFor(() => {
-        expect(frames().some((f) => f.type === "response.started")).toBe(true);
+        expect(providerCalls).toHaveLength(1);
       }, { timeout: 10_000, interval: 15 });
-      expect(providerCalls).toHaveLength(1);
       expect(providerCalls[0]!.prompt).toBe(TRANSCRIPT);
       expect(providerCalls[0]!.chatId).toBe(CHAT_ID);
       expect(providerCalls[0]!.turnId).toBe(transcript.canonicalTurnId);
       expect(providerCalls[0]!.runId).toMatch(/^run_/);
       expect(providerCalls[0]!.interactionMode).toBe("default");
-      expect(providerCalls[0]!.permissionMode).toBe("supervised");
+      // The canonical decision owns the interaction/permission pair: the
+      // create request's "supervised" is overridden by the server-owned
+      // CANONICAL_VOICE_PERMISSION_MODE at session create.
+      expect(providerCalls[0]!.permissionMode).toBe("full_access");
       expect(providerCalls[0]!.runPolicy).toMatchObject({
         memoryMode: "ordinary",
         source: "voice",
         voiceSessionId: sessionId,
       });
+      // The server-qualified decision freezes the exact five-tool inventory;
+      // neither the client nor the fake model boundary can widen it.
+      expect(providerCalls[0]!.runPolicy?.executionPolicy).toEqual(EXECUTION_POLICY);
+      expect(providerCalls[0]!.actions).toBe(actions);
 
-      // ---- Step 7: synthesis + durable delivery --------------------------
+      // ---- Step 7: bounded correlated input -> exact approval ------------
+      const runId = providerCalls[0]!.runId;
+      await vi.waitFor(async () => {
+        const detail = await repository.getDetailPage(OWNER, CHAT_ID, { limit: 100 });
+        expect(detail!.activities).toContainEqual(expect.objectContaining({
+          type: "input.requested", requestId: "req_composed_clarification",
+        }));
+      }, { timeout: 5_000, interval: 15 });
+      await expect(orchestrator.submitInput(OWNER, CHAT_ID, "run_competing", "req_composed_clarification", {
+        clientRequestId: "req_wrong_run_input", structuredAnswers: { style: ["Concise"] },
+      })).rejects.toThrow();
+      await orchestrator.submitInput(OWNER, CHAT_ID, runId, "req_composed_clarification", {
+        clientRequestId: "req_composed_input", structuredAnswers: { style: ["Concise"] },
+      });
+
+      const applyActionId = `action_${String(5).padStart(32, "0")}`;
+      let approvalDigest = "";
+      await vi.waitFor(async () => {
+        const detail = await repository.getDetailPage(OWNER, CHAT_ID, { limit: 100 });
+        const operation = detail!.operations?.find((candidate) => candidate.id === applyActionId);
+        expect(operation?.state).toBe("waiting_for_approval");
+        approvalDigest = operation!.argumentDigest;
+        expect(detail!.activities).toContainEqual(expect.objectContaining({
+          type: "approval.requested", approvalId: applyActionId, argumentDigest: approvalDigest,
+        }));
+      }, { timeout: 5_000, interval: 15 });
+      await expect(orchestrator.submitApproval(OWNER, CHAT_ID, runId, applyActionId, {
+        clientRequestId: "req_wrong_digest", decision: "approve", argumentDigest: "0".repeat(64),
+      })).rejects.toThrow();
+      expect((await actionRepository.get({ owner: OWNER, chatId: CHAT_ID, runId, actionId: applyActionId })).state)
+        .toBe("waiting_for_approval");
+      await orchestrator.submitApproval(OWNER, CHAT_ID, runId, applyActionId, {
+        clientRequestId: "req_exact_digest", decision: "approve", argumentDigest: approvalDigest,
+      });
+
+      // ---- Step 8: synthesis + durable delivery --------------------------
       await vi.waitFor(() => {
         expect(frames().filter((f) => f.type === "response.audio").length).toBe(1);
         expect(frames().filter((f) => f.type === "response.audio_end").length).toBe(1);
@@ -402,6 +533,21 @@ describe("voice session composed path", () => {
       expect(audioFrames.map((f) => f.segmentId)).toEqual([segment!.segmentId]);
       expect(pendingRecord!.deliveredThroughMs).toBe(100);
       expect(pendingRecord!.acknowledgedSegment).toBeNull();
+
+      const detail = await repository.getDetailPage(OWNER, CHAT_ID, { limit: 100 });
+      expect(detail!.operations?.map((operation) => operation.toolId)).toEqual(FIVE_APP_TOOLS);
+      expect(detail!.operations?.every((operation) => operation.state === "succeeded")).toBe(true);
+      expect(detail!.operations?.find((operation) => operation.toolId === "matrix_open_app")?.result)
+        .toEqual({ navigation: { kind: "open_app", app: "notes", path: "apps/notes" } });
+      expect(detail!.operations?.find((operation) => operation.toolId === "matrix_apply_app_files")?.result)
+        .toEqual(expect.objectContaining({
+          artifact: { kind: "app", path: "apps/notes" },
+          navigation: { kind: "open_app", app: "notes", path: "apps/notes" },
+          files: [expect.objectContaining({ path: "apps/notes/src/main.tsx" })],
+        }));
+      expect(await readFile(join(home, "apps", "notes", "src", "main.tsx"), "utf8"))
+        .toBe("export const title = 'Concise notes';\n");
+      await expect(readFile(join(home, "src", "main.tsx"), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
 
       // ---- Step 8: final phrase acknowledgement completes delivery -------
       sendFrame({
@@ -484,5 +630,5 @@ describe("voice session composed path", () => {
       policyLookup.clear(engine.sessionPolicyLookup);
       await repository.release();
     }
-  }, 20_000);
+  }, 30_000);
 });

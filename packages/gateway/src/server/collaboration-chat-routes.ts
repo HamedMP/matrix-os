@@ -11,6 +11,7 @@ import { registerCanonicalChatEventHttpRoute } from "../chat/event-http-route.js
 import { registerCanonicalChatEventWebSocketRoute } from "../chat/event-websocket-route.js";
 import { createGatewayChatEventStream } from "../chat/gateway-event-stream.js";
 import type { CanonicalChatOrchestrator } from "../chat/orchestrator.js";
+import type { CanonicalActionAuthority } from "../chat/action-authority.js";
 import { createChatProviderRoutes } from "../chat/provider-routes.js";
 import { createGatewayChatProviderCatalog } from "../chat/runtime-provider-catalog.js";
 import { createCanonicalChatRuntime } from "../chat/runtime.js";
@@ -39,6 +40,8 @@ export interface CollaborationChatRouteOptions {
   projectOwnerToolOutput: OwnerToolOutputProjection;
   canonicalChatRuntime: Awaited<ReturnType<typeof createCanonicalChatRuntime>> | null;
   canonicalChatProviderCatalog: ReturnType<typeof createGatewayChatProviderCatalog>["catalog"];
+  /** Targeted canonical action cancellation; the route fails closed when absent. */
+  canonicalActionAuthority?: CanonicalActionAuthority | null;
   aiProviderService: AiProviderService;
   providerSettingsStore: ProviderSettingsStore;
   listGmailAccounts?: (ownerId: string) => Promise<readonly GmailAccountRow[]>;
@@ -48,7 +51,8 @@ export function registerCollaborationChatRoutes(options: CollaborationChatRouteO
   const { app, upgradeWebSocket, canonicalChatEventStream, chatRepository,
     gatewayCollaboration, collaborationFailClosedReason, canonicalChatOrchestrator,
     canonicalChatExecutionRoots, canonicalChatCollaborationGuard, projectOwnerToolOutput,
-    canonicalChatRuntime, canonicalChatProviderCatalog, aiProviderService,
+    canonicalChatRuntime, canonicalChatProviderCatalog, canonicalActionAuthority,
+    aiProviderService,
     providerSettingsStore, listGmailAccounts } = options;
   if (canonicalChatEventStream) {
     registerCanonicalChatEventWebSocketRoute({
@@ -69,12 +73,14 @@ export function registerCollaborationChatRoutes(options: CollaborationChatRouteO
     service: chatRepository
         ? createCanonicalChatService(chatRepository, {
           projectOwnerToolOutput,
+          catalog: canonicalChatProviderCatalog,
           ...(canonicalChatOrchestrator ? { orchestrator: canonicalChatOrchestrator } : {}),
           ...(canonicalChatExecutionRoots ? { executionRoots: canonicalChatExecutionRoots } : {}),
           ...(canonicalChatCollaborationGuard ? { collaborationGuard: canonicalChatCollaborationGuard } : {}),
         })
       : createUnavailableCanonicalChatService(),
     getPrincipal: (c) => requireRequestPrincipal(c),
+    ...(canonicalActionAuthority ? { actionAuthority: canonicalActionAuthority } : {}),
   }));
   app.route("/", createChatAgentRoutes({
     ...(canonicalChatRuntime && chatRepository ? {

@@ -499,6 +499,47 @@ describe("reconnect and epochs", () => {
     expect(lastFrame(replacementSink, "session.state")).toBeUndefined();
   });
 
+  it("keeps a failed session retriable when the chat-event restore throws", async () => {
+    const limited = makeRig({ limits: { maxIdleSeconds: 1 } });
+    const s = await listeningSession(limited);
+    limited.clock.advance(1_000);
+    await flush(limited, s.sessionId);
+    expect(limited.engine.describeSession({ principal: PRINCIPAL, chatId: CHAT_ID, sessionId: s.sessionId })?.status)
+      .toBe("failed");
+
+    // A throwing subscribe must not strand the session as "reconnecting" with
+    // no subscription/timers — it stays "failed" so a later retry restores.
+    limited.events.subscribeError = new Error("shared sink full");
+    expect(() => limited.engine.reconnectSession({
+      principal: PRINCIPAL, chatId: CHAT_ID, sessionId: s.sessionId,
+    })).toThrowError(expect.objectContaining({ code: "internal_failure" }));
+    expect(limited.engine.describeSession({ principal: PRINCIPAL, chatId: CHAT_ID, sessionId: s.sessionId })?.status)
+      .toBe("failed");
+
+    limited.events.subscribeError = null;
+    const reconnect = limited.engine.reconnectSession({
+      principal: PRINCIPAL, chatId: CHAT_ID, sessionId: s.sessionId,
+    });
+    const consumed = limited.tickets.consume(reconnect.lease.ticket, {
+      path: reconnect.lease.path, sessionId: s.sessionId, chatId: CHAT_ID,
+    });
+    const replacementSink = makeSink();
+    limited.engine.attachTransport({
+      sessionId: s.sessionId, chatId: CHAT_ID, principalId: PRINCIPAL.userId,
+      generation: consumed.binding.generation,
+    }, replacementSink);
+    expect(lastFrame(replacementSink, "session.resumed")).toMatchObject({
+      epoch: reconnect.lease.epoch, state: "listening", reason: "restored",
+    });
+    // The restored session really is live: the canonical subscription and
+    // timers came back, so it cannot silently outlive its limits.
+    expect(limited.events.listenerCount).toBe(1);
+    limited.clock.advance(1_000);
+    await flush(limited, s.sessionId);
+    expect(limited.engine.describeSession({ principal: PRINCIPAL, chatId: CHAT_ID, sessionId: s.sessionId })?.status)
+      .toBe("failed");
+  });
+
   it("revalidates a queued frame against the captured binding before dispatch", async () => {
     const { rig, adapter } = makeDeferredRig();
     const first = createAttached(rig);

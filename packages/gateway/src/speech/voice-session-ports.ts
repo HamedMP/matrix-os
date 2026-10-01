@@ -110,14 +110,49 @@ export function createManagedVoiceSynthesisPort(options: {
   };
 }
 
-/** Coarse authoritative probe for server composition. No key-presence heuristic,
- * no cache of funded readiness, no provider details returned. Bound probes to 10s.
+/**
+ * Coarse readiness classification for the managed Platform-Speech path.
+ * Only `"ready"` may admit voice work — every other state fails closed.
  */
-export async function probeManagedVoiceSpeechReadiness(options: {
+export type ManagedVoiceReadinessState =
+  /** Transcription ready AND synthesis ready AND synthesis streaming. */
+  | "ready"
+  /** A schema-valid capability response reported a leg unavailable, absent,
+   * or completed-only (non-streaming) synthesis — an authoritative "not ready". */
+  | "unready"
+  /** The probe's own bounded wait elapsed without an answer. */
+  | "timeout"
+  /** Transport/protocol/other failure — readiness could not be determined. */
+  | "unknown";
+
+/**
+ * Bounded capability probe returning the full readiness classification.
+ * `timeoutMs` (default 10s) bounds the wait through a dedicated
+ * `AbortSignal.timeout`; a caller-supplied `signal` additionally shortens it
+ * but an externally aborted wait classifies `unknown`, never `timeout` —
+ * only this probe's own budget expiry reports `timeout`. No key-presence
+ * heuristic and no provider details escape.
+ */
+export async function classifyManagedVoiceSpeechReadiness(options: {
   client: Pick<PlatformSpeechClient, "capabilities">;
   signal?: AbortSignal;
-}): Promise<{ ready: boolean }> {
-  const signal = options.signal ? AbortSignal.any([options.signal, AbortSignal.timeout(10_000)]) : AbortSignal.timeout(10_000);
+  timeoutMs?: number;
+  /**
+   * Whose synthesis the managed adapter actually uses. `"platform"` (default)
+   * requires ready + streaming synthesis in the platform capability document;
+   * `"external"` means a development-gated port owns synthesis, so the probe
+   * only adjudicates the platform transcription leg it is authoritative for.
+   */
+  synthesisSource?: "platform" | "external";
+  now?: () => number;
+}): Promise<{ state: ManagedVoiceReadinessState; checkedAt: number }> {
+  const now = options.now ?? Date.now;
+  // Clamp here too — direct callers must get the same 1s–15s bound the
+  // caching probe enforces, so an out-of-range override can never stall a
+  // readiness decision past the advertised bound.
+  const timeoutMs = Math.min(Math.max(options.timeoutMs ?? 10_000, 1_000), 15_000);
+  const timeout = AbortSignal.timeout(timeoutMs);
+  const signal = options.signal ? AbortSignal.any([options.signal, timeout]) : timeout;
   let onAbort!: () => void;
   const aborted = new Promise<never>((_resolve, reject) => {
     onAbort = () => reject(signal.reason);
@@ -127,16 +162,30 @@ export async function probeManagedVoiceSpeechReadiness(options: {
   try {
     const response = await Promise.race([options.client.capabilities(signal), aborted]);
     const result = SpeechCapabilitiesResponseSchema.safeParse(response);
+    // A payload that is not a valid capability document is a protocol
+    // failure, not an authoritative "not ready".
+    if (!result.success) return { state: "unknown", checkedAt: now() };
     // Aoede streams segment audio: a ready-but-completed-only synthesis
     // (absent/false `streaming`) is not readiness for the managed voice path.
-    return {
-      ready: result.success
-        && result.data.fileTranscription.status === "ready"
-        && result.data.synthesis?.status === "ready"
-        && result.data.synthesis.streaming === true,
-    };
+    // When synthesis is served by a development-gated port instead, the
+    // platform document only describes the transcription leg.
+    const synthesisReady = options.synthesisSource === "external"
+      || (result.data.synthesis?.status === "ready" && result.data.synthesis.streaming === true);
+    const ready = result.data.fileTranscription.status === "ready" && synthesisReady;
+    return { state: ready ? "ready" : "unready", checkedAt: now() };
   } catch (error: unknown) {
     console.warn("[platform-speech] capability probe unavailable", error instanceof Error ? error.name : "UnknownError");
-    return { ready: false };
+    return { state: timeout.aborted ? "timeout" : "unknown", checkedAt: now() };
   } finally { signal.removeEventListener("abort", onAbort); }
+}
+
+/** Coarse authoritative probe for server composition. No key-presence heuristic,
+ * no cache of funded readiness, no provider details returned. Bound probes to 10s.
+ */
+export async function probeManagedVoiceSpeechReadiness(options: {
+  client: Pick<PlatformSpeechClient, "capabilities">;
+  signal?: AbortSignal;
+}): Promise<{ ready: boolean }> {
+  const { state } = await classifyManagedVoiceSpeechReadiness(options);
+  return { ready: state === "ready" };
 }

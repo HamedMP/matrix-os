@@ -393,7 +393,14 @@ export function createVoiceSessionRoutes(deps: VoiceSessionRoutesDeps): Hono {
             deps.engine.assertCanonicalDecision({ principal, chatId, sessionId }, decision);
           }
         } catch (error: unknown) {
-          await deps.engine.endSession({ principal, chatId, sessionId, kind: "user" });
+          // End the session only on definitive invalidation — the chat is
+          // gone or the session's pinned canonical policy no longer resolves.
+          // Transient failures (DB, readiness probe, capability outage) keep
+          // the session alive so the client can retry the reconnect.
+          if (error instanceof VoiceSessionError
+            && (error.code === "not_found" || error.code === "session_conflict")) {
+            await deps.engine.endSession({ principal, chatId, sessionId, kind: "user" });
+          }
           throw error;
         }
         const result = deps.engine.reconnectSession({

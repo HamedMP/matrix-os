@@ -318,11 +318,14 @@ export class FakeDelivery implements VoiceDeliveryPort {
 export class FakeChatEvents implements VoiceChatEventSource {
   private listeners = new Set<(event: VoiceCanonicalChatEvent) => void>();
   subscriptions = 0;
+  /** When set, subscribe throws — models a shared-sink registration failure. */
+  subscribeError: Error | null = null;
 
   subscribe(
     _input: { chatId: string; principalId: string },
     listener: (event: VoiceCanonicalChatEvent) => void,
   ): VoiceChatEventSubscription {
+    if (this.subscribeError) throw this.subscribeError;
     this.subscriptions += 1;
     this.listeners.add(listener);
     return { close: () => { this.listeners.delete(listener); } };
@@ -341,7 +344,7 @@ export class FakeRunControl implements VoiceRunControlPort {
   readonly cancelledRuns: { chatId: string; runId: string; principalId: string; reason: string }[] = [];
   readonly cancelledActions: { chatId: string; actionId: string; principalId: string }[] = [];
   runResult: "cancelled" | "already_terminal" | "unavailable" = "cancelled";
-  actionResult: "cancelled" | "unavailable" | "unknown" = "cancelled";
+  actionResult: "cancelled" | "requested" | "already_terminal" | "unavailable" | "unknown" = "cancelled";
   runError: Error | null = null;
   actionError: Error | null = null;
 

@@ -3,8 +3,9 @@
  *
  * `registerVoiceSessionMediaAdapters` is the single authority deciding which
  * media adapter (if any) a gateway registers. The matrix pins the security
- * invariants: the simulator flag always wins, a managed adapter only exists
- * when a synthesis port exists too, and a direct provider key is a
+ * invariants: outside production the simulator flag always wins while
+ * production denies it outright, a managed adapter only exists when a
+ * synthesis port exists too, and a direct provider key is a
  * development-only escape hatch that production ignores entirely. All
  * provider seams are injected fakes — no env leaks, no fetches.
  */
@@ -98,11 +99,11 @@ async function flushAsync(rounds = 12): Promise<void> {
 }
 
 describe("registerVoiceSessionMediaAdapters", () => {
-  it("simulator flag wins over every other signal and stays the only adapter", () => {
+  it("simulator flag wins over every other signal outside production and stays the only adapter", () => {
     const rig = run(
       {
         MATRIX_VOICE_SIMULATOR: "1",
-        NODE_ENV: "production",
+        NODE_ENV: "development",
         ...DIRECT_ENV,
       },
       { managed: true },
@@ -116,9 +117,43 @@ describe("registerVoiceSessionMediaAdapters", () => {
     expect(rig.logs.filter((entry) => entry.event === "voice.adapter.registration")).toHaveLength(1);
   });
 
+  it("production denies the simulator flag and falls through to the managed adapter", () => {
+    const rig = run(
+      {
+        MATRIX_VOICE_SIMULATOR: "1",
+        NODE_ENV: "production",
+        ...DIRECT_ENV,
+      },
+      { managed: true, managedSynthesis: true },
+    );
+    // The simulator must be structurally impossible in production: the
+    // denial is logged and registration falls through to managed speech.
+    expect(rig.outcome).toEqual({ adapterId: "managed", reason: "managed_platform_speech", synthesisSource: "platform" });
+    expect(rig.registry.size).toBe(1);
+    expect(rig.registry.get("simulator")).toBeUndefined();
+    expect(rig.registry.get("managed")).toBeDefined();
+    expect(rig.directCalls).toHaveLength(0);
+    expect(rig.logs.some((entry) =>
+      entry.event === "voice.adapter.simulator_ignored"
+      && entry.fields.reason === "simulator_denied_production"
+    )).toBe(true);
+  });
+
+  it("production + simulator-only registers nothing — the flag cannot fabricate an adapter", () => {
+    const rig = run({ MATRIX_VOICE_SIMULATOR: "1", NODE_ENV: "production" });
+    expect(rig.outcome).toEqual({ adapterId: null, reason: "not_configured" });
+    expect(rig.registry.size).toBe(0);
+    expect(rig.logs.some((entry) =>
+      entry.event === "voice.adapter.simulator_ignored"
+      && entry.fields.reason === "simulator_denied_production"
+    )).toBe(true);
+  });
+
   it("managed mode: platform transcription pairs with the dev-gated synthesizer outside production", async () => {
     const rig = run({ NODE_ENV: "development", ...DIRECT_ENV }, { managed: true });
-    expect(rig.outcome).toEqual({ adapterId: "managed", reason: "managed_platform_speech" });
+    // Synthesis came from the dev gate — the readiness probe must know not
+    // to adjudicate a platform synthesis leg this adapter never uses.
+    expect(rig.outcome).toEqual({ adapterId: "managed", reason: "managed_platform_speech", synthesisSource: "external" });
     expect(rig.registry.size).toBe(1);
     // The dev gate is satisfied once — the direct factory saw a trimmed key
     // and the env-tunable model defaults.
@@ -197,7 +232,7 @@ describe("registerVoiceSessionMediaAdapters", () => {
 
   it("production registers a fully managed adapter without constructing direct ports", () => {
     const rig = run({ NODE_ENV: "production" }, { managed: true, managedSynthesis: true });
-    expect(rig.outcome).toEqual({ adapterId: "managed", reason: "managed_platform_speech" });
+    expect(rig.outcome).toEqual({ adapterId: "managed", reason: "managed_platform_speech", synthesisSource: "platform" });
     expect(rig.registry.get("managed")).toBeDefined();
     expect(rig.directCalls).toHaveLength(0);
   });

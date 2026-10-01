@@ -5,7 +5,8 @@
  *
  * | MATRIX_VOICE_SIMULATOR | Platform Speech client | MATRIX_VOICE_DIRECT_OPENAI=1 + MATRIX_VOICE_OPENAI_API_KEY | NODE_ENV | adapter |
  * |---|---|---|---|---|
- * | `1` | any | any | any | `simulator` (explicit dev/integration seam — ONLY adapter) |
+ * | `1` | any | any | ≠production | `simulator` (explicit dev/integration seam — ONLY adapter) |
+ * | `1` | any | any | production | simulator denied + logged; the managed/direct rows decide |
  * | unset | provisioned STT+TTS | any | any | `managed`: platform speech |
  * | unset | provisioned STT only | complete gate | ≠production | `managed`: platform STT + dev synthesizer |
  * | unset | provisioned STT only | incomplete or ignored | any | none — no synthesis port |
@@ -21,8 +22,11 @@
  * - A managed adapter registers only when both STT and TTS exist. Development
  *   may supply its explicitly gated synthesizer as a fallback; production
  *   never does.
- * - The simulator flag always wins and stays the ONLY adapter, so a stray
- *   provider key can never silently route dev sessions to paid calls.
+ * - Outside production the simulator flag always wins and stays the ONLY
+ *   adapter, so a stray provider key can never silently route dev sessions to
+ *   paid calls. Production evaluates first: `MATRIX_VOICE_SIMULATOR=1` is
+ *   denied and logged there — it can never fabricate, mask, or replace the
+ *   managed/direct decision.
  */
 import {
   SimulatorVoiceMediaAdapter,
@@ -52,6 +56,14 @@ export interface VoiceAdapterRegistrationOutcome {
   /** Registered adapter id, or null when nothing registered. */
   adapterId: string | null;
   reason: VoiceAdapterRegistrationReason;
+  /**
+   * Whose synthesis a registered `managed` adapter uses: `"platform"` when
+   * the provisioned client supplies it, `"external"` when a development-gated
+   * port filled the synthesis leg. Absent for every other outcome — the
+   * readiness probe keys off this so it never adjudicates a platform leg the
+   * adapter does not use.
+   */
+  synthesisSource?: "platform" | "external";
 }
 
 /**
@@ -74,26 +86,36 @@ export function registerVoiceSessionMediaAdapters(options: {
     ?? ((event: string, fields: Record<string, unknown>) => console.warn("[voice-session]", event, fields));
   const clock = options.clock ?? createSystemVoiceClock();
   const createDirect = options.createDirectPorts ?? createDirectOpenAiSpeechPorts;
-  const done = (adapterId: string | null, reason: VoiceAdapterRegistrationReason, detail: string): VoiceAdapterRegistrationOutcome => {
+  const done = (adapterId: string | null, reason: VoiceAdapterRegistrationReason, detail: string,
+    synthesisSource?: "platform" | "external"): VoiceAdapterRegistrationOutcome => {
     log("voice.adapter.registration", { adapter: adapterId ?? "none", reason, detail });
-    return { adapterId, reason };
+    return { adapterId, reason, ...(synthesisSource !== undefined ? { synthesisSource } : {}) };
   };
 
+  // Production is evaluated before every dev seam: the simulator and the
+  // direct-provider escape hatch are structurally impossible there.
+  const production = env.NODE_ENV === "production";
+
   if (env.MATRIX_VOICE_SIMULATOR === "1") {
-    options.registry.register(new SimulatorVoiceMediaAdapter({
-      scenario: {
-        scenarioId: "matrix-voice-sim",
-        version: 1,
-        initialEpoch: 1,
-        limits: { maxQueuedAudioMs: 10_000, maxDurationMs: 3_600_000 },
-        timeline: [],
-      },
-      clock,
-    }));
-    return done("simulator", "simulator", "MATRIX_VOICE_SIMULATOR=1 selects the deterministic simulator as the only adapter");
+    if (!production) {
+      options.registry.register(new SimulatorVoiceMediaAdapter({
+        scenario: {
+          scenarioId: "matrix-voice-sim",
+          version: 1,
+          initialEpoch: 1,
+          limits: { maxQueuedAudioMs: 10_000, maxDurationMs: 3_600_000 },
+          timeline: [],
+        },
+        clock,
+      }));
+      return done("simulator", "simulator", "MATRIX_VOICE_SIMULATOR=1 selects the deterministic simulator as the only adapter");
+    }
+    log("voice.adapter.simulator_ignored", {
+      reason: "simulator_denied_production",
+      detail: "MATRIX_VOICE_SIMULATOR is a development seam; it can never fabricate a media adapter in production",
+    });
   }
 
-  const production = env.NODE_ENV === "production";
   const directFlag = env.MATRIX_VOICE_DIRECT_OPENAI === "1";
   const directKey = env.MATRIX_VOICE_OPENAI_API_KEY?.trim();
 
@@ -128,7 +150,8 @@ export function registerVoiceSessionMediaAdapters(options: {
       options.registry.register(adapter);
       return done(adapter.id, "managed_platform_speech", options.managedSynthesize
         ? "platform-managed transcription and synthesis"
-        : "platform-managed transcription with a development-gated synthesis port");
+        : "platform-managed transcription with a development-gated synthesis port",
+        options.managedSynthesize ? "platform" : "external");
     }
     return done(null, "managed_no_synthesis_port", "platform speech is provisioned but no synthesis port exists (no platform TTS endpoint; dev synthesis gate unset or denied)");
   }

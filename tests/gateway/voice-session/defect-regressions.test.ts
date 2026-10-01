@@ -533,6 +533,59 @@ describe("interruption and action cancel truth", () => {
       code: "unsupported_surface", retryable: false,
     });
   });
+
+  it("acks every targeted action cancel with the canonical outcome", async () => {
+    const s = await listeningSession(rig);
+    for (const [actionId, outcome] of [
+      ["action_ok", "cancelled"],
+      ["action_mid", "requested"],
+      ["action_done", "already_terminal"],
+      ["action_gone", "unknown"],
+    ] as const) {
+      rig.runControl.actionResult = outcome;
+      await s.handle.receive(clientFrame(s.sessionId, s.epoch, { type: "action.cancel", actionId }));
+      await flush(rig, s.sessionId);
+      expect(lastFrame(s.sink, "action.cancel_result")).toMatchObject({ actionId, outcome });
+    }
+  });
+
+  it("does not escalate a returned 'unknown' cancel to a session-level error", async () => {
+    const s = await listeningSession(rig);
+    rig.runControl.actionResult = "unknown";
+    await s.handle.receive(clientFrame(s.sessionId, s.epoch, { type: "action.cancel", actionId: "action_1" }));
+    await flush(rig, s.sessionId);
+    // The ack alone carries the unproven outcome truthfully — a live session
+    // must not be presented as failed/conflicted over a per-action result.
+    expect(lastFrame(s.sink, "action.cancel_result")).toMatchObject({ actionId: "action_1", outcome: "unknown" });
+    expect(framesOfType(s.sink, "session.error")).toHaveLength(0);
+    expect(rig.engine.describeSession({ principal: PRINCIPAL, chatId: CHAT_ID, sessionId: s.sessionId })?.status)
+      .toBe("listening");
+  });
+
+  it("reports an unsupported action cancel when no run control port exists", async () => {
+    const noControl = makeRig({ engine: { runControl: undefined } });
+    const s = await listeningSession(noControl);
+    await s.handle.receive(clientFrame(s.sessionId, s.epoch, { type: "action.cancel", actionId: "action_1" }));
+    await flush(noControl, s.sessionId);
+    // Truthful ack — the authority is unreachable, so the outcome is
+    // "unavailable" rather than a silent drop or a false "requested".
+    expect(lastFrame(s.sink, "action.cancel_result")).toMatchObject({
+      actionId: "action_1", outcome: "unavailable",
+    });
+  });
+
+  it("acks a thrown cancel as unknown plus the transport error", async () => {
+    const s = await listeningSession(rig);
+    rig.runControl.actionError = new Error("authority offline");
+    await s.handle.receive(clientFrame(s.sessionId, s.epoch, { type: "action.cancel", actionId: "action_1" }));
+    await flush(rig, s.sessionId);
+    expect(lastFrame(s.sink, "action.cancel_result")).toMatchObject({
+      actionId: "action_1", outcome: "unknown",
+    });
+    expect(lastFrame(s.sink, "session.error")).toMatchObject({
+      code: "chat_unavailable", retryable: true,
+    });
+  });
 });
 
 describe("bounded session tracking", () => {

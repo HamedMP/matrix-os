@@ -330,11 +330,18 @@ export interface VoiceRunControlPort {
     principalId: string;
     reason: "user" | "interruption";
   }): Promise<"cancelled" | "already_terminal" | "unavailable">;
+  /**
+   * Targeted canonical action cancellation. Outcome vocabulary mirrors the
+   * canonical HTTP route: `cancelled` = op reached `cancelled`; `requested` =
+   * still running/outcome_unknown with `cancellationRequested` recorded;
+   * `already_terminal` = op finished before the request landed;
+   * `unavailable` = no action authority; `unknown` = lookup/cancel failed.
+   */
   cancelAction(input: {
     chatId: string;
     actionId: string;
     principalId: string;
-  }): Promise<"cancelled" | "unavailable" | "unknown">;
+  }): Promise<"cancelled" | "requested" | "already_terminal" | "unavailable" | "unknown">;
 }
 
 /**

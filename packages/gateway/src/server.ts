@@ -78,6 +78,10 @@ import {
 } from "./voice-session/adapter.js";
 import { registerVoiceSessionMediaAdapters } from "./voice-session/adapter-registration.js";
 import {
+  createManagedVoiceReadinessProbe,
+  wrapCapabilityPortWithReadiness,
+} from "./speech/managed-readiness.js";
+import {
   canonicalVoiceDecision,
   canonicalVoiceSelectionRequirements,
   createCanonicalVoicePorts,
@@ -1686,8 +1690,17 @@ export async function createGateway(config: GatewayConfig) {
     });
     canonicalChatOrchestrator = canonicalChatRuntime.orchestrator;
     if (canonicalActionAuthority) {
-      const recovery = await canonicalActionAuthority.reconcilePending();
-      if (recovery.checked > 0) console.warn("[chat/actions] startup reconciliation", recovery);
+      // Startup recovery is best-effort and must not gate route registration:
+      // up to 128 sequential reconciliations and any list/recovery DB failure
+      // run detached after composition instead of blocking or aborting boot.
+      void canonicalActionAuthority.reconcilePending()
+        .then((recovery) => {
+          if (recovery.checked > 0) console.warn("[chat/actions] startup reconciliation", recovery);
+        })
+        .catch((error: unknown) => {
+          console.warn("[chat/actions] startup reconciliation failed",
+            error instanceof Error ? error.name : "UnknownError");
+        });
     }
     backgroundChatProjection.setReconciler(ownerId => canonicalChatOrchestrator?.reconcileActiveRuns({ type: "personal", ownerId }) ?? Promise.resolve());
 
@@ -1714,7 +1727,7 @@ export async function createGateway(config: GatewayConfig) {
     // client. A direct provider key is a non-production escape
     // hatch — never a second key authority on a production gateway.
     const voicePlatformSpeechClient = createVoiceSessionPlatformSpeechClient(process.env);
-    registerVoiceSessionMediaAdapters({
+    const voiceAdapterRegistration = registerVoiceSessionMediaAdapters({
       registry: voiceAdapters,
       env: process.env,
       managedTranscribe: voicePlatformSpeechClient
@@ -1725,10 +1738,29 @@ export async function createGateway(config: GatewayConfig) {
         : undefined,
       log: voiceLog,
     });
-    const voiceCapabilities = createAdapterCapabilityPort({
+    // Managed speech readiness is authoritative and bounded (≤15s probe, 30s
+    // positive / 5s negative cache). Consulted only when the registered adapter
+    // is "managed"; every non-ready state fails closed downstream. When the
+    // managed adapter's synthesis leg came from a development-gated port, the
+    // probe adjudicates only the platform transcription it is authoritative
+    // for — it must not fail closed on a synthesis leg the adapter never uses.
+    const managedVoiceReadiness = voicePlatformSpeechClient
+      ? createManagedVoiceReadinessProbe({
+          client: voicePlatformSpeechClient,
+          synthesisSource: voiceAdapterRegistration.synthesisSource ?? "platform",
+        })
+      : undefined;
+    const voiceAdapterCapabilities = createAdapterCapabilityPort({
       registry: voiceAdapters,
       limits: { maxSessionSeconds: 3_600, maxIdleSeconds: 300 },
     });
+    const voiceCapabilities = managedVoiceReadiness
+      ? wrapCapabilityPortWithReadiness({
+          port: voiceAdapterCapabilities,
+          probe: managedVoiceReadiness,
+          selectedAdapterId: () => voiceAdapterRegistration.adapterId,
+        })
+      : voiceAdapterCapabilities;
     // Single-process authority: customer VPSes run exactly one gateway, so
     // this in-memory map is the complete replay state; replicas would need a
     // shared atomic consume store (see ticket-auth.ts). MATRIX_AUTH_TOKEN
@@ -1959,6 +1991,7 @@ export async function createGateway(config: GatewayConfig) {
     collaborationFailClosedReason, canonicalChatOrchestrator, canonicalChatExecutionRoots,
     canonicalChatCollaborationGuard, projectOwnerToolOutput, canonicalChatRuntime,
     canonicalChatProviderCatalog, aiProviderService, providerSettingsStore,
+    canonicalActionAuthority,
     listGmailAccounts: (ownerId) => withCapabilityLookupTimeout(() => lookupJevGmailAccounts(ownerId)),
   });
 
