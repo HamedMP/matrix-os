@@ -1,10 +1,12 @@
 ---
+triggers: ["Matrix theme", "app styling", "design tokens", "app icon", "UI components"]
 name: matrix-design-system
 description: The Matrix OS visual language — colors, typography, icons, animations, and component patterns. Apply this every time you build, redesign, or polish any Matrix OS surface.
 version: 2.1.0
 author: Matrix OS
 license: MIT
 platforms: [linux, macos]
+related_skills: [matrix-app-builder]
 metadata:
   agent:
     tags: [Matrix OS, design, UI, brand, theme, colors, typography, icons, animations]
@@ -147,7 +149,7 @@ Default to simple line-style SVGs for all UI. Only use specialist bundled assets
 
 ## Animations
 
-Read the installed `emil-design-eng` and `apple-design` skills; see the builder’s
+Discover the installed design skills and read the one relevant to polish or gestures; see the builder’s
 `references/app-craft.md` for the shared process. Motion serves feedback, continuity,
 or a spatial relationship. Frequency comes first: keep typing, keyboard actions, and
 repeated navigation immediate. Do not stagger all content on page mount.
@@ -181,7 +183,8 @@ of inventing one-off controls.
 ### Buttons
 
 ```css
-.btn { padding: 10px 24px; border-radius: 50px; font-family: 'Inter'; font-size: 0.875rem; font-weight: 500; transition: all 0.2s; }
+.btn { padding: 10px 16px; border-radius: 10px; font-family: var(--matrix-font-sans, system-ui); font-size: 0.875rem; font-weight: 500; transition: transform 120ms ease-out, background-color 150ms ease; }
+.btn:focus-visible { outline: 2px solid var(--matrix-accent); outline-offset: 3px; }
 ```
 
 | Variant   | Background  | Text          |
@@ -195,16 +198,16 @@ of inventing one-off controls.
 ### Cards
 
 ```css
-.card { background: rgba(255,255,255,0.55); backdrop-filter: blur(12px); border: 1px solid rgba(214,211,200,0.35); border-radius: 22px; padding: 20px; }
+.card { background: var(--matrix-card); color: var(--matrix-fg); border: 1px solid var(--matrix-border); border-radius: 12px; padding: 16px; }
 ```
 
-**Stat cards use horizontal layout** — icon container (46px, gradient bg, 14px radius) + text (label, value, subtitle) side by side. Never stack vertically with empty whitespace.
+Use stat cards only when the number helps a real decision. A compact label/value row is a good starting point; choose hierarchy and density for the content. Glass/gradients are optional direction choices, not default card materials.
 
 ### Inputs
 
 ```css
-.input { background: rgba(255,255,255,0.8); border: 1.5px solid rgba(214,211,200,0.6); border-radius: 50px; padding: 13px 22px; }
-.input:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(67,78,63,0.06); background: rgba(255,255,255,0.95); }
+.input { background: var(--matrix-bg); color: var(--matrix-fg); border: 1px solid var(--matrix-border); border-radius: 8px; padding: 10px 12px; font-family: var(--matrix-font-sans, system-ui); }
+.input:focus-visible { outline: 2px solid var(--matrix-accent); outline-offset: 2px; }
 ```
 
 ## Common Pitfalls (non-negotiable)

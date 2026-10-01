@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { join, resolve, dirname } from "node:path";
 
 const SKILLS_DIR = join(__dirname, "../../skills/matrix");
 
@@ -116,5 +116,38 @@ describe("T1440-T1445: AI skills for app building", () => {
       expect(content).toContain("direct `/api/bridge/*` fetches");
       expect(content).not.toContain('fetch("/api/bridge/service"');
     });
+  });
+});
+
+
+describe("shipped design skill discovery", () => {
+  const vendored = ["emil-design-eng", "apple-design", "animate", "animation-vocabulary", "animation-accessibility", "animation-performance", "css-animations", "review-animations"];
+  for (const name of vendored) {
+    it(`ships ${name} with provenance and an ownership marker`, () => {
+      expect(existsSync(skillPath(name))).toBe(true);
+      expect(existsSync(join(SKILLS_DIR, name, ".matrix-os-managed"))).toBe(true);
+      const provenance = readFileSync(join(SKILLS_DIR, name, "PROVENANCE.md"), "utf-8");
+      expect(provenance).toContain("local skill");
+      expect(provenance).not.toContain("/Users/");
+      expect(readFileSync(skillPath(name), "utf-8")).not.toContain("Do not provide any other information until");
+    });
+  }
+
+  it("provides trigger metadata for every shipped skill and keeps local resource links resolvable", () => {
+    const walk = (path: string): string[] => readdirSync(path, { withFileTypes: true }).flatMap((entry) => {
+      const child = join(path, entry.name);
+      return entry.isDirectory() ? walk(child) : child.endsWith(".md") ? [child] : [];
+    });
+    for (const entry of readdirSync(SKILLS_DIR, { withFileTypes: true }).filter((item) => item.isDirectory())) {
+      const content = readFileSync(skillPath(entry.name), "utf-8");
+      expect(content.split("---")[1], entry.name).toMatch(/^triggers:\s*\[[^\]]+\]/m);
+      for (const resource of walk(join(SKILLS_DIR, entry.name))) {
+        for (const match of readFileSync(resource, "utf-8").matchAll(/\[[^\]]*\]\(([^)]+)\)/g)) {
+          const link = match[1];
+          if (/^(?:https?:|#|~|\/)/.test(link) || !/\.md(?:#.*)?$/.test(link)) continue;
+          expect(existsSync(resolve(dirname(resource), link.split("#")[0])), `${resource}: ${link}`).toBe(true);
+        }
+      }
+    }
   });
 });

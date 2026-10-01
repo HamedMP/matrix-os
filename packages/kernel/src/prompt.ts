@@ -7,6 +7,7 @@ import { loadHandle } from "./identity.js";
 import { listTasks } from "./ipc.js";
 import { createMemoryStore } from "./memory.js";
 import type { MatrixDB } from "./db.js";
+import { buildMatrixAgentOrientation } from "../../contracts/matrix-agent-orientation.mjs";
 
 function warnPromptFallback(context: string, err: unknown): void {
   console.warn(`[prompt] ${context}: ${err instanceof Error ? err.message : String(err)}`);
@@ -27,6 +28,7 @@ export function buildSystemPrompt(homePath: string, db?: MatrixDB): string {
   } else {
     sections.push("You are the Matrix OS kernel.");
   }
+  sections.push(buildMatrixAgentOrientation({ surface: "kernel" }));
 
   // SOUL -- personality and behavior (L0, always present)
   const soul = loadSoul(homePath);
@@ -106,32 +108,13 @@ export function buildSystemPrompt(homePath: string, db?: MatrixDB): string {
 
 ## App Data (CRITICAL -- READ THIS FIRST)
 
-App data is in Postgres. Do NOT read files in ~/data/. Do NOT search for databases. Do NOT read app HTML files. Use Bash with curl to call the gateway API at http://localhost:4000/api/bridge/query.
+Structured app records live in owner-controlled Postgres. Do not infer records from ~/data files or search for a separate database. Discover actual apps/tables before querying; do not assume built-in todo, notes or expense schemas. The gateway structured-data API is http://localhost:4000/api/bridge/query; use the run's authorized gateway access and handle auth/errors explicitly. Do not expose credentials or bypass permissions.
 
-Add a todo:
-  curl -s http://localhost:4000/api/bridge/query -X POST -H 'Content-Type: application/json' -d '{"action":"insert","app":"todo","table":"tasks","data":{"text":"Buy milk","done":false}}'
-
-List todos:
-  curl -s http://localhost:4000/api/bridge/query -X POST -H 'Content-Type: application/json' -d '{"action":"find","app":"todo","table":"tasks","orderBy":{"created_at":"desc"}}'
-
-Complete a todo (replace ID):
-  curl -s http://localhost:4000/api/bridge/query -X POST -H 'Content-Type: application/json' -d '{"action":"update","app":"todo","table":"tasks","id":"UUID","data":{"done":true}}'
-
-Delete a todo (replace ID):
-  curl -s http://localhost:4000/api/bridge/query -X POST -H 'Content-Type: application/json' -d '{"action":"delete","app":"todo","table":"tasks","id":"UUID"}'
-
-Add expense:
-  curl -s http://localhost:4000/api/bridge/query -X POST -H 'Content-Type: application/json' -d '{"action":"insert","app":"expense-tracker","table":"expenses","data":{"amount":25.50,"description":"Lunch","category":"food","date":"2026-03-23"}}'
-
-Add note:
-  curl -s http://localhost:4000/api/bridge/query -X POST -H 'Content-Type: application/json' -d '{"action":"insert","app":"notes","table":"notes","data":{"title":"Meeting","content":"Discuss roadmap","pinned":false}}'
-
-List all apps and tables:
-  curl -s http://localhost:4000/api/bridge/query -X POST -H 'Content-Type: application/json' -d '{"action":"listApps","app":"_"}'
-
-Filter syntax: {"done":false}, {"amount":{"$gt":10}}, {"text":{"$ilike":"%milk%"}}
-
-IMPORTANT: Always use http://localhost:4000/api/bridge/query (NOT /api/bridge/data which is the old KV path).`,
+Discovery body: {"action":"listApps","app":"_"}
+Read body: {"action":"find","app":"<actual slug>","table":"<declared table>","limit":50,"orderBy":{"created_at":"desc"}}
+Mutations use insert/update/delete with validated fields and the actual record ID. Related writes must be atomic; do not claim a sequence of bridge calls is a transaction.
+Filter examples: {"done":false}, {"amount":{"$gt":10}}, {"text":{"$ilike":"%milk%"}}
+Use /api/bridge/query for structured records; /api/bridge/data is legacy KV state. App code uses window.MatrixOS.db through the shell bridge, never a direct gateway fetch.`,
   );
 
   sections.push("\n## Matrix Integrations\n");
@@ -202,7 +185,7 @@ IMPORTANT: Always use http://localhost:4000/api/bridge/query (NOT /api/bridge/da
         );
         sections.push(
           `${appNames.length} apps: ${appNames.join(", ")}\n` +
-          "Use the app_data tool to read/write app data. Apps store data in ~/data/{appName}/{key}.json."
+          "Structured app records live in the owner's Postgres database. Discover app tables and records through the gateway query API above."
         );
       } else {
         sections.push("No apps installed yet.");
@@ -215,37 +198,9 @@ IMPORTANT: Always use http://localhost:4000/api/bridge/query (NOT /api/bridge/da
     sections.push("No apps installed yet.");
   }
 
-  // App data summary
-  const dataPath = join(homePath, "data");
+  // Database contents cannot be inferred from a legacy filesystem listing.
   sections.push("\n## App Data\n");
-  if (existsSync(dataPath)) {
-    try {
-      const appDirs = readdirSync(dataPath).filter((f) => {
-        try {
-          return readdirSync(join(dataPath, f)).some((k) => k.endsWith(".json"));
-        } catch (err: unknown) {
-          warnPromptFallback(`Could not inspect app data for ${f}`, err);
-          return false;
-        }
-      });
-      if (appDirs.length > 0) {
-        const lines = appDirs.map((app) => {
-          const keys = readdirSync(join(dataPath, app))
-            .filter((k) => k.endsWith(".json"))
-            .map((k) => k.replace(".json", ""));
-          return `- ${app}: ${keys.join(", ")}`;
-        });
-        sections.push(lines.join("\n"));
-      } else {
-        sections.push("No app data stored yet.");
-      }
-    } catch (err: unknown) {
-      warnPromptFallback("Could not summarize app data", err);
-      sections.push("No app data stored yet.");
-    }
-  } else {
-    sections.push("No app data stored yet.");
-  }
+  sections.push("App record contents have not been queried for this prompt. Use the owner-scoped Postgres query API when the user's task needs them; files under ~/data are not a database inventory.");
 
   // Recent conversation summaries
   const summariesDir = join(homePath, "system", "summaries");

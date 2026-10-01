@@ -49,17 +49,18 @@ is_matrix_owned_dir() {
     case "$resolved" in
       "$MATRIX_SKILLS_SOURCE"/*) return 0 ;;
     esac
+    [ -f "$path/.matrix-os-managed" ] && return 0
     return 1
   fi
   [ -f "$path/.matrix-os-managed" ] && return 0
-  [ -f "$path/SKILL.md" ] && grep -q '^author:[[:space:]]*Matrix OS[[:space:]]*$' "$path/SKILL.md" && return 0
+  [[ "$(basename "$path")" == matrix-* ]] && [ -f "$path/SKILL.md" ] && grep -q '^author:[[:space:]]*Matrix OS[[:space:]]*$' "$path/SKILL.md" && return 0
   return 1
 }
 
 cleanup_root() {
   local root="$1"
   mkdir -p "$root"
-  for generated in "$root"/matrix-*; do
+  for generated in "$root"/*; do
     [ -e "$generated" ] || [ -L "$generated" ] || continue
     if is_matrix_owned_dir "$generated"; then
       rm -rf "$generated"

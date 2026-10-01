@@ -113,6 +113,42 @@ describe("Matrix coding-agent skill sync", () => {
     }
   });
 
+  it("refreshes vendored skills across releases while preserving user-owned collisions", () => {
+    const root = resolve(mkdirSync(join(tmpdir(), `matrix-vendored-sync-${Date.now()}`), { recursive: true }));
+    const previousSource = join(root, "previous", "matrix");
+    const source = join(root, "release", "matrix");
+    const cliHome = join(root, "cli-home");
+    const targets = [join(cliHome, ".agents", "skills"), join(cliHome, ".claude", "skills"), join(root, "hermes", "skills")];
+    try {
+      writeSkill(previousSource, "animate", "animate");
+      writeFileSync(join(previousSource, "animate", ".matrix-os-managed"), "vendored skill\n");
+      writeSkill(source, "animate", "animate");
+      writeSkill(source, "apple-design", "apple-design");
+      writeFileSync(join(source, "animate", ".matrix-os-managed"), "vendored skill\n");
+      for (const target of targets) {
+        mkdirSync(target, { recursive: true });
+        execFileSync("ln", ["-s", join(previousSource, "animate"), join(target, "animate")]);
+        writeSkill(target, "apple-design", "apple-design");
+        const userSkill = join(target, "apple-design", "SKILL.md");
+        writeFileSync(userSkill, readFileSync(userSkill, "utf-8").replace("author: Matrix OS", "author: Owner"));
+        mkdirSync(join(target, "retired-vendored"));
+        writeFileSync(join(target, "retired-vendored", ".matrix-os-managed"), "vendored skill\n");
+      }
+      execFileSync("bash", [join(process.cwd(), "scripts/sync-matrix-agent-skills.sh"), source], {
+        env: { ...process.env, HOME: cliHome, MATRIX_HOME: join(root, "matrix-home"), HERMES_HOME: join(root, "hermes"), MATRIX_SKILL_TARGETS: "claude,codex,hermes" },
+        stdio: "pipe",
+      });
+      for (const target of targets) {
+        expect(realpathSync(join(target, "animate"))).toBe(realpathSync(join(source, "animate")));
+        expect(readFileSync(join(target, "apple-design", "SKILL.md"), "utf-8")).toContain("author: Owner");
+        expect(lstatSync(join(target, "apple-design")).isSymbolicLink()).toBe(false);
+        expect(existsSync(join(target, "retired-vendored"))).toBe(false);
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("keeps manual skill installers aligned with the shipped Matrix skill pack", () => {
     const root = process.cwd();
     const shippedSkillDirs = readdirSync(join(root, "skills", "matrix"), { withFileTypes: true })
@@ -162,6 +198,31 @@ printf '%s\\n' "$*" >> "${logPath}"
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
+  });
+
+  it("preserves remote Hermes destination collisions before invoking its installer", () => {
+    const root = resolve(mkdirSync(join(tmpdir(), `matrix-hermes-remote-${Date.now()}`), { recursive: true }));
+    const hermesHome = join(root, "hermes-home");
+    const fakeHermes = join(root, "hermes");
+    const logPath = join(root, "calls.log");
+    try {
+      writeSkill(join(hermesHome, "skills"), "animate", "animate");
+      mkdirSync(join(hermesHome, "skills", "matrix-app-builder"));
+      execFileSync("ln", ["-s", join(root, "missing-owner-skill"), join(hermesHome, "skills", "apple-design")]);
+      writeFileSync(fakeHermes, `#!/usr/bin/env bash\nprintf '%s\\n' "$*" >> "${logPath}"\n`);
+      chmodSync(fakeHermes, 0o755);
+      execFileSync("bash", [join(process.cwd(), "scripts/install-hermes-matrix-skills.sh"), "Example/remote-repo"], {
+        env: { ...process.env, HERMES_BIN: fakeHermes, HERMES_HOME: hermesHome }, stdio: "pipe",
+      });
+      const calls = readFileSync(logPath, "utf-8").split("\n");
+      expect(calls.some((call) => call.endsWith("/animate"))).toBe(false);
+      expect(calls.some((call) => call.endsWith("/app-builder"))).toBe(false);
+      expect(calls.some((call) => call.endsWith("/apple-design"))).toBe(false);
+      expect(calls.some((call) => call.endsWith("/integrations"))).toBe(true);
+      expect(calls.join("\n")).not.toContain("--force");
+      expect(readFileSync(join(hermesHome, "skills", "animate", "SKILL.md"), "utf-8")).toContain("animate test skill");
+      expect(lstatSync(join(hermesHome, "skills", "apple-design")).isSymbolicLink()).toBe(true);
+    } finally { rmSync(root, { recursive: true, force: true }); }
   });
 
   it("lets the Hermes installer sync from a direct skills/matrix source path", () => {

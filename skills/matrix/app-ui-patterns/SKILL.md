@@ -1,10 +1,12 @@
 ---
+triggers: ["app layout", "dashboard", "data table", "window resize", "responsive app"]
 name: matrix-app-ui-patterns
 description: UI patterns and layouts for Matrix OS apps — dashboards, workspaces, data views, mobile, and windowed contexts. Use this when building the interior of an app, not the design tokens (see matrix-design-system).
 version: 1.0.0
 author: Matrix OS
 license: MIT
 platforms: [linux, macos]
+related_skills: [matrix-design-system, matrix-app-builder]
 metadata:
   agent:
     tags: [Matrix OS, UI, layout, patterns, dashboard, mobile, responsive]

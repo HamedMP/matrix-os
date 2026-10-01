@@ -13,16 +13,24 @@ else
 fi
 
 skills=(
+  animate
+  animation-accessibility
+  animation-performance
+  animation-vocabulary
   app-builder
   app-ui-patterns
+  apple-design
   chat-import
+  css-animations
+  debug-app
   design-system
+  dev-vps
+  emil-design-eng
   integrations
   jev-email-triage
-  dev-vps
-  debug-app
   landing-design
   personal-daily-brief
+  review-animations
 )
 
 if ! command -v "$AGENT_BIN" >/dev/null 2>&1; then

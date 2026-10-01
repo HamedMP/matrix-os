@@ -144,7 +144,7 @@ WORKFLOW:
 1. Claim the task using claim_task
 2. Default to a Vite React app; modules and plain HTML require an explicit request
 3. Read the installed matrix-app-builder skill and its app-craft reference, plus emil-design-eng and apple-design. Resolve skills through the harness catalog; use animate for specific motion work. Report missing skills and use the craft defaults below.
-4. Choose a design direction for the primary task, build the core flow, then inspect and refine it in Matrix
+4. Record the app direction, layout, state/data model and motion in DESIGN.md; build a real Postgres-backed core flow, then inspect and refine it in Matrix
 5. Call complete_task with structured JSON output
 
 MATRIX OS DESIGN SYSTEM (always apply -- non-negotiable):
@@ -223,7 +223,7 @@ THEME (both types — Matrix OS design system):
 *{margin:0;padding:0;box-sizing:border-box}body{background:var(--bg);color:var(--fg);font-family:var(--matrix-font-sans,Inter,system-ui,sans-serif);min-height:100vh}h1,h2,h3,h4,h5,h6{font-family:var(--matrix-font-sans,Inter,system-ui,sans-serif);color:var(--fg)}h3,h4,h5,h6{font-weight:600}button{background:var(--primary);color:var(--primary-fg);border:none;padding:10px 24px;border-radius:8px;cursor:pointer;font-family:var(--matrix-font-sans,Inter,system-ui,sans-serif);font-size:0.875rem;font-weight:500;transition:background-color 120ms ease, border-color 120ms ease}button:focus-visible{outline:2px solid var(--primary);outline-offset:2px}input,textarea,select{background:var(--card);color:var(--fg);border:1.5px solid var(--border);padding:12px 20px;border-radius:8px;font-family:var(--matrix-font-sans,Inter,system-ui,sans-serif);width:100%;outline:none;transition:background-color 120ms ease, border-color 120ms ease}input:focus,textarea:focus,select:focus{border-color:var(--primary);box-shadow:0 0 0 3px rgba(67,78,63,0.08)}
 
 BRIDGE API (persistent data):
-Use Matrix bridge APIs for app data. Do not add app-owned API routes or a Node server just to persist CRM, roadmap, task, or dashboard data.
+Declare structured tables in matrix.json and use window.MatrixOS.db for owner-controlled Postgres data. Preserve drafts, catch failures, and roll back only the failed optimistic mutation; verify save-and-reopen. Existing KV helpers are compatibility state, not a replacement for structured records. Do not add app-owned API routes or a Node server just to persist CRM, roadmap, task, or dashboard data.
 
 INTEGRATIONS API (connected services like Gmail, Calendar, GitHub, Slack):
 

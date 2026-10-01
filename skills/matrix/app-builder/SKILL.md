@@ -1,10 +1,12 @@
 ---
+triggers: ["build app", "create app", "Matrix app", "redesign app", "Postgres app"]
 name: matrix-app-builder
 description: Build Matrix OS apps as Vite React TypeScript projects with matrix.json manifests, Matrix theme integration, Postgres-backed app data, and production build verification.
-version: 1.1.1
+version: 1.2.0
 author: Matrix OS
 license: MIT
 platforms: [linux, macos]
+related_skills: [matrix-design-system, matrix-app-ui-patterns, matrix-integrations, matrix-debug-app, emil-design-eng, apple-design, animate]
 metadata:
   agent:
     tags: [Matrix OS, apps, Vite, React, TypeScript]
@@ -28,7 +30,7 @@ Use this when the user asks to build, create, fix, redesign, or publish a Matrix
 - Always run `pnpm install` when dependencies changed and `pnpm build` before saying the app works.
 - Verify `dist/index.html` exists.
 - Use injected Matrix theme variables and iframe-safe sizing. Custom apps should inherit the shell theme by default; add explicit app branding only when the user asks for it or the app has a clear domain reason.
-- For UI, read `matrix-design-system`, `matrix-app-ui-patterns`, and [App craft](references/app-craft.md). Discover and read the installed `emil-design-eng` and `apple-design` SKILL.md files before designing; use `animate` for specific motion work. Preserve Matrix theme/runtime rules and choose layout, materials, and motion for the app’s actual purpose.
+- For UI, read `matrix-design-system`, `matrix-app-ui-patterns`, and [App craft](references/app-craft.md). Discover relevant installed skills through the active harness catalog (or `load_skill` in kernel routes). Read `emil-design-eng` for polish, `apple-design` for direct manipulation, and `animate` for specific motion work; load supporting references only for the chosen task. Preserve Matrix theme/runtime rules and choose layout, materials, and motion for the app’s actual purpose.
 - Store structured app data through Matrix/Postgres bridge APIs, not ad hoc local databases.
 - Never put provider secrets, API keys, or OAuth tokens inside the app directory.
 - Do not use browser `localStorage` as app persistence in the Matrix shell. Sandboxed iframes can throw `SecurityError`; use `window.MatrixOS.db` and keep local fallback paths test-only/no-op.
@@ -36,7 +38,12 @@ Use this when the user asks to build, create, fix, redesign, or publish a Matrix
 
 ## Design workflow
 
-Before scaffolding, read the craft reference and installed design skills. Choose a concise design direction and primary user flow. Build the core interaction first, add purposeful feedback, then inspect and refine the running app in Matrix. Avoid a generic welcome hero, decorative statistic cards, repeated glass containers, and automatic staggered entrances. Record which skills and surfaces you actually checked.
+1. Read the craft reference, relevant skill descriptions, and any user reference or existing app `DESIGN.md`. Follow supplied references by default. Offer small design alternatives only when they help resolve real ambiguity or the user requests them; continue with a sensible direction without an approval checkpoint.
+2. Save a short app `DESIGN.md`: primary task, layout and density, inherited tokens, typography/spacing, true data and state behavior, and one useful motion recipe with a reduced-motion variant. Keep it updated as the implementation changes.
+3. Build one complete vertical slice against the owner's real Postgres through `window.MatrixOS.db`: read → create/edit → confirm or restore on failure → reopen. Verify it before expanding secondary screens. Never use convincing fake records to conceal a missing data path.
+4. Inspect the running app in the available Matrix surfaces, refine the largest hierarchy or interaction problem, and inspect again. Check keyboard and reduced motion, not just the default screenshot. Record skills loaded, surface, viewport, theme, states, persistence result, and screenshot/recording evidence; report unavailable evidence explicitly.
+
+Avoid a generic welcome hero, decorative statistic cards, repeated glass containers, and automatic staggered entrances. The usable primary flow owns the first screen.
 
 ## Standard Structure
 
@@ -169,8 +176,15 @@ Use the inherited shell fonts (`var(--matrix-font-sans)`, `var(--matrix-font-mon
 - Load from bridge storage on startup; do not seed duplicate fallback rows after real rows load.
 - Roll back optimistic UI changes on failed creates, updates, deletes, and reorders. Keep pending deletes
   filtered from visible state until the bridge confirms or rolls back.
-- Serialize dependent writes that update ordering, best scores, stats counters, or history rows. Avoid racing
-  two bridge writes that can overwrite each other's derived state.
+- Do not confuse sequential requests with a database transaction. Keep a single-entity change in one
+  bridge write; use the documented `bulkUpdate`/`bulkInsert` operation when it matches the atomic operation.
+  If a workflow requires multiple related writes across operations, use an existing server transaction
+  boundary or redesign the schema/action to one write; do not invent a `db.transaction()` API.
+- Cap queries with `limit` and paginate large collections. Treat unavailable bridge or database failures
+  as an error with retry, never a successful in-memory save or an empty database.
+- Serialize saves to the same record and prevent duplicate submissions. Restore only the failed mutation;
+  a stale failure must not overwrite newer edits or another active document. Keep unsaved text available.
+  Close change subscriptions on unmount; catch and handle reload failures at the UI boundary.
 - Keep browser-only helpers guarded for tests. In production shell iframes, direct `localStorage` access and
   raw bridge `fetch()` calls are not reliable persistence.
 
