@@ -1,6 +1,7 @@
+import {desktopDriveDraftIdentity, openDesktopCompanyDriveChat} from "../../stores/company-drive-chat-draft";
 import { OrganizationDriveSnapshotSchema } from "@matrix-os/contracts";
 import {
-  createRefreshGuard,
+  companyDriveChatReference, resolveOrganizationDriveNavigation, OrganizationDriveBrowser, createRefreshGuard,
   driveBasePath,
   ensureOrganizationContributorGrant,
   loadOrganizationDriveOptions,
@@ -22,7 +23,8 @@ function message(error: unknown): string {
   return "Organization drive is unavailable. Try again.";
 }
 
-export function DesktopOrganizationDrivesView({ isActive = true }: { isActive?: boolean }) {
+export function DesktopOrganizationDrivesView({ isActive = true, requestedScopeId, requestedIntentId }: { isActive?: boolean; requestedScopeId?: string; requestedIntentId?: string }) {
+  const draftIdentity=useConnection(desktopDriveDraftIdentity);
   const platformHost = useConnection((state) => state.platformHost);
   const runtimeSlot = useConnection((state) => state.runtimeSlot);
   const authGeneration = useConnection((state) => state.authGeneration);
@@ -33,6 +35,12 @@ export function DesktopOrganizationDrivesView({ isActive = true }: { isActive?: 
   const [busy, setBusy] = useState(false);
   const [transferBusy, setTransferBusy] = useState(false);
   const [folder, setFolder] = useState("");
+  const appliedRequest = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    if ((requestedIntentId ?? requestedScopeId) !== appliedRequest.current && requestedScopeId && options.some(option => option.scopeId === requestedScopeId)) {
+      appliedRequest.current = requestedIntentId ?? requestedScopeId; setSelected(requestedScopeId); setFolder("");
+    }
+  }, [requestedScopeId, requestedIntentId, options]);
   const [error, setError] = useState<string | null>(null);
   const pageCounts = useRef<OrganizationDrivePageCounts>({});
   const [guard] = useState(createRefreshGuard);
@@ -52,8 +60,7 @@ export function DesktopOrganizationDrivesView({ isActive = true }: { isActive?: 
       pageCounts.current = Object.fromEntries(next.filter((item) => item.pages)
         .map((item) => [item.scopeId, item.pages ?? 1]));
       setOptions(next);
-      setSelected((current) => current && next.some((item) => item.scopeId === current)
-        ? current : next[0]?.scopeId ?? null);
+      setSelected((current) => current ?? next[0]?.scopeId ?? null);
       setError(null);
     } catch (failure: unknown) {
       if (guard.isCurrent(token)) setError(message(failure));
@@ -65,14 +72,17 @@ export function DesktopOrganizationDrivesView({ isActive = true }: { isActive?: 
     void load();
     return () => { guard.invalidate(); };
   }, [isActive, api, guard, load]);
+  const navigation = resolveOrganizationDriveNavigation(options.map(option => option.scopeId), selected,
+    requestedScopeId ? {scopeId: requestedScopeId, intentId: requestedIntentId} : undefined, appliedRequest.current);
+  const active = options.find(option => option.scopeId === navigation.scopeId);
   useEffect(() => {
-    if (!isActive || !api || !selected) return;
-    const unsubscribe = api.subscribe?.(selected, () => load(), () => setError("Organization drive is unavailable. Try again."));
+    if (!isActive || !api || !navigation.scopeId) return;
+    let live = true;
+    const unsubscribe = api.subscribe?.(navigation.scopeId, () => {if (live) return load();}, () => {if (live) setError("Organization drive is unavailable. Try again.");});
     const timer = setInterval(() => { void load(); }, 30_000);
-    return () => { unsubscribe?.(); clearInterval(timer); };
-  }, [isActive, api, selected, load]);
+    return () => { live = false; unsubscribe?.(); clearInterval(timer); };
+  }, [isActive, api, navigation.scopeId, load]);
 
-  const active = options.find((item) => item.scopeId === selected);
   const run = async (action: () => Promise<void>) => {
     if (busy) return;
     setBusy(true); setError(null);
@@ -111,7 +121,7 @@ export function DesktopOrganizationDrivesView({ isActive = true }: { isActive?: 
   });
   const loadMore = async (option: OrganizationDriveOption) => {
     const cursor = option.snapshot?.nextCursor;
-    if (!api || !cursor || busy) return;
+    if (!api || !cursor || busy || (option.pages ?? 1) >= 20) return;
     setBusy(true); setError(null);
     try {
       const page = OrganizationDriveSnapshotSchema.parse(await api.direct.request(option.scopeId, "GET",
@@ -136,44 +146,36 @@ export function DesktopOrganizationDrivesView({ isActive = true }: { isActive?: 
         <button type="button" className={button} style={buttonStyle} disabled={busy} onClick={() => void load()}>Refresh</button>
       </div>
     </div>
+    {!loading && navigation.unavailable ? <p role="alert" className="mb-3 text-xs">This drive is unavailable. Choose another drive or refresh.</p> : null}
     {error && <p role="alert" className="mb-3 text-xs" style={{ color: "var(--danger)" }}>{error}</p>}
     {loading ? <p style={{ color: "var(--text-tertiary)" }}>Loading drives…</p> : options.length === 0
       ? <p style={{ color: "var(--text-tertiary)" }}>Share a folder with your organization to make a drive available here.</p>
-      : <div className="flex min-h-0 flex-1 gap-5">
-        <nav aria-label="Organization drives" className="w-48 shrink-0 space-y-1 border-r pr-3" style={{ borderColor: "var(--border-subtle)" }}>
-          {options.map((option) => <button key={option.scopeId} type="button" aria-current={selected === option.scopeId ? "page" : undefined}
-            onClick={() => setSelected(option.scopeId)} className="w-full rounded-md px-3 py-2 text-left text-xs hover:bg-[var(--bg-hover)]"
-            style={{ background: selected === option.scopeId ? "var(--bg-hover)" : undefined }}>{option.name}</button>)}
+      : <div className="flex min-h-0 flex-1 flex-col gap-4 sm:flex-row">
+        <nav aria-label="Organization drives" className="w-full shrink-0 space-y-1 border-b pb-2 sm:w-48 sm:border-b-0 sm:border-r sm:pb-0 sm:pr-3" style={{ borderColor: "var(--border-subtle)" }}>
+          {options.map((option) => <button key={option.scopeId} type="button" aria-current={navigation.scopeId === option.scopeId ? "page" : undefined}
+            disabled={busy} onClick={() => { appliedRequest.current = requestedIntentId ?? requestedScopeId; setSelected(option.scopeId); setFolder(""); }} className="w-full rounded-md px-3 py-2 text-left text-xs hover:bg-[var(--bg-hover)]"
+            style={{ background: navigation.scopeId === option.scopeId ? "var(--bg-hover)" : undefined }}>{option.name}</button>)}
         </nav>
         {active && <div className="min-w-0 flex-1 overflow-auto">
-          <h3 className="mb-3 font-medium">{active.name}</h3>
+
           {active.state === "pending" && <button type="button" className={button} style={buttonStyle} disabled={busy}
             onClick={() => void activate(active)}>Open organization share</button>}
           {active.state === "enable" && <button type="button" className={button} style={buttonStyle} disabled={busy}
             onClick={() => void enable(active)}>Enable drive for organization</button>}
           {active.snapshot && <>
             {active.canManage && <button type="button" className={`${button} mb-3`} style={buttonStyle} disabled={busy}
-              onClick={() => void share(active)}>Ensure organization can upload</button>}
-            <p className="mb-3 text-xs" style={{ color: "var(--text-tertiary)" }}>
-              {(active.snapshot.usedBytes / 1_000_000_000).toFixed(2)} GB of {(active.snapshot.quotaBytes / 1_000_000_000_000).toFixed(1)} TB used
-            </p>
-            <label className="mb-3 block text-xs">Folder path (optional)
-              <input type="text" value={folder} maxLength={700} disabled={busy} placeholder="reports/2026"
-                onChange={(event) => setFolder(event.target.value)} className="mt-1 block w-full max-w-xs rounded-md border px-2 py-1.5"
-                style={{ borderColor: "var(--border-default)", background: "var(--bg-surface)" }} />
-            </label>
-            {active.canUpload && <button type="button" className={`${button} mb-4`} style={buttonStyle} disabled={busy}
-              onClick={() => void upload(active)}>{busy ? "Transferring…" : "Upload file"}</button>}
-            <ul className="divide-y" style={{ borderColor: "var(--border-subtle)" }}>
-              {active.snapshot.files.map((file) => <li key={file.id} className="flex items-center justify-between gap-3 py-2">
-                <span className="min-w-0 truncate text-xs">{file.path}</span>
-                <button type="button" className={button} style={buttonStyle} disabled={busy}
-                  onClick={() => void download(active, file.id)}>Download</button>
-              </li>)}
-            </ul>
-            {active.snapshot.nextCursor && <button type="button" className={`${button} mt-3`} style={buttonStyle} disabled={busy}
-              onClick={() => void loadMore(active)}>Load more files</button>}
-            {active.snapshot.files.length === 0 && <p className="text-xs" style={{ color: "var(--text-tertiary)" }}>No files yet.</p>}
+              onClick={() => void share(active)}>Allow organization uploads</button>}
+            <OrganizationDriveBrowser key={active.scopeId} name={active.name} files={active.snapshot.files}
+              usedBytes={active.snapshot.usedBytes} reservedBytes={active.snapshot.reservedBytes} quotaBytes={active.snapshot.quotaBytes}
+              busy={busy} canUpload={Boolean(active.canUpload)} folder={folder} onFolderChange={setFolder}
+              onChatContext={selection=>{
+                const reference=companyDriveChatReference(active,selection.kind==="file"?{kind:"file",fileId:selection.file.id,version:selection.file.version,path:selection.file.path}:selection.kind==="folder"?selection:undefined);
+                openDesktopCompanyDriveChat(reference,draftIdentity);
+              }}
+              onDownload={file => void download(active, file.id)} hasMore={Boolean(active.snapshot.nextCursor)}
+              pageLimitReached={(active.pages ?? 1) >= 20} onLoadMore={() => void loadMore(active)}
+              uploadControl={<button type="button" className={button} style={buttonStyle} disabled={busy}
+                onClick={() => void upload(active)}>{busy ? "Transferring…" : "Upload file"}</button>} />
           </>}
         </div>}
       </div>}

@@ -1,3 +1,4 @@
+import { associateAdmittedDriveChat } from "./drive-project-database.js";
 import { chatContextRequestHash } from "./agent-context.js";
 import {
   CanonicalChatIdSchema, CanonicalChatMessageSchema, CanonicalChatRunSchema,
@@ -173,6 +174,7 @@ export async function admitChatTurn(deps: TurnAdmissionDependencies, ownerInput:
       }).where("id", "=", input.chatId).where("revision", "=", input.baseRevision)
         .returningAll().executeTakeFirst();
       if (!updated) throw new ChatConflictError(input.chatId, Number(current.revision));
+      await associateAdmittedDriveChat(trx, input.chatId, turn.clientRequestId, run.context);
       await deps.appendOutbox(trx, owner, input.chatId, revision, "turn.accepted", { runId: run.id, turnId: turn.id });
       return {
         chat: await deps.toPrincipalRecord(trx, owner, updated),

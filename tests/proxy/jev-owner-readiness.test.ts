@@ -151,3 +151,14 @@ it.each([
     expect(f.finalizations).toEqual([]);
   } finally { await f.relay.close(); }
 });
+
+it.each(["evaluation", "readiness"])("blocks %s dispatch when its admitted review expires during reservation start", async route => {
+  const f = fixture("review-expires-during-start", { ...renewedReview,
+    MATRIX_JEV_PRICING_VALID_THROUGH: "2026-10-01T00:00:00.020Z" }, new Date("2026-10-01T00:00:00.000Z"));
+  try {
+    const response = await (route === "evaluation" ? f.evaluation() : f.request());
+    expect(response.status).not.toBe(200);
+    expect(f.events).toEqual(["check", "authorize", "start"]);
+    expect(f.finalizations).toEqual([]);
+  } finally { await f.relay.close(); }
+});

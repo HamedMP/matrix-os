@@ -651,6 +651,9 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
         throw new Error("Funded AI start response did not match its reservation");
       }
       started = true;
+      // Start is awaited and may cross the admitted review deadline. The
+      // reservation is already in flight, so retain its hold if this fails.
+      reviewedJevPricing(now(), pricing);
       const target = cloudflareJevTarget(config.gatewayBaseUrl);
       const upstream = await fetchImpl(target.url, {
         method: "POST",

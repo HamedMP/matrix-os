@@ -4,6 +4,7 @@ import {
   OrganizationDriveFileSchema,
   OrganizationDriveDownloadSchema,
   OrganizationDrivePathSchema,
+  OrganizationDriveUploadFolderSchema,
   OrganizationDriveUploadReservationSchema,
 } from "@matrix-os/contracts";
 import { createCollaborationDirectClient, type CollaborationDirectClient } from "@matrix-os/ui/collaboration-direct-client";
@@ -14,7 +15,7 @@ const MAX_FILE_BYTES = 100 * 1024 * 1024;
 const driveBasePath = (scopeId: string) => `/api/collaboration/scopes/${scopeId}/drive`;
 const RequestSchema = z.object({ scopeId: z.uuid(), organizationId: z.string().regex(/^org_[A-Za-z0-9_-]+$/),
   runtimeSlot: z.string().min(1).max(128), authGeneration: z.number().int().nonnegative(),
-  folder: z.string().max(700) }).strict();
+  folder: OrganizationDriveUploadFolderSchema }).strict();
 type TransferRequest = z.infer<typeof RequestSchema>;
 const DownloadRequestSchema = RequestSchema.omit({ folder: true }).extend({ fileId: z.uuid() }).strict();
 type BaseResult = { status: "cancelled" } | { status: "error"; code: "unavailable" | "invalid_file" | "conflict" };

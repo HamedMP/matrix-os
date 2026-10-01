@@ -1,4 +1,5 @@
 import { z } from "zod/v4";
+import { OrganizationDriveContextReferenceSchema } from "#organization-drive-context";
 import { canonicalBoundedText, canonicalSafeLabel, canonicalEncodedByteLength } from "#canonical-chat-primitives";
 import { ResolvedChatAgentRecipeSchema } from "#chat-agent-recipe";
 
@@ -27,6 +28,7 @@ export const ChatRunContextSchema = z.object({
     recipe: ResolvedChatAgentRecipeSchema.optional(),
   }).strict().optional(),
   chats: z.array(ChatContextSnapshotSchema).max(3),
+  drives: z.array(OrganizationDriveContextReferenceSchema).min(1).max(3).optional(),
   history: ChatContextSnapshotSchema.optional(),
 }).strict().refine((value) => canonicalEncodedByteLength(value) <= 64 * 1024, {
   message: "Resolved Chat context exceeds its byte limit",

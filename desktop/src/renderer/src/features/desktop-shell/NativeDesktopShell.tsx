@@ -35,7 +35,7 @@ import {
   createNativeOsViewLayoutMemory,
   transitionNativeOsViewLayout,
 } from "./native-os-view-layout-memory";
-import { nativeTabOsViewPath } from "./native-os-view-persistence";
+import { useNativeChatStartup, useNativeStartupNavigation } from "./use-native-chat-startup";
 import { useNativeOsViewPersistence } from "./use-native-os-view-persistence";
 import { analyticsKindForTab, FIXED_APP_ANALYTICS_KINDS } from "./desktop-app-analytics";
 
@@ -85,7 +85,7 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
   const api = useConnection((state) => state.api);
   const platformHost = useConnection((state) => state.platformHost);
   const runtimeSlot = useConnection((state) => state.runtimeSlot);
-  const { data: installedApps = [], refetch: refetchInstalledApps } = useAppsQuery();
+  const { data: installedApps = [], refetch: refetchInstalledApps, isPending: appsLoading } = useAppsQuery();
   const desktopIcons = useDesktopIcons((state) => state.icons);
   const primeDesktopIcons = useDesktopIcons((state) => state.prime);
   const moveDesktopIcon = useDesktopIcons((state) => state.move);
@@ -97,7 +97,10 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
   const [viewport, setViewport] = useState(currentViewport);
   const previousDesktopModeRef = useRef(desktopMode);
   const osViewLayoutsRef = useRef(createNativeOsViewLayoutMemory());
-  const durableOpenedPathsRef = useRef<Record<string, true>>({});
+  const userId = useConnection((state) => state.userId);
+  const authGeneration = useConnection((state) => state.authGeneration);
+  const entryKey = [userId, platformHost, runtimeSlot, authGeneration].join("|");
+  const { navigationChangedRef, restoringRef } = useNativeStartupNavigation(entryKey);
   const tabIds = useMemo(() => tabs.map((tab) => tab.id), [tabs]);
   const defaultIconLayout = useMemo(
     createDefaultOsViewDesktopIcons,
@@ -117,10 +120,14 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
   );
   const {
     durableState,
+    loadSettled,
+    surfacesRestored,
     recordCanonicalBounds,
     schedulePersist: scheduleDurablePersist,
   } = useNativeOsViewPersistence({
     api,
+    entryKey,
+    navigationChangedRef,
     tabs,
     surfaces,
     installedApps,
@@ -128,10 +135,6 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
     viewport,
     defaultIconLayout,
   });
-
-  useEffect(() => {
-    durableOpenedPathsRef.current = {};
-  }, [api]);
 
   useEffect(() => {
     const resize = () => setViewport(currentViewport());
@@ -176,9 +179,12 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
   }, [desktopTransition, finishDesktopTransition]);
 
   const activeSurface = activeTabId ? surfaces[activeTabId] : undefined;
-  const activeSurfaceAvailable = activeSurface !== undefined && activeSurface.mode !== "closed";
+  const activeSurfaceAvailable = activeSurface !== undefined && activeSurface.mode !== "closed" && activeSurface.mode !== "minimized";
   useEffect(() => {
     if (!activeTabId || !activeSurfaceAvailable) return;
+    // Persistence effects can apply minimized/closed state earlier in this commit.
+    const current = useDesktopSurfaces.getState().surfaces[activeTabId];
+    if (!current || current.mode === "minimized" || current.mode === "closed") return;
     activateSurface(activeTabId);
     // Only react to active identity or a surface appearing. Bounds/z-index
     // updates must not recursively focus the same surface while it is dragged.
@@ -295,25 +301,11 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
     return [...fixed, ...generated];
   }, [installedApps, openRoot, openTab, platformHost, runtimeSlot]);
 
-  useEffect(() => {
-    const state = durableState;
-    if (!state) return;
-    const currentPaths = new Set(useTabs.getState().tabs.flatMap((tab) => {
-      const path = nativeTabOsViewPath(tab, installedApps);
-      return path ? [path] : [];
-    }));
-    for (const app of state.document.apps) {
-      if (app.state === "closed" || durableOpenedPathsRef.current[app.path] || currentPaths.has(app.path)) continue;
-      const destinationPath = app.path.startsWith("__terminal__:") ? "__terminal__" : app.path;
-      const destination = destinations.find((candidate) => candidate.path === destinationPath);
-      durableOpenedPathsRef.current[app.path] = true;
-      if (!destination) continue;
-      destination.open();
-      if (app.path.startsWith("__terminal__:") && app.path.length > "__terminal__:".length) {
-        useTabs.getState().requestTerminalSession(app.path.slice("__terminal__:".length));
-      }
-    }
-  }, [destinations, durableState, installedApps]);
+  useNativeChatStartup({
+    entryKey, loadSettled, surfacesRestored, modeHydrated: desktopModeHydrated, catalogSettled: !appsLoading,
+    durableState, installedApps, destinations, navigationChangedRef, restoringRef,
+    openChat: () => openRoot(openChatIndex),
+  });
 
   const openDesktopApp = useCallback((app: (typeof FIXED_DESKTOP_APPS)[number]) => {
     destinations.find((destination) => destination.id === app.id)?.open();

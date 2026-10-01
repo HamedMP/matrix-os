@@ -14,6 +14,11 @@ handle or a member's login.
 - Files shows each organization drive to current members on Web Canvas, Web
   Desktop, Web Mobile and Electron Desktop. A member can list, upload and download files.
   Listings are paged by logical path so drives with more than one page remain usable.
+  The shared browser derives virtual folders, breadcrumbs, name/modified ordering,
+  loaded-file search, visible metadata and upload destination from those pages.
+  Search states its loaded-list scope when more pages remain; a view retains at
+  most 20 pages. Chat shows company drive shortcuts which select the exact
+  authorized scope in Files; it does not create a local project or share a Chat.
   Upload paths can contain virtual folder segments. The owner enables a drive
   from an existing organization-shared folder scope and grants Contributor
   access to the organization; each member activates that grant. Membership

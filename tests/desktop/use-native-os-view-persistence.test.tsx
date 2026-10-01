@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act, renderHook, waitFor } from "@testing-library/react";
+import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { createDefaultOsViewDocument } from "@matrix-os/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useNativeOsViewPersistence } from "@desktop/renderer/src/features/desktop-shell/use-native-os-view-persistence";
@@ -24,7 +24,52 @@ describe("Electron OS-view persistence hook", () => {
     useDesktopSurfaces.setState(useDesktopSurfaces.getInitialState(), true);
   });
 
-  afterEach(() => vi.restoreAllMocks());
+  afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+
+  it("preserves entry surfaces through Canvas hydration and resets for a new entry", async () => {
+    const document = createDefaultOsViewDocument();
+    document.apps = [{ path: "__chat__", title: "Chat", state: "closed" }, { path: "__terminal__", title: "Terminal", state: "closed" }];
+    const canonical = { x: 300, y: 200, width: 700, height: 400 };
+    document.desktop.windows = document.apps.map(({ path }) => ({ path, ...canonical }));
+    document.canvas.windows = document.apps.map(({ path }) => ({ path, ...canonical }));
+    const state = { ...loadedState, document };
+    const api = { get: vi.fn(async (path: string) => path === "/api/settings/desktop" ? { legacyDesktopImport: null } : state), post: vi.fn(async () => state) };
+    const tabs = [
+      { id: "chat", kind: "work" as const, title: "Chat", closable: false },
+      { id: "terminal", kind: "terminals" as const, title: "Terminal", closable: true },
+    ];
+    const bounds = { x: 40, y: 60, width: 900, height: 640 };
+    useTabs.setState({ tabs, activeTabId: "chat" });
+    useDesktopSurfaces.setState({ surfaces: Object.fromEntries(tabs.map((tab, index) => [tab.id, {
+      tabId: tab.id, mode: index === 0 ? "minimized" as const : "closed" as const,
+      restoreMode: "window" as const, bounds, zIndex: index + 1,
+    }])) });
+    const defaultIconLayout: [] = [];
+    const { result, rerender } = renderHook(({ mode, entryKey }: { mode: "desktop" | "canvas"; entryKey: string }) => useNativeOsViewPersistence({
+      api: api as never, entryKey, tabs, surfaces: useDesktopSurfaces.getState().surfaces,
+      installedApps: [], mode, viewport: { width: 1200, height: 800 }, defaultIconLayout,
+    }), { initialProps: { mode: "desktop", entryKey: "first" } });
+    await waitFor(() => expect(result.current.surfacesRestored).toBe(true));
+    expect(useDesktopSurfaces.getState().surfaces.chat).toMatchObject({ mode: "minimized", bounds });
+    expect(useDesktopSurfaces.getState().surfaces.terminal).toMatchObject({ mode: "closed", bounds: canonical });
+
+    const reopenTerminal = () => useDesktopSurfaces.setState({ surfaces: {
+      ...useDesktopSurfaces.getState().surfaces,
+      terminal: { ...useDesktopSurfaces.getState().surfaces.terminal!, mode: "window", bounds },
+    } });
+    // Later owner writes must not replace the original entry snapshot before Canvas restores.
+    act(reopenTerminal);
+    rerender({ mode: "canvas", entryKey: "first" });
+    await waitFor(() => expect(result.current.surfacesRestored).toBe(true));
+    expect(useDesktopSurfaces.getState().surfaces.chat).toMatchObject({ mode: "minimized", bounds });
+    expect(useDesktopSurfaces.getState().surfaces.terminal).toMatchObject({ mode: "closed", bounds: canonical });
+
+    act(reopenTerminal);
+    rerender({ mode: "desktop", entryKey: "second" });
+    await waitFor(() => expect(result.current.surfacesRestored).toBe(true));
+    expect(useDesktopSurfaces.getState().surfaces.terminal).toMatchObject({ mode: "window", bounds });
+    expect(useTabs.getState().activeTabId).toBe("chat");
+  });
 
   it("retries a fresh native snapshot after a persistence failure", async () => {
     const api = {

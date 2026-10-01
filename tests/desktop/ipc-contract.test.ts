@@ -7,6 +7,12 @@ import {
 import type { CreateAgentThreadRequest } from "@matrix-os/contracts";
 
 describe("IPC contract", () => {
+  it("matches the shared drive folder byte range at the IPC boundary",()=>{
+    const input={scopeId:"00000000-0000-4000-8000-000000000001",organizationId:"org_example",runtimeSlot:"primary",authGeneration:1,folder:"f".repeat(798)};
+    const schema=INVOKE_CHANNELS["runtime:organization-drive-upload"].request;
+    expect(schema.safeParse(input).success).toBe(true);expect(schema.safeParse({...input,folder:"é".repeat(400)}).success).toBe(false);
+  });
+
   it("accepts only sign-up and sign-in intents for Electron Desktop device auth", () => {
     const request = INVOKE_CHANNELS["auth:start-device-flow"].request;
 

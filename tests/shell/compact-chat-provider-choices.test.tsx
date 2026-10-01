@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import React from "react";
 import { readFileSync } from "node:fs";
-import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CompactChatProviderChoices } from "../../packages/ui/src/compact-chat-provider-choices.js";
@@ -15,7 +15,7 @@ const matrix: CanonicalProviderChoice = {
   options: [], selectedOptions: [], supportsFileAttachments: true,
 };
 const pi = { ...matrix, instanceId: "pi_work", driverKind: "pi" as const, harnessLabel: "Pi · Work" };
-afterEach(() => vi.useRealTimers());
+afterEach(() => { cleanup(); vi.useRealTimers(); });
 
 const support = {
   rootChat: true, resume: true, cancellation: true, attachments: ["file"] as const,
@@ -244,5 +244,57 @@ describe("compact shared Chat choices", () => {
     expect(screen.queryByRole("button", { name: `Connect ${name}` })).toBeNull();
     expect(select).not.toHaveBeenCalled();
     expect(setup).not.toHaveBeenCalled();
+  });
+});
+
+
+describe("provider setup affordances", () => {
+  function installPickerStyles() {
+    const style = document.createElement("style");
+    style.textContent = `:root { --accent: rgb(20, 60, 40); --text-on-accent: rgb(250, 250, 245); }
+${readFileSync("packages/ui/src/compact-chat-provider-choices.css", "utf8")}`;
+    document.head.append(style);
+    return () => style.remove();
+  }
+
+  it.each(["claude_code", "codex"] as const)("keeps unauthenticated %s colorful and its existing connection action prominent with another provider selected", (driverKind) => {
+    const removeStyles = installPickerStyles();
+    try {
+      const label = driverKind === "claude_code" ? "Claude Code" : "Codex";
+      const action = { id: "connect", kind: "open_settings" as const, label: `Connect ${driverKind === "claude_code" ? "Claude" : "Codex"}` };
+      const instance = { ...catalog.instances[2]!, id: `${driverKind}_default`, driverKind, displayName: label, setupActions: [action] };
+      const setup = vi.fn();
+      const select = vi.fn();
+      render(<CompactChatProviderChoices catalog={{ ...catalog, drivers: [...catalog.drivers, { kind: driverKind, displayName: label, adapterVersion: "1", capabilityClass: "coding_agent" }], instances: [...catalog.instances, instance] }}
+        choices={[matrix, pi]} selected={pi} onSelect={select} onSetupAction={setup} />);
+      const entry = screen.getByRole("button", { name: `${label} agent, Authentication required` });
+      expect(entry).toBeEnabled();
+      expect(Number(getComputedStyle(entry).opacity || "1")).toBe(1);
+      fireEvent.click(entry);
+      expect(entry).toHaveAttribute("aria-pressed", "true");
+      expect(screen.queryByRole("option")).toBeNull();
+      const connect = screen.getByRole("button", { name: action.label });
+      const appearance = getComputedStyle(connect);
+      expect(appearance.backgroundColor).not.toBe("rgba(0, 0, 0, 0)");
+      expect(appearance.borderStyle).toBe("solid");
+      expect(appearance.justifyContent).toBe("center");
+      fireEvent.click(connect);
+      expect(setup).toHaveBeenCalledExactlyOnceWith(instance, action);
+      expect(select).not.toHaveBeenCalled();
+    } finally { removeStyles(); }
+  });
+
+  it("retains dimmed and disabled semantics for a locked ready provider", () => {
+    const removeStyles = installPickerStyles();
+    try {
+      const select = vi.fn();
+      render(<CompactChatProviderChoices catalog={{ ...catalog, instances: catalog.instances.map(instance => instance.driverKind === "opencode" ? { ...instance, availability: "available", setupActions: [] } : instance) }} choices={[matrix, pi]} selected={pi}
+        lockedInstanceId={pi.instanceId} onSelect={select} />);
+      const locked = screen.getByRole("button", { name: "OpenCode agent, Available" });
+      expect(locked).toBeDisabled();
+      expect(Number(getComputedStyle(locked).opacity)).toBeLessThan(1);
+      fireEvent.click(locked);
+      expect(select).not.toHaveBeenCalled();
+    } finally { removeStyles(); }
   });
 });

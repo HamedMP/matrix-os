@@ -1,3 +1,4 @@
+import { ChatProviderOnboarding } from "../chat/ChatProviderOnboarding";
 import { FolderOpen } from "@renderer/lib/hugeicons";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -423,7 +424,7 @@ export function ProjectChatDraft({
       {...attachments.paneProps}
     >
       {presentation === "hero" ? (
-        <ProjectChatHero
+        <ChatProviderOnboarding><ProjectChatHero
           projectLabel={projectLabel}
           headline={heroHeadline}
           suggestionsVisible={canCreate && promptEmpty}
@@ -432,7 +433,7 @@ export function ProjectChatDraft({
             setDraft((current) => ({ ...current, prompt }));
             focusComposer();
           }}
-        />
+        /></ChatProviderOnboarding>
       ) : null}
       <div className={`shrink-0 ${presentation === "landing" ? "" : "px-6 pb-5"}`}>
         <div className={cn("@container/project-composer mx-auto w-full", presentation === "landing" ? "max-w-none" : CHAT_CONTENT_WIDTH_CLASS)} data-slot="draft-composer">

@@ -324,7 +324,7 @@ export class ProviderSettingsController {
 
 export interface UseProviderSettingsControllerResult extends ProviderSettingsControllerState {
   onSelectHarness: (harnessInstanceId: string) => void;
-  refresh: () => Promise<void>;
+  refresh: (options?: { refresh?: boolean }) => Promise<void>;
   refreshForConnection: () => Promise<ProviderSettingsSnapshot | null>;
   mutate: (intent: ProviderSettingsMutationIntent, options?: ProviderSettingsMutationOptions) => Promise<boolean>;
 }
