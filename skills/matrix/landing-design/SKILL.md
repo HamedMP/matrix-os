@@ -58,6 +58,8 @@ Motion should establish hierarchy, explain continuity, or confirm an action. Rea
 
 ## Responsive and content states
 
+Read [Responsive layout and verification](../app-builder/references/responsive-layout.md). Apply its container-width composition and multi-width checks to the landing page and its working product; keep primary CTA, compact navigation, keyboard focus and touch controls accessible.
+
 Design for both wide and narrow Matrix windows. Use flexible grids and fluid type/spacing; collapse navigation before it crowds the CTA. Make long product names, headings, and labels wrap. Avoid fixed-height hero clipping or body overflow locks on scrolling pages.
 
 Use safe contrast in light/dark themes, readable screenshots, descriptive image alternatives, and semantic landmarks/headings. Loading imagery needs a stable aspect ratio. A missing preview, bridge, or asset should show an honest usable fallback; never a broken image or dead button.

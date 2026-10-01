@@ -181,7 +181,7 @@ For spatial apps: whiteboards, kanban boards, node editors.
 
 - Full-bleed canvas: no padding, fills the entire window
 - Floating toolbar: glass-morphism bar, positioned top-center or left side
-- Toolbar buttons: ghost variant, 36×36px, icon-only with tooltips
+- Toolbar buttons: ghost variant, compact visible icons with at least 44×44px touch hit areas; provide accessible labels, with tooltips as supplementary help
 - Zoom controls: bottom-right corner, small pill-shaped container
 - Canvas background: very subtle dot grid or topo pattern at 2-3% opacity
 - Cancellation must be explicit: Escape/cancel should suppress follow-up blur commits for inline editors.
@@ -219,10 +219,10 @@ Place the empty state in the same position where content will appear when popula
 
 ## Pattern: Mobile Adaptation
 
-Apps should be usable at 320px width (minimum window size).
+Apps should remain usable in narrow resizable containers, including 320px where supported. This is a fit check, not a fixed app minimum width. Follow [Responsive layout and verification](../app-builder/references/responsive-layout.md) for observed width checks and accessible compact navigation.
 
 - Sidebar → collapses to hamburger menu or bottom tabs
-- Data table → stacks into card list
+- Data table → labeled rows/details retaining all fields, or an explicit accessible scroll region for essential tables where comparison needs two dimensions
 - Side sheet → full-width overlay
 - Stats grid → 2 columns, then 1 column
 - Command bar → full width with reduced padding
@@ -241,7 +241,7 @@ Apps should be usable at 320px width (minimum window size).
 3. **Airy where reflective.** Journals, notes, creative tools should breathe. More padding, fewer borders.
 4. **One primary action per view.** The main thing the user came to do should be immediately obvious.
 5. **Never nest cards inside cards.** If you need hierarchy, use muted backgrounds or border-left accents.
-6. **Navigation: top (tabs) or left (sidebar).** Never bottom — the OS owns that space.
+6. **Navigation fits the available container.** Top tabs, a sidebar or accessible compact navigation should preserve all destinations; app navigation must not cover content or conflict with OS controls and safe areas.
 7. **No layout shift under data refresh.** Loading, empty, error, and populated states should reserve compatible
    space for the same controls.
 8. **Keyboard behavior is stateful.** Pause overlays, inline editors, and selected tools should treat Enter,

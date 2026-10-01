@@ -247,8 +247,8 @@ Always use flexbox centering and inline SVG or bundled local icons:
 
 ```css
 .icon-btn {
-  width: 36px;
-  height: 36px;
+  width: 44px;
+  height: 44px;
   border-radius: 50%;
   display: flex;
   align-items: center;
@@ -273,13 +273,15 @@ Always use flexbox centering and inline SVG or bundled local icons:
 1. **Never use text characters as icons.** `+`, `×`, `→`, `✓` never center. Use inline SVG or bundled local assets.
 2. **Always center icon buttons with flexbox.** `display:flex; align-items:center; justify-content:center`.
 3. **Use space intentionally.** Let density and negative space serve the primary task and selected product style.
-4. **Touch targets: minimum 36×36px.** Even if the icon is 16px.
+4. **Touch hit areas: minimum 44×44px on touch surfaces.** The visible icon may be smaller.
 5. **Text overflow:** `overflow:hidden; text-overflow:ellipsis; white-space:nowrap` on single-line text.
 6. **All inputs need visible focus states.** Never just `outline:none` with no replacement.
 7. **All buttons need hover + active states.** No flat state-free buttons.
 8. **Use a coherent shape system.** Deliberate radius differences can express hierarchy within the selected style.
 9. **Product backgrounds follow their semantic palette and supported modes.** Use gradients only with a purpose.
 10. **Choose available local or inherited fonts.** Establish hierarchy through size, weight, leading, and spacing.
+
+Adapt composition to the observed app container width, preserving all meaningful fields and actions. Prevent page-level horizontal overflow; essential tables, timelines and boards may use explicit accessible scroll regions. Do not use overflow masks to conceal clipped content.
 
 ## Bridge API Patterns
 

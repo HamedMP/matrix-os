@@ -99,7 +99,10 @@ describe("T1440-T1445: AI skills for app building", () => {
 
     it("documents responsive patterns", () => {
       const content = readFileSync(skillPath("design-system"), "utf-8");
-      expect(content).toContain("No horizontal overflow");
+      expect(content).toContain("No page-level horizontal overflow");
+      expect(content).toContain("essential tables");
+      expect(content).toContain("44×44px");
+      expect(content).not.toContain("minimum 36×36px");
     });
 
     it("documents shadcn-style primitives", () => {
@@ -148,6 +151,46 @@ describe("shipped design skill discovery", () => {
           expect(existsSync(resolve(dirname(resource), link.split("#")[0])), `${resource}: ${link}`).toBe(true);
         }
       }
+    }
+  });
+});
+
+describe("responsive app and landing guidance", () => {
+  const reference = join(SKILLS_DIR, "app-builder/references/responsive-layout.md");
+
+  it("checks concrete viewport widths and preserves access to essential content", () => {
+    const content = readFileSync(reference, "utf-8");
+    for (const width of [360, 390, 600, 820, 1024, 1440]) expect(content).toContain(`${width}px`);
+    expect(content).toContain("observed viewport");
+    expect(content).toContain("user-agent");
+    expect(content).toContain("container width");
+    expect(content).toContain("Do not hide fields");
+    expect(content).toContain("44×44px");
+    expect(content).toContain("keyboard focus");
+    expect(content).toContain("long labels");
+    expect(content).toContain("horizontal scrolling");
+    expect(content).toContain("fixed minimum width");
+  });
+
+  it("shares the responsive reference across app and landing workflows", () => {
+    const resources = [skillPath("app-builder"), join(SKILLS_DIR, "app-builder/references/app-craft.md"), skillPath("landing-design")];
+    for (const resource of resources) expect(readFileSync(resource, "utf-8")).toContain("responsive-layout.md");
+  });
+
+  it("requires observed multi-width evidence in model comparison briefs", () => {
+    const content = readFileSync(join(__dirname, "../../specs/543-app-builder-craft/demo-briefs.md"), "utf-8");
+    for (const width of [360, 390, 600, 820, 1024, 1440]) expect(content).toContain(`${width}px`);
+    expect(content).toContain("observed viewport");
+    expect(content).toContain("unavailable");
+  });
+
+  it("keeps baseline references compatible with touch and essential table scrolling", () => {
+    const patterns = readFileSync(skillPath("app-ui-patterns"), "utf-8");
+    const knowledge = readFileSync(join(__dirname, "../../home/agents/knowledge/matrix-design-system.md"), "utf-8");
+    for (const content of [patterns, knowledge]) {
+      expect(content).toContain("44×44px");
+      expect(content).toContain("essential tables");
+      expect(content).not.toContain("minimum 36×36px");
     }
   });
 });

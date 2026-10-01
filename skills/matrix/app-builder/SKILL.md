@@ -43,6 +43,8 @@ Use this when the user asks to build, create, fix, redesign, or publish a Matrix
 3. Build one complete vertical slice against the owner's real Postgres through `window.MatrixOS.db`: read → create/edit → confirm or restore on failure → reopen. Verify it before expanding secondary screens. Never use convincing fake records to conceal a missing data path.
 4. Inspect the running app in the available Matrix surfaces, refine the largest hierarchy or interaction problem, and inspect again. Check keyboard and reduced motion, not just the default screenshot. Record skills loaded, surface, viewport, theme, states, persistence result, and screenshot/recording evidence; report unavailable evidence explicitly.
 
+For apps and matching landing pages, read [Responsive layout and verification](references/responsive-layout.md). Compose for actual app container width across varied Matrix windows and mobile screens; verify the listed widths and retain all meaningful fields/actions.
+
 Avoid a generic welcome hero, decorative statistic cards, repeated glass containers, and automatic staggered entrances. The usable primary flow owns the first screen.
 
 ## Standard Structure

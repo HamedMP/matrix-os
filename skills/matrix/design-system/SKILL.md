@@ -220,7 +220,7 @@ Use stat cards only when the number helps a real decision. A compact label/value
 
 **Components must fill space intentionally.** No cards with 80% empty whitespace and tiny text in one corner. Use horizontal layouts for compact cards.
 
-**Touch targets: minimum 36×36px.** Even if the icon is 16px.
+**Touch hit areas: minimum 44×44px on touch surfaces.** The visible icon may be smaller.
 
 **Text overflow.** Use `overflow:hidden; text-overflow:ellipsis; white-space:nowrap` on single-line text in constrained containers.
 
@@ -232,7 +232,7 @@ Use stat cards only when the number helps a real decision. A compact label/value
 
 ## Verification
 
-- No horizontal overflow in small windows
+- No page-level horizontal overflow in small windows; essential tables, timelines and boards may scroll inside explicit accessible regions without hiding fields
 - No text characters used as icons (search for `>×</`, `>+</`)
 - All icon buttons visually centered
 - No components with excessive empty whitespace

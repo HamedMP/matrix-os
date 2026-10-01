@@ -145,12 +145,14 @@ open/close and failures with normal and reduced motion.
 
 ## Inspect and refine
 
+Follow [Responsive layout and verification](responsive-layout.md) for container-based composition, accessible compact navigation, essential table scrolling and the required multi-width checks. Record responsive decisions in DESIGN.md and observed viewport/container evidence in BUILD-REPORT.md.
+
 Run the app in Matrix, not only a standalone preview. Check Web Canvas, Web Desktop,
 and Electron Desktop where available; include Web Mobile and Native Mobile when supported.
 At minimum inspect a narrow window, the normal working size, both theme modes, and
 reduced motion. Test keyboard focus, Escape, labeled icon buttons, long text, empty,
-loading, failure/retry, populated, and saving states. Touch targets should be comfortably
-usable (aim for 44px on touch surfaces). Verify persistence by reopening the app.
+loading, failure/retry, populated, and saving states. Touch hit areas must be at least
+44×44px on touch surfaces. Verify persistence by reopening the app.
 
 Capture screenshots and interact with the primary flow; review motion at normal speed
 and slower playback when tools allow. Fix the biggest hierarchy, spacing, contrast, or
