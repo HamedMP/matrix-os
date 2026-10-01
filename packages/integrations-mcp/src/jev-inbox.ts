@@ -17,6 +17,17 @@ const inputSchema = z.union([
     z.strictObject({ operation: z.literal("batch_status"), jobId: jobId.optional() }),
   ])
 ]);
+// MCP's tool catalog requires an object schema. A top-level union is
+// advertised as an empty parameter object by the SDK. Keep the operation
+// union below as the authoritative per-action validation before any fetch.
+const catalogSchema = z.strictObject({
+  operation: z.enum(["discover", "select", "evaluate", "batch_start", "batch_next", "batch_resume", "batch_status"]),
+  receipt: receipt.optional().describe("Required for select and evaluate. Use the server-issued receipt from the preceding discover or select result."),
+  threadId: JevInboxGmailIdSchema.optional().describe("Required for select. Use a threadId returned by discover; omit for all other operations."),
+  maxThreads: z.number().int().min(1).max(10000).optional().describe("Optional for batch_start only. Bounds the number of Inbox threads to process."),
+  jobId: jobId.optional().describe("Required for batch_next and batch_resume; optional for batch_status to locate specific saved work. Use a server-issued jobId."),
+  revision: z.number().int().min(1).optional().describe("Required for batch_next only. Use the latest revision returned by the server."),
+});
 const MAX_BYTES = 64 * 1024;
 const failure = () => ({ isError: true, content: [{ type: "text" as const,
       text: "Inbox result is unavailable. If labeling is enabled, changes may be unconfirmed; check Gmail before retrying." }] });
@@ -29,8 +40,8 @@ function cancelBody(body: ReadableStream<Uint8Array> | ReadableStreamDefaultRead
 /** Sole tool for an isolated recipe process. Account/content/verification authority remains on the server. */
 export function registerJevInboxTool(server: McpServer, fetcher: GatewayFetcher = fetch): void {
   server.registerTool("jev_inbox_preview", {
-    description: "For Inbox-wide triage, batch_start then repeat batch_next with the latest returned jobId and revision until terminal/paused, report server progress; batch_status locates saved work and batch_resume continues it. For a targeted thread, discover, select with receipt, then evaluate. The server returns proposals or, when the owner saved labeling permission for this bot, adds verified Jev labels and confirms Gmail readback. Never archives, sends or deletes email.",
-    inputSchema, annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+    description: "Operation arguments: discover takes no other arguments; select requires receipt and threadId; evaluate requires receipt; batch_start accepts optional maxThreads; batch_next requires jobId and revision; batch_resume requires jobId; batch_status accepts optional jobId. Omit fields not accepted by the selected operation. For Inbox-wide triage, batch_start then repeat batch_next with the latest returned jobId and revision until terminal/paused, report server progress; batch_status locates saved work and batch_resume continues it. For a targeted thread, discover, select with receipt, then evaluate. The server returns proposals or, when the owner saved labeling permission for this bot, adds verified Jev labels and confirms Gmail readback. Never archives, sends or deletes email.",
+    inputSchema: catalogSchema, annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
   }, async (rawInput) => {
     let response: Response | undefined;
     let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
