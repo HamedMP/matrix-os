@@ -3,6 +3,7 @@ import { sql, type Kysely } from "kysely";
 import { z } from "zod/v4";
 import type { ChatDatabase } from "./database.js";
 import type { ChatOwner } from "./records.js";
+import { hasCompanyDriveMaterial } from "./drive-sharing-guard.js";
 
 export { ShareSnapshotSchema, ShareTokenSchema } from "@matrix-os/contracts";
 import { ShareSnapshotSchema, ShareTokenSchema, type ShareSnapshot } from "@matrix-os/contracts";
@@ -32,6 +33,8 @@ function tokenHash(token: string) {
 
 
 async function readSnapshot(trx: Kysely<ChatDatabase>, chatId: string, title: string) {
+  // Callers hold the Chat lock also used by admission and sharing transitions.
+  if (await hasCompanyDriveMaterial(trx, chatId)) throw new ChatSharingError("conflict");
   const rows = await trx.selectFrom("chat_messages").select(["role", "parts"])
     .where("chat_id", "=", chatId).where("state", "=", "committed").where("role", "in", ["user", "assistant"])
     .orderBy("seq").limit(201).execute();
@@ -98,8 +101,16 @@ export class ChatSharing {
 
   async read(token: string): Promise<ShareSnapshot | null> {
     if (!ShareTokenSchema.safeParse(token).success) return null;
-    const row = await this.db.selectFrom("chat_shares").select("snapshot")
-      .where("token_hash", "=", tokenHash(token)).where("expires_at", ">", new Date()).executeTakeFirst();
-    return row ? ShareSnapshotSchema.parse(row.snapshot) : null;
+    return this.db.transaction().execute(async (trx) => {
+      await sql`SET LOCAL statement_timeout = '5s'`.execute(trx);
+      await sql`SET LOCAL lock_timeout = '5s'`.execute(trx);
+      const row = await trx.selectFrom("chat_shares").innerJoin("chats", "chats.id", "chat_shares.chat_id")
+        .select(["chat_shares.snapshot", "chat_shares.chat_id"])
+        .where("token_hash", "=", tokenHash(token)).where("expires_at", ">", new Date())
+        .forShare("chats").executeTakeFirst();
+      // Old immutable snapshots also fail closed once their source becomes drive-backed.
+      if (!row || await hasCompanyDriveMaterial(trx, row.chat_id)) return null;
+      return ShareSnapshotSchema.parse(row.snapshot);
+    });
   }
 }

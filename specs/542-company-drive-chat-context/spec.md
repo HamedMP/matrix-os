@@ -155,7 +155,13 @@ Chat row lock, so a previously issued share confirmation cannot bypass it.
 Project resource staging checks the same restriction, and final project publication
 locks each inherited Chat and rechecks drive material in the publication transaction.
 Mentioning such a Chat as context in another Chat is also disabled, including
-queued/retried referenced history. Personal stored Chat history stays readable.
+queued/retried referenced history. The legacy public-link preview and creation endpoints enforce the same guard
+under their Chat row lock. Public token reads lock the source Chat and fail closed
+when drive material exists, including run-only context; existing links cannot
+bypass the rule. Owner link listing and revocation remain available for cleanup.
+Public reads have five-second SQL and lock deadlines and return the ordinary
+unavailable response without revealing drive existence. Personal stored Chat
+history stays readable.
 This increment does not claim organization sharing of drive excerpts.
 
 Large-file extraction plan: new authorization, tools, production configuration
