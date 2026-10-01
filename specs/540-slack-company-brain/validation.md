@@ -103,8 +103,8 @@ is baked into the next auth-shell build, avoiding a manual configuration loss
 on rebuild. The Worker uses no credentials. Remove its exact route, DNS record
 and script after the test; automatic expiry denies requests in the meantime.
 
-Qualification: the final preview/Worker regression passes 10 suites / 173 tests;
-the documentation repository passes 233 tests. The 26 focused Worker tests cover host/path separation, actual body
+Qualification: the preview/Worker regression passed 10 suites / 173 tests;
+the documentation repository passes 233 tests. The focused Worker regression now passes 35 tests, including exact Clerk handshake return normalization from the local HTTP auth transport to the approved HTTPS alias. External issuers, other preview hosts and credential-bearing return URLs are unchanged. No handshake is followed by the Worker and no session tokens are logged. The Worker tests also cover host/path separation, actual body
 caps, expiry, proof-header removal, cookie handling, auth redirects and stalled
 requests; strict Worker TypeScript passes. Slack itself verified the new event
 URL. The native install-start endpoint independently authenticated the selected
