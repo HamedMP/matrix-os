@@ -98,6 +98,12 @@ describe("getFocusedSessionId", () => {
     expect(getFocusedSessionId(tree, null)).toBe("s-left");
   });
 
+  it("falls back to the first pane when focus still names a pane from another tab", () => {
+    // After a layout conflict adopts a different tab, focus can lag behind; it must not
+    // hide the share control for a tab that does have an attached terminal.
+    expect(getFocusedSessionId(tree, "pane-from-previous-tab")).toBe("s-left");
+  });
+
   it("returns null for a pane that has no session yet", () => {
     const unattached: PaneNode = { type: "pane", id: "only", cwd: "/" };
     expect(getFocusedSessionId(unattached, null)).toBeNull();

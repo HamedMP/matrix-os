@@ -196,6 +196,34 @@ describe("DesktopOrganizationMenuItems", () => {
     expect(window.localStorage.getItem(KEY + "user_nima")).toBeNull();
   });
 
+  it("never judges a newly signed-in user's choice against the previous user's list", async () => {
+    apiState.get.mockResolvedValueOnce({ organizations: [{ organizationId: "org_a", name: "A" }] });
+    renderMenu();
+    await screen.findByRole("menuitemradio", { name: "A" });
+
+    // Account B signs in while the menu is open; B's own listing has not arrived yet.
+    apiState.get.mockReturnValueOnce(new Promise(() => undefined));
+    window.localStorage.setItem(KEY + "user_b", "org_b");
+    act(() => { useConnection.setState({ userId: "user_b", organizationId: "org_b" }); });
+    await act(async () => { await Promise.resolve(); });
+
+    expect(useConnection.getState().organizationId).toBe("org_b");
+    expect(window.localStorage.getItem(KEY + "user_b")).toBe("org_b");
+  });
+
+  it("keeps a remembered organization that a capped listing cannot rule out", async () => {
+    useConnection.getState().selectOrganization("org_beyond_cap");
+    const organizations = Array.from({ length: 100 }, (_, index) => ({
+      organizationId: `org_${String(index).padStart(3, "0")}`,
+      name: `Org ${index}`,
+    }));
+    apiState.get.mockResolvedValue({ organizations });
+    renderMenu();
+
+    await screen.findByRole("menuitemradio", { name: "Org 0" });
+    expect(useConnection.getState().organizationId).toBe("org_beyond_cap");
+  });
+
   it("releases its collaboration API when the menu closes", async () => {
     apiState.get.mockResolvedValue({ organizations: [{ organizationId: "org_finna", name: "Finna" }] });
     const { unmount } = renderMenu();

@@ -225,7 +225,9 @@ export function hasPaneId(node: PaneNode, paneId: string): boolean {
  * terminal rather than each deriving its own.
  */
 export function getFocusedSessionId(node: PaneNode, focusedPaneId: string | null): string | null {
-  return getPaneSessionId(node, focusedPaneId ?? getFirstPaneId(node));
+  // Focus can still name a pane from the previous tab after a layout conflict adopts
+  // another one; looking it up in this tree would find nothing and hide sharing.
+  return getPaneSessionId(node, focusedPaneId && hasPaneId(node, focusedPaneId) ? focusedPaneId : getFirstPaneId(node));
 }
 
 export function getPaneSessionId(node: PaneNode, paneId: string): string | null {
