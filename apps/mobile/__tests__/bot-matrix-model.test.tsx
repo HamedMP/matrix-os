@@ -30,8 +30,13 @@ it("retains an unavailable Native Mobile choice and blocks creation until delibe
   fireEvent.press(screen.getByText("GLM 5.3 Flash · Matrix AI · Pi"));
   rerender(<BotRecipeChooser {...props} catalog={{ ...catalog, instances: [] }} />);
   expect(screen.getByText(/saved Matrix AI model is unavailable/)).toBeTruthy();
+  expect(screen.getByRole("radio", { name: "GLM 5.3 Flash · Matrix AI · Pi · unavailable" }).props.accessibilityState)
+    .toMatchObject({ checked: true, disabled: true });
+
   fireEvent.press(screen.getByText("Build in Chat"));
   expect(create).not.toHaveBeenCalled();
+  fireEvent.press(screen.getByText("Automatic · managed by this computer"));
+  expect(screen.queryByText(/saved Matrix AI model is unavailable/)).toBeNull();
 });
 it("reads saved Matrix model intent in Native Mobile bot controls and shows unavailable state", () => {
   const snapshot = { agentId: "bot_abcdefgh", name: "Writer", selection: selected, interactions: [], tasks: [],
@@ -39,6 +44,17 @@ it("reads saved Matrix model intent in Native Mobile bot controls and shows unav
   render(<BotChatControls snapshot={snapshot} catalog={{ ...catalog, instances: [] }}
     onResolve={jest.fn()} onRevoke={jest.fn()} onMemory={jest.fn()} onRefresh={jest.fn()} />);
   expect(screen.getByText(`Runtime: Pi · Matrix AI · ${selected.model} · unavailable`)).toBeTruthy();
+});
+
+it("restores the exact saved identity when a creation attempt reopens with an unavailable route", () => {
+  const unavailable = { ...catalog, instances: [{ ...catalog.instances[0]!, availability: "unavailable" as const }] };
+  const attemptRef = { current: { scope: "owner", key: "attempt", requestId: "request_abcdefgh", selection: selected } };
+  const { rerender } = render(<BotRecipeChooser recipes={[recipe]} catalog={unavailable}
+    attemptRef={attemptRef} attemptScope="owner" onCreate={jest.fn()} onOpenChat={jest.fn()} />);
+  expect(screen.getByRole("radio", { name: "GLM 5.3 Flash · Matrix AI · Pi · unavailable" }).props.accessibilityState.checked).toBe(true);
+  rerender(<BotRecipeChooser recipes={[recipe]} catalog={{ ...catalog, instances: [] }}
+    attemptRef={attemptRef} attemptScope="owner" onCreate={jest.fn()} onOpenChat={jest.fn()} />);
+  expect(screen.getByRole("radio", { name: "GLM 5.3 Flash · Matrix AI · Pi · unavailable" })).toBeTruthy();
 });
 
 it("edits only the bot model through its revisioned Native Mobile action", async () => {

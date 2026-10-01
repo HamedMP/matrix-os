@@ -1,7 +1,7 @@
 import { useRef, useState, type RefObject } from "react";
 import { FlatList, Pressable, Text, TextInput, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
-import { managedPiBotModelChoices, type CanonicalProviderCatalog, type CanonicalChatModelSelection, type BotRecipeRef, type BotRecipeSummary } from "@matrix-os/contracts";
+import { botModelRoutingLabel, canonicalProviderModelRouteLabel, managedPiBotModelChoices, type CanonicalProviderCatalog, type CanonicalChatModelSelection, type BotRecipeRef, type BotRecipeSummary } from "@matrix-os/contracts";
 import { canonicalChatRequestId } from "@/lib/requests";
 
 export interface BotCreationAttempt { scope: string; key: string; requestId: string; selection?: CanonicalChatModelSelection | null }
@@ -21,6 +21,12 @@ export function BotRecipeChooser({ recipes, onCreate, onOpenChat, attemptRef, at
   const [selection, setSelection] = useState<CanonicalChatModelSelection | null>(() =>
     attempt.current?.scope === attemptScope ? attempt.current.selection ?? null : null);
   const choices = managedPiBotModelChoices(catalog);
+  const [savedModelLabel, setSavedModelLabel] = useState(() => {
+    const instance = catalog?.instances.find((candidate) => candidate.id === selection?.instanceId);
+    const model = instance?.models.find((candidate) => candidate.id === selection?.model);
+    return instance && selection ? canonicalProviderModelRouteLabel(instance, model?.displayName ?? selection.model)
+      : selection ? botModelRoutingLabel(selection) : "";
+  });
   const modelAvailable = !selection || choices.some((choice) => choice.selection.instanceId === selection.instanceId && choice.selection.model === selection.model);
   const normalized = query.trim().toLocaleLowerCase();
   const visible = recipes.filter((recipe) => !normalized || [recipe.name, recipe.description, recipe.output]
@@ -54,9 +60,13 @@ export function BotRecipeChooser({ recipes, onCreate, onOpenChat, attemptRef, at
     <Text style={styles.heading}>Bot model</Text>
     <Pressable accessibilityRole="radio" accessibilityState={{ checked: !selection, disabled: !!pending }} disabled={!!pending}
       style={styles.button} onPress={() => setSelection(null)}><Text style={styles.text}>Automatic · managed by this computer</Text></Pressable>
+    {!modelAvailable && selection ? <Pressable accessibilityRole="radio"
+      accessibilityState={{ checked: true, disabled: true }} disabled style={styles.button}>
+      <Text style={styles.text}>{savedModelLabel} · unavailable</Text>
+    </Pressable> : null}
     {choices.map((choice) => <Pressable key={choice.selection.model} accessibilityRole="radio"
       accessibilityState={{ checked: selection?.model === choice.selection.model, disabled: !!pending }} disabled={!!pending}
-      style={styles.button} onPress={() => setSelection(choice.selection)}><Text style={styles.text}>{choice.label}</Text></Pressable>)}
+      style={styles.button} onPress={() => { setSavedModelLabel(choice.label); setSelection(choice.selection); }}><Text style={styles.text}>{choice.label}</Text></Pressable>)}
     {!modelAvailable ? <Text style={styles.muted}>This saved Matrix AI model is unavailable. Choose another model or check Agents &amp; providers.</Text> : null}
     {error ? <Text accessibilityRole="alert" style={styles.text}>{error}</Text> : null}
     <FlatList style={styles.scroller} contentContainerStyle={styles.list} nestedScrollEnabled

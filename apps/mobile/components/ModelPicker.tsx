@@ -1,6 +1,6 @@
-import type { CanonicalChatModelSelection, CanonicalProviderCatalog } from "@matrix-os/contracts";
+import { canonicalProviderAvailabilityReasonLabel, canonicalProviderModelRouteLabel, type CanonicalChatModelSelection, type CanonicalProviderCatalog } from "@matrix-os/contracts";
 import { Host, Picker } from "@expo/ui";
-import { View } from "react-native";
+import { Text, View } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 
 const MODEL_VALUE_SEPARATOR = "::";
@@ -31,14 +31,18 @@ export function ModelPicker({
   onSelectionChange: (selection: CanonicalChatModelSelection) => void;
 }) {
   const { theme } = useUnistyles();
-  if (!catalog) return null;
-  const availableInstances = catalog.instances.filter((instance) => instance.availability === "available");
-  if (availableInstances.length === 0) return null;
+  const availableInstances = catalog?.instances.filter((instance) => instance.availability === "available") ?? [];
 
   const selectedInstance = selection
-    ? availableInstances.find((instance) => instance.id === selection.instanceId)
+    ? catalog?.instances.find((instance) => instance.id === selection.instanceId)
     : undefined;
+  const selectedModel = selectedInstance?.models.find((model) => model.id === selection?.model);
+  const selectionAvailable = selectedInstance?.availability === "available" && selectedModel?.availability === "available";
+  const savedLabel = canonicalProviderModelRouteLabel(selectedInstance, selectedModel?.displayName ?? selection?.model ?? "Models unavailable");
   const modelValue = selection ? modelKey(selection.instanceId, selection.model) : "";
+  const recoveryReason = !catalog ? "Checking model availability"
+    : selectedInstance?.availability !== "available" && selectedInstance ? canonicalProviderAvailabilityReasonLabel(selectedInstance)
+      : "Saved model unavailable";
 
   function handleModelChange(value: string) {
     const parsed = parseModelKey(value);
@@ -49,7 +53,7 @@ export function ModelPicker({
     onSelectionChange({ instanceId: instance.id, model: model.id });
   }
 
-  const composerOption = selectedInstance?.options.find((option) => option.placement === "composer");
+  const composerOption = selectionAvailable ? selectedInstance?.options.find((option) => option.placement === "composer") : undefined;
   const optionValue = composerOption && selection?.options
     ? selection.options.find((selected) => selected.id === composerOption.id)?.value
     : composerOption?.defaultValue;
@@ -65,7 +69,7 @@ export function ModelPicker({
 
   // The native menu button's own label already shows the selected item's
   // text (SwiftUI .pickerStyle(.menu) / Material3 dropdown convention), so
-  // no separate caption is rendered here — just the model's short name.
+  // Include the connection/runtime label to distinguish equally named models.
   return (
     <View style={styles.row}>
       <Host matchContents seedColor={theme.v2.appColors.muted}>
@@ -73,21 +77,27 @@ export function ModelPicker({
           appearance="menu"
           selectedValue={modelValue}
           onValueChange={handleModelChange}
+          enabled={availableInstances.some((instance) => instance.models.some((model) => model.availability === "available"))}
           testID="model-picker"
         >
+          {selection && !selectionAvailable ? <Picker.Item label={`${savedLabel} · ${catalog ? "unavailable" : "checking"}`} value={modelValue} /> : null}
+          {!selection ? <Picker.Item label="Choose a model" value="" /> : null}
           {availableInstances.flatMap((instance) => (
             instance.models
               .filter((model) => model.availability === "available")
               .map((model) => (
                 <Picker.Item
                   key={modelKey(instance.id, model.id)}
-                  label={model.displayName}
+                  label={canonicalProviderModelRouteLabel(instance, model.displayName)}
                   value={modelKey(instance.id, model.id)}
                 />
               ))
           ))}
         </Picker>
       </Host>
+      {selection && !selectionAvailable ? <Text accessibilityRole="alert" style={styles.recovery}>
+        {recoveryReason}. Choose another model or check Agents &amp; providers.
+      </Text> : null}
       {composerOption && composerOption.kind === "enum" && composerOption.values ? (
         <Host matchContents seedColor={theme.v2.appColors.muted}>
           <Picker
@@ -106,10 +116,12 @@ export function ModelPicker({
   );
 }
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create((theme) => ({
   row: {
     flexDirection: "row",
+    flexWrap: "wrap",
     alignItems: "center",
     gap: 4,
   },
-});
+  recovery: { color: theme.colors.mutedForeground, flexBasis: "100%", fontSize: 12 },
+}));

@@ -1,3 +1,4 @@
+import { canonicalProviderAvailabilityReasonLabel } from "@matrix-os/contracts";
 import type {
   CanonicalProviderCatalog,
   CanonicalProviderDriverKind,
@@ -69,34 +70,10 @@ function selectedOptionsFor(
   });
 }
 
-const UNAVAILABLE_LABELS: Record<
-  NonNullable<CanonicalProviderInstanceDescriptor["unavailabilityReason"]>,
-  string
-> = {
-  disabled_in_settings: "Disabled in Settings",
-  settings_unavailable: "Settings unavailable",
-  runtime_not_runnable: "Not supported in this runtime",
-  runtime_inactive: "Runtime inactive",
-  runtime_unavailable: "Runtime unavailable",
-  not_installed: "Not installed",
-  authentication_required: "Authentication required",
-  multiple_profiles_unsupported: "Choose one enabled account",
-};
-
-export function canonicalProviderAvailabilityLabel(
-  instance: CanonicalProviderInstanceDescriptor,
-): string {
-  if (instance.unavailabilityReason !== "disabled_in_settings" && instance.unavailabilityReason !== "settings_unavailable") {
-    if (instance.connectionState === "credit_required") return "Matrix AI credit required";
-    if (instance.connectionState === "unavailable") return "Matrix AI unavailable";
-  }
-  if (instance.availability === "available") return (instance.driverKind === "codex" || instance.localObservation !== undefined)
-    ? codexLocalObservationLabel(instance.localObservation)
-    : "Available";
-  if (instance.unavailabilityReason) return UNAVAILABLE_LABELS[instance.unavailabilityReason];
-  if (instance.availability === "setup_required") return "Setup required";
-  if (instance.availability === "auth_required") return "Authentication required";
-  return "Unavailable";
+export function canonicalProviderAvailabilityLabel(instance: CanonicalProviderInstanceDescriptor): string {
+  const label = canonicalProviderAvailabilityReasonLabel(instance);
+  return label === "Available" && (instance.driverKind === "codex" || instance.localObservation !== undefined)
+    ? codexLocalObservationLabel(instance.localObservation) : label;
 }
 
 export function codexLocalObservationLabel(observation?: AiProviderLocalObservation): string {
