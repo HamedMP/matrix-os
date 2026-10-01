@@ -56,6 +56,10 @@ export function HostedWorkSidebar({ tab, active }: { tab: Tab; active: boolean }
         runtime?.requestAgentDraft(text, resources);
         navigateToGlobalDraft();
       }}
+      onOpenBotChat={(chatId) => useTabs.getState().openTab({
+        kind: "work", title: "Chat", workRoute: "chat", chatId,
+        chatView: "conversation", closable: false,
+      })}
       onCreateProject={() => useUi.getState().openCreateProject()}
       onNewProjectChat={openWorkProject}
       onSelectChat={selectChat}

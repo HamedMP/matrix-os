@@ -1,6 +1,6 @@
 import { CanonicalUpdateChatReadStateRequestSchema, type CanonicalUpdateChatReadStateRequest } from "@matrix-os/contracts";
 import { createChatAgentClient, filePreviewContentUrl, type ChatAgentClient } from "@matrix-os/ui";
-import { chatMessageVersionUrl, chatReadStateVersionUrl } from "@matrix-os/contracts";
+import { chatEventVersionUrl, chatMessageVersionUrl, chatReadStateVersionUrl } from "@matrix-os/contracts";
 import {
   CanonicalChatQueueAdmissionResponseSchema, CanonicalChatQueueCancellationResponseSchema,
   CanonicalQueueChatTurnRequestSchema, CanonicalCancelQueuedChatTurnRequestSchema, CanonicalChatQueuedTurnIdSchema,
@@ -180,7 +180,7 @@ export function createCanonicalShellChatClient(options: {
       ...(body === undefined ? {} : { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }),
     })),
     async openEventStream({ cursor, signal }) {
-      const response = await fetchFn(chatReadStateVersionUrl(chatMessageVersionUrl(`${options.gatewayUrl}/api/chats/events`)), {
+      const response = await fetchFn(chatEventVersionUrl(chatReadStateVersionUrl(chatMessageVersionUrl(`${options.gatewayUrl}/api/chats/events`))), {
         method: "GET",
         headers: {
           Accept: "text/event-stream",

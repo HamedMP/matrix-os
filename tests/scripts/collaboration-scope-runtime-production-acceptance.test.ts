@@ -5,6 +5,11 @@ import {
   SCOPE_RUNTIME_PROFILE_DIGEST,
   SCOPE_RUNTIME_PROFILE_ID,
 } from "../../packages/scope-runtime/src/profile.js";
+import {
+  SCOPE_RUNTIME_BOT_HARNESS_VERSION,
+  SCOPE_RUNTIME_BOT_PROFILE_DIGEST,
+  SCOPE_RUNTIME_BOT_PROFILE_ID,
+} from "../../packages/scope-runtime/src/bot-profile.js";
 
 const acceptancePath = "scripts/spikes/collaboration/production-supervisor-acceptance.mjs";
 
@@ -221,5 +226,14 @@ describe("collaboration production scope-runtime acceptance", () => {
     expect(source).toContain("scope_runtime_production_acceptance=passed");
     expect(source).toContain("supervisor_version=1.0.0");
     expect(source).toContain("profile_digest=");
+  });
+
+  it("pins the advertised bot profile to the source-controlled digest and adapter", async () => {
+    const source = await readFile(acceptancePath, "utf8");
+
+    expect(source).toContain(`EXPECTED_BOT_PROFILE_ID = "${SCOPE_RUNTIME_BOT_PROFILE_ID}"`);
+    expect(source).toContain(`EXPECTED_BOT_PROFILE_DIGEST = "${SCOPE_RUNTIME_BOT_PROFILE_DIGEST}"`);
+    expect(source).toContain(`EXPECTED_BOT_HARNESS_VERSION = "${SCOPE_RUNTIME_BOT_HARNESS_VERSION}"`);
+    expect(source).toContain('"profile_catalog_chat_invalid"');
   });
 });

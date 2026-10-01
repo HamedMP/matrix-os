@@ -21,6 +21,7 @@ TimeoutStartSec=30
 TimeoutStopSec=45
 KillMode=control-group
 RuntimeDirectory=matrix-scope-runtime
+RuntimeDirectoryPreserve=yes
 RuntimeDirectoryMode=0770
 StateDirectory=matrix-scope-runtime
 StateDirectoryMode=0700
@@ -28,7 +29,10 @@ UMask=0007
 PrivateNetwork=yes
 PrivateIPC=yes
 PrivateDevices=yes
-ProtectHome=yes
+# Home stays hidden except the bot workspace root, which the supervisor reads
+# (never writes) to validate a bot_agent mount before systemd binds it.
+ProtectHome=tmpfs
+BindReadOnlyPaths=-/home/matrix/home/bots
 ProtectSystem=strict
 ProtectProc=invisible
 ProcSubset=pid

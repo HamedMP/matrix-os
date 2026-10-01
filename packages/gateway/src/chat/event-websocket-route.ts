@@ -1,4 +1,4 @@
-import { CanonicalChatEventCursorSchema } from "@matrix-os/contracts";
+import { CanonicalChatEventCursorSchema, ChatEventWireVersionSchema, projectChatEventFrame } from "@matrix-os/contracts";
 import type { Context, Hono } from "hono";
 import type { UpgradeWebSocket, WSContext } from "hono/ws";
 import { z } from "zod/v4";
@@ -33,12 +33,13 @@ export function registerCanonicalChatEventWebSocketRoute(options: {
           const rawCursor = context.req.query("cursor");
           if (rawCursor !== undefined && !/^(0|[1-9]\d*)$/.test(rawCursor)) throw new Error("InvalidCursor");
           const cursor = rawCursor === undefined ? undefined : CanonicalChatEventCursorSchema.parse(Number(rawCursor));
+          const eventVersion = ChatEventWireVersionSchema.parse(context.req.query("eventVersion"));
           const opened = await options.stream.open({ principal, cursor, sink: {
             send(frame) {
               if (closed || frame.type === "chat.content") return false;
               const raw = ws.raw as { bufferedAmount?: number } | undefined;
               if ((raw?.bufferedAmount ?? 0) > 256 * 1024) return false;
-              ws.send(JSON.stringify(frame));
+              ws.send(JSON.stringify(projectChatEventFrame(frame, eventVersion)));
               return true;
             },
             close: () => close(ws),

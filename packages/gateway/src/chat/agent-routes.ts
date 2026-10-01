@@ -117,6 +117,9 @@ export function createChatAgentRoutes(options: {
     const input = UpdateChatAgentRequestSchema.parse(await c.req.json());
     const current = await agents.get({ type: "personal", ownerId: principal.userId }, id);
     if (!current) return c.json({ error: "Agent or Chat not found" }, 404);
+    if (input.selection && current.recipeRef) {
+      return c.json({ error: "This bot’s model is managed by this computer." }, 400);
+    }
     const jev = isJevInboxRecipe(input.recipe === null ? undefined : input.recipe ?? current.recipe);
     if ((input.selection || (input.recipe && jev) || (jev && input.archived === false))
       && !await validSelection(principal, input.selection ?? current.selection, jev)) return c.json({ error: "Choose an available Agent model." }, 400);

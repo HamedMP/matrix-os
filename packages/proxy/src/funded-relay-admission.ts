@@ -57,6 +57,15 @@ export class AdmissionController {
     };
   }
 
+  /**
+   * Why `acquireGlobal` just refused, read in the same tick. Only a full
+   * concurrency pool frees on its own soon; a spent per-minute window does not.
+   */
+  globalRefusalReason(): "busy" | "rate_limited" | "closed" {
+    if (this.closed) return "closed";
+    return this.active >= this.config.globalConcurrency ? "busy" : "rate_limited";
+  }
+
   admitRuntime(runtimeId: string): boolean {
     if (this.closed) return false;
     const now = this.now();

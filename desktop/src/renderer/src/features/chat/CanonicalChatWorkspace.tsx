@@ -1,10 +1,13 @@
 import { CanonicalNewChatContent } from "./CanonicalNewChatContent";
+import { MATRIX_BOT_SELECTION } from "@matrix-os/contracts";
 import { desktopProviderIdentityKey } from "../../lib/provider-settings-identity";
 import { canonicalComposerSelectionIsAvailable } from "./canonical-composer-state";
 import {
   isChatUnread,
   chatReadAction,
   CanonicalSharedChatPanel,
+  BotChatPanel,
+  useDirectBotChat,
   SharedChatPanel,
   sharedChatMembershipFromProjection,
 } from "@matrix-os/ui";
@@ -166,6 +169,17 @@ export function CanonicalChatWorkspace({
     autoSelectFirst: false,
     eventSource,
   });
+  const [botEventRevision, setBotEventRevision] = useState(0);
+  useEffect(() => {
+    if (!live || !eventSource) return;
+    const subscription = eventSource.subscribe((event) => {
+      if (event.type === "chat.changed" && event.chatId === controller.activeChatId
+        && /^(?:interaction\.|bot\.)/.test(event.eventType)) {
+        setBotEventRevision((revision) => revision + 1);
+      }
+    });
+    return () => subscription.dispose();
+  }, [live, eventSource, controller.activeChatId]);
   const [globalView, setGlobalView] = useState<"index" | "draft" | "conversation">(
     initialView ?? (initialChatId ? "conversation" : "index"),
   );
@@ -230,7 +244,7 @@ export function CanonicalChatWorkspace({
     refreshRuntimeSummary,
     api ?? null,
   );
-  const { selection, onSelectionChange } = useCanonicalComposerSelection({
+  const { selection: providerSelection, onSelectionChange } = useCanonicalComposerSelection({
     catalog: providerCatalog,
     catalogReady: Boolean(catalog || liveCatalog.status === "ready" || liveCatalog.status === "error"),
     initializeImmediately: Boolean(catalog),
@@ -238,6 +252,9 @@ export function CanonicalChatWorkspace({
     currentSelection: controller.detail?.record.chat.currentSelection,
     boundInstanceId: controller.detail?.record.providerBinding?.instanceId,
   });
+  const directBotId = useDirectBotChat(explicitSharedRoute ? undefined : routedComposerChatId ?? undefined, client.agents);
+  const selection = directBotId ? { ...MATRIX_BOT_SELECTION, options: [], interactionMode: "default", permissionMode: "default" } : providerSelection;
+  const selectionAvailable = Boolean(directBotId || canonicalComposerSelectionIsAvailable(providerCatalog, selection));
   const mentionPermission = useChatMentionPermission(routedComposerChatId ?? `new:${projectId ?? "global"}`, mentionResources,
     selection?.permissionMode ?? "supervised", draftRequestIdentity);
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; title: string } | null>(null);
@@ -433,7 +450,7 @@ export function CanonicalChatWorkspace({
     const selectedInstance = providerCatalog.instances.find((instance) => instance.id === selection?.instanceId);
     if (
       !selection
-      || !canonicalComposerSelectionIsAvailable(providerCatalog, selection)
+      || !selectionAvailable
       || (activeRun && !mentionResources.length)
       || uploadingAttachments
     ) return;
@@ -510,7 +527,7 @@ export function CanonicalChatWorkspace({
       (!activeRun && !editingQueuedTurn && !mentionResources.length)
       || !controller.detail
       || !selection
-      || !canonicalComposerSelectionIsAvailable(providerCatalog, selection)
+      || !selectionAvailable
       || composerAction
       || uploadingAttachments
       || (attachments.items.length > 0 && !supportsNativeFileAttachments(selectedInstance))
@@ -686,11 +703,12 @@ export function CanonicalChatWorkspace({
         onAbort={activeRun ? () => void controller.cancelActiveRun() : undefined}
         busy={Boolean(activeRun) || uploadingAttachments}
         submitWhileBusy={Boolean(activeRun)}
-        disabled={controller.status === "loading" || uploadingAttachments || (!catalog && liveCatalog.status === "loading")}
-        canSubmit={Boolean(canonicalComposerSelectionIsAvailable(providerCatalog, selection) && !uploadingAttachments && (
+        disabled={controller.status === "loading" || uploadingAttachments || (!directBotId && !catalog && liveCatalog.status === "loading")}
+        canSubmit={Boolean(selectionAvailable && !uploadingAttachments && (
           draft.trim() || referenceTokens.length > 0 || attachments.items.length > 0
         ))}
         catalog={providerCatalog}
+        automaticRouting={Boolean(directBotId)}
         onProviderPickerOpen={catalog ? undefined : liveCatalog.refresh}
         selection={selection}
         onSelectionChange={onSelectionChange}
@@ -879,6 +897,8 @@ export function CanonicalChatWorkspace({
         {controller.detail && globalView === "conversation" ? (
           <>
             {api && !chromeHost ? <ChatSharingButton key={controller.detail.record.chat.id} api={api} chatId={controller.detail.record.chat.id} copyText={copyText} /> : null}
+            <BotChatPanel key={controller.detail.record.chat.id} chatId={controller.detail.record.chat.id}
+              client={client.agents} directBotId={directBotId} refreshKey={controller.detail.record.chat.revision + botEventRevision} />
             <ChatContextMenu chatId={controller.detail.record.chat.id}>
             <div className="contents">
             <ConversationTranscript turns={transcript} callbacks={{
