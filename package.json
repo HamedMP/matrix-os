@@ -24,6 +24,7 @@
     "dev:parity:down": "pnpm node scripts/dev-production-parity.mjs down",
     "dev:parity:status": "pnpm node scripts/dev-production-parity.mjs status",
     "dev:parity:logs": "pnpm node scripts/dev-production-parity.mjs logs",
+    "dev:preflight": "node scripts/dev-preflight.mjs",
     "dev:kernel": "pnpm --filter '@matrix-os/kernel' dev",
     "dev:gateway": "pnpm --filter '@matrix-os/observability' --filter '@matrix-os/kernel' build && pnpm --filter '@matrix-os/gateway' dev",
     "dev:speech": "node scripts/dev-speech-stack.mjs",
