@@ -75,6 +75,37 @@ describe('bounded legacy Slack pilot sign-in route', () => {
     expect((await handleSlackPilotRequest(request('/api/slack/oauth/callback'), env)).headers.get('location')).toBe(target);
     expect(fetch).toHaveBeenCalledTimes(1);
   });
+  it.each(['http:', 'https:'])('keeps Clerk handshake returns on the HTTPS pilot for %s upstream origins', async (protocol) => {
+    clock();
+    const target = new URL('https://clerk.matrix-os.com/v1/client/handshake');
+    target.searchParams.set('redirect_url', upstream.replace('https:', protocol) + '/slack/link?flow=own');
+    target.searchParams.set('__session', 'opaque-test-session');
+    target.searchParams.set('format', 'nonce');
+    const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(null, {
+      status: 307, headers: { location: target.href },
+    }));
+    const location = new URL((await handleSlackPilotRequest(request('/'), env)).headers.get('location')!);
+    expect(location.origin).toBe(target.origin);
+    expect(location.pathname).toBe(target.pathname);
+    expect(location.searchParams.get('redirect_url')).toBe(origin + '/slack/link?flow=own');
+    expect(location.searchParams.get('__session')).toBe('opaque-test-session');
+    expect(location.searchParams.get('format')).toBe('nonce');
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+  it.each([
+    ['https://clerk.matrix-os.com/v1/client/handshake', 'https://app.matrix-os.com/'],
+    ['https://clerk.matrix-os.com/v1/client/handshake', 'http://pr-2080---matrix-platform-preview-example-ey.a.run.app/'],
+    ['https://clerk.matrix-os.com/v1/client/handshake', 'http://user@pr-2079---matrix-platform-preview-example-ey.a.run.app/'],
+    ['https://clerk.matrix-os.com/v1/client/handshake', 'invalid'],
+    ['https://clerk.matrix-os.com/v1/client/handshake/extra', upstream + '/'],
+    ['https://clerk.matrix-os.com/other', upstream + '/'],
+    ['https://clerk.matrix-os.com.evil.example/v1/client/handshake', upstream + '/'],
+  ])('does not broaden external return rewriting for %s to %s', async (issuer, returnUrl) => {
+    clock(); const target = new URL(issuer);
+    target.searchParams.set('redirect_url', returnUrl);
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(null, { status: 307, headers: { location: target.href } }));
+    expect((await handleSlackPilotRequest(request('/'), env)).headers.get('location')).toBe(target.href);
+  });
   it('drops parent-domain cookies while retaining separate host-only cookies', async () => {
     clock(); const headers = new Headers();
     headers.append('set-cookie', 'a=1; Path=/; Secure; HttpOnly');

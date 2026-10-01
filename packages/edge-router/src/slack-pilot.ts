@@ -79,17 +79,26 @@ function redirectLocation(location: string, upstream: string, publicOrigin: stri
   let url: URL;
   try { url = new URL(location, upstream); }
   catch (error: unknown) { if (error instanceof TypeError) return location; throw error; }
-  if (url.origin !== upstream) return location;
+  const ownRedirect = url.origin === upstream;
+  const clerkHandshake = url.origin === 'https://clerk.matrix-os.com'
+    && url.pathname === '/v1/client/handshake' && !url.username && !url.password;
+  if (!ownRedirect && !clerkHandshake) return location;
   // The already-built auth shell's canonical origin is the run.app tag. Preserve the
   // path and query while keeping that shell's own redirects on this approved alias.
   const returnUrl = url.searchParams.get('redirect_url');
   if (returnUrl) {
     try {
       const target = new URL(returnUrl);
-      if (target.origin === upstream) url.searchParams.set('redirect_url', publicOrigin + target.pathname + target.search + target.hash);
+      // Next's local auth proxy is plain HTTP. Only this exact Clerk handshake
+      // may normalize its matching preview return; never follow it or log tokens.
+      const matchingOrigin = target.origin === upstream
+        || (clerkHandshake && target.origin === upstream.replace('https:', 'http:'));
+      if (matchingOrigin && !target.username && !target.password) {
+        url.searchParams.set('redirect_url', publicOrigin + target.pathname + target.search + target.hash);
+      }
     } catch (error: unknown) { if (!(error instanceof TypeError)) throw error; }
   }
-  return publicOrigin + url.pathname + url.search + url.hash;
+  return ownRedirect ? publicOrigin + url.pathname + url.search + url.hash : url.href;
 }
 
 export async function handleSlackPilotRequest(request: Request, env: SlackPilotEnv): Promise<Response> {
