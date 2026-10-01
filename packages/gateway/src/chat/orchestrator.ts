@@ -381,6 +381,7 @@ export class CanonicalChatOrchestrator {
       selection: context.latestRun.selection,
       boundInstanceId: context.latestRun.instanceId,
       requirements: {
+        resources: context.latestRun.context?.drives?.length ? ["organization_drive"] : [],
         interactionMode: context.latestRun.interactionMode,
         permissionMode: context.latestRun.permissionMode,
         worktree: context.latestRun.executionRoot?.kind === "worktree",
@@ -697,6 +698,7 @@ export class CanonicalChatOrchestrator {
         selection: run.selection,
         interactionMode: run.interactionMode,
         permissionMode: run.permissionMode,
+        ...(sharedScopeId ? { sharedScopeId } : {}),
         ...(resolvedRoot ? { executionRoot: resolvedRoot.primaryWorkspaceRoot } : {}),
         ...(resolvedRoot ? { projectSlug: resolvedRoot.projectSlug } : {}),
         ...(resolvedRoot?.ref.kind === "worktree" ? { worktreeId: resolvedRoot.ref.worktreeId } : {}),

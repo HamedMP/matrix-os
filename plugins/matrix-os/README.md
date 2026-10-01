@@ -1,6 +1,6 @@
 # Matrix OS plugin
 
-One package for Codex and Claude Code: 15 remote-computer MCP tools plus three
+One package for Codex and Claude Code: 15 remote-computer MCP tools plus four
 workflow skills. Both manifests load the same `.mcp.json` and `skills/` directory.
 
 ## Availability

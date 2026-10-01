@@ -1,5 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { registerChatAgentTools } from "./chat-agents.js";
+import { registerCompanyDriveTools } from "./company-drive.js";
 import { registerJevInboxTool } from "./jev-inbox.js";
 import {
   callServiceHandler,
@@ -22,7 +23,7 @@ export interface IntegrationsMcpServerOptions {
   toolSurface?: IntegrationsMcpToolSurface;
 }
 
-export const IntegrationsMcpToolSurfaceSchema = z.enum(["full", "custom-mcp-call", "custom-mcp-discovery", "chat-call", "chat-discovery", "preview-drive-call", "jev-inbox-preview"]);
+export const IntegrationsMcpToolSurfaceSchema = z.enum(["full", "custom-mcp-call", "custom-mcp-discovery", "chat-call", "chat-discovery", "preview-drive-call", "jev-inbox-preview", "custom-mcp-call-drive", "custom-mcp-discovery-drive", "chat-call-drive", "chat-discovery-drive"]);
 export type IntegrationsMcpToolSurface = z.infer<typeof IntegrationsMcpToolSurfaceSchema>;
 
 const serviceSchema = z.string().min(1).max(64).regex(/^[a-z0-9_-]+$/);
@@ -48,8 +49,10 @@ export function createIntegrationsMcpServer(
   const surface = IntegrationsMcpToolSurfaceSchema.parse(options.toolSurface ?? "full");
   const full = surface === "full";
   const previewDrive = surface === "preview-drive-call";
-  const chat = surface === "chat-call" || surface === "chat-discovery" || previewDrive;
-  const discovery = surface === "custom-mcp-discovery" || surface === "chat-discovery";
+  const chat = surface === "chat-call" || surface === "chat-discovery"
+    || surface === "chat-call-drive" || surface === "chat-discovery-drive" || previewDrive;
+  const discovery = surface === "custom-mcp-discovery" || surface === "chat-discovery"
+    || surface === "custom-mcp-discovery-drive" || surface === "chat-discovery-drive";
   const approvalSchema: z.ZodRawShape = chat ? { matrix_approval_receipt: z.string().regex(/^[a-f0-9]{64}$/).optional()
     .describe("Reserved: Matrix fills this only after human approval; never supply it yourself.") } : {};
   // Per-invocation closure: concurrent calls never share approval transport state.
@@ -71,7 +74,7 @@ export function createIntegrationsMcpServer(
           + (discovery ? "This run supports discovery only; provider actions and account management are unavailable."
             : "Call provider actions only when needed for the user's request. Matrix owns action authorization and account-management approval. Custom MCP remains available through its separate broker tools.")
         : "Discover personal Custom MCP servers with list_custom_mcp_servers, then inspect enabled tools and approval policies with describe_custom_mcp_server. "
-          + (surface === "custom-mcp-call"
+          + ((surface === "custom-mcp-call" || surface === "custom-mcp-call-drive")
             ? "Use call_custom_mcp_tool for an enabled tool when the user needs it. Matrix's broker owns tool policy and approval."
             : "This run supports discovery only; remote tool calls are unavailable."),
     },
@@ -81,6 +84,8 @@ export function createIntegrationsMcpServer(
     registerJevInboxTool(server, fetcher);
     return server;
   }
+
+  if (surface.endsWith("-drive")) registerCompanyDriveTools(server, fetcher);
 
   if (full || chat) {
     server.registerTool(

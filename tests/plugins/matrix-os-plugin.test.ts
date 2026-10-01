@@ -63,4 +63,13 @@ describe("Matrix OS coding-agent plugin", () => {
       expect(skill).not.toContain("Never create or use shell tabs");
     }
   });
+
+  it("ships a local Codex Chat import skill with preview and owner checks", async () => {
+    const skill = await readFile(resolve(pluginRoot, "skills/matrix-chat-import/SKILL.md"), "utf8");
+    expect(skill).toContain("name: matrix-chat-import");
+    expect(skill).toContain("matrix whoami");
+    expect(skill).toContain("matrix chats import codex");
+    expect(skill).toContain("--apply");
+    expect(skill).toContain("private");
+  });
 });

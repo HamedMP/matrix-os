@@ -306,14 +306,15 @@ export function createCanonicalChatService(
         }),
       });
       if (!page) return null;
+      const projected = options.projectOwnerToolOutput?.(owner, page) ?? page;
       return CanonicalChatDetailResponseSchema.parse({
-        record: page.record,
-        messages: page.messages,
-        turns: page.turns,
-        runs: page.runs,
-        activities: options.projectOwnerToolOutput?.(owner, page).activities ?? page.activities,
-        queuedTurns: page.queuedTurns,
-        terminalSessionIds: page.terminalSessionIds,
+        record: projected.record,
+        messages: projected.messages,
+        turns: projected.turns,
+        runs: projected.runs,
+        activities: projected.activities,
+        queuedTurns: projected.queuedTurns,
+        terminalSessionIds: projected.terminalSessionIds,
         ...(page.nextBeforeSeq === undefined ? {} : {
           nextCursor: encodeCursor({
             version: 1,

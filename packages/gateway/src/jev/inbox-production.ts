@@ -39,9 +39,9 @@ export function createProductionJevInboxRuntime(options: {
   const read = createJevRecipeReadClient(options);
   const runtime = createJevInboxRuntime({ ownerId: options.ownerId, getAgent: options.getAgent,
     resolveCredentials: createJevHermesCredentialResolver(options),
-    verifyRuntime: async (root, signal) => {
+    verifyRuntime: async (root, signal, apiMode) => {
       await verifyJevHermesRuntimePin(root, signal);
-      await verifyJevHermesDependencies(root, signal);
+      await verifyJevHermesDependencies(root, apiMode, signal);
     },
     fundedPolicyReady: async signal => {
       if (!options.service || !options.fundedOwnerId || !options.summary) return false;

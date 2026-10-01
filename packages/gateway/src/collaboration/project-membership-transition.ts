@@ -1,3 +1,4 @@
+import {hasCompanyDriveMaterial} from "../chat/drive-sharing-guard.js";
 import type { Transaction } from "kysely";
 import type { OwnerCollaborationDatabase } from "./database.js";
 
@@ -69,6 +70,12 @@ export async function reconcileProjectMembershipAtPublication(
       || child.lifecycle === "deleted"
       || (child.kind !== "chat" && child.kind !== "terminal")) {
       throw new ProjectMembershipTransitionError("conflict");
+    }
+
+    if (child.kind === "chat") {
+      // Admission takes this same Chat lock. Keep it until publication commits.
+      await trx.selectFrom("chats").select("id").where("id", "=", child.resource_id).forUpdate().executeTakeFirst();
+      if (await hasCompanyDriveMaterial(trx, child.resource_id)) throw new ProjectMembershipTransitionError("conflict");
     }
 
     const members = await trx.selectFrom("collaboration_members")

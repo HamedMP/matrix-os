@@ -3,7 +3,7 @@ import {
   createRefreshGuard,
   loadDiscoveryItems,
   loadDriveSnapshotPages,
-} from "../../shell/src/components/file-browser/organization-drive-paging";
+} from "@matrix-os/ui";
 
 const SCOPE_ID = "00000000-0000-4000-8000-0000000000aa";
 

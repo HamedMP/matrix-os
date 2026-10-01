@@ -22,6 +22,11 @@ export const MATRIX_CUSTOM_MCP_TOOLS = [
   "mcp__matrix-integrations__call_custom_mcp_tool",
 ] as const;
 
+export const MATRIX_COMPANY_DRIVE_TOOLS = [
+  "mcp__matrix-integrations__search_company_drive",
+  "mcp__matrix-integrations__read_company_drive_file",
+] as const;
+
 export type MatrixMcpRunScope = "discovery" | "call" | "integration_read" | "chat_call" | "chat_discovery" | "preview_drive_call";
 
 export interface PreviewDriveRunContext {
@@ -35,17 +40,18 @@ export interface MatrixMcpRunContext {
   scope: MatrixMcpRunScope;
   consumeIntegrationRequest?: ReturnType<typeof createIntegrationToolAuthority>["consumeIntegrationRequest"];
   previewDrive?: PreviewDriveRunContext;
+  driveContext?: boolean;
 }
 
 /** The configured stdio server only exposes Matrix's stable broker contract. */
-export function matrixMcpConfig(scope: "call" | "discovery" | "chat_call" | "chat_discovery" | "preview_drive_call" = "call"): string {
+export function matrixMcpConfig(scope: "call" | "discovery" | "chat_call" | "chat_discovery" | "preview_drive_call" = "call", driveContext = false): string {
   return JSON.stringify({
     mcpServers: {
       "matrix-integrations": {
         command: "/opt/matrix/bin/matrix-integrations-mcp",
         // An argv flag survives MCP child environment sanitization and makes
         // the host launcher deny machine-bearer fallback for this Chat Run.
-        args: ["--require-scoped-capability", `--tool-surface=${scope === "preview_drive_call" ? "preview-drive-call" : scope.startsWith("chat_") ? scope.replace("_", "-") : `custom-mcp-${scope}`}`],
+        args: ["--require-scoped-capability", `--tool-surface=${scope === "preview_drive_call" ? "preview-drive-call" : scope.startsWith("chat_") ? `${scope.replace("_", "-")}${driveContext ? "-drive" : ""}` : `custom-mcp-${scope}${driveContext ? "-drive" : ""}`}`],
       },
     },
   });
@@ -61,7 +67,7 @@ export interface MatrixMcpRunCapability {
 }
 
 export interface MatrixMcpCapabilityIssuer {
-  issue(input: { owner: { type: string; ownerId: string }; runId: string; scope: MatrixMcpRunScope; fullAccess?: boolean }): MatrixMcpRunCapability | null;
+  issue(input: { owner: { type: string; ownerId: string }; runId: string; scope: MatrixMcpRunScope; fullAccess?: boolean; driveContext?: boolean }): MatrixMcpRunCapability | null;
 }
 
 export interface MatrixMcpCapabilityRegistry extends MatrixMcpCapabilityIssuer {
@@ -98,7 +104,7 @@ export function createMatrixMcpCapabilityRegistry(options: {
   previewRuntime?: boolean;
   now?: () => number;
 }): MatrixMcpCapabilityRegistry {
-  const active = new Map<string, { actorId: string; runId: string; scope: MatrixMcpRunScope; expiresAt: number;
+  const active = new Map<string, { actorId: string; runId: string; scope: MatrixMcpRunScope; driveContext?: boolean; expiresAt: number;
     authority?: ReturnType<typeof createIntegrationToolAuthority>; previewDrive?: PreviewDriveRunContext;
     onRevoke?: () => void }>();
   const previewRuns = new Map<string, { actorId: string; chatId: string; runGrant: string; expiresAt: number;
@@ -120,8 +126,11 @@ export function createMatrixMcpCapabilityRegistry(options: {
     if (closed || !/^[a-f0-9]{64}$/.test(token)) return null;
     sweep();
     const grant = active.get(digest(token));
-    return grant && permitted(method, path, grant.scope)
+    return grant && (permitted(method, path, grant.scope)
+      || (grant.driveContext === true && method === "POST"
+        && (path === "/api/chat-drive-context/search" || path === "/api/chat-drive-context/read")))
       ? { actorId: grant.actorId, runId: grant.runId, scope: grant.scope,
+        ...(grant.driveContext ? { driveContext: true } : {}),
         ...(grant.authority && !grant.previewDrive ? { consumeIntegrationRequest: grant.authority.consumeIntegrationRequest } : {}),
         ...(grant.previewDrive ? { previewDrive: grant.previewDrive } : {}) }
       : null;
@@ -146,7 +155,7 @@ export function createMatrixMcpCapabilityRegistry(options: {
       if (options.previewRuntime) {
         const pending = previewRuns.get(input.runId);
         if (!pending || input.owner.type !== "personal" || input.owner.ownerId !== pending.actorId
-          || input.scope !== "chat_call" || input.fullAccess === true || active.size >= MAX_ACTIVE) return null;
+          || input.scope !== "chat_call" || input.fullAccess === true || input.driveContext === true || active.size >= MAX_ACTIVE) return null;
         previewRuns.delete(input.runId);
         const token = randomBytes(32).toString("hex");
         const key = digest(token);
@@ -197,7 +206,7 @@ export function createMatrixMcpCapabilityRegistry(options: {
         || input.owner.type !== "personal"
         || input.owner.ownerId !== options.configuredOwnerId
         || !["discovery", "call", "integration_read", "chat_call", "chat_discovery"].includes(input.scope)
-        ) return null;
+        || (input.driveContext && input.scope === "integration_read")) return null;
       if (active.size >= MAX_ACTIVE) return null;
       const token = randomBytes(32).toString("hex");
       const key = digest(token);
@@ -206,7 +215,7 @@ export function createMatrixMcpCapabilityRegistry(options: {
         now, fullAccess: input.fullAccess === true,
         live: () => !closed && active.has(key) && now() < expiresAt,
       }) : undefined;
-      active.set(key, { actorId: input.owner.ownerId, runId: input.runId, scope: input.scope, expiresAt, authority });
+      active.set(key, { actorId: input.owner.ownerId, runId: input.runId, scope: input.scope, ...(input.driveContext ? { driveContext: true } : {}), expiresAt, authority });
       return { token, revoke: () => { active.delete(key); },
         ...(authority ? { grantIntegrationTool: authority.grantIntegrationTool } : {}) };
     },

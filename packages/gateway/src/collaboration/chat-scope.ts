@@ -1,3 +1,4 @@
+import { hasCompanyDriveMaterial } from "../chat/drive-sharing-guard.js";
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { z } from "zod/v4";
 import { sql, type Kysely, type Transaction } from "kysely";
@@ -63,7 +64,7 @@ export class CollaborationChatScopeService {
 
   async preflight(input: { ownerId: string; organizationId: string; chatId: string }): Promise<{
     eligible: boolean;
-    reason?: "active_work";
+    reason?: "active_work" | "unsupported";
     chatRevision: number;
     confirmationToken?: string;
   }> {
@@ -76,6 +77,7 @@ export class CollaborationChatScopeService {
       .executeTakeFirst();
     if (!chat) throw new CollaborationChatScopeError("not_found", "Chat not found");
     const chatRevision = Number(chat.revision);
+    if (await hasCompanyDriveMaterial(this.db, input.chatId)) return {eligible:false,reason:"unsupported",chatRevision};
     if (await hasActiveWork(this.db, input.chatId)) {
       return { eligible: false, reason: "active_work", chatRevision };
     }
@@ -114,6 +116,7 @@ export class CollaborationChatScopeService {
         .forUpdate()
         .executeTakeFirst();
       if (!chat) throw new CollaborationChatScopeError("not_found", "Chat not found");
+      if (await hasCompanyDriveMaterial(trx, input.chatId)) throw new CollaborationChatScopeError("conflict", "Chat audience policy is unavailable");
       const existingBinding = parseBinding(chat.collaboration);
       if (existingBinding) {
         const existing = await selectScope(trx, existingBinding.scopeId);

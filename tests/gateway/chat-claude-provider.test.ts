@@ -649,7 +649,7 @@ describe("Claude canonical Chat Provider adapter", () => {
       {
         type: "assistant.delta",
         messageId: "claude_text_1",
-        delta: "~/apps/flappy-bird.",
+        delta: "/home/matrix/home/apps/flappy-bird.",
       },
       { type: "run.completed", outcome: "completed" },
     ]);
@@ -668,7 +668,7 @@ describe("Claude canonical Chat Provider adapter", () => {
     const adapter = createClaudeChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn });
     const events = [];
 
-    for await (const event of adapter.start(baseInput)) events.push(event);
+    for await (const event of adapter.start({ ...baseInput, sharedScopeId: "scope_shared" })) events.push(event);
 
     expect(events).toContainEqual({
       type: "assistant.delta",

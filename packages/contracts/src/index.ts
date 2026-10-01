@@ -1,3 +1,4 @@
+export * from "#chat-drive-project";
 import { TerminalScrollLineSchema, TerminalScrollStateSchema } from "#terminal-scroll";
 export * from "#terminal-scroll";
 export * from "#private-preview";
@@ -1436,7 +1437,7 @@ export type {
   PatchOsViewStateRequest,
 } from "#os-view";
 
-export { resolveChatMessageLink } from "#chat-links";
+export { resolveChatMessageLink, resolveChatAppReference } from "#chat-links";
 export { ShareSnapshotSchema, ShareTokenSchema, shareHtml, isPublicShareLink, type ShareSnapshot } from "#chat-sharing";
 export * from "#terminal-keyboard";
 
@@ -1446,3 +1447,5 @@ export * from "#custom-mcp-availability";
 
 export { normalizeTerminalSnapshot } from "#terminal-snapshot";
 export { chatSubagentPresentation, projectChatSubagent, ChatSubagentSchema, type ChatSubagent } from "#chat-subagent";
+
+export { ImportedChatAssetRefSchema, importedChatAssetContentPath, type ImportedChatAssetRef } from "#canonical-chat-import-parts";

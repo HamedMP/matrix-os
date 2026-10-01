@@ -105,3 +105,33 @@ The gateway contract is shared by Electron Desktop, Web Desktop and Web Canvas.
 No shell business logic is duplicated. Record live surface coverage separately.
 Public support guidance and the harness support matrix live in this repository;
 the private site documentation track is outside this support-fix scope.
+
+## Main integration compatibility and owner-runtime acceptance
+
+The Claude discovery surface composes personal integration inventory with company
+Drive context tools. Company context keeps its independent membership and resource
+authorization; discovering either surface does not grant personal action authority.
+Shared Preview discovery and calls remain restricted to their browser-bound Drive
+lease and must reject company context tools. The installed host launcher recognizes
+the explicit `preview-drive-call` surface so an approved request reaches the same
+scoped Gateway boundary as the development launcher.
+
+Provider-login discovery retries must use the latest Terminal session snapshot.
+A newer missing or ended snapshot cannot be overridden by a delayed result from an
+older poll. Tool activity detail must retain the Canonical event schema shape and
+sanitized command preview; private reply path projection must not change that
+separate activity contract.
+
+An explicitly authorized owner-runtime acceptance may install the immutable PR
+bundle on the owner's Main computer through scoped registered-bundle deployment.
+Record its prior version as the rollback target, preserve owner files, database,
+sessions, update subscription and provider credentials, and verify the installed
+release and Gateway/Shell/Sync health. Use the owner's existing Claude subscription
+and ordinary personal integration authorization. Do not transfer shared Preview
+model credentials, actor selectors or funding policy to the owner runtime.
+
+Acceptance requires a fresh Claude Chat with native approval, an explicit connected
+account and `google_drive.list_files` capped at three metadata records, followed by
+visible model continuation. Credential-file presence alone is not provider
+readiness. Record actual authentication and live surface coverage before claiming
+success; file content and write operations are outside this acceptance scope.

@@ -262,7 +262,9 @@ export function createClaudeChatProviderAdapter(options: {
       // Unknown future interaction modes receive discovery only.
       scope: mcpScope,
       fullAccess,
+      ...(input.context?.drives?.length ? { driveContext: true } : {}),
     }) ?? null;
+    if (input.context?.drives?.length && !capability) throw new Error("Company drive tools unavailable");
     const previewDrive = capability?.surface === "preview_drive_call";
     const recipeGuidance = input.context?.agent?.recipe
       ? (capability
@@ -298,6 +300,7 @@ export function createClaudeChatProviderAdapter(options: {
         claudeOutputFormat: "stream-json",
         claudeIncludePartialMessages: true,
         matrixCustomMcp: capability !== null,
+        matrixDriveContext: Boolean(input.context?.drives?.length),
         matrixCustomMcpScope: previewDrive ? "preview_drive_call" : mcpScope,
       });
       if (resumeState) {
@@ -453,10 +456,12 @@ export function createClaudeChatProviderAdapter(options: {
     let pendingDelta = "";
     let pendingDeltaMessageId: string | undefined;
     let deltaFlushScheduled = false;
-    const textProjector = createAssistantTextStreamProjector({
+    const pathProjection = {
       homePath: options.homePath,
       executionRoot: input.executionRoot,
-    });
+      showPrivatePaths: !input.sharedScopeId,
+    };
+    const textProjector = createAssistantTextStreamProjector(pathProjection);
     let projectedMessageId: string | undefined;
     let boundaryProbe: {
       originMessageId?: string;
@@ -516,9 +521,7 @@ export function createClaudeChatProviderAdapter(options: {
         if (projected) enqueueDelta(projected, projectedMessageId);
         if (ordinaryCompletedKeyword) {
           for (const segment of boundaryProbe.segments) {
-            const word = sanitizeAssistantText(segment.text, {
-              homePath: options.homePath, executionRoot: input.executionRoot,
-            });
+            const word = sanitizeAssistantText(segment.text, pathProjection);
             if (word) enqueueDelta(word, segment.messageId);
           }
         } else redactProbeSegments(boundaryProbe.segments);
@@ -685,8 +688,7 @@ export function createClaudeChatProviderAdapter(options: {
             activityId: block.id,
             ...claudeActivity(block.name),
             ...safeToolPreview(block.name, block.input, {
-              homePath: options.homePath,
-              executionRoot: input.executionRoot,
+              homePath: options.homePath, executionRoot: input.executionRoot,
             }),
           };
           activityByIndex.set(line.event.index, activity);
@@ -713,8 +715,7 @@ export function createClaudeChatProviderAdapter(options: {
               completedActivity = {
                 ...activity,
                 ...safeToolPreview(toolName, parsedInput, {
-                  homePath: options.homePath,
-                  executionRoot: input.executionRoot,
+                  homePath: options.homePath, executionRoot: input.executionRoot,
                 }),
               };
             } catch (error: unknown) {
@@ -732,10 +733,7 @@ export function createClaudeChatProviderAdapter(options: {
           : line.subtype === undefined
             ? undefined
             : "other";
-        resultText = sanitizeAssistantText(line.result ?? "", {
-          homePath: options.homePath,
-          executionRoot: input.executionRoot,
-        });
+        resultText = sanitizeAssistantText(line.result ?? "", pathProjection);
         resultFailed = line.is_error === true || line.subtype === "error";
         finishInput?.();
       }

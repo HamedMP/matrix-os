@@ -188,38 +188,7 @@ interface GatewayIntegrationRegistryModule {
   getAction(serviceId: string, actionId: string): any;
 }
 
-interface GatewayR2Client {
-  getPresignedGetUrl(key: string, expiresIn?: number): Promise<string>;
-  getPresignedPutUrl(key: string, size: number, expiresIn?: number): Promise<string>;
-  createMultipartUpload(key: string): Promise<string>;
-  getPresignedPartUrl(
-    key: string,
-    uploadId: string,
-    partNumber: number,
-    expiresIn?: number,
-  ): Promise<string>;
-  completeMultipartUpload(
-    key: string,
-    uploadId: string,
-    parts: Array<{ partNumber: number; etag: string }>,
-  ): Promise<{ etag?: string }>;
-  abortMultipartUpload(key: string, uploadId: string): Promise<void>;
-  getObject(
-    key: string,
-    options?: { signal?: AbortSignal },
-  ): Promise<{ body: ReadableStream | null; etag?: string; contentLength?: number }>;
-  putObject(
-    key: string,
-    body: string | Uint8Array | ReadableStream<Uint8Array>,
-    options?: { signal?: AbortSignal; contentLength?: number },
-  ): Promise<{ etag?: string }>;
-  headObject(
-    key: string,
-    options?: { signal?: AbortSignal },
-  ): Promise<{ exists: boolean; etag?: string }>;
-  deleteObject(key: string, options?: { signal?: AbortSignal }): Promise<void>;
-  destroy(): void;
-}
+type GatewayR2Client = import("./r2-client.js").R2Client;
 
 interface GatewayR2ClientModule {
   createR2Client(config: {

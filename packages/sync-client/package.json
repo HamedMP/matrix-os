@@ -1,7 +1,7 @@
 {
   "name": "@finnaai/matrix",
-  "version": "0.3.19",
-  "description": "Matrix OS command-line client — login, sync, and peer management for matrix-os.com",
+  "version": "0.3.21",
+  "description": "Matrix OS command-line client \u2014 login, sync, and peer management for matrix-os.com",
   "type": "module",
   "license": "AGPL-3.0-or-later",
   "homepage": "https://matrix-os.com",
@@ -36,7 +36,8 @@
       "import": "./src/protocol/shell.js",
       "default": "./src/protocol/shell.js"
     },
-    "./port-forward": "./src/cli/port-forward.ts"
+    "./port-forward": "./src/cli/port-forward.ts",
+    "./local-chat-import": "./src/import/local-chat-source.ts"
   },
   "files": [
     "bin/",

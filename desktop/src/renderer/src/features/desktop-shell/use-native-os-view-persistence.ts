@@ -23,6 +23,8 @@ const OS_VIEW_SAVE_RETRY_MS = 2_000;
 
 export function useNativeOsViewPersistence(input: {
   api: ApiClient | null;
+  entryKey?: string;
+  navigationChangedRef?: { current: boolean };
   tabs: readonly Tab[];
   surfaces: Readonly<Record<string, DesktopSurface>>;
   installedApps: readonly MatrixApp[];
@@ -30,8 +32,19 @@ export function useNativeOsViewPersistence(input: {
   viewport: DesktopViewport;
   defaultIconLayout: readonly { path: string; x: number; y: number }[];
 }) {
+  const [surfaceHydration, setSurfaceHydration] = useState<{
+    entry: string | ApiClient | null;
+    appliedKeys: readonly string[];
+  } | null>(null);
   const [durableState, setDurableState] = useState<OsViewStateResponse | null>(null);
   const loadedRef = useRef(false);
+  const [loadedEntry, setLoadedEntry] = useState<string | ApiClient | null>(null);
+  const entry = input.entryKey ?? input.api;
+  const loadingEntryRef = useRef<string | ApiClient | null>(null);
+  // Borrow immutable owner snapshots for this entry; do not clone growing ID caches.
+  // Keep them through both presentation restores, then release on entry change/unmount.
+  const initialTabsRef = useRef<readonly Tab[]>([]);
+  const initialSurfacesRef = useRef<Readonly<Record<string, DesktopSurface>>>({});
   const appliedRef = useRef<Record<string, true>>({});
   const canonicalGeometryRef = useRef<Record<OsViewMode, Record<string, DesktopSurfaceBounds>>>({
     desktop: {},
@@ -84,6 +97,11 @@ export function useNativeOsViewPersistence(input: {
     if (path) canonicalGeometryRef.current[mode][path] = { ...bounds };
   }, []);
 
+  useEffect(() => () => {
+    initialTabsRef.current = [];
+    initialSurfacesRef.current = {};
+  }, []);
+
   useEffect(() => {
     activeApiRef.current = input.api;
     return () => {
@@ -97,6 +115,12 @@ export function useNativeOsViewPersistence(input: {
       clearTimeout(persistTimerRef.current);
       persistTimerRef.current = null;
     }
+    // Auth refresh may replace ApiClient without creating a new runtime entry.
+    if (entry !== null && loadedEntry === entry) return;
+    loadingEntryRef.current = entry;
+    initialTabsRef.current = useTabs.getState().tabs;
+    initialSurfacesRef.current = useDesktopSurfaces.getState().surfaces;
+    setLoadedEntry(null);
     setDurableState(null);
     loadedRef.current = false;
     appliedRef.current = {};
@@ -105,8 +129,10 @@ export function useNativeOsViewPersistence(input: {
     let cancelled = false;
     const iconHydrationRevision = captureDesktopIconsHydrationRevision();
     void loadNativeOsViewStateWithLegacyImport(input.api).then((state) => {
-      if (cancelled) return;
+      if (cancelled || loadingEntryRef.current !== entry || activeApiRef.current !== input.api) return;
       loadedRef.current = true;
+      setLoadedEntry(entry);
+      if (input.navigationChangedRef?.current) return;
       canonicalGeometryRef.current = {
         desktop: Object.fromEntries(state.document.desktop.windows.map(({ path, ...bounds }) => [path, bounds])),
         canvas: Object.fromEntries(state.document.canvas.windows.map(({ path, ...bounds }) => [path, bounds])),
@@ -117,18 +143,20 @@ export function useNativeOsViewPersistence(input: {
     }).catch((error: unknown) => {
       if (!cancelled) {
         loadedRef.current = true;
+        setLoadedEntry(entry);
         console.warn("[os-view-state] Electron Desktop load failed:", error instanceof Error ? error.name : "UnknownError");
       }
     });
     return () => { cancelled = true; };
-  }, [input.api, input.defaultIconLayout]);
+  }, [entry, input.api, input.defaultIconLayout]);
 
   useEffect(() => {
-    if (!durableState) return;
+    if (!durableState || loadedEntry !== entry || input.navigationChangedRef?.current) return;
     const geometry = canonicalGeometryRef.current[input.mode];
     const appsByPath = Object.fromEntries(durableState.document.apps.map((app) => [app.path, app]));
     const nextSurfaces = { ...useDesktopSurfaces.getState().surfaces };
     let changed = false;
+    let applied = false;
     for (const tab of input.tabs) {
       const appliedKey = `${input.mode}:${tab.id}`;
       if (appliedRef.current[appliedKey]) continue;
@@ -136,6 +164,12 @@ export function useNativeOsViewPersistence(input: {
       const surface = nextSurfaces[tab.id];
       if (!path || !surface) continue;
       appliedRef.current[appliedKey] = true;
+      applied = true;
+      const initialSurface = initialSurfacesRef.current[tab.id];
+      if (initialSurface && initialSurface.mode !== "closed") {
+        canonicalGeometryRef.current[input.mode][path] = { ...surface.bounds };
+        continue;
+      }
       const canonical = geometry[path];
       const app = appsByPath[path];
       nextSurfaces[tab.id] = {
@@ -144,13 +178,14 @@ export function useNativeOsViewPersistence(input: {
           bounds: input.mode === "desktop" ? desktopSurfaceBounds(canonical, input.viewport) : canonical,
         } : {}),
         ...(app?.state === "minimized" ? { mode: "minimized" as const }
-          : app?.state === "closed" ? { mode: "closed" as const }
+          : app?.state === "closed" && initialTabsRef.current.some((initialTab) => initialTab.id === tab.id) ? { mode: "closed" as const }
             : {}),
       };
       changed = true;
     }
     if (changed) useDesktopSurfaces.setState({ surfaces: nextSurfaces });
-  }, [durableState, input.installedApps, input.mode, input.surfaces, input.tabs, input.viewport]);
+    if (applied) setSurfaceHydration({ entry, appliedKeys: Object.keys(appliedRef.current) });
+  }, [durableState, entry, loadedEntry, input.installedApps, input.mode, input.surfaces, input.tabs, input.viewport]);
 
   useEffect(() => useNativeDesktopMode.subscribe((state, previous) => {
     if (state.mode === "canvas"
@@ -159,5 +194,15 @@ export function useNativeOsViewPersistence(input: {
     }
   }), [schedulePersist]);
 
-  return { durableState, recordCanonicalBounds, schedulePersist };
+  const surfacesRestored = loadedEntry === entry && input.tabs.every((tab) => {
+    const path = nativeTabOsViewPath(tab, input.installedApps);
+    return !path || (input.surfaces[tab.id] && (!durableState || (surfaceHydration?.entry === entry && surfaceHydration.appliedKeys.includes(`${input.mode}:${tab.id}`))));
+  });
+  return {
+    durableState: loadedEntry === entry ? durableState : null,
+    loadSettled: Boolean(input.api) && loadedEntry === entry,
+    surfacesRestored,
+    recordCanonicalBounds,
+    schedulePersist,
+  };
 }

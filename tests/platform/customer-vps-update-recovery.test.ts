@@ -14,9 +14,11 @@ function syncAgentHarnessSource(): string {
   return syncAgent
     .slice(0, syncAgent.indexOf('# ── Main loop'))
     .replace('source /opt/matrix/env/host.env', ':')
+    .replace(/# BEGIN update manifest library loader[\s\S]*?# END update manifest library loader/, () => readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-update-manifest'), 'utf8'))
+    .replace(/# BEGIN update request rejection library loader[\s\S]*?# END update request rejection library loader/, () => readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-update-request-rejection'), 'utf8'))
     .replace(
       /# BEGIN update recovery library loader[\s\S]*?# END update recovery library loader/,
-      recoveryLibrary,
+      () => recoveryLibrary,
     )
     .replace('readonly APP_DIR="/opt/matrix/app"', 'readonly APP_DIR="$TEST_ROOT/app"')
     .replace('readonly STAGING_DIR="/opt/matrix/staging"', 'readonly STAGING_DIR="$TEST_ROOT/staging"')
@@ -146,6 +148,8 @@ describe('customer VPS update recovery', () => {
         join(root, 'scripts/inline-sync-agent-recovery.mjs'),
         stagedAgent,
         stagedLibrary,
+        join(root, "distro/customer-vps/host-bin/matrix-update-manifest"),
+        join(root, "distro/customer-vps/host-bin/matrix-update-request-rejection"),
       ], {
         cwd: root,
         encoding: 'utf8',
@@ -153,6 +157,10 @@ describe('customer VPS update recovery', () => {
       expect(inline.status, inline.stderr || inline.stdout).toBe(0);
       const staged = readFileSync(stagedAgent, 'utf8');
       expect(staged).toContain('recover_interrupted_update() {');
+      expect(staged).toContain('load_trusted_apply_manifest() {');
+      expect(staged).toContain('reject_unchanged_update_request() {');
+      expect(staged).not.toContain('source "$BIN_DIR/matrix-update-manifest"');
+      expect(staged).not.toContain('source "$BIN_DIR/matrix-update-request-rejection"');
       expect(staged).not.toContain('source "$BIN_DIR/matrix-sync-agent-recovery"');
       const syntax = spawnSync('bash', ['-n', stagedAgent], { encoding: 'utf8' });
       expect(syntax.status, syntax.stderr || syntax.stdout).toBe(0);

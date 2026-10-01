@@ -11,7 +11,7 @@ import {
 } from "@matrix-os/contracts";
 import { CodexExecutableSchema } from "./coding-agents/codex-executable.js";
 import { codexExecContractStatus } from "./coding-agents/codex-version.js";
-import { MATRIX_CUSTOM_MCP_DISCOVERY_TOOLS, MATRIX_CUSTOM_MCP_TOOLS, matrixMcpConfig } from "./chat/matrix-mcp-launch.js";
+import { MATRIX_COMPANY_DRIVE_TOOLS, MATRIX_CUSTOM_MCP_DISCOVERY_TOOLS, MATRIX_CUSTOM_MCP_TOOLS, matrixMcpConfig } from "./chat/matrix-mcp-launch.js";
 import { MATRIX_INTEGRATION_DISCOVERY_TOOLS, MATRIX_INTEGRATION_ACTION_TOOLS } from "./chat/integration-tool-authority.js";
 
 export const SupportedAgentSchema = z.enum(["claude", "codex", "opencode", "pi"]);
@@ -67,6 +67,7 @@ export interface AgentLaunchInput {
   claudeOutputFormat?: "stream-json";
   claudeIncludePartialMessages?: boolean;
   matrixCustomMcp?: boolean;
+  matrixDriveContext?: boolean;
   matrixCustomMcpScope?: "call" | "discovery" | "chat_call" | "chat_discovery" | "preview_drive_call";
 }
 
@@ -210,11 +211,12 @@ const ClaudeAllowRuleSchema = z.union([
   ClaudeEditPermissionRuleSchema,
   z.enum(MATRIX_CUSTOM_MCP_TOOLS),
   z.enum(MATRIX_INTEGRATION_DISCOVERY_TOOLS),
+  z.enum(MATRIX_COMPANY_DRIVE_TOOLS),
 ]);
 const ClaudeLaunchSettingsSchema = z.object({
   permissions: z.object({
-    // Twenty writable roots plus fixed built-in/Custom MCP discovery wrappers.
-    allow: z.array(ClaudeAllowRuleSchema).max(26).optional(),
+    // Twenty writable roots plus fixed built-in, Custom MCP and company Drive wrappers.
+    allow: z.array(ClaudeAllowRuleSchema).max(28).optional(),
     ask: z.array(z.enum(MATRIX_INTEGRATION_ACTION_TOOLS)).max(4).optional(),
     deny: z.array(z.enum(["Edit", "Write", "NotebookEdit"])).max(3).optional(),
   }).strict().optional(),
@@ -285,7 +287,7 @@ function claudeLaunchSettings(input: AgentLaunchInput): z.infer<typeof ClaudeLau
   const previewDrive = input.matrixCustomMcpScope === "preview_drive_call";
   const chatIntegrations = input.matrixCustomMcpScope?.startsWith("chat_") === true || previewDrive;
   const mcpTools = input.matrixCustomMcp
-    ? [...(previewDrive ? [MATRIX_INTEGRATION_DISCOVERY_TOOLS[0], MATRIX_INTEGRATION_DISCOVERY_TOOLS[2]]
+    ? [...(!previewDrive && input.matrixDriveContext ? MATRIX_COMPANY_DRIVE_TOOLS : []), ...(previewDrive ? [MATRIX_INTEGRATION_DISCOVERY_TOOLS[0], MATRIX_INTEGRATION_DISCOVERY_TOOLS[2]]
       : chatIntegrations ? MATRIX_INTEGRATION_DISCOVERY_TOOLS : []), ...(previewDrive ? [] : mode === "read-only" || claudePermissionMode(input) === "default"
       ? MATRIX_CUSTOM_MCP_DISCOVERY_TOOLS : MATRIX_CUSTOM_MCP_TOOLS)]
     : [];
@@ -330,7 +332,7 @@ function claudeLaunchArgs(input: AgentLaunchInput): string[] {
     "--permission-mode",
     permissionMode,
     "--strict-mcp-config",
-    ...(input.matrixCustomMcp ? ["--mcp-config", matrixMcpConfig(input.matrixCustomMcpScope)] : []),
+    ...(input.matrixCustomMcp ? ["--mcp-config", matrixMcpConfig(input.matrixCustomMcpScope, input.matrixDriveContext)] : []),
     "--no-chrome",
     ...(input.model ? ["--model", input.model] : []),
     ...(modelOption(input, "effort") ? ["--effort", modelOption(input, "effort")!] : []),

@@ -1,5 +1,7 @@
 "use client";
 
+import { useAuth } from "@clerk/nextjs";
+import { getGatewayUrl } from "@/lib/gateway";
 import { useEffect, useRef, useState } from "react";
 import { useFileBrowser } from "@/hooks/useFileBrowser";
 import { usePreviewWindow } from "@/hooks/usePreviewWindow";
@@ -18,6 +20,7 @@ import { QuickLook } from "./QuickLook";
 import { FileDownloadProvider } from "./FileDownloadProvider";
 import { FileResourceSharing } from "./FileResourceSharing";
 import { XpExplorer } from "./XpExplorer";
+import { organizationDriveNavigationIdentity, useOrganizationDriveNavigation } from "@/stores/organization-drive-navigation";
 import { OrganizationDrivesView } from "./OrganizationDrivesView";
 
 interface FileBrowserProps {
@@ -29,6 +32,20 @@ export function FileBrowser({ windowId, mobile = false }: FileBrowserProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [showingTrash, setShowingTrash] = useState(false);
   const [showingOrganizationDrives, setShowingOrganizationDrives] = useState(false);
+  const {userId, sessionId} = useAuth();
+  const identity = organizationDriveNavigationIdentity(userId, sessionId, getGatewayUrl());
+  const driveRequest = useOrganizationDriveNavigation(state => state.request);
+  const [openedDriveRequest, setOpenedDriveRequest] = useState<typeof driveRequest>(null);
+  const activeDriveRequest = openedDriveRequest?.identity === identity ? openedDriveRequest : null;
+  useEffect(() => {
+    setOpenedDriveRequest(null); setShowingOrganizationDrives(false);
+  }, [identity]);
+  useEffect(() => {
+    if (!driveRequest) return;
+    useOrganizationDriveNavigation.getState().consume(driveRequest);
+    if (driveRequest.identity !== identity) return;
+    setOpenedDriveRequest(driveRequest); setShowingOrganizationDrives(true);
+  }, [driveRequest, identity]);
   const [renamingPath, setRenamingPath] = useState<string | null>(null);
 
   const currentPath = useFileBrowser((s) => s.currentPath);
@@ -308,7 +325,7 @@ export function FileBrowser({ windowId, mobile = false }: FileBrowserProps) {
       {selectedKind && selectedPath && !showingTrash && !searchResults && !showingOrganizationDrives ? <div className="flex justify-end border-b px-3 py-1.5">
         <FileResourceSharing key={`${selectedKind}:${selectedPath}`} kind={selectedKind} path={selectedPath} />
       </div> : null}
-      {showingOrganizationDrives ? <OrganizationDrivesView /> : isXpExplorer ? (
+      {showingOrganizationDrives ? <OrganizationDrivesView mobile={mobile} draftIdentity={identity} key={identity} requestedScopeId={activeDriveRequest?.scopeId} requestedIntentId={activeDriveRequest?.id} /> : isXpExplorer ? (
         <XpExplorer
           renamingPath={renamingPath}
           onStartRename={setRenamingPath}

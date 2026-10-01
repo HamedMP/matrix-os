@@ -18,7 +18,8 @@ import type {
 import { AppError } from "../../../../shared/app-error";
 import { buildGatewayUrl, type ApiClient } from "../../lib/api";
 import { invoke } from "../../lib/operator";
-import { isValidShellSessionName, useShellSessions } from "../../stores/shell-sessions";
+import { isValidShellSessionName, readShellSessions, useShellSessions, type ShellSessionSummary } from "../../stores/shell-sessions";
+import { captureRuntimeGeneration, isCurrentRuntimeGeneration } from "../../stores/runtime-generation";
 import { useTabs } from "../../stores/tabs";
 import { useDesktopSurfaces } from "../../stores/desktop-surfaces";
 
@@ -30,6 +31,7 @@ const MAX_CHECKOUT_RESPONSE_BYTES = 8 * 1024;
 const PROVIDER_TERMINAL_DISCOVERY_ATTEMPTS = 8;
 const PROVIDER_TERMINAL_DISCOVERY_INTERVAL_MS = 250;
 const PROVIDER_AUTH_SESSION_PATTERN = /^provider-auth-[0-9a-z]{50}$/;
+let latestTerminalHandoff: symbol | undefined;
 
 export { desktopProviderIdentityKey } from "../../lib/provider-settings-identity";
 
@@ -99,31 +101,66 @@ export async function openExistingProviderTerminalSession(
   isIdentityCurrent: () => boolean = () => true,
 ): Promise<boolean> {
   const isTerminalRef = isValidShellSessionName(terminalSessionId);
-  if (!isTerminalRef && !PROVIDER_AUTH_SESSION_PATTERN.test(terminalSessionId)) return false;
-  let canonicalSessionName: string | null = null;
-  for (let attempt = 0; attempt < PROVIDER_TERMINAL_DISCOVERY_ATTEMPTS; attempt += 1) {
-    if (!isIdentityCurrent()) return false;
-    const sessions = await useShellSessions.getState().load(api);
-    if (!isIdentityCurrent()) return false;
-    const matches = sessions?.filter((session) => isTerminalRef
-      ? session.name === terminalSessionId
-      : session.subtitle === terminalSessionId);
-    if (matches && matches.length > 1) return false;
-    const matching = matches?.[0];
-    if (matching?.status === "active") {
-      canonicalSessionName = matching.name;
-      break;
+  if ((!isTerminalRef && !PROVIDER_AUTH_SESSION_PATTERN.test(terminalSessionId)) || !isIdentityCurrent()) return false;
+  const handoff = Symbol();
+  latestTerminalHandoff = handoff;
+  const generation = captureRuntimeGeneration();
+  const matchingSession = (sessions: ShellSessionSummary[]) => {
+    const matches = sessions.filter((session) => isTerminalRef
+      ? session.name === terminalSessionId : session.subtitle === terminalSessionId);
+    return matches.length === 1 ? matches[0] : undefined;
+  };
+  const openSession = (session: ShellSessionSummary) => {
+    const tabId = useTabs.getState().openTab({ kind: "terminals", title: "Terminal" });
+    useDesktopSurfaces.getState().activateSurface(tabId);
+    useTabs.getState().requestTerminalSession(session.name);
+    return true;
+  };
+  let sequence = useShellSessions.getState().loadSequence;
+  let acceptedRevision: number | undefined;
+  try {
+    for (let attempt = 0; attempt < PROVIDER_TERMINAL_DISCOVERY_ATTEMPTS; attempt += 1) {
+      if (latestTerminalHandoff !== handoff || !isIdentityCurrent() || !isCurrentRuntimeGeneration(generation)) return false;
+      const currentBeforeRead = useShellSessions.getState();
+      if (acceptedRevision !== undefined && currentBeforeRead.authoritativeRevision !== acceptedRevision) {
+        const latest = matchingSession(currentBeforeRead.sessions);
+        return latest?.status === "active" ? openSession(latest) : false;
+      }
+      const revision = currentBeforeRead.authoritativeRevision;
+      sequence = useShellSessions.getState().loadSequence + 1;
+      // Fence older polls; newer completed lists or deletions remain authoritative.
+      useShellSessions.setState({ loadSequence: sequence, loading: true, error: null });
+      const sessions: ShellSessionSummary[] = await readShellSessions(api);
+      if (latestTerminalHandoff !== handoff || !isIdentityCurrent() || !isCurrentRuntimeGeneration(generation)) return false;
+      const current = useShellSessions.getState();
+      const superseded = current.authoritativeRevision !== revision;
+      const authoritativeSessions = superseded ? current.sessions : sessions;
+      if (!superseded) {
+        useShellSessions.setState((state) => ({
+          sessions,
+          authoritativeRevision: state.authoritativeRevision + 1,
+        }));
+      }
+      acceptedRevision = useShellSessions.getState().authoritativeRevision;
+      const matching = matchingSession(authoritativeSessions);
+      if (matching?.status === "active") return openSession(matching);
+      if (authoritativeSessions.filter((session) => isTerminalRef
+        ? session.name === terminalSessionId : session.subtitle === terminalSessionId).length > 1) return false;
+      if (superseded || matching?.status === "exited" || matching?.status === "degraded") return false;
+      if (attempt < PROVIDER_TERMINAL_DISCOVERY_ATTEMPTS - 1) {
+        await new Promise((resolve) => setTimeout(resolve, PROVIDER_TERMINAL_DISCOVERY_INTERVAL_MS));
+      }
     }
-    if (matching?.status === "exited" || matching?.status === "degraded") return false;
-    if (attempt < PROVIDER_TERMINAL_DISCOVERY_ATTEMPTS - 1) {
-      await new Promise((resolve) => setTimeout(resolve, PROVIDER_TERMINAL_DISCOVERY_INTERVAL_MS));
+    return false;
+  } catch (error) {
+    console.warn("[provider-settings] Terminal handoff unavailable:", error instanceof Error ? error.name : typeof error);
+    return false;
+  } finally {
+    if (latestTerminalHandoff === handoff && isCurrentRuntimeGeneration(generation)
+      && useShellSessions.getState().loadSequence === sequence) {
+      useShellSessions.setState({ loading: false });
     }
   }
-  if (!canonicalSessionName || !isIdentityCurrent()) return false;
-  const tabId = useTabs.getState().openTab({ kind: "terminals", title: "Terminal" });
-  useDesktopSurfaces.getState().activateSurface(tabId);
-  useTabs.getState().requestTerminalSession(canonicalSessionName);
-  return true;
 }
 
 export async function openDesktopProviderAgentSetup(

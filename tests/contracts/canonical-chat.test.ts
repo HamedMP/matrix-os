@@ -15,6 +15,7 @@ import {
   CanonicalProviderDriverDescriptorSchema,
   CanonicalProviderCatalogSchema,
   CanonicalProviderInstanceDescriptorSchema,
+  canonicalChatSafeFailureReason,
 } from "../../packages/contracts/src/index.js";
 
 const now = "2026-08-25T00:00:00.000Z";
@@ -784,5 +785,15 @@ describe("canonical Chat contracts", () => {
       retryable: false,
       recoveryActions: ["start_new_chat"],
     }).success).toBe(false);
+  });
+
+  it("shows a specific recovery choice for an Agent runtime that only supports Full access", () => {
+    expect(CanonicalChatSafeErrorSchema.safeParse({
+      code: "agent_full_access_required",
+      safeMessage: "This Agent's runtime requires Full access.",
+      retryable: false,
+    }).success).toBe(true);
+    expect(canonicalChatSafeFailureReason("agent_full_access_required"))
+      .toBe("This Agent's runtime requires Full access. Enable it for this request or choose a different Agent model.");
   });
 });

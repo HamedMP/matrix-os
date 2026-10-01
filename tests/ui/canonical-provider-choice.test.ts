@@ -98,6 +98,7 @@ describe("canonical Provider choice presentation", () => {
       permissionModes: ["supervised", "full_access"],
       options: catalog.instances[0]!.options,
       selectedOptions: [{ id: "effort", value: "high" }, { id: "thinking", value: true }],
+      supportsCompanyDriveContext: false,
       supportsFileAttachments: false,
     }]);
   });
