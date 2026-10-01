@@ -1,4 +1,5 @@
 "use client";
+import {CompanyDriveContextControl} from "./CompanyDriveContextControl";
 import {
   usePlatformSpeechDraft,
   SpeechInputWaveform,
@@ -37,6 +38,7 @@ export function ChatInput({
   onDraftConsumed,
   unavailablePlaceholder,
   attachmentsEnabled,
+  driveContextEnabled = false,
   speechClient,
   speechCaptureAdapter,
 }: {
@@ -52,6 +54,7 @@ export function ChatInput({
   onDraftConsumed?: (id: number) => void;
   unavailablePlaceholder?: string;
   attachmentsEnabled: boolean;
+  driveContextEnabled?: boolean;
   speechClient?: BrowserSpeechClient;
   speechCaptureAdapter?: PlatformSpeechCaptureAdapter;
 }) {
@@ -68,6 +71,7 @@ export function ChatInput({
   const mentionListRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const inputRef = useRef(input);
+  const consumedDraftRequest = useRef<number | null>(null);
   const { attachments, addFiles, removeFile, clearAll, getBase64Files } = useAttachments();
   const [defaultSpeechClient] = useState(() => createBrowserSpeechClient());
   const [defaultSpeechCapture] = useState(() => createWebPcmSpeechCaptureAdapter());
@@ -84,7 +88,8 @@ export function ChatInput({
     },
   });
   const speechBusy = speech.phase === "requesting_permission" || speech.phase === "recording" || speech.phase === "transcribing";
-  const canSend = !speechBusy && canSendChatInput({ connected, sending, allowed: permission.allowed, busy, references: resources.length, text: input, attachments: attachments.length });
+  const blockedDriveContext = resources.some(resource => resource.kind === "organization_drive") && !driveContextEnabled;
+  const canSend = !blockedDriveContext && !speechBusy && canSendChatInput({ connected, sending, busy, references: resources.length, text: input, attachments: attachments.length });
 
   useEffect(() => {
     inputRef.current = input;
@@ -96,7 +101,8 @@ export function ChatInput({
   }, [autoFocus]);
 
   useEffect(() => {
-    if (!draftRequest) return;
+    if (!draftRequest || consumedDraftRequest.current === draftRequest.id) return;
+    consumedDraftRequest.current = draftRequest.id;
     setDraft({ text: draftRequest.text, resources: draftRequest.resources ?? [] });
     textareaRef.current?.focus();
     onDraftConsumed?.(draftRequest.id);
@@ -134,6 +140,11 @@ export function ChatInput({
         setInput(input.replace(/@[^\s@]*$/, ""));
         textareaRef.current?.focus();
       }} />
+      <CompanyDriveContextControl identity={scope} resources={resources} enabled={driveContextEnabled} query={query} onSelect={resource => {
+        composer.setResources([...resources, resource]);
+        if (query !== null) setInput(input.replace(/@[^\s@]*$/, ""));
+        textareaRef.current?.focus();
+      }}/>
       <ChatMentionTokens resources={resources} onRemove={(resource) => composer.setResources(resources.filter((item) => item !== resource))} />
       <ChatMentionControls client={agentClient} resources={resources} permissionMode={permissionMode} confirmed={permission.confirmed} onConfirm={permission.confirm} />
       {error ? <p role="alert" className="text-xs text-destructive">{error}</p> : null}

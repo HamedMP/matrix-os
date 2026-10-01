@@ -1,3 +1,4 @@
+export * from "#chat-drive-project";
 import { TerminalScrollLineSchema, TerminalScrollStateSchema } from "#terminal-scroll";
 export * from "#terminal-scroll";
 export * from "#private-preview";
@@ -1446,3 +1447,5 @@ export * from "#custom-mcp-availability";
 
 export { normalizeTerminalSnapshot } from "#terminal-snapshot";
 export { chatSubagentPresentation, projectChatSubagent, ChatSubagentSchema, type ChatSubagent } from "#chat-subagent";
+
+export { ImportedChatAssetRefSchema, importedChatAssetContentPath, type ImportedChatAssetRef } from "#canonical-chat-import-parts";

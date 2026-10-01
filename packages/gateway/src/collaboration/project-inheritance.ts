@@ -1,3 +1,4 @@
+import {hasCompanyDriveMaterial} from "../chat/drive-sharing-guard.js";
 import { randomUUID } from "node:crypto";
 import { sql, type Kysely, type Selectable, type Transaction } from "kysely";
 import { z } from "zod/v4";
@@ -239,6 +240,10 @@ export function createProjectInheritanceResolver(options: {
           && (project.authority_runtime_id !== input.authorityRuntimeId
             || Number(project.authority_generation) !== input.authorityGeneration)) {
           throw new ProjectInheritanceError("conflict");
+        }
+        if (input.kind === "chat") {
+          await trx.selectFrom("chats").select("id").where("id", "=", input.resourceId).forUpdate().executeTakeFirst();
+          if (await hasCompanyDriveMaterial(trx, input.resourceId)) throw new ProjectInheritanceError("resource_blocked");
         }
         const existing = await trx.selectFrom("collaboration_resource_bindings").selectAll()
           .where("project_scope_id", "=", input.projectScopeId)

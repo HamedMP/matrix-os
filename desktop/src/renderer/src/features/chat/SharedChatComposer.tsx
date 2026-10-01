@@ -1,4 +1,5 @@
-import { canAddChatMention, isChatMention, orderChatResources } from "@matrix-os/ui";
+import {CompanyDriveContextControl} from "./CompanyDriveContextControl";
+import { chatResourceKey, canAddChatMention, isChatMention, orderChatResources } from "@matrix-os/ui";
 import type {
   CanonicalChatResourceReference,
   CanonicalProviderCatalog,
@@ -244,6 +245,9 @@ export function SharedChatComposer({
     editorRef.current?.focus();
   }, [markdownPreview]);
   const instance = catalog.instances.find((candidate) => candidate.id === selection?.instanceId);
+  const driveContextEnabled = instance?.supports.resources.includes("organization_drive") === true;
+  const selectedResources = referenceTokens.flatMap(token => token.type === "resource" ? [token.resource] : []);
+  const blockedDriveContext = selectedResources.some(resource => resource.kind === "organization_drive") && !driveContextEnabled;
   const valueBeforeCursor = value.slice(0, cursor);
   const slashMatch = valueBeforeCursor.match(/(?:^|\s)(\/[a-z0-9_-]*)$/i);
   const resourceMatch = valueBeforeCursor.match(/(?:^|\s)@([^\s]*)$/);
@@ -286,7 +290,7 @@ export function SharedChatComposer({
   ));
   const availableResources = orderChatResources([...resources, ...remoteResources])
     .filter((resource, index, all) => all.findIndex((candidate) => (
-      candidate.kind === resource.kind && candidate.id === resource.id
+      chatResourceKey(candidate) === chatResourceKey(resource)
     )) === index)
     .filter((resource) => !isChatMention(resource) || canAddChatMention(referenceTokens.flatMap((token) => token.type === "resource" ? [token.resource] : []), resource));
   const filteredResources = resourceQuery === null ? [] : availableResources
@@ -354,6 +358,7 @@ export function SharedChatComposer({
           && !resourceMenuOpen
           && !disabled
           && !speechActive
+          && !blockedDriveContext
           && (canSubmit ?? (value.trim().length > 0 || referenceTokens.length > 0))
         ) {
           onSubmit(currentSubmission());
@@ -439,11 +444,12 @@ export function SharedChatComposer({
           />
         </SuggestionMenu>
       ) : null}
+      <CompanyDriveContextControl resources={selectedResources} enabled={driveContextEnabled} disabled={disabled} query={resourceMenuOpen ? resourceQuery : null} onSelect={insertResource}/>
       <PromptInput
         value={value}
         onChange={onChange}
         onSubmit={() => {
-          if (!speechActive) {
+          if (!blockedDriveContext && !speechActive) {
             const submission = currentSubmission();
             if (markdownPreview) restoreEditorFocus.current = true;
             setPreviewState({ scopeKey: draftScopeKey, active: false });
@@ -454,7 +460,7 @@ export function SharedChatComposer({
         busy={busy}
         submitWhileBusy={submitWhileBusy}
         disabled={disabled}
-        canSubmit={!speechActive && (canSubmit ?? (!disabled && (value.trim().length > 0 || referenceTokens.length > 0)))}
+        canSubmit={!blockedDriveContext && !speechActive && (canSubmit ?? (!disabled && (value.trim().length > 0 || referenceTokens.length > 0)))}
         autoFocus={autoFocus}
         focusRequestId={focusRequestId}
         layout={layout}

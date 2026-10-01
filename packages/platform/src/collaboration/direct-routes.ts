@@ -119,7 +119,7 @@ export function createPlatformCollaborationDirectRoutes(options: {
   return app;
 }
 
-async function requireRuntime(
+export async function requireRuntime(
   c: Context,
   authenticate: (input: { runtimeId: string; bearerToken: string }) => Promise<AuthenticatedRuntime | null>,
 ): Promise<AuthenticatedRuntime | null> {

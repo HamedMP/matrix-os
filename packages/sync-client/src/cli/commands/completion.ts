@@ -18,6 +18,7 @@ const COMMANDS = [
   "forward",
   "upload",
   "download",
+  "chats",
   "agent",
   "doctor",
   "instance",

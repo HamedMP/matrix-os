@@ -19,6 +19,8 @@ import {
 } from "./limits.js";
 import { createTerminalRuntimeEnvironment } from "./runtime-environment.js";
 import { decodeZellijScreenDump } from "./zellij-screen-dump.js";
+import { terminalCommandStateFromPanes, type TerminalCommandState } from "./terminal-command-state.js";
+import { ArchiveTabInventorySchema, ArchivePaneInventorySchema, archivedTabRuntimeIdentity } from "./terminal-ended-tab-archive.js";
 
 const MAX_COMMAND_OUTPUT_BYTES = 5 * 1024 * 1024;
 const MAX_SUBSCRIPTION_LINE_BYTES = 1024 * 1024;
@@ -547,6 +549,41 @@ export class ZellijCliRuntimeAdapter implements ZellijRuntimeAdapter {
       return;
     }
     await this.run(terminalPaneActionArgs(sessionName, paneId, action), binaryPath);
+  }
+
+  async findTabByInternalNameReadOnly(sessionNameInput: string, internalNameInput: string,
+    expected?: { tabId: number | null; paneId: string | null }): Promise<{ tabId: number; paneId: string } | undefined> {
+    const { sessionName, binaryPath } = await this.resolveWorkspaceTarget(sessionNameInput);
+    const internalName = z.string().regex(TAB_NAME).parse(internalNameInput);
+    const deadline = Date.now() + TERMINAL_RUNTIME_COMMAND_TIMEOUT_MS;
+    const tabs = await this.readStructuredJson(
+      ["--session", sessionName, "action", "list-tabs", "--json"], ArchiveTabInventorySchema, binaryPath,
+      deadline,
+    );
+    const matches = tabs.filter((tab) => tab.name === internalName);
+    if (matches.length === 0 && !expected) return undefined;
+    if (matches.length > 1) throw new Error("Terminal tab identity is ambiguous");
+    const panes = await this.readStructuredJson(
+      ["--session", sessionName, "action", "list-panes", "--all", "--json"], ArchivePaneInventorySchema, binaryPath,
+      deadline,
+    );
+    return archivedTabRuntimeIdentity(tabs, panes, internalName, expected);
+  }
+
+  async getCommandState(sessionNameInput: string, tabIdInput: number, paneIdInput: string): Promise<TerminalCommandState> {
+    const { sessionName, binaryPath } = await this.resolveWorkspaceTarget(sessionNameInput);
+    const tabId = z.number().int().min(0).parse(tabIdInput);
+    const paneId = z.string().regex(PANE_ID).parse(paneIdInput);
+    try {
+      const output = await this.run(
+        ["--session", sessionName, "action", "list-panes", "--all", "--json"], binaryPath,
+        TERMINAL_RUNTIME_COMMAND_TIMEOUT_MS,
+      );
+      return terminalCommandStateFromPanes(JSON.parse(output), tabId, paneId);
+    } catch (error) {
+      console.warn("[terminal-runtime] command state unavailable", error instanceof Error ? error.name : "unknown_error");
+      return "unknown";
+    }
   }
 
   async findTabByInternalName(

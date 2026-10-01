@@ -4,8 +4,10 @@
 // (FR-081). The bearer credential never appears in any schema; Hermes provider
 // credentials are accepted only by the bounded write-only setter request.
 import { z } from "zod/v4";
+import { LOCAL_CHAT_IMPORT_INVOKE, LOCAL_CHAT_IMPORT_EVENTS } from "./local-chat-import-ipc";
 import {
   AppGenerateEventSchema,
+  OrganizationDriveUploadFolderSchema,
   BuildSourceSchema,
   FileDownloadRequestSchema,
   FileDownloadResultSchema,
@@ -137,6 +139,7 @@ const BoundedJsonValue = z.unknown().refine(
 );
 
 export const INVOKE_CHANNELS = {
+  ...LOCAL_CHAT_IMPORT_INVOKE,
   "terminal:read-clipboard-files": { request: Empty, response: TerminalClipboardResultSchema },
   "analytics:flush-complete": { request: Empty, response: Ok },
   "auth:start-device-flow": {
@@ -255,6 +258,30 @@ export const INVOKE_CHANNELS = {
   "runtime:download-file": {
     request: FileDownloadRequestSchema,
     response: FileDownloadResultSchema,
+  },
+  "runtime:organization-drive-upload": {
+    request: z.object({ scopeId: z.uuid(), organizationId: z.string().regex(/^org_[A-Za-z0-9_-]+$/),
+      folder: OrganizationDriveUploadFolderSchema, runtimeSlot: z.string().min(1).max(128),
+      authGeneration: z.number().int().nonnegative() }).strict(),
+    response: z.discriminatedUnion("status", [
+      z.object({ status: z.literal("cancelled") }).strict(),
+      z.object({ status: z.literal("uploaded"), fileId: z.uuid() }).strict(),
+      z.object({ status: z.literal("error"), code: z.enum(["unavailable", "invalid_file", "conflict"]) }).strict(),
+    ]),
+  },
+  "runtime:organization-drive-download": {
+    request: z.object({ scopeId: z.uuid(), organizationId: z.string().regex(/^org_[A-Za-z0-9_-]+$/),
+      fileId: z.uuid(), runtimeSlot: z.string().min(1).max(128),
+      authGeneration: z.number().int().nonnegative() }).strict(),
+    response: z.discriminatedUnion("status", [
+      z.object({ status: z.literal("cancelled") }).strict(),
+      z.object({ status: z.literal("downloaded") }).strict(),
+      z.object({ status: z.literal("error"), code: z.enum(["unavailable", "invalid_file", "conflict"]) }).strict(),
+    ]),
+  },
+  "runtime:organization-drive-cancel": {
+    request: Empty,
+    response: Ok,
   },
   "runtime:cancel-file-download": {
     request: z.object({ requestId: z.uuid() }).strict(),
@@ -473,6 +500,7 @@ export const INVOKE_CHANNELS = {
 } as const;
 
 export const EVENT_CHANNELS = {
+  ...LOCAL_CHAT_IMPORT_EVENTS,
   "app:generate": AppGenerateEventSchema,
   "analytics:capture": DesktopAnalyticsDetailSchema,
   "analytics:flush-requested": Empty,

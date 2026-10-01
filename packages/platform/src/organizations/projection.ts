@@ -6,7 +6,8 @@
  * recent upstream verification of that organization. Evidence expires at a
  * fixed deadline anchored to the upstream request start, never to receipt
  * time. Reconciliations are coalesced per organization, run on a recurring
- * timer for recently active organizations (bounded, LRU), and an upstream
+ * timer for recently active organizations (bounded, LRU). A stale read for a
+ * known active membership awaits fresh coalesced verification, and an upstream
  * failure simply lets the verification age out, so outages fail closed.
  */
 import type { EndedMembership, PlatformOrganizationRepository } from "./repository.js";
@@ -34,13 +35,18 @@ export interface OrganizationMembershipProjection {
   shutdown(): Promise<void>;
 }
 
+export class OrganizationRefreshUnavailableError extends Error {
+  constructor() { super("Organization refresh unavailable"); this.name = "OrganizationRefreshUnavailableError"; }
+}
+
 export const ORGANIZATION_EVIDENCE_TTL_MS = 20_000;
 export const ORGANIZATION_POSITIVE_EVIDENCE_MAX_AGE_MS = 60_000;
 export const ORGANIZATION_REFRESH_INTERVAL_MS = 10_000;
 const CLOCK_SKEW_MS = 5_000;
 const ACTIVE_WINDOW_MS = 5 * 60_000;
 const MAX_REFRESH_CONCURRENCY = 4;
-const MAX_INFLIGHT_RECONCILIATIONS = 64;
+export const MAX_INFLIGHT_RECONCILIATIONS = 64;
+const FAILED_REFRESH_RETRY_MS = 10_000;
 
 export function createOrganizationMembershipProjection(options: {
   repository: PlatformOrganizationRepository;
@@ -59,6 +65,8 @@ export function createOrganizationMembershipProjection(options: {
   const maxTracked = options.maxTrackedOrganizations ?? 1_000;
   const tracked = new Map<string, number>();
   const inflight = new Map<string, Promise<{ verified: boolean; endedMemberships: EndedMembership[] }>>();
+  // TTL plus LRU eviction bounds negative retry state without renewing evidence.
+  const retryAfter = new Map<string, number>();
   let closed = false;
   let timer: ReturnType<typeof setInterval> | undefined;
   let sweeping: Promise<void> | undefined;
@@ -102,12 +110,26 @@ export function createOrganizationMembershipProjection(options: {
     if (closed) return { verified: false, endedMemberships: [] };
     const existing = inflight.get(organizationId);
     if (existing) return existing;
-    if (inflight.size >= MAX_INFLIGHT_RECONCILIATIONS) {
-      // Bounded: the organization simply stays unverified (fail closed) until a later attempt.
-      console.warn("[organizations] reconciliation deferred: too many in flight");
-      return { verified: false, endedMemberships: [] };
+    const current = now().getTime();
+    for (const [id, deadline] of retryAfter) {
+      if (deadline <= current) retryAfter.delete(id);
     }
-    const promise = reconcileNow(organizationId).finally(() => { inflight.delete(organizationId); });
+    if ((retryAfter.get(organizationId) ?? 0) > current) return { verified: false, endedMemberships: [] };
+    if (inflight.size >= MAX_INFLIGHT_RECONCILIATIONS) {
+      // Capacity is availability, not membership evidence. Reads fail closed
+      // with an unavailable response rather than silently hiding valid organizations.
+      console.warn("[organizations] reconciliation deferred: too many in flight");
+      throw new OrganizationRefreshUnavailableError();
+    }
+    const promise = reconcileNow(organizationId).then((result) => {
+      if (result.verified) retryAfter.delete(organizationId);
+      else {
+        retryAfter.delete(organizationId);
+        retryAfter.set(organizationId, now().getTime() + FAILED_REFRESH_RETRY_MS);
+        while (retryAfter.size > maxTracked) retryAfter.delete(retryAfter.keys().next().value!);
+      }
+      return result;
+    }).finally(() => { inflight.delete(organizationId); });
     inflight.set(organizationId, promise);
     return promise;
   };
@@ -133,10 +155,21 @@ export function createOrganizationMembershipProjection(options: {
 
   const evaluate = async (organizationId: string, actorId: string): Promise<{ member: boolean; membershipEpoch: number; aiSubmission: "members" | "owner_only" }> => {
     touch(organizationId);
-    const [organization, membership] = await Promise.all([
+    let [organization, membership] = await Promise.all([
       options.repository.getOrganization(organizationId),
       options.repository.getMembership({ organizationId, actorId }),
     ]);
+    // Idle Cloud Run instances cannot rely on timers to refresh positive evidence.
+    // Only a previously known active membership may request this bounded,
+    // coalesced upstream verification; unknown actors never trigger a lookup.
+    if (options.upstream && organization?.lifecycle === "active" && membership?.state === "active"
+      && (!organization.verifiedAt || now().getTime() - organization.verifiedAt.getTime() > maxAgeMs)) {
+      await reconcile(organizationId);
+      [organization, membership] = await Promise.all([
+        options.repository.getOrganization(organizationId),
+        options.repository.getMembership({ organizationId, actorId }),
+      ]);
+    }
     const epoch = membership?.membershipEpoch ?? organization?.membershipEpoch ?? 0;
     const aiSubmission = organization?.aiSubmission ?? "owner_only";
     if (!organization || organization.lifecycle !== "active" || !organization.verifiedAt) return { member: false, membershipEpoch: epoch, aiSubmission };
@@ -169,6 +202,7 @@ export function createOrganizationMembershipProjection(options: {
       timer = undefined;
       await Promise.allSettled([...inflight.values(), sweeping ?? Promise.resolve()]);
       tracked.clear();
+      retryAfter.clear();
     },
   };
 }

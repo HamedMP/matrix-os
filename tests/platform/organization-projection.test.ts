@@ -97,6 +97,71 @@ describe("organization membership projection (T016/T019)", () => {
     await projection.shutdown();
   });
 
+  it.each(["retained", "removed", "upstream unavailable"])("refreshes an idle known membership before answering: %s", async (scenario) => {
+    let first = true;
+    const listMembers = vi.fn(async () => {
+      if (!first && scenario === "upstream unavailable") throw new Error("upstream unavailable");
+      return snapshot(org, first || scenario === "retained" ? [member] : [], first ? 1_000 : 2_000);
+    });
+    const projection = createOrganizationMembershipProjection({ repository, upstream: { listMembers }, now: () => clock });
+    try {
+      await projection.reconcile(org);
+      first = false;
+      clock = new Date(clock.getTime() + 60_001);
+      expect(await projection.isCurrentMember({ organizationId: org, actorId: member })).toBe(scenario === "retained");
+      expect(listMembers).toHaveBeenCalledTimes(2);
+      if (scenario === "removed") expect((await repository.getMembership({ organizationId: org, actorId: member }))?.state).toBe("removed");
+      if (scenario === "upstream unavailable") expect((await repository.getOrganization(org))?.verifiedAt?.getTime()).toBe(clock.getTime() - 60_001);
+    } finally { await projection.shutdown(); }
+  });
+
+  it("backs off sequential failed stale reads without extending evidence, then retries", async () => {
+    let unavailable = false;
+    const listMembers = vi.fn(async () => {
+      if (unavailable) throw new Error("upstream unavailable");
+      return snapshot(org, [member], unavailable ? 2_000 : 1_000);
+    });
+    const projection = createOrganizationMembershipProjection({ repository, upstream: { listMembers }, now: () => clock });
+    try {
+      await projection.reconcile(org);
+      const verifiedAt = (await repository.getOrganization(org))!.verifiedAt!.getTime();
+      unavailable = true;
+      clock = new Date(clock.getTime() + 60_001);
+      for (let index = 0; index < 3; index++) expect(await projection.isCurrentMember({ organizationId: org, actorId: member })).toBe(false);
+      expect(listMembers).toHaveBeenCalledTimes(2);
+      expect((await repository.getOrganization(org))!.verifiedAt!.getTime()).toBe(verifiedAt);
+      unavailable = false;
+      clock = new Date(clock.getTime() + 10_001);
+      expect(await projection.isCurrentMember({ organizationId: org, actorId: member })).toBe(true);
+      expect(listMembers).toHaveBeenCalledTimes(3);
+    } finally { await projection.shutdown(); }
+  });
+
+  it("does not perform upstream lookups for unknown organizations or unrelated actors", async () => {
+    const listMembers = vi.fn(async () => snapshot(org, [member]));
+    const projection = createOrganizationMembershipProjection({ repository, upstream: { listMembers }, now: () => clock });
+    try {
+      await projection.reconcile(org);
+      listMembers.mockClear();
+      clock = new Date(clock.getTime() + 60_001);
+      expect(await projection.isCurrentMember({ organizationId: org, actorId: outsider })).toBe(false);
+      expect(await projection.isCurrentMember({ organizationId: other, actorId: member })).toBe(false);
+      expect(listMembers).not.toHaveBeenCalled();
+    } finally { await projection.shutdown(); }
+  });
+
+  it("reports exhausted capacity as unavailable instead of denying a known member", async () => {
+    await repository.reconcileOrganization(snapshot(org, [member]), new Date(clock.getTime() - 60_001));
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const listMembers = vi.fn(async (id: string) => { await gate; return snapshot(id, []); });
+    const projection = createOrganizationMembershipProjection({ repository, upstream: { listMembers }, now: () => clock });
+    const pending = Array.from({ length: 64 }, (_, index) => projection.reconcile(`org_pool${String(index).padStart(20, "0")}`));
+    try {
+      await expect(projection.isCurrentMember({ organizationId: org, actorId: member })).rejects.toThrow("Organization refresh unavailable");
+    } finally { release(); await Promise.all(pending); await projection.shutdown(); }
+  });
+
   it("denies everything when no upstream is configured", async () => {
     const projection = createOrganizationMembershipProjection({ repository, now: () => clock });
     await repository.applyOrganization({ organizationId: org, name: "Org", slug: "org", aiSubmission: "owner_only", sourceUpdatedAt: new Date(1) });

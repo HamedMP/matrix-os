@@ -1,5 +1,11 @@
 import { SpawnError } from "./errors.js";
 
+// Loopback ports handed to app processes. Kept below the Linux ephemeral
+// range (net.ipv4.ip_local_port_range, default 32768-60999): the kernel
+// assigns those as local ports for outbound connections, and an app told to
+// listen on one an outbound socket already holds exits with EADDRINUSE.
+export const APP_PORT_RANGE = { min: 20000, max: 29999 } as const;
+
 export interface PortPoolOptions {
   min?: number;
   max?: number;
@@ -14,8 +20,8 @@ export class PortPool {
   private readonly cap: number;
 
   constructor(opts: PortPoolOptions = {}) {
-    this.min = opts.min ?? 40000;
-    this.max = opts.max ?? 49999;
+    this.min = opts.min ?? APP_PORT_RANGE.min;
+    this.max = opts.max ?? APP_PORT_RANGE.max;
     this.cap = opts.cap ?? 100;
     this.available = new Set<number>();
     this.allocated = new Set<number>();

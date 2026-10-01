@@ -237,7 +237,7 @@ describe("provider terminal login legacy migration", () => {
     });
 
     let latest = sameKeyRenewal;
-    for (let revision = 3; revision <= 70; revision += 1) {
+    for (let revision = 3; revision <= 257; revision += 1) {
       checkedAt = new Date(Date.parse(latest.expiresAt) + 1);
       latest = await login.startLogin({
         ...legacyInput,
@@ -261,7 +261,7 @@ describe("provider terminal login legacy migration", () => {
       join(homePath, "system/ai-providers/login-recovery.json"),
       "utf8",
     )) as { receipts: unknown[] };
-    expect(receipts.receipts).toHaveLength(64);
+    expect(receipts.receipts).toHaveLength(256);
     expect(recovery.receipts).toHaveLength(1);
     expect(registry.create).not.toHaveBeenCalled();
     expect(registry.delete).not.toHaveBeenCalled();
@@ -298,7 +298,7 @@ describe("provider terminal login legacy migration", () => {
     expect(sessions).toContain(migratedSessionName);
     expect(sessions).not.toContain(legacy.sessionName);
 
-    for (let index = 0; index < 65; index += 1) {
+    for (let index = 0; index < 257; index += 1) {
       await login.startLogin({
         ...legacyInput,
         mutation: {
@@ -328,7 +328,7 @@ describe("provider terminal login legacy migration", () => {
       ...legacyInput,
       mutation: {
         ...legacyInput.mutation,
-        expectedRevision: 67,
+        expectedRevision: 259,
         idempotencyKey: "login_legacy_after_document_eviction",
       },
     });
@@ -363,7 +363,7 @@ describe("provider terminal login legacy migration", () => {
       ? migrated.action.terminalSessionId
       : "";
 
-    for (let index = 0; index < 65; index += 1) {
+    for (let index = 0; index < 257; index += 1) {
       await login.startLogin({
         ...legacyInput,
         mutation: {
@@ -383,7 +383,7 @@ describe("provider terminal login legacy migration", () => {
       ...legacyInput,
       mutation: {
         ...legacyInput.mutation,
-        expectedRevision: 67,
+        expectedRevision: 259,
         idempotencyKey: "login_legacy_after_stale_eviction",
       },
     })).rejects.toMatchObject({ code: "lifecycle_unavailable" });

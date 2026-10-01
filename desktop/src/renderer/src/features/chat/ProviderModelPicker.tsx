@@ -38,12 +38,16 @@ export function ProviderModelPicker({ catalog, selection, instanceLocked, disabl
       <button type="button" disabled={disabled} aria-label="Choose model and provider"
         data-provider-instance={selectedInstance?.id ?? selection?.instanceId ?? ""} data-model={selectedModel?.id ?? selection?.model ?? ""}
         title={selectionLabel}
-        className="flex h-8 max-w-[18rem] items-center gap-1.5 rounded-lg px-2 text-sm font-medium outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:opacity-50"
+        data-slot="provider-model-trigger"
+        className="relative flex h-8 min-w-0 max-w-[18rem] items-center gap-1.5 @max-[42rem]/chat-composer:w-8 @max-[42rem]/chat-composer:shrink-0 @max-[42rem]/chat-composer:justify-center @max-[42rem]/chat-composer:gap-0 @max-[42rem]/chat-composer:px-0 rounded-lg px-2 text-sm font-medium outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:opacity-50"
         style={{ color: "var(--text-secondary)" }}>
         {selectedInstance ? <ProviderDriverGlyph kind={selectedInstance.driverKind} /> : <Cpu size={15} />}
-        <span className="truncate">{routeLabel}</span>
-        {unavailable ? <span className="shrink-0">Unavailable</span> : null}
-        <ChevronDown size={13} aria-hidden />
+        <span data-slot="provider-model-label" className="truncate @max-[42rem]/chat-composer:hidden">{routeLabel}</span>
+        {unavailable ? <span className="shrink-0 @max-[42rem]/chat-composer:hidden">Unavailable</span> : null}
+        <ChevronDown size={13} aria-hidden className="shrink-0 @max-[42rem]/chat-composer:hidden" />
+        {unavailable ? <span aria-hidden data-slot="provider-model-unavailable-indicator"
+          className="absolute right-1 top-1 hidden size-1.5 rounded-full @max-[42rem]/chat-composer:block"
+          style={{ background: "var(--danger)" }} /> : null}
       </button>
     </Popover.Trigger>
     <Popover.Portal><Popover.Content side={menuSide} align="end" sideOffset={10} collisionPadding={16}

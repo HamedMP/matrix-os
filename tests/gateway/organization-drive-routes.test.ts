@@ -11,14 +11,15 @@ function fixture(kind: "folder" | "file" = "folder") {
   const usage = vi.fn().mockResolvedValue({ usedBytes: 0, reservedBytes: 0, quotaBytes: 1_000_000_000_000 });
   const list = vi.fn().mockResolvedValue({ files: [] });
   const enable = vi.fn().mockResolvedValue(undefined);
+  const versionForPath = vi.fn().mockResolvedValue(2);
   const verifyAndAuthorize = vi.fn().mockResolvedValue({ actorId: "user_owner", ownerId: "user_owner",
     organizationId: "org_example", scopeId, membershipScopeId: scopeId, resourceKind: kind,
     resourceId: "00000000-0000-4000-8000-000000000002", role: "owner", authEpoch: 1,
     authorityRuntimeId: "vps:owner", authorityGeneration: 1, capability: "read" });
   const app = new Hono();
   registerOrganizationDriveRoutes(app, { verifier: { verifyAndAuthorize },
-    authority: {}, organizationDrive: { usage, list, enable } } as unknown as CollaborationRouteOptions);
-  return { app, usage, list, enable, verifyAndAuthorize };
+    authority: {}, organizationDrive: { usage, list, enable, versionForPath } } as unknown as CollaborationRouteOptions);
+  return { app, usage, list, enable, versionForPath, verifyAndAuthorize };
 }
 
 describe("organization drive HTTP boundary", () => {
@@ -44,5 +45,15 @@ describe("organization drive HTTP boundary", () => {
     expect(result.status).toBe(200);
     expect(f.enable).toHaveBeenCalledWith({ organizationId: "org_example", scopeId,
       authorityRuntimeId: "vps:owner", authorityGeneration: 1, runtimeId: "vps:owner", generation: 1 });
+  });
+
+  it("looks up one path version after scope authorization", async () => {
+    const f = fixture();
+    const result = await f.app.request(`${path}/files/lookup`, { method: "POST",
+      headers: { ...proof, "Content-Type": "application/json" }, body: JSON.stringify({ path: "reports/plan.txt" }) });
+    expect(result.status).toBe(200);
+    expect(await result.json()).toEqual({ baseVersion: 2 });
+    expect(f.versionForPath).toHaveBeenCalledWith({ organizationId: "org_example", scopeId,
+      authorityRuntimeId: "vps:owner", authorityGeneration: 1, path: "reports/plan.txt" });
   });
 });

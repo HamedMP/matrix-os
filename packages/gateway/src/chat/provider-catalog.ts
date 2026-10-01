@@ -135,7 +135,7 @@ function codingSupports(
     approvals: isCodex,
     userInput: true,
     worktrees: "optional",
-    resources: ["file", "folder", "project", "task", "app", "terminal_session"],
+    resources: ["file", "folder", "project", "task", "app", "terminal_session", ],
     interactionModes: supportedModes,
     permissionModes: driverKind === "pi" || driverKind === "opencode"
       ? ["supervised"]
@@ -505,6 +505,7 @@ export function createChatProviderCatalogService(options: {
   executableDriverKinds?: readonly CanonicalProviderDriverKind[];
   credentialedDriverKinds?: readonly CanonicalProviderDriverKind[];
   now?: () => Date;
+  driveContextReady?: () => boolean;
   runtimeTimeoutMs?: number;
   skillsSource?: () => Array<{ name: string; description: string }>;
   codingModelCatalogSource?: (
@@ -639,6 +640,15 @@ export function createChatProviderCatalogService(options: {
         credentialedDriverKinds: options.credentialedDriverKinds,
         aiSnapshot,
       });
+      // Availability is finalized by the owner runtime and funding projection.
+      // Never advertise a tool when registration-time dependencies are missing.
+      if (options.driveContextReady?.()) {
+        for (const instance of instances) {
+          if (instance.driverKind === "claude_code" && instance.availability === "available") {
+            instance.supports = { ...instance.supports, resources: [...instance.supports.resources, "organization_drive"] };
+          }
+        }
+      }
       const driverKinds: CanonicalProviderDriverKind[] = [
         ...(instances.some((instance) => instance.driverKind === "kernel") ? ["kernel" as const] : []),
         ...SYSTEM_DRIVERS,
@@ -671,7 +681,7 @@ export function createChatProviderCatalogService(options: {
   return service;
 }
 
-interface ProviderSelectionRequirements {
+export interface ProviderSelectionRequirements {
   attachments?: CanonicalChatAttachmentKind[];
   resources?: CanonicalChatResourceKind[];
   interactionMode?: string;

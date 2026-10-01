@@ -107,6 +107,18 @@ describe("Files workspace", () => {
     URL.revokeObjectURL = originalRevoke;
   });
 
+  it("keeps the organization drive pane mounted across ordinary Files tab switches", async () => {
+    const view = render(<Tooltip.Provider><FilesWorkspace /></Tooltip.Provider>);
+    expect(view.container.querySelector("[data-retained-pane] h2")?.textContent).not.toBe("Organization drives");
+    fireEvent.click(screen.getByRole("tab", { name: "Organization drives" }));
+    const heading = await screen.findByRole("heading", { name: "Organization drives" });
+    fireEvent.click(screen.getByRole("tab", { name: "Matrix home" }));
+    expect(heading.isConnected).toBe(true);
+    expect(heading.closest("[data-retained-pane]")?.getAttribute("aria-hidden")).toBe("true");
+    fireEvent.click(screen.getByRole("tab", { name: "Organization drives" }));
+    expect(screen.getByRole("heading", { name: "Organization drives" })).toBe(heading);
+  });
+
   it("retains same-tab Back and Forward history after the parent tab path updates", async () => {
     render(<Tooltip.Provider><FilesWorkspace /></Tooltip.Provider>);
     await screen.findByRole("button", { name: "Open workspaces" });
