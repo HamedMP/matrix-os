@@ -29,7 +29,11 @@ export function OrganizationMenuItems({ itemClass }: { itemClass: string }) {
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [failedName, setFailedName] = useState<string | null>(null);
   const memberships = userMemberships?.data ?? [];
-  if (!isLoaded || !setActive || memberships.length === 0) return null;
+  // A failed membership load is not "no organizations": rendering nothing would leave a
+  // member unable to share with no sign why. Show the section so the failure is visible.
+  const loadFailed = userMemberships?.isError ?? false;
+  if (!isLoaded || !setActive) return null;
+  if (memberships.length === 0 && !loadFailed) return null;
 
   const activate = (organizationId: string, name: string) => {
     setPendingId(organizationId);
@@ -98,6 +102,12 @@ export function OrganizationMenuItems({ itemClass }: { itemClass: string }) {
       {failedName ? (
         <p role="alert" className="px-3 py-1.5 text-xs text-destructive">
           Couldn&apos;t switch to {failedName}. Try again.
+        </p>
+      ) : null}
+      {/* "More organizations" stays visible after a failed page load, so it doubles as retry. */}
+      {loadFailed ? (
+        <p role="alert" className="px-3 py-1.5 text-xs text-destructive">
+          {memberships.length > 0 ? "Couldn't load more organizations. Try again." : "Couldn't load your organizations."}
         </p>
       ) : null}
     </>

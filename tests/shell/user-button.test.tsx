@@ -21,6 +21,7 @@ const clerkState = vi.hoisted(() => ({
   setActive: vi.fn(async (_params: { organization: string }) => undefined),
   hasNextPage: false,
   isFetching: false,
+  isError: false,
   fetchNext: vi.fn(),
 }));
 
@@ -47,6 +48,7 @@ vi.mock("@clerk/nextjs", () => ({
       data: clerkState.memberships,
       hasNextPage: clerkState.hasNextPage,
       isFetching: clerkState.isFetching,
+      isError: clerkState.isError,
       fetchNext: clerkState.fetchNext,
     },
   }),
@@ -75,6 +77,7 @@ describe("UserButton", () => {
     clerkState.setActive.mockResolvedValue(undefined);
     clerkState.hasNextPage = false;
     clerkState.isFetching = false;
+    clerkState.isError = false;
     clerkState.fetchNext.mockReset();
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(JSON.stringify({ cleared: true }), {
@@ -234,6 +237,32 @@ describe("UserButton", () => {
     fireEvent.click(screen.getByRole("menuitem", { name: "More organizations" }));
 
     expect(clerkState.fetchNext).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows a failed page load and keeps the next-page item available to retry", async () => {
+    clerkState.isError = true;
+    clerkState.hasNextPage = true;
+    clerkState.memberships = [{ organization: { id: "org_a", name: "Finna" } }];
+    const { UserButton } = await import("../../shell/src/components/UserButton.js");
+
+    render(<UserButton variant="settings" />);
+    await openAccountMenu();
+
+    expect(screen.getByRole("alert").textContent).toBe("Couldn't load more organizations. Try again.");
+    fireEvent.click(screen.getByRole("menuitem", { name: "More organizations" }));
+    expect(clerkState.fetchNext).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows a failed first load instead of rendering as if the member had no organizations", async () => {
+    clerkState.isError = true;
+    clerkState.memberships = [];
+    const { UserButton } = await import("../../shell/src/components/UserButton.js");
+
+    render(<UserButton variant="settings" />);
+    await openAccountMenu();
+
+    expect(screen.getByText("Organization")).toBeTruthy();
+    expect(screen.getByRole("alert").textContent).toBe("Couldn't load your organizations.");
   });
 
   it("offers no further page once every membership is loaded", async () => {
