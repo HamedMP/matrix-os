@@ -9,6 +9,7 @@ import {
   CanonicalChatToolOutputTextSchema,
   ProtectedToolOutputSchema,
   ApprovalIdSchema,
+  ApprovalPreviewSchema,
   CorrelationIdSchema,
   RequestIdSchema,
   SafeDisplayStringSchema,
@@ -125,6 +126,7 @@ const MatrixCodexRecordSchema = z.discriminatedUnion("type", [
     correlationId: CorrelationIdSchema,
     title: SafeDisplayStringSchema,
     safeDescription: SafeDisplayStringSchema,
+    preview: ApprovalPreviewSchema.optional().catch(undefined),
     actionKind: z.enum(["command", "file_change", "provider"]),
     risk: z.enum(["medium", "high"]),
     allowedDecisions: z.array(z.enum(["approve", "approve_for_session", "decline", "cancel"]))
@@ -262,6 +264,7 @@ function appServerRecordEvents(
         threadId: context.threadId,
         title: record.title,
         safeDescription: record.safeDescription,
+        ...(record.preview ? { preview: record.preview } : {}),
         actionKind: record.actionKind,
         risk: record.risk,
         allowedDecisions: record.allowedDecisions,

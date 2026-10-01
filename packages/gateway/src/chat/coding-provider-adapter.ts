@@ -230,6 +230,8 @@ function normalizeEvent(
       type: "approval.requested",
       approvalId: event.approval.approvalId,
       title: event.approval.title,
+      safeDescription: event.approval.safeDescription,
+      ...(event.approval.preview ? { preview: event.approval.preview } : {}),
       risk: event.approval.risk,
       allowedDecisions: event.approval.allowedDecisions,
     })];

@@ -4,7 +4,7 @@ import { OrganizationDriveContextReferenceSchema } from "#organization-drive-con
 import { ChatSubagentSchema } from "#chat-subagent";
 import { ChatRunContextSchema, isChatAgentDriver } from "#chat-agent-context";
 import { IsoTimestampSchema, ProviderModelReferenceSchema } from "#contract-primitives";
-import { UserInputQuestionListSchema, MAX_AGENT_ATTACHMENT_BYTES, ProtectedToolOutputSchema } from "#agent-thread-contracts";
+import { UserInputQuestionListSchema, MAX_AGENT_ATTACHMENT_BYTES, ProtectedToolOutputSchema, ApprovalPreviewSchema } from "#agent-thread-contracts";
 import {
   CanonicalChatExecutionRootRefSchema,
   CanonicalProviderDriverKindSchema,
@@ -552,6 +552,7 @@ export const CanonicalChatRunActivitySchema = z.discriminatedUnion("type", [
     title: canonicalSafeLabel(160, 640),
     risk: z.enum(["low", "medium", "high"]),
     safeDescription: z.string().min(1).max(4_000).optional(),
+    preview: ApprovalPreviewSchema.optional().catch(undefined),
     allowedDecisions: z.array(CanonicalChatApprovalDecisionSchema).min(1).max(4),
   }).strict(),
   CanonicalChatRunActivityBaseSchema.extend({
