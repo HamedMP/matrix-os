@@ -17,7 +17,7 @@ import { useCommandStore } from "@/stores/commands";
 import { useWindowManager } from "@/hooks/useWindowManager";
 import { useCanvasTransform } from "@/hooks/useCanvasTransform";
 import { usePreviewWindow } from "@/hooks/usePreviewWindow";
-import { isRetiredBuiltInAppPath } from "@/lib/builtin-apps";
+import { isRetiredBuiltInAppPath, normalizeBuiltInAppPath } from "@/lib/builtin-apps";
 import { voiceMediaSupported, createVoiceSessionFetcher } from "@/lib/voice-session-client";
 import { safeAoedeArtifactPath } from "@matrix-os/ui/aoede";
 
@@ -124,7 +124,8 @@ export function revealShellAppWindow(path: string, title: string): void {
   if (command && !revealDispatchInFlight) {
     revealDispatchInFlight = true;
     try {
-      command.execute();
+      const invoker = typeof document !== "undefined" && document.activeElement instanceof HTMLElement ? document.activeElement : undefined;
+      command.execute({ invoker });
     } finally {
       revealDispatchInFlight = false;
     }
@@ -170,4 +171,32 @@ export function openAoedeResult(path: string): void {
   if (!safe) return;
   usePreviewWindow.getState().openFile(safe);
   revealShellAppWindow("__preview-window__", "Preview");
+}
+
+// Mirrors the controller-side contract validation (defense in depth): slugs
+// are bounded safe ids and paths stay inside `apps/<slug>` with no traversal,
+// scheme/query noise or control bytes.
+const SAFE_NAV_APP = /^[a-z0-9][a-z0-9_-]{0,79}$/;
+const NAV_PATH_MAX = 160;
+const NAV_PATH_FORBIDDEN = /[\\%?#:\x00-\x1f]/;
+
+/**
+ * Canonical "open this app result" navigation. Only destinations the shell can
+ * actually reveal make it to the window manager: the path must normalize to a
+ * registered app-launcher command (proof of installation), retired built-ins
+ * never become windows, and `revealShellAppWindow` stays the single dispatch
+ * path so no recursive command invocation or canvas-pan fork can sneak in.
+ */
+export function openAoedeNavigation(nav: { app: string; path: string }): void {
+  if (!nav || typeof nav.app !== "string" || typeof nav.path !== "string") return;
+  if (!SAFE_NAV_APP.test(nav.app) || nav.path.length === 0 || nav.path.length > NAV_PATH_MAX) return;
+  if (nav.path.includes("..") || nav.path.includes("//") || NAV_PATH_FORBIDDEN.test(nav.path)) return;
+  const prefix = `apps/${nav.app}`;
+  if (nav.path !== prefix && nav.path !== `${prefix}.html` && !nav.path.startsWith(`${prefix}/`)) return;
+  const normalized = normalizeBuiltInAppPath(nav.path);
+  if (isRetiredBuiltInAppPath(normalized)) return;
+  // A registered launcher proves the destination is installed and keeps the
+  // reveal on the single dispatch path (canvas pan + retired-path guards).
+  if (!useCommandStore.getState().commands.has(`app:${normalized}`)) return;
+  revealShellAppWindow(normalized, nav.app);
 }

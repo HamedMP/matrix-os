@@ -15,6 +15,7 @@ import {
   createAoedeController,
   AoedeCanonicalCards,
   AoedePanel,
+  AoedeSettings,
   type AoedeController,
   type AoedeOwnerOptions,
 } from "@matrix-os/ui/aoede";
@@ -59,6 +60,8 @@ export interface ShellAoedeHostProps {
   /** Canonical history/result navigation wired by the shell owner. */
   onOpenHistory?: (chatId: string) => void;
   onOpenResult?: (path: string) => void;
+  /** Validated canonical app navigation (`apps/<slug>` destinations only). */
+  onOpenNavigation?: (nav: { app: string; path: string }) => void;
   /** Test seam: substitute the gateway-bound fetcher. */
   fetcher?: typeof fetch;
   /** Test seam: substitute bootstrap/media factories. */
@@ -115,6 +118,7 @@ function ShellAoedeIdentityRoot({
   supported,
   onOpenHistory,
   onOpenResult,
+  onOpenNavigation,
   fetcher,
   controllerDeps,
 }: ShellAoedeHostProps) {
@@ -128,6 +132,7 @@ function ShellAoedeIdentityRoot({
         ...(projectId ? { projectId } : {}),
         ...(onOpenHistory ? { onOpenHistory } : {}),
         ...(onOpenResult ? { onOpenResult } : {}),
+        ...(onOpenNavigation ? { onOpenNavigation } : {}),
       } satisfies AoedeOwnerOptions,
       controllerDeps ?? {},
     ),
@@ -186,8 +191,10 @@ function ShellAoedeEntries({ controller }: { controller: AoedeController }) {
         keywords: ["assistant", "voice", "workspace", "aoede"],
         // Focus/reveal, never toggle: a palette invocation racing an icon
         // click must converge on the same open instance, not dismiss it.
-        execute: () => {
-          void controller.focus();
+        // The invoker recorded by the palette is kept so dismissal returns
+        // focus to the element that launched the command.
+        execute: (context) => {
+          void controller.focus(context?.invoker);
         },
       },
     ]);
@@ -260,6 +267,7 @@ function ShellAoedeEntries({ controller }: { controller: AoedeController }) {
             turnMode={snapshot.turnMode}
             captions={snapshot.canonical.captions}
             capability={snapshot.binding?.capability}
+            canCancel={snapshot.canonical.canCancel}
             error={snapshot.error ?? undefined}
             commands={{
               start: () => void controller.start(),
@@ -268,12 +276,14 @@ function ShellAoedeEntries({ controller }: { controller: AoedeController }) {
               pause: controller.pause,
               resume: controller.resume,
               stopSpeaking: controller.stopSpeaking,
+              cancelGeneration: () => void controller.cancelGeneration(),
               pushToTalkStart: controller.pushToTalkStart,
               pushToTalkStop: controller.pushToTalkStop,
               retry: () => void controller.retry(),
               newConversation: () => void controller.newConversation(),
               viewHistory: controller.viewHistory,
             }}
+            settings={<AoedeSettings controller={controller} snapshot={snapshot} />}
           >
             <AoedeCanonicalCards
               controller={controller}

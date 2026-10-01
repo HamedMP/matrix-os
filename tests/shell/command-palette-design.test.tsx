@@ -45,4 +45,21 @@ describe("web CommandPalette design", () => {
     expect(screen.getByText("Open Settings")).toBeTruthy();
     expect(screen.queryByText("Notes")).toBeNull();
   });
+
+  it("passes the element focused before the palette to executed commands", async () => {
+    const invoker = document.createElement("button");
+    document.body.appendChild(invoker);
+    const onOpenChange = vi.fn();
+    const execute = vi.fn();
+    useCommandStore.getState().register([{ id: "app:__aoede__", label: "Aoede", group: "Apps", execute }]);
+    const { rerender } = render(<CommandPalette open={false} onOpenChange={onOpenChange} />);
+    invoker.focus();
+    rerender(<CommandPalette open onOpenChange={onOpenChange} />);
+    const input = screen.getByPlaceholderText("Type a command or search…");
+    await waitFor(() => expect(document.activeElement).toBe(input));
+    fireEvent.click(screen.getByText("Aoede"));
+    expect(execute).toHaveBeenCalledWith(expect.objectContaining({ invoker }));
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+    invoker.remove();
+  });
 });

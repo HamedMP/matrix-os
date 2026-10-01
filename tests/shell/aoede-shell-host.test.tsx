@@ -9,6 +9,7 @@ import { ShellAoedeHost } from "../../shell/src/components/ShellAoedeHost.js";
 import type { AoedeApi } from "../../packages/ui/src/aoede/client.js";
 import type { VoiceSessionClient } from "../../packages/ui/src/voice-session/client-types.js";
 import type { CanonicalChatInvalidation } from "../../packages/ui/src/canonical-chat-event-source.js";
+import { createCanonicalChatFixture } from "../contracts/fixtures/canonical-chat.js";
 import { useCommandStore } from "../../shell/src/stores/commands.js";
 import { AOEDE_COMMAND_ID } from "../../shell/src/lib/aoede-shell.js";
 
@@ -52,14 +53,23 @@ const detail: CanonicalChatDetailResponse = {
   activities: [],
 };
 
-function harness(bootstrapImpl?: () => Promise<AoedeBootstrapResponse>) {
+const operationView = { id: "action_nav", chatId: "chat_aoede", runId: "run_nav", toolId: "tool_open", schemaRevision: "s1", policyRevision: "p1", state: "succeeded" as const, argumentDigest: "a".repeat(64), cancellationRequested: false, createdAt: "2026-09-30T00:00:00.000Z", updatedAt: "2026-09-30T00:00:00.000Z" };
+
+function runningDetail(): CanonicalChatDetailResponse {
+  const fixture = createCanonicalChatFixture("running").snapshot;
+  const run = { ...fixture.runs[0]!, chatId: binding.chatId, capabilitySnapshot: { ...fixture.runs[0]!.capabilitySnapshot, cancellation: "run" as const } };
+  return { ...detail, record: { ...detail.record, activeRun: { runId: run.id, turnId: run.turnId, status: "running" } }, runs: [run],
+    turns: fixture.turns.map(item => ({ ...item, chatId: binding.chatId })), messages: fixture.messages.map(item => ({ ...item, chatId: binding.chatId })), activities: [] };
+}
+
+function harness(bootstrapImpl?: () => Promise<AoedeBootstrapResponse>, initialDetail = detail) {
   const source = {
     subscribe: vi.fn((_listener: (event: CanonicalChatInvalidation) => void) => ({ dispose: vi.fn() })),
     start: vi.fn(async () => {}),
     dispose: vi.fn(),
   };
   const bootstrap = vi.fn(bootstrapImpl ?? (async () => binding));
-  const detailFn = vi.fn(async () => detail);
+  const detailFn = vi.fn(async () => initialDetail);
   const cancelRun = vi.fn(async () => ({}));
   const api = {
     bootstrap,
@@ -69,25 +79,29 @@ function harness(bootstrapImpl?: () => Promise<AoedeBootstrapResponse>) {
     submitInput: vi.fn(async () => ({})),
     submitApproval: vi.fn(async () => ({})),
   } as unknown as AoedeApi;
+  let mediaListener: (() => void) | undefined;
   const media = {
-    subscribe: vi.fn(() => () => {}),
-    getSnapshot: () => ({
-      phase: "idle",
+    subscribe: vi.fn((listener: () => void) => { mediaListener = listener; return () => {}; }),
+    getSnapshot: vi.fn(() => ({
+      phase: "idle" as const,
       voice: null,
       error: null,
       notice: null,
       chatId: null,
       sessionId: null,
       reconnectStatus: null,
-    }),
+    })),
     startVoice: vi.fn(async () => {}),
     end: vi.fn(async () => {}),
     dispose: vi.fn(),
     controller: () => null,
     retry: vi.fn(),
+    listDevices: vi.fn(async () => null),
+    setInputDevice: vi.fn(async () => true),
+    setOutputDevice: vi.fn(async () => "applied" as const),
   } as unknown as VoiceSessionClient;
   const voiceFactory = vi.fn(() => media);
-  return { api, bootstrap, detailFn, cancelRun, source, media, voiceFactory };
+  return { api, bootstrap, detailFn, cancelRun, source, media, voiceFactory, notifyMedia: () => mediaListener?.() };
 }
 
 function renderHost(
@@ -354,5 +368,74 @@ describe("Shell Aoede host", () => {
     expect(h.media.end).not.toHaveBeenCalled();
     expect(h.voiceFactory).toHaveBeenCalledTimes(1);
     expect(document.querySelectorAll("[data-testid='aoede-host']")).toHaveLength(1);
+  });
+
+  it("forwards the palette invoker so dismissal restores its focus", async () => {
+    const h = harness();
+    renderHost(h, {}, <button type="button" data-testid="invoker">Invoke</button>);
+    const invoker = screen.getByTestId("invoker");
+    await act(async () => {
+      paletteCommand()?.execute({ invoker });
+    });
+    await waitFor(() => expect(screen.getByTestId("aoede-host")).toBeInTheDocument());
+    await act(async () => {
+      fireEvent.keyDown(screen.getByTestId("aoede-host"), { key: "Escape" });
+    });
+    await waitFor(() => expect(screen.queryByTestId("aoede-host")).toBeNull());
+    await waitFor(() => expect(document.activeElement).toBe(invoker));
+  });
+
+  it("shows the settings panel wired to the singleton controller", async () => {
+    const h = harness();
+    renderHost(h);
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("aoede-launcher"));
+    });
+    await waitFor(() => expect(screen.getByTestId("aoede-host")).toBeInTheDocument());
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    });
+    await waitFor(() => expect(screen.getByText("Turn mode")).toBeInTheDocument());
+    expect(screen.getByLabelText("Hands free")).toBeChecked();
+    // Truthful degradation: this api/media harness exposes no catalog or enumeration.
+    await waitFor(() => expect(screen.getByText("Provider list unavailable.")).toBeInTheDocument());
+    expect(screen.getByText(/Device list unavailable/)).toBeInTheDocument();
+  });
+
+  it("routes the panel's Cancel generation to canonical run cancellation", async () => {
+    const running = runningDetail();
+    const h = harness(undefined, running);
+    renderHost(h);
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("aoede-launcher"));
+    });
+    await waitFor(() => expect(screen.getByTestId("aoede-host")).toBeInTheDocument());
+    vi.mocked(h.media.getSnapshot).mockReturnValue({
+      phase: "active", voice: { state: "thinking", muted: false, turnMode: "hands_free" },
+      error: null, notice: null, chatId: binding.chatId, sessionId: "vs_1", reconnectStatus: null,
+    } as never);
+    await act(async () => { h.notifyMedia(); });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Cancel generation" }));
+    });
+    await waitFor(() => expect(h.cancelRun).toHaveBeenCalledWith(binding.chatId, running.runs[0].id, expect.objectContaining({ clientRequestId: expect.stringMatching(/^req_/) })));
+    expect(h.media.end).not.toHaveBeenCalled();
+  });
+
+  it("routes canonical card navigation through the validated shell destination", async () => {
+    const h = harness(undefined, {
+      ...detail,
+      operations: [{ ...operationView, result: { navigation: { kind: "open_app", app: "files", path: "apps/files/index.html" } } }],
+    });
+    const onOpenNavigation = vi.fn();
+    renderHost(h, { onOpenNavigation });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("aoede-launcher"));
+    });
+    await waitFor(() => expect(screen.getByTestId("aoede-host")).toBeInTheDocument());
+    await act(async () => {
+      fireEvent.click(await screen.findByRole("button", { name: /Open files/i }));
+    });
+    expect(onOpenNavigation).toHaveBeenCalledWith({ app: "files", path: "apps/files/index.html" });
   });
 });

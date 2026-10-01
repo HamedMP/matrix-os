@@ -43,7 +43,7 @@ export function useGlobalShortcuts(onPalette: () => void) {
       for (const cmd of commands.values()) {
         if (cmd.shortcut && matchShortcut(cmd.shortcut, e)) {
           e.preventDefault();
-          cmd.execute();
+          cmd.execute({ invoker: e.target instanceof HTMLElement ? e.target : undefined });
           return;
         }
       }

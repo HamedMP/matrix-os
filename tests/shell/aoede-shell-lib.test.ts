@@ -8,6 +8,7 @@ import {
   aoedeSurfaceForDesktopMode,
   getAoedeShellFetcher,
   openAoedeHistory,
+  openAoedeNavigation,
   openAoedeResult,
   revealShellAppWindow,
   resetAoedeShellFetcherForTests,
@@ -189,6 +190,47 @@ describe("Aoede shell entry helpers", () => {
     openAoedeResult("memory/agent.md");
     openAoedeResult("apps/%2e%2e/secrets.pem");
     expect(usePreviewWindow.getState().tabs).toHaveLength(0);
+    expect(useWindowManager.getState().windows).toHaveLength(0);
+  });
+
+  it("reveals installed canonical app destinations through the registered launcher", () => {
+    const chatLaunch = vi.fn(); const timerLaunch = vi.fn();
+    useCommandStore.setState({
+      commands: new Map([
+        ["app:__chat__", { id: "app:__chat__", label: "Chat", group: "Apps" as const, execute: chatLaunch }],
+        ["app:apps/timer/index.html", { id: "app:apps/timer/index.html", label: "Timer", group: "Apps" as const, execute: timerLaunch }],
+      ]),
+    });
+    // A built-in app path normalizes to its registered launcher command.
+    openAoedeNavigation({ app: "chat", path: "apps/chat/index.html" });
+    expect(chatLaunch).toHaveBeenCalledTimes(1);
+    // An installed app path dispatches its own launcher — never a raw window.
+    openAoedeNavigation({ app: "timer", path: "apps/timer/index.html" });
+    expect(timerLaunch).toHaveBeenCalledTimes(1);
+    expect(useWindowManager.getState().windows).toHaveLength(0);
+  });
+
+  it("rejects retired, uninstalled, cross-app and malformed navigation targets", () => {
+    const launch = vi.fn();
+    useCommandStore.setState({
+      commands: new Map([
+        ["app:__chat__", { id: "app:__chat__", label: "Chat", group: "Apps" as const, execute: launch }],
+        ["app:__aoede__", { id: "app:__aoede__", label: "Aoede", group: "Apps" as const, execute: launch }],
+      ]),
+    });
+    // Retired built-ins stay retired even with a registered singleton command.
+    openAoedeNavigation({ app: "aoede", path: "apps/aoede/index.html" });
+    // No registered launcher: the app is not installed, so nothing may open.
+    openAoedeNavigation({ app: "ghost", path: "apps/ghost/index.html" });
+    // The path must live under the exact app slug, with no traversal/noise.
+    openAoedeNavigation({ app: "chat", path: "apps/other/index.html" });
+    openAoedeNavigation({ app: "chat", path: "apps/chat/../files/index.html" });
+    openAoedeNavigation({ app: "chat", path: "apps/chat/index.html?debug=1" });
+    openAoedeNavigation({ app: "chat", path: "apps//chat/index.html" });
+    openAoedeNavigation({ app: "Chat", path: "apps/chat/index.html" });
+    openAoedeNavigation({ app: "chat", path: "apps/chat/../chat/index.html" });
+    openAoedeNavigation({ app: "chat", path: `apps/chat/${"x".repeat(200)}` });
+    expect(launch).not.toHaveBeenCalled();
     expect(useWindowManager.getState().windows).toHaveLength(0);
   });
 

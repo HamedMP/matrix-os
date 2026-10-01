@@ -1,5 +1,14 @@
 import { create } from "zustand";
 
+/**
+ * Execution context supplied by whichever surface ran the command. The
+ * command palette records the element focused before its search input stole
+ * focus so focus can be returned there (e.g. Aoede dismiss restores it).
+ */
+export interface CommandExecutionContext {
+  invoker?: HTMLElement;
+}
+
 export interface Command {
   id: string;
   label: string;
@@ -7,7 +16,7 @@ export interface Command {
   icon?: string;
   shortcut?: string;
   keywords?: string[];
-  execute: () => void;
+  execute: (context?: CommandExecutionContext) => void;
 }
 
 interface CommandStore {

@@ -24,6 +24,7 @@ import {
   aoedeEntrySupported,
   aoedeSurfaceForDesktopMode,
   openAoedeHistory,
+  openAoedeNavigation,
   openAoedeResult,
 } from "@/lib/aoede-shell";
 
@@ -150,6 +151,7 @@ function ShellHomeContent({
         supported={aoedeEntrySupported(isMobile)}
         onOpenHistory={handleAoedeHistory}
         onOpenResult={openAoedeResult}
+        onOpenNavigation={openAoedeNavigation}
       >
       <div className="flex h-screen w-screen flex-col overflow-hidden md:flex-row">
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
