@@ -33,7 +33,9 @@ it("shared provider works with Chat absent through StrictMode and presentation s
   const requests = bootstraps.map(([, init]) => JSON.parse(String(init?.body)) as { surface: string });
   expect(requests.map(request => request.surface)).toEqual(["web_canvas", "web_desktop"]);
   expect(voice.end).not.toHaveBeenCalled();
-  fireEvent.click(screen.getByRole("button", { name: "Start" })); expect(screen.getByText("Permission")).toBeTruthy(); expect(voice.startVoice).not.toHaveBeenCalled();
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Start" })); });
+  expect(voice.startVoice).toHaveBeenCalledExactlyOnceWith("chat_owner");
+  expect(screen.queryByText("Permission")).toBeNull();
   rerender(view("other-account/runtime", "web_desktop")); expect(screen.queryByText("Voice ready")).toBeNull(); await act(async () => {}); expect(voice.end).toHaveBeenCalled();
 });
 it("focus entry point refocuses the same visible assistant and dismissal returns to its invoker", async () => {
