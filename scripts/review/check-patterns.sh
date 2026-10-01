@@ -46,24 +46,6 @@ if ! command -v rg &>/dev/null; then
   exit 2
 fi
 
-# Build file list
-if [[ -n "$DIFF_BASE" ]]; then
-  if ! git rev-parse --verify "$DIFF_BASE" &>/dev/null; then
-    echo "Error: diff base '$DIFF_BASE' not found. Run 'git fetch' first." >&2
-    exit 2
-  fi
-  FILES=$(git diff --name-only --diff-filter=ACMR "$DIFF_BASE"...HEAD -- $SCAN_PATHS | grep -E '\.(ts|tsx)$' || true)
-  if [[ -z "$FILES" ]]; then
-    echo "No TypeScript files changed vs $DIFF_BASE."
-    exit 0
-  fi
-  FILE_ARGS="$FILES"
-  SCAN_MODE="changed files vs $DIFF_BASE"
-else
-  FILE_ARGS=""
-  SCAN_MODE="all files in: $SCAN_PATHS"
-fi
-
 header() {
   echo ""
   echo -e "${BOLD}${CYAN}── $1 ──${RESET}"
@@ -78,6 +60,61 @@ warning() {
   echo -e "  ${YELLOW}WARNING${RESET} $1"
   WARNINGS=$((WARNINGS + 1))
 }
+
+# ═══════════════════════════════════════════════════════════════
+# PASS 9: Architecture budgets (issue #1676 Phase 0)
+# Runs BEFORE the --diff early exit below: ratchets and dir caps are
+# absolute full-tree budgets (not per-diff), so a diff-scoped run would
+# miss growth elsewhere — e.g. an oversized file added only under
+# desktop/, apps/mobile/, or home/apps/ while no packages/ or shell/
+# TypeScript changed. Cost is a few seconds; do not "optimize" this to
+# --diff. (Numbered 9 to match the summary order; it executes first.)
+# ═══════════════════════════════════════════════════════════════
+
+# NOTE: budgets always scan the whole tree, even in --diff mode. Ratchets
+# and dir caps are absolute (not per-diff), so a diff-scoped run would miss
+# growth elsewhere. Cost is a few seconds; do not "optimize" this to --diff.
+header "9. Architecture budgets — file LOC ratchets and flat-dir caps"
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if command -v node &>/dev/null && [[ -f "$SCRIPT_DIR/check-budgets.mjs" ]]; then
+  BUDGET_STATUS=0
+  BUDGET_OUTPUT=$(node "$SCRIPT_DIR/check-budgets.mjs" 2>&1) || BUDGET_STATUS=$?
+  if [[ "$BUDGET_STATUS" -ne 0 ]]; then
+    violation "check-budgets.mjs failed with exit $BUDGET_STATUS — architecture budgets unenforced"
+    printf '%s\n' "$BUDGET_OUTPUT" | head -20 || true
+  else
+    BUDGET_VIOLATIONS=$(printf '%s\n' "$BUDGET_OUTPUT" | grep -c '^VIOLATION' || true)
+    if [[ "$BUDGET_VIOLATIONS" -gt 0 ]]; then
+      violation "Architecture budget exceeded (see bun run check:budgets for details)"
+      printf '%s\n' "$BUDGET_OUTPUT" | grep '^VIOLATION' | head -20 || true
+    fi
+  fi
+else
+  violation "check-budgets.mjs skipped — node unavailable or script missing; architecture budgets unenforced"
+fi
+
+# Build file list
+if [[ -n "$DIFF_BASE" ]]; then
+  if ! git rev-parse --verify "$DIFF_BASE" &>/dev/null; then
+    echo "Error: diff base '$DIFF_BASE' not found. Run 'git fetch' first." >&2
+    exit 2
+  fi
+  FILES=$(git diff --name-only --diff-filter=ACMR "$DIFF_BASE"...HEAD -- $SCAN_PATHS | grep -E '\.(ts|tsx)$' || true)
+  if [[ -z "$FILES" ]]; then
+    echo "No TypeScript files changed vs $DIFF_BASE."
+    # Pass 9 (budgets) already ran above — preserve its verdict instead of
+    # masking it with a clean exit.
+    if [[ "$VIOLATIONS" -gt 0 ]]; then exit 1; fi
+    if $STRICT && [[ "$WARNINGS" -gt 0 ]]; then exit 1; fi
+    exit 0
+  fi
+  FILE_ARGS="$FILES"
+  SCAN_MODE="changed files vs $DIFF_BASE"
+else
+  FILE_ARGS=""
+  SCAN_MODE="all files in: $SCAN_PATHS"
+fi
 
 rg_scan() {
   local pattern="$1"
