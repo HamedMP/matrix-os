@@ -61,9 +61,9 @@ const ChatSendEventSchema = z.object({
 }).strict();
 
 const ChatRoutingFields = {
-  harness: z.enum(["kernel", "hermes", "openclaw", "codex", "claude_code", "opencode", "pi", "matrix_bot"]),
+  harness: z.enum(["kernel", "hermes", "openclaw", "codex", "claude_code", "opencode", "pi", "matrix_bot", "matrix_pi"]),
   modelProvider: z.string().min(1).max(80).regex(/^[a-z0-9][a-z0-9_-]*$/),
-  model: z.string().min(1).max(160).regex(/^[A-Za-z0-9][A-Za-z0-9_.:/-]*$/),
+  model: z.string().min(1).max(160).regex(/^[A-Za-z0-9][A-Za-z0-9_.:@/-]*$/),
 } as const;
 
 const ChatSendSucceededEventSchema = z.object({

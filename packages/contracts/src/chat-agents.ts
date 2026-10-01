@@ -17,6 +17,8 @@ export const CreateChatAgentRequestSchema = ChatAgentInputFieldsSchema.extend({
   clientRequestId: CanonicalChatRequestIdSchema,
 }).strict();
 export const UpdateChatAgentRequestSchema = ChatAgentInputFieldsSchema.partial().extend({
+  // Patch omission must preserve the saved value; create defaults are not updates.
+  description: ChatAgentInputFieldsSchema.shape.description.removeDefault().optional(),
   baseRevision: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
   archived: z.boolean().optional(),
   recipe: ChatAgentRecipeSchema.nullable().optional(),

@@ -1,5 +1,5 @@
 import { z } from "zod/v4";
-import { CanonicalChatIdSchema, CanonicalChatRequestIdSchema } from "#canonical-chat";
+import { CanonicalChatIdSchema, CanonicalChatRequestIdSchema, CanonicalChatModelSelectionSchema } from "#canonical-chat";
 import { canonicalBoundedText, canonicalReferenceId, canonicalSafeLabel } from "#canonical-chat-primitives";
 import { BotIdSchema, BotRevisionSchema } from "#bots/ids";
 
@@ -25,6 +25,7 @@ export const InstantiateBotRequestSchema = z.object({
   clientRequestId: CanonicalChatRequestIdSchema,
   recipe: BotRecipeRefSchema,
   name: canonicalSafeLabel(80, 320).optional(),
+  selection: CanonicalChatModelSelectionSchema.optional(),
 }).strict();
 
 export const BotSummarySchema = z.object({

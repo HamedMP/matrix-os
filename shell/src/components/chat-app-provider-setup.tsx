@@ -313,7 +313,7 @@ export function ChatProviderSetupPanel({
             renderDriverIcon={(kind) => kind === "kernel" || kind === "matrix_bot" ? <span aria-hidden="true" className="inline-flex size-5 [&_svg]:size-full"
               dangerouslySetInnerHTML={{ __html: rabbitMarkSvg("matrix-chat-rabbit-mark") }} /> : (
               <span className="inline-flex size-5 shrink-0 items-center justify-center [&_.matrix-ap-agent-logo]:!size-5 [&_.matrix-ap-agent-logo]:!rounded [&_img]:!size-3 [&_svg]:size-4">
-                <HarnessIcon harness={kind === "claude_code" ? "claude" : kind} />
+                <HarnessIcon harness={kind === "claude_code" ? "claude" : kind === "matrix_pi" ? "pi" : kind} />
               </span>
             )}
             onSetupAction={onSetupAction}

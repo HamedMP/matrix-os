@@ -1,3 +1,4 @@
+import { MatrixBotModelField } from "./bots/MatrixBotModelField.js";
 import { useId } from "react";
 import { ChatAgentRecipeSchema, type ChatAgent, type ChatAgentRecipe, type ChatAgentRecipeCatalog, type CanonicalChatModelSelection } from "@matrix-os/contracts";
 import type { deriveCanonicalProviderChoices } from "../canonical-provider-choice.js";
@@ -25,11 +26,11 @@ function AgentModelField({ id, selected, pending, models, change, onSetup, herme
         ...(choice.selectedOptions.length ? { options: choice.selectedOptions } : {}) } });
     }}>
       {!available ? <option value={modelKey}>{selected ? `${selected.model} · unavailable` : "No Agent model available"}</option> : null}
-      {models.map((choice) => <option key={`${choice.instanceId}:${choice.modelId}`} value={JSON.stringify([choice.instanceId, choice.modelId])}>{choice.modelLabel} · {choice.harnessLabel}</option>)}
+      {models.map((choice) => <option key={`${choice.instanceId}:${choice.modelId}`} value={JSON.stringify([choice.instanceId, choice.modelId])}>{choice.modelLabel} · {choice.connectionLabel ? `${choice.connectionLabel} · ` : ""}{choice.harnessLabel}</option>)}
     </select></label>
     {!available ? <p className="text-sm" style={muted}>{hermesOnly
       ? "Configure a supported Hermes model in Agents & providers to use this Inbox workflow."
-      : "Set up Codex or Hermes in Agents & providers to use this Agent."} {onSetup ? <button type="button" className="underline" disabled={pending} onClick={onSetup}>Open setup</button> : null}</p> : null}
+      : "Choose a ready Matrix AI, Codex or Hermes model in Agents & providers to use this Agent."} {onSetup ? <button type="button" className="underline" disabled={pending} onClick={onSetup}>Open setup</button> : null}</p> : null}
   </>;
 }
 
@@ -63,7 +64,7 @@ export function AgentEditor({ draft, editing, pending, models, recipeCatalog, co
       <label className="grid gap-1.5 text-sm" htmlFor={`${ids}-description`}>Description <span className="text-xs" style={muted}>Optional</span><input id={`${ids}-description`} className={input} value={draft.description} maxLength={400} disabled={pending} onChange={(event) => change({ description: event.target.value })} /></label>
       <label className="grid gap-1.5 text-sm" htmlFor={`${ids}-instructions`}>Instructions<textarea id={`${ids}-instructions`} className={`${input} min-h-32 resize-y`} value={draft.instructions} maxLength={8000} required disabled={pending} placeholder="What should this Agent do? How should it work?" onChange={(event) => change({ instructions: event.target.value })} /></label>
       {recipeBot ? <div className="grid gap-3 text-sm"><p>Runtime <strong>Pi</strong></p>
-        <p>Model <span style={muted}>Automatic · managed by this computer</span></p>
+        <MatrixBotModelField id={`${ids}-model`} selection={draft.selection} models={models} pending={pending} onChange={(selection) => change({ selection })} />
         <p className="text-xs" style={muted}>This bot runs in its own Chat. Its model and tool access are managed by this computer.</p>
       </div> : <AgentModelField id={`${ids}-model`} selected={draft.selection} pending={pending} models={models} change={change} onSetup={onSetup} hermesOnly={draft.recipe?.skills.includes("matrix-jev-email-triage") === true} />}
       {!recipeBot ? <AgentRecipeEditor recipe={draft.recipe} hadRecipe={editing !== "new" && Boolean(editing.recipe)} catalog={recipeCatalog}

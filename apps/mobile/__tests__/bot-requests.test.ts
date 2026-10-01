@@ -1,4 +1,4 @@
-import { fetchNativeBotChat, fetchNativeBotRecipes, instantiateNativeBot,
+import { updateNativeBotModel, fetchNativeBotChat, fetchNativeBotRecipes, instantiateNativeBot,
   resolveNativeBotInteraction, revokeNativeBotGrant } from "@/lib/requests/bots";
 
 jest.mock("micromark", () => ({ micromark: jest.fn() }));
@@ -56,4 +56,14 @@ it("lists launch recipes and instantiates one with a stable caller request ID", 
     recipeId: recipe.recipeId, version: recipe.version,
   } })).chatId).toBe("chat_research");
   expect(JSON.parse(fetchMock.mock.calls[1]![1]!.body as string).clientRequestId).toBe("req_abcdefgh");
+});
+
+it("updates only the exact saved bot model under its loaded revision", async () => {
+  const selection = { instanceId: "matrix_pi_default", model: "cloudflare:@cf/zai-org/glm-5.3-flash" };
+  const agent = { id: "bot_research1", revision: 3, name: "Writer", description: "", instructions: "Write drafts", selection,
+    archived: false, createdAt: "2026-10-02T00:00:00.000Z", updatedAt: "2026-10-02T00:00:00.000Z" };
+  const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue({ ok: true, json: async () => agent } as Response);
+  await updateNativeBotModel(token, gatewayUrl, agent.id, 2, selection);
+  expect(fetchMock.mock.calls[0]![1]!.method).toBe("PATCH");
+  expect(JSON.parse(fetchMock.mock.calls[0]![1]!.body as string)).toEqual({ baseRevision: 2, selection });
 });

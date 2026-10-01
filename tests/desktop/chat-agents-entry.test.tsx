@@ -101,7 +101,7 @@ describe("shared Agents entry", () => {
     fireEvent.click(await screen.findByRole("button", { name: `Edit ${saved.name}` }));
     expect(screen.getByText("Pi")).toBeTruthy();
     expect(screen.getByText("Automatic · managed by this computer")).toBeTruthy();
-    expect(screen.queryByRole("combobox", { name: "Model" })).toBeNull();
+    expect((screen.getByRole("combobox", { name: "Model" }) as HTMLSelectElement).value).toBe("");
     expect(screen.queryByText(/Set up Codex or Hermes/)).toBeNull();
     expect(screen.queryByText(/Agent requests use Full access/)).toBeNull();
     expect(screen.queryByRole("button", { name: "Add recipe" })).toBeNull();

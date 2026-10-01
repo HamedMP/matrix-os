@@ -543,7 +543,7 @@ export function SharedChatComposer({
               />
             ) : null}
             {runActions}
-            {automaticRouting ? <span className="text-xs" style={{ color: "var(--text-secondary)" }}>Automatic</span> : <ProviderModelPicker
+            {automaticRouting ? <span className="text-xs" style={{ color: "var(--text-secondary)" }}>Bot model</span> : <ProviderModelPicker
               catalog={catalog}
               selection={selection}
               instanceLocked={instanceLocked}

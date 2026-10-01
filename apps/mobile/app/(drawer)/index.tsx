@@ -1,3 +1,4 @@
+import { MATRIX_BOT_SELECTION } from "@matrix-os/contracts";
 import "@/lib/hermes-polyfills";
 import { ChatToolActivity } from "@/components/ChatToolActivity";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -78,10 +79,11 @@ export default function ChatScreen() {
   const { projects } = useProjects();
   const sendMessage = useSendChatMessage();
 
-  const selection = selectionOverride
+  const directBot = Boolean(botChat.snapshot);
+  const selection = directBot ? MATRIX_BOT_SELECTION : selectionOverride
     ?? detail?.record.chat.currentSelection
     ?? defaultCatalogSelection(catalog);
-  const turnModes = defaultTurnModes(catalog, selection);
+  const turnModes = directBot ? { interactionMode: "default", permissionMode: "default" } : defaultTurnModes(catalog, selection);
 
   const messages = useMemo(() => buildTranscript(detail), [detail]);
   const busy = sendMessage.isPending || (detail?.runs.some(
@@ -224,14 +226,14 @@ export default function ChatScreen() {
       {showBotRecipes && gatewayUrl ? botRecipes.isError
         ? <Text accessibilityRole="alert" style={styles.systemText}>Bot recipes could not be loaded. Try again.</Text>
         : botRecipes.isPending ? <Text style={styles.systemText}>Loading bot recipes…</Text>
-          : <BotRecipeChooser recipes={botRecipes.recipes} onCreate={botRecipes.create}
+          : <BotRecipeChooser catalog={catalog} recipes={botRecipes.recipes} onCreate={botRecipes.create}
             attemptRef={botCreationAttempt} attemptScope={`${userId ?? ""}:${gatewayUrl}`} onOpenChat={(chatId) => {
             selectChat(chatId);
             setShowBotRecipes(false);
             void chats.invalidate();
           }} /> : null}
-      {botChat.snapshot ? <BotChatControls snapshot={botChat.snapshot} actionsAvailable={!botChat.isError}
-        onResolve={botChat.resolve}
+      {botChat.snapshot ? <BotChatControls catalog={catalog} snapshot={botChat.snapshot} actionsAvailable={!botChat.isError}
+        onSelectionChange={botChat.updateModel} onResolve={botChat.resolve}
         onRevoke={botChat.revoke} onMemory={botChat.memory} onRefresh={botChat.refresh}
         onConnectUrl={async (url) => {
           if (new URL(url).protocol !== "https:") throw new Error("Invalid consent link");
@@ -313,11 +315,11 @@ export default function ChatScreen() {
               />
               <View style={styles.composerControlsRight}>
                 <View onTouchStart={handlePickerTouchStart}>
-                  <ModelPicker
+                  {!directBot ? <ModelPicker
                     catalog={catalog}
                     selection={selection}
                     onSelectionChange={setSelectionOverride}
-                  />
+                  /> : <Text style={styles.systemText}>Bot model</Text>}
                 </View>
                 <IconButton
                   accessibilityLabel={busy ? "Matrix is responding" : "Send message"}

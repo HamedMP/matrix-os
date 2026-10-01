@@ -1,3 +1,4 @@
+import { matrixBotModelChoices } from "./bots/MatrixBotModelField.js";
 import { isChatAgentDriver } from "@matrix-os/contracts";
 import type { StartAgentChat } from "./client.js";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
@@ -265,7 +266,7 @@ export function ChatAgentsPanel({ client, view = "library", onClose, onSetup, on
       const saved = state.editing === "new"
         ? await client.create({ ...fields, selection: draft.selection, clientRequestId: draft.requestId, ...(draft.recipe ? { recipe: draft.recipe } : {}) })
         : await client.update(state.editing!.id, { ...fields,
-          ...(recipeBot || JSON.stringify(draft.selection) === JSON.stringify(state.editing!.selection) ? {} : { selection: draft.selection }), baseRevision: state.editing!.revision,
+          ...(JSON.stringify(draft.selection) === JSON.stringify(state.editing!.selection) ? {} : { selection: draft.selection }), baseRevision: state.editing!.revision,
           ...(recipeBot || draft.recipe === undefined ? {} : { recipe: draft.recipe }) });
       setState((current) => ({ ...current, pending: false, editing: null, draft: null,
         agents: [...current.agents.filter((agent) => agent.id !== saved.id), saved],
@@ -299,9 +300,9 @@ export function ChatAgentsPanel({ client, view = "library", onClose, onSetup, on
     </header>
     <div className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-8 sm:px-6">
     {recipes ? <AgentRecipesPanel onStartChat={onStartChat ? (text) => { onClose(); onStartChat(text); } : undefined}
-      botRecipes={botRecipes} onOpenBotChat={onOpenBotChat ? (chatId) => { onClose(); onOpenBotChat(chatId); } : undefined}
-      onInstantiateBot={client.bots && onOpenBotChat ? async (recipe, clientRequestId) =>
-        (await client.bots!.instantiate({ recipe, clientRequestId })).chatId : undefined}
+      matrixModels={matrixBotModelChoices(models)} botRecipes={botRecipes} onOpenBotChat={onOpenBotChat ? (chatId) => { onClose(); onOpenBotChat(chatId); } : undefined}
+      onInstantiateBot={client.bots && onOpenBotChat ? async (recipe, clientRequestId, selection) =>
+        (await client.bots!.instantiate({ recipe, clientRequestId, ...(selection ? { selection } : {}) })).chatId : undefined}
       onCreateJev={onStartChat ? createJev : undefined} connections={state.connections}
       jevUnavailable={jevUnavailable} jevPending={jevPending} jevError={jevError} /> : <div className="mx-auto w-full max-w-3xl">
     <AgentLibraryBody state={state} models={state.draft?.recipe?.skills.includes("matrix-jev-email-triage")

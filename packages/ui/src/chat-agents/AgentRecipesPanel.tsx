@@ -1,3 +1,6 @@
+import { MatrixBotModelField, matrixBotModelChoices } from "./bots/MatrixBotModelField.js";
+import type { CanonicalProviderChoice } from "../canonical-provider-choice.js";
+import type { CanonicalChatModelSelection } from "@matrix-os/contracts";
 import { buildAgentRecipePrompt, isLaunchBotRecipeId, LAUNCH_BOT_RECIPE_IDS } from "./recipe-handoff.js";
 import type { ChatAgentIntegrationConnection, StartAgentChat } from "./client.js";
 import { activeConnections } from "./recipe-integrations.js";
@@ -21,22 +24,25 @@ export const BOT_RECIPE_COUNT = agentInspirations.filter((recipe) => !isLaunchBo
 const EMPTY_BOT_RECIPES: BotRecipeSummary[] = [];
 
 export function AgentRecipesPanel({ onStartChat, onCreateJev, connections = [], jevUnavailable = "", jevPending = false, jevError = "",
-  botRecipes = EMPTY_BOT_RECIPES, onInstantiateBot, onOpenBotChat }: {
+  botRecipes = EMPTY_BOT_RECIPES, matrixModels = [], onInstantiateBot, onOpenBotChat }: {
   onStartChat?: StartAgentChat; onCreateJev?: (accountLabel: string, labeling: boolean) => Promise<void>;
   connections?: ChatAgentIntegrationConnection[]; jevUnavailable?: string; jevPending?: boolean; jevError?: string;
-  botRecipes?: BotRecipeSummary[];
-  onInstantiateBot?: (recipe: BotRecipeRef, clientRequestId: string) => Promise<string>;
+  botRecipes?: BotRecipeSummary[]; matrixModels?: readonly CanonicalProviderChoice[];
+  onInstantiateBot?: (recipe: BotRecipeRef, clientRequestId: string, selection?: CanonicalChatModelSelection) => Promise<string>;
   onOpenBotChat?: (chatId: string) => void;
 }) {
   const [query, setQuery] = useState("");
   const [selectedGmail, setSelectedGmail] = useState("");
   const [labeling, setLabeling] = useState(false);
+  const [botSelection, setBotSelection] = useState<CanonicalChatModelSelection | null>(null);
   const [botPending, setBotPending] = useState<string | null>(null);
   const [botError, setBotError] = useState("");
   const botAttempt = useRef<{ key: string; requestId: string } | null>(null);
+  const botModelAvailable = !botSelection || matrixBotModelChoices(matrixModels).some((choice) =>
+    choice.instanceId === botSelection.instanceId && choice.modelId === botSelection.model);
   const createBot = async (recipe: BotRecipeSummary) => {
-    if (!onInstantiateBot || !onOpenBotChat || botPending) return;
-    const key = `${recipe.recipeId}@${recipe.version}`;
+    if (!onInstantiateBot || !onOpenBotChat || botPending || !botModelAvailable) return;
+    const key = `${recipe.recipeId}@${recipe.version}:${JSON.stringify(botSelection)}`;
     if (botAttempt.current?.key !== key) {
       const bytes = new Uint8Array(16);
       globalThis.crypto.getRandomValues(bytes);
@@ -45,7 +51,10 @@ export function AgentRecipesPanel({ onStartChat, onCreateJev, connections = [], 
     setBotPending(key);
     setBotError("");
     try {
-      const chatId = await onInstantiateBot({ recipeId: recipe.recipeId, version: recipe.version }, botAttempt.current.requestId);
+      const ref = { recipeId: recipe.recipeId, version: recipe.version };
+      const chatId = await (botSelection
+        ? onInstantiateBot(ref, botAttempt.current.requestId, botSelection)
+        : onInstantiateBot(ref, botAttempt.current.requestId));
       botAttempt.current = null;
       onOpenBotChat(chatId);
     } catch (error: unknown) {
@@ -82,6 +91,8 @@ export function AgentRecipesPanel({ onStartChat, onCreateJev, connections = [], 
       <span className="sr-only">Search recipes</span>
       <input className={chatAgentInputClass} type="search" value={query} onChange={(event) => setQuery(event.currentTarget.value)} placeholder="Search roles, skills, or integrations" aria-label="Search recipes" />
     </label>
+    {botMode ? <MatrixBotModelField label="Bot model" selection={botSelection} models={matrixModels} pending={!!botPending}
+      onChange={(selection) => { setBotSelection(selection.instanceId === "matrix_bot_default" ? null : selection); setBotError(""); }} /> : null}
     {botError ? <p role="alert" className="text-xs">{botError}</p> : null}
     {showJev || matches.length || visibleBotRecipes.length ? <div className="matrix-chat-agent-recipes__grid grid gap-3">
       {visibleBotRecipes.map((recipe) => <article key={`${recipe.recipeId}@${recipe.version}`} data-matrix-recipe={recipe.recipeId}
@@ -90,9 +101,9 @@ export function AgentRecipesPanel({ onStartChat, onCreateJev, connections = [], 
           <div className="min-w-0 flex-1"><h4 className="text-base font-semibold">{recipe.name}</h4>
             <p className="mt-2 text-xs leading-5" style={chatAgentMutedStyle}>{recipe.description}</p></div></div>
         <p className="text-xs" style={chatAgentMutedStyle}>Creates: {recipe.output}</p>
-        <button type="button" aria-label={`Use ${recipe.name}`} disabled={!onInstantiateBot || !onOpenBotChat || !!botPending}
+        <button type="button" aria-label={`Use ${recipe.name}`} disabled={!onInstantiateBot || !onOpenBotChat || !!botPending || !botModelAvailable}
           className={`${chatAgentButtonClass} justify-self-start`} onClick={() => { void createBot(recipe); }}>
-          {botPending === `${recipe.recipeId}@${recipe.version}` ? "Creating…" : "Build in Chat"}</button>
+          {botPending?.startsWith(`${recipe.recipeId}@${recipe.version}:`) ? "Creating…" : "Build in Chat"}</button>
       </article>)}
       {showJev ? <article data-matrix-recipe={jevRecipe.id} className="matrix-chat-agent-card matrix-chat-agent-recipe-card grid min-w-0 gap-4 rounded-2xl border p-4">
         <div className="flex min-w-0 items-start gap-4">
