@@ -127,7 +127,13 @@ export interface VoiceMediaSession {
   /** Begin/end capture for a turn. `null` releases capture resources. */
   setCapture(capture: { turnId: string; mode: VoiceTurnMode } | null): void;
   /** Bounded base64 audio for the active capture turn. */
-  pushAudio(input: { turnId: string; timestampMs: number; data: string }): void;
+  pushAudio(input: {
+    turnId: string;
+    timestampMs: number;
+    data: string;
+    /** True while delivered assistant audio remains unacknowledged as played. */
+    playbackActive?: boolean;
+  }): void;
   /** Synthesize one canonical-text segment for playback. */
   synthesize(command: VoiceSynthesisCommand): void;
   /** Stop generation+queued audio for a response (generation cancel). */

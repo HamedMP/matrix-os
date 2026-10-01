@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import type { SafeVoiceError, VoiceCapability } from "@matrix-os/contracts/voice-session";
 import { Button } from "../Button.js";
 import {
@@ -10,6 +10,9 @@ import {
 import { orbLevel } from "./orb-level.js";
 import { AoedeCloseIcon, AoedeHistoryIcon, AoedeNewIcon, AoedeSettingsIcon } from "./icons.js";
 import "./aoede-panel.css";
+
+/** Distance from the transcript's bottom edge (px) within which streaming still auto-follows. */
+const TRANSCRIPT_STICKY_PX = 24;
 
 export interface AoedePanelProps {
   title?: string;
@@ -117,10 +120,19 @@ export function AoedePanel({
 
   const utterance = boundedAoedeText(captions.utterance);
   const response = boundedAoedeText(captions.response);
-  // Keep the newest exchange in view as it streams; the region itself never resizes.
-  useEffect(() => {
+  // Follow new content only while the reader is already at (or near) the
+  // bottom; scrolling up to re-read earlier output must not be yanked back by
+  // every streamed token. Recorded on scroll, applied before paint so the
+  // pre-update position decides.
+  const stickToBottom = useRef(true);
+  const onTranscriptScroll = useCallback(() => {
     const node = transcript.current;
-    if (node) node.scrollTop = node.scrollHeight;
+    if (!node) return;
+    stickToBottom.current = node.scrollHeight - node.scrollTop - node.clientHeight <= TRANSCRIPT_STICKY_PX;
+  }, []);
+  useLayoutEffect(() => {
+    const node = transcript.current;
+    if (node && stickToBottom.current) node.scrollTop = node.scrollHeight;
   }, [utterance, response, children, error]);
 
   const begin = (gesture: { key?: string; pointerId?: number }) => {
@@ -180,7 +192,7 @@ export function AoedePanel({
       {settings && settingsOpen ? (
         <section id={`${id}-settings`} className="matrix-aoede__settings" aria-label="Aoede settings">{settings}</section>
       ) : (
-        <div ref={transcript} className="matrix-aoede__transcript" data-empty={transcriptEmpty}>
+        <div ref={transcript} className="matrix-aoede__transcript" data-empty={transcriptEmpty} onScroll={onTranscriptScroll}>
           {canStart && transcriptEmpty ? <p id={`${id}-rationale`} className="matrix-aoede__rationale">
             Start turns on the microphone and listens for your next turn. Pause, Dismiss or End turns it off.
           </p> : null}

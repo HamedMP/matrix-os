@@ -33,7 +33,7 @@ From Web Canvas or browser Web Desktop, the icon and palette open one assistant 
 
 ### 2. Continue or start fresh
 
-Bootstrap resolves the owner's assistant conversation for the immutable runtime and stable workspace/project scope. Continue after End or shell reload reuses that canonical conversation, but not an ephemeral voice session. New conversation is an explicit operation with idempotent request identity. Access loss/deletion stops media, reports unavailable and requires explicit new-conversation intent; it never silently selects another Chat. History opens the exact backing record only when requested.
+Bootstrap resolves the owner's assistant conversation for the immutable runtime and stable workspace/project scope. The first open in a shell session starts a fresh canonical conversation (bootstrap intent `new`, idempotent by request identity) so the assistant never resumes a stale thread the user has forgotten; reopening after dismissal or End within the same shell session continues that conversation without a second bootstrap, and earlier conversations stay reachable through View history. New conversation remains an explicit operation with idempotent request identity. Access loss/deletion stops media, reports unavailable and requires explicit new-conversation intent; it never silently selects another Chat. History opens the exact backing record only when requested.
 
 ### 3. Discuss and act in the workspace
 
@@ -53,7 +53,7 @@ Lost responses reconcile stable creation/request identity. Reconnect rotates tic
 | --- | --- |
 | AO-01 | Icon and global palette converge on one shell-level singleton across app/window/presentation switches. |
 | AO-02 | No ChatApp or Chat-mounted component owns Aoede or remains hidden to control it. |
-| AO-03 | Idempotent backing-conversation bootstrap binds authenticated owner, runtime and workspace/project scope; End/reload continues; New is explicit. |
+| AO-03 | Idempotent backing-conversation bootstrap binds authenticated owner, runtime and workspace/project scope; first open per shell session starts fresh, reopen within the session continues, New is explicit. |
 | AO-04 | Runtime/account/scope changes fence async work and release old media; access/deletion never silently rebinds. |
 | AO-05 | No microphone access on layout/state restoration or open/focus; explicit Start plus rationale only. |
 | AO-06 | Canonical typed/spoken admission, queue, dequeue, steering, retry and actual dispatch share one server-owned policy. |

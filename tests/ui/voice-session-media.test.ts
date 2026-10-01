@@ -39,8 +39,9 @@ class FakeSource implements VoicePlaybackSource {
   }
 }
 
-function fakePlaybackContext() {
+function fakePlaybackContext(options: { state?: "running" | "suspended"; resumeTo?: "running" | "suspended" } = {}) {
   let nowSeconds = 0;
+  let state = options.state;
   const sources: FakeSource[] = [];
   const context: VoiceAudioContextLike = {
     get currentTimeSeconds() {
@@ -57,7 +58,13 @@ function fakePlaybackContext() {
       return source;
     },
     close: vi.fn(async () => undefined),
+    resume: vi.fn(async () => {
+      state = options.resumeTo ?? state;
+    }),
   };
+  if (state !== undefined) {
+    Object.defineProperty(context, "state", { get: () => state });
+  }
   return { context, sources, setNow: (value: number) => { nowSeconds = value; } };
 }
 
@@ -339,19 +346,82 @@ describe("createWebVoiceMediaSession", () => {
     });
   });
 
-  it("retains synthesized chunks beyond pressure watermarks until playback drains", async () => {
-    const { session, playback, acks } = mediaHarness({ maxQueuedSegments: 1 });
+  it("silently retains synthesized chunks beyond both pressure watermarks until playback drains", async () => {
+    const { session, playback, acks, backpressure } = mediaHarness({ maxQueuedSegments: 1 });
     await session.prepare();
 
-    session.enqueueSegment({ responseId: "vresp_slow", segmentId: "vseg_1", data: pcmSegment(3_200) });
-    session.enqueueSegment({ responseId: "vresp_slow", segmentId: "vseg_2", data: pcmSegment(3_200) });
-    session.enqueueSegment({ responseId: "vresp_slow", segmentId: "vseg_3", data: pcmSegment(3_200) });
+    // Three 6-second segments cross the one-segment and 10-second watermarks.
+    session.enqueueSegment({ responseId: "vresp_slow", segmentId: "vseg_1", data: pcmSegment(96_000) });
+    session.enqueueSegment({ responseId: "vresp_slow", segmentId: "vseg_2", data: pcmSegment(96_000) });
+    session.enqueueSegment({ responseId: "vresp_slow", segmentId: "vseg_3", data: pcmSegment(96_000) });
 
     playback.sources[0]!.finish();
     playback.sources[1]!.finish();
     playback.sources[2]!.finish();
     expect(acks.map((ack) => ack.segmentId)).toEqual(["vseg_1", "vseg_2", "vseg_3"]);
-    expect(acks.at(-1)?.playedThroughMs).toBe(600);
+    expect(acks.at(-1)?.playedThroughMs).toBe(18_000);
+    expect(backpressure).toEqual([]);
+  });
+
+  it("counts the current buffer toward the hard byte cap and reports the rejected segment once", async () => {
+    const { session, playback, acks, backpressure } = mediaHarness();
+    await session.prepare();
+
+    // Decoding s16 to f32 expands these to 20 MiB current + 12 MiB queued.
+    session.enqueueSegment({ responseId: "vresp_cap", segmentId: "vseg_current", data: pcmSegment(5 * 1024 * 1024) });
+    session.enqueueSegment({ responseId: "vresp_cap", segmentId: "vseg_queued", data: pcmSegment(3 * 1024 * 1024) });
+    session.enqueueSegment({ responseId: "vresp_cap", segmentId: "vseg_rejected", data: pcmSegment(1) });
+
+    expect(backpressure).toEqual([1]);
+    playback.sources[0]!.finish();
+    playback.sources[1]!.finish();
+    expect(acks.map((ack) => ack.segmentId)).toEqual(["vseg_current", "vseg_queued"]);
+    expect(playback.sources).toHaveLength(2);
+  });
+
+  it("reports a context that remains suspended once without acknowledging stranded audio", async () => {
+    const playback = fakePlaybackContext({ state: "suspended", resumeTo: "suspended" });
+    const errors: { code: string; retryable: boolean }[] = [];
+    const acks: VoicePlaybackAck[] = [];
+    const session = createWebVoiceMediaSession({
+      audio: AUDIO,
+      callbacks: {
+        onAudioChunk: () => true,
+        onSegmentPlayed: (ack) => acks.push(ack),
+        onError: (error) => errors.push(error),
+      },
+      mediaDevices: fakeMediaDevices().devices,
+      createAudioContext: () => playback.context,
+    });
+
+    session.enqueueSegment({ responseId: "vresp_suspended", segmentId: "vseg_1", data: pcmSegment(320) });
+    session.enqueueSegment({ responseId: "vresp_suspended", segmentId: "vseg_2", data: pcmSegment(320) });
+    await vi.waitFor(() => expect(errors).toEqual([
+      expect.objectContaining({ code: "output_unavailable", retryable: true }),
+    ]));
+    expect(acks).toEqual([]);
+  });
+
+  it("plays normally when resume leaves the context running", async () => {
+    const playback = fakePlaybackContext({ state: "suspended", resumeTo: "running" });
+    const acks: VoicePlaybackAck[] = [];
+    const errors: { code: string }[] = [];
+    const session = createWebVoiceMediaSession({
+      audio: AUDIO,
+      callbacks: {
+        onAudioChunk: () => true,
+        onSegmentPlayed: (ack) => acks.push(ack),
+        onError: (error) => errors.push(error),
+      },
+      mediaDevices: fakeMediaDevices().devices,
+      createAudioContext: () => playback.context,
+    });
+
+    session.enqueueSegment({ responseId: "vresp_running", segmentId: "vseg_1", data: pcmSegment(320) });
+    await Promise.resolve();
+    playback.sources[0]!.finish();
+    expect(acks).toHaveLength(1);
+    expect(errors).toEqual([]);
   });
 
   it("returns the true played boundary on response.interrupt mid-segment", async () => {

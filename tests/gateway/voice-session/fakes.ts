@@ -375,7 +375,7 @@ export class FakeChatAccess implements VoiceChatAccessPort {
 
 export interface FakeAdapterSession extends VoiceMediaSession {
   captures: ({ turnId: string; mode: string } | null)[];
-  audios: { turnId: string; timestampMs: number; data: string }[];
+  audios: { turnId: string; timestampMs: number; data: string; playbackActive?: boolean }[];
   synths: { responseId: string; segmentId: string; text: string }[];
   cancels: string[];
   interrupts: { responseId: string; playedThroughMs: number }[];

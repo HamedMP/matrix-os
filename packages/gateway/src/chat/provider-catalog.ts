@@ -46,6 +46,7 @@ const MAX_EFFORTS = 4;
 const MAX_SKILLS = 64;
 const MAX_CATALOG_CACHE_TTL_MS = 60_000;
 const MAX_CATALOG_CACHE_ENTRIES = 64;
+const UNAVAILABLE_CATALOG_CACHE_TTL_MS = 2_000;
 const CODING_SETUP: Record<CodingDriverKind, {
   command: string;
   installPackage: string;
@@ -526,20 +527,28 @@ export function createChatProviderCatalogService(options: {
   const cached = new Map<string, { catalog: CanonicalProviderCatalog; expiresAt: number }>();
   const inFlight = new Map<string, Promise<CanonicalProviderCatalog>>();
 
-  // Every served read is reused for the window, including one shaped by a
-  // probe timeout: on a slow host most reads are, and re-probing on every
-  // reader is what the window exists to prevent. A thrown read leaves nothing
-  // behind, and refresh() always re-reads.
+  // Bootstrap finds a usable route by validating instance.defaultSelection.
+  // Keep catalogs without one briefly to coalesce cold-host probes without
+  // preserving a startup false-negative for the full readiness window.
+  // A thrown read leaves nothing behind, and refresh() always re-reads.
   function remember(principal: RequestPrincipal): Promise<CanonicalProviderCatalog> {
     if (cacheTtlMs === 0) return readCatalog(principal);
     const ownerId = principal.userId;
     const read = readCatalog(principal).then((catalog) => {
+      // A refresh may have registered and completed a newer read while this
+      // one was pending. Only the currently registered read may update cache.
+      if (inFlight.get(ownerId) !== read) return catalog;
       cached.delete(ownerId);
       if (cached.size >= MAX_CATALOG_CACHE_ENTRIES) {
         const oldest = cached.keys().next().value;
         if (oldest !== undefined) cached.delete(oldest);
       }
-      cached.set(ownerId, { catalog, expiresAt: nowMs() + cacheTtlMs });
+      const hasUsableProvider = catalog.instances.some((instance) => instance.defaultSelection
+        && validateChatProviderSelection({ catalog, selection: instance.defaultSelection }).ok);
+      const ttlMs = hasUsableProvider
+        ? cacheTtlMs
+        : Math.min(cacheTtlMs, UNAVAILABLE_CATALOG_CACHE_TTL_MS);
+      cached.set(ownerId, { catalog, expiresAt: nowMs() + ttlMs });
       return catalog;
     }).finally(() => {
       if (inFlight.get(ownerId) === read) inFlight.delete(ownerId);

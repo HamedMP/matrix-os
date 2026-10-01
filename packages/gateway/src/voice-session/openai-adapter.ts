@@ -23,7 +23,7 @@
  * terminate on the first clause's end. `generatedDurationMs` stays
  * cumulative (monotonic across the response).
  */
-import type { VoiceTurnMode } from "@matrix-os/contracts/voice-session";
+import { VOICE_SESSION_LIMITS, type VoiceTurnMode } from "@matrix-os/contracts/voice-session";
 import { VoiceFinalityIdSchema, VoiceSegmentIdSchema } from "@matrix-os/contracts/voice-session";
 import {
   VoiceAdapterCapabilitiesSchema,
@@ -48,13 +48,21 @@ import {
 } from "./speech-ports.js";
 
 const SYNTH_CHUNK_BYTES = 24 * 1024;
-const MAX_QUEUED_SEGMENTS = 16;
+// One segment may be in flight; the remaining contract-bounded response
+// manifest may queue without turning ordinary slow synthesis into rejection.
+const MAX_QUEUED_SEGMENTS = VOICE_SESSION_LIMITS.maxSegments - 1;
 const MAX_SYNTH_RESPONSES = 64;
 const MAX_INFLIGHT_TRANSCRIPTIONS = 4;
 const DEFAULT_MAX_CAPTURE_BYTES = 8 * 1024 * 1024;
 const SILENCE_PRE_ROLL_MS = 250;
 const DEFAULT_MAX_SYNTHESIS_BYTES = 16 * 1024 * 1024;
-const DEFAULT_VAD = { silenceThresholdRms: 500, silenceHangoverMs: 900, minSpeechMs: 250 } as const;
+const DEFAULT_VAD = {
+  silenceThresholdRms: 500,
+  silenceHangoverMs: 900,
+  minSpeechMs: 250,
+  bargeInThresholdMultiplier: 2.5,
+  bargeInMinSpeechMs: 600,
+} as const;
 
 const MAX_TRANSCRIPT_CHARS = 8_000;
 
@@ -84,6 +92,10 @@ export interface OpenAiVoiceAdapterOptions {
     silenceHangoverMs?: number;
     /** Minimum voiced audio before hangover can end a turn (default 250ms). */
     minSpeechMs?: number;
+    /** Playback-time RMS multiplier that rejects likely speaker echo (default 2.5). */
+    bargeInThresholdMultiplier?: number;
+    /** Playback-time voiced audio required before barge-in (default 600ms). */
+    bargeInMinSpeechMs?: number;
   };
 }
 
@@ -171,7 +183,13 @@ interface AdapterConfig {
   clock: VoiceClock;
   maxCaptureBytes: number;
   maxSynthesisBytes: number;
-  vad: { silenceThresholdRms: number; silenceHangoverMs: number; minSpeechMs: number };
+  vad: {
+    silenceThresholdRms: number;
+    silenceHangoverMs: number;
+    minSpeechMs: number;
+    bargeInThresholdMultiplier: number;
+    bargeInMinSpeechMs: number;
+  };
 }
 
 class ChunkedVoiceMediaSession implements VoiceMediaSession {
@@ -209,7 +227,7 @@ class ChunkedVoiceMediaSession implements VoiceMediaSession {
     };
   }
 
-  pushAudio(input: { turnId: string; timestampMs: number; data: string }): void {
+  pushAudio(input: { turnId: string; timestampMs: number; data: string; playbackActive?: boolean }): void {
     const cap = this.capture;
     if (this.closed || !cap || cap.turnId !== input.turnId) return;
     let chunk: Buffer;
@@ -220,7 +238,7 @@ class ChunkedVoiceMediaSession implements VoiceMediaSession {
       return;
     }
     if (chunk.length === 0) return;
-    this.runVad(cap, chunk);
+    this.runVad(cap, chunk, input.playbackActive === true);
     if (cap.mode === "hands_free" && !cap.inSpeech && (this.audioCodec === "pcm_s16le" || this.audioCodec === "pcm_f32le")) {
       // Idle listening retains only a short pre-roll, never an utterance-sized
       // buffer. Preserve the leading boundary when speech actually starts.
@@ -313,12 +331,18 @@ class ChunkedVoiceMediaSession implements VoiceMediaSession {
     return chunk.length / bytesPerMs;
   }
 
-  private runVad(cap: CaptureState, chunk: Buffer): void {
+  private runVad(cap: CaptureState, chunk: Buffer, playbackActive: boolean): void {
     if (cap.mode !== "hands_free") return;
     const codec = this.audioCodec;
     if (codec !== "pcm_s16le" && codec !== "pcm_f32le") return; // capture boundaries decide
     const rms = codec === "pcm_s16le" ? rmsS16le(chunk) : rmsF32le(chunk);
-    if (rms >= this.config.vad.silenceThresholdRms) {
+    const speechThreshold = playbackActive
+      ? this.config.vad.silenceThresholdRms * this.config.vad.bargeInThresholdMultiplier
+      : this.config.vad.silenceThresholdRms;
+    const minimumSpeechMs = playbackActive
+      ? this.config.vad.bargeInMinSpeechMs
+      : this.config.vad.minSpeechMs;
+    if (rms >= speechThreshold) {
       cap.speechMs += this.frameMs(chunk);
       if (!cap.inSpeech) {
         cap.inSpeech = true;
@@ -327,7 +351,7 @@ class ChunkedVoiceMediaSession implements VoiceMediaSession {
       // noise) as barge-in. `speech_start` is destructive upstream: it stops
       // playback and cancels the run, so apply the configured minimum before
       // emitting it rather than only when deciding whether to finalize.
-      if (!cap.speechStartEmitted && cap.speechMs >= this.config.vad.minSpeechMs) {
+      if (!cap.speechStartEmitted && cap.speechMs >= minimumSpeechMs) {
         cap.speechStartEmitted = true;
         this.emit({ type: "vad", turnId: cap.turnId, action: "speech_start" });
       }
@@ -661,6 +685,9 @@ export function createOpenAiVoiceMediaAdapter(options: OpenAiVoiceAdapterOptions
     silenceThresholdRms: options.vad?.silenceThresholdRms ?? DEFAULT_VAD.silenceThresholdRms,
     silenceHangoverMs: options.vad?.silenceHangoverMs ?? DEFAULT_VAD.silenceHangoverMs,
     minSpeechMs: options.vad?.minSpeechMs ?? DEFAULT_VAD.minSpeechMs,
+    bargeInThresholdMultiplier: options.vad?.bargeInThresholdMultiplier
+      ?? DEFAULT_VAD.bargeInThresholdMultiplier,
+    bargeInMinSpeechMs: options.vad?.bargeInMinSpeechMs ?? DEFAULT_VAD.bargeInMinSpeechMs,
   };
   if (
     !Number.isFinite(vad.silenceThresholdRms)
@@ -671,6 +698,12 @@ export function createOpenAiVoiceMediaAdapter(options: OpenAiVoiceAdapterOptions
     || !Number.isSafeInteger(vad.minSpeechMs)
     || vad.minSpeechMs < 0
     || vad.minSpeechMs > 60_000
+    || !Number.isFinite(vad.bargeInThresholdMultiplier)
+    || vad.bargeInThresholdMultiplier < 1
+    || vad.bargeInThresholdMultiplier > 100
+    || !Number.isSafeInteger(vad.bargeInMinSpeechMs)
+    || vad.bargeInMinSpeechMs < 0
+    || vad.bargeInMinSpeechMs > 60_000
   ) {
     throw new RangeError("Voice adapter VAD tuning is invalid");
   }

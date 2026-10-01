@@ -134,7 +134,9 @@ it("delivers active capture audio synchronously past a stalled mutation", async 
     type: "capture.audio", turnId: "vturn_active", timestampMs: 20, data: "AAAA",
   }));
 
-  expect(rig.adapter.sessions[0].audios).toContainEqual({ turnId: "vturn_active", timestampMs: 20, data: "AAAA" });
+  expect(rig.adapter.sessions[0].audios).toContainEqual({
+    turnId: "vturn_active", timestampMs: 20, data: "AAAA", playbackActive: false,
+  });
   expect(record.pendingMutationTasks).toBe(pendingBefore);
   release();
   await blocker;
@@ -158,6 +160,41 @@ it("keeps audio ordered behind a pending capture start", async () => {
   await Promise.all([blocker, start, audio]);
   expect(rig.adapter.sessions[0].captures).toContainEqual({ turnId: "vturn_pending", mode: "hands_free" });
   expect(rig.adapter.sessions[0].audios).toEqual([
-    { turnId: "vturn_pending", timestampMs: 0, data: "AQAB" },
+    { turnId: "vturn_pending", timestampMs: 0, data: "AQAB", playbackActive: false },
   ]);
+});
+
+it("marks capture audio playback-active only until delivered audio is acknowledged", async () => {
+  const s = await listeningSession(rig);
+  await s.handle.receive(clientFrame(s.sessionId, s.epoch, {
+    type: "capture.start", turnId: "vturn_prompt", mode: "hands_free",
+  }));
+  rig.adapter.emit({
+    type: "transcript.final", turnId: "vturn_prompt", finalityId: "vfinal_prompt", text: "Speak",
+  });
+  await flush(rig, s.sessionId);
+  rig.events.emit({ type: "assistant.text", runId: "run_1", text: "Reply.", textStart: 0, textEnd: 6 });
+  await flush(rig, s.sessionId);
+  const responseId = rig.adapter.sessions[0].synths[0]!.responseId;
+  const segmentId = rig.adapter.sessions[0].synths[0]!.segmentId;
+  rig.adapter.emit({
+    type: "synthesis.audio", responseId, segmentId, startMs: 0, durationMs: 100, data: "AAAA",
+  });
+  await flush(rig, s.sessionId);
+
+  await s.handle.receive(clientFrame(s.sessionId, s.epoch, {
+    type: "capture.start", turnId: "vturn_barge", mode: "hands_free",
+  }));
+  await s.handle.receive(clientFrame(s.sessionId, s.epoch, {
+    type: "capture.audio", turnId: "vturn_barge", timestampMs: 0, data: "AAAA",
+  }));
+  expect(rig.adapter.sessions[0].audios.at(-1)?.playbackActive).toBe(true);
+
+  await s.handle.receive(clientFrame(s.sessionId, s.epoch, {
+    type: "playback.segment_played", responseId, segmentId, deliveryRevision: 1, playedThroughMs: 100,
+  }));
+  await s.handle.receive(clientFrame(s.sessionId, s.epoch, {
+    type: "capture.audio", turnId: "vturn_barge", timestampMs: 20, data: "AAAA",
+  }));
+  expect(rig.adapter.sessions[0].audios.at(-1)?.playbackActive).toBe(false);
 });

@@ -166,6 +166,7 @@ interface ResponsePlayback {
   ackRevision: number;
   stopping: boolean;
   waitingForContext: boolean;
+  outputUnavailableReported: boolean;
 }
 
 export function createWebVoiceMediaSession(options: {
@@ -457,7 +458,6 @@ export function createWebVoiceMediaSession(options: {
       return;
     }
     playback.queuedMs = Math.max(0, playback.queuedMs - segment.buffer.durationMs);
-    playback.queuedBytes = Math.max(0, playback.queuedBytes - segment.byteLength);
     const source = context.createSource(segment.buffer);
     const startedAtSeconds = Math.max(context.currentTimeSeconds, playback.nextStartSeconds);
     playback.nextStartSeconds = startedAtSeconds + segment.buffer.durationMs / 1_000;
@@ -465,6 +465,9 @@ export function createWebVoiceMediaSession(options: {
     source.onended = () => {
       if (playback.stopping) return;
       playback.current = null;
+      // Retain the playing segment in the byte accounting until its source
+      // ends; AudioBuffer memory remains live while `current` references it.
+      playback.queuedBytes = Math.max(0, playback.queuedBytes - segment.byteLength);
       playback.playedMs += segment.buffer.durationMs;
       playback.ackRevision += 1;
       const ack: VoicePlaybackAck = {
@@ -491,12 +494,20 @@ export function createWebVoiceMediaSession(options: {
     try {
       const resumeResult = context.resume?.() as Promise<void> | undefined;
       if (resumeResult && typeof resumeResult.then === "function") {
-        // AudioContext.resume() is async and can reject (autoplay policy,
-        // device revoked). Observe it: a suspended context never produces
-        // sound, so the session must not go on believing audio is live.
-        void resumeResult.catch((resumeError: unknown) => {
+        // `resume()` settling is the earliest reliable point to inspect the
+        // browser's state. A fulfilled promise can still leave policy-blocked
+        // playback suspended, where this source would otherwise never end.
+        void resumeResult.then(() => {
+          const state = (context as VoiceAudioContextLike & { readonly state?: string }).state;
+          if (state === "suspended" && !released && playbackContext === context
+            && !playback.outputUnavailableReported) {
+            playback.outputUnavailableReported = true;
+            emitError(voiceErrorForCode("output_unavailable"));
+          }
+        }, (resumeError: unknown) => {
           console.warn("[voice-session] playback resume failed:", resumeError instanceof Error ? resumeError.name : "UnknownError");
-          if (!released && playbackContext === context) {
+          if (!released && playbackContext === context && !playback.outputUnavailableReported) {
+            playback.outputUnavailableReported = true;
             emitError(voiceErrorForCode("output_unavailable"));
           }
         });
@@ -505,6 +516,7 @@ export function createWebVoiceMediaSession(options: {
     } catch (error: unknown) {
       console.warn("[voice-session] playback start failed:", error instanceof Error ? error.name : "UnknownError");
       playback.current = null;
+      playback.queuedBytes = Math.max(0, playback.queuedBytes - segment.byteLength);
       emitError(voiceErrorForCode("output_unavailable"));
     }
   };
@@ -745,7 +757,7 @@ export function createWebVoiceMediaSession(options: {
             releaseInFlightResponse(oldest);
           }
         }
-        playback = { queue: [], queuedMs: 0, queuedBytes: 0, current: null, nextStartSeconds: 0, playedMs: 0, ackRevision: 0, stopping: false, waitingForContext: false };
+        playback = { queue: [], queuedMs: 0, queuedBytes: 0, current: null, nextStartSeconds: 0, playedMs: 0, ackRevision: 0, stopping: false, waitingForContext: false, outputUnavailableReported: false };
         responses.set(responseId, playback);
       }
       if (playback.stopping) {
@@ -777,10 +789,9 @@ export function createWebVoiceMediaSession(options: {
         callbacks.onBackpressure?.(invalidSegments);
         return;
       }
-      if (playback.queue.length >= maxQueuedSegments
-        || playback.queuedMs >= VOICE_SESSION_LIMITS.maxQueuedAudioMs) {
-        callbacks.onBackpressure?.(invalidSegments);
-      }
+      // Segment-count and duration watermarks intentionally do not signal
+      // transport backpressure: no audio was dropped. The byte cap above is
+      // the hard retained-memory bound and is the only playback drop signal.
       while (inFlightSegments.size >= MAX_SEEN_SEGMENTS) {
         const oldest = inFlightSegments.values().next().value;
         if (oldest === undefined) break;

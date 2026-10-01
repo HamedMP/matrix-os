@@ -290,6 +290,68 @@ describe("createOpenAiVoiceMediaAdapter", () => {
     expect(h.calls).toHaveLength(0);
   });
 
+  it("uses stricter playback-aware thresholds for likely speaker echo", async () => {
+    for (const playbackActive of [true, false]) {
+      const h = await startSession({ handler: () => jsonResponse({ text: "speech" }) });
+      h.session.setCapture({ turnId: "vturn_echo", mode: "hands_free" });
+      for (let index = 0; index < 20; index += 1) {
+        h.session.pushAudio({
+          turnId: "vturn_echo", timestampMs: index * 20, data: pcmS16Frame(800), playbackActive,
+        });
+      }
+      expect(eventsOfType(h.events, "vad").map((event) => event.action)).toEqual(
+        playbackActive ? [] : ["speech_start"],
+      );
+      h.session.close();
+    }
+  });
+
+  it("emits playback-time speech_start once after sustained genuine speech", async () => {
+    const h = await startSession({ handler: () => jsonResponse({ text: "speech" }) });
+    h.session.setCapture({ turnId: "vturn_barge", mode: "hands_free" });
+    for (let index = 0; index < 35; index += 1) {
+      h.session.pushAudio({
+        turnId: "vturn_barge", timestampMs: index * 20, data: pcmS16Frame(3_000), playbackActive: true,
+      });
+    }
+    expect(eventsOfType(h.events, "vad")).toEqual([
+      { type: "vad", turnId: "vturn_barge", action: "speech_start" },
+    ]);
+  });
+
+  it.each([
+    { durationMs: 240, starts: 0 },
+    { durationMs: 260, starts: 1 },
+  ])("pins the normal VAD minimum at $durationMs ms", async ({ durationMs, starts }) => {
+    const h = await startSession({ handler: () => jsonResponse({ text: "speech" }) });
+    h.session.setCapture({ turnId: "vturn_boundary", mode: "hands_free" });
+    for (let timestampMs = 0; timestampMs < durationMs; timestampMs += 20) {
+      h.session.pushAudio({
+        turnId: "vturn_boundary", timestampMs, data: pcmS16Frame(800), playbackActive: false,
+      });
+    }
+    expect(eventsOfType(h.events, "vad")).toHaveLength(starts);
+    h.session.close();
+  });
+
+  it("preserves pre-roll and threshold-crossing frames in transcription order", async () => {
+    const h = await startSession({ handler: () => jsonResponse({ text: "ordered" }) });
+    h.session.setCapture({ turnId: "vturn_ordered", mode: "hands_free" });
+    const amplitudes = [101, 102, 103, 104, 105, 106, 107, 108, 109, 110,
+      1_001, 1_002, 1_003, 1_004, 1_005, 1_006, 1_007, 1_008, 1_009, 1_010, 1_011, 1_012, 1_013];
+    amplitudes.forEach((amplitude, index) => {
+      h.session.pushAudio({
+        turnId: "vturn_ordered", timestampMs: index * 20, data: pcmS16Frame(amplitude),
+      });
+    });
+    h.session.setCapture(null);
+    await flushAsync();
+    const file = (h.calls[0]!.init.body as FormData).get("file") as File;
+    const pcm = Buffer.from(await file.arrayBuffer()).subarray(44);
+    expect(pcm).toHaveLength(amplitudes.length * 640);
+    expect(amplitudes.map((_, index) => pcm.readInt16LE(index * 640))).toEqual(amplitudes);
+  });
+
   it("maps transcription HTTP failures to provider_unavailable and timeouts to connection_failed", async () => {
     const failing = await startSession({
       handler: () => new Response("provider exploded", { status: 500 }),
@@ -463,11 +525,13 @@ describe("createOpenAiVoiceMediaAdapter", () => {
     ]);
   });
 
-  it("rejects synthesis explicitly when the bounded command queue is full", async () => {
+  it("queues 20 slow synthesis segments without rejection and drains them in order", async () => {
+    const gate = Promise.withResolvers<Response>();
+    let speechCalls = 0;
     const h = await startSession({
-      handler: () => new Promise<Response>(() => undefined),
+      handler: () => ++speechCalls === 1 ? gate.promise : pcmStreamResponse([pcmBytes(480)]),
     });
-    for (let index = 0; index < 18; index += 1) {
+    for (let index = 0; index < 20; index += 1) {
       h.session.synthesize({
         responseId: "vresp_1",
         segment: segment(`vseg_${index}`, index),
@@ -475,14 +539,15 @@ describe("createOpenAiVoiceMediaAdapter", () => {
       });
     }
     await flushAsync();
-    expect(eventsOfType(h.events, "synthesis.rejected")).toEqual([{
-      type: "synthesis.rejected",
-      responseId: "vresp_1",
-      segmentId: "vseg_17",
-      code: "audio_backpressure",
-      retryable: true,
-    }]);
-    h.session.close();
+    expect(h.calls).toHaveLength(1);
+    expect(eventsOfType(h.events, "synthesis.rejected")).toEqual([]);
+    gate.resolve(pcmStreamResponse([pcmBytes(480)]));
+    await flushAsync(80);
+    expect(h.calls).toHaveLength(20);
+    expect(eventsOfType(h.events, "synthesis.rejected")).toEqual([]);
+    expect(eventsOfType(h.events, "synthesis.end").map((event) => event.segmentId)).toEqual(
+      Array.from({ length: 20 }, (_, index) => `vseg_${index}`),
+    );
   });
 
   it("cancelResponse and interrupt abort in-flight synthesis without further events", async () => {

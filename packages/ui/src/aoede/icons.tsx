@@ -29,6 +29,3 @@ export function AoedeSettingsIcon(props: IconProps) {
   return <Icon {...props}><circle cx="10" cy="10" r="2.4" /><path d="M10 2.8v1.9M10 15.3v1.9M2.8 10h1.9M15.3 10h1.9M4.9 4.9l1.35 1.35M13.75 13.75l1.35 1.35M4.9 15.1l1.35-1.35M13.75 6.25l1.35-1.35" /></Icon>;
 }
 
-export function AoedeBackIcon(props: IconProps) {
-  return <Icon {...props}><path d="M12 4l-6 6 6 6" /></Icon>;
-}

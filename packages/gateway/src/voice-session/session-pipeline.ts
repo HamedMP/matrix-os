@@ -169,7 +169,17 @@ export class VoiceSessionPipeline {
       this.runtime.countStale("audio_for_inactive_turn");
       return;
     }
-    s.adapter?.pushAudio({ turnId: turn.turnId, timestampMs: frame.timestampMs, data: frame.data });
+    // Delivered-but-unacknowledged audio is still audibly playing. Give the
+    // adapter that boundary so speaker leakage receives stricter VAD gating.
+    const playbackActive = [...s.responses.values()].some((ledger) =>
+      ledger.state === "open" && ledger.deliveredThroughMs > ledger.playedThroughMs
+    );
+    s.adapter?.pushAudio({
+      turnId: turn.turnId,
+      timestampMs: frame.timestampMs,
+      data: frame.data,
+      playbackActive,
+    });
   }
 
   onCaptureStop(frame: Extract<VoiceClientFrame, { type: "capture.stop" }>): void {

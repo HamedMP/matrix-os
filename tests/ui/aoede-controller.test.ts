@@ -354,6 +354,17 @@ describe("Aoede shell owner", () => {
     expect(h.controller.getSnapshot()).toMatchObject({ status: "listening", microphoneActive: true, error: null });
     h.controller.dispose();
   });
+  it("surfaces a retryable media warning once the session is paused (microphone off)", async () => {
+    // A wrong implementation that keys suppression on `phase === "active"` alone would
+    // also hide the warning here; the paused voice state must let it through.
+    const h = harness(); await h.controller.open();
+    vi.mocked(h.media.getSnapshot).mockReturnValue({ phase: "active", voice: { state: "paused", muted: true, turnMode: "hands_free" }, error: null,
+      notice: { code: "audio_backpressure", retryable: true, recovery: "none" }, chatId: binding.chatId, sessionId: "vs_1", reconnectStatus: null } as never);
+    h.notifyMedia();
+    expect(h.controller.getSnapshot()).toMatchObject({ status: "paused", microphoneActive: false,
+      error: { code: "audio_backpressure", retryable: true, recovery: "none" } });
+    h.controller.dispose();
+  });
   it("surfaces backpressure when media has actually ended", async () => {
     const h = harness(); await h.controller.open();
     vi.mocked(h.media.getSnapshot).mockReturnValue({ phase: "ended", voice: null, error: null,
