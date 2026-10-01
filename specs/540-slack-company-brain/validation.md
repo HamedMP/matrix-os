@@ -111,3 +111,19 @@ URL. The native install-start endpoint independently authenticated the selected
 account and fresh test-organization administrator membership. Slack consent
 was approved, but the browser submission has not yet reached the Matrix
 callback. No successful installation or live bot/model reply is claimed.
+
+### Merged auth compatibility restored
+
+The live pilot rendered `getAuthPage`'s legacy Default installs fallback after
+the local auth-shell proxy failed. Its setup requests are outside the pilot's
+route allowlist, so this screen cannot provision the Slack test computer.
+The stack now includes the already-merged PR #2063 public-origin, local
+self-proxy, bounded Server Action body and workflow-origin fixes. Operator
+configuration supplies the browser origin; transport headers are restored
+after Clerk authentication and no credential/authorization check is bypassed.
+The pilot Worker forwards auth-page POST actions only from its exact browser
+origin, under the existing 256 KiB body cap, and retains `next-action` only for
+those auth requests. Runtime paths remain denied. The combined focused auth,
+preview and Worker regression passes 12 suites / 136 tests, including 38
+Worker tests; platform and Worker strict TypeScript checks pass. Redeployment
+and the browser journey remain acceptance gates.
