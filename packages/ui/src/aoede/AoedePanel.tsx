@@ -8,6 +8,7 @@ import {
   boundedAoedeText, type AoedeStatus,
 } from "./presentation.js";
 import { orbLevel } from "./orb-level.js";
+import { AoedeCloseIcon, AoedeHistoryIcon, AoedeNewIcon, AoedeSettingsIcon } from "./icons.js";
 import "./aoede-panel.css";
 
 export interface AoedePanelProps {
@@ -43,15 +44,21 @@ export interface AoedePanelProps {
    * updates/s never re-render the panel.
    */
   subscribeInputLevel?: (listener: (level: number) => void) => () => void;
+  /**
+   * Host-provided renderer for the assistant's response text (markdown). The
+   * panel bounds the text first; the host decides how it is displayed.
+   */
+  renderResponse?: (text: string) => ReactNode;
 }
 
 /** Presentation only. The host owns focus restoration, light dismissal, media and canonical work. */
 export function AoedePanel({
   title = "Aoede", scopeLabel, status, microphoneActive, turnMode, captions,
-  capability, canCancel, error, children, commands, settings, subscribeInputLevel,
+  capability, canCancel, error, children, commands, settings, subscribeInputLevel, renderResponse,
 }: AoedePanelProps) {
   const id = useId();
   const orb = useRef<HTMLDivElement | null>(null);
+  const transcript = useRef<HTMLDivElement | null>(null);
   const listening = status === "listening" && microphoneActive;
   useEffect(() => {
     const node = orb.current;
@@ -108,6 +115,14 @@ export function AoedePanel({
     };
   }, [release]);
 
+  const utterance = boundedAoedeText(captions.utterance);
+  const response = boundedAoedeText(captions.response);
+  // Keep the newest exchange in view as it streams; the region itself never resizes.
+  useEffect(() => {
+    const node = transcript.current;
+    if (node) node.scrollTop = node.scrollHeight;
+  }, [utterance, response, children, error]);
+
   const begin = (gesture: { key?: string; pointerId?: number }) => {
     if (!canHold || hold.current) return;
     hold.current = { ...gesture, stop: commands.pushToTalkStop };
@@ -115,8 +130,6 @@ export function AoedePanel({
     commands.pushToTalkStart();
   };
   const afterRelease = (command: () => void) => () => { release(); command(); };
-  const utterance = boundedAoedeText(captions.utterance);
-  const response = boundedAoedeText(captions.response);
   const displayTitle = boundedAoedeText(title, 80) || "Aoede";
   const actionCopy = aoedeActionCopy(capability);
   const canStart = status === "idle" || status === "ended";
@@ -126,53 +139,75 @@ export function AoedePanel({
   const showCancel = Boolean(commands.cancelGeneration) && active && status !== "listening"
     && canCancel === true && !children;
   const canRetry = status === "failed" && error?.retryable && error.code !== "chat_unavailable";
+  const showError = status === "failed" || Boolean(error);
+  const transcriptEmpty = !utterance && !response && !children && !showError;
 
   return (
     <section className="matrix-aoede" aria-labelledby={`${id}-title`} data-state={status}>
       <header className="matrix-aoede__header">
         <h2 id={`${id}-title`}>{displayTitle}</h2>
-        <Button variant="ghost" size="sm" className="matrix-aoede__button"
-          aria-label={`Dismiss ${displayTitle}`} onClick={afterRelease(commands.dismiss)}>Dismiss</Button>
+        <div className="matrix-aoede__tools" role="group" aria-label="Conversation">
+          <Button variant="ghost" size="icon" className="matrix-aoede__icon" aria-label="New conversation"
+            title="New conversation" onClick={afterRelease(commands.newConversation)}><AoedeNewIcon /></Button>
+          {commands.viewHistory ? <Button variant="ghost" size="icon" className="matrix-aoede__icon" aria-label="View history"
+            title="View history" onClick={commands.viewHistory}><AoedeHistoryIcon /></Button> : null}
+          {settings ? <Button variant="ghost" size="icon" className="matrix-aoede__icon" aria-label="Settings" title="Settings"
+            aria-expanded={settingsOpen} aria-controls={`${id}-settings`}
+            onClick={() => setSettingsOpen((open) => !open)}><AoedeSettingsIcon /></Button> : null}
+          <Button variant="ghost" size="icon" className="matrix-aoede__icon" title="Dismiss"
+            aria-label={`Dismiss ${displayTitle}`} onClick={afterRelease(commands.dismiss)}><AoedeCloseIcon /></Button>
+        </div>
       </header>
 
       <div className="matrix-aoede__presence">
         <div ref={orb} className="matrix-aoede__orb" data-testid="aoede-orb" aria-hidden="true">
-          <span className="matrix-aoede__orb-halo" />
-          <span className="matrix-aoede__orb-swirl" />
-          <span className="matrix-aoede__orb-core" />
+          <span className="matrix-aoede__orb-glow" />
+          <span className="matrix-aoede__orb-ring" />
+          <span className="matrix-aoede__orb-blob matrix-aoede__orb-blob--a" />
+          <span className="matrix-aoede__orb-blob matrix-aoede__orb-blob--b" />
+          <span className="matrix-aoede__orb-blob matrix-aoede__orb-blob--c" />
+          <span className="matrix-aoede__orb-glass" />
         </div>
         <div role="status" aria-live="polite" aria-atomic="true" className="matrix-aoede__status">
           <p className="matrix-aoede__literal">{AOEDE_STATUS_LABELS[status]}</p>
-          <p className="matrix-aoede__mic" data-active={microphoneActive}>{microphoneActive ? "Microphone active" : "Microphone off"}</p>
-          <p className="matrix-aoede__scope">{boundedAoedeText(scopeLabel, 160)}</p>
+          <p className="matrix-aoede__meta">
+            <span className="matrix-aoede__mic" data-active={microphoneActive}>{microphoneActive ? "Microphone active" : "Microphone off"}</span>
+            <span className="matrix-aoede__scope">{boundedAoedeText(scopeLabel, 160)}</span>
+          </p>
         </div>
       </div>
+
+      {settings && settingsOpen ? (
+        <section id={`${id}-settings`} className="matrix-aoede__settings" aria-label="Aoede settings">{settings}</section>
+      ) : (
+        <div ref={transcript} className="matrix-aoede__transcript" data-empty={transcriptEmpty}>
+          {canStart && transcriptEmpty ? <p id={`${id}-rationale`} className="matrix-aoede__rationale">
+            Start turns on the microphone and listens for your next turn. Pause, Dismiss or End turns it off.
+          </p> : null}
+          {utterance ? <section className="matrix-aoede__caption matrix-aoede__caption--you"
+            aria-label={captions.provisional ? "Current utterance (provisional)" : "Current utterance"}>
+            <h3>{captions.provisional ? "Provisional utterance" : "You"}</h3><p>{utterance}</p>
+          </section> : null}
+          {response ? <section className="matrix-aoede__caption matrix-aoede__caption--assistant" aria-label="Current response">
+            <h3>{displayTitle}</h3>
+            {renderResponse ? <div className="matrix-aoede__response">{renderResponse(response)}</div> : <p>{response}</p>}
+          </section> : null}
+          {children ? <div className="matrix-aoede__canonical">{children}</div> : null}
+          {showError ? <p className="matrix-aoede__error" role="alert" aria-live="assertive">
+            {aoedeErrorCopy(error?.code)}
+          </p> : null}
+        </div>
+      )}
 
       <div className="matrix-aoede__readiness">
         <p>{aoedeReadinessCopy(capability, status)}</p>
         {actionCopy ? <p>{actionCopy}</p> : null}
       </div>
 
-      {canStart ? <p id={`${id}-rationale`} className="matrix-aoede__rationale">
-        Start turns on the microphone and listens for your next turn. Pause, Dismiss or End turns it off.
-      </p> : null}
-
-      {utterance ? <section className="matrix-aoede__caption" aria-label={captions.provisional ? "Current utterance (provisional)" : "Current utterance"}>
-        <h3>{captions.provisional ? "Provisional utterance" : "You"}</h3><p>{utterance}</p>
-      </section> : null}
-      {response ? <section className="matrix-aoede__caption" aria-label="Current response">
-        <h3>{displayTitle}</h3><p>{response}</p>
-      </section> : null}
-
-      {children ? <div className="matrix-aoede__canonical">{children}</div> : null}
-      {status === "failed" || error ? <p className="matrix-aoede__error" role="alert" aria-live="assertive">
-        {aoedeErrorCopy(error?.code)}
-      </p> : null}
-
       <div role="group" aria-label="Aoede controls" className="matrix-aoede__controls">
-        {canStart ? <Button className="matrix-aoede__button" disabled={!modeAvailable}
-          aria-describedby={`${id}-rationale`} onClick={commands.start}>Start</Button> : null}
-        {canHold ? <Button className="matrix-aoede__button matrix-aoede__ptt" aria-pressed={held}
+        {canStart ? <Button className="matrix-aoede__button matrix-aoede__button--main" disabled={!modeAvailable}
+          aria-describedby={transcriptEmpty ? `${id}-rationale` : undefined} onClick={commands.start}>Start</Button> : null}
+        {canHold ? <Button className="matrix-aoede__button matrix-aoede__button--main matrix-aoede__ptt" aria-pressed={held}
           aria-describedby={`${id}-ptt-hint`}
           onPointerDown={(event) => {
             if (event.button !== undefined && event.button !== 0) return;
@@ -198,21 +233,13 @@ export function AoedePanel({
             if (event.detail === 0) { if (hold.current) release(); else begin({}); }
           }}>Push to talk</Button> : null}
         {active ? <Button variant="secondary" className="matrix-aoede__button" onClick={afterRelease(commands.pause)}>Pause</Button> : null}
-        {status === "paused" ? <Button className="matrix-aoede__button" disabled={!modeAvailable} onClick={commands.resume}>Resume</Button> : null}
+        {status === "paused" ? <Button className="matrix-aoede__button matrix-aoede__button--main" disabled={!modeAvailable} onClick={commands.resume}>Resume</Button> : null}
         {status === "speaking" ? <Button variant="secondary" className="matrix-aoede__button" onClick={commands.stopSpeaking}>Stop speaking</Button> : null}
         {showCancel && commands.cancelGeneration ? <Button variant="secondary" className="matrix-aoede__button" onClick={afterRelease(commands.cancelGeneration)}>Cancel generation</Button> : null}
-        {canRetry ? <Button className="matrix-aoede__button" onClick={afterRelease(commands.retry)}>Retry</Button> : null}
-        <Button variant="secondary" className="matrix-aoede__button" disabled={canStart} onClick={afterRelease(commands.end)}>End</Button>
+        {canRetry ? <Button className="matrix-aoede__button matrix-aoede__button--main" onClick={afterRelease(commands.retry)}>Retry</Button> : null}
+        {!canStart ? <Button variant="secondary" className="matrix-aoede__button" onClick={afterRelease(commands.end)}>End</Button> : null}
       </div>
       {canHold ? <p id={`${id}-ptt-hint`} className="matrix-aoede__hint">Hold to speak. Release to send. Use Space or Enter on the button.</p> : null}
-
-      <footer className="matrix-aoede__secondary">
-        <Button variant="ghost" size="sm" className="matrix-aoede__button" onClick={afterRelease(commands.newConversation)}>New conversation</Button>
-        {commands.viewHistory ? <Button variant="ghost" size="sm" className="matrix-aoede__button" onClick={commands.viewHistory}>View history</Button> : null}
-        {settings ? <Button variant="ghost" size="sm" className="matrix-aoede__button" aria-expanded={settingsOpen}
-          aria-controls={`${id}-settings`} onClick={() => setSettingsOpen(!settingsOpen)}>Settings</Button> : null}
-      </footer>
-      {settings && settingsOpen ? <section id={`${id}-settings`} className="matrix-aoede__settings" aria-label="Aoede settings">{settings}</section> : null}
     </section>
   );
 }

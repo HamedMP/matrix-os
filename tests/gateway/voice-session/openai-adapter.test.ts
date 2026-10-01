@@ -276,6 +276,20 @@ describe("createOpenAiVoiceMediaAdapter", () => {
     ]);
   });
 
+  it("does not emit destructive barge-in for a sub-minimum loud blip", async () => {
+    const h = await startSession({ handler: () => jsonResponse({ text: "ignored" }) });
+    h.session.setCapture({ turnId: "vturn_blip", mode: "hands_free" });
+    for (let i = 0; i < 5; i += 1) {
+      h.session.pushAudio({ turnId: "vturn_blip", timestampMs: i * 20, data: pcmS16Frame(8_000) });
+    }
+    h.session.pushAudio({ turnId: "vturn_blip", timestampMs: 100, data: pcmS16Frame(0) });
+
+    expect(eventsOfType(h.events, "vad")).toHaveLength(0);
+    h.clock.advance(900);
+    expect(eventsOfType(h.events, "vad")).toHaveLength(0);
+    expect(h.calls).toHaveLength(0);
+  });
+
   it("maps transcription HTTP failures to provider_unavailable and timeouts to connection_failed", async () => {
     const failing = await startSession({
       handler: () => new Response("provider exploded", { status: 500 }),

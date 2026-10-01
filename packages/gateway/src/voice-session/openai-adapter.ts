@@ -152,6 +152,7 @@ interface CaptureState {
   bytes: number;
   speechMs: number;
   inSpeech: boolean;
+  speechStartEmitted: boolean;
   silenceTimer: VoiceTimer | null;
 }
 
@@ -203,6 +204,7 @@ class ChunkedVoiceMediaSession implements VoiceMediaSession {
       bytes: 0,
       speechMs: 0,
       inSpeech: false,
+      speechStartEmitted: false,
       silenceTimer: null,
     };
   }
@@ -320,6 +322,13 @@ class ChunkedVoiceMediaSession implements VoiceMediaSession {
       cap.speechMs += this.frameMs(chunk);
       if (!cap.inSpeech) {
         cap.inSpeech = true;
+      }
+      // Do not treat a single loud frame (speaker echo, click, or keyboard
+      // noise) as barge-in. `speech_start` is destructive upstream: it stops
+      // playback and cancels the run, so apply the configured minimum before
+      // emitting it rather than only when deciding whether to finalize.
+      if (!cap.speechStartEmitted && cap.speechMs >= this.config.vad.minSpeechMs) {
+        cap.speechStartEmitted = true;
         this.emit({ type: "vad", turnId: cap.turnId, action: "speech_start" });
       }
       cap.silenceTimer?.cancel();
@@ -336,7 +345,7 @@ class ChunkedVoiceMediaSession implements VoiceMediaSession {
   private onSilenceHangover(cap: CaptureState): void {
     cap.silenceTimer = null;
     if (this.closed || this.capture !== cap || !cap.inSpeech) return;
-    if (cap.speechMs >= this.config.vad.minSpeechMs) {
+    if (cap.speechStartEmitted) {
       this.emit({ type: "vad", turnId: cap.turnId, action: "speech_end" });
       this.finalizeCapture();
       return;
@@ -344,6 +353,7 @@ class ChunkedVoiceMediaSession implements VoiceMediaSession {
     // Sub-minimum blip: keep listening without consuming the turn.
     cap.inSpeech = false;
     cap.speechMs = 0;
+    cap.speechStartEmitted = false;
   }
 
   /** Ends the active capture (VAD end or `setCapture(null)`) and transcribes. */

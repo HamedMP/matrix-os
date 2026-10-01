@@ -164,7 +164,8 @@ describe("AoedePanel standalone presentation", () => {
     expect(view.commands.start).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Start" }));
     expect(view.commands.start).toHaveBeenCalledTimes(1);
-    expect(screen.getByRole("button", { name: "End" })).toBeDisabled();
+    // A session that has not started has nothing to end; the control is absent rather than disabled.
+    expect(screen.queryByRole("button", { name: "End" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "New conversation" }));
     expect(view.commands.newConversation).toHaveBeenCalledTimes(1);
     fireEvent.click(screen.getByRole("button", { name: "View history" }));

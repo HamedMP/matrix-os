@@ -163,9 +163,43 @@ describe("Shell Aoede host", () => {
     expect(screen.getByText("Workspace")).toBeInTheDocument();
     expect(launcher).toHaveAttribute("aria-expanded", "true");
     expect(h.bootstrap).toHaveBeenCalledWith(expect.objectContaining({
-      intent: "continue",
+      intent: "new",
       surface: "web_desktop",
     }));
+  });
+
+  it("renders markdown in the assistant response caption", async () => {
+    const completed = createCanonicalChatFixture("completed").snapshot;
+    const userMessage = completed.messages[0]!;
+    const h = harness(undefined, {
+      ...detail,
+      messages: [
+        { ...userMessage, chatId: binding.chatId },
+        {
+          ...userMessage,
+          id: "msg_markdown_response",
+          chatId: binding.chatId,
+          seq: 2,
+          role: "assistant",
+          runId: completed.runs[0]!.id,
+          parts: [{ type: "text", text: "**Bold** and\n\n- one\n- two" }],
+        },
+      ],
+      turns: completed.turns.map((turn) => ({ ...turn, chatId: binding.chatId })),
+      runs: completed.runs.map((run) => ({ ...run, chatId: binding.chatId })),
+    });
+    renderHost(h);
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("aoede-launcher"));
+    });
+
+    const caption = await screen.findByRole("region", { name: "Current response" });
+    // Streamdown renders markdown asynchronously and emits data-streamdown-tagged elements.
+    await waitFor(() => expect(caption.querySelector('[data-streamdown="strong"]')).toHaveTextContent("Bold"));
+    expect(caption.querySelectorAll("li")).toHaveLength(2);
+    expect(caption.querySelectorAll("li")[0]).toHaveTextContent("one");
+    expect(caption.querySelectorAll("li")[1]).toHaveTextContent("two");
   });
 
   it("converges racing launcher-icon and palette invocations on one instance with one bootstrap", async () => {
@@ -214,7 +248,7 @@ describe("Shell Aoede host", () => {
     expect(h.bootstrap).toHaveBeenCalledTimes(1);
     const request = h.bootstrap.mock.calls[0]?.[0] as { projectId?: string; intent: string };
     expect(request.projectId).toBeUndefined();
-    expect(request.intent).toBe("continue");
+    expect(request.intent).toBe("new");
   });
 
   it("stops media on dismissal without claiming canonical cancellation", async () => {

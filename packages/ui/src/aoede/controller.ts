@@ -118,6 +118,17 @@ export function createAoedeController(owner: AoedeOwnerOptions, dependencies: { 
       try { listener(); } catch (error: unknown) { console.warn("[aoede] subscriber failed", error instanceof Error ? error.name : "UnknownError"); }
     }
   };
+  const projectedMediaError = (value: ReturnType<VoiceSessionClient["getSnapshot"]> | undefined): SafeVoiceError | null => {
+    if (!value) return null;
+    const error = value.error ?? value.notice ?? value.voice?.error;
+    // Retryable media warnings describe an interruption, not a live session
+    // that has already continued. The media snapshot is authoritative: retain
+    // warnings for paused/terminal states, but do not leave one stale while a
+    // normal active state is progressing.
+    const continuing = value.phase === "active" && value.voice
+      && ["listening", "thinking", "using_tool", "speaking"].includes(value.voice.state);
+    return error?.retryable && continuing ? null : (error ?? null);
+  };
   const fail = (error: unknown) => {
     console.warn("[aoede] request failed", error instanceof Error ? error.name : "UnknownError");
     const lost = error instanceof AoedeRequestError && [403, 404, 410].includes(error.status);
@@ -142,7 +153,7 @@ export function createAoedeController(owner: AoedeOwnerOptions, dependencies: { 
     const live = media?.getSnapshot();
     const capability = snapshot.binding?.capability;
     const readinessError = capability?.status === "unavailable" ? capabilityUnavailableError(capability.reason) : null;
-    const error = live?.error ?? live?.notice ?? live?.voice?.error ?? readinessError;
+    const error = projectedMediaError(live) ?? readinessError;
     patch({ canonical: projectAoedeCanonical(detail), boundProviderInstanceId: value.record.providerBinding?.instanceId ?? null,
       ...(recovered ? { error,
         ...(!error && snapshot.status === "failed" && !mediaLive() ? { status: live?.phase === "ended" ? "ended" as const : "idle" as const } : {}),
@@ -191,7 +202,7 @@ export function createAoedeController(owner: AoedeOwnerOptions, dependencies: { 
         : value.phase === "idle" ? snapshot.status : value.phase;
       const provisional = voice?.provisionalTranscript?.text;
       patch({ status, microphoneActive: value.phase === "active" && !!voice && !voice.muted && (voice.turnMode !== "push_to_talk" || voice.pushToTalkActive),
-        error: value.error ?? value.notice ?? voice?.error ?? requestError,
+        error: projectedMediaError(value) ?? requestError,
         canonical: { ...projectAoedeCanonical(detail), ...(provisional ? { captions: { ...projectAoedeCanonical(detail).captions, utterance: boundedAoedeText(provisional), provisional: true } } : {}) } });
     });
     source = api.events();
@@ -372,7 +383,7 @@ export function createAoedeController(owner: AoedeOwnerOptions, dependencies: { 
       request = null;
       await bootstrap("continue");
     },
-    async open(target?: HTMLElement) { if (disposed || suspended) return; if (target) invoker = target; patch({ visible: true, focusRevision: (snapshot.focusRevision + 1) % 2_147_483_647 }); if (!snapshot.binding && !unavailable) await bootstrap(request?.intent ?? "continue"); },
+    async open(target?: HTMLElement) { if (disposed || suspended) return; if (target) invoker = target; patch({ visible: true, focusRevision: (snapshot.focusRevision + 1) % 2_147_483_647 }); if (!snapshot.binding && !unavailable) await bootstrap(request?.intent ?? "new"); },
     async focus(target?: HTMLElement) { await controller.open(target); },
     async toggle(target?: HTMLElement) { if (snapshot.visible) await controller.dismiss(); else await controller.open(target); },
     async dismiss() { patch({ visible: false }); await endMedia(); if (!disposed && !suspended && !snapshot.visible && invoker?.isConnected) invoker.focus(); },

@@ -53,6 +53,8 @@ export type {
 const DEFAULT_MAX_IN_FLIGHT_MS = 2_000;
 const DEFAULT_MAX_RESPONSES = 16;
 const DEFAULT_MAX_QUEUED_SEGMENTS = 128;
+/** Gateway's 16 MiB s16 stream expands to at most 32 MiB of decoded f32 PCM. */
+const MAX_QUEUED_PLAYBACK_BYTES = 32 * 1024 * 1024;
 /** Bounded replay protection: seen segment ids for dedupe (oldest evicted). */
 const MAX_SEEN_SEGMENTS = 256;
 
@@ -155,8 +157,9 @@ interface PendingChunk {
 }
 
 interface ResponsePlayback {
-  queue: { segmentId: string; buffer: VoicePcmBuffer }[];
+  queue: { segmentId: string; buffer: VoicePcmBuffer; byteLength: number }[];
   queuedMs: number;
+  queuedBytes: number;
   current: { segmentId: string; source: VoicePlaybackSource; buffer: VoicePcmBuffer; startedAtSeconds: number } | null;
   nextStartSeconds: number;
   playedMs: number;
@@ -454,6 +457,7 @@ export function createWebVoiceMediaSession(options: {
       return;
     }
     playback.queuedMs = Math.max(0, playback.queuedMs - segment.buffer.durationMs);
+    playback.queuedBytes = Math.max(0, playback.queuedBytes - segment.byteLength);
     const source = context.createSource(segment.buffer);
     const startedAtSeconds = Math.max(context.currentTimeSeconds, playback.nextStartSeconds);
     playback.nextStartSeconds = startedAtSeconds + segment.buffer.durationMs / 1_000;
@@ -741,11 +745,10 @@ export function createWebVoiceMediaSession(options: {
             releaseInFlightResponse(oldest);
           }
         }
-        playback = { queue: [], queuedMs: 0, current: null, nextStartSeconds: 0, playedMs: 0, ackRevision: 0, stopping: false, waitingForContext: false };
+        playback = { queue: [], queuedMs: 0, queuedBytes: 0, current: null, nextStartSeconds: 0, playedMs: 0, ackRevision: 0, stopping: false, waitingForContext: false };
         responses.set(responseId, playback);
       }
-      if (playback.stopping || playback.queue.length >= maxQueuedSegments
-        || playback.queuedMs > VOICE_SESSION_LIMITS.maxQueuedAudioMs) {
+      if (playback.stopping) {
         invalidSegments += 1;
         callbacks.onBackpressure?.(invalidSegments);
         return;
@@ -763,14 +766,30 @@ export function createWebVoiceMediaSession(options: {
         sampleRateHz: wireFormat.sampleRateHz,
         channels: wireFormat.channels,
       });
+      const decodedByteLength = samples.byteLength;
+      // `maxQueuedSegments` and maxQueuedAudioMs are pressure watermarks, not
+      // lossy playback limits. Fast synthesis routinely gets >10 seconds
+      // ahead of a real-time speaker on slow clients; dropping at either
+      // watermark permanently truncates the reply. The hard byte cap remains
+      // bounded to the gateway's per-response synthesis maximum.
+      if (playback.queuedBytes + decodedByteLength > MAX_QUEUED_PLAYBACK_BYTES) {
+        invalidSegments += 1;
+        callbacks.onBackpressure?.(invalidSegments);
+        return;
+      }
+      if (playback.queue.length >= maxQueuedSegments
+        || playback.queuedMs >= VOICE_SESSION_LIMITS.maxQueuedAudioMs) {
+        callbacks.onBackpressure?.(invalidSegments);
+      }
       while (inFlightSegments.size >= MAX_SEEN_SEGMENTS) {
         const oldest = inFlightSegments.values().next().value;
         if (oldest === undefined) break;
         inFlightSegments.delete(oldest);
       }
       inFlightSegments.add(dedupeKey);
-      playback.queue.push({ segmentId, buffer });
+      playback.queue.push({ segmentId, buffer, byteLength: decodedByteLength });
       playback.queuedMs += buffer.durationMs;
+      playback.queuedBytes += decodedByteLength;
       scheduleNext(responseId, playback);
     },
     interruptResponse(responseId) {
@@ -798,6 +817,7 @@ export function createWebVoiceMediaSession(options: {
         playback.stopping = true;
         playback.queue = [];
         playback.queuedMs = 0;
+        playback.queuedBytes = 0;
         try {
           playback.current?.source.stop();
         } catch (error: unknown) {

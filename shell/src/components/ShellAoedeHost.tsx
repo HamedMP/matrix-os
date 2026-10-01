@@ -39,6 +39,7 @@ import {
   getAoedeShellFetcher,
   type AoedeShellSurface,
 } from "@/lib/aoede-shell";
+import { AoedeMarkdown } from "@/components/aoede/AoedeMarkdown";
 
 /** Injectable controller internals for deterministic fixtures. */
 export type AoedeControllerDependencies = NonNullable<
@@ -252,7 +253,7 @@ function ShellAoedeEntries({ controller }: { controller: AoedeController }) {
           aria-label="Aoede assistant"
           tabIndex={-1}
           data-testid="aoede-host"
-          className={`fixed bottom-[8.5rem] right-4 max-h-[min(42rem,calc(100vh-10rem))] w-[min(22rem,calc(100vw-2rem))] overflow-y-auto outline-none ${SHELL_AOEDE_TOKEN_MAP}`}
+          className={`fixed bottom-[8.5rem] right-4 h-[min(36rem,calc(100vh-10rem))] w-[min(22rem,calc(100vw-2rem))] overflow-hidden outline-none ${SHELL_AOEDE_TOKEN_MAP}`}
           style={{ zIndex: SHELL_Z_INDEX.appDialog }}
           onKeyDown={(event) => {
             if (event.key === "Escape") {
@@ -267,6 +268,7 @@ function ShellAoedeEntries({ controller }: { controller: AoedeController }) {
             microphoneActive={snapshot.microphoneActive}
             turnMode={snapshot.turnMode}
             captions={snapshot.canonical.captions}
+            renderResponse={(text: string) => <AoedeMarkdown text={text} />}
             capability={snapshot.binding?.capability}
             canCancel={snapshot.canonical.canCancel}
             error={snapshot.error ?? undefined}

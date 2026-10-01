@@ -104,6 +104,7 @@ interface MediaHarness {
 function mediaHarness(options: {
   getUserMediaImpl?: () => Promise<unknown>;
   maxInFlightMs?: number;
+  maxQueuedSegments?: number;
   acceptChunks?: boolean;
   captureSampleRateHz?: number;
 } = {}): MediaHarness {
@@ -140,6 +141,7 @@ function mediaHarness(options: {
     createAudioContext: () => playback.context,
     captureFactory,
     maxInFlightMs: options.maxInFlightMs,
+    maxQueuedSegments: options.maxQueuedSegments,
     now: () => now,
   });
   return {
@@ -335,6 +337,21 @@ describe("createWebVoiceMediaSession", () => {
     expect(acks[1]).toEqual({
       responseId: "vresp_1", segmentId: "vseg_2", deliveryRevision: 2, playedThroughMs: 300,
     });
+  });
+
+  it("retains synthesized chunks beyond pressure watermarks until playback drains", async () => {
+    const { session, playback, acks } = mediaHarness({ maxQueuedSegments: 1 });
+    await session.prepare();
+
+    session.enqueueSegment({ responseId: "vresp_slow", segmentId: "vseg_1", data: pcmSegment(3_200) });
+    session.enqueueSegment({ responseId: "vresp_slow", segmentId: "vseg_2", data: pcmSegment(3_200) });
+    session.enqueueSegment({ responseId: "vresp_slow", segmentId: "vseg_3", data: pcmSegment(3_200) });
+
+    playback.sources[0]!.finish();
+    playback.sources[1]!.finish();
+    playback.sources[2]!.finish();
+    expect(acks.map((ack) => ack.segmentId)).toEqual(["vseg_1", "vseg_2", "vseg_3"]);
+    expect(acks.at(-1)?.playedThroughMs).toBe(600);
   });
 
   it("returns the true played boundary on response.interrupt mid-segment", async () => {

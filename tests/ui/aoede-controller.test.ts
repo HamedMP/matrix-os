@@ -271,9 +271,11 @@ describe("Aoede shell owner", () => {
   it("captures ordinary supervised bootstrap selection, not any external Chat selection", async () => {
     const h = harness(); await h.controller.open(); expect(h.factory.mock.calls[0][0].request).toEqual({ turnMode: "hands_free", selection: binding.selection, interactionMode: "default", permissionMode: "supervised", memoryMode: "ordinary" }); h.controller.dispose();
   });
-  it("bootstraps Continue after reload and still requires an explicit Start", async () => {
-    const old = harness(); await old.controller.open(); old.controller.dispose(); const restored = harness(); await restored.controller.open();
-    expect(restored.bootstrap.mock.calls[0][0].intent).toBe("continue"); expect(restored.media.startVoice).not.toHaveBeenCalled(); restored.controller.dispose();
+  it("bootstraps New on first open, then reuses that conversation on later opens", async () => {
+    const h = harness(); await h.controller.open();
+    expect(h.bootstrap).toHaveBeenCalledTimes(1); expect(h.bootstrap.mock.calls[0][0].intent).toBe("new");
+    await h.controller.dismiss(); await h.controller.open();
+    expect(h.bootstrap).toHaveBeenCalledTimes(1); expect(h.media.startVoice).not.toHaveBeenCalled(); h.controller.dispose();
   });
   it("retry recovery does not End an unresolved create or request microphone before Start", async () => {
     const h = harness(); await h.controller.open(); await h.controller.retry(); expect(h.media.end).not.toHaveBeenCalled(); expect(h.media.startVoice).not.toHaveBeenCalled();
@@ -343,6 +345,23 @@ describe("Aoede shell owner", () => {
     h.notifyMedia(); expect(h.controller.getSnapshot().status).toBe("restoring");
     vi.mocked(h.media.getSnapshot).mockReturnValue({ phase: "active", voice: { state: "listening", muted: false, turnMode: "hands_free" }, error: null, notice: null, chatId: binding.chatId, sessionId: "vs_1", reconnectStatus: null } as never);
     h.notifyMedia(); expect(h.controller.getSnapshot().status).toBe("listening"); h.controller.dispose();
+  });
+  it("does not surface retryable backpressure while active media keeps running", async () => {
+    const h = harness(); await h.controller.open();
+    vi.mocked(h.media.getSnapshot).mockReturnValue({ phase: "active", voice: { state: "listening", muted: false, turnMode: "hands_free" }, error: null,
+      notice: { code: "audio_backpressure", retryable: true, recovery: "none" }, chatId: binding.chatId, sessionId: "vs_1", reconnectStatus: null } as never);
+    h.notifyMedia();
+    expect(h.controller.getSnapshot()).toMatchObject({ status: "listening", microphoneActive: true, error: null });
+    h.controller.dispose();
+  });
+  it("surfaces backpressure when media has actually ended", async () => {
+    const h = harness(); await h.controller.open();
+    vi.mocked(h.media.getSnapshot).mockReturnValue({ phase: "ended", voice: null, error: null,
+      notice: { code: "audio_backpressure", retryable: true, recovery: "none" }, chatId: binding.chatId, sessionId: "vs_1", reconnectStatus: null } as never);
+    h.notifyMedia();
+    expect(h.controller.getSnapshot()).toMatchObject({ status: "ended", microphoneActive: false,
+      error: { code: "audio_backpressure", retryable: true, recovery: "none" } });
+    h.controller.dispose();
   });
   it("shows the literal Ending status while live media teardown is in flight", async () => {
     const h = harness(); await h.controller.open();
