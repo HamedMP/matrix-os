@@ -1,6 +1,7 @@
 import { APP_GENERATE_CHANNEL, AppGenerateContextSchema, APP_AI_CHANNEL, APP_AI_TIMEOUT_MS, AppAiInputSchema, AppAiResultSchema, type AppAiInput } from "@matrix-os/contracts";
 import type { IpcMain, IpcMainInvokeEvent } from "electron";
 import { z } from "zod/v4";
+import { NATIVE_APP_OPEN_CHANNEL, NativeAppOpenRequestSchema, NativeAppOpenTargetSchema, type NativeAppOpenRequest, type NativeAppOpenTarget } from "../../shared/native-app-open";
 import {
   NATIVE_APP_QUERY_CHANNEL,
   NativeAppQuerySchema,
@@ -62,6 +63,8 @@ interface NativeAppBridgeOptions {
   request: (slug: string, query: NativeAppQuery) => Promise<unknown>;
   gatewayRequest: (slug: string, request: NativeAppGatewayRequest) => Promise<unknown>;
   gatewayOrigin: () => string;
+  resolveApp?: (request: NativeAppOpenRequest) => Promise<NativeAppOpenTarget>;
+  openApp?: (app: NativeAppOpenTarget) => void;
   maxSenders?: number;
 }
 
@@ -76,7 +79,7 @@ interface NativeAppQueryRequesterOptions {
   fetchFn?: typeof fetch;
 }
 
-async function readBoundedJson(response: Response): Promise<unknown> {
+export async function readBoundedJson(response: Response): Promise<unknown> {
   const contentLength = Number(response.headers.get("content-length"));
   if (Number.isFinite(contentLength) && contentLength > MAX_RESPONSE_BYTES) {
     throw new Error("database response too large");
@@ -197,6 +200,9 @@ export class NativeAppBridge {
   private readonly senders = new Map<number, { appIdentity: string; routeSlug: string; authGeneration: number }>();
   private generateWindow = 0;
   private generateCount = 0;
+  private openWindow = 0;
+  private openCount = 0;
+  private pendingOpens = 0;
   private readonly options: NativeAppBridgeOptions;
   private readonly maxSenders: number;
 
@@ -276,7 +282,45 @@ export class NativeAppBridge {
     this.options.generate(identity.appIdentity, context);
   }
 
+  async openApp(sender: NativeAppSender, rawRequest: unknown): Promise<void> {
+    const identity = this.senders.get(sender.id);
+    const authorized = () => identity && this.senders.get(sender.id) === identity
+      && identity.authGeneration === this.options.authGeneration()
+      && isSenderAtApp(sender, this.options.gatewayOrigin(), identity.routeSlug);
+    if (!authorized()) throw new Error("not authorized");
+    if (!this.options.resolveApp || !this.options.openApp) throw new Error("App launch dependency is unavailable");
+    const request = NativeAppOpenRequestSchema.parse(rawRequest);
+    const now = Date.now();
+    if (now - this.openWindow >= 60_000) { this.openWindow = now; this.openCount = 0; }
+    if (this.openCount >= 10 || this.pendingOpens >= 8) throw new Error("App launch rate limit exceeded");
+    this.openCount++;
+    this.pendingOpens++;
+    try {
+      const app = NativeAppOpenTargetSchema.parse(await this.options.resolveApp(request));
+      if (!authorized()) throw new Error("not authorized");
+      this.options.openApp(app);
+    } finally {
+      this.pendingOpens--;
+    }
+  }
+
   registerIpc(ipcMain: Pick<IpcMain, "handle">): void {
+    if (this.options.resolveApp || this.options.openApp) {
+      if (!this.options.resolveApp || !this.options.openApp) throw new Error("App launch dependencies are required");
+      ipcMain.handle(NATIVE_APP_OPEN_CHANNEL, async (event: IpcMainInvokeEvent, rawRequest: unknown) => {
+        try {
+          if (event.senderFrame !== event.sender.mainFrame) throw new Error("not authorized");
+          await this.openApp({ id: event.sender.id, get url() {
+            if (event.senderFrame !== event.sender.mainFrame || event.sender.isDestroyed()) return "";
+            return event.sender.getURL();
+          } }, rawRequest);
+          return { ok: true };
+        } catch (error: unknown) {
+          console.warn("[native-app-bridge] launch failed:", error instanceof Error ? error.name : "UnknownError");
+          throw new Error("App launch is unavailable");
+        }
+      });
+    }
     ipcMain.handle(APP_GENERATE_CHANNEL, (event: IpcMainInvokeEvent, rawContext: unknown) => {
       try {
         if (event.senderFrame !== event.sender.mainFrame) throw new Error("not authorized");
