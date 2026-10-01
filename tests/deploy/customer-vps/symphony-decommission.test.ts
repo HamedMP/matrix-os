@@ -54,8 +54,8 @@ describe("retiring the legacy Symphony runtime", () => {
   it("snapshots the old unit and retains it through a committed update for rollback", () => {
     expect(syncAgent).toContain('record_legacy_symphony_unit "$extract_dir"');
     expect(syncAgent).toContain('matrix-symphony.service:active');
-    expect(syncAgent).toContain('preserve_symphony_rollback_transaction');
-    expect(recovery).toContain('preserve_symphony_rollback_transaction');
+    expect(syncAgent).toContain('preserve_host_rollback_transaction');
+    expect(recovery).toContain('preserve_host_rollback_transaction');
     expect(syncAgent).toContain('if ! retire_legacy_symphony; then');
     expect(syncAgent).toContain('if resume_symphony_after_update; then\n      cleanup_update_transaction');
   });

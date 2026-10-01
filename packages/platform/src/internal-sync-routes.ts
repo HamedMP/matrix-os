@@ -31,6 +31,7 @@ interface R2Client {
     key: string,
     options?: { signal?: AbortSignal },
   ): Promise<{ exists: boolean; etag?: string }>;
+  listMultipartUploads(key: string): Promise<{ key: string; uploadId: string }[]>;
   createMultipartUpload(key: string): Promise<string>;
   getPresignedPartUrl(
     key: string,
@@ -503,6 +504,29 @@ export function createInternalSyncRoutes(opts: {
     }
   });
 
+  for (const path of ["/multipart/list", "/object/head"] as const) {
+    app.post(path, bodyLimit({ maxSize: INTERNAL_SYNC_BODY_LIMIT }), async (c) => {
+      const parsed = SystemStorageKeyInputSchema.safeParse(await parseJsonBody(c));
+      if (!parsed.success) return c.json({ error: "Validation error" }, 400);
+      const allowed = requireAllowedKey(c, parsed.data.key);
+      if (allowed instanceof Response) return allowed;
+      try {
+        if (path === "/object/head") {
+          const result = await opts.r2.headObject(parsed.data.key);
+          return c.json({ exists: result.exists });
+        }
+        const uploads = await opts.r2.listMultipartUploads(parsed.data.key);
+        if (uploads.length > 10 || uploads.some(upload => upload.key !== parsed.data.key || !upload.uploadId || upload.uploadId.length > 1024)) {
+          throw new Error("Unsafe recovery result");
+        }
+        return c.json({ uploads });
+      } catch (error: unknown) {
+        console.error("[internal-sync] Storage recovery failed", error instanceof Error ? error.name : "UnknownError");
+        return c.json({ error: "Storage recovery unavailable" }, 500);
+      }
+    });
+  }
+
   app.post("/multipart/create", bodyLimit({ maxSize: INTERNAL_SYNC_BODY_LIMIT }), async (c) => {
     const parsed = parseMultipartCreateInput(await parseJsonBody(c));
     if (!parsed) {
@@ -548,6 +572,9 @@ export function createInternalSyncRoutes(opts: {
         );
         return c.json({ etag: result.etag ?? null });
       } catch (err: unknown) {
+        if (err instanceof Error && ["InvalidPart", "InvalidPartOrder"].includes(err.name)) {
+          return c.json({ error: "Multipart completion unavailable", code: "receipt_mismatch" }, 409);
+        }
         console.error(
           "[internal-sync] Multipart completion failed:",
           err instanceof Error ? err.message : String(err),

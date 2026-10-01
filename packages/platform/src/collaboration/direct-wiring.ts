@@ -23,6 +23,7 @@ import {
 } from "./runtime-endpoints.js";
 import { CollaborationTicketIssuer, loadTicketSigningKeyring, type TicketSigningKeyring } from "./ticket-issuer.js";
 import { CollaborationRelay, type RelayHome } from "./relay.js";
+import { createPlatformDriveContextRuntimeRoutes } from "./drive-context-routes.js";
 
 export const DEFAULT_COLLABORATION_RELAY_ORIGIN = "https://app.matrix-os.com";
 
@@ -122,6 +123,7 @@ export async function createPlatformCollaborationDirect(options: {
     authenticateRuntime: options.authenticateRuntime,
     resolveRelayHandle: options.resolveRelayHandle,
   });
+  const driveContextRoutes = createPlatformDriveContextRuntimeRoutes({issuer, relay, relayOrigin: options.relayOrigin, authenticateRuntime: options.authenticateRuntime});
   let registered = false;
   let closing = false;
   return {
@@ -134,6 +136,7 @@ export async function createPlatformCollaborationDirect(options: {
       if (registered || closing) throw new Error("Direct collaboration routes are already registered or shutting down");
       registered = true;
       app.route("/", routes);
+      app.route("/", driveContextRoutes);
     },
     handleUpgrade: (req, socket, head) => upgrade.handleUpgrade(req, socket, head),
     async shutdown() {

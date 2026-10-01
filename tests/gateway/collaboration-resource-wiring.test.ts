@@ -2,7 +2,11 @@
  * S12: the gateway entry point only names the owner resource wiring. The driver
  * construction, its project lookup and its close-on-failure path are proven here.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { createProjectManager } from "../../packages/gateway/src/project-manager.js";
 import {
   enableGatewaySharedResources,
   type OwnerAppRegistrySource,
@@ -18,7 +22,7 @@ function projects(working: Record<string, string | null>) {
       return {
         projects: Object.keys(working)
           .filter((key) => key.startsWith(prefix))
-          .map((key) => ({ id: key.slice(prefix.length) })),
+          .map((key) => ({ id: key.slice(prefix.length), slug: key })),
       };
     },
     async getProjectById(ownerScope: { type: "user"; id: string }, projectId: string) {
@@ -50,6 +54,36 @@ function fakeDriver(closed: { count: number }): OwnerResourceDriverHandle {
 }
 
 describe("gateway shared resource wiring", () => {
+  it("registers an unrelated folder when an archived project remains on disk, without sharing the archived checkout", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-archived-catalog-"));
+    const manager = createProjectManager({ homePath, runCommand: vi.fn() });
+    const ownerScope = { type: "user" as const, id: "owner_1" };
+    let driver: OwnerResourceDriverHandle | undefined;
+    try {
+      const created = await manager.createProject({ mode: "scratch", name: "Old", slug: "old", ownerScope });
+      expect(created.ok).toBe(true);
+      if (!created.ok) throw new Error("Fixture project creation failed");
+      await manager.setProjectLifecycleState({ slug: "old", ownerScope, archivedAt: "2026-09-30T00:00:00.000Z" });
+      await mkdir(join(homePath, "shared", "team"), { recursive: true });
+      const inventory = vi.spyOn(manager, "listManagedProjects");
+      driver = enableGatewaySharedResources({ runtime: { enableSharedResources: () => {} }, homePath,
+        projects: manager, apps: registry([]), ownerId: ownerScope.id });
+      await expect(driver.resolveOwnerNamespace!({ ownerId: ownerScope.id, kind: "folder", path: "shared/team" }))
+        .resolves.toEqual({ projectId: null, path: "shared/team" });
+      expect(inventory).toHaveBeenCalledTimes(1);
+      await expect(driver.resolveOwnerNamespace!({ ownerId: ownerScope.id, kind: "folder", path: "projects" }))
+        .rejects.toMatchObject({ code: "forbidden" });
+      await writeFile(join(created.project.localPath, "notes.txt"), "private archived project");
+      await expect(driver.resolveOwnerNamespace!({ ownerId: ownerScope.id, kind: "file", path: "projects/old/repo/notes.txt" }))
+        .resolves.toEqual({ projectId: created.project.id, path: "notes.txt" });
+      // Boundary enumeration must not turn an archived checkout into readable shared data.
+      await expect(driver.fingerprint({ ownerId: ownerScope.id, projectId: created.project.id, path: "notes.txt" }))
+        .rejects.toMatchObject({ code: "unavailable" });
+    } finally {
+      driver?.close();
+      await rm(homePath, { recursive: true, force: true });
+    }
+  });
   it("resolves a project working directory through the gateway project manager", async () => {
     let resolveProjectWorkingDirectory: ((ownerId: string, projectId: string) => Promise<string | null>) | undefined;
     let listOwnedProjectIds: ((ownerId: string) => Promise<readonly string[]>) | undefined;
@@ -73,6 +107,25 @@ describe("gateway shared resource wiring", () => {
     // An unknown project is a missing directory, never a throw into the driver.
     expect(await resolveProjectWorkingDirectory?.("owner_1", "proj_missing")).toBeNull();
     expect(closed.count).toBe(0);
+  });
+
+  it("refuses ambiguous or oversized project boundary inventories", async () => {
+    for (const count of [2, 1_001]) {
+      let boundary: ((ownerId: string) => Promise<unknown>) | undefined;
+      const resolve = vi.fn(async () => "/home/matrix/home/projects/old/repo");
+      const source = {
+        ...projects({}),
+        listManagedProjects: async () => ({ projects: Array.from({ length: count }, () => ({ id: "proj_old", slug: "old" })) }),
+        resolveProjectWorkingDirectory: resolve,
+      };
+      enableGatewaySharedResources({ runtime: { enableSharedResources: () => {} }, homePath: "/home/matrix/home",
+        projects: source, apps: registry([]), ownerId: "owner_1", createDriver: (options) => {
+          boundary = options.listOwnedProjectBoundaries;
+          return fakeDriver({ count: 0 });
+        } });
+      await expect(boundary?.("owner_1")).rejects.toMatchObject({ code: "unavailable" });
+      expect(resolve).not.toHaveBeenCalled();
+    }
   });
 
   it("closes the driver when the runtime refuses it", () => {

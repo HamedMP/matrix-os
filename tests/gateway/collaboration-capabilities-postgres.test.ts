@@ -86,6 +86,12 @@ describe("S04 capability grants and effective access", () => {
     await seedProject(fixture);
   });
 
+  async function currentRequest() {
+    const scope = await fixture.db.selectFrom("collaboration_scopes").select("revision")
+      .where("id", "=", collaborationIds.scope).executeTakeFirstOrThrow();
+    return request(Number(scope.revision));
+  }
+
   afterEach(async () => {
     if (fixture) await fixture.destroy();
   });
@@ -193,7 +199,7 @@ describe("S04 capability grants and effective access", () => {
       expect((await blind.evaluateEffectiveAccess({ scopeId: collaborationIds.scope, actorId: collaborationActors.owner })).preset).toBe("contributor");
       // A member grant (no activation row involved) is unaffected by missing epoch evidence.
       const direct = await grants.createGrant({
-        scopeId: collaborationIds.scope, actorId: collaborationActors.owner, ...request(2),
+        scopeId: collaborationIds.scope, actorId: collaborationActors.owner, ...await currentRequest(),
         audience: { kind: "member", actorId: collaborationActors.viewer }, preset: "viewer", policyVersion: "v1",
       });
       await blind.acceptGrant({ grantId: direct.grantId, actorId: collaborationActors.viewer });
@@ -224,7 +230,7 @@ describe("S04 capability grants and effective access", () => {
       expect(access.preset).toBe("viewer");
 
       const orgGrant = await grants.createGrant({
-        scopeId: collaborationIds.scope, actorId: collaborationActors.owner, ...request(2),
+        scopeId: collaborationIds.scope, actorId: collaborationActors.owner, ...await currentRequest(),
         audience: { kind: "organization" }, preset: "contributor", policyVersion: "v1",
       });
       access = await evaluator.evaluateEffectiveAccess({ scopeId: collaborationIds.scope, actorId: collaborationActors.editor });
@@ -241,11 +247,11 @@ describe("S04 capability grants and effective access", () => {
       });
       await evaluator.acceptGrant({ grantId: created.grantId, actorId: collaborationActors.editor });
       await expect(grants.patchGrantPreset({
-        scopeId: collaborationIds.scope, actorId: collaborationActors.owner, ...request(2),
+        scopeId: collaborationIds.scope, actorId: collaborationActors.owner, ...await currentRequest(),
         grantId: created.grantId, expectedGrantRevision: 99, preset: "viewer",
       })).rejects.toMatchObject({ code: "conflict" });
       const patched = await grants.patchGrantPreset({
-        scopeId: collaborationIds.scope, actorId: collaborationActors.owner, ...request(2),
+        scopeId: collaborationIds.scope, actorId: collaborationActors.owner, ...await currentRequest(),
         grantId: created.grantId, expectedGrantRevision: created.grantRevision + 1, preset: "viewer",
       });
       expect(patched.grantRevision).toBe(created.grantRevision + 2);
@@ -268,12 +274,12 @@ describe("S04 capability grants and effective access", () => {
       expect(await grants.expireGrants()).toBe(1);
 
       const second = await grants.createGrant({
-        scopeId: collaborationIds.scope, actorId: collaborationActors.owner, ...request(2),
+        scopeId: collaborationIds.scope, actorId: collaborationActors.owner, ...await currentRequest(),
         audience: { kind: "member", actorId: collaborationActors.editor }, preset: "viewer", policyVersion: "v1",
       });
       await evaluator.acceptGrant({ grantId: second.grantId, actorId: collaborationActors.editor });
       await grants.revokeGrant({
-        scopeId: collaborationIds.scope, actorId: collaborationActors.owner, ...request(3),
+        scopeId: collaborationIds.scope, actorId: collaborationActors.owner, ...await currentRequest(),
         grantId: second.grantId, expectedGrantRevision: second.grantRevision + 1,
       });
       access = await evaluator.evaluateEffectiveAccess({ scopeId: collaborationIds.scope, actorId: collaborationActors.editor });
@@ -409,33 +415,46 @@ describe("S04 capability grants and effective access", () => {
         audience: { kind: "organization" }, preset: "viewer", policyVersion: "v1",
       });
       const initial = await epoch();
+      const revision = async () => Number((await fixture.db.selectFrom("collaboration_scopes")
+        .select("revision").where("id", "=", collaborationIds.scope).executeTakeFirstOrThrow()).revision);
+      const initialRevision = await revision();
       await evaluator.acceptGrant({ grantId: orgGrant.grantId, actorId: collaborationActors.editor });
       expect(await epoch()).toBe(initial + 1);
+      expect(await revision()).toBe(initialRevision + 1);
       await evaluator.acceptGrant({ grantId: orgGrant.grantId, actorId: collaborationActors.editor });
       expect(await epoch()).toBe(initial + 1);
+      expect(await revision()).toBe(initialRevision + 1);
       await evaluator.declineGrant({ grantId: orgGrant.grantId, actorId: collaborationActors.viewer });
       expect(await epoch()).toBe(initial + 2);
+      expect(await revision()).toBe(initialRevision + 2);
       await evaluator.declineGrant({ grantId: orgGrant.grantId, actorId: collaborationActors.viewer });
       expect(await epoch()).toBe(initial + 2);
+      expect(await revision()).toBe(initialRevision + 2);
       await evaluator.acceptGrant({ grantId: orgGrant.grantId, actorId: collaborationActors.viewer });
       expect(await epoch()).toBe(initial + 3);
+      expect(await revision()).toBe(initialRevision + 3);
 
       const memberGrant = await grants.createGrant({
-        scopeId: collaborationIds.scope, actorId: collaborationActors.owner, ...request(2),
+        scopeId: collaborationIds.scope, actorId: collaborationActors.owner, ...await currentRequest(),
         audience: { kind: "member", actorId: collaborationActors.editor }, preset: "viewer", policyVersion: "v1",
       });
       const beforeMemberAccept = await epoch();
+      const beforeMemberAcceptRevision = await revision();
       await evaluator.acceptGrant({ grantId: memberGrant.grantId, actorId: collaborationActors.editor });
       expect(await epoch()).toBe(beforeMemberAccept + 1);
+      expect(await revision()).toBe(beforeMemberAcceptRevision + 1);
       await evaluator.acceptGrant({ grantId: memberGrant.grantId, actorId: collaborationActors.editor });
       expect(await epoch()).toBe(beforeMemberAccept + 1);
+      expect(await revision()).toBe(beforeMemberAcceptRevision + 1);
       const declinedMember = await grants.createGrant({
-        scopeId: collaborationIds.scope, actorId: collaborationActors.owner, ...request(3),
+        scopeId: collaborationIds.scope, actorId: collaborationActors.owner, ...await currentRequest(),
         audience: { kind: "member", actorId: collaborationActors.viewer }, preset: "viewer", policyVersion: "v1",
       });
       const beforeMemberDecline = await epoch();
+      const beforeMemberDeclineRevision = await revision();
       await evaluator.declineGrant({ grantId: declinedMember.grantId, actorId: collaborationActors.viewer });
       expect(await epoch()).toBe(beforeMemberDecline + 1);
+      expect(await revision()).toBe(beforeMemberDeclineRevision + 1);
     });
 
     it("advances the scope authorization epoch once per changed departure scope", async () => {
@@ -503,7 +522,17 @@ describe("S04 capability grants and effective access", () => {
         }),
         evaluator.acceptGrant({ grantId: created.grantId, actorId: collaborationActors.editor }),
       ]);
-      expect(outcomes[0].status).toBe("fulfilled");
+      if (outcomes[0].status === "rejected") {
+        // Acceptance may commit the new scope revision first. Retry the
+        // owner's explicit revoke with fresh scope and grant revisions.
+        expect(outcomes[0].reason).toMatchObject({ code: "conflict" });
+        const current = await grants.getGrant(created.grantId);
+        await grants.revokeGrant({
+          scopeId: collaborationIds.scope, actorId: collaborationActors.owner, ...await currentRequest(),
+          grantId: created.grantId, expectedGrantRevision: current!.grantRevision,
+        });
+      }
+      expect(await grants.getGrant(created.grantId)).toMatchObject({ state: "revoked" });
       const access = await evaluator.evaluateEffectiveAccess({ scopeId: collaborationIds.scope, actorId: collaborationActors.editor });
       expect(access.preset).toBeNull();
       expect(await grants.listParticipants(collaborationIds.scope)).toEqual([collaborationActors.owner]);
@@ -617,11 +646,11 @@ describe("S04 capability grants and effective access", () => {
       });
       await evaluator.acceptGrant({ grantId: first.grantId, actorId: collaborationActors.editor });
       await grants.revokeGrant({
-        scopeId: collaborationIds.scope, actorId: collaborationActors.owner, ...request(2),
+        scopeId: collaborationIds.scope, actorId: collaborationActors.owner, ...await currentRequest(),
         grantId: first.grantId, expectedGrantRevision: first.grantRevision + 1,
       });
       const replacement = await grants.createGrant({
-        scopeId: collaborationIds.scope, actorId: collaborationActors.owner, ...request(3),
+        scopeId: collaborationIds.scope, actorId: collaborationActors.owner, ...await currentRequest(),
         audience: { kind: "member", actorId: collaborationActors.editor }, preset: "viewer", policyVersion: "v1",
       });
       // Same created_at as the revoked grant (the clock is frozen); the live one must still win, and a
@@ -712,7 +741,7 @@ describe("S04 capability grants and effective access", () => {
       await expect(authority.authorize({ scopeId: collaborationIds.scope, actorId: collaborationActors.editor, action: "discuss" }))
         .resolves.toMatchObject({ role: "editor", organizationId: ORG });
       const viewerGrant = await grants.createGrant({
-        scopeId: collaborationIds.scope, actorId: collaborationActors.owner, ...request(2),
+        scopeId: collaborationIds.scope, actorId: collaborationActors.owner, ...await currentRequest(),
         audience: { kind: "member", actorId: collaborationActors.viewer }, preset: "viewer", policyVersion: "v1",
       });
       await evaluator.acceptGrant({ grantId: viewerGrant.grantId, actorId: collaborationActors.viewer });

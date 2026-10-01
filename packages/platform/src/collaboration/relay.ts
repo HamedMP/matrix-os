@@ -18,7 +18,7 @@ import {
   COLLABORATION_EXPECTED_REVISION_HEADER,
 } from "@matrix-os/contracts";
 
-const UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}";
+const UUID = "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}";
 const RUNTIME = "(?:[A-Za-z0-9:_-]|%3[Aa]){1,128}";
 const SESSION_ROUTES: ReadonlyArray<readonly [string, RegExp]> = [
   ["POST", new RegExp(`^/api/collaboration/direct-sessions$`)],

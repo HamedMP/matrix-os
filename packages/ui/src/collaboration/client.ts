@@ -4,6 +4,8 @@ import {
   COLLABORATION_EXPECTED_MEMBER_REVISION_HEADER,
   COLLABORATION_EXPECTED_REVISION_HEADER,
   CollaborationDeleteConditionSchema,
+  CollaborationOrganizationIdSchema,
+  CollaborationOrganizationMembersCursorSchema,
 } from "@matrix-os/contracts";
 import type { CollaborationApi } from "./ChatCollaboratorsDialog.js";
 
@@ -23,7 +25,7 @@ export function createCollaborationBrowserApi(options: {
 }): CollaborationApi {
   const baseUrl = requireBaseUrl(options.baseUrl);
   const request = async (path: string, method: "GET" | "POST" | "PATCH" | "DELETE", body?: unknown) => {
-    const url = requireCollaborationPath(baseUrl, path);
+    const url = requirePlatformPath(baseUrl, path, method);
     const deleteConditions = method === "DELETE" ? CollaborationDeleteConditionSchema.parse(body) : undefined;
     const serialized = method === "DELETE" || body === undefined ? undefined : JSON.stringify(body);
     if (serialized !== undefined && new TextEncoder().encode(serialized).byteLength > COLLABORATION_HTTP_BODY_LIMIT) {
@@ -81,15 +83,41 @@ function requireBaseUrl(value: string): URL {
 /** The retired V1 ticket route is refused here too, so no caller can revive it through this client. */
 const RETIRED_CONNECTION_TICKET_PATH = /\/connection-tickets(?:[/?]|$)/;
 
-function requireCollaborationPath(baseUrl: URL, path: string): URL {
-  if (path.length > 1_024 || !path.startsWith("/api/collaboration/") || path.includes("..") || path.includes("//")
-    || RETIRED_CONNECTION_TICKET_PATH.test(path)) {
+function requirePlatformPath(baseUrl: URL, path: string, method: "GET" | "POST" | "PATCH" | "DELETE"): URL {
+  if (path.length > 1_024 || path.includes("..") || path.includes("//") || RETIRED_CONNECTION_TICKET_PATH.test(path)) {
     throw new Error("CollaborationUnavailable");
   }
-  const url = new URL(path, baseUrl);
-  if (url.origin !== baseUrl.origin || !url.pathname.startsWith("/api/collaboration/")) {
-    throw new Error("CollaborationUnavailable");
+  if (path.startsWith("/api/collaboration/")) {
+    const url = new URL(path, baseUrl);
+    if (url.origin === baseUrl.origin && url.pathname.startsWith("/api/collaboration/")) return url;
+  } else if (method === "GET") {
+    const url = organizationDirectoryUrl(baseUrl, path);
+    if (url) return url;
   }
+  throw new Error("CollaborationUnavailable");
+}
+
+const ORGANIZATION_MEMBERS_PATH = /^\/api\/organizations\/([^/]+)\/members$/;
+
+/**
+ * The two organization directory reads Share and organization drives make on
+ * the platform: the caller's organizations and one page of an organization's
+ * members. The URL is rebuilt from validated parts, so nothing else under
+ * `/api/organizations` is reachable through this client.
+ */
+function organizationDirectoryUrl(baseUrl: URL, path: string): URL | null {
+  if (!path.startsWith("/api/organizations")) return null;
+  const requested = new URL(path, baseUrl);
+  if (requested.origin !== baseUrl.origin || requested.hash) return null;
+  if (requested.pathname === "/api/organizations") return requested.search ? null : new URL("/api/organizations", baseUrl);
+  const organizationId = ORGANIZATION_MEMBERS_PATH.exec(requested.pathname)?.[1];
+  if (!organizationId || !CollaborationOrganizationIdSchema.safeParse(organizationId).success) return null;
+  const url = new URL(`/api/organizations/${organizationId}/members`, baseUrl);
+  const keys = [...requested.searchParams.keys()];
+  if (keys.length === 0) return url;
+  const cursor = CollaborationOrganizationMembersCursorSchema.safeParse(requested.searchParams.get("cursor"));
+  if (keys.length !== 1 || keys[0] !== "cursor" || !cursor.success) return null;
+  url.searchParams.set("cursor", cursor.data);
   return url;
 }
 

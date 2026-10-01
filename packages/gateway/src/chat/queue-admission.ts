@@ -17,6 +17,7 @@ import {
 import type { CanonicalChatProviderRegistry } from "./provider-adapter.js";
 import type { ChatOwner } from "./records.js";
 import type { ChatRepository } from "./repository.js";
+import { unsupportedAgentPermissionMode } from "./agent-permission.js";
 
 export class CanonicalQueueAdmissionError extends Error {
   constructor(readonly safeError: CanonicalChatSafeError, readonly status: 400 | 404 | 409 | 503) {
@@ -85,16 +86,20 @@ export async function enqueueCanonicalQueuedTurn(options: {
   const prepared = await options.agentContext?.prepare(options.owner, options.chatId, input);
   const effective = { ...input, ...prepared };
   const catalog = await options.catalog.getCatalog(options.principal);
+  const requirements = chatProviderRequirements({ ...effective, parts: prepared ? input.parts.filter((part) =>
+    part.type !== "resource_reference" || !["agent", "chat"].includes(part.resource.kind)) : input.parts });
   const validated = validateChatProviderSelection({
     catalog,
     selection: effective.selection,
     ...(!prepared?.context?.agent && record.providerBinding ? { boundInstanceId: record.providerBinding.instanceId } : {}),
-    requirements: chatProviderRequirements({ ...effective, parts: prepared ? input.parts.filter((part) =>
-      part.type !== "resource_reference" || !["agent", "chat"].includes(part.resource.kind)) : input.parts }),
+    requirements,
   });
   if (!validated.ok) {
+    const agentModeError = validated.error.code === "capability_mismatch"
+      ? unsupportedAgentPermissionMode(catalog, effective.selection, requirements, Boolean(prepared?.context?.agent))
+      : null;
     throw new CanonicalQueueAdmissionError(
-      validated.error,
+      agentModeError ?? validated.error,
       validated.error.code === "provider_instance_locked" ? 409 : 400,
     );
   }

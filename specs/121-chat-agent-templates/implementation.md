@@ -182,3 +182,18 @@ included in both Tailwind scans. Browser validation confirms CRUD, mention
 selection, explicit access consent, context preview and a response without reload
 using the local scripted adapter. Native Hermes and full presentation validation
 are still pending.
+
+### Supervised Agent request correction (2026-09-30)
+
+Selecting a saved Agent from the rail or the `@` picker keeps it as a typed,
+one-request reference. Sending uses the selected permission mode when the
+Agent's saved runtime supports that mode. Full access is an explicit per-request
+choice, never an automatic consequence of selecting an Agent. The gateway
+resolves the saved Agent and validates its runtime capabilities before admission.
+If that runtime only supports Full access, admission rejects the request and
+the composer shows a safe, specific choice to enable Full access or change the
+Agent's model. The rejected draft remains available for retry.
+
+Validation covers Web Canvas, Web Desktop, Electron Desktop, and Web Mobile
+through their shared Agent controls, plus direct gateway admission and queueing.
+The public documentation update is a separate PR in `FinnaAI/matrix-os-site`.

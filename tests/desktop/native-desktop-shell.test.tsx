@@ -282,7 +282,7 @@ describe("native desktop shell", () => {
         if (path === "/api/os-view-state") {
           return { revision: 1, document: createDefaultOsViewDocument(), updatedAt: "2026-08-30T12:00:00.000Z" };
         }
-        return backgrounds.shift();
+        return path === "/api/settings/desktop" ? backgrounds.shift() : {};
       }),
       getBlob: vi.fn(async () => new Blob(["wallpaper"], { type: "image/jpeg" })),
     };
@@ -313,7 +313,7 @@ describe("native desktop shell", () => {
         if (path === "/api/os-view-state") {
           return { revision: 1, document: createDefaultOsViewDocument(), updatedAt: "2026-08-30T12:00:00.000Z" };
         }
-        return backgrounds.shift();
+        return path === "/api/settings/desktop" ? backgrounds.shift() : {};
       }),
     };
     useConnection.setState({ api: api as never });

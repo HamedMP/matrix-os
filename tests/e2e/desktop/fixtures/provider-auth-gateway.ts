@@ -6,6 +6,7 @@ import {
   ProviderSettingsMutationSchema,
   ProviderSettingsSnapshotSchema,
   type AgentProviderSummary,
+  type CanonicalProviderCatalog,
   type ProviderSettingsSnapshot,
 } from "@matrix-os/contracts";
 
@@ -83,15 +84,30 @@ export function providerAuthSettingsSnapshot(authenticated: boolean): ProviderSe
 }
 
 /** Isolated provider fixture; no real provider login/logout is executed. */
-export async function startProviderAuthGateway() {
+export async function startProviderAuthGateway(options: {
+  catalog?: CanonicalProviderCatalog;
+  settings?: (authenticated: boolean) => ProviderSettingsSnapshot;
+  failSettingsRead?: () => boolean;
+} = {}) {
   const upstream = await startStubGateway();
   let authenticated = false;
   const commands: unknown[] = [];
+  const settings = () => options.settings?.(authenticated) ?? providerAuthSettingsSnapshot(authenticated);
   const server = createServer(async (req, res) => {
     const path = new URL(req.url ?? "/", "http://localhost").pathname;
-    if (req.method === "GET" && path === "/api/ai/provider-settings") {
+    if (req.method === "GET" && path === "/api/chat-providers" && options.catalog) {
       res.writeHead(200, { "content-type": "application/json" });
-      res.end(JSON.stringify(providerAuthSettingsSnapshot(authenticated)));
+      res.end(JSON.stringify(options.catalog));
+      return;
+    }
+    if (req.method === "GET" && path === "/api/ai/provider-settings") {
+      if (options.failSettingsRead?.()) {
+        res.writeHead(503, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "settings unavailable" }));
+        return;
+      }
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify(settings()));
       return;
     }
     if (req.method === "POST" && path === "/api/ai/provider-settings/actions") {
@@ -108,7 +124,7 @@ export async function startProviderAuthGateway() {
         res.writeHead(200, { "content-type": "application/json" });
         res.end(JSON.stringify({
           kind: "snapshot",
-          snapshot: providerAuthSettingsSnapshot(authenticated),
+          snapshot: settings(),
         }));
         return;
       }
@@ -132,7 +148,7 @@ export async function startProviderAuthGateway() {
         signal: AbortSignal.timeout(10_000),
       });
       const { tab } = await tabResponse.json() as { tab: { id: string } };
-      const snapshot = providerAuthSettingsSnapshot(authenticated);
+      const snapshot = settings();
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify({
         kind: "login_attempt",

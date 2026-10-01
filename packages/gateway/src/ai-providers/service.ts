@@ -338,7 +338,7 @@ export class AiProviderService implements AiProviderSnapshotReader {
     const { credentials, savedModel } = await this.#credentials.read();
     // These observations are independent. A slow CLI must not serialize the
     // funding and credential checks behind its bounded inventory deadline.
-    const [drivers, funded, apiKeyReadiness, profileReadiness, codexLocalObservation, nativeHarnessCatalog] = await Promise.all([
+    const [drivers, funded, apiKeyReadiness, profileReadiness, nativeHarnessCatalog] = await Promise.all([
       this.#drivers(),
       !options.suppressFundedProbes && credentials.matrixIncluded.state === "ready" && this.#fundedReadiness
         ? this.#fundedReadiness.read()
@@ -349,9 +349,13 @@ export class AiProviderService implements AiProviderSnapshotReader {
       this.#resolveOwnerReadiness(
         "owner_anthropic_profile", credentials.ownerProfile.state, "profile", now, options.refresh === true,
       ),
-      this.#readCodexLocalObservation(),
       this.#nativeHarnessCatalogReader ? this.#nativeHarnessCatalogReader(options.refresh === true) : undefined,
     ]);
+    options.signal?.throwIfAborted();
+    // Native discovery can consume more than the local credential probe's
+    // five-second TTL. Collect the bounded observation after metadata settles;
+    // preserve its original timestamps rather than extending stale evidence.
+    const codexLocalObservation = await this.#readCodexLocalObservation();
     options.signal?.throwIfAborted();
     const codexDriver = drivers.find((driver) => driver.id === "codex");
     // Driver health and CLI login are local observations. Neither proves the

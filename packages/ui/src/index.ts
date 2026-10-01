@@ -1,3 +1,5 @@
+export { createChatDriveProjectClient, type ChatDriveProjectClient } from "./organization-drive/chat-project-client.js";
+export { useChatDriveProjects } from "./organization-drive/use-chat-drive-projects.js";
 export { Button } from "./Button.js";
 export type { ButtonProps, ButtonVariant, ButtonSize } from "./Button.js";
 
@@ -6,6 +8,7 @@ export type { CardProps, CardHeaderProps, CardTitleProps, CardContentProps, Card
 
 export { Input } from "./Input.js";
 export type { InputProps } from "./Input.js";
+export { ChatImportPanel, type NativeChatImportAdapter } from "./chat-import/ChatImportPanel.js";
 
 export { Dialog } from "./Dialog.js";
 export type { DialogProps } from "./Dialog.js";
@@ -111,6 +114,11 @@ export { SharedTerminalControls } from "./collaboration/SharedTerminalControls.j
 export { TerminalSharingButton } from "./collaboration/TerminalSharingButton.js";
 export { ProjectSharingDialog } from "./collaboration/ProjectSharingDialog.js";
 export { ProjectSharingButton } from "./collaboration/ProjectSharingButton.js";
+export {
+  PROJECT_SHARING_UNAVAILABLE_MESSAGE,
+  useProjectSharing,
+  type ProjectSharingController,
+} from "./collaboration/useProjectSharing.js";
 export { ResourceSharingButton } from "./collaboration/ResourceSharingButton.js";
 export { ReadinessSummary } from "./collaboration/ReadinessSummary.js";
 export { ProjectSourceSummary } from "./collaboration/ProjectSourceSummary.js";
@@ -124,6 +132,8 @@ export { deriveChatPermissions } from "./collaboration/permissions.js";
 export { createCollaborationBrowserApi } from "./collaboration/client.js";
 export { createCollaborationDirectClient, CollaborationDirectError, type CollaborationDirectClient, type CollaborationDirectClientOptions, type CollaborationDirectErrorCode, type DirectScopeState } from "./collaboration/direct-client.js";
 export { createCollaborationDirectApi, type CollaborationDirectApi } from "./collaboration/direct-api.js";
+export { resolveOrganizationDriveNavigation, createRefreshGuard, driveBasePath, loadDiscoveryItems, loadDriveSnapshotPages } from "./organization-drive/paging.js";
+export { ensureOrganizationContributorGrant, loadOrganizationDriveOptions, type OrganizationDriveOption, type OrganizationDrivePageCounts } from "./organization-drive/discovery.js";
 export {
   COLLABORATION_DISCOVERY_CHANGED_EVENT,
   notifyCollaborationDiscoveryChanged,
@@ -141,7 +151,7 @@ export { ChatAgentsEntry, ChatAgentsRailSection } from "./chat-agents/ChatAgents
 export { ChatAgentsContent } from "./chat-agents/ChatAgentsContent.js";
 export { ChatAgentsWorkspace, useChatAgentsNavigation } from "./chat-agents/ChatAgentsNavigation.js";
 export { ChatMentionControls, useChatMentionPermission } from "./chat-agents/ChatMentionControls.js";
-export { isChatMention, hasChatMentionParts, canAddChatMention, orderChatResources, chatAgentAttribution } from "./chat-agents/mentions.js";
+export { chatResourceKey, isChatMention, hasChatMentionParts, canAddChatMention, orderChatResources, chatAgentAttribution } from "./chat-agents/mentions.js";
 
 export { ChatContextReceipt } from "./chat-agents/ChatContextReceipt.js";
 export { createChatMentionRequestTracker } from "./chat-agents/request-tracker.js";
@@ -173,3 +183,13 @@ export { captureTerminalFileDrag, terminalDropFiles, terminalDropMimeType, MAX_T
 export { canonicalChatSafeFailureReason } from "./canonical-chat-error-copy.js";
 
 export { ConversationSubagentActivity } from "./chat/subagent-activity";
+export { ChatProviderConnections, ChatProviderOnboarding, deriveChatProviderConnectionState } from "./agents-providers/ChatProviderConnections.js";
+export { shouldOpenChatOnStartup } from "./chat-startup-policy.js";
+
+export { OrganizationDriveBrowser, type OrganizationDriveBrowserProps } from "./organization-drive/OrganizationDriveBrowser.js";
+export { OrganizationDrivesNavigation } from "./organization-drive/OrganizationDrivesNavigation.js";
+
+export { CompanyDriveContextPicker } from "./organization-drive/CompanyDriveContextPicker.js";
+
+export {companyDriveChatReference} from "./organization-drive/context-reference.js";
+export type {DriveChatContextSelection} from "./organization-drive/OrganizationDriveBrowser.js";
