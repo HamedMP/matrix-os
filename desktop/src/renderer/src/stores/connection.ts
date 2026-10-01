@@ -2,6 +2,7 @@ import { desktopProviderIdentityKey } from "../lib/provider-settings-identity";
 // Connection/auth status store. Holds NO credential — only status snapshots
 // from the trusted core (FR-002).
 import { create } from "zustand";
+import { pickDefaultOrganizationId } from "@matrix-os/ui/default-organization";
 import { invoke, onEvent } from "../lib/operator";
 import { createApiClient, type ApiClient } from "../lib/api";
 import { clearDraftChats } from "./draft-chat";
@@ -19,10 +20,12 @@ interface ConnectionState {
   handle: string | null;
   userId: string | null;
   /**
-   * Active Clerk organization for collaboration sharing (S20 / T101). The
-   * trusted-core auth status does not surface it yet, so it stays null and the
-   * share controls stay disabled on Electron Desktop until the device-auth
-   * status carries the organization.
+   * Active organization for collaboration sharing (S20 / T101). The trusted-core
+   * auth status does not carry one, so it defaults to the member's oldest
+   * organization (DesktopDefaultOrganization), can be switched in the account menu,
+   * and the choice is remembered per user. Every share request sends it and the
+   * platform re-checks current membership, so a client-side choice cannot widen
+   * access -- it only decides which organization the share controls act in.
    */
   organizationId: string | null;
   displayName: string | null;
@@ -38,6 +41,18 @@ interface ConnectionState {
   providerCatalogGeneration: number;
   invalidateProviderCatalog: (identityKey: string) => void;
   refresh: () => Promise<void>;
+  /** Chooses the organization share controls act in; null clears it. Remembered per user. */
+  selectOrganization: (organizationId: string | null) => void;
+  /**
+   * Applies a freshly read membership listing: keeps the member's choice while the
+   * listing still contains it, otherwise falls back to their oldest organization (none
+   * for a user in no organization). Ignored when the listing was read for another
+   * account or requested before a listing already applied, and a capped listing never
+   * rules a choice out.
+   */
+  reconcileOrganizations: (listing: { request: number; forUserId: string; organizationIds: readonly string[]; complete: boolean }) => void;
+  /** Numbers a membership listing request so a slower, older response cannot undo a newer one. */
+  beginOrganizationListing: () => number;
   selectRuntime: (slot: string) => Promise<void>;
   signOut: () => Promise<void>;
 }
@@ -100,7 +115,7 @@ export const useConnection = create<ConnectionState>()((set, get) => ({
         status: status.signedIn ? "signed-in" : "signed-out",
         handle: status.handle ?? null,
         userId: status.userId ?? null,
-        organizationId: readOrganizationId(status),
+        organizationId: readOrganizationId(status) ?? readSelectedOrganization(status.userId ?? null),
         displayName: status.displayName ?? null,
         imageUrl: status.imageUrl ?? null,
         email: status.email ?? null,
@@ -120,6 +135,26 @@ export const useConnection = create<ConnectionState>()((set, get) => ({
       }
       set({ status: "signed-out", handle: null, userId: null, organizationId: null, displayName: null, imageUrl: null, email: null, api: null });
     }
+  },
+
+  selectOrganization: (organizationId) => {
+    const valid = organizationId === null || ORGANIZATION_ID.test(organizationId) ? organizationId : null;
+    set({ organizationId: valid });
+    writeSelectedOrganization(get().userId, valid);
+  },
+
+  beginOrganizationListing: () => {
+    organizationListingRequests += 1;
+    return organizationListingRequests;
+  },
+
+  reconcileOrganizations: ({ request, forUserId, organizationIds, complete }) => {
+    if (forUserId !== get().userId || request < lastAppliedOrganizationListing) return;
+    lastAppliedOrganizationListing = request;
+    const current = get().organizationId;
+    if (current && (!complete || organizationIds.includes(current))) return;
+    const fallback = pickDefaultOrganizationId(organizationIds);
+    if (fallback !== current) get().selectOrganization(fallback);
   },
 
   selectRuntime: async (slot) => {
@@ -210,8 +245,38 @@ export function unwireConnectionEvents(): void {
   wired = false;
 }
 
+const ORGANIZATION_ID = /^org_[A-Za-z0-9_-]{1,124}$/;
+// The sign-in loader and the account menu read memberships independently; responses can
+// arrive out of order, and only the newest request applied so far may decide.
+let organizationListingRequests = 0;
+let lastAppliedOrganizationListing = 0;
+const SELECTED_ORGANIZATION_KEY = "matrix.desktop.selectedOrganization:";
+
 function readOrganizationId(status: unknown): string | null {
   if (!status || typeof status !== "object") return null;
   const value = Reflect.get(status, "organizationId");
-  return typeof value === "string" && /^org_[A-Za-z0-9_-]{1,124}$/.test(value) ? value : null;
+  return typeof value === "string" && ORGANIZATION_ID.test(value) ? value : null;
+}
+
+// Keyed by user so one person's choice never applies to the next account signed in.
+function readSelectedOrganization(userId: string | null): string | null {
+  if (!userId) return null;
+  try {
+    const value = window.localStorage.getItem(SELECTED_ORGANIZATION_KEY + userId);
+    return value && ORGANIZATION_ID.test(value) ? value : null;
+  } catch (error: unknown) {
+    console.warn("[connection] selected organization unreadable", error instanceof Error ? error.name : "UnknownError");
+    return null;
+  }
+}
+
+function writeSelectedOrganization(userId: string | null, organizationId: string | null): void {
+  if (!userId) return;
+  try {
+    const key = SELECTED_ORGANIZATION_KEY + userId;
+    if (organizationId) window.localStorage.setItem(key, organizationId);
+    else window.localStorage.removeItem(key);
+  } catch (error: unknown) {
+    console.warn("[connection] selected organization not saved", error instanceof Error ? error.name : "UnknownError");
+  }
 }
