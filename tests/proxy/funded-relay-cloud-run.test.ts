@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -226,4 +227,44 @@ describe("funded relay Cloud Run service", () => {
     expect(workflow).toContain("${funded_ai_env_bindings}");
     expect(workflow).toContain("${funded_ai_secret_bindings}");
   });
+});
+
+function runDeploymentValidation(reviewedAt: string, validThrough: string) {
+  const workflow = readFileSync(join(root, ".github/workflows/ai-relay-cloud-run.yml"), "utf8");
+  const block = workflow.split("- name: Validate preview deployment configuration")[1]!
+    .split("- name: Authenticate to Google Cloud")[0]!.split("run: |\n")[1]!;
+  const script = block.split("\n").map(line => line.replace(/^          /, "")).join("\n");
+  return spawnSync("bash", ["-c", script], { encoding: "utf8", timeout: 10_000, env: {
+    ...process.env, DEPLOY_ENVIRONMENT: "staging", GCP_PROJECT_ID: "fixture", GCP_REGION: "fixture",
+    ARTIFACT_REPOSITORY: "fixture", AI_RELAY_CLOUD_RUN_SERVICE: "fixture",
+    AI_RELAY_CLOUD_RUN_SERVICE_ACCOUNT: "fixture", PLATFORM_INTERNAL_URL: "https://platform.example.test",
+    CLOUDFLARE_AI_GATEWAY_URL: enabledEnv().CLOUDFLARE_AI_GATEWAY_URL!,
+    MATRIX_JEV_PRICING_REVIEW_VERSION: "typesafe-jev-input-2026-09",
+    MATRIX_JEV_PRICING_REVIEWED_AT: reviewedAt, MATRIX_JEV_PRICING_VALID_THROUGH: validThrough,
+  } });
+}
+it("rejects a format-correct nonexistent review date before Cloud Run authentication", () => {
+  expect(runDeploymentValidation("2026-02-30T00:00:00.000Z", "2026-03-31T00:00:00.000Z").status).not.toBe(0);
+});
+
+const dayMs = 24 * 60 * 60_000;
+it.each([
+  ["expired", -2, -1],
+  ["future", 1, 2],
+  ["reversed", -1, -2],
+  ["empty", -1, -1],
+  ["overlong", -1, 90],
+] as const)("rejects %s review windows before Cloud Run authentication", (_label, startDays, endDays) => {
+  const now = Date.now();
+  const result = runDeploymentValidation(new Date(now + startDays * dayMs).toISOString(),
+    new Date(now + endDays * dayMs).toISOString());
+  expect(result.error).toBeUndefined();
+  expect(result.status).toBe(1);
+  expect(result.stderr).toContain("current window of at most 90 days");
+});
+it("accepts a current bounded deployment review without altering its attested timestamps", () => {
+  const now = Date.now();
+  const result = runDeploymentValidation(new Date(now - dayMs).toISOString(), new Date(now + dayMs).toISOString());
+  expect(result.error).toBeUndefined();
+  expect(result.status).toBe(0);
 });

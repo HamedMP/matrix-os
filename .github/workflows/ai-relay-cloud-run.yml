@@ -81,6 +81,29 @@ jobs:
               exit 1
             fi
           done
+          python3 - <<'PYTHON'
+          import os
+          import sys
+          from datetime import datetime, timedelta, timezone
+
+          try:
+              dates = []
+              for name in ("MATRIX_JEV_PRICING_REVIEWED_AT", "MATRIX_JEV_PRICING_VALID_THROUGH"):
+                  value = os.environ[name]
+                  parsed = datetime.strptime(value, "%Y-%m-%dT%H:%M:%S.%fZ").replace(tzinfo=timezone.utc)
+                  if parsed.isoformat(timespec="milliseconds").replace("+00:00", "Z") != value:
+                      raise ValueError("noncanonical date")
+                  dates.append(parsed)
+              reviewed_at, valid_through = dates
+              now = datetime.now(timezone.utc)
+              if not timedelta(0) < valid_through - reviewed_at <= timedelta(days=90):
+                  raise ValueError("invalid review window")
+              if not reviewed_at <= now <= valid_through:
+                  raise ValueError("review is not current")
+          except (KeyError, ValueError):
+              print("Jev review must use valid UTC dates and a current window of at most 90 days.", file=sys.stderr)
+              sys.exit(1)
+          PYTHON
           if ! [[ "$PLATFORM_INTERNAL_URL" =~ ^https://[^/?#]+/?$ ]]; then
             echo "PLATFORM_INTERNAL_URL must be an HTTPS origin." >&2
             exit 1
