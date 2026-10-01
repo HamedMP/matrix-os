@@ -1,4 +1,8 @@
-import type { CanonicalChatModelSelection } from "@matrix-os/contracts";
+import type {
+  CanonicalChatContentFrame,
+  CanonicalChatDetailResponse,
+  CanonicalChatModelSelection,
+} from "@matrix-os/contracts";
 import {
   createContext,
   use,
@@ -12,10 +16,15 @@ import {
 import { useAuth } from "@clerk/clerk-expo";
 import { useQueryClient } from "@tanstack/react-query";
 
+import { applyCanonicalChatContentFrames } from "@/lib/canonical-chat-content";
 import { createCanonicalChatEventSource, type CanonicalChatInvalidation } from "@/lib/canonical-chat-events";
 import { mobileQueryKeys } from "@/lib/requests";
 import { HOSTED_GATEWAY_URL } from "@/lib/storage";
 import { useCanonicalChats } from "@/lib/queries/use-canonical-chats";
+
+// A snapshot fetch normally lands within a few frames; this only bounds the
+// queue if one never does.
+const MAX_WAITING_FRAMES = 200;
 
 interface CanonicalChatSessionContextValue {
   /** The chat currently shown, or null for a draft chat not yet created. */
@@ -77,16 +86,8 @@ export function CanonicalChatSessionProvider({ children }: { children: ReactNode
 
   useEffect(() => {
     if (!computerKey || !computer) return;
-    // Hosted routed computers terminate WebSocket upgrades on the canonical
-    // platform origin (not the `/vm/<handle>` path) and resolve the machine
-    // from the `runtime` query alone — matching GatewayClient's `wsBaseUrl`.
-    // gatewayPath is `/vm/<handle>` or `/vm/<handle>?runtime=<slot>`; only
-    // that trailing query (if any) carries over.
-    const queryIndex = computer.gatewayPath.indexOf("?");
-    const routingQuery = queryIndex === -1 ? "" : computer.gatewayPath.slice(queryIndex);
-    const wsUrl = `${HOSTED_GATEWAY_URL}/ws/chats/events${routingQuery}`.replace(/^http/, "ws");
     const source = createCanonicalChatEventSource({
-      wsUrl,
+      gatewayUrl: `${HOSTED_GATEWAY_URL}${computer.gatewayPath}`,
       getToken: async () => getToken(),
     });
     eventSourceRef.current = source;
@@ -101,23 +102,46 @@ export function CanonicalChatSessionProvider({ children }: { children: ReactNode
   useEffect(() => {
     const source = eventSourceRef.current;
     if (!source) return;
+    const uid = userId ?? "signed-out";
+    const key = computerKey ?? "none";
+    const chatsKey = mobileQueryKeys.canonicalChats(uid, key);
+    const detailKey = mobileQueryKeys.canonicalChatDetail(uid, key, activeChatId ?? "none");
+    // Streamed frames for the open chat that don't fit its cached detail yet:
+    // the detail is still loading, or a frame was missed. They wait here for a
+    // snapshot instead of being dropped, so streaming picks up right after it.
+    let waitingFrames: CanonicalChatContentFrame[] = [];
+    const applyWaitingFrames = () => {
+      const cached = queryClient.getQueryData<CanonicalChatDetailResponse>(detailKey);
+      if (!cached) return;
+      const { detail, unapplied } = applyCanonicalChatContentFrames(cached, waitingFrames);
+      waitingFrames = unapplied;
+      if (detail !== cached) queryClient.setQueryData(detailKey, detail);
+    };
+
     return source.subscribe((event) => {
-      const uid = userId ?? "signed-out";
-      const key = computerKey ?? "none";
       if (event.type === "chat.full_refresh") {
-        void queryClient.invalidateQueries({ queryKey: mobileQueryKeys.canonicalChats(uid, key) });
-        if (activeChatId) {
-          void queryClient.invalidateQueries({
-            queryKey: mobileQueryKeys.canonicalChatDetail(uid, key, activeChatId),
-          });
-        }
+        void queryClient.invalidateQueries({ queryKey: chatsKey });
+        if (activeChatId) void queryClient.invalidateQueries({ queryKey: detailKey });
         return;
       }
-      void queryClient.invalidateQueries({ queryKey: mobileQueryKeys.canonicalChats(uid, key) });
-      if (event.chatId === activeChatId) {
-        void queryClient.invalidateQueries({
-          queryKey: mobileQueryKeys.canonicalChatDetail(uid, key, event.chatId),
-        });
+      // Each streamed piece of text is a `run.message` event: it grows the
+      // open transcript but changes nothing the chat list shows.
+      if (event.eventType !== "run.message") {
+        void queryClient.invalidateQueries({ queryKey: chatsKey });
+      }
+      if (event.chatId !== activeChatId) return;
+      if (!event.content) {
+        void queryClient.invalidateQueries({ queryKey: detailKey });
+        return;
+      }
+
+      const wasWaiting = waitingFrames.length > 0;
+      waitingFrames = [...waitingFrames, event.content].slice(-MAX_WAITING_FRAMES);
+      applyWaitingFrames();
+      // The first frame that doesn't fit triggers one snapshot fetch; frames
+      // arriving while it loads just queue up behind it.
+      if (waitingFrames.length > 0 && !wasWaiting) {
+        void queryClient.invalidateQueries({ queryKey: detailKey }).then(applyWaitingFrames);
       }
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
