@@ -135,7 +135,10 @@ Catalog-only rows use presentation IDs only; install/connect handoff uses the
 authoritative catalog entry and advertised action. Guided credential writes stay
 owner-only. Legacy configuration remains a secondary disclosure, including when
 capabilities are unavailable. Figma SVG assets are stored unchanged; the designed
-OC/Pi/H/Cl marks are Settings-specific text layers.
+OC/Pi/H/Cl marks are Settings-specific text layers. Web artwork must preserve the
+explicit VM and runtime slot in the current document URL; packaged Electron
+artwork resolves beside its renderer index. Root-shell assets must not substitute
+for an explicit Preview runtime. Invalid runtime values never enter asset paths.
 
 ### 4. Validation & Error Matrix
 
@@ -164,7 +167,10 @@ workflow failure exposes the full legacy editor as the default connection UI.
 Red/green regressions cover capability-unavailable Codex chooser, missing OpenClaw
 catalog row, source-null Hermes enable prerequisite, typed workflow denial and
 failed-save retention/retry. Real route/store regression asserts public HTTP 400
-and zero runtime changes for the captured payload.
+and zero runtime changes for the captured payload. Artwork regressions cover
+all four Settings SVGs, VM/runtime query and canonical path scopes, root Web,
+packaged Electron, and invalid scope values. Live acceptance must confirm nonzero
+image naturalWidth on the deployed Preview, not only inspect the generated URL.
 
 ### 7. Wrong vs Correct
 
