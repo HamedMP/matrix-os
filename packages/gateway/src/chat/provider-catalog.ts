@@ -526,14 +526,15 @@ export function createChatProviderCatalogService(options: {
   const cached = new Map<string, { catalog: CanonicalProviderCatalog; expiresAt: number }>();
   const inFlight = new Map<string, Promise<CanonicalProviderCatalog>>();
 
-  // Only clean successful reads are reused; a failed or degraded read leaves
-  // nothing behind, so the next reader retries immediately.
+  // Every served read is reused for the window, including one shaped by a
+  // probe timeout: on a slow host most reads are, and re-probing on every
+  // reader is what the window exists to prevent. A thrown read leaves nothing
+  // behind, and refresh() always re-reads.
   function remember(principal: RequestPrincipal): Promise<CanonicalProviderCatalog> {
-    if (cacheTtlMs === 0) return readCatalog(principal).then(({ catalog }) => catalog);
+    if (cacheTtlMs === 0) return readCatalog(principal);
     const ownerId = principal.userId;
-    const read = readCatalog(principal).then(({ catalog, degraded }) => {
+    const read = readCatalog(principal).then((catalog) => {
       cached.delete(ownerId);
-      if (degraded) return catalog;
       if (cached.size >= MAX_CATALOG_CACHE_ENTRIES) {
         const oldest = cached.keys().next().value;
         if (oldest !== undefined) cached.delete(oldest);
@@ -573,13 +574,8 @@ export function createChatProviderCatalogService(options: {
     },
   };
 
-  /**
-   * One full read. `degraded` marks a result shaped by a transient source
-   * failure (inventory rejection, live model discovery timeout); such a
-   * result is still served but never reused, so the next read retries at once.
-   */
-  async function readCatalog(principal: RequestPrincipal): Promise<{ catalog: CanonicalProviderCatalog; degraded: boolean }> {
-    let degraded = false;
+  /** One full read across every inventory source. */
+  async function readCatalog(principal: RequestPrincipal): Promise<CanonicalProviderCatalog> {
     const systemRuntimeReads = Promise.all(SYSTEM_DRIVERS.map(async (kind) => {
       const source = options.systemRuntimeSources?.[kind];
       if (!source) return [kind, null] as const;
@@ -587,7 +583,6 @@ export function createChatProviderCatalogService(options: {
         return [kind, await readRuntimeSnapshot(source, options.runtimeTimeoutMs)] as const;
       } catch (_error) {
         console.warn(`[chat-providers] ${driverDisplayName(kind)} Provider inventory unavailable`);
-        degraded = true;
         return [kind, null] as const;
       }
     }));
@@ -600,19 +595,15 @@ export function createChatProviderCatalogService(options: {
     ]);
     if (codingResult.status === "rejected") {
       console.warn("[chat-providers] Coding Provider inventory unavailable");
-      degraded = true;
     }
     if (runtimeResult.status === "rejected") {
       console.warn("[chat-providers] System Provider inventory unavailable");
-      degraded = true;
     }
     if (aiProviderResult.status === "rejected") {
       console.warn("[chat-providers] AI Provider inventory unavailable");
-      degraded = true;
     }
     if (settingsResult.status === "rejected") {
       console.warn("[chat-providers] Harness settings unavailable");
-      degraded = true;
       if (settingsResult.reason instanceof ProviderSettingsStoreError
         && settingsResult.reason.status === 503) {
         throw new ProviderCatalogUnavailableError(true);
@@ -637,7 +628,6 @@ export function createChatProviderCatalogService(options: {
           discoveryFailed = true;
         }
       }
-      if (discoveryFailed) degraded = true;
       const instance = codingInstance(provider, skills, projectedCatalog);
       return instance && discoveryFailed ? unavailableInstance(instance, "runtime_unavailable") : instance;
     }));
@@ -724,7 +714,7 @@ export function createChatProviderCatalogService(options: {
       console.warn(`[chat-providers] Canonical Provider projection failed validation: ${safeIssuePaths.join(",")}`);
       throw new ProviderCatalogUnavailableError(false);
     }
-    return { catalog: parsed.data, degraded };
+    return parsed.data;
   }
   return service;
 }

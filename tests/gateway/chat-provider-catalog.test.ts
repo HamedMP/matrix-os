@@ -1651,7 +1651,7 @@ describe("canonical Chat Provider catalog", () => {
     expect(listProviders).toHaveBeenCalledTimes(2);
   });
 
-  it("does not remember a read whose inventory source failed", async () => {
+  it("reuses a read shaped by a failed inventory probe inside the window; refresh re-reads at once", async () => {
     let fail = true;
     const listProviders = vi.fn(async () => { if (fail) throw new Error("probe lost"); return [codingProvider()]; });
     const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
@@ -1662,10 +1662,31 @@ describe("canonical Chat Provider catalog", () => {
       cacheTtlMs: 10_000,
     });
     const codex = (catalog: CanonicalProviderCatalog) => catalog.instances.find(instance => instance.driverKind === "codex");
-    expect(codex(await service.getCatalog(principal))?.availability).not.toBe("available");
+    const degraded = await service.getCatalog(principal);
+    expect(codex(degraded)?.availability).not.toBe("available");
     fail = false;
-    expect(codex(await service.getCatalog(principal))?.availability).toBe("available");
+    // A slow host times out probes on most reads; re-probing every reader is
+    // what the window prevents, so the degraded shape is served until refresh.
+    expect(await service.getCatalog(principal)).toBe(degraded);
+    expect(listProviders).toHaveBeenCalledTimes(1);
+    expect(codex(await service.refresh(principal))?.availability).toBe("available");
     expect(listProviders).toHaveBeenCalledTimes(2);
+    warning.mockRestore();
+  });
+
+  it("does not remember a read that threw", async () => {
+    let fail = true;
+    const service = createChatProviderCatalogService({
+      codingProviders: { listProviders: async () => [codingProvider()], invalidate: vi.fn() },
+      agentRuntimeSource: runtimeSource(),
+      harnessSettingsSource: { getSnapshot: async () => { if (fail) throw new ProviderSettingsStoreError("runtime_unavailable", 503); return undefined; } } as never,
+      now: () => new Date("2026-08-30T10:00:00.000Z"),
+      cacheTtlMs: 10_000,
+    });
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+    await expect(service.getCatalog(principal)).rejects.toBeInstanceOf(ProviderCatalogUnavailableError);
+    fail = false;
+    expect((await service.getCatalog(principal)).instances.find(instance => instance.driverKind === "codex")?.availability).toBe("available");
     warning.mockRestore();
   });
 
