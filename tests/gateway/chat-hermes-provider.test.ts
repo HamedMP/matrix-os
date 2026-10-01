@@ -70,6 +70,25 @@ describe("Hermes canonical Chat Provider adapter", () => {
     expect(deltas.join("")).toBe("Open [redacted path] now.");
     expect(deltas.join("")).not.toContain("fixture-private");
   });
+  it("masks assignment and Bearer credentials split across Hermes live deltas", async () => {
+    for (const [first, second, complete, expected] of [
+      ["Open ACCESS_TO", "KEN=qa-fake-2058 now.", "Open ACCESS_TOKEN=qa-fake-2058 now.", "Open [redacted credential] now."],
+      ["Use Bea", "rer qa-fake-2058 now.", "Use Bearer qa-fake-2058 now.", "Use Bearer [redacted] now."],
+    ] as const) {
+      const gateway = fakeGateway();
+      const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn: gateway.spawnFn });
+      const eventsPromise = collect(adapter.start(privateBaseInput));
+      await vi.waitFor(() => expect(gateway.requests.some(({ method }) => method === "prompt.submit")).toBe(true));
+      gateway.event("message.delta", { text: first });
+      gateway.event("message.delta", { text: second });
+      gateway.event("message.complete", { text: complete, status: "complete" });
+      const deltas = (await eventsPromise).filter((event): event is { type: "assistant.delta"; delta: string } =>
+        typeof event === "object" && event !== null && "type" in event && event.type === "assistant.delta")
+        .map((event) => event.delta);
+      expect(deltas.join("")).toBe(expected);
+      expect(deltas.join("")).not.toContain("qa-fake-2058");
+    }
+  });
   it("forwards an explicit Codex subscription model to native session creation without a configured Anthropic override", async () => {
     const gateway = fakeGateway();
     const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn: gateway.spawnFn });

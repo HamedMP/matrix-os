@@ -166,10 +166,13 @@ export function createCanonicalChatEventStream(options: {
     return true;
   }
 
-  function deliver(subscriber: Subscriber, event: ChatOutboxEvent): boolean {
+  function deliver(subscriber: Subscriber, event: ChatOutboxEvent, live = true): boolean {
     if (!rememberCursor(subscriber, event.cursor)) return true;
     try {
-      if (subscriber.content && event.payload.streamContent) {
+      // Captured content contains the Chat's sharing state at commit time.
+      // Replayed and attach-buffered events may now belong to a shared Chat;
+      // send metadata so the client refetches through the current owner read.
+      if (live && subscriber.content && event.payload.streamContent) {
         const parsed = CanonicalChatContentFrameSchema.safeParse({
           type: "chat.content", event: safeEvent(event), content: event.payload.streamContent,
         });
@@ -258,7 +261,7 @@ export function createCanonicalChatEventStream(options: {
         subscriber.buffered = [];
       } else {
         for (const event of replay.events) {
-          if (!deliver(subscriber, event)) {
+          if (!deliver(subscriber, event, false)) {
             evict(subscriber.id);
             return { touch: () => undefined, onClose: () => undefined };
           }
@@ -282,7 +285,7 @@ export function createCanonicalChatEventStream(options: {
       const buffered = subscriber.buffered;
       subscriber.buffered = [];
       for (const event of buffered) {
-        if (!deliver(subscriber, event)) {
+        if (!deliver(subscriber, event, false)) {
           evict(subscriber.id);
           break;
         }

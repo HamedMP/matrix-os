@@ -35,6 +35,7 @@ import {
   HermesApprovalRequestSchema,
 } from "./hermes-approval-control.js";
 import {
+  hasAssistantCredentialBoundaryCandidate,
   safePublishedText,
   safeToolPreview,
   sanitizeAssistantText,
@@ -457,9 +458,12 @@ export function createHermesChatProviderAdapter(options: {
           throw new HermesRunFailure("run", "Hermes output exceeded limit");
         }
         if (!currentSegment && isRawProviderFailureText(text)) currentSegmentSuppressed = true;
-        // A slash token can become a credential-bearing path in a later delta.
-        // Seal the remaining segment as one value before publishing it.
-        if (!deferredPathStream && /(^|[\s"'`(=:<>|;&])\//u.test(currentSegment.slice(-1) + text)) {
+        // A slash path or partial credential key can become sensitive in a
+        // later delta. Seal the remaining segment before publishing it.
+        if (!deferredPathStream && (
+          /(^|[\s"'`(=:<>|;&])\//u.test(currentSegment.slice(-1) + text)
+          || hasAssistantCredentialBoundaryCandidate(currentSegment + text)
+        )) {
           deferredPathStream = true;
           publishedRawPrefixLength = currentSegment.length - pendingStreamBoundaryText.length;
         }

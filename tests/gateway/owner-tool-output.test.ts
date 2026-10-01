@@ -102,7 +102,7 @@ it("decrypts only the authorized detail response, keeping repository state encry
   expect(JSON.stringify(stored)).not.toContain("OPAQUE_PRIVATE_RESULT");
 });
 
-it("decrypts owner stream live/replay only, without modifying outbox or telemetry", async () => {
+it("replays historical content as notifications while preserving private live owner output", async () => {
   const event: ChatOutboxEvent = { cursor: 1, chatId: "chat_test", revision: 1, eventType: "run.activity",
     createdAt: "2026-09-20T00:00:00.000Z", payload: { streamContent: content() } };
   let publish!: ChatOutboxSink;
@@ -121,12 +121,42 @@ it("decrypts owner stream live/replay only, without modifying outbox or telemetr
       await stream.open({ principal: { userId, source: "jwt" }, content: true,
         sink: { send(frame) { frames.push(frame); return true; }, close() {} } });
     }
-    expect(JSON.stringify(alice)).toContain("OPAQUE_PRIVATE_RESULT");
+    // The Chat may have become shared after this outbox event was captured.
+    // Replay must make the client refetch current visibility, never project
+    // protected output using the captured private Chat record.
+    expect(alice.some((frame) => frame.type === "chat.event" && frame.event.cursor === 1)).toBe(true);
+    expect(JSON.stringify(alice)).not.toContain("OPAQUE_PRIVATE_RESULT");
+    expect(JSON.stringify(alice)).not.toContain("streamContent");
     alice.length = 0;
     publish({ owner, event: { ...event, cursor: 2 } });
     expect(JSON.stringify(alice)).toContain("OPAQUE_PRIVATE_RESULT");
     expect(JSON.stringify(bob)).not.toContain("OPAQUE_PRIVATE_RESULT");
     expect(JSON.stringify(event)).not.toContain("OPAQUE_PRIVATE_RESULT");
     expect(JSON.stringify(telemetry)).not.toContain("OPAQUE_PRIVATE_RESULT");
+  } finally { stream.shutdown(); }
+});
+
+it("does not expose a private event buffered during replay after a Chat becomes shared", async () => {
+  const event: ChatOutboxEvent = { cursor: 2, chatId: "chat_test", revision: 1, eventType: "run.activity",
+    createdAt: "2026-09-20T00:00:00.000Z", payload: { streamContent: content() } };
+  let publish!: ChatOutboxSink;
+  let release!: () => void;
+  const replay = new Promise<void>((resolve) => { release = resolve; });
+  const stream = createCanonicalChatEventStream({
+    projectOwnerToolOutput: createOwnerToolOutputProjection(key, ["alice"]),
+    repository: {
+      registerOutboxSink(sink) { publish = sink; return { dispose() {} }; },
+      async replayOutboxWindow() { await replay; return { events: [], gap: false }; },
+    },
+  });
+  const frames: CanonicalChatTransportFrame[] = [];
+  try {
+    const opening = stream.open({ principal: { userId: "alice", source: "jwt" }, content: true,
+      sink: { send(frame) { frames.push(frame); return true; }, close() {} } });
+    publish({ owner, event });
+    release();
+    await opening;
+    expect(frames.some((frame) => frame.type === "chat.event" && frame.event.cursor === 2)).toBe(true);
+    expect(JSON.stringify(frames)).not.toContain("OPAQUE_PRIVATE_RESULT");
   } finally { stream.shutdown(); }
 });

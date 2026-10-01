@@ -115,6 +115,14 @@ export function classifyAssistantCredentialBoundaryPrefix(value: string): "pendi
   return "continuation";
 }
 
+/** Hermes can publish raw deltas before their authoritative interim text. Hold
+ * a segment as soon as its trailing token could become a credential key. */
+export function hasAssistantCredentialBoundaryCandidate(value: string): boolean {
+  if (redactAssistantCredentials(value) !== value) return true;
+  const tail = /(?:^|[^A-Za-z0-9_])([A-Za-z][A-Za-z0-9_-]*(?:\s*=?\s*)?)$/u.exec(value)?.[1];
+  return tail !== undefined && classifyAssistantCredentialBoundaryPrefix(tail) !== "continuation";
+}
+
 function normalizedRoot(value: string): string {
   return value.replace(/[\\/]+$/, "");
 }
