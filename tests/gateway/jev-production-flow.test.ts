@@ -25,7 +25,10 @@ import { loadFundedAiRuntimeConfig } from "../../packages/gateway/src/funded-ai-
 import { createFundedAiFundingSummaryClient } from "../../packages/gateway/src/funded-ai-funding-summary-client.js";
 import { createFundedAiRouteReadinessClient } from "../../packages/gateway/src/funded-ai-route-readiness-client.js";
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.useRealTimers();
+});
 async function fixture(mode = "ready") {
   const now = Date.now(); const home = await mkdtemp(join(tmpdir(), "jev-production-flow-"));
   await mkdir(join(home, "system"));
@@ -145,6 +148,10 @@ async function fixture(mode = "ready") {
 }
 
 it("admits the actual Jev production factory through Platform's exact-model filter only after profile preflight", async () => {
+  // The real policy fixture contains pricing valid through September 30.
+  // Freeze Date only; network deadlines and database timers remain real.
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date("2026-09-30T12:00:00.000Z"));
   const f = await fixture("platform-filter");
   try {
     await f.runtime.admit("owner_fixture", f.agent);
