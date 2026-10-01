@@ -157,10 +157,14 @@ locks each inherited Chat and rechecks drive material in the publication transac
 Mentioning such a Chat as context in another Chat is also disabled, including
 queued/retried referenced history. The legacy public-link preview and creation endpoints enforce the same guard
 under their Chat row lock. Public token reads lock the source Chat and fail closed
-when drive material exists, including run-only context; existing links cannot
+when drive material exists, including run-only or queued-only context; existing links cannot
 bypass the rule. Owner link listing and revocation remain available for cleanup.
 Public reads have five-second SQL and lock deadlines and return the ordinary
-unavailable response without revealing drive existence. Personal stored Chat
+unavailable response without revealing drive existence. Message, run and queued
+material predicates use partial indexes by Chat; bootstrap adds them atomically
+under an advisory lock, with five-second lock and thirty-second SQL deadlines.
+The database composition entrypoint only invokes the extracted index migration.
+Cancelled queue records retain their privacy provenance. Personal stored Chat
 history stays readable.
 This increment does not claim organization sharing of drive excerpts.
 

@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, expect, it } from "vitest";
+import { sql } from "kysely";
 import { KyselyPGlite } from "kysely-pglite";
 import { ChatRepository } from "../../packages/gateway/src/chat/repository";
 import { ChatSharing, bootstrapChatSharing } from "../../packages/gateway/src/chat/sharing";
@@ -113,16 +114,18 @@ it("blocks previously minted public links after drive context is added but permi
 
 it("blocks sharing when drive context exists only in a run snapshot", async () => {
   const now = new Date();
-  await repository.kysely.insertInto("chat_turns").values({
-    id: "turn_drive", chat_id: "chat_share", client_request_id: "request_drive",
-    base_message_seq: 1, input_message_id: "message_share", status: "failed", created_at: now, updated_at: now,
-  }).execute();
-  await repository.kysely.insertInto("chat_runs").values({
-    id: "run_drive", chat_id: "chat_share", turn_id: "turn_drive", client_request_id: "request_drive",
-    attempt: 1, driver_kind: "claude", instance_id: "default", selection: "{}",
-    interaction_mode: "chat", permission_mode: "default", status: "failed", history_boundary_seq: 1,
-    capability_snapshot: "{}", context_snapshot: JSON.stringify({ drives: [{}] }), created_at: now, updated_at: now,
-  }).execute();
+  await repository.kysely.transaction().execute(async (trx) => {
+    await trx.insertInto("chat_turns").values({
+      id: "turn_drive", chat_id: "chat_share", client_request_id: "request_drive",
+      base_message_seq: 1, input_message_id: "message_share", status: "failed", created_at: now, updated_at: now,
+    }).execute();
+    await trx.insertInto("chat_runs").values({
+      id: "run_drive", chat_id: "chat_share", turn_id: "turn_drive", client_request_id: "request_drive",
+      attempt: 1, driver_kind: "claude", instance_id: "default", selection: "{}",
+      interaction_mode: "chat", permission_mode: "default", status: "failed", history_boundary_seq: 1,
+      capability_snapshot: "{}", context_snapshot: JSON.stringify({ drives: [{}] }), created_at: now, updated_at: now,
+    }).execute();
+  });
   await expect(shares.preview(owner, "chat_share")).rejects.toMatchObject({ code: "conflict" });
   await expect(shares.create(owner, "chat_share", 0)).rejects.toMatchObject({ code: "conflict" });
   expect(await shares.list(owner, "chat_share")).toEqual([]);
@@ -145,4 +148,39 @@ it("wires drive privacy to legacy preview, token creation, and public read route
   expect((await app.request("/api/share/chats/" + created.token)).status).toBe(404);
   expect((await (await app.request(path)).json()).shares).toHaveLength(1);
   expect((await app.request(path + "/" + created.id, { method: "DELETE" })).status).toBe(200);
+});
+
+
+it.each(["parts", "context_snapshot"] as const)("blocks queued-only drive %s before claim, including existing public tokens", async (field) => {
+  const created = await shares.create(owner, "chat_share", 0);
+  const now = new Date();
+  await repository.kysely.insertInto("chat_queued_turns").values({
+    id: "queue_drive", chat_id: "chat_share", client_request_id: "req_queue", position: 1, status: "queued",
+    parts: JSON.stringify(field === "parts" ? [{ type: "resource_reference", resource: { kind: "organization_drive" } }] : [{ type: "text", text: "Queued" }]),
+    context_snapshot: field === "context_snapshot" ? JSON.stringify({ drives: [{}] }) : null,
+    driver_kind: "claude", instance_id: "default", selection: "{}", interaction_mode: "chat",
+    permission_mode: "default", capability_snapshot: "{}", created_at: now, updated_at: now,
+  }).execute();
+  await expect(shares.preview(owner, "chat_share")).rejects.toMatchObject({ code: "conflict" });
+  await expect(shares.create(owner, "chat_share", 0)).rejects.toMatchObject({ code: "conflict" });
+  expect(await shares.read(created.token)).toBeNull();
+  // Cancelled source records retain provenance; cancellation must not reopen public access.
+  await repository.kysely.updateTable("chat_queued_turns").set({ status: "cancelled" }).where("id", "=", "queue_drive").execute();
+  expect(await shares.read(created.token)).toBeNull();
+});
+
+it("bootstraps usable partial indexes for each drive-material lookup", async () => {
+  await repository.bootstrap();
+  await repository.kysely.transaction().execute(async (trx) => {
+    await sql`SET LOCAL enable_seqscan = off`.execute(trx);
+    const predicates = [
+      ["chat_messages", "idx_chat_messages_company_drive", sql`parts @> '[{"type":"resource_reference","resource":{"kind":"organization_drive"}}]'::jsonb`],
+      ["chat_runs", "idx_chat_runs_company_drive", sql`context_snapshot ? 'drives'`],
+      ["chat_queued_turns", "idx_chat_queued_turns_company_drive", sql`context_snapshot ? 'drives' OR parts @> '[{"type":"resource_reference","resource":{"kind":"organization_drive"}}]'::jsonb`],
+    ] as const;
+    for (const [table, index, predicate] of predicates) {
+      const result = await sql<{ "QUERY PLAN": string }>`EXPLAIN SELECT 1 FROM ${sql.table(table)} WHERE chat_id = ${"chat_share"} AND (${predicate})`.execute(trx);
+      expect(result.rows.map(row => row["QUERY PLAN"]).join("\n")).toContain(index);
+    }
+  });
 });

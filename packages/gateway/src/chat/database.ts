@@ -1,3 +1,4 @@
+import { bootstrapCompanyDriveSharingIndexes } from "./drive-sharing-guard.js";
 import { bootstrapChatDriveProjects } from "./drive-project-database.js";
 import { bootstrapChatImports, type ChatImportDatabase } from "./import-database.js";
 export type { ChatImportJobsTable, ChatImportMessagesTable } from "./import-database.js";
@@ -706,6 +707,7 @@ export async function bootstrapChatDatabase<Database extends ChatDatabase>(
   await sql`CREATE INDEX IF NOT EXISTS idx_chat_outbox_owner_cursor ON chat_outbox(owner_type, owner_id, cursor)`.execute(db);
   await bootstrapChatReadState(db);
   await bootstrapChatDriveProjects(db);
+  await bootstrapCompanyDriveSharingIndexes(db);
 }
 
 // Existing history starts read once on upgrade; subsequent bootstraps preserve user choices.
