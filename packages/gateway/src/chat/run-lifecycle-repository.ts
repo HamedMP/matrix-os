@@ -15,6 +15,8 @@ import { sql, type Kysely, type Selectable, type Transaction } from "kysely";
 import { z } from "zod/v4";
 import { ChatRunFailureDiagnosticSchema, type ChatRunFailureDiagnostic } from "./failure-diagnostic.js";
 import type { ChatDatabase, ChatsTable } from "./database.js";
+import { storeAssistantCredentialSidecars } from "./credential-repository.js";
+import type { SealedAssistantCredential } from "./assistant-credential-crypto.js";
 import {
   ChatBusyError,
   ChatConflictError,
@@ -539,6 +541,7 @@ export class ChatRunLifecycleRepository {
     createdAt: string;
     /** Full backing text, merged by prefix under the same Run/message locks. */
     snapshot?: boolean;
+    credentials?: readonly SealedAssistantCredential[];
   }): Promise<CanonicalChatMessage> {
     const owner = validateOwner(ownerInput);
     const chatId = CanonicalChatIdSchema.parse(input.chatId);
@@ -563,6 +566,7 @@ export class ChatRunLifecycleRepository {
         .executeTakeFirst();
       let next: CanonicalChatMessage;
       let inserted = false;
+      let baseOffset = 0;
       if (existing) {
         const current = toMessage(existing);
         const textParts = current.parts.every((part) => part.type === "text")
@@ -574,6 +578,7 @@ export class ChatRunLifecycleRepository {
           throw new ChatConflictError(chatId, Number(chat.revision));
         }
         const last = textParts.at(-1)!;
+        baseOffset = textParts.map((part) => part.text.length).reduce((sum, length) => sum + length, 0);
         if (input.snapshot) {
           const persisted = textParts.map((part) => part.text).join("");
           if (!input.delta.startsWith(persisted)) throw new ChatConflictError(chatId, Number(chat.revision));
@@ -629,6 +634,13 @@ export class ChatRunLifecycleRepository {
           created_at: next.createdAt,
         }).execute();
         inserted = true;
+      }
+      if (!input.snapshot) {
+        await storeAssistantCredentialSidecars(trx, {
+          owner, chatId, runId: input.runId, messageId: input.messageId,
+          delta, baseOffset, credentials: input.credentials,
+          createdAt, privateChat: chat.collaboration === null,
+        });
       }
       const revision = Number(chat.revision) + 1;
       await trx.updateTable("chats").set({

@@ -249,6 +249,8 @@ export async function createGatewayCollaboration(options: {
   const chatScope = new CollaborationChatScopeService(options.db, {
     runtimeId: options.config.runtimeId,
     preflightSecret: confirmationSecret,
+    onChatShared: (ownerId, event) => options.chatRepository.publishCommittedExternalOutbox(
+      { type: "personal", ownerId }, event),
   });
   const projectTransitions = createProjectTransitionJournal({ db: options.db });
   const projectFence = createProjectFence({ db: options.db, transitions: projectTransitions });

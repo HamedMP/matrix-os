@@ -153,6 +153,7 @@ function ResponseMessage({
               <MessageResponse className="text-md leading-relaxed" copyText={callbacks.copyText} openFile={callbacks.openFile} openWebLink={callbacks.openWebLink} loadFileImage={callbacks.loadFileImage} resolveApp={callbacks.resolveApp} openApp={callbacks.openApp}>{visibleMarkdown}</MessageResponse>
             </BubbleContent>
           </Bubble>
+          {callbacks.renderCredentialDisclosure?.(message)}
           {showMetadata ? (
             <MessageMetadata
               content={message.copyText}
