@@ -219,6 +219,15 @@ export function hasPaneId(node: PaneNode, paneId: string): boolean {
   return hasPaneId(node.children[0], paneId) || hasPaneId(node.children[1], paneId);
 }
 
+/**
+ * Session of the pane a tab is focused on, or of its first pane. Share controls on
+ * every layout use this, so Web Desktop and the mobile/Canvas chrome share the same
+ * terminal rather than each deriving its own.
+ */
+export function getFocusedSessionId(node: PaneNode, focusedPaneId: string | null): string | null {
+  return getPaneSessionId(node, focusedPaneId ?? getFirstPaneId(node));
+}
+
 export function getPaneSessionId(node: PaneNode, paneId: string): string | null {
   if (node.type === "pane") {
     return node.id === paneId ? node.sessionId ?? null : null;
