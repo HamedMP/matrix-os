@@ -1,6 +1,7 @@
-import { afterEach, beforeEach, expect, it } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { sql } from "kysely";
 import { KyselyPGlite } from "kysely-pglite";
+import { bootstrapChatDatabase } from "../../packages/gateway/src/chat/database";
 import { ChatRepository } from "../../packages/gateway/src/chat/repository";
 import { ChatSharing, bootstrapChatSharing } from "../../packages/gateway/src/chat/sharing";
 
@@ -183,4 +184,41 @@ it("bootstraps usable partial indexes for each drive-material lookup", async () 
       expect(result.rows.map(row => row["QUERY PLAN"]).join("\n")).toContain(index);
     }
   });
+});
+
+
+it.each(["55P03", "57014", "08006"])("keeps owner bootstrap available only for optional index deadlines (%s)", async (code) => {
+  await repository.kysely.transaction().execute(async trx => {
+    await sql`DROP INDEX idx_chat_messages_company_drive`.execute(trx);
+    await sql`DROP INDEX idx_chat_runs_company_drive`.execute(trx);
+    await sql`DROP INDEX idx_chat_queued_turns_company_drive`.execute(trx);
+  });
+  const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+  try {
+    const fault = Object.assign(new Error("Synthetic database failure"), { code });
+    const failing = repository.kysely.withPlugin({
+      transformQuery: ({ node }) => {
+        if (node.kind === "RawNode" && node.sqlFragments.join("").includes("CREATE INDEX IF NOT EXISTS idx_chat_runs_company_drive")) throw fault;
+        return node;
+      },
+      async transformResult({ result }) { return result; },
+    });
+    if (code === "08006") await expect(bootstrapChatDatabase(failing)).rejects.toBe(fault);
+    else {
+      await expect(bootstrapChatDatabase(failing)).resolves.toBeUndefined();
+      expect(warning).toHaveBeenCalledWith("[chat/drive-sharing] Optional indexes deferred after database deadline", code);
+      expect(await repository.get(owner, "chat_share")).not.toBeNull();
+      await addDriveReference();
+      await expect(shares.preview(owner, "chat_share")).rejects.toMatchObject({ code: "conflict" });
+    }
+    const indexes = await sql`SELECT indexname FROM pg_indexes WHERE indexname IN
+      ('idx_chat_messages_company_drive','idx_chat_runs_company_drive','idx_chat_queued_turns_company_drive')`.execute(repository.kysely);
+    expect(indexes.rows).toEqual([]);
+    // Retry on a subsequent bootstrap installs all indexes without losing owner data.
+    await repository.bootstrap();
+    const retried = await sql`SELECT indexname FROM pg_indexes WHERE indexname IN
+      ('idx_chat_messages_company_drive','idx_chat_runs_company_drive','idx_chat_queued_turns_company_drive')`.execute(repository.kysely);
+    expect(retried.rows).toHaveLength(3);
+    expect(await repository.get(owner, "chat_share")).not.toBeNull();
+  } finally { warning.mockRestore(); }
 });

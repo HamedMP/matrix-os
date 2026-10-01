@@ -58,6 +58,8 @@ export class ChatSharing {
 
   async create(owner: ChatOwner, chatId: string, revision: number, fingerprint?: string) {
     return this.db.transaction().execute(async (trx) => {
+      await sql`SET LOCAL statement_timeout = '5s'`.execute(trx);
+      await sql`SET LOCAL lock_timeout = '5s'`.execute(trx);
       const chat = await trx.selectFrom("chats").selectAll().where("id", "=", chatId)
         .where("owner_type", "=", owner.type).where("owner_id", "=", owner.ownerId).forUpdate().executeTakeFirst();
       if (!chat) throw new ChatSharingError("not_found");
@@ -77,6 +79,8 @@ export class ChatSharing {
 
   async preview(owner: ChatOwner, chatId: string) {
     return this.db.transaction().execute(async (trx) => {
+      await sql`SET LOCAL statement_timeout = '5s'`.execute(trx);
+      await sql`SET LOCAL lock_timeout = '5s'`.execute(trx);
       const chat = await trx.selectFrom("chats").select(["title", "revision"])
         .where("id", "=", chatId).where("owner_type", "=", owner.type).where("owner_id", "=", owner.ownerId)
         .forShare().executeTakeFirst();
