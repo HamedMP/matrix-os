@@ -27,9 +27,9 @@ if [ -d "${MATRIX_SKILLS_SOURCE}/app-builder" ]; then
   exit 0
 fi
 
-for skill_dir in animate animation-accessibility animation-performance animation-vocabulary app-builder app-ui-patterns apple-design chat-import css-animations debug-app design-system dev-vps emil-design-eng integrations jev-email-triage landing-design personal-daily-brief review-animations; do
+for skill_dir in animate animation-accessibility animation-performance animation-vocabulary app-builder app-ui-patterns apple-design chat-import css-animations debug-app design-system dev-vps emil-design-eng integrations jev-email-triage landing-design personal-daily-brief review-animations shadcn; do
   case "$skill_dir" in
-    animate|animation-accessibility|animation-performance|animation-vocabulary|apple-design|css-animations|emil-design-eng|review-animations)
+    animate|animation-accessibility|animation-performance|animation-vocabulary|apple-design|css-animations|emil-design-eng|review-animations|shadcn)
       skill_name="$skill_dir" ;;
     *) skill_name="matrix-$skill_dir" ;;
   esac

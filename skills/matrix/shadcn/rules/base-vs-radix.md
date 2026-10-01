@@ -193,13 +193,13 @@ Base uses a `multiple` boolean prop. Radix uses `type="single"` or `type="multip
 
 ```tsx
 // Single (no prop needed), defaultValue is always an array.
-<ToggleGroup defaultValue={["daily"]} spacing={2}>
+<ToggleGroup aria-label="Frequency" defaultValue={["daily"]} spacing={2}>
   <ToggleGroupItem value="daily">Daily</ToggleGroupItem>
   <ToggleGroupItem value="weekly">Weekly</ToggleGroupItem>
 </ToggleGroup>
 
 // Multi-selection.
-<ToggleGroup multiple>
+<ToggleGroup multiple aria-label="Text formatting">
   <ToggleGroupItem value="bold">Bold</ToggleGroupItem>
   <ToggleGroupItem value="italic">Italic</ToggleGroupItem>
 </ToggleGroup>
@@ -209,13 +209,13 @@ Base uses a `multiple` boolean prop. Radix uses `type="single"` or `type="multip
 
 ```tsx
 // Single, defaultValue is a string.
-<ToggleGroup type="single" defaultValue="daily" spacing={2}>
+<ToggleGroup type="single" aria-label="Frequency" defaultValue="daily" spacing={2}>
   <ToggleGroupItem value="daily">Daily</ToggleGroupItem>
   <ToggleGroupItem value="weekly">Weekly</ToggleGroupItem>
 </ToggleGroup>
 
 // Multi-selection.
-<ToggleGroup type="multiple">
+<ToggleGroup type="multiple" aria-label="Text formatting">
   <ToggleGroupItem value="bold">Bold</ToggleGroupItem>
   <ToggleGroupItem value="italic">Italic</ToggleGroupItem>
 </ToggleGroup>
@@ -226,11 +226,11 @@ Base uses a `multiple` boolean prop. Radix uses `type="single"` or `type="multip
 ```tsx
 // base — wrap/unwrap arrays.
 const [value, setValue] = React.useState("normal")
-<ToggleGroup value={[value]} onValueChange={(v) => setValue(v[0])}>
+<ToggleGroup aria-label="Font weight" value={value ? [value] : []} onValueChange={(v) => setValue(v[0] ?? "")}>
 
 // radix — plain string.
 const [value, setValue] = React.useState("normal")
-<ToggleGroup type="single" value={value} onValueChange={setValue}>
+<ToggleGroup type="single" aria-label="Font weight" value={value} onValueChange={setValue}>
 ```
 
 ---

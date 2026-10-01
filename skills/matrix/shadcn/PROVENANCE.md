@@ -4,6 +4,8 @@ Source: owner-provided local skill `shadcn`, imported 2026-10-02. Upstream proje
 
 Adaptations: Matrix/pnpm release-age policy, no automatic project-context execution or permission grants, preservation of existing components, coherent app-local presets, current chart guidance. Commands are documentation only and require actual harness tools and authorization. No CLI or dependencies are installed by importing this pack.
 
+The `author: Matrix OS` catalog metadata identifies the adapted pack's Matrix maintainer so bundled discovery accepts it; upstream authorship remains attributed to shadcn/ui and the owner-provided snapshot above. Reviewed corrections also preserve complete color variables in Tailwind v3 and label separate Base UI/Radix toggle-group examples.
+
 Source file SHA-256 (before adaptation):
 
 - `SKILL.md`: `89ae3bdf17a08fb30dff8571fcbc0918e57821d6aedb6339d147b143f25157cc`

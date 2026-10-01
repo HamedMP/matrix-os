@@ -101,14 +101,15 @@ module.exports = {
   theme: {
     extend: {
       colors: {
-        warning: "oklch(var(--warning) / <alpha-value>)",
-        "warning-foreground":
-          "oklch(var(--warning-foreground) / <alpha-value>)",
+        warning: "var(--warning)",
+        "warning-foreground": "var(--warning-foreground)",
       },
     },
   },
 }
 ```
+
+These variables already contain complete `oklch(...)` colors. Reference them directly; wrapping them in another color function creates invalid CSS. This v3 recipe does not provide slash-opacity modifiers. If opacity utilities are required, use a separately reviewed channel-only token/config recipe matching the project's color format.
 
 ```tsx
 // 3. Use in components.

@@ -122,24 +122,38 @@ const [selected, setSelected] = useState("daily")
 </div>
 ```
 
-**Correct:**
+**Correct (Base UI-backed project, single selection):**
 
 ```tsx
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 
-<ToggleGroup spacing={2}>
+<ToggleGroup aria-label="Frequency" defaultValue={["daily"]} spacing={2}>
   <ToggleGroupItem value="daily">Daily</ToggleGroupItem>
   <ToggleGroupItem value="weekly">Weekly</ToggleGroupItem>
   <ToggleGroupItem value="monthly">Monthly</ToggleGroupItem>
 </ToggleGroup>
 ```
 
-Combine with `Field` for labelled toggle groups:
+**Correct (Radix-backed project, single selection):**
+
+```tsx
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
+
+<ToggleGroup type="single" aria-label="Frequency" defaultValue="daily" spacing={2}>
+  <ToggleGroupItem value="daily">Daily</ToggleGroupItem>
+  <ToggleGroupItem value="weekly">Weekly</ToggleGroupItem>
+  <ToggleGroupItem value="monthly">Monthly</ToggleGroupItem>
+</ToggleGroup>
+```
+
+Combine with `Field` for a visible group label. Choose the variant matching the installed component source.
+
+**Base UI-backed project:**
 
 ```tsx
 <Field orientation="horizontal">
-  <FieldTitle id="theme-label">Theme</FieldTitle>
-  <ToggleGroup aria-labelledby="theme-label" spacing={2}>
+  <FieldTitle id="theme-label-base">Theme</FieldTitle>
+  <ToggleGroup aria-labelledby="theme-label-base" defaultValue={["system"]} spacing={2}>
     <ToggleGroupItem value="light">Light</ToggleGroupItem>
     <ToggleGroupItem value="dark">Dark</ToggleGroupItem>
     <ToggleGroupItem value="system">System</ToggleGroupItem>
@@ -147,7 +161,20 @@ Combine with `Field` for labelled toggle groups:
 </Field>
 ```
 
-> **Note:** `defaultValue` and `type`/`multiple` props differ between base and radix. See [base-vs-radix.md](./base-vs-radix.md#togglegroup).
+**Radix-backed project:**
+
+```tsx
+<Field orientation="horizontal">
+  <FieldTitle id="theme-label-radix">Theme</FieldTitle>
+  <ToggleGroup type="single" aria-labelledby="theme-label-radix" defaultValue="system" spacing={2}>
+    <ToggleGroupItem value="light">Light</ToggleGroupItem>
+    <ToggleGroupItem value="dark">Dark</ToggleGroupItem>
+    <ToggleGroupItem value="system">System</ToggleGroupItem>
+  </ToggleGroup>
+</Field>
+```
+
+Base UI uses array values and the `multiple` boolean for multi-selection; Radix requires `type="single"` with string values or `type="multiple"` with arrays. Check the installed source and [Base UI](https://base-ui.com/react/components/toggle-group) / [Radix](https://www.radix-ui.com/primitives/docs/components/toggle-group) API for the matching version. See [base-vs-radix.md](./base-vs-radix.md#togglegroup).
 
 ---
 
