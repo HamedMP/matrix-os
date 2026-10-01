@@ -192,6 +192,8 @@ export interface BotSchemaMigrationsTable {
 }
 
 export interface BotDatabase {
+  managed_pi_sessions: Omit<BotAgentSessionsTable, "bot_id">;
+  managed_pi_tool_checkpoints: Omit<BotToolCheckpointsTable, "task_id"> & { chat_id: string };
   bot_schema_migrations: BotSchemaMigrationsTable;
   bot_operations: BotOperationsTable;
   bot_chat_bindings: BotChatBindingsTable;

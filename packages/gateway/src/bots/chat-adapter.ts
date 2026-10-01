@@ -50,7 +50,7 @@ function safeRef(prefix: string, value: string): string {
   return SAFE_REF.test(value) ? value : `${prefix}_${createHash("sha256").update(value).digest("hex").slice(0, 32)}`;
 }
 
-function mapEvent(event: BotEvent["event"]): CanonicalProviderRunEvent[] {
+export function mapBotEvent(event: BotEvent["event"]): CanonicalProviderRunEvent[] {
   switch (event.type) {
     case "assistant_delta": {
       const deltas: CanonicalProviderRunEvent[] = [];
@@ -116,7 +116,7 @@ export function createMatrixBotChatProviderAdapter(options: {
       if (input.owner.type !== "personal") throw new Error("Bots run only for a personal owner");
       const handle = options.orchestrator.start({
         ownerId: input.owner.ownerId, chatId: input.chatId, runId: input.runId,
-        text: messageText(input.parts), signal: input.signal,
+        selection: input.selection, text: messageText(input.parts), signal: input.signal,
       });
       let result: BotTurnResult;
       let drained = false;
@@ -127,7 +127,7 @@ export function createMatrixBotChatProviderAdapter(options: {
             yield CanonicalProviderRunEventSchema.parse({ type: "state.updated", state: BotChatStateSchema.parse(item.state) });
             continue;
           }
-          for (const event of mapEvent(item.event)) {
+          for (const event of mapBotEvent(item.event)) {
             if (event.type === "tool.progress" || event.type === "agent.activity") {
               // Past the budget the reply still streams; further progress is summarized once.
               activities += 1;

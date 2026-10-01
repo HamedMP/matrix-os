@@ -1,8 +1,8 @@
-import { BotModelRouteSchema } from "@matrix-os/contracts";
+import { BotModelRouteSchema, type CanonicalChatModelSelection } from "@matrix-os/contracts";
 import type { AiProviderSnapshotReader } from "../ai-providers/service.js";
 import type { ResolveCodexOwnerIdentity } from "../collaboration/codex-owner-identity.js";
 import { CODEX_SUBSCRIPTION_URL } from "./codex-inference.js";
-import { BotRouteError, resolveBotRoute, type ResolvedBotRoute } from "./route-resolver.js";
+import { BotRouteError, resolveBotRoute, resolveManagedPiRoute, type ResolvedBotRoute } from "./route-resolver.js";
 
 /** Trusted operator configuration chooses a concrete subscription model.
  * No renderer/provider picker may set it. A configured subscription never
@@ -13,8 +13,9 @@ export function createBotModelRouteResolver(options: {
   providers: AiProviderSnapshotReader;
   resolveCodexIdentity: ResolveCodexOwnerIdentity;
   lifetime: AbortSignal;
-}): () => Promise<ResolvedBotRoute> {
-  return async () => {
+}): (selection?: CanonicalChatModelSelection) => Promise<ResolvedBotRoute> {
+  return async (selection) => {
+    if (selection) return resolveManagedPiRoute(await options.providers.getSnapshot(), selection);
     if (options.codexModel === undefined) return resolveBotRoute(await options.providers.getSnapshot());
     const route = BotModelRouteSchema.safeParse({ api: "openai-responses", modelId: options.codexModel,
       input: ["text", "image"], contextWindow: 128_000, maxOutputTokens: 8_192 });

@@ -65,7 +65,7 @@ function setup(call = vi.fn(async () => ({ data: { threads: [{ id: "t1", subject
     agents: { get: vi.fn(async () => ({ id: BOT, recipeRef: { recipeId: "mail-helper", version: "1" } }) as never) },
     now: () => toolClock,
   });
-  const interactions = createBotInteractionService({ transact, handlers: createBotAccessHandlers({ tools }), now: () => toolClock });
+  const interactions = createBotInteractionService({ transact, handlers: createBotAccessHandlers({ tools, now: () => toolClock }), now: () => toolClock });
   return { tools, client, call, interactions };
 }
 

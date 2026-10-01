@@ -25,3 +25,13 @@ describe("explicit owner Codex subscription bot route", () => {
     await expect(createBotModelRouteResolver({ ...options, codexModel: "gpt-5.6-luna" })()).rejects.toBeInstanceOf(BotRouteError);
   });
 });
+
+it("an explicit managed model bypasses an operator Codex pin and never acquires subscription identity", async () => {
+  const identity = vi.fn();
+  const resolve = createBotModelRouteResolver({ codexModel: "gpt-5.6-luna", providers: { getSnapshot: async () => ({
+    accessSources: [{ id: "matrix_cloudflare", state: "ready", staleAfter: null, eligibleModelIds: ["@cf/zai-org/glm-5.3-flash"] }],
+    models: [{ id: "@cf/zai-org/glm-5.3-flash", vendor: "cloudflare", capabilities: ["tools"], status: "current", eligibleAccessSourceIds: ["matrix_cloudflare"] }],
+  }) as never }, resolveCodexIdentity: identity, lifetime: new AbortController().signal });
+  expect(await resolve({ instanceId: "matrix_pi_default", model: "@cf/zai-org/glm-5.3-flash" })).toMatchObject({ route: { api: "openai-completions", modelId: "@cf/zai-org/glm-5.3-flash" } });
+  expect(identity).not.toHaveBeenCalled();
+});

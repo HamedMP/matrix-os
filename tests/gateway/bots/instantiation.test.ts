@@ -50,10 +50,12 @@ function setup(overrides: {
   agents?: Partial<Pick<ChatAgentStore, "createRecipeBot" | "get" | "count">>;
   chats?: Pick<ChatRepository, "withTransaction">;
   ensureWorkspace?: (botId: string) => Promise<void>;
+  validateSelection?: Parameters<typeof createBotInstantiation>[0]["validateSelection"];
   recipes?: ReturnType<typeof createBotRecipeCatalog>;
 } = {}) {
   return createBotInstantiation({
     db,
+    validateSelection: overrides.validateSelection,
     chats: overrides.chats ?? chats,
     agents: {
       createRecipeBot: (owner, input) => agents.createRecipeBot(owner, input),
@@ -277,4 +279,19 @@ describe("bot creation reconciliation", () => {
     await reconciler.runOnce();
     expect(resume).not.toHaveBeenCalled();
   });
+});
+
+it("persists an authorized managed model in the bot definition and includes it in idempotency", async () => {
+  const selection = { instanceId: "matrix_pi_default", model: "claude-sonnet-5" };
+  const validateSelection = vi.fn(async () => undefined);
+  const instantiation = setup({ validateSelection });
+  const created = await instantiation.instantiate(OWNER, request({ selection }));
+  expect(validateSelection).toHaveBeenCalledWith(OWNER, selection);
+  expect(await agents.get(scope, created.agent.id)).toMatchObject({ selection });
+  expect((await chats.get(scope, created.chatId))?.chat.currentSelection).toEqual(selection);
+  await expect(instantiation.instantiate(OWNER, request({ selection: { ...selection, model: "other-model" } }))).rejects.toEqual(new BotInstantiationError("conflict"));
+});
+it("fails a managed create before reserving IDs when route admission is unavailable", async () => {
+  await expect(setup().instantiate(OWNER, request({ selection: { instanceId: "matrix_pi_default", model: "claude-sonnet-5" } }))).rejects.toEqual(new BotInstantiationError("invalid_request"));
+  expect(await operation()).toBeUndefined();
 });

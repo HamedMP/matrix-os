@@ -1,3 +1,4 @@
+import { FUNDED_AI_READINESS_TIMEOUTS } from "@matrix-os/contracts";
 import type { FundedRelayConfig } from "./funded-relay-config.js";
 import { FUNDED_GLM_FLASH } from "./funded-relay-model.js";
 import { workersAiTarget } from "./funded-relay-openai-request.js";
@@ -53,7 +54,7 @@ export async function probeFundedModel(config: FundedRelayConfig, modelId: strin
   } else return false;
 
   try {
-    const response = await fetchFn(url, { method: "POST", headers, body, redirect: "error", signal: AbortSignal.timeout(5_000) });
+    const response = await fetchFn(url, { method: "POST", headers, body, redirect: "error", signal: AbortSignal.timeout(FUNDED_AI_READINESS_TIMEOUTS.relayUpstreamProbeMs) });
     if (!response.ok) {
       await response.body?.cancel();
       return false;

@@ -46,9 +46,15 @@ export interface BotRuntimeBinding {
   requestClass: "interactive" | "background";
 }
 
-interface StoredBinding extends BotRuntimeBinding {
-  expiresAt: number;
+export interface ManagedPiRuntimeBinding extends Omit<BotRuntimeBinding, "botId" | "taskId"> {
+  kind: "managed_chat";
+  workspace: { kind: "chat_workspace" } | import("../chat/execution-root.js").ChatExecutionRootProvenance;
 }
+export type PiRuntimeBinding = BotRuntimeBinding | ManagedPiRuntimeBinding;
+export function isManagedPiBinding(binding: PiRuntimeBinding): binding is ManagedPiRuntimeBinding {
+  return "kind" in binding && binding.kind === "managed_chat";
+}
+type StoredBinding = PiRuntimeBinding & { expiresAt: number };
 
 export class BotRuntimeRegistryError extends Error {
   constructor(readonly code: "capacity_exceeded" | "invalid_binding") {
@@ -70,6 +76,17 @@ const BindingSchema = z.object({
   accessSourceId: BotCredentialAccessSourceIdSchema,
   capabilities: z.array(BotToolCapabilitySchema).max(16),
   requestClass: z.enum(["interactive", "background"]),
+}).strict();
+
+const ManagedBindingSchema = BindingSchema.omit({ botId: true, taskId: true }).extend({
+  kind: z.literal("managed_chat"),
+  workspace: z.union([
+    z.object({ kind: z.literal("chat_workspace") }).strict(),
+    z.object({ ref: z.union([
+      z.object({ kind: z.literal("project"), projectId: ReferenceSchema }).strict(),
+      z.object({ kind: z.literal("worktree"), projectId: ReferenceSchema, worktreeId: ReferenceSchema }).strict(),
+    ]), fingerprint: z.string().regex(/^[a-f0-9]{64}$/) }).strict(),
+  ]),
 }).strict();
 
 /** The broker action each model API uses; a route never reaches another. */
@@ -97,8 +114,8 @@ export class BotRuntimeRegistry {
   }
 
   /** Expired bindings are swept before the capacity check, so stale runs never block admission. */
-  bind(input: BotRuntimeBinding): void {
-    const parsed = BindingSchema.safeParse(input);
+  bind(input: PiRuntimeBinding): void {
+    const parsed = (isManagedPiBinding(input) ? ManagedBindingSchema : BindingSchema).safeParse(input);
     if (!parsed.success) throw new BotRuntimeRegistryError("invalid_binding");
     this.sweep();
     if (!this.entries.has(parsed.data.runtimeHandle) && this.entries.size >= this.capacity) {
@@ -108,7 +125,7 @@ export class BotRuntimeRegistry {
   }
 
   /** The binding for a frame's runtime and generation; a stale generation never matches. */
-  lookup(input: { runtimeHandle: string; executionGeneration: string }): BotRuntimeBinding | null {
+  lookup(input: { runtimeHandle: string; executionGeneration: string }): PiRuntimeBinding | null {
     const runtimeHandle = RuntimeHandleSchema.safeParse(input.runtimeHandle);
     const generation = GenerationSchema.safeParse(input.executionGeneration);
     if (!runtimeHandle.success || !generation.success) return null;
@@ -120,7 +137,7 @@ export class BotRuntimeRegistry {
   }
 
   /** Bot frames must also name the bound run. */
-  lookupRun(input: { runtimeHandle: string; executionGeneration: string; runId: string }): BotRuntimeBinding | null {
+  lookupRun(input: { runtimeHandle: string; executionGeneration: string; runId: string }): PiRuntimeBinding | null {
     const binding = this.lookup(input);
     return binding && binding.runId === input.runId ? binding : null;
   }

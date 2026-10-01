@@ -108,11 +108,16 @@ export class ChatAgentContext {
     const references = input.parts.flatMap((part) => part.type === "resource_reference" ? [part.resource] : []);
     // A recipe bot's direct chat always runs that bot, whatever the client selected. Its
     // authority is the bot's capability set and grants, not the Chat permission mode.
-    if (this.options.botChats && await this.options.botChats.directBot(owner, chatId)) {
+    const directBotId = await this.options.botChats?.directBot(owner, chatId);
+    if (directBotId) {
       if (references.some((reference) => reference.kind === "agent" || reference.kind === "chat")) {
         throw new ChatAgentContextError("context_unavailable");
       }
-      return { selection: MATRIX_BOT_SELECTION, interactionMode: "default", permissionMode: "default" };
+      const bot = await this.agent(owner, directBotId);
+      const concrete = input.selection.instanceId === "matrix_pi_default" || (input.selection.instanceId === MATRIX_BOT_INSTANCE_ID && input.selection.model !== "auto")
+        ? input.selection : bot.selection.instanceId === "matrix_pi_default" ? bot.selection : undefined;
+      if (concrete && Object.keys(concrete.options ?? {}).length) throw new ChatAgentContextError("context_unavailable");
+      return { selection: concrete ? { instanceId: MATRIX_BOT_INSTANCE_ID, model: concrete.model } : MATRIX_BOT_SELECTION, interactionMode: "default", permissionMode: "default" };
     }
     // Only a bot's own chat can run the bot runtime.
     if (input.selection.instanceId === MATRIX_BOT_INSTANCE_ID) throw new ChatAgentContextError("context_unavailable");
@@ -125,7 +130,7 @@ export class ChatAgentContext {
     if (chatReferences.some((reference) => reference.id === chatId)) throw new ChatAgentContextError("context_unavailable");
     const agent = agentReference ? await this.agent(owner, agentReference.id) : undefined;
     // Recipe bots are reached only through their own direct chat.
-    if (agent?.selection.instanceId === MATRIX_BOT_INSTANCE_ID) throw new ChatAgentContextError("context_unavailable");
+    if (agent?.recipeRef || agent?.selection.instanceId === MATRIX_BOT_INSTANCE_ID) throw new ChatAgentContextError("context_unavailable");
     if (agent?.recipe?.skills.includes("matrix-jev-email-triage") &&
       (!agent.recipe.jevInboxTriage || agent.recipe.jevInboxTriage.ownerId !== owner.ownerId)) {
       throw new ChatAgentContextError("context_unavailable");

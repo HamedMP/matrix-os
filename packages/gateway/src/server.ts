@@ -1459,7 +1459,7 @@ export async function createGateway(config: GatewayConfig) {
     fundingSummaryReader: fundedAiFundingSummaryReader,
     runtimeCoordinator: providerGenericHarnessCoordinator,
   });
-  const canonicalExecutableDriverKinds = [
+  const canonicalExecutableDriverKinds: import("@matrix-os/contracts").CanonicalProviderDriverKind[] = [
     "kernel" as const,
     "hermes" as const,
     "openclaw" as const,
@@ -1565,6 +1565,10 @@ export async function createGateway(config: GatewayConfig) {
       }
     }
     if (botServices?.adapter) canonicalAdapters.push(botServices.adapter);
+    if (botServices?.managedAdapter) {
+      canonicalAdapters.push(botServices.managedAdapter);
+      canonicalExecutableDriverKinds.push("matrix_pi");
+    }
     canonicalChatRuntime = await createCanonicalChatRuntime({
       homePath,
       ...(chatDriveContext.service ? {drives:chatDriveContext.service} : {}),

@@ -1,6 +1,6 @@
 import type { AiProviderSnapshotV3 } from "@matrix-os/contracts";
 import { describe, expect, it } from "vitest";
-import { BotRouteError, resolveBotRoute } from "../../../packages/gateway/src/bots/route-resolver.js";
+import { BotRouteError, resolveBotRoute, resolveManagedPiRoute } from "../../../packages/gateway/src/bots/route-resolver.js";
 
 const NOW = Date.parse("2026-09-28T12:00:00.000Z");
 const ready = { state: "ready", checkedAt: null, staleAfter: null, action: "none", safeReason: null };
@@ -102,5 +102,25 @@ describe("bot route resolver", () => {
       instances: [{ accessSourceId: "owner_anthropic_profile", defaultModelId: SONNET }, { accessSourceId: "owner_anthropic_key", defaultModelId: SONNET }],
     }), NOW);
     expect(resolved.accessSourceId).toBe("owner_anthropic_key");
+  });
+});
+
+describe("explicit managed Pi route", () => {
+  const value = () => snapshot({
+    sources: [{ id: "matrix_cloudflare", models: [GLM] }, { id: "matrix_included", models: [SONNET] }],
+    models: [{ id: GLM, vendor: "cloudflare", sources: ["matrix_cloudflare"] }, { id: SONNET, vendor: "anthropic", sources: ["matrix_included"] }],
+  });
+  it("honors a concrete Anthropic model instead of the healthy GLM default", () => {
+    expect(resolveManagedPiRoute(value(), { instanceId: "matrix_pi_default", model: SONNET }, NOW)).toMatchObject({
+      accessSourceId: "matrix_included", route: { api: "anthropic-messages", modelId: SONNET },
+    });
+  });
+  it("refuses stale, forged, and revoked explicit routes without falling back", () => {
+    const revoked = value(); revoked.accessSources[1]!.state = "disabled";
+    const stale = value(); stale.accessSources[1]!.staleAfter = new Date(NOW - 1).toISOString();
+    for (const current of [revoked, stale]) expect(() => resolveManagedPiRoute(current, { instanceId: "matrix_pi_default", model: SONNET }, NOW)).toThrow(BotRouteError);
+    for (const selection of [{ instanceId: "kernel_matrix_included", model: SONNET }, { instanceId: "matrix_pi_default", model: "gpt-forged" }]) {
+      expect(() => resolveManagedPiRoute(value(), selection, NOW)).toThrow(BotRouteError);
+    }
   });
 });

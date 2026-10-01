@@ -47,6 +47,7 @@ function setup(overrides: {
   resolveCredentials?: (registry: BotRuntimeRegistry) => unknown;
   fundedAdmission?: FundedAdmissionQueue;
   publish?: () => Promise<void>;
+  revalidateBinding?: () => Promise<boolean>;
 } = {}) {
   const registry = new BotRuntimeRegistry();
   registry.bind(binding);
@@ -73,6 +74,7 @@ function setup(overrides: {
       homePath: "/tmp",
       lifetime: lifetime.signal,
       fundedAdmission: overrides.fundedAdmission,
+      revalidateBinding: overrides.revalidateBinding,
       resolveCredentials: (overrides.resolveCredentials
         ? overrides.resolveCredentials(registry)
         : vi.fn(async () => ({ env: { ANTHROPIC_AUTH_TOKEN: "funded-token", ANTHROPIC_BASE_URL: "https://relay.test" } }))) as never,
@@ -342,4 +344,15 @@ describe("bot broker actions", () => {
       expect(fetchImpl).not.toHaveBeenCalled();
     });
   });
+});
+
+it("rechecks canonical managed run authority after a funded queue wait before sending", async () => {
+  let allowed = true;
+  const fetchImpl = vi.fn();
+  const fundedAdmission = { run: async (_input: unknown, work: () => Promise<unknown>) => { allowed = false; const result = await work() as { value: unknown }; return result.value; } } as unknown as FundedAdmissionQueue;
+  const { actions } = setup({ fetchImpl: fetchImpl as never, fundedAdmission, revalidateBinding: async () => allowed });
+  const response = await actions.handleFrame({ version: 1, requestId: REQUEST_ID, runtimeHandle: RUNTIME, executionGeneration: "6",
+    action: "inference.messages", method: "POST", path: "/v1/messages?beta=true", headers: {}, body: JSON.stringify({ model: binding.route.modelId, stream: true }) });
+  expect(response).toMatchObject({ ok: false, error: "action_denied" });
+  expect(fetchImpl).not.toHaveBeenCalled();
 });

@@ -253,6 +253,11 @@ describe("server-resolved Chat mention context", () => {
     }
 
     it("runs a bot's own chat on the bot runtime by capability set, whatever was selected", async () => {
+      await agents.createRecipeBot(owner, {
+        id: "bot_0123456789abcdef01234567", createHash: "b".repeat(64),
+        fields: { name: "Writing Bot", description: "", instructions: "Revise.", selection: botSelection },
+        recipeRef: { recipeId: "writing-bot", version: "2026-09-27.1" },
+      });
       const bots = botContext((chatId) => (chatId === "chat_current" ? "bot_0123456789abcdef01234567" : null));
       await expect(bots.prepare(owner, "chat_current", { ...request, permissionMode: "read_only" }))
         .resolves.toEqual({ selection: botSelection, interactionMode: "default", permissionMode: "default" });

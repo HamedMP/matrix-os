@@ -1,3 +1,4 @@
+import { canonicalJson } from "./repositories/serialization.js";
 /**
  * Broker actions for bot workloads (spec 536, contracts/bot-broker-protocol.md).
  * Every frame is authorized by the bot registry: the runtime handle, current
@@ -26,7 +27,7 @@ import { forwardBotInference, type BotInferenceDependencies } from "./broker-inf
 import type { BotCheckpointsRepository } from "./repositories/checkpoints.js";
 import type { BotSessionsRepository } from "./repositories/sessions.js";
 import { BotStateError, withTransaction, type BotExecutor } from "./repositories/shared.js";
-import type { BotRuntimeBinding, BotRuntimeRegistry } from "./runtime-registry.js";
+import { isManagedPiBinding, type PiRuntimeBinding, type BotRuntimeRegistry } from "./runtime-registry.js";
 import type { ScopeRuntimeHost } from "../scope-runtime-host/index.js";
 
 const DEFAULT_TOOL_TIMEOUT_MS = 30_000;
@@ -44,19 +45,19 @@ export class BotBrokerActionError extends Error {
 
 /** The run the gateway admitted, and its input images. Implemented by the orchestrator (L8). */
 export interface BotRunSource {
-  loadRunSpec(binding: BotRuntimeBinding): Promise<BotRunSpec>;
-  readImageChunk(binding: BotRuntimeBinding, request: BotImageChunkRequest): Promise<BotImageChunk>;
+  loadRunSpec(binding: PiRuntimeBinding): Promise<BotRunSpec>;
+  readImageChunk(binding: PiRuntimeBinding, request: BotImageChunkRequest): Promise<BotImageChunk>;
 }
 
 /** Receives ordered events for projection into canonical Chat (L8). */
 export interface BotEventSink {
-  publish(binding: BotRuntimeBinding, event: BotEvent): Promise<void>;
+  publish(binding: PiRuntimeBinding, event: BotEvent): Promise<void>;
 }
 
 /** Concrete tools (artifacts, memory, interactions, integrations) plug in here (L8-L9). */
 export interface BotToolDispatcher {
   effectClass(request: BotToolRequest): BotEffectClass;
-  dispatch(binding: BotRuntimeBinding, request: BotToolRequest, signal: AbortSignal): Promise<{ result: BotToolResult; outcomeRef?: string }>;
+  dispatch(binding: PiRuntimeBinding, request: BotToolRequest, signal: AbortSignal): Promise<{ result: BotToolResult; outcomeRef?: string }>;
 }
 
 function refusal(requestId: string, code: BotToolErrorCode) {
@@ -95,19 +96,13 @@ function untilAborted<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
   });
 }
 
-function canonicalJson(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
-  if (value && typeof value === "object") {
-    return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson((value as Record<string, unknown>)[key])}`).join(",")}}`;
-  }
-  return JSON.stringify(value);
-}
-
 export function createBotBrokerActions(deps: {
   /** The owner database the repositories use; pre-dispatch checkpoint writes share one transaction on it. */
   db: BotExecutor;
   registry: BotRuntimeRegistry;
   sessions: BotSessionsRepository;
+  managedSessions?: import("../chat/managed-pi-sessions.js").ManagedPiSessionsRepository;
+  managedCheckpoints?: import("../chat/managed-pi-checkpoints.js").ManagedPiCheckpointsRepository;
   checkpoints: BotCheckpointsRepository;
   runs: BotRunSource;
   events: BotEventSink;
@@ -153,7 +148,7 @@ export function createBotBrokerActions(deps: {
     evictOrders();
   }
 
-  async function publishEvent(binding: BotRuntimeBinding, event: BotEvent): Promise<boolean> {
+  async function publishEvent(binding: PiRuntimeBinding, event: BotEvent): Promise<boolean> {
     const order = eventOrder.get(binding.runId) ?? {
       runtimeHandle: binding.runtimeHandle, executionGeneration: binding.executionGeneration, lastSeq: -1, publishing: false,
     };
@@ -170,44 +165,42 @@ export function createBotBrokerActions(deps: {
     return true;
   }
 
-  async function runTool(binding: BotRuntimeBinding, request: BotToolRequest): Promise<BotToolResult> {
+  async function runTool(binding: PiRuntimeBinding, request: BotToolRequest): Promise<BotToolResult> {
     if (!binding.capabilities.includes(request.capability)) throw new BotBrokerActionError("denied");
     const effectClass = deps.tools.effectClass(request);
     const argsHash = createHash("sha256").update(canonicalJson(request.args)).digest("hex");
     // Prepared and dispatched commit together; the tool call itself runs outside the transaction.
+    const checkpoints = isManagedPiBinding(binding) ? deps.managedCheckpoints : deps.checkpoints;
+    if (!checkpoints) throw new BotBrokerActionError("not_granted");
     const id = await withTransaction(deps.db, async (trx) => {
-      const prepared = await deps.checkpoints.prepare({
-        ownerId: binding.ownerId,
-        taskId: binding.taskId,
-        runId: binding.runId,
-        toolCallId: request.toolCallId,
-        action: { capability: request.capability, argsHash },
-        effectClass,
-        now: now().toISOString(),
-      }, trx);
+      const fields = { ownerId: binding.ownerId, runId: binding.runId, toolCallId: request.toolCallId,
+        action: { capability: request.capability, argsHash }, effectClass, now: now().toISOString() };
+      const prepared = isManagedPiBinding(binding)
+        ? await deps.managedCheckpoints!.prepare({ ...fields, chatId: binding.chatId }, trx)
+        : await deps.checkpoints.prepare({ ...fields, taskId: binding.taskId }, trx);
       // A tool call ID is used once per run; a repeat is never dispatched again.
       if (!prepared.created) throw new BotBrokerActionError("denied");
       const checkpointId = { ownerId: binding.ownerId, checkpointId: prepared.checkpoint.checkpointId };
-      await deps.checkpoints.markDispatched({ ...checkpointId, now: now().toISOString() }, trx);
+      await checkpoints.markDispatched({ ...checkpointId, now: now().toISOString() }, trx);
       return checkpointId;
     });
     // The run may have been released while the checkpoint was written; nothing was dispatched.
     if (!deps.registry.lookupRun(binding)) {
-      await deps.checkpoints.markObserved({ ...id, now: now().toISOString() });
+      await checkpoints.markObserved({ ...id, now: now().toISOString() });
       throw new BotBrokerActionError("stale_generation");
     }
     const signal = AbortSignal.any([deps.inference.lifetime, AbortSignal.timeout(toolTimeoutMs)]);
     try {
       const { result, outcomeRef } = await untilAborted(deps.tools.dispatch(binding, request, signal), signal);
-      await deps.checkpoints.markObserved({ ...id, ...(outcomeRef ? { outcomeRef } : {}), now: now().toISOString() });
+      await checkpoints.markObserved({ ...id, ...(outcomeRef ? { outcomeRef } : {}), now: now().toISOString() });
       return result;
     } catch (error: unknown) {
       // A refusal is decided before any effect; anything else leaves the effect unknown.
       if (error instanceof BotBrokerActionError) {
-        await deps.checkpoints.markObserved({ ...id, now: now().toISOString() });
+        await checkpoints.markObserved({ ...id, now: now().toISOString() });
         throw error;
       }
-      await deps.checkpoints.markEffectUnknown({ ...id, now: now().toISOString() });
+      await checkpoints.markEffectUnknown({ ...id, now: now().toISOString() });
       if (signal.aborted) throw new BotBrokerActionError("timeout");
       console.warn("[bots] tool dispatch failed:", error instanceof Error ? error.name : "UnknownError");
       throw new BotBrokerActionError("unavailable");
@@ -240,7 +233,9 @@ export function createBotBrokerActions(deps: {
       const request = parsed.data;
       const binding = deps.registry.lookupRun(request);
       if (!binding) return refusal(request.requestId, "stale_generation");
-      const key = { ownerId: binding.ownerId, botId: binding.botId, chatId: binding.chatId };
+      const sessions = isManagedPiBinding(binding) ? deps.managedSessions : deps.sessions;
+      if (!sessions) return refusal(request.requestId, "not_granted");
+      const key = { ownerId: binding.ownerId, chatId: binding.chatId };
       try {
         switch (request.action) {
           case "bot.run.load":
@@ -248,11 +243,11 @@ export function createBotBrokerActions(deps: {
           case "bot.input.image":
             return success(request.requestId, BotImageChunkSchema.parse(await deps.runs.readImageChunk(binding, request.image)));
           case "bot.session.load": {
-            const snapshot = await deps.sessions.load(key);
+            const snapshot = isManagedPiBinding(binding) ? await deps.managedSessions!.load(key) : await deps.sessions.load({ ...key, botId: binding.botId });
             return success(request.requestId, { revision: snapshot.revision, messages: snapshot.messages });
           }
           case "bot.session.save": {
-            const saved = await deps.sessions.save({
+            const fields = {
               ...key,
               baseRevision: request.session.baseRevision,
               messages: request.session.messages,
@@ -260,7 +255,8 @@ export function createBotBrokerActions(deps: {
               tokenEstimate: Math.ceil(JSON.stringify(request.session.messages).length / 4),
               runtimeVersions: { "@earendil-works/pi-agent-core": SCOPE_RUNTIME_BOT_HARNESS_VERSION },
               now: now().toISOString(),
-            });
+            };
+            const saved = isManagedPiBinding(binding) ? await deps.managedSessions!.save(fields) : await deps.sessions.save({ ...fields, botId: binding.botId });
             return success(request.requestId, { revision: saved.revision });
           }
           case "bot.event":
