@@ -1,75 +1,24 @@
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { CheckIcon, UsersIcon } from "@renderer/lib/hugeicons";
-import { useEffect, useMemo, useState } from "react";
-import { z } from "zod/v4";
-import { createDesktopCollaborationApi, releaseDesktopCollaborationApi } from "../../lib/collaboration";
+import { useDesktopOrganizations } from "../collaboration/useDesktopOrganizations";
 import { useConnection } from "../../stores/connection";
-
-// The platform caps the listing here. A full page cannot prove an organization is absent.
-const LISTING_CAP = 100;
-
-const OrganizationsResponseSchema = z.object({
-  organizations: z.array(z.object({
-    organizationId: z.string().regex(/^org_[A-Za-z0-9_-]{1,124}$/),
-    name: z.string().max(256),
-  })).max(LISTING_CAP),
-});
-
-type Organization = z.infer<typeof OrganizationsResponseSchema>["organizations"][number];
-// `forUserId` ties a listing to the account it was read for, so an account switch can
-// never judge one user's remembered organization against another user's memberships.
-type Listing = { state: "loading" } | { state: "loaded"; forUserId: string; organizations: Organization[] } | { state: "failed" };
-
 
 /**
  * Electron Desktop counterpart of the shell's OrganizationMenuItems.
  *
  * Every share control on Electron Desktop reads `organizationId` from the connection
- * store, and the trusted-core auth status never carries one -- so before this, all of
- * them read "Join an organization to share" permanently. Choosing here sets it and the
- * store remembers it per user.
+ * store. The member's oldest organization is active by default (DesktopDefaultOrganization);
+ * this switches between the ones they belong to, and the store remembers the choice per user.
  *
- * Organizations come from the platform's membership projection, not Clerk's browser
- * SDK (Electron has no Clerk session). The platform caps the listing at 100, so one
- * request returns every membership and there is no next page to fetch.
- *
- * Mounted inside the open menu: each open re-reads membership, and the API is released
- * on close rather than left in the shared live-API set.
+ * Mounted inside the open menu: each open re-reads membership, so an organization the
+ * member has left is replaced here too, and the API is released on close rather than
+ * left in the shared live-API set. The platform caps the listing at 100, so one request
+ * returns every membership and there is no next page to fetch.
  */
 export function DesktopOrganizationMenuItems({ itemClass }: { itemClass: string }) {
-  const platformHost = useConnection((state) => state.platformHost);
-  const userId = useConnection((state) => state.userId);
   const organizationId = useConnection((state) => state.organizationId);
   const selectOrganization = useConnection((state) => state.selectOrganization);
-  const api = useMemo(() => createDesktopCollaborationApi(platformHost), [platformHost]);
-  const [listing, setListing] = useState<Listing>({ state: "loading" });
-
-  useEffect(() => () => { if (api) releaseDesktopCollaborationApi(api); }, [api]);
-
-  // react-doctor-disable-next-line react-doctor/no-fetch-in-effect -- membership is read when the account menu opens, not on a user event; the request is ignored after unmount.
-  useEffect(() => {
-    let active = true;
-    if (!api || !userId) return () => { active = false; };
-    void api.get("/api/organizations").then((value) => {
-      if (!active) return;
-      const { organizations } = OrganizationsResponseSchema.parse(value);
-      setListing({ state: "loaded", forUserId: userId, organizations });
-    }).catch((error: unknown) => {
-      console.warn("[collaboration-organization] organizations unavailable", error instanceof Error ? error.name : "UnknownError");
-      if (active) setListing({ state: "failed" });
-    });
-    return () => { active = false; };
-  }, [api, userId]);
-
-  // A remembered organization the member has since left must not stay selected -- but only
-  // when this listing can prove it: it must be this user's, and complete rather than capped.
-  useEffect(() => {
-    if (listing.state !== "loaded" || !organizationId) return;
-    if (listing.forUserId !== userId || listing.organizations.length >= LISTING_CAP) return;
-    if (!listing.organizations.some((organization) => organization.organizationId === organizationId)) {
-      selectOrganization(null);
-    }
-  }, [listing, organizationId, selectOrganization, userId]);
+  const listing = useDesktopOrganizations();
 
   if (listing.state === "loading") return null;
   if (listing.state === "loaded" && listing.organizations.length === 0) return null;

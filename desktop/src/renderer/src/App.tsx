@@ -9,6 +9,7 @@ import SignIn from "./features/signin/SignIn";
 import MissionControl from "./features/mission-control/MissionControl";
 import DesktopUpdateExperience from "./features/updates/DesktopUpdateExperience";
 import DesktopSupportWidget from "./features/support/DesktopSupportWidget";
+import { DesktopDefaultOrganization } from "./features/collaboration/DesktopDefaultOrganization";
 import { useAppearance } from "./stores/appearance";
 import { useConnection, wireConnectionEvents } from "./stores/connection";
 
@@ -35,7 +36,11 @@ export default function App() {
         ) : status === "signed-out" ? (
           <SignIn />
         ) : (
-          <RuntimeCompatibilityGate key={scope}><MissionControl /></RuntimeCompatibilityGate>
+          <>
+            {/* Outside the runtime gate: organizations come from the platform, not the computer. */}
+            <DesktopDefaultOrganization />
+            <RuntimeCompatibilityGate key={scope}><MissionControl /></RuntimeCompatibilityGate>
+          </>
         )}
       </div>
       <NativeChatBadge />

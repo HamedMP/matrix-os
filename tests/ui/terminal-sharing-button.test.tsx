@@ -51,6 +51,18 @@ describe("terminal sharing button", () => {
     expect(screen.getByText(/ongoing terminal/i)).toBeVisible();
   });
 
+  it("shows sharing as disabled for an individual user in no organization", () => {
+    const api = { baseUrl: "https://app.matrix-os.com", get: vi.fn(), post: vi.fn(), delete: vi.fn() };
+    render(<TerminalSharingButton api={api} runtimeId="runtime_owner" organizationId={null} terminalId="terminal_release" />);
+
+    const button = screen.getByRole("button", { name: "Share terminal" });
+    expect(button).toBeDisabled();
+    expect(button).toHaveTextContent("Join an organization to share");
+    fireEvent.click(button);
+    expect(api.post).not.toHaveBeenCalled();
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
   it("leaves an unrestricted terminal intact when preflight rejects it", async () => {
     const api = {
       baseUrl: "https://app.matrix-os.com",

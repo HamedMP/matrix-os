@@ -2,6 +2,7 @@ import { desktopProviderIdentityKey } from "../lib/provider-settings-identity";
 // Connection/auth status store. Holds NO credential — only status snapshots
 // from the trusted core (FR-002).
 import { create } from "zustand";
+import { pickDefaultOrganizationId } from "@matrix-os/ui/default-organization";
 import { invoke, onEvent } from "../lib/operator";
 import { createApiClient, type ApiClient } from "../lib/api";
 import { clearDraftChats } from "./draft-chat";
@@ -20,7 +21,8 @@ interface ConnectionState {
   userId: string | null;
   /**
    * Active organization for collaboration sharing (S20 / T101). The trusted-core
-   * auth status does not carry one, so the member chooses it in the account menu
+   * auth status does not carry one, so it defaults to the member's oldest
+   * organization (DesktopDefaultOrganization), can be switched in the account menu,
    * and the choice is remembered per user. Every share request sends it and the
    * platform re-checks current membership, so a client-side choice cannot widen
    * access -- it only decides which organization the share controls act in.
@@ -41,6 +43,13 @@ interface ConnectionState {
   refresh: () => Promise<void>;
   /** Chooses the organization share controls act in; null clears it. Remembered per user. */
   selectOrganization: (organizationId: string | null) => void;
+  /**
+   * Applies a freshly read membership listing: keeps the member's choice while the
+   * listing still contains it, otherwise falls back to their oldest organization (none
+   * for a user in no organization). Ignored when the listing was read for another
+   * account, and a capped listing never rules a choice out.
+   */
+  reconcileOrganizations: (listing: { forUserId: string; organizationIds: readonly string[]; complete: boolean }) => void;
   selectRuntime: (slot: string) => Promise<void>;
   signOut: () => Promise<void>;
 }
@@ -129,6 +138,14 @@ export const useConnection = create<ConnectionState>()((set, get) => ({
     const valid = organizationId === null || ORGANIZATION_ID.test(organizationId) ? organizationId : null;
     set({ organizationId: valid });
     writeSelectedOrganization(get().userId, valid);
+  },
+
+  reconcileOrganizations: ({ forUserId, organizationIds, complete }) => {
+    if (forUserId !== get().userId) return;
+    const current = get().organizationId;
+    if (current && (!complete || organizationIds.includes(current))) return;
+    const fallback = pickDefaultOrganizationId(organizationIds);
+    if (fallback !== current) get().selectOrganization(fallback);
   },
 
   selectRuntime: async (slot) => {

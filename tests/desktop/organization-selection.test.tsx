@@ -19,6 +19,7 @@ vi.mock("@desktop/renderer/src/lib/collaboration", () => ({
 
 import { useConnection } from "@desktop/renderer/src/stores/connection";
 import { DesktopOrganizationMenuItems } from "@desktop/renderer/src/features/mission-control/DesktopOrganizationMenuItems";
+import { DesktopDefaultOrganization } from "@desktop/renderer/src/features/collaboration/DesktopDefaultOrganization";
 
 const KEY = "matrix.desktop.selectedOrganization:";
 
@@ -187,9 +188,21 @@ describe("DesktopOrganizationMenuItems", () => {
     expect(screen.queryByRole("menuitemradio", { name: "Bad" })).toBeNull();
   });
 
-  it("clears a remembered organization the member has since left", async () => {
+  it("moves a member off an organization they have since left, onto their oldest remaining one", async () => {
     useConnection.getState().selectOrganization("org_left");
-    apiState.get.mockResolvedValue({ organizations: [{ organizationId: "org_finna", name: "Finna" }] });
+    apiState.get.mockResolvedValue({ organizations: [
+      { organizationId: "org_matrix", name: "Matrix" },
+      { organizationId: "org_finna", name: "Finna" },
+    ] });
+    renderMenu();
+
+    await waitFor(() => expect(useConnection.getState().organizationId).toBe("org_finna"));
+    expect(window.localStorage.getItem(KEY + "user_nima")).toBe("org_finna");
+  });
+
+  it("clears the organization of a member who has left every one", async () => {
+    useConnection.getState().selectOrganization("org_left");
+    apiState.get.mockResolvedValue({ organizations: [] });
     renderMenu();
 
     await waitFor(() => expect(useConnection.getState().organizationId).toBeNull());
@@ -224,10 +237,105 @@ describe("DesktopOrganizationMenuItems", () => {
     expect(useConnection.getState().organizationId).toBe("org_beyond_cap");
   });
 
-  it("releases its collaboration API when the menu closes", async () => {
+  it("releases its collaboration API once the menu has its listing", async () => {
     apiState.get.mockResolvedValue({ organizations: [{ organizationId: "org_finna", name: "Finna" }] });
     const { unmount } = renderMenu();
     await screen.findByRole("menuitemradio", { name: "Finna" });
+
+    unmount();
+
+    expect(apiState.released).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("connection store organization reconciliation", () => {
+  it("ignores a listing read for a different account", () => {
+    useConnection.getState().reconcileOrganizations({ forUserId: "user_other", organizationIds: ["org_finna"], complete: true });
+
+    expect(useConnection.getState().organizationId).toBeNull();
+  });
+
+  it("keeps a choice a capped listing cannot rule out, but still offers a default from it", () => {
+    const { reconcileOrganizations, selectOrganization } = useConnection.getState();
+    reconcileOrganizations({ forUserId: "user_nima", organizationIds: ["org_b", "org_a"], complete: false });
+    expect(useConnection.getState().organizationId).toBe("org_a");
+
+    selectOrganization("org_beyond_cap");
+    reconcileOrganizations({ forUserId: "user_nima", organizationIds: ["org_b", "org_a"], complete: false });
+    expect(useConnection.getState().organizationId).toBe("org_beyond_cap");
+  });
+});
+
+describe("DesktopDefaultOrganization", () => {
+  it("activates the oldest organization at sign-in without the member opening any menu", async () => {
+    apiState.get.mockResolvedValue({ organizations: [
+      { organizationId: "org_matrix", name: "Matrix" },
+      { organizationId: "org_finna", name: "Finna" },
+    ] });
+    render(<DesktopDefaultOrganization />);
+
+    await waitFor(() => expect(useConnection.getState().organizationId).toBe("org_finna"));
+    expect(apiState.get).toHaveBeenCalledWith("/api/organizations");
+  });
+
+  it("keeps an organization the member chose over the default", async () => {
+    useConnection.getState().selectOrganization("org_matrix");
+    apiState.get.mockResolvedValue({ organizations: [
+      { organizationId: "org_matrix", name: "Matrix" },
+      { organizationId: "org_finna", name: "Finna" },
+    ] });
+    render(<DesktopDefaultOrganization />);
+
+    await waitFor(() => expect(apiState.get).toHaveBeenCalled());
+    await act(async () => { await Promise.resolve(); });
+    expect(useConnection.getState().organizationId).toBe("org_matrix");
+  });
+
+  it("keeps an individual user individual: no organization, nothing activated", async () => {
+    apiState.get.mockResolvedValue({ organizations: [] });
+    render(<DesktopDefaultOrganization />);
+
+    await waitFor(() => expect(apiState.get).toHaveBeenCalled());
+    await act(async () => { await Promise.resolve(); });
+    expect(useConnection.getState().organizationId).toBeNull();
+  });
+
+  it("never applies one account's listing to the next account signed in", async () => {
+    let resolveFirst: (value: unknown) => void = () => undefined;
+    apiState.get.mockReturnValueOnce(new Promise((resolve) => { resolveFirst = resolve; }));
+    apiState.get.mockReturnValueOnce(new Promise(() => undefined));
+    render(<DesktopDefaultOrganization />);
+    await waitFor(() => expect(apiState.get).toHaveBeenCalledTimes(1));
+
+    act(() => { useConnection.setState({ userId: "user_b", organizationId: null }); });
+    await act(async () => { resolveFirst({ organizations: [{ organizationId: "org_finna", name: "Finna" }] }); });
+
+    expect(useConnection.getState().organizationId).toBeNull();
+  });
+
+  it("leaves sharing unavailable, not broken, when the listing cannot load", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    apiState.get.mockRejectedValue(new TypeError("network"));
+    render(<DesktopDefaultOrganization />);
+
+    await waitFor(() => expect(console.warn).toHaveBeenCalled());
+    expect(useConnection.getState().organizationId).toBeNull();
+  });
+
+  it("releases its collaboration API as soon as the listing settles, not at sign-out", async () => {
+    apiState.get.mockResolvedValue({ organizations: [] });
+    const { unmount } = render(<DesktopDefaultOrganization />);
+
+    await waitFor(() => expect(apiState.released).toHaveBeenCalledTimes(1));
+    unmount();
+    expect(apiState.released).toHaveBeenCalledTimes(1);
+  });
+
+  it("releases an API whose request is still in flight at sign-out", async () => {
+    apiState.get.mockReturnValue(new Promise(() => undefined));
+    const { unmount } = render(<DesktopDefaultOrganization />);
+    await waitFor(() => expect(apiState.get).toHaveBeenCalled());
+    expect(apiState.released).not.toHaveBeenCalled();
 
     unmount();
 
