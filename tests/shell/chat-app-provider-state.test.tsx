@@ -9,9 +9,15 @@ import { ChatApp } from "../../shell/src/components/ChatApp.js";
 import { OPEN_PROVIDER_SETTINGS_EVENT, PROVIDER_SETTINGS_CHANGED_EVENT } from "../../shell/src/lib/canonical-provider-setup.js";
 import { TERMINAL_AGENT_OPTIONS } from "../../shell/src/components/terminal/terminal-agent-options.js";
 
+// This suite isolates catalog/send binding; connection actions are covered by chat-provider-onboarding.test.tsx.
+vi.mock("../../shell/src/components/chat-provider-onboarding", () => ({
+  ChatProviderOnboarding: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+}));
+
 vi.mock("@clerk/nextjs", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@clerk/nextjs")>()),
   useOrganization: () => ({ organization: null }),
+  useAuth: () => ({userId:null,sessionId:null}),
 }));
 
 function providerCatalog(available = true, secondModel = false) {
@@ -341,7 +347,7 @@ describe("Chat canonical provider state", () => {
       onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={onSubmit}
     />);
 
-    expect(await screen.findByText("Connect a harness in Settings to start chatting.")).toBeVisible();
+    expect(await screen.findByText("Choose a model to start chatting.")).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "Choose model and connection" }));
     fireEvent.click(screen.getByRole("button", { name: "Pi agent, Disabled in Settings" }));
     expect(await screen.findByText("Disabled in Settings")).toBeVisible();
@@ -392,7 +398,7 @@ describe("Chat canonical provider state", () => {
       onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={onSubmit}
     />);
 
-    expect(await screen.findByText("Connect a harness in Settings to start chatting.")).toBeVisible();
+    expect(await screen.findByText("Choose a model to start chatting.")).toBeVisible();
     const draft = screen.getByPlaceholderText("Write or dictate a draft — connect a harness to send");
     expect(draft).toBeEnabled();
     fireEvent.change(draft, { target: { value: "Keep this bound draft" } });

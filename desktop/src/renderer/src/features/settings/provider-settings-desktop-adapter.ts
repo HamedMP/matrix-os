@@ -18,7 +18,8 @@ import type {
 import { AppError } from "../../../../shared/app-error";
 import { buildGatewayUrl, type ApiClient } from "../../lib/api";
 import { invoke } from "../../lib/operator";
-import { isValidShellSessionName, useShellSessions } from "../../stores/shell-sessions";
+import { isValidShellSessionName, readShellSessions, useShellSessions, type ShellSessionSummary } from "../../stores/shell-sessions";
+import { captureRuntimeGeneration, isCurrentRuntimeGeneration } from "../../stores/runtime-generation";
 import { useTabs } from "../../stores/tabs";
 import { useDesktopSurfaces } from "../../stores/desktop-surfaces";
 
@@ -27,6 +28,7 @@ const PROVIDER_SETTINGS_ACTIONS_PATH = "/api/ai/provider-settings/actions";
 const MAX_RESPONSE_BYTES = 1024 * 1024;
 const MAX_MUTATION_BYTES = 64 * 1024;
 const MAX_CHECKOUT_RESPONSE_BYTES = 8 * 1024;
+let latestTerminalHandoff: symbol | undefined;
 
 export { desktopProviderIdentityKey } from "../../lib/provider-settings-identity";
 
@@ -95,17 +97,48 @@ export async function openExistingProviderTerminalSession(
   terminalSessionId: string,
   isIdentityCurrent: () => boolean = () => true,
 ): Promise<boolean> {
-  if (!isValidShellSessionName(terminalSessionId)) return false;
-  const sessions = await useShellSessions.getState().load(api);
-  if (!isIdentityCurrent()) return false;
-  const exists = sessions?.some((session) => (
-    session.name === terminalSessionId && session.status === "active"
-  )) ?? false;
-  if (!exists) return false;
-  const tabId = useTabs.getState().openTab({ kind: "terminals", title: "Terminal" });
-  useDesktopSurfaces.getState().activateSurface(tabId);
-  useTabs.getState().requestTerminalSession(terminalSessionId);
-  return true;
+  if (!isValidShellSessionName(terminalSessionId) || !isIdentityCurrent()) return false;
+  const handoff = Symbol();
+  latestTerminalHandoff = handoff;
+  const generation = captureRuntimeGeneration();
+  const revision = useShellSessions.getState().authoritativeRevision;
+  const sequence = useShellSessions.getState().loadSequence + 1;
+  // Invalidate polls issued before this read, while allowing polls issued after
+  // it to complete normally. Completion order alone is not snapshot freshness.
+  useShellSessions.setState({ loadSequence: sequence, loading: true, error: null });
+  // A background poll can supersede store.load while this user action waits.
+  // Validate the handoff independently without weakening latest-only polling.
+  try {
+    const sessions: ShellSessionSummary[] = await readShellSessions(api);
+    if (latestTerminalHandoff !== handoff || !isIdentityCurrent() || !isCurrentRuntimeGeneration(generation)) return false;
+    const current = useShellSessions.getState();
+    // A completed newer list or deletion owns the truth. In-flight polls alone
+    // cannot turn this successfully validated exact reference into "missing".
+    const superseded = current.authoritativeRevision !== revision;
+    const authoritativeSessions = superseded ? current.sessions : sessions;
+    if (!superseded) {
+      useShellSessions.setState((state) => ({
+        sessions,
+        authoritativeRevision: state.authoritativeRevision + 1,
+      }));
+    }
+    const exists = authoritativeSessions.some((session) => (
+      session.name === terminalSessionId && session.status === "active"
+    ));
+    if (!exists) return false;
+    const tabId = useTabs.getState().openTab({ kind: "terminals", title: "Terminal" });
+    useDesktopSurfaces.getState().activateSurface(tabId);
+    useTabs.getState().requestTerminalSession(terminalSessionId);
+    return true;
+  } catch (error) {
+    console.warn("[provider-settings] Terminal handoff unavailable:", error instanceof Error ? error.name : typeof error);
+    return false;
+  } finally {
+    if (latestTerminalHandoff === handoff && isCurrentRuntimeGeneration(generation)
+      && useShellSessions.getState().loadSequence === sequence) {
+      useShellSessions.setState({ loading: false });
+    }
+  }
 }
 
 export async function openDesktopProviderAgentSetup(

@@ -110,6 +110,8 @@ export function renderLocalParityCloudInit(template, input) {
     imageSource: "clean_image",
     targetBundleSha256: input.bundleSha256 ?? "",
     snapshotSourceVersion: "",
+    updateManifestBaseUrlEnv: "",
+    collaborationDisabledEnv: "",
     hostBundleUrl: input.hostBundleUrl,
     platformRegisterUrl: `${input.platformUrl}/vps/register`,
     platformInternalUrl: input.platformUrl,

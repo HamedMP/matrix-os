@@ -8,6 +8,7 @@ import { isCurrentRuntimeGeneration } from "../../stores/runtime-generation";
 import { useConnection } from "../../stores/connection";
 import ComputerFileBrowser, { type BrowserSelection } from "./ComputerFileBrowser";
 import { DesktopResourceSharing } from "./DesktopResourceSharing";
+import { DesktopOrganizationDrivesView } from "./DesktopOrganizationDrivesView";
 import { PreviewPane, resolveActivePath, type FileSelection } from "./FilePreviewPane";
 import { openFileInDesktopEditor } from "../editor/desktop-editor-store";
 
@@ -28,6 +29,7 @@ interface NewFolderRequest {
   authGeneration: number;
 }
 const HOME_TAB: FileTab = { id: "files-home", path: "", initialPath: "", title: "Matrix home" };
+const ORGANIZATION_DRIVES_TAB = "organization-drives";
 
 function pathTitle(path: string): string {
   return path.split("/").filter(Boolean).at(-1) ?? "Matrix home";
@@ -44,6 +46,8 @@ export default function FilesWorkspace() {
   const authGeneration = useConnection((state) => state.authGeneration);
   const [tabs, setTabs] = useState<FileTab[]>([HOME_TAB]);
   const [activeTabId, setActiveTabId] = useState(HOME_TAB.id);
+  const [driveOpened, setDriveOpened] = useState(false);
+  const [requestedDrive, setRequestedDrive] = useState<{scopeId: string; id: string | undefined}>();
   const [selections, setSelections] = useState<Record<string, FileSelection | null>>({});
   const [refreshes, setRefreshes] = useState<Record<string, number>>({});
   const [newFolderRequest, setNewFolderRequest] = useState<NewFolderRequest | null>(null);
@@ -63,6 +67,8 @@ export default function FilesWorkspace() {
     setSelections({});
     setTabs([HOME_TAB]);
     setActiveTabId(HOME_TAB.id);
+    setDriveOpened(false);
+    setRequestedDrive(undefined);
     setNewFolderRequest(null);
     setNewFolderName("");
     setNewFolderError(null);
@@ -94,7 +100,9 @@ export default function FilesWorkspace() {
     if (!navigation) return;
     useFilesNavigation.getState().consume(navigation);
     if (navigation.runtimeSlot !== runtimeSlot || navigation.authGeneration !== authGeneration || !isCurrentRuntimeGeneration(navigation.generation)) return;
-    openFolderTab(navigation.path);
+    if (navigation.driveScopeId) {
+      setDriveOpened(true); setRequestedDrive({scopeId: navigation.driveScopeId, id: navigation.driveIntentId}); setActiveTabId(ORGANIZATION_DRIVES_TAB);
+    } else openFolderTab(navigation.path);
   }, [navigation, runtimeSlot, authGeneration, openFolderTab]);
 
   const closeTab = useCallback((tabId: string) => {
@@ -172,6 +180,13 @@ export default function FilesWorkspace() {
             </div>
           );
         })}
+        <button type="button" role="tab" aria-selected={activeTabId === ORGANIZATION_DRIVES_TAB}
+          onClick={() => { setDriveOpened(true); setActiveTabId(ORGANIZATION_DRIVES_TAB); }}
+          className="flex h-8 shrink-0 items-center rounded-t-lg border border-b-0 px-3 text-xs font-medium outline-none focus-visible:ring-1 focus-visible:ring-[var(--accent)]"
+          style={{ borderColor: "var(--border-subtle)", background: activeTabId === ORGANIZATION_DRIVES_TAB ? "var(--bg-surface)" : "transparent",
+            color: activeTabId === ORGANIZATION_DRIVES_TAB ? "var(--text-primary)" : "var(--text-tertiary)" }}>
+          Organization drives
+        </button>
         {activePath && activeSelection?.entry ? <DesktopResourceSharing key={`${activeSelection.entry.type}:${activePath}`}
           kind={activeSelection.entry.type === "directory" ? "folder" : "file"} path={activePath} /> : null}
         <button type="button" aria-label="Open Matrix home in new tab" onClick={() => openFolderTab("", "Matrix home")} className="mb-1 flex size-7 shrink-0 items-center justify-center rounded-md hover:bg-[var(--bg-hover)]" style={{ color: "var(--text-tertiary)" }}><Plus size={15} /></button>
@@ -197,6 +212,9 @@ export default function FilesWorkspace() {
               </RetainedPane>
             );
           })}
+          {driveOpened && <RetainedPane active={activeTabId === ORGANIZATION_DRIVES_TAB} visible={activeTabId === ORGANIZATION_DRIVES_TAB}>
+            <DesktopOrganizationDrivesView key={`${runtimeSlot}:${authGeneration}`} isActive={activeTabId === ORGANIZATION_DRIVES_TAB} requestedScopeId={requestedDrive?.scopeId} requestedIntentId={requestedDrive?.id} />
+          </RetainedPane>}
         </div>
         {previewSelection ? (
           <Suspense fallback={<div className="flex flex-1 items-center justify-center text-xs" style={{ color: "var(--text-tertiary)" }}>Loading preview…</div>}>

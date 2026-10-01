@@ -11,6 +11,8 @@ export async function createCanonicalChatRuntime(options: Omit<ConstructorParame
   homePath: string;
   recipeSkillsRoot?: string;
   enabled?: () => boolean;
+  drives?: ConstructorParameters<typeof ChatAgentContext>[0]["drives"];
+  assertChatReferenceAllowed?: ConstructorParameters<typeof ChatAgentContext>[0]["assertChatReferenceAllowed"];
   admitJevWorkflow?: ConstructorParameters<typeof ChatAgentContext>[0]["admitJevWorkflow"];
 }) {
   const recipes = createChatAgentRecipeResolver({
@@ -23,6 +25,8 @@ export async function createCanonicalChatRuntime(options: Omit<ConstructorParame
   const context = new ChatAgentContext({
     repository: options.repository, agents, recipes, enabled: options.enabled ?? (() => true),
     admitJevWorkflow: options.admitJevWorkflow,
+    drives: options.drives,
+    assertChatReferenceAllowed: options.assertChatReferenceAllowed,
   });
   return { agents, recipes, context, orchestrator: new CanonicalChatOrchestrator({ ...options, agentContext: context }) };
 }

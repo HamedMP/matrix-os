@@ -18,6 +18,7 @@ import { CommandPalette } from "@/components/CommandPalette";
 import { ApprovalDialog } from "@/components/ApprovalDialog";
 import { useMobileViewport } from "@/hooks/useMobileViewport";
 import { createShellSnapshotScope } from "@/lib/shell-snapshot-cache";
+import { isSelfHostedRuntime, SELF_HOSTED_SHELL_USER_ID } from "@/lib/self-host-mode";
 
 const LAUNCHABLE_BUILT_IN_PATHS = new Set([
   "__terminal__",
@@ -59,10 +60,26 @@ export function ShellHome(props: ShellHomeProps = {}) {
     return <ShellHomeContent {...props} userId={null} sessionId={null} />;
   }
 
+  // Self-hosted documents render without ClerkProvider, so useAuth must never run there.
+  // react-doctor-disable-next-line react-doctor/no-hydration-branch-on-browser-global -- both sides read the same MATRIX_SELF_HOSTED flag: the server from its env, the client from the data-matrix-self-hosted attribute the root layout renders from that env
+  if (isSelfHostedRuntime()) {
+    return (
+      <ShellHomeBody
+        userId={SELF_HOSTED_SHELL_USER_ID}
+        sessionId={null}
+        initialCollaborationView={props.initialCollaborationView}
+      />
+    );
+  }
+
   return <ManagedShellHome {...props} />;
 }
 
 function ManagedShellHome(props: ShellHomeProps) {
+  return <ClerkShellHome {...props} />;
+}
+
+function ClerkShellHome(props: ShellHomeProps) {
   const { userId, sessionId } = useAuth();
   return <ShellHomeContent {...props} userId={userId} sessionId={sessionId} />;
 }
@@ -71,6 +88,20 @@ function ShellHomeContent({
   initialCollaborationView,
   userId,
   sessionId,
+}: ShellHomeProps & { userId: string | null | undefined; sessionId: string | null | undefined }) {
+  return (
+    <ShellHomeBody
+      userId={userId}
+      sessionId={sessionId}
+      initialCollaborationView={initialCollaborationView}
+    />
+  );
+}
+
+function ShellHomeBody({
+  userId,
+  sessionId,
+  initialCollaborationView,
 }: ShellHomeProps & { userId: string | null | undefined; sessionId: string | null | undefined }) {
   const isMobile = useMobileViewport();
   const cachePathname = typeof window === "undefined" ? "/" : window.location.pathname;

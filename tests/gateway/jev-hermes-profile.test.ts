@@ -11,6 +11,8 @@ describe("immutable recipe-only Hermes inputs", () => {
       expect(config.model).toMatchObject({ provider: "anthropic", default: "claude-sonnet-5", api_mode: "anthropic_messages" });
       expect(config.tools).toEqual({ tool_search: false });
       expect(Object.keys(config.mcp_servers)).toEqual(["matrix_jev_recipe"]);
+      expect(config.mcp_servers.matrix_jev_recipe.timeout).toBe(600);
+      expect(config.agent.max_turns).toBe(64);
       expect(config.mcp_servers.matrix_jev_recipe.args).toEqual(["--require-scoped-capability", "--tool-surface=jev-inbox-preview"]);
       expect(config.auxiliary.title_generation.enabled).toBe(false); expect(config.auxiliary.background_review.enabled).toBe(false);
       expect(JSON.stringify(config)).not.toContain("sk-ant-api"); expect(JSON.stringify(config)).not.toContain("a".repeat(64));
@@ -34,5 +36,23 @@ describe("immutable recipe-only Hermes inputs", () => {
     const gate = createJevHermesCatalogGate();
     gate.observe({ type: "session.info", session_id: "live_fixture", payload: { lazy: false, tools: { matrix_jev_recipe: ["mcp__matrix_jev_recipe__jev_inbox_preview"] } } });
     gate.setSession("live_fixture"); await expect(gate.ready(new AbortController().signal)).resolves.toBeUndefined();
+  });
+  it("waits through the native lazy cwd snapshot without tool fields", async () => {
+    const expected = { provider: "openai-codex", model: "gpt-5.6-sol" };
+    const gate = createJevHermesCatalogGate(expected); gate.setSession("live_fixture");
+    gate.observe({ type: "session.info", session_id: "live_fixture", payload: {
+      cwd: "/tmp/isolated-fixture", branch: "", project: null, lazy: true,
+    } });
+    gate.observe({ type: "session.info", session_id: "live_fixture", payload: {
+      ...expected, tools: { matrix_jev_recipe: ["mcp__matrix_jev_recipe__jev_inbox_preview"] },
+    } });
+    await expect(gate.ready(new AbortController().signal)).resolves.toBeUndefined();
+  });
+  it.each(["provider", "model"])("rejects a changed %s even with the correct sole tool", async field => {
+    const expected = { provider: "openai-codex", model: "gpt-5.6-sol" };
+    const gate = createJevHermesCatalogGate(expected); gate.setSession("live_fixture");
+    gate.observe({ type: "session.info", session_id: "live_fixture", payload: { ...expected, [field]: "different",
+      lazy: false, tools: { matrix_jev_recipe: ["mcp__matrix_jev_recipe__jev_inbox_preview"] } } });
+    await expect(gate.ready(new AbortController().signal)).rejects.toThrow();
   });
 });

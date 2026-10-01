@@ -316,7 +316,8 @@ suite("packaged Electron production-mode terminal selection", () => {
     const surfaceMode = () => terminalSurface().evaluate((element) =>
       element.closest("[data-surface-mode]")?.getAttribute("data-surface-mode"));
     if (await surfaceMode() === "window") {
-      await page.getByRole("button", { name: "Maximize", exact: true }).click();
+      await page.getByRole("dialog", { name: "Terminal window", exact: true })
+        .getByRole("button", { name: "Maximize", exact: true }).click();
     }
     await page.locator('[data-surface-mode="tab"] [data-testid="desktop-terminal-app"]').waitFor({ state: "visible" });
     expect(await surfaceMode()).toBe("tab");

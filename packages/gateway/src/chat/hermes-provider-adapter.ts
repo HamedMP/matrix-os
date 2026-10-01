@@ -301,6 +301,7 @@ export function createHermesChatProviderAdapter(options: {
     preflight(ownerId: string, scope: HermesJevScope, signal: AbortSignal): Promise<void>;
     clearRun(ownerId: string, runId: string): void;
     summary(ownerId: string, scope: HermesJevScope): string | null;
+    activitySummary?(ownerId: string, scope: HermesJevScope): string | null;
   };
 }): CanonicalChatProviderAdapter<HermesChatState> {
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
@@ -323,7 +324,7 @@ export function createHermesChatProviderAdapter(options: {
     if (input.interactionMode !== "default") throw new Error("Unsupported Hermes interaction mode");
     const selected = selection(input.selection.model);
     const jevScope = jevScopeForRun(input.owner.ownerId, input.runId, input.context);
-    const catalogGate = jevScope ? createJevHermesCatalogGate() : undefined;
+    const catalogGate = jevScope ? createJevHermesCatalogGate(selected) : undefined;
     const selectedRouteGate = !jevScope && selected.provider === "openai-codex"
       ? createHermesSelectedRouteGate(selected) : undefined;
     if (jevScope && !options.jev) throw new Error("Restricted Inbox setup required");
@@ -573,20 +574,24 @@ export function createHermesChatProviderAdapter(options: {
           }
           collectUnsafeToolFragments(parsed.data.result, unsafeToolFragments);
         }
+        if (jevScope) {
+          const validTool = (stored?.name ?? hermesToolName(parsed.data.name)) === "mcp__matrix_jev_recipe__jev_inbox_preview";
+          const active = resolveHermesIntegrationCapability(integrationCapability.token, "POST", "/api/jev/inbox/preview") === input.owner.ownerId;
+          const summary = validTool && active && !failed ? options.jev!.summary(input.owner.ownerId, jevScope) : null;
+          emitAgentActivity({activityId,...activity,status:failed?"failed":"completed",
+            summary: summary ? options.jev!.activitySummary?.(input.owner.ownerId,jevScope) ?? hermesActivitySummary(activity.kind,failed) : hermesActivitySummary(activity.kind,failed)});
+          queue.push({ type: "tool.output", toolCallId: activityId,
+            text: summary ?? (jevScope.account.labelingEnabled === true
+              ? "Inbox result is unavailable. Labeling may be unconfirmed; check Gmail before retrying."
+              : "Inbox review has no verified proposal. No mailbox changes have been made."), truncated: false });
+          return;
+        }
         emitAgentActivity({
           activityId,
           ...activity,
           status: failed ? "failed" : "completed",
           summary: hermesActivitySummary(activity.kind, failed),
         });
-        if (jevScope) {
-          const validTool = (stored?.name ?? hermesToolName(parsed.data.name)) === "mcp__matrix_jev_recipe__jev_inbox_preview";
-          const active = resolveHermesIntegrationCapability(integrationCapability.token, "POST", "/api/jev/inbox/preview") === input.owner.ownerId;
-          const summary = validTool && active && !failed ? options.jev!.summary(input.owner.ownerId, jevScope) : null;
-          queue.push({ type: "tool.output", toolCallId: activityId,
-            text: summary ?? "Inbox review has no verified proposal. No mailbox changes have been made.", truncated: false });
-          return;
-        }
         const output = hermesToolOutput(stored?.name ?? hermesToolName(parsed.data.name), parsed.data.result,
           (stored?.privateContext ?? true) || hermesToolHasPrivateContext(parsed.data.args),
           options.toolOutputKey ? { key: options.toolOutputKey, toolCallId: activityId } : undefined);

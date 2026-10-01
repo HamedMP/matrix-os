@@ -18,6 +18,7 @@ COPY packages/kernel/package.json packages/kernel/package.json
 COPY packages/mcp-browser/package.json packages/mcp-browser/package.json
 COPY packages/observability/package.json packages/observability/package.json
 COPY packages/brand/package.json packages/brand/package.json
+COPY packages/ui/package.json packages/ui/package.json
 COPY packages/platform/package.json packages/platform/package.json
 COPY packages/sync-client/package.json packages/sync-client/package.json
 COPY shell/package.json shell/package.json
@@ -83,6 +84,7 @@ COPY --from=prod-deps --chown=matrix-platform:matrix-platform /app/packages/kern
 COPY --from=prod-deps --chown=matrix-platform:matrix-platform /app/packages/mcp-browser/package.json ./packages/mcp-browser/package.json
 COPY --from=prod-deps --chown=matrix-platform:matrix-platform /app/packages/observability/package.json ./packages/observability/package.json
 COPY --from=prod-deps --chown=matrix-platform:matrix-platform /app/packages/brand/package.json ./packages/brand/package.json
+COPY --from=prod-deps --chown=matrix-platform:matrix-platform /app/packages/ui/package.json ./packages/ui/package.json
 COPY --from=prod-deps --chown=matrix-platform:matrix-platform /app/packages/platform/package.json ./packages/platform/package.json
 COPY --from=prod-deps --chown=matrix-platform:matrix-platform /app/packages/sync-client/package.json ./packages/sync-client/package.json
 COPY --from=prod-deps --chown=matrix-platform:matrix-platform /app/shell/package.json ./shell/package.json

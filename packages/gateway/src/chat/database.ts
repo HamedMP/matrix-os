@@ -1,3 +1,7 @@
+import { bootstrapCompanyDriveSharingIndexes } from "./drive-sharing-guard.js";
+import { bootstrapChatDriveProjects } from "./drive-project-database.js";
+import { bootstrapChatImports, type ChatImportDatabase } from "./import-database.js";
+export type { ChatImportJobsTable, ChatImportMessagesTable } from "./import-database.js";
 import { bootstrapChatMetadata } from "./metadata-schema.js";
 import { bootstrapChatAttribution } from "./attribution-repair.js";
 import { sql, type ColumnType, type Generated, type Kysely } from "kysely";
@@ -247,7 +251,7 @@ export interface ChatMigrationsTable {
   updated_at: Timestamp;
 }
 
-export interface ChatDatabase {
+export interface ChatDatabase extends ChatImportDatabase {
   chat_shares: {
     id: string;
     chat_id: string;
@@ -668,6 +672,7 @@ export async function bootstrapChatDatabase<Database extends ChatDatabase>(
       PRIMARY KEY (owner_type, owner_id, source_kind, source_id)
     )
   `.execute(db);
+  await bootstrapChatImports(db);
   await sql`
     CREATE TABLE IF NOT EXISTS chat_migrations (
       owner_type TEXT NOT NULL CHECK (owner_type IN ('personal', 'organization')),
@@ -701,6 +706,8 @@ export async function bootstrapChatDatabase<Database extends ChatDatabase>(
   await sql`CREATE INDEX IF NOT EXISTS idx_chat_messages_search ON chat_messages USING GIN (to_tsvector('simple', search_text)) WHERE state = 'committed'`.execute(db);
   await sql`CREATE INDEX IF NOT EXISTS idx_chat_outbox_owner_cursor ON chat_outbox(owner_type, owner_id, cursor)`.execute(db);
   await bootstrapChatReadState(db);
+  await bootstrapChatDriveProjects(db);
+  await bootstrapCompanyDriveSharingIndexes(db);
 }
 
 // Existing history starts read once on upgrade; subsequent bootstraps preserve user choices.

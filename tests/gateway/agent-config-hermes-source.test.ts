@@ -18,6 +18,38 @@ describe("Hermes agent settings source", () => {
     expect(snapshot.providers.find(provider => provider.id === "openai-codex")?.models).toHaveLength(10);
     expect(snapshot.messaging).toMatchObject({ provider: "copilot", model: "copilot-127", configured: true });
   });
+
+  it.each([
+    ["openai-codex", "provider_profile"],
+    ["openai-api", "api_key"],
+    ["openrouter", "api_key"],
+  ])("observes the pinned SDK's built-in %s inventory without auth_type", (provider, credentialKind) => {
+    const observedAt = Date.now();
+    const snapshot = normalizeHermesRuntimeSnapshot({ observedAt,
+      status: { version: "0.21.4", gateway_running: false },
+      options: { provider, model: "selected-model", providers: [{ slug: provider,
+        is_user_defined: false, authenticated: true, models: ["selected-model"] }] },
+    });
+    expect(snapshot.runtime.options[0]?.nativeRouteObservation).toMatchObject({
+      providerId: provider, modelId: "selected-model", credentialKind,
+      localObservation: { state: "present_unverified", checkedAt: new Date(observedAt).toISOString() },
+    });
+  });
+
+  it.each([
+    { slug: "unknown", is_user_defined: false },
+    { slug: "openai-codex", is_user_defined: true },
+    { slug: "openai-codex", auth_type: "external_process", is_user_defined: false },
+    { slug: "openai-codex" },
+  ])("does not infer a supported credential source from ambiguous inventory %j", (provider) => {
+    const snapshot = normalizeHermesRuntimeSnapshot({ observedAt: Date.now(), status: {},
+      options: { provider: provider.slug, model: "selected-model", providers: [{ ...provider,
+        authenticated: true, models: ["selected-model"] }] },
+    });
+    expect(snapshot.runtime.options[0]?.nativeRouteObservation?.credentialKind).not.toBe("provider_profile");
+    expect(snapshot.runtime.options[0]?.nativeRouteObservation?.credentialKind).not.toBe("api_key");
+  });
+
   it("normalizes the dashboard inventory into the shared provider contract", () => {
     const snapshot = normalizeHermesRuntimeSnapshot({
       status: {

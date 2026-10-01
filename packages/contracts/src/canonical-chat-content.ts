@@ -66,6 +66,7 @@ const CANONICAL_CHAT_FAILURE_COPY: Record<CanonicalChatSafeError["code"], string
   provider_instance_locked: "This Chat is locked to another provider. Use that provider or start a new Chat.",
   model_unavailable: "The selected model is unavailable. Choose another model.",
   capability_mismatch: "The selected provider does not support one of the requested options or attachments.",
+  agent_full_access_required: "This Agent's runtime requires Full access. Enable it for this request or choose a different Agent model.",
   run_not_found: "The previous Run no longer exists. Refresh and try again.",
   run_not_resumable: "The previous Run cannot be resumed. Start a new message.",
   run_unavailable: "The agent Run is temporarily unavailable. Try again.",

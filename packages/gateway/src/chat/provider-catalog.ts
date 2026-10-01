@@ -135,7 +135,7 @@ function codingSupports(
     approvals: isCodex,
     userInput: true,
     worktrees: "optional",
-    resources: ["file", "folder", "project", "task", "app", "terminal_session"],
+    resources: ["file", "folder", "project", "task", "app", "terminal_session", ],
     interactionModes: supportedModes,
     permissionModes: driverKind === "pi" || driverKind === "opencode"
       ? ["supervised"]
@@ -155,11 +155,14 @@ function codingModels(provider: AgentProviderSummary): CanonicalModelDescriptor[
   const parsedModel = provider.defaultModel === undefined
     ? null
     : CanonicalChatModelSelectionSchema.shape.model.safeParse(provider.defaultModel);
-  if (parsedModel?.success !== true
-    && (codingDriverKind(provider) === "pi" || codingDriverKind(provider) === "opencode")) {
-    return [];
-  }
-  const id = parsedModel?.success === true ? parsedModel.data : "provider-default";
+  // Without a real, parseable model id there is nothing safe to offer: a
+  // synthetic placeholder id (e.g. "provider-default") is not a model this
+  // driver's CLI actually recognizes, and sending it would fail the turn
+  // silently. Report no models instead, exactly like Pi and OpenCode already
+  // do -- this only affects Codex, since Claude Code returns its own fixed
+  // model list above and never reaches this branch.
+  if (parsedModel?.success !== true) return [];
+  const id = parsedModel.data;
   const availability = provider.availability === "available"
     ? "available" as const
     : provider.availability === "auth_required"
@@ -167,7 +170,7 @@ function codingModels(provider: AgentProviderSummary): CanonicalModelDescriptor[
       : "unavailable" as const;
   return [{
     id,
-    displayName: parsedModel?.success === true ? parsedModel.data : `${provider.displayName} default`,
+    displayName: id,
     availability,
     capabilities: ["reasoning", "tools"],
     supportsVision: false,
@@ -502,6 +505,7 @@ export function createChatProviderCatalogService(options: {
   executableDriverKinds?: readonly CanonicalProviderDriverKind[];
   credentialedDriverKinds?: readonly CanonicalProviderDriverKind[];
   now?: () => Date;
+  driveContextReady?: () => boolean;
   runtimeTimeoutMs?: number;
   skillsSource?: () => Array<{ name: string; description: string }>;
   codingModelCatalogSource?: (
@@ -636,6 +640,15 @@ export function createChatProviderCatalogService(options: {
         credentialedDriverKinds: options.credentialedDriverKinds,
         aiSnapshot,
       });
+      // Availability is finalized by the owner runtime and funding projection.
+      // Never advertise a tool when registration-time dependencies are missing.
+      if (options.driveContextReady?.()) {
+        for (const instance of instances) {
+          if (instance.driverKind === "claude_code" && instance.availability === "available") {
+            instance.supports = { ...instance.supports, resources: [...instance.supports.resources, "organization_drive"] };
+          }
+        }
+      }
       const driverKinds: CanonicalProviderDriverKind[] = [
         ...(instances.some((instance) => instance.driverKind === "kernel") ? ["kernel" as const] : []),
         ...SYSTEM_DRIVERS,
@@ -668,7 +681,7 @@ export function createChatProviderCatalogService(options: {
   return service;
 }
 
-interface ProviderSelectionRequirements {
+export interface ProviderSelectionRequirements {
   attachments?: CanonicalChatAttachmentKind[];
   resources?: CanonicalChatResourceKind[];
   interactionMode?: string;

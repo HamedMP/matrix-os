@@ -55,7 +55,7 @@ export async function verifyJevHermesDependencies(root: string, signal: AbortSig
       deadline.throwIfAborted();
       const version = await runPython(join(root, "venv", "bin", "python"), hermesDependencyArguments(root, cachePrefix), deadline);
       deadline.throwIfAborted();
-      if (version !== "0.87.0\n") throw new Error("Restricted runtime setup required");
+      if (version !== "0.87.0\n2.24.0\n") throw new Error("Restricted runtime setup required");
     } finally { await rm(cachePrefix, { recursive: true, force: true }); }
   }, 10_000, signal);
 }

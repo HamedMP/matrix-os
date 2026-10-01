@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { JEV_EMAIL_TRIAGE_ANSWER_IDS, JEV_MODEL_ID, FundedAiRuntimeFundingSummaryResponseSchema,
   FundedAiRouteReadinessReceiptSchema, type ChatAgent } from "@matrix-os/contracts";
 import type { JevService } from "../../packages/gateway/src/jev/service.js";
@@ -12,6 +12,7 @@ import type { PlatformDb } from "../../packages/gateway/src/platform-db.js";
 import { authMiddleware } from "../../packages/gateway/src/auth.js";
 import { issueHermesIntegrationCapability, type HermesJevScope } from "../../packages/gateway/src/chat/hermes-integration-capability.js";
 import { jevReadySettingsSnapshot } from "../fixtures/jev-inbox.js";
+import { normalizeHermesRuntimeSnapshot } from "../../packages/gateway/src/agent-config/hermes-source.js";
 import { saved } from "../desktop/chat-agents-fixture.js";
 import { createTestPlatformDb, destroyTestPlatformDb } from "../platform/platform-db-test-helper.js";
 import { insertUserMachine } from "../../packages/platform/src/db.js";
@@ -24,7 +25,16 @@ import { loadFundedAiRuntimeConfig } from "../../packages/gateway/src/funded-ai-
 import { createFundedAiFundingSummaryClient } from "../../packages/gateway/src/funded-ai-funding-summary-client.js";
 import { createFundedAiRouteReadinessClient } from "../../packages/gateway/src/funded-ai-route-readiness-client.js";
 
-afterEach(() => vi.unstubAllGlobals());
+beforeEach(() => {
+  // Keep synthetic pricing, policy, and readiness receipts in the same valid window.
+  // Leave real timers running for the production request/deadline paths.
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date("2026-09-30T12:00:00.000Z"));
+});
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.useRealTimers();
+});
 async function fixture(mode = "ready") {
   const now = Date.now(); const home = await mkdtemp(join(tmpdir(), "jev-production-flow-"));
   await mkdir(join(home, "system"));
@@ -35,6 +45,16 @@ async function fixture(mode = "ready") {
     skills: ["matrix-jev-email-triage", "matrix-integrations"], integrations: [{ service: "gmail", accountLabel: "Work" }],
     output: "Read-only proposals", jevInboxTriage: { version: 1, ownerId: "owner_fixture", ...scope.account } } };
   const settings = jevReadySettingsSnapshot(now);
+  let runtimeSource;
+  if (mode === "native") {
+    await mkdir(join(home, ".hermes"));
+    await writeFile(join(home, ".hermes/config.yaml"), JSON.stringify({ model: { provider: "openrouter", default: "anthropic/claude-sonnet-5" } }));
+    await writeFile(join(home, ".hermes/.env"), "OPENROUTER_API_KEY=synthetic-selected-native-key\n");
+    agent.selection = { instanceId: "hermes_default", model: "openrouter:anthropic/claude-sonnet-5" };
+    runtimeSource = async () => normalizeHermesRuntimeSnapshot({ observedAt: Date.now(),
+      status: { version: "0.21.4", gateway_running: true }, options: { provider: "openrouter", model: "anthropic/claude-sonnet-5",
+        providers: [{ slug: "openrouter", name: "OpenRouter", auth_type: "api_key", authenticated: true, models: ["anthropic/claude-sonnet-5"] }] } });
+  }
   if (mode === "unsupported") settings.accounts[0]!.authMethod = "oauth";
   const calls: { target: URL; method: string }[] = [];
   const date = (id: string) => String(now - (10 - Number(id.slice(1))) * 86_400_000);
@@ -120,6 +140,7 @@ async function fixture(mode = "ready") {
     routeReader = createFundedAiRouteReadinessClient(config, fetchFn);
   }
   const runtime = createProductionJevInboxRuntime({ homePath: home, ownerId: "owner_fixture", fundedOwnerId: "funded_owner_fixture",
+    runtimeSource,
     settings: { getSnapshot: async () => settings }, getAgent: async () => agent,
     service: { evaluate }, summary: summaryReader, routes: routeReader,
     internalBaseUrl: null, db: db as unknown as PlatformDb, pipedream });
@@ -133,6 +154,10 @@ async function fixture(mode = "ready") {
 }
 
 it("admits the actual Jev production factory through Platform's exact-model filter only after profile preflight", async () => {
+  // The real policy fixture contains pricing valid through September 30.
+  // Freeze Date only; network deadlines and database timers remain real.
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date("2026-09-30T12:00:00.000Z"));
   const f = await fixture("platform-filter");
   try {
     await f.runtime.admit("owner_fixture", f.agent);
@@ -144,8 +169,8 @@ it("admits the actual Jev production factory through Platform's exact-model filt
   } finally { await f.close(); }
 });
 
-it("composes production owner-key/readiness, active scope, real SDK getter, latest four and server proposal", async () => {
-  const f = await fixture();
+it.each(["ready", "native"])("composes production %s credentials/readiness, active scope, real SDK getter, latest four and server proposal", async mode => {
+  const f = await fixture(mode);
   try {
     await f.runtime.admit("owner_fixture", f.agent); expect(f.calls).toEqual([]); expect(f.evaluate).not.toHaveBeenCalled();
     await f.runtime.launch.preflight("owner_fixture", f.scope, f.controller.signal);

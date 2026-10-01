@@ -1,3 +1,5 @@
+import { createChatDriveProjectRoutes } from "./chat/drive-projects.js";
+import { createProductionChatDriveContext } from "./chat/drive-context-production.js";
 import { createOwnerAnthropicKeyPreflight } from "./ai-providers/owner-key-preflight.js";
 import { serve } from "@hono/node-server";
 import { createNodeWebSocket } from "@hono/node-ws";
@@ -195,6 +197,7 @@ import {
 import type { CanonicalProviderSnapshotReader } from "./ai-providers/provider-settings-coordinators.js";
 import { ProviderSettingsStore } from "./ai-providers/provider-settings-store.js";
 import { createProviderTerminalLoginCoordinator } from "./ai-providers/provider-terminal-login-coordinator.js";
+import { createProviderTerminalLoginHandoff } from "./ai-providers/provider-terminal-login-handoff.js";
 import { AiProviderService } from "./ai-providers/service.js";
 import type { KvStore } from "./app-db-kv.js";
 import type { QueryEngine } from "./app-db-query.js";
@@ -1156,8 +1159,10 @@ export async function createGateway(config: GatewayConfig) {
       if (!providerSettingsStore) throw new Error("Provider settings are unavailable");
       return providerSettingsStore.getSnapshot(options);
     } },
+    runtimeSource: Object.assign((signal: AbortSignal) => agentRuntimeServices.systemRuntimeSources.hermes(signal),
+      { invalidate: () => agentRuntimeServices.systemRuntimeSources.hermes.invalidate?.() }),
     getAgent: (ownerId, agentId) => canonicalChatRuntime?.agents.get({ type: "personal", ownerId }, agentId) ?? Promise.resolve(null),
-    service: jevService, summary: fundedAiFundingSummaryReader,
+    service: jevService, batchStore: jevRuntime?.batchStore, summary: fundedAiFundingSummaryReader,
     routes: fundedAiRuntimeConfig ? createFundedAiRouteReadinessClient(fundedAiRuntimeConfig) : undefined,
     internalBaseUrl: internalIntegrationBaseUrl, machineToken: internalPlatformToken, db: platformDb, pipedream: pipedreamClient,
   }) : null;
@@ -1264,7 +1269,7 @@ export async function createGateway(config: GatewayConfig) {
     canonicalChatExecutionRoots, gatewayCollaboration,
   });
 
-  const processManager = registerDeferredRuntimeRoutes({
+  const { processManager, customMcp } = registerDeferredRuntimeRoutes({
     app, homePath, integrationRoutes, internalIntegrationBaseUrl,
     internalPlatformToken, internalPlatformUrl, internalHandle,
     proxyIntegrationRequest: (c, targetBase, machineToken, routePrefix) =>
@@ -1462,6 +1467,9 @@ export async function createGateway(config: GatewayConfig) {
       ? ["opencode" as const]
       : []),
   ];
+  const chatDriveContext = createProductionChatDriveContext({repository:chatRepository,collaborationReady:gatewayCollaboration !== null});
+  app.route("/",chatDriveContext.routes);
+  app.route("/", await createChatDriveProjectRoutes({repository:chatRepository,drives:chatDriveContext.service,resolveOwner: c => ({type:"personal",ownerId:requireRequestPrincipal(c).userId})}));
   const {
     catalog: canonicalChatProviderCatalog, resolveClaudeCredentialLaunch,
   } = createGatewayChatProviderCatalog({
@@ -1475,6 +1483,7 @@ export async function createGateway(config: GatewayConfig) {
     harnessSettingsSource: providerSettingsStore,
     executableDriverKinds: canonicalExecutableDriverKinds,
     credentialedDriverKinds: ["pi", "opencode"],
+    driveContextReady: () => chatDriveContext.service !== null,
   });
   if (chatRepository && canonicalChatExecutionRoots) {
     const canonicalAdapters: CanonicalChatProviderAdapter[] = [
@@ -1520,6 +1529,8 @@ export async function createGateway(config: GatewayConfig) {
     }
     canonicalChatRuntime = await createCanonicalChatRuntime({
       homePath,
+      ...(chatDriveContext.service ? {drives:chatDriveContext.service} : {}),
+      assertChatReferenceAllowed: chatDriveContext.assertChatReferenceAllowed,
       repository: chatRepository,
       catalog: canonicalChatProviderCatalog,
       adapters: new CanonicalChatProviderRegistry(canonicalAdapters.map(adapter => withAsyncChatInput(adapter))),
@@ -1609,11 +1620,13 @@ export async function createGateway(config: GatewayConfig) {
   if (!providerSettingsStore) throw new Error("Provider settings are unavailable");
   const lookupJevGmailAccounts = createJevGmailAccountLookup({ db: platformDb,
     internalBaseUrl: internalIntegrationBaseUrl, machineToken: internalPlatformToken });
-  registerCollaborationChatRoutes({
+  const localChatImportLifecycle = registerCollaborationChatRoutes({
     app, upgradeWebSocket, canonicalChatEventStream, chatRepository, gatewayCollaboration,
+    syncR2, runtimeOwnerId: terminalRuntimeOwnerId, runtimeSlot: process.env.MATRIX_RUNTIME_SLOT,
     collaborationFailClosedReason, canonicalChatOrchestrator, canonicalChatExecutionRoots,
     canonicalChatCollaborationGuard, projectOwnerToolOutput, canonicalChatRuntime,
-    canonicalChatProviderCatalog, aiProviderService, providerSettingsStore,
+    canonicalChatProviderCatalog, aiProviderService,
+    providerSettingsStore: createProviderTerminalLoginHandoff(providerSettingsStore, providerLoginTerminalRegistry.resolveTerminalRef, providerLoginCoordinator.resolveTerminalIdentity),
     listGmailAccounts: (ownerId) => withCapabilityLookupTimeout(() => lookupJevGmailAccounts(ownerId)),
   });
 
@@ -1756,7 +1769,8 @@ export async function createGateway(config: GatewayConfig) {
     pluginRegistry,
     hookRunner,
     async close() {
-      jevInboxRuntime?.close();
+      await jevInboxRuntime?.close();
+      chatDriveContext.close();
       matrixMcpCapabilities.close();
       workspaceStartupRecoveryController.close();
       await terminalPasteAssetCleanup.close();
@@ -1791,6 +1805,7 @@ export async function createGateway(config: GatewayConfig) {
       watchdog.stop();
       proactiveHeartbeat.stop();
       cronService.stop();
+      await localChatImportLifecycle.close();
       await backgroundChatProjection.close();
       await canonicalChatOrchestrator?.close();
       canonicalChatOrchestrator = null;
@@ -1817,6 +1832,7 @@ export async function createGateway(config: GatewayConfig) {
       canvasSubscriptionHub?.close();
       systemActivityCandidates.clear();
       await channelManager.stop();
+      customMcp.stop();
       await processManager.shutdownAll();
       await forwardTunnelHub.close();
       await watcher.close();

@@ -4,6 +4,7 @@
   --model-choice-secondary: var(--text-tertiary, var(--muted-foreground));
   --model-choice-hover: var(--bg-hover, var(--muted));
   --model-choice-focus: var(--accent, var(--primary));
+  --model-choice-action: var(--primary, var(--accent));
 }
 
 .matrix-chat-model-search {
@@ -62,7 +63,8 @@
   align-items: center;
   justify-content: center;
   border-radius: 0.5rem;
-  color: var(--model-choice-secondary);
+  color: var(--text-primary, var(--foreground));
+  opacity: 1;
   transition: color 120ms ease, background-color 120ms ease, opacity 120ms ease;
 }
 
@@ -71,7 +73,6 @@
   background: var(--bg-active, var(--muted));
 }
 
-.matrix-chat-provider-button[data-availability]:not([data-availability="available"]),
 .matrix-chat-provider-button:disabled {
   opacity: 0.38;
 }
@@ -119,8 +120,7 @@
   font-weight: 500;
 }
 
-.matrix-chat-model-lock-note button:hover,
-.matrix-chat-provider-setup button:hover {
+.matrix-chat-model-lock-note button:hover {
   background: var(--model-choice-hover);
 }
 
@@ -140,16 +140,24 @@
 
 .matrix-chat-provider-setup button {
   display: flex;
-  width: 100%;
-  min-height: 2.25rem;
+  width: fit-content;
+  max-width: 100%;
+  min-height: 2rem;
   align-items: center;
-  margin-top: 0.25rem;
+  justify-content: center;
+  margin-top: 0.5rem;
+  border: 1px solid;
+  border-color: var(--model-choice-action);
   border-radius: 0.5rem;
-  padding: 0 0.5rem;
-  color: var(--text-primary, var(--foreground));
-  font-size: 0.875rem;
-  font-weight: 500;
-  text-align: left;
+  padding: 0.375rem 0.625rem;
+  background-color: var(--model-choice-action);
+  color: var(--text-on-accent, var(--primary-foreground));
+  font-size: 0.75rem;
+  font-weight: 600;
+  line-height: 1rem;
+  text-align: center;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .matrix-chat-model-option:hover:not(:disabled) {
@@ -160,4 +168,13 @@
 .matrix-chat-model-option:focus-visible {
   outline: 2px solid var(--model-choice-focus);
   outline-offset: -2px;
+}
+
+.matrix-chat-provider-setup button:hover {
+  filter: brightness(0.96);
+}
+
+.matrix-chat-provider-setup button:focus-visible {
+  outline: 2px solid var(--model-choice-focus);
+  outline-offset: 2px;
 }

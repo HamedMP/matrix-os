@@ -2,6 +2,15 @@ import { describe, expect, it, vi } from "vitest";
 import { createHmac } from "node:crypto";
 import { bindJevInboxRecipe, createJevGmailAccountLookup, listOwnerGmailAccounts, listOwnerGmailAccountsViaPlatform } from "../../packages/gateway/src/chat/jev-recipe-authority.js";
 
+it("saves the owner's explicit labeling opt-in in the exact Gmail binding, leaving old bots read-only", async () => {
+  const recipe = { skills: ["matrix-jev-email-triage"], integrations: [{ service: "gmail", accountLabel: "My Gmail" }], output: "Inbox labels" };
+  const listGmailAccounts = async () => [{ id: "conn_own", service: "gmail", account_label: "My Gmail", account_email: "me@example.test", status: "active" }];
+  const preview = await bindJevInboxRecipe({ ownerId: "owner_fixture", recipe, listGmailAccounts });
+  expect(preview.jevInboxTriage?.labelingEnabled).not.toBe(true);
+  const labeling = await bindJevInboxRecipe({ ownerId: "owner_fixture", recipe: { ...recipe, jevInboxLabeling: true }, listGmailAccounts });
+  expect(labeling.jevInboxTriage).toMatchObject({ connectionId: "conn_own", expectedEmail: "me@example.test", labelingEnabled: true });
+});
+
 describe("Jev recipe production account lookup", () => {
   it("resolves the authenticated owner to platform ID and excludes foreign, revoked, and non-Gmail rows", async () => {
     const selected = { id: "conn_own", user_id: "platform_own", service: "gmail", account_label: "My Gmail",

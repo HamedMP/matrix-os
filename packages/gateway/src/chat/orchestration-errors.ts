@@ -39,7 +39,7 @@ export function mapRepositoryError(error: unknown): never {
       throw new CanonicalChatOrchestrationError(canonicalChatSafeError(
         error.code === "workflow_setup_required" ? "capability_mismatch" : "service_unavailable",
         error.code === "workflow_setup_required"
-          ? "Inbox triage requires a ready selected Hermes owner API-key account. Check Agents & providers."
+          ? "Inbox triage requires a supported configured Hermes account. Check Agents & providers."
           : "Inbox triage funding is unavailable. Check Matrix AI readiness and retry.",
       ), error.code === "workflow_setup_required" ? 400 : 503);
     }
@@ -49,9 +49,7 @@ export function mapRepositoryError(error: unknown): never {
     }
     throw new CanonicalChatOrchestrationError(error.code === "context_unavailable"
       ? canonicalChatSafeError("resource_unavailable", "The selected Agent or Chat is unavailable.")
-      : canonicalChatSafeError("capability_mismatch", error.code === "agent_permission_required"
-        ? "This Agent requires Full access. Select it before sending."
-        : "Agents and Chat references are disabled."), 400);
+      : canonicalChatSafeError("capability_mismatch", "Agents and Chat references are disabled."), 400);
   }
   if (error instanceof ChatNotFoundError) {
     throw new CanonicalChatOrchestrationError(canonicalChatSafeError("chat_not_found", "Chat not found."), 404);

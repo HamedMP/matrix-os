@@ -841,12 +841,23 @@ exit 99
     expect(restore).toContain('restore-complete');
     expect(restore).toContain('pg_isready');
     expect(restore.indexOf('pg_isready')).toBeLessThan(restore.indexOf('pg_restore'));
-    expect(restore).toContain('docker run -d');
-    expect(restore).not.toContain('docker compose');
+    expect(restore).not.toContain('docker run -d');
+    expect(readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-postgres-start'), 'utf8')).toContain('docker run -d');
     expect(restore).toContain('pg_restore');
     expect(restore).toContain('exit 1');
     expect(restore).toContain('system/runtime-slots/${runtime_slot}/db/latest');
     expect(gateway).toContain('ConditionPathExists=/opt/matrix/restore-complete');
+  });
+
+  it('scales gateway memory guardrails with VPS RAM in both service templates', () => {
+    const root = process.cwd();
+    const gateway = readFileSync(join(root, 'distro/customer-vps/systemd/matrix-gateway.service'), 'utf8');
+    const cloudInit = readFileSync(join(root, 'distro/customer-vps/cloud-init.yaml'), 'utf8');
+
+    for (const template of [gateway, cloudInit]) {
+      expect(template).toContain('MemoryHigh=40%');
+      expect(template).toContain('MemoryMax=50%');
+    }
   });
 
   it('only skips restore on confirmed missing R2 backup markers', () => {
@@ -952,7 +963,7 @@ exit 99
     expect(cloudInit).toContain('docker.io file git postgresql-client procps python3-cryptography nginx openssl socat sudo unzip zsh');
     expect(cloudInit).toContain('https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip');
     expect(cloudInit).toContain('/tmp/aws/install --bin-dir /usr/local/bin --install-dir /usr/local/aws-cli');
-    expect(cloudInit).toContain('docker run -d');
+    expect(cloudInit).toContain('systemctl start matrix-postgres.service');
     expect(cloudInit).toContain('systemctl enable matrix-restore.service matrix-scope-runtime.service matrix-gateway.service matrix-shell.service matrix-code-server.service matrix-code.service matrix-sync-agent.service matrix-hermes.service matrix-hermes-dashboard.service matrix-linux-tools.service matrix-developer-tools.service matrix-db-backup.timer');
   });
 

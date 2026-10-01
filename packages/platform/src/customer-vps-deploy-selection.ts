@@ -7,8 +7,11 @@ export function selectCustomerVpsDeployMachines<
   runningMachines: readonly T[],
   target?: DeployTarget,
 ): T[] {
+  // A Private Preview changes code only through its owner's explicit update (spec 537).
   if (target?.handle) {
-    return runningMachines.filter((machine) => machine.handle === target.handle);
+    return runningMachines.filter((machine) => machine.handle === target.handle
+      && machine.provisioningClass !== 'private-preview');
   }
-  return runningMachines.filter((machine) => machine.provisioningClass !== 'preview');
+  // Previews run pinned PR bundles; only an explicit handle target updates them.
+  return runningMachines.filter((machine) => machine.provisioningClass === 'customer');
 }

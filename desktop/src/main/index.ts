@@ -1,6 +1,9 @@
-import { app, BrowserWindow, dialog, ipcMain, Notification, safeStorage, screen, session, shell } from "electron";
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Notification, safeStorage, screen, session, shell, type IpcMainInvokeEvent } from "electron";
 import { join } from "node:path";
 import { createFileDownloadService } from "./files/file-download-service";
+import { createOrganizationDriveTransferService } from "./files/organization-drive-transfer";
+import { readDriveUploadFile, saveDriveDownloadFile } from "./files/organization-drive-file-io";
+import { registerTerminalClipboardIpc } from "./files/terminal-clipboard";
 import { pathToFileURL } from "node:url";
 import { AuthService } from "./auth/auth-service";
 import { createAnalyticsBeforeQuit } from "./analytics-quit";
@@ -46,6 +49,8 @@ import {
   setHermesCredential,
   updateHermesConfiguration,
 } from "./hermes/configuration-client";
+import { createNativeChatImportService } from "./files/local-chat-import";
+import { registerLocalChatImportIpc } from "./ipc/local-chat-import";
 import { registerIpcHandlers } from "./ipc/handlers";
 import { fetchDesktopSupportIdentity } from "./support/support-identity-client";
 import { createLocalStore } from "./persistence/local-store";
@@ -82,6 +87,10 @@ if (process.env.OPERATOR_USER_DATA_DIR) {
 let mainWindow: BrowserWindow | null = null;
 let updateCheckTimer: ReturnType<typeof setInterval> | null = null;
 let fileDownloads: ReturnType<typeof createFileDownloadService> | null = null;
+let localChatImports:ReturnType<typeof createNativeChatImportService>|null=null;
+let importsDrained=false;
+let drainingImports=false;
+let organizationDriveTransfers: ReturnType<typeof createOrganizationDriveTransferService> | null = null;
 let downloadsDrained = false;
 let drainingDownloads = false;
 let closeCodingAgentThreadEvents: (() => void) | null = null;
@@ -232,6 +241,8 @@ if (!gotLock) {
         clearProfile: () => store.delete("profile"),
         onAuthChanged: (status) => {
           fileDownloads?.cancelAll();
+          organizationDriveTransfers?.cancelAll();
+          localChatImports?.cancelAll();
           sendEvent("auth:changed", {
             signedIn: status.signedIn,
             ...(status.signedIn ? {
@@ -356,10 +367,58 @@ if (!gotLock) {
           return result.canceled ? null : result.filePath ?? null;
         },
       });
+      organizationDriveTransfers = createOrganizationDriveTransferService({
+        auth,
+        chooseUpload: async () => {
+          const options = { title: "Upload to organization drive",
+            properties: ["openFile"] as Array<"openFile"> };
+          const result = mainWindow && !mainWindow.isDestroyed()
+            ? await dialog.showOpenDialog(mainWindow, options)
+            : await dialog.showOpenDialog(options);
+          return result.canceled || !result.filePaths[0] ? null : readDriveUploadFile(result.filePaths[0]);
+        },
+        chooseDownload: async (filename) => {
+          const options = { title: "Download from organization drive",
+            defaultPath: join(app.getPath("downloads"), filename), buttonLabel: "Save",
+            properties: ["createDirectory", "showOverwriteConfirmation"] as Array<"createDirectory" | "showOverwriteConfirmation"> };
+          const result = mainWindow && !mainWindow.isDestroyed()
+            ? await dialog.showSaveDialog(mainWindow, options)
+            : await dialog.showSaveDialog(options);
+          return result.canceled ? null : result.filePath ?? null;
+        },
+        saveDownload: saveDriveDownloadFile,
+      });
+      localChatImports = createNativeChatImportService({auth, progress:progress=>sendEvent("runtime:chat-import-progress",progress),
+        chooseFile:async harness=>{
+          const root=harness==="codex"?process.env.CODEX_HOME??join(app.getPath("home"),".codex"):process.env.CLAUDE_CONFIG_DIR??join(app.getPath("home"),".claude");
+          const options={title:`Import ${harness==="codex"?"Codex":"Claude Code"} transcript`,defaultPath:join(root,harness==="codex"?"sessions":"projects"),filters:[{name:"Transcript",extensions:["jsonl"]}],properties:["openFile"] as Array<"openFile">};
+          const result=mainWindow&&!mainWindow.isDestroyed()?await dialog.showOpenDialog(mainWindow,options):await dialog.showOpenDialog(options);
+          return result.canceled?null:result.filePaths[0]??null;
+        }});
+      registerLocalChatImportIpc(ipcMain,localChatImports,rawEvent=>{
+        const event=rawEvent as IpcMainInvokeEvent;const contents=mainWindow?.webContents;
+        const rendererUrl=desktopRendererUrl??pathToFileURL(join(__dirname,"../renderer/index.html")).toString();
+        return !!contents&&!contents.isDestroyed()&&event.sender===contents&&event.senderFrame===contents.mainFrame&&contents.getURL()===rendererUrl;
+      });
       const downloads = fileDownloads;
+      const driveTransfers = organizationDriveTransfers;
+      registerTerminalClipboardIpc(ipcMain, {
+        clipboard,
+        isTrustedSender: (rawEvent) => {
+          const event = rawEvent as IpcMainInvokeEvent;
+          const contents = mainWindow?.webContents;
+          const rendererUrl = desktopRendererUrl ?? pathToFileURL(join(__dirname, "../renderer/index.html")).toString();
+          return !!contents && !contents.isDestroyed()
+            && event.sender === contents && event.senderFrame === contents.mainFrame
+            && contents.getURL() === rendererUrl;
+        },
+      });
       registerIpcHandlers(ipcMain, {
         downloadFile: (request) => downloads.download(request),
         cancelFileDownload: (requestId) => downloads.cancel(requestId),
+        uploadOrganizationDrive: (request) => driveTransfers.upload(request),
+        downloadOrganizationDrive: (request) => driveTransfers.download(request),
+        cancelOrganizationDriveTransfer: () => { driveTransfers.cancelAll(); return { ok: true }; },
         auth,
         store,
         embeds,
@@ -379,6 +438,8 @@ if (!gotLock) {
         },
         onRuntimeChanged: (slot) => {
           downloads.cancelAll();
+          driveTransfers.cancelAll();
+          localChatImports?.cancelAll();
           // Switching runtime invalidates embed cookies/tokens; tear them down so
           // they re-handshake against the new slot (Integration Wiring rule).
           embeds.closeAll();
@@ -513,7 +574,13 @@ if (!gotLock) {
     });
 
   app.on("before-quit", (event) => {
+    organizationDriveTransfers?.cancelAll();
     if (handleAnalyticsBeforeQuit?.(event)) return;
+    if(!importsDrained&&localChatImports){
+      event.preventDefault();
+      if(!drainingImports){drainingImports=true;void localChatImports.dispose().catch((error:unknown)=>logMainError("import cleanup failed",error)).finally(()=>{importsDrained=true;app.quit();});}
+      return;
+    }
     if (!downloadsDrained && fileDownloads) {
       event.preventDefault();
       if (!drainingDownloads) {

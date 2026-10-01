@@ -1,3 +1,4 @@
+import {chatAgentComposerDraft} from "../../desktop/src/renderer/src/features/chat/chat-agent-draft";
 // @vitest-environment jsdom
 
 import React, { useState } from "react";
@@ -550,7 +551,7 @@ describe("SharedChatComposer", () => {
     expect(screen.queryByRole("button", { name: "Attach files" })).toBeNull();
   });
 
-  it("keeps unauthenticated harnesses dimmed but exposes setup inside the selector", () => {
+  it("keeps unauthenticated harness setup discoverable inside the selector", () => {
     const onProviderSetup = vi.fn();
     render(<Harness onProviderSetup={onProviderSetup} />);
 
@@ -946,4 +947,20 @@ describe("SharedChatComposer", () => {
     expect(screen.getByRole("button", { name: "Choose model and provider" }).textContent)
       .toContain("GPT-5.6-Terra");
   });
+});
+
+
+it("keeps drive drafts unsent on unsupported routes and submits typed context only on an available drive route",async()=>{
+ const catalog=catalogFixture(),instance=catalog.instances.find(item=>item.id==="claude_personal")!;
+ const ref={kind:"organization_drive" as const,id:"00000000-0000-4000-8000-000000000001",label:"Authority",drive:{kind:"drive" as const,organizationId:"org_company",scopeId:"00000000-0000-4000-8000-000000000001"}};
+ const onSubmit=vi.fn();const draft=chatAgentComposerDraft({id:1,text:"Summarize the plan",resources:[ref]});
+ const props={value:draft.text,onChange:vi.fn(),referenceTokens:draft.referenceTokens,onSubmit,busy:false,catalog,selection:createCanonicalComposerSelection(catalog,"claude_personal"),onSelectionChange:vi.fn(),instanceLocked:false};
+ const view=render(<SharedChatComposer {...props}/>);
+ expect((screen.getByRole("button",{name:"Send"}) as HTMLButtonElement).disabled).toBe(true);
+ fireEvent.keyDown(screen.getByRole("textbox",{name:"Message chat"}),{key:"Enter"});expect(onSubmit).not.toHaveBeenCalled();
+ const ready={...catalog,instances:catalog.instances.map(item=>item===instance?{...item,supports:{...item.supports,resources:["organization_drive" as const]}}:item)};
+ view.rerender(<SharedChatComposer {...props} catalog={ready}/>);
+ expect((screen.getByRole("button",{name:"Send"}) as HTMLButtonElement).disabled).toBe(false);
+ fireEvent.click(screen.getByRole("button",{name:"Send"}));expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({text:draft.text,resources:[ref]}));
+ cleanup();
 });

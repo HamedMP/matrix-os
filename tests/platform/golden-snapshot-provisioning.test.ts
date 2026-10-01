@@ -982,10 +982,11 @@ describe('golden snapshot provisioning activation', () => {
 
   it('locks a source generation and snapshot before its create intent during registration', async () => {
     const source = await readFile(
-      new URL('../../packages/platform/src/customer-vps.ts', import.meta.url),
+      new URL('../../packages/platform/src/customer-vps-registration.ts', import.meta.url),
       'utf8',
     );
-    const registerStart = source.indexOf('async register(token, input)');
+    const registerStart = source.indexOf('async function register(token');
+    expect(registerStart).toBeGreaterThanOrEqual(0);
     const transactionStart = source.indexOf('runInPlatformTransaction', registerStart);
     const transactionEnd = source.indexOf('return { registered: true', transactionStart);
     const registrationTransaction = source.slice(transactionStart, transactionEnd);

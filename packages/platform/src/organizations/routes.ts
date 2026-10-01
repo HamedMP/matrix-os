@@ -12,6 +12,7 @@ import {
   CollaborationActorIdSchema,
   CollaborationControlAckSchema,
   CollaborationOrganizationIdSchema,
+  CollaborationOrganizationMembersCursorSchema,
 } from "@matrix-os/contracts";
 import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
@@ -19,7 +20,7 @@ import { z } from "zod/v4";
 import type { CollaborationControlAuthority } from "../collaboration/control-authority.js";
 import { logicalRuntimeIdFor } from "../collaboration/runtime-identity.js";
 import { applyClerkOrganizationEvent } from "./commands.js";
-import type { OrganizationMembershipProjection } from "./projection.js";
+import { MAX_INFLIGHT_RECONCILIATIONS, type OrganizationMembershipProjection } from "./projection.js";
 import { MEMBERSHIP_PAGE_LIMIT, type PlatformOrganizationRepository } from "./repository.js";
 import { parseClerkOrganizationWebhook } from "./roles.js";
 import { verifyClerkWebhookSignature } from "./webhook-signature.js";
@@ -28,7 +29,7 @@ const RuntimeIdSchema = z.string().min(1).max(128).regex(/^[A-Za-z0-9:_-]+$/);
 const BearerTokenSchema = z.string().min(32).max(4_096).regex(/^[A-Za-z0-9._~-]+$/);
 const MembersQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(MEMBERSHIP_PAGE_LIMIT).default(50),
-  cursor: z.string().max(256).regex(/^[A-Za-z0-9_-]+$/).optional(),
+  cursor: CollaborationOrganizationMembersCursorSchema.optional(),
 }).strict();
 const AccessResolveSchema = z.object({
   protocolVersion: z.literal(COLLABORATION_DIRECT_PROTOCOL_VERSION),
@@ -59,9 +60,25 @@ export function createPlatformOrganizationRoutes(options: {
     if (!actorId) return safeJson(c, "Unauthorized", 401);
     try {
       const memberships = await options.repository.listOrganizationsForActor(actorId);
+      // The repository caps this request at 100 entries. Use at most the
+      // global pool's capacity, so one supported listing can refresh every
+      // entry without rejecting its own excess work or waiting serially.
+      const decisions: Array<{ organizationId: string; member: boolean }> = new Array(memberships.length);
+      let next = 0;
+      await Promise.all(Array.from({ length: Math.min(MAX_INFLIGHT_RECONCILIATIONS, memberships.length) }, async () => {
+        while (next < memberships.length) {
+          const index = next++;
+          const organizationId = memberships[index]!.organization.organizationId;
+          decisions[index] = { organizationId, member: await options.projection.isCurrentMember({ organizationId, actorId }) };
+        }
+      }));
+      const permitted = new Set(decisions.filter((decision) => decision.member).map((decision) => decision.organizationId));
+      // Request-local set is bounded by the repository's 100-entry limit.
+      // Refresh may change role, policy, epoch or remove membership entirely.
+      const refreshed = await options.repository.listOrganizationsForActor(actorId);
       const organizations = [];
-      for (const entry of memberships) {
-        if (!(await options.projection.isCurrentMember({ organizationId: entry.organization.organizationId, actorId }))) continue;
+      for (const entry of refreshed) {
+        if (!permitted.has(entry.organization.organizationId)) continue;
         organizations.push({
           organizationId: entry.organization.organizationId,
           name: entry.organization.name,

@@ -1,4 +1,4 @@
-import type { ChatSubagent, CanonicalChatApprovalDecision } from "@matrix-os/contracts";
+import type { ChatSubagent, CanonicalChatApprovalDecision, ImportedChatAssetRef } from "@matrix-os/contracts";
 import type { ChatRunContext, CanonicalChatExecutionRootRef, CanonicalChatInputView, CanonicalSubmitChatInputRequest } from "@matrix-os/contracts";
 export type ConversationMessageRole = "user" | "assistant";
 
@@ -10,8 +10,8 @@ export interface ConversationAttachmentPresentation {
 
 export type ConversationMessageContentPresentation =
   | { kind: "text"; text: string }
-  | { kind: "reference"; id: string; referenceKind: "file" | "resource" | "invocation"; label: string; path?: string }
-  | { kind: "image"; id: string; label: string; src: string; path?: string };
+  | { kind: "reference"; id: string; referenceKind: "file" | "resource" | "invocation"; label: string; path?: string; importAsset?: ImportedChatAssetRef }
+  | { kind: "image"; id: string; label: string; src: string; path?: string; importAsset?: ImportedChatAssetRef };
 
 export interface ConversationMessagePresentation {
   kind: "message";
@@ -137,10 +137,14 @@ export interface ConversationTurnPresentation {
 export interface ConversationPresentationCallbacks {
   copyText: (text: string) => Promise<void>;
   loadImage?: (src: string) => Promise<Blob>;
+  loadFileImage?: (path: string, executionRoot?: CanonicalChatExecutionRootRef) => Promise<Blob>;
+  resolveApp?: (path: string, executionRoot?: CanonicalChatExecutionRootRef) => { name: string } | null;
+  openApp?: (path: string, executionRoot?: CanonicalChatExecutionRootRef) => boolean;
   submitInput?: (runId: string, requestId: string, input: Omit<CanonicalSubmitChatInputRequest, "clientRequestId">) => Promise<boolean>;
   performAction?: (action: ConversationActionPresentation, input?: string) => Promise<void>;
   canPerformAction?: (action: ConversationActionPresentation) => boolean;
   openFile?: (path: string, executionRoot?: CanonicalChatExecutionRootRef) => boolean;
+  openImportedAsset?: (asset: ImportedChatAssetRef) => Promise<void>;
   openAttachment?: (path: string) => boolean;
   openWebLink?: (url: string) => boolean;
 }

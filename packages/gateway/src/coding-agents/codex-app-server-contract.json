@@ -1,6 +1,6 @@
 {
   "packageName": "@openai/codex",
-  "latestVerifiedVersion": "0.158.0",
+  "latestVerifiedVersion": "0.159.3",
   "experimental": true,
   "verifiedVersions": {
     "0.144.3": {
@@ -101,6 +101,24 @@
         "darwin-arm64": "aa5cb3fbcdebf833515fb42cd085a0670eb755d461037a0ad67bb72a709dcd0f",
         "linux-x64": "aa5cb3fbcdebf833515fb42cd085a0670eb755d461037a0ad67bb72a709dcd0f"
       }
+    },
+    "0.159.0": {
+      "schemaSha256ByTarget": {
+        "darwin-arm64": "7243ba241962af92ca60581f1a81808ebda4212a800f8b205f54703bcfd508c5",
+        "linux-x64": "7243ba241962af92ca60581f1a81808ebda4212a800f8b205f54703bcfd508c5"
+      }
+    },
+    "0.159.2": {
+      "schemaSha256ByTarget": {
+        "darwin-arm64": "7243ba241962af92ca60581f1a81808ebda4212a800f8b205f54703bcfd508c5",
+        "linux-x64": "7243ba241962af92ca60581f1a81808ebda4212a800f8b205f54703bcfd508c5"
+      }
+    },
+    "0.159.3": {
+      "schemaSha256ByTarget": {
+        "darwin-arm64": "7243ba241962af92ca60581f1a81808ebda4212a800f8b205f54703bcfd508c5",
+        "linux-x64": "7243ba241962af92ca60581f1a81808ebda4212a800f8b205f54703bcfd508c5"
+      }
     }
   },
   "requiredServerMethods": [
@@ -134,6 +152,6 @@
     "item/agentMessage/delta": "427d58ea4e1b0fd7afce1035cefd40df96d7dc48b82cbe293a2f69ed4e803bf9",
     "item/commandExecution/outputDelta": "aa94a86bcbf20ceca1672b7c476c3472ef5e507b831ceb26561c2785a97a5dc4",
     "thread/tokenUsage/updated": "5dbf1e2a382453af89a44bf72660aade96c8a549068d5bb55ca56951a30505d7",
-    "turn/completed": "873327cc9c902d8bc5eaf96eb241df1498213d5723029134b8a476ef03005972"
+    "turn/completed": "cbba93d35c49dee9ac42aa7bca7eeeeb935e0cc89c223c31094a27660427f57f"
   }
 }

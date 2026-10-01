@@ -1,0 +1,4 @@
+interface:
+  display_name: "Matrix Chat Import"
+  short_description: "Import chosen local Codex sessions into private Matrix Chats"
+  default_prompt: "Use $matrix-chat-import to preview and import my selected Codex transcript into Matrix Chat."
