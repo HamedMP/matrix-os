@@ -362,7 +362,7 @@ describe("funded Jev evaluation relay", () => {
       authorize: vi.fn(), start: vi.fn(), release: vi.fn(), finalize: vi.fn(),
     };
     const config = resolveFundedRelayConfig(environment())!;
-    const relay = createFundedRelay({ ...config, now: () => NOW, fetch: upstream as typeof fetch, platformClient });
+    const relay = createFundedRelay({ ...config, fetch: upstream as typeof fetch, platformClient, now: () => NOW });
     const app = new Hono();
     relay.register(app);
 

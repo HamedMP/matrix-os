@@ -19,7 +19,6 @@ export function useChatMentionPermission(
   if (confirmation && confirmation.key !== key) setConfirmation(null);
   const confirmed = confirmation?.key === key && confirmation.allowed;
   return {
-    allowed: !agentId || permissionMode === "full_access" || confirmed,
     confirmed,
     permissionMode: agentId && (permissionMode === "full_access" || confirmed) ? "full_access" : permissionMode,
     confirm: useCallback((allowed: boolean) => setConfirmation({ key, allowed }), [key]),

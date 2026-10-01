@@ -37,6 +37,11 @@ const panelsMock = vi.hoisted(() => ({
   lastOrientation: undefined as "horizontal" | "vertical" | undefined,
 }));
 
+// Layout fixtures use a partial API; provider transport wiring has its own integration suite.
+vi.mock("@desktop/renderer/src/features/chat/ChatProviderOnboarding", () => ({
+  ChatProviderOnboarding: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+}));
+
 vi.mock("react-resizable-panels", () => ({
   Group: ({ children, defaultLayout, onLayoutChange, className, orientation }: {
     children: React.ReactNode;

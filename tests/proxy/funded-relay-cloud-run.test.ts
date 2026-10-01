@@ -53,7 +53,10 @@ describe("funded relay Cloud Run service", () => {
     const fetchFn = vi.fn<typeof fetch>().mockResolvedValue(Response.json({
       success: true, result: { model: "@cf/zai-org/glm-5.3-flash", choices: [{ message: { content: "ok" } }] },
     }));
-    const service = createFundedRelayService(config, { fetchFn, now: () => new Date("2026-09-26T00:00:00.000Z") });
+    const service = createFundedRelayService(config, {
+      fetchFn,
+      now: () => new Date("2026-09-30T12:00:00.000Z"),
+    });
     const path = "http://relay.test/ready?model=%40cf%2Fzai-org%2Fglm-5.3-flash";
     try {
       expect((await service.app.request(path)).status).toBe(401);
@@ -114,7 +117,10 @@ describe("funded relay Cloud Run service", () => {
     const fetchFn = vi.fn<typeof fetch>().mockResolvedValue(Response.json({
       type: "message", model: "claude-sonnet-5", content: [{ type: "text", text: "ok" }],
     }));
-    const service = createFundedRelayService(config, { fetchFn, now: () => new Date("2026-09-26T00:00:00.000Z") });
+    const service = createFundedRelayService(config, {
+      fetchFn,
+      now: () => new Date("2026-09-30T12:00:00.000Z"),
+    });
     try {
       const response = await service.app.request("http://relay.test/ready?model=anthropic%2Fclaude-sonnet-5", {
         headers: { authorization: `Bearer ${config.relayControlToken}` },

@@ -1,3 +1,7 @@
+import { bootstrapCompanyDriveSharingIndexes } from "./drive-sharing-guard.js";
+import { bootstrapChatDriveProjects } from "./drive-project-database.js";
+import { bootstrapChatImports, type ChatImportDatabase } from "./import-database.js";
+export type { ChatImportJobsTable, ChatImportMessagesTable } from "./import-database.js";
 import { bootstrapChatMetadata } from "./metadata-schema.js";
 import { bootstrapChatAttribution } from "./attribution-repair.js";
 import { sql, type ColumnType, type Generated, type Kysely } from "kysely";
@@ -233,29 +237,6 @@ export interface ChatLegacyImportsTable {
   updated_at: Timestamp;
 }
 
-export interface ChatImportJobsTable {
-  owner_type: "personal";
-  owner_id: string;
-  source_id: string;
-  source_hash: string;
-  title: string;
-  status: "uploading" | "verified";
-  chat_id: string | null;
-  next_seq: number;
-  total_bytes: number;
-  created_at: Timestamp;
-  updated_at: Timestamp;
-}
-
-export interface ChatImportMessagesTable {
-  owner_id: string;
-  source_id: string;
-  seq: number;
-  role: "user" | "assistant";
-  text: string;
-  created_at: Timestamp;
-}
-
 export interface ChatMigrationsTable {
   owner_type: "personal" | "organization";
   owner_id: string;
@@ -270,7 +251,7 @@ export interface ChatMigrationsTable {
   updated_at: Timestamp;
 }
 
-export interface ChatDatabase {
+export interface ChatDatabase extends ChatImportDatabase {
   chat_shares: {
     id: string;
     chat_id: string;
@@ -295,8 +276,6 @@ export interface ChatDatabase {
   chat_outbox: ChatOutboxTable;
   chat_deletions: ChatDeletionsTable;
   chat_legacy_imports: ChatLegacyImportsTable;
-  chat_import_jobs: ChatImportJobsTable;
-  chat_import_messages: ChatImportMessagesTable;
   chat_migrations: ChatMigrationsTable;
 }
 
@@ -693,34 +672,7 @@ export async function bootstrapChatDatabase<Database extends ChatDatabase>(
       PRIMARY KEY (owner_type, owner_id, source_kind, source_id)
     )
   `.execute(db);
-  await sql`
-    CREATE TABLE IF NOT EXISTS chat_import_jobs (
-      owner_type TEXT NOT NULL CHECK (owner_type = 'personal'),
-      owner_id TEXT NOT NULL,
-      source_id TEXT NOT NULL,
-      source_hash TEXT NOT NULL,
-      title TEXT NOT NULL,
-      status TEXT NOT NULL CHECK (status IN ('uploading', 'verified')),
-      chat_id TEXT REFERENCES chats(id) ON DELETE SET NULL,
-      next_seq BIGINT NOT NULL DEFAULT 1,
-      total_bytes BIGINT NOT NULL DEFAULT 0,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-      PRIMARY KEY (owner_id, source_id)
-    )
-  `.execute(db);
-  await sql`
-    CREATE TABLE IF NOT EXISTS chat_import_messages (
-      owner_id TEXT NOT NULL,
-      source_id TEXT NOT NULL,
-      seq BIGINT NOT NULL,
-      role TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
-      text TEXT NOT NULL,
-      created_at TIMESTAMPTZ NOT NULL,
-      PRIMARY KEY (owner_id, source_id, seq),
-      FOREIGN KEY (owner_id, source_id) REFERENCES chat_import_jobs(owner_id, source_id) ON DELETE CASCADE
-    )
-  `.execute(db);
+  await bootstrapChatImports(db);
   await sql`
     CREATE TABLE IF NOT EXISTS chat_migrations (
       owner_type TEXT NOT NULL CHECK (owner_type IN ('personal', 'organization')),
@@ -754,6 +706,8 @@ export async function bootstrapChatDatabase<Database extends ChatDatabase>(
   await sql`CREATE INDEX IF NOT EXISTS idx_chat_messages_search ON chat_messages USING GIN (to_tsvector('simple', search_text)) WHERE state = 'committed'`.execute(db);
   await sql`CREATE INDEX IF NOT EXISTS idx_chat_outbox_owner_cursor ON chat_outbox(owner_type, owner_id, cursor)`.execute(db);
   await bootstrapChatReadState(db);
+  await bootstrapChatDriveProjects(db);
+  await bootstrapCompanyDriveSharingIndexes(db);
 }
 
 // Existing history starts read once on upgrade; subsequent bootstraps preserve user choices.

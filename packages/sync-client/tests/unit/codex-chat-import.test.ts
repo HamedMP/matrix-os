@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { importCodexPreview, previewCodexFile } from "../../src/cli/codex-chat-import.js";
-import { safeCodexImportError } from "../../src/cli/commands/chats.js";
+import { localChatImportErrorText } from "@matrix-os/contracts/local-chat-import";
 
 const sourceId = "019eb0ae-9a30-7541-bdb8-db4d17e65146";
 let directory = "";
@@ -11,8 +11,8 @@ afterEach(async () => { if (directory) await rm(directory, { recursive: true, fo
 
 describe("CLI Codex Chat import", () => {
   it("does not print raw filesystem or gateway error details", () => {
-    expect(safeCodexImportError(new Error("EACCES /home/someone/private.jsonl")))
-      .toBe("Chat import failed. Check the selected file and connection, then retry.");
+    expect(localChatImportErrorText(new Error("EACCES /home/someone/private.jsonl")))
+      .toBe("Chat import unavailable. Check your connection and Matrix version, then retry. Your local file was not changed.");
   });
   it("previews selected local history and sends only the projected conversation to the authenticated owner", async () => {
     directory = await mkdtemp(join(tmpdir(), "matrix-codex-import-"));

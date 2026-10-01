@@ -27,6 +27,7 @@ export interface R2ClientConfig {
 export interface R2Client {
   getPresignedGetUrl(key: string, expiresIn?: number): Promise<string>;
   getPresignedPutUrl(key: string, size: number, expiresIn?: number): Promise<string>;
+  listMultipartUploads(key: string): Promise<{ key: string; uploadId: string }[]>;
   createMultipartUpload(key: string): Promise<string>;
   getPresignedPartUrl(key: string, uploadId: string, partNumber: number, expiresIn?: number): Promise<string>;
   completeMultipartUpload(
@@ -80,6 +81,7 @@ export async function createR2Client(config: R2ClientConfig): Promise<R2Client> 
     HeadObjectCommand,
     DeleteObjectCommand,
     CreateMultipartUploadCommand,
+    ListMultipartUploadsCommand,
     UploadPartCommand,
     CompleteMultipartUploadCommand,
     AbortMultipartUploadCommand,
@@ -129,6 +131,16 @@ export async function createR2Client(config: R2ClientConfig): Promise<R2Client> 
         signingDate: new Date(),
         unhoistableHeaders: new Set(["content-length"]),
       });
+    },
+
+    async listMultipartUploads(key: string): Promise<{ key: string; uploadId: string }[]> {
+      const response = await s3.send(new ListMultipartUploadsCommand({ Bucket: bucket, Prefix: key, MaxUploads: 11 }), {
+        abortSignal: AbortSignal.timeout(R2_READ_TIMEOUT_MS),
+      });
+      if (response.IsTruncated) throw new Error("Storage recovery capacity exceeded");
+      const matches = (response.Uploads ?? []).filter(upload => upload.Key === key);
+      if (matches.length > 10 || matches.some(upload => !upload.UploadId)) throw new Error("Storage recovery capacity exceeded");
+      return matches.map(upload => ({ key, uploadId: upload.UploadId! }));
     },
 
     async createMultipartUpload(key: string): Promise<string> {
@@ -191,9 +203,11 @@ export async function createR2Client(config: R2ClientConfig): Promise<R2Client> 
         Key: key,
         UploadId: uploadId,
       });
-      await s3.send(command, {
-        abortSignal: AbortSignal.timeout(R2_WRITE_TIMEOUT_MS),
-      });
+      try {
+        await s3.send(command, { abortSignal: AbortSignal.timeout(R2_WRITE_TIMEOUT_MS) });
+      } catch (error: unknown) {
+        if (!(error instanceof Error) || error.name !== "NoSuchUpload") throw error;
+      }
     },
 
     async getObject(

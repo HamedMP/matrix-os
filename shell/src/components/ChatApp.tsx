@@ -1,4 +1,5 @@
 "use client";
+import { ChatProviderOnboarding } from "./chat-provider-onboarding";
 import type { ChatAgentDraftRequest, ChatCollaborationView, StartAgentChat } from "@matrix-os/ui";
 
 import { useChatReadState, CanonicalChatInputForm } from "@matrix-os/ui";
@@ -13,6 +14,7 @@ import { useChatComposerDraft } from "./chat/useChatComposerDraft";
 import { ChatAgentsRailSection, ChatAgentsWorkspace, ChatAgentsContent, useChatAgentsNavigation, type ChatAgentClient } from "@matrix-os/ui";
 import type { ChatSubmitOptions } from "@/hooks/useChatState";
 import { ChatSharing } from "./chat/ChatSharing";
+import { OrganizationDrivesNav } from "./chat/OrganizationDrivesNav";
 import { SharedWithMeNav } from "./chat/SharedWithMeNav";
 import { ShellChatCollaboration } from "./chat/ShellChatCollaboration";
 import { ChatAttachments, ChatContextMenu } from "@matrix-os/ui";
@@ -403,6 +405,7 @@ function ChatAppContent({
           onOpenSharedHome();
           if (mobile) setSidebarOpen(false);
         }} /> : null}
+        <OrganizationDrivesNav chats={conversations} client={agentClient} onNewChat={startAgentChat} onSelectChat={onSwitchConversation} activeChatId={sessionId} />
         {/* Search */}
         <div className="px-3 pb-2">
           <div className={`flex items-center gap-2 rounded-lg bg-background/60 px-2.5 text-xs ${mobile ? "py-2.5" : "py-1.5"}`}>
@@ -611,7 +614,7 @@ function ChatAppContent({
         {/* Empty state or conversation */}
         {isEmpty ? (
           <EmptyState
-            composerProps={{ composer, agentClient, scope: composerScope, permissionMode: providerState.selected?.permissionMode ?? "supervised" }}
+            composerProps={{ composer, agentClient, scope: composerScope, permissionMode: providerState.selected?.permissionMode ?? "supervised", driveContextEnabled: providerState.selected?.supportsCompanyDriveContext === true }}
             onSubmit={submitWithHermesSetup}
             connected={connected}
             suggestions={suggestions}
@@ -706,6 +709,7 @@ function ChatAppContent({
                 </div>
               )}
               <ChatInput
+                driveContextEnabled={providerState.selected?.supportsCompanyDriveContext === true}
                 key={`composer:${composerScope}`} composer={composer} agentClient={agentClient} scope={composerScope} permissionMode={providerState.selected?.permissionMode ?? "supervised"}
                 connected={connected && providerState.selected !== null}
                 busy={busy}
@@ -743,7 +747,7 @@ function EmptyState({
   providerReady,
   attachmentsEnabled,
 }: {
-  composerProps: Pick<React.ComponentProps<typeof ChatInput>, "composer" | "agentClient" | "scope" | "permissionMode">;
+  composerProps: Pick<React.ComponentProps<typeof ChatInput>, "composer" | "agentClient" | "scope" | "permissionMode" | "driveContextEnabled">;
   onSubmit: React.ComponentProps<typeof ChatInput>["onSubmit"];
   connected: boolean;
   suggestions: string[];
@@ -755,17 +759,19 @@ function EmptyState({
   attachmentsEnabled: boolean;
 }) {
   return (
-    <div className="flex flex-1 flex-col items-center justify-center px-4">
-      <div className="w-full max-w-[600px] space-y-8">
+    <div data-slot="chat-empty-state-scroll" className="flex min-h-0 flex-1 flex-col items-center overflow-y-auto px-4 py-4">
+      <div data-slot="chat-empty-state-stack" className="my-auto w-full max-w-[600px] shrink-0 space-y-8">
         {/* Greeting */}
-        <div className="text-center space-y-2">
+        <ChatProviderOnboarding><div className="text-center space-y-2">
           <h1 className="text-2xl font-medium tracking-tight text-foreground/90">
             What should Matrix do?
           </h1>
           <p className="text-sm text-muted-foreground">
-            {modelLabel ? `Using ${modelLabel}` : "Connect a harness in Settings to start chatting."}
+            {modelLabel ? `Using ${modelLabel}` : "Choose a model to start chatting."}
           </p>
         </div>
+
+        </ChatProviderOnboarding>
 
         {/* Input */}
         <ChatInput

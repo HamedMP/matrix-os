@@ -60,3 +60,14 @@ export function createRefreshGuard() {
     inFlight() { return pending !== null; },
   };
 }
+
+/** An unresolved shortcut must never silently fall back to a different drive. */
+export function resolveOrganizationDriveNavigation(scopeIds: readonly string[], selected: string | null,
+  requested: {scopeId: string; intentId?: string} | undefined, appliedIntent: string | undefined): {scopeId: string | null; unavailable: boolean} {
+  if (requested && (requested.intentId ?? requested.scopeId) !== appliedIntent) {
+    return scopeIds.includes(requested.scopeId) ? {scopeId: requested.scopeId, unavailable: false} : {scopeId: null, unavailable: true};
+  }
+  if (selected && scopeIds.includes(selected)) return {scopeId: selected, unavailable: false};
+  if (requested) return {scopeId: null, unavailable: true};
+  return {scopeId: scopeIds[0] ?? null, unavailable: false};
+}

@@ -19,34 +19,36 @@ it("keeps one Agent and three distinct Chats while preserving other resources", 
   expect(canAddChatMention([chat, { ...chat, id: "chat_second" }, { ...chat, id: "chat_third" }], { ...chat, id: "chat_fourth" })).toBe(false);
   expect(orderChatResources([file, chat, bot])).toEqual([bot, chat, file]);
 });
-it("requires explicit per-request access and resets it on Chat changes and after removal", () => {
+it("allows supervised Agent requests and treats Full access as an explicit per-request choice", () => {
   const { result, rerender } = renderHook(({ scope, resources }) => useChatMentionPermission(scope, resources, "supervised"), {
     initialProps: { scope: "chat_one", resources: [bot] },
   });
-  expect(result.current.allowed).toBe(false);
+  expect(result.current.confirmed).toBe(false);
+  expect(result.current.permissionMode).toBe("supervised");
   act(() => result.current.confirm(true));
-  expect(result.current.allowed).toBe(true);
+  expect(result.current.confirmed).toBe(true);
   expect(result.current.permissionMode).toBe("full_access");
   rerender({ scope: "chat_two", resources: [bot] });
-  expect(result.current.allowed).toBe(false);
+  expect(result.current.confirmed).toBe(false);
+  expect(result.current.permissionMode).toBe("supervised");
   act(() => result.current.confirm(true));
   rerender({ scope: "chat_two", resources: [] });
   expect(result.current.permissionMode).toBe("supervised");
   rerender({ scope: "chat_two", resources: [bot] });
-  expect(result.current.allowed).toBe(false);
+  expect(result.current.confirmed).toBe(false);
+  expect(result.current.permissionMode).toBe("supervised");
 });
 it("requires fresh consent when the selected Agent revision changes", () => {
   const { result, rerender } = renderHook(({ revision }) => useChatMentionPermission("chat_one", [{ ...bot, revision }], "supervised"), {
     initialProps: { revision: "1" },
   });
   act(() => result.current.confirm(true));
-  expect(result.current.allowed).toBe(true);
+  expect(result.current.confirmed).toBe(true);
   rerender({ revision: "2" });
-  expect(result.current.allowed).toBe(false);
   expect(result.current.confirmed).toBe(false);
   expect(result.current.permissionMode).toBe("supervised");
   rerender({ revision: "1" });
-  expect(result.current.allowed).toBe(false);
+  expect(result.current.confirmed).toBe(false);
 });
 it("keeps consent while editing one request and revokes it when a new draft replaces that request", () => {
   const { result, rerender } = renderHook(({ requestIdentity, text }) => {
@@ -55,12 +57,12 @@ it("keeps consent while editing one request and revokes it when a new draft repl
   }, { initialProps: { requestIdentity: 1, text: "First request" } });
   act(() => result.current.confirm(true));
   rerender({ requestIdentity: 1, text: "Edited first request" });
-  expect(result.current.allowed).toBe(true);
+  expect(result.current.confirmed).toBe(true);
   rerender({ requestIdentity: 2, text: "Replacement request" });
-  expect(result.current.allowed).toBe(false);
+  expect(result.current.confirmed).toBe(false);
   expect(result.current.permissionMode).toBe("supervised");
   rerender({ requestIdentity: 1, text: "First request" });
-  expect(result.current.allowed).toBe(false);
+  expect(result.current.confirmed).toBe(false);
 });
 it("previews bounded Chat context with provenance without starting work", async () => {
   const client = { preview: vi.fn(async () => ({ chatId: chat.id, title: chat.label, throughSeq: 28, text: "Decisions: meet on Thursday.", truncated: true })) } as unknown as ChatAgentClient;

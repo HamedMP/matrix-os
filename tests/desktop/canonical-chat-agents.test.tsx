@@ -38,7 +38,7 @@ it("keeps a rail Agent's identity on a new draft and clears it for a later ordin
   expect(client.create).not.toHaveBeenCalled();
 });
 
-it("requires new consent when the same Agent replaces a draft, while retaining consent during typing", async () => {
+it("resets optional Full access when the same Agent replaces a draft, while retaining it during typing", async () => {
   const client = createCanonicalChatWorkspaceClient();
   vi.mocked(client.list).mockResolvedValue({ items: [] });
   const resource = { ...agent, revision: "3" };
@@ -53,11 +53,11 @@ it("requires new consent when the same Agent replaces a draft, while retaining c
   view.rerender(<CanonicalChatWorkspace {...props} draftRequest={{ id: 12, text: "Second request", resources: [resource] }} />);
   await waitFor(() => expect(editor.textContent).toContain("Second request"));
   expect((screen.getByRole("checkbox", { name: /Allow Full access/ }) as HTMLInputElement).checked).toBe(false);
-  expect((screen.getByRole("button", { name: "Send" }) as HTMLButtonElement).disabled).toBe(true);
+  expect((screen.getByRole("button", { name: "Send" }) as HTMLButtonElement).disabled).toBe(false);
   expect(client.create).not.toHaveBeenCalled();
 });
 
-it("extends the existing picker, sends typed references with explicit access, and retains a failed draft", async () => {
+it("extends the existing picker, sends typed references in Supervised mode, and retains a failed draft", async () => {
   const client = createCanonicalChatWorkspaceClient();
   client.agents = { search: vi.fn(async () => ({ enabled: true, resources: [agent, contextChat] })) } as unknown as ChatAgentClient;
   vi.mocked(client.admitTurn).mockRejectedValue(new Error("Service unavailable"));
@@ -69,12 +69,11 @@ it("extends the existing picker, sends typed references with explicit access, an
   fireEvent.click(await screen.findByRole("option", { name: /Meeting helper/ }));
   expect(client.admitTurn).not.toHaveBeenCalled();
   await appendSharedComposerText(editor, " Review this meeting");
-  expect((screen.getByRole("button", { name: "Send" }) as HTMLButtonElement).disabled).toBe(true);
-  fireEvent.click(screen.getByRole("checkbox", { name: /Allow Full access/ }));
+  expect((screen.getByRole("button", { name: "Send" }) as HTMLButtonElement).disabled).toBe(false);
   fireEvent.click(screen.getByRole("button", { name: "Send" }));
   await waitFor(() => expect(client.admitTurn).toHaveBeenCalled());
   expect(vi.mocked(client.admitTurn).mock.calls[0]![1]).toMatchObject({
-    selection: { instanceId: canonicalChatRecord.chat.currentSelection!.instanceId }, permissionMode: "full_access",
+    selection: { instanceId: canonicalChatRecord.chat.currentSelection!.instanceId }, permissionMode: "supervised",
     parts: expect.arrayContaining([{ type: "resource_reference", resource: agent }]),
   });
   expect(screen.getByRole("log")).toBe(transcript);

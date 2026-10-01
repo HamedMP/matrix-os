@@ -1,4 +1,5 @@
 import { projectHermesNativeRouteObservation } from "./hermes-native-route-observation.js";
+import { projectMissingCredentialAuth } from "./provider-missing-credential-auth.js";
 import { qualifyGeneratedNativeSource } from "./provider-generated-native-route.js";
 import {
   ProviderSettingsSnapshotSchema,
@@ -391,7 +392,7 @@ function projectHarness(input: {
     version: null,
     installState: driver?.installState ?? "missing",
     ...projectHermesNativeRouteObservation({ driver, stored: input.stored, source, accounts: input.accounts, now: input.now }),
-    authState: authState(readiness),
+    authState: projectMissingCredentialAuth({ canonical: input.canonical, stored: input.stored, source, driver, now: input.now }) ?? authState(readiness),
     loginMethods: [...visibleMethods],
     recommendedLoginMethod: visibleMethods[0] ?? null,
     connectivity: connectivity(readiness),

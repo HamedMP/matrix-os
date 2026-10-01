@@ -20,4 +20,8 @@ describe("contracts native Node runtime", () => {
 
     expect(output.trim()).toBe("desktop,canvas function openai-codex");
   });
+  it("loads the portable transcript parser subpath without a TypeScript resolver",()=>{
+    const output=execFileSync(process.execPath,["--input-type=module","-e",'import("@matrix-os/contracts/local-chat-import").then(({readLocalChatJsonl,reconstructLocalChat})=>console.log(typeof readLocalChatJsonl,typeof reconstructLocalChat))'],{cwd:process.cwd(),encoding:"utf8",timeout:10000,env:{...process.env,NODE_OPTIONS:""}});
+    expect(output.trim()).toBe("function function");
+  });
 });

@@ -8,12 +8,16 @@ import {
 } from "@matrix-os/contracts";
 import { z } from "zod/v4";
 import { TERMINAL_RUNTIME_PROTOCOL_ERROR_CODES } from "./errors.js";
+import { TerminalCommandStateRefSchema } from "./terminal-command-state.js";
+import { TerminalEndedTabArchiveRequestSchema } from "./terminal-ended-tab-archive.js";
 
 const RequestIdSchema = z.string().regex(/^req_[0-9a-f]{32}$/);
 const RequestBase = { version: z.literal(1), requestId: RequestIdSchema };
 
 export const TerminalRuntimeRequestSchema = z.discriminatedUnion("operation", [
   z.object({ ...RequestBase, operation: z.literal("ListWorkspaces"), input: z.object({}).strict() }).strict(),
+  z.object({ ...RequestBase, operation: z.literal("GetCommandState"), input: TerminalCommandStateRefSchema }).strict(),
+  z.object({ ...RequestBase, operation: z.literal("ArchiveEndedTab"), input: TerminalEndedTabArchiveRequestSchema }).strict(),
   z.object({
     ...RequestBase,
     operation: z.literal("EnsureWorkspace"),

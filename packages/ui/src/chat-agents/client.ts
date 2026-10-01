@@ -1,3 +1,4 @@
+import { createChatDriveProjectClient, type ChatDriveProjectClient } from "../organization-drive/chat-project-client.js";
 import {
   CanonicalChatIdSchema, CanonicalProviderCatalogSchema,
   ChatAgentIdSchema, ChatAgentSchema, ChatAgentListResponseSchema, ChatMentionSearchResponseSchema,
@@ -24,6 +25,7 @@ const IntegrationConnectionListSchema = z.array(IntegrationConnectionSchema).max
 export type ChatAgentIntegrationConnection = z.infer<typeof IntegrationConnectionSchema>;
 
 export interface ChatAgentClient {
+  driveProjects?: ChatDriveProjectClient;
   list(): Promise<ChatAgentListResponse>;
   catalog(): Promise<CanonicalProviderCatalog>;
   recipeCatalog(): Promise<ChatAgentRecipeCatalog>;
@@ -39,6 +41,7 @@ export function createChatAgentClient(request: (
   path: string, method: "GET" | "POST" | "PATCH", body?: unknown,
 ) => Promise<unknown>): ChatAgentClient {
   return {
+    driveProjects: createChatDriveProjectClient(request),
     list: async () => ChatAgentListResponseSchema.parse(await request("/api/chat-agents", "GET")),
     catalog: async () => CanonicalProviderCatalogSchema.parse(await request("/api/chat-providers", "GET")),
     recipeCatalog: async () => ChatAgentRecipeCatalogSchema.parse(await request("/api/chat-agents/recipe-catalog", "GET")),

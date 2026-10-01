@@ -98,6 +98,11 @@ const ROUTE_BASELINE: ReadonlyArray<readonly [string, string]> = [
   ["POST", "/api/collaboration/scopes/:scopeId/apps/:appId/actions"],
   ["PUT", "/api/collaboration/scopes/:scopeId/drive"],
   ["GET", "/api/collaboration/scopes/:scopeId/drive"],
+  // Context search registers body limit and signed-request authorization before its handler.
+  ["POST", "/api/collaboration/scopes/:scopeId/drive/context/search"],
+  ["POST", "/api/collaboration/scopes/:scopeId/drive/context/search"],
+  ["POST", "/api/collaboration/scopes/:scopeId/drive/context/search"],
+  ["GET", "/api/collaboration/scopes/:scopeId/drive/files/:fileId/context"],
   ["POST", "/api/collaboration/scopes/:scopeId/drive/uploads"],
   ["POST", "/api/collaboration/scopes/:scopeId/drive/uploads/:uploadId/commit"],
   ["DELETE", "/api/collaboration/scopes/:scopeId/drive/uploads/:uploadId"],

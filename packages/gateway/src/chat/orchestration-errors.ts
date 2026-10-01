@@ -48,9 +48,7 @@ export function mapChatAgentContextError(error: ChatAgentContextError): Canonica
   }
   return new CanonicalChatOrchestrationError(error.code === "context_unavailable"
     ? canonicalChatSafeError("resource_unavailable", "The selected Agent or Chat is unavailable.")
-    : canonicalChatSafeError("capability_mismatch", error.code === "agent_permission_required"
-      ? "This Agent requires Full access. Select it before sending."
-      : "Agents and Chat references are disabled."), 400);
+    : canonicalChatSafeError("capability_mismatch", "Agents and Chat references are disabled."), 400);
 }
 
 export function mapRepositoryError(error: unknown): never {
