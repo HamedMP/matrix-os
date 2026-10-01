@@ -898,7 +898,7 @@ export function CanonicalChatWorkspace({
           <>
             {api && !chromeHost ? <ChatSharingButton key={controller.detail.record.chat.id} api={api} chatId={controller.detail.record.chat.id} copyText={copyText} /> : null}
             <BotChatPanel key={controller.detail.record.chat.id} chatId={controller.detail.record.chat.id}
-              client={client.agents} directBotId={directBotId} refreshKey={controller.detail.record.chat.revision + botEventRevision} />
+              client={client.agents} directBotId={directBotId} catalog={providerCatalog} refreshKey={controller.detail.record.chat.revision + botEventRevision} />
             <ChatContextMenu chatId={controller.detail.record.chat.id}>
             <div className="contents">
             <ConversationTranscript turns={transcript} callbacks={{

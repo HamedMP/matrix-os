@@ -548,7 +548,7 @@ function ChatAppContent({
                 <p className="truncate text-[10px] leading-3 text-muted-foreground">
                   {collaborationView
                     ? activeSharedMetadata ? `Shared · ${activeSharedMetadata.role}` : "Shared session"
-                    : directBotId ? "Automatic" : providerState.selected?.modelLabel ?? (providerState.loading ? "Loading AI access" : "AI access unavailable")}
+                    : directBotId ? "Bot model" : providerState.selected?.modelLabel ?? (providerState.loading ? "Loading AI access" : "AI access unavailable")}
                 </p>
               </div>
             </div>
@@ -585,7 +585,7 @@ function ChatAppContent({
             <span className="text-[10px] text-destructive font-medium">Offline</span>
           )}
         </header>
-        {!collaborationView && sessionId ? <BotChatPanel key={sessionId} chatId={sessionId} client={agentClient} directBotId={directBotId} refreshKey={botEventRevision} /> : null}
+        {!collaborationView && sessionId ? <BotChatPanel key={sessionId} chatId={sessionId} client={agentClient} directBotId={directBotId} catalog={providerState.catalog} refreshKey={botEventRevision} /> : null}
         {!collaborationView && !directBotId && setupOpen && (
           <ChatProviderSetupPanel
             onDismiss={() => {
@@ -630,7 +630,7 @@ function ChatAppContent({
             mobile={mobile}
             composerDraftRequest={activeDraftRequest}
             onComposerDraftConsumed={consumeDraftRequest}
-            modelLabel={directBotId ? "Automatic" : providerState.selected?.modelLabel ?? null}
+            modelLabel={directBotId ? "Bot model" : providerState.selected?.modelLabel ?? null}
             providerReady={providerReady}
             attachmentsEnabled={!directBotId && (providerState.selected?.supportsFileAttachments ?? false)}
           />

@@ -64,6 +64,7 @@ export const CanonicalProviderDriverKindSchema = z.enum([
   "opencode",
   "pi",
   "matrix_bot",
+  "matrix_pi",
 ]);
 
 export const CanonicalChatExecutionRootRefSchema = z.discriminatedUnion("kind", [

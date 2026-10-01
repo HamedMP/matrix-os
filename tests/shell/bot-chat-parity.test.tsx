@@ -9,6 +9,7 @@ import { BotChatPanel } from "../../packages/ui/src/chat-agents/bots/BotChatPane
 vi.mock("@clerk/nextjs", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@clerk/nextjs")>()),
   useOrganization: () => ({ organization: null }),
+  useAuth: () => ({ userId: null, sessionId: null }),
 }));
 
 afterEach(cleanup);

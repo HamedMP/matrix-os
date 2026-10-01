@@ -1,11 +1,11 @@
 import { z } from "zod/v4";
 import {
-  BotAuthorityViewSchema, BotDirectChatResponseSchema, BotGrantIdSchema, BotInteractionIdSchema,
+  ChatAgentSchema, UpdateChatAgentRequestSchema, BotAuthorityViewSchema, BotDirectChatResponseSchema, BotGrantIdSchema, BotInteractionIdSchema,
   BotInteractionSchema, BotMemoryItemIdSchema, BotMemoryMutationRequestSchema, BotMemoryMutationResponseSchema,
   BotRecipeListResponseSchema, BotTaskListResponseSchema, CanonicalChatIdSchema, ChatAgentIdSchema, ChatAgentListResponseSchema,
   InstantiateBotRequestSchema, InstantiateBotResponseSchema,
   ResolveBotInteractionRequestSchema, ResolveBotInteractionResponseSchema, RevokeBotGrantResponseSchema,
-  type BotAuthorityView, type BotInteraction, type BotMemoryMutationRequest, type BotRecipeSummary, type BotTaskSummary,
+  type CanonicalChatModelSelection, type BotAuthorityView, type BotInteraction, type BotMemoryMutationRequest, type BotRecipeSummary, type BotTaskSummary,
   type InstantiateBotRequest, type InstantiateBotResponse,
   type ResolveBotInteractionRequest, type ResolveBotInteractionResponse,
 } from "@matrix-os/contracts";
@@ -14,6 +14,8 @@ import { buildGatewayRequestUrl, fetchAuthenticatedJson } from "./http";
 export interface NativeBotChatSnapshot {
   agentId: string;
   name: string;
+  selection?: CanonicalChatModelSelection;
+  revision?: number;
   interactions: BotInteraction[];
   tasks: BotTaskSummary[];
   authority: BotAuthorityView;
@@ -70,8 +72,10 @@ export async function fetchNativeBotChat(token: string, gatewayUrl: string, chat
   if (interactions.status === "rejected" || tasks.status === "rejected" || authority.status === "rejected") {
     throw new Error(STATUS_ERROR);
   }
+  const agent = library.status === "fulfilled" ? library.value.agents.find((candidate) => candidate.id === agentId) : undefined;
   return {
     agentId,
+    ...(agent ? { selection: agent.selection, revision: agent.revision } : {}),
     name: library.status === "fulfilled"
       ? library.value.agents.find((agent) => agent.id === agentId)?.name ?? "Your bot" : "Your bot",
     interactions: interactions.value.interactions,
@@ -105,4 +109,13 @@ export async function mutateNativeBotMemory(token: string, gatewayUrl: string, a
     `${agentPath(agentId)}/memory/${encodeURIComponent(id)}/${action}`),
   token, method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
   schema: BotMemoryMutationResponseSchema, errorMessage: ACCESS_ERROR });
+}
+
+export async function updateNativeBotModel(token: string, gatewayUrl: string, agentId: string,
+  baseRevision: number, selection: CanonicalChatModelSelection): Promise<void> {
+  const validated = UpdateChatAgentRequestSchema.parse({ baseRevision, selection });
+  const body = { baseRevision: validated.baseRevision, selection: validated.selection };
+  await fetchAuthenticatedJson({ url: buildGatewayRequestUrl(gatewayUrl, agentPath(agentId)), token,
+    method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+    schema: ChatAgentSchema, errorMessage: "Bot model could not be saved. Try again." });
 }

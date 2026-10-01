@@ -1,6 +1,6 @@
 import { useAuth } from "@clerk/clerk-expo";
 import { useQuery } from "@tanstack/react-query";
-import type { BotRecipeRef } from "@matrix-os/contracts";
+import type { BotRecipeRef, CanonicalChatModelSelection } from "@matrix-os/contracts";
 import { fetchNativeBotRecipes, instantiateNativeBot } from "@/lib/requests/bots";
 
 export function useBotRecipes(gatewayUrl: string | null, visible: boolean) {
@@ -18,10 +18,10 @@ export function useBotRecipes(gatewayUrl: string | null, visible: boolean) {
     recipes: query.data ?? [],
     isPending: query.isPending,
     isError: query.isError,
-    create: async (recipe: BotRecipeRef, clientRequestId: string) => {
+    create: async (recipe: BotRecipeRef, clientRequestId: string, selection?: CanonicalChatModelSelection) => {
       const token = await getToken();
       if (!token || !gatewayUrl) throw new Error("Bot could not be created.");
-      return (await instantiateNativeBot(token, gatewayUrl, { recipe, clientRequestId })).chatId;
+      return (await instantiateNativeBot(token, gatewayUrl, { recipe, clientRequestId, ...(selection ? { selection } : {}) })).chatId;
     },
   };
 }

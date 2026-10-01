@@ -9,3 +9,4 @@ export * from "#bots/broker";
 export * from "#bots/worker";
 export * from "#bots/view-model";
 export * from "#bots/selection";
+export * from "#bots/model-choice";

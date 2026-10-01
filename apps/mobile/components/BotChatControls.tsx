@@ -2,14 +2,16 @@ import { useState } from "react";
 import { Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import {
-  botInteractionCard, botTaskStatusCopy, groupBotAuthority,
-  type BotAuthorityView, type BotInteraction, type BotMemoryMutationRequest,
+  managedPiBotModelChoices, MATRIX_BOT_SELECTION, botModelRoutingLabel, botInteractionCard, botTaskStatusCopy, groupBotAuthority,
+  type CanonicalChatModelSelection, type CanonicalProviderCatalog, type BotAuthorityView, type BotInteraction, type BotMemoryMutationRequest,
   type BotTaskSummary, type ResolveBotInteractionRequest, type ResolveBotInteractionResponse,
 } from "@matrix-os/contracts";
 
 export interface BotChatSnapshot {
   agentId: string;
   name: string;
+  selection?: CanonicalChatModelSelection;
+  revision?: number;
   interactions: BotInteraction[];
   tasks: BotTaskSummary[];
   authority: BotAuthorityView;
@@ -17,7 +19,9 @@ export interface BotChatSnapshot {
 
 interface BotChatControlsProps {
   snapshot: BotChatSnapshot;
+  catalog?: CanonicalProviderCatalog | null;
   actionsAvailable?: boolean;
+  onSelectionChange?: (selection: CanonicalChatModelSelection) => Promise<unknown>;
   onResolve: (interactionId: string, input: ResolveBotInteractionRequest) => Promise<ResolveBotInteractionResponse>;
   onRevoke: (grantId: string) => Promise<unknown>;
   onMemory: (itemId: string, action: "confirm" | "forget", input: BotMemoryMutationRequest) => Promise<unknown>;
@@ -163,7 +167,7 @@ function BotInteractionControl({ interaction, onResolve, onRefresh, onConnectUrl
   </View>;
 }
 
-export function BotChatControls({ snapshot, actionsAvailable = true, onResolve, onRevoke, onMemory, onRefresh, onConnectUrl }: BotChatControlsProps) {
+export function BotChatControls({ snapshot, catalog, onSelectionChange, actionsAvailable = true, onResolve, onRevoke, onMemory, onRefresh, onConnectUrl }: BotChatControlsProps) {
   const [showAuthority, setShowAuthority] = useState(false);
   const [pending, setPending] = useState<string | null>(null);
   const [error, setError] = useState("");
@@ -175,7 +179,7 @@ export function BotChatControls({ snapshot, actionsAvailable = true, onResolve, 
       await action();
     } catch (failure: unknown) {
       console.warn("[mobile-bots] Authority change failed:", failure instanceof Error ? failure.name : "UnknownError");
-      setError("Could not change bot access. Try again.");
+      setError(key === "model" ? "Bot model could not be saved. Try again." : "Could not change bot access. Try again.");
       setPending(null);
       return;
     }
@@ -191,11 +195,21 @@ export function BotChatControls({ snapshot, actionsAvailable = true, onResolve, 
   const authority = snapshot.authority;
   return <View style={styles.panel}>
     <View style={styles.header}>
-      <View style={styles.title}><Text style={styles.heading}>{snapshot.name}</Text><Text style={styles.muted}>Your bot's Chat</Text></View>
+      <View style={styles.title}><Text style={styles.heading}>{snapshot.name}</Text><Text style={styles.muted}>Your bot's Chat</Text><Text style={styles.muted}>Runtime: Pi · {botModelRoutingLabel(snapshot.selection, catalog)}</Text></View>
       <Pressable accessibilityRole="button" accessibilityState={{ expanded: showAuthority }} style={styles.button}
         onPress={() => setShowAuthority((value) => !value)}><Text style={styles.text}>Access &amp; memory</Text></Pressable>
     </View>
     <ScrollView style={styles.scroller} contentContainerStyle={styles.group} nestedScrollEnabled>
+      {onSelectionChange && snapshot.revision ? <View style={styles.group}>
+        <Text style={styles.heading}>Bot model</Text>
+        <Pressable accessibilityRole="button" disabled={!!pending || !actionsAvailable} style={styles.button}
+          onPress={() => void change("model", () => onSelectionChange(MATRIX_BOT_SELECTION))}>
+          <Text style={styles.text}>Automatic · managed by this computer</Text></Pressable>
+        {managedPiBotModelChoices(catalog).map((choice) => <Pressable key={choice.selection.model} accessibilityRole="button"
+          disabled={!!pending || !actionsAvailable} style={styles.button}
+          onPress={() => void change("model", () => onSelectionChange(choice.selection))}>
+          <Text style={styles.text}>{choice.label}</Text></Pressable>)}
+      </View> : null}
       {snapshot.interactions.map((interaction) => <BotInteractionControl key={interaction.interactionId}
         interaction={interaction} actionsAvailable={actionsAvailable}
         onResolve={onResolve} onRefresh={onRefresh} onConnectUrl={onConnectUrl} />)}

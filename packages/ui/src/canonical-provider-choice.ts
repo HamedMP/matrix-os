@@ -38,9 +38,11 @@ export function orderCanonicalProviderInstancesForDefault(
   return instances
     .map((instance, index) => ({ instance, index }))
     .sort((left, right) => {
+      const managedPiPriority = Number(right.instance.driverKind === "matrix_pi" && right.instance.availability === "available")
+        - Number(left.instance.driverKind === "matrix_pi" && left.instance.availability === "available");
       const priority = Number(isManagedGlmInstance(right.instance))
         - Number(isManagedGlmInstance(left.instance));
-      return priority || left.index - right.index;
+      return managedPiPriority || priority || left.index - right.index;
     })
     .map(({ instance }) => instance);
 }
