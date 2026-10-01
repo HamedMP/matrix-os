@@ -629,7 +629,7 @@ describe("Claude canonical Chat Provider adapter", () => {
     ]);
   });
 
-  it("preserves harmless JSX closers and prose separators while redacting real unrelated absolute paths in shared Chat", async () => {
+  it("preserves harmless JSX closers, prose separators, and owner-visible absolute paths", async () => {
     const spawnFn = vi.fn(() => child([
       JSON.stringify({
         type: "result",
@@ -637,6 +637,27 @@ describe("Claude canonical Chat Provider adapter", () => {
         is_error: false,
         result: "Renders <App />; compare vite.config.ts / tsconfig.json; inspect /private/secret/file.",
         session_id: "claude_path_session",
+      }),
+    ]));
+    const adapter = createClaudeChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn });
+    const events = [];
+
+    for await (const event of adapter.start(baseInput)) events.push(event);
+
+    expect(events).toContainEqual({
+      type: "assistant.delta",
+      delta: "Renders <App />; compare vite.config.ts / tsconfig.json; inspect /private/secret/file.",
+    });
+  });
+
+  it("redacts unrelated absolute paths while preserving harmless syntax in shared Chat", async () => {
+    const spawnFn = vi.fn(() => child([
+      JSON.stringify({
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        result: "Renders <App />; compare vite.config.ts / tsconfig.json; inspect /private/secret/file.",
+        session_id: "claude_shared_path_session",
       }),
     ]));
     const adapter = createClaudeChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn });

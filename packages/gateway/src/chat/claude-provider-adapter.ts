@@ -127,12 +127,12 @@ function canonicalClaudeActivityEvent(
   activity: ClaudeActivity,
   status: "running" | "completed",
 ): CanonicalProviderRunEvent {
-  const projected = CanonicalProviderRunEventSchema.safeParse({
+  const fullProjection = CanonicalProviderRunEventSchema.safeParse({
     type: "agent.activity",
     ...activity,
     status,
   });
-  if (projected.success) return projected.data;
+  if (fullProjection.success) return fullProjection.data;
 
   let retained = CanonicalProviderRunEventSchema.parse({
     type: "agent.activity",

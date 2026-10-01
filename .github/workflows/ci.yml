@@ -11,7 +11,7 @@ on:
     types: [labeled, ready_for_review, synchronize]
 
 concurrency:
-  group: ci-${{ github.ref }}-${{ github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name != 'ready-for-ci' && github.run_id || 'shared' }}
+  group: ci-${{ github.ref }}-${{ github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name != 'ready-for-ci' && !contains(github.event.pull_request.labels.*.name, 'ready-for-ci') && github.run_id || 'shared' }}
   queue: max
 
 permissions:
@@ -26,6 +26,7 @@ jobs:
     outputs:
       base_sha: ${{ steps.changed.outputs.base_sha }}
       bootstrap: ${{ steps.changed.outputs.bootstrap }}
+      trigger_requested: ${{ steps.changed.outputs.trigger_requested }}
       should_run: ${{ steps.changed.outputs.should_run }}
       docs_contract_tests: ${{ steps.changed.outputs.docs_contract_tests }}
       os_view_parity_tests: ${{ steps.changed.outputs.os_view_parity_tests }}
@@ -80,6 +81,7 @@ jobs:
           # successful coverage-aware ancestor so failed or cancelled work is
           # automatically absorbed by the next run.
           if [ "$GITHUB_EVENT_NAME" = "push" ] && [ "$GITHUB_REF" = "refs/heads/main" ]; then
+            echo "trigger_requested=true" >> "$GITHUB_OUTPUT"
             node scripts/ci/main-ci-coverage.mjs >> "$GITHUB_OUTPUT"
             echo "os_view_parity_tests=true" >> "$GITHUB_OUTPUT"
             exit 0
@@ -87,6 +89,7 @@ jobs:
 
           # Manual and merge-queue runs must execute CI regardless of changed paths.
           if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ] || [ "$GITHUB_EVENT_NAME" = "merge_group" ]; then
+            echo "trigger_requested=true" >> "$GITHUB_OUTPUT"
             echo "should_run=true" >> "$GITHUB_OUTPUT"
             echo "docs_contract_tests=false" >> "$GITHUB_OUTPUT"
             echo "os_view_parity_tests=true" >> "$GITHUB_OUTPUT"
@@ -97,12 +100,13 @@ jobs:
           should_run_trigger=true
           if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
             should_run_trigger=false
-            if [ "$PR_ACTION" = "ready_for_review" ] || { [ "$PR_ACTION" = "labeled" ] && [ "$PR_LABEL_NAME" = "ready-for-ci" ]; } || { [ "$PR_ACTION" = "synchronize" ] && [ "$PR_HAS_READY_FOR_CI" = "true" ]; }; then
+            if [ "$PR_ACTION" = "ready_for_review" ] || { [ "$PR_ACTION" = "labeled" ] && { [ "$PR_LABEL_NAME" = "ready-for-ci" ] || [ "$PR_HAS_READY_FOR_CI" = "true" ]; }; } || { [ "$PR_ACTION" = "synchronize" ] && [ "$PR_HAS_READY_FOR_CI" = "true" ]; }; then
               should_run_trigger=true
             fi
           fi
 
           if [ "$should_run_trigger" != "true" ]; then
+            echo "trigger_requested=false" >> "$GITHUB_OUTPUT"
             echo "should_run=false" >> "$GITHUB_OUTPUT"
             echo "docs_contract_tests=false" >> "$GITHUB_OUTPUT"
             echo "os_view_parity_tests=false" >> "$GITHUB_OUTPUT"
@@ -110,6 +114,7 @@ jobs:
             exit 0
           fi
 
+          echo "trigger_requested=true" >> "$GITHUB_OUTPUT"
           git fetch --no-tags --depth=1 origin "$GITHUB_BASE_REF"
           changed_files="$(git diff --name-only "origin/$GITHUB_BASE_REF" "$GITHUB_SHA")"
           os_view_parity_tests="$(printf '%s\n' "$changed_files" | node scripts/ci/os-view-parity-plan.mjs)"
@@ -735,6 +740,7 @@ jobs:
     steps:
       - name: Summarize required CI jobs
         env:
+          CI_TRIGGER_REQUESTED: ${{ needs.changes.outputs.trigger_requested }}
           SHOULD_RUN: ${{ needs.changes.outputs.should_run }}
           CHANGES_RESULT: ${{ needs.changes.result }}
           TYPECHECK_RESULT: ${{ needs.typecheck.result }}
@@ -756,6 +762,7 @@ jobs:
             echo
             echo "Branch protection should require this aggregate job, not each internal shard."
             echo
+            echo "CI trigger requested: ${CI_TRIGGER_REQUESTED:-unknown}"
             echo "CI relevant source changes: ${SHOULD_RUN:-unknown}"
             echo
             echo "| Job | Result |"
@@ -773,6 +780,11 @@ jobs:
             echo "| OS View Parity | $OS_VIEW_PARITY_RESULT |"
             echo "| E2E Tests | $E2E_RESULT |"
           } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "$CI_TRIGGER_REQUESTED" != "true" ]; then
+            echo "Full CI was not requested for this commit. Apply the ready-for-ci label before review." >&2
+            exit 1
+          fi
 
           failed=false
           for result in "$CHANGES_RESULT" "$TYPECHECK_RESULT" "$SHELL_PRODUCTION_BUILD_RESULT" "$PATTERNS_RESULT" "$REACT_DOCTOR_RESULT" "$SYNC_CLIENT_RESULT" "$AGENT_SDK_COMPATIBILITY_RESULT" "$UNIT_RESULT" "$FUNDED_POSTGRES_RESULT" "$DOCS_CONTRACT_RESULT" "$OS_VIEW_PARITY_RESULT" "$E2E_RESULT"; do

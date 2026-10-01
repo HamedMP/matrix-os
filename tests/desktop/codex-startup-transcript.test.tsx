@@ -24,7 +24,7 @@ it("renders live Codex Reconnecting before prompt admission and recovers without
   const client = createCanonicalChatWorkspaceClient();
   const initial = await h.getDetail();
   vi.mocked(client.list).mockResolvedValue({ items: [initial.record] });
-  vi.mocked(client.getDetail).mockResolvedValue(initial);
+  vi.mocked(client.getDetail).mockImplementation(async () => h.getDetail());
   client.acknowledgeCompletion = async () => (await h.getDetail()).record;
   try {
     await startCanonicalChatAfterReplay(source);
