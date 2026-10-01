@@ -101,6 +101,17 @@ esac
 }
 
 describe("preview platform collaboration authority", () => {
+  it("preserves only explicitly supplied preview Slack bindings through deployment", () => {
+    const isolated = deployedArguments({
+      SLACK_PREVIEW_ENV_BINDINGS: "|SLACK_APP_ID=AEXAMPLE|SLACK_PREVIEW_RUNTIME_HANDLE=pr-1990",
+      SLACK_PREVIEW_SECRET_BINDINGS: ",SLACK_SIGNING_SECRET=slack-preview-pr1990-signing-secret:1",
+    });
+    expect(isolated.env).toContain("|SLACK_APP_ID=AEXAMPLE|SLACK_PREVIEW_RUNTIME_HANDLE=pr-1990");
+    expect(isolated.secrets).toContain(",SLACK_SIGNING_SECRET=slack-preview-pr1990-signing-secret:1");
+    const normal = deployedArguments();
+    expect(normal.env).not.toContain("SLACK_APP_ID");
+    expect(normal.secrets).not.toContain("SLACK_SIGNING_SECRET");
+  });
   it("binds ticket keys only from the preview-only secret, never the production one", () => {
     const { secrets } = deployedArguments();
     expect(secrets.split(",")).toContain(`MATRIX_COLLABORATION_TICKET_KEYS=${PREVIEW_SECRET}:latest`);
