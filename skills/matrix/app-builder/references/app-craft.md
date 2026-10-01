@@ -69,7 +69,7 @@ transaction method the bridge does not expose, or add a new embedded database.
 
 ## Visual decisions
 
-- Use inherited Matrix fonts and tokens. Establish hierarchy through size, weight,
+- Use available local/inherited fonts and the selected app-local semantic tokens. Establish hierarchy through size, weight,
   leading, alignment, and spacing; system fonts are a good default. Use tabular figures
   where numbers need comparison and comfortable line lengths for reading.
 - Favor a clear content surface. Use cards for distinct objects, not as wrappers around

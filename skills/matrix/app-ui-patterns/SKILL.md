@@ -15,6 +15,8 @@ metadata:
 
 # Matrix OS App UI Patterns
 
+The color, type and material examples below use Matrix platform tokens as a baseline. Generated products substitute the coherent app-local semantic palette, typography, shapes and materials recorded in DESIGN.md; the examples do not require a muted palette or a single visual family. Keep task structure, responsive behavior, focus and accessibility intact.
+
 ## When to Use
 
 Use this when building the layout and interaction patterns inside a Matrix OS app. For colors, typography, and token values, use `matrix-design-system`. This skill covers how things are arranged, not how they look at the token level.
