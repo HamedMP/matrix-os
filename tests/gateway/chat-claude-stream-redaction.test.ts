@@ -46,6 +46,7 @@ const input = {
   interactionMode: "default",
   permissionMode: "auto_accept_edits",
   executionRoot: "/safe/project",
+  sharedScopeId: "scope_claude_fixture",
   signal: new AbortController().signal,
 };
 
@@ -78,14 +79,17 @@ function separateTextBlocks(parts: string[]): string[] {
 
 async function runLines(
   lines: string[],
-  options: { exitCode?: number; afterLines?: () => void; signal?: AbortSignal } = {},
+  options: { exitCode?: number; afterLines?: () => void; signal?: AbortSignal; privateChat?: boolean } = {},
 ): Promise<CanonicalProviderRunEvent[]> {
   const adapter = createClaudeChatProviderAdapter({
     homePath: "/home/matrix/home",
     spawnFn: vi.fn(() => child(lines, options)),
   });
   const events: CanonicalProviderRunEvent[] = [];
-  for await (const event of adapter.start({ ...input, signal: options.signal ?? input.signal })) events.push(event);
+  for await (const event of adapter.start({ ...input,
+    ...(options.privateChat ? { sharedScopeId: undefined } : {}),
+    signal: options.signal ?? input.signal,
+  })) events.push(event);
   return events;
 }
 
@@ -110,6 +114,20 @@ function assembledAssistantMessages(events: CanonicalProviderRunEvent[]): Map<st
 }
 
 describe("Claude streamed assistant text redaction", () => {
+  it("shows full paths only in a private Chat", async () => {
+    const lines = streamLines(["Open /home/matrix/home/apps/chart/index.html now."]);
+    expect([...assembledAssistantMessages(await runLines(lines, { privateChat: true })).values()].join(""))
+      .toBe("Open /home/matrix/home/apps/chart/index.html now.");
+    expect([...assembledAssistantMessages(await runLines(lines)).values()].join(""))
+      .toBe("Open ~/apps/chart/index.html now.");
+  });
+  it("keeps a query credential hidden across private Chat text blocks", async () => {
+    const events = await runLines(separateTextBlocks(["Open /api/apps?to", "ken=fixture-private now."]),
+      { privateChat: true });
+    const text = [...assembledAssistantMessages(events).values()].join("");
+    expect(text).toBe("Open [redacted path] now.");
+    expect(text).not.toContain("fixture-private");
+  });
   it("preserves a public HTTPS documentation URL split at path boundaries", async () => {
     const deltas = await streamedAssistantDeltas([
       "Title: What is Azure Functions? URL: https://learn.microsoft.com/azure",

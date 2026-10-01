@@ -12,6 +12,7 @@ import "./globals.css";
 import { PwaRegister } from "@/components/pwa/PwaRegister";
 import { InstallPrompt } from "@/components/pwa/InstallPrompt";
 import { PostHogIdentify } from "@/components/PostHogIdentify";
+import { DefaultOrganization } from "@/components/DefaultOrganization";
 import { Toaster } from "@/components/ui/sonner";
 import { AppProviders } from "./providers";
 
@@ -71,6 +72,8 @@ export default function RootLayout({
       <body className="matrix-shell-fonts">
         <AppProviders>{children}</AppProviders>
         {includePostHogIdentify ? <PostHogIdentify /> : null}
+        {/* Same Clerk-only branch: self-hosted documents have no ClerkProvider and no organizations. */}
+        {includePostHogIdentify && process.env.NEXT_PUBLIC_E2E_TEST_BYPASS !== "1" ? <DefaultOrganization /> : null}
         <PwaRegister />
         <InstallPrompt />
         <Toaster />

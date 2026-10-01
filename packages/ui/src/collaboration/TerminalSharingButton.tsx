@@ -99,9 +99,9 @@ export function TerminalSharingButton({ api, runtimeId, organizationId, terminal
     }
   };
   return <div className="relative inline-flex shrink-0 items-center">
-    <button type="button" className={buttonClass} aria-label="Share terminal" disabled={pending}
+    <button type="button" className={buttonClass} aria-label="Share terminal" disabled={pending || !organizationId}
       aria-expanded={surface !== null} onClick={() => surface ? close() : void begin()}>
-      {pending ? "Loading share…" : "Share"}
+      {pending ? "Loading share…" : !organizationId ? "Join an organization to share" : "Share"}
     </button>
     {error ? <span role="alert" className="absolute right-0 top-full z-50 mt-2 w-72 rounded-lg border bg-[var(--bg-surface,var(--background))] p-3 shadow-lg">
       {error === "unsupported"

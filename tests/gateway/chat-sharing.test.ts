@@ -33,6 +33,30 @@ it("creates a bounded text snapshot, keeps it immutable, and revokes access", as
   expect(await shares.read(result.token)).toBeNull();
 });
 
+it("removes private assistant paths and credentials from public share previews and snapshots", async () => {
+  await repository.kysely.insertInto("chat_messages").values({
+    id: "assistant_share", chat_id: "chat_share", seq: 2, role: "assistant", state: "committed",
+    turn_id: null, run_id: null,
+    parts: JSON.stringify([{ type: "text", text: "Open /home/ma" },
+      { type: "text", text: "trix/home/private/report.txt. ACCESS_TO" },
+      { type: "text", text: "KEN=qa-fake-2058" }]),
+    byte_count: 48, search_text: "Open", created_at: new Date(),
+  }).execute();
+  const preview = await shares.preview(owner, "chat_share");
+  expect(preview.messages[1]?.text).toBe("Open [redacted path] [redacted credential]");
+  const created = await shares.create(owner, "chat_share", preview.revision, preview.fingerprint);
+  expect((await shares.read(created.token))?.messages[1]?.text).toBe("Open [redacted path] [redacted credential]");
+});
+
+it("projects old immutable snapshots when reading a public link", async () => {
+  const created = await shares.create(owner, "chat_share", 0);
+  await repository.kysely.updateTable("chat_shares").set({ snapshot: JSON.stringify({
+    title: "Fixture", messages: [{ role: "assistant", text: "Open /home/matrix/home/private/report.txt ACCESS_TOKEN=qa-fake-2058" }],
+  }) }).where("id", "=", created.id).execute();
+  expect((await shares.read(created.token))?.messages[0]?.text)
+    .toBe("Open [redacted path] [redacted credential]");
+});
+
 it("rejects another owner and stale revision without minting a token", async () => {
   await expect(shares.create({ type: "personal", ownerId: "other" }, "chat_share", 1)).rejects.toThrow();
   await expect(shares.create(owner, "chat_share", 999)).rejects.toThrow();

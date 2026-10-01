@@ -126,6 +126,8 @@ export interface CanonicalProviderRunInput<State = unknown> {
   interactionMode: string;
   permissionMode: string;
   executionRoot?: string;
+  /** Persisted collaboration admission, never inferred from model text. */
+  sharedScopeId?: string;
   projectSlug?: string;
   worktreeId?: string;
   resumeState?: State;
