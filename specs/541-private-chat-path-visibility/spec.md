@@ -10,7 +10,7 @@ The provider text projection replaces absolute filesystem paths before Chat stor
 
 - For a personal Chat without a collaboration scope, preserve complete absolute paths in Claude, Hermes, and coding-provider assistant replies and bounded tool previews. Keep credential assignments, Bearer values, and paths with query strings or fragments protected, including split streaming deltas and recovered Codex output.
 - For a shared execution, retain the existing path projection. When a private Chat later becomes shared, project historical assistant messages, activity previews, and tool output text on shared reads without modifying the owner's stored data. Never release a partial historical assistant delta in a shared response.
-- Public share previews and snapshots redact assistant paths. Shared exports redact assistant paths and do not decrypt protected tool output.
+- Public share previews and snapshots redact assistant paths and recognized credentials, including snapshots minted before this fix. Shared exports redact assistant paths and recognized credentials and do not decrypt protected tool output. Legacy private assistant messages mask recognized credentials on owner reads while preserving their complete paths.
 - Existing redacted messages cannot be reconstructed. New private messages show paths only after the gateway update reaches the user's VPS.
 
 ## Boundary

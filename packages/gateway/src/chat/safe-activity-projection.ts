@@ -3,6 +3,7 @@ import type { CanonicalChatMessagePart } from "@matrix-os/contracts";
 
 const SECRET_TEXT = /(?:authorization\s*[:=]|bearer\s+|(?:api[_-]?(?:key|token)|access[_-]?token|secret|password|credential)\s*[:=]|\bprivate\s+raw\b|ghp_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9_-]+)/i;
 const SECRET_ASSIGNMENT = /\b(?:API[_-]?KEY|API[_-]?TOKEN|ACCESS[_-]?TOKEN|SECRET|PASSWORD|CREDENTIAL)\s*=\s*[^\s,;]+/gi;
+const BEARER_VALUE = /\bBearer\s+[A-Za-z0-9._~+/=-]+/gi;
 const ABSOLUTE_PATH = /(^|[\s"'`(=:<>|;&])\/(?=[A-Za-z0-9._~-])(?!\/)[^\s"'`<>)]*/g;
 const SENSITIVE_PATH_VALUE = /[?&](?:token|key|api[_-]?key|access[_-]?token|password|secret|credential)=/i;
 // Fixed public collection names are product references, not host locations.
@@ -15,8 +16,14 @@ function redactAbsolutePath(match: string, prefix: string): string {
 export function redactAssistantPaths(value: string): string {
   return value.replace(ABSOLUTE_PATH, redactAbsolutePath);
 }
-/** Join only text parts crossed by one path; preserve independent block boundaries. */
-export function redactAssistantParts(parts: CanonicalChatMessagePart[]): CanonicalChatMessagePart[] {
+export function redactAssistantCredentials(value: string): string {
+  return value.replace(BEARER_VALUE, "Bearer [redacted]").replace(SECRET_ASSIGNMENT, "[redacted credential]");
+}
+export function redactSharedAssistantText(value: string): string {
+  return redactAssistantCredentials(redactAssistantPaths(value));
+}
+/** Join only text parts crossed by one protected token; preserve other block boundaries. */
+function projectAssistantParts(parts: CanonicalChatMessagePart[], redactPaths: boolean): CanonicalChatMessagePart[] {
   const projected: CanonicalChatMessagePart[] = [];
   let textRun: Extract<CanonicalChatMessagePart, { type: "text" }>[] = [];
   const pushText = (safe: string) => {
@@ -37,18 +44,22 @@ export function redactAssistantParts(parts: CanonicalChatMessagePart[]): Canonic
       boundaries.push(offset);
     }
     const mergeAfter = boundaries.map(() => false);
-    for (const match of joined.matchAll(ABSOLUTE_PATH)) {
-      const start = match.index + match[1]!.length;
-      const end = match.index + match[0].length;
-      boundaries.forEach((boundary, index) => {
-        if (start < boundary && boundary < end) mergeAfter[index] = true;
-      });
+    for (const pattern of redactPaths
+      ? [ABSOLUTE_PATH, SECRET_ASSIGNMENT, BEARER_VALUE]
+      : [SECRET_ASSIGNMENT, BEARER_VALUE]) {
+      for (const match of joined.matchAll(pattern)) {
+        const start = match.index + (pattern === ABSOLUTE_PATH ? match[1]!.length : 0);
+        const end = match.index + match[0].length;
+        boundaries.forEach((boundary, index) => {
+          if (start < boundary && boundary < end) mergeAfter[index] = true;
+        });
+      }
     }
     let group = "";
     textRun.forEach((part, index) => {
       group += part.text;
       if (!mergeAfter[index]) {
-        pushText(redactAssistantPaths(group));
+        pushText(redactPaths ? redactSharedAssistantText(group) : redactAssistantCredentials(group));
         group = "";
       }
     });
@@ -60,6 +71,12 @@ export function redactAssistantParts(parts: CanonicalChatMessagePart[]): Canonic
   }
   flush();
   return projected;
+}
+export function redactAssistantParts(parts: CanonicalChatMessagePart[]): CanonicalChatMessagePart[] {
+  return projectAssistantParts(parts, true);
+}
+export function redactAssistantCredentialParts(parts: CanonicalChatMessagePart[]): CanonicalChatMessagePart[] {
+  return projectAssistantParts(parts, false);
 }
 function preservePrivatePath(match: string, prefix: string): string {
   const path = match.slice(prefix.length);
@@ -153,10 +170,7 @@ export function sanitizeAssistantText(
   options: PathProjectionOptions,
 ): string {
   if (options.showPrivatePaths) {
-    return value
-      .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]+/gi, "Bearer [redacted]")
-      .replace(SECRET_ASSIGNMENT, "[redacted credential]")
-      .replace(ABSOLUTE_PATH, preservePrivatePath);
+    return redactAssistantCredentials(value).replace(ABSOLUTE_PATH, preservePrivatePath);
   }
   const homePath = normalizedRoot(options.homePath);
   const executionRoot = options.executionRoot ? normalizedRoot(options.executionRoot) : undefined;
@@ -164,10 +178,7 @@ export function sanitizeAssistantText(
   if (executionRoot && !executionRoot.startsWith(`${homePath}/`)) {
     projected = projected.replaceAll(`${executionRoot}/`, "").replaceAll(executionRoot, ".");
   }
-  return projected
-    .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]+/gi, "Bearer [redacted]")
-    .replace(SECRET_ASSIGNMENT, "[redacted credential]")
-    .replace(ABSOLUTE_PATH, redactAbsolutePath);
+  return redactAssistantCredentials(projected).replace(ABSOLUTE_PATH, redactAbsolutePath);
 }
 
 /** Project streamed text only after its path or credential token is complete. */

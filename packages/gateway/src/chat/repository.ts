@@ -7,7 +7,7 @@ import { admitChatTurn } from "./turn-admission-repository.js";
 import { randomUUID } from "node:crypto";
 import { captureChatContent } from "./content-projection.js";
 import { captureChatFailureMetadata } from "./failure-telemetry.js";
-import { redactAssistantPaths } from "./safe-activity-projection.js";
+import { redactAssistantCredentials, redactSharedAssistantText } from "./safe-activity-projection.js";
 import { createOwnerToolOutputProjection } from "./owner-tool-output.js";
 import type { ChatRunFailureDiagnostic } from "./failure-diagnostic.js";
 import {
@@ -336,8 +336,10 @@ async function toPrincipalRecord(
     userState?.attention_acknowledged_at,
   );
   return { ...record,
-    ...(effectiveProjection?.mode === "shared" && record.chat.lastMessagePreview
-      ? { chat: { ...record.chat, lastMessagePreview: redactAssistantPaths(record.chat.lastMessagePreview) } }
+    ...(record.chat.lastMessagePreview
+      ? { chat: { ...record.chat, lastMessagePreview: effectiveProjection?.mode === "shared"
+        ? redactSharedAssistantText(record.chat.lastMessagePreview)
+        : redactAssistantCredentials(record.chat.lastMessagePreview) } }
       : {}),
     readState: await projectChatReadState(executor, owner, row.id),
   };

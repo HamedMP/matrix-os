@@ -3,7 +3,7 @@ import { sql, type Kysely } from "kysely";
 import { z } from "zod/v4";
 import type { ChatDatabase } from "./database.js";
 import type { ChatOwner } from "./records.js";
-import { redactAssistantParts } from "./safe-activity-projection.js";
+import { redactAssistantParts, redactSharedAssistantText } from "./safe-activity-projection.js";
 import { hasCompanyDriveMaterial } from "./drive-sharing-guard.js";
 
 export { ShareSnapshotSchema, ShareTokenSchema } from "@matrix-os/contracts";
@@ -117,7 +117,10 @@ export class ChatSharing {
         .forShare("chats").executeTakeFirst();
       // Old immutable snapshots also fail closed once their source becomes drive-backed.
       if (!row || await hasCompanyDriveMaterial(trx, row.chat_id)) return null;
-      return ShareSnapshotSchema.parse(row.snapshot);
+      const snapshot = ShareSnapshotSchema.parse(row.snapshot);
+      return { ...snapshot, messages: snapshot.messages.map((message) => message.role === "assistant"
+        ? { ...message, text: redactSharedAssistantText(message.text) }
+        : message) };
     });
   }
 }

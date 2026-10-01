@@ -15,6 +15,19 @@ function content(): CanonicalChatContent {
   }] };
 }
 describe("owner-only output response projection", () => {
+  it("masks legacy assistant credentials on private owner reads without hiding paths", () => {
+    const value = content();
+    value.messages = [{ id: "msg_legacy", chatId: "chat_test", seq: 1, role: "assistant", state: "committed",
+      parts: [{ type: "text", text: "Open /home/matrix/home/apps/chart.png ACCESS_TO" },
+        { type: "text", text: "KEN=qa-fake-2058" }], createdAt: "2026-09-20T00:00:00.000Z" }];
+    value.record.chat.lastMessagePreview = "ACCESS_TOKEN=qa-fake-2058";
+    const before = JSON.stringify(value);
+    const projected = createOwnerToolOutputProjection(key, ["alice"])(owner, value);
+    expect(projected.messages?.[0]?.parts.map((part) => part.type === "text" ? part.text : "").join(""))
+      .toBe("Open /home/matrix/home/apps/chart.png [redacted credential]");
+    expect(projected.record.chat.lastMessagePreview).toBe("[redacted credential]");
+    expect(JSON.stringify(value)).toBe(before);
+  });
   it("decrypts for the runtime owner without mutating persisted events", () => {
     const stored = content(); const before = JSON.stringify(stored);
     const response = createOwnerToolOutputProjection(key, ["alice"])(owner, stored);
@@ -55,20 +68,20 @@ describe("owner-only output response projection", () => {
   it("does not replay a partial private path through shared live content", () => {
     const value = content();
     value.record.chat.collaboration = { mode: "shared", membership: { role: "owner", memberCount: 2 } };
-    value.record.chat.lastMessagePreview = "Open /home/matrix/home/private/report.txt";
+    value.record.chat.lastMessagePreview = "Open /home/matrix/home/private/report.txt ACCESS_TOKEN=qa-fake-2058";
     value.activities!.push({ id: "evt_plain_tool", runId: "run_test", chatId: "chat_test", sequence: 3,
       occurredAt: "2026-09-20T00:00:00.000Z", type: "tool.output", toolCallId: "tool_plain",
-      text: "Wrote /home/matrix/home/private/report.txt", truncated: false });
+      text: "Wrote /home/matrix/home/private/report.txt ACCESS_TOKEN=qa-fake-2058", truncated: false });
     value.activities!.push({ id: "evt_delta", runId: "run_test", chatId: "chat_test", sequence: 2,
       occurredAt: "2026-09-20T00:00:00.000Z", type: "assistant.delta", delta: "Open /home/ma" });
     value.messageDelta = { message: { id: "msg_delta", chatId: "chat_test", seq: 1, role: "assistant",
       state: "committed", parts: [{ type: "text", text: "Open /home/ma" }],
       createdAt: "2026-09-20T00:00:00.000Z" }, partIndex: 0, offset: 0 };
     const projected = createOwnerToolOutputProjection(key, ["alice"])(owner, value);
-    expect(projected.record.chat.lastMessagePreview).toBe("Open [redacted path]");
+    expect(projected.record.chat.lastMessagePreview).toBe("Open [redacted path] [redacted credential]");
     expect(projected.activities?.some((activity) => activity.type === "assistant.delta")).toBe(false);
     expect(projected.activities?.find((activity) => activity.type === "tool.output" && activity.toolCallId === "tool_plain"))
-      .toMatchObject({ text: "Wrote [redacted path]" });
+      .toMatchObject({ text: "Wrote [redacted path] [redacted credential]" });
     expect(projected.messageDelta).toBeUndefined();
   });
 });

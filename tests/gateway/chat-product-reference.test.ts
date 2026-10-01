@@ -50,4 +50,7 @@ it("keeps unrelated assistant text blocks separate when projecting a shared hist
   expect(redactAssistantParts([{ type: "text" as const, text: "Open /home/ma" },
     { type: "text" as const, text: "trix/home/private/report.txt" }]))
     .toEqual([{ type: "text", text: "Open [redacted path]" }]);
+  expect(redactAssistantParts([{ type: "text" as const, text: "ACCESS_TO" },
+    { type: "text" as const, text: "KEN=qa-fake-2058" }]))
+    .toEqual([{ type: "text", text: "[redacted credential]" }]);
 });
