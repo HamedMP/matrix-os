@@ -156,6 +156,36 @@ describe("createCanonicalChatEventSource", () => {
     source.disconnect();
   });
 
+  it("asks for a full refresh when a first connection is told events were skipped", async () => {
+    const stream = streamingResponse();
+    mockFetch.mockResolvedValue(stream.response);
+    const { source, events } = connectedSource();
+    await settle();
+
+    stream.emit(
+      sse({ type: "chat.stream.attached" })
+        + sse({ type: "chat.replay.gap", reason: "cursor_unavailable" })
+        + sse({ type: "chat.replay.end", nextCursor: 512 }),
+    );
+    await settle();
+
+    expect(events).toEqual([{ type: "chat.full_refresh" }]);
+    source.disconnect();
+  });
+
+  it("does not refresh after a first connection that skipped nothing", async () => {
+    const stream = streamingResponse();
+    mockFetch.mockResolvedValue(stream.response);
+    const { source, events } = connectedSource();
+    await settle();
+
+    stream.emit(sse({ type: "chat.stream.attached" }) + sse({ type: "chat.replay.end" }));
+    await settle();
+
+    expect(events).toEqual([]);
+    source.disconnect();
+  });
+
   it("reconnects when the stream goes silent", async () => {
     mockFetch.mockResolvedValue(streamingResponse().response);
     const { source } = connectedSource();

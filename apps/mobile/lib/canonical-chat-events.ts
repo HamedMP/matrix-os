@@ -98,8 +98,12 @@ export function createCanonicalChatEventSource(options: {
     inactivityTimer = setTimeout(() => drop(current), INACTIVITY_TIMEOUT_MS);
   }
 
-  /** One SSE record: an optional `id:` line plus a `data:` line holding a JSON frame. */
-  function handleRecord(record: string, resumed: boolean) {
+  /**
+   * One SSE record: an optional `id:` line plus a `data:` line holding a JSON
+   * frame. `replay.missedEvents` is set while the connection's opening replay
+   * may have skipped events, so the end of the replay can reconcile.
+   */
+  function handleRecord(record: string, replay: { missedEvents: boolean }) {
     const data = record.split("\n").find((line) => line.startsWith("data:"))?.slice("data:".length);
     if (!data) return; // Heartbeats are comment-only records.
 
@@ -122,11 +126,14 @@ export function createCanonicalChatEventSource(options: {
     const frame = parsed.data;
     if (frame.type === "chat.stream.attached") {
       reconnectAttempts = 0;
+    } else if (frame.type === "chat.replay.gap") {
+      // The server has more past events than it replays, so it skipped them.
+      // That can happen on a first connection too, not only after a resume.
+      replay.missedEvents = true;
     } else if (frame.type === "chat.replay.end") {
       if (frame.nextCursor !== undefined) lastCursor = frame.nextCursor;
-      // Changes committed while we were disconnected may not all be replayed
-      // in order, so reconcile once from REST after every resume.
-      if (resumed) emit({ type: "chat.full_refresh" });
+      if (replay.missedEvents) emit({ type: "chat.full_refresh" });
+      replay.missedEvents = false;
     } else if (frame.type === "chat.event" || frame.type === "chat.content") {
       lastCursor = Math.max(lastCursor ?? 0, frame.event.cursor);
       emit({
@@ -145,7 +152,9 @@ export function createCanonicalChatEventSource(options: {
     if (disposed || connection) return;
     const current = new AbortController();
     connection = current;
-    const resumed = lastCursor !== undefined;
+    // Changes committed while we were disconnected may not all be replayed in
+    // order, so every resume reconciles once from REST when its replay ends.
+    const replay = { missedEvents: lastCursor !== undefined };
     // Also bounds the wait for response headers, not just gaps between events.
     watchForSilence(current);
     try {
@@ -176,7 +185,7 @@ export function createCanonicalChatEventSource(options: {
         const records = buffered.split("\n\n");
         buffered = records.pop() ?? "";
         if (buffered.length > MAX_BUFFERED_CHARS) throw new Error("ChatEventFrameTooLarge");
-        for (const record of records) handleRecord(record, resumed);
+        for (const record of records) handleRecord(record, replay);
       }
     } catch (error: unknown) {
       if (connection === current) {

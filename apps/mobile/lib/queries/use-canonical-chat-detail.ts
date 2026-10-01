@@ -12,7 +12,7 @@ const TERMINAL_RUN_STATUSES = new Set(["completed", "failed", "aborted"]);
 /**
  * Live updates -- streamed text, tool activity -- arrive over the chat event
  * stream and are written straight into this query's cache (see
- * canonical-chat-session-context.tsx). Polling is only the safety net for when
+ * canonical-chat-cache-sync.ts). Polling is only the safety net for when
  * that stream is down: the gateway persists each piece of text as it is
  * generated, so a plain refetch still observes the reply growing. Polls only
  * while a run is active, and stops itself once it settles.

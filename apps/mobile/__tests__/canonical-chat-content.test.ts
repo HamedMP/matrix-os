@@ -22,6 +22,23 @@ const message: CanonicalChatMessage = {
   parts: [{ type: "text", text: "hello" }], createdAt,
 };
 
+function run(id: string) {
+  return {
+    id, chatId: "chat_content", turnId: "cturn_test", status: "running", createdAt, updatedAt: createdAt,
+  } as unknown as CanonicalChatDetailResponse["runs"][number];
+}
+
+function activity(id: string, runId: string) {
+  return {
+    id, chatId: "chat_content", runId, type: "run.status" as const, status: "running" as const, occurredAt: createdAt,
+  };
+}
+
+/** The delta that starts message 201, pushing the oldest one out of a full window. */
+const newestMessage = {
+  ...message, id: "msg_newest", seq: 201, runId: "run_test", parts: [{ type: "text" as const, text: "next" }],
+};
+
 function frame(revision: number, content: Partial<CanonicalChatContentFrame["content"]>): CanonicalChatContentFrame {
   return {
     type: "chat.content",
@@ -68,20 +85,77 @@ describe("applyCanonicalChatContent", () => {
   });
 
   it("upserts whole entities and drops removed activities", () => {
-    const stale = {
-      id: "activity_stale", chatId: "chat_content", runId: "run_test",
-      type: "run.status" as const, status: "running" as const, occurredAt: createdAt,
-    };
-    const fresh = { ...stale, id: "activity_fresh" };
-    const committed: CanonicalChatMessage = { ...message, state: "committed" };
+    const stale = activity("activity_stale", "run_test");
+    const fresh = activity("activity_fresh", "run_test");
+    const pending: CanonicalChatMessage = { ...message, runId: "run_test" };
+    const committed: CanonicalChatMessage = { ...pending, state: "committed" };
 
     const next = applyCanonicalChatContent(
-      { ...initial, messages: [message], activities: [stale] },
+      { ...initial, messages: [pending], runs: [run("run_test")], activities: [stale] },
       frame(2, { messages: [committed], activities: [fresh], removedActivityIds: ["activity_stale"] }),
     )!;
 
     expect(next.messages).toEqual([committed]);
     expect(next.activities).toEqual([fresh]);
+  });
+
+  it("keeps the newest 200 messages and 500 activities, like a snapshot, instead of growing", () => {
+    const full: CanonicalChatDetailResponse = {
+      ...initial,
+      runs: [run("run_test")],
+      messages: Array.from({ length: 200 }, (_, i) => ({ ...message, id: `msg_${i}`, seq: i + 1, runId: "run_test" })),
+      activities: Array.from({ length: 500 }, (_, i) => ({ ...activity(`activity_${i}`, "run_test"), sequence: i + 1 })),
+    };
+    const update = frame(2, {
+      messageDelta: { message: newestMessage, partIndex: 0, offset: 0 },
+      activities: [{ ...activity("activity_next", "run_test"), sequence: 501 }],
+    });
+
+    const next = applyCanonicalChatContent(full, update)!;
+
+    expect(next.messages).toHaveLength(200);
+    expect(next.messages[0]?.seq).toBe(2);
+    expect(next.activities).toHaveLength(500);
+    expect(next.activities.at(-1)?.id).toBe("activity_next");
+    expect(full.messages[0]?.seq).toBe(1);
+  });
+
+  it("keeps a run that has no reply yet, through the turn of the message that asked for it", () => {
+    const question: CanonicalChatMessage = {
+      id: "msg_question", chatId: "chat_content", seq: 1, role: "user", state: "committed",
+      turnId: "cturn_test", parts: [{ type: "text", text: "hi" }], createdAt,
+    };
+    const turn = {
+      id: "cturn_test", chatId: "chat_content", inputMessageId: "msg_question", createdAt,
+    } as unknown as CanonicalChatDetailResponse["turns"][number];
+    const thinking = activity("activity_thinking", "run_test");
+
+    const next = applyCanonicalChatContent(
+      { ...initial, messages: [question], turns: [turn], runs: [run("run_test")] },
+      frame(2, { activities: [thinking] }),
+    )!;
+
+    expect(next.runs.map((item) => item.id)).toEqual(["run_test"]);
+    expect(next.activities).toEqual([thinking]);
+  });
+
+  it("drops runs and activities once their last message has left the window", () => {
+    const full: CanonicalChatDetailResponse = {
+      ...initial,
+      runs: [run("run_old"), run("run_test")],
+      messages: Array.from({ length: 200 }, (_, i) => ({
+        ...message, id: `msg_${i}`, seq: i + 1, runId: i === 0 ? "run_old" : "run_test",
+      })),
+      activities: [activity("activity_old", "run_old")],
+    };
+    const update = frame(2, {
+      messageDelta: { message: newestMessage, partIndex: 0, offset: 0 },
+    });
+
+    const next = applyCanonicalChatContent(full, update)!;
+
+    expect(next.runs.map((item) => item.id)).toEqual(["run_test"]);
+    expect(next.activities).toEqual([]);
   });
 });
 

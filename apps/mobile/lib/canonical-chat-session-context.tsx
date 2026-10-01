@@ -1,8 +1,4 @@
-import type {
-  CanonicalChatContentFrame,
-  CanonicalChatDetailResponse,
-  CanonicalChatModelSelection,
-} from "@matrix-os/contracts";
+import type { CanonicalChatModelSelection } from "@matrix-os/contracts";
 import {
   createContext,
   use,
@@ -16,15 +12,11 @@ import {
 import { useAuth } from "@clerk/clerk-expo";
 import { useQueryClient } from "@tanstack/react-query";
 
-import { applyCanonicalChatContentFrames } from "@/lib/canonical-chat-content";
+import { createCanonicalChatCacheSync } from "@/lib/canonical-chat-cache-sync";
 import { createCanonicalChatEventSource, type CanonicalChatInvalidation } from "@/lib/canonical-chat-events";
 import { mobileQueryKeys } from "@/lib/requests";
 import { HOSTED_GATEWAY_URL } from "@/lib/storage";
 import { useCanonicalChats } from "@/lib/queries/use-canonical-chats";
-
-// A snapshot fetch normally lands within a few frames; this only bounds the
-// queue if one never does.
-const MAX_WAITING_FRAMES = 200;
 
 interface CanonicalChatSessionContextValue {
   /** The chat currently shown, or null for a draft chat not yet created. */
@@ -104,46 +96,17 @@ export function CanonicalChatSessionProvider({ children }: { children: ReactNode
     if (!source) return;
     const uid = userId ?? "signed-out";
     const key = computerKey ?? "none";
-    const chatsKey = mobileQueryKeys.canonicalChats(uid, key);
-    const detailKey = mobileQueryKeys.canonicalChatDetail(uid, key, activeChatId ?? "none");
-    // Streamed frames for the open chat that don't fit its cached detail yet:
-    // the detail is still loading, or a frame was missed. They wait here for a
-    // snapshot instead of being dropped, so streaming picks up right after it.
-    let waitingFrames: CanonicalChatContentFrame[] = [];
-    const applyWaitingFrames = () => {
-      const cached = queryClient.getQueryData<CanonicalChatDetailResponse>(detailKey);
-      if (!cached) return;
-      const { detail, unapplied } = applyCanonicalChatContentFrames(cached, waitingFrames);
-      waitingFrames = unapplied;
-      if (detail !== cached) queryClient.setQueryData(detailKey, detail);
-    };
-
-    return source.subscribe((event) => {
-      if (event.type === "chat.full_refresh") {
-        void queryClient.invalidateQueries({ queryKey: chatsKey });
-        if (activeChatId) void queryClient.invalidateQueries({ queryKey: detailKey });
-        return;
-      }
-      // Each streamed piece of text is a `run.message` event: it grows the
-      // open transcript but changes nothing the chat list shows.
-      if (event.eventType !== "run.message") {
-        void queryClient.invalidateQueries({ queryKey: chatsKey });
-      }
-      if (event.chatId !== activeChatId) return;
-      if (!event.content) {
-        void queryClient.invalidateQueries({ queryKey: detailKey });
-        return;
-      }
-
-      const wasWaiting = waitingFrames.length > 0;
-      waitingFrames = [...waitingFrames, event.content].slice(-MAX_WAITING_FRAMES);
-      applyWaitingFrames();
-      // The first frame that doesn't fit triggers one snapshot fetch; frames
-      // arriving while it loads just queue up behind it.
-      if (waitingFrames.length > 0 && !wasWaiting) {
-        void queryClient.invalidateQueries({ queryKey: detailKey }).then(applyWaitingFrames);
-      }
+    const sync = createCanonicalChatCacheSync({
+      queryClient,
+      chatsKey: mobileQueryKeys.canonicalChats(uid, key),
+      activeChatId,
+      detailKey: mobileQueryKeys.canonicalChatDetail(uid, key, activeChatId ?? "none"),
     });
+    const unsubscribe = source.subscribe(sync.handle);
+    return () => {
+      unsubscribe();
+      sync.dispose();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeChatId, computerKey, userId, queryClient]);
 

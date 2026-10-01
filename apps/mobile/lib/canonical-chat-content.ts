@@ -6,6 +6,15 @@ import type {
 
 type MessageDelta = NonNullable<CanonicalChatContentFrame["content"]["messageDelta"]>;
 
+// The same bounds a REST snapshot has, so a detail kept alive by streamed
+// frames alone cannot grow past what a refetch would return.
+const MESSAGE_WINDOW = 200;
+const TURN_WINDOW = 100;
+const RUN_WINDOW = 100;
+const ACTIVITY_WINDOW = 500;
+
+const byCreatedAt = (a: { createdAt: string }, b: { createdAt: string }) => a.createdAt.localeCompare(b.createdAt);
+
 function upsert<T extends { id: string }>(current: T[], incoming: T[] = []): T[] {
   const result = [...current];
   for (const item of incoming) {
@@ -72,17 +81,40 @@ export function applyCanonicalChatContent(
     messages = appended;
   }
 
+  // Slide the window forward: keep the newest messages, then only the turns,
+  // runs and activities those messages still belong to.
+  const windowMessages = [...messages].sort((a, b) => a.seq - b.seq).slice(-MESSAGE_WINDOW);
+  const messageTurnIds = new Set(windowMessages.map((message) => message.turnId));
+  const messageRunIds = new Set(windowMessages.map((message) => message.runId));
+  const turns = upsert(detail.turns, content.turns)
+    .filter((turn) => messageTurnIds.has(turn.id))
+    .sort(byCreatedAt)
+    .slice(-TURN_WINDOW);
+  const turnIds = new Set(turns.map((turn) => turn.id));
+  const runs = upsert(detail.runs, content.runs)
+    .filter((run) => messageRunIds.has(run.id) || turnIds.has(run.turnId))
+    .sort(byCreatedAt)
+    .slice(-RUN_WINDOW);
+  const runIds = new Set(runs.map((run) => run.id));
   const removedActivityIds = new Set(content.removedActivityIds);
+  const activities = upsert(
+    detail.activities.filter((activity) => !removedActivityIds.has(activity.id)),
+    content.activities,
+  )
+    .filter((activity) => runIds.has(activity.runId))
+    .sort((a, b) => a.occurredAt.localeCompare(b.occurredAt)
+      || a.runId.localeCompare(b.runId)
+      || (a.sequence ?? 0) - (b.sequence ?? 0)
+      || a.id.localeCompare(b.id))
+    .slice(-ACTIVITY_WINDOW);
+
   return {
     ...detail,
     record: content.record,
-    messages,
-    turns: upsert(detail.turns, content.turns),
-    runs: upsert(detail.runs, content.runs),
-    activities: upsert(
-      detail.activities.filter((activity) => !removedActivityIds.has(activity.id)),
-      content.activities,
-    ),
+    messages: windowMessages,
+    turns,
+    runs,
+    activities,
     ...(content.queuedTurns === undefined ? {} : { queuedTurns: content.queuedTurns }),
     ...(content.terminalSessionIds === undefined ? {} : { terminalSessionIds: content.terminalSessionIds }),
   };
