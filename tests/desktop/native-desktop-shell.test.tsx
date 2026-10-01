@@ -991,8 +991,8 @@ describe("native desktop shell", () => {
     expect(content.style.paddingRight).toBe("");
     expect(content.style.paddingBottom).toBe("");
     const frame = content.closest("[data-os-window]")!;
-    expect(frame.querySelector<HTMLElement>('[data-window-resize="e"]')?.style.right).toBe("-6px");
-    expect(frame.querySelector<HTMLElement>('[data-window-resize="se"]')?.style.bottom).toBe("-16px");
+    expect(frame.querySelector<HTMLElement>('[data-window-resize="e"]')?.style.right).toBe("-12px");
+    expect(frame.querySelector<HTMLElement>('[data-window-resize="se"]')?.style.bottom).toBe("-24px");
   });
 
   it("keeps native app resize corners reachable at restored work-area boundaries", () => {
@@ -1003,27 +1003,27 @@ describe("native desktop shell", () => {
       surfaces: { ...state.surfaces, [id]: { ...state.surfaces[id]!, bounds: { x: 0, y: 0, width: 1200, height: 700 } } },
     })));
     const frame = screen.getByRole("dialog", { name: "Browser window" });
-    expect(frame.style.left).toBe("16px");
-    expect(frame.style.top).toBe("16px");
-    expect(Number.parseFloat(frame.style.left) + Number.parseFloat(frame.style.width) + 16).toBeLessThanOrEqual(1200);
-    expect(Number.parseFloat(frame.style.top) + Number.parseFloat(frame.style.height) + 16)
+    expect(frame.style.left).toBe("24px");
+    expect(frame.style.top).toBe("24px");
+    expect(Number.parseFloat(frame.style.left) + Number.parseFloat(frame.style.width) + 24).toBeLessThanOrEqual(1200);
+    expect(Number.parseFloat(frame.style.top) + Number.parseFloat(frame.style.height) + 24)
       .toBeLessThanOrEqual(800 - NATIVE_DESKTOP_LAYOUT.taskbarReservedHeight - NATIVE_DESKTOP_LAYOUT.tabStripHeight);
     const content = screen.getByTestId("desktop-surface-content-browser");
     expect(content.style.paddingLeft).toBe("");
     expect(content.style.paddingBottom).toBe("");
     vi.stubGlobal("PointerEvent", MouseEvent);
     const east = frame.querySelector<HTMLElement>('[data-window-resize="e"]')!;
-    fireEvent.pointerDown(east, { button: 0, clientX: 1184, clientY: 100 });
+    fireEvent.pointerDown(east, { button: 0, clientX: 1176, clientY: 100 });
     fireEvent.pointerMove(window, { clientX: 1400, clientY: 100 });
     fireEvent.pointerUp(window);
-    expect(frame.style.left).toBe("16px");
-    expect(frame.style.width).toBe("1168px");
+    expect(frame.style.left).toBe("24px");
+    expect(frame.style.width).toBe("1152px");
     const moved = useDesktopSurfaces.getState().surfaces[id]!.bounds;
-    expect(moved.x + moved.width + 16).toBe(1200);
+    expect(moved.x + moved.width + 24).toBe(1200);
     vi.unstubAllGlobals();
     Object.defineProperty(window, "innerWidth", { configurable: true, value: 900 });
     fireEvent(window, new Event("resize"));
-    expect(Number.parseFloat(frame.style.left) + Number.parseFloat(frame.style.width) + 16).toBeLessThanOrEqual(900);
+    expect(Number.parseFloat(frame.style.left) + Number.parseFloat(frame.style.width) + 24).toBeLessThanOrEqual(900);
   });
 
   it("unmounts a closed root surface and reopens it from its desktop icon", () => {

@@ -79,8 +79,8 @@ describe("current desktop tab panes", () => {
     const controls = frame.querySelector<HTMLElement>("[data-window-resize-controls]")!;
     expect(controls.parentElement).toBe(frame);
     expect(controls.closest("[data-os-window-clip]")).toBeNull();
-    expect(controls.querySelector<HTMLElement>('[data-window-resize="e"]')!.style.right).toBe(presentation === "canvas" ? "-12px" : "-6px");
-    expect(controls.querySelector<HTMLElement>('[data-window-resize="se"]')!.style.bottom).toBe(presentation === "canvas" ? "-32px" : "-16px");
+    expect(controls.querySelector<HTMLElement>('[data-window-resize="e"]')!.style.right).toBe(presentation === "canvas" ? "-24px" : "-12px");
+    expect(controls.querySelector<HTMLElement>('[data-window-resize="se"]')!.style.bottom).toBe(presentation === "canvas" ? "-48px" : "-24px");
   });
   it.each([
     ["chat", "chat"],

@@ -28,16 +28,21 @@ describe("window resizing", () => {
   ] as const)("resizes %s while anchoring the opposite edges", (direction, expected) => {
     expect(resizeWindowBounds(bounds, direction, 40, 20, minimum)).toEqual(expected);
   });
-  it.each([1, 0.5])("resizes from every outside hit region with native content filling the frame at scale %s", (scale) => {
+  it.each([1, 0.5, 2])("resizes from every outside hit region with native content filling the frame at scale %s", (scale) => {
     vi.stubGlobal("PointerEvent", MouseEvent);
     const changed = vi.fn();
     const view = render(<WindowResizeControls bounds={bounds} minimum={minimum} scale={scale} placement="outside" onBoundsChange={changed} />);
-    const edge = 6 / scale;
-    const corner = 16 / scale;
+    const edge = 12 / scale;
+    const corner = 24 / scale;
+    const grip = view.container.querySelector<HTMLElement>("[data-window-resize-grip]")!;
+    expect(grip).toBeTruthy();
+    expect(grip.closest("[data-window-resize]")?.getAttribute("data-window-resize")).toBe("se");
+    expect(grip.getAttribute("aria-hidden")).toBe("true");
     for (const direction of ["n", "s", "e", "w", "ne", "nw", "se", "sw"] as const) {
       const handle = view.container.querySelector<HTMLElement>(`[data-window-resize="${direction}"]`)!;
       expect(handle.style[direction.includes("n") ? "top" : direction.includes("s") ? "bottom" : direction === "e" ? "right" : "left"])
         .toBe(`${-(direction.length === 2 ? corner : edge)}px`);
+      expect(Number.parseFloat(handle.style[direction.length === 2 || !["n", "s"].includes(direction) ? "width" : "height"]) * scale).toBeGreaterThanOrEqual(direction.length === 2 ? 24 : 12);
       handle.setPointerCapture = vi.fn();
       changed.mockClear();
       fireEvent.pointerDown(handle, { button: 0, clientX: 100, clientY: 100 });

@@ -20,9 +20,9 @@ The desktop renderer preload exposes the existing `embed:open` and `embed:set-bo
 
 ## Integration wiring
 
-`NativeDesktopShell` supplies the available floating-window viewport to `DesktopSurfaceFrame`. Native Electron Desktop windows reserve 16px outside the frame for edge/corner targets, including restored bounds and viewport changes. Drag and resize constraints share the same placement helper and retain the stationary resize edge. Renderer-only windows keep their existing placement policy. Canvas keeps freely pannable positions; offscreen controls are recovered by panning, and scaled targets remain outside native content.
+`NativeDesktopShell` supplies the available floating-window viewport to `DesktopSurfaceFrame`. Native Electron Desktop windows reserve 24px outside the frame for edge/corner targets, including restored bounds and viewport changes. Drag and resize constraints share the same placement helper and retain the stationary resize edge. Renderer-only windows keep their existing placement policy. Canvas keeps freely pannable positions; offscreen controls are recovered by panning, and scaled targets remain outside native content.
 
-`EmbedHost` measures the content host's actual rectangle and inherited frame radius on initial open and layout updates. The shared IPC schema validates geometry; the embed manager forwards it to the native-view factory, which applies device/page zoom conversion and resets rounding for tabbed content. The app content itself has no extra padding. Pointer capture, focus, blur/cancel/lost-capture cleanup and the rounded renderer-content clip remain active.
+`EmbedHost` measures the content host's actual rectangle and inherited frame radius on initial open and layout updates. The shared IPC schema validates geometry; the embed manager forwards it to the native-view factory, which applies device/page zoom conversion and resets rounding for tabbed content. The app content itself has no extra padding. Native outside targets are at least 12px for edges and 24px for corners on screen at supported zoom; a visible bottom-right grip sits entirely outside native content. Pointer capture, focus, blur/cancel/lost-capture cleanup and the rounded renderer-content clip remain active.
 
 ## Failure modes and visual limits
 

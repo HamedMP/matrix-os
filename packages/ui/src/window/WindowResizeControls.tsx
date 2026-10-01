@@ -90,9 +90,10 @@ export function WindowResizeControls({
   };
 
   // Keep hit targets usable at canvas zoom levels without covering window controls.
-  const edge = 6 / Math.max(0.5, scale);
-  const corner = 16 / Math.max(0.5, scale);
   const outside = placement === "outside";
+  const targetScale = Math.max(0.5, scale);
+  const edge = (outside ? 12 : 6) / targetScale;
+  const corner = (outside ? 24 : 16) / targetScale;
   return <div data-window-resize-controls className={className} style={{ position: "absolute", inset: 0, zIndex: 50, pointerEvents: "none" }}>
     {directions.map((direction) => {
       const diagonal = direction.length === 2;
@@ -117,7 +118,21 @@ export function WindowResizeControls({
         role="separator" aria-label={`Resize ${labels[direction]}`}
         aria-orientation={diagonal ? undefined : vertical ? "horizontal" : "vertical"}
         className={`no-drag cursor-${direction}-resize`} style={style}
-        onPointerDown={(event) => start(event, direction)} />;
+        onPointerDown={(event) => start(event, direction)}>
+        {outside && direction === "se" ? (
+          <span data-window-resize-grip aria-hidden="true" style={{
+            position: "absolute", left: 4 / targetScale, top: 4 / targetScale,
+            width: 16 / targetScale, height: 16 / targetScale,
+            pointerEvents: "none", color: "var(--text-secondary)",
+            background: "color-mix(in srgb, var(--bg-app) 85%, transparent)",
+            borderRadius: 4 / targetScale,
+          }}>
+            <svg width="100%" height="100%" viewBox="0 0 24 24" fill="none" focusable="false">
+              <path d="M6 18L18 6M12 18L18 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+            </svg>
+          </span>
+        ) : null}
+      </div>;
     })}
   </div>;
 }
