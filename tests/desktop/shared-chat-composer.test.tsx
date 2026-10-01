@@ -551,7 +551,7 @@ describe("SharedChatComposer", () => {
     expect(screen.queryByRole("button", { name: "Attach files" })).toBeNull();
   });
 
-  it("keeps unauthenticated harnesses dimmed but exposes setup inside the selector", () => {
+  it("keeps unauthenticated harness setup discoverable inside the selector", () => {
     const onProviderSetup = vi.fn();
     render(<Harness onProviderSetup={onProviderSetup} />);
 

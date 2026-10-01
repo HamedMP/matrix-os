@@ -3,7 +3,7 @@ import type { Context, Hono } from "hono";
 import { createNodeWebSocket } from "@hono/node-ws";
 import { AiProviderService } from "../ai-providers/service.js";
 import { createAiProviderRoutes } from "../ai-providers/routes.js";
-import { ProviderSettingsStore } from "../ai-providers/provider-settings-store.js";
+import type { ProviderSettingsStoreWriter } from "../ai-providers/provider-settings-store.js";
 import type { GmailAccountRow } from "../chat/jev-recipe-authority.js";
 import { createProviderSettingsRoutes } from "../ai-providers/provider-settings-routes.js";
 import { createChatAgentRoutes } from "../chat/agent-routes.js";
@@ -44,7 +44,7 @@ export interface CollaborationChatRouteOptions {
   canonicalChatRuntime: Awaited<ReturnType<typeof createCanonicalChatRuntime>> | null;
   canonicalChatProviderCatalog: ReturnType<typeof createGatewayChatProviderCatalog>["catalog"];
   aiProviderService: AiProviderService;
-  providerSettingsStore: ProviderSettingsStore;
+  providerSettingsStore: ProviderSettingsStoreWriter;
   syncR2?: R2Client | null;
   runtimeOwnerId?: string;
   runtimeSlot?: string;

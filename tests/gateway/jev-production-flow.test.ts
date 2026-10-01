@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { JEV_EMAIL_TRIAGE_ANSWER_IDS, JEV_MODEL_ID, FundedAiRuntimeFundingSummaryResponseSchema,
   FundedAiRouteReadinessReceiptSchema, type ChatAgent } from "@matrix-os/contracts";
 import type { JevService } from "../../packages/gateway/src/jev/service.js";
@@ -25,6 +25,12 @@ import { loadFundedAiRuntimeConfig } from "../../packages/gateway/src/funded-ai-
 import { createFundedAiFundingSummaryClient } from "../../packages/gateway/src/funded-ai-funding-summary-client.js";
 import { createFundedAiRouteReadinessClient } from "../../packages/gateway/src/funded-ai-route-readiness-client.js";
 
+beforeEach(() => {
+  // Keep synthetic pricing, policy, and readiness receipts in the same valid window.
+  // Leave real timers running for the production request/deadline paths.
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date("2026-09-30T12:00:00.000Z"));
+});
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.useRealTimers();

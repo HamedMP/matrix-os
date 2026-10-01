@@ -197,6 +197,7 @@ import {
 import type { CanonicalProviderSnapshotReader } from "./ai-providers/provider-settings-coordinators.js";
 import { ProviderSettingsStore } from "./ai-providers/provider-settings-store.js";
 import { createProviderTerminalLoginCoordinator } from "./ai-providers/provider-terminal-login-coordinator.js";
+import { createProviderTerminalLoginHandoff } from "./ai-providers/provider-terminal-login-handoff.js";
 import { AiProviderService } from "./ai-providers/service.js";
 import type { KvStore } from "./app-db-kv.js";
 import type { QueryEngine } from "./app-db-query.js";
@@ -1624,7 +1625,8 @@ export async function createGateway(config: GatewayConfig) {
     syncR2, runtimeOwnerId: terminalRuntimeOwnerId, runtimeSlot: process.env.MATRIX_RUNTIME_SLOT,
     collaborationFailClosedReason, canonicalChatOrchestrator, canonicalChatExecutionRoots,
     canonicalChatCollaborationGuard, projectOwnerToolOutput, canonicalChatRuntime,
-    canonicalChatProviderCatalog, aiProviderService, providerSettingsStore,
+    canonicalChatProviderCatalog, aiProviderService,
+    providerSettingsStore: createProviderTerminalLoginHandoff(providerSettingsStore, providerLoginTerminalRegistry.resolveTerminalRef, providerLoginCoordinator.resolveTerminalIdentity),
     listGmailAccounts: (ownerId) => withCapabilityLookupTimeout(() => lookupJevGmailAccounts(ownerId)),
   });
 

@@ -8,7 +8,6 @@ import {
   type RuntimeSummary,
 } from "@matrix-os/contracts";
 import ProjectChatsView from "../../desktop/src/renderer/src/features/project/ProjectChatsView";
-import { useProviderPreferences } from "../../desktop/src/renderer/src/features/settings/provider-preferences";
 import { resetProviderPreferences } from "./provider-preferences-test-utils";
 import { useCodingAgentWorkspace } from "../../desktop/src/renderer/src/stores/coding-agent-workspace";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
@@ -18,6 +17,8 @@ import { useProjectWorkspaces } from "../../desktop/src/renderer/src/stores/proj
 import { clearDraftChats, useDraftChat } from "../../desktop/src/renderer/src/stores/draft-chat";
 import { useProjectChatLauncher } from "../../desktop/src/renderer/src/lib/project-chat";
 import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
+import { disconnectedSnapshot } from "../ui/chat-provider-settings-fixture";
+import { createLegacyProjectProviderCatalog } from "../../desktop/src/renderer/src/features/chat/canonical-composer-adapter";
 
 const NOW = "2026-07-12T12:00:00.000Z";
 const defaultResolveNewChatTarget = useProjectWorkspaces.getState().resolveNewChatTarget;
@@ -496,9 +497,25 @@ describe("draft chat implicit thread creation", () => {
       path: decodeURIComponent(path.split("path=")[1] ?? ""),
       size: file.size,
     }));
-    useConnection.setState({ api: { putBytes } as never });
+    const providerSettings = disconnectedSnapshot();
+    providerSettings.harnesses.find((harness) => harness.harness === "codex")!.authState = "authenticated";
+    const api = {
+      putBytes,
+      forRuntime: vi.fn(() => api),
+      get: vi.fn(async (path: string) => {
+        if (path.startsWith("/api/ai/provider-settings?")) return providerSettings;
+        if (path.startsWith("/api/chat-providers")) return createLegacyProjectProviderCatalog(summaryFixture());
+        if (path === "/api/conversations") return { conversations: [] };
+        throw new Error(`Unexpected draft request: ${path}`);
+      }),
+    };
+    useConnection.setState({ api: api as never });
     const { invoke } = mockOperator();
     const composer = await openDraft();
+    expect(api.forRuntime).toHaveBeenCalledWith("primary");
+    await waitFor(() => expect(api.get).toHaveBeenCalledWith(
+      "/api/ai/provider-settings?includeCapabilities=true", expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    ));
     const pane = screen.getByRole("region", { name: "New chat in Matrix OS" });
     fireEvent.drop(pane, {
       dataTransfer: { files: [new File(["context"], "context.txt", { type: "text/plain" })] },

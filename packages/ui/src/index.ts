@@ -183,6 +183,8 @@ export { captureTerminalFileDrag, terminalDropFiles, terminalDropMimeType, MAX_T
 export { canonicalChatSafeFailureReason } from "./canonical-chat-error-copy.js";
 
 export { ConversationSubagentActivity } from "./chat/subagent-activity";
+export { ChatProviderConnections, ChatProviderOnboarding, deriveChatProviderConnectionState } from "./agents-providers/ChatProviderConnections.js";
+export { shouldOpenChatOnStartup } from "./chat-startup-policy.js";
 
 export { OrganizationDriveBrowser, type OrganizationDriveBrowserProps } from "./organization-drive/OrganizationDriveBrowser.js";
 export { OrganizationDrivesNavigation } from "./organization-drive/OrganizationDrivesNavigation.js";

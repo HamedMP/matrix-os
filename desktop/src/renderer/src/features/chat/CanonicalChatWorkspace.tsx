@@ -1,3 +1,4 @@
+import { CanonicalNewChatContent } from "./CanonicalNewChatContent";
 import { desktopProviderIdentityKey } from "../../lib/provider-settings-identity";
 import { canonicalComposerSelectionIsAvailable } from "./canonical-composer-state";
 import {
@@ -26,7 +27,7 @@ import type {
   CanonicalChatQueuedTurn,
   KernelConversationContextProjection,
 } from "@matrix-os/contracts";
-import { MessageSquare, Plus, Search } from "@renderer/lib/hugeicons";
+import { Plus, Search } from "@renderer/lib/hugeicons";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ConversationTranscript } from "../../components/conversation/transcript";
 import { CHAT_CONTENT_WIDTH_CLASS } from "../../components/conversation/layout";
@@ -43,7 +44,6 @@ import { useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
 import { captureRuntimeGeneration, isCurrentRuntimeGeneration } from "../../stores/runtime-generation";
 import { AttachmentPreviewRow } from "./attachments/AttachmentPreviewRow";
 import { useConversationAttachments } from "./attachments/use-conversation-attachments";
-import { ChatStarterCards } from "./ChatStarterCards";
 import { CanonicalChatIndex } from "./CanonicalChatIndex";
 import { DeleteConversationDialog } from "./DeleteConversationDialog";
 import { canonicalChatPresentation } from "./canonical-chat-presentation";
@@ -920,46 +920,8 @@ export function CanonicalChatWorkspace({
           >
             Loading chat…
           </div>
-        ) : projectId === null ? (
-          <div
-            data-slot="chat-new-chat-content"
-            className="flex min-h-0 flex-1 flex-col overflow-hidden"
-          >
-            <div
-              data-slot="chat-starter-scroll"
-              className={`flex min-h-0 flex-1 justify-center ${workspaceLayout === "narrow" ? "items-start overflow-y-auto px-3 py-3" : "items-center px-5 py-8"}`}
-              style={workspaceLayout === "narrow" ? { scrollbarGutter: "stable" } : undefined}
-            >
-              <div
-                data-slot="chat-starter-stack"
-                className={`w-full max-w-[480px] ${workspaceLayout === "narrow" ? "my-auto" : ""}`}
-              >
-                <ChatStarterCards
-                  layout="two-by-two"
-                  density={workspaceLayout === "narrow" ? "compact" : "regular"}
-                  onSelect={setDraft}
-                />
-              </div>
-            </div>
-            <div className={cn("mx-auto w-full shrink-0", CHAT_CONTENT_WIDTH_CLASS, workspaceLayout === "narrow" ? "px-3 pb-3" : "px-5 pb-5")}>
-              {composer}
-            </div>
-          </div>
         ) : (
-          <div className={cn("mx-auto flex min-h-0 w-full flex-1 flex-col justify-center", CHAT_CONTENT_WIDTH_CLASS, workspaceLayout === "narrow" ? "gap-3 overflow-y-auto px-3 py-3" : "gap-[26px] px-5 py-8")}>
-            <div className="flex flex-col items-center gap-3 text-center">
-              <MessageSquare size={28} aria-hidden style={{ color: "var(--text-tertiary)" }} />
-              <h1 className="text-[24px] font-medium leading-[32px]" style={{ color: "var(--text-primary)" }}>
-                What should we build today?
-              </h1>
-            </div>
-            <ChatStarterCards
-              layout="two-by-two"
-              density={workspaceLayout === "narrow" ? "compact" : "regular"}
-              onSelect={setDraft}
-            />
-            {composer}
-          </div>
+          <CanonicalNewChatContent projectId={projectId} workspaceLayout={workspaceLayout} composer={composer} onSelect={setDraft} />
         )}
         </>}
       </SharedChatSurface>

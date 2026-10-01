@@ -17,6 +17,7 @@ import {
 import { z } from "zod/v4";
 import { TerminalRuntimeError } from "./errors.js";
 import { terminalTabIncarnation } from "./incarnation.js";
+import { TerminalEndedTabArchiveInputSchema, type TerminalEndedTabArchiveInput } from "./terminal-ended-tab-archive.js";
 import {
   MAX_TERMINAL_SNAPSHOT_ANSI_BYTES,
   MAX_TERMINAL_SNAPSHOT_BYTES,
@@ -390,6 +391,30 @@ export class TerminalWorkspaceStore {
       });
       await this.persistSnapshot(snapshot);
       return snapshot;
+    });
+  }
+
+  async archiveEndedTab(refInput: TerminalRef, inputRaw: TerminalEndedTabArchiveInput): Promise<TerminalTab> {
+    const ref = TerminalRefSchema.parse(refInput);
+    const input = TerminalEndedTabArchiveInputSchema.parse(inputRaw);
+    return this.mutate((state) => {
+      const workspace = state.workspaces[ref.workspaceId];
+      const tab = workspace?.tabs[ref.tabId];
+      if (!workspace || !tab) throw new TerminalRuntimeError("not_found");
+      if (tab.agent?.providerId !== input.providerId) throw new TerminalRuntimeError("unavailable");
+      if (tab.name !== input.expectedName || tab.revision !== input.baseRevision
+        || terminalTabIncarnation(tab) !== input.expectedIncarnation) throw new TerminalRuntimeError("conflict");
+      if (Object.values(state.workspaces).some((candidate) => Object.values(candidate.tabs).some((other) =>
+        other.name === input.name && (candidate.id !== ref.workspaceId || other.id !== ref.tabId)))) {
+        throw new TerminalRuntimeError("conflict");
+      }
+      tab.name = input.name;
+      tab.revision += 1;
+      tab.updatedAt = this.now().toISOString();
+      workspace.revision += 1;
+      workspace.updatedAt = tab.updatedAt;
+      state.revision += 1;
+      return this.toPublicTab(tab);
     });
   }
 
