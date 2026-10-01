@@ -83,7 +83,6 @@ import {
 } from "./speech/managed-readiness.js";
 import {
   canonicalVoiceDecision,
-  canonicalVoiceSelectionRequirements,
   createCanonicalVoicePorts,
 } from "./voice-session/canonical-ports.js";
 import { VoiceSessionEngine } from "./voice-session/engine.js";
@@ -1804,21 +1803,6 @@ export async function createGateway(config: GatewayConfig) {
             : capability;
         },
       },
-      routeEligibility: async ({ principal, chatId, selection }) => {
-        const owner = { type: "personal" as const, ownerId: principal.userId };
-        const selected = selection ?? (await chatRepository!.get(owner, chatId))?.chat.currentSelection;
-        if (!selected) return false;
-        const catalog = await canonicalChatProviderCatalog.getCatalog(principal);
-        const qualifiedPolicy = await qualifiedCanonicalPolicyFor(selected, catalog);
-        return validateChatProviderSelection({
-          catalog,
-          selection: selected,
-          requirements: {
-            ...canonicalVoiceSelectionRequirements(),
-            ...(qualifiedPolicy ? { qualifiedPolicy } : {}),
-          },
-        }).ok;
-      },
       // Server-owned canonical authority: persisted Chat selection, provider
       // route eligibility, and the adapter-qualified frozen execution policy.
       // No decision (no persisted selection) fails closed to conversation_only.
@@ -1874,13 +1858,18 @@ export async function createGateway(config: GatewayConfig) {
               ? { kind: "project" as const, id: resolved.project.id, label: resolved.project.name }
               : null;
           },
-          resolveReadiness: async ({ principal, surface, selection, catalog }) => ({
+          // Speech readiness is independent of the selected model and Chat;
+          // overlap its bounded probe with cold canonical catalog discovery.
+          resolveSpeechCapability: async ({ principal, surface }) => voiceCapabilities.capabilities({
+            principalId: principal.userId, chatId: "aoede_bootstrap", surface,
+          }),
+          resolveReadiness: async ({ principal, surface, selection, catalog, speechCapability }) => ({
             // The exact requested/saved selection is authoritative — the
             // service rejects any substituted route, so never substitute.
             selection,
             capability: projectVoiceCapability(
               // The Chat may not exist yet; adapter capability is not chat-scoped.
-              await voiceCapabilities.capabilities({
+              speechCapability ?? await voiceCapabilities.capabilities({
                 principalId: principal.userId, chatId: "aoede_bootstrap", surface,
               }),
               canonicalVoiceDecision({

@@ -39,6 +39,7 @@ const artifactPort = Number(process.env.MATRIX_PARITY_ARTIFACT_PORT ?? 9876);
 // Keep parity isolated from the source/HMR platform's conventional port 9000.
 const platformPort = Number(process.env.MATRIX_PARITY_PLATFORM_PORT ?? 9003);
 const storageTlsPort = Number(process.env.MATRIX_PARITY_STORAGE_TLS_PORT ?? 9444);
+const speechTlsPort = Number(process.env.MATRIX_PARITY_SPEECH_TLS_PORT ?? 9445);
 const guestHostAddress = "10.0.2.2";
 const fixturePublicAddress = "192.0.2.2";
 const localPlatformUrl = `http://${guestHostAddress}:${platformPort}`;
@@ -46,6 +47,7 @@ const localArtifactUrl = `http://${guestHostAddress}:${artifactPort}`;
 const ubuntuImageUrl = "https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img";
 const fixtureRouterName = "matrix-os-parity-router";
 const storageTlsProxyName = "matrix-os-parity-storage-tls";
+const speechTlsProxyName = "matrix-os-parity-speech-tls";
 const platformContainerName = "matrix-os-parity-platform";
 const platformImageName = "matrix-os-parity-platform:working-tree";
 export const LOCAL_PARITY_OWNER_LABEL = "com.matrix-os.local-production-parity.root";
@@ -129,7 +131,7 @@ export function renderLocalParityCloudInit(template, input) {
     syncRuntimeToken: runtimeToken("matrix-sync-runtime", identity, input.platformSecret),
     fundedAiRuntimeToken: runtimeToken("matrix-funded-ai-runtime", identity, input.platformSecret),
     platformSpeechEnabled: String(input.platformSpeechEnabled === true),
-    platformSpeechOrigin: input.platformUrl,
+    platformSpeechOrigin: input.platformSpeechOrigin ?? input.platformUrl,
     platformSpeechRuntimeToken: runtimeToken("matrix-platform-speech-runtime", identity, input.platformSecret),
     registrationToken: input.registrationToken,
     registrationTokenExpiresAt: input.registrationTokenExpiresAt,
@@ -273,7 +275,7 @@ export function assertLocalParityMachinesAvailable(options = {}) {
   if (options.builderName && exists(options.builderName)) {
     throw new Error(`${options.builderName} already exists; remove it manually only if you own that OrbStack machine`);
   }
-  for (const name of [platformContainerName, fixtureRouterName, storageTlsProxyName]) {
+  for (const name of [platformContainerName, fixtureRouterName, storageTlsProxyName, speechTlsProxyName]) {
     if (containerExists(name)) {
       throw new Error(`${name} already exists; run dev:parity:down only if you own that environment`);
     }
@@ -488,6 +490,26 @@ function startStorageTlsProxy() {
   run("docker", storageTlsProxyArguments());
 }
 
+export function speechTlsProxyArguments(options = {}) {
+  const name = options.name ?? speechTlsProxyName;
+  const owner = options.owner ?? root;
+  const port = options.port ?? speechTlsPort;
+  const targetPort = options.platformPort ?? platformPort;
+  const tlsDirectory = options.tlsDirectory ?? storageTlsDirectory;
+  return [
+    "run", "--detach", "--name", name,
+    "--label", `${LOCAL_PARITY_OWNER_LABEL}=${owner}`,
+    "--publish", `127.0.0.1:${port}:${port}`,
+    "--volume", `${tlsDirectory}:/tls:ro`,
+    "alpine:latest", "sh", "-c",
+    `apk add --no-cache socat >/dev/null && exec socat OPENSSL-LISTEN:${port},fork,reuseaddr,cert=/tls/certificate.pem,key=/tls/key.pem,verify=0 TCP:host.docker.internal:${targetPort}`,
+  ];
+}
+
+function startSpeechTlsProxy() {
+  run("docker", speechTlsProxyArguments());
+}
+
 function containerExists(name) {
   return spawnSync("docker", ["container", "inspect", name], { stdio: "ignore" }).status === 0;
 }
@@ -507,6 +529,10 @@ function stopFixtureRouter() {
 
 function stopStorageTlsProxy() {
   stopOwnedContainer(storageTlsProxyName);
+}
+
+function stopSpeechTlsProxy() {
+  stopOwnedContainer(speechTlsProxyName);
 }
 
 function stopPlatformContainer() {
@@ -548,7 +574,7 @@ async function stopQemuRuntime() {
 
 export async function cleanupLocalParityResources(options = {}) {
   const stopRuntime = options.stopRuntime ?? stopQemuRuntime;
-  const stopContainers = options.stopContainers ?? [stopFixtureRouter, stopStorageTlsProxy, stopPlatformContainer];
+  const stopContainers = options.stopContainers ?? [stopFixtureRouter, stopStorageTlsProxy, stopSpeechTlsProxy, stopPlatformContainer];
   const removeRuntime = options.removeRuntime ?? (() => rmSync(runtimeDirectory, { recursive: true, force: true }));
   const errors = [];
   let runtimeStopped = false;
@@ -824,6 +850,23 @@ async function waitFor(url, timeoutMs = 120_000, signal) {
   throw new Error(`Timed out waiting for ${url}`);
 }
 
+async function waitForSpeechTls(timeoutMs = 120_000, signal) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    signal?.throwIfAborted();
+    const result = spawnSync("curl", [
+      "--fail", "--silent", "--show-error", "--max-time", "2",
+      "--noproxy", "*",
+      "--cacert", storageTlsCertificatePath,
+      "--resolve", `${guestHostAddress}:${speechTlsPort}:127.0.0.1`,
+      `https://${guestHostAddress}:${speechTlsPort}/health`,
+    ], { cwd: root, stdio: "ignore" });
+    if (result.status === 0) return;
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 1_000));
+  }
+  throw new Error("Timed out waiting for the local platform speech TLS proxy");
+}
+
 export async function startArtifactServer(state, options = {}) {
   const server = createServer((request, response) => {
     if (request.url === "/health") return response.end("ok\n");
@@ -955,6 +998,7 @@ async function up() {
     assertTcpPortAvailable(platformPort),
     assertTcpPortAvailable(artifactPort),
     assertTcpPortAvailable(storageTlsPort),
+    assertTcpPortAvailable(speechTlsPort),
   ]);
   assertFixtureAddressInstalled();
   const publicEnv = publicBuildEnvironment();
@@ -984,6 +1028,7 @@ async function up() {
       ...state,
       hostBundleUrl: `${localArtifactUrl}/matrix-host-bundle.tar.gz`,
       platformUrl: localPlatformUrl,
+      platformSpeechOrigin: `https://${guestHostAddress}:${speechTlsPort}`,
       shellOrigin: `http://app.localhost:${platformPort}`,
       platformSpeechEnabled: configuredEnv.MATRIX_PLATFORM_SPEECH_RUNTIME_ENABLED === "true",
     });
@@ -1008,6 +1053,8 @@ async function up() {
     artifactServer = await startArtifactServer(state);
     startPlatformContainer(env);
     await waitFor(`http://127.0.0.1:${platformPort}/health`, 120_000, shutdown.signal);
+    startSpeechTlsProxy();
+    await waitForSpeechTls(120_000, shutdown.signal);
     startQemuRuntime();
     await waitForRuntimeSsh(15 * 60_000, shutdown.signal);
     // Keep the event loop available to serve the host bundle while cloud-init

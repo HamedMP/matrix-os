@@ -62,6 +62,19 @@ describe("Aoede settings", () => {
     fireEvent.change(model, { target: { value: "gpt-5.7-sol" } });
     await waitFor(() => expect(controller.setSelection).toHaveBeenCalledWith({ instanceId: "codex_fixture", model: "gpt-5.7-sol" }));
   });
+  it("preserves an unavailable saved model and requires an explicit replacement", async () => {
+    const controller = makeController();
+    const snapshot = makeSnapshot();
+    snapshot.binding!.selection.model = "provider-default";
+    render(<AoedeSettings controller={controller} snapshot={snapshot} />);
+    const model = await screen.findByLabelText("Model");
+    expect(model).toHaveValue("provider-default");
+    expect(screen.getByRole("option", { name: "Saved model unavailable" })).toBeDisabled();
+    expect(screen.getByText("The saved model is unavailable. Choose an available model to restore voice.")).toBeInTheDocument();
+    expect(controller.setSelection).not.toHaveBeenCalled();
+    fireEvent.change(model, { target: { value: "gpt-5.6-sol" } });
+    await waitFor(() => expect(controller.setSelection).toHaveBeenCalledWith({ instanceId: "codex_fixture", model: "gpt-5.6-sol" }));
+  });
   it("locks the provider instance while a run is bound to the chat", async () => {
     render(<AoedeSettings controller={makeController()} snapshot={makeSnapshot({ boundProviderInstanceId: "codex_fixture" })} />);
     await screen.findByLabelText("Model");

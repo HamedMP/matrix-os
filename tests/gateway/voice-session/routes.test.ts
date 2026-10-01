@@ -1,5 +1,6 @@
 import { Hono, type Context } from "hono";
 import type { UpgradeWebSocket, WSEvents } from "hono/ws";
+import { readFile } from "node:fs/promises";
 import { beforeEach, describe, expect, it } from "vitest";
 import { CanonicalProviderCatalogSchema } from "@matrix-os/contracts";
 import type { VoiceCapability } from "@matrix-os/contracts/voice-session";
@@ -80,6 +81,7 @@ function makeRoutes(options: {
   rateLimited?: boolean;
   routeEligibility?: Parameters<typeof createVoiceSessionRoutes>[0]["routeEligibility"];
   canonicalDecision?: Parameters<typeof createVoiceSessionRoutes>[0]["canonicalDecision"];
+  capabilities?: Parameters<typeof createVoiceSessionRoutes>[0]["capabilities"];
 } = {}): RouteRig {
   const rig = options.rig ?? makeRig();
   const access = new FakeChatAccess();
@@ -92,7 +94,7 @@ function makeRoutes(options: {
       return options.principal ?? PRINCIPAL;
     },
     chatAccess: access,
-    capabilities: { capabilities: () => CAPABILITY },
+    capabilities: options.capabilities ?? { capabilities: () => CAPABILITY },
     canonicalDecision: options.canonicalDecision ?? (() => DECISION),
     ...(options.routeEligibility ? { routeEligibility: options.routeEligibility } : {}),
     ...(options.rateLimited ? { checkRateLimit: () => false } : {}),
@@ -109,6 +111,62 @@ async function createViaHttp(app: Hono, overrides: Record<string, unknown> = {})
 
 describe("voice capabilities route", () => {
   beforeEach(() => resetFrameSeq());
+
+  it("overlaps cold canonical and speech probes for capabilities, create and reconnect", async () => {
+    const { vi } = await import("vitest");
+    vi.useFakeTimers();
+    const { app } = makeRoutes({
+      canonicalDecision: async () => { await new Promise(resolve => setTimeout(resolve, 20_600)); return DECISION; },
+      capabilities: { capabilities: async () => { await new Promise(resolve => setTimeout(resolve, 9_800)); return CAPABILITY; } },
+    });
+    try {
+      let settled = false;
+      const caps = app.request(`http://test/api/chats/${CHAT_ID}/voice/capabilities`).then(response => { settled = true; return response; });
+      await vi.advanceTimersByTimeAsync(20_700);
+      expect(settled).toBe(true);
+      expect((await caps).status).toBe(200);
+      settled = false;
+      const creation = createViaHttp(app).then(response => { settled = true; return response; });
+      await vi.advanceTimersByTimeAsync(20_700);
+      expect(settled).toBe(true);
+      const created = await creation;
+      expect(created.res.status).toBe(201);
+      settled = false;
+      const reconnect = app.request(`http://test${CREATE_URL}/${created.body.sessionId}/reconnect`, jsonInit({})).then(response => { settled = true; return response; });
+      await vi.advanceTimersByTimeAsync(20_700);
+      expect(settled).toBe(true);
+      expect((await reconnect).status).toBe(200);
+      await app.request(`http://test${CREATE_URL}/${created.body.sessionId}`, { method: "DELETE" });
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("fails readiness closed when canonical authority cannot resolve a selection", async () => {
+    const { app } = makeRoutes({ canonicalDecision: () => undefined });
+    const response = await app.request(`http://test/api/chats/${CHAT_ID}/voice/capabilities`);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ status: "unavailable", reason: "provider_unavailable",
+      transportModes: [], turnModes: [] });
+  });
+
+  it("composes one authoritative catalog decision per request instead of a duplicate eligibility probe", async () => {
+    const source = await readFile(new URL("../../../packages/gateway/src/server.ts", import.meta.url), "utf8");
+    const start = source.indexOf('app.route("/", createVoiceSessionRoutes({');
+    const end = source.indexOf("// Aoede standalone assistant bootstrap", start);
+    expect(start).toBeGreaterThan(0);
+    expect(end).toBeGreaterThan(start);
+    expect(source.slice(start, end)).not.toContain("routeEligibility:");
+    let decisions = 0;
+    const { app } = makeRoutes({ canonicalDecision: () => { decisions += 1; return DECISION; } });
+    await app.request(`http://test/api/chats/${CHAT_ID}/voice/capabilities`);
+    expect(decisions).toBe(1);
+    const created = await createViaHttp(app);
+    expect(created.res.status).toBe(201);
+    expect(decisions).toBe(2);
+    const reconnect = await app.request(`http://test${CREATE_URL}/${created.body.sessionId}/reconnect`, jsonInit({}));
+    expect(reconnect.status).toBe(200);
+    expect(decisions).toBe(3);
+    expect((await app.request(`http://test${CREATE_URL}/${created.body.sessionId}`, { method: "DELETE" })).status).toBe(200);
+  });
 
   it("speech conversation_only does not suppress a qualified canonical tool inventory", async () => {
     const rig = makeRig();

@@ -17,9 +17,10 @@ import {
 } from "@matrix-os/contracts";
 import { createCanonicalChatEventSource as createSharedCanonicalChatEventSource, type CanonicalChatEventSource } from "../canonical-chat-event-source.js";
 import { boundedJson } from "../voice-session/session-api.js";
+import { SafeVoiceErrorSchema, type SafeVoiceError } from "@matrix-os/contracts/voice-session";
 
 export class AoedeRequestError extends Error {
-  constructor(public readonly status: number) { super("Assistant request unavailable"); this.name = "AoedeRequestError"; }
+  constructor(public readonly status: number, public readonly safeError?: SafeVoiceError) { super("Assistant request unavailable"); this.name = "AoedeRequestError"; }
 }
 export interface AoedeApi {
   bootstrap(input: AoedeBootstrapRequest): Promise<AoedeBootstrapResponse>;
@@ -37,20 +38,32 @@ export function createAoedeApi(options: { baseUrl: string; fetcher?: typeof fetc
   // Capture the target and fetch implementation; old cleanup cannot follow a new runtime.
   const base = options.baseUrl.replace(/\/$/, "");
   const fetcher = options.fetcher ?? fetch;
-  const request = async (path: string, body?: unknown, method = "POST"): Promise<unknown> => {
+  // Catalog discovery and speech readiness can each consume their own bounded
+  // server probe. Allow cold startup to finish before the browser aborts it.
+  const request = async (path: string, body?: unknown, method = "POST", timeoutMs = 10_000): Promise<unknown> => {
     const response = await fetcher(`${base}${path}`, {
       method: body === undefined ? "GET" : method,
       headers: { "X-Matrix-Chat-Metadata": "1", ...(body === undefined ? {} : { "Content-Type": "application/json" }) },
-      ...(body === undefined ? {} : { body: JSON.stringify(body) }), signal: AbortSignal.timeout(10_000),
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }), signal: AbortSignal.timeout(timeoutMs),
     });
-    if (!response.ok) throw new AoedeRequestError(response.status);
+    if (!response.ok) {
+      let safeError: SafeVoiceError | undefined;
+      try {
+        const payload = await boundedJson(response);
+        const parsed = z.strictObject({ error: SafeVoiceErrorSchema }).safeParse(payload);
+        if (parsed.success) safeError = parsed.data.error;
+      } catch (error: unknown) {
+        console.warn("[aoede] error response unavailable", error instanceof Error ? error.name : "UnknownError");
+      }
+      throw new AoedeRequestError(response.status, safeError);
+    }
     return boundedJson(response);
   };
   const chatPath = (chatId: string) => `/api/chats/${encodeURIComponent(CanonicalChatIdSchema.parse(chatId))}`;
   const runPath = (chatId: string, runId: string) => `${chatPath(chatId)}/runs/${encodeURIComponent(CanonicalChatRunIdSchema.parse(runId))}`;
   const actionPath = (chatId: string, actionId: string) => `${chatPath(chatId)}/actions/${encodeURIComponent(CanonicalActionIdSchema.parse(actionId))}`;
   return {
-    async bootstrap(input) { return AoedeBootstrapResponseSchema.parse(await request("/api/aoede/bootstrap", AoedeBootstrapRequestSchema.parse(input))); },
+    async bootstrap(input) { return AoedeBootstrapResponseSchema.parse(await request("/api/aoede/bootstrap", AoedeBootstrapRequestSchema.parse(input), "POST", 30_000)); },
     async detail(chatId) { return CanonicalChatDetailResponseSchema.parse(await request(chatReadStateVersionUrl(chatMessageVersionUrl(`${chatPath(chatId)}?limit=200`)))); },
     events() {
       return createSharedCanonicalChatEventSource({ openStream: ({ cursor, signal }) => fetcher(
@@ -59,12 +72,13 @@ export function createAoedeApi(options: { baseUrl: string; fetcher?: typeof fetc
           signal: AbortSignal.any([signal, AbortSignal.timeout(5 * 60 * 1000)]) },
       ) });
     },
-    async providers() { return CanonicalProviderCatalogSchema.parse(await request("/api/chat-providers")); },
+    async providers() { return CanonicalProviderCatalogSchema.parse(await request("/api/chat-providers", undefined, "GET", 30_000)); },
     async updateSelection(chatId, input) {
       return CanonicalChatRecordSchema.parse(await request(
         `${chatPath(chatId)}/selection`,
         CanonicalUpdateChatSelectionRequestSchema.parse(input),
         "PATCH",
+        30_000,
       ));
     },
     async cancelRun(chatId, runId, input) { return CanonicalChatRunCancellationResponseSchema.parse(await request(`${runPath(chatId, runId)}/cancel`, CanonicalCancelChatRunRequestSchema.parse(input))); },

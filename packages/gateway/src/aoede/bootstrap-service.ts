@@ -26,13 +26,15 @@ export interface AoedeBootstrapServiceDeps {
   runtimeIdentity: { machineId: string; runtimeSlot: string } | { serverId: string };
   /** Existing project repository authorizes the exact requested project; null means unavailable. */
   resolveProject(principal: RequestPrincipal, projectId: string): Promise<AoedeScope | null>;
+  /** Independent speech probe, overlapped with catalog discovery when supplied. */
+  resolveSpeechCapability?(input: { principal: RequestPrincipal; surface: AoedeBootstrapRequest["surface"] }): Promise<VoiceCapability>;
   /** Canonical catalog default runnable route + server action policy + managed speech readiness.
    * If selection exists, inspect that exact saved route: never select a substitute.
    * No provider inference, speech dispatch or microphone work occurs here.
    */
   resolveReadiness(input: { principal: RequestPrincipal; scope: AoedeScope;
     surface: AoedeBootstrapRequest["surface"]; selection: CanonicalChatModelSelection;
-    catalog: CanonicalProviderCatalog;
+    catalog: CanonicalProviderCatalog; speechCapability?: VoiceCapability;
   }): Promise<{ selection: CanonicalChatModelSelection; capability: VoiceCapability }>;
 }
 function hash(value: unknown): string {
@@ -80,21 +82,23 @@ export class AoedeBootstrapService {
     // Everything potentially external resolves before the single locking transaction.
     // A catalog outage is a retryable provider failure, not a generic 500 —
     // the UI distinguishes "try again" from "something broke".
-    const catalog = CanonicalProviderCatalogSchema.parse(
-      await this.deps.catalog.getCatalog(principal).catch((error: unknown) => {
+    const [rawCatalog, speechCapability] = await Promise.all([
+      this.deps.catalog.getCatalog(principal).catch((error: unknown) => {
         if (error instanceof ProviderCatalogUnavailableError) {
           throw new AoedeBootstrapError("provider_unavailable", 503, error.retryable, "retry_connection");
         }
         throw error;
       }),
-    );
+      this.deps.resolveSpeechCapability?.({ principal, surface: request.surface }),
+    ]);
+    const catalog = CanonicalProviderCatalogSchema.parse(rawCatalog);
     const defaultSelection = catalog.instances.flatMap((instance) => instance.defaultSelection
       && validateChatProviderSelection({ catalog, selection: instance.defaultSelection }).ok
       ? [instance.defaultSelection] : [])[0];
     const selected = savedSelection ?? defaultSelection;
     if (!selected) throw new AoedeBootstrapError("provider_unavailable", 503, true, "retry_connection");
     const readiness = await this.deps.resolveReadiness({ principal, scope: safeScope, surface: request.surface,
-      selection: selected, catalog });
+      selection: selected, catalog, ...(speechCapability ? { speechCapability } : {}) });
     if (hash(selected) !== hash(readiness.selection)) {
       throw new AoedeBootstrapError("provider_unavailable", 503, true, "retry_connection");
     }

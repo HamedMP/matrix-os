@@ -7,7 +7,7 @@ import {
   type VoiceSessionClientOptions,
 } from "../../packages/ui/src/voice-session/use-voice-session";
 import { VoiceMediaError, type VoiceMediaSession, type VoiceMediaCallbacks } from "../../packages/ui/src/voice-session/media-session";
-import { voiceErrorForCode } from "../../packages/ui/src/voice-session/session-api";
+import { createVoiceSessionApi, voiceErrorForCode } from "../../packages/ui/src/voice-session/session-api";
 import type { VoiceTransportSocket } from "../../packages/ui/src/voice-session/transport";
 
 const CHAT_ID = "chat_1";
@@ -30,6 +30,23 @@ const CAPABILITY = {
 };
 
 const LIMITS = { maxSessionSeconds: 3600, maxIdleSeconds: 300, maxQueuedAudioMs: 10_000 };
+
+it("budgets slow voice admission and reconnect separately from prompt cleanup", async () => {
+  const timeout = vi.fn((_ms: number) => new AbortController().signal);
+  const api = createVoiceSessionApi({ baseUrl: "https://runtime.test", makeTimeoutSignal: timeout,
+    fetcher: vi.fn(async (url, init) => new Response(JSON.stringify(
+      String(url).endsWith("capabilities") ? CAPABILITY
+        : String(url).endsWith("reconnect") ? { sessionId: SESSION_ID, chatId: CHAT_ID, limits: LIMITS, transport: grant("ticket-new", 2) }
+          : init?.method === "DELETE" ? {} : createdBody(),
+    ))),
+  });
+  await api.getCapabilities(CHAT_ID);
+  await api.createSession(CHAT_ID, { clientRequestId: "request-slow", turnMode: "hands_free", memoryMode: "ordinary",
+    selection: { instanceId: "codex_default", model: "real-model" }, interactionMode: "default", permissionMode: "supervised" });
+  await api.reconnect(CHAT_ID, SESSION_ID);
+  await api.deleteSession(CHAT_ID, SESSION_ID);
+  expect(timeout.mock.calls.map(call => call[0])).toEqual([30_000, 30_000, 30_000, 10_000]);
+});
 
 function grant(ticket: string, epoch: number) {
   return {

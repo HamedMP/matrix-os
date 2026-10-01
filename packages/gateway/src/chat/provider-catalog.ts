@@ -36,6 +36,7 @@ import { claudeFallbackCatalog } from "./claude-model-catalog.js";
 import { systemModels } from "./system-model-catalog.js";
 import { managedChatInstances } from "./managed-chat-catalog.js";
 import { applyHarnessSettings, configuredSystemModel } from "./harness-catalog-admission.js";
+import { unavailableInstance } from "./configured-harness-catalog.js";
 
 const ADAPTER_VERSION = "1.0.0";
 const SYSTEM_DRIVERS = ["hermes", "openclaw"] as const;
@@ -570,14 +571,18 @@ export function createChatProviderCatalogService(options: {
       // together; Promise.all preserves registry order even if probes finish out of order.
       const projectedInstances = await Promise.all(coding.map(async (provider) => {
         let projectedCatalog: CodingModelCatalogProjection | null = null;
+        let discoveryFailed = false;
         if (options.codingModelCatalogSource) {
           try {
             projectedCatalog = await options.codingModelCatalogSource(provider, principal);
+            discoveryFailed = provider.kind === "codex" && provider.availability === "available" && projectedCatalog === null;
           } catch (_error) {
             console.warn("[chat-providers] Coding model catalog unavailable");
+            discoveryFailed = true;
           }
         }
-        return codingInstance(provider, skills, projectedCatalog);
+        const instance = codingInstance(provider, skills, projectedCatalog);
+        return instance && discoveryFailed ? unavailableInstance(instance, "runtime_unavailable") : instance;
       }));
       for (const instance of projectedInstances) {
         if (instance === null) continue;

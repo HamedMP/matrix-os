@@ -72,6 +72,37 @@ describe("standalone Aoede bootstrap (real owner-local PGlite, fake readiness on
   });
   afterEach(async () => { await chats.kysely.destroy(); catalog.getCatalog.mockReset(); catalog.getCatalog.mockResolvedValue(fakeCatalog); });
 
+  it("overlaps real bootstrap catalog and independent speech readiness on a composed cold path", async () => {
+    vi.useFakeTimers();
+    const speech = vi.fn(async () => {
+      await new Promise(resolve => setTimeout(resolve, 9_800));
+      return capability;
+    });
+    catalog.getCatalog.mockImplementationOnce(async () => {
+      await new Promise(resolve => setTimeout(resolve, 5_800));
+      await new Promise(resolve => setTimeout(resolve, 14_800));
+      return fakeCatalog;
+    });
+    const composed = new AoedeBootstrapService({ repository: bindings, catalog,
+      runtimeIdentity: { machineId: "machine_a", runtimeSlot: "slot_a" }, resolveProject,
+      resolveSpeechCapability: speech,
+      resolveReadiness: async input => {
+        const ready = input.speechCapability ?? await speech();
+        return { selection: input.selection, capability: ready };
+      },
+    });
+    try {
+      const start = Date.now();
+      const pending = composed.bootstrap(principal, request("cold_path"));
+      await vi.waitFor(() => expect(catalog.getCatalog).toHaveBeenCalled());
+      expect(speech).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(20_600);
+      expect(await pending).toMatchObject({ capability: { status: "available" } });
+      expect(Date.now() - start).toBeLessThan(25_000);
+      expect(speech).toHaveBeenCalledTimes(1);
+    } finally { vi.useRealTimers(); }
+  });
+
   it("requires a canonical default runnable route before creating any binding", async () => {
     catalog.getCatalog.mockResolvedValueOnce({ ...fakeCatalog, instances: [] });
     await expect(service.bootstrap(principal, request("no_route"))).rejects.toMatchObject({ code: "provider_unavailable" });

@@ -67,6 +67,111 @@ it("API uses strict bootstrap, negotiated detail and SSE URLs, bounded timeout a
   const events = api.events(); await events.start(); expect(String(vi.mocked(fetcher).mock.calls[2][0])).toContain("/api/chats/events?messageVersion=2&inputVersion=1"); events.dispose();
   await expect(api.bootstrap({ clientRequestId: "req_bad", intent: "continue", surface: "web_canvas", chatId: "chat_wrong" } as never)).rejects.toThrow();
 });
+it.each(["bootstrap", "providers", "selection"] as const)("allows slow %s discovery but bounds it at 30 seconds", async operation => {
+  vi.useFakeTimers();
+  vi.spyOn(AbortSignal, "timeout").mockImplementation(ms => {
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(new DOMException("Timed out", "TimeoutError")), ms);
+    return controller.signal;
+  });
+  let respond = true;
+  const fetcher = vi.fn((_url: string, init?: RequestInit) => new Promise<Response>((resolve, reject) => {
+    init?.signal?.addEventListener("abort", () => reject(init.signal?.reason), { once: true });
+    if (respond) setTimeout(() => resolve(new Response(JSON.stringify(
+      operation === "bootstrap" ? binding : operation === "providers" ? catalog : detail.record,
+    ))), 12_000);
+  })) as unknown as typeof fetch;
+  const api = createAoedeApi({ baseUrl: "https://runtime.test", fetcher });
+  const invoke = () => operation === "bootstrap"
+    ? api.bootstrap({ clientRequestId: "req_slow", intent: "continue", surface: "web_canvas" })
+    : operation === "providers" ? api.providers()
+      : api.updateSelection(binding.chatId, { baseRevision: 0, selection: binding.selection });
+  try {
+    const slow = invoke();
+    const success = slow.then(value => ({ value }), error => ({ error }));
+    await vi.advanceTimersByTimeAsync(12_000);
+    expect(await success).toEqual({ value: operation === "bootstrap" ? binding : operation === "providers" ? catalog : detail.record });
+    respond = false;
+    const stuck = invoke();
+    const failure = expect(stuck).rejects.toMatchObject({ name: "TimeoutError" });
+    await vi.advanceTimersByTimeAsync(29_999);
+    expect(vi.mocked(fetcher).mock.calls[1][1]?.signal?.aborted).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    await failure;
+  } finally { vi.restoreAllMocks(); vi.useRealTimers(); }
+});
+it("keeps ordinary detail requests bounded at ten seconds", async () => {
+  const timeout = vi.spyOn(AbortSignal, "timeout");
+  const api = createAoedeApi({ baseUrl: "https://runtime.test", fetcher: vi.fn(async () => new Response(JSON.stringify(detail))) });
+  try { await api.detail(binding.chatId); expect(timeout).toHaveBeenCalledWith(10_000); }
+  finally { timeout.mockRestore(); }
+});
+it("projects a readiness timeout as retryable connection failure without starting media", async () => {
+  const h = harness(vi.fn().mockRejectedValueOnce(new DOMException("private upstream detail", "TimeoutError")).mockResolvedValue(binding));
+  await h.controller.open();
+  expect(h.controller.getSnapshot()).toMatchObject({ status: "failed", microphoneActive: false,
+    error: { code: "connection_failed", retryable: true, recovery: "retry_connection" } });
+  expect(h.factory).not.toHaveBeenCalled();
+  await h.controller.retry();
+  expect(h.bootstrap.mock.calls[0][0].clientRequestId).toBe(h.bootstrap.mock.calls[1][0].clientRequestId);
+  expect(h.media.startVoice).not.toHaveBeenCalled();
+  h.controller.dispose();
+});
+it("preserves newer capability failure and Retry after a timed-out bootstrap", async () => {
+  const unready = { ...binding, capability: { ...binding.capability, status: "unavailable" as const,
+    transportModes: [], turnModes: [], reason: "provider_unavailable" as const } };
+  const h = harness(vi.fn().mockRejectedValueOnce(new DOMException("Timed out", "TimeoutError")).mockResolvedValue(unready));
+  await h.controller.open();
+  await h.controller.retry();
+  expect(h.controller.getSnapshot()).toMatchObject({ status: "failed",
+    error: { code: "provider_unavailable", retryable: true } });
+  await h.controller.refresh();
+  expect(h.controller.getSnapshot().error?.code).toBe("provider_unavailable");
+  expect(h.media.startVoice).not.toHaveBeenCalled();
+  h.controller.dispose();
+});
+it("rechecks server readiness when explicitly replacing a stale model", async () => {
+  const unready = { ...binding, capability: { ...binding.capability, status: "unavailable" as const,
+    transportModes: [], turnModes: [], reason: "provider_unavailable" as const } };
+  const next = { instanceId: "pi_main", model: "new:model" };
+  const h = harness(vi.fn().mockResolvedValueOnce(unready).mockResolvedValue({ ...binding, selection: next }));
+  await h.controller.open();
+  h.detailFn.mockResolvedValue({ ...detail, record: { ...detail.record, chat: {
+    ...detail.record.chat, revision: 1, currentSelection: next,
+  } } });
+  expect(await h.controller.setSelection(next)).toBe(true);
+  expect(h.bootstrap).toHaveBeenCalledTimes(2);
+  expect(h.controller.getSnapshot()).toMatchObject({ status: "idle", binding: {
+    selection: next, capability: { status: "available", turnModes: ["hands_free", "push_to_talk"] },
+  } });
+  expect(h.media.startVoice).not.toHaveBeenCalled();
+  h.controller.dispose();
+});
+it.each([false, true])("restores truthful readiness after detail recovery (available=%s)", async available => {
+  const unready = { ...binding, capability: { ...binding.capability, status: "unavailable" as const,
+    transportModes: [], turnModes: [], reason: "provider_unavailable" as const } };
+  const h = harness(vi.fn().mockResolvedValue(available ? binding : unready));
+  h.detailFn.mockRejectedValueOnce(new DOMException("Timed out", "TimeoutError"));
+  await h.controller.open();
+  expect(h.controller.getSnapshot().status).toBe("failed");
+  await h.controller.refresh();
+  expect(h.controller.getSnapshot()).toMatchObject(available
+    ? { status: "idle", error: null }
+    : { status: "failed", error: { code: "provider_unavailable", retryable: true } });
+  expect(h.media.startVoice).not.toHaveBeenCalled();
+  h.controller.dispose();
+});
+it("preserves bounded safe bootstrap errors without displaying upstream details", async () => {
+  const fetcher = vi.fn(async () => new Response(JSON.stringify({ error: {
+    code: "provider_unavailable", retryable: true, recovery: "retry_connection",
+  } }), { status: 503 }));
+  const api = createAoedeApi({ baseUrl: "https://runtime.test", fetcher });
+  await expect(api.bootstrap({ clientRequestId: "req_safe", intent: "continue", surface: "web_canvas" }))
+    .rejects.toMatchObject({ status: 503, safeError: { code: "provider_unavailable", retryable: true, recovery: "retry_connection" } });
+  fetcher.mockResolvedValueOnce(new Response(JSON.stringify({ error: { code: "private-provider-failure", message: "secret detail" } }), { status: 503 }));
+  await expect(api.bootstrap({ clientRequestId: "req_bad_safe", intent: "continue", surface: "web_canvas" }))
+    .rejects.toMatchObject({ status: 503, safeError: undefined, message: "Assistant request unavailable" });
+});
 it("client calls providers, PATCH selection and POST action cancel with schema validation", async () => {
   const fetcher = vi.fn(async (url: string, _init: RequestInit) => new Response(JSON.stringify(
     url.includes("/api/chat-providers") ? catalog
@@ -256,6 +361,7 @@ describe("Aoede shell owner", () => {
     const h = harness(); await h.controller.open();
     const next = { instanceId: "pi_alt", model: "other:model" };
     h.detailFn.mockResolvedValue({ ...detail, record: { ...detail.record, chat: { ...detail.record.chat, revision: 1, currentSelection: next } } });
+    h.bootstrap.mockResolvedValue({ ...binding, selection: next });
     expect(await h.controller.setSelection(next)).toBe(true);
     expect(h.updateSelection).toHaveBeenCalledWith(binding.chatId, { baseRevision: 0, selection: next });
     expect(h.controller.getSnapshot().binding?.selection).toEqual(next);

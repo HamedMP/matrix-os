@@ -40,6 +40,7 @@ export function AoedeSettings({ controller, snapshot }: AoedeSettingsProps) {
     ? catalog.instances.find(item => item.id === (boundInstance ?? selection?.instanceId)) ?? null
     : null;
   const availableModels = (instance?.models ?? []).filter(model => model.availability === "available").slice(0, 64);
+  const savedModelUnavailable = Boolean(selection?.model && !availableModels.some(model => model.id === selection.model));
   const inputs = devices !== "loading" && devices !== null ? devices.filter(device => device.kind === "audioinput").slice(0, 32) : [];
   const outputs = devices !== "loading" && devices !== null ? devices.filter(device => device.kind === "audiooutput").slice(0, 32) : [];
   const turnModes = capability?.turnModes ?? ["hands_free", "push_to_talk"];
@@ -91,10 +92,12 @@ export function AoedeSettings({ controller, snapshot }: AoedeSettingsProps) {
               if (!instance || !model || !selection) return;
               run("selection", controller.setSelection({ instanceId: instance.id, model }));
             }}>
+            {savedModelUnavailable ? <option value={selection!.model} disabled>Saved model unavailable</option> : null}
             {availableModels.length === 0 ? <option value="" disabled>No available models</option> : null}
             {availableModels.map(model => <option key={model.id} value={model.id}>{boundedAoedeText(model.displayName, 80)}</option>)}
           </select>
         </label>
+        {savedModelUnavailable ? <p className="matrix-aoede-settings__hint">The saved model is unavailable. Choose an available model to restore voice.</p> : null}
       </> : null}
     </fieldset>
 

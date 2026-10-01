@@ -241,13 +241,16 @@ export function createVoiceSessionRoutes(deps: VoiceSessionRoutesDeps): Hono {
           actionMode: "conversation_only", actionCancellation: "none", sessionOnly: "unsupported",
         }));
       }
-      const capability = await deps.capabilities.capabilities({
-        principalId: principal.userId,
-        chatId,
-        ...(parsedSurface !== undefined ? { surface: parsedSurface } : {}),
-      });
-      const decision = await deps.canonicalDecision?.({ principal, chatId,
-        ...(parsedSurface ? { surface: parsedSurface } : {}) });
+      const [capability, decision] = await Promise.all([
+        deps.capabilities.capabilities({ principalId: principal.userId, chatId,
+          ...(parsedSurface !== undefined ? { surface: parsedSurface } : {}) }),
+        deps.canonicalDecision?.({ principal, chatId,
+          ...(parsedSurface ? { surface: parsedSurface } : {}) }),
+      ]);
+      if (deps.canonicalDecision && !decision) return c.json(VoiceCapabilitySchema.parse({
+        ...capability, status: "unavailable", reason: "provider_unavailable", transportModes: [], turnModes: [],
+        actionMode: "conversation_only", actionCancellation: "none", sessionOnly: "unsupported",
+      }));
       return c.json(projectVoiceCapability(capability, decision));
     } catch (error: unknown) {
       return routeError(c, error, log);
@@ -278,11 +281,14 @@ export function createVoiceSessionRoutes(deps: VoiceSessionRoutesDeps): Hono {
         // Session create rides the server-owned canonical decision only. A
         // Chat without a persisted canonical selection yields no decision —
         // `request.selection` is never trusted as a substitute.
-        const decision = await deps.canonicalDecision?.({ principal, chatId });
+        const [decision, speech] = await Promise.all([
+          deps.canonicalDecision?.({ principal, chatId }),
+          deps.capabilities.capabilities({ principalId: principal.userId, chatId }),
+        ]);
         if (!decision) {
           throw new VoiceSessionError("provider_unavailable", "Voice unavailable", 503);
         }
-        const capability = projectVoiceCapability(await deps.capabilities.capabilities({ principalId: principal.userId, chatId }), decision);
+        const capability = projectVoiceCapability(speech, decision);
         if (capability.status === "unavailable") throw new VoiceSessionError("provider_unavailable", "Voice unavailable", 503);
         if (request.memoryMode === "session_only" || !capability.turnModes.includes(request.turnMode)
           || !capability.transportModes.includes(request.requestedTransport ?? "relayed_websocket")) {
@@ -380,8 +386,11 @@ export function createVoiceSessionRoutes(deps: VoiceSessionRoutesDeps): Hono {
         await rateLimited(principal, "reconnect");
         try {
           await deps.chatAccess.requireAccess({ principalId: principal.userId, chatId, level: "write" });
-          const decision = await deps.canonicalDecision?.({ principal, chatId });
-          const capability = projectVoiceCapability(await deps.capabilities.capabilities({ principalId: principal.userId, chatId }), decision);
+          const [decision, speech] = await Promise.all([
+            deps.canonicalDecision?.({ principal, chatId }),
+            deps.capabilities.capabilities({ principalId: principal.userId, chatId }),
+          ]);
+          const capability = projectVoiceCapability(speech, decision);
           if (capability.status === "unavailable" || (deps.routeEligibility && !await deps.routeEligibility({ principal, chatId }))) {
             throw new VoiceSessionError("provider_unavailable", "Voice unavailable", 503);
           }

@@ -128,7 +128,7 @@ export function AoedePanel({
       </div>
 
       <div className="matrix-aoede__readiness">
-        <p>{aoedeReadinessCopy(capability)}</p>
+        <p>{aoedeReadinessCopy(capability, status)}</p>
         {actionCopy ? <p>{actionCopy}</p> : null}
       </div>
 

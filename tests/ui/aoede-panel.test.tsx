@@ -39,6 +39,13 @@ function setup(overrides: Partial<AoedePanelProps> = {}) {
 }
 
 describe("AoedePanel standalone presentation", () => {
+  it("shows terminal readiness failure rather than an ongoing check after timeout", () => {
+    setup({ status: "failed", capability: undefined,
+      error: { code: "connection_failed", retryable: true, recovery: "retry_connection" } });
+    expect(screen.queryByText("Checking voice readiness")).not.toBeInTheDocument();
+    expect(screen.getByText("Voice readiness check failed. Retry to check again.")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeEnabled();
+  });
   it("has no Chat chrome, composer, message list, modal trap, or automatic start", () => {
     const { container, commands } = setup();
     expect(screen.getByRole("region", { name: "Aoede" })).toBeVisible();

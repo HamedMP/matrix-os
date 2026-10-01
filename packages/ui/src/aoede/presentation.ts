@@ -56,8 +56,8 @@ const AOEDE_READINESS_DIRECTIONS: Record<string, string> = {
   provider_unavailable: "Try again later.",
 };
 
-export function aoedeReadinessCopy(capability?: VoiceCapability): string {
-  if (!capability) return "Checking voice readiness";
+export function aoedeReadinessCopy(capability?: VoiceCapability, status?: AoedeStatus): string {
+  if (!capability) return status === "failed" ? "Voice readiness check failed. Retry to check again." : "Checking voice readiness";
   const base = capability.status === "available" ? "Voice ready"
     : capability.status === "degraded" ? "Voice available with limits"
     : "Voice unavailable";

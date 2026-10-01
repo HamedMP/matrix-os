@@ -2,7 +2,7 @@
  * Typed REST client for the voice session routes
  * (specs/535-aoede-rewrite/contracts/voice-session-api.md).
  *
- * Every request is bounded (10s timeout, 256 KiB response cap) and every
+ * Every request is bounded (30s admission, 10s cleanup, 256 KiB response cap) and every
  * failure is mapped to a SafeVoiceError: raw HTTP status text, provider
  * names, and server error bodies never leave this module.
  */
@@ -27,6 +27,7 @@ import {
 } from "@matrix-os/contracts/voice-session";
 
 export const VOICE_SESSION_API_TIMEOUT_MS = 10_000;
+const ADMISSION_TIMEOUT_MS = 30_000;
 const MAX_RESPONSE_BYTES = 256 * 1024;
 const SAFE_ID = /^[A-Za-z0-9_-]+$/;
 
@@ -211,7 +212,7 @@ export function createVoiceSessionApi(options: {
     signal?: AbortSignal;
     schema?: { safeParse(value: unknown): { success: true; data: T } | { success: false; error?: unknown } };
   }): Promise<T> {
-    const timeout = makeTimeoutSignal(VOICE_SESSION_API_TIMEOUT_MS);
+    const timeout = makeTimeoutSignal(input.method === "DELETE" ? VOICE_SESSION_API_TIMEOUT_MS : ADMISSION_TIMEOUT_MS);
     const signal = input.signal ? AbortSignal.any([input.signal, timeout]) : timeout;
     let response: Response;
     try {

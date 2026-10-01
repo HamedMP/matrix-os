@@ -1598,6 +1598,29 @@ describe("canonical Chat Provider catalog", () => {
     expect(openclaw.setupActions.some((action) => action.id === "openclaw_install")).toBe(false);
   });
 
+  it.each(["timeout", "empty"])("does not invent a runnable Codex default after live discovery %s", async failure => {
+    let recovered = false;
+    const service = createChatProviderCatalogService({
+      codingProviders: codingRegistry([codingProvider({ defaultModel: undefined })]),
+      agentRuntimeSource: runtimeSource(),
+      codingModelCatalogSource: async () => {
+        if (!recovered) {
+          if (failure === "timeout") throw new DOMException("private detail", "TimeoutError");
+          return null;
+        }
+        return { models: [{ id: "real-model", displayName: "Real model", capabilities: ["tools"],
+          supportsVision: false, supportsToolUse: true }], options: [], defaultModel: "real-model" };
+      },
+    });
+    const unavailable = (await service.getCatalog(principal)).instances.find(instance => instance.driverKind === "codex")!;
+    expect(unavailable.availability).toBe("unavailable");
+    expect(unavailable.models).toEqual([]);
+    expect(unavailable.defaultSelection).toBeUndefined();
+    recovered = true;
+    const available = (await service.getCatalog(principal)).instances.find(instance => instance.driverKind === "codex")!;
+    expect(available.models.map(model => model.id)).toEqual(["real-model"]);
+    expect(available.defaultSelection?.model).toBe("real-model");
+  });
   it("uses the authenticated harness model catalog instead of a generic Provider default", async () => {
     const service = createChatProviderCatalogService({
       codingProviders: codingRegistry([codingProvider({ defaultModel: undefined })]),

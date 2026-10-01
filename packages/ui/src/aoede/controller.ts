@@ -123,7 +123,9 @@ export function createAoedeController(owner: AoedeOwnerOptions, dependencies: { 
     if (lost) unavailable = true;
     // A safe voice error (permission_denied, input_unavailable…) is already
     // truthful — surface it instead of collapsing to a generic failure.
-    const safe = error instanceof VoiceSessionApiError ? error.safeError : undefined;
+    const safe = error instanceof VoiceSessionApiError ? error.safeError
+      : error instanceof AoedeRequestError ? error.safeError
+      : error instanceof Error && error.name === "TimeoutError" ? voiceErrorForCode("connection_failed") : undefined;
     requestError = lost
       ? { code: "chat_unavailable", retryable: false, recovery: "none" }
       : (safe ?? { code: "internal_failure", retryable: true, recovery: "start_new_session" });
@@ -137,8 +139,13 @@ export function createAoedeController(owner: AoedeOwnerOptions, dependencies: { 
     const recovered = requestError !== null;
     requestError = null;
     const live = media?.getSnapshot();
+    const capability = snapshot.binding?.capability;
+    const readinessError = capability?.status === "unavailable" ? capabilityUnavailableError(capability.reason) : null;
+    const error = live?.error ?? live?.notice ?? live?.voice?.error ?? readinessError;
     patch({ canonical: projectAoedeCanonical(detail), boundProviderInstanceId: value.record.providerBinding?.instanceId ?? null,
-      ...(recovered ? { error: live?.error ?? live?.notice ?? live?.voice?.error ?? null } : {}) });
+      ...(recovered ? { error,
+        ...(!error && snapshot.status === "failed" && !mediaLive() ? { status: live?.phase === "ended" ? "ended" as const : "idle" as const } : {}),
+      } : {}) });
   };
   const refresh = (): Promise<void> => {
     if (refreshFlight) { refreshAgain = true; return refreshFlight; }
@@ -215,7 +222,7 @@ export function createAoedeController(owner: AoedeOwnerOptions, dependencies: { 
           media?.dispose(); media = null;
           if (!current(epoch)) return;
         }
-        unavailable = false; request = null;
+        unavailable = false; request = null; requestError = null;
         patch({ binding, turnMode, status: binding.capability.status === "unavailable" ? "failed" : "idle",
           error: binding.capability.status === "unavailable" ? capabilityUnavailableError(binding.capability.reason) : null });
         if (!media) attach(binding, epoch);
@@ -467,7 +474,9 @@ export function createAoedeController(owner: AoedeOwnerOptions, dependencies: { 
         if (resolved && snapshot.binding) {
           patch({ binding: { ...snapshot.binding, selection: resolved } });
         }
-        return rebuildMediaOwner(epoch);
+        if (!await rebuildMediaOwner(epoch)) return false;
+        await bootstrap("continue");
+        return current(epoch);
       });
     },
     /** Persisted turn mode. A live session ends so the next Start applies it. */

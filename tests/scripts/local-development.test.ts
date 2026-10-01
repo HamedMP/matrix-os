@@ -46,6 +46,7 @@ import {
   runtimeProcessPids,
   runAbortableCommand,
   runLocalParityLauncherWithLock,
+  speechTlsProxyArguments,
   startArtifactServer,
   storageTlsProxyArguments,
 } from "../../scripts/dev-production-parity.mjs";
@@ -315,7 +316,8 @@ describe("local development contracts", () => {
       handle: "local", machineId: "local-machine", clerkUserId: "local-owner",
       platformSecret: "local-test-platform", postgresPassword: "local-test-postgres",
       hostBundleUrl: "http://10.0.2.2:9876/matrix-host-bundle.tar.gz",
-      platformUrl: "http://10.0.2.2:9003", shellOrigin: "http://app.localhost:9003",
+      platformUrl: "http://10.0.2.2:9003", platformSpeechOrigin: "https://10.0.2.2:9445",
+      shellOrigin: "http://app.localhost:9003",
       platformSpeechEnabled: true, registrationToken: "local-registration",
       registrationTokenExpiresAt: "2029-01-01T00:00:00Z",
     });
@@ -395,6 +397,19 @@ describe("local development contracts", () => {
       `${LOCAL_PARITY_OWNER_LABEL}=/workspace/one`,
       "127.0.0.1:9444:9444",
       "/tls:/tls:ro",
+    ]));
+    expect(speechTlsProxyArguments({
+      name: "speech",
+      owner: "/workspace/one",
+      port: 9445,
+      platformPort: 9003,
+      tlsDirectory: "/tls",
+    })).toEqual(expect.arrayContaining([
+      `${LOCAL_PARITY_OWNER_LABEL}=/workspace/one`,
+      "127.0.0.1:9445:9445",
+      "/tls:/tls:ro",
+      expect.stringContaining("OPENSSL-LISTEN:9445"),
+      expect.stringContaining("TCP:host.docker.internal:9003"),
     ]));
     expect(() => assertLocalParityContainerOwnership("storage", "/workspace/two", "/workspace/one"))
       .toThrow("storage belongs to another checkout");
@@ -770,6 +785,7 @@ describe("local development contracts", () => {
       handle: "local",
       hostBundleUrl: "http://10.0.2.2:9876/matrix-host-bundle.tar.gz",
       platformUrl: "http://10.0.2.2:9003",
+      platformSpeechOrigin: "https://10.0.2.2:9445",
       shellOrigin: "http://app.localhost:9003",
       platformSecret: "platform-secret",
       registrationToken: "registration-token",
@@ -786,11 +802,13 @@ describe("local development contracts", () => {
     expect(rendered).toContain("MATRIX_METADATA_PUBLIC_IPV4_URL=http://10.0.2.2:9876/metadata/public-ipv4");
     expect(rendered).toContain("NODE_EXTRA_CA_CERTS=/opt/matrix/local-parity-storage-ca.pem");
     expect(rendered).toContain("MATRIX_PLATFORM_SPEECH_ENABLED=true");
+    expect(rendered).toContain("MATRIX_PLATFORM_SPEECH_ORIGIN=https://10.0.2.2:9445");
     expect(rendered).toContain("SHELL_ORIGIN=http://app.localhost:9003");
     const cloudInit = parse(rendered) as { write_files: Array<{ path: string; content: string }> };
     const persistentEnv = cloudInit.write_files.find((file) => file.path === "/opt/matrix/env/host.env")!.content;
     expect(persistentEnv).toContain("SHELL_ORIGIN=http://app.localhost:9003");
     expect(persistentEnv).toContain("MATRIX_PLATFORM_SPEECH_ENABLED=true");
+    expect(persistentEnv).toContain("MATRIX_PLATFORM_SPEECH_ORIGIN=https://10.0.2.2:9445");
     // Bundle updates replace app/bin/systemd payloads, not this durable environment.
     const updateAgent = readFileSync(resolve(root, "distro/customer-vps/host-bin/matrix-sync-agent"), "utf8");
     expect(updateAgent).toContain('readonly APP_DIR="/opt/matrix/app"');

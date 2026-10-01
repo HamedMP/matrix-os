@@ -6,6 +6,45 @@ import { buildAgentRuntimeEnvironment } from "../../packages/gateway/src/agent-l
 import { createCodexModelCatalogSource, normalizeCodexModelCatalog } from "../../packages/gateway/src/chat/codex-model-catalog.js";
 
 describe("Codex model catalog projection", () => {
+  it("allows a slow cold model discovery but stops a stalled discovery after fifteen seconds", async () => {
+    vi.useFakeTimers();
+    const children: Array<ReturnType<typeof makeChild>> = [];
+    function makeChild() {
+      return Object.assign(new EventEmitter(), {
+        stdin: new PassThrough(), stdout: new PassThrough(), stderr: new PassThrough(), kill: vi.fn(),
+      });
+    }
+    const spawnProcess = vi.fn(() => {
+      const child = makeChild(); children.push(child);
+      child.stdin.on("data", (chunk: Buffer) => {
+        const message = JSON.parse(chunk.toString()) as { id?: number };
+        if (message.id === 1 && children.length === 1) {
+          setTimeout(() => child.stdout.write(`${JSON.stringify({ id: 1, result: {} })}\n`), 8_000);
+        }
+        if (message.id === 2) child.stdout.write(`${JSON.stringify({ id: 2, result: { data: [{
+          id: "live-model", model: "live-model", displayName: "Live model", hidden: false,
+          isDefault: true, defaultReasoningEffort: "low", supportedReasoningEfforts: [],
+        }], nextCursor: null } })}\n`);
+      });
+      return child as never;
+    });
+    try {
+      const source = createCodexModelCatalogSource({ executable: "codex", cwd: "/home/owner", spawnProcess, cacheTtlMs: 1 });
+      const slow = source({ id: "codex", kind: "codex", availability: "available" } as never)
+        .then(value => ({ value }), error => ({ error }));
+      await vi.advanceTimersByTimeAsync(8_000);
+      expect(await slow).toMatchObject({ value: { defaultModel: "live-model" } });
+      await vi.advanceTimersByTimeAsync(2);
+      const stalled = source({ id: "codex", kind: "codex", availability: "available" } as never)
+        .then(value => ({ value }), error => ({ error }));
+      await vi.advanceTimersByTimeAsync(14_999);
+      expect(children[1].kill).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(await stalled).toMatchObject({ error: expect.any(Error) });
+      expect(children[1].kill).toHaveBeenCalledWith("SIGTERM");
+    } finally { vi.useRealTimers(); }
+  });
+
   it("spawns the configured Codex executable with the owner runtime HOME", async () => {
     vi.stubEnv("HOME", "/gateway-home");
     vi.stubEnv("CODEX_HOME", "/explicit-codex-home");
