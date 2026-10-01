@@ -1,5 +1,6 @@
 // @vitest-environment gateway-renderer
 import React from "react";
+import { startCanonicalChatAfterReplay } from "./canonical-chat-stream-test-utils";
 import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { CanonicalChatWorkspace } from "@desktop/renderer/src/features/chat/CanonicalChatWorkspace";
@@ -26,11 +27,12 @@ it("renders live Codex Reconnecting before prompt admission and recovers without
   vi.mocked(client.getDetail).mockResolvedValue(initial);
   client.acknowledgeCompletion = async () => (await h.getDetail()).record;
   try {
+    await startCanonicalChatAfterReplay(source);
     render(<CanonicalChatWorkspace client={client} eventSource={source} catalog={h.catalog}
       projectId={null} initialChatId={h.chatId} initialView="conversation" active />);
-    await act(async () => { await source.start(); });
-    await waitFor(() => expect(h.frames.at(-1)?.type).toBe("chat.replay.end"));
     await screen.findByRole("log");
+    await waitFor(() => expect(client.getDetail).toHaveBeenCalledTimes(1));
+    const initialDetailCalls = vi.mocked(client.getDetail).mock.calls.length;
     await act(async () => { await h.admit(); });
     const log = within(screen.getByRole("log"));
     await waitFor(() => expect(log.getByText("Reconnecting… 1/5")).toBeTruthy(), { timeout: 4_000 });
@@ -41,7 +43,7 @@ it("renders live Codex Reconnecting before prompt admission and recovers without
     await waitFor(() => expect(log.getByText("Started exactly once.")).toBeTruthy(), { timeout: 4_000 });
     await waitFor(() => expect(screen.queryByRole("button", { name: "Stop" })).toBeNull());
     expect(log.getAllByText("Started exactly once.")).toHaveLength(1);
-    expect(client.getDetail).toHaveBeenCalledTimes(1);
+    expect(client.getDetail).toHaveBeenCalledTimes(initialDetailCalls);
     expect(h.openStream).toHaveBeenCalledTimes(1);
   } finally { cleanup(); source.dispose(); await h.close(); }
 }, 15_000);

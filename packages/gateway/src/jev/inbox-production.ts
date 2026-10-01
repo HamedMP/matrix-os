@@ -33,7 +33,7 @@ export function createProductionJevInboxRuntime(options: {
   db?: PlatformDb | null; pipedream?: PipedreamConnectClient | null;
 }) {
   const readiness = options.summary && options.routes
-    ? createFundedAiReadinessReader({ summary: options.summary, routes: {
+    ? createFundedAiReadinessReader({ modelId: JEV_MODEL_ID, summary: options.summary, routes: {
       getRouteReadiness: call => options.routes!.getRouteReadiness({ ...call, modelId: JEV_MODEL_ID }),
     } }) : null;
   const read = createJevRecipeReadClient(options);

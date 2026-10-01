@@ -134,13 +134,24 @@ function canonicalClaudeActivityEvent(
   });
   if (projected.success) return projected.data;
 
-  return CanonicalProviderRunEventSchema.parse({
+  let retained = CanonicalProviderRunEventSchema.parse({
     type: "agent.activity",
     activityId: activity.activityId,
     kind: activity.kind,
     label: activity.label,
     status,
   });
+  // Validate optional fields independently: an unavailable path detail must
+  // not erase a safe command preview. Preview and kind remain one atomic pair.
+  for (const fields of [
+    activity.preview === undefined ? undefined : { preview: activity.preview, previewKind: activity.previewKind },
+    activity.detail === undefined ? undefined : { detail: activity.detail },
+  ]) {
+    if (!fields) continue;
+    const candidate = CanonicalProviderRunEventSchema.safeParse({ ...retained, ...fields });
+    if (candidate.success) retained = candidate.data;
+  }
+  return retained;
 }
 
 function classifiedClaudeFailureEvidence(text: string) {

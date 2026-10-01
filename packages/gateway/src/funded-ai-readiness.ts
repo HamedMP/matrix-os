@@ -1,10 +1,9 @@
-import { FUNDED_AI_READINESS_TIMEOUTS, FundedAiRouteReadinessReceiptSchema, FundedAiRuntimeFundingSummaryResponseSchema, type AiProviderReadiness } from "@matrix-os/contracts";
+import { FUNDED_AI_READINESS_TIMEOUTS, JEV_MODEL_ID, FundedAiRouteReadinessReceiptSchema, FundedAiRuntimeFundingSummaryResponseSchema, type AiProviderReadiness } from "@matrix-os/contracts";
 import type { FundedAiFundingSummaryReader } from "./funded-ai-funding-summary-client.js";
 import type { FundedAiRouteReadinessReader } from "./funded-ai-route-readiness-client.js";
 
 // Funding-summary stays bounded at 5s; route readiness also permits a cold relay.
 // The outer bound leaves transport margin and covers dependencies ignoring abort.
-const READINESS_DEADLINE_MS = FUNDED_AI_READINESS_TIMEOUTS.gatewayObservationMs;
 
 export interface FundedAiReadiness {
   readiness: AiProviderReadiness;
@@ -16,8 +15,11 @@ export function createFundedAiReadinessReader(options: {
   summary: FundedAiFundingSummaryReader;
   routes?: FundedAiRouteReadinessReader;
   now?: () => Date;
+  modelId?: typeof JEV_MODEL_ID;
 }): FundedAiReadinessReader {
   const now = options.now ?? (() => new Date());
+  const deadlineMs = options.modelId === JEV_MODEL_ID
+    ? FUNDED_AI_READINESS_TIMEOUTS.jevObservationMs : FUNDED_AI_READINESS_TIMEOUTS.gatewayObservationMs;
   let inFlight: Promise<FundedAiReadiness> | undefined;
 
   async function readFresh(callerSignal?: AbortSignal): Promise<FundedAiReadiness> {
@@ -42,11 +44,11 @@ export function createFundedAiReadinessReader(options: {
         timeout = setTimeout(() => {
           controller.abort();
           reject(new Error("Funded readiness deadline exceeded"));
-        }, READINESS_DEADLINE_MS);
+        }, deadlineMs);
       });
       const [raw, rawReceipt] = await Promise.race([Promise.all([
         options.summary.getFundingSummary({ signal }),
-        options.routes.getRouteReadiness({ signal }),
+        options.routes.getRouteReadiness({ signal, ...(options.modelId ? { modelId: options.modelId } : {}) }),
       ]), deadline]);
       const { policy, funding } = FundedAiRuntimeFundingSummaryResponseSchema.parse({ contractVersion: 1, ...raw });
       const receipt = FundedAiRouteReadinessReceiptSchema.parse(rawReceipt);
