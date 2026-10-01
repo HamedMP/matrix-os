@@ -4,9 +4,9 @@ Do not start the full runtime or invoke paid providers without separate authoriz
 
 ## Deterministic development
 
-Use the existing bun/pnpm scripts after verifying their actual composition. Before running any composed fixture, assert that BOTH speech and canonical model/action adapters are fake. `MATRIX_VOICE_SIMULATOR=1` alone is not a no-paid-call guarantee, grants no native action eligibility, and currently selects an empty/discarding simulator even before the production guard. Until fixed, `dev:voice:integration` means simulator composition, not real managed-speech integration.
+Use the existing bun/pnpm scripts after verifying their actual composition. Before running any composed fixture, assert that BOTH speech and canonical model/action adapters are fake. `MATRIX_VOICE_SIMULATOR=1` alone is not a no-paid-call guarantee, grants no native action eligibility, and selects an empty/discarding simulator; the production guard now denies the flag outright. `dev:voice:simulator` means simulator composition, not real managed-speech integration.
 
-Presentation fixture scenarios: idle/permission, listening, batch-final caption, thinking, tool/activity, speaking, approval, qualified clarification, navigation/artifact/reconciliation result, reconnect and failure. Replace or explicitly label the existing Chat-attached `tests/fixtures/voice-session/ui-fixture` as legacy; it is not Aoede evidence. Run `AoedePanel`/controller through standalone Web Canvas and Web Desktop fixture hosts with Chat closed. Record actual commands and inspected artifact paths in requirement-evidence.md; browser fixtures are not real-device evidence.
+Run `pnpm exec tsx scripts/aoede-fixture-screenshots.ts` for idle/permission, listening, batch-final caption, thinking, tool/activity, speaking, approval, qualified clarification, navigation/artifact/reconciliation, reconnect and failure states. The fixture mounts the real `ShellAoedeHost` on mocked Canvas/Desktop stages with Chat closed and explicitly injected fake fetcher/media. Its machine-readable gate requires both fake seams and zero schema issues. Captures/status live under `.amp/in/artifacts/aoede/`; old `tests/fixtures/aoede/screenshots/` captures are not current evidence. The older Chat-attached fixture is labeled legacy. These images are isolated-host evidence, not full-shell or real-device qualification.
 
 ## Focused verification
 
@@ -14,7 +14,7 @@ Use `pnpm exec vitest run` with exact affected files, plus affected-package `tsc
 
 ## PostgreSQL
 
-`bun run test:voice:postgres` must provision a disposable local isolated database or fail clearly. Do not point it at a shared database, read credentials from `.env`, or claim PGlite proves crash/locking behavior. Cleanup only test databases created by the gate. The command currently omits `tests/gateway/chat-action-postgres.test.ts`; add it to this gate (or add a separately mandatory action-PG command) before relying on the script. The old raw-array JSONB fixture defect is fixed in source but requires a current rerun.
+`bun run test:voice:postgres` provisions a disposable local isolated database or fails clearly. Set `MATRIX_VOICE_POSTGRES_ADMIN_URL` explicitly to a disposable-test-capable local server; never source shared credentials from `.env`. The script creates/drops only its random `matrix_voice_test_*` database. The gate includes action concurrency/SIGKILL recovery and canonical voice delivery; the current 22-file / 341-pass result is recorded in `requirement-evidence.md`. PGlite is not proof of process crash or native PostgreSQL locking.
 
 ## Optional qualification, not authorized now
 
