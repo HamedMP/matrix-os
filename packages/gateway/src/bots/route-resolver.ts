@@ -11,7 +11,7 @@
  * Stale or not-ready sources and retired, tool-less, or ineligible models
  * are never selected.
  */
-import type { AiProviderSnapshotV3, BotModelRoute } from "@matrix-os/contracts";
+import type { AiProviderSnapshotV3, BotModelRoute, CanonicalChatModelSelection } from "@matrix-os/contracts";
 import { BotModelRouteSchema } from "@matrix-os/contracts";
 import type { BotCredentialAccessSourceId } from "./credentials.js";
 import { MATRIX_DEFAULT_MODEL_ID } from "../ai-providers/model-catalog.js";
@@ -86,4 +86,19 @@ export function resolveBotRoute(snapshot: AiProviderSnapshotV3, now = Date.now()
     }
   }
   throw new BotRouteError("model_unavailable");
+}
+
+export const MANAGED_PI_INSTANCE_ID = "matrix_pi_default";
+
+/** A concrete managed choice never falls back to the active provider or owner keys. */
+export function resolveManagedPiRoute(snapshot: AiProviderSnapshotV3, selection: CanonicalChatModelSelection, now = Date.now()): ResolvedBotRoute {
+  if (selection.instanceId !== MANAGED_PI_INSTANCE_ID || Object.keys(selection.options ?? {}).length) throw new BotRouteError("model_unavailable");
+  const candidates = SOURCES_IN_ORDER.filter((source) => source.credential === "matrix_included")
+    .flatMap((source) => {
+      const route = routeFor(snapshot, source, selection.model, now);
+      return route ? [route] : [];
+    });
+  // Ambiguous routing requires a reviewed descriptor rather than choosing implicitly.
+  if (candidates.length !== 1) throw new BotRouteError("model_unavailable");
+  return candidates[0]!;
 }

@@ -1,3 +1,10 @@
+import { createManagedPiAdmission } from "../chat/managed-pi-admission.js";
+import { createManagedPiRuntime } from "../chat/managed-pi-runtime.js";
+import { createManagedPiSessionsRepository } from "../chat/managed-pi-sessions.js";
+import { createManagedPiCheckpointsRepository } from "../chat/managed-pi-checkpoints.js";
+import { resolveManagedPiRoute } from "../bots/route-resolver.js";
+import { BotInstantiationError } from "../bots/instantiation.js";
+import { isManagedPiBinding } from "../bots/runtime-registry.js";
 /**
  * Starts recipe bot services on the owner database the chat repository owns
  * (spec 536, technical-design "Integration Wiring and Startup"):
@@ -109,6 +116,7 @@ export interface BotServices {
   tasks(ownerId: string, chatId: string): Promise<import("@matrix-os/contracts").BotTaskSummary[]>;
   /** Present only when the scope runtime can run bot workloads. */
   adapter?: CanonicalChatProviderAdapter<BotChatState>;
+  managedAdapter?: CanonicalChatProviderAdapter;
   close(): Promise<void>;
 }
 
@@ -142,6 +150,11 @@ export async function startBots(options: {
     chats: options.repository,
     agents: options.agents,
     recipes,
+    validateSelection: async (_ownerId, selection) => {
+      if (!options.host?.available) throw new BotInstantiationError("unavailable");
+      try { resolveManagedPiRoute(await options.providers.getSnapshot(), selection); }
+      catch (error: unknown) { console.warn("[bots] selected managed model unavailable", error instanceof Error ? error.name : "UnknownError"); throw new BotInstantiationError("invalid_request"); }
+    },
     ensureWorkspace: (botId) => ensureBotWorkspace(options.homePath, botId),
   });
   const reconciler = createBotOperationReconciler({ operations: createBotOperationsRepository(db), instantiation });
@@ -229,17 +242,25 @@ export async function startBots(options: {
   }
 
   const checkpoints = createBotCheckpointsRepository(db);
+  const managedCheckpoints = createManagedPiCheckpointsRepository(db);
   const startedAt = now().toISOString();
+  // Both namespaces can exceed one bounded batch after a crash. Keep draining
+  // only pre-start rows, without replaying any tool effect.
+  const reconcileCheckpoints = async (at: string) => {
+    const botChanged = await checkpoints.reconcileDispatched({ olderThan: startedAt, now: at });
+    const managedChanged = await managedCheckpoints.reconcileDispatched({ olderThan: startedAt, now: at });
+    return botChanged + managedChanged;
+  };
   const passes = Math.max(1, Math.min(Math.trunc(options.checkpointReconcile?.passes ?? MAX_CHECKPOINT_RECONCILE_PASSES), MAX_CHECKPOINT_RECONCILE_PASSES));
   const interval = Math.max(10, Math.min(Math.trunc(options.checkpointReconcile?.intervalMs ?? CHECKPOINT_RECONCILE_INTERVAL_MS), CHECKPOINT_RECONCILE_INTERVAL_MS));
   let leftover = true;
   for (let pass = 0; pass < passes && leftover; pass += 1) {
-    leftover = await checkpoints.reconcileDispatched({ olderThan: startedAt, now: startedAt }) > 0;
+    leftover = await reconcileCheckpoints(startedAt) > 0;
   }
   // Checkpoints from before this start are all closed eventually: one bounded pass per tick until none remain.
   let reconciling: Promise<unknown> | undefined;
   const checkpointTimer = leftover ? setInterval(() => {
-    reconciling ??= checkpoints.reconcileDispatched({ olderThan: startedAt, now: now().toISOString() })
+    reconciling ??= reconcileCheckpoints(now().toISOString())
       .then((changed) => { if (changed === 0 && checkpointTimer) clearInterval(checkpointTimer); })
       .catch((error: unknown) => {
         console.warn("[bots] checkpoint reconciliation failed:", error instanceof Error ? error.name : "UnknownError");
@@ -262,6 +283,7 @@ export async function startBots(options: {
   const resolveCodexIdentity = createCodexOwnerIdentityResolver({ homePath: options.homePath });
   const registry = new BotRuntimeRegistry();
   const admission = createPrivateBotAdmission({ db, host, roots: options.executionRoots, registry });
+  const managedAdmission = createManagedPiAdmission({ db, homePath: options.homePath, host, registry, roots: options.executionRoots });
   let forgetRun: (runId: string) => void = () => undefined;
   const orchestrator = createBotTaskOrchestrator({
     bindings,
@@ -281,18 +303,29 @@ export async function startBots(options: {
     client: host.client,
     onRunFinished: (runId) => forgetRun(runId),
   });
+  const managed = createManagedPiRuntime({ admission: managedAdmission, host, providers: options.providers, lifetime: lifetime.signal, forgetRun: (runId) => forgetRun(runId) });
   const actions = createBotBrokerActions({
     db,
     registry,
     sessions: createBotSessionsRepository(db),
+    managedSessions: createManagedPiSessionsRepository(db),
+    managedCheckpoints,
     checkpoints,
-    runs: orchestrator.runSource,
-    events: orchestrator.eventSink,
+    runs: {
+      loadRunSpec: (binding) => isManagedPiBinding(binding) ? managed.runs.loadRunSpec(binding) : orchestrator.runSource.loadRunSpec(binding),
+      readImageChunk: (binding, request) => isManagedPiBinding(binding) ? managed.runs.readImageChunk(binding, request) : orchestrator.runSource.readImageChunk(binding, request),
+    },
+    events: { publish: (binding, event) => isManagedPiBinding(binding) ? managed.events.publish(binding, event) : orchestrator.eventSink.publish(binding, event) },
     tools: createBotToolDispatcher({
-      homePath: options.homePath, interactions, memory, ...(integrationTools ? { integrations: integrationTools } : {}),
+      homePath: options.homePath, managedWorkspace: managedAdmission.workspace, interactions, memory, ...(integrationTools ? { integrations: integrationTools } : {}),
     }),
     inference: {
       homePath: options.homePath,
+      revalidateBinding: async (binding) => {
+        if (!isManagedPiBinding(binding)) return true;
+        try { await managedAdmission.workspace(binding); return true; }
+        catch (error: unknown) { console.warn("[managed-pi] authority revalidation failed", error instanceof Error ? error.name : "UnknownError"); return false; }
+      },
       lifetime: lifetime.signal,
       resolveCodexIdentity,
       ...(options.fundedCredentialProvider ? { fundedCredentialProvider: options.fundedCredentialProvider } : {}),
@@ -316,6 +349,7 @@ export async function startBots(options: {
     botChats,
     tasks,
     adapter,
+    managedAdapter: managed.adapter,
     async close() {
       if (checkpointTimer) clearInterval(checkpointTimer);
       clearInterval(saveSweepTimer);
@@ -324,8 +358,9 @@ export async function startBots(options: {
       await stopConnections();
       await stopSweep();
       await reconciler.stop();
-      unregister();
       lifetime.abort();
+      await managed.close();
+      unregister();
       registry.shutdown();
     },
   };

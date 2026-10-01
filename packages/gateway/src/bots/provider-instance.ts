@@ -22,7 +22,7 @@ export const MATRIX_BOT_DRIVER: CanonicalProviderDriverDescriptor = {
   capabilityClass: "system_agent",
 };
 
-function botInstance(catalogRevision: string): CanonicalProviderInstanceDescriptor {
+function botInstance(catalogRevision: string, model = MATRIX_BOT_MODEL): CanonicalProviderInstanceDescriptor {
   return {
     id: MATRIX_BOT_INSTANCE_ID,
     driverKind: "matrix_bot",
@@ -32,7 +32,7 @@ function botInstance(catalogRevision: string): CanonicalProviderInstanceDescript
     catalogRevision,
     // The concrete model is resolved from Provider V3 when each run starts.
     models: [{
-      id: MATRIX_BOT_MODEL, displayName: "Automatic", availability: "available",
+      id: model, displayName: model === MATRIX_BOT_MODEL ? "Automatic" : model, availability: "available",
       capabilities: ["tools"], supportsVision: false, supportsToolUse: true,
     }],
     options: [],
@@ -44,7 +44,7 @@ function botInstance(catalogRevision: string): CanonicalProviderInstanceDescript
       attachments: [], tools: [], approvals: false, userInput: false, worktrees: "none",
       resources: [], interactionModes: ["default"], permissionModes: ["default"],
     },
-    defaultSelection: { instanceId: MATRIX_BOT_INSTANCE_ID, model: MATRIX_BOT_MODEL },
+    defaultSelection: { instanceId: MATRIX_BOT_INSTANCE_ID, model },
   };
 }
 
@@ -57,6 +57,16 @@ export function withBotProviderInstance(
       // Admission passes the server-prepared selection only after owner/bot Chat
       // checks. Bot routing reads Provider V3 at dispatch, not ordinary harness settings.
       if (selection?.instanceId === MATRIX_BOT_INSTANCE_ID) {
+        if (selection.model !== MATRIX_BOT_MODEL) {
+          const base = await catalog.getCatalog(principal);
+          const managed = base.instances.find((instance) => instance.id === "matrix_pi_default");
+          const chosen = managed?.models.find((model) => model.id === selection.model && model.availability === "available");
+          const instance = botInstance(base.revision, selection.model);
+          if (!chosen || managed?.availability !== "available" || Object.keys(selection.options ?? {}).length) {
+            instance.availability = "unavailable"; instance.models = []; delete instance.defaultSelection;
+          }
+          return { revision: base.revision, drivers: [MATRIX_BOT_DRIVER], instances: [instance] };
+        }
         const revision = "matrix_bot_v1";
         return { revision, drivers: [MATRIX_BOT_DRIVER], instances: [botInstance(revision)] };
       }

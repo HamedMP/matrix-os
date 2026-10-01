@@ -23,7 +23,7 @@ import {
   readBoundedBody,
   safeResponseHeaders,
 } from "../collaboration/scope-runtime-broker.js";
-import type { BotRuntimeBinding } from "./runtime-registry.js";
+import type { PiRuntimeBinding } from "./runtime-registry.js";
 
 const INFERENCE_TIMEOUT_MS = 30_000;
 /** Codex tool continuations can outlast one short provider call; the worker
@@ -45,6 +45,8 @@ export interface BotInferenceDependencies {
   resolveCredentials?: typeof buildKernelCredentialLaunch;
   resolveCodexIdentity?: ResolveCodexOwnerIdentity;
   fetchImpl?: typeof fetch;
+  /** Canonical owner/run/workspace authority is rechecked after funded queue waits. */
+  revalidateBinding?: (binding: PiRuntimeBinding) => Promise<boolean>;
 }
 
 function failure(
@@ -63,7 +65,7 @@ function failure(
  */
 export async function forwardBotInference(
   request: ScopeRuntimeBotInferenceRequest,
-  binding: BotRuntimeBinding,
+  binding: PiRuntimeBinding,
   authorize: (modelId: string) => BotInferenceAuthorization,
   deps: BotInferenceDependencies,
 ): Promise<ScopeRuntimeBrokerResponse> {
@@ -76,6 +78,7 @@ export async function forwardBotInference(
     }
     return failure(request.requestId, "invalid_request");
   }
+  if (deps.revalidateBinding && !await deps.revalidateBinding(binding)) return failure(request.requestId, "action_denied");
   const authorization = authorize(modelId);
   if (!authorization.allowed || !authorization.accessSourceId || !authorization.allowedModelIds.includes(modelId)) {
     return failure(request.requestId, "action_denied");
@@ -129,6 +132,7 @@ export async function forwardBotInference(
     if (accessSourceId === "matrix_included") headers.set("x-matrix-funded-claim-key", request.runtimeHandle);
     // Returns "denied" instead of sending when the run lost its authorization.
     const send = async (): Promise<Response | "denied"> => {
+      if (deps.revalidateBinding && !await deps.revalidateBinding(binding)) return "denied";
       if (!stillAuthorized()) return "denied";
       return fetchImpl(`${baseUrl}${request.path}`, {
         method: "POST",

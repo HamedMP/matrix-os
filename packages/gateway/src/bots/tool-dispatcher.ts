@@ -11,6 +11,7 @@ import { constants } from "node:fs";
 import { lstat, mkdir, open, opendir, rename, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { BOT_ARTIFACT_MAX_BYTES, type BotToolRequest, type BotToolResult } from "@matrix-os/contracts";
+import { BotAdmissionError } from "./admission.js";
 import { ChatExecutionRootError } from "../chat/execution-root.js";
 import { resolveBotWorkspaceRoot } from "../chat/bot-workspace-root.js";
 import type { BotEffectClass } from "./database.js";
@@ -18,7 +19,7 @@ import { BotBrokerActionError, type BotToolDispatcher } from "./broker-actions.j
 import type { BotInteractionService } from "./interactions.js";
 import type { BotIntegrationTools } from "./integration-tools.js";
 import type { BotMemoryService } from "./memory-service.js";
-import type { BotRuntimeBinding } from "./runtime-registry.js";
+import { isManagedPiBinding, type PiRuntimeBinding } from "./runtime-registry.js";
 
 const MAX_TEXT_PART_CHARS = 60 * 1024;
 /**
@@ -161,12 +162,17 @@ function textResult(text: string): BotToolResult {
 
 export function createBotToolDispatcher(deps: {
   homePath: string;
+  managedWorkspace?: (binding: import("./runtime-registry.js").ManagedPiRuntimeBinding) => Promise<string>;
   interactions?: Pick<BotInteractionService, "createFromTool">;
   memory?: Pick<BotMemoryService, "propose" | "search">;
   integrations?: Pick<BotIntegrationTools, "inventory" | "call">;
 }): BotToolDispatcher {
-  async function workspace(binding: BotRuntimeBinding): Promise<string> {
+  async function workspace(binding: PiRuntimeBinding): Promise<string> {
     try {
+      if (isManagedPiBinding(binding)) {
+        if (!deps.managedWorkspace) throw new BotBrokerActionError("not_granted");
+        return await deps.managedWorkspace(binding);
+      }
       const root = await resolveBotWorkspaceRoot({
         homePath: deps.homePath,
         owner: { type: "personal", ownerId: binding.ownerId },
@@ -177,18 +183,28 @@ export function createBotToolDispatcher(deps: {
       return root.primaryWorkspaceRoot;
     } catch (error: unknown) {
       if (error instanceof BotBrokerActionError) throw error;
+      if (error instanceof BotAdmissionError) throw new BotBrokerActionError(error.code === "root_changed" || error.code === "not_found" ? "stale_generation" : "unavailable");
       if (error instanceof ChatExecutionRootError) throw new BotBrokerActionError("unavailable");
       throw error;
     }
   }
 
-  async function write(binding: BotRuntimeBinding, request: Extract<BotToolRequest, { capability: "artifact.write" }>): Promise<BotToolResult> {
+  async function write(binding: PiRuntimeBinding, request: Extract<BotToolRequest, { capability: "artifact.write" }>): Promise<BotToolResult> {
     // Revision-checked replacement needs artifact revisions; a plain save overwrites.
     if (request.args.replace) throw new BotBrokerActionError("invalid_arguments");
     const parts = segments(request.args.relPath);
     const root = await workspace(binding);
     const directory = await directoryFor(root, parts, true);
     const target = join(directory, parts.at(-1)!);
+    if (isManagedPiBinding(binding)) {
+      // Canonical Chat currently authorizes exclusive creates. No staged temp file
+      // survives a crash, and a failed write retains an unknown-effect checkpoint.
+      let file;
+      try { file = await open(target, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o640); }
+      catch (error: unknown) { if (isCode(error, "EEXIST", "ELOOP")) throw new BotBrokerActionError("invalid_arguments"); throw error; }
+      try { await file.writeFile(request.args.content, "utf8"); } finally { await file.close(); }
+      return textResult(`Saved ${request.args.relPath} (${Buffer.byteLength(request.args.content, "utf8")} bytes).`);
+    }
     try {
       const existing = await lstat(target);
       if (!existing.isFile() || existing.isSymbolicLink()) throw new BotBrokerActionError("invalid_arguments");
@@ -223,7 +239,7 @@ export function createBotToolDispatcher(deps: {
     return textResult(`Saved ${request.args.relPath} (${Buffer.byteLength(request.args.content, "utf8")} bytes).`);
   }
 
-  async function read(binding: BotRuntimeBinding, request: Extract<BotToolRequest, { capability: "artifact.read" }>): Promise<BotToolResult> {
+  async function read(binding: PiRuntimeBinding, request: Extract<BotToolRequest, { capability: "artifact.read" }>): Promise<BotToolResult> {
     const parts = segments(request.args.relPath);
     const directory = await directoryFor(await workspace(binding), parts, false);
     let file;
@@ -254,6 +270,7 @@ export function createBotToolDispatcher(deps: {
         return { result: await write(binding, request), outcomeRef };
       }
       if (request.capability === "artifact.read") return { result: await read(binding, request) };
+      if (isManagedPiBinding(binding)) throw new BotBrokerActionError("not_granted");
       if (request.capability === "interaction.create" && deps.interactions) {
         return { result: await deps.interactions.createFromTool(binding, request.args) };
       }

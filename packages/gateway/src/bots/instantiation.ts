@@ -66,10 +66,11 @@ export function botAvatarSeed(botId: string): string {
 }
 
 /** Hash of the normalized creation request; a retry with another payload is a conflict. */
-export function instantiationPayloadHash(request: Pick<InstantiateBotRequest, "recipe" | "name">): string {
+export function instantiationPayloadHash(request: Pick<InstantiateBotRequest, "recipe" | "name" | "selection">): string {
   return createHash("sha256").update(JSON.stringify({
     recipe: { recipeId: request.recipe.recipeId, version: request.recipe.version },
     name: request.name ?? null,
+    ...(request.selection ? { selection: request.selection } : {}),
   })).digest("hex");
 }
 
@@ -115,6 +116,7 @@ export function createBotInstantiation(deps: {
   chats: Pick<ChatRepository, "withTransaction">;
   agents: Pick<ChatAgentStore, "createRecipeBot" | "get" | "count">;
   recipes: BotRecipeCatalog;
+  validateSelection?: (ownerId: string, selection: import("@matrix-os/contracts").CanonicalChatModelSelection) => Promise<void>;
   ensureWorkspace(botId: string): Promise<void>;
   now?: () => Date;
 }) {
@@ -246,6 +248,10 @@ export function createBotInstantiation(deps: {
         // An unfinished creation of a now-retired recipe finishes only from its saved definition.
         recipe = undefined;
       }
+      if (request.selection) {
+        if (!deps.validateSelection) throw new BotInstantiationError("invalid_request");
+        await deps.validateSelection(ownerId, request.selection);
+      }
       // Checked before reserving so a full owner is refused without leaving an operation behind.
       if (!existing && await deps.agents.count(scope) >= 100) throw new BotInstantiationError("rate_limited");
       let reserved: { operation: BotOperation; created: boolean };
@@ -266,7 +272,7 @@ export function createBotInstantiation(deps: {
             name: request.name ?? recipe.name,
             description: recipe.description,
             instructions: recipe.instructions,
-            selection: MATRIX_BOT_SELECTION,
+            selection: request.selection ?? MATRIX_BOT_SELECTION,
           },
           recipeRef: { recipeId: recipe.recipeId, version: recipe.version },
         })

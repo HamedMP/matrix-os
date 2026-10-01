@@ -93,7 +93,7 @@ export function createBotTaskOrchestrator(deps: {
   memory?: Pick<BotMemoryService, "admitted">;
   agents: Pick<ChatAgentStore, "get">;
   recipes: BotRecipeCatalog;
-  resolveRoute(ownerId: string): Promise<ResolvedBotRoute>;
+  resolveRoute(selection?: import("@matrix-os/contracts").CanonicalChatModelSelection): Promise<ResolvedBotRoute>;
   admission: Pick<PrivateBotAdmission, "admit" | "release">;
   registry: Pick<BotRuntimeRegistry, "lookupRun">;
   client: Pick<ScopeRuntimeHostClient, "runBot">;
@@ -191,7 +191,7 @@ export function createBotTaskOrchestrator(deps: {
     run.grace.unref?.();
   }
 
-  async function execute(input: { ownerId: string; chatId: string; runId: string; text: string; signal: AbortSignal }, run: ActiveRun): Promise<BotTurnResult> {
+  async function execute(input: { ownerId: string; chatId: string; runId: string; text: string; selection?: import("@matrix-os/contracts").CanonicalChatModelSelection; signal: AbortSignal }, run: ActiveRun): Promise<BotTurnResult> {
     const owner = { type: "personal" as const, ownerId: input.ownerId };
     const botId = await directBot(input.ownerId, input.chatId);
     const agent = botId ? await deps.agents.get(owner, botId) : null;
@@ -216,7 +216,8 @@ export function createBotTaskOrchestrator(deps: {
 
     let resolved: ResolvedBotRoute;
     try {
-      resolved = await deps.resolveRoute(input.ownerId);
+      resolved = await deps.resolveRoute(input.selection && input.selection.model !== "auto" ? { ...input.selection, instanceId: "matrix_pi_default" }
+        : agent.selection.instanceId === "matrix_pi_default" ? agent.selection : undefined);
     } catch (error: unknown) {
       if (!(error instanceof BotRouteError)) console.warn("[bots] model route unavailable:", error instanceof Error ? error.name : "UnknownError");
       return settle(task, "blocked", "model_unavailable");
@@ -307,7 +308,7 @@ export function createBotTaskOrchestrator(deps: {
     eventSink,
     directBot,
     /** Starts one turn. Events stream until the run's outcome is known. */
-    start(input: { ownerId: string; chatId: string; runId: string; text: string; signal: AbortSignal }): BotTurnHandle {
+    start(input: { ownerId: string; chatId: string; runId: string; text: string; selection?: import("@matrix-os/contracts").CanonicalChatModelSelection; signal: AbortSignal }): BotTurnHandle {
       if (!input.text.trim()) throw new BotTurnError("invalid_request");
       if (active.has(input.runId) || active.size >= BOT_RUNTIME_REGISTRY_CAPACITY) throw new BotTurnError("capacity_exceeded");
       const run: ActiveRun = { ownerId: input.ownerId, queue: createCanonicalCliEventQueue<BotTurnEvent>(MAX_QUEUED_EVENTS) };

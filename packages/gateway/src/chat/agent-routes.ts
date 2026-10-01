@@ -117,12 +117,14 @@ export function createChatAgentRoutes(options: {
     const input = UpdateChatAgentRequestSchema.parse(await c.req.json());
     const current = await agents.get({ type: "personal", ownerId: principal.userId }, id);
     if (!current) return c.json({ error: "Agent or Chat not found" }, 404);
-    if (input.selection && current.recipeRef) {
-      return c.json({ error: "This bot’s model is managed by this computer." }, 400);
+    const automatic = input.selection?.instanceId === "matrix_bot_default" && input.selection.model === "auto"
+      && !Object.keys(input.selection.options ?? {}).length;
+    if (input.selection && current.recipeRef && !automatic && input.selection.instanceId !== "matrix_pi_default") {
+      return c.json({ error: "Choose an available Matrix AI model." }, 400);
     }
     const jev = isJevInboxRecipe(input.recipe === null ? undefined : input.recipe ?? current.recipe);
     if ((input.selection || (input.recipe && jev) || (jev && input.archived === false))
-      && !await validSelection(principal, input.selection ?? current.selection, jev)) return c.json({ error: "Choose an available Agent model." }, 400);
+      && !(current.recipeRef && automatic) && !await validSelection(principal, input.selection ?? current.selection, jev)) return c.json({ error: "Choose an available Agent model." }, 400);
     const recipe = input.recipe ? await bindJevInboxRecipe({ ownerId: principal.userId, recipe: input.recipe,
       listGmailAccounts: options.listGmailAccounts }) : undefined;
     const updated = await agents.update({ type: "personal", ownerId: principal.userId }, id, input, recipe);

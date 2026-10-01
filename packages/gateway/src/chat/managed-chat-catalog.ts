@@ -1,3 +1,4 @@
+import { resolveManagedPiRoute, MANAGED_PI_INSTANCE_ID, BotRouteError } from "../bots/route-resolver.js";
 import type {
   AiProviderSnapshotV3,
   CanonicalChatSkillDescriptor,
@@ -59,4 +60,27 @@ export function managedChatInstances(
       ...(defaultModel ? { defaultSelection: { instanceId: instance.id, model: defaultModel } } : {}),
     }];
   });
+}
+
+/** The owned Pi worker has its own identity; old kernel checkpoints remain unchanged. */
+export function managedPiChatInstances(snapshot: AiProviderSnapshotV3 | undefined, now = Date.now()): Array<Omit<CanonicalProviderInstanceDescriptor, "catalogRevision">> {
+  if (!snapshot) return [];
+  const eligible = snapshot.models.filter((model) => {
+    if (!model.capabilities.includes("tools")) return false;
+    try { resolveManagedPiRoute(snapshot, { instanceId: MANAGED_PI_INSTANCE_ID, model: model.id }, now); return true; }
+    catch (error: unknown) { if (error instanceof BotRouteError) return false; throw error; }
+  });
+  const available = eligible.length > 0;
+  return [{
+    id: MANAGED_PI_INSTANCE_ID, driverKind: "matrix_pi", displayName: "Matrix AI", connectionLabel: "Matrix AI",
+    availability: available ? "available" : "unavailable", connectionState: available ? "ready" : "unavailable",
+    workspaceRequirement: "project_optional",
+    models: eligible.map((model) => ({ id: model.id, displayName: model.displayName, availability: "available",
+      capabilities: ["tools"], supportsVision: false, supportsToolUse: true })),
+    options: [], skills: [], commands: [], setupActions: [],
+    supports: { rootChat: true, resume: false, cancellation: true, steering: "same_run", attachments: [], tools: [],
+      approvals: false, userInput: false, worktrees: "optional", resources: [], interactionModes: ["default"],
+      permissionModes: ["supervised", "full_access"] },
+    ...(available ? { defaultSelection: { instanceId: MANAGED_PI_INSTANCE_ID, model: eligible[0]!.id } } : {}),
+  }];
 }

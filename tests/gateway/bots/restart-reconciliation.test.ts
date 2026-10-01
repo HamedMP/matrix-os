@@ -5,6 +5,7 @@ import type { Kysely } from "kysely";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OwnerBotDatabase } from "../../../packages/gateway/src/bots/database.js";
 import { createBotCheckpointsRepository } from "../../../packages/gateway/src/bots/repositories/checkpoints.js";
+import * as managedPiCheckpoints from "../../../packages/gateway/src/chat/managed-pi-checkpoints.js";
 import { createBotTasksRepository } from "../../../packages/gateway/src/bots/repositories/tasks.js";
 import { ChatAgentStore } from "../../../packages/gateway/src/chat/agent-store.js";
 import type { ChatDatabase } from "../../../packages/gateway/src/chat/database.js";
@@ -53,6 +54,28 @@ const base = () => ({
 });
 
 describe("bot services at gateway start", () => {
+  it("continues managed Chat checkpoint recovery beyond its bounded startup batch", async () => {
+    let remaining = 250;
+    const reconcile = vi.fn(async () => {
+      const changed = Math.min(remaining, 200);
+      remaining -= changed;
+      return changed;
+    });
+    const repository = managedPiCheckpoints.createManagedPiCheckpointsRepository(db);
+    const factory = vi.spyOn(managedPiCheckpoints, "createManagedPiCheckpointsRepository")
+      .mockReturnValue({ ...repository, reconcileDispatched: reconcile });
+    const { host: runtimeHost } = host();
+    const services = await startBots({ ...base(), host: runtimeHost as never,
+      now: () => new Date("2026-09-28T09:00:00.000Z"), checkpointReconcile: { passes: 1, intervalMs: 10 } });
+    try {
+      await vi.waitFor(() => expect(remaining).toBe(0));
+      expect(reconcile.mock.calls.length).toBeGreaterThanOrEqual(2);
+    } finally {
+      await services!.close();
+      factory.mockRestore();
+    }
+  });
+
   it("continues later owners when one inventory fails, and retries failed admission", async () => {
     const continuation = { chatId: "chat_restart1", clientRequestId: "req_answer_in_0123456789abcdef01234567", text: "Connected." };
     const reconcile = vi.fn(async (ownerId: string) => {

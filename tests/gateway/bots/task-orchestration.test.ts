@@ -110,6 +110,18 @@ async function tasks() {
 }
 
 describe("bot turns through the matrix_bot adapter", () => {
+  it("keeps legacy Automatic routing when an internal caller omits selection", async () => {
+    const resolveRoute = vi.fn(async (selection?: unknown) => {
+      if (selection !== undefined) throw new BotRouteError("model_unavailable");
+      return { route: ROUTE, accessSourceId: "matrix_included" as const };
+    });
+    const { orchestrator } = setup({ resolveRoute });
+    const run = orchestrator.start({ ownerId: OWNER, chatId: CHAT, runId: "run_legacy_auto",
+      text: "Hello", signal: new AbortController().signal });
+    expect(await run.result).toMatchObject({ status: "completed" });
+    expect(resolveRoute).toHaveBeenCalledExactlyOnceWith(undefined);
+  });
+
   it("runs one turn in the bot workload and projects its events onto Chat", async () => {
     const { adapter, orchestrator, admission, commands } = setup({
       worker: async (input, { publish }) => {

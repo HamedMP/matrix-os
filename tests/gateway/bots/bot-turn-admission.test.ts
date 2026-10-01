@@ -1,3 +1,5 @@
+import { managedPiChatInstances } from "../../../packages/gateway/src/chat/managed-chat-catalog.js";
+import { makeAiProviderSnapshot } from "../../fixtures/ai-provider-snapshot.js";
 import { KyselyPGlite } from "kysely-pglite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { withBotProviderInstance } from "../../../packages/gateway/src/bots/provider-instance.js";
@@ -15,12 +17,14 @@ let orchestrator: CanonicalChatOrchestrator;
 let finishBlockedRun: (() => void) | undefined;
 let blockedRun: Promise<void> | undefined;
 let getCatalog: ReturnType<typeof vi.fn>;
+let savedSelection = { instanceId: "matrix_bot_default", model: "auto" };
 let started: Array<{ selection: unknown; permissionMode: string }>;
 
 beforeEach(async () => {
   repository = new ChatRepository((await KyselyPGlite.create()).dialect);
   await repository.bootstrap();
   started = [];
+  savedSelection = { instanceId: "matrix_bot_default", model: "auto" };
   finishBlockedRun = undefined;
   blockedRun = undefined;
   getCatalog = vi.fn(async () => ({ revision: "rev_bots", drivers: [], instances: [] }));
@@ -41,7 +45,7 @@ beforeEach(async () => {
     catalog: withBotProviderInstance({ getCatalog }),
     adapters: new CanonicalChatProviderRegistry([bot]),
     agentContext: new ChatAgentContext({
-      repository, agents: { get: vi.fn(async () => null) }, enabled: () => true,
+      repository, agents: { get: vi.fn(async () => ({ id: "bot_0123456789abcdef01234567", archived: false, selection: savedSelection }) as never) }, enabled: () => true,
       botChats: { directBot: async (_owner, chatId) => (chatId === BOT_CHAT ? "bot_0123456789abcdef01234567" : null) },
     }),
   });
@@ -130,4 +134,20 @@ describe("turns in a bot's chat", () => {
     })).rejects.toMatchObject({ status: 400 });
     expect(started).toEqual([]);
   });
+});
+
+it("keeps a saved managed bot choice and its exact per-turn model in canonical admission", async () => {
+  savedSelection = { instanceId: "matrix_pi_default", model: "claude-sonnet-5" };
+  getCatalog.mockImplementation(async () => ({ revision: "managed", drivers: [{ kind: "matrix_pi", displayName: "Pi", adapterVersion: "1", capabilityClass: "system_agent" }],
+    instances: managedPiChatInstances(makeAiProviderSnapshot()).map((instance) => ({ ...instance, catalogRevision: "managed" })) }));
+  const result = await orchestrator.admitTurn(principal, owner, BOT_CHAT, { clientRequestId: "req_concrete", baseRevision: 0,
+    parts: [{ type: "text", text: "Hi" }], selection: { instanceId: "matrix_bot_default", model: "auto" }, interactionMode: "default", permissionMode: "default" });
+  expect(result.run.selection).toEqual({ instanceId: "matrix_bot_default", model: "claude-sonnet-5" });
+  await vi.waitFor(() => expect(started).toHaveLength(1));
+  expect(started[0]).toEqual({ selection: { instanceId: "matrix_bot_default", model: "claude-sonnet-5" }, permissionMode: "default" });
+});
+it("refuses an unavailable explicit bot model without falling back to Automatic", async () => {
+  await expect(orchestrator.admitTurn(principal, owner, BOT_CHAT, { clientRequestId: "req_concrete_bad", baseRevision: 0,
+    parts: [{ type: "text", text: "Hi" }], selection: { instanceId: "matrix_pi_default", model: "forged-model" }, interactionMode: "default", permissionMode: "default" })).rejects.toMatchObject({ status: 400 });
+  expect(started).toEqual([]);
 });
