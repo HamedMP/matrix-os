@@ -19,7 +19,7 @@ import {
   JEV_PRICING_VALID_THROUGH,
 } from "./funded-relay-evaluation.js";
 import { JEV_READINESS_PATH, jevProbeControlAuthorized, fixedJevProbeRequest, assertJevProbeSettlement } from "./funded-relay-jev-probe.js";
-import { estimateWorstCaseMicrousd, FUNDED_GLM_FLASH, mapFundedModel, maximumFundedInputTokens } from "./funded-relay-model.js";
+import { estimateWorstCaseMicrousd, FUNDED_GLM_FLASH, isFundedModelPriceCurrent, mapFundedModel, maximumFundedInputTokens } from "./funded-relay-model.js";
 import { serializeFundedOpenAiRequest, workersAiTarget } from "./funded-relay-openai-request.js";
 import { normalizeWorkersAiResponse } from "./funded-relay-workers-response.js";
 import {
@@ -418,6 +418,7 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
         inputTokens,
         maxOutputTokens: parsedBody.max_tokens!,
         now: now(),
+        pricingReviews: config.pricingReviews,
       });
     } catch (error) {
       const errorName = error instanceof Error ? error.name : "UnknownError";
@@ -446,6 +447,12 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
       || (config.reservationMode === "usage"
         ? reservation.billingMode !== "usage" || reservation.reservedMicrousd <= 0 || reservation.reservedMicrousd > maxCostMicrousd
         : reservation.billingMode === "usage" || reservation.reservedMicrousd !== maxCostMicrousd)) {
+      await releaseBeforeStart(reservation.reservationId, authorization.identity.tokenId);
+      return errorResponse(c, 503, "api_error", "AI access is temporarily unavailable");
+    }
+    // Authorization can cross the operator review deadline. Release its
+    // untouched reservation before start rather than dispatching stale pricing.
+    if (!isFundedModelPriceCurrent(model.canonicalModelId, now(), config.pricingReviews)) {
       await releaseBeforeStart(reservation.reservationId, authorization.identity.tokenId);
       return errorResponse(c, 503, "api_error", "AI access is temporarily unavailable");
     }

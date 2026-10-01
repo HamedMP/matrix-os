@@ -1,4 +1,5 @@
 import { z } from "zod/v4";
+import { FUNDED_PRICING_VERSIONS, validateFundedPricingReview, type FundedPricingReviews } from "./funded-pricing-review.js";
 
 const NATIVE_SONNET_5 = "claude-sonnet-5";
 // Cloudflare's catalog identifier; provider-native Anthropic requests use the
@@ -21,12 +22,12 @@ interface FundedPricing {
   cacheWrite1hRateHundredths: number;
 }
 
-// Anthropic made Sonnet 5's $2/$10 introductory rate permanent on 2026-08-31.
+// Standard rates re-verified 2026-10-02; renewal requires an explicit operator review.
 // https://platform.claude.com/docs/en/about-claude/pricing
-// Keep the review horizon deliberately short so a stale list price fails closed.
+// The historical deadline remains expired unless an operator re-attests it.
 const CURRENT_PRICING: FundedPricing = {
   canonicalModelId: CANONICAL_SONNET_5,
-  version: "anthropic-2026-08-31-standard",
+  version: FUNDED_PRICING_VERSIONS[CANONICAL_SONNET_5],
   validThrough: "2026-09-30T23:59:59.999Z",
   inputRateHundredths: 200,
   outputRateHundredths: 1_000,
@@ -34,30 +35,40 @@ const CURRENT_PRICING: FundedPricing = {
   cacheWrite5mRateHundredths: 250,
   cacheWrite1hRateHundredths: 400,
 };
-// Verified 2026-09-10: https://developers.cloudflare.com/workers-ai/models/glm-5.3-flash/
+// Re-verified 2026-10-02: https://developers.cloudflare.com/workers-ai/models/glm-5.3-flash/
 const GLM_PRICING: FundedPricing = {
   canonicalModelId: FUNDED_GLM_FLASH,
-  version: "cloudflare-2026-09-10-glm-flash",
+  version: FUNDED_PRICING_VERSIONS[FUNDED_GLM_FLASH],
   validThrough: "2026-09-30T23:59:59.999Z",
   inputRateHundredths: 15, outputRateHundredths: 50, cacheReadRateHundredths: 3,
   cacheWrite5mRateHundredths: 15, cacheWrite1hRateHundredths: 15,
 };
 
-/** Readiness must agree with the local price gate used before admission. */
-export function fundedModelPriceValidThrough(modelId: string): string | undefined {
+/** Readiness and admission resolve the same model-specific review. */
+export function fundedModelPriceValidThrough(modelId: string, reviews: FundedPricingReviews = []): string | undefined {
   const pricing = [CURRENT_PRICING, GLM_PRICING].find((item) => item.canonicalModelId === modelId);
-  return pricing?.validThrough;
+  if (!pricing) return undefined;
+  const review = reviews.find((item) => item.canonicalModelId === modelId);
+  if (review) validateFundedPricingReview(review);
+  return review?.validThrough ?? pricing.validThrough;
 }
 
-export function isFundedModelPriceCurrent(modelId: string, now: Date): boolean {
-  const validThrough = fundedModelPriceValidThrough(modelId);
-  return !!validThrough && now.getTime() <= Date.parse(validThrough);
+export function isFundedModelPriceCurrent(modelId: string, now: Date, reviews: FundedPricingReviews = []): boolean {
+  const validThrough = fundedModelPriceValidThrough(modelId, reviews);
+  const reviewedAt = reviews.find((item) => item.canonicalModelId === modelId)?.reviewedAt;
+  const time = now.getTime();
+  return !!validThrough && Number.isFinite(time) && time <= Date.parse(validThrough)
+    && (!reviewedAt || time >= Date.parse(reviewedAt));
 }
 
 // Retain the previous version only for safe settlement of reservations created
 // before this deployment. It is never selected for new reservations.
 const SETTLEMENT_PRICING: Readonly<Record<string, FundedPricing>> = {
-  "anthropic-2026-08-29": { ...CURRENT_PRICING, version: "anthropic-2026-08-29" },
+  "anthropic-2026-08-29": {
+    canonicalModelId: CANONICAL_SONNET_5, version: "anthropic-2026-08-29",
+    validThrough: "2026-09-30T23:59:59.999Z", inputRateHundredths: 200, outputRateHundredths: 1_000,
+    cacheReadRateHundredths: 20, cacheWrite5mRateHundredths: 250, cacheWrite1hRateHundredths: 400,
+  },
   [CURRENT_PRICING.version]: CURRENT_PRICING,
   [GLM_PRICING.version]: GLM_PRICING,
 };
@@ -99,11 +110,12 @@ export function estimateWorstCaseMicrousd(input: {
   inputTokens: number;
   maxOutputTokens: number;
   now: Date;
+  pricingReviews?: FundedPricingReviews;
 }): { amountMicrousd: number; pricingVersion: string; pricingValidThrough: string } {
   const pricing = [CURRENT_PRICING, GLM_PRICING].find((item) => item.canonicalModelId === input.canonicalModelId);
   if (!pricing) throw new Error("Funded AI pricing is unavailable");
-  if (input.now.getTime() > Date.parse(pricing.validThrough)) {
-    throw new Error("Funded AI pricing has expired");
+  if (!isFundedModelPriceCurrent(input.canonicalModelId, input.now, input.pricingReviews)) {
+    throw new Error("Funded AI pricing has expired or its review is not current");
   }
   const inputTokens = TokenCountSchema.parse(input.inputTokens);
   const maxOutputTokens = OutputTokenCountSchema.parse(input.maxOutputTokens);
@@ -121,7 +133,7 @@ export function estimateWorstCaseMicrousd(input: {
   return {
     amountMicrousd,
     pricingVersion: pricing.version,
-    pricingValidThrough: pricing.validThrough,
+    pricingValidThrough: fundedModelPriceValidThrough(input.canonicalModelId, input.pricingReviews)!,
   };
 }
 

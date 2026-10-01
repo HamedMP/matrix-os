@@ -23,6 +23,17 @@ function enabledEnv(): NodeJS.ProcessEnv {
 }
 
 describe("funded relay Cloud Run service", () => {
+  it("preserves reviewed pricing attestations in the candidate deployment", () => {
+    const workflow = readFileSync(join(root, ".github/workflows/ai-relay-cloud-run.yml"), "utf8");
+    for (const model of ["SONNET", "GLM"]) {
+      for (const field of ["REVIEW_VERSION", "REVIEWED_AT", "VALID_THROUGH"]) {
+        const name = `MATRIX_FUNDED_${model}_PRICING_${field}`;
+        expect(workflow).toContain(`${name}: \${{ vars.${name} }}`);
+        expect(workflow).toContain(`${name}=\${${name}}`);
+      }
+    }
+    expect(workflow).not.toContain('date -u +');
+  });
   it("fails closed unless the dedicated funded relay is explicitly enabled", () => {
     expect(() => requireFundedRelayServiceConfig({})).toThrow(
       "MATRIX_FUNDED_AI_ENABLED must be true for the dedicated relay service",
