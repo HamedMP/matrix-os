@@ -18,3 +18,12 @@ Original source file hashes (before Matrix adaptations):
 | File | SHA-256 |
 | --- | --- |
 | `SKILL.md` | `e71de849347050c2c573c1cf24d742d5a13459557ecffa6e562f08006f46b5b7` |
+
+Matrix discovery metadata uses `author: Matrix OS` to identify the managed adaptation
+for the bundled recipe catalog, with a version and supported platforms. This
+is a distribution marker, not a claim of upstream authorship or a license grant.
+Original attribution and the original source hashes above remain authoritative.
+Detailed stagger, animation debugging, and review checklist guidance was moved
+to the lazy `review-checklist.md` companion to fit the recipe instruction bound.
+Stagger guidance is optional for purposeful, occasional entrances; repeated
+list updates and keyboard feedback remain immediate.
