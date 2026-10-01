@@ -7,6 +7,7 @@ import { chatContextRequestHash, transcript } from "./agent-context.js";
 
 export function validateQueuedAgentDriver(context: ChatRunContext | undefined, driver: string, chatId: string, revision: number) {
   if (context?.agent && !isChatAgentDriver(driver)) throw new ChatConflictError(chatId, revision);
+  if (context?.drives?.length && driver !== "claude_code") throw new ChatConflictError(chatId, revision);
 }
 
 /** Called under the Chat row lock, before its queued input is committed. */

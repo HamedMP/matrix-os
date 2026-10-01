@@ -1,9 +1,13 @@
 // @vitest-environment jsdom
 
 import React from "react";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DesktopOrganizationDrivesView } from "../../desktop/src/renderer/src/features/files/DesktopOrganizationDrivesView";
+import { WorkSurfaceRuntimeProvider, useWorkSurfaceRuntime } from "../../desktop/src/renderer/src/features/work/WorkSurfaceRuntime";
+import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
+import { CanonicalChatWorkspace } from "../../desktop/src/renderer/src/features/chat/CanonicalChatWorkspace";
+import { createCanonicalChatWorkspaceClient, providerCatalog } from "./canonical-chat-workspace-test-utils";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
 
 const { createApi } = vi.hoisted(() => ({ createApi: vi.fn() }));
@@ -13,7 +17,7 @@ vi.mock("../../desktop/src/renderer/src/lib/collaboration", () => ({
   closeDesktopCollaborationSessions: vi.fn(),
 }));
 
-afterEach(() => { cleanup(); createApi.mockReset(); });
+afterEach(() => { cleanup(); createApi.mockReset(); useTabs.setState(useTabs.getInitialState(), true); });
 
 describe("Electron organization drive view", () => {
   it("creates a fresh direct client after StrictMode cleanup", async () => {
@@ -36,7 +40,7 @@ describe("Electron organization drive view", () => {
     expect(clients.at(-1)!.get).toHaveBeenCalledWith("/api/organizations");
   });
 
-  it("stops its live subscription while the retained pane is hidden", async () => {
+  it("hands Files to a new unsent Chat without a Work provider and stops hidden subscriptions", async () => {
     const scopeId = "00000000-0000-4000-8000-000000000001";
     const organizationId = "org_example";
     const unsubscribe = vi.fn();
@@ -60,9 +64,30 @@ describe("Electron organization drive view", () => {
     });
     useConnection.setState({ platformHost: "https://app.matrix-os.com", runtimeSlot: "primary", authGeneration: 3 });
     const view = render(<DesktopOrganizationDrivesView isActive />);
+    fireEvent.click(await screen.findByRole("button",{name:"Ask about this drive"}));
+    const tab=useTabs.getState().tabs.find(item=>item.id===useTabs.getState().activeTabId)!;
+    expect(tab).toMatchObject({kind:"work",workRoute:"chat",chatView:"draft"});
+    expect(tab.chatId).toBeUndefined();
+    const client=createCanonicalChatWorkspaceClient();
+    function Receipt(){const runtime=useWorkSurfaceRuntime();return <><output data-testid="files-chat-draft">{JSON.stringify(runtime?.agentDraftRequest??null)}</output><CanonicalChatWorkspace client={client} catalog={providerCatalog} projectId={null} initialView="draft" draftRequest={runtime?.agentDraftRequest} externalNavigation active/></>;}
+    const chat=render(<WorkSurfaceRuntimeProvider active tabId={tab.id}><Receipt/></WorkSurfaceRuntimeProvider>);
+    await waitFor(()=>expect(JSON.parse(screen.getByTestId("files-chat-draft").textContent!)).toMatchObject({text:"",resources:[{kind:"organization_drive",drive:{kind:"drive",organizationId,scopeId}}]}));
+    await waitFor(()=>expect(screen.getByRole("textbox").textContent).toContain("Authority"));
+    expect(client.create).not.toHaveBeenCalled();
+    expect(client.admitTurn).not.toHaveBeenCalled();
+    expect(direct.request.mock.calls.every(call=>call[1]==="GET")).toBe(true);
+    chat.unmount();
     await waitFor(() => expect(subscribe).toHaveBeenCalled());
     view.rerender(<DesktopOrganizationDrivesView isActive={false} />);
     await waitFor(() => expect(unsubscribe).toHaveBeenCalled());
     expect(direct.close).not.toHaveBeenCalledWith(scopeId);
   });
+  it("does not open an unrelated drive when the requested shortcut is unavailable", async () => {
+    createApi.mockImplementation(() => ({get: vi.fn(async path => path === "/api/organizations" ? {organizations: []} : {items: []}), direct: {close: vi.fn(), request: vi.fn()}}));
+    useConnection.setState({platformHost:"https://app.matrix-os.com",runtimeSlot:"primary",authGeneration:3});
+    render(<DesktopOrganizationDrivesView requestedScopeId="00000000-0000-4000-8000-0000000000ff" requestedIntentId="new-request"/>);
+    expect(await screen.findByText("This drive is unavailable. Choose another drive or refresh.")).toBeTruthy();
+    expect(screen.queryByRole("button",{name:"Upload file"})).toBeNull();
+  });
+
 });

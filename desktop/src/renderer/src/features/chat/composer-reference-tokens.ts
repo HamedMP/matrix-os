@@ -1,3 +1,4 @@
+import {chatResourceKey} from "@matrix-os/ui";
 import type {
   CanonicalChatInvocation,
   CanonicalChatResourceReference,
@@ -24,7 +25,7 @@ export interface SharedChatComposerSubmission {
 export function composerReferenceTokenKey(token: ComposerReferenceToken): string {
   return token.type === "invocation"
     ? `invocation:${token.invocation.kind}:${token.invocation.descriptorId}`
-    : `resource:${token.resource.kind}:${token.resource.id}`;
+    : `resource:${chatResourceKey(token.resource)}`;
 }
 
 export function addComposerReferenceToken(

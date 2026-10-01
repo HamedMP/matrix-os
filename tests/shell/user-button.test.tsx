@@ -15,6 +15,14 @@ const clerkState = vi.hoisted(() => ({
   },
   signOut: vi.fn(async () => undefined),
   openUserProfile: vi.fn(),
+  organization: null as { id: string } | null,
+  organizationsLoaded: true,
+  memberships: [] as Array<{ organization: { id: string; name: string } }>,
+  setActive: vi.fn(async (_params: { organization: string }) => undefined),
+  hasNextPage: false,
+  isFetching: false,
+  isError: false,
+  fetchNext: vi.fn(),
 }));
 
 const replaceMock = vi.hoisted(() => vi.fn());
@@ -31,6 +39,18 @@ vi.mock("@clerk/nextjs", () => ({
   useClerk: () => ({
     signOut: clerkState.signOut,
     openUserProfile: clerkState.openUserProfile,
+  }),
+  useOrganization: () => ({ organization: clerkState.organization }),
+  useOrganizationList: () => ({
+    isLoaded: clerkState.organizationsLoaded,
+    setActive: clerkState.setActive,
+    userMemberships: {
+      data: clerkState.memberships,
+      hasNextPage: clerkState.hasNextPage,
+      isFetching: clerkState.isFetching,
+      isError: clerkState.isError,
+      fetchNext: clerkState.fetchNext,
+    },
   }),
 }));
 
@@ -50,6 +70,15 @@ describe("UserButton", () => {
     clerkState.user.username = "kongfupanda13";
     clerkState.user.fullName = null;
     clerkState.signOut.mockResolvedValue(undefined);
+    clerkState.organization = null;
+    clerkState.organizationsLoaded = true;
+    clerkState.memberships = [];
+    clerkState.setActive.mockReset();
+    clerkState.setActive.mockResolvedValue(undefined);
+    clerkState.hasNextPage = false;
+    clerkState.isFetching = false;
+    clerkState.isError = false;
+    clerkState.fetchNext.mockReset();
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(JSON.stringify({ cleared: true }), {
         status: 200,
@@ -101,6 +130,149 @@ describe("UserButton", () => {
 
     expect(menu).toBeTruthy();
     expect((menu as HTMLElement).style.zIndex).toBe(String(SHELL_Z_INDEX.popover));
+  });
+
+  it("shows no organization section to a user who belongs to none", async () => {
+    const { UserButton } = await import("../../shell/src/components/UserButton.js");
+
+    render(<UserButton variant="settings" />);
+    await openAccountMenu();
+
+    expect(screen.queryByText("Organization")).toBeNull();
+  });
+
+  it("shows no organization section until Clerk has loaded memberships", async () => {
+    clerkState.organizationsLoaded = false;
+    clerkState.memberships = [{ organization: { id: "org_a", name: "Finna" } }];
+    const { UserButton } = await import("../../shell/src/components/UserButton.js");
+
+    render(<UserButton variant="settings" />);
+    await openAccountMenu();
+
+    expect(screen.queryByText("Organization")).toBeNull();
+    expect(screen.queryByRole("menuitemradio", { name: "Finna" })).toBeNull();
+  });
+
+  it("lists the member's organizations and activates the one they choose", async () => {
+    // Sharing reads the *active* organization, and nothing else in the shell sets
+    // one -- without this the share control stays "Join an organization to share"
+    // for a user who already belongs to an organization.
+    clerkState.memberships = [
+      { organization: { id: "org_a", name: "Finna" } },
+      { organization: { id: "org_b", name: "Matrix" } },
+    ];
+    const { UserButton } = await import("../../shell/src/components/UserButton.js");
+
+    render(<UserButton variant="settings" />);
+    await openAccountMenu();
+
+    expect(screen.getByText("Organization")).toBeTruthy();
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "Matrix" }));
+    expect(clerkState.setActive).toHaveBeenCalledWith({ organization: "org_b" });
+  });
+
+  it("keeps the menu open after a choice so the result is visible where it was made", async () => {
+    clerkState.memberships = [
+      { organization: { id: "org_a", name: "Finna" } },
+      { organization: { id: "org_b", name: "Matrix" } },
+    ];
+    const { UserButton } = await import("../../shell/src/components/UserButton.js");
+
+    render(<UserButton variant="settings" />);
+    await openAccountMenu();
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "Matrix" }));
+
+    await waitFor(() => expect(clerkState.setActive).toHaveBeenCalled());
+    expect(screen.getByRole("menuitemradio", { name: "Finna" })).toBeTruthy();
+  });
+
+  it("does not re-activate the organization that is already active", async () => {
+    clerkState.organization = { id: "org_a" };
+    clerkState.memberships = [{ organization: { id: "org_a", name: "Finna" } }];
+    const { UserButton } = await import("../../shell/src/components/UserButton.js");
+
+    render(<UserButton variant="settings" />);
+    await openAccountMenu();
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "Finna" }));
+
+    expect(clerkState.setActive).not.toHaveBeenCalled();
+  });
+
+  it("announces the active organization to assistive technology, not only with a checkmark", async () => {
+    clerkState.organization = { id: "org_b" };
+    clerkState.memberships = [
+      { organization: { id: "org_a", name: "Finna" } },
+      { organization: { id: "org_b", name: "Matrix" } },
+    ];
+    const { UserButton } = await import("../../shell/src/components/UserButton.js");
+
+    render(<UserButton variant="settings" />);
+    await openAccountMenu();
+
+    expect(screen.getByRole("menuitemradio", { name: "Matrix" }).getAttribute("aria-checked")).toBe("true");
+    expect(screen.getByRole("menuitemradio", { name: "Finna" }).getAttribute("aria-checked")).toBe("false");
+  });
+
+  it("shows a visible failure instead of only logging when activation fails", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    clerkState.setActive.mockRejectedValue(new TypeError("network"));
+    clerkState.memberships = [{ organization: { id: "org_a", name: "Finna" } }];
+    const { UserButton } = await import("../../shell/src/components/UserButton.js");
+
+    render(<UserButton variant="settings" />);
+    await openAccountMenu();
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "Finna" }));
+
+    expect((await screen.findByRole("alert")).textContent).toBe("Couldn't switch to Finna. Try again.");
+    expect(warn).toHaveBeenCalledWith("[collaboration-organization] activation failed", "TypeError");
+  });
+
+  it("offers later pages of memberships instead of silently dropping them", async () => {
+    clerkState.hasNextPage = true;
+    clerkState.memberships = [{ organization: { id: "org_a", name: "Finna" } }];
+    const { UserButton } = await import("../../shell/src/components/UserButton.js");
+
+    render(<UserButton variant="settings" />);
+    await openAccountMenu();
+    fireEvent.click(screen.getByRole("menuitem", { name: "More organizations" }));
+
+    expect(clerkState.fetchNext).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows a failed page load and keeps the next-page item available to retry", async () => {
+    clerkState.isError = true;
+    clerkState.hasNextPage = true;
+    clerkState.memberships = [{ organization: { id: "org_a", name: "Finna" } }];
+    const { UserButton } = await import("../../shell/src/components/UserButton.js");
+
+    render(<UserButton variant="settings" />);
+    await openAccountMenu();
+
+    expect(screen.getByRole("alert").textContent).toBe("Couldn't load more organizations. Try again.");
+    fireEvent.click(screen.getByRole("menuitem", { name: "More organizations" }));
+    expect(clerkState.fetchNext).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows a failed first load instead of rendering as if the member had no organizations", async () => {
+    clerkState.isError = true;
+    clerkState.memberships = [];
+    const { UserButton } = await import("../../shell/src/components/UserButton.js");
+
+    render(<UserButton variant="settings" />);
+    await openAccountMenu();
+
+    expect(screen.getByText("Organization")).toBeTruthy();
+    expect(screen.getByRole("alert").textContent).toBe("Couldn't load your organizations.");
+  });
+
+  it("offers no further page once every membership is loaded", async () => {
+    clerkState.memberships = [{ organization: { id: "org_a", name: "Finna" } }];
+    const { UserButton } = await import("../../shell/src/components/UserButton.js");
+
+    render(<UserButton variant="settings" />);
+    await openAccountMenu();
+
+    expect(screen.queryByRole("menuitem", { name: "More organizations" })).toBeNull();
   });
 
   it("offers hosted users both computer-management actions", async () => {

@@ -7,7 +7,7 @@ export interface PublicOriginRequestLike {
 }
 
 export function getConfiguredAppOrigin(
-  configuredAppUrl: string | undefined = process.env.NEXT_PUBLIC_MATRIX_APP_URL,
+  configuredAppUrl: string | undefined = process.env.MATRIX_APP_ORIGIN ?? process.env.NEXT_PUBLIC_MATRIX_APP_URL,
 ): string | null {
   if (!configuredAppUrl || !URL.canParse(configuredAppUrl)) return null;
   const url = new URL(configuredAppUrl);
@@ -17,7 +17,7 @@ export function getConfiguredAppOrigin(
 
 export function getPublicOrigin(
   request: PublicOriginRequestLike,
-  configuredAppUrl: string | undefined = process.env.NEXT_PUBLIC_MATRIX_APP_URL,
+  configuredAppUrl: string | undefined = process.env.MATRIX_APP_ORIGIN ?? process.env.NEXT_PUBLIC_MATRIX_APP_URL,
 ): string {
   const canonical = getConfiguredAppOrigin(configuredAppUrl);
   if (canonical) return canonical;

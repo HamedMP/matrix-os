@@ -30,6 +30,25 @@ it("publishes operation and batch arguments in the actual MCP tool catalog", asy
     });
   } finally { await close(); }
 });
+it("explains each operation's required arguments to clients through tools/list", async () => {
+  const { client, close } = await connect(vi.fn<GatewayFetcher>());
+  try {
+    const tool = (await client.listTools()).tools[0]!;
+    expect(tool.description).toContain("select requires receipt and threadId");
+    expect(tool.description).toContain("evaluate requires receipt");
+    expect(tool.description).toContain("batch_next requires jobId and revision");
+    expect(tool.description).toContain("batch_resume requires jobId");
+    expect(tool.description).toContain("discover takes no other arguments");
+    expect(tool.description).toContain("batch_start accepts optional maxThreads");
+    expect(tool.description).toContain("batch_status accepts optional jobId");
+    expect(tool.inputSchema.properties).toMatchObject({
+      receipt: { description: expect.stringContaining("Required for select and evaluate") },
+      threadId: { description: expect.stringContaining("Required for select") },
+      jobId: { description: expect.stringContaining("Required for batch_next and batch_resume") },
+      revision: { description: expect.stringContaining("Required for batch_next") },
+    });
+  } finally { await close(); }
+});
 it.each([
   { operation: "discover", ownerId: "forged" },
   { operation: "discover", verified: true },

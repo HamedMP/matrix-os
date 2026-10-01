@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import type { ImportedChatAssetRef } from "@matrix-os/contracts";
 import { Dialog } from "../Dialog.js";
 
 export interface ChatMessageAttachment {
@@ -8,24 +9,43 @@ export interface ChatMessageAttachment {
   kind: "file" | "image";
   path?: string;
   src?: string;
+  importAsset?: ImportedChatAssetRef;
 }
 
-export function ChatAttachments({ attachments, open, loadImage, align = "end" }: {
+export function ChatAttachments({ attachments, open, loadImage, openImportedAsset, align = "end" }: {
   attachments: ChatMessageAttachment[];
   open?: (path: string) => boolean | void;
   loadImage?: (src: string) => Promise<Blob>;
   align?: "start" | "end";
+  openImportedAsset?: (ref: ImportedChatAssetRef) => Promise<void>;
 }) {
   return <div className={`flex max-w-[min(85%,48rem)] flex-wrap gap-2 ${align === "start" ? "justify-start" : "ml-auto justify-end"}`}>
     {attachments.map((attachment) => attachment.kind === "image" && attachment.src
-      ? <AttachmentImage key={attachment.id} src={attachment.src} label={attachment.label} path={attachment.path} open={open} loadImage={loadImage} />
+      ? <div key={attachment.id}><AttachmentImage src={attachment.src} label={attachment.label} path={attachment.path} open={open} loadImage={loadImage} />
+        {attachment.importAsset ? <ImportedAssetButton refValue={attachment.importAsset} open={openImportedAsset} /> : null}</div>
       : <div key={attachment.id} className="max-w-full overflow-hidden rounded-xl border bg-[var(--bg-surface,var(--background))]" style={{ borderColor: "var(--border-default, var(--border))" }}>
-      <button type="button" disabled={!attachment.path || !open} aria-label={`Preview ${attachment.label}`}
+      {attachment.importAsset ? <ImportedAssetButton refValue={attachment.importAsset} open={openImportedAsset} /> : <button type="button" disabled={!attachment.path || !open} aria-label={`Preview ${attachment.label}`}
         onClick={() => attachment.path && open?.(attachment.path)} className="flex max-w-full items-center gap-2 px-3 py-2 text-sm hover:enabled:bg-[var(--bg-hover,var(--muted))] disabled:cursor-default">
         <span aria-hidden>{attachment.kind === "image" ? "▧" : "▤"}</span><span className="truncate">{attachment.label}</span>
-      </button>
+      </button>}
     </div>)}
   </div>;
+}
+
+function ImportedAssetButton({ refValue, open }: { refValue: ImportedChatAssetRef; open?: (ref: ImportedChatAssetRef) => Promise<void> }) {
+  const [pending, setPending] = useState(false);
+  const [failed, setFailed] = useState(false);
+  return <span className="block max-w-full">
+    <button type="button" disabled={!open || pending} aria-label={`Download ${refValue.label}`}
+      className="flex max-w-full items-center gap-2 px-3 py-2 text-sm disabled:opacity-50"
+      onClick={() => {
+        if (!open || pending) return; setPending(true); setFailed(false);
+        void open(refValue).catch((error: unknown) => {
+          console.warn("[chat/import] asset download unavailable", error instanceof Error ? error.name : "UnknownError"); setFailed(true);
+        }).finally(() => setPending(false));
+      }}><span aria-hidden>▤</span><span className="truncate">{pending ? "Downloading…" : refValue.label}</span></button>
+    {failed ? <span role="alert" className="block px-3 pb-2 text-xs">Download unavailable. Try again.</span> : null}
+  </span>;
 }
 
 export function AttachmentImage({
