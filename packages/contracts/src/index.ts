@@ -1449,3 +1449,6 @@ export { normalizeTerminalSnapshot } from "#terminal-snapshot";
 export { chatSubagentPresentation, projectChatSubagent, ChatSubagentSchema, type ChatSubagent } from "#chat-subagent";
 
 export { ImportedChatAssetRefSchema, importedChatAssetContentPath, type ImportedChatAssetRef } from "#canonical-chat-import-parts";
+export { AiCreditHistoryQuerySchema, AiCreditHistoryEntrySchema, AiCreditHistoryResponseSchema, type AiCreditHistoryEntry, type AiCreditHistoryResponse } from "#ai-credit-history";
+
+export * from "#provider-workflows";

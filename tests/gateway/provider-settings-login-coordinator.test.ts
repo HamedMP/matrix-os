@@ -1,3 +1,4 @@
+import { createNativeProviderProfileGuard } from "../../packages/gateway/src/ai-providers/native-provider-profile-guard.js";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -68,6 +69,7 @@ describe("provider terminal login coordinator", () => {
     return createProviderTerminalLoginCoordinator({
       homePath,
       registry,
+      profileGuard: createNativeProviderProfileGuard({ homePath, registry }),
       enabledHarnesses,
       now: () => now,
     });

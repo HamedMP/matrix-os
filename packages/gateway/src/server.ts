@@ -1,3 +1,4 @@
+import { createNativeProviderProfileGuard } from "./ai-providers/native-provider-profile-guard.js";
 import { createChatDriveProjectRoutes } from "./chat/drive-projects.js";
 import { createProductionChatDriveContext } from "./chat/drive-context-production.js";
 import { createOwnerAnthropicKeyPreflight } from "./ai-providers/owner-key-preflight.js";
@@ -152,7 +153,11 @@ import { createHostToolPackInstaller, createToolPackService, InMemoryToolPackRep
 import { createPreviewManager } from "./preview-manager.js";
 import { createProjectManager } from "./project-manager.js";
 import { createProvisioner } from "./provisioner.js";
-import { requireRequestPrincipal } from "./request-principal.js";
+import { getOptionalRequestPrincipal, requireRequestPrincipal } from "./request-principal.js";
+import { registerProviderWorkflowRuntime } from "./server/provider-workflow-runtime.js";
+import { createNativeProviderWorkflowAdapters } from "./ai-providers/provider-workflow-native.js";
+import { createCodexKeySaver, createProviderKeyVerifier } from "./ai-providers/provider-workflow-key.js";
+import { createCodexNativeKeyReadinessReader } from "./ai-providers/codex-native-key-readiness.js";
 import { createReviewStore } from "./review-store.js";
 import { securityHeadersMiddleware } from "./security/headers.js";
 import {
@@ -1396,6 +1401,7 @@ export async function createGateway(config: GatewayConfig) {
     ),
   });
   const aiProviderService = new AiProviderService({
+    codexNativeKeyReadiness: createCodexNativeKeyReadinessReader({ homePath }),
     nativeHarnessCatalogReader: genericHarnessModelCatalog,
     hermesRuntimeSource: agentRuntimeServices.systemRuntimeSources.hermes,
     homePath,
@@ -1419,7 +1425,9 @@ export async function createGateway(config: GatewayConfig) {
     }) } : {}),
   });
   collaborationProviderSnapshots.attach(aiProviderService);
+  const nativeProviderProfileGuard = createNativeProviderProfileGuard({ homePath, registry: providerLoginTerminalRegistry });
   const providerLoginCoordinator = createProviderTerminalLoginCoordinator({
+    profileGuard: nativeProviderProfileGuard,
     homePath,
     registry: providerLoginTerminalRegistry,
     enabledHarnesses: codingAgentWorkspaceAgents.filter(
@@ -1427,6 +1435,7 @@ export async function createGateway(config: GatewayConfig) {
     ),
   });
   const providerAccountLifecycle = createDefaultProviderCliAccountLifecycleCoordinator({
+    profileGuard: nativeProviderProfileGuard,
     homePath,
     enabledHarnesses: codingAgentWorkspaceAgents,
   });
@@ -1618,6 +1627,17 @@ export async function createGateway(config: GatewayConfig) {
   }
 
   if (!providerSettingsStore) throw new Error("Provider settings are unavailable");
+  const workflowStore = createProviderTerminalLoginHandoff(providerSettingsStore, providerLoginTerminalRegistry.resolveTerminalRef, providerLoginCoordinator.resolveTerminalIdentity);
+  const providerWorkflowLifecycle = await registerProviderWorkflowRuntime({
+    app,
+    ownerId: terminalRuntimeOwnerId ?? (!process.env.MATRIX_AUTH_TOKEN && process.env.NODE_ENV !== "production" ? "default" : null),
+    getPrincipal: getOptionalRequestPrincipal,
+    createAdapters: () => createNativeProviderWorkflowAdapters({
+      store: workflowStore, terminal: terminalWorkspaceRuntime, profileGuard: nativeProviderProfileGuard,
+      inventory: async () => (await aiProviderService.getSnapshot()).drivers,
+      verifyKeys: { codex: createProviderKeyVerifier({ providerId: "openai", profileGuard: nativeProviderProfileGuard, profile: "codex", save: createCodexKeySaver({ homePath }) }) },
+    }),
+  });
   const lookupJevGmailAccounts = createJevGmailAccountLookup({ db: platformDb,
     internalBaseUrl: internalIntegrationBaseUrl, machineToken: internalPlatformToken });
   const localChatImportLifecycle = registerCollaborationChatRoutes({
@@ -1806,6 +1826,7 @@ export async function createGateway(config: GatewayConfig) {
       proactiveHeartbeat.stop();
       cronService.stop();
       await localChatImportLifecycle.close();
+      await providerWorkflowLifecycle.close();
       await backgroundChatProjection.close();
       await canonicalChatOrchestrator?.close();
       canonicalChatOrchestrator = null;

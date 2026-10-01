@@ -69,6 +69,7 @@ export const ProviderModelViewSchema = z.object({
   id: ProviderModelReferenceSchema,
   displayName: DisplayNameSchema,
   enabled: z.boolean(),
+  capabilities: z.array(z.enum(["tools", "vision", "reasoning", "long_context", "audio"])).max(5).refine(unique).optional(),
 }).strict();
 export const ProviderModelProviderSchema = z.object({
   id: ProviderIdSchema,

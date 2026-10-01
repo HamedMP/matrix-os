@@ -457,13 +457,14 @@ export async function projectProviderSettings(input: {
   for (const model of input.canonical.models) {
     modelsByVendor.set(model.vendor, [...(modelsByVendor.get(model.vendor) ?? []), model]);
   }
-  const modelProviders = [...modelsByVendor].map(([id, models]) => ({
+  const modelProviders: ProviderSettingsSnapshot["modelProviders"] = [...modelsByVendor].map(([id, models]) => ({
     id,
     displayName: id === "cloudflare" ? "Cloudflare Workers AI" : id[0]!.toUpperCase() + id.slice(1),
     models: models.map((model) => ({
       id: model.id,
       displayName: model.displayName,
       enabled: model.status !== "retired" && model.status !== "unavailable",
+      capabilities: [...model.capabilities],
     })),
   }));
   const canonicalProviderIds = new Set(modelProviders.map((provider) => provider.id));
@@ -472,13 +473,13 @@ export async function projectProviderSettings(input: {
     if (!existing) {
       modelProviders.push({
         ...discovered,
-        models: discovered.models.map((model) => ({ ...model })),
+        models: discovered.models.map(({ id, displayName, enabled }) => ({ id, displayName, enabled })),
       });
       continue;
     }
     for (const model of discovered.models) {
       if (!existing.models.some((candidate) => candidate.id === model.id)) {
-        existing.models.push({ ...model });
+        existing.models.push({ id: model.id, displayName: model.displayName, enabled: model.enabled });
       }
     }
   }

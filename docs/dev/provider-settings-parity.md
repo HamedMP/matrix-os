@@ -44,10 +44,16 @@ This is the operational setup surface. It owns:
 - model routing, capability-compatible controls, and model allowlists;
 - truthful usage or credit displays when an authoritative source exists.
 
-The left rail is labeled **Harness instances**. The add button creates another
-harness instance; it does not create an inference vendor. Generic harnesses can
-select a model provider and model. Model-specific harnesses expose only routes
-that the harness contract proves they support.
+The page presents **Matrix AI** first, followed by **Coding agents** (Claude
+Code, Codex, OpenCode, Pi) and **General agents** (Hermes, OpenClaw). Agent rows
+are accessible accordions with one derived status. Additional configured
+instances remain visible. Advanced controls retain instance creation,
+enablement, account dependencies, route selection, budgets, and allowlists.
+Creating an instance does not create an inference vendor. Generic harnesses
+can select a model provider and model; model-specific harnesses expose only
+routes that the harness contract proves they support. The redesign and its
+delivery gates are specified in
+[`specs/543-agents-providers-settings/spec.md`](../../specs/543-agents-providers-settings/spec.md).
 
 ### Identity & personality
 
@@ -81,7 +87,7 @@ off. `authStatus: unknown` in the compatibility catalog must not be rendered
 as a remote authentication verdict; successful execution on the exact
 selected source remains a separate release validation step.
 
-Canvas, Web Desktop, and Electron must expose the same:
+Web Canvas, Web Desktop, and Electron Desktop must expose the same:
 
 - harnesses, accounts, access sources, models, and readiness states;
 - add-instance and add-account flows;
@@ -97,11 +103,12 @@ temporary shell-specific exception requires an issue, a documented capability
 reason, and a disabled or explanatory state on the other shells; silent omission
 is not acceptable.
 
-Electron Desktop is the visual and interaction ground truth while the surfaces
-converge. Canvas is the primary product surface and is validated first. The
+Electron Desktop is the ongoing visual and interaction reference while the
+surfaces converge. Web Desktop and Electron Desktop are the default
+presentations; Web Canvas is a first-class presentation. The
 required manual order for user-visible changes is:
 
-1. Canvas on the browser shell;
+1. Web Canvas on the browser shell;
 2. Web Desktop on the same runtime;
 3. Electron Desktop against the same V3 fixture.
 
@@ -130,7 +137,7 @@ silent omission from an existing settings implementation. If Native Mobile
 adds provider management, it must consume the same contracts, derivations,
 actions, recovery semantics, tests, and current device evidence before release.
 
-Canvas, Web Desktop, and Electron admit turns through the canonical Chat
+Web Canvas, Web Desktop, and Electron Desktop admit turns through the canonical Chat
 orchestrator (`/api/chats` and `/api/chats/:id/turns`) and resolve picker choices
 from `/api/chat-providers`. A shell must not pair the canonical picker with the
 legacy `/api/message` execution path: that would display a harness selection
@@ -417,6 +424,74 @@ the required active tax registrations.
   file, and credential payload logging remains disabled.
 
 ## Delivery stack
+
+### Additive Settings workflows and credit history
+
+The shared grouped page consumes separate workflow capabilities and typed
+workflow/history endpoints. Do not add new secrets, codes, or lifecycle fields
+to historical strict Settings snapshots or generic mutation receipts. A
+missing workflow capability leaves an explanatory unavailable state or the
+existing supported Terminal fallback; it does not manufacture a working action.
+
+Login, install, and uninstall operations keep exact harness/operation identity,
+bounded lifetimes, and visible canonical Terminal sessions. Device codes and
+allowlisted sign-in URLs belong only to the foreground authorized attempt.
+Cancellation must terminate the corresponding process before reporting
+success. Completed local login setup remains distinct from remote access
+verification: a Codex `login status` observation cannot prove a subscription
+or inference request succeeds. Row/account readiness still comes from the
+canonical source, not a workflow's `succeeded` label.
+
+The injected native-profile guard serializes canonical/legacy login and logout,
+key verification/save, and managed install/uninstall for Claude and Codex.
+Persisted receipts and live Terminal incarnations both participate in admission;
+receipt expiry cannot release a running process. Exact recovery remains
+idempotent, and uncertain launch or failed cleanup retains protection until
+liveness can be resolved. Direct owner Terminal commands are outside this API
+boundary. Fresh credential fingerprints and readback verify observed mode;
+they do not promise a universal filesystem lock.
+
+An owner-scoped active operation ID in capabilities lets a fresh Settings view
+recover the exact harness receipt and cancellation control. Renderer reads use
+a 15-second deadline and mutations 90 seconds. Uncertain starts reuse their
+idempotency key; a lost key-save response shows uncertainty rather than claiming
+the old key was preserved or the new one saved.
+
+API-key submission uses a dedicated bounded secret payload and provider probe
+before replacing the native credential. Rejection preserves the prior
+credential and route. Codex retains its `owner_openai_profile` access-source
+identity; its funding mode follows the native profile's actual authentication
+mode. Neither CLI metadata nor a renderer account label can upgrade an
+unverified subscription to remotely authenticated. Verified key readiness and
+successful inference remain separate facts.
+
+Disconnect keeps the existing logout/dependency guard. Optional uninstall is a
+separate operation over a verified Matrix-managed executable prefix, not
+`remove_harness` and not owner-home deletion. No chats, projects, Settings,
+native owner configuration, or immutable Chat bindings are deleted. Progress
+and reset/allowance data are shown only when authoritative; otherwise use
+actual phases or explicitly unknown information. Diagnostic views expose only
+bounded sanitized operation events, never arbitrary native output or secrets.
+
+`GET /billing/ai-credit/history` uses the same platform Clerk identity resolver
+as credit checkout. It accepts a validated runtime slot, limit (1–50, default
+20), and opaque pagination marker. It derives the active authorized computer
+server-side and applies owner, machine, and runtime predicates to the existing
+`ai_funded_credit_ledger`. A cursor from another owner/computer is invalid.
+Created-at/entry ordering provides stable keyset pagination; markers are not
+authentication credentials. Responses use `Cache-Control: no-store` and
+contain only timestamp, signed microusd amount, credit/usage/adjustment kind,
+and nullable model ID. Model metadata joins only a settled reservation in the
+same owner/computer/runtime scope. Missing metadata remains unknown. Split
+promotional/add-on debits remain separate exact ledger entries. No request,
+reservation, ledger, payment, or source-reference identifiers are returned.
+
+`tests/platform/ai-credit-history.test.ts` checks scope isolation, pagination,
+invalid/duplicate query values, private-field redaction, unknown metadata,
+empty history, safe database errors, and billing route registration. These
+automated tests do not establish deployed history availability, paid checkout,
+native login, or real Electron Desktop inference acceptance. Capture exact
+client/runtime versions and those outcomes independently during Human Review.
 
 ### Setup interaction contract
 

@@ -15,8 +15,8 @@ import {
 const PROVIDER_SETTINGS_BODY_LIMIT = 64 * 1024;
 const RefreshQuerySchema = z.enum(["true", "false"]).optional();
 
-function withCapabilities(snapshot: ProviderSettingsSnapshot, include: boolean): ProviderSettingsSnapshot {
-  const publicSnapshot = { ...snapshot, harnesses: snapshot.harnesses.map(({ enablementOrigin: _enablementOrigin, ...harness }) => harness) };
+function withCapabilities(snapshot: ProviderSettingsSnapshot, include: boolean, includeModels = false): ProviderSettingsSnapshot {
+  const publicSnapshot = { ...snapshot, modelProviders: snapshot.modelProviders.map(provider => ({ ...provider, models: provider.models.map(({ capabilities, ...model }) => includeModels ? { ...model, ...(capabilities ? { capabilities } : {}) } : model) })), harnesses: snapshot.harnesses.map(({ enablementOrigin: _enablementOrigin, ...harness }) => harness) };
   if (include) return { ...publicSnapshot, atomicConnectSupported: snapshot.supportedActions.includes("set_route")
     && snapshot.supportedActions.includes("set_harness_enabled") };
   return {
@@ -150,9 +150,10 @@ export function createProviderSettingsRoutes(options: ProviderSettingsRouteOptio
     if (authError) return authError;
     const refresh = RefreshQuerySchema.safeParse(context.req.query("refresh"));
     const capabilities = RefreshQuerySchema.safeParse(context.req.query("includeCapabilities"));
-    if (!refresh.success || !capabilities.success) return invalidRequest(context);
+    const modelCapabilities = RefreshQuerySchema.safeParse(context.req.query("includeModelCapabilities"));
+    if (!refresh.success || !capabilities.success || !modelCapabilities.success) return invalidRequest(context);
     try {
-      return context.json(withCapabilities(await options.store.getSnapshot({ refresh: refresh.data === "true" }), capabilities.data === "true"));
+      return context.json(withCapabilities(await options.store.getSnapshot({ refresh: refresh.data === "true" }), capabilities.data === "true", modelCapabilities.data === "true"));
     } catch (error) {
       return handleStoreError(context, error);
     }
@@ -162,12 +163,13 @@ export function createProviderSettingsRoutes(options: ProviderSettingsRouteOptio
     const authError = authorize(context, options);
     if (authError) return authError;
     const capabilities = RefreshQuerySchema.safeParse(context.req.query("includeCapabilities"));
-    if (!capabilities.success) return invalidRequest(context);
+    const modelCapabilities = RefreshQuerySchema.safeParse(context.req.query("includeModelCapabilities"));
+    if (!capabilities.success || !modelCapabilities.success) return invalidRequest(context);
     const mutation = ProviderSettingsMutationSchema.safeParse(await readJson(context));
     if (!mutation.success) return invalidRequest(context);
     try {
       const result = await options.store.mutate(mutation.data);
-      return context.json({ ...result, snapshot: withCapabilities(result.snapshot, capabilities.data === "true") });
+      return context.json({ ...result, snapshot: withCapabilities(result.snapshot, capabilities.data === "true", modelCapabilities.data === "true") });
     } catch (error) {
       return handleStoreError(context, error);
     }
@@ -177,7 +179,8 @@ export function createProviderSettingsRoutes(options: ProviderSettingsRouteOptio
     const authError = authorize(context, options);
     if (authError) return authError;
     const capabilities = RefreshQuerySchema.safeParse(context.req.query("includeCapabilities"));
-    if (!capabilities.success) return invalidRequest(context);
+    const modelCapabilities = RefreshQuerySchema.safeParse(context.req.query("includeModelCapabilities"));
+    if (!capabilities.success || !modelCapabilities.success) return invalidRequest(context);
     const body = DeleteAccountBodySchema.safeParse(await readJson(context));
     if (!body.success) return invalidRequest(context);
     const mutation = ProviderSettingsMutationSchema.safeParse({
@@ -191,7 +194,7 @@ export function createProviderSettingsRoutes(options: ProviderSettingsRouteOptio
     if (!mutation.success) return invalidRequest(context);
     try {
       const result = await options.store.mutate(mutation.data);
-      return context.json({ ...result, snapshot: withCapabilities(result.snapshot, capabilities.data === "true") });
+      return context.json({ ...result, snapshot: withCapabilities(result.snapshot, capabilities.data === "true", modelCapabilities.data === "true") });
     } catch (error) {
       return handleStoreError(context, error);
     }
