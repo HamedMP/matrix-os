@@ -67,10 +67,24 @@ export function createCanonicalActionTools(options: { homeForOwner(owner: Canoni
   const descriptions: Record<string, string> = { matrix_list_apps: "List bounded owner Vite apps.", matrix_inspect_app: "Inspect an exact owner app without secret/config reads.", matrix_search_workspace: "Search bounded safe source text in one owner app.", matrix_open_app: "Return navigation intent for an exact validated existing owner app.", matrix_apply_app_files: "Propose an approved bounded owner Vite app file batch. Every existing file needs its expected SHA256; null means exclusive create. Never installs dependencies or runs code." };
   const meta = (toolId: string, effect: QualifiedActionTool["effect"], approval = false): QualifiedActionTool => ({ toolId, schemaRevision: "canonical_apps_v1", description: descriptions[toolId]!, inputSchema: z.toJSONSchema(schemas[toolId]!), effect, approval, reconciliation: effect === "files", cancellation: "before_dispatch" });
   const normalize = (schema: z.ZodType) => (input: unknown) => { BoundedActionJsonSchema.parse(input); const args = schema.parse(input); BoundedActionJsonSchema.parse(args); return args; };
-  const manifest = async (home: string, app: string) => {
+  const manifest = async (home: string, app: string, discovery = false) => {
     const path = await safeFile(home, `apps/${app}/matrix.json`);
-    const parsed = AppManifestSchema.parse(JSON.parse(await boundedText(path)));
-    if (parsed.slug !== app || parsed.runtime !== "vite") throw new CanonicalActionError();
+    let text: string;
+    try { text = await boundedText(path); }
+    catch (error: unknown) {
+      if (discovery && (error as NodeJS.ErrnoException).code === "ENOENT") return null;
+      throw error;
+    }
+    let parsed;
+    try { parsed = AppManifestSchema.parse(JSON.parse(text)); }
+    catch (error: unknown) {
+      if (discovery && (error instanceof SyntaxError || error instanceof z.ZodError)) return null;
+      throw error;
+    }
+    if (parsed.slug !== app || parsed.runtime !== "vite") {
+      if (discovery) return null;
+      throw new CanonicalActionError();
+    }
     return parsed;
   };
   const list: CanonicalActionTool = { ...meta("matrix_list_apps", "read"), normalize: normalize(z.object({}).strict()), async execute(input) {
@@ -82,13 +96,15 @@ export function createCanonicalActionTools(options: { homeForOwner(owner: Canoni
     for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
       input.signal.throwIfAborted();
       if (!entry.isDirectory() || !SAFE_SLUG.test(entry.name)) continue;
-      const m = await manifest(home, entry.name);
+      const m = await manifest(home, entry.name, true);
+      if (!m) continue;
       results.push({ app: m.slug, name: m.name.slice(0, 160) });
     }
     return BoundedActionJsonSchema.parse({ apps: results });
   } };
   const inspect: CanonicalActionTool = { ...meta("matrix_inspect_app", "read"), normalize: normalize(inspectSchema), async execute(input) {
     input.signal.throwIfAborted(); const args = inspectSchema.parse(input.arguments); const home = await options.homeForOwner(input.owner); const m = await manifest(home, args.app);
+    if (!m) throw new CanonicalActionError();
     const files = [];
     for (const path of args.paths ?? []) {
       input.signal.throwIfAborted();

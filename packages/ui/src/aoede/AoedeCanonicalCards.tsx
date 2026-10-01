@@ -2,6 +2,7 @@
 import React, { useState } from "react";
 import type { CanonicalChatApprovalView, CanonicalChatApprovalDecision, CanonicalOperationView } from "@matrix-os/contracts";
 import { CanonicalChatInputForm } from "../chat/CanonicalChatInputForm.js";
+import { Button } from "../Button.js";
 import type { AoedeController } from "./controller.js";
 import type { AoedeCanonicalProjection } from "./projection.js";
 import { boundedAoedeText } from "./presentation.js";
@@ -32,8 +33,9 @@ function ApprovalCard({ view, controller }: { view: CanonicalChatApprovalView; c
     <h3>{boundedAoedeText(view.title, 160)}</h3>
     {view.description ? <p>{boundedAoedeText(view.description)}</p> : null}
     <p>{view.pending ? "Your decision is required" : view.decision ? `Decision: ${decisions[view.decision]}` : "Approval closed"}</p>
-    {view.pending ? <div role="group" aria-label="Approval decision">{view.allowedDecisions.map(decision =>
-      <button key={decision} type="button" disabled={busy || !view.argumentDigest} onClick={() => void submit(decision)}>{decisions[decision]}</button>)}</div> : null}
+    {view.pending ? <div className="matrix-aoede__decisions" role="group" aria-label="Approval decision">{view.allowedDecisions.map(decision =>
+      <Button key={decision} className="matrix-aoede__button" variant={decision === "approve" || decision === "approve_for_session" ? "primary" : "secondary"}
+        disabled={busy || !view.argumentDigest} onClick={() => void submit(decision)}>{decisions[decision]}</Button>)}</div> : null}
     {view.pending && !view.argumentDigest ? <p>This action has no verified argument binding. It cannot be approved here.</p> : null}
     {failed ? <p role="alert">The decision could not be applied. Review the current action and try again.</p> : null}
   </section>;

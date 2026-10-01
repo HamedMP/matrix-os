@@ -230,7 +230,7 @@ describe("AoedePanel standalone presentation", () => {
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     expect(view.commands.retry).toHaveBeenCalledTimes(1);
     view.rerender(<AoedePanel {...view.props} error={{ ...error, code: "x".repeat(10000) } as unknown as SafeVoiceError} />);
-    expect(screen.getByRole("alert")).toHaveTextContent("Voice stopped safely");
+    expect(screen.getByRole("alert")).toHaveTextContent("The request could not be completed");
     expect(screen.getByRole("alert").textContent!.length).toBeLessThanOrEqual(200);
     expect(aoedeErrorCopy("__proto__")).toBe(aoedeErrorCopy("internal_failure"));
     expect(aoedeErrorCopy("constructor")).toBe(aoedeErrorCopy("internal_failure"));

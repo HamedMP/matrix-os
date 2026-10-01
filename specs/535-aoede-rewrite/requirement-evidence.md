@@ -2,9 +2,17 @@
 
 Branch `feat/aoede-product-rebuild` over base `1eafe737b2668a84592eacadb307707e094eb1a7` (`main` is a direct ancestor; `git diff main` is the full-branch diff). Scope: Web Canvas and browser Web Desktop only; Electron Desktop is deferred. The shared `electron_desktop` protocol value remains compatibility-only. A = locally implemented; B = deterministically validated by a reproducible command on the final working tree; C = release-qualified. No row claims C.
 
-## Deterministic gate provenance (2026-10-01)
+## High-review corrections and final revision evidence (2026-10-01)
 
-All commands run from this worktree's repository root without sourcing `.env` or invoking live providers. Logs and inspected captures are private local review artifacts under `.amp/in/artifacts/`, not shipped assets. Historical checkpoint counts are not completion evidence. The committed implementation passed these gates; after committing this evidence, repeat the gates on final HEAD with `*-final-head.log` names before handing back. Do not make further source edits or treat this instruction as an already-executed check.
+The high-effort read-only reviewer found six local defects, then two more in focused rereview. Repairs preserve named object properties in runner schemas; keep explicit Pause through canonical progress and reconnect; count only undrained audio as queue pressure; preserve truthful live-media status on transient Chat failures; skip unqualified manifests during app discovery without hiding filesystem/security errors; and render separate approval targets. The real speech adapter now retains only 250ms idle-silence pre-roll and terminalizes true utterance overflow with a retryable error. Replacement transport attach restores current run truth (including a run finishing while detached), preserves saved Pause, and emits the required `session.resumed` epoch handshake. Visual inspection also found and repaired the missing shell primary-background token.
+
+Regression evidence includes the real five-tool inventory through the actual coding adapter and runner schema validator; real engine/controller pause/reconnect sequences; actual stalled-queue overflow versus drained capture; real chunked speech adapter with 13,108 silent frames followed by speech, bounded WAV size and sample boundaries; and mixed manifest discovery with strict exact reads and symlink rejection. Both isolated web stages execute approval target-size/separation, visible primary background, focus-outline and keyboard-submission assertions. Inspected captures: `aoede/web_canvas-approval-focused.png` and `aoede/web_desktop-approval-focused.png`.
+
+Final revision gates use `high-review-final-head-{affected,postgres,typecheck,build,patterns,react-doctor,fixture}.log` under `.amp/in/artifacts/`; each records the checked Git revision before its command. These logs, not the historical counts below, are current-tree evidence. The final response reports actual outcomes and any limitations. The first broad high-review run overlapped new regression edits and failed two reconnect cases plus stale error-copy expectations; it is retained as `high-review-broad.log`, not counted as a final pass. Red reproductions and focused green runs are retained separately. No paid provider, physical audio device, full/parity runtime or shared infrastructure was used.
+
+## Historical deterministic baseline (before high-review corrections)
+
+All commands ran from this worktree's repository root without sourcing `.env` or invoking live providers. Logs and inspected captures are private local review artifacts under `.amp/in/artifacts/`, not shipped assets. The following counts describe the earlier committed implementation and are not proof of the high-review fixes.
 
 - `bun run typecheck` and `pnpm --filter <package> exec tsc --noEmit` for contracts, gateway, UI and `./shell`: pass. Log: `typecheck-completion-retry.log`.
 - `bun run check:patterns`: zero violations, five advisories. Touched mutating routes have `bodyLimit`; validated path and trusted principal boundaries were manually reviewed. Log: `patterns-completion.log`.
@@ -68,13 +76,17 @@ Two structured review passes ran over the implementation:
 
 All fixes carry regression tests in the suites listed above.
 
+The additional high-effort review and focused rereviews are recorded in the current correction section above. Its final focused check reported no additional actionable finding and independently passed the reconnect, real-adapter and shell-host suites; subsequent local testing also covers a run terminalizing before replacement attach. These are deterministic local results, not release qualification.
+
 Strict follow-up review against the handoff found and repaired: qualified clarification being rejected by the coding adapter; cross-app/traversal result projection; stale media acquisitions; post-dispatch cancellation affordances; device-loss default fallback; deferred sink failures falling through to default output; missing consequential fake composition; and missing real-worker crash evidence. A second focused pass found oldest-first bounded operation history, blocked queued playback after explicit output recovery, and stale device setter failures. These now have discriminating regression cases, including tied timestamps and slow capture cleanup. The screenshot gate rejects malformed schemas and missing fake seams. Mock surface images are labeled as isolated-host evidence rather than full-shell integration.
 
 ## Skills and external sources used
 
-Skills: brainstorming (approved plan, no new design), ce-work, ce-code-review, commit, ai-elements, shadcn, agent-browser, launch-app and web-design-guidelines. Repository guidance, constitution, approved spec/plan/contracts, speech domain docs and review-pipeline rules govern local ownership and verification.
+Skills: brainstorming (approved plan, no new design), ce-work, ce-code-review, commit, ai-elements, shadcn, frontend-design, agent-browser, launch-app and web-design-guidelines. Repository guidance, constitution, approved spec/plan/contracts, speech domain docs and review-pipeline rules govern local ownership and verification.
 
 Authoritative references: [Codex App Server](https://developers.openai.com/codex/app-server/), [Media Capture](https://www.w3.org/TR/mediacapture-streams/), [Audio Output Devices](https://www.w3.org/TR/audio-output/), [Web Audio](https://www.w3.org/TR/webaudio/), [Node child processes](https://nodejs.org/api/child_process.html), [node-postgres pooling](https://node-postgres.com/features/pooling), [Tailwind Vite setup](https://tailwindcss.com/docs/installation/using-vite), and [Zod 4 migration](https://zod.dev/v4/changelog?id=deprecates-strict-and-passthrough). The current corrections are local policy, projection, race and evidence bugs, not a newly diagnosed upstream regression; new GitHub issue searching is unnecessary. Historical Codex issue/PR research in `research.md` is not represented as newly reverified.
+
+High-review fixes additionally used the official [JSON Schema object reference](https://json-schema.org/understanding-json-schema/reference/object), [shadcn Button documentation](https://ui.shadcn.com/docs/components/base/button), and [Web Interface Guidelines](https://raw.githubusercontent.com/vercel-labs/web-interface-guidelines/main/command.md). The silence buffer and reconnect repairs change local state/queue contracts without changing a provider API or diagnosing upstream behavior.
 
 ## Separately authorized qualification gates
 

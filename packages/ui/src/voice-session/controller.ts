@@ -101,6 +101,7 @@ export class VoiceSessionController {
   private readonly sessionId: string;
   private readonly onCommand?: (command: VoiceSessionCommand) => void;
   private activeResponse: ActiveResponsePlayback | null = null;
+  private userPaused = false;
   private disposed = false;
 
   constructor(options: {
@@ -167,7 +168,9 @@ export class VoiceSessionController {
     switch (frame.type) {
       case "session.resumed":
       case "session.state": {
-        const lifecycle = LIFECYCLE_PROJECTION[frame.state];
+        const projected = LIFECYCLE_PROJECTION[frame.state];
+        const lifecycle = this.userPaused && ["listening", "thinking", "using_tool", "speaking"].includes(projected)
+          ? "paused" : projected;
         next = {
           ...this.snapshot,
           state: lifecycle,
@@ -320,12 +323,14 @@ export class VoiceSessionController {
 
   pause(): void {
     if (!this.canCommand()) return;
+    this.userPaused = true;
     this.update({ ...this.snapshot, state: "paused", muted: true, pushToTalkActive: false });
     this.command({ type: "session.pause" });
   }
 
   resume(): void {
     if (!this.canCommand()) return;
+    this.userPaused = false;
     this.update({ ...this.snapshot, state: "listening", muted: false });
     this.command({ type: "session.resume" });
   }
@@ -362,7 +367,7 @@ export class VoiceSessionController {
   }
 
   beginPushToTalk(): void {
-    if (!this.canCommand() || this.snapshot.pushToTalkActive) return;
+    if (!this.canCommand() || this.snapshot.state === "paused" || this.snapshot.pushToTalkActive) return;
     this.update({ ...this.snapshot, pushToTalkActive: true, muted: false });
     this.command({ type: "capture.start", mode: "push_to_talk" });
   }
@@ -383,6 +388,7 @@ export class VoiceSessionController {
 
   retry(): void {
     if (this.disposed || this.snapshot.state !== "failed") return;
+    this.userPaused = false;
     this.update({ ...this.snapshot, state: "connecting", error: null, muted: false });
     this.command({ type: "session.retry" });
   }

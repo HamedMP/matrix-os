@@ -160,7 +160,24 @@ async function main() {
               await page.getByText("Answer submitted", { exact: true }).waitFor();
               await page.screenshot({ path: path.join(OUT_DIR, `${surface}-clarification-submitted.png`), fullPage: true });
             } else if (scenario === "approval") {
-              await page.getByRole("button", { name: "Approve", exact: true }).click();
+              const controls = await page.getByRole("group", { name: "Approval decision" }).getByRole("button").evaluateAll(nodes => nodes.map(node => {
+                const rect = node.getBoundingClientRect();
+                const style = getComputedStyle(node);
+                return { text: node.textContent, left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom,
+                  width: rect.width, height: rect.height, background: style.backgroundColor, color: style.color };
+              }));
+              if (controls.length !== 3 || controls.some(control => control.width < 44 || control.height < 44)) throw new Error("approval targets are missing or too small");
+              if (controls[0].background === "rgba(0, 0, 0, 0)" || controls[0].background === controls[0].color) throw new Error("Approve button lacks a visible primary background");
+              for (let index = 1; index < controls.length; index++) {
+                const previous = controls[index - 1]; const current = controls[index];
+                if (current.left - previous.right < 8 && current.top - previous.bottom < 8) throw new Error("approval targets lack separation");
+              }
+              const approve = page.getByRole("button", { name: "Approve", exact: true });
+              await approve.focus();
+              const focus = await approve.evaluate(node => ({ focused: document.activeElement === node, outline: getComputedStyle(node).outlineStyle }));
+              if (!focus.focused || focus.outline === "none") throw new Error("approval keyboard focus is not visible");
+              await page.screenshot({ path: path.join(OUT_DIR, `${surface}-approval-focused.png`), fullPage: true });
+              await approve.press("Enter");
               await page.getByText("Decision: Approve", { exact: true }).waitFor();
             } else if (scenario === "navigation-artifact") {
               await page.getByRole("button", { name: "Open timer", exact: true }).click();

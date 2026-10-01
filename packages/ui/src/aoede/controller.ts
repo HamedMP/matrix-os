@@ -93,6 +93,7 @@ export function createAoedeController(owner: AoedeOwnerOptions, dependencies: { 
   let unsubscribeMedia: (() => void) | null = null;
   let refreshFlight: Promise<void> | null = null;
   let refreshAgain = false;
+  let requestError: SafeVoiceError | null = null;
   let unavailable = false;
   let providerCatalog: CanonicalProviderCatalog | null = null;
   let providerFlight: Promise<CanonicalProviderCatalog | null> | null = null;
@@ -123,15 +124,21 @@ export function createAoedeController(owner: AoedeOwnerOptions, dependencies: { 
     // A safe voice error (permission_denied, input_unavailable…) is already
     // truthful — surface it instead of collapsing to a generic failure.
     const safe = error instanceof VoiceSessionApiError ? error.safeError : undefined;
-    patch({ status: "failed", microphoneActive: false, error: lost
+    requestError = lost
       ? { code: "chat_unavailable", retryable: false, recovery: "none" }
-      : (safe ?? { code: "internal_failure", retryable: true, recovery: "start_new_session" }) });
+      : (safe ?? { code: "internal_failure", retryable: true, recovery: "start_new_session" });
+    // A failed Chat request does not stop media. Preserve its live projection.
+    patch({ ...(!lost && mediaLive() ? {} : { status: "failed", microphoneActive: false }), error: requestError });
     if (lost) { source?.dispose(); source = null; void endMedia(false); }
   };
   const acceptDetail = (value: CanonicalChatDetailResponse) => {
     if (value.record.chat.id !== snapshot.binding?.chatId || (detail && value.record.chat.revision < detail.record.chat.revision)) return;
     detail = value;
-    patch({ canonical: projectAoedeCanonical(detail), boundProviderInstanceId: value.record.providerBinding?.instanceId ?? null });
+    const recovered = requestError !== null;
+    requestError = null;
+    const live = media?.getSnapshot();
+    patch({ canonical: projectAoedeCanonical(detail), boundProviderInstanceId: value.record.providerBinding?.instanceId ?? null,
+      ...(recovered ? { error: live?.error ?? live?.notice ?? live?.voice?.error ?? null } : {}) });
   };
   const refresh = (): Promise<void> => {
     if (refreshFlight) { refreshAgain = true; return refreshFlight; }
@@ -168,7 +175,7 @@ export function createAoedeController(owner: AoedeOwnerOptions, dependencies: { 
         : value.phase === "idle" ? snapshot.status : value.phase;
       const provisional = voice?.provisionalTranscript?.text;
       patch({ status, microphoneActive: value.phase === "active" && !!voice && !voice.muted && (voice.turnMode !== "push_to_talk" || voice.pushToTalkActive),
-        error: value.error ?? value.notice ?? voice?.error ?? null,
+        error: value.error ?? value.notice ?? voice?.error ?? requestError,
         canonical: { ...projectAoedeCanonical(detail), ...(provisional ? { captions: { ...projectAoedeCanonical(detail).captions, utterance: boundedAoedeText(provisional), provisional: true } } : {}) } });
     });
     source = api.events();

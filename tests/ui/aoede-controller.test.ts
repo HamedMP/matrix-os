@@ -103,6 +103,21 @@ it("client calls providers, PATCH selection and POST action cancel with schema v
 });
 
 describe("Aoede shell owner", () => {
+  it.each(["refresh", "mutation"])("keeps live microphone truth on transient %s failure", async failure => {
+    const h = harness(undefined, runningDetail()); await h.controller.open();
+    vi.mocked(h.media.getSnapshot).mockReturnValue({ phase: "active", voice: { state: "listening", muted: false, turnMode: "hands_free" }, error: null, notice: null } as ReturnType<VoiceSessionClient["getSnapshot"]>);
+    h.notifyMedia();
+    expect(h.controller.getSnapshot()).toMatchObject({ status: "listening", microphoneActive: true });
+    if (failure === "refresh") { h.detailFn.mockRejectedValueOnce(new AoedeRequestError(503)); await h.controller.refresh(); }
+    else { h.cancelRun.mockRejectedValueOnce(new AoedeRequestError(503)); expect(await h.controller.cancelGeneration()).toBe(false); }
+    expect(h.controller.getSnapshot()).toMatchObject({ status: "listening", microphoneActive: true, error: { code: "internal_failure" } });
+    h.notifyMedia();
+    expect(h.controller.getSnapshot().error?.code).toBe("internal_failure");
+    await h.controller.refresh();
+    expect(h.controller.getSnapshot()).toMatchObject({ status: "listening", microphoneActive: true, error: null });
+    expect(h.media.end).not.toHaveBeenCalled(); h.controller.dispose();
+  });
+
   it("deletion/access loss stops media, blocks reopen/retry and only explicit New rebinds", async () => {
     const h = harness(); await h.controller.open();
     h.source.subscribe.mock.calls[0][0]({ type: "chat.changed", chatId: binding.chatId, cursor: 1, revision: 1, eventType: "chat.deleted" });

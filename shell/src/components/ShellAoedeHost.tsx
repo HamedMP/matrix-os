@@ -77,6 +77,7 @@ const SHELL_AOEDE_TOKEN_MAP = [
   "[--matrix-fg:var(--foreground)]",
   "[--matrix-border:var(--border)]",
   "[--matrix-accent:var(--primary)]",
+  "[--matrix-primary:var(--primary)]",
   "[--matrix-primary-fg:var(--primary-foreground)]",
   "[--matrix-destructive:var(--destructive)]",
   "[--matrix-muted-fg:var(--muted-foreground)]",

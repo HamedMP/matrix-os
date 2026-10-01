@@ -159,7 +159,6 @@ export class VoiceSessionPipeline {
     };
     s.turns.set(turn.turnId, turn);
     s.activeCaptureTurnId = turn.turnId;
-    s.queuedAudioMs = 0;
     s.adapter?.setCapture({ turnId: turn.turnId, mode: frame.mode });
   }
 
@@ -171,14 +170,6 @@ export class VoiceSessionPipeline {
       return;
     }
     s.adapter?.pushAudio({ turnId: turn.turnId, timestampMs: frame.timestampMs, data: frame.data });
-    s.queuedAudioMs += s.audio?.frameDurationMs ?? 20;
-    if (s.queuedAudioMs >= this.host.limits.maxQueuedAudioMs) {
-      // Backpressure: pause capture explicitly; never grow the queue.
-      this.runtime.stopCapture();
-      turn.phase = "finalizing";
-      this.runtime.emitError("audio_backpressure", true);
-      this.runtime.setState("paused");
-    }
   }
 
   onCaptureStop(frame: Extract<VoiceClientFrame, { type: "capture.stop" }>): void {
@@ -190,7 +181,6 @@ export class VoiceSessionPipeline {
     }
     turn.phase = "finalizing";
     if (s.activeCaptureTurnId === turn.turnId) s.activeCaptureTurnId = null;
-    s.queuedAudioMs = 0;
     s.adapter?.setCapture(null);
   }
 
@@ -391,7 +381,6 @@ export class VoiceSessionPipeline {
         }
         if (event.action === "speech_end" && turn.phase === "capturing") {
           turn.phase = "finalizing";
-          s.queuedAudioMs = 0;
         }
         return;
       }
@@ -426,7 +415,6 @@ export class VoiceSessionPipeline {
         turn.phase = event.outcome === "empty" ? "empty" : "rejected";
         if (s.activeCaptureTurnId === turn.turnId) {
           s.activeCaptureTurnId = null;
-          s.queuedAudioMs = 0;
           s.adapter?.setCapture(null);
         }
         this.runtime.emit({ type: "capture.completed", turnId: turn.turnId, outcome: event.outcome });
@@ -550,7 +538,6 @@ export class VoiceSessionPipeline {
     // start once the session returns to listening.
     if (s.activeCaptureTurnId === turn.turnId) {
       s.activeCaptureTurnId = null;
-      s.queuedAudioMs = 0;
       s.adapter?.setCapture(null);
     }
     if (event.truncated === true || event.text.trim().length === 0) {
@@ -685,7 +672,6 @@ export class VoiceSessionPipeline {
     const s = this.session;
     if (s.activeCaptureTurnId === turn.turnId) {
       s.activeCaptureTurnId = null;
-      s.queuedAudioMs = 0;
       s.adapter?.setCapture(null);
     }
     this.runtime.emit({ type: "capture.completed", turnId: turn.turnId, outcome: "failed" });

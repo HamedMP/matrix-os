@@ -37,7 +37,7 @@ const ERROR_COPY: Record<SafeVoiceErrorCode, string> = {
   chat_unavailable: "This conversation is unavailable. Start a new conversation explicitly to continue.",
   session_conflict: "Another voice session is active. End that session before retrying.",
   unsupported_surface: "Voice is not supported on this surface.",
-  internal_failure: "Voice stopped safely. Try again when ready.",
+  internal_failure: "The request could not be completed. Check the current status, then try again.",
 };
 
 /** Never render server messages, unknown codes, or inherited object properties. */

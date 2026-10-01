@@ -320,7 +320,7 @@ export const AOEDE_SCENARIOS: readonly AoedeScenario[] = [
     }),
     media: { frames: [voiceFrames.transcriptFinal(UTTERANCE), voiceFrames.listening(), voiceFrames.sessionError()] },
     drive: ["open", "start", "allow"],
-    ready: { state: "failed", texts: ["Voice stopped safely", "Retry"] },
+    ready: { state: "failed", texts: ["The request could not be completed", "Microphone off", "Retry"] },
   },
   {
     id: "ptt",

@@ -513,13 +513,38 @@ describe("createOpenAiVoiceMediaAdapter", () => {
     h.session.pushAudio({ turnId: "vturn_1", timestampMs: 20, data: frame });
     h.session.pushAudio({ turnId: "vturn_1", timestampMs: 40, data: frame });
     expect(eventsOfType(h.events, "error")).toEqual([
-      { type: "error", code: "audio_backpressure", retryable: false, fatal: false },
+      { type: "error", code: "audio_backpressure", retryable: true, fatal: false },
     ]);
+    expect(eventsOfType(h.events, "capture.completed")).toEqual([{ type: "capture.completed", turnId: "vturn_1", outcome: "failed" }]);
     h.session.setCapture(null);
     await flushAsync();
     // Everything past the cap is dropped — nothing reached the provider.
     expect(eventsOfType(h.events, "error")).toHaveLength(1);
     expect(h.calls).toHaveLength(0);
+  });
+
+  it("keeps bounded hands-free silence pre-roll and transcribes later speech", async () => {
+    const h = await startSession({ handler: () => jsonResponse({ text: "Speech after silence" }) });
+    h.session.setCapture({ turnId: "vturn_silence", mode: "hands_free" });
+    const silent = pcmS16Frame(0);
+    for (let index = 0; index < 13_108; index++) {
+      h.session.pushAudio({ turnId: "vturn_silence", timestampMs: index * 20, data: silent });
+      h.clock.advance(20);
+    }
+    expect(h.events).toEqual([]);
+    expect(h.calls).toHaveLength(0);
+    for (let index = 0; index < 20; index++) h.session.pushAudio({ turnId: "vturn_silence", timestampMs: h.clock.now() + index * 20, data: pcmS16Frame(8_000) });
+    h.session.setCapture(null);
+    await flushAsync();
+    expect(eventsOfType(h.events, "transcript.final")).toContainEqual(expect.objectContaining({ turnId: "vturn_silence", text: "Speech after silence" }));
+    expect(h.calls).toHaveLength(1);
+    const wav = (h.calls[0].init.body as FormData).get("file") as Blob;
+    // 250ms pre-roll + 400ms speech at 32 bytes/ms, plus the WAV header.
+    expect(wav.size).toBeLessThanOrEqual(20_844);
+    const pcm = Buffer.from(await wav.arrayBuffer()).subarray(44);
+    expect(pcm.readInt16LE(0)).toBe(0);
+    expect(pcm.readInt16LE(pcm.length - 2)).toBe(8_000);
+    h.session.close();
   });
 
   it("close() is idempotent and silences all pending work", async () => {

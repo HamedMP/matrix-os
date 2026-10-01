@@ -16,6 +16,21 @@ function frame(
 }
 
 describe("VoiceSessionController", () => {
+  it("keeps an explicit local pause while pre-pause activity frames arrive", () => {
+    const controller = new VoiceSessionController({ initialEpoch: 4, sessionId: SESSION_ID });
+    controller.receive(frame(1, { type: "session.state", state: "using_tool" }));
+    controller.pause();
+    for (const [index, state] of ["using_tool", "speaking", "listening"].entries()) {
+      controller.receive(frame(index + 2, { type: "session.state", state }));
+      expect(controller.getState()).toMatchObject({ state: "paused", muted: true });
+    }
+    controller.receive(frame(1, { type: "session.resumed", state: "thinking", reason: "restored" }, 5));
+    expect(controller.getState()).toMatchObject({ state: "paused", muted: true, epoch: 5 });
+    controller.resume();
+    controller.receive(frame(2, { type: "session.state", state: "listening" }, 5));
+    expect(controller.getState()).toMatchObject({ state: "listening", muted: false });
+  });
+
   it("fences stale epochs and duplicate or non-monotonic sequences", () => {
     const controller = new VoiceSessionController({ initialEpoch: 4, sessionId: SESSION_ID });
 

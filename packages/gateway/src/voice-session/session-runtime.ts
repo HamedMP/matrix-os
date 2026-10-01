@@ -305,7 +305,9 @@ export class VoiceSessionRuntime {
     if (s.state === "connecting") {
       this.emit({ type: "session.state", state: "connecting" });
     } else if (s.state === "reconnecting") {
-      const restored = s.restorableState;
+      // Work may have finished while no transport was attached. Restore the
+      // current run truth while preserving an explicit saved pause.
+      const restored = this.resumeTarget();
       s.state = restored;
       this.emit({ type: "session.resumed", state: restored, reason: "restored" });
     } else {
@@ -423,6 +425,16 @@ export class VoiceSessionRuntime {
     }
     binding.lastInboundSequence = frame.sequence;
     const bytes = new TextEncoder().encode(JSON.stringify(frame)).byteLength;
+    const audioMs = frame.type === "capture.audio" ? s.audio?.frameDurationMs ?? 20 : 0;
+    if (audioMs && s.queuedAudioMs + audioMs > this.host.limits.maxQueuedAudioMs) {
+      const turn = s.activeCaptureTurnId ? s.turns.get(s.activeCaptureTurnId) : undefined;
+      if (turn?.phase === "capturing") turn.phase = "finalizing";
+      this.stopCapture();
+      this.emitError("audio_backpressure", true);
+      this.setState("paused");
+      return Promise.resolve();
+    }
+    s.queuedAudioMs += audioMs;
     return enqueueSessionTask(s, () => {
       // Admission-time checks are insufficient: a reconnect/end can replace
       // this binding while the frame waits behind an asynchronous mutation.
@@ -433,7 +445,7 @@ export class VoiceSessionRuntime {
         return;
       }
       return this.dispatch(frame);
-    }, { bytes });
+    }, { bytes }).finally(() => { s.queuedAudioMs -= audioMs; });
   }
 
   /** Close admission immediately, then terminate in queue order exactly once. */
@@ -454,7 +466,7 @@ export class VoiceSessionRuntime {
   /** Current-state a replacement connection resumes into. */
   resumeTarget(): VoiceSessionState {
     const s = this.session;
-    if (s.state === "paused") return "paused";
+    if (s.state === "paused" || (s.state === "reconnecting" && s.restorableState === "paused")) return "paused";
     if (this.hasActiveRun()) return "thinking";
     return "listening";
   }
@@ -489,14 +501,15 @@ export class VoiceSessionRuntime {
         this.pipeline.onCaptureStop(frame);
         return;
       case "session.pause":
-        if (s.state === "listening" || s.state === "thinking" || s.state === "speaking") {
+        if (s.state === "listening" || s.state === "thinking" || s.state === "using_tool" || s.state === "speaking") {
+          this.stopCapture();
           this.setState("paused");
         } else {
           this.countStale("pause_in_state");
         }
         return;
       case "session.resume":
-        if (s.state === "paused") this.setState("listening");
+        if (s.state === "paused") this.setState("listening", true);
         else this.countStale("resume_in_state");
         return;
       case "session.end":
@@ -810,12 +823,15 @@ export class VoiceSessionRuntime {
       s.adapter?.setCapture(null);
       s.activeCaptureTurnId = null;
     }
-    s.queuedAudioMs = 0;
   }
 
-  setState(state: VoiceSessionState): void {
+  setState(state: VoiceSessionState, explicitResume = false): void {
     const s = this.session;
     if (s.state === state || s.state === "ending" || s.state === "ended") return;
+    // Only attachTransport commits the resumed lifecycle and epoch handshake.
+    if (s.state === "reconnecting" && ACTIVE_SESSION_STATES.has(state)) return;
+    // Canonical work continues while paused; it must not reopen capture.
+    if (s.state === "paused" && ACTIVE_SESSION_STATES.has(state) && !explicitResume) return;
     s.state = state;
     this.emit({ type: "session.state", state });
   }

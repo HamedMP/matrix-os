@@ -434,7 +434,10 @@ function runnerSafeJsonSchema(value: unknown): unknown {
   const safe: Record<string, unknown> = {};
   for (const [key, child] of Object.entries(value)) {
     if (!RUNNER_SCHEMA_DIALECT.has(key)) continue;
-    safe[key] = runnerSafeJsonSchema(child);
+    // `properties` is a name-to-schema map, not another schema object.
+    safe[key] = key === "properties" && child && typeof child === "object" && !Array.isArray(child)
+      ? Object.fromEntries(Object.entries(child).map(([name, schema]) => [name, runnerSafeJsonSchema(schema)]))
+      : runnerSafeJsonSchema(child);
   }
   // The runner dialect requires every string to carry a bounded maxLength;
   // regex-stripped strings get the transport bound, normalization still wins.

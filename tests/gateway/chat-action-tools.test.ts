@@ -6,6 +6,23 @@ import { createCanonicalActionTools } from "../../packages/gateway/src/chat/acti
 let home: string;
 afterEach(async () => { if (home) await rm(home, { recursive: true, force: true }); });
 describe("bounded owner app tools", () => {
+  it("lists valid Vite apps across missing, invalid and unsupported manifests", async () => {
+    home = await mkdtemp(join(tmpdir(), "matrix-action-"));
+    for (const app of ["alpha", "messages", "invalid", "static", "omega"]) await mkdir(join(home, "apps", app), { recursive: true });
+    for (const app of ["alpha", "omega", "static"]) await writeFile(join(home, "apps", app, "matrix.json"), JSON.stringify({
+      name: app, slug: app, version: "1.0.0", runtime: app === "static" ? "static" : "vite", runtimeVersion: "^24.0.0",
+      build: { command: "vite build", output: "dist" },
+    }));
+    await writeFile(join(home, "apps/invalid/matrix.json"), "{broken");
+    const tools = createCanonicalActionTools({ homeForOwner: async () => home });
+    const input = { owner: { type: "personal" as const, ownerId: "tools_owner" }, actionId: "action_list", arguments: {}, signal: new AbortController().signal };
+    expect(await tools[0].execute(input)).toEqual({ apps: [{ app: "alpha", name: "alpha" }, { app: "omega", name: "omega" }] });
+    await expect(tools[1].execute({ ...input, arguments: { app: "messages" } })).rejects.toThrow();
+    await expect(tools[1].execute({ ...input, arguments: { app: "static" } })).rejects.toThrow();
+    await symlink(join(home, "apps/alpha/matrix.json"), join(home, "apps/messages/matrix.json"));
+    await expect(tools[0].execute(input)).rejects.toThrow();
+  });
+
   it("rejects secret/traversal paths before access and exposes one inventory", async () => {
     home = await mkdtemp(join(tmpdir(), "matrix-action-"));
     const tools = createCanonicalActionTools({ homeForOwner: async () => home });

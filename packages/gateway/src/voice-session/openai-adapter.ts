@@ -52,6 +52,7 @@ const MAX_QUEUED_SEGMENTS = 16;
 const MAX_SYNTH_RESPONSES = 64;
 const MAX_INFLIGHT_TRANSCRIPTIONS = 4;
 const DEFAULT_MAX_CAPTURE_BYTES = 8 * 1024 * 1024;
+const SILENCE_PRE_ROLL_MS = 250;
 const DEFAULT_MAX_SYNTHESIS_BYTES = 16 * 1024 * 1024;
 const DEFAULT_VAD = { silenceThresholdRms: 500, silenceHangoverMs: 900, minSpeechMs: 250 } as const;
 
@@ -149,7 +150,6 @@ interface CaptureState {
   mode: VoiceTurnMode;
   chunks: Buffer[];
   bytes: number;
-  overflowed: boolean;
   speechMs: number;
   inSpeech: boolean;
   silenceTimer: VoiceTimer | null;
@@ -201,7 +201,6 @@ class ChunkedVoiceMediaSession implements VoiceMediaSession {
       mode: capture.mode,
       chunks: [],
       bytes: 0,
-      overflowed: false,
       speechMs: 0,
       inSpeech: false,
       silenceTimer: null,
@@ -210,7 +209,7 @@ class ChunkedVoiceMediaSession implements VoiceMediaSession {
 
   pushAudio(input: { turnId: string; timestampMs: number; data: string }): void {
     const cap = this.capture;
-    if (this.closed || !cap || cap.turnId !== input.turnId || cap.overflowed) return;
+    if (this.closed || !cap || cap.turnId !== input.turnId) return;
     let chunk: Buffer;
     try {
       chunk = Buffer.from(input.data, "base64");
@@ -219,16 +218,30 @@ class ChunkedVoiceMediaSession implements VoiceMediaSession {
       return;
     }
     if (chunk.length === 0) return;
+    this.runVad(cap, chunk);
+    if (cap.mode === "hands_free" && !cap.inSpeech && (this.audioCodec === "pcm_s16le" || this.audioCodec === "pcm_f32le")) {
+      // Idle listening retains only a short pre-roll, never an utterance-sized
+      // buffer. Preserve the leading boundary when speech actually starts.
+      const limit = Math.min(this.config.maxCaptureBytes, Math.ceil(chunk.length / this.frameMs(chunk) * SILENCE_PRE_ROLL_MS));
+      cap.chunks.push(chunk.subarray(Math.max(0, chunk.length - limit)));
+      cap.bytes += Math.min(chunk.length, limit);
+      while (cap.bytes > limit) {
+        const first = cap.chunks[0];
+        const removed = Math.min(first.length, cap.bytes - limit);
+        if (removed === first.length) cap.chunks.shift();
+        else cap.chunks[0] = first.subarray(removed);
+        cap.bytes -= removed;
+      }
+      return;
+    }
     if (cap.bytes + chunk.length > this.config.maxCaptureBytes) {
-      cap.overflowed = true;
-      cap.chunks = [];
-      cap.bytes = 0;
-      this.emit({ type: "error", code: "audio_backpressure", retryable: false, fatal: false });
+      this.discardCapture();
+      this.emit({ type: "error", code: "audio_backpressure", retryable: true, fatal: false });
+      this.emit({ type: "capture.completed", turnId: cap.turnId, outcome: "failed" });
       return;
     }
     cap.chunks.push(chunk);
     cap.bytes += chunk.length;
-    this.runVad(cap, chunk);
   }
 
   synthesize(command: VoiceSynthesisCommand): void {

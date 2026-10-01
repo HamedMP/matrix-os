@@ -154,6 +154,12 @@
 .matrix-aoede__canonical > *,
 .matrix-aoede__settings > * { min-inline-size: 0; max-inline-size: 100%; }
 
+.matrix-aoede__decisions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
 .matrix-aoede__error {
   margin: 0.5rem 1rem 0.75rem !important;
   padding: 0.625rem 0.75rem;
