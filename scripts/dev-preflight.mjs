@@ -154,7 +154,7 @@ export async function runPreflight(deps) {
   }
 
   try {
-    const integrations = await deps.authenticatedGet("/api/integrations");
+    const integrations = await deps.authenticatedGet("/api/integrations/available");
     if (integrations.status === 503 && integrations.json?.error === "integrations_unavailable") {
       checks.push(warn("integrations", "optional Pipedream integrations are not configured"));
     } else {

@@ -100,5 +100,6 @@ describe("local demo preflight", () => {
     expect(result.exitCode).toBe(0);
     expect(result.checks.find((check) => check.id === "aoede")).toMatchObject({ level: "PASS" });
     expect(result.checks.find((check) => check.id === "integrations")).toMatchObject({ level: "WARN" });
+    expect(deps.authenticatedGet).toHaveBeenCalledWith("/api/integrations/available");
   });
 });
