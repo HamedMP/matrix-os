@@ -23,13 +23,14 @@ it("renders live Codex Reconnecting before prompt admission and recovers without
   const client = createCanonicalChatWorkspaceClient();
   const initial = await h.getDetail();
   vi.mocked(client.list).mockResolvedValue({ items: [initial.record] });
-  vi.mocked(client.getDetail).mockResolvedValue(initial);
+  vi.mocked(client.getDetail).mockImplementation(async () => h.getDetail());
   client.acknowledgeCompletion = async () => (await h.getDetail()).record;
   try {
     render(<CanonicalChatWorkspace client={client} eventSource={source} catalog={h.catalog}
       projectId={null} initialChatId={h.chatId} initialView="conversation" active />);
     await act(async () => { await source.start(); });
     await waitFor(() => expect(h.frames.at(-1)?.type).toBe("chat.replay.end"));
+    await waitFor(() => expect(client.getDetail).toHaveBeenCalledTimes(2));
     await screen.findByRole("log");
     await act(async () => { await h.admit(); });
     const log = within(screen.getByRole("log"));
@@ -41,7 +42,7 @@ it("renders live Codex Reconnecting before prompt admission and recovers without
     await waitFor(() => expect(log.getByText("Started exactly once.")).toBeTruthy(), { timeout: 4_000 });
     await waitFor(() => expect(screen.queryByRole("button", { name: "Stop" })).toBeNull());
     expect(log.getAllByText("Started exactly once.")).toHaveLength(1);
-    expect(client.getDetail).toHaveBeenCalledTimes(1);
+    expect(client.getDetail).toHaveBeenCalledTimes(2);
     expect(h.openStream).toHaveBeenCalledTimes(1);
   } finally { cleanup(); source.dispose(); await h.close(); }
 }, 15_000);

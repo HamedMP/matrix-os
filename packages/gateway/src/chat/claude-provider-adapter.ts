@@ -127,20 +127,37 @@ function canonicalClaudeActivityEvent(
   activity: ClaudeActivity,
   status: "running" | "completed",
 ): CanonicalProviderRunEvent {
-  const projected = CanonicalProviderRunEventSchema.safeParse({
+  const fullProjection = CanonicalProviderRunEventSchema.safeParse({
     type: "agent.activity",
     ...activity,
     status,
   });
-  if (projected.success) return projected.data;
+  if (fullProjection.success) return fullProjection.data;
 
-  return CanonicalProviderRunEventSchema.parse({
+  // One rejected owner-only path must not erase independent safe metadata.
+  let projected = CanonicalProviderRunEventSchema.parse({
     type: "agent.activity",
     activityId: activity.activityId,
     kind: activity.kind,
     label: activity.label,
     status,
   });
+  if (activity.preview && activity.previewKind) {
+    const withPreview = CanonicalProviderRunEventSchema.safeParse({
+      ...projected,
+      preview: activity.preview,
+      previewKind: activity.previewKind,
+    });
+    if (withPreview.success) projected = withPreview.data;
+  }
+  if (activity.detail) {
+    const withDetail = CanonicalProviderRunEventSchema.safeParse({
+      ...projected,
+      detail: activity.detail,
+    });
+    if (withDetail.success) projected = withDetail.data;
+  }
+  return projected;
 }
 
 function classifiedClaudeFailureEvidence(text: string) {

@@ -84,7 +84,9 @@ OTA payloads.
 
 The `ready-for-ci` label is sticky: applying it starts full PR validation, and every later PR
 head reruns both core CI and Docker classification while the label remains. Reviewers must use
-the checks attached to the exact head SHA rather than an earlier green commit.
+the checks attached to the exact head SHA rather than an earlier green commit. Until CI is
+explicitly requested, the aggregate `CI Results` check stays red so skipped shards cannot be
+mistaken for validated source changes.
 
 ## Delivery Lane Router
 

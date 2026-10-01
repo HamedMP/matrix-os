@@ -430,7 +430,6 @@ describe("Claude canonical Chat Provider adapter", () => {
         status: "running",
         preview: "pnpm build",
         previewKind: "command",
-        detail: "Working directory: ~/apps/flappy-bird",
       },
       expect.objectContaining({
         type: "agent.activity",
@@ -613,7 +612,6 @@ describe("Claude canonical Chat Provider adapter", () => {
         status: "completed",
         preview: "pnpm build",
         previewKind: "command",
-        detail: "Working directory: ~/apps/flappy-bird",
       },
       {
         type: "assistant.delta",
@@ -623,13 +621,13 @@ describe("Claude canonical Chat Provider adapter", () => {
       {
         type: "assistant.delta",
         messageId: "claude_text_1",
-        delta: "~/apps/flappy-bird.",
+        delta: "/home/matrix/home/apps/flappy-bird.",
       },
       { type: "run.completed", outcome: "completed" },
     ]);
   });
 
-  it("preserves harmless JSX closers and prose separators while redacting real unrelated absolute paths", async () => {
+  it("preserves harmless JSX closers, prose separators, and owner-visible absolute paths", async () => {
     const spawnFn = vi.fn(() => child([
       JSON.stringify({
         type: "result",
@@ -646,7 +644,7 @@ describe("Claude canonical Chat Provider adapter", () => {
 
     expect(events).toContainEqual({
       type: "assistant.delta",
-      delta: "Renders <App />; compare vite.config.ts / tsconfig.json; inspect [redacted path]",
+      delta: "Renders <App />; compare vite.config.ts / tsconfig.json; inspect /private/secret/file.",
     });
   });
 

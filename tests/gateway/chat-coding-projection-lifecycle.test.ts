@@ -29,7 +29,7 @@ describe("Chat projection preserves the backing execution lifecycle", () => {
         nativeSignal = signal;
         const base = () => ({ threadId: thread.id, eventId: nextEventId(), occurredAt: now().toISOString() });
         await publishEvents!({ events: [{ ...base(), type: "thread.status", status: "running" },
-          { ...base(), type: "assistant.text.delta", messageId: "msg_active", delta: "Working" }] });
+          { ...base(), type: "assistant.text.delta", messageId: "msg_active", delta: "Working " }] });
         await (starts === 1 ? finish.promise : finishRetry.promise);
         return { events: [{ ...base(), type: "thread.completed", outcome: "completed" }] };
       },
@@ -108,7 +108,7 @@ describe("Chat projection preserves the backing execution lifecycle", () => {
         const base = () => ({ threadId: thread.id, eventId: nextEventId(), occurredAt: now().toISOString() });
         await publishEvents!({ events: [{ ...base(), type: "thread.status", status: "running" }] });
         for (let i = 0; i < 26; i += 1) {
-          await publishEvents!({ events: [{ ...base(), type: "assistant.text.delta", messageId: "msg_large", delta: "x".repeat(4_000) }] });
+          await publishEvents!({ events: [{ ...base(), type: "assistant.text.delta", messageId: "msg_large", delta: "safe ".repeat(800) }] });
         }
         await finish.promise;
         return { events: [{ ...base(), type: "thread.completed", outcome: "completed" }] };
@@ -176,7 +176,7 @@ describe("Chat projection preserves the backing execution lifecycle", () => {
         nativeThreadId = thread.id;
         for (let i = 0; i < 26; i += 1) {
           await publishEvents!({ events: [{ threadId: thread.id, eventId: nextEventId(),
-            occurredAt: now().toISOString(), type: "assistant.text.delta", messageId: "msg_large", delta: "x".repeat(4_000) }] });
+            occurredAt: now().toISOString(), type: "assistant.text.delta", messageId: "msg_large", delta: "safe ".repeat(800) }] });
         }
         await finish.promise;
         return { events: [] };

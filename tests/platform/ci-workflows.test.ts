@@ -45,6 +45,55 @@ function readChangeDetectionCheckoutRun(root: string): string | undefined {
   );
 }
 
+function readCiResultsRun(root: string): string | undefined {
+  const workflow = parse(
+    readFileSync(join(root, '.github/workflows/ci.yml'), 'utf8'),
+  ) as {
+    jobs?: {
+      'ci-results'?: {
+        steps?: Array<{
+          name?: string;
+          run?: string;
+        }>;
+      };
+    };
+  };
+
+  return workflow.jobs?.['ci-results']?.steps?.find(
+    (step) => step.name === 'Summarize required CI jobs',
+  )?.run;
+}
+
+function runCiResults(ciResultsRun: string, triggerRequested: boolean): number | null {
+  const tempDir = mkdtempSync(join(tmpdir(), 'matrix-ci-results-'));
+  const summary = join(tempDir, 'summary');
+
+  try {
+    return spawnSync('bash', ['-c', ciResultsRun], {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        AGENT_SDK_COMPATIBILITY_RESULT: 'success',
+        CHANGES_RESULT: 'success',
+        CI_TRIGGER_REQUESTED: String(triggerRequested),
+        DOCS_CONTRACT_RESULT: 'success',
+        E2E_RESULT: 'success',
+        GITHUB_STEP_SUMMARY: summary,
+        OS_VIEW_PARITY_RESULT: 'success',
+        PATTERNS_RESULT: 'success',
+        REACT_DOCTOR_RESULT: 'success',
+        SHELL_PRODUCTION_BUILD_RESULT: 'success',
+        SHOULD_RUN: 'false',
+        SYNC_CLIENT_RESULT: 'success',
+        TYPECHECK_RESULT: 'success',
+        UNIT_RESULT: 'success',
+      },
+    }).status;
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+}
+
 function runChangeDetectionCheckout(
   checkoutRun: string,
   failuresBeforeSuccess: number,
@@ -238,10 +287,16 @@ describe('CI workflows', () => {
     const unlabeled = runPullRequestChangeDetection(process.cwd(), path, false);
     expect(unlabeled.status, unlabeled.stderr).toBe(0);
     expect(unlabeled.output).toContain('should_run=false');
+    if (path.endsWith('ci.yml')) {
+      expect(unlabeled.output).toContain('trigger_requested=false');
+    }
 
     const labeled = runPullRequestChangeDetection(process.cwd(), path, true);
     expect(labeled.status, labeled.stderr).toBe(0);
     expect(labeled.output).toContain('should_run=true');
+    if (path.endsWith('ci.yml')) {
+      expect(labeled.output).toContain('trigger_requested=true');
+    }
   });
 
   it('queues main CI runs and delegates only full-plan supersession to a narrow workflow', () => {
@@ -288,6 +343,11 @@ describe('CI workflows', () => {
     expect(workflow).toContain('needs.os-view-parity.result');
     expect(workflow).toContain('needs.e2e.result');
     expect(workflow).toContain('"$PATTERNS_RESULT" "$REACT_DOCTOR_RESULT" "$SYNC_CLIENT_RESULT" "$AGENT_SDK_COMPATIBILITY_RESULT" "$UNIT_RESULT" "$DOCS_CONTRACT_RESULT" "$OS_VIEW_PARITY_RESULT"');
+
+    const ciResultsRun = readCiResultsRun(root);
+    expect(ciResultsRun).toBeDefined();
+    expect(runCiResults(ciResultsRun ?? '', false)).not.toBe(0);
+    expect(runCiResults(ciResultsRun ?? '', true)).toBe(0);
     expect(workflow).toContain('Branch protection should require this aggregate job');
   });
 

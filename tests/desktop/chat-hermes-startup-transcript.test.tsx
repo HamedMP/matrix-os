@@ -21,18 +21,19 @@ it("renders Hermes Reconnecting from HTTP before success without a failed-run fl
   const client = createCanonicalChatWorkspaceClient();
   const initial = await h.getDetail();
   vi.mocked(client.list).mockResolvedValue({ items: [initial.record] });
-  vi.mocked(client.getDetail).mockResolvedValue(initial);
+  vi.mocked(client.getDetail).mockImplementation(async () => h.getDetail());
   client.acknowledgeCompletion = async () => (await h.getDetail()).record;
   try {
     render(<CanonicalChatWorkspace client={client} eventSource={h.source} catalog={h.catalog}
       projectId={null} initialChatId={h.chatId} initialView="conversation" active />);
     await act(async () => { await h.source.start(); });
     await screen.findByRole("log");
+    await waitFor(() => expect(client.getDetail).toHaveBeenCalledTimes(2));
     await act(async () => { await h.admit(); });
     await waitFor(() => expect(within(screen.getByRole("log")).getByText("Reconnecting… 1/5")).toBeTruthy());
     expect(screen.queryByText(/Agent work failed|connection failed/)).toBeNull();
     expect(screen.getByRole("button", { name: "Stop" })).toBeTruthy();
-    expect(client.getDetail).toHaveBeenCalledTimes(1);
+    expect(client.getDetail).toHaveBeenCalledTimes(2);
     await waitFor(() => expect(h.process.requests().filter((request) => request.method === "prompt.submit")).toHaveLength(1));
     await act(async () => {
       h.process.children[1]!.event("message.complete", { text: "Startup recovered once.", status: "complete" });
@@ -40,6 +41,6 @@ it("renders Hermes Reconnecting from HTTP before success without a failed-run fl
     });
     await waitFor(() => expect(within(screen.getByRole("log")).getByText("Startup recovered once.")).toBeTruthy());
     expect(screen.queryByRole("button", { name: "Stop" })).toBeNull();
-    expect(client.getDetail).toHaveBeenCalledTimes(1);
+    expect(client.getDetail).toHaveBeenCalledTimes(2);
   } finally { cleanup(); await h.close(); }
 });

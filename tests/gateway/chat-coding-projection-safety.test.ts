@@ -62,7 +62,11 @@ describe("coding-thread to Chat projection safety", () => {
       expect(events.filter((event) => event.type === "run.completed")).toEqual([
         { type: "run.completed", outcome: "completed" },
       ]);
-      expect(events).toContainEqual({ type: "assistant.delta", messageId: "msg_result", delta: "Command succeeded." });
+      expect(events
+        .filter((event) => event.type === "assistant.delta" && event.messageId === "msg_result")
+        .map((event) => event.delta)
+        .join(""))
+        .toBe("Command succeeded.");
       expect(events.filter((event) => event.type === "agent.activity").map((event) => event.status))
         .toEqual(["running", "completed"]);
       if (omitted) expect(JSON.stringify(events)).not.toContain(omitted);

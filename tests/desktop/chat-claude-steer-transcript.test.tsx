@@ -29,9 +29,8 @@ it("renders real Claude post-Steer HTTP events in the Electron transcript before
   const source = createCanonicalChatEventSource({ openStream: h.openStream });
   const client = createCanonicalChatWorkspaceClient();
   const initial = await h.getDetail();
-  // A frozen initial snapshot makes HTTP content delivery necessary for progress.
   vi.mocked(client.list).mockResolvedValue({ items: [initial.record] });
-  vi.mocked(client.getDetail).mockResolvedValue(initial);
+  vi.mocked(client.getDetail).mockImplementation(async () => h.getDetail());
   // Completion acknowledgement is not part of this streaming seam. Avoid its
   // separate user-state invalidation triggering an unrelated detail refresh.
   client.acknowledgeCompletion = async () => (await h.getDetail()).record;
@@ -40,6 +39,7 @@ it("renders real Claude post-Steer HTTP events in the Electron transcript before
       projectId={null} initialChatId={h.chatId} initialView="conversation" active />);
     await act(async () => { await source.start(); });
     await waitFor(() => expect(h.frames.at(-1)?.type).toBe("chat.replay.end"));
+    await waitFor(() => expect(client.getDetail).toHaveBeenCalledTimes(2));
     await screen.findByRole("log");
     let admitted!: Awaited<ReturnType<typeof h.admit>>;
     await act(async () => { admitted = await h.admit(); });
@@ -58,7 +58,7 @@ it("renders real Claude post-Steer HTTP events in the Electron transcript before
     await waitFor(() => {
       const log = within(screen.getByRole("log"));
       expect(log.getByText(AFTER_STEER)).toBeTruthy();
-      expect(log.getByText("src/streaming.ts")).toBeTruthy();
+      expect(log.getByText("/safe/project/src/streaming.ts")).toBeTruthy();
     });
     const log = within(screen.getByRole("log"));
     expect(log.getByText(STEER_REQUEST)).toBeTruthy();
@@ -66,7 +66,7 @@ it("renders real Claude post-Steer HTTP events in the Electron transcript before
     expect(screen.getByRole("button", { name: "Stop" })).toBeTruthy();
     expect(resumed.resultReleased).toBe(false);
     expect(resumed.exited).toBe(false);
-    expect(client.getDetail).toHaveBeenCalledTimes(1);
+    expect(client.getDetail).toHaveBeenCalledTimes(2);
     expect(h.openStream).toHaveBeenCalledTimes(1);
     expect(log.getAllByText(AFTER_STEER)).toHaveLength(1);
     const transcript = screen.getByRole("log").textContent!;
@@ -85,7 +85,7 @@ it("renders real Claude post-Steer HTTP events in the Electron transcript before
       frame.content.messages?.some((message) => message.parts
         .some((part) => part.type === "text" && part.text === FINAL_TEXT))
     ))).toBe(true);
-    expect(client.getDetail).toHaveBeenCalledTimes(1);
+    expect(client.getDetail).toHaveBeenCalledTimes(2);
   } finally {
     cleanup(); source.dispose(); await h.close();
   }

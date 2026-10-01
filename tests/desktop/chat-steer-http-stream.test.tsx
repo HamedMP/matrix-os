@@ -57,7 +57,9 @@ it.each([
     })), { headers: response.headers });
   });
   const source = createCanonicalChatEventSource({ openStream });
-  const getDetail = vi.fn(async () => initial);
+  const getDetail = vi.fn(async () => (
+    await repository.getDetailPage(owner, chatId, { limit: 200 })
+  )!);
   let firstRequest = true;
   const steer = async () => {
       const suffix = !firstRequest && repeat === "accepted" ? "_second" : "";
@@ -140,9 +142,9 @@ it.each([
     });
     await waitFor(() => expect(hook.result.current.detail?.record.activeRun).toBeUndefined());
     expect(hook.result.current.detail?.runs.find((candidate) => candidate.id === run.id)?.status).toBe("completed");
-    // One initial snapshot; reconnection deliberately reconciles once. Healthy
+    // One route load plus one bounded refresh per replay checkpoint. Healthy
     // steering/content delivery never uses per-event polling or reload.
-    expect(getDetail).toHaveBeenCalledTimes(reconnect ? 2 : 1);
+    expect(getDetail).toHaveBeenCalledTimes(reconnect ? 3 : 2);
   } finally {
     release?.(); hook.unmount(); source.dispose(); stream.shutdown(); await repository.kysely.destroy();
   }
