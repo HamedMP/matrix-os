@@ -316,11 +316,7 @@ export async function resetVolatilePtySessionList(persistPath: string): Promise<
 
 const MAX_MAIN_WS_CLIENTS = 100;
 
-async function codexCanonicalAuthFile(homePath: string): Promise<string | undefined> {
-  const codexHome = process.env.CODEX_HOME?.trim()
-    ? resolve(process.env.CODEX_HOME)
-    : join(homePath, ".codex");
-  const authFile = join(codexHome, "auth.json");
+async function codexCanonicalAuthFile(authFile: string): Promise<string | undefined> {
   try {
     const info = await lstat(authFile);
     return info.isFile()
@@ -519,7 +515,11 @@ export async function createGateway(config: GatewayConfig) {
   let canonicalActionTools: readonly CanonicalActionTool[] = [];
   let canonicalActionAuthority: CanonicalActionAuthority | undefined;
   const codexControlClient = codexExecutable ? createCodexControlClient({ homePath }) : undefined;
-  const codexCanonicalAuth = codexExecutable ? await codexCanonicalAuthFile(homePath) : undefined;
+  // The location is stable, but login/logout can happen after gateway startup.
+  // Inspect it at qualification and again at dispatch, never cache readiness.
+  const codexCanonicalAuth = join(process.env.CODEX_HOME?.trim()
+    ? resolve(process.env.CODEX_HOME)
+    : join(homePath, ".codex"), "auth.json");
   let codexEventBridge: CodexEventBridge | undefined;
   let codingAgentWorkspaceRuntime: WorkspaceSessionOrchestrator | null = null;
   let codingAgentApprovalsEnabled = false;
@@ -1603,11 +1603,11 @@ export async function createGateway(config: GatewayConfig) {
           ...(canonicalActionRepository && canonicalActionTools.length > 0 ? {
             canonical: {
               inventory: canonicalActionTools,
-              ...(codexCanonicalAuth ? { authFile: codexCanonicalAuth } : {}),
-              isDispatchLive: () => canonicalActionAuthority !== undefined
+              authFile: codexCanonicalAuth,
+              isDispatchLive: async () => canonicalActionAuthority !== undefined
                 && codexEventBridge !== undefined
                 && codexControlClient !== undefined
-                && codexCanonicalAuth !== undefined,
+                && await codexCanonicalAuthFile(codexCanonicalAuth) !== undefined,
             },
           } : {}),
         }));

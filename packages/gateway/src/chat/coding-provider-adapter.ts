@@ -387,7 +387,7 @@ export interface CanonicalCodingExecutionCapability {
   /** Owner CLI `auth.json` bound into the isolated home when provisioned. */
   authFile?: string;
   /** Live check that the bridge dispatch and authority are still wired. */
-  isDispatchLive(): boolean;
+  isDispatchLive(): boolean | Promise<boolean>;
 }
 
 export const CANONICAL_CODEX_POLICY_REVISION = "codex_canonical_v1";
@@ -400,12 +400,12 @@ const CANONICAL_WORKSPACE_SCOPE = /^apps(?::[a-z0-9][a-z0-9-]{0,63})?$/;
  * against this — the voice/session decision must carry it verbatim, so the
  * derivation is deterministic per (driver, permissionMode, workspaceScope).
  */
-function qualifiedCanonicalCodexPolicy(
+async function qualifiedCanonicalCodexPolicy(
   capability: CanonicalCodingExecutionCapability,
   permissionMode: string,
   workspaceScope: string,
-): CanonicalExecutionPolicy | undefined {
-  if (!capability.isDispatchLive()) return undefined;
+): Promise<CanonicalExecutionPolicy | undefined> {
+  if (!await capability.isDispatchLive()) return undefined;
   if (!CANONICAL_CODEX_PERMISSION_MODES.has(permissionMode)) return undefined;
   if (!CANONICAL_WORKSPACE_SCOPE.test(workspaceScope)) return undefined;
   return CanonicalExecutionPolicySchema.parse({
@@ -484,13 +484,13 @@ export function createCanonicalCodingChatProviderAdapter(options: {
    * policy this adapter can currently enforce. Anything else fails closed —
    * a sandbox alone never transports a canonical grant.
    */
-  function canonicalGrantFor(
+  async function canonicalGrantFor(
     input: CanonicalProviderRunInput<CodingState>,
-  ): CodingAgentCanonicalExecution | undefined {
+  ): Promise<CodingAgentCanonicalExecution | undefined> {
     const frozen = input.runPolicy?.executionPolicy;
     if (!frozen) return undefined;
     if (!capability) throw new Error("Provider requires qualified canonical execution");
-    const qualified = qualifiedCanonicalCodexPolicy(capability, input.permissionMode, frozen.workspaceScope);
+    const qualified = await qualifiedCanonicalCodexPolicy(capability, input.permissionMode, frozen.workspaceScope);
     if (!qualified || canonicalJsonStringify(qualified) !== canonicalJsonStringify(frozen)) {
       throw new Error("Provider requires qualified canonical execution");
     }
@@ -597,7 +597,7 @@ export function createCanonicalCodingChatProviderAdapter(options: {
         const requestId = legacyRequestId(input.continuationId ?? input.runId);
         // The grant leaves this process only through the internal createThread
         // argument — never inside the client-shaped thread request.
-        const canonicalExecution = canonicalGrantFor(input);
+        const canonicalExecution = await canonicalGrantFor(input);
         const created = await options.threads.createThread(principal(input.owner.ownerId), {
           providerId: options.providerId,
           prompt: input.prompt,

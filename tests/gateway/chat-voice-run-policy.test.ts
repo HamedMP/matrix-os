@@ -697,6 +697,24 @@ describe("checkpoint provenance and retained history", () => {
     expect(result.retainedHistory).toBeUndefined();
   });
 
+  it.each(["voice", "typed"] as const)("rebuilds %s canonical-action turns instead of resuming a single-use runner", async (source) => {
+    await createChat();
+    await completedCheckpoint("single_use");
+    await commitMessage("msg_heard", 2, "7 plus 11 is 18.", "run_heard");
+    const result = await decision({
+      retainedHistorySupported: true,
+      historyBoundarySeq: 2,
+      runPolicy: { ...requestPolicy(source), executionPolicy: {
+        revision: "codex_canonical_v1", actionMode: "canonical_actions", workspaceScope: "apps",
+        tools: ["matrix_list_apps"], delegation: false,
+      } },
+    });
+    expect(result.mode).toBe("rebuild");
+    expect(result.resumeState).toBeUndefined();
+    expect(result.retainedHistory?.text).toContain("remember");
+    expect(result.retainedHistory?.text).toContain("7 plus 11 is 18.");
+  });
+
   it("resumes with retained canonical history when the checkpoint predates it", async () => {
     await createChat();
     const runId = await completedCheckpoint("retained");

@@ -33,6 +33,7 @@ export type ChatResumeDecisionMode =
 
 export type ChatResumeDeclineReason =
   | "disposable_policy"
+  | "canonical_actions_policy"
   | "no_checkpoint"
   | "eligibility_unavailable" // eligibility query failed — fail closed
   | "provenance_unverifiable" // selection carried no checkpoint provenance
@@ -260,17 +261,19 @@ export async function loadChatResumeDecision(input: ChatResumeDecisionInput): Pr
     }
   };
 
-  // A disposable checkpoint policy never resumes native provider state, but
-  // it still needs Matrix-owned heard-safe history. Otherwise every
-  // session-only follow-up would behave like a first turn.
+  // Constrained action runners are single-use: their grant and isolated home
+  // belong to one run. Rebuild from Matrix-owned heard-safe history just as
+  // for disposable checkpoints, without reusing a prior run's native authority.
+  const canonicalActions = input.runPolicy?.executionPolicy?.actionMode === "canonical_actions";
   if (input.runPolicy?.nativeCheckpointPolicy === "disposable"
-    || input.runPolicy?.memoryMode === "session_only") {
+    || input.runPolicy?.memoryMode === "session_only" || canonicalActions) {
+    const reason = canonicalActions ? "canonical_actions_policy" : "disposable_policy";
     if ((input.historyBoundarySeq ?? 0) === 0) {
-      return { mode: "none", reason: "disposable_policy" };
+      return { mode: "none", reason };
     }
     const retainedHistory = await rebuildContext();
     if (!retainedHistory) throw new ChatResumeHistoryUnavailableError();
-    return rebuild("disposable_policy", retainedHistory);
+    return rebuild(reason, retainedHistory);
   }
 
   const unheardResponses = (input.deliveryContext?.unheardResponses ?? [])
