@@ -263,6 +263,7 @@ describe("preview platform collaboration home connection", () => {
       writeFileSync(join(directory, "preview-share-route.json"), JSON.stringify({ address: "203.0.113.7", handle: HANDLE }));
       const bin = join(directory, "bin");
       executable(bin, "sleep", ":\n");
+      executable(bin, "date", "printf '2026-09-28T00:00:00Z\\n'\n");
       executable(bin, "gcloud", `printf 'gcloud %s\\n' "$3 $4" >> "$LOG"; printf 'synthetic-secret-value'\n`);
       executable(bin, "node", `case "$*" in
   *"preview-collaboration-staging.mjs register"*) printf 'register\\n' >> "$LOG"; [ "$REGISTER" = true ] ;;
