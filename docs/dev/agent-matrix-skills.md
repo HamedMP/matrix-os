@@ -283,11 +283,6 @@ persistence result, and screenshot or recording evidence. A build/preflight or m
 scenario does not establish live authenticated launch or visual quality; report any
 unavailable verification rather than implying it passed.
 
-The transferable workflow is informed by Lovable's public [design guidance](https://docs.lovable.dev/features/design-guidance),
-[design systems](https://docs.lovable.dev/features/design-systems), and [browser testing](https://docs.lovable.dev/features/browser-testing),
-and Replit's [Design Canvas](https://docs.replit.com/design/canvas) and [DESIGN.md](https://docs.replit.com/design/design-md).
-These sources describe direction, reuse, visual feedback, and continuity. Applying
-those practices in Matrix is an inference, not access to their hidden prompts or
-proof that those practices alone cause the quality of their generated apps.
+Builders invite a style, app link or inspiration screenshot when the direction is unclear. The visual-reference workflow can delegate bounded similar-app research to available subagents, inspect actual screens, and record selected patterns in the owner project's design/references/ and DESIGN.md. It keeps references out of the shared pack and verifies rendered quality separately from real Postgres persistence.
 
 The remote Hermes installer skips any existing named skill directory or symlink before calling Hermes, since Hermes can replace filesystem-only entries even without `--force`. Use a local checkout and `sync-matrix-agent-skills.sh` to refresh Matrix-managed installations; remote repeat installs fill only missing names.

@@ -154,6 +154,8 @@ await window.MatrixOS.writeData('myapp-data', JSON.stringify(value));
 
 Read the installed `matrix-app-builder` skill and its `references/app-craft.md`. Load `matrix-design-system` and `matrix-app-ui-patterns` for the layout/theme contract; use `emil-design-eng` and `apple-design` for interface craft, `matrix-landing-design` for landing pages, and `animate` plus its relevant companions for motion. Find these through your harness's skill catalog and read only the resources needed for the task.
 
+Read the app-builder visual-reference resource: invite the user’s preferred style or inspiration image when needed, delegate bounded similar-app screenshot research when tools support it, inspect the actual images, and choose a primary direction. Keep captures and reference notes in the owner project.
+
 Record a short `DESIGN.md` in the app: user's main job, visual direction, references, layout/density, theme tokens, typography, interaction states, Postgres fields, and purposeful motion. Reuse approved references and existing components. Choose a coherent direction when the brief is clear; offer alternatives when requested or a meaningful choice is unresolved.
 
 - Build the core read/create/edit flow before decorative polish. A planner should open onto planning, not a marketing hero or invented metrics.

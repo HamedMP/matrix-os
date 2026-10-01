@@ -26,7 +26,7 @@ Verification: assembled kernel prompt and Claude launch args / Codex thread-star
 
 Goal: preserve primary-source findings and document observable product behavior.
 Files: specs/543-app-builder-craft/research.md; separate FinnaAI/matrix-os-site content/docs documentation PR.
-Approach: cite Lovable design directions/design systems/browser testing and Replit Design Canvas/DESIGN.md; describe transferable workflows as inferences, not secret prompts. Keep Matrix's Vite/React, sandbox, Matrix theme and Postgres architecture.
+Approach: document design directions, reusable systems, screenshot references, rendered testing and DESIGN.md continuity in Matrix-focused terms. Keep Matrix's Vite/React, sandbox, Matrix theme and Postgres architecture.
 Verification: focused tests, type checks, independent code/skill review, Matrix OS PR and separate site documentation PR. No customer deployment or merge in this task.
 
 ## Boundaries

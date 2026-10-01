@@ -158,12 +158,6 @@ interaction problems, then inspect again. Report what you actually tested and an
 unavailable surface. A successful build alone is not visual or launch verification.
 
 
-## Research behind this workflow
+## Reference continuity
 
-Public documentation describes transferable workflows, not hidden prompts or proof
-of why every generated app looks good. Lovable documents [design guidance](https://docs.lovable.dev/features/design-guidance),
-[design systems](https://docs.lovable.dev/features/design-systems), and [browser testing](https://docs.lovable.dev/features/browser-testing).
-Replit documents [Design Canvas](https://docs.replit.com/design/canvas) and [DESIGN.md](https://docs.replit.com/design/design-md).
-Our inference: reusable tokens/components, a recorded direction, visual feedback,
-and continuity across iterations can make Matrix builds more deliberate. Matrix
-implements that workflow with existing app files, skills, and surface inspection.
+Use [Visual references and style intake](visual-references.md) to inspect actual app screenshots, invite the user's preferred style, and delegate bounded reference research when available. Record the selected direction, component/token decisions and interaction states in DESIGN.md. Refine from actual Matrix screenshots while preserving the user's intent. References inform original product-specific work; build and persistence checks establish whether the implementation works.

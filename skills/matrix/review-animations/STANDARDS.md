@@ -226,7 +226,7 @@ const closedX = reduce ? 0 : "-100%";
 // app-wide: <MotionConfig reducedMotion="user"> animates only opacity/background
 ```
 
-Disable autoplaying animations under `reduce`; for looping animations, pause on a representative "hero" frame (`animation-play-state: paused; animation-delay: -0.4s`) rather than frame 0. For essential visual sequences, jump between frames instead of tweening. **Tap targets ≥ 44×44px** (enlarge with a `::before` hitbox without changing layout). On touch devices, hover+click fire together — detect `pointer: coarse` and use a two-tap pattern (first tap = hover, second = click).
+Disable autoplaying animations under `reduce`; for looping animations, pause on a representative "hero" frame (`animation-play-state: paused; animation-delay: -0.4s`) rather than frame 0. For essential visual sequences, jump between frames instead of tweening. **Tap targets ≥ 44×44px** (enlarge with a `::before` hitbox without changing layout). Ordinary touch controls activate on the first tap; gate hover-only decoration with `(hover: hover) and (pointer: fine)`. Use separate, clearly labeled controls for optional previews or details instead of making the primary action require a second tap.
 
 ## Debugging (recommend when feel is uncertain)
 
