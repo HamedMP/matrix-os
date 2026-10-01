@@ -1,3 +1,4 @@
+import {sql} from "kysely";
 import { KyselyPGlite } from "kysely-pglite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CanonicalProviderCatalogSchema, type CanonicalCreateChatTurnRequest } from "@matrix-os/contracts";
@@ -63,6 +64,30 @@ describe("company drive canonical execution lifecycle", () => {
         expect(admitted.run.context?.drives).toEqual([drive]);
         permitted = false;
         await expect(orchestrator.retryTurn(principal, owner, "chat_drive", admitted.turn.id, { clientRequestId: "req_retry", baseRevision: (await repository.get(owner, "chat_drive"))!.chat.revision })).rejects.toMatchObject({ safeError: { code: "resource_unavailable" } });
+        expect(calls).toHaveLength(1);
+    });
+    it("groups a pending queued drive turn atomically and rejects changing its admitted context",async()=>{
+        hold=new Promise<void>(resolve=>{release=resolve;});
+        await orchestrator.admitTurn(principal,owner,"chat_drive",await request("req_first",false));
+        await vi.waitFor(()=>expect(calls).toHaveLength(1));
+        const queued=await orchestrator.enqueueQueuedTurn(principal,owner,"chat_drive",await request("req_next"));
+        const pendingAssociation=await sql<{reference:unknown}>`SELECT reference FROM chat_drive_projects WHERE chat_id = 'chat_drive'`.execute(repository.kysely);
+        expect(pendingAssociation.rows[0]?.reference).toEqual(drive);
+        const record=(await repository.get(owner,"chat_drive"))!;
+        await expect(repository.updateQueuedTurn(owner,{chatId:"chat_drive",queuedTurnId:queued.queuedTurn.id,clientRequestId:"req_mutate",baseRevision:record.chat.revision,parts:[{type:"text",text:"Different context"}],updatedAt:new Date().toISOString()})).rejects.toThrow();
+        release!();
+        await vi.waitFor(()=>expect(calls).toHaveLength(2),{timeout:5000});
+        const associated=await sql<{reference:unknown}>`SELECT reference FROM chat_drive_projects WHERE chat_id = 'chat_drive'`.execute(repository.kysely);
+        expect(associated.rows[0]?.reference).toEqual(drive);
+    });
+    it("retains the first drive association when its pending turn is cancelled", async () => {
+        hold = new Promise<void>(resolve => { release = resolve; });
+        await orchestrator.admitTurn(principal, owner, "chat_drive", await request("req_running_cancel", false));
+        await vi.waitFor(() => expect(calls).toHaveLength(1));
+        const queued = await orchestrator.enqueueQueuedTurn(principal, owner, "chat_drive", await request("req_pending_cancel"));
+        await repository.cancelQueuedTurn(owner, { chatId: "chat_drive", queuedTurnId: queued.queuedTurn.id, clientRequestId: "req_cancel_drive", baseRevision: (await repository.get(owner, "chat_drive"))!.chat.revision, cancelledAt: new Date().toISOString() });
+        const associated = await sql<{reference:unknown}>`SELECT reference FROM chat_drive_projects WHERE chat_id = 'chat_drive'`.execute(repository.kysely);
+        expect(associated.rows[0]?.reference).toEqual(drive);
         expect(calls).toHaveLength(1);
     });
     it("revalidates queued references before the next adapter launches", async () => {
