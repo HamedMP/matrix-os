@@ -98,6 +98,8 @@ describe("Chat projection preserves the backing execution lifecycle", () => {
       return persistState(...args);
     });
     const finish = Promise.withResolvers<void>();
+    // Use complete ordinary tokens: oversized unbroken tokens are redacted by
+    // the stream projector and cannot exercise the 96 KiB transcript ceiling.
     let nativeSignal: AbortSignal | undefined;
     let nativeThreadId = "";
     const threads = createCodingAgentThreadStore({ homePath, providers: [{
@@ -108,7 +110,7 @@ describe("Chat projection preserves the backing execution lifecycle", () => {
         const base = () => ({ threadId: thread.id, eventId: nextEventId(), occurredAt: now().toISOString() });
         await publishEvents!({ events: [{ ...base(), type: "thread.status", status: "running" }] });
         for (let i = 0; i < 26; i += 1) {
-          await publishEvents!({ events: [{ ...base(), type: "assistant.text.delta", messageId: "msg_large", delta: "safe ".repeat(800) }] });
+          await publishEvents!({ events: [{ ...base(), type: "assistant.text.delta", messageId: "msg_large", delta: "word ".repeat(800) }] });
         }
         await finish.promise;
         return { events: [{ ...base(), type: "thread.completed", outcome: "completed" }] };
@@ -176,7 +178,7 @@ describe("Chat projection preserves the backing execution lifecycle", () => {
         nativeThreadId = thread.id;
         for (let i = 0; i < 26; i += 1) {
           await publishEvents!({ events: [{ threadId: thread.id, eventId: nextEventId(),
-            occurredAt: now().toISOString(), type: "assistant.text.delta", messageId: "msg_large", delta: "safe ".repeat(800) }] });
+            occurredAt: now().toISOString(), type: "assistant.text.delta", messageId: "msg_large", delta: "word ".repeat(800) }] });
         }
         await finish.promise;
         return { events: [] };

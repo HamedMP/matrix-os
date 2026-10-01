@@ -78,6 +78,7 @@ function runCiResults(ciResultsRun: string, triggerRequested: boolean): number |
         CI_TRIGGER_REQUESTED: String(triggerRequested),
         DOCS_CONTRACT_RESULT: 'success',
         E2E_RESULT: 'success',
+        FUNDED_POSTGRES_RESULT: 'success',
         GITHUB_STEP_SUMMARY: summary,
         OS_VIEW_PARITY_RESULT: 'success',
         PATTERNS_RESULT: 'success',
@@ -351,7 +352,7 @@ describe('CI workflows', () => {
     expect(workflow).toContain('ci-results:');
     expect(workflow).toContain('name: CI Results');
     expect(workflow).toContain('if: always()');
-    expect(workflow).toContain('needs: [changes, typecheck, shell-production-build, patterns, react-doctor, sync-client, agent-sdk-compatibility, unit, docs-contract, os-view-parity, e2e]');
+    expect(workflow).toContain('needs: [changes, typecheck, shell-production-build, patterns, react-doctor, sync-client, agent-sdk-compatibility, unit, funded-postgres, docs-contract, os-view-parity, e2e]');
     expect(workflow).toContain('### CI Results');
     expect(workflow).toContain('needs.typecheck.result');
     expect(workflow).toContain('needs.shell-production-build.result');
@@ -365,7 +366,7 @@ describe('CI workflows', () => {
     expect(workflow).toContain('needs.docs-contract.result');
     expect(workflow).toContain('needs.os-view-parity.result');
     expect(workflow).toContain('needs.e2e.result');
-    expect(workflow).toContain('"$PATTERNS_RESULT" "$REACT_DOCTOR_RESULT" "$SYNC_CLIENT_RESULT" "$AGENT_SDK_COMPATIBILITY_RESULT" "$UNIT_RESULT" "$DOCS_CONTRACT_RESULT" "$OS_VIEW_PARITY_RESULT"');
+    expect(workflow).toContain('"$PATTERNS_RESULT" "$REACT_DOCTOR_RESULT" "$SYNC_CLIENT_RESULT" "$AGENT_SDK_COMPATIBILITY_RESULT" "$UNIT_RESULT" "$FUNDED_POSTGRES_RESULT" "$DOCS_CONTRACT_RESULT" "$OS_VIEW_PARITY_RESULT"');
 
     const ciResultsRun = readCiResultsRun(root);
     expect(ciResultsRun).toBeDefined();

@@ -134,30 +134,24 @@ function canonicalClaudeActivityEvent(
   });
   if (fullProjection.success) return fullProjection.data;
 
-  // One rejected owner-only path must not erase independent safe metadata.
-  let projected = CanonicalProviderRunEventSchema.parse({
+  let retained = CanonicalProviderRunEventSchema.parse({
     type: "agent.activity",
     activityId: activity.activityId,
     kind: activity.kind,
     label: activity.label,
     status,
   });
-  if (activity.preview && activity.previewKind) {
-    const withPreview = CanonicalProviderRunEventSchema.safeParse({
-      ...projected,
-      preview: activity.preview,
-      previewKind: activity.previewKind,
-    });
-    if (withPreview.success) projected = withPreview.data;
+  // Validate optional fields independently: an unavailable path detail must
+  // not erase a safe command preview. Preview and kind remain one atomic pair.
+  for (const fields of [
+    activity.preview === undefined ? undefined : { preview: activity.preview, previewKind: activity.previewKind },
+    activity.detail === undefined ? undefined : { detail: activity.detail },
+  ]) {
+    if (!fields) continue;
+    const candidate = CanonicalProviderRunEventSchema.safeParse({ ...retained, ...fields });
+    if (candidate.success) retained = candidate.data;
   }
-  if (activity.detail) {
-    const withDetail = CanonicalProviderRunEventSchema.safeParse({
-      ...projected,
-      detail: activity.detail,
-    });
-    if (withDetail.success) projected = withDetail.data;
-  }
-  return projected;
+  return retained;
 }
 
 function classifiedClaudeFailureEvidence(text: string) {

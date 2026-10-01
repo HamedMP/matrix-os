@@ -1,5 +1,6 @@
 // @vitest-environment gateway-renderer
 import React from "react";
+import { startCanonicalChatAfterReplay } from "./canonical-chat-stream-test-utils";
 import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { CanonicalChatWorkspace } from "@desktop/renderer/src/features/chat/CanonicalChatWorkspace";
@@ -35,12 +36,12 @@ it("renders real Claude post-Steer HTTP events in the Electron transcript before
   // separate user-state invalidation triggering an unrelated detail refresh.
   client.acknowledgeCompletion = async () => (await h.getDetail()).record;
   try {
+    await startCanonicalChatAfterReplay(source);
     render(<CanonicalChatWorkspace client={client} eventSource={source} catalog={h.catalog}
       projectId={null} initialChatId={h.chatId} initialView="conversation" active />);
-    await act(async () => { await source.start(); });
-    await waitFor(() => expect(h.frames.at(-1)?.type).toBe("chat.replay.end"));
-    await waitFor(() => expect(client.getDetail).toHaveBeenCalledTimes(2));
     await screen.findByRole("log");
+    await waitFor(() => expect(client.getDetail).toHaveBeenCalledTimes(1));
+    const initialDetailCalls = vi.mocked(client.getDetail).mock.calls.length;
     let admitted!: Awaited<ReturnType<typeof h.admit>>;
     await act(async () => { admitted = await h.admit(); });
     await waitFor(() => expect(h.children).toHaveLength(1));
@@ -66,7 +67,7 @@ it("renders real Claude post-Steer HTTP events in the Electron transcript before
     expect(screen.getByRole("button", { name: "Stop" })).toBeTruthy();
     expect(resumed.resultReleased).toBe(false);
     expect(resumed.exited).toBe(false);
-    expect(client.getDetail).toHaveBeenCalledTimes(2);
+    expect(client.getDetail).toHaveBeenCalledTimes(initialDetailCalls);
     expect(h.openStream).toHaveBeenCalledTimes(1);
     expect(log.getAllByText(AFTER_STEER)).toHaveLength(1);
     const transcript = screen.getByRole("log").textContent!;
@@ -85,7 +86,7 @@ it("renders real Claude post-Steer HTTP events in the Electron transcript before
       frame.content.messages?.some((message) => message.parts
         .some((part) => part.type === "text" && part.text === FINAL_TEXT))
     ))).toBe(true);
-    expect(client.getDetail).toHaveBeenCalledTimes(2);
+    expect(client.getDetail).toHaveBeenCalledTimes(initialDetailCalls);
   } finally {
     cleanup(); source.dispose(); await h.close();
   }
