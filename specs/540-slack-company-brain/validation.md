@@ -72,3 +72,5 @@ identity mismatch before its correction. Four focused Slack suites pass
 67 tests, and the platform TypeScript check passes. Live Slack installation and
 reply acceptance remain pending preview configuration; automated checks do not
 establish a live Slack success.
+
+The Slack pilot also selects `preview-isolated` alongside `preview-platform`. Its exact tagged browser origin is resolved before the Next.js build and reused for runtime auth and collaboration origins. Runtime-only overrides cannot fix an auth URL baked into the image. Invalid/non-preview service origins fail before build; previews without the label retain shared-host behavior. `preview-platform-isolated-origin.test.ts` executes the workflow step with a synthetic service URL and covers tag derivation, unsafe origins, invalid PR identifiers, and ordering.

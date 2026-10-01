@@ -69,7 +69,7 @@ function deployedArguments(overrides: Record<string, string> = {}) {
 
 function revisionContract(revision: unknown) {
   const functionEnd = deployment.indexOf("\nservice_base_url=");
-  const script = `${deployment.slice(0, functionEnd)}\nverify_collaboration_revision <<< "$REVISION_JSON"`;
+  const script = `date() { printf '%s\\n' '2026-09-28T00:00:00.000Z'; }\n${deployment.slice(0, functionEnd)}\nverify_collaboration_revision <<< "$REVISION_JSON"`;
   return spawnSync("bash", ["-euc", script], { encoding: "utf8", timeout: 5_000, env: {
     ...baseEnvironment(), REVISION_JSON: JSON.stringify(revision),
   } });
