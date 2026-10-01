@@ -197,11 +197,9 @@ function isSenderAtApp(sender: NativeAppSender, origin: string, slug: string): b
 }
 
 export class NativeAppBridge {
-  private readonly senders = new Map<number, { appIdentity: string; routeSlug: string; authGeneration: number }>();
+  private readonly senders = new Map<number, { appIdentity: string; routeSlug: string; authGeneration: number; openWindow: number; openCount: number }>();
   private generateWindow = 0;
   private generateCount = 0;
-  private openWindow = 0;
-  private openCount = 0;
   private pendingOpens = 0;
   private readonly options: NativeAppBridgeOptions;
   private readonly maxSenders: number;
@@ -224,7 +222,7 @@ export class NativeAppBridge {
       throw new Error("invalid app bridge identity");
     }
     this.senders.delete(senderId);
-    this.senders.set(senderId, { appIdentity, routeSlug, authGeneration: this.options.authGeneration() });
+    this.senders.set(senderId, { appIdentity, routeSlug, authGeneration: this.options.authGeneration(), openWindow: 0, openCount: 0 });
     while (this.senders.size > this.maxSenders) {
       const oldest = this.senders.keys().next().value as number | undefined;
       if (oldest === undefined) break;
@@ -287,13 +285,13 @@ export class NativeAppBridge {
     const authorized = () => identity && this.senders.get(sender.id) === identity
       && identity.authGeneration === this.options.authGeneration()
       && isSenderAtApp(sender, this.options.gatewayOrigin(), identity.routeSlug);
-    if (!authorized()) throw new Error("not authorized");
+    if (!identity || !authorized()) throw new Error("not authorized");
     if (!this.options.resolveApp || !this.options.openApp) throw new Error("App launch dependency is unavailable");
     const request = NativeAppOpenRequestSchema.parse(rawRequest);
     const now = Date.now();
-    if (now - this.openWindow >= 60_000) { this.openWindow = now; this.openCount = 0; }
-    if (this.openCount >= 10 || this.pendingOpens >= 8) throw new Error("App launch rate limit exceeded");
-    this.openCount++;
+    if (now - identity.openWindow >= 60_000) { identity.openWindow = now; identity.openCount = 0; }
+    if (identity.openCount >= 10 || this.pendingOpens >= 8) throw new Error("App launch rate limit exceeded");
+    identity.openCount++;
     this.pendingOpens++;
     try {
       const app = NativeAppOpenTargetSchema.parse(await this.options.resolveApp(request));

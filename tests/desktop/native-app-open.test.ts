@@ -76,6 +76,26 @@ describe("native installed-app opening", () => {
     await expect(bridge.openApp(sender, request)).rejects.toThrow("limit");
     expect(openApp).toHaveBeenCalledTimes(9);
   });
+  it("keeps launch rate budgets independent across registered senders and authentication generations", async () => {
+    const { bridge, openApp, advance } = fixture();
+    const now = vi.spyOn(Date, "now").mockReturnValue(100_000);
+    bridge.register(2, "other-app");
+    for (let index = 0; index < 10; index++) await bridge.openApp(sender, request);
+    await expect(bridge.openApp(sender, request)).rejects.toThrow("limit");
+    await bridge.openApp({ id: 2, url: "https://gateway.test/apps/other-app/" }, request);
+    expect(openApp).toHaveBeenCalledTimes(11);
+    advance();
+    await expect(bridge.openApp(sender, request)).rejects.toThrow("not authorized");
+    bridge.register(1, "gallery");
+    await bridge.openApp(sender, request);
+    expect(openApp).toHaveBeenCalledTimes(12);
+    now.mockReturnValue(160_000);
+    for (let index = 0; index < 10; index++) await bridge.openApp(sender, request);
+    await expect(bridge.openApp(sender, request)).rejects.toThrow("limit");
+    bridge.clear(); bridge.register(1, "gallery");
+    await bridge.openApp(sender, request);
+    expect(openApp).toHaveBeenCalledTimes(23);
+  });
   it("checks dependencies at registration and blocks subframe IPC without leaking failures", async () => {
     const { bridge, openApp, resolveApp } = fixture();
     const handle = vi.fn(); bridge.registerIpc({ handle });

@@ -14,7 +14,7 @@ Expose the existing one-way `MatrixOS.openApp(name, path): void` request in Elec
 | Main catalog lookup | Current desktop bearer through `/api/apps` | Fixed origin URL, no redirects, ten-second timeout, bounded catalog response; exact app match |
 | Main to renderer event | Current runtime slot and authentication generation | Validated installed-app metadata; signed-in renderer scope check before normal tab opening |
 
-Bound concurrent launch requests and request frequency. Revalidate the sender after asynchronous lookup; reject retired or navigated views and authentication changes. Verify dependencies when registering the capability. Clear registrations on embed shutdown. Preserve existing app sandbox permissions and tokens.
+Bound concurrent launch requests globally and request frequency per registered sender/authentication generation. Store the frequency budget in the existing capped sender registry so closing, evicting, or replacing a registration releases its budget; unrelated apps and newly authenticated views keep independent budgets. Revalidate the sender after asynchronous lookup; reject retired or navigated views and authentication changes. Verify dependencies when registering the capability. Clear registrations on embed shutdown. Preserve existing app sandbox permissions and tokens.
 
 ## Delivery
 
