@@ -338,11 +338,15 @@ export function createAiFundedRuntimeRoutes(options: {
         && latest.policy.allowedModelIds.length === first.policy.allowedModelIds.length
         && latest.policy.allowedModelIds.every((id) => first.policy.allowedModelIds.includes(id))
         && Date.parse(latest.policy.checkedAt) <= current && Date.parse(latest.policy.staleAfter) > current;
-      const readyModelIds = unchanged ? observations.filter(({ model, result }) =>
+      const readyObservations = unchanged ? observations.filter(({ model, result }) =>
         result.ready && Date.parse(result.checkedAt) <= current && Date.parse(result.staleAfter) > current
-          && latest.policy.allowedModelIds.includes(model)).map(({ model }) => model) : [];
-      const earliestObservation = observations.length > 0
-        ? Math.min(...observations.map(({ result }) => Date.parse(result.staleAfter))) : current + 5_000;
+          && latest.policy.allowedModelIds.includes(model)) : [];
+      const readyModelIds = readyObservations.map(({ model }) => model);
+      // A failed peer's short negative-cache TTL is not evidence for the
+      // successful models in this receipt. Only their current observations
+      // constrain its validity; empty receipts retain a short retry horizon.
+      const earliestObservation = readyObservations.length > 0
+        ? Math.min(...readyObservations.map(({ result }) => Date.parse(result.staleAfter))) : current + 5_000;
       const staleAfter = Math.min(current + 30_000, Date.parse(latest.policy.staleAfter), earliestObservation);
       if (staleAfter <= current) return c.json(safeError("unavailable"), 503);
       return c.json(FundedAiRouteReadinessReceiptSchema.parse({

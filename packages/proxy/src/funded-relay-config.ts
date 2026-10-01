@@ -1,3 +1,5 @@
+import { readFundedPricingReviews, type FundedPricingReviews } from "./funded-pricing-review.js";
+
 const DEFAULT_BODY_LIMIT_BYTES = 2 * 1024 * 1024;
 const DEFAULT_RESPONSE_LIMIT_BYTES = 32 * 1024 * 1024;
 const DEFAULT_CONTROL_RESPONSE_LIMIT_BYTES = 64 * 1024;
@@ -24,6 +26,7 @@ export interface FundedRelayConfig {
   gatewayBaseUrl: string;
   gatewayToken: string;
   jevMaxCostMicrousd: number;
+  pricingReviews?: FundedPricingReviews;
   reservationMode: "cloudflare-count" | "usage";
   workersAiToken?: string;
   platformBaseUrl: string;
@@ -174,6 +177,7 @@ export function resolveFundedRelayConfig(
   return {
     gatewayBaseUrl,
     gatewayToken,
+    pricingReviews: readFundedPricingReviews(env),
     jevMaxCostMicrousd: readInteger(
       env, "MATRIX_JEV_MAX_COST_MICROUSD", DEFAULT_JEV_MAX_COST_MICROUSD, 1, 1_000_000,
     ),
