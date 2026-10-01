@@ -6,11 +6,11 @@ version: 1.2.0
 author: Matrix OS
 license: MIT
 platforms: [linux, macos]
-related_skills: [matrix-design-system, matrix-app-ui-patterns, matrix-integrations, matrix-debug-app, emil-design-eng, apple-design, animate]
+related_skills: [matrix-design-system, matrix-app-ui-patterns, matrix-integrations, matrix-debug-app, emil-design-eng, apple-design, animate, shadcn]
 metadata:
   agent:
     tags: [Matrix OS, apps, Vite, React, TypeScript]
-    related_skills: [matrix-design-system, matrix-app-ui-patterns, matrix-integrations, matrix-debug-app, emil-design-eng, apple-design, animate]
+    related_skills: [matrix-design-system, matrix-app-ui-patterns, matrix-integrations, matrix-debug-app, emil-design-eng, apple-design, animate, shadcn]
 ---
 
 # Matrix App Builder
@@ -46,6 +46,8 @@ Use this when the user asks to build, create, fix, redesign, or publish a Matrix
 For apps and matching landing pages, read [Responsive layout and verification](references/responsive-layout.md). Compose for actual app container width across varied Matrix windows and mobile screens; verify the listed widths and retain all meaningful fields/actions.
 
 Avoid a generic welcome hero, decorative statistic cards, repeated glass containers, and automatic staggered entrances. The usable primary flow owns the first screen.
+
+For requested shadcn UI, read the installed `shadcn` skill, [preset guidance](../shadcn/presets.md) and [charts](../shadcn/charts.md). Use real current components with the project’s actual config, approved package policy and semantic tokens. Choose one fresh coherent style for a new app when the user delegates direction; sample preset links are examples. Preserve existing local components/design during refinements.
 
 ## Standard Structure
 

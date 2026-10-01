@@ -32,6 +32,7 @@ skills=(
   landing-design
   personal-daily-brief
   review-animations
+  shadcn
 )
 
 if ! command -v "$AGENT_BIN" >/dev/null 2>&1; then
@@ -42,7 +43,7 @@ fi
 
 for skill in "${skills[@]}"; do
   case "$skill" in
-    animate|animation-accessibility|animation-performance|animation-vocabulary|apple-design|css-animations|emil-design-eng|review-animations)
+    animate|animation-accessibility|animation-performance|animation-vocabulary|apple-design|css-animations|emil-design-eng|review-animations|shadcn)
       skill_name="$skill" ;;
     *) skill_name="matrix-$skill" ;;
   esac

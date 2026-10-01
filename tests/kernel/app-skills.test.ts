@@ -124,7 +124,7 @@ describe("T1440-T1445: AI skills for app building", () => {
 
 
 describe("shipped design skill discovery", () => {
-  const vendored = ["emil-design-eng", "apple-design", "animate", "animation-vocabulary", "animation-accessibility", "animation-performance", "css-animations", "review-animations"];
+  const vendored = ["emil-design-eng", "apple-design", "animate", "animation-vocabulary", "animation-accessibility", "animation-performance", "css-animations", "review-animations", "shadcn"];
   for (const name of vendored) {
     it(`ships ${name} with provenance and an ownership marker`, () => {
       expect(existsSync(skillPath(name))).toBe(true);

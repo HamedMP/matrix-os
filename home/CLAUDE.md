@@ -154,7 +154,7 @@ await window.MatrixOS.writeData('myapp-data', JSON.stringify(value));
 
 ## Design and motion workflow
 
-Read the installed `matrix-app-builder` skill and its `references/app-craft.md`. Load `matrix-design-system` and `matrix-app-ui-patterns` for the layout/theme contract; use `emil-design-eng` and `apple-design` for interface craft, `matrix-landing-design` for landing pages, and `animate` plus its relevant companions for motion. Find these through your harness's skill catalog and read only the resources needed for the task.
+Read the installed `matrix-app-builder` skill and its `references/app-craft.md`. Load `matrix-design-system` and `matrix-app-ui-patterns` for the layout/theme contract; use `emil-design-eng` and `apple-design` for interface craft, `matrix-landing-design` for landing pages, `shadcn` for current components/presets/charts, and `animate` plus its relevant companions for motion. Find these through your harness's skill catalog and read only the resources needed for the task.
 
 Read the app-builder visual-reference resource: invite the user’s preferred style or inspiration image when needed, delegate bounded similar-app screenshot research when tools support it, inspect the actual images, and choose a primary direction. Keep captures and reference notes in the owner project.
 

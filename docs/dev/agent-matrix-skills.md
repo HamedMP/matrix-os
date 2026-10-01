@@ -25,6 +25,7 @@ Matrix ships an Agent-installable skill pack under `skills/matrix/`. These skill
 | `animation-accessibility` | Design/test reduced-motion alternatives and accessible media behavior. |
 | `animation-performance` | Diagnose dropped frames and choose efficient animation properties. |
 | `css-animations` | Implement CSS motion with worked recipes. |
+| `shadcn` | Compose current project-aware components, coherent presets and responsive charts from real saved data. |
 | `review-animations` | Inspect the implemented motion against craft/accessibility/performance criteria. |
 
 Every skill supplies top-level discovery triggers. Matrix companion names also appear

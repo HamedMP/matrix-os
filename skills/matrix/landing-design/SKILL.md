@@ -56,6 +56,8 @@ Motion should establish hierarchy, explain continuity, or confirm an action. Rea
 - Respect `prefers-reduced-motion`: remove entrance transforms, smooth scrolling and ornamental motion while preserving content and feedback.
 - Avoid `transition: all`, expensive full-page blur effects, and layout animation on frequently edited controls.
 
+For shadcn component work, read the installed `shadcn` skill and its [preset guidance](../shadcn/presets.md). Compose components around the product’s actual task and selected style, preserve local changes, and verify current APIs instead of copying an arbitrary demo preset.
+
 ## Responsive and content states
 
 Read [Responsive layout and verification](../app-builder/references/responsive-layout.md). Apply its container-width composition and multi-width checks to the landing page and its working product; keep primary CTA, compact navigation, keyboard focus and touch controls accessible.
