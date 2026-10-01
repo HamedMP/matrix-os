@@ -447,7 +447,7 @@ export function WorkRail({
         showCollapseControl={showCollapseControl}
       />
       <SharedWithMeRailRow />
-      <OrganizationDrivesRail active={active} />
+      <OrganizationDrivesRail active={active} chats={unreadOnly ? records.filter(isChatUnread) : records} client={client?.agents} onNewChat={onStartAgentChat} onSelectChat={onSelectChat} activeChatId={activeChatId} />
       {readError ? <p role="alert" className="px-3 text-xs">{readError}</p> : null}
       {unreadOnly && !records.some(isChatUnread) ? <p className="px-3 text-xs">No unread chats.</p> : null}
       <ChatAgentsRailSection client={client?.agents} onOpen={onOpenAgents} onStartChat={onStartAgentChat} onSetup={() => { useUi.getState().requestSettingsSection("agents-providers"); useTabs.getState().openTab({ kind: "settings", title: "Settings" }); }} />

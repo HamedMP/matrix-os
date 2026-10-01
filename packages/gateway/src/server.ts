@@ -1,3 +1,5 @@
+import { createChatDriveProjectRoutes } from "./chat/drive-projects.js";
+import { createProductionChatDriveContext } from "./chat/drive-context-production.js";
 import { createOwnerAnthropicKeyPreflight } from "./ai-providers/owner-key-preflight.js";
 import { serve } from "@hono/node-server";
 import { createNodeWebSocket } from "@hono/node-ws";
@@ -1465,6 +1467,9 @@ export async function createGateway(config: GatewayConfig) {
       ? ["opencode" as const]
       : []),
   ];
+  const chatDriveContext = createProductionChatDriveContext({repository:chatRepository,collaborationReady:gatewayCollaboration !== null});
+  app.route("/",chatDriveContext.routes);
+  app.route("/", await createChatDriveProjectRoutes({repository:chatRepository,drives:chatDriveContext.service,resolveOwner: c => ({type:"personal",ownerId:requireRequestPrincipal(c).userId})}));
   const {
     catalog: canonicalChatProviderCatalog, resolveClaudeCredentialLaunch,
   } = createGatewayChatProviderCatalog({
@@ -1478,6 +1483,7 @@ export async function createGateway(config: GatewayConfig) {
     harnessSettingsSource: providerSettingsStore,
     executableDriverKinds: canonicalExecutableDriverKinds,
     credentialedDriverKinds: ["pi", "opencode"],
+    driveContextReady: () => chatDriveContext.service !== null,
   });
   if (chatRepository && canonicalChatExecutionRoots) {
     const canonicalAdapters: CanonicalChatProviderAdapter[] = [
@@ -1523,6 +1529,8 @@ export async function createGateway(config: GatewayConfig) {
     }
     canonicalChatRuntime = await createCanonicalChatRuntime({
       homePath,
+      ...(chatDriveContext.service ? {drives:chatDriveContext.service} : {}),
+      assertChatReferenceAllowed: chatDriveContext.assertChatReferenceAllowed,
       repository: chatRepository,
       catalog: canonicalChatProviderCatalog,
       adapters: new CanonicalChatProviderRegistry(canonicalAdapters.map(adapter => withAsyncChatInput(adapter))),
@@ -1762,6 +1770,7 @@ export async function createGateway(config: GatewayConfig) {
     hookRunner,
     async close() {
       await jevInboxRuntime?.close();
+      chatDriveContext.close();
       matrixMcpCapabilities.close();
       workspaceStartupRecoveryController.close();
       await terminalPasteAssetCleanup.close();

@@ -213,3 +213,19 @@ it("resets optional Full access when a website handoff replaces a draft with the
   expect((screen.getByRole("checkbox", { name: /Allow Full access/ }) as HTMLInputElement).checked).toBe(false);
   expect((screen.getByRole("button", { name: "Send" }) as HTMLButtonElement).disabled).toBe(false);
 });
+
+
+it("preserves a drive draft on an unsupported route and sends its exact typed reference when the catalog supports it",async()=>{
+ const ref={kind:"organization_drive" as const,id:"00000000-0000-4000-8000-000000000001",label:"Authority",drive:{kind:"drive" as const,organizationId:"org_company",scopeId:"00000000-0000-4000-8000-000000000001"}};
+ const submit=vi.fn(async()=>false),draft={id:999,text:"Summarize the plan",resources:[ref]};
+ const view=render(<ChatApp {...base} onSubmit={submit} agentClient={client} composerDraftRequest={draft}/>);
+ await screen.findByRole("button",{name:"Remove Authority"});expect((screen.getByRole("button",{name:"Send"}) as HTMLButtonElement).disabled).toBe(true);
+ fireEvent.keyDown(screen.getByRole("textbox",{name:"Message chat"}),{key:"Enter"});expect(submit).not.toHaveBeenCalled();
+ view.unmount();
+ const catalog=createCanonicalProviderCatalogFixture();catalog.instances[0]!.supports.resources.push("organization_drive");
+ vi.stubGlobal("fetch",vi.fn(async()=>Response.json(catalog)));
+ render(<ChatApp {...base} onSubmit={submit} agentClient={client} composerDraftRequest={draft}/>);
+ await waitFor(()=>expect((screen.getByRole("button",{name:"Send"}) as HTMLButtonElement).disabled).toBe(false));
+ fireEvent.click(screen.getByRole("button",{name:"Send"}));await waitFor(()=>expect(submit).toHaveBeenCalled());expect(submit.mock.calls[0]![2]).toMatchObject({resources:[ref]});
+ expect(screen.getByRole("button",{name:"Remove Authority"})).toBeTruthy();
+});

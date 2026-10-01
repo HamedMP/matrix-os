@@ -1,19 +1,10 @@
+import { OrganizationDrivePathSchema } from "#organization-drive-context";
+export { OrganizationDrivePathSchema, OrganizationDriveUploadFolderSchema, OrganizationDriveContextReferenceSchema, OrganizationDriveContextSearchSchema, ChatDriveSearchInputSchema, ChatDriveReadInputSchema, type OrganizationDriveContextReference } from "#organization-drive-context";
 import { z } from "zod/v4";
 import { CollaborationActorIdSchema, CollaborationOrganizationIdSchema, CollaborationRuntimeIdSchema } from "#collaboration";
 
 const utf8 = new TextEncoder();
 const Sha256Schema = z.string().regex(/^[a-f0-9]{64}$/);
-
-/** Logical path inside one organization drive; never an R2 key or host path. */
-export const OrganizationDrivePathSchema = z.string().min(1).max(800).refine((path) =>
-  utf8.encode(path).byteLength <= 800 && !path.startsWith("/") && !path.includes("\\")
-    && !/[\u0000-\u001f\u007f]/.test(path)
-    && path.split("/").every((segment) => segment.length > 0 && segment !== "." && segment !== ".."),
-  { message: "Invalid drive path" },
-);
-
-/** Reserve the slash and at least one UTF-8 filename byte; the full file path is validated at upload. */
-export const OrganizationDriveUploadFolderSchema = z.union([z.literal(""), OrganizationDrivePathSchema.refine(path => utf8.encode(path).byteLength <= 798)]);
 
 /** Organization-selected authority generation changes whenever the serving home moves. */
 export const OrganizationDriveAuthoritySchema = z.object({
@@ -63,3 +54,14 @@ export const OrganizationDriveDownloadSchema = z.object({
 export type OrganizationDriveAuthority = z.infer<typeof OrganizationDriveAuthoritySchema>;
 export type OrganizationDriveFile = z.infer<typeof OrganizationDriveFileSchema>;
 export type OrganizationDriveUploadRequest = z.infer<typeof OrganizationDriveUploadRequestSchema>;
+
+export const OrganizationDriveTextContextSchema = z.discriminatedUnion("status", [
+  z.object({status: z.literal("text"), file: OrganizationDriveFileSchema,
+    text: z.string().max(32 * 1024).refine(value => utf8.encode(value).byteLength <= 32 * 1024), truncated: z.boolean(), readOnly: z.literal(true)}).strict(),
+  z.object({status: z.literal("unsupported"), file: OrganizationDriveFileSchema, readOnly: z.literal(true)}).strict(),
+]);
+
+export const OrganizationDriveContextSearchResponseSchema = z.object({
+  organizationId: CollaborationOrganizationIdSchema, scopeId: z.uuid(),
+  files: z.array(OrganizationDriveFileSchema).max(50), nextCursor: OrganizationDrivePathSchema.optional(),
+}).strict();

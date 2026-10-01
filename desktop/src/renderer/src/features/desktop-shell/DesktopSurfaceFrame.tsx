@@ -313,6 +313,6 @@ export default function DesktopSurfaceFrame({
     </SurfaceChromeContext.Provider>
   );
   return isWorkSurface ? (
-    <WorkSurfaceRuntimeProvider active={visible}>{frame}</WorkSurfaceRuntimeProvider>
+    <WorkSurfaceRuntimeProvider active={visible} tabId={tab.id}>{frame}</WorkSurfaceRuntimeProvider>
   ) : frame;
 }

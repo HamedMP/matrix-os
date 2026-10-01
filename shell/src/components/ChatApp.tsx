@@ -405,7 +405,7 @@ function ChatAppContent({
           onOpenSharedHome();
           if (mobile) setSidebarOpen(false);
         }} /> : null}
-        <OrganizationDrivesNav />
+        <OrganizationDrivesNav chats={conversations} client={agentClient} onNewChat={startAgentChat} onSelectChat={onSwitchConversation} activeChatId={sessionId} />
         {/* Search */}
         <div className="px-3 pb-2">
           <div className={`flex items-center gap-2 rounded-lg bg-background/60 px-2.5 text-xs ${mobile ? "py-2.5" : "py-1.5"}`}>
@@ -614,7 +614,7 @@ function ChatAppContent({
         {/* Empty state or conversation */}
         {isEmpty ? (
           <EmptyState
-            composerProps={{ composer, agentClient, scope: composerScope, permissionMode: providerState.selected?.permissionMode ?? "supervised" }}
+            composerProps={{ composer, agentClient, scope: composerScope, permissionMode: providerState.selected?.permissionMode ?? "supervised", driveContextEnabled: providerState.selected?.supportsCompanyDriveContext === true }}
             onSubmit={submitWithHermesSetup}
             connected={connected}
             suggestions={suggestions}
@@ -709,6 +709,7 @@ function ChatAppContent({
                 </div>
               )}
               <ChatInput
+                driveContextEnabled={providerState.selected?.supportsCompanyDriveContext === true}
                 key={`composer:${composerScope}`} composer={composer} agentClient={agentClient} scope={composerScope} permissionMode={providerState.selected?.permissionMode ?? "supervised"}
                 connected={connected && providerState.selected !== null}
                 busy={busy}
@@ -746,7 +747,7 @@ function EmptyState({
   providerReady,
   attachmentsEnabled,
 }: {
-  composerProps: Pick<React.ComponentProps<typeof ChatInput>, "composer" | "agentClient" | "scope" | "permissionMode">;
+  composerProps: Pick<React.ComponentProps<typeof ChatInput>, "composer" | "agentClient" | "scope" | "permissionMode" | "driveContextEnabled">;
   onSubmit: React.ComponentProps<typeof ChatInput>["onSubmit"];
   connected: boolean;
   suggestions: string[];

@@ -20,6 +20,7 @@ export interface CanonicalProviderChoice {
   options: CanonicalProviderOptionDescriptor[];
   selectedOptions: Array<{ id: string; value: string | boolean }>;
   supportsFileAttachments: boolean;
+  supportsCompanyDriveContext?: boolean;
 }
 
 const MANAGED_GLM_MODEL_ID = "cloudflare:@cf/zai-org/glm-5.3-flash";
@@ -130,6 +131,7 @@ export function deriveCanonicalProviderChoices(
       permissionModes: [...instance.supports.permissionModes],
       options: [...instance.options],
       selectedOptions: selectedOptionsFor(instance, model.id),
+      supportsCompanyDriveContext: instance.supports.resources.includes("organization_drive"),
       supportsFileAttachments: instance.supports.attachments.some((kind) => kind === "file" || kind === "image"),
     }] : []);
   });

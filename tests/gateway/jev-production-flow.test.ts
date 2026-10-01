@@ -154,6 +154,10 @@ async function fixture(mode = "ready") {
 }
 
 it("admits the actual Jev production factory through Platform's exact-model filter only after profile preflight", async () => {
+  // The real policy fixture contains pricing valid through September 30.
+  // Freeze Date only; network deadlines and database timers remain real.
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date("2026-09-30T12:00:00.000Z"));
   const f = await fixture("platform-filter");
   try {
     await f.runtime.admit("owner_fixture", f.agent);

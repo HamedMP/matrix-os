@@ -128,7 +128,7 @@ export const CanonicalProviderSupportSchema = z.object({
   approvals: z.boolean(),
   userInput: z.boolean(),
   worktrees: z.enum(["none", "optional", "required"]),
-  resources: z.array(CanonicalChatResourceKindSchema).max(6),
+  resources: z.array(CanonicalChatResourceKindSchema).max(7),
   interactionModes: z.array(canonicalReferenceId(80)).max(16),
   permissionModes: z.array(canonicalReferenceId(80)).max(16),
 }).strict().superRefine((supports, ctx) => {

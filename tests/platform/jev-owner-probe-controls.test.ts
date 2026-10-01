@@ -6,6 +6,7 @@ import { insertUserMachine, type PlatformDB } from "../../packages/platform/src/
 import { createTestPlatformDb, destroyTestPlatformDb } from "./platform-db-test-helper.js";
 let db: PlatformDB;
 beforeEach(async () => {
+  // Match the reviewed pricing returned by this fixture; leave I/O timers real.
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.setSystemTime(new Date("2026-09-30T12:00:00.000Z"));
   ({ db } = await createTestPlatformDb());

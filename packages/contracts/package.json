@@ -29,7 +29,6 @@
     "#chat-sharing": "./src/chat-sharing.ts",
     "#ai-provider": "./src/ai-provider.ts",
     "#billing-catalog": "./src/billing-catalog.ts",
-    "#ai-provider": "./src/ai-provider.ts",
     "#billing-public": "./src/billing-public.ts",
     "#agent-runtime-config": "./src/agent-runtime-config.ts",
     "#agent-thread-contracts": "./src/agent-thread-contracts.ts",
@@ -70,8 +69,6 @@
     "#jev-hermes-route": "./src/jev-hermes-route.ts",
     "#getting-started": "./src/getting-started.ts",
     "#os-view": "./src/os-view.ts",
-    "#provider-settings": "./src/provider-settings.ts",
-    "#funded-ai": "./src/funded-ai.ts",
     "#safe-client-error": "./src/safe-client-error.ts",
     "#speech": "./src/speech.ts",
     "#support-chat-properties": "./src/support-chat-properties.ts",
@@ -79,7 +76,10 @@
     "#terminal-keyboard": "./src/terminal-keyboard.ts",
     "#terminal-scroll": "./src/terminal-scroll.ts",
     "#terminal-snapshot": "./src/terminal-snapshot.ts",
-    "#terminal-links": "./src/terminal-links.ts"
+    "#terminal-links": "./src/terminal-links.ts",
+    "#collaboration-identity": "./src/collaboration-identity.ts",
+    "#organization-drive-context": "./src/organization-drive-context.ts",
+    "#chat-drive-project": "./src/chat-drive-project.ts"
   },
   "main": "src/index.ts",
   "types": "src/index.ts",

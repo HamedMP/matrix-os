@@ -1,3 +1,5 @@
+export { createChatDriveProjectClient, type ChatDriveProjectClient } from "./organization-drive/chat-project-client.js";
+export { useChatDriveProjects } from "./organization-drive/use-chat-drive-projects.js";
 export { Button } from "./Button.js";
 export type { ButtonProps, ButtonVariant, ButtonSize } from "./Button.js";
 
@@ -149,7 +151,7 @@ export { ChatAgentsEntry, ChatAgentsRailSection } from "./chat-agents/ChatAgents
 export { ChatAgentsContent } from "./chat-agents/ChatAgentsContent.js";
 export { ChatAgentsWorkspace, useChatAgentsNavigation } from "./chat-agents/ChatAgentsNavigation.js";
 export { ChatMentionControls, useChatMentionPermission } from "./chat-agents/ChatMentionControls.js";
-export { isChatMention, hasChatMentionParts, canAddChatMention, orderChatResources, chatAgentAttribution } from "./chat-agents/mentions.js";
+export { chatResourceKey, isChatMention, hasChatMentionParts, canAddChatMention, orderChatResources, chatAgentAttribution } from "./chat-agents/mentions.js";
 
 export { ChatContextReceipt } from "./chat-agents/ChatContextReceipt.js";
 export { createChatMentionRequestTracker } from "./chat-agents/request-tracker.js";
@@ -186,3 +188,8 @@ export { shouldOpenChatOnStartup } from "./chat-startup-policy.js";
 
 export { OrganizationDriveBrowser, type OrganizationDriveBrowserProps } from "./organization-drive/OrganizationDriveBrowser.js";
 export { OrganizationDrivesNavigation } from "./organization-drive/OrganizationDrivesNavigation.js";
+
+export { CompanyDriveContextPicker } from "./organization-drive/CompanyDriveContextPicker.js";
+
+export {companyDriveChatReference} from "./organization-drive/context-reference.js";
+export type {DriveChatContextSelection} from "./organization-drive/OrganizationDriveBrowser.js";

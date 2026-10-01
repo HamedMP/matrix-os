@@ -1,0 +1,53 @@
+// @vitest-environment jsdom
+import React from "react";
+import { act, cleanup, renderHook } from "@testing-library/react";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { useCompanyDriveChatHandoff } from "../../desktop/src/renderer/src/features/work/use-company-drive-chat-handoff";
+import { desktopDriveDraftIdentity, openDesktopCompanyDriveChat, useDesktopCompanyDriveChatDraft } from "../../desktop/src/renderer/src/stores/company-drive-chat-draft";
+import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
+import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
+const reference = { kind: "organization_drive" as const, id: "00000000-0000-4000-8000-000000000001", label: "Authority", drive: { kind: "drive" as const, organizationId: "org_company", scopeId: "00000000-0000-4000-8000-000000000001" } };
+beforeEach(() => { useTabs.setState(useTabs.getInitialState(), true); useConnection.setState(useConnection.getInitialState(), true); useDesktopCompanyDriveChatDraft.setState({ request: null }); });
+afterEach(() => { cleanup(); vi.useRealTimers(); useDesktopCompanyDriveChatDraft.setState({ request: null }); });
+it("hands off once to the active target draft without changing a different conversation", () => {
+    const identity = desktopDriveDraftIdentity(useConnection.getState());
+    openDesktopCompanyDriveChat(reference, identity);
+    const request = useDesktopCompanyDriveChatDraft.getState().request!;
+    const start = vi.fn();
+    const hook = renderHook(({ active, tabId }) => useCompanyDriveChatHandoff(active, tabId, start), { initialProps: { active: false, tabId: request.tabId } });
+    expect(start).not.toHaveBeenCalled();
+    hook.rerender({ active: true, tabId: "another_window" });
+    expect(start).not.toHaveBeenCalled();
+    hook.rerender({ active: true, tabId: request.tabId });
+    expect(start).toHaveBeenCalledExactlyOnceWith("", [reference]);
+    expect(useDesktopCompanyDriveChatDraft.getState().request).toBeNull();
+    hook.rerender({ active: true, tabId: request.tabId });
+    expect(start).toHaveBeenCalledTimes(1);
+});
+it("drops pending Files context across credential replacement and rejects stale callbacks", () => {
+    const identity = desktopDriveDraftIdentity(useConnection.getState());
+    openDesktopCompanyDriveChat(reference, identity);
+    const request = useDesktopCompanyDriveChatDraft.getState().request!;
+    act(() => useConnection.setState({ authGeneration: 1 }));
+    const start = vi.fn();
+    renderHook(() => useCompanyDriveChatHandoff(true, request.tabId, start));
+    expect(start).not.toHaveBeenCalled();
+    expect(useDesktopCompanyDriveChatDraft.getState().request).toBeNull();
+    openDesktopCompanyDriveChat(reference, identity);
+    expect(useDesktopCompanyDriveChatDraft.getState().request).toBeNull();
+});
+it("expires Files intents and refuses to replace a conversation navigated to since launch", () => {
+    vi.useFakeTimers();
+    const identity = desktopDriveDraftIdentity(useConnection.getState());
+    openDesktopCompanyDriveChat(reference, identity);
+    const request = useDesktopCompanyDriveChatDraft.getState().request!;
+    useTabs.getState().openTab({ kind: "work", title: "Chat", workRoute: "chat", chatView: "conversation", chatId: "chat_other", closable: false });
+    const start = vi.fn();
+    const hook = renderHook(({ active }) => useCompanyDriveChatHandoff(active, request.tabId, start), { initialProps: { active: true } });
+    expect(start).not.toHaveBeenCalled();
+    act(() => vi.advanceTimersByTime(600001));
+    hook.rerender({ active: false });
+    hook.rerender({ active: true });
+    expect(start).not.toHaveBeenCalled();
+    expect(useDesktopCompanyDriveChatDraft.getState().request).toBeNull();
+});
